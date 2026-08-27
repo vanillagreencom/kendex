@@ -10,9 +10,9 @@ an outside contributor.
 
 ### Changed
 
-- **Breaking:** `kendex check` calls hooks armed only when the guard
-  package's marker is in both hook files and `core.hooksPath` is unset.
-  New `kendex guard check` asks the package, which answers in full.
+- **Breaking:** hooks read as armed only when the package's marker is in
+  both hook files, both are executable, and `core.hooksPath` is unset;
+  `guard install` stands down under any value. New: `kendex guard check`.
 
 ### Fixed
 
@@ -32,21 +32,17 @@ an outside contributor.
 - An install whose `pre-commit` or `commit-msg` script is missing or not
   executable reads as not armed rather than armed, in the package's own
   `--check` as well as in `kendex check` — that state blocks every commit.
-- `kendex guard install` arms a repository whose `core.hooksPath` names its
-  own hooks directory even when that directory does not exist yet.
 - The `pre-commit-check` hook stands aside only when both git hooks are
   armed; with `commit-msg` missing it no longer waives the message gate.
 - The guard verbs run the package's scripts through `sh` on Windows, where
   `#!` lines are not honoured, instead of failing to start.
 
-- `core.hooksPath` set to a repository's own hooks directory no longer stops
-  `kendex guard install` from arming it, whatever spelling the value uses.
 - The growth-guards `--check` reads an empty `core.hooksPath` as hooks
   switched off, rather than measuring the repository root in its place.
 
-- The `pre-commit-check` hook reads an empty `core.hooksPath` as hooks
-  switched off, naming the unset that fixes it, instead of standing aside for
-  a repository-root file git never runs.
+- The `pre-commit-check` hook no longer stands aside for a repository-root
+  file git never runs when `core.hooksPath` is set: any value at all reads
+  as not armed.
 - `kendex check` reports an install whose `pre-commit` or `commit-msg` script
   is missing or not executable, which blocks every commit, instead of
   reporting it armed.

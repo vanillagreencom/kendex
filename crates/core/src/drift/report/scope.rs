@@ -132,7 +132,7 @@ impl ScopeCheck<'_> {
                 }
             }
             Ok(crate::lock::LockFile::Legacy { .. }) => sections.unknown.push(unknown(format!(
-                "{prefix}v1 lock — install history not checked until it is imported"
+                "{prefix}v1 lock — install history not checked; move it aside or delete it"
             ))),
             Ok(crate::lock::LockFile::Absent) => {}
             Err(error) => sections.unknown.push(unknown(format!(
