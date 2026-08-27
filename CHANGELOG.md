@@ -85,7 +85,7 @@ an outside contributor.
 
 - `worktree`: the recovery text consumers copy into `AGENTS.md` no longer calls a
   `.agents` directory broken. A repo that commits its render has tracked files
-  there, so the entry is a real directory and only a missing child link is a fault.
+  there, so the entry is a real directory and a child is what breaks.
 
 - `worktree`: an untracked `.gitignore` under a tracked-content `WORKTREE_SYMLINKS`
   entry is copied, not symlinked, so the worktree ignores what the main checkout

@@ -54,16 +54,17 @@ Broken `.agents` in a worktree: from the MAIN checkout run
 `.agents/skills/worktree/scripts/worktree fix-links <ID|PATH>`, never from the worktree.
 The command is the same for both shapes; what counts as broken is not. A repo that
 commits its render has tracked files under `.agents`, so the entry is a REAL DIRECTORY
-by design, holding those files plus one symlink per untracked child, and the fault is
-normally a child: missing its symlink, or sitting there as a real path. Where nothing
-under `.agents` is tracked the entry itself must be a symlink, and
-`git checkout -- .agents` is never the repair there (the path holds no tracked content,
-so the command changes nothing while the link stays broken). A genuinely modified or
-corrupt TRACKED file is the other case: `git checkout -- <path>`, run in the checkout
-the file really lives in (the main checkout when the path sits under a configured
-symlink). `fix-links` reports success only when every configured entry ended healthy;
-a non-zero exit names the paths it did not restore, so read them rather than re-running
-the same command.
+by design: those tracked files, plus one symlink per untracked child, except an
+untracked `.gitignore`, which is a copy of main's file and is healthy as a real file.
+The fault is normally a child that does not match that shape, a link missing or a real
+path where a link belongs. Where nothing under `.agents` is tracked the entry itself
+must be a symlink, and `git checkout -- .agents` is never the repair there (the path
+holds no tracked content, so the command changes nothing while the link stays broken).
+A genuinely modified or corrupt TRACKED file is the other case: `git checkout -- <path>`,
+run in the checkout the file really lives in (the main checkout when the path sits under
+a configured symlink). `fix-links` reports success only when every configured entry
+ended healthy; a non-zero exit names the paths it did not restore, so read them rather
+than re-running the same command.
 ```
 
 ## Session guard (ownership leases)
@@ -80,4 +81,4 @@ No worktree command runs a package-manager install: installs run only in the mai
 
 ## Configuration
 
-Set non-sensitive defaults in committed `kendex.settings.toml` under `[env]`; existing `.env` and `.env.local` variables still work, and `.env.local` wins for secrets or personal overrides. **Symlink untracked paths only** — an entry that shadows tracked files is linked per untracked child instead (`fix-links --help`). Variable semantics and setup-path hardening: `worktree --help`.
+Set non-sensitive defaults in committed `kendex.settings.toml` under `[env]`; existing `.env` and `.env.local` variables still work, and `.env.local` wins for secrets or personal overrides. **Symlink untracked paths only** — an entry that shadows tracked files is linked per untracked child instead, bar an untracked `.gitignore`, which is copied (`fix-links --help`). Variable semantics and setup-path hardening: `worktree --help`.
