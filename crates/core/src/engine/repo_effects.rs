@@ -15,6 +15,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::env::Env;
+use crate::error::Result;
 use crate::model::{ItemKind, Scope};
 use crate::repo_effects::{DeclaredEffects, declared};
 
@@ -151,7 +152,10 @@ fn blocked(drift: &[DriftRow], name: &str) -> bool {
 /// window the CLI has to run the uninstaller in: once the plan executes the
 /// scripts are gone, and shims that exec a script that is not there fail
 /// every commit closed. A tree already missing declares nothing here; what
-/// it left armed is `guard::stranded`'s to report.
+/// it left armed is `guard::stranded`'s to report. A tree that is there and
+/// cannot be read is neither: the error stops the plan with the package
+/// still installed, rather than reporting a declaration of nothing and
+/// letting the removal take the scripts out from under armed shims.
 ///
 /// Empty outside a project. An effect is a change to a repository, and the
 /// global scope is not one; `run_script` refuses it.
@@ -160,14 +164,14 @@ pub(super) fn leaving(
     scope: &Scope,
     before: &crate::lock::Lock,
     after: &crate::lock::Lock,
-) -> Vec<DeclaredEffects> {
+) -> Result<Vec<DeclaredEffects>> {
     if !matches!(scope, Scope::Project { .. }) {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let staying = skill_names(after);
     let mut found: BTreeMap<String, DeclaredEffects> = BTreeMap::new();
     for name in skill_names(before).difference(&staying) {
-        let Some((root, text)) = installed_tree(env, scope, before, name) else {
+        let Some((root, text)) = installed_tree(env, scope, before, name)? else {
             continue;
         };
         let Some(effects) = declared(&text) else {
@@ -182,7 +186,7 @@ pub(super) fn leaving(
             },
         );
     }
-    found.into_values().collect()
+    Ok(found.into_values().collect())
 }
 
 /// The packages a lock carries, by name: the package, not any tool's copy
@@ -205,12 +209,16 @@ fn skill_names(lock: &crate::lock::Lock) -> BTreeSet<&str> {
 /// reading only `.agents/skills` found no declaration for exactly the
 /// install whose scripts were about to be trashed. The first copy that
 /// carries a `SKILL.md` is the one whose scripts run.
+///
+/// A candidate with no `SKILL.md` is skipped; a candidate whose `SKILL.md`
+/// will not read is an error, because the alternative is to call a package
+/// that declares an uninstaller a package that declares nothing.
 fn installed_tree(
     env: &Env,
     scope: &Scope,
     before: &crate::lock::Lock,
     name: &str,
-) -> Option<(std::path::PathBuf, String)> {
+) -> Result<Option<(std::path::PathBuf, String)>> {
     let canonical = crate::harness::canonical_name(name);
     let mut candidates = vec![skill_canonical(env, scope, name)];
     for entry in before
@@ -222,8 +230,63 @@ fn installed_tree(
             candidates.push(dir.join(&canonical));
         }
     }
-    candidates.into_iter().find_map(|root| {
-        let text = crate::fs::read_if_exists(&root.join("SKILL.md")).ok()??;
-        Some((root, text))
-    })
+    for root in candidates {
+        if let Some(text) = crate::fs::read_if_exists(&root.join("SKILL.md"))? {
+            return Ok(Some((root, text)));
+        }
+    }
+    Ok(None)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    use super::*;
+    use crate::env::FakeOs;
+
+    /// A candidate with no `SKILL.md` is a candidate to move past; a
+    /// candidate whose `SKILL.md` will not read is the end of the search.
+    ///
+    /// Swallowing the read spelled the second case as the first, and the
+    /// caller reads that as "this package declares nothing" — which is how
+    /// a removal takes a package's scripts away with its hook shims still
+    /// delegating to them. The lock is empty, so the canonical tree is the
+    /// only candidate and the answer is about the read, nothing else.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn an_unreadable_declaration_is_an_error_not_an_absent_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().to_path_buf();
+        let env = Env::fake(&home, FakeOs::Linux);
+        let root = home.join("dev/app");
+        let scope = Scope::Project { root: root.clone() };
+        let lock = crate::lock::Lock::default();
+
+        assert!(
+            installed_tree(&env, &scope, &lock, "armer")
+                .unwrap()
+                .is_none(),
+            "a tree that is not there declares nothing"
+        );
+
+        let tree = root.join(".agents/skills/armer");
+        fs::create_dir_all(&tree).unwrap();
+        let declaration = tree.join("SKILL.md");
+        fs::write(&declaration, "---\nname: armer\n---\nBody.\n").unwrap();
+        let readable = installed_tree(&env, &scope, &lock, "armer").unwrap();
+        assert_eq!(readable.map(|(at, _)| at), Some(tree));
+
+        fs::set_permissions(&declaration, fs::Permissions::from_mode(0o000)).unwrap();
+        // Root reads a mode-000 file, so there is no unreadable file to make.
+        if fs::read_to_string(&declaration).is_ok() {
+            return;
+        }
+        let err = installed_tree(&env, &scope, &lock, "armer").unwrap_err();
+        assert!(
+            err.to_string().contains("SKILL.md"),
+            "the error did not name the file it could not read: {err}"
+        );
+    }
 }
