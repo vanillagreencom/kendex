@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use clap::Subcommand;
 use kendex_core::guard::{self, GuardReport};
 
-use super::out;
+use super::{out, say};
 
 /// Exit taxonomy, the family contract: 0 clean, 1 violations, 2 the check
 /// could not run. Both nonzero verdicts block a commit. kendex implements
@@ -28,8 +28,16 @@ pub enum GuardCommand {
     Check,
 }
 
+/// Each stream on its own channel, in the package's own order.
+///
+/// The package prints one summary line on stdout and its warnings on stderr,
+/// and a caller piping `kendex guard check` is reading for that one line.
+/// Relaying both to stdout handed them a `::warning::` stream to filter.
 fn report(report: &GuardReport) -> ExitCode {
-    for line in &report.lines {
+    for line in &report.stderr {
+        say(line);
+    }
+    for line in &report.stdout {
         out(line);
     }
     ExitCode::from(report.code)

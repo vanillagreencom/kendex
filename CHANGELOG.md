@@ -22,6 +22,13 @@ an outside contributor.
 - `guard` verbs run from a linked worktree find the package under the same
   project path in the main checkout, not only at its top level.
 
+- `kendex guard` relays the package's summary line on stdout and its warnings
+  on stderr, instead of putting both on stdout.
+
+- A `growth-guards` package inside the work tree, beside a git directory kept
+  there, is no longer resolved as the main checkout's copy and run as the
+  repository's commit gate.
+
 - A `core.hooksPath` whose value ends in a newline no longer makes `--check`
   inspect a different directory and report the repository as armed.
 - Under `--separate-git-dir`, the generated git-hook helper no longer runs a

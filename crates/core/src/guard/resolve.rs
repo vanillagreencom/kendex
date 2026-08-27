@@ -156,15 +156,26 @@ fn search_roots(repo: &super::Repo) -> Vec<PathBuf> {
 /// one: a package this repository never installed, running as its commit
 /// gate.
 ///
-/// Owning it is the test, not merely being next to it: the candidate's own
-/// common git directory has to be this repository's. The package's installer
-/// asks the same question in the same way, and where the answer is no this
-/// root is not searched at all — a verb that finds nothing says so, which is
-/// the safe end of being wrong here.
+/// Two things have to hold, and the first alone is not enough.
+///
+/// Owning it: the candidate's own common git directory has to be this
+/// repository's. And being a checkout root: the work tree git resolves from
+/// the candidate has to be the candidate itself.
+///
+/// The ownership test alone answers yes for any directory INSIDE this
+/// repository's work tree, because git resolves upward — so a git directory
+/// at `<worktree>/meta/repo.git` made `<worktree>/meta` the main checkout,
+/// and a `growth-guards` under `<worktree>/meta/.agents/skills` would have
+/// run as this repository's gate. Same repository, wrong root.
+///
+/// The package's installer asks both questions in the same way, and where
+/// either answer is no this root is not searched at all — a verb that finds
+/// nothing says so, which is the safe end of being wrong here.
 fn main_checkout(repo: &super::Repo) -> Option<PathBuf> {
     let candidate = repo.common_dir.parent()?;
     let owned = super::Repo::at(candidate).ok()?;
-    (owned.common_dir == repo.common_dir).then(|| candidate.to_path_buf())
+    (owned.common_dir == repo.common_dir && owned.worktree == candidate)
+        .then(|| candidate.to_path_buf())
 }
 
 /// The kendex project the caller is standing in: the nearest manifest at or

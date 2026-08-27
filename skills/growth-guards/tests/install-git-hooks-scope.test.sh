@@ -275,6 +275,52 @@ OUT="$(cd "$OUT_DIR/checkout" && git commit -m "feat: separate" 2>&1)" || RC=$?
 [ "$RC" -ne 0 ] && ok "and the commit is blocked rather than passed" \
   || bad "commit passed with no gate" "rc=$RC out=$OUT"
 
+echo "=== a package INSIDE the work tree is not the main checkout ==="
+# git resolves upward, so the ownership test — does this candidate's common
+# git dir match ours — says yes about every directory inside our own work
+# tree. A git directory at <checkout>/meta/repo.git makes `${common%/*}`
+# name <checkout>/meta, which passes ownership and is not a checkout root at
+# all; a growth-guards under it would run as this repository's gate. Being
+# the root is the second test: git's top level from there has to be there.
+IN_DIR="$TMP/inside"
+mkdir -p "$IN_DIR/meta"
+git init -q --separate-git-dir "$IN_DIR/meta/repo.git" "$IN_DIR"
+git -C "$IN_DIR" config user.email t@t
+git -C "$IN_DIR" config user.name t
+printf 'meta/\n.agents/\n' >"$IN_DIR/.gitignore"
+
+# The decoy sits where `${common%/*}` points: inside our own work tree.
+DECOY2="$IN_DIR/meta/.agents/skills/growth-guards/scripts"
+mkdir -p "$DECOY2"
+for lane in pre-commit commit-msg; do
+  printf '#!/bin/sh\ntouch %s\nexit 0\n' "$TMP/inside-decoy-ran" >"$DECOY2/$lane"
+  chmod +x "$DECOY2/$lane"
+done
+
+mkdir -p "$IN_DIR/.agents/skills"
+cp -R "$SKILL_DIR" "$IN_DIR/.agents/skills/growth-guards"
+OUT=""; RC=0
+OUT="$("$IN_DIR/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$IN_DIR" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "a git dir inside its own work tree installs" \
+  || bad "inside-git-dir install" "rc=$RC out=$OUT"
+
+# The baked path is blanked so the helper has to rediscover, which is the
+# search under test.
+HELPER2="$IN_DIR/meta/repo.git/hooks/kendex-guards"
+[ -f "$HELPER2" ] || HELPER2="$IN_DIR/.git/hooks/kendex-guards"
+sed -i "s|^installed_scripts=.*|installed_scripts=''|" "$HELPER2"
+
+MARK2="TO""DO"
+printf '# %s: nope\n' "$MARK2" >"$IN_DIR/b.py"
+git -C "$IN_DIR" add -A
+OUT=""; RC=0
+OUT="$(cd "$IN_DIR" && git commit -m "feat: inside" 2>&1)" || RC=$?
+[ -e "$TMP/inside-decoy-ran" ] \
+  && bad "a package under the git dir's parent ran as the gate" "out=$OUT" \
+  || ok "a directory inside the work tree is not its main checkout"
+[ "$RC" != "0" ] && ok "and the real package gated the commit" \
+  || bad "commit passed with no gate" "rc=$RC out=$OUT"
+
 echo "=== a linked worktree is still served by the main checkout ==="
 # The ownership check must not cost the ordinary case: git answers
 # --git-common-dir relative to where it is asked, so comparing it unresolved

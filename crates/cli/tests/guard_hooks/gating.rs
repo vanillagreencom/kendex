@@ -298,6 +298,62 @@ fn the_main_checkout_is_searched_at_the_projects_path() {
     assert!(said(&out).contains("armed"), "{}", said(&out));
 }
 
+/// A directory inside this work tree is not this repository's main checkout.
+///
+/// git resolves upward, so "does this candidate's common git dir match
+/// ours" answers yes about every directory below our own top level. A git
+/// directory at `<checkout>/meta/repo.git` makes the parent `<checkout>/meta`
+/// — inside the work tree, not a checkout root — and a `growth-guards` under
+/// it would be resolved as this repository's package. Being the root is the
+/// second test.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_directory_inside_the_work_tree_is_not_the_main_checkout() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    std::fs::create_dir_all(home.join(".claude")).unwrap();
+    let root = home.join("proj");
+    std::fs::create_dir_all(root.join("meta")).unwrap();
+    std::fs::create_dir_all(root.join(".agents")).unwrap();
+    git_ok(
+        home,
+        home,
+        &[
+            "init",
+            "--quiet",
+            "-b",
+            "main",
+            "--separate-git-dir",
+            root.join("meta/repo.git").to_str().unwrap(),
+            root.to_str().unwrap(),
+        ],
+    );
+    git_ok(home, &root, &["config", "user.email", "t@t"]);
+    git_ok(home, &root, &["config", "user.name", "t"]);
+
+    // The decoy sits where the git directory's parent points, inside the
+    // work tree. It is the only copy with an executable script.
+    let decoy = root.join("meta/.agents/skills/growth-guards/scripts");
+    std::fs::create_dir_all(&decoy).unwrap();
+    for lane in ["pre-commit", "commit-msg", "install-git-hooks"] {
+        let script = decoy.join(lane);
+        std::fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let out = run(home, &root, "kendex", &["guard", "check"]);
+    let said = said(&out);
+    assert!(
+        !said.contains("meta/.agents"),
+        "a package inside the work tree was resolved as the main checkout's: {said}"
+    );
+    assert!(
+        said.contains("no growth-guards skill"),
+        "the only copy here is the decoy, so nothing should resolve: {said}"
+    );
+}
+
 /// A tool directory holding a broken copy must not shadow a working one
 /// beside it: the helper takes the first root whose script is executable,
 /// and so does this.

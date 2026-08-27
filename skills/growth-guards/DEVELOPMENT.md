@@ -78,12 +78,13 @@ this installer did not write is never overwritten. A bare repository is
 refused — there is no work tree to guard.
 
 Linked worktrees share the install, since git resolves their hooks to the
-main checkout's hooks directory. The same sharing governs removal: while any
-work tree on that hooks directory still has a SEPARATE install of the skill,
-`--uninstall` keeps the shims, retargets the helper at that surviving
-install, and says so. Separate is decided by physical path — a worktree
-whose skills directory links back into the checkout being uninstalled from
-is the same install, and it is going away.
+main checkout's hooks directory. The same sharing governs removal, and it
+makes arming repository-level: one hooks directory, one set of shims, shared
+by every work tree and every nested project. `--uninstall` disarms the
+repository. It does not ask whether another work tree or another project
+still wants the shims — that question was five rounds of wrong answers, the
+last of them a repository two projects could never disarm at all. Re-arming
+is one `install-git-hooks` run from whichever project still wants it.
 
 `--uninstall` drops the helper and our marked line from each hook, deleting
 a hook file this installer created outright and leaving every other line of

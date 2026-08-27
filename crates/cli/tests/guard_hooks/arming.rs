@@ -2,7 +2,7 @@
 //! verbs, the migration off the retired arming, and what `kendex check`
 //! says about a repository in each state.
 
-use crate::{install_package, install_package_undeclared, repo, run, said};
+use crate::{git_ok, install_package, install_package_undeclared, repo, run, said};
 
 /// Disarming removes only the helper and the package's own marked line;
 /// the hook someone else wrote survives it.
@@ -375,5 +375,47 @@ fn an_agent_of_the_same_name_is_not_consent_to_commit_hooks() {
     assert!(
         !out.contains("commit hooks"),
         "an agent of that name was read as consent to commit hooks: {out}"
+    );
+}
+
+/// The package's two streams stay two streams.
+///
+/// Its contract is one summary line on stdout and its warnings on stderr
+/// (`install-git-hooks --help`), and a caller piping `kendex guard` is
+/// reading for that one line. Relaying both to stdout handed them a
+/// `::warning::` stream to filter out.
+///
+/// `core.hooksPath` set is the case that prints both: the install stands
+/// down with a warning and still says what it did.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn each_of_the_packages_streams_is_relayed_on_its_own() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
+    git_ok(home, &root, &["config", "core.hooksPath", ".githooks"]);
+
+    let out = run(home, &root, "kendex", &["guard", "install"]);
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+
+    assert!(
+        stdout.contains("growth-guards git hooks:"),
+        "the summary line belongs on stdout: {stdout:?} {stderr:?}"
+    );
+    assert!(
+        !stdout.contains("::warning::"),
+        "a warning reached the stream a caller pipes: {stdout:?}"
+    );
+    assert!(
+        stderr.contains("::warning::"),
+        "the warning belongs on stderr: {stderr:?}"
+    );
+    // One line, so a caller can read it without filtering.
+    assert_eq!(
+        stdout.lines().count(),
+        1,
+        "stdout is the summary and nothing else: {stdout:?}"
     );
 }

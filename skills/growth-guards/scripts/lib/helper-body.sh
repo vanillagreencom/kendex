@@ -108,9 +108,17 @@ gg_git_path top "$PWD" rev-parse --show-toplevel || top=""
 # lives outside the checkout, so this is an unrelated directory — and one
 # with a growth-guards of its own would run here as this repository's gate.
 #
-# Owning it is the test: its own common git dir has to be ours. Where it is
-# not, the root is dropped rather than guessed at, and a search that then
-# finds nothing fails closed, which is what this helper is for.
+# Two tests, and the first alone is not enough. Owning it: its own common
+# git dir has to be ours. And BEING a checkout root: git resolves upward, so
+# every directory inside this work tree passes the ownership test — a git
+# directory at <worktree>/meta/repo.git made <worktree>/meta the main
+# checkout, and a growth-guards under it would have run as this
+# repository's gate. So the work tree git resolves from the candidate has to
+# be the candidate itself.
+#
+# Where either answer is no the root is dropped rather than guessed at, and
+# a search that then finds nothing fails closed, which is what this helper
+# is for.
 main="${common%/*}"
 [ -n "$main" ] || main="/"
 # In a subshell with git's redirects unset: this helper runs AS a hook, so
@@ -130,7 +138,14 @@ case "${main_common:-/}" in
   /*) ;;
   *) main_common="$main/$main_common" ;;
 esac
-if [ -z "$main_common" ] || [ "$main_common" != "$common" ]; then
+main_top="$(
+  unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+  git -C "$main" rev-parse --show-toplevel 2>/dev/null && printf x
+)" || main_top=""
+main_top="${main_top%x}"
+main_top="${main_top%"$gg_nl"}"
+if [ -z "$main_common" ] || [ "$main_common" != "$common" ] \
+  || [ -z "$main_top" ] || [ "$main_top" != "$main" ]; then
   main=""
 fi
 if [ -n "$installed_scripts" ] && [ -x "$installed_scripts/$mode" ]; then

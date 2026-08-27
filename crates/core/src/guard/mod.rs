@@ -68,9 +68,16 @@ pub(crate) fn guard_err(check: &str, message: impl Into<String>) -> CoreError {
 
 /// What a delegated run said and how it ended. `code` is the package's own
 /// exit status, relayed rather than reinterpreted.
+///
+/// The two streams stay apart because the package's contract distinguishes
+/// them: one summary line on stdout, warnings and diagnostics on stderr
+/// (`install-git-hooks --help`). Merging them put every `::warning::` line
+/// into the stdout a caller pipes, and dropped the summary line into the
+/// middle of them.
 #[derive(Debug)]
 pub struct GuardReport {
-    pub lines: Vec<String>,
+    pub stdout: Vec<String>,
+    pub stderr: Vec<String>,
     pub code: u8,
 }
 
@@ -121,15 +128,21 @@ pub fn run_hook(dir: &Path, hook: &str, message_file: Option<&Path>) -> Result<G
 /// remediation text a committer acts on, so it travels whole; a status the
 /// platform cannot name is "could not run", never a pass.
 fn relay(output: &std::process::Output) -> GuardReport {
-    let mut lines: Vec<String> = Vec::new();
-    for stream in [&output.stdout, &output.stderr] {
-        lines.extend(String::from_utf8_lossy(stream).lines().map(str::to_owned));
-    }
+    let split = |stream: &[u8]| -> Vec<String> {
+        String::from_utf8_lossy(stream)
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    };
     let code = match output.status.code() {
         Some(code) => u8::try_from(code).unwrap_or(2),
         None => 2,
     };
-    GuardReport { lines, code }
+    GuardReport {
+        stdout: split(&output.stdout),
+        stderr: split(&output.stderr),
+        code,
+    }
 }
 
 /// Arm the shims: the package's own installer, in this repository.
