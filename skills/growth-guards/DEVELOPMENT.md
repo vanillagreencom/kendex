@@ -13,10 +13,17 @@ docs live in README.md.
 - `scripts/install-git-hooks` — hook installer, remover, and `--check` verdict
 - `scripts/lib/common.sh`, `scripts/lib/settings.sh` — shared helpers and
   layered settings resolution
+- `scripts/lib/hook-check.sh`, `scripts/lib/hook-entrypoint.sh` — the two
+  read-only halves of `install-git-hooks --check`: the verdict over the
+  shims this installer writes, and the whole-file grammar for a hook
+  someone hand-wired under `core.hooksPath`
 - `kendex.settings.toml.example` — settings template for consumers
 - `SKILL.md` — agent-facing skill definition
 - `README.md` — consumer documentation
+- `CHECKS.md` — what each check bans, and how it is scoped
 - `tests/` — run any file directly; every suite sources the harness first
+- `tests/lib/install-hooks.bash` — the consumer-shaped fixture repository
+  and installer invocations the four `install-git-hooks` suites share
 - `tests/lib/harness.bash` — the scratch root a suite owns, a `TMPDIR`
   inside it, and git-config isolation; sourced, so the name stays outside
   the `tests/*.sh` glob runners execute

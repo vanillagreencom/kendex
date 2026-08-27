@@ -1,14 +1,12 @@
-//! Black-box compatibility tests for the binding v1 surface: bare-form
-//! add, report routing (dry-run + stubbed gh), self-update against a local
-//! release feed, v1 import fixtures, and init scaffolding.
+//! Black-box tests for the binding surface: bare-form add, report routing
+//! (dry-run + stubbed gh), self-update against a local release feed, and
+//! init scaffolding.
 #![cfg(unix)]
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Output};
-
-use kendex_core::manifest::MANIFEST_SCHEMA;
 
 #[allow(clippy::expect_used)]
 fn kendex_in(home: &Path, cwd: &Path, args: &[&str], envs: &[(&str, String)]) -> Output {

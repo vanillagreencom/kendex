@@ -105,6 +105,6 @@ full repo-relative path; `*` crosses `/`); a pattern without a reason is a
 config error. **Baseline format** — `path<TAB>count`, `LC_ALL=C` sorted,
 unique paths, positive counts.
 
-Per-check consumer detail, seeding a first baseline, and CI wiring:
-[README.md](README.md). Marker shapes, per-language suppression patterns,
+What each check bans and how it is scoped: [CHECKS.md](CHECKS.md). Seeding
+a first baseline and CI wiring: [README.md](README.md). Marker shapes, per-language suppression patterns,
 and the hook install and removal contract: [DEVELOPMENT.md](DEVELOPMENT.md).
