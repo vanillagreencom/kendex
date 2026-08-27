@@ -208,16 +208,22 @@ manifest_carves() { # FILE -> carve lines for one manifest, "*" on a failed pars
       next
     }
     (in_skills || line ~ /^skills[ \t]*\./) && line ~ src {
-      key = line
-      sub(/^skills[ \t]*\.[ \t]*/, "", key)
+      body = line
+      sub(/^skills[ \t]*\.[ \t]*/, "", body)
+      key = body
       if (key ~ /^"/) { sub(/^"/, "", key); sub(/".*$/, "", key) }
       else if (key ~ ("^" q)) { sub("^" q, "", key); key = substr(key, 1, index(key, q) - 1) }
       else { sub(/[ \t=.].*$/, "", key) }
       if (key != "") {
         accounted += 1
-        # A key of exactly "source" is a value line inside a multiline
-        # inline table, not a skill name — unaccountable, so it carves.
-        if (key == "source" || key ~ /\\/) { print "*" } else { print key }
+        # Only two shapes tie the key to the value on one line: a dotted
+        # declaration and a closed one-level inline table. Anything else —
+        # a continuation line, a nested table, a key of exactly "source",
+        # an escape-bearing key — is unaccountable, so it carves.
+        trusted = 0
+        if (body ~ /^[^=]*\./) { trusted = 1 }
+        else if (body ~ /^[^{}]*=[ \t]*\{[^{}]*\}[ \t]*,?[ \t]*(#.*)?$/) { trusted = 1 }
+        if (!trusted || key == "source" || key ~ /\\/) { print "*" } else { print key }
       }
     }
     END { if (coarse > accounted) print "*" }

@@ -208,7 +208,7 @@ assert_verdict "an equals-sign repo path still carves" false --repo "$eqrepo" --
 # A TOML 1.1 multiline inline table puts the value on its own line inside
 # [skills]; the line is unaccountable as a name and degrades to the carve.
 mlt="$(new_repo multiline-table)"
-printf 'schema = 6\n[skills]\nmine = {\nsource = "in-place",\n}\n' >"$mlt/kendex.toml"
+printf 'schema = 6\n[skills]\nmine = {\nenabled = true, source = "in-place",\n}\n' >"$mlt/kendex.toml"
 commit_paths "$mlt" "baseline" README.md
 mltbase="$(git -C "$mlt" rev-parse HEAD)"
 commit_paths "$mlt" "edit" .agents/skills/mine/SKILL.md
