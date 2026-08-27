@@ -1415,8 +1415,16 @@ elif [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ] && [ "$
   # Captured, never interpolated straight into the echo: a composer that
   # failed would otherwise leave an empty description on a verdict that still
   # printed, and a status is the only thing a reader gets.
+  # Captured on its OWN line: as an environment assignment on the composer
+  # command, this substitution's status is discarded and the composer would
+  # format whatever partial list it was handed and exit 0.
   awaiting_rc=0
-  awaiting_detail="$(HEAD_SHA="$HEAD_SHA" SOURCES="$(awaiting_sources)" "$script_dir/awaiting-detail.sh")" || awaiting_rc=$?
+  awaiting_srcs="$(awaiting_sources)" || awaiting_rc=$?
+  if [ "$awaiting_rc" != 0 ]; then
+    echo "::error::review-predicate: could not resolve the awaiting sources (exit $awaiting_rc) — no verdict" >&2
+    exit 2
+  fi
+  awaiting_detail="$(HEAD_SHA="$HEAD_SHA" SOURCES="$awaiting_srcs" "$script_dir/awaiting-detail.sh")" || awaiting_rc=$?
   if [ "$awaiting_rc" != 0 ] || [ -z "$awaiting_detail" ]; then
     echo "::error::review-predicate: scripts/awaiting-detail.sh failed (exit $awaiting_rc) — no verdict" >&2
     exit 2

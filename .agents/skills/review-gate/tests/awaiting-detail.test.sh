@@ -27,7 +27,7 @@ grep -qx "RG_STATUS_LIMIT=$RG_STATUS_LIMIT" "$COMPOSER" \
 # The predicate must route its awaiting arm through the composer and hand it
 # the resolved list: a copy of either judgment left elsewhere would pass every
 # case below while production said something else.
-grep -q 'SOURCES="\$(awaiting_sources)".*awaiting-detail\.sh' "$PRED" \
+grep -q 'SOURCES="\$awaiting_srcs".*awaiting-detail\.sh' "$PRED" \
   && ok "the awaiting arm passes the predicate's resolved sources to the composer" \
   || bad "the awaiting arm passes the predicate's resolved sources to the composer" "the arm does not"
 grep -q 'verdict=awaiting detail=\$awaiting_detail' "$PRED" \
@@ -40,6 +40,18 @@ grep -q 'awaiting_detail.*|| awaiting_rc=\$?' "$PRED" \
   && grep -q 'awaiting-detail.sh failed' "$PRED" \
   && ok "a failed composer is captured and exits 2 before any verdict" \
   || bad "a failed composer is captured and exits 2 before any verdict" "no failure guard"
+# The resolver is captured on its OWN line. As an environment assignment on
+# the composer command its status would be discarded, and the composer would
+# format a partial list and exit 0.
+grep -q 'awaiting_srcs="\$(awaiting_sources)" || awaiting_rc=\$?' "$PRED" \
+  && grep -q 'could not resolve the awaiting sources' "$PRED" \
+  && ok "the resolver is captured and checked before the composer runs" \
+  || bad "the resolver is captured and checked before the composer runs" "no resolver guard"
+if grep -q 'SOURCES="\$(awaiting_sources)"' "$PRED"; then
+  bad "the resolver is not called inside an assignment prefix" "status would be discarded"
+else
+  ok "the resolver is not called inside an assignment prefix"
+fi
 if grep -q 'TRUSTED_LOGINS\|TRUSTED_CONTEXTS\|COMMENT_REVIEWERS' "$COMPOSER"; then
   bad "the composer models no trust setting of its own" "it reads a trust setting"
 else
@@ -209,6 +221,25 @@ case "$broken_out" in
   *verdict=*) bad "a broken normalization emits no verdict" "$broken_out" ;;
   *) ok "a broken normalization emits no verdict" ;;
 esac
+
+# Capturing the resolver's status only means something if the resolver has a
+# status to report. A stubbed failure has to come back as one, not as an
+# empty list the composer would format into a plausible status.
+res_stub="$(mktemp -d)"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$res_stub/awk"
+chmod +x "$res_stub/awk"
+res_rc=0
+OUTAGE_CONTEXT="" PR_AUTHOR="carol" TRUSTED_LOGINS="alice" TRUSTED_CONTEXTS="" COMMENT_REVIEWERS=""
+TRUSTED_LOGINS_N="$(rg_pack "$TRUSTED_LOGINS" ';,')"
+TRUSTED_CONTEXTS_N="$(rg_pack "$TRUSTED_CONTEXTS" ';')"
+COMMENT_REVIEWERS_N="$(rg_pack "$COMMENT_REVIEWERS" ';')"
+( PATH="$res_stub:$PATH"; awaiting_sources ) >/dev/null 2>&1 || res_rc=$?
+rm -rf "$res_stub"
+if [ "$res_rc" != 0 ]; then
+  ok "a broken resolver pipeline reports failure instead of an empty list"
+else
+  bad "a broken resolver pipeline reports failure instead of an empty list" "exit 0"
+fi
 
 # ---------------------------------------------------------------- layer 2 ---
 # The composer, driven by a resolved list exactly as the predicate hands it in.
