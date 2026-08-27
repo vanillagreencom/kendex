@@ -5,14 +5,14 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { findCargoWorkspaceRootResultAsync, runCargoAsync, runWorkspaceClippyAsync } from "./cargo.js";
 
 /**
- * Match a bash command that is exactly `cd <target>` with no shell operators
- * that would scope the directory change (no `&&`, `||`, `|`, `;`, parens,
- * backticks, `$(...)`, or embedded newlines). Such commands change Pi's CWD
- * across subsequent tool calls and leak state between unrelated tools.
+ * Match a bash command that is exactly `cd` or `cd <target>` with no shell
+ * operators that would scope the directory change (no `&&`, `||`, `|`, `;`,
+ * parens, backticks, `$(...)`, or newlines). Such commands change Pi's CWD
+ * across tool calls; a bare `cd` goes to $HOME, the same permanent move.
  *
  * Mirrors `hooks/block-bare-cd.sh`.
  */
-const BARE_CD = /^cd\s+[^&|;()`$\n]+$/;
+const BARE_CD = /^cd(\s+[^&|;()`$\n]+)?$/;
 
 export function isBareCd(command: string): boolean {
 	return BARE_CD.test(command.trim());

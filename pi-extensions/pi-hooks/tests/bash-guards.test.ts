@@ -388,6 +388,13 @@ describe("bare cd detection", () => {
 		expect(isBareCd("cd /tmp && ls")).toBe(false);
 	});
 
+	test("a cd with no target is the same permanent move", () => {
+		expect(isBareCd("cd")).toBe(true);
+		expect(isBareCd("  cd  ")).toBe(true);
+		expect(isBareCd("cdr --version")).toBe(false);
+		expect(isBareCd("echo cd")).toBe(false);
+	});
+
 	test("read-only searches with backtick-bearing patterns are never bare cd (kendex#668)", () => {
 		expect(isBareCd('rg -n "`kendex refresh`" skills/')).toBe(false);
 		expect(isBareCd("rg -n '`kendex refresh`' skills/")).toBe(false);

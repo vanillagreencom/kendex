@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 0.6.1
+
+- `blockBareCd` refuses a `cd` with no target. It changes to `$HOME` for every later tool call, the same permanent move as `cd /tmp`, and only the form carrying a path was caught before.
+
 ### 0.6.0
 
 - The session-start drift report no longer opens with "kendex check could not run" when kendex ran and answered. Exit 1 (drift, or packages not yet evaluated) is relayed verbatim. Exit 2 means kendex could not check, in part or at all: a report carrying a "could not check" section is relayed under a "kendex check incomplete (exit 2); some drift status unknown:" line, while output opening with kendex's own `Error:` line or a usage `error:` (nothing was checked) keeps the "kendex check could not run (exit 2)" line. Exit 3+, a non-ENOENT spawn error, an inaccessible session directory, or an unexpected throw read as "could not run"; a missing binary (ENOENT) reads as "skipped". `DriftCheckResult` gains the `incomplete` variant.
