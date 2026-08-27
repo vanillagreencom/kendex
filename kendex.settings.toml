@@ -244,9 +244,11 @@ WORKTREE_DEFAULT_BRANCH = "main"
 WORKTREE_MKDIRS = "tmp"
 # ui/node_modules: tools/guard's UI lanes run `npx --no-install` in ui/, so a
 # worktree without it fails guard on its first commit. The link shares the
-# main checkout's store; a branch that changes ui/ dependencies must replace
-# the link with a real `pnpm install` or it writes through into the main
-# checkout. .gitignore's bare `node_modules` pattern covers the symlink.
+# main checkout's real install (npm — ui/package-lock.json), and worktree
+# setup re-creates it on every pass, replacing anything materialized at this
+# path. So change ui/ dependencies from the main checkout, where
+# `npm ci --prefix ui` operates on the real store — never from a linked
+# worktree. .gitignore's bare `node_modules` pattern covers the symlink.
 WORKTREE_SYMLINKS = ".env.local .agents .cache .codex .opencode .pi/agents .pi/kendex .claude/agents .claude/hooks .claude/skills .claude/settings.json ui/node_modules"
 
 # Nothing needs one: .claude/CLAUDE.md is a tracked symlink, so it arrives
