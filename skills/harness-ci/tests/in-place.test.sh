@@ -205,4 +205,13 @@ eqbase="$(git -C "$eqrepo" rev-parse HEAD)"
 commit_paths "$eqrepo" "edit" .agents/skills/mine/SKILL.md
 assert_verdict "an equals-sign repo path still carves" false --repo "$eqrepo" --event push --base "$eqbase" --head HEAD
 
+# A TOML 1.1 multiline inline table puts the value on its own line inside
+# [skills]; the line is unaccountable as a name and degrades to the carve.
+mlt="$(new_repo multiline-table)"
+printf 'schema = 6\n[skills]\nmine = {\nsource = "in-place",\n}\n' >"$mlt/kendex.toml"
+commit_paths "$mlt" "baseline" README.md
+mltbase="$(git -C "$mlt" rev-parse HEAD)"
+commit_paths "$mlt" "edit" .agents/skills/mine/SKILL.md
+assert_verdict "a multiline inline table degrades to the carve" false --repo "$mlt" --event push --base "$mltbase" --head HEAD
+
 report in-place

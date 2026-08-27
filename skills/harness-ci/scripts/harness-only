@@ -215,7 +215,9 @@ manifest_carves() { # FILE -> carve lines for one manifest, "*" on a failed pars
       else { sub(/[ \t=.].*$/, "", key) }
       if (key != "") {
         accounted += 1
-        if (key ~ /\\/) { print "*" } else { print key }
+        # A key of exactly "source" is a value line inside a multiline
+        # inline table, not a skill name — unaccountable, so it carves.
+        if (key == "source" || key ~ /\\/) { print "*" } else { print key }
       }
     }
     END { if (coarse > accounted) print "*" }
