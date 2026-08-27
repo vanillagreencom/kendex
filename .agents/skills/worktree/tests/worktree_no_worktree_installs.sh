@@ -10,7 +10,10 @@
 #   2. a JS worktree with no node_modules gets the warning, and the warning
 #      names the main checkout;
 #   3. a WORKTREE_SYMLINKS node_modules entry satisfies the check silently;
-#   4. a repo without a root package.json gets no warning.
+#   4. a repo without a root package.json gets no warning;
+#   5. a nested node_modules entry (ui-style) with no main-checkout source
+#      warns on create, and fix-links links it once the install exists;
+#   6. a root node_modules entry with no source warns exactly once.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -124,6 +127,53 @@ else
   ok "linked worktree gets no warning"
 fi
 assert_no_pm_calls "linked repo: create invoked no package manager" || true
+
+echo "=== a nested node_modules entry with no source warns, then fix-links links it ==="
+ROOT="$TMP_ROOT/nested"
+make_repo "$ROOT" repo
+mkdir -p "$ROOT/repo/ui"
+printf '{ "name": "ui", "devDependencies": {} }\n' >"$ROOT/repo/ui/package.json"
+git -C "$ROOT/repo" add ui/package.json
+git -C "$ROOT/repo" commit -q -m "js: nested ui package"
+git -C "$ROOT/repo" push -q origin main
+printf 'WORKTREE_SYMLINKS="ui/node_modules"\n' >"$ROOT/repo/.env"
+STDERR_NESTED="$TMP_ROOT/nested-stderr.log"
+(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-nested >/dev/null 2>"$STDERR_NESTED")
+WT_NESTED="$ROOT/.worktrees/repo/issue-nested"
+if grep -q "dependencies were not installed" "$STDERR_NESTED" &&
+  grep -qF "$ROOT/repo/ui/node_modules" "$STDERR_NESTED"; then
+  ok "missing nested source warns and names the main-checkout path"
+else
+  bad "nested missing-source warning" "stderr: $(cat "$STDERR_NESTED")"
+fi
+mkdir -p "$ROOT/repo/ui/node_modules/dep"
+STDERR_FIXLINKS="$TMP_ROOT/nested-fixlinks-stderr.log"
+(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" fix-links "$WT_NESTED" >/dev/null 2>"$STDERR_FIXLINKS")
+[ -L "$WT_NESTED/ui/node_modules" ] && ok "fix-links links the source once it exists" \
+  || bad "fix-links links nested node_modules" "no symlink at $WT_NESTED/ui/node_modules"
+if grep -q "dependencies were not installed" "$STDERR_FIXLINKS"; then
+  bad "linked nested worktree stays silent" "stderr: $(cat "$STDERR_FIXLINKS")"
+else
+  ok "no warning once the nested source is linked"
+fi
+assert_no_pm_calls "nested repo: no package manager invoked" || true
+
+echo "=== a root node_modules entry with no source warns exactly once ==="
+ROOT="$TMP_ROOT/rootentry"
+make_repo "$ROOT" repo
+printf '{ "name": "app", "devDependencies": {} }\n' >"$ROOT/repo/package.json"
+git -C "$ROOT/repo" add package.json
+git -C "$ROOT/repo" commit -q -m "js: root entry"
+git -C "$ROOT/repo" push -q origin main
+printf 'WORKTREE_SYMLINKS="node_modules"\n' >"$ROOT/repo/.env"
+STDERR_ROOT="$TMP_ROOT/rootentry-stderr.log"
+(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-rootentry >/dev/null 2>"$STDERR_ROOT")
+WARN_COUNT="$(grep -c "dependencies were not installed" "$STDERR_ROOT" || true)"
+if [ "$WARN_COUNT" = "1" ]; then
+  ok "configured root entry with no source warns exactly once"
+else
+  bad "single warning for a configured root entry" "count=$WARN_COUNT stderr: $(cat "$STDERR_ROOT")"
+fi
 
 echo "=== a repo without package.json gets no warning ==="
 ROOT="$TMP_ROOT/plain"
