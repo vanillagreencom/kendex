@@ -40,6 +40,11 @@ always the same: re-copy the template. Nothing here re-derives what the
 workflow means, so no spelling of a change can satisfy the check while
 breaking the contract.
 
+The single-writer contract gets one check of its own, over-approximating on
+purpose: no other tracked workflow may name the engine outside a comment.
+An invocation has no closed set of spellings, so this counts a reference and
+says only that — a second workflow naming it is something to read.
+
 One thing equality cannot express is checked separately: with the
 `check_run` opt-in enabled, the reviewer's check name lives in a GitHub
 repository variable, not in the file.
@@ -101,6 +106,15 @@ esac
 # guard's error string.
 EXEC_WRITER_RE='^[[:space:]]*exec[[:space:]]+[^[:space:]]*review-writer\.sh[[:space:]]*$'
 
+# Comments and blank lines are dropped wherever a file is read. Prose is
+# reworded legitimately — the catalog's own copy says so in its header — and
+# a comment gates nothing; what is read is every line that decides behavior.
+# One sed, not a grep chain: a `grep -v` that filters everything exits 1, and
+# the `|| true` that would paper over it also papers over an exit 2.
+code_lines() { # FILE — the file's code lines, trailing space stripped
+  sed -e 's/[[:space:]]*$//' -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$1"
+}
+
 # ========================= find the adopted copy ===========================
 
 # TRACKED files only: Actions runs what is committed, so an untracked
@@ -134,16 +148,35 @@ if [ "$adopted_count" -gt 1 ]; then
 fi
 ok "one adopted writer workflow: $adopted"
 
-# ============================== equality ===================================
+# The single-writer contract is about how many workflows can post the gate
+# status, and an INVOCATION has no closed set of spellings — `exec X`,
+# `bash X`, `sh -c`, a variable holding the path. Rather than keep a list
+# nobody can finish, this counts tracked workflows whose CODE mentions the
+# engine at all. It over-approximates on purpose and says only what it
+# proves: a second workflow naming the engine outside a comment is something
+# a person has to look at, whether or not it turns out to run it.
+engine_refs=0
+engine_ref_files=""
+while IFS= read -r wf; do
+  [ -n "$wf" ] && [ -f "$wf" ] || continue
+  code_lines "$wf" >"$TMP/wf.code"
+  ref_rc=0
+  grep -qF -- 'review-writer.sh' "$TMP/wf.code" || ref_rc=$?
+  [ "$ref_rc" -le 1 ] || die "$wf: unreadable while counting engine references (grep exit $ref_rc)"
+  [ "$ref_rc" -eq 0 ] || continue
+  engine_refs=$((engine_refs + 1))
+  engine_ref_files="${engine_ref_files:+$engine_ref_files, }$wf"
+done <<EOF_REFS
+$(git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml')
+EOF_REFS
 
-# Comments and blank lines are dropped from both sides. Prose is reworded
-# legitimately — the catalog's own copy says so in its header — and a comment
-# gates nothing; what is compared is every line that decides behavior.
-# One sed, not a grep chain: a `grep -v` that filters everything exits 1, and
-# the `|| true` that would paper over it also papers over an exit 2.
-code_lines() { # FILE — the file's code lines, trailing space stripped
-  sed -e 's/[[:space:]]*$//' -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$1"
-}
+if [ "$engine_refs" -gt 1 ]; then
+  bad "$engine_refs tracked workflows name review-writer.sh outside a comment ($engine_ref_files) — the gate has exactly one writer by design, and a second workflow reaching the engine by any spelling can post gate statuses outside the single-writer group. Read it and delete the reference, or the workflow"
+else
+  ok "no other tracked workflow names the engine outside a comment"
+fi
+
+# ============================== equality ===================================
 
 code_lines "$adopted" >"$TMP/adopted.code"
 

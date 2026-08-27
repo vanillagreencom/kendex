@@ -77,9 +77,13 @@ a substring, an inline flow mapping on the trigger key line, a foreign
 is a new hole. Equality has no such gap, because the template carries no
 per-repo values: a copy that differs is a copy someone edited.
 
-What equality cannot express is checked on its own, and there is one such
-thing: with the `check_run` opt-in enabled, the reviewer's check name lives in
-a GitHub repository variable rather than in the file.
+What equality cannot express is checked on its own, and there are two such
+things. With the `check_run` opt-in enabled, the reviewer's check name lives
+in a GitHub repository variable rather than in the file. And the single-writer
+contract is about the workflow SET, not one file: no other tracked workflow
+may name the engine outside a comment. That second one over-approximates on
+purpose — an invocation has no closed set of spellings, so it counts a
+reference and claims only that.
 
 The boundary, stated so it is not discovered: comments are compared out. A
 copy whose prose was reworded is still the template — the catalog's own copy

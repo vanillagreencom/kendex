@@ -233,6 +233,11 @@ expect_fail "a DOTTED key is read by nothing and is named" "$dir" "DOTTED name"
 
 sandbox
 dir="$DIR"
+printf 'REVIEW_GATE_MODE . typo = "off"\n' >>"$dir/kendex.settings.toml"
+expect_fail "a dotted key with whitespace around the dot is caught too" "$dir" "DOTTED name"
+
+sandbox
+dir="$DIR"
 printf '[env]\nREVIEW_GATE_THREADS = "off"\n' >>"$dir/kendex.settings.toml"
 expect_clean "a plain assignment under a table header is not read as dotted" "$dir"
 
@@ -352,6 +357,34 @@ dir="$DIR"
 cp "$dir/.github/workflows/review-gate-writer.yml" "$dir/.github/workflows/second-writer.yml"
 commit "$dir"
 expect_fail "two writers is two writers" "$dir" "tracked workflows execute review-writer.sh"
+
+# A second workflow reaching the engine by ANY spelling is a second writer.
+# There is no closed set of invocation forms, so the count is over a CODE
+# mention rather than a list of the ways to run a script.
+sandbox
+dir="$DIR"
+{
+  printf 'name: Another writer\n'
+  printf '"on":\n  workflow_dispatch: {}\n'
+  printf 'jobs:\n  write:\n    runs-on: ubuntu-latest\n    steps:\n'
+  printf '      - name: run it the other way\n'
+  printf '        run: bash .agents/skills/review-gate/scripts/review-writer.sh\n'
+} >"$dir/.github/workflows/other-writer.yml"
+commit "$dir"
+expect_fail "a second workflow running the engine WITHOUT exec is named" "$dir" "name review-writer.sh outside a comment"
+
+# ...and a workflow that only mentions it in a comment is not.
+sandbox
+dir="$DIR"
+{
+  printf 'name: Mentions the writer in prose\n'
+  printf '"on":\n  workflow_dispatch: {}\n'
+  printf 'jobs:\n  talk:\n    runs-on: ubuntu-latest\n    steps:\n'
+  printf '      # review-writer.sh is named here and run nowhere\n'
+  printf '      - name: say nothing\n        run: echo hi\n'
+} >"$dir/.github/workflows/mentions.yml"
+commit "$dir"
+expect_clean "a workflow naming the engine only in a COMMENT is not a writer" "$dir"
 
 # An untracked copy is not the repo's writer: Actions runs what is committed.
 sandbox

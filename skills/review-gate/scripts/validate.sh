@@ -193,7 +193,7 @@ else
   # read: its probe wants the bare name followed by its `=`, so
   # `REVIEW_GATE_MODE.typo = "off"` is invisible to the engine and, scanned
   # for the bare shape alone, invisible here too.
-  dotted="$(sed -n 's/^[[:space:]]*\(REVIEW_GATE_[A-Za-z0-9_-]*\)\.[A-Za-z0-9_.-]*[[:space:]]*=.*/\1/p' "$SETTINGS_FILE" | sort -u)"
+  dotted="$(sed -n 's/^[[:space:]]*\(REVIEW_GATE_[A-Za-z0-9_-]*\)[[:space:]]*\.[[:space:]]*[A-Za-z0-9_.[:space:]-]*=.*/\1/p' "$SETTINGS_FILE" | sort -u)"
   unknown=""
   seams=""
   repo_vars=""
