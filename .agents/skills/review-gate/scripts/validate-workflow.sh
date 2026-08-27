@@ -47,9 +47,11 @@ purpose: no other tracked workflow may name the engine outside a comment.
 An invocation has no closed set of spellings, so this counts a reference and
 says only that — a second workflow naming it is something to read.
 
-One thing equality cannot express is checked separately: with the
-`check_run` opt-in enabled, the reviewer's check name lives in a GitHub
-repository variable, not in the file.
+One prerequisite is REPORTED and not checked. With the `check_run` opt-in
+enabled, the reviewer's check name lives in a GitHub repository variable
+rather than in any file, so nothing here can read it: the note says the
+variable has to be set and cannot say whether it is. A run that is otherwise
+clean exits 0 with that prerequisite unverified.
 
 Output: one verdict line per check (ok / FAIL / note).
 
@@ -204,6 +206,8 @@ ok "one adopted writer workflow: $adopted"
 exec_target="$(sed -n 's/^[[:space:]]*exec[[:space:]]\{1,\}\([^[:space:]]*review-writer\.sh\)[[:space:]]*$/\1/p' "$adopted" | head -n 1)"
 if [ -z "$exec_target" ]; then
   bad "$adopted names no exec target — the discovery above matched, so this is a parse gap in this tool rather than a repo fault; report it with \`kendex report\`"
+elif [ -L "$exec_target" ]; then
+  bad "$adopted execs $exec_target, which is a SYMLINK — CI checks out the link and runs whatever sits at the other end, which is nothing when the target is untracked or outside the repository. Commit the engine at that path"
 elif git ls-files --error-unmatch -- "$exec_target" >/dev/null 2>&1; then
   ok "the engine the workflow execs is tracked ($exec_target)"
 else
@@ -316,10 +320,12 @@ fi
 # ==================== what equality cannot express =========================
 
 if [ "$CHECK_RUN_ENABLED" -eq 1 ]; then
-  # The reviewer's check NAME is a GitHub repository variable, read by the
-  # relay's if: before any checkout exists. No file can carry it, so no
-  # comparison of files can check it.
-  note "the check_run opt-in is enabled — set the repository variable REVIEW_GATE_CHECK_RUN_NAME to the reviewer's check name (Settings → Secrets and variables → Actions), or the trigger relays nothing"
+  # REPORTED, not checked, and the note says so. The reviewer's check NAME
+  # is a GitHub repository variable read by the relay's if: before any
+  # checkout exists; a local report-only tool cannot see it, and reaching for
+  # the API to find out would be a network dependency this tool does not
+  # have. So the prerequisite is named and left to a person.
+  note "the check_run opt-in is enabled, so the repository variable REVIEW_GATE_CHECK_RUN_NAME must carry the reviewer's check name (Settings → Secrets and variables → Actions), or the trigger relays nothing. NOT CHECKED HERE — this tool reads files, and that value is not in one; confirm it yourself"
 fi
 
 printf '\n'

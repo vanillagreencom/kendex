@@ -121,6 +121,14 @@ for rel in scripts/review-predicate.sh scripts/review-writer.sh \
     bad "$rel is missing from the installed skill ($SKILL_DIR) — re-run \`kendex refresh\` and commit the result"
     continue
   fi
+  # A tracked SYMLINK is not tracked content, and every check below follows
+  # it: presence, syntax and mode all answer for the local target while a
+  # fresh checkout holds the link itself, pointing at whatever is there —
+  # nothing, if the target was untracked or outside the repository.
+  if [ -L "$path" ]; then
+    bad "$rel is a SYMLINK — presence, syntax and mode below would answer for its target, while CI checks out the link and resolves whatever sits at the other end. Commit the file itself"
+    continue
+  fi
   if ! bash -n "$path" 2>/dev/null; then
     bad "$rel does not parse under \`bash -n\` — the install is truncated or edited; re-run \`kendex refresh\`"
     continue

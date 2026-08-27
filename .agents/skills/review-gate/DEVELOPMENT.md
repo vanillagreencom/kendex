@@ -98,13 +98,20 @@ a substring, an inline flow mapping on the trigger key line, a foreign
 is a new hole. Equality has no such gap, because the template carries no
 per-repo values: a copy that differs is a copy someone edited.
 
-What equality cannot express is checked on its own, and there are two such
-things. With the `check_run` opt-in enabled, the reviewer's check name lives
-in a GitHub repository variable rather than in the file. And the single-writer
-contract is about the workflow SET, not one file: no other tracked workflow
-may name the engine outside a comment. That second one over-approximates on
-purpose — an invocation has no closed set of spellings, so it counts a
-reference and claims only that.
+What equality cannot express is handled in one of two ways, and the
+difference matters to anyone reading a clean run.
+
+CHECKED: the single-writer contract is about the workflow SET, not one file,
+so no other tracked workflow may name the engine outside a comment. That one
+over-approximates on purpose — an invocation has no closed set of spellings,
+so it counts a reference and claims only that.
+
+REPORTED, NOT CHECKED: with the `check_run` opt-in enabled, the reviewer's
+check name lives in a GitHub repository variable rather than in any file. A
+local, report-only tool cannot read it, and reaching for the API to find out
+would give this tool a network dependency it does not have. The note names
+the prerequisite and says it is unverified; a clean exit does not mean the
+variable is set.
 
 The boundary, stated so it is not discovered: comments are compared out. A
 copy whose prose was reworded is still the template — the catalog's own copy

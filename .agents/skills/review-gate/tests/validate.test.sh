@@ -76,6 +76,15 @@ settings() { # DIR KEY VALUE
   printf '%s = "%s"\n' "$2" "$3" >>"$1/kendex.settings.toml"
 }
 
+repo_fails() { # NAME SUBSTRING SHELL — SHELL runs at the sandbox root, then
+                # the case commits and expects a finding
+  sandbox
+  dir="$DIR"
+  ( cd "$dir" && eval "$3" )
+  commit "$dir"
+  expect_fail "$1" "$dir" "$2"
+}
+
 setting_fails() { # NAME KEY VALUE SUBSTRING — one setting, one expectation
   sandbox
   dir="$DIR"
@@ -174,9 +183,8 @@ dir="$DIR"
 printf 'REVIEW_GATE_MODE = "off"\nREVIEW_GATE_MODE = "enforce"\n' >>"$dir/kendex.settings.toml"
 expect_fail "a key assigned twice fails (the loader's ambiguity guard)" "$dir" "a committed setting is not legal"
 
-# The environment must not decide the verdict: an exported legal value can
-# never launder an illegal committed one, or CI would pass what the gate
-# then chokes on.
+# An exported legal value must not launder an illegal committed one, or CI
+# would pass what the gate then chokes on.
 sandbox
 dir="$DIR"
 settings "$dir" REVIEW_GATE_MODE "bogus"
@@ -267,14 +275,12 @@ printf '%s' "$OUT" | grep -qF "reword a mention" &&
   bad "the over-flag names its own remedy" "$OUT"
 
 # No classification at all: the token on a line that is not the accepted
-# shape is a finding, with or without an `=` anywhere on it.
+# shape is a finding, `=` or no `=`.
 sandbox
 dir="$DIR"
 printf 'notes = [\n  "REVIEW_GATE_MODE",\n]\n' >>"$dir/kendex.settings.toml"
 expect_fail "the token on a line carrying no assignment at all is a finding" "$dir" "a shape the loader does not read"
 
-# A SYMLINK is not committed content: CI checks out the link, and everything
-# here would read the target's bytes.
 sandbox
 dir="$DIR"
 (cd "$dir" && rm kendex.settings.toml && printf '[env]\nREVIEW_GATE_CONTEXT = "Review gate"\n' >real-settings.toml && ln -s real-settings.toml kendex.settings.toml && git add -A && git commit -q -m "symlink the settings file")
@@ -311,10 +317,9 @@ printf '%s' "$OUT" | grep -qF "malformed REVIEW_GATE_COMMENT_REVIEWERS" &&
 
 setting_clean "a well-formed comment-reviewer pair still passes" REVIEW_GATE_COMMENT_REVIEWERS "bot[bot]:Reviewed commit:"
 
-# A refused load must be a FINDING. Collapsing it into an empty value makes
+# A refused load must be a FINDING: collapsing it into an empty value makes
 # every exclusion check below report a clean sheet against a list the engine
-# would have refused. The prophylactic key is the one nothing else validates:
-# --check-config never reads it, so this is its only reader.
+# would have refused.
 sandbox
 dir="$DIR"
 printf 'REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ["a", "b"]\n' >>"$dir/kendex.settings.toml"
@@ -359,10 +364,9 @@ setting_fails "a dot-relative glob is refused by the engine" REVIEW_GATE_CARRY_F
 
 setting_fails "an embedded dot component is refused by the engine" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/./guide.md" "a committed setting is not legal"
 
-# The grammar is closed in the ENGINE, and every spelling outside it is
-# refused there and relayed here — a bracket class and a backslash escape
-# respell the dead component the structural rules reject, so refusing the
-# spelling is what leaves no equivalence to enumerate.
+# The grammar is closed in the ENGINE and every spelling outside it is
+# refused there and relayed here: refusing the spelling is what leaves no
+# equivalence to enumerate.
 setting_fails "a bracket-class glob is refused by the engine's grammar" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "[.]/future/*" "a committed setting is not legal"
 
 sandbox
@@ -430,9 +434,8 @@ cp "$dir/.github/workflows/review-gate-writer.yml" "$dir/.github/workflows/secon
 commit "$dir"
 expect_fail "two writers is two writers" "$dir" "tracked workflows execute review-writer.sh"
 
-# A second workflow reaching the engine by ANY spelling is a second writer.
-# There is no closed set of invocation forms, so the count is over a CODE
-# mention rather than a list of the ways to run a script.
+# A second workflow reaching the engine by ANY spelling is a second writer,
+# so the count is over a CODE mention rather than a list of invocation forms.
 sandbox
 dir="$DIR"
 {
@@ -460,11 +463,7 @@ expect_clean "a workflow naming the engine only in a COMMENT is not a writer" "$
 
 # A symlinked workflow is the same hazard on the other side: the comparison
 # would read the target's bytes while CI checks out the link.
-sandbox
-dir="$DIR"
-(cd "$dir/.github/workflows" && mv review-gate-writer.yml real-writer.yml && ln -s real-writer.yml review-gate-writer.yml)
-commit "$dir"
-expect_fail "a SYMLINKED workflow is a finding, not a skip" "$dir" "is a SYMLINK"
+repo_fails "a SYMLINKED workflow is a finding, not a skip" "is a SYMLINK" 'cd .github/workflows && mv review-gate-writer.yml real-writer.yml && ln -s real-writer.yml review-gate-writer.yml'
 
 # A NON-ASCII workflow name is C-quoted by `git ls-files` in text mode, so a
 # line-based read hands `-f` the quoted spelling and skips the file — which
@@ -614,19 +613,17 @@ dir="$DIR"
 mutate "$dir" "s|^  workflow_dispatch: {}$|  check_run:\n  workflow_dispatch: {}\n    types: [created, completed]|"
 expect_fail "the opt-in's two lines must be adjacent" "$dir" "PARTIAL check_run opt-in"
 
-# BLANK lines are compared. Inside a `run: |` block scalar a blank is script
-# content, and one after a backslash continuation changes what the shell
-# runs, so two workflows that behave differently must not compare equal.
+# BLANK lines are compared: inside a `run: |` a blank is script content, so
+# two workflows that behave differently must not compare equal.
 sandbox
 dir="$DIR"
 # `G` appends the empty hold space, i.e. a blank line after each match.
 mutate "$dir" "/^          set -u\$/G"
 expect_fail "an inserted blank line inside a run: block is a divergence" "$dir" "has diverged from the shipped template"
 
-# Inside a `run: |` scalar the lines are shell PAYLOAD, so the two things
-# tolerated in YAML are not tolerable there: a `#` line is a shell comment
-# that can comment out a joined command, and trailing whitespace after a
-# backslash cancels the continuation. Both change what runs.
+# Inside a `run: |` the lines are shell PAYLOAD: a `#` line can comment out
+# a joined command, and trailing whitespace after a backslash cancels the
+# continuation. Both change what runs.
 # awk, not sed: the mutation is "append a space to the first continuation",
 # and expressing that through two layers of quoting is how it goes wrong.
 pad_continuation() { # DIR — cancel the first backslash continuation
@@ -774,18 +771,24 @@ dir="$DIR"
 rm "$dir/.agents/skills/review-gate/scripts/pr-watch.sh"
 expect_fail "a missing engine script is named" "$dir" "is missing from the installed skill"
 
-# PRESENT is not COMMITTED here either: an untracked engine passes presence,
-# mode and syntax, and does not exist in the checkout Actions makes.
+# PRESENT is not COMMITTED here either: an uncommitted engine passes every
+# local check and does not exist in the checkout Actions makes.
 sandbox
 dir="$DIR"
 (cd "$dir" && git rm -q --cached .agents/skills/review-gate/scripts/pr-watch.sh && git commit -q -m "untrack the engine")
 expect_fail "an UNTRACKED engine script is a finding, not a pass" "$dir" "present but UNTRACKED"
+
+# A tracked SYMLINK answers every check against its local target, while a
+# fresh checkout holds the link and resolves whatever is at the other end.
+repo_fails "a SYMLINKED runtime entry is a finding, not a pass" "is a SYMLINK" 'cd .agents/skills/review-gate/scripts && mv pr-watch.sh real-pr-watch.sh && ln -s real-pr-watch.sh pr-watch.sh'
 
 # ...and so is the path the adopted workflow NAMES, which is what Actions runs.
 sandbox
 dir="$DIR"
 (cd "$dir" && git rm -q --cached .agents/skills/review-gate/scripts/review-writer.sh && git commit -q -m "untrack the writer")
 expect_fail "an UNTRACKED exec target is named by the workflow check" "$dir" "which is NOT tracked"
+
+repo_fails "a SYMLINKED exec target is a finding too" "which is a SYMLINK" 'cd .agents/skills/review-gate/scripts && mv review-writer.sh real-writer.sh && ln -s real-writer.sh review-writer.sh'
 
 sandbox
 dir="$DIR"
