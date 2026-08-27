@@ -44,6 +44,9 @@ case "$out" in "0 0 "*) ok "a decline is not a claim";; *) bad "a decline is not
 out=$(page "$(thread true "$(human 'Out of scope, tracked.'),$(human 'Declined: probe is intentional')")")
 case "$out" in "0 0 "*) ok "a later Declined: reply clears a naked claim";; *) bad "a later Declined: reply clears a naked claim" "$out";; esac
 
+out=$(page "$(thread true "$(human 'Out of scope, tracked.'),$(human 'Fixed in abc1234')")")
+case "$out" in "0 0 "*) ok "a later Fixed in <sha> reply clears a naked claim";; *) bad "a later Fixed in <sha> reply clears a naked claim" "$out";; esac
+
 out=$(page "$(thread true "$(human 'Out of scope, tracked.'),$(human 'Tracked: KEN-637')")")
 case "$out" in "0 0 "*) ok "a later Tracked: <id> reply clears a naked claim";; *) bad "a later Tracked: <id> reply clears a naked claim" "$out";; esac
 
