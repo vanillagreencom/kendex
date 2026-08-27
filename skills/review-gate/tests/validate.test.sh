@@ -339,7 +339,7 @@ setting_fails "a glob matching no tracked path is dead config" REVIEW_GATE_CARRY
 # Pattern SPELLING is the engine's call, relayed through --check-config: one
 # grammar, in the matcher's own file, so this tool cannot drift from it.
 setting_fails "a leading-'/' anchor is refused by the engine and relayed" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "/AGENTS.md" "a committed setting is not legal"
-printf '%s' "$OUT" | grep -qF "can never match" &&
+printf '%s' "$OUT" | grep -qF "is not supported" &&
   ok "the engine's own reason rides out in the verdict" ||
   bad "the engine's own reason rides out in the verdict" "$OUT"
 
@@ -359,19 +359,19 @@ setting_fails "a dot-relative glob is refused by the engine" REVIEW_GATE_CARRY_F
 
 setting_fails "an embedded dot component is refused by the engine" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/./guide.md" "a committed setting is not legal"
 
-# The matcher HONORS bracket classes and backslash escapes, so nothing may
-# refuse them as spelling — refusing them was this tool keeping a second
-# grammar that had drifted from the engine's. They are ordinary patterns that
-# happen to match no tracked path, which is the tree check's business.
-setting_fails "a bracket-class glob is a live spelling that matches nothing here" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "[.]/future/*" "matches no tracked path"
+# The grammar is closed in the ENGINE, and every spelling outside it is
+# refused there and relayed here — a bracket class and a backslash escape
+# respell the dead component the structural rules reject, so refusing the
+# spelling is what leaves no equivalence to enumerate.
+setting_fails "a bracket-class glob is refused by the engine's grammar" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "[.]/future/*" "a committed setting is not legal"
 
 sandbox
 dir="$DIR"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "[.]/future/*"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "[.]/future/*"
-expect_clean "a bracket-class glob declared prophylactic is accepted, as any live spelling is" "$dir"
+expect_fail "declaring a refused spelling prophylactic does not rescue it" "$dir" "a committed setting is not legal"
 
-setting_fails "a backslash escape is a live spelling that matches nothing here" REVIEW_GATE_CARRY_FORWARD_EXCLUDE 'docs/\*.md' "matches no tracked path"
+setting_fails "a backslash escape is refused by the engine's grammar" REVIEW_GATE_CARRY_FORWARD_EXCLUDE 'docs/\.md' "a committed setting is not legal"
 
 # An EMPTY component is unreachable for the same reason a '.' one is: git
 # names carry neither. A trailing '/' is the same thing spelt at the end.
@@ -773,6 +773,19 @@ sandbox
 dir="$DIR"
 rm "$dir/.agents/skills/review-gate/scripts/pr-watch.sh"
 expect_fail "a missing engine script is named" "$dir" "is missing from the installed skill"
+
+# PRESENT is not COMMITTED here either: an untracked engine passes presence,
+# mode and syntax, and does not exist in the checkout Actions makes.
+sandbox
+dir="$DIR"
+(cd "$dir" && git rm -q --cached .agents/skills/review-gate/scripts/pr-watch.sh && git commit -q -m "untrack the engine")
+expect_fail "an UNTRACKED engine script is a finding, not a pass" "$dir" "present but UNTRACKED"
+
+# ...and so is the path the adopted workflow NAMES, which is what Actions runs.
+sandbox
+dir="$DIR"
+(cd "$dir" && git rm -q --cached .agents/skills/review-gate/scripts/review-writer.sh && git commit -q -m "untrack the writer")
+expect_fail "an UNTRACKED exec target is named by the workflow check" "$dir" "which is NOT tracked"
 
 sandbox
 dir="$DIR"

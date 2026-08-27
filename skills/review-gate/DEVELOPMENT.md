@@ -36,9 +36,16 @@ The split is deliberate, and it is the line between a tool and a test suite.
 ONE JUDGE per rule, and the judge is whoever owns the mechanism. The
 exclusion matcher lives in `review-predicate.sh`, so exclusion-pattern
 spelling is refused there and nowhere else; a second grammar in the validator
-could only drift from the matcher, and did — it refused bracket classes the
-`case` matcher honors. What `validate.sh` keeps is what the engine cannot
-answer: facts about the calling repository's tree.
+could only drift from the matcher, and did. What `validate.sh` keeps is what
+the engine cannot answer: facts about the calling repository's tree.
+
+The grammar the engine judges by is CLOSED — path characters plus `*` — and
+that is what ends the equivalence hunt rather than another refusal. `case`
+offers three more metacharacters, and each respells something the structural
+rules reject: `[.]` and `\.` are the `.` component written differently, and
+the next equivalence would be the next round. Refusing the spelling outright
+leaves nothing to analyse. The check runs in the configuration phase, ahead
+of every evaluation, so the grammar and what actually matches cannot diverge.
 
 `--check-config` stops at the last point before the predicate needs a PR to
 evaluate. Every configuration rule sits above that stop — the comment-reviewer

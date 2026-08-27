@@ -34,8 +34,8 @@ Exit codes:
 
 Four groups run, in this order:
 
-  runtime     every engine script this repo needs is present, executable and
-              parses under `bash -n`.
+  runtime     every engine script this repo needs is present, TRACKED (CI
+              checks out nothing else), executable and parses under `bash -n`.
   settings    the committed file is TRACKED (CI checks out nothing else), and
               every REVIEW_GATE_* assignment is one the engine reads, spelt
               the ONE way it reads them (a bare key, then its own `=`), and
@@ -125,11 +125,18 @@ for rel in scripts/review-predicate.sh scripts/review-writer.sh \
     bad "$rel does not parse under \`bash -n\` — the install is truncated or edited; re-run \`kendex refresh\`"
     continue
   fi
+  # PRESENT is not COMMITTED, the same split the settings check closes: an
+  # untracked engine passes every check here and does not exist in Actions,
+  # where the writer then fails to execute on every leg.
+  if ! git ls-files --error-unmatch -- "$SKILL_REL/$rel" >/dev/null 2>&1; then
+    bad "$rel is present but UNTRACKED — CI checks out tracked files only, so the engine validated here is absent there and the writer cannot run (\`git add $SKILL_REL/$rel\`)"
+    continue
+  fi
   case "$rel" in
-    */lib/*) ok "$rel is present and parses" ;;
+    */lib/*) ok "$rel is present, tracked and parses" ;;
     *)
       if [ -x "$path" ]; then
-        ok "$rel is present, executable and parses"
+        ok "$rel is present, tracked, executable and parses"
       else
         bad "$rel is not executable — CI runs it directly, so a lost mode bit reds the writer on every leg (\`git update-index --chmod=+x $SKILL_REL/$rel\`)"
       fi

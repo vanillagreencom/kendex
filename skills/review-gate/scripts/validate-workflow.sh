@@ -198,6 +198,18 @@ if [ "$adopted_count" -gt 1 ]; then
 fi
 ok "one adopted writer workflow: $adopted"
 
+# The path the workflow NAMES has to exist in a checkout, which is a
+# different question from whether this machine has the engine: the exec line
+# is what Actions runs, and an untracked target is a red writer on every leg.
+exec_target="$(sed -n 's/^[[:space:]]*exec[[:space:]]\{1,\}\([^[:space:]]*review-writer\.sh\)[[:space:]]*$/\1/p' "$adopted" | head -n 1)"
+if [ -z "$exec_target" ]; then
+  bad "$adopted names no exec target — the discovery above matched, so this is a parse gap in this tool rather than a repo fault; report it with \`kendex report\`"
+elif git ls-files --error-unmatch -- "$exec_target" >/dev/null 2>&1; then
+  ok "the engine the workflow execs is tracked ($exec_target)"
+else
+  bad "$adopted execs $exec_target, which is NOT tracked — Actions checks out tracked files only, so that path is absent in CI and the writer fails to execute on every leg (\`git add $exec_target\`)"
+fi
+
 # The single-writer contract is about how many workflows can post the gate
 # status, and an INVOCATION has no closed set of spellings — `exec X`,
 # `bash X`, `sh -c`, a variable holding the path. Rather than keep a list

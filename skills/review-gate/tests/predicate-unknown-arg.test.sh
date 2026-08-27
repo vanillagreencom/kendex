@@ -97,14 +97,22 @@ config_reject "an exclusion with an empty path component" REVIEW_GATE_CARRY_FORW
 config_reject "an exclusion ending in '/'" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/"
 config_reject "an unreachable PROPHYLACTIC declaration" REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "../future/*"
 
-# ...and the spellings the matcher HONORS are legal. Refusing these was the
-# drift: a bracket class and a backslash escape both work in `case`.
-for spelling in '[.]/future/*' 'docs/\*.md' 'docs/?.md' '*AGENTS.md'; do
+# The grammar is CLOSED — path characters plus '*' — so each metacharacter
+# `case` also offers is refused as a spelling rather than analysed. '[.]' and
+# '\.' respell the '.' component the rules above reject, and refusing the
+# spelling is what leaves no equivalence to find.
+config_reject "a bracket class" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "[.]/future/*"
+config_reject "a backslash escape" REVIEW_GATE_CARRY_FORWARD_EXCLUDE 'docs/\.md'
+config_reject "a '?' wildcard" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/?.md"
+
+# ...and the grammar itself is accepted, or the refusals above would just be
+# a broken checker.
+for spelling in '*AGENTS.md' 'docs/*' '.github/*' 'docs/**/notes.md'; do
   rc=0
   env -u GH_REPO -u PR_NUMBER -u HEAD_SHA REVIEW_GATE_SETTINGS_FILE=/dev/null \
     REVIEW_GATE_CARRY_FORWARD_EXCLUDE="$spelling" "$PREDICATE" --check-config >/dev/null 2>&1 || rc=$?
-  [ "$rc" -eq 0 ] && ok "--check-config accepts the live spelling '$spelling'" ||
-    bad "--check-config accepts the live spelling '$spelling' (got $rc)"
+  [ "$rc" -eq 0 ] && ok "--check-config accepts the grammar's own spelling '$spelling'" ||
+    bad "--check-config accepts the grammar's own spelling '$spelling' (got $rc)"
 done
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
