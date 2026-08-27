@@ -164,10 +164,11 @@ fn a_link_whose_target_is_gone_is_still_reproduced() {
     assert_eq!(fs::read_link(&dest).unwrap(), gone);
 }
 
-/// A tree and a file are still reproduced by their bytes, and `move_any`
-/// takes the original away once they are.
+/// A tree and a file are reproduced by their bytes. `copy_any` is called
+/// directly, because both sides share a filesystem here and a move would
+/// rename them without copying a byte.
 #[test]
-fn plain_bytes_are_reproduced_then_the_original_goes() {
+fn plain_bytes_are_reproduced_by_copy() {
     let tmp = tempfile::tempdir().unwrap();
     let tree = tmp.path().join("tree");
     fs::create_dir_all(tree.join("nested")).unwrap();
@@ -175,11 +176,9 @@ fn plain_bytes_are_reproduced_then_the_original_goes() {
     let file = tmp.path().join("one.md");
     fs::write(&file, "one").unwrap();
 
-    move_any(&tree, &tmp.path().join("held/tree")).unwrap();
-    move_any(&file, &tmp.path().join("held/one.md")).unwrap();
+    copy_any(&tree, &tmp.path().join("held/tree")).unwrap();
+    copy_any(&file, &tmp.path().join("held/one.md")).unwrap();
 
-    assert!(!tree.exists());
-    assert!(!file.exists());
     assert_eq!(
         fs::read_to_string(tmp.path().join("held/tree/nested/SKILL.md")).unwrap(),
         "body"
@@ -188,19 +187,65 @@ fn plain_bytes_are_reproduced_then_the_original_goes() {
         fs::read_to_string(tmp.path().join("held/one.md")).unwrap(),
         "one"
     );
+    // Reproduced, not moved: copy_any leaves the original alone.
+    assert!(tree.join("nested/SKILL.md").is_file());
+    assert!(file.is_file());
 }
 
-/// A move rename(2) refuses and the copy cannot finish either names both
-/// halves: what refused the rename, and what the second attempt hit.
+/// Where rename(2) can do it in one step, that step is the whole move.
 #[test]
-fn a_move_that_fails_twice_names_the_rename_refusal_too() {
+fn a_move_within_one_filesystem_leaves_nothing_behind() {
     let tmp = tempfile::tempdir().unwrap();
-    let missing = tmp.path().join("missing");
+    let file = tmp.path().join("one.md");
+    fs::write(&file, "one").unwrap();
+    let held = tmp.path().join("held");
+    fs::create_dir_all(&held).unwrap();
 
-    let error = move_any(&missing, &tmp.path().join("held"))
-        .unwrap_err()
-        .to_string();
+    move_any(&file, &held.join("one.md")).unwrap();
 
-    assert!(error.contains("rename refused it"), "{error}");
-    assert!(error.contains("moving it across by hand failed"), "{error}");
+    assert!(!file.exists());
+    assert_eq!(fs::read_to_string(held.join("one.md")).unwrap(), "one");
+}
+
+/// A move refused twice names both halves, and the two failures are made
+/// different so the message cannot pass by carrying one of them twice:
+/// rename crosses a mount and is refused for that, and the copy that
+/// follows lands in a directory nothing may write to.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_move_that_fails_twice_names_both_failures() {
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+    let tmp = tempfile::tempdir().unwrap();
+    let Ok(elsewhere) = tempfile::tempdir_in("/dev/shm") else {
+        return;
+    };
+    let (Ok(here), Ok(there)) = (
+        fs::metadata(tmp.path()).map(|m| m.dev()),
+        fs::metadata(elsewhere.path()).map(|m| m.dev()),
+    ) else {
+        return;
+    };
+    if here == there {
+        // One mount, so rename cannot be refused for crossing one.
+        return;
+    }
+    let from = elsewhere.path().join("decider");
+    fs::write(&from, "body").unwrap();
+    let sealed = tmp.path().join("sealed");
+    fs::create_dir_all(&sealed).unwrap();
+    fs::set_permissions(&sealed, fs::Permissions::from_mode(0o500)).unwrap();
+    let unlock = || fs::set_permissions(&sealed, fs::Permissions::from_mode(0o700)).unwrap();
+    if fs::write(sealed.join("probe"), "x").is_ok() {
+        // Permissions do not bind this user (root): the copy cannot be
+        // made to fail here.
+        unlock();
+        return;
+    }
+
+    let outcome = move_any(&from, &sealed.join("decider"));
+    unlock();
+
+    let error = outcome.unwrap_err().to_string();
+    assert!(error.contains("os error 18"), "no rename refusal: {error}");
+    assert!(error.contains("os error 13"), "no copy failure: {error}");
 }

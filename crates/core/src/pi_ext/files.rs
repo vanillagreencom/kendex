@@ -158,6 +158,92 @@ mod tests {
         assert!(inside(base, "/etc/passwd", "p").is_err());
     }
 
+    /// A name a dangling link holds is a name that is taken. `exists` says
+    /// it is free, the move onto it then replaces the link where the two
+    /// share a filesystem and fails where they do not — either way what
+    /// the trash was keeping is lost. Both seconds the call can land in
+    /// are seeded, so the clock cannot decide the outcome.
+    #[cfg(unix)]
+    #[test]
+    fn a_trash_name_a_dangling_link_holds_is_not_taken() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = Env::fake(tmp.path(), crate::env::FakeOs::Linux);
+        let dir = env.trash_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let now = crate::clock::unix_now();
+        let held: Vec<PathBuf> = [now, now + 1]
+            .iter()
+            .map(|secs| {
+                let stamp = crate::clock::iso_from_unix(*secs).replace(':', "-");
+                dir.join(format!("{stamp}-pi-hooks"))
+            })
+            .collect();
+        for name in &held {
+            std::os::unix::fs::symlink(tmp.path().join("gone"), name).unwrap();
+        }
+        let package = tmp.path().join("pi-hooks");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(package.join("package.json"), "{}").unwrap();
+
+        trash(&env, &package).unwrap();
+
+        assert!(!package.exists());
+        for name in &held {
+            assert!(name.is_symlink(), "{} was taken", name.display());
+        }
+        let landed: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.join("package.json").is_file())
+            .collect();
+        assert_eq!(landed.len(), 1, "{landed:?}");
+        assert!(
+            landed[0].to_string_lossy().contains("-1-pi-hooks"),
+            "{:?}",
+            landed[0]
+        );
+    }
+
+    /// The installed copy replaced by a link whose target is gone, with the
+    /// trash on another mount so the move is made by hand rather than by
+    /// rename. Read through, the copy fails with the target's ENOENT and
+    /// the uninstall aborts on it. /dev/shm is the second mount; a machine
+    /// that does not have it as one has nothing to prove here.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_copy_that_is_a_link_crosses_a_mount_into_the_trash() {
+        use std::os::unix::fs::MetadataExt as _;
+        let tmp = tempfile::tempdir().unwrap();
+        let env = Env::fake(tmp.path(), crate::env::FakeOs::Linux);
+        let Ok(elsewhere) = tempfile::tempdir_in("/dev/shm") else {
+            return;
+        };
+        let (Ok(here), Ok(there)) = (
+            std::fs::metadata(tmp.path()).map(|m| m.dev()),
+            std::fs::metadata(elsewhere.path()).map(|m| m.dev()),
+        ) else {
+            return;
+        };
+        if here == there {
+            return;
+        }
+        let installed = elsewhere.path().join("pi-hooks");
+        let gone = elsewhere.path().join("gone");
+        std::os::unix::fs::symlink(&gone, &installed).unwrap();
+
+        trash(&env, &installed).unwrap();
+
+        assert!(!installed.is_symlink());
+        let held = std::fs::read_dir(env.trash_dir())
+            .unwrap()
+            .flatten()
+            .next()
+            .unwrap()
+            .path();
+        assert_eq!(std::fs::read_link(held).unwrap(), gone);
+    }
+
     #[test]
     fn hashing_and_copying_agree_on_what_to_skip() {
         let tmp = tempfile::tempdir().unwrap();

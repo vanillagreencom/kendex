@@ -318,9 +318,11 @@ fn a_copy_that_cannot_be_read_stops_the_removal() {
         }],
     };
 
-    let error = execute(&env, &plan, None).unwrap_err();
+    // Unlocked before anything can panic: a sealed directory outlives the
+    // TempDir that cannot remove it.
+    let outcome = execute(&env, &plan, None);
     unlock();
-    assert!(matches!(error, CoreError::RolledBack { .. }));
+    assert!(matches!(outcome.unwrap_err(), CoreError::RolledBack { .. }));
     assert_eq!(fs::read_to_string(&victim).unwrap(), "content");
 }
 

@@ -168,6 +168,10 @@ pub(crate) fn sync_tree(root: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Remove whatever is at `path`, if anything is. A remove-if-present: the
+/// journal's restore of an absent pre-image asks for it on paths nothing
+/// ever wrote to, and failing there would strand the journal and take
+/// every later apply in the scope down with it.
 pub(crate) fn remove_any(path: &Path) -> Result<()> {
     if path.is_symlink() || path.is_file() {
         fs::remove_file(path).map_err(|e| CoreError::io(path, e))?;
@@ -179,11 +183,13 @@ pub(crate) fn remove_any(path: &Path) -> Result<()> {
 
 pub(crate) fn copy_tree(from: &Path, to: &Path) -> Result<()> {
     fs::create_dir_all(to).map_err(|e| CoreError::io(to, e))?;
-    for entry in fs::read_dir(from)
-        .map_err(|e| CoreError::io(from, e))?
-        .flatten()
-    {
-        let source = entry.path();
+    // An entry the listing could not produce is an entry nothing was
+    // proven about, so it stops the copy rather than dropping out of it —
+    // the same rule `plain_tree` states in pre.rs. This is the journal's
+    // pre-image writer: a shortened copy would be recorded as a whole one,
+    // and the rollback that trusts it would put back less than it took.
+    for entry in fs::read_dir(from).map_err(|e| CoreError::io(from, e))? {
+        let source = entry.map_err(|e| CoreError::io(from, e))?.path();
         let Some(name) = source.file_name() else {
             continue;
         };
@@ -215,13 +221,19 @@ pub(crate) fn copy_any(from: &Path, to: &Path) -> Result<()> {
 
 /// Move an entry to `to`, whether or not the two share a filesystem.
 ///
-/// rename(2) does it in one step where they do, and refuses where they do
-/// not — the everyday shape for the trash, which a project on its own
-/// mount is removed into under the home directory. Across that boundary
-/// the entry is reproduced and the original taken away. Its refusal is
-/// carried into whatever the second attempt fails with: rename can refuse
-/// for reasons a copy does not share, and without it the caller reads only
-/// that the original could not be removed.
+/// `to` must be a free name, proven against a link as well as against
+/// existence: rename(2) replaces an occupied destination silently, and the
+/// copy the other branch makes merges into a directory already sitting
+/// there. Both callers prove it — `unique_in` and pi_ext's own free-name
+/// loop.
+///
+/// rename(2) does it in one step where they share a filesystem, and
+/// refuses where they do not — the everyday shape for the trash, which a
+/// project on its own mount is removed into under the home directory.
+/// Across that boundary the entry is reproduced and the original taken
+/// away. Its refusal is carried into whatever the second attempt fails
+/// with: rename can refuse for reasons a copy does not share, and without
+/// it the caller reads only that the original could not be removed.
 pub(crate) fn move_any(from: &Path, to: &Path) -> Result<()> {
     let Err(refused) = fs::rename(from, to) else {
         return Ok(());
