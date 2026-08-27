@@ -139,10 +139,12 @@ assert_verdict "the coarse carve covers every skill path" false --repo "$coarse"
 # The escape and split-string avenues land in the coarse net too — an
 # escaped value, an escaped section-header key, a value split across lines:
 # none spells in-place where the extractor reads names, all decode to it.
-for exotic in 'source = "in\u002Dplace"' 'split' 'header' 'quoted-split'; do
+for exotic in 'source = "in\u002Dplace"' 'split' 'header' 'quoted-split' 'dotted-escape'; do
   ex="$(new_repo "exotic-$RANDOM")"
   if [ "$exotic" = split ]; then
     printf 'schema = 6\n[skills.mine]\nsource = """in\\\n-place"""\n' >"$ex/kendex.toml"
+  elif [ "$exotic" = dotted-escape ]; then
+    printf 'schema = 6\nskills."mi\\u006Ee" = { source = "in-place" }\n' >"$ex/kendex.toml"
   elif [ "$exotic" = quoted-split ]; then
     printf 'schema = 6\n[skills.mine]\n"source" = """in-\\\nplace"""\n' >"$ex/kendex.toml"
   elif [ "$exotic" = header ]; then

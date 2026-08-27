@@ -202,14 +202,21 @@ manifest_carves() { # FILE -> carve lines for one manifest, "*" on a failed pars
       next
     }
     line ~ /^\[/ { in_skills = 0; name = "" }
-    name != "" && line ~ ("^" src "[ \t]*(#.*)?$") { accounted += 1; print name; next }
+    name != "" && line ~ ("^" src "[ \t]*(#.*)?$") {
+      accounted += 1
+      if (name ~ /\\/) { print "*" } else { print name }
+      next
+    }
     (in_skills || line ~ /^skills[ \t]*\./) && line ~ src {
       key = line
       sub(/^skills[ \t]*\.[ \t]*/, "", key)
       if (key ~ /^"/) { sub(/^"/, "", key); sub(/".*$/, "", key) }
       else if (key ~ ("^" q)) { sub("^" q, "", key); key = substr(key, 1, index(key, q) - 1) }
       else { sub(/[ \t=.].*$/, "", key) }
-      if (key != "") { accounted += 1; print key }
+      if (key != "") {
+        accounted += 1
+        if (key ~ /\\/) { print "*" } else { print key }
+      }
     }
     END { if (coarse > accounted) print "*" }
   ' "$1" 2>/dev/null || echo "*"
