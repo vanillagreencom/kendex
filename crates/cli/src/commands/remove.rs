@@ -31,22 +31,77 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, sweep: Option<boo
         for warning in &report.warnings {
             say(&format!("warning: {}: {}", warning.name, warning.message));
         }
-        let touches_artifacts = report
-            .plan
-            .ops
-            .iter()
-            .any(|op| matches!(op.op, Op::Trash { .. } | Op::WriteLock { .. }));
-        if touches_artifacts {
+        if takes_anything(&report) {
             removed_any = true;
             say_split(&report);
-            kendex_core::apply::execute(env, &report.plan, None)?;
-            for op in &report.plan.ops {
-                say(&format!("  - {}", op.description));
-            }
+            take_away(env, &report)?;
         }
     }
     if !removed_any {
         say("Nothing removed");
+    }
+    Ok(())
+}
+
+/// `--keep-declaration`: the files go, kendex.toml stays as it is, and the
+/// next refresh installs the items again. Nothing to ask about a sweep —
+/// what these items pull in is wanted back with them — and nothing to warn
+/// about: whatever needed them gets them back the same way.
+pub fn uninstall(env: &Env, names: Vec<String>, filter: ScopeFilter) -> CliResult {
+    if names.is_empty() {
+        say("usage: kendex remove <name>… --keep-declaration [--scope project|global|all]");
+        return Ok(());
+    }
+    let mut removed_any = false;
+    for scope in resolve_scopes(env, filter)? {
+        let report = match ops::uninstall(env, &scope, &names) {
+            Ok(report) => report,
+            Err(error) if super::engine_common::is_legacy(&error) => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if !takes_anything(&report) {
+            continue;
+        }
+        removed_any = true;
+        // The planner's reasons read as disowning ("no longer declared
+        // here"); here the declaration stays, so only the kept rows carry
+        // theirs.
+        for change in &report.set_changes {
+            if change.direction == kendex_core::engine::SetDirection::Remove {
+                say(&format!(
+                    "removing {} {} for {}",
+                    change.kind.name(),
+                    change.name,
+                    change.harness.display_name()
+                ));
+            }
+        }
+        say_kept(&report);
+        take_away(env, &report)?;
+        say(&format!(
+            "{}: still declared in kendex.toml; refresh installs it again",
+            scope.label()
+        ));
+    }
+    if !removed_any {
+        say("Nothing removed");
+    }
+    Ok(())
+}
+
+/// Whether the plan takes anything off disk; one that does not is not run.
+fn takes_anything(report: &EngineReport) -> bool {
+    report
+        .plan
+        .ops
+        .iter()
+        .any(|op| matches!(op.op, Op::Trash { .. } | Op::WriteLock { .. }))
+}
+
+fn take_away(env: &Env, report: &EngineReport) -> CliResult {
+    kendex_core::apply::execute(env, &report.plan, None)?;
+    for op in &report.plan.ops {
+        say(&format!("  - {}", op.description));
     }
     Ok(())
 }
@@ -67,6 +122,10 @@ fn say_split(report: &EngineReport) {
             ));
         }
     }
+    say_kept(report);
+}
+
+fn say_kept(report: &EngineReport) {
     for kept in &report.kept {
         say(&format!(
             "keeping {} {} for {} — {}",

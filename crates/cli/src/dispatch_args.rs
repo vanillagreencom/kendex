@@ -34,8 +34,12 @@ pub(crate) fn remove(
     scope: Option<String>,
     sweep: bool,
     no_sweep: bool,
+    keep_declaration: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::Project)?;
+    if keep_declaration {
+        return commands::remove::uninstall(env, names, filter);
+    }
     let sweep = match (sweep, no_sweep) {
         (true, _) => Some(true),
         (_, true) => Some(false),

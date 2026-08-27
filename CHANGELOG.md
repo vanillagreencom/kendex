@@ -16,6 +16,9 @@ an outside contributor.
 - A package that changes the repository beyond kendex's own folders says so
   at install and waits for its own yes, good for that run alone. Declining
   installs it unarmed; no terminal declines unless `--allow-repo-effects`.
+- `kendex remove <name> --keep-declaration` takes the files away and leaves
+  kendex.toml alone, so the next `kendex refresh` installs the package again.
+  The remedy for an install gone wrong no longer needs the manifest restored.
 
 ### Changed
 

@@ -64,6 +64,9 @@ enum Command {
         /// Keep what nothing needs anymore
         #[arg(long, conflicts_with = "sweep")]
         no_sweep: bool,
+        /// Take the files away but leave kendex.toml alone; refresh installs them again
+        #[arg(long, conflicts_with_all = ["sweep", "no_sweep"])]
+        keep_declaration: bool,
     },
     /// Regenerate every declared installation from its source
     Refresh(commands::refresh::RefreshArgs),
@@ -249,7 +252,16 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             scope,
             sweep,
             no_sweep,
-        } => remove(&env, names, global, scope, sweep, no_sweep)?,
+            keep_declaration,
+        } => remove(
+            &env,
+            names,
+            global,
+            scope,
+            sweep,
+            no_sweep,
+            keep_declaration,
+        )?,
         Command::Refresh(args) => commands::refresh::run_args(&env, args)?,
         Command::Verify {
             names,

@@ -94,6 +94,32 @@ pub fn remove(
     kind: Option<ItemKind>,
     sweep: bool,
 ) -> Result<EngineReport> {
+    removal(env, scope, names, kind, sweep, true)
+}
+
+/// Take these items' installations away and keep their declarations. The
+/// files come off disk and the record forgets them, exactly as `remove`
+/// would, but kendex.toml is not touched — the next refresh installs them
+/// again from their source. This is the remedy for an install that went
+/// wrong, and what the manifest says is what makes it a remedy rather than
+/// a removal. Never a sweep: what these items pull in is wanted again the
+/// moment they are.
+pub fn uninstall(env: &Env, scope: &Scope, names: &[String]) -> Result<EngineReport> {
+    removal(env, scope, names, None, false, false)
+}
+
+/// The removal both verbs share. The plan is made against a manifest
+/// without the declarations either way; `disown` is whether that manifest
+/// becomes the file. Kept declared, nothing in the plan may write the
+/// manifest: the planner's own save carries the same undeclared copy.
+fn removal(
+    env: &Env,
+    scope: &Scope,
+    names: &[String],
+    kind: Option<ItemKind>,
+    sweep: bool,
+    disown: bool,
+) -> Result<EngineReport> {
     let mut manifest = manifest_for_mutation(env, scope)?;
     let lock = crate::lock::load(&lock_path(env, scope))?;
     let bundles: Vec<String> = names
@@ -163,7 +189,16 @@ pub fn remove(
     report
         .notes
         .extend(unreadable_origins(env, scope, &manifest, &lock, names));
-    ensure_manifest_persisted(env, scope, &manifest, &mut report)?;
+    if disown {
+        ensure_manifest_persisted(env, scope, &manifest, &mut report)?;
+    } else {
+        let manifest_path = manifest::manifest_path(env, scope);
+        report.plan.ops.retain(|op| match &op.op {
+            Op::WriteManifest { .. } => false,
+            Op::WriteFile { path, .. } => *path != manifest_path,
+            _ => true,
+        });
+    }
     Ok(report)
 }
 

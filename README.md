@@ -176,7 +176,7 @@ then `kendex guard install`.
 | Verb | Does |
 |---|---|
 | `add` (or bare `kendex <source>`) | declare and install agents/skills from a source |
-| `remove`, `adopt`, `apply` | undeclare, take ownership, reconcile |
+| `remove`, `adopt`, `apply` | undeclare (`--keep-declaration` uninstalls only), take ownership, reconcile |
 | `refresh` | re-resolve sources, regenerate every installation |
 | `verify` | drift check; exit 1 on any failing row |
 | `list` (`ls`), `check` | observe everything; sanity report |
