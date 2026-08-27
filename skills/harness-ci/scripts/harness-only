@@ -163,19 +163,22 @@ printf '%s\n' "$changed" | sed -e 's/^/harness-only: changed: /' >&2
 # output — the answer before in-place existed.
 in_place_skills=""
 if [ -f "$repo/kendex.toml" ]; then
-  # The spellings kendex writes plus the hand edits a manifest legally
-  # carries: leading whitespace, a [skills.name] or [skills."quoted name"]
-  # header (spaces around the dotted key included), single or double
-  # quotes, and a trailing comment after the value. An exotic spelling
-  # beyond these reads as render output — the answer before in-place
-  # existed.
+  # Every spelling a declaration legally wears: section headers (quoted
+  # names, spaces around the dotted key), inline tables and dotted keys
+  # (single-line by TOML 1.0, so a line parser sees them whole), either
+  # quote style, indentation, trailing comments. Over-matching is the safe
+  # direction — a carve too wide only runs lanes that could have stood
+  # down.
   sq="'"
   in_place_skills="$(awk -v q="$sq" '
+    BEGIN { src = "source[ \t]*=[ \t]*(\"in-place\"|" q "in-place" q ")" }
     {
       line = $0
       sub(/^[ \t]+/, "", line)
     }
+    line ~ /^\[[ \t]*skills[ \t]*\][ \t]*(#.*)?$/ { in_skills = 1; name = ""; next }
     line ~ /^\[[ \t]*skills[ \t]*\./ {
+      in_skills = 0
       name = line
       sub(/^\[[ \t]*skills[ \t]*\.[ \t]*/, "", name)
       sub(/[ \t]*\][ \t]*(#.*)?$/, "", name)
@@ -184,9 +187,15 @@ if [ -f "$repo/kendex.toml" ]; then
       }
       next
     }
-    line ~ /^\[/ { name = "" }
-    name != "" && line ~ ("^source[ \t]*=[ \t]*(\"in-place\"|" q "in-place" q ")[ \t]*(#.*)?$") {
-      print name
+    line ~ /^\[/ { in_skills = 0; name = "" }
+    name != "" && line ~ ("^" src "[ \t]*(#.*)?$") { print name }
+    (in_skills || line ~ /^skills[ \t]*\./) && line ~ src {
+      key = line
+      sub(/^skills[ \t]*\.[ \t]*/, "", key)
+      if (key ~ /^"/) { sub(/^"/, "", key); sub(/".*$/, "", key) }
+      else if (key ~ ("^" q)) { sub("^" q, "", key); key = substr(key, 1, index(key, q) - 1) }
+      else { sub(/[ \t=.].*$/, "", key) }
+      if (key != "") print key
     }
   ' "$repo/kendex.toml" 2>/dev/null)" || in_place_skills=""
 fi

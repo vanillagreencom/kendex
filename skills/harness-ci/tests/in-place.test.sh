@@ -57,13 +57,17 @@ assert_verdict "without a manifest every .agents path is render output" true \
   --repo "$norepo" --event push --base "$nobase" --head HEAD
 
 
-# The manifest spellings a declaration legally wears: quoted keys (spaces
-# included), single quotes, indentation, spaces around the dotted key, and a
-# trailing comment on the value. An inline table is the documented limit: it
-# reads as render output.
+# Every spelling a declaration legally wears: quoted keys (spaces included),
+# single quotes, indentation, spaces around the dotted key, trailing value
+# comments, a [skills] table with inline and dotted entries, and top-level
+# dotted keys — inline tables are single-line by TOML 1.0.
 spell="$(new_repo spellings)"
 cat >"$spell/kendex.toml" <<'MANIFEST'
 schema = 6
+
+[skills]
+tabled = { source = "in-place" }
+dotted.source = "in-place"
 
 [skills."ship it"]
 source = "in-place"
@@ -73,8 +77,6 @@ source = "in-place"
 
 [ skills . spaced ]
 source = 'in-place'
-
-skills.inline = { source = "in-place" }
 MANIFEST
 commit_paths "$spell" "baseline" README.md
 spellbase="$(git -C "$spell" rev-parse HEAD)"
@@ -87,6 +89,20 @@ spell_case() { # LABEL EXPECTED PATH
 spell_case "a quoted name with a space" false ".agents/skills/ship it/SKILL.md"
 spell_case "an indented declaration with a value comment" false .agents/skills/indented/SKILL.md
 spell_case "spaces around the dotted key, single-quoted value" false .agents/skills/spaced/SKILL.md
-spell_case "an inline table is beyond the parser and stays render" true .agents/skills/inline/SKILL.md
+spell_case "an inline table under the skills table" false .agents/skills/tabled/SKILL.md
+spell_case "a dotted entry under the skills table" false .agents/skills/dotted/SKILL.md
+
+# Top-level dotted spellings live in their own manifest: TOML lets one style
+# define the skills table, not both.
+dotted="$(new_repo dotted)"
+printf '%s\n' 'schema = 6' 'skills.inline = { source = "in-place" }' 'skills.deep.source = "in-place"' >"$dotted/kendex.toml"
+commit_paths "$dotted" "baseline" README.md
+dottedbase="$(git -C "$dotted" rev-parse HEAD)"
+for dotted_skill in inline deep; do
+  git -C "$dotted" checkout -q -B "case" "$dottedbase"
+  git -C "$dotted" clean -qfd -e kendex.toml
+  commit_paths "$dotted" "$dotted_skill" ".agents/skills/$dotted_skill/SKILL.md"
+  assert_verdict "a top-level dotted $dotted_skill declaration" false --repo "$dotted" --event push --base "$dottedbase" --head HEAD
+done
 
 report in-place
