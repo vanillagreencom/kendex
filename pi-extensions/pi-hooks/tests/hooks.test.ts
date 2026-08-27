@@ -123,276 +123,132 @@ async function withFakeCargo<T>(run: (paths: { bin: string; log: string }) => Pr
 	}
 }
 
+// The marker the growth-guards installer ends its delegating line with,
+// assembled so this file is not itself mistaken for a shim.
+const GG_MARK = "# kendex-" + "guards-hook";
+
+function armHooks(project: string): void {
+	for (const lane of ["pre-commit", "commit-msg"]) {
+		const file = join(project, ".git", "hooks", lane);
+		writeFileSync(file, `#!/bin/sh\nexit 0 ${GG_MARK}\n`);
+		chmodSync(file, 0o755);
+	}
+}
+
+function cargoLog(log: string): string {
+	return readFileSync(log, { encoding: "utf8", flag: "a+" });
+}
+
 describe("pi-hooks pre-commit tool_call", () => {
-	test("blocks when async cargo fmt fails", async () => {
-		await withFakeCargo(async () => {
+	// A fake cargo stays on PATH throughout as the control: the gate defers or
+	// refuses, and never runs a check of its own, so the log must stay empty.
+	test("defers to an armed repository without running anything", async () => {
+		await withFakeCargo(async ({ log }) => {
 			const project = initRustRepo("pi-hooks-project-");
+			armHooks(project);
 			process.env.FAKE_FMT_EXIT = "1";
 			try {
 				const handler = installToolCallHandler();
-				const result = await handler({ toolName: "bash", input: { command: "git commit -m test" } }, { cwd: project });
-				expect(result).toEqual({ block: true, reason: "pi-hooks pre-commit: cargo fmt --check failed. Run `cargo fmt` first." });
+				expect(await handler({ toolName: "bash", input: { command: "git commit -m test" } }, { cwd: project })).toBeUndefined();
+				expect(cargoLog(log)).toBe("");
 			} finally {
 				rmSync(project, { recursive: true, force: true });
 			}
 		});
 	});
 
-	test("blocks when async cargo clippy fails", async () => {
-		await withFakeCargo(async () => {
+	test("refuses an unarmed repository naming kendex guard install", async () => {
+		await withFakeCargo(async ({ log }) => {
 			const project = initRustRepo("pi-hooks-project-");
-			process.env.FAKE_CLIPPY_EXIT = "1";
-			try {
-				const handler = installToolCallHandler();
-				const result = await handler({ toolName: "bash", input: { command: "git commit -m test" } }, { cwd: project });
-				expect(result).toEqual({ block: true, reason: "pi-hooks pre-commit: cargo clippy found warnings. Fix them before committing." });
-			} finally {
-				rmSync(project, { recursive: true, force: true });
-			}
-		});
-	});
-
-	test("blocks metadata probe failures after Rust changes", async () => {
-		await withFakeCargo(async () => {
-			const project = initRustRepo("pi-hooks-project-");
-			process.env.FAKE_METADATA_EXIT = "2";
 			try {
 				const handler = installToolCallHandler();
 				const result = await handler({ toolName: "bash", input: { command: "git commit -m test" } }, { cwd: project }) as { block?: boolean; reason?: string };
 				expect(result.block).toBe(true);
-				expect(result.reason).toContain("found Rust files but could not identify a Cargo workspace");
+				expect(result.reason).toContain("not armed by kendex");
+				expect(result.reason).toContain("kendex guard install");
+				expect(cargoLog(log)).toBe("");
 			} finally {
 				rmSync(project, { recursive: true, force: true });
 			}
 		});
 	});
 
-	test("checks untracked Rust files staged by the same bash command", async () => {
-		await withFakeCargo(async () => {
-			const project = initCleanRustRepo("pi-hooks-project-");
-			writeFileSync(join(project, "src", "new.rs"), "pub fn new_answer() -> i32 { 7 }\n");
-			process.env.FAKE_FMT_EXIT = "1";
-			try {
-				runGit(["config", "alias.a", "add"], project);
-				const handler = installToolCallHandler();
-				for (const command of [
-					"git add src/new.rs\ngit commit -m test",
-					"git -c alias.a=add a src/new.rs && git commit -m test",
-					"git a src/new.rs && git commit -m test",
-					"git${IFS}add src/new.rs && git commit -m test",
-					"git${IFS} add src/new.rs && git commit -m test",
-					"$(echo git) add src/new.rs && git commit -m test",
-					"$(printf 'git add') src/new.rs && git commit -m test",
-					"`echo git` add src/new.rs && git commit -m test",
-					"G=git; ${G} add src/new.rs && git commit -m test",
-				]) {
-					const result = await handler({ toolName: "bash", input: { command } }, { cwd: project });
-					expect(result).toEqual({ block: true, reason: "pi-hooks pre-commit: cargo fmt --check failed. Run `cargo fmt` first." });
-				}
-			} finally {
-				rmSync(project, { recursive: true, force: true });
+	test("refuses a bypass of the armed hooks", async () => {
+		const project = initRustRepo("pi-hooks-project-");
+		armHooks(project);
+		try {
+			const handler = installToolCallHandler();
+			for (const command of ["git commit --no-verify -m test", "git commit -anm test", "git -c core.hooksPath=/dev/null commit -m test"]) {
+				const result = await handler({ toolName: "bash", input: { command } }, { cwd: project }) as { block?: boolean; reason?: string };
+				expect(result.block).toBe(true);
+				expect(result.reason).toContain("bypasses this repository's armed git hooks");
 			}
-		});
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
 	});
 
-	test("checks env split-string wrapped git commits", async () => {
-		await withFakeCargo(async () => {
-			const project = initRustRepo("pi-hooks-project-");
-			const other = mkdtempSync(join(tmpdir(), "pi-hooks-other-"));
-			runGit(["init", "-q"], other);
-			process.env.FAKE_FMT_EXIT = "1";
-			try {
-				const handler = installToolCallHandler();
-				for (const command of [
-					"env -S 'git commit -m test'",
-					"env -S'git commit -m test'",
-					"env -iS'git commit -m test'",
-					"env -S 'bash -c \"git commit -m test\"'",
-					"/usr/bin/env -S 'git commit -m test'",
-					"env -S 'git -C . commit -m test'",
-					"env --split-string 'git commit -m test'",
-					"env --split-string='git commit -m test'",
-					`env GIT_WORK_TREE=${JSON.stringify(project)} -S "git --git-dir=${join(other, ".git")} commit -m test"`,
-				]) {
-					const result = await handler({ toolName: "bash", input: { command } }, { cwd: project });
-					expect(result).toEqual({ block: true, reason: "pi-hooks pre-commit: cargo fmt --check failed. Run `cargo fmt` first." });
-				}
-			} finally {
-				rmSync(project, { recursive: true, force: true });
-				rmSync(other, { recursive: true, force: true });
+	test("shell expansion is not a refusal", async () => {
+		const project = initRustRepo("pi-hooks-project-");
+		armHooks(project);
+		try {
+			const handler = installToolCallHandler();
+			for (const command of [
+				'repo=$(git rev-parse --show-toplevel) && git -C "$repo" commit -m test',
+				"git -C `pwd` commit -m test",
+				'cd "$dir" && git commit -m test',
+			]) {
+				expect(await handler({ toolName: "bash", input: { command } }, { cwd: project })).toBeUndefined();
 			}
-		});
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
 	});
 
-	test("checks later shell-c project commit after parsed outside commit", async () => {
-		await withFakeCargo(async () => {
-			const project = initRustRepo("pi-hooks-project-");
-			const other = mkdtempSync(join(tmpdir(), "pi-hooks-other-"));
-			runGit(["init", "-q"], other);
-			process.env.FAKE_FMT_EXIT = "1";
-			try {
-				runGit(["config", "alias.ca", "commit -a"], project);
-				runGit(["config", "alias.co", "-c user.name=pi-hooks commit"], project);
-				runGit(["config", "alias.sh", "!git commit"], project);
-				const handler = installToolCallHandler();
-				for (const command of [
-					`git -C ${JSON.stringify(other)} commit -m fixture; bash -c "git commit -m project"`,
-					`git -C ${JSON.stringify(other)} commit -m fixture; bash -lc "git commit -m project"`,
-					`bash -o pipefail -c "git commit -m project"`,
-					`bash +o pipefail -c "git commit -m project"`,
-					`bash -c $'git commit -m project'`,
-					`bash -c 'git "$@"' _ commit -m project`,
-					`bash -c 'git ${"${@}"}' _ commit -m project`,
-					`bash -c 'git ${"${1}"} -m project' _ commit`,
-					`/usr/bin/git commit -m project`,
-					`command /usr/bin/git commit -m project`,
-					`git -c alias.ci=commit ci -m project`,
-					`git -c ALIAS.upper=commit upper -m project`,
-					`git -c alias.zzz=commit ZZZ -m project`,
-					`git -c 'alias.ci=commit -m project' ci`,
-					`ALIAS=commit git --config-env=alias.ce=ALIAS ce -m project`,
-					`GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.zzz276 GIT_CONFIG_VALUE_0=commit git zzz276 -am project`,
-					`git config alias.zzz276 commit; git zzz276 -am project`,
-					`git config --file .git/config alias.zzz277 commit; git zzz277 -am project`,
-					`shopt -s expand_aliases; alias g=git; g commit -am project`,
-					`shopt -s expand_aliases\nalias gc="git commit"\ngc -am project`,
-					`eval "git commit -am project"`,
-					`eval 'git \`echo commit\` -am project'`,
-					`eval 'git "$(echo commit)" -am project'`,
-					`bash <<<"git commit -am project"`,
-					`bash -c -- 'git commit -am project'`,
-					`bash -c '$1 commit -am project' _ git`,
-					`cmd=git bash -c '$cmd commit -am project'`,
-					`bash -c '${"${G:-git}"} commit -am project'`,
-					`bash -c 'git $(echo commit) -am project'`,
-					`bash -c $'shopt -s expand_aliases\nalias g=git\ng commit -am project'`,
-					`printf 'git commit -am project\\n' | bash`,
-					`git ca -m project`,
-					`git co -m project`,
-					`git sh -m project`,
-					`git $'commit' -m project`,
-					`git $'co\\x6dmit' -m project`,
-					`git $'co\\155mit' -m project`,
-					`git -C ${JSON.stringify(other)} commit -m fixture; git --exec-path ${JSON.stringify("/usr/lib/git-core")} commit -m project`,
-				]) {
-					const result = await handler({ toolName: "bash", input: { command } }, { cwd: project });
-					expect(result).toEqual({ block: true, reason: "pi-hooks pre-commit: cargo fmt --check failed. Run `cargo fmt` first." });
-				}
-				for (const command of [
-					`cmd=git; $cmd commit -am project`,
-					`G=git; ${"${G}"} commit -am project`,
-					`${"${G:-git}"} commit -am project`,
-					`${"${G:-git}"} ${"${C:-commit}"} -am project`,
-					`$(echo git) commit -am project`,
-					`$(printf 'git commit') -am project`,
-					`$(echo git)${"${IFS}"}commit -am project`,
-					`\`echo git\` commit -am project`,
-					`v=commit; git${"${IFS}"}$v -am project`,
-					`git${"${IFS}"}commit -am project`,
-					`git${"${IFS}"} commit -am project`,
-					`x=zz; ALIAS=commit git --config-env=alias.$x=ALIAS zz -m project`,
-					`n=1; GIT_CONFIG_COUNT=$n GIT_CONFIG_KEY_0=alias.zzz276 GIT_CONFIG_VALUE_0=commit git zzz276 -am project`,
-					`CFG=alias.zzz276=commit; git -c $CFG zzz276 -am project`,
-					`git config ${"${K:-alias.zzz276}"} commit; git zzz276 -am project`,
-					`GIT_CONFIG_GLOBAL=/tmp/pi-hooks-aliases git zzz276 -am project`,
-					`HOME=$h git zzz276 -am project`,
-					`export GIT_CONFIG_GLOBAL=/tmp/pi-hooks-aliases; git zzz276 -am project`,
-					`git -c include.path=/tmp/pi-hooks-aliases zzz276 -am project`,
-					`git -c includeIf.gitdir:${project}/.git.path=/tmp/pi-hooks-aliases zzz276 -am project`,
-				]) {
-					const result = await handler({ toolName: "bash", input: { command } }, { cwd: project }) as { block?: boolean } | undefined;
-					expect(result?.block).toBe(true);
-				}
-			} finally {
-				rmSync(project, { recursive: true, force: true });
-				rmSync(other, { recursive: true, force: true });
-			}
-		});
+	test("the preCommitCheck setting turns the gate off", async () => {
+		const project = initRustRepo("pi-hooks-project-");
+		writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify({
+			kendex: { extensionManager: { config: { [CONFIG_ID]: { preCommitCheck: false } } } },
+		}));
+		try {
+			const handler = installToolCallHandler();
+			const ctx = { cwd: project, isProjectTrusted: () => true };
+			expect(await handler({ toolName: "bash", input: { command: "git commit -m test" } }, ctx)).toBeUndefined();
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
 	});
 
-	test("checks untracked Rust files staged inside env split-string", async () => {
-		await withFakeCargo(async () => {
-			const project = initCleanRustRepo("pi-hooks-project-");
-			writeFileSync(join(project, "src", "split_new.rs"), "pub fn split_new() -> i32 { 9 }\n");
-			process.env.FAKE_FMT_EXIT = "1";
-			try {
-				const handler = installToolCallHandler();
-				for (const command of [
-					"env -S 'git add src/split_new.rs && git commit -m test'",
-					"env --split-string 'git add src/split_new.rs && git commit -m test'",
-					"env --split-string='git add src/split_new.rs && git commit -m test'",
-				]) {
-					const result = await handler({ toolName: "bash", input: { command } }, { cwd: project });
-					expect(result).toEqual({ block: true, reason: "pi-hooks pre-commit: cargo fmt --check failed. Run `cargo fmt` first." });
-				}
-			} finally {
-				rmSync(project, { recursive: true, force: true });
-			}
-		});
+	test("a commit aimed elsewhere from outside any repository passes with a UI notice", async () => {
+		const plain = mkdtempSync(join(tmpdir(), "pi-hooks-plain-"));
+		const other = mkdtempSync(join(tmpdir(), "pi-hooks-other-"));
+		runGit(["init", "-q"], other);
+		const notices: string[] = [];
+		try {
+			const handler = installToolCallHandler();
+			const ctx = { cwd: plain, hasUI: true, ui: { notify: (message: string) => notices.push(message) } };
+			expect(await handler({ toolName: "bash", input: { command: `git -C ${JSON.stringify(other)} commit -m fixture` } }, ctx)).toBeUndefined();
+			expect(notices).toHaveLength(1);
+			expect(notices[0]).toContain("moves repositories");
+			expect(notices[0]).toContain(`judged ${plain} only`);
+		} finally {
+			rmSync(plain, { recursive: true, force: true });
+			rmSync(other, { recursive: true, force: true });
+		}
 	});
 
-	test("checks untracked Rust files staged inside shell -c fallback", async () => {
-		await withFakeCargo(async () => {
-			const project = initCleanRustRepo("pi-hooks-project-");
-			writeFileSync(join(project, "src", "shell_new.rs"), "pub fn shell_new() -> i32 { 11 }\n");
-			process.env.FAKE_FMT_EXIT = "1";
-			try {
-				const handler = installToolCallHandler();
-				const result = await handler({ toolName: "bash", input: { command: "sh -c 'git add src/shell_new.rs && git commit -m test'" } }, { cwd: project });
-				expect(result).toEqual({ block: true, reason: "pi-hooks pre-commit: cargo fmt --check failed. Run `cargo fmt` first." });
-			} finally {
-				rmSync(project, { recursive: true, force: true });
-			}
-		});
-	});
-
-	test("checks same-command untracked Rust from nested cwd", async () => {
-		await withFakeCargo(async () => {
-			const project = initCleanRustRepo("pi-hooks-project-");
-			const nested = join(project, "nested");
-			mkdirSync(nested);
-			writeFileSync(join(project, "src", "nested_new.rs"), "pub fn nested_new() -> i32 { 13 }\n");
-			process.env.FAKE_FMT_EXIT = "1";
-			try {
-				const handler = installToolCallHandler();
-				const result = await handler({ toolName: "bash", input: { command: "git add ../src/nested_new.rs && git commit -m test" } }, { cwd: nested });
-				expect(result).toEqual({ block: true, reason: "pi-hooks pre-commit: cargo fmt --check failed. Run `cargo fmt` first." });
-			} finally {
-				rmSync(project, { recursive: true, force: true });
-			}
-		});
-	});
-
-	test("allows non-executed git commit text without running cargo", async () => {
+	test("allows a command with no git commit in word order without running anything", async () => {
 		await withFakeCargo(async ({ log }) => {
 			const project = initRustRepo("pi-hooks-project-");
 			process.env.FAKE_FMT_EXIT = "1";
 			try {
 				const handler = installToolCallHandler();
-				for (const command of ["echo git commit", "# git commit", "printf 'git commit'"]) {
-					const result = await handler({ toolName: "bash", input: { command } }, { cwd: project });
-					expect(result).toBeUndefined();
+				for (const command of ["cargo fmt", "git status", "echo commit", "git log --grep=commit"]) {
+					expect(await handler({ toolName: "bash", input: { command } }, { cwd: project })).toBeUndefined();
 				}
-				expect(readFileSync(log, { encoding: "utf8", flag: "a+" })).toBe("");
+				expect(cargoLog(log)).toBe("");
 			} finally {
 				rmSync(project, { recursive: true, force: true });
-			}
-		});
-	});
-
-	test("allows other-repo commits without running cargo", async () => {
-		await withFakeCargo(async ({ log }) => {
-			const project = initRustRepo("pi-hooks-project-");
-			const other = mkdtempSync(join(tmpdir(), "pi-hooks-other-"));
-			runGit(["init", "-q"], other);
-			try {
-				const handler = installToolCallHandler();
-				const result = await handler({ toolName: "bash", input: { command: `git -C ${JSON.stringify(other)} commit -m fixture` } }, { cwd: project });
-				expect(result).toBeUndefined();
-				expect(readFileSync(log, { encoding: "utf8", flag: "a+" })).toBe("");
-			} finally {
-				rmSync(project, { recursive: true, force: true });
-				rmSync(other, { recursive: true, force: true });
 			}
 		});
 	});

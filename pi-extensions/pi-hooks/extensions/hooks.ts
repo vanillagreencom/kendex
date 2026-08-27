@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isAbsolute, resolve } from "node:path";
 
-import { isBareCd, runPreCommitCheck } from "./bash-guards.js";
+import { isBareCd, preCommitGate } from "./bash-guards.js";
 import { refusalReason, repoCopyRefusal } from "./repo-copy-guard.js";
 import { invalidateClippyCache } from "./cargo.js";
 import { getBool, getNumber, readConfig, recordProjectTrust } from "./config.js";
@@ -78,11 +78,13 @@ export default function piHooks(pi: ExtensionAPI): void {
 		}
 
 		if (getBool(cfg, "preCommitCheck")) {
-			const timeoutMs = getNumber(cfg, "clippyTimeoutMs");
-			const fail = await runPreCommitCheck(ctx.cwd, timeoutMs, command);
-			if (fail) {
-				return { block: true, reason: fail.reason };
+			const verdict = await preCommitGate(command, ctx.cwd);
+			if (verdict.kind === "refuse") {
+				return { block: true, reason: verdict.reason };
 			}
+			// The bash hook writes this to stderr, which the harness shows the
+			// person and not the agent; Pi's equivalent is the UI notice.
+			if (verdict.notice && ctx.hasUI) ctx.ui.notify(verdict.notice, "info");
 		}
 
 		return undefined;

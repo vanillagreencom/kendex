@@ -26,6 +26,9 @@ an outside contributor.
 - The review gate's pending status now names the repo's own configured
   evidence sources — `no review evidence at <sha> yet; expected from <names>`
   — instead of reading as a block on someone's approval.
+- **Breaking:** the pi-hooks pre-commit listener (0.7.0) defers to git hooks
+  kendex armed and refuses a bypass or an unarmed repository, like the bash
+  hook; it runs no fmt or clippy of its own, so arm with `kendex guard install`.
 
 - **Breaking:** a `core.hooksPath` naming a directory answers "could not
   determine" from `kendex guard check`; the stand-down prints git's own

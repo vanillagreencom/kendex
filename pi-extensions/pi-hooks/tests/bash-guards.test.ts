@@ -1,10 +1,15 @@
-import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
-import { gitCommitTargets, isBareCd, nearestCargoManifestDir, projectGitCommitCwd, resolveProjectGitCommit } from "../extensions/bash-guards.ts";
+import { isBareCd, isGitCommit, preCommitGate } from "../extensions/bash-guards.ts";
+
+// The marker the growth-guards installer ends its delegating line with, and
+// the only thing that makes a hook file ours as far as this gate is
+// concerned. Assembled so this file is not itself mistaken for a shim.
+const GG_MARK = "# kendex-" + "guards-hook";
 
 function runGit(args: string[], cwd: string): void {
 	const result = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -13,370 +18,264 @@ function runGit(args: string[], cwd: string): void {
 	}
 }
 
-function initRepo(prefix: string): string {
-	const dir = mkdtempSync(join(tmpdir(), prefix));
+function initRepo(root: string, name: string): string {
+	const dir = join(root, name);
+	mkdirSync(dir, { recursive: true });
 	runGit(["init", "-q"], dir);
 	return dir;
 }
 
-function q(path: string): string {
-	return JSON.stringify(path);
+// A hook file git would run, carrying the marker; `executable: false` leaves
+// the marker in place and takes the bit git needs away.
+function writeHook(dir: string, lane: string, executable = true): void {
+	const file = join(dir, lane);
+	writeFileSync(file, `#!/bin/sh\nexit 0 ${GG_MARK}\n`);
+	chmodSync(file, executable ? 0o755 : 0o644);
 }
 
-describe("git commit target detection", () => {
-	test("detects commits in the current project repo", async () => {
-		const project = initRepo("pi-hooks-project-");
+// Every fixture carries a package script that would announce itself if
+// anything ran it. Nothing may: this gate defers to an armed hook or refuses,
+// and never runs a repository's own scripts on its behalf.
+function plantAnnouncingScript(repo: string, log: string): void {
+	const scripts = join(repo, ".agents", "skills", "growth-guards", "scripts");
+	mkdirSync(scripts, { recursive: true });
+	writeFileSync(join(scripts, "pre-commit"), `#!/usr/bin/env bash\necho 'the repository script ran' >>"${log}"\nexit 0\n`);
+	chmodSync(join(scripts, "pre-commit"), 0o755);
+}
+
+describe("pre-commit gate: the bash hook's contract", () => {
+	const root = mkdtempSync(join(tmpdir(), "pi-hooks-gate-"));
+	const ranLog = join(root, "ran.log");
+	let unarmed: string;
+	let armed: string;
+	let armedByPath: string;
+	let disarmed: string;
+	let disarmedByPath: string;
+	let hooksOff: string;
+	let halfArmed: string;
+	let markedNotExec: string;
+	let notARepo: string;
+	// Bare PATH: the armed hook gates a commit with no binary involved, and the
+	// refusal for an unarmed one needs none either.
+	let savedPath: string | undefined;
+
+	beforeAll(() => {
+		unarmed = initRepo(root, "unarmed");
+
+		armed = initRepo(root, "armed");
+		for (const lane of ["pre-commit", "commit-msg"]) writeHook(join(armed, ".git", "hooks"), lane);
+
+		armedByPath = initRepo(root, "armed-by-path");
+		const customHooks = join(root, "custom-hooks");
+		mkdirSync(customHooks);
+		for (const lane of ["pre-commit", "commit-msg"]) writeHook(customHooks, lane);
+		runGit(["config", "core.hooksPath", customHooks], armedByPath);
+
+		// A hook file git will not run: present, execute bit off. Git skips it
+		// silently, so it must not count as armed.
+		disarmed = initRepo(root, "disarmed");
+		writeHook(join(disarmed, ".git", "hooks"), "pre-commit", false);
+
+		disarmedByPath = initRepo(root, "disarmed-by-path");
+		const disarmedHooks = join(root, "disarmed-hooks");
+		mkdirSync(disarmedHooks);
+		writeHook(disarmedHooks, "pre-commit", false);
+		runGit(["config", "core.hooksPath", disarmedHooks], disarmedByPath);
+
+		// core.hooksPath set and EMPTY switches hooks off, and git's answer
+		// about it misleads: `rev-parse --git-path hooks` reports `./`, so the
+		// directory resolves to the repository root. This fixture puts an
+		// executable `pre-commit` exactly there, the trap, while git runs
+		// nothing at all.
+		hooksOff = initRepo(root, "hooks-off");
+		runGit(["config", "core.hooksPath", ""], hooksOff);
+		writeFileSync(join(hooksOff, "pre-commit"), "#!/bin/sh\nexit 0\n");
+		chmodSync(join(hooksOff, "pre-commit"), 0o755);
+
+		// One lane armed and not the other. Deferring here would hand the
+		// commit to a gate that checks content and accepts any message.
+		halfArmed = initRepo(root, "half-armed");
+		writeHook(join(halfArmed, ".git", "hooks"), "pre-commit");
+
+		// Marked on both lanes, and one of them is a file git will not execute.
+		markedNotExec = initRepo(root, "marked-not-exec");
+		writeHook(join(markedNotExec, ".git", "hooks"), "pre-commit", false);
+		writeHook(join(markedNotExec, ".git", "hooks"), "commit-msg");
+
+		notARepo = join(root, "plain");
+		mkdirSync(notARepo);
+
+		for (const repo of [unarmed, armed, armedByPath, disarmed, disarmedByPath, hooksOff, halfArmed, markedNotExec]) {
+			plantAnnouncingScript(repo, ranLog);
+		}
+
+		const bin = join(root, "no-kendex-bin");
+		mkdirSync(bin);
+		for (const tool of ["git", "sh", "bash"]) {
+			const found = spawnSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).stdout.trim();
+			if (found) spawnSync("ln", ["-sf", found, join(bin, tool)]);
+		}
+		savedPath = process.env.PATH;
+		process.env.PATH = bin;
+	});
+
+	afterAll(() => {
+		if (savedPath === undefined) delete process.env.PATH;
+		else process.env.PATH = savedPath;
+		rmSync(root, { recursive: true, force: true });
+	});
+
+	async function gate(cwd: string, command: string) {
+		const verdict = await preCommitGate(command, cwd);
+		let ran = "";
 		try {
-			expect(await projectGitCommitCwd("git commit -m test", project, 1000)).toBe(resolve(project));
-		} finally {
-			rmSync(project, { recursive: true, force: true });
+			ran = readFileSync(ranLog, "utf8");
+		} catch {
+			// Nothing ran, so nothing wrote the log.
+		}
+		return { verdict, ran };
+	}
+
+	test("detection is word order, never shell parsing", () => {
+		expect(isGitCommit("ls -la")).toBe(false);
+		expect(isGitCommit("git commit -m test")).toBe(true);
+		expect(isGitCommit("git -C /somewhere/else commit -m test")).toBe(true);
+		// Real whitespace separates words, as JSON's escapes do in the bash hook.
+		expect(isGitCommit("cargo fmt\ngit commit -m x")).toBe(true);
+		expect(isGitCommit("cd sub\tgit commit -m x")).toBe(true);
+		expect(isGitCommit("cargo fmt\r\ngit commit -m x")).toBe(true);
+		// Over-matching is the design: a miss skips a refusal, never a check.
+		expect(isGitCommit("echo git commit")).toBe(true);
+		expect(isGitCommit("git status && echo commit")).toBe(true);
+	});
+
+	test("a non-commit command is left alone", async () => {
+		const { verdict, ran } = await gate(unarmed, "ls -la");
+		expect(verdict).toEqual({ kind: "allow" });
+		expect(ran).toBe("");
+	});
+
+	test("a plain git commit in an unarmed repository is refused, never stood in for", async () => {
+		for (const command of ["git commit -m test", "git -C /somewhere/else commit -m test", "cargo fmt\ngit commit -m x"]) {
+			const { verdict, ran } = await gate(unarmed, command);
+			expect(verdict.kind).toBe("refuse");
+			if (verdict.kind !== "refuse") throw new Error("unreachable");
+			expect(verdict.reason).toContain("not armed by kendex");
+			expect(verdict.reason).toContain("kendex guard install");
+			expect(verdict.reason).toContain("kendex guard check");
+			expect(ran).toBe("");
 		}
 	});
 
-	test("detects git -C commits inside the project repo", async () => {
-		const project = initRepo("pi-hooks-project-");
-		try {
-			const subdir = join(project, "nested");
-			mkdirSync(subdir);
-			expect(await projectGitCommitCwd(`git -C ${q(subdir)} commit -m test`, project, 1000)).toBe(resolve(subdir));
-		} finally {
-			rmSync(project, { recursive: true, force: true });
+	test("an armed .git/hooks pair gates the commit itself", async () => {
+		expect((await gate(armed, "git commit -m test")).verdict).toEqual({ kind: "allow" });
+		expect((await gate(armed, "git commit -am test")).verdict).toEqual({ kind: "allow" });
+		expect((await gate(armed, "git commit -m test")).ran).toBe("");
+	});
+
+	test("a core.hooksPath hook is not armed by this gate", async () => {
+		const { verdict, ran } = await gate(armedByPath, "git commit -m test");
+		expect(verdict.kind).toBe("refuse");
+		expect(ran).toBe("");
+	});
+
+	test("a hook file git will not run is not armed", async () => {
+		for (const repo of [disarmed, disarmedByPath, markedNotExec]) {
+			const { verdict, ran } = await gate(repo, "git commit -m test");
+			expect(verdict.kind).toBe("refuse");
+			if (verdict.kind !== "refuse") throw new Error("unreachable");
+			expect(verdict.reason).toContain("not armed by kendex");
+			expect(ran).toBe("");
 		}
 	});
 
-	test("detects multiline git commit commands", async () => {
-		const project = initRepo("pi-hooks-project-");
-		try {
-			expect(await projectGitCommitCwd("git add src/lib.rs\ngit commit -m test", project, 1000)).toBe(resolve(project));
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
+	test("one lane armed is not an armed repository", async () => {
+		const { verdict, ran } = await gate(halfArmed, "git commit -m test");
+		expect(verdict.kind).toBe("refuse");
+		if (verdict.kind !== "refuse") throw new Error("unreachable");
+		expect(verdict.reason).toContain("not armed by kendex");
+		expect(ran).toBe("");
 	});
 
-	test("detects env and command wrappers", async () => {
-		const project = initRepo("pi-hooks-project-");
-		try {
-			expect(await projectGitCommitCwd("env FOO=bar git commit -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("env -u FOO git commit -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("env -S 'git commit -m test'", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("env -S'git commit -m test'", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("env -iS'git commit -m test'", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("env -S 'bash -c \"git commit -m test\"'", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("/usr/bin/env -S 'git commit -m test'", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("env -S 'git -C . commit -m test'", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("env --split-string 'git commit -m test'", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("env --split-string='git commit -m test'", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("command git commit -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("git -c alias.ci=commit ci -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("git -c ALIAS.upper=commit upper -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("git -c alias.zzz=commit ZZZ -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("git -c 'alias.ci=commit -m test' ci", project, 1000)).toBe(resolve(project));
-			runGit(["config", "alias.ci", "commit"], project);
-			runGit(["config", "alias.ca", "commit -a"], project);
-			runGit(["config", "alias.co", "-c user.name=pi-hooks commit"], project);
-			runGit(["config", "alias.sh", "!git commit"], project);
-			expect(await projectGitCommitCwd("git ci -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("git ca -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("git co -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("git sh -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("ALIAS=commit git --config-env=alias.ce=ALIAS ce -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("env ALIAS=commit git --config-env=alias.ee=ALIAS ee -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.zzz276 GIT_CONFIG_VALUE_0=commit git zzz276 -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("git config alias.zzz276 commit; git zzz276 -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("git config --file .git/config alias.zzz277 commit; git zzz277 -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("shopt -s expand_aliases; alias g=git; g commit -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("shopt -s expand_aliases\nalias gc=\"git commit\"\ngc -m test", project, 1000)).toBe(resolve(project));
-			expect((await resolveProjectGitCommit("cmd=git; $cmd commit -m test", project, 1000)).kind).toBe("error");
-			expect(await projectGitCommitCwd("G=git; ${G} commit -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("${G:-git} commit -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("${G:-git} ${C:-commit} -m test", project, 1000)).toBe(resolve(project));
-			expect((await resolveProjectGitCommit("$(echo git) commit -m test", project, 1000)).kind).toBe("error");
-			expect((await resolveProjectGitCommit("$(printf 'git commit') -m test", project, 1000)).kind).toBe("error");
-			expect(await projectGitCommitCwd("$(echo git)${IFS}commit -m test", project, 1000)).toBe(resolve(project));
-			expect((await resolveProjectGitCommit("`echo git` commit -m test", project, 1000)).kind).toBe("error");
-			expect(await projectGitCommitCwd("v=commit; git${IFS}$v -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("git${IFS}commit -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("git${IFS} commit -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("eval \"git commit -m test\"", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("eval 'git `echo commit` -m test'", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("eval 'git \"$(echo commit)\" -m test'", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("bash <<<\"git commit -m test\"", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("bash -c -- 'git commit -m test'", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("bash -c '$1 commit -m test' _ git", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("cmd=git bash -c '$cmd commit -m test'", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("bash -c '${G:-git} commit -m test'", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("bash -c 'git $(echo commit) -m test'", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("bash -c $'shopt -s expand_aliases\nalias g=git\ng commit -m test'", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("printf 'git commit -m test\\n' | bash", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("git $'commit' -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("git $'co\\x6dmit' -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("git $'co\\155mit' -m test", project, 1000)).toBe(resolve(project));
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
+	test("an empty core.hooksPath is hooks off, not a hooks directory", async () => {
+		const { verdict, ran } = await gate(hooksOff, "git commit -m test");
+		expect(verdict.kind).toBe("refuse");
+		if (verdict.kind !== "refuse") throw new Error("unreachable");
+		expect(verdict.reason).toContain("not armed by kendex");
+		expect(verdict.reason).toContain("kendex guard check");
+		expect(ran).toBe("");
 	});
 
-	test("handles long env and shell wrapper inputs without regex backtracking", async () => {
-		const project = initRepo("pi-hooks-project-");
-		const spaces = " ".repeat(1000);
-		try {
-			expect(await projectGitCommitCwd(`env -S 'git${spaces}commit -m test'`, project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`sh -c "git${spaces}commit -m test"`, project, 1000)).toBe(resolve(project));
-		} finally {
-			rmSync(project, { recursive: true, force: true });
+	test("bypassing the armed hook is refused, not half-checked", async () => {
+		for (const command of [
+			"git commit --no-verify -m x",
+			"git commit --no-verif -m x",
+			"git commit -n -m x",
+			"git commit -anm x",
+			"git -c core.hooksPath=/dev/null commit -m x",
+			"git -c core.hookspath=/dev/null commit -m x",
+			"git -c include.path=/tmp/alt.config commit -m x",
+			"git --config-env=core.hooksPath=HP commit -m x",
+			"GIT_CONFIG_KEY_0=Core.HooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x",
+			"GIT_CONFIG_COUNT=1 git commit -m x",
+			"git config --local core.hooksPath /dev/null && git commit -m x",
+			"git config --local --type path --includes --show-scope core.hooksPath /dev/null && git commit -m x",
+		]) {
+			const { verdict, ran } = await gate(armed, command);
+			expect(verdict.kind).toBe("refuse");
+			if (verdict.kind !== "refuse") throw new Error("unreachable");
+			expect(verdict.reason).toContain("bypasses this repository's armed git hooks");
+			expect(ran).toBe("");
 		}
+		const named = await gate(armed, "git commit --no-verify -m x");
+		if (named.verdict.kind !== "refuse") throw new Error("unreachable");
+		expect(named.verdict.reason).toContain("'--no-verify' bypasses");
+
+		const byPath = await gate(armedByPath, "git commit --no-verify -m x");
+		expect(byPath.verdict.kind).toBe("refuse");
+		expect(byPath.ran).toBe("");
 	});
 
-	test("does not let env assignments override shell variables used by git -C", async () => {
-		const project = initRepo("pi-hooks-project-");
-		try {
-			expect(await projectGitCommitCwd("repo=.; env repo=$(mktemp -d) git -C $repo commit -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("GIT_DIR=/tmp /bin/true; git commit -m test", project, 1000)).toBe(resolve(project));
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
+	test("the gate judges its working directory only", async () => {
+		// From an armed directory it defers whatever the target; from an
+		// unarmed one it judges itself and says so.
+		expect((await gate(armed, `git -C ${unarmed} commit -m x`)).verdict).toEqual({ kind: "allow" });
+
+		const fromUnarmed = await gate(unarmed, `git -C ${armed} commit -m x`);
+		expect(fromUnarmed.verdict.kind).toBe("refuse");
+		if (fromUnarmed.verdict.kind !== "refuse") throw new Error("unreachable");
+		expect(fromUnarmed.verdict.reason).toContain(`judged ${unarmed} only`);
+		expect(fromUnarmed.verdict.reason).toContain("moves repositories");
+		expect(fromUnarmed.ran).toBe("");
+
+		const leadingCd = await gate(unarmed, 'cd "$dir" && git commit -m x');
+		if (leadingCd.verdict.kind !== "refuse") throw new Error("unreachable");
+		expect(leadingCd.verdict.reason).toContain("moves repositories");
+
+		const inPlace = await gate(unarmed, "git commit -m x");
+		if (inPlace.verdict.kind !== "refuse") throw new Error("unreachable");
+		expect(inPlace.verdict.reason).not.toContain("moves repositories");
+
+		const outside = await gate(notARepo, `git -C ${unarmed} commit -m x`);
+		expect(outside.verdict.kind).toBe("allow");
+		if (outside.verdict.kind !== "allow") throw new Error("unreachable");
+		expect(outside.verdict.notice).toContain("moves repositories");
 	});
 
-	test("detects control-flow and scoped project commits", async () => {
-		const project = initRepo("pi-hooks-project-");
-		try {
-			expect(await projectGitCommitCwd("if true; then git commit -m test; fi", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("! git commit -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("{ git commit -m test; }", project, 1000)).toBe(resolve(project));
-		} finally {
-			rmSync(project, { recursive: true, force: true });
+	test("shell forms the old parser refused pass through an armed repository", async () => {
+		for (const command of [
+			'git -C "$repo" commit -m x',
+			'repo=$(git rev-parse --show-toplevel) && git -C "$repo" commit -m x',
+			'cd "$dir" && git commit -m x',
+			"git -C `pwd` commit -m x",
+			"(cd /target && git commit -m x)",
+			"git --git-dir=/t/.git --work-tree=/t commit -m x",
+			'git -C "/tmp/my repo" commit -m x',
+		]) {
+			const { verdict } = await gate(armed, command);
+			expect(verdict).toEqual({ kind: "allow" });
 		}
-	});
-
-	test("detects commits after failed or scoped cd forms as project commits", async () => {
-		const project = initRepo("pi-hooks-project-");
-		const other = initRepo("pi-hooks-other-");
-		const noExec = join(project, "noexec");
-		try {
-			mkdirSync(noExec);
-			chmodSync(noExec, 0o000);
-			expect(await projectGitCommitCwd(`(cd ${q(other)} && true); git commit -m test`, project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`(cd ${q(other)} && git commit -m other); git commit -m test`, project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("cd /path/that/does/not/exist; git commit -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("cd /path/that/does/not/exist || git commit -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("cd /path/that/does/not/exist && true; git commit -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("false && cd /tmp; git commit -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd("if false; then cd /tmp; fi; git commit -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`cd ${q(noExec)}; git commit -m test`, project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`true | cd ${q(other)}; git commit -m test`, project, 1000)).toBe(resolve(project));
-		} finally {
-			chmodSync(noExec, 0o700);
-			rmSync(project, { recursive: true, force: true });
-			rmSync(other, { recursive: true, force: true });
-		}
-	});
-
-	test("treats project git-dir with external cwd/work-tree as project commit", async () => {
-		const project = initRepo("pi-hooks-project-");
-		const other = initRepo("pi-hooks-other-");
-		try {
-			expect(await projectGitCommitCwd(`git --git-dir=${q(join(project, ".git"))} --work-tree=${q(other)} commit -m test`, project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`git --git-dir=${q(join(other, ".git"))} --work-tree=${q(project)} commit -m test`, project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`GIT_DIR=${q(join(project, ".git"))} git -C ${q(other)} commit -m test`, project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`GIT_DIR=${q(join(other, ".git"))} GIT_WORK_TREE=${q(project)} git commit -m test`, project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`export GIT_WORK_TREE=${q(project)}; git --git-dir=${q(join(other, ".git"))} commit -m test`, project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`env GIT_WORK_TREE=${q(project)} -S "git --git-dir=${join(other, ".git")} commit -m test"`, project, 1000)).toBe(resolve(project));
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-			rmSync(other, { recursive: true, force: true });
-		}
-	});
-
-	test("treats linked worktree git-dir as active project commit", async () => {
-		const main = initRepo("pi-hooks-main-");
-		const parent = mkdtempSync(join(tmpdir(), "pi-hooks-worktree-parent-"));
-		const worktree = join(parent, "wt");
-		try {
-			writeFileSync(join(main, "README.md"), "init\n");
-			runGit(["add", "README.md"], main);
-			runGit(["-c", "user.email=pi-hooks@example.com", "-c", "user.name=pi-hooks", "commit", "-q", "-m", "init"], main);
-			runGit(["worktree", "add", "-q", worktree, "HEAD"], main);
-			const gitDir = readFileSync(join(worktree, ".git"), "utf8").trim().replace(/^gitdir:\s*/, "");
-			expect(await projectGitCommitCwd(`git --git-dir=${q(gitDir)} commit -m test`, worktree, 1000)).toBe(resolve(worktree));
-		} finally {
-			rmSync(main, { recursive: true, force: true });
-			rmSync(parent, { recursive: true, force: true });
-		}
-	});
-
-	test("falls back to project commit when later shell-c commit is not parsed", async () => {
-		const project = initRepo("pi-hooks-project-");
-		const other = initRepo("pi-hooks-other-");
-		try {
-			expect(await projectGitCommitCwd(`git -C ${q(other)} commit -m fixture; bash -c "git commit -m project"`, project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`git -C ${q(other)} commit -m fixture; bash -lc "git commit -m project"`, project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`bash -o pipefail -c "git commit -m project"`, project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`bash +o pipefail -c "git commit -m project"`, project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`bash -c $'git commit -m project'`, project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`bash -c 'git "$@"' _ commit -m project`, project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`bash -c 'git ${"${@}"}' _ commit -m project`, project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`bash -c 'git ${"${1}"} -m project' _ commit`, project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`zsh -fc "git commit -m project"`, project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`/bin/bash -c "git commit -m project"`, project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`/usr/bin/git commit -m project`, project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`command /usr/bin/git commit -m project`, project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`git -C ${q(other)} commit -m fixture; git --exec-path ${q("/usr/lib/git-core")} commit -m project`, project, 1000)).toBe(resolve(project));
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-			rmSync(other, { recursive: true, force: true });
-		}
-	});
-
-	test("detects canonical project paths that look outside lexically", async () => {
-		const project = initRepo("pi-hooks-project-");
-		const parent = mkdtempSync(join(tmpdir(), "pi-hooks-links-"));
-		const link = join(parent, "project-link");
-		const otherWorkTree = join(parent, "other-work-tree");
-		try {
-			symlinkSync(project, link, "dir");
-			mkdirSync(otherWorkTree);
-			expect(await projectGitCommitCwd("git -C /proc/self/cwd commit -m test", project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`git -C ${q(link)} commit -m test`, project, 1000)).toBe(resolve(link));
-			expect(await projectGitCommitCwd(`git --git-dir=${q(join(link, ".git"))} commit -m test`, project, 1000)).toBe(resolve(project));
-			expect(await projectGitCommitCwd(`git --work-tree=${q(otherWorkTree)} commit -m test`, project, 1000)).toBe(resolve(project));
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-			rmSync(parent, { recursive: true, force: true });
-		}
-	});
-
-	test("detects backslash-newline wrapped git commits", async () => {
-		const project = initRepo("pi-hooks-project-");
-		try {
-			expect(await projectGitCommitCwd(`git add src/lib.rs && \\
-git commit -m test`, project, 1000)).toBe(resolve(project));
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
-	test("skips git -C commits targeting another repo", async () => {
-		const project = initRepo("pi-hooks-project-");
-		const other = initRepo("pi-hooks-other-");
-		try {
-			expect(await projectGitCommitCwd(`git -C ${q(other)} commit -m base`, project, 1000)).toBeNull();
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-			rmSync(other, { recursive: true, force: true });
-		}
-	});
-
-	test("skips commands that cd into another repo before committing", async () => {
-		const project = initRepo("pi-hooks-project-");
-		const other = initRepo("pi-hooks-other-");
-		try {
-			expect(await projectGitCommitCwd(`cd ${q(other)} && git commit -m base`, project, 1000)).toBeNull();
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-			rmSync(other, { recursive: true, force: true });
-		}
-	});
-
-	test("skips mktemp -C targets that are provably outside the project", async () => {
-		const project = initRepo("pi-hooks-project-");
-		try {
-			const command = 'seed=$(mktemp -d); git -C "$seed" commit -m base';
-			expect(gitCommitTargets(command, project)).toEqual([
-				expect.objectContaining({ cwd: null, external: true, unknown: false, hasGitDir: false, gitDir: null, hasWorkTree: false, workTree: null }),
-			]);
-			expect(await projectGitCommitCwd(command, project, 1000)).toBeNull();
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
-	test("blocks unresolved dynamic targets instead of silently skipping", async () => {
-		const project = initRepo("pi-hooks-project-");
-		try {
-			const result = await resolveProjectGitCommit('git -C "$repo" commit -m base', project, 1000);
-			expect(result.kind).toBe("error");
-			const dynamicSubcommand = await resolveProjectGitCommit('git "$cmd" -m base', project, 1000);
-			expect(dynamicSubcommand.kind).toBe("error");
-			const dynamicAlias = await resolveProjectGitCommit("x=zz; ALIAS=commit git --config-env=alias.$x=ALIAS zz -m base", project, 1000);
-			expect(dynamicAlias.kind).toBe("error");
-			expect(await projectGitCommitCwd("CFG=alias.zzz=commit; git -c $CFG zzz -m base", project, 1000)).toBe(resolve(project));
-			const dynamicConfigKey = await resolveProjectGitCommit("git config ${K:-alias.zzz} commit; git zzz -m base", project, 1000);
-			expect(dynamicConfigKey.kind).toBe("error");
-			const includeAlias = await resolveProjectGitCommit("git -c include.path=/tmp/aliases zzz276 -m base", project, 1000);
-			expect(includeAlias.kind).toBe("error");
-			const includeIfAlias = await resolveProjectGitCommit(`git -c includeIf.gitdir:${project}/.git.path=/tmp/aliases zzz276 -m base`, project, 1000);
-			expect(includeIfAlias.kind).toBe("error");
-			const globalAlias = await resolveProjectGitCommit("GIT_CONFIG_GLOBAL=/tmp/aliases git zzz276 -m base", project, 1000);
-			expect(globalAlias.kind).toBe("error");
-			const exportedGlobalAlias = await resolveProjectGitCommit("export GIT_CONFIG_GLOBAL=/tmp/aliases; git zzz276 -m base", project, 1000);
-			expect(exportedGlobalAlias.kind).toBe("error");
-			const dynamicHomeAlias = await resolveProjectGitCommit("HOME=$h git zzz276 -m base", project, 1000);
-			expect(dynamicHomeAlias.kind).toBe("error");
-			const dynamicCount = await resolveProjectGitCommit("n=1; GIT_CONFIG_COUNT=$n GIT_CONFIG_KEY_0=alias.zzz GIT_CONFIG_VALUE_0=commit git zzz -m base", project, 1000);
-			expect(dynamicCount.kind).toBe("error");
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
-	test("skips non-executed git commit text", async () => {
-		const project = initRepo("pi-hooks-project-");
-		try {
-			for (const command of ["echo git commit", "# git commit", "printf 'git commit'", "cat <<<'git commit'"]) {
-				const result = await resolveProjectGitCommit(command, project, 1000);
-				expect(result).toEqual({ kind: "skip", reason: "no-git-commit" });
-			}
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
-	test("does not leak one-shot git config prefix assignments", async () => {
-		const project = initRepo("pi-hooks-project-");
-		try {
-			for (const command of [
-				"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.zzz GIT_CONFIG_VALUE_0=commit /bin/true; git zzz -m base",
-				"GIT_CONFIG_GLOBAL=/tmp/aliases /bin/true; git zzz276 -m base",
-			]) {
-				expect(await projectGitCommitCwd(command, project, 1000)).toBeNull();
-			}
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
-	test("skips explicit --git-dir outside the project", async () => {
-		const project = initRepo("pi-hooks-project-");
-		const other = initRepo("pi-hooks-other-");
-		try {
-			expect(await projectGitCommitCwd(`git --git-dir=${q(join(other, ".git"))} commit -m base`, project, 1000)).toBeNull();
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-			rmSync(other, { recursive: true, force: true });
-		}
-	});
-});
-
-describe("nearestCargoManifestDir", () => {
-	test("resolves a Cargo.toml nested under the repo root (kendex cli/)", () => {
-		const root = mkdtempSync(join(tmpdir(), "pi-hooks-ws-"));
-		try {
-			mkdirSync(join(root, "cli", "src", "harness"), { recursive: true });
-			writeFileSync(join(root, "cli", "Cargo.toml"), "[package]\nname = \"x\"\nversion = \"0.0.0\"\n");
-			expect(nearestCargoManifestDir(root, ["cli/src/harness/codex.rs"])).toBe(join(root, "cli"));
-		} finally {
-			rmSync(root, { recursive: true, force: true });
-		}
-	});
-
-	test("returns null when no Cargo.toml sits above the files", () => {
-		const root = mkdtempSync(join(tmpdir(), "pi-hooks-ws-"));
-		try {
-			mkdirSync(join(root, "docs"), { recursive: true });
-			expect(nearestCargoManifestDir(root, ["docs/notes.rs"])).toBeNull();
-		} finally {
-			rmSync(root, { recursive: true, force: true });
-		}
+		expect((await gate(unarmed, 'git -C "/tmp/my repo" commit -m x')).verdict.kind).toBe("refuse");
 	});
 });
 

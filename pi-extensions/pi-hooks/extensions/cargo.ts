@@ -1,13 +1,8 @@
 import { spawnSync } from "node:child_process";
 
-import { type CommandResult, runCommandAsync } from "./process.js";
+import type { CommandResult } from "./process.js";
 
 export type CargoResult = CommandResult;
-
-export type WorkspaceRootResult =
-	| { kind: "ok"; root: string }
-	| { kind: "none"; reason: string }
-	| { kind: "error"; reason: string };
 
 export function runCargo(args: string[], cwd: string, timeoutMs: number): CargoResult {
 	const result = spawnSync("cargo", args, {
@@ -22,10 +17,6 @@ export function runCargo(args: string[], cwd: string, timeoutMs: number): CargoR
 		stderr: result.stderr ?? "",
 		timedOut: (result as { signal?: NodeJS.Signals | null }).signal === "SIGTERM",
 	};
-}
-
-export function runCargoAsync(args: string[], cwd: string, timeoutMs: number): Promise<CargoResult> {
-	return runCommandAsync("cargo", args, cwd, timeoutMs);
 }
 
 /**
@@ -54,40 +45,6 @@ export function findCargoWorkspaceRoot(cwd: string, timeoutMs: number): string |
 	return root;
 }
 
-export async function findCargoWorkspaceRootAsync(cwd: string, timeoutMs: number): Promise<string | null> {
-	const result = await findCargoWorkspaceRootResultAsync(cwd, timeoutMs);
-	return result.kind === "ok" ? result.root : null;
-}
-
-export async function findCargoWorkspaceRootResultAsync(cwd: string, timeoutMs: number): Promise<WorkspaceRootResult> {
-	if (workspaceRootCache.has(cwd)) {
-		const cached = workspaceRootCache.get(cwd) ?? null;
-		return cached ? { kind: "ok", root: cached } : { kind: "none", reason: "no cargo workspace found" };
-	}
-	const r = await runCargoAsync(["metadata", "--format-version", "1", "--no-deps"], cwd, timeoutMs);
-	if (r.timedOut) {
-		return { kind: "error", reason: `cargo metadata timed out after ${Math.max(1, timeoutMs)}ms.` };
-	}
-	if (r.exitCode !== 0) {
-		workspaceRootCache.set(cwd, null);
-		const detail = (r.stderr || r.stdout).trim();
-		return { kind: "none", reason: detail || "cargo metadata did not find a workspace" };
-	}
-	let root: string | null = null;
-	try {
-		const meta = JSON.parse(r.stdout);
-		if (typeof meta?.workspace_root === "string") root = meta.workspace_root;
-	} catch {
-		return { kind: "error", reason: "cargo metadata returned invalid JSON." };
-	}
-	if (!root) {
-		workspaceRootCache.set(cwd, null);
-		return { kind: "none", reason: "cargo metadata output did not include workspace_root" };
-	}
-	workspaceRootCache.set(cwd, root);
-	return { kind: "ok", root };
-}
-
 /**
  * Per-turn cache for the most recent workspace clippy run. Both `post-edit-lint`
  * and `task-completed-check` need the same `cargo clippy --workspace
@@ -108,15 +65,6 @@ export function runWorkspaceClippy(root: string, timeoutMs: number): CargoResult
 		return cachedClippy.result;
 	}
 	const result = runCargo(["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"], root, timeoutMs);
-	cachedClippy = { root, result };
-	return result;
-}
-
-export async function runWorkspaceClippyAsync(root: string, timeoutMs: number): Promise<CargoResult> {
-	if (cachedClippy && cachedClippy.root === root) {
-		return cachedClippy.result;
-	}
-	const result = await runCargoAsync(["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"], root, timeoutMs);
 	cachedClippy = { root, result };
 	return result;
 }

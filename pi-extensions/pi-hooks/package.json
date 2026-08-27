@@ -1,7 +1,7 @@
 {
   "name": "@vanillagreen/pi-hooks",
-  "version": "0.6.1",
-  "description": "First-class Pi port of the kendex safety hooks: bare-cd blocking, pre-commit fmt+clippy, post-edit clippy, end-of-turn lint, session-start kendex drift report. Per-hook toggles via pi-extension-manager.",
+  "version": "0.7.0",
+  "description": "First-class Pi port of the kendex safety hooks: bare-cd blocking, pre-commit gate deferring to armed git hooks, post-edit clippy, end-of-turn lint, session-start kendex drift report. Per-hook toggles via pi-extension-manager.",
   "license": "MIT",
   "keywords": [
     "pi-package",
@@ -52,8 +52,8 @@
         },
         {
           "key": "preCommitCheck",
-          "label": "Pre-commit fmt + clippy",
-          "description": "When the agent runs `git commit` in the project repo, run `cargo fmt --check` and `cargo clippy --workspace --all-targets -- -D warnings` first using async child processes. Block the commit if either fails. Skips commits targeting other repos and only fires when staged or modified .rs files exist; if the bash command contains `git add`, untracked .rs files are treated conservatively as possibly staged by that command. Cost: only paid at commit time.",
+          "label": "Pre-commit gate",
+          "description": "On a bash command containing `git commit` in word order, defer to the working directory's git hooks when kendex armed them (`kendex guard install`: pre-commit and commit-msg both executable and marked, `core.hooksPath` unset), so git validates the commit exactly once. Refuse a command that sidesteps an armed hook (`--no-verify`, `-n`, `-c`, `--config-env`, `GIT_CONFIG_*`, a `git config` write of `core.hooksPath`). Refuse a commit in a repository nothing armed, naming `kendex guard install`; this gate never runs a check of its own. Gates the working directory only: a commit aimed at another repository is that repository's own hook's to gate. Mirrors hooks/pre-commit-check.sh.",
           "type": "boolean",
           "default": true,
           "category": "Bash",
@@ -98,7 +98,7 @@
         {
           "key": "clippyTimeoutMs",
           "label": "Clippy timeout",
-          "description": "Maximum milliseconds any single cargo clippy invocation is allowed to run. Advisory post-edit/end-of-turn clippy timeouts are abandoned so the tool/turn can continue; blocking pre-commit fmt/clippy timeouts block the commit with a timeout reason. Matches the `timeout: 30` declared in hooks/post-edit-lint.sh. Raise for slow workspaces.",
+          "description": "Maximum milliseconds any single cargo clippy invocation is allowed to run. Post-edit and end-of-turn clippy timeouts are abandoned so the tool/turn can continue. Matches the `timeout: 30` declared in hooks/post-edit-lint.sh. Raise for slow workspaces.",
           "type": "number",
           "default": 30000,
           "category": "Rust",
