@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Behavioral coverage for the untracked-claim term: the predicate's thread
-# jq (extracted from the script, not restated) flags a human tracking claim
-# with no issue id, passes claims carrying any ABC-123 or #123 id, exempts
-# bot comments, and fails closed on a comments page it cannot finish.
+# jq (extracted from the script, not restated) judges each thread by its
+# latest non-bot comment — a tracking claim with no issue id counts, a
+# Fixed in/Declined: reply never does, a later reply clears an earlier
+# claim, resolving the thread does not, bot replies do not move the
+# disposition — and fails closed on a comments page it cannot finish.
 # The writer maps the verdict to a failure status.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,6 +40,21 @@ case "$out" in "0 0 "*) ok "bot comments are exempt";; *) bad "bot comments are 
 
 out=$(page "$(thread true "$(human 'Declined: probe is intentional')")")
 case "$out" in "0 0 "*) ok "a decline is not a claim";; *) bad "a decline is not a claim" "$out";; esac
+
+out=$(page "$(thread true "$(human 'Out of scope, tracked.'),$(human 'Declined: probe is intentional')")")
+case "$out" in "0 0 "*) ok "a later Declined: reply clears a naked claim";; *) bad "a later Declined: reply clears a naked claim" "$out";; esac
+
+out=$(page "$(thread true "$(human 'Out of scope, tracked.'),$(human 'Tracked: KEN-637')")")
+case "$out" in "0 0 "*) ok "a later Tracked: <id> reply clears a naked claim";; *) bad "a later Tracked: <id> reply clears a naked claim" "$out";; esac
+
+out=$(page "$(thread true "$(human 'Fixed in abc123, every tracked caller now runs')")")
+case "$out" in "0 0 "*) ok "a Fixed in reply is never a claim, whatever its prose";; *) bad "a Fixed in reply is never a claim, whatever its prose" "$out";; esac
+
+out=$(page "$(thread true "$(human 'Out of scope, tracked.'),$(bot 'Thanks, noted as tracked')")")
+case "$out" in "0 1 "*) ok "a bot reply does not move the disposition";; *) bad "a bot reply does not move the disposition" "$out";; esac
+
+out=$(page "$(thread true "$(human 'Fixed in abc123'),$(human 'the rest is tracked for later')")")
+case "$out" in "0 1 "*) ok "a resolved thread with a naked last reply still counts";; *) bad "a resolved thread with a naked last reply still counts" "$out";; esac
 
 out=$(page "$(thread false "$(human 'looking')")")
 case "$out" in "1 0 "*) ok "unresolved counting unchanged";; *) bad "unresolved counting unchanged" "$out";; esac

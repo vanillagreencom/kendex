@@ -239,8 +239,10 @@ git -C "[WORKTREE_PATH]" push origin HEAD
 | Blocked → issue | `Tracked: [CREATED_ISSUE_ID]` — the issue exists BEFORE the reply; the gate rejects a tracking claim naming no issue |
 | Already fixed | The finding's `draft_response` |
 
-The word "tracked" (any form) in a reply without a `KEN-` or `#` issue id
-turns the gate red (`untracked-claim`). A decline is a decline — say so.
+The word "tracked" (any form) in a thread's latest non-bot reply without a
+`KEN-` or `#` issue id turns the gate red (`untracked-claim`); a reply
+opening with `Fixed in` or `Declined:` never does. The latest non-bot reply
+is the thread's disposition, resolving it is not. A decline is a decline — say so.
 
 ```bash
 .agents/skills/github/scripts/github.sh post-reply "[THREAD_ID]" "[REPLY_BODY]" --pr "[PR_NUMBER]"

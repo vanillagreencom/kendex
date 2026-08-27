@@ -1262,16 +1262,11 @@ fi
 unresolved=0
 untracked=0
 if [ "$THREADS_MODE" = "enforce" ]; then
-# Threads are counted across PAGES: long-lived PRs accumulate hundreds of
-# resolved threads, and failing closed at the first page's hasNextPage made
-# the gate permanently red once total threads passed 100 — regardless of
-# how many were unresolved. The bound moves to 20 pages (2000 threads);
-# past it, and on a truthy hasNextPage with no advancing cursor, the old
-# fail-closed "overflow" posture still applies. Malformed nodes keep
-# failing closed per page exactly as before.
-# A human reply claiming a finding is "tracked" must name the tracker issue
-# (an ABC-123 tracker id or #123): a tracking claim with nothing behind it is a false
-# disposition, and the gate is where it becomes visible. Bot comments are
+# A thread's disposition is its LATEST non-bot comment. That comment is an
+# untracked claim when it is not a leading "Fixed in"/"Declined:" reply,
+# carries a track-word, and names no issue (ABC-123 or #123). A later reply
+# of either form or a Tracked: <id> clears an earlier naked claim; resolving
+# the thread does not — the claimant is also the resolver. Bot comments are
 # exempt (they quote each other); a missing comments field reads as none.
 # A thread past 50 comments cannot be fully read in this page shape, so it
 # fails closed as malformed rather than approving a claim it never saw.
@@ -1281,10 +1276,11 @@ t_threads_page_jq='if ((.data.repository.pullRequest.reviewThreads.pageInfo.hasN
   elif ([.data.repository.pullRequest.reviewThreads.nodes[] | select(.comments.pageInfo.hasNextPage == true)] | length) > 0
   then "malformed"
   else ([.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length | tostring)
-    + " " + ([.data.repository.pullRequest.reviewThreads.nodes[] | ((.comments.nodes // [])[]
-        | select((.author.__typename // "User") != "Bot")
-        | select((.body // "") | test("(?i)\\btrack(ed|ing|s)?\\b"))
-        | select(((.body // "") | test("([A-Z][A-Z0-9]+-[0-9]+|#[0-9]+)\\b")) | not))] | length | tostring)
+    + " " + ([.data.repository.pullRequest.reviewThreads.nodes[]
+        | ([(.comments.nodes // [])[] | select((.author.__typename // "User") != "Bot")] | last // empty | .body // "")
+        | select(test("^\\s*(fixed in|declined:)"; "i") | not)
+        | select(test("(?i)\\btrack(ed|ing|s)?\\b"))
+        | select(test("([A-Z][A-Z0-9]+-[0-9]+|#[0-9]+)\\b") | not)] | length | tostring)
     + " " + (.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | tostring)
     + " " + (.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // "END")
   end'
