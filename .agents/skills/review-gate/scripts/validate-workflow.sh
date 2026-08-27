@@ -161,8 +161,29 @@ code_lines() { # FILE — YAML comment-only lines dropped outside block scalars
 # character, so `-f` would then see the quoted spelling, skip the file
 # silently, and let a second writer hide behind its own name; a pathname may
 # also contain a newline, which a line-based read splits in two.
-git ls-files -z -- '.github/workflows/*.yml' '.github/workflows/*.yaml' >"$TMP/workflows" ||
+git ls-files -z -- '.github/workflows/*.yml' '.github/workflows/*.yaml' >"$TMP/listing" ||
   die "could not list this repository's tracked workflows"
+
+# DIRECT CHILDREN only. A git pathspec '*' crosses '/', so the listing above
+# also carries nested paths like .github/workflows/archive/writer.yml — and
+# GitHub runs no such file. Counting one as the adopted writer is the worst
+# shape this tool has: a repo whose only copy is filed away reads as wired.
+: >"$TMP/workflows"
+nested_engine=""
+while IFS= read -r -d '' wf; do
+  [ -n "$wf" ] || continue
+  case "${wf#.github/workflows/}" in
+    */*)
+      # Named separately below rather than dropped in silence: a nested copy
+      # that runs the engine is the likely reason a repo has no writer.
+      if [ -f "$wf" ] && grep -qE -- "$EXEC_WRITER_RE" "$wf" 2>/dev/null; then
+        nested_engine="${nested_engine:+$nested_engine, }$wf"
+      fi
+      continue
+      ;;
+  esac
+  printf '%s\0' "$wf" >>"$TMP/workflows"
+done <"$TMP/listing"
 
 adopted=""
 adopted_count=0
@@ -190,6 +211,9 @@ done <"$TMP/workflows"
 
 if [ "$adopted_count" -eq 0 ]; then
   bad "no tracked workflow under .github/workflows/ EXECUTES review-writer.sh — nothing writes this repo's gate status; copy templates/review-gate-writer.yml in (references/adoption.md)"
+  if [ -n "$nested_engine" ]; then
+    note "a NESTED file does execute the engine ($nested_engine), and GitHub runs only direct children of .github/workflows/ — move it up one level"
+  fi
   printf '\n'
   exit 1
 fi
