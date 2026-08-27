@@ -585,5 +585,30 @@ case "$OUT" in
   *) bad "install did not name the empty value" "$OUT" ;;
 esac
 
+echo "=== the default named equivalently, before the directory exists ==="
+# git does not always have a .git/hooks yet, and a directory that is not
+# there cannot be resolved on disk. Comparing the raw spellings there
+# answered "elsewhere" for the repository's own hooks directory, so an
+# install that should have CREATED it stood down and wrote nothing — the
+# harm being silence, not a wrong verdict.
+R63="$(new_repo no-hooks-dir)"
+rm -rf "$R63/.git/hooks"
+git -C "$R63" config core.hooksPath ".git/refs/../hooks"
+install_in "$R63"
+[ -x "$R63/.git/hooks/kendex-guards" ] \
+  && ok "install creates the hooks directory it was pointed at" \
+  || bad "install stood down over an unresolvable equivalent spelling" "out=$OUT"
+check_in "$R63"
+[ "$RC" -eq 0 ] && ok "and the result reads armed" || bad "not armed" "rc=$RC out=$OUT"
+
+# The must-fail control: still unresolvable, but genuinely somewhere else.
+R64="$(new_repo no-hooks-dir-elsewhere)"
+rm -rf "$R64/.git/hooks"
+git -C "$R64" config core.hooksPath "nowhere/at/all"
+install_in "$R64"
+[ -e "$R64/.git/hooks/kendex-guards" ] \
+  && bad "wrote into a directory git does not read" "out=$OUT" \
+  || ok "must-fail: an unresolvable path that is elsewhere still stands down"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

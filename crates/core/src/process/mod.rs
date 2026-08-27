@@ -51,6 +51,8 @@ const GIT_REDIRECTS: &[&str] = &[
     "GIT_NAMESPACE",
 ];
 
+mod programs;
+
 pub struct Hardened {
     command: Command,
     /// What the caller asked for, for error messages. Plumbing arguments
@@ -64,108 +66,6 @@ pub struct Hardened {
 }
 
 impl Hardened {
-    pub fn git(args: &[&str], cwd: Option<&Path>) -> Hardened {
-        let mut hardened = Hardened::git_command(owned(args), cwd);
-        hardened.label = format!("git {}", args.join(" "));
-        hardened
-    }
-
-    /// git against a downloaded repository. The working tree is pinned on
-    /// the command line, where it outranks a `core.worktree` the repository
-    /// ships, so the call cannot reach outside `repo`.
-    pub fn git_in(repo: &Path, args: &[&str]) -> Hardened {
-        let mut pinned = vec![
-            OsString::from("--git-dir"),
-            repo.join(".git").into_os_string(),
-            OsString::from("--work-tree"),
-            repo.as_os_str().to_owned(),
-        ];
-        pinned.extend(owned(args));
-        let mut hardened = Hardened::git_command(pinned, Some(repo));
-        hardened.label = format!("git {}", args.join(" "));
-        hardened
-    }
-
-    /// git against a bare mirror in the cache. No working tree is attached,
-    /// so no operation on it can write a file anywhere: a mirror only ever
-    /// gains objects and refs.
-    pub fn git_bare(git_dir: &Path, args: &[&str]) -> Hardened {
-        let mut pinned = vec![OsString::from("--git-dir"), git_dir.as_os_str().to_owned()];
-        pinned.extend(owned(args));
-        let mut hardened = Hardened::git_command(pinned, Some(git_dir));
-        hardened.label = format!("git {}", args.join(" "));
-        hardened
-    }
-
-    /// git materializing a commit out of a bare mirror into `work_tree`.
-    /// Both ends are pinned on the command line, where they outrank any
-    /// `core.worktree` in the mirror, so the write lands in the directory
-    /// named here and nowhere else.
-    pub fn git_into(git_dir: &Path, work_tree: &Path, args: &[&str]) -> Hardened {
-        let mut pinned = vec![
-            OsString::from("--git-dir"),
-            git_dir.as_os_str().to_owned(),
-            OsString::from("--work-tree"),
-            work_tree.as_os_str().to_owned(),
-        ];
-        pinned.extend(owned(args));
-        let mut hardened = Hardened::git_command(pinned, Some(work_tree));
-        hardened.label = format!("git {}", args.join(" "));
-        hardened
-    }
-
-    pub fn npm(args: &[&str], cwd: Option<&Path>) -> Hardened {
-        let mut hardened = Hardened::new("npm", owned(args));
-        if let Some(cwd) = cwd {
-            hardened.command.current_dir(cwd);
-        }
-        hardened
-    }
-
-    pub fn gh(args: &[&str]) -> Hardened {
-        Hardened::new("gh", owned(args))
-    }
-
-    pub fn curl(args: &[&str]) -> Hardened {
-        Hardened::new("curl", owned(args))
-    }
-
-    /// A hook body the growth-guards package ships, run from the repository
-    /// root as the commit gate.
-    ///
-    /// The one child here that deliberately keeps git's redirect variables.
-    /// Everything else scrubs them, because an inherited `GIT_DIR` would
-    /// send a command at the wrong repository; but this child *is* a git
-    /// hook body. Git exported those variables for it — `GIT_INDEX_FILE`
-    /// naming the temporary index of the commit being made — and a chain
-    /// that could not see them would judge the wrong snapshot, passing a
-    /// commit nobody checked. Its stdin stays the caller's for the same
-    /// reason: the commit-msg lane reads a message from a pipe when git
-    /// hands it no file, and `/dev/null` there is an empty message. The
-    /// program is never a name a committed file chose: it is the installed
-    /// package's own script, at a path this crate derived.
-    pub fn guard_hook(program: &Path, args: &[&str], cwd: &Path) -> Hardened {
-        let mut hardened = Hardened::new(&program.to_string_lossy(), owned(args));
-        hardened.command.stdin(Stdio::inherit());
-        hardened.command.current_dir(cwd);
-        hardened
-    }
-
-    /// A management script the growth-guards package ships — arming,
-    /// disarming, or reporting on the shims.
-    ///
-    /// Not a hook body, so it gets the ordinary scrub. These run git
-    /// themselves against the repository they were pointed at, and an
-    /// inherited `GIT_DIR` or `GIT_INDEX_FILE` would outrank that and send
-    /// them at a different repository — writing hooks into one repo while
-    /// reporting about another.
-    pub fn guard_script(program: &Path, args: &[&str], cwd: &Path) -> Hardened {
-        let mut hardened = Hardened::new(&program.to_string_lossy(), owned(args));
-        hardened.scrub_git_redirects();
-        hardened.command.current_dir(cwd);
-        hardened
-    }
-
     pub fn timeout(mut self, timeout: Duration) -> Hardened {
         self.timeout = timeout;
         self

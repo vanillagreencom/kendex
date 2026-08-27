@@ -19,6 +19,16 @@ an outside contributor.
 - `kendex check` reads a repository's hook files itself instead of running
   its guard scripts, so reading a clone's status executes none of its code.
   It answers armed, not armed, or cannot tell, and never guesses.
+- An install whose `pre-commit` or `commit-msg` script is missing or not
+  executable reads as not armed rather than armed, in the package's own
+  `--check` as well as in `kendex check` — that state blocks every commit.
+- `kendex guard install` arms a repository whose `core.hooksPath` names its
+  own hooks directory even when that directory does not exist yet.
+- The `pre-commit-check` hook stands aside only when both git hooks are
+  armed; with `commit-msg` missing it no longer waives the message gate.
+- The guard verbs run the package's scripts through `sh` on Windows, where
+  `#!` lines are not honoured, instead of failing to start.
+
 - `core.hooksPath` set to a repository's own hooks directory no longer stops
   `kendex guard install` from arming it, whatever spelling the value uses.
 - The growth-guards `--check` reads an empty `core.hooksPath` as hooks

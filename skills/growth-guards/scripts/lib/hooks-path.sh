@@ -10,14 +10,50 @@
 # when the file was read.
 set -euo pipefail
 
+# A path with `.` dropped and `..` folded on paper, for comparing two
+# spellings of one place when neither can be resolved on disk. Never a
+# substitute for resolving: it settles no symlink, and a `..` across one
+# lands somewhere else entirely.
+lexical_dir() { # PATH -> folded path on stdout
+  local rest="${1%/}" part="" out="" lead="" last=""
+  case "$1" in /*) lead="/" ;; esac
+  local IFS=/
+  for part in $rest; do
+    case "$part" in
+      "" | .) continue ;;
+      ..)
+        last="${out##*/}"
+        if [ -z "$out" ]; then
+          # Absolute: `..` at the root is the root, which is where git and
+          # the kernel land too. Relative: the climb is real and is kept.
+          [ -n "$lead" ] || out=".."
+        elif [ "$last" = ".." ]; then
+          out="$out/.."
+        else
+          case "$out" in
+            */*) out="${out%/*}" ;;
+            *) out="" ;;
+          esac
+        fi
+        ;;
+      *) out="${out:+$out/}$part" ;;
+    esac
+  done
+  printf '%s' "${lead}${out}"
+}
+
 # Two directories are the same directory whatever they are called. Resolved
-# on disk, which settles a symlinked checkout and a `..` together; a
-# directory that is not there yet cannot be resolved and is compared as
-# written, which is enough for spellings that differ only on paper.
+# on disk first, which settles a symlinked checkout and a `..` together.
+#
+# A directory that is not there yet cannot be resolved, and comparing the
+# raw spellings there answered "elsewhere" for `.git/refs/../hooks` on a
+# repository whose hooks directory git had not created — so an install that
+# should have created it stood down instead. Unresolvable falls back to the
+# folded form, which settles every spelling that differs only on paper.
 same_dir() { # A B
   local a="" b=""
-  a="$(cd -- "$1" 2>/dev/null && pwd -P)" || a="$1"
-  b="$(cd -- "$2" 2>/dev/null && pwd -P)" || b="$2"
+  a="$(cd -- "$1" 2>/dev/null && pwd -P)" || a="$(lexical_dir "$1")"
+  b="$(cd -- "$2" 2>/dev/null && pwd -P)" || b="$(lexical_dir "$2")"
   [ "$a" = "$b" ]
 }
 
@@ -48,3 +84,20 @@ classify_hooks_path() {
   same_dir "$abs" "$HOOKS_DIR" && HOOKS_PATH_ELSEWHERE=0
   return 0
 }
+
+# core.hooksPath set to the empty string switches git hooks off outright.
+#
+# Its own question because git's answer about it misleads everywhere else:
+# `rev-parse --git-path hooks` reports `./`, so every caller that resolves
+# the directory would measure the repository ROOT in place of a directory
+# git never reads — and a root holding the right shapes then reads as armed
+# for a repository whose commits nothing gates. Callers ask this before they
+# resolve anything.
+hooks_path_off() { # -> 0 when hooks are switched off
+  [ "$HOOKS_PATH_SET" -eq 1 ] && [ -z "$CUSTOM_HOOKS" ]
+}
+
+# The one remedy line for that state, so install and check say the same
+# thing. Arming is not the whole of it: the installer stands down under any
+# value at all, empty included, so the unset has to come first.
+HOOKS_OFF_REMEDY="run 'git config --unset core.hooksPath', then 'kendex guard install'"

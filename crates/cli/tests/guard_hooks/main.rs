@@ -10,6 +10,7 @@
 //! `arming` is putting it in place, taking it away, and reporting on it.
 #![cfg(unix)]
 
+mod agreement;
 mod arming;
 mod gating;
 

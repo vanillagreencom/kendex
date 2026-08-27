@@ -55,6 +55,35 @@ check_helper() { # DIR -> 0 armed, 1 not armed, 3 unverifiable
     add_reason "helper $HELPER_NAME is not the one this installer generates, so what it runs cannot be verified"
     return 3
   fi
+  check_delegated_lanes || return $?
+  return 0
+}
+
+# The helper being ours settles what it WOULD run, not that running it gates
+# anything.
+#
+# It execs one program per lane and exits 2 where the program is missing or
+# carries no execute bit, so an install that lost either one refuses every
+# commit. Calling that armed describes a repository whose commits are
+# BLOCKED as one whose commits are checked, which is the more expensive way
+# round to be wrong: the person is told nothing is wrong while nothing can
+# be committed.
+#
+# Asked here, once, so the answer cannot differ between the check that
+# reports and the engine that reads the report.
+check_delegated_lanes() { # -> 0 both lanes runnable, 1 not
+  local lane="" program=""
+  for lane in pre-commit commit-msg; do
+    program="$SCRIPT_DIR/$lane"
+    if [ ! -f "$program" ]; then
+      add_reason "$lane is missing from $SCRIPT_DIR, so every commit is blocked rather than guarded"
+      return 1
+    fi
+    if [ ! -x "$program" ]; then
+      add_reason "$lane in $SCRIPT_DIR is not executable, so every commit is blocked rather than guarded"
+      return 1
+    fi
+  done
   return 0
 }
 

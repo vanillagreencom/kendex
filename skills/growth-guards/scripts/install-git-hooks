@@ -139,7 +139,7 @@ HOOKS_DIR="$COMMON_DIR/hooks"
 classify_hooks_path
 
 if [ "$HOOKS_PATH_ELSEWHERE" -eq 1 ] && [ "$MODE" = "install" ]; then
-  if [ -z "$CUSTOM_HOOKS" ]; then
+  if hooks_path_off; then
     warn "core.hooksPath is set and empty, which switches git hooks off entirely, so the guard shims were NOT installed"
     echo "  Run 'git config --unset core.hooksPath', then install again." >&2
   else
@@ -643,12 +643,8 @@ other_worktree_still_installed() {
 
 if [ "$MODE" = "check" ]; then
   VERDICT=0
-  # Set and empty is not a redirect to anywhere; it switches hooks off, and
-  # git's own answer misleads about it — `rev-parse --git-path hooks` reports
-  # `./`, so the directory below would resolve to the repository root and be
-  # measured in place of a directory git never reads.
-  if [ "$HOOKS_PATH_SET" -eq 1 ] && [ -z "$CUSTOM_HOOKS" ]; then
-    echo "growth-guards git hooks: NOT armed — core.hooksPath is set and empty, which switches git hooks off, so commits are NOT gated; run 'git config --unset core.hooksPath', then 'kendex guard install'"
+  if hooks_path_off; then
+    echo "growth-guards git hooks: NOT armed — core.hooksPath is set and empty, which switches git hooks off, so commits are NOT gated; $HOOKS_OFF_REMEDY"
     exit 1
   fi
   # A core.hooksPath naming this repository's own hooks directory is not a

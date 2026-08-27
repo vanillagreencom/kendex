@@ -96,14 +96,18 @@ git -C "$UNARMED" init -q
 ARMED="$TMP_ROOT/armed"
 mkdir -p "$ARMED"
 git -C "$ARMED" init -q
-printf '#!/bin/sh\nexit 0\n' >"$ARMED/.git/hooks/pre-commit"
-chmod +x "$ARMED/.git/hooks/pre-commit"
+for lane in pre-commit commit-msg; do
+  printf '#!/bin/sh\nexit 0\n' >"$ARMED/.git/hooks/$lane"
+  chmod +x "$ARMED/.git/hooks/$lane"
+done
 
 ARMED_BY_PATH="$TMP_ROOT/armed-by-path"
 mkdir -p "$ARMED_BY_PATH" "$TMP_ROOT/custom-hooks"
 git -C "$ARMED_BY_PATH" init -q
-printf '#!/bin/sh\nexit 0\n' >"$TMP_ROOT/custom-hooks/pre-commit"
-chmod +x "$TMP_ROOT/custom-hooks/pre-commit"
+for lane in pre-commit commit-msg; do
+  printf '#!/bin/sh\nexit 0\n' >"$TMP_ROOT/custom-hooks/$lane"
+  chmod +x "$TMP_ROOT/custom-hooks/$lane"
+done
 git -C "$ARMED_BY_PATH" config core.hooksPath "$TMP_ROOT/custom-hooks"
 
 # A hook file git will not run: present, execute bit off. Git skips it
@@ -132,13 +136,22 @@ git -C "$HOOKS_OFF" config core.hooksPath ""
 printf '#!/bin/sh\nexit 0\n' >"$HOOKS_OFF/pre-commit"
 chmod +x "$HOOKS_OFF/pre-commit"
 
+# One lane armed and not the other. Deferring here would hand the commit to
+# a gate that checks content and accepts any message, and would waive the one
+# thing this hook can still do about it.
+HALF_ARMED="$TMP_ROOT/half-armed"
+mkdir -p "$HALF_ARMED"
+git -C "$HALF_ARMED" init -q
+printf '#!/bin/sh\nexit 0\n' >"$HALF_ARMED/.git/hooks/pre-commit"
+chmod +x "$HALF_ARMED/.git/hooks/pre-commit"
+
 NOT_A_REPO="$TMP_ROOT/plain"
 mkdir -p "$NOT_A_REPO"
 
 # Every fixture carries a package whose script would announce itself if
 # anything ran it. Nothing may: this hook defers to an armed hook or
 # refuses, and never runs a repository's own scripts on its behalf.
-for fixture in "$UNARMED" "$ARMED" "$ARMED_BY_PATH" "$DISARMED" "$DISARMED_BY_PATH" "$HOOKS_OFF"; do
+for fixture in "$UNARMED" "$ARMED" "$ARMED_BY_PATH" "$DISARMED" "$DISARMED_BY_PATH" "$HOOKS_OFF" "$HALF_ARMED"; do
   scripts="$fixture/.agents/skills/growth-guards/scripts"
   mkdir -p "$scripts"
   {
@@ -320,6 +333,11 @@ assert_eq "$log" "" "and nothing was run beside it"
 # at the repository root is what `--git-path hooks` points at when the value
 # is empty, so reading that directory answers about the wrong place — and
 # answers "armed" for a repository whose commits git gates with nothing.
+run_hook "$HALF_ARMED" "$(payload 'git commit -m test')"
+assert_eq "$rc" "2" "one lane armed is not an armed repository"
+assert_contains "$err" "only one of the two git hooks is armed" "the refusal says which half is missing"
+assert_eq "$log" "" "and nothing of the repository's was run"
+
 run_hook "$HOOKS_OFF" "$(payload 'git commit -m test')"
 assert_eq "$rc" "2" "an empty core.hooksPath is hooks off, not a hooks directory"
 assert_contains "$err" "switches git hooks off" "the refusal says what is actually wrong"

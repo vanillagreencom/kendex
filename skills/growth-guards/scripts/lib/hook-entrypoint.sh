@@ -60,6 +60,38 @@ gg_trusted_interpreter() { # SHEBANG-LINE -> 0 trusted
   [ -f "$rest" ] && [ -x "$rest" ]
 }
 
+# Whether a command word means something other than itself once the shell
+# is done with it.
+#
+# One definition for every quoting context, because the two spellings this
+# had drifted: `*'\\'*` is a QUOTED pair of backslashes and matches two in a
+# row, so a word carrying exactly one — which is what an escape looks like —
+# went straight through the guard that exists to catch it. The pattern that
+# matches one is `*\\*`, unquoted, where the backslash escapes itself.
+#
+# Single quotes make everything literal, so nothing is opaque there. Double
+# quotes still expand `$` and backticks and honour backslashes. An unquoted
+# word does all of that and additionally globs and expands `~`.
+#
+# A checkout path that literally contains `$slot` passed every file test
+# here while /bin/sh ran whatever `slot` pointed at, which is the failure
+# this closes: the check compares a spelling to a file on disk, and only a
+# spelling that survives evaluation unchanged can stand for what runs.
+word_is_opaque() { # WORD QUOTING -> 0 when the shell would change it
+  case "$2" in
+    single) return 1 ;;
+    double) case "$1" in *'$'* | *'`'* | *\\*) return 0 ;; esac ;;
+    *)
+      case "$1" in
+        *'$'* | *'`'* | *\\* | *'*'* | *'?'* | *'['* | *']'* | *'{'* | *'}'* | *'~'*)
+          return 0
+          ;;
+      esac
+      ;;
+  esac
+  return 1
+}
+
 hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecognized
   local hook="$1" path="$2" line="" body="" cmd="" tail="" rest="" cmd_dir="" own_dir="" shebang=""
   local quoting="" seen=0 matched=0 named=0 opaque=0
@@ -139,22 +171,10 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
     # unquoted word additionally globs and expands ~. A checkout path that
     # literally contains `$slot` passed every file test here while /bin/sh
     # ran whatever `slot` pointed at.
-    case "$quoting" in
-      single) ;;
-      double)
-        case "$cmd" in
-          *'$'* | *'`'* | *'\\'*) opaque=1; continue ;;
-        esac
-        ;;
-      *)
-        case "$cmd" in
-          *'$'* | *'`'* | *'\\'* | *'*'* | *'?'* | *'['* | *']'* | *'{'* | *'}'* | *'~'*)
-            opaque=1
-            continue
-            ;;
-        esac
-        ;;
-    esac
+    if word_is_opaque "$cmd" "$quoting"; then
+      opaque=1
+      continue
+    fi
     # A tail has to be SEPARATED from the command by a real blank. The shell
     # concatenates `"…/commit-msg""$1"` into one word, so accepting it as
     # command-plus-tail describes a hook that names something git cannot run

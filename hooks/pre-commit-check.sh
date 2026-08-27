@@ -86,7 +86,19 @@ case "$CUSTOM_STATUS" in
     exit 2
     ;;
 esac
-if [ -z "$HOOKS_OFF" ] && [ -x "$HOOKS_DIR/pre-commit" ]; then
+# BOTH lanes, or this lane is not standing aside for anything.
+#
+# Deferring is justified by git running the whole gate, and half of it is a
+# different bargain: with commit-msg gone, git checks the content and accepts
+# any message, and the one thing this hook could still have caught — a
+# bypass that skips the message gate — is waved through as already armed.
+# The same rule the package applies to the lanes it delegates to, asked here
+# over the two files git actually executes.
+ARMED=""
+if [ -z "$HOOKS_OFF" ] && [ -x "$HOOKS_DIR/pre-commit" ] && [ -x "$HOOKS_DIR/commit-msg" ]; then
+  ARMED=1
+fi
+if [ -n "$ARMED" ]; then
   BYPASS=$(printf '%s' "$WORDS" | grep -oE ' (--no-veri[a-z]*|-[a-zA-Z]*n[a-zA-Z]*|-c|--config-env[^ ]*|GIT_CONFIG_[^ ]*) ' | head -1) \
     || BYPASS=$(printf '%s' "$WORDS" | grep -oiE ' config .* hookspath ' | head -1) \
     || exit 0
@@ -108,6 +120,10 @@ elsewhere_notice
 # has to come first or the next commit is refused the same way.
 if [ -n "$HOOKS_OFF" ]; then
   echo "pre-commit-check: core.hooksPath is set and empty in $PWD, which switches git hooks off, so nothing checks this commit — run 'git config --unset core.hooksPath', then arm them with 'kendex guard install'" >&2
+  exit 2
+fi
+if [ -x "$HOOKS_DIR/pre-commit" ] || [ -x "$HOOKS_DIR/commit-msg" ]; then
+  echo "pre-commit-check: only one of the two git hooks is armed in $PWD, and both gate a commit, so this one is not fully checked — arm both with 'kendex guard install'" >&2
   exit 2
 fi
 echo "pre-commit-check: no git pre-commit hook is armed in $PWD, so nothing checks this commit — arm them with 'kendex guard install' (this hook does not run a repository's own scripts on its behalf), or remove this hook" >&2
