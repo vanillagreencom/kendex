@@ -32,7 +32,7 @@ case "$OUT" in
   *) bad "the verdict does not name the cause" "$OUT" ;;
 esac
 case "$OUT" in
-  *"git config --unset core.hooksPath"*) ok "and leads with the remedy that works" ;;
+  *"--unset-all core.hooksPath"*) ok "and leads with the remedy that works" ;;
   *) bad "no unset in the remedy" "$OUT" ;;
 esac
 install_in "$R62"
@@ -66,7 +66,7 @@ for spelling in default-relative default-absolute elsewhere empty; do
   # shape `--check` has no way to verify, so following it left a repository
   # permanently unable to say whether it was gated.
   case "$OUT" in
-    *"To arm this repository, run 'git config --unset core.hooksPath'"*)
+    *"To arm this repository, run git -C "*"--unset-all core.hooksPath"*)
       ok "and the remedy printed is the one that arms ($spelling)" ;;
     *) bad "no unset remedy ($spelling)" "$OUT" ;;
   esac
@@ -115,11 +115,17 @@ case "$OUT" in
   *) ok "and it claims nothing about arming, in either direction" ;;
 esac
 case "$OUT" in
-  *"core.hooksPath ('customhooks')"*) ok "and names the value that sends git elsewhere" ;;
+  *"core.hooksPath is set ('customhooks')"*) ok "and names the configured value" ;;
   *) bad "the value is not named" "$OUT" ;;
 esac
+# Where git was sent is not measured, so it is not claimed: the same value
+# may name this repository's own hooks directory under another spelling.
 case "$OUT" in
-  *"git config --unset core.hooksPath"*) ok "and carries the remedy that arms" ;;
+  *"sends git"* | *"redirect"*) bad "the verdict claims where git reads hooks from" "$OUT" ;;
+  *) ok "and claims nothing about where git reads hooks from" ;;
+esac
+case "$OUT" in
+  *"--unset-all core.hooksPath"*) ok "and carries the remedy that arms" ;;
   *) bad "no unset remedy" "$OUT" ;;
 esac
 case "$OUT" in
@@ -158,6 +164,12 @@ git -C "$R80" config core.hooksPath .git/hooks
 check_in "$R80"
 [ "$RC" -eq 2 ] && ok "a value naming the default hooks directory stands down too" \
   || bad "default-spelling redirect checks 2" "rc=$RC out=$OUT"
+# And this is the case that makes "git is sent away from .git/hooks" a false
+# sentence: git reads hooks from exactly the directory this package writes.
+case "$OUT" in
+  *"away from"* | *"sends git"*) bad "the verdict claims git was sent elsewhere" "$OUT" ;;
+  *) ok "and the verdict says nothing that this spelling makes false" ;;
+esac
 
 # The must-fail control: unsetting it arms the same repository again, so the
 # pins above are not passing on a checker that answers 2 for everything.
@@ -165,6 +177,55 @@ git -C "$R80" config --unset core.hooksPath
 check_in "$R80"
 [ "$RC" -eq 0 ] && ok "must-fail: unsetting the value arms the same repository again" \
   || bad "unset re-arms" "rc=$RC out=$OUT"
+
+echo "=== the remedy names the scope that actually holds the value ==="
+# `git config --unset` writes the LOCAL file. Told that for a value set
+# globally, the person runs it, git exits 5 because the local file has no
+# such key, and the next install stands down for the reason they were told
+# to fix. The scope git reports is the scope the remedy names.
+R90="$(new_repo scoped-remedy)"
+install_in "$R90"
+git config --global core.hooksPath "$R90/globalhooks"
+[ -z "$(git -C "$R90" config --local --get core.hooksPath || true)" ] \
+  && ok "the control: the value is global only, with nothing local" \
+  || bad "the fixture set a local value too" "$(git -C "$R90" config --local --get core.hooksPath || true)"
+
+check_in "$R90"
+[ "$RC" -eq 2 ] && ok "a global core.hooksPath stands the checker down" \
+  || bad "global hooksPath checks 2" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"config --global --unset-all core.hooksPath"*) ok "and the remedy unsets it in the global scope" ;;
+  *) bad "the remedy does not name the global scope" "$OUT" ;;
+esac
+case "$OUT" in
+  *"git -C '$R90' config --global"*) ok "and names the repository, so it works from anywhere" ;;
+  *) bad "the remedy does not name the repository" "$OUT" ;;
+esac
+
+# The install lane derives it the same way, from the same one definition.
+install_in "$R90"
+case "$OUT" in
+  *"config --global --unset-all core.hooksPath"*) ok "and the install prints the same scoped remedy" ;;
+  *) bad "install printed an unscoped remedy" "$OUT" ;;
+esac
+
+# The remedy has to be a command that WORKS: run it, and the repository arms.
+eval "git -C '$R90' config --global --unset-all core.hooksPath"
+install_in "$R90"
+[ -x "$R90/.git/hooks/kendex-guards" ] \
+  && ok "and running that remedy really does let the install arm" \
+  || bad "the printed remedy did not arm the repository" "out=$OUT"
+
+# The must-fail control: the unscoped remedy this replaced — spelled exactly
+# as it used to print — fails on the same repository, which is the defect the
+# scope lookup exists for.
+git config --global core.hooksPath "$R90/globalhooks"
+UNSCOPED_RC=0
+git -C "$R90" config --unset core.hooksPath 2>/dev/null || UNSCOPED_RC=$?
+[ "$UNSCOPED_RC" -eq 5 ] \
+  && ok "must-fail: the unscoped unset exits 5 against a global value" \
+  || bad "unscoped unset against a global value" "rc=$UNSCOPED_RC"
+git config --global --unset core.hooksPath
 
 echo "=== a repository path that begins with a dash is a path ==="
 # `cd "$REPO"` reads a leading dash as an option: `--repo -P` became `cd -P`,

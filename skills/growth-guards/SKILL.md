@@ -67,8 +67,8 @@ bit git needs, and says armed or not armed. The `--check` verdicts below are
 the fuller vocabulary, for a person or a verb that asks for it:
 (0 armed in `.git/hooks`; 1 drifted, absent, or `core.hooksPath` set and
 empty, which switches git hooks off; 2 could not determine — an unreadable
-hooks directory, or any `core.hooksPath` naming a directory, which sends git
-where this package does not write). Repeat runs
+hooks directory, or any `core.hooksPath` naming a directory, which is
+outside this verifier's contract: it reads `.git/hooks` only). Repeat runs
 are no-ops and repairs; `core.hooksPath` is never set; existing hooks keep
 their content and exit status. Full install and refusal behaviour:
 [DEVELOPMENT.md](DEVELOPMENT.md).

@@ -101,7 +101,45 @@ hooks_path_off() { # -> 0 when hooks are switched off
   [ "$HOOKS_PATH_SET" -eq 1 ] && [ -z "$CUSTOM_HOOKS" ]
 }
 
-# The one remedy line for that state, so install and check say the same
-# thing. Arming is not the whole of it: the installer stands down under any
-# value at all, empty included, so the unset has to come first.
-HOOKS_OFF_REMEDY="run 'git config --unset core.hooksPath', then 'kendex guard install'"
+# The one remedy, so install and check say the same thing — derived, never
+# remembered.
+#
+# `git config --unset` writes the LOCAL file. A value that lives in the
+# global, system, or per-worktree file is untouched by that, and git exits 5
+# for an unset that matched nothing: the person runs what they were told,
+# sees a failure, and the next install stands down for the reason they were
+# told to fix. So the file git actually answered from is the one named.
+# `--show-scope` reports it, and the repository is named too, because the
+# remedy has to work from wherever it is pasted.
+#
+# `--unset-all` rather than `--unset`: one file may carry the key twice, and
+# `--unset` refuses that outright, which is the same dead end by a different
+# route. For a single value the two behave alike.
+#
+# Arming is not the whole of it: the installer stands down under any value
+# at all, empty included, so the unset comes first.
+hooks_path_remedy() { # -> what to run, on stdout, no trailing newline
+  local scope="" repo=""
+  repo="$(gg_shell_quote "$REPO_ABS")"
+  # not-a-path: only the scope WORD is read here. `--show-scope` prefixes the
+  # value with its scope and a tab, and the value half is dropped — it is
+  # already in CUSTOM_HOOKS, captured through gg_git_path above.
+  scope="$(git -C "$REPO_ABS" config --show-scope --get core.hooksPath 2>/dev/null)" || scope=""
+  scope="${scope%%$'\t'*}"
+  case "$scope" in
+    # No file holds it: `git -c` and the GIT_CONFIG_* family set it for one
+    # command, and there is nothing to unset.
+    command)
+      printf '%s' "re-run without the core.hooksPath git passes on the command line (-c, or GIT_CONFIG_*), then 'kendex guard install'"
+      ;;
+    local | global | system | worktree)
+      printf '%s' "run git -C '$repo' config --$scope --unset-all core.hooksPath, then 'kendex guard install'"
+      ;;
+    # git predates --show-scope, or the read failed. Naming a scope that may
+    # be wrong is the defect this function exists for, so it names the
+    # command that finds the file instead.
+    *)
+      printf '%s' "unset core.hooksPath in the file that sets it (git -C '$repo' config --show-origin --get core.hooksPath names it), then 'kendex guard install'"
+      ;;
+  esac
+}

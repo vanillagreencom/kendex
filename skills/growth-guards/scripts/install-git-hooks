@@ -14,7 +14,8 @@
 # Exit codes: 0 shims in place (or deliberately skipped, stated on stdout);
 # 1 one or more shims could not be installed; 2 usage error. --check is
 # read-only: 0 armed in .git/hooks, 1 drifted or absent, 2 could not
-# determine — which every core.hooksPath naming a directory is.
+# determine — which every core.hooksPath naming a directory is, whatever it
+# resolves to.
 set -euo pipefail
 
 HELPER_NAME="kendex-guards"
@@ -86,9 +87,9 @@ consumer's own hook untouched.
 1 not armed (drifted, absent, or core.hooksPath set and empty, which
 switches git hooks off), 2 the question could not be answered — an
 unreadable hooks directory, or a core.hooksPath naming a directory, which
-sends git somewhere this installer does not write and does not verify.
-Failure to measure is never a clean measurement. The verdict line on stdout
-names what is wrong and the remedy.
+is outside this verifier's contract: it reads .git/hooks only, whatever the
+configured value resolves to. Failure to measure is never a clean
+measurement. The verdict line on stdout names what is wrong and the remedy.
 
 Prints one summary line on stdout; warnings go to stderr.
 
@@ -160,13 +161,16 @@ if [ "$HOOKS_PATH_ELSEWHERE" -eq 1 ] && [ "$MODE" = "install" ]; then
   if hooks_path_off; then
     warn "core.hooksPath is set and empty, which switches git hooks off entirely, so the guard shims were NOT installed"
   else
-    warn "core.hooksPath is set ('$CUSTOM_HOOKS'); git ignores $HOOKS_DIR, so the guard shims were NOT installed"
+    # Not "git ignores $HOOKS_DIR": the value may resolve to that very
+    # directory, and which one git reads is the question this installer
+    # deliberately stopped answering.
+    warn "core.hooksPath is set ('$CUSTOM_HOOKS'); this installer writes $HOOKS_DIR only and will not write behind a configured hooks path, so the guard shims were NOT installed"
   fi
   # One remedy, and it is the one that arms. Telling somebody to wire that
   # directory by hand prescribes a shape --check has no way to verify, so it
   # trades a repository that is not gated for one that is gated and can
   # never say so.
-  echo "  To arm this repository, $HOOKS_OFF_REMEDY." >&2
+  echo "  To arm this repository, $(hooks_path_remedy)." >&2
   echo "growth-guards git hooks: skipped — core.hooksPath is set ('$CUSTOM_HOOKS')"
   exit 0
 fi
@@ -469,14 +473,16 @@ if [ "$MODE" = "check" ]; then
   # directory means deciding whether foreign shell text reaches our entry
   # point when git runs it — reachability, which no reader settles, and which
   # answered "armed" about repositories that gated nothing every time
-  # somebody wrote a hook nobody had thought of. This package verifies the
-  # directory it writes, and says so about every other one.
+  # somebody wrote a hook nobody had thought of. This package reads the
+  # directory it writes, and says so under every configured value.
   if [ "$HOOKS_PATH_ELSEWHERE" -eq 1 ]; then
     if hooks_path_off; then
-      echo "growth-guards git hooks: NOT armed — core.hooksPath is set and empty, which switches git hooks off, so commits are NOT gated; $HOOKS_OFF_REMEDY"
+      echo "growth-guards git hooks: NOT armed — core.hooksPath is set and empty, which switches git hooks off, so commits are NOT gated; $(hooks_path_remedy)"
       exit 1
     fi
-    echo "growth-guards git hooks: could not determine whether commits are gated — core.hooksPath ('$CUSTOM_HOOKS') sends git away from $HOOKS_DIR, and this package verifies only that directory; $HOOKS_OFF_REMEDY, or read the redirected directory yourself"
+    # Where the value sends git is not claimed, because it is not measured:
+    # it may well name $HOOKS_DIR under another spelling.
+    echo "growth-guards git hooks: could not determine whether commits are gated — core.hooksPath is set ('$CUSTOM_HOOKS'), and a configured hooks path is outside this verifier's contract: it reads $HOOKS_DIR only; $(hooks_path_remedy), or read the configured directory yourself"
     exit 2
   fi
   check_hooks_dir || VERDICT=$?

@@ -123,15 +123,29 @@ guard line and executes none of it, exiting 0 for everything. The shared
 shebang check stays permissive because a repo's own hooks may legitimately
 carry either; a hook this tool vouches for may not.
 
-Under `core.hooksPath` there is no verdict. Any value at all sends git to a
-directory this installer does not write, and `--check` answers `2` naming
-the value, the directory it does verify, and the unset that arms. Grading
-the redirected directory meant deciding whether foreign shell text reaches
-our entry point when git runs it — reachability, which needs a shell parser,
-and which answered `armed` about a repository that gated nothing every time
-somebody wrote a hook nobody had thought of. A `core.hooksPath` set and
-EMPTY is the exception, and only because it needs no reading: it switches
-git hooks off, so it is `1` with the unset as its remedy.
+Under `core.hooksPath` there is no verdict. A configured hooks path is
+outside this verifier's contract: it reads `.git/hooks` and nothing else,
+whatever the value resolves to — that directory under another spelling
+included, because resolving spellings is the question this package stopped
+asking. So `--check` answers `2` naming the value, the directory it does
+read, and the unset that arms; it does not claim git was sent anywhere,
+because it did not measure that. Grading the configured directory meant
+deciding whether foreign shell text reaches our entry point when git runs
+it — reachability, which needs a shell parser, and which answered `armed`
+about a repository that gated nothing every time somebody wrote a hook
+nobody had thought of. A `core.hooksPath` set and EMPTY is the exception,
+and only because it needs no reading: it switches git hooks off, so it is
+`1` with the unset as its remedy.
+
+The unset in that remedy is derived per repository, not a fixed string.
+`git config --unset` writes the local file, so a global, system, or
+per-worktree value survives it and git exits 5 for the unset that matched
+nothing — the person runs the remedy, watches it fail, and the next install
+stands down for the reason they were told to fix. `hooks_path_remedy` reads
+the scope from `git config --show-scope` and names that scope and the
+repository. A value from `git -c` or `GIT_CONFIG_*` has scope `command` and
+no file at all, so the remedy there is to re-run without it; where the scope
+cannot be read, the remedy names `--show-origin` rather than guess.
 
 The cost is one arming: a directory hand-wired to these scripts really does
 gate, and `--check` says `2` about it rather than `0`. That is why the

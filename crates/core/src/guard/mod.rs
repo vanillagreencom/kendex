@@ -164,8 +164,8 @@ pub fn uninstall(dir: &Path) -> Result<GuardReport> {
 /// Ask the package whether this repository is armed, and relay its answer.
 ///
 /// Its `--check` is read-only and speaks the whole vocabulary — armed,
-/// drifted, dormant, unverifiable — which is exactly what a person running
-/// this verb asked for. Invoking a guard verb is the consent to run the
+/// drifted, unverifiable — which is exactly what a person running this verb
+/// asked for. Invoking a guard verb is the consent to run the
 /// package's scripts; `kendex check`, which nobody invoked for that, reads
 /// the marker instead and executes nothing.
 pub fn check(dir: &Path) -> Result<GuardReport> {
