@@ -91,6 +91,8 @@ assert_eq "$rc" 2 'a truncated JSON payload refuses rather than skipping the gua
 assert_contains "$ERR_FILE" 'not valid JSON' 'the parse refusal names the cause'
 run_payload '{"tool_input":{"command":123}}'
 assert_eq "$rc" 2 'a command that is not a string refuses'
+run_payload '{"tool_input":{"command":false}}'
+assert_eq "$rc" 2 'a command of false refuses, not read as an absent one'
 run_payload '{"tool_input":"cd /tmp"}'
 assert_eq "$rc" 2 'a tool_input that is not an object refuses'
 run_payload '{"tool_input":{"command":""}}'

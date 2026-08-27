@@ -22,9 +22,12 @@ INPUT=$(cat)
 
 # A payload that does not parse, or that names a command which is not a
 # string, is refused rather than skipped. An absent command is the empty
-# string and passes.
+# string and passes. The null tests are spelled out because jq's `//` reads
+# `false` as absent, and `false` is not a command either.
 if ! COMMAND=$(printf '%s' "$INPUT" \
-  | jq -r '(.tool_input.command // .command // "") | if type == "string" then . else error end' 2>/dev/null); then
+  | jq -r 'if .tool_input.command == null then (if .command == null then "" else .command end)
+           else .tool_input.command end
+           | if type == "string" then . else error end' 2>/dev/null); then
   echo "block-bare-cd: hook payload is not valid JSON, or names a command that is not a string; refusing rather than skipping the guard" >&2
   exit 2
 fi
