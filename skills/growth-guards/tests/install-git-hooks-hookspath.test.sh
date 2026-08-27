@@ -313,6 +313,44 @@ case "$OUT" in
   *) bad "no origin from a working git" "$OUT" ;;
 esac
 
+echo "=== the listing is escaped, so a value cannot drive the terminal ==="
+# The summary escapes the value; the listing repeats that value in git's own
+# words, and relaying those bytes raw would hand a terminal whatever the
+# value contains. An ESC in a config value is somebody else's data reaching
+# a screen as control codes, one line below the place that was careful.
+R95="$(new_repo esc-value)"
+install_in "$R95"
+ESC="$(printf '\033')"
+git -C "$R95" config core.hooksPath "ev${ESC}[31mil"
+[ "$(git -C "$R95" config --get core.hooksPath)" = "ev${ESC}[31mil" ] \
+  && ok "the control: the configured value really does carry an ESC byte" \
+  || bad "the fixture value has no ESC" "$(git -C "$R95" config --get core.hooksPath || true)"
+
+check_in "$R95"
+[ "$RC" -eq 2 ] && ok "an ESC-valued core.hooksPath stands the checker down" \
+  || bad "ESC-valued hooksPath checks 2" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"$ESC"*) bad "a raw ESC byte reached the output" "$(printf '%s' "$OUT" | cat -v)" ;;
+  *) ok "and no raw ESC byte reaches the reader" ;;
+esac
+# Escaped, not dropped: the value is still reported, in the same rendering
+# the summary uses.
+case "$OUT" in
+  *'31mil'*) ok "and the value is still reported, escaped rather than removed" ;;
+  *) bad "the value went missing instead of being escaped" "$(printf '%s' "$OUT" | cat -v)" ;;
+esac
+# The summary line and the listing agree: one rendering, used twice.
+case "$OUT" in
+  *"core.hooksPath is set ("*) ok "and the summary renders it the same way" ;;
+  *) bad "the summary does not name the value" "$(printf '%s' "$OUT" | cat -v)" ;;
+esac
+# The must-fail control: the raw bytes really would have carried the ESC, so
+# the pin is not passing on a value that never had one.
+case "ev${ESC}[31mil" in
+  *"$ESC"*) ok "must-fail: the raw value carries the ESC that was escaped" ;;
+  *) bad "the raw value has no ESC after all" "" ;;
+esac
+
 echo "=== a value carrying a newline stays on one summary line ==="
 # The stdout summary is promised to be ONE line, and the configured value is
 # bytes git handed back: a value with a newline in it, interpolated raw,

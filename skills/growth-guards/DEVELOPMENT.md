@@ -142,8 +142,8 @@ That remedy is data, not a command. `docs/ARCHITECTURE.md` rules it:
 recovery instructions present their parameters as data, never a pasteable
 command line. `hooks_path_origins` prints three things — that
 `core.hooksPath` is set, git's own report of where from (`git config
---show-origin --show-scope --get-all core.hooksPath`, unedited), and one
-sentence naming no path and no command: clear the setting at its source,
+--show-origin --show-scope --get-all core.hooksPath`, line for line), and
+one sentence naming no path and no command: clear the setting at its source,
 then run `kendex guard install`. Both modes print the same block, on
 stderr, so `--check` keeps its single stdout line.
 
@@ -158,7 +158,10 @@ command it wrote for them.
 
 Nothing here asserts what an origin is, either. git answers `command line:`
 for a value carried in the environment or on the command line, where there
-is no file to clear at all, and that answer goes through as git wrote it. A
+is no file to clear at all, and that answer goes through as git said it —
+rendered by `%q`, the way the summary renders the value, because a report
+quoting somebody's configuration must not hand that configuration a
+terminal. One line in, one line out; nothing dropped or reordered. A
 report git will not produce is stated as missing rather than stood in for,
 and the verdict is the same either way.
 

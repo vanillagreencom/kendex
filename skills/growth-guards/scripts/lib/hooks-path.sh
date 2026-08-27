@@ -126,12 +126,24 @@ HOOKS_PATH_REMEDY="Clear the setting at its source, then run kendex guard instal
 # repository. It goes to stderr in each: --check keeps one verdict line on
 # stdout, and the install lane already reports there.
 hooks_path_origins() { # -> the stand-down text, on stderr
+  local line="" listed=0
   echo "  core.hooksPath is set." >&2
-  # git's report reaches the reader as git wrote it: stdout onto this
-  # stream, its own diagnostics dropped. A report git will not produce is
-  # said to be missing rather than stood in for, and the verdict does not
-  # depend on it either way.
-  if ! git -C "$REPO_ABS" config --show-origin --show-scope --get-all core.hooksPath >&2 2>/dev/null; then
+  # git's report, said the way the summary says the value: what git wrote,
+  # rendered by %q. Relaying the raw bytes would put a value carrying ESC on
+  # a terminal unescaped, which is the same value the summary is careful
+  # with one line further up — and a report about somebody's configuration
+  # is not the place to hand that configuration a terminal.
+  #
+  # Nothing is dropped or reordered: one line in, one line out.
+  while IFS= read -r line; do
+    listed=1
+    printf '  %q\n' "$line" >&2
+  done < <(git -C "$REPO_ABS" config --show-origin --show-scope --get-all core.hooksPath 2>/dev/null)
+  # git prints at least one line for a value that is set, so nothing read
+  # means nothing to read. That covers the failure and the empty answer
+  # together, which is right: both leave the reader without the report, and
+  # neither changes the verdict.
+  if [ "$listed" -eq 0 ]; then
     echo "  Its origin could not be listed." >&2
   fi
   echo "  $HOOKS_PATH_REMEDY" >&2
