@@ -24,13 +24,25 @@ fn the_repository_effect_is_disclosed_and_not_applied_without_a_yes() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
     offer(&world, "growth-guards");
-    let out = world.run(&["add", "cat", "--skill", "growth-guards", "-y"]);
+    let spoken = world.try_run(&["add", "cat", "--skill", "growth-guards", "-y"]);
+    assert!(spoken.status.success(), "{}", spoke(&spoken));
+    let asked = String::from_utf8_lossy(&spoken.stderr).into_owned();
+    let composed = String::from_utf8_lossy(&spoken.stdout).into_owned();
+    let out = format!("{composed}{asked}");
+
+    // On the channel the question is on. A person who redirects stdout to
+    // a file is still asked whether to arm their repository, so the account
+    // of what that means has to reach them where the asking does.
+    assert!(
+        asked.contains("changes how this repository works"),
+        "the disclosure was not on the channel that asks:\n{out}"
+    );
+    assert!(
+        !composed.contains("changes how this repository works"),
+        "the disclosure went to stdout:\n{out}"
+    );
 
     // What changes, where it writes, what else takes part, how to undo it.
-    assert!(
-        out.contains("changes how this repository works"),
-        "no disclosure header:\n{out}"
-    );
     assert!(out.contains("every commit in this repository"), "{out}");
     assert!(out.contains(".git/hooks/pre-commit"), "{out}");
     assert!(out.contains(".git/hooks/commit-msg"), "{out}");

@@ -9,10 +9,16 @@ use kendex_core::model::Scope;
 use kendex_core::names::shown;
 use kendex_core::repo_effects::DeclaredEffects;
 
-use super::super::{out, say};
+use super::super::say;
 
 /// The block, in the order a reader needs it: what changes, what is
 /// written, what survives, what the chain will do here, and how to undo it.
+///
+/// On the human channel, with the question it belongs to. This is not
+/// output a caller composes with — it is the context for `[y/N]`, and the
+/// prompt writes to stderr. Sending the block to stdout meant
+/// `kendex add ... > log` asked the question with the reasons for it in the
+/// file, which is a consent prompt with nothing to consent to.
 pub fn disclose<'a>(scope: &Scope, pending: &[&'a DeclaredEffects]) -> Vec<&'a DeclaredEffects> {
     // `pending` is empty outside a project, so this only names the root.
     let Scope::Project { root } = scope else {
@@ -52,13 +58,13 @@ pub fn disclose<'a>(scope: &Scope, pending: &[&'a DeclaredEffects]) -> Vec<&'a D
         let effects = &declared.effects;
         let name = shown(&declared.name);
         say("");
-        out(&format!(
+        say(&format!(
             "{name} changes how this repository works, beyond the files above:"
         ));
-        out(&format!("  {}", shown(&effects.summary)));
+        say(&format!("  {}", shown(&effects.summary)));
         if !effects.writes.is_empty() {
-            out("");
-            out("  writes");
+            say("");
+            say("  writes");
             let mut shared = false;
             for path in &effects.writes {
                 let target = lands_at(root, git_dir.as_ref().ok(), path);
@@ -67,38 +73,38 @@ pub fn disclose<'a>(scope: &Scope, pending: &[&'a DeclaredEffects]) -> Vec<&'a D
                 // and the line it decides is a claim about who else sees
                 // these files.
                 shared |= git_dir.as_ref().is_ok_and(|dir| target.starts_with(dir));
-                out(&format!("    {}", shown(&target.display().to_string())));
+                say(&format!("    {}", shown(&target.display().to_string())));
             }
             if shared {
-                out("");
-                out("  that directory is the repository's, not this checkout's:");
-                out("  every work tree of it shares these files");
+                say("");
+                say("  that directory is the repository's, not this checkout's:");
+                say("  every work tree of it shares these files");
             }
         }
         if !effects.companions.is_empty() {
-            out("");
-            out("  companion packages");
+            say("");
+            say("  companion packages");
             for companion in &effects.companions {
-                out(&format!("    {}", shown(companion)));
+                say(&format!("    {}", shown(companion)));
             }
-            out("");
-            out("  the chain resolves each of those when a commit is made:");
-            out("  one that is installed runs its lane, one that is not is an");
-            out("  announced skip, and one that is there but cannot run stops");
-            out("  the commit rather than skipping it");
+            say("");
+            say("  the chain resolves each of those when a commit is made:");
+            say("  one that is installed runs its lane, one that is not is an");
+            say("  announced skip, and one that is there but cannot run stops");
+            say("  the commit rather than skipping it");
         }
         for note in &effects.notes {
-            out("");
-            out(&format!("  {}", shown(note)));
+            say("");
+            say(&format!("  {}", shown(note)));
         }
-        out("");
+        say("");
         match &effects.removal {
-            Some(removal) => out(&format!("  to undo: {}", shown(removal))),
+            Some(removal) => say(&format!("  to undo: {}", shown(removal))),
             // Not "remove the package". Removing it takes the scripts away
             // and leaves the effect: shims in .git/hooks outlive the tree
             // they point at, and then fail every commit closed. What is true
             // is that the package said nothing about undoing this.
-            None => out("  to undo: the package declares no removal instructions"),
+            None => say("  to undo: the package declares no removal instructions"),
         }
         shown_to_them.push(*declared);
     }
