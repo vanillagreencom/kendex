@@ -263,11 +263,15 @@ pub fn armed(repo: &Repo) -> Result<bool> {
 /// here, followed, would have disarmed the gate the other project asked
 /// for.
 ///
-/// Each path that carries the marker, or the helper by its name, so the
-/// report can say which files to clean up. Empty where `core.hooksPath` is
-/// set: git reads no hook here, so nothing fails, and what a redirected
-/// directory means is a grammar this module does not have. The execute bit
-/// is not consulted: a leftover git happens to skip is still a leftover.
+/// Each lane that carries the marker, and the helper by its name beside
+/// them, so the report can say which files to clean up. The marker is the
+/// whole test: a lane hook carrying it is what execs the helper, and a
+/// file of the helper's name with no such lane runs on no commit — the
+/// installer leaves a foreign file of that name alone, and so does this.
+/// Empty where `core.hooksPath` is set: git reads no hook here, so nothing
+/// fails, and what a redirected directory means is a grammar this module
+/// does not have. The execute bit is not consulted: a leftover git happens
+/// to skip is still a leftover.
 pub fn stranded(repo: &Repo) -> Result<Vec<PathBuf>> {
     let hooks = repo.default_hooks_dir();
     let mut files = Vec::new();
@@ -277,12 +281,12 @@ pub fn stranded(repo: &Repo) -> Result<Vec<PathBuf>> {
             files.push(path);
         }
     }
+    if files.is_empty() || repo.hooks_redirected()? || Installed::anywhere(repo) {
+        return Ok(Vec::new());
+    }
     let helper = hooks.join(HELPER);
     if helper.is_file() {
         files.push(helper);
-    }
-    if files.is_empty() || repo.hooks_redirected()? || Installed::anywhere(repo)? {
-        return Ok(Vec::new());
     }
     Ok(files)
 }

@@ -85,34 +85,40 @@ impl Installed {
         None
     }
 
-    /// Whether any kendex project in this repository carries the package.
+    /// Whether anything in this repository carries the package.
     ///
     /// The question `stranded` asks, and a wider one than [`present`]: that
     /// searches from where the caller stands, which is the right copy to
     /// RUN, while a hooks directory is shared by every project in the work
-    /// tree and by every linked work tree of it. So every project under
-    /// this work tree and under the main checkout is searched — a copy in
-    /// any of them is what the shared shims run.
+    /// tree and by every linked work tree of it. So the whole work tree and
+    /// the whole main checkout are walked, every directory asked for a
+    /// skills root holding the package — a copy anywhere in them is what
+    /// the shared shims run.
+    ///
+    /// Every directory, not every discovered project: a repository whose
+    /// root carries a harness marker IS a project to the discovery walk,
+    /// which stops there and never sees the nested project that armed the
+    /// hooks. The main checkout is resolved once, for the roots `present`
+    /// searches and for the walk alike — it costs two git processes.
     ///
     /// [`present`]: Installed::present
-    pub fn anywhere(repo: &super::Repo) -> Result<bool> {
-        if Installed::present(repo).is_some() {
-            return Ok(true);
+    pub fn anywhere(repo: &super::Repo) -> bool {
+        let main = main_checkout(repo);
+        let mut carries = |dir: &Path| {
+            SKILL_ROOTS
+                .iter()
+                .map(|base| dir.join(base).join(SKILL))
+                .any(|dir| dir.exists() || dir.is_symlink())
+        };
+        if search_roots_with(repo, main.clone())
+            .iter()
+            .any(|root| carries(root))
+        {
+            return true;
         }
-        let mut trees = vec![repo.worktree.clone()];
-        trees.extend(main_checkout(repo));
-        for tree in trees {
-            for project in crate::discover::discover_projects(&tree)? {
-                if SKILL_ROOTS
-                    .iter()
-                    .map(|base| project.join(base).join(SKILL))
-                    .any(|dir| dir.exists() || dir.is_symlink())
-                {
-                    return Ok(true);
-                }
-            }
-        }
-        Ok(false)
+        std::iter::once(&repo.worktree)
+            .chain(main.iter())
+            .any(|tree| crate::discover::any_dir(tree, &mut carries))
     }
 
     /// Whether any copy of the package is here at all, for a message that
@@ -149,8 +155,13 @@ impl Installed {
 /// Duplicates are dropped rather than avoided: in an ordinary single-project
 /// clone every one of these is the same directory.
 fn search_roots(repo: &super::Repo) -> Vec<PathBuf> {
+    search_roots_with(repo, main_checkout(repo))
+}
+
+/// The same roots, with the main checkout already resolved by a caller
+/// that needs it for something else too.
+fn search_roots_with(repo: &super::Repo, main: Option<PathBuf>) -> Vec<PathBuf> {
     let project = project_root(repo);
-    let main = main_checkout(repo);
     // The project path carried across, and only when it IS a path under this
     // work tree: a project root that is not below it has no counterpart to
     // map, and joining an absolute path would silently replace the checkout.

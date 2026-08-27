@@ -234,8 +234,8 @@ pub fn confirm_and_apply(
 /// packages — and the package's declared uninstaller has to run while the
 /// scripts it names are still on disk. Executing `report.plan` directly
 /// skips that, so no verb does: every report goes through here, and only a
-/// bare `Plan` with no report behind it (a fork's move, an adopt's) is
-/// executed on its own.
+/// bare `Plan` with no report behind it, which by construction drops no
+/// package, is executed on its own.
 pub fn apply_report(env: &Env, report: &EngineReport) -> Result<usize, Box<dyn std::error::Error>> {
     super::repo_effects::undo(&report.plan.scope, report)?;
     Ok(kendex_core::apply::execute(env, &report.plan, None)?.applied)

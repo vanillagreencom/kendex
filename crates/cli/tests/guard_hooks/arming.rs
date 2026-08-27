@@ -250,11 +250,30 @@ fn check_names_the_shims_a_removed_package_left_behind() {
         "a redirected repository was reported as failing every commit:\n{}",
         said(&out)
     );
+
+    // A file of the helper's name beside hooks that carry no marker execs
+    // on no commit: the installer leaves such a file alone, and so does
+    // the report.
+    git_ok(home, &root, &["config", "--unset", "core.hooksPath"]);
+    for lane in ["pre-commit", "commit-msg"] {
+        std::fs::write(root.join(".git/hooks").join(lane), "#!/bin/sh\nexit 0\n").unwrap();
+    }
+    assert!(root.join(".git/hooks/kendex-guards").is_file());
+    let out = run(home, &root, "kendex", &["check"]);
+    assert!(
+        !said(&out).contains("commit hooks"),
+        "a lone helper with unmarked hooks was reported as stranded:\n{}",
+        said(&out)
+    );
 }
 
 /// One repository, two kendex projects, one hooks directory. The project
 /// without the package is gated by the one that armed it — not stranded —
 /// and the advice to delete the shims would have disarmed its neighbour.
+///
+/// The repository root is itself a project, which is the ordinary shape: a
+/// `.claude/CLAUDE.md` at the top marks it as one. A search that stops at
+/// the first project it meets stops there and never sees `apps/api`.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_neighbouring_project_carrying_the_package_is_not_a_leftover() {
@@ -264,6 +283,8 @@ fn a_neighbouring_project_carrying_the_package_is_not_a_leftover() {
     let root = home.join("mono");
     let api = root.join("apps/api");
     let web = root.join("apps/web");
+    std::fs::create_dir_all(root.join(".claude")).unwrap();
+    std::fs::write(root.join(".claude/CLAUDE.md"), "the monorepo\n").unwrap();
     std::fs::create_dir_all(api.join(".agents")).unwrap();
     std::fs::create_dir_all(web.join(".agents")).unwrap();
     git_ok(home, &root, &["init", "--quiet", "-b", "main"]);
@@ -277,13 +298,16 @@ fn a_neighbouring_project_carrying_the_package_is_not_a_leftover() {
     assert!(armed.status.success(), "{}", said(&armed));
     std::fs::write(web.join("kendex.toml"), "schema = 6\n").unwrap();
 
-    let out = run(home, &web, "kendex", &["check"]);
-    assert!(
-        !said(&out).contains("commit hooks"),
-        "a gated repository was reported as stranded:\n{}",
-        said(&out)
-    );
-    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    for from in [&web, &root] {
+        let out = run(home, from, "kendex", &["check"]);
+        assert!(
+            !said(&out).contains("commit hooks"),
+            "a gated repository was reported as stranded from {}:\n{}",
+            from.display(),
+            said(&out)
+        );
+        assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    }
 
     // The control: a commit from the project without the package runs the
     // neighbour's chain and passes.

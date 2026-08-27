@@ -164,24 +164,28 @@ pub fn undo(scope: &Scope, report: &EngineReport) -> CliResult {
     let Scope::Project { root } = scope else {
         return Ok(());
     };
-    let mut repo: Option<bool> = None;
-    for declared in &report.repo_effects_leaving {
+    let leaving = &report.repo_effects_leaving;
+    // Asked once, and only when something leaving would need the answer:
+    // the probe is git processes, and a package that writes nowhere near
+    // `.git` never asks. `touches_git` is core's, the same reading the
+    // disclosure was made under, so an effect is armed and disarmed on one
+    // answer rather than two spellings of one.
+    //
+    // `probe`, not the disclosure's `at`: that one withholds an offer where
+    // git will not answer, because it is about to ask somebody to authorize
+    // a path it cannot name. This side only asks whether the work tree that
+    // could have been armed is here.
+    let git_here = leaving
+        .iter()
+        .any(|declared| kendex_core::repo_effects::touches_git(&declared.effects))
+        && kendex_core::guard::Repo::probe(root)?.is_some();
+    for declared in leaving {
         let name = shown(&declared.name);
-        if kendex_core::repo_effects::touches_git(&declared.effects) {
-            let here = match repo {
-                Some(here) => here,
-                None => {
-                    let here = kendex_core::guard::Repo::probe(root)?.is_some();
-                    repo = Some(here);
-                    here
-                }
-            };
-            if !here {
-                say(&format!(
-                    "{name}: not inside a git work tree, so nothing it armed is here to undo"
-                ));
-                continue;
-            }
+        if kendex_core::repo_effects::touches_git(&declared.effects) && !git_here {
+            say(&format!(
+                "{name}: not inside a git work tree, so nothing it armed is here to undo"
+            ));
+            continue;
         }
         let Some(uninstaller) = &declared.effects.uninstaller else {
             say(&format!(

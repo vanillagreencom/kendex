@@ -70,6 +70,37 @@ pub fn discover_projects(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(found.into_iter().collect())
 }
 
+/// Whether any directory under `root` satisfies `found`, `root` included.
+///
+/// The same pruning as the project walk — hidden directories, the build
+/// and dependency trees in `SKIP_DIRS`, symlinked directories — and none
+/// of its stopping rules: it does not stop at a project, because what it
+/// looks for may sit inside one (a nested project's skills directory under
+/// a repository whose root is itself a project), and it has no depth cap,
+/// because a copy at depth six is a copy. `found` is asked before the
+/// descent, so the first hit ends the walk.
+pub fn any_dir(root: &Path, found: &mut dyn FnMut(&Path) -> bool) -> bool {
+    if found(root) {
+        return true;
+    }
+    let Ok(entries) = fs::read_dir(root) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name.starts_with('.') || SKIP_DIRS.contains(&name) {
+            continue;
+        }
+        if path.is_dir() && !path.is_symlink() && any_dir(&path, found) {
+            return true;
+        }
+    }
+    false
+}
+
 fn walk(dir: &Path, depth: usize, found: &mut BTreeSet<PathBuf>) {
     if is_project(dir) {
         if let Ok(canonical) = dir.canonicalize() {
