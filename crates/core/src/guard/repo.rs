@@ -47,35 +47,73 @@ fn english(hardened: Hardened) -> Hardened {
     hardened.env("LC_ALL", "C")
 }
 
+/// One path out of git, as the bytes git wrote.
+///
+/// Asked one path at a time, and read as bytes rather than text. Both halves
+/// matter and both were wrong here.
+///
+/// Two paths in one `rev-parse` came back as two lines, so a checkout whose
+/// name contains a newline — legal on Unix, and a name a person can create —
+/// shifted the second answer onto part of the first. And `from_utf8_lossy`
+/// turns any byte that is not UTF-8 into U+FFFD, which is not a filename: the
+/// canonicalize below then fails for a repository that is perfectly fine, on
+/// every verb, with a diagnostic naming a path nobody has.
+///
+/// git terminates the answer with exactly one newline, which is the only
+/// byte removed.
+fn one_path(dir: &Path, flag: &str) -> Result<Option<PathBuf>> {
+    let output = english(Hardened::git(&["rev-parse", flag], Some(dir))).run()?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let mut bytes = output.stdout;
+    if bytes.last() == Some(&b'\n') {
+        bytes.pop();
+    }
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+    #[cfg(unix)]
+    let path = {
+        use std::os::unix::ffi::OsStringExt;
+        PathBuf::from(std::ffi::OsString::from_vec(bytes))
+    };
+    #[cfg(not(unix))]
+    let path = {
+        let text = String::from_utf8(bytes).map_err(|_| {
+            guard_err(
+                "hooks",
+                format!("git answered {flag} with bytes that are not text"),
+            )
+        })?;
+        PathBuf::from(text)
+    };
+    Ok(Some(path))
+}
+
 impl Repo {
     pub fn at(dir: &Path) -> Result<Repo> {
-        let output = english(Hardened::git(
-            &["rev-parse", "--show-toplevel", "--git-common-dir"],
-            Some(dir),
-        ))
-        .run()?;
-        if !output.status.success() {
-            return Err(guard_err("hooks", "not inside a git repository"));
-        }
-        let text = String::from_utf8_lossy(&output.stdout);
-        let mut lines = text.lines();
-        let (Some(worktree), Some(common)) = (lines.next(), lines.next()) else {
-            return Err(guard_err(
+        let no_work_tree = || {
+            guard_err(
                 "hooks",
                 format!(
                     "git named no working tree for {} — commit hooks live in a checkout, not a bare repository",
                     dir.display()
                 ),
-            ));
+            )
         };
-        let worktree = PathBuf::from(worktree);
+        let Some(worktree) = one_path(dir, "--show-toplevel")? else {
+            return Err(guard_err("hooks", "not inside a git repository"));
+        };
+        let Some(common) = one_path(dir, "--git-common-dir")? else {
+            return Err(no_work_tree());
+        };
         let worktree = worktree
             .canonicalize()
             .map_err(|e| CoreError::io(&worktree, e))?;
         // A relative common dir is relative to where git was asked — `dir` —
         // not to the top level: from a subdirectory git says `../.git`, and
         // joining that onto the top level names the wrong repository.
-        let common = PathBuf::from(common);
         let common_dir = match common.is_absolute() {
             true => common,
             false => dir

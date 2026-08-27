@@ -16,6 +16,9 @@ an outside contributor.
 
 ### Fixed
 
+- The guard verbs work in a checkout whose path is not valid UTF-8 or
+  contains a newline; they used to report a path that does not exist.
+
 - The `harness-ci` wiring guide covers a lane that reads a path family beside
   the render verdict; the single-gate condition it shipped skipped that lane
   whenever the classifying job died.
