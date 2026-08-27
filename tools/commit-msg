@@ -1,26 +1,42 @@
 #!/usr/bin/env bash
-# The repo's own commit-message rule, run after the growth-guards commit-msg
+# The repo's own commit-message rules, run after the growth-guards commit-msg
 # shim: that shim judges the conventional-commit header, this judges the
-# changelog. Only a commit-msg hook sees the subject, so the [no-changelog]
-# escape hatch cannot live in the pre-commit lane.
+# subject's length and the changelog. Only a commit-msg hook sees the subject,
+# so neither rule can live in the pre-commit lane.
 #
 # Exit codes follow the guard family: 0 clean, 1 violation, 2 could not run.
 set -uo pipefail
 
 [ $# -ge 1 ] && [ -r "$1" ] || {
-  echo "commit-msg: no readable message file — the changelog rule could not run"
+  echo "commit-msg: no readable message file — the rules could not run"
   exit 2
 }
 staged=$(git diff --cached --name-only) || {
   echo "commit-msg: could not read the staged file list — the changelog rule could not run"
   exit 2
 }
+subject=$(head -1 "$1")
+
+fail=0
+say() {
+  echo "commit-msg: $1"
+  fail=1
+}
+
+# A subject past 72 characters is a body sentence on the wrong line. Merge and
+# revert subjects are git's own text, not a line anyone wrote to fit.
+case "$subject" in
+  Merge\ * | Revert\ *) : ;;
+  *) [ "${#subject}" -le 72 ] ||
+    say "subject is ${#subject} characters (max 72) — move the detail into the body" ;;
+esac
 
 # Code changes ship with a changelog entry; [no-changelog] is the escape
 # hatch for pure refactors.
 if echo "$staged" | grep -qE '^(crates|ui)/' &&
   ! echo "$staged" | grep -qx 'CHANGELOG.md' &&
-  ! head -1 "$1" | grep -qF '[no-changelog]'; then
-  echo "commit-msg: crates/ or ui/ changed without a CHANGELOG.md entry — add one or put [no-changelog] in the subject"
-  exit 1
+  ! printf '%s' "$subject" | grep -qF '[no-changelog]'; then
+  say "crates/ or ui/ changed without a CHANGELOG.md entry — add one or put [no-changelog] in the subject"
 fi
+
+exit $fail

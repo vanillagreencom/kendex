@@ -94,6 +94,28 @@ OUT="$(git -C "$R" commit -m "feat: a crate change [no-changelog]" 2>&1)" || RC=
 [ "$RC" -eq 0 ] && ok "[no-changelog] in the subject releases it" \
   || bad "[no-changelog] in the subject releases it" "rc=$RC out=$OUT"
 
+echo "=== this repo caps the subject; git's own subjects are exempt ==="
+LONG="docs: $(printf 'x%.0s' $(seq 1 70))" # 76 characters
+printf 'y\n' >>"$R/README.md"
+git -C "$R" add -A
+RC=0
+OUT="$(git -C "$R" commit -m "$LONG" 2>&1)" || RC=$?
+[ "$RC" -ne 0 ] && case "$OUT" in *"subject is 76 characters"*) true ;; *) false ;; esac \
+  && ok "a 76-character subject is refused, naming the count" \
+  || bad "a 76-character subject is refused, naming the count" "rc=$RC out=$OUT"
+printf 'm\n' >>"$R/README.md"
+git -C "$R" add -A
+RC=0
+OUT="$(git -C "$R" commit -m "Merge $(printf 'x%.0s' $(seq 1 70))" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "a long Merge subject passes — git wrote it, nobody sized it" \
+  || bad "a long Merge subject passes — git wrote it, nobody sized it" "rc=$RC out=$OUT"
+printf 'z\n' >>"$R/README.md"
+git -C "$R" add -A
+RC=0
+OUT="$(git -C "$R" commit -m "docs: $(printf 'x%.0s' $(seq 1 66))" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "a 72-character subject passes" \
+  || bad "a 72-character subject passes" "rc=$RC out=$OUT"
+
 echo "=== setup never claims armed where git reads hooks elsewhere ==="
 E="$TMP/elsewhere"
 mkdir -p "$E/tools" "$E/other-hooks" "$E/.agents/skills"
