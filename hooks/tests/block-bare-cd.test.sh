@@ -51,9 +51,11 @@ run_hook() { # command -> rc, stderr in ERR_FILE
 # A PATH without jq exercises the escape-aware fallback decoder.
 NOJQ_BIN="$TMP_ROOT/nojq"
 mkdir -p "$NOJQ_BIN"
+# type -P, not command -v: grep and friends are shell functions in some
+# interactive environments, and a function name symlinks to nothing.
 for tool in cat sed grep head; do
-  real="$(command -v "$tool" 2>/dev/null || true)"
-  [ -n "$real" ] || continue
+  real="$(type -P "$tool" 2>/dev/null || true)"
+  [ -n "$real" ] && [ -x "$real" ] || continue
   ln -sf "$real" "$NOJQ_BIN/$tool"
 done
 run_hook_nojq() { # command -> rc, stderr in ERR_FILE
@@ -96,6 +98,32 @@ run_hook_nojq 'cd "$repo" && ls';  assert_eq "$rc" 0 'without jq, the escape-awa
 run_hook_nojq 'cd "$repo"';        assert_eq "$rc" 2 'without jq, a quoted bare cd is still refused'
 run_hook_nojq 'cd';                assert_eq "$rc" 2 'without jq, a bare cd with no target is refused'
 run_hook_nojq 'ls -la';            assert_eq "$rc" 0 'without jq, an unrelated command passes'
+
+echo "=== block-bare-cd: a quoted operator is an operand, not a separator ==="
+run_hook 'cd "a;b"';               assert_eq "$rc" 2 'a quoted ; does not turn a bare cd into a chain'
+run_hook "cd 'a&b'";               assert_eq "$rc" 2 'a single-quoted & does not either'
+run_hook 'cd "a|b" && ls';         assert_eq "$rc" 0 'a real chain after a quoted | still passes'
+
+echo "=== block-bare-cd: both decoders agree on JSON escapes ==="
+# The fallback decodes only \" and \\. Anything it would have to interpret is
+# refused, so it can never pass what jq refuses.
+for payload in '{"tool_input":{"command":"cd\t/tmp"}}' '{"tool_input":{"command":"ls\ncd"}}'; do
+  set +e
+  printf '%s' "$payload" | "$BASH_BIN" "$HOOK" >/dev/null 2>&1; with_jq=$?
+  printf '%s' "$payload" | env -i HOME="$HOME" PWD="$PWD" PATH="$NOJQ_BIN" "$BASH_BIN" "$HOOK" \
+    >/dev/null 2>"$ERR_FILE"; rc=$?
+  set -e
+  assert_eq "$rc" 2 "without jq, an escape it cannot decode refuses: $payload"
+  assert_eq "$with_jq" 2 "jq decodes the same escape to a bare cd: $payload"
+done
+
+echo "=== block-bare-cd: no text tools ==="
+set +e
+printf '%s' '{"tool_input":{"command":"cd /tmp"}}' \
+  | env -i PATH=/nonexistent "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"; rc=$?
+set -e
+assert_eq "$rc" 2 'a PATH with no text tools refuses rather than no-opping every check'
+assert_contains "$ERR_FILE" 'unavailable to read the payload' 'the refusal names the missing tools'
 
 echo "=== block-bare-cd: an undecodable payload refuses ==="
 set +e

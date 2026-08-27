@@ -9,6 +9,14 @@
 
 set -euo pipefail
 
+# Every decision below is made by these tools, so a PATH without them would
+# no-op each check in turn and exit clean. Refuse before reading anything.
+if ! command -v cat >/dev/null 2>&1 || ! command -v grep >/dev/null 2>&1 \
+  || ! command -v sed >/dev/null 2>&1 || ! command -v head >/dev/null 2>&1; then
+  echo "block-bare-cd: text tools (cat/grep/sed/head) unavailable to read the payload; refusing rather than skipping the guard" >&2
+  exit 2
+fi
+
 INPUT=$(cat)
 
 # Decode the command the way the sibling guards do. The value carries JSON
@@ -24,8 +32,17 @@ if command -v jq >/dev/null 2>&1; then
   fi
 else
   # Escape-aware fallback: the value may carry \" and \\ inside it.
-  COMMAND=$(printf '%s' "$INPUT" | grep -o '"command"[[:space:]]*:[[:space:]]*"\([^"\\]\|\\.\)*"' | head -1 \
-    | sed 's/^"command"[[:space:]]*:[[:space:]]*"//;s/"$//;s/\\"/"/g;s/\\\\/\\/g' 2>/dev/null || true)
+  RAW=$(printf '%s' "$INPUT" | grep -o '"command"[[:space:]]*:[[:space:]]*"\([^"\\]\|\\.\)*"' | head -1 \
+    | sed 's/^"command"[[:space:]]*:[[:space:]]*"//;s/"$//' 2>/dev/null || true)
+  # Only \" and \\ are decoded here. A \t, \n, or \u escape would have to be
+  # interpreted before the command can be classified, and reading one wrong
+  # is a bare cd that passes, so such a payload is refused instead. jq, when
+  # it is there, decodes them all and never reaches this.
+  if printf '%s' "$RAW" | grep -q '\\[^"\\]'; then
+    echo "block-bare-cd: hook payload carries a JSON escape this fallback does not decode; refusing rather than skipping the guard" >&2
+    exit 2
+  fi
+  COMMAND=$(printf '%s' "$RAW" | sed 's/\\"/"/g;s/\\\\/\\/g')
   # Same fail-closed contract as the jq branch: a payload that names a
   # command the fallback could not decode is refused, not skipped. A
   # decoded-empty command ("command":"") still passes.
@@ -44,9 +61,12 @@ if ! echo "$COMMAND" | grep -qE 'cd([[:space:]]|$)'; then
 fi
 
 # Check for bare top-level cd (not in subshell or &&-chained with other work)
-# Simple heuristic: if the command is just "cd /path" with nothing else meaningful
+# Simple heuristic: if the command is just "cd /path" with nothing else
+# meaningful. Quoted text is an operand, not structure, so it is blanked
+# first — the `;` in `cd "a;b"` separates nothing.
 STRIPPED=$(echo "$COMMAND" | sed 's/^[[:space:]]*//')
-if echo "$STRIPPED" | grep -qE '^cd([[:space:]]+[^&|;]*)?$'; then
+MASKED=$(printf '%s' "$STRIPPED" | sed 's/"[^"]*"/Q/g' | sed "s/'[^']*'/Q/g")
+if echo "$MASKED" | grep -qE '^cd([[:space:]]+[^&|;]*)?$'; then
   echo "Bare 'cd' changes working directory permanently across tool calls." >&2
   echo "Use a subshell instead: (cd /path && command)" >&2
   exit 2
