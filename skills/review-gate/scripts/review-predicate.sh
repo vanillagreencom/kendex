@@ -1262,24 +1262,24 @@ fi
 unresolved=0
 untracked=0
 if [ "$THREADS_MODE" = "enforce" ]; then
-# A thread's disposition is its LATEST non-bot comment. That comment is an
-# untracked claim when it is not a leading "Fixed in"/"Declined:" reply,
-# carries a track-word, and names no issue (ABC-123 or #123). A later reply
-# of either form or a Tracked: <id> clears an earlier naked claim; resolving
-# the thread does not — the claimant is also the resolver. Bot comments are
-# exempt (they quote each other); a missing comments field reads as none.
-# A thread past 50 comments cannot be fully read in this page shape, so it
-# fails closed as malformed rather than approving a claim it never saw.
-t_threads_page_jq='if ((.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | type) != "boolean")
+# A thread's disposition is its newest non-bot comment that is a Fixed in
+# <sha>/Declined: reply or carries a track-word; other comments never move
+# it. It is an untracked claim when it is not such a reply and names no
+# issue (ABC-123 or #123); resolving the thread does not clear it, since the
+# claimant is also the resolver. Bot comments are exempt (they quote each
+# other); a missing comments field reads as none. A thread past 50 comments
+# cannot be fully read in this page shape, so it fails closed as malformed.
+t_threads_page_jq='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|declined:)"; "i");
+  if ((.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | type) != "boolean")
     or ([.data.repository.pullRequest.reviewThreads.nodes[] | select((.isResolved | type) != "boolean")] | length) > 0
   then "malformed"
   elif ([.data.repository.pullRequest.reviewThreads.nodes[] | select(.comments.pageInfo.hasNextPage == true)] | length) > 0
   then "malformed"
   else ([.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length | tostring)
     + " " + ([.data.repository.pullRequest.reviewThreads.nodes[]
-        | ([(.comments.nodes // [])[] | select((.author.__typename // "User") != "Bot")] | last // empty | .body // "")
-        | select(test("^\\s*(fixed in|declined:)"; "i") | not)
-        | select(test("(?i)\\btrack(ed|ing|s)?\\b"))
+        | ([(.comments.nodes // [])[] | select((.author.__typename // "User") != "Bot") | (.body // "")
+            | select(disposition or test("(?i)\\btrack(ed|ing|s)?\\b"))] | last // empty)
+        | select(disposition | not)
         | select(test("([A-Z][A-Z0-9]+-[0-9]+|#[0-9]+)\\b") | not)] | length | tostring)
     + " " + (.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | tostring)
     + " " + (.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // "END")

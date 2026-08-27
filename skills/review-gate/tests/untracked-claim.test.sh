@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Behavioral coverage for the untracked-claim term: the predicate's thread
 # jq (extracted from the script, not restated) judges each thread by its
-# latest non-bot comment — a tracking claim with no issue id counts, a
-# Fixed in/Declined: reply never does, a later reply clears an earlier
-# claim, resolving the thread does not, bot replies do not move the
-# disposition — and fails closed on a comments page it cannot finish.
+# newest non-bot comment that is a Fixed in <sha>/Declined: reply or
+# carries a track-word: a claim with no issue id counts, such a reply
+# never does, later replies of any other kind, bot replies, and resolving
+# the thread do not move it. A comments page it cannot finish fails closed.
 # The writer maps the verdict to a failure status.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,14 +47,23 @@ case "$out" in "0 0 "*) ok "a later Declined: reply clears a naked claim";; *) b
 out=$(page "$(thread true "$(human 'Out of scope, tracked.'),$(human 'Tracked: KEN-637')")")
 case "$out" in "0 0 "*) ok "a later Tracked: <id> reply clears a naked claim";; *) bad "a later Tracked: <id> reply clears a naked claim" "$out";; esac
 
-out=$(page "$(thread true "$(human 'Fixed in abc123, every tracked caller now runs')")")
+out=$(page "$(thread true "$(human 'Fixed in abc1234, every tracked caller now runs')")")
 case "$out" in "0 0 "*) ok "a Fixed in reply is never a claim, whatever its prose";; *) bad "a Fixed in reply is never a claim, whatever its prose" "$out";; esac
 
-out=$(page "$(thread true "$(human 'Out of scope, tracked.'),$(bot 'Thanks, noted as tracked')")")
+out=$(page "$(thread true "$(human 'Out of scope, tracked.'),$(bot 'Thanks, noted')")")
 case "$out" in "0 1 "*) ok "a bot reply does not move the disposition";; *) bad "a bot reply does not move the disposition" "$out";; esac
 
-out=$(page "$(thread true "$(human 'Fixed in abc123'),$(human 'the rest is tracked for later')")")
+out=$(page "$(thread true "$(human 'Fixed in abc1234'),$(human 'the rest is tracked for later')")")
 case "$out" in "0 1 "*) ok "a resolved thread with a naked last reply still counts";; *) bad "a resolved thread with a naked last reply still counts" "$out";; esac
+
+out=$(page "$(thread true "$(human 'Out of scope, tracked.'),$(human 'ok')"),$(thread true "$(human 'Out of scope, tracked.'),$(human 'Which issue?')")")
+case "$out" in "0 2 "*) ok "a reply that is neither claim nor disposition does not move it";; *) bad "a reply that is neither claim nor disposition does not move it" "$out";; esac
+
+out=$(page "$(thread true "$(human 'Fixed in a follow-up, tracked separately')")")
+case "$out" in "0 1 "*) ok "Fixed in without a sha is not a disposition";; *) bad "Fixed in without a sha is not a disposition" "$out";; esac
+
+out=$(page "$(thread true "$(human 'Declined: the caller is tracked by the loader already')")")
+case "$out" in "0 0 "*) ok "a Declined: reply with a naked track-word is never a claim";; *) bad "a Declined: reply with a naked track-word is never a claim" "$out";; esac
 
 out=$(page "$(thread false "$(human 'looking')")")
 case "$out" in "1 0 "*) ok "unresolved counting unchanged";; *) bad "unresolved counting unchanged" "$out";; esac
