@@ -136,3 +136,14 @@ hooks_path_origins() { # -> the stand-down text, on stderr
   fi
   echo "  $HOOKS_PATH_REMEDY" >&2
 }
+
+# The configured value, rendered for a message that promises to be one line.
+#
+# CUSTOM_HOOKS is bytes git handed back, and a config value may carry a
+# newline: interpolated raw, it splits the single summary line this tool
+# promises, and the tail lands where a caller reading the first line never
+# sees it. %q renders any byte on one line, quotes an empty value visibly,
+# and escapes what a terminal would otherwise act on.
+hooks_path_shown() { # -> CUSTOM_HOOKS on one line, on stdout
+  printf '%q' "$CUSTOM_HOOKS"
+}

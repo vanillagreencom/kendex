@@ -16,7 +16,9 @@ set -euo pipefail
 
 # --check: nothing below this comment's section writes. Component findings
 # are folded into the single stdout verdict line, so a caller that sees only
-# the summary still learns what is wrong and where.
+# the summary still learns what is wrong and where. The remedy is the other
+# stream's: a core.hooksPath stand-down puts git's report on stderr, because
+# it is as many lines as git gives and stdout stays one line.
 CHECK_REASONS=""
 add_reason() { # MESSAGE
   if [ -n "$CHECK_REASONS" ]; then

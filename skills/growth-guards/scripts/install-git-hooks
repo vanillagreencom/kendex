@@ -89,9 +89,11 @@ switches git hooks off), 2 the question could not be answered — an
 unreadable hooks directory, or a core.hooksPath naming a directory, which
 is outside this verifier's contract: it reads .git/hooks only, whatever the
 configured value resolves to. Failure to measure is never a clean
-measurement. The verdict line on stdout names what is wrong and the remedy.
+measurement. stdout is one summary line: the verdict, and what is wrong.
 
-Prints one summary line on stdout; warnings go to stderr.
+Warnings go to stderr, and so does the core.hooksPath remedy, which the
+summary points at rather than repeats: git's report of where the value is
+set runs to as many lines as git gives.
 
 Exit codes: 0 installed/removed or deliberately skipped; 1 a shim could not
 be installed or removed; 2 usage error. Under --check: the verdict above.
@@ -164,14 +166,14 @@ if [ "$HOOKS_PATH_ELSEWHERE" -eq 1 ] && [ "$MODE" = "install" ]; then
     # Not "git ignores $HOOKS_DIR": the value may resolve to that very
     # directory, and which one git reads is the question this installer
     # deliberately stopped answering.
-    warn "core.hooksPath is set ('$CUSTOM_HOOKS'); this installer writes $HOOKS_DIR only and will not write behind a configured hooks path, so the guard shims were NOT installed"
+    warn "core.hooksPath is set ($(hooks_path_shown)); this installer writes $HOOKS_DIR only and will not write behind a configured hooks path, so the guard shims were NOT installed"
   fi
   # One remedy, and it is the one that arms. Telling somebody to wire that
   # directory by hand prescribes a shape --check has no way to verify, so it
   # trades a repository that is not gated for one that is gated and can
   # never say so.
   hooks_path_origins
-  echo "growth-guards git hooks: skipped — core.hooksPath is set ('$CUSTOM_HOOKS')"
+  echo "growth-guards git hooks: skipped — core.hooksPath is set ($(hooks_path_shown))"
   exit 0
 fi
 
@@ -483,7 +485,7 @@ if [ "$MODE" = "check" ]; then
     fi
     # Where the value sends git is not claimed, because it is not measured:
     # it may well name $HOOKS_DIR under another spelling.
-    echo "growth-guards git hooks: could not determine whether commits are gated — core.hooksPath is set ('$CUSTOM_HOOKS'), and a configured hooks path is outside this verifier's contract: it reads $HOOKS_DIR only; git's report of where it is set is on stderr, or read the configured directory yourself"
+    echo "growth-guards git hooks: could not determine whether commits are gated — core.hooksPath is set ($(hooks_path_shown)), and a configured hooks path is outside this verifier's contract: it reads $HOOKS_DIR only; git's report of where it is set is on stderr, or read the configured directory yourself"
     exit 2
   fi
   check_hooks_dir || VERDICT=$?

@@ -115,7 +115,7 @@ case "$OUT" in
   *) ok "and it claims nothing about arming, in either direction" ;;
 esac
 case "$OUT" in
-  *"core.hooksPath is set ('customhooks')"*) ok "and names the configured value" ;;
+  *"core.hooksPath is set (customhooks)"*) ok "and names the configured value" ;;
   *) bad "the value is not named" "$OUT" ;;
 esac
 # Where git was sent is not measured, so it is not claimed: the same value
@@ -312,6 +312,49 @@ case "$OUT" in
   *file:*) ok "must-fail: the same repository with a working git reports an origin" ;;
   *) bad "no origin from a working git" "$OUT" ;;
 esac
+
+echo "=== a value carrying a newline stays on one summary line ==="
+# The stdout summary is promised to be ONE line, and the configured value is
+# bytes git handed back: a value with a newline in it, interpolated raw,
+# ends the promised line early and puts the rest of the verdict where a
+# caller reading the first line never sees it.
+R94="$(new_repo newline-value)"
+install_in "$R94"
+NL_VALUE="$(printf 'two\nlines')"
+git -C "$R94" config core.hooksPath "$NL_VALUE"
+[ "$(git -C "$R94" config --get core.hooksPath | wc -l)" -eq 2 ] \
+  && ok "the control: the configured value really does carry a newline" \
+  || bad "the fixture value has no newline" "$(git -C "$R94" config --get core.hooksPath || true)"
+
+# stdout alone, so the count is the promise being tested.
+SUMMARY=""; RC=0
+SUMMARY="$("$R94/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$R94" --check 2>/dev/null)" || RC=$?
+[ "$RC" -eq 2 ] && ok "a newline-valued core.hooksPath stands the checker down" \
+  || bad "newline-valued hooksPath checks 2" "rc=$RC out=$SUMMARY"
+[ "$(printf '%s' "$SUMMARY" | wc -l)" -eq 0 ] \
+  && ok "and the summary is still exactly one line" \
+  || bad "the summary broke into several lines" "$SUMMARY"
+case "$SUMMARY" in
+  *"could not determine"*) ok "and that one line still carries the whole verdict" ;;
+  *) bad "the verdict did not survive on the first line" "$SUMMARY" ;;
+esac
+
+# The install lane makes the same promise on its own stdout line.
+SUMMARY=""; RC=0
+SUMMARY="$("$R94/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$R94" 2>/dev/null)" || RC=$?
+[ "$(printf '%s' "$SUMMARY" | wc -l)" -eq 0 ] \
+  && ok "and the install summary is one line too" \
+  || bad "the install summary broke into several lines" "$SUMMARY"
+case "$SUMMARY" in
+  *skipped*) ok "and it still says the install was skipped" ;;
+  *) bad "the install verdict did not survive" "$SUMMARY" ;;
+esac
+
+# The must-fail control: the raw value really is multi-line, so the pins
+# above are not passing on a fixture that never had a newline to lose.
+[ "$(printf '%s' "$NL_VALUE" | wc -l)" -eq 1 ] \
+  && ok "must-fail: the raw value spans two lines, which is what was escaped" \
+  || bad "the raw value is one line after all" "$NL_VALUE"
 
 echo "=== a repository path that begins with a dash is a path ==="
 # `cd "$REPO"` reads a leading dash as an option: `--repo -P` became `cd -P`,
