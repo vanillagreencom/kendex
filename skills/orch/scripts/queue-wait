@@ -157,8 +157,8 @@ read` runs only for the final selected op:// reference, each candidate
 source is probed at most once, and a selected env token is validated with
 `gh api user`. Full ladder: orch DEVELOPMENT.md.
 
-Environment (orch-env ladder: parent env > .env.local > kendex.settings.toml /
-  .kendex/settings.toml [env] > .env > default):
+Environment (orch-env ladder: parent env > .env.local > .kendex/settings.toml /
+  kendex.settings.toml [env] > default):
   QUEUE_WAIT_ARM_GRACE      seconds to keep polling before reporting
                 "not_queued" when no poll has yet seen the PR queued or
                 armed (default 120). Enqueue registration lags the merge

@@ -33,34 +33,34 @@ run_setting() {
 }
 
 echo "=== whitespace-tolerant reads ==="
-run_setting 'REVIEW_GATE_T1 = "col1"' REVIEW_GATE_T1 "dflt"
+run_setting $'[env]\nREVIEW_GATE_T1 = "col1"' REVIEW_GATE_T1 "dflt"
 [[ "$RC" -eq 0 && "$OUT" == "col1" ]] && ok "column-one assignment reads" || bad "column-one assignment reads" "rc=$RC out=$OUT"
 
-run_setting '  REVIEW_GATE_T2 = "indented"' REVIEW_GATE_T2 "dflt"
+run_setting $'[env]\n  REVIEW_GATE_T2 = "indented"' REVIEW_GATE_T2 "dflt"
 [[ "$RC" -eq 0 && "$OUT" == "indented" ]] && ok "indented sole assignment reads (not the silent default)" || bad "indented sole assignment reads (not the silent default)" "rc=$RC out=$OUT"
 
 run_setting $'[env]\nREVIEW_GATE_T3 = ""' REVIEW_GATE_T3 "dflt"
 [[ "$RC" -eq 0 && "$OUT" == "" ]] && ok "explicit empty assignment overrides the default (empty-disables contract)" || bad "explicit empty assignment overrides the default" "rc=$RC out=$OUT"
 
-run_setting 'REVIEW_GATE_T4 = "file"' REVIEW_GATE_T4 "dflt"
+run_setting $'[env]\nREVIEW_GATE_T4 = "file"' REVIEW_GATE_T4 "dflt"
 env_out="$(REVIEW_GATE_T4="env" REVIEW_GATE_SETTINGS_FILE="$TMP/settings.toml" rg_setting REVIEW_GATE_T4 "dflt")"
 [[ "$env_out" == "env" ]] && ok "explicit environment still wins over the file" || bad "explicit environment still wins over the file" "$env_out"
 
 echo "=== ambiguity fails loud regardless of indentation ==="
-run_setting $'REVIEW_GATE_T5 = "a"\nREVIEW_GATE_T5 = "b"' REVIEW_GATE_T5 "dflt"
+run_setting $'[env]\nREVIEW_GATE_T5 = "a"\nREVIEW_GATE_T5 = "b"' REVIEW_GATE_T5 "dflt"
 [[ "$RC" -ne 0 ]] && grep -q "assigned more than once" "$TMP/err" && ok "column-one duplicate is a config error (control)" || bad "column-one duplicate is a config error (control)" "rc=$RC"
 
-run_setting $'REVIEW_GATE_T6 = "a"\n  REVIEW_GATE_T6 = "b"' REVIEW_GATE_T6 "dflt"
+run_setting $'[env]\nREVIEW_GATE_T6 = "a"\n  REVIEW_GATE_T6 = "b"' REVIEW_GATE_T6 "dflt"
 [[ "$RC" -ne 0 ]] && grep -q "assigned more than once" "$TMP/err" && ok "INDENTED duplicate is a config error (was invisible to the guard)" || bad "INDENTED duplicate is a config error (was invisible to the guard)" "rc=$RC out=$OUT"
 
-run_setting $'  REVIEW_GATE_T7 = "a"\n  REVIEW_GATE_T7 = "b"' REVIEW_GATE_T7 "dflt"
+run_setting $'[env]\n  REVIEW_GATE_T7 = "a"\n  REVIEW_GATE_T7 = "b"' REVIEW_GATE_T7 "dflt"
 [[ "$RC" -ne 0 ]] && ok "two indented duplicates are a config error" || bad "two indented duplicates are a config error" "rc=$RC out=$OUT"
 
 echo "=== unparseable stays loud ==="
-run_setting 'REVIEW_GATE_T8 = ["array"]' REVIEW_GATE_T8 "dflt"
+run_setting $'[env]\nREVIEW_GATE_T8 = ["array"]' REVIEW_GATE_T8 "dflt"
 [[ "$RC" -ne 0 ]] && grep -q "unsupported syntax" "$TMP/err" && ok "array syntax is a config error (control)" || bad "array syntax is a config error (control)" "rc=$RC"
 
-run_setting '  REVIEW_GATE_T9 = ["array"]' REVIEW_GATE_T9 "dflt"
+run_setting $'[env]\n  REVIEW_GATE_T9 = ["array"]' REVIEW_GATE_T9 "dflt"
 [[ "$RC" -ne 0 ]] && grep -q "unsupported syntax" "$TMP/err" && ok "indented array syntax is a config error, not a silent default" || bad "indented array syntax is a config error, not a silent default" "rc=$RC out=$OUT"
 
 echo "=== invalid key names are refused before any interpolation ==="
@@ -68,13 +68,13 @@ echo "=== invalid key names are refused before any interpolation ==="
 # patterns; the identifier-shape rejection is the only thing standing between
 # a metacharacter name and pattern injection. Red-first: both refusal cases
 # fail against a build with the `case` guard deleted.
-run_setting 'REVIEW_GATE_OK = "x"' 9BADNAME "dflt"
+run_setting $'[env]\nREVIEW_GATE_OK = "x"' 9BADNAME "dflt"
 [[ "$RC" -ne 0 ]] && grep -q "invalid key name" "$TMP/err" && ok "leading-digit name is refused" || bad "leading-digit name is refused" "rc=$RC out=$OUT"
 
-run_setting 'REVIEW_GATE_OK = "x"' 'REVIEW_GATE.DOT' "dflt"
+run_setting $'[env]\nREVIEW_GATE_OK = "x"' 'REVIEW_GATE.DOT' "dflt"
 [[ "$RC" -ne 0 ]] && grep -q "invalid key name" "$TMP/err" && ok "regex-metacharacter name is refused (never reaches ERE interpolation)" || bad "regex-metacharacter name is refused (never reaches ERE interpolation)" "rc=$RC out=$OUT"
 
-run_setting '_REVIEW_GATE_U = "u1"' _REVIEW_GATE_U "dflt"
+run_setting $'[env]\n_REVIEW_GATE_U = "u1"' _REVIEW_GATE_U "dflt"
 [[ "$RC" -eq 0 && "$OUT" == "u1" ]] && ok "underscore-prefixed name stays valid (control)" || bad "underscore-prefixed name stays valid (control)" "rc=$RC out=$OUT"
 
 echo "=== dash-prefixed settings path is a filename, never grep options ==="
@@ -82,7 +82,7 @@ echo "=== dash-prefixed settings path is a filename, never grep options ==="
 # OPTION: the presence probe errors, and the reader silently falls back to the
 # caller default — fail-open on permissive defaults (hyprtrade#515 review,
 # qodo). Red-first: fails against a build without the -- terminators.
-printf 'REVIEW_GATE_TD = "dashfile"\n' > "$TMP/-e"
+printf '[env]\nREVIEW_GATE_TD = "dashfile"\n' > "$TMP/-e"
 OUT=""; RC=0
 OUT="$(cd "$TMP" && { unset REVIEW_GATE_TD 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="-e" rg_setting REVIEW_GATE_TD "dflt" 2>"$TMP/err"; })" || RC=$?
 [[ "$RC" -eq 0 && "$OUT" == "dashfile" ]] && ok "dash-prefixed settings path reads its value (no option-injection fallback)" || bad "dash-prefixed settings path reads its value (no option-injection fallback)" "rc=$RC out=$OUT"
@@ -118,7 +118,7 @@ OUT="$(unset REVIEW_GATE_TN 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="$TMP/cycle-a
 [[ "$RC" -ne 0 ]] && grep -q "does not resolve" "$TMP/err" && ok "a CYCLIC symlink settings path is a config error, not a silent default" || bad "a CYCLIC symlink settings path is a config error, not a silent default" "rc=$RC out=$OUT"
 
 # A RESOLVING symlink is an ordinary install shape and must still read.
-printf 'REVIEW_GATE_TL = "linked"\n' >"$TMP/link-target.settings.toml"
+printf '[env]\nREVIEW_GATE_TL = "linked"\n' >"$TMP/link-target.settings.toml"
 ln -s link-target.settings.toml "$TMP/link.settings.toml"
 OUT=""; RC=0
 OUT="$(unset REVIEW_GATE_TL 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="$TMP/link.settings.toml" rg_setting REVIEW_GATE_TL "dflt" 2>"$TMP/err")" || RC=$?
@@ -132,7 +132,7 @@ echo "=== an UNREADABLE settings source fails loud, never falls back ==="
 if [ "$(id -u)" -eq 0 ]; then
   echo "  skip  unreadable-source pins need a non-root reader (chmod 000 cannot deny root)"
 else
-  printf 'REVIEW_GATE_TU = "configured"\n' >"$TMP/unreadable.settings.toml"
+  printf '[env]\nREVIEW_GATE_TU = "configured"\n' >"$TMP/unreadable.settings.toml"
   chmod 000 "$TMP/unreadable.settings.toml"
   RC=0
   rg_settings_grep "^REVIEW_GATE_TU" "$TMP/unreadable.settings.toml" >/dev/null 2>"$TMP/err" || RC=$?
@@ -174,6 +174,68 @@ OUT="$(cd "$TMP/sentinel" && { unset REVIEW_GATE_TS 2>/dev/null; REVIEW_GATE_SET
 OUT=""; RC=0
 OUT="$(cd "$TMP/sentinel" && REVIEW_GATE_TS="fromenv" REVIEW_GATE_SETTINGS_FILE=/dev/null rg_setting REVIEW_GATE_TS "dflt" 2>"$TMP/err")" || RC=$?
 [[ "$RC" -eq 0 && "$OUT" == "fromenv" ]] && ok "an explicit environment variable still wins over the sentinel" || bad "sentinel vs environment" "rc=$RC out=$OUT"
+
+echo "=== only the [env] table is read ==="
+# The loader is table-aware: a bare assignment above the first header or
+# under an unrelated table belongs to another tool and resolves nothing.
+# Both cases fail against a file-wide matcher, which would read the value.
+run_setting $'REVIEW_GATE_TT = "top"\n[env]\nREVIEW_GATE_OTHER = "x"' REVIEW_GATE_TT "dflt"
+[[ "$RC" -eq 0 && "$OUT" == "dflt" ]] && ok "an assignment ABOVE the [env] header is ignored" || bad "an assignment ABOVE the [env] header is ignored" "rc=$RC out=$OUT"
+
+run_setting $'[notes]\nREVIEW_GATE_TT = "elsewhere"' REVIEW_GATE_TT "dflt"
+[[ "$RC" -eq 0 && "$OUT" == "dflt" ]] && ok "an assignment under an UNRELATED table is ignored" || bad "an assignment under an UNRELATED table is ignored" "rc=$RC out=$OUT"
+
+# A duplicate split across re-entered [env] sections is the same ambiguity
+# as two lines in one section.
+run_setting $'[env]\nREVIEW_GATE_TT = "a"\n[notes]\nx = "y"\n[env]\nREVIEW_GATE_TT = "b"' REVIEW_GATE_TT "dflt"
+[[ "$RC" -ne 0 ]] && grep -q "assigned more than once in \[env\]" "$TMP/err" && ok "a duplicate across re-entered [env] sections is a config error" || bad "a duplicate across re-entered [env] sections is a config error" "rc=$RC out=$OUT"
+
+echo "=== the contract value grammar ==="
+# Values are single-line basic strings with no double quote and no
+# backslash; a trailing TOML comment is accepted. Both families decode the
+# contract shape identically, so a backslash cannot mean an escape in one
+# reader and a literal in another — it is refused everywhere.
+run_setting $'[env]\nREVIEW_GATE_TC = "spaced value" # trailing comment' REVIEW_GATE_TC "dflt"
+[[ "$RC" -eq 0 && "$OUT" == "spaced value" ]] && ok "a trailing comment is dropped from the decoded value" || bad "a trailing comment is dropped from the decoded value" "rc=$RC out=$OUT"
+
+run_setting $'[env]\nREVIEW_GATE_TB = "a\\b"' REVIEW_GATE_TB "dflt"
+[[ "$RC" -ne 0 ]] && grep -q "unsupported syntax" "$TMP/err" && ok "a backslash in the value is a config error, never decoded" || bad "a backslash in the value is a config error, never decoded" "rc=$RC out=$OUT"
+
+echo "=== default-path layering and the REVIEW_GATE_MODE exception ==="
+# With no REVIEW_GATE_SETTINGS_FILE the default sources apply: .env.local >
+# .kendex/settings.toml > kendex.settings.toml > default — except
+# REVIEW_GATE_MODE, which skips the dotenv layer so the local waiter and the
+# CI gate (which has no .env.local) resolve the switch identically.
+mkdir -p "$TMP/layers/.kendex"
+printf '[env]\nREVIEW_GATE_TP = "root"\nREVIEW_GATE_MODE = "off"\n' >"$TMP/layers/kendex.settings.toml"
+layer() { # NAME DEFAULT — resolve from inside the layered fixture
+  OUT=""; RC=0
+  OUT="$(cd "$TMP/layers" && { unset "$1" REVIEW_GATE_SETTINGS_FILE 2>/dev/null; rg_setting "$1" "$2" 2>"$TMP/err"; })" || RC=$?
+}
+layer REVIEW_GATE_TP "dflt"
+[[ "$RC" -eq 0 && "$OUT" == "root" ]] && ok "control: the root settings file supplies the value" || bad "control: the root settings file supplies the value" "rc=$RC out=$OUT"
+
+printf '[env]\nREVIEW_GATE_TP = "nested"\n' >"$TMP/layers/.kendex/settings.toml"
+layer REVIEW_GATE_TP "dflt"
+[[ "$RC" -eq 0 && "$OUT" == "nested" ]] && ok ".kendex/settings.toml beats kendex.settings.toml" || bad ".kendex/settings.toml beats kendex.settings.toml" "rc=$RC out=$OUT"
+
+printf 'REVIEW_GATE_TP=dotenv\nREVIEW_GATE_MODE=enforce\n' >"$TMP/layers/.env.local"
+layer REVIEW_GATE_TP "dflt"
+[[ "$RC" -eq 0 && "$OUT" == "dotenv" ]] && ok ".env.local beats both settings files" || bad ".env.local beats both settings files" "rc=$RC out=$OUT"
+
+# The exception: the same .env.local assigns REVIEW_GATE_MODE=enforce, and
+# the settings file says off — the settings file must win, because the
+# dotenv layer is not a source for this key. Fails against a resolver that
+# reads the mode from .env.local.
+layer REVIEW_GATE_MODE "enforce"
+[[ "$RC" -eq 0 && "$OUT" == "off" ]] && ok "REVIEW_GATE_MODE ignores .env.local and reads the settings file" || bad "REVIEW_GATE_MODE ignores .env.local and reads the settings file" "rc=$RC out=$OUT"
+
+# And with the settings assignment gone, the exception resolves the built-in
+# default while the dotenv value still sits there unread.
+printf '[env]\nREVIEW_GATE_TP = "root"\n' >"$TMP/layers/kendex.settings.toml"
+rm -f "$TMP/layers/.kendex/settings.toml"
+layer REVIEW_GATE_MODE "enforce"
+[[ "$RC" -eq 0 && "$OUT" == "enforce" ]] && ok "REVIEW_GATE_MODE falls to the default over a dotenv-only value" || bad "REVIEW_GATE_MODE falls to the default over a dotenv-only value" "rc=$RC out=$OUT"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

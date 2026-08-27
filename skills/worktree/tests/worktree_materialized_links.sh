@@ -65,7 +65,7 @@ printf 'harness/**\n!harness/tracked.md\nruntime/\n' >"$MAIN/.gitignore"
 printf 'installed\n' >"$MAIN/harness/skills/installed.txt"
 printf 'tracked\n' >"$MAIN/harness/tracked.md"
 printf 'state\n' >"$MAIN/runtime/state.json"
-printf 'WORKTREE_SYMLINKS="harness runtime"\n' >"$MAIN/.env"
+printf 'WORKTREE_SYMLINKS="harness runtime"\n' >"$MAIN/.env.local"
 git -C "$MAIN" add .gitignore harness/tracked.md
 git -C "$MAIN" commit -q -m harness
 git -C "$MAIN" push -q origin main

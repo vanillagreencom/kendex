@@ -31,7 +31,7 @@ Recovering a broken `.agents` entry in a worktree, the app-created-worktree hook
 
 ## Setup
 
-Run from the main checkout of a git repo with an `origin` remote. New-work claims need authenticated `gh` and `flock`. Put project defaults in committed `kendex.settings.toml` under `[env]`; keep secrets and personal overrides in `.env.local`. Load order is `.env`, then `kendex.settings.toml`, then `.env.local`.
+Run from the main checkout of a git repo with an `origin` remote. New-work claims need authenticated `gh` and `flock`. Put project defaults in committed `kendex.settings.toml` under `[env]`; keep secrets and personal overrides in `.env.local`, which wins over the settings files. A `.env` file is never read.
 
 | Variable | Purpose |
 |----------|---------|

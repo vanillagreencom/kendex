@@ -313,7 +313,7 @@ load_bot_token() {
     local token=""
 
     if ! token=$(select_github_auth_token); then
-        # Load .env, public settings, then .env.local only when the process env
+        # Load public settings, then .env.local, only when the process env
         # did not already carry a resolved GitHub token.
         local lib_dir
         lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -36,7 +36,7 @@ arguments — git passes none to pre-commit. Wire it through the installed shim:
 `install-git-hooks --repo <root>`.
 
 Configuration (env > .env.local > .kendex/settings.toml >
-kendex.settings.toml [env] > .env > default):
+kendex.settings.toml [env] > default):
   GROWTH_GUARDS_PRE_COMMIT_LOCAL   repo-root-relative executable to run last
                                    (default "": no repo-local entry)
 Every GROWTH_GUARDS_* key the batch reads applies here unchanged.

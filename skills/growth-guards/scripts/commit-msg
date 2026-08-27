@@ -31,7 +31,7 @@ git-generated messages (Merge/Revert/Reapply, fixup!/squash!/amend!) pass
 unchanged. Wire it as .git/hooks/commit-msg: `commit-msg "$1"`.
 
 Configuration (env > .env.local > .kendex/settings.toml >
-kendex.settings.toml [env] > .env > default):
+kendex.settings.toml [env] > default):
   GROWTH_GUARDS_COMMIT_TYPES   space-separated type list
                                (default "build chore ci docs feat fix perf refactor revert style test")
 

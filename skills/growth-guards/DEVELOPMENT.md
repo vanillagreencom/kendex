@@ -254,7 +254,7 @@ sourced. Only an ABSENT source is skipped: a source that exists but is
 unusable — unreadable, a directory, FIFO, socket or device, or a symlink
 that does not resolve — is a config error (exit 2), never a fall-through to
 the next layer. `GROWTH_GUARDS_SETTINGS_FILE=/dev/null` selects no settings
-source at all — `.env.local`, the settings file and `.env` are all skipped —
+source at all — `.env.local` and the settings files are both skipped —
 leaving explicit environment variables and the built-in defaults. The
 scripts `cd` to `git rev-parse --show-toplevel` before resolving anything,
 so all relative paths are repo-root-relative.

@@ -42,7 +42,7 @@
 #   ORCH_LANE_DIRS     Colon-separated config dirs, for a layout discovery does
 #                      not reach. Replaces claude discovery entirely.
 # Both read through the kendex settings ladder (process env > .env.local >
-# kendex.settings.toml [env] > .env).
+# .kendex/settings.toml / kendex.settings.toml [env]).
 #
 # CLAIMS are the launches already in flight on a lane: `open-terminal` records
 # one per tmux lane it launches under a resolved lane, and a claim is live

@@ -86,7 +86,7 @@ make_repo() {
   printf 'base\n' >"$root/main/base.txt"
   git -C "$root/main" add base.txt
   git -C "$root/main" commit -q -m base
-  printf 'WORKTREE_BASE_DIR="../trees"\n' >"$root/main/.env"
+  printf 'WORKTREE_BASE_DIR="../trees"\n' >"$root/main/.env.local"
   git init -q --bare "$root/origin.git"
   git -C "$root/main" remote add origin "$root/origin.git"
   git -C "$root/main" push -q -u origin main

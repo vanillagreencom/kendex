@@ -65,8 +65,8 @@ mkdir -p "$R/main/harness/skills"
 printf 'harness/state.json\n' >"$R/main/.gitignore"
 printf 'runtime\n' >"$R/main/harness/state.json"
 printf 'v1\n' >"$R/main/harness/skills/tool.md"
-printf 'WORKTREE_SYMLINKS="harness"\n' >"$R/main/.env"
-git -C "$R/main" add .gitignore harness/skills/tool.md .env
+printf 'WORKTREE_SYMLINKS="harness"\n' >"$R/main/.env.local"
+git -C "$R/main" add .gitignore harness/skills/tool.md .env.local
 git -C "$R/main" commit -q -m harness
 git -C "$R/main" push -q origin main
 
@@ -122,8 +122,8 @@ make_repo "$C"
 mkdir -p "$C/main/runtime/sub"
 printf 'state\n' >"$C/main/runtime/state.json"
 printf 'more\n' >"$C/main/runtime/sub/x.json"
-printf 'WORKTREE_SYMLINKS="runtime"\n' >"$C/main/.env"
-git -C "$C/main" add .env
+printf 'WORKTREE_SYMLINKS="runtime"\n' >"$C/main/.env.local"
+git -C "$C/main" add .env.local
 git -C "$C/main" commit -q -m runtime
 git -C "$C/main" push -q origin main
 

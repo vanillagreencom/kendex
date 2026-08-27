@@ -58,6 +58,10 @@ an outside contributor.
   installs in the main checkout and link its `node_modules` via
   `WORKTREE_SYMLINKS`; an unlinked JS worktree warns, naming the main checkout.
 
+- **Breaking:** every skill resolves settings as env > `.env.local` >
+  `.kendex/settings.toml` > `kendex.settings.toml` > default, `[env]` table
+  only; `.env` is silently ignored (use `.env.local`); duplicates error.
+
 - **Breaking:** kendex no longer reads the pre-2.0 mutable clone in the
   source cache. Nothing has written that layout since 2.0, so a scope whose
   only copy is there reads as Pending until `kendex refresh` fetches it.

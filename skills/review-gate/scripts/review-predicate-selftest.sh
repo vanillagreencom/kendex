@@ -18,8 +18,8 @@
 #      the skip-pattern (pass-without-analysis) filter, review-object trust,
 #      approval non-supersession, fail-loud reads, and config validation.
 #   2. Configured layer — the same approve/near-miss discipline re-derived
-#      from THIS repo's resolved REVIEW_GATE_* settings (env >
-#      kendex.settings.toml > defaults), so a repo trusting a different bot
+#      from THIS repo's resolved REVIEW_GATE_* settings (env > .env.local >
+#      the settings files > defaults), so a repo trusting a different bot
 #      tests its OWN trust list, not someone else's defaults.
 #
 # Mechanism: a `gh` shim earlier on PATH answers from fixtures and applies any

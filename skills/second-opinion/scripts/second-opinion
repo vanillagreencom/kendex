@@ -244,7 +244,7 @@ HELP
 }
 
 # Help is answered before project configuration is read: sourcing a repo's
-# .env under --help would execute repository-controlled shell code. The
+# .env.local under --help would execute repository-controlled shell code. The
 # option parser treats -h/--help at any position as help, so the same scan
 # decides here.
 for _arg in "$@"; do
@@ -806,7 +806,7 @@ file_declares_current_model() {
 # called on a refusal path.
 declaring_project_files() {
   local f kind found=""
-  for f in "$PROJECT_ROOT/.env" "$PROJECT_ROOT/kendex.settings.toml" \
+  for f in "$PROJECT_ROOT/kendex.settings.toml" \
            "$PROJECT_ROOT/.kendex/settings.toml" "$PROJECT_ROOT/.env.local"; do
     [[ -f "$f" ]] || continue
     case "$f" in *.toml) kind="toml" ;; *) kind="env" ;; esac

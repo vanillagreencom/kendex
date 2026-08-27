@@ -240,7 +240,7 @@ assert_contains "$PROMPT_CAPTURE" "RULE-ECHO" "legitimate sibling instruction fi
 
 # --- Scenario 8: explicitly EMPTY caller env survives project settings --------
 # SECOND_OPINION_REVIEW_INSTRUCTIONS="" is meaningful (disables the block);
-# the .env reload must restore caller SET-ness, not just non-empty values.
+# the project-env reload must restore caller SET-ness, not just non-empty values.
 echo "=== scenario 8: empty caller override beats project settings ==="
 printf '[env]\nSECOND_OPINION_REVIEW_INSTRUCTIONS = "review-bots.md"\n' > "$TMP_ROOT/proj/kendex.settings.toml"
 out8="$TMP_ROOT/out8.json"

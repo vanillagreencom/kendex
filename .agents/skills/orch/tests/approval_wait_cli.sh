@@ -128,13 +128,14 @@ assert_eq "$(run_resolve_mode)" "off" "resolve: settings-file REVIEW_GATE_MODE=o
 rm -f "$TMP_ROOT/repo/kendex.settings.toml"
 
 # The engine boundary (PR #1615): REVIEW_GATE_MODE resolves from process env
-# and kendex.settings.toml ONLY — the review-gate engine never reads dotenv
-# files, so a .env/.env.local value must not turn the waiter off while the
-# gate stays enforcing. The PR_REVIEW_* keys keep full dotenv precedence.
+# and the settings files ONLY — the engine skips dotenv for this key by
+# per-key exception, and a .env file is read by nothing at all, so neither
+# shape may turn the waiter off while the gate stays enforcing. The
+# PR_REVIEW_* keys keep full .env.local precedence.
 cat > "$TMP_ROOT/repo/.env" <<'EOF'
 REVIEW_GATE_MODE=off
 EOF
-assert_eq "$(run_resolve_mode)" "approval" "resolve: dotenv REVIEW_GATE_MODE=off is ignored (engine boundary)"
+assert_eq "$(run_resolve_mode)" "approval" "resolve: a .env REVIEW_GATE_MODE=off is read by nothing"
 assert_eq "$(run_resolve_mode REVIEW_GATE_MODE=off)" "off" "resolve: parent-env off still applies beside a dotenv file"
 cat > "$TMP_ROOT/repo/kendex.settings.toml" <<'EOF'
 [env]
@@ -143,14 +144,15 @@ EOF
 assert_eq "$(run_resolve_mode)" "off" "resolve: settings-file off still applies beside a dotenv file"
 rm -f "$TMP_ROOT/repo/kendex.settings.toml"
 mv "$TMP_ROOT/repo/.env" "$TMP_ROOT/repo/.env.local"
-assert_eq "$(run_resolve_mode)" "approval" "resolve: .env.local REVIEW_GATE_MODE=off is ignored too"
+assert_eq "$(run_resolve_mode)" "approval" "resolve: .env.local REVIEW_GATE_MODE=off is ignored (per-key exception)"
 rm -f "$TMP_ROOT/repo/.env.local"
-# Control: the reviewer keys keep their dotenv precedence.
-cat > "$TMP_ROOT/repo/.env" <<'EOF'
+# Control: the reviewer keys keep their .env.local precedence, so the
+# exception above is the mode key's, not a dead dotenv layer.
+cat > "$TMP_ROOT/repo/.env.local" <<'EOF'
 PR_REVIEW_GATE=review
 EOF
-assert_eq "$(run_resolve_mode)" "review" "resolve: dotenv PR_REVIEW_GATE keeps full precedence (control)"
-rm -f "$TMP_ROOT/repo/.env"
+assert_eq "$(run_resolve_mode)" "review" "resolve: .env.local PR_REVIEW_GATE keeps full precedence (control)"
+rm -f "$TMP_ROOT/repo/.env.local"
 
 # REVIEW_GATE_MODE goes through the ENGINE's resolver (rg_setting), so its
 # settings-file semantics are the engine's, not the generic loader's.
@@ -161,6 +163,7 @@ EOF
 assert_eq "$(run_resolve_mode REVIEW_GATE_SETTINGS_FILE=/dev/null)" "approval" "resolve: REVIEW_GATE_SETTINGS_FILE=/dev/null forces the default over settings off"
 rm -f "$TMP_ROOT/repo/kendex.settings.toml"
 cat > "$TMP_ROOT/repo/alt-settings.toml" <<'EOF'
+[env]
 REVIEW_GATE_MODE = "off"
 EOF
 assert_eq "$(run_resolve_mode REVIEW_GATE_SETTINGS_FILE=alt-settings.toml)" "off" "resolve: the REVIEW_GATE_SETTINGS_FILE override is honored"
@@ -168,6 +171,7 @@ rm -f "$TMP_ROOT/repo/alt-settings.toml"
 # The engine fails loud on a duplicate assignment; the waiter propagates it
 # instead of quietly picking a value the predicate would reject.
 cat > "$TMP_ROOT/repo/kendex.settings.toml" <<'EOF'
+[env]
 REVIEW_GATE_MODE = "off"
 REVIEW_GATE_MODE = "enforce"
 EOF

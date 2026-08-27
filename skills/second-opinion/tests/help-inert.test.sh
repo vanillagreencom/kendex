@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Help is inert: second-opinion answers -h/--help at any argument position
-# before sourcing project configuration, so the script repository's .env
-# never runs as shell code under --help. The script resolves its project
+# before sourcing project configuration, so the script repository's
+# .env.local never runs as shell code under --help. The script resolves its project
 # root from its own location, so the copy under test lives inside the
 # fixture repository.
 set -euo pipefail
@@ -29,7 +29,7 @@ echo "=== second-opinion help is answered before project config loads ==="
 mkdir -p "$TMP/repo"
 git -C "$TMP/repo" init -q
 cp -R "$SCRIPTS_DIR" "$TMP/repo/scripts"
-printf 'touch "%s/env-executed"\n' "$TMP" >"$TMP/repo/.env"
+printf 'touch "%s/env-executed"\n' "$TMP" >"$TMP/repo/.env.local"
 
 check "--help prints help" --help
 check "-h prints help" -h
@@ -47,9 +47,9 @@ else
 fi
 
 if [[ -e "$TMP/env-executed" ]]; then
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "help sourced the project .env"
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "help sourced the project .env.local"
 else
-  PASS=$((PASS + 1)); printf '  ok    %s\n' "no help form sourced the project .env"
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "no help form sourced the project .env.local"
 fi
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"

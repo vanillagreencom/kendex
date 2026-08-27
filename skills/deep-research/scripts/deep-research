@@ -83,7 +83,6 @@ async function loadEnvFile(path) {
 
 async function loadEnv() {
   await loadEnvFile(resolve(process.cwd(), ".env.local"));
-  await loadEnvFile(resolve(process.cwd(), ".env"));
 }
 
 function resolveSecretRef(value, name) {

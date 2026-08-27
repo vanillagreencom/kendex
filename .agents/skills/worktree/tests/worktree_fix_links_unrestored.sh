@@ -42,7 +42,7 @@ assert_lacks() {
 write_base_env() {
   printf '%s\n%s\n' \
     'WORKTREE_SYMLINKS="harness runtime"' \
-    'WORKTREE_RELATIVE_SYMLINKS=".claude/CLAUDE.md=../AGENTS.md"' >"$MAIN/.env"
+    'WORKTREE_RELATIVE_SYMLINKS=".claude/CLAUDE.md=../AGENTS.md"' >"$MAIN/.env.local"
 }
 
 mkdir -p "$TMP_ROOT/bin"
@@ -105,7 +105,7 @@ fi
 echo "=== an entry with no source in the main checkout is named, not skipped ==="
 printf '%s\n%s\n' \
   'WORKTREE_SYMLINKS="harness runtime absent-here"' \
-  'WORKTREE_RELATIVE_SYMLINKS=".claude/CLAUDE.md=../AGENTS.md"' >"$MAIN/.env"
+  'WORKTREE_RELATIVE_SYMLINKS=".claude/CLAUDE.md=../AGENTS.md"' >"$MAIN/.env.local"
 run_fix_links
 if [[ "$RC" != 0 ]]; then ok "nonzero exit for an entry missing from the main checkout"; else bad "nonzero exit for an entry missing from the main checkout" "rc=0: $OUT"; fi
 assert_contains "$OUT" "absent-here" "names the skipped entry"
@@ -141,7 +141,7 @@ echo "=== a relative entry the pass could not create is named ==="
 # either.
 printf '%s\n%s\n' \
   'WORKTREE_SYMLINKS="harness runtime"' \
-  'WORKTREE_RELATIVE_SYMLINKS="notes.md/link=../base.txt"' >"$MAIN/.env"
+  'WORKTREE_RELATIVE_SYMLINKS="notes.md/link=../base.txt"' >"$MAIN/.env.local"
 run_fix_links
 if [[ "$RC" != 0 ]]; then ok "nonzero exit for a relative entry that could not be created"; else bad "nonzero exit for a relative entry that could not be created" "rc=0: $OUT"; fi
 assert_contains "$OUT" "notes.md/link" "names the relative entry"

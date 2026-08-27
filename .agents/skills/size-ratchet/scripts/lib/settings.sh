@@ -13,25 +13,21 @@
 #      string, so a caller can force "explicitly empty";
 #   2. .env.local (KEY=value, quotes optional — parsed, never sourced);
 #   3. .kendex/settings.toml, then the repo's committed kendex.settings.toml
-#      (sole uncommented `KEY = "value"` assignment; an explicit
+#      (the [env] table's sole `KEY = "value"` assignment; an explicit
 #      SIZE_RATCHET_SETTINGS_FILE consults only itself);
-#   4. .env (same shape);
-#   5. the built-in default passed by the caller.
+#   4. the built-in default passed by the caller.
+# A `.env` file is never read.
 #
 # SIZE_RATCHET_SETTINGS_FILE=/dev/null is the force-defaults handle and means
-# NO settings source at all: layers 2-4 are skipped whole, leaving explicit
+# NO settings source at all: layers 2-3 are skipped whole, leaving explicit
 # environment variables and the built-in defaults.
 #
-# The parser reads flat single-line basic-string TOML assignments only —
-# exactly the shape kendex.settings.toml [env] blocks use.
-#
-# Keys are matched FILE-WIDE by exact name, with no TOML-table awareness:
-# adopter settings sit under an [env] table, and a table-aware top-level
-# parser would resolve none of them. The consequence is a contract: every
-# key name read through sr_setting is reserved across the whole file — an
-# assignment under an unrelated table would be read as the setting, so
-# callers must keep these names unique file-wide. The one detectable
-# ambiguity, the same name assigned more than once, fails loud below.
+# The parser reads the [env] table only, and inside it accepts flat
+# single-line basic-string assignments whose value contains no `"` and no
+# `\` — exactly the kendex settings contract, decoded identically by every
+# kendex resolver. An assignment outside [env] belongs to another tool and
+# is ignored; a key re-assigned inside [env], or a value in any other
+# shape, fails loud below.
 #
 # The caller cds to the repo root before resolving, so the default settings
 # path is relative.
@@ -258,9 +254,31 @@ sr_settings_grep() { # REGEX FILE — matching lines on stdout; 1 = no match
   return "$status"
 }
 
+# The [env] table's lines. A table header is a lone [name] on its own line
+# (whitespace tolerated); any other line never changes the section, and the
+# lines before the first header belong to no table. awk failing to read the
+# source is an unreadable source and fails loud, same discipline as
+# sr_settings_grep.
+sr_env_table() { # FILE — [env]-table lines on stdout; 2 + ::error when unreadable
+  local status=0
+  awk '
+    /^[[:space:]]*\[[A-Za-z0-9_.-]+\][[:space:]]*$/ {
+      header = $0
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", header)
+      in_env = (header == "[env]")
+      next
+    }
+    in_env { print }
+  ' "$1" || status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "::error::$1: unreadable while resolving a setting (awk exit $status)" >&2
+    return 2
+  fi
+}
+
 sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
                # a present-but-unparseable assignment (callers must propagate)
-  local name="$1" default="$2" line val file status matches
+  local name="$1" default="$2" line val file table status matches
   # The name is interpolated into ERE patterns below; constrain it to the
   # identifier shape every real key has, so a metacharacter can neither
   # misgrep nor inject pattern syntax.
@@ -277,17 +295,17 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     return 0
   fi
   # /dev/null is the force-defaults handle: it selects NO settings source at
-  # all, so the dotenv layers around the settings file are skipped with it.
-  # Skipping only the TOML layer left .env.local and .env still deciding, so
-  # a caller asking for built-in defaults got whatever the repository's env
-  # files happened to say.
+  # all, so the dotenv layer around the settings files is skipped with it.
+  # Skipping only the TOML layer left .env.local still deciding, so a caller
+  # asking for built-in defaults got whatever the repository's env file
+  # happened to say.
   if [ "${SIZE_RATCHET_SETTINGS_FILE:-}" = "/dev/null" ]; then
     printf '%s' "$default"
     return 0
   fi
-  # Env-file overrides (standard project layering: .env.local beats the
-  # committed settings, .env is the base) — LAST matching KEY= line wins (shell-sourcing semantics),
-  # optional surrounding quotes stripped. Parsed, never sourced.
+  # Env-file override (standard project layering: .env.local beats the
+  # committed settings) — LAST matching KEY= line wins (shell-sourcing
+  # semantics), optional surrounding quotes stripped. Parsed, never sourced.
   local local_env=""
   local_env="$(sr_settings_source ".env.local")" || return 1
   sr_settings_usable "$local_env" || return 1
@@ -316,6 +334,7 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   file="$(sr_settings_source "$file")" || return 1
   sr_settings_usable "$file" || return 1
   if [ -f "$file" ]; then
+    table="$(sr_env_table "$file")" || return 1
     # Key PRESENCE decides, not value non-emptiness: `NAME = ""` is a real
     # assignment and must override the built-in default, exactly like a
     # set-but-empty env var does above.
@@ -325,25 +344,24 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     # fail-loud guard and an indented sole assignment collapse silently to
     # the built-in default (kendex#1059).
     status=0
-    matches="$(sr_settings_grep "^[[:space:]]*${name}[[:space:]]*=" "$file")" || status=$?
+    matches="$(printf '%s\n' "$table" | grep -E -- "^[[:space:]]*${name}[[:space:]]*=")" || status=$?
     [ "$status" -le 1 ] || return 1
     if [ "$status" -eq 0 ]; then
-      # File-wide matching (header contract) makes a re-assigned name
-      # ambiguous — e.g. the same key under two tables. Silently taking the
-      # first could read an unrelated table's value, so ambiguity is a
-      # configuration error.
+      # A re-assigned name is ambiguous — which value wins would be an
+      # accident of read order. Silently taking the first could read a stale
+      # value, so ambiguity is a configuration error.
       if [ "$(printf '%s\n' "$matches" | grep -c .)" -gt 1 ]; then
-        echo "::error::$file: $name is assigned more than once (keys are matched file-wide regardless of TOML table; each name must be unique in the file)" >&2
+        echo "::error::$file: $name is assigned more than once in [env] (each key must be unique in the table)" >&2
         return 1
       fi
       line="$(printf '%s\n' "$matches" | head -n 1)"
       # A PRESENT assignment this parser cannot read must fail LOUDLY, never
-      # collapse to empty. Only the flat single-line basic-string shape is
-      # supported — the value is quote-free ([^"]*), which makes the
+      # collapse to empty. Only the contract shape is supported — the value
+      # is quote-free and backslash-free ([^"\]*), which makes the
       # extraction exact even with a trailing TOML comment (accepted);
       # anything else is a configuration error.
-      if ! printf '%s\n' "$line" | grep -Eq -- "^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"[^\"]*\"[[:space:]]*(#.*)?\$"; then
-        echo "::error::$file: unsupported syntax for $name (expected a single-line basic string: $name = \"value\")" >&2
+      if ! printf '%s\n' "$line" | grep -Eq -- "^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"[^\"\\\\]*\"[[:space:]]*(#.*)?\$"; then
+        echo "::error::$file: unsupported syntax for $name (expected a single-line basic string with no '\"' and no '\\': $name = \"value\")" >&2
         return 1
       fi
       val="$(printf '%s\n' "$line" | sed -n "s/^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*\$/\1/p")"
@@ -352,22 +370,5 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     fi
   fi
   done
-  local base_env=""
-  base_env="$(sr_settings_source ".env")" || return 1
-  sr_settings_usable "$base_env" || return 1
-  if [ -f "$base_env" ]; then
-    status=0
-    matches="$(sr_settings_grep "^[[:space:]]*(export[[:space:]]+)?${name}=" "$base_env")" || status=$?
-    [ "$status" -le 1 ] || return 1
-    line="$(printf '%s\n' "$matches" | tail -n 1)"
-    if [ -n "$line" ]; then
-      if ! val="$(sr_dotenv_value "${line#*=}")"; then
-        echo "::error::.env: unsupported syntax for $name (a quoted value must end at its closing quote, optionally followed by a comment)" >&2
-        return 1
-      fi
-      printf '%s' "$val"
-      return 0
-    fi
-  fi
   printf '%s' "$default"
 }

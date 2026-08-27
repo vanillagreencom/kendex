@@ -43,7 +43,7 @@ linear_key_fingerprint() {
 # LINEAR_API_KEY precedence, highest first:
 #   1. LINEAR_API_KEY_OVERRIDE — the explicit inline channel. Tests rely on it
 #      so fake/op:// values are not replaced by a developer's .env.local.
-#   2. Project files (.env, then settings [env], then .env.local).
+#   2. Project files (settings [env], then .env.local).
 #   3. Plain inherited LINEAR_API_KEY — only when no file provides a key.
 # Per-repo workspaces make a box-global export actively wrong for every other
 # repo, so unlike LINEAR_TEAM the inherited key must never shadow the project's
@@ -66,7 +66,7 @@ source "$_LIB_DIR/kendex-env.sh"
 kendex_load_project_env "$PROJECT_ROOT"
 
 # Where each target-selecting value came from: override (LINEAR_API_KEY_OVERRIDE),
-# project-config (.env / kendex.settings.toml / .env.local), environment (process
+# project-config (kendex.settings.toml / .env.local), environment (process
 # env, used because the project files provided nothing), or unset. auth-check
 # reports these; a global key with no project team is the combination that
 # writes into another project's workspace.

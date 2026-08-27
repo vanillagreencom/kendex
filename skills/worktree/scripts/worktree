@@ -57,10 +57,10 @@ Path arguments and canonicalization:
   and foreign worktrees. Codex app-created worktrees are registered git
   worktrees and are accepted even outside WORKTREE_BASE_DIR.
 
-Configuration (loaded lowest to highest: .env, then kendex.settings.toml
-[env], then .kendex/settings.toml [env], then .env.local — later wins, and
-explicit parent environment beats every project file; use .env.local for
-secrets or personal overrides):
+Configuration (loaded lowest to highest: kendex.settings.toml [env], then
+.kendex/settings.toml [env], then .env.local — later wins, and explicit
+parent environment beats every project file; use .env.local for secrets or
+personal overrides):
   WORKTREE_BASE_DIR           Parent directory for created worktrees. Relative
                               paths resolve from the main checkout; absolute
                               paths and ~ are used as-is. Default:
@@ -534,8 +534,8 @@ EOF
 }
 
 # Every help form is answered here, before git resolution and before any
-# project env file is read: a sourced .env statement must never run under
-# --help, and help must work outside a repository. The scan covers every
+# project env file is read: a sourced .env.local statement must never run
+# under --help, and help must work outside a repository. The scan covers every
 # argv position — enumerating positions is how this class leaks.
 case "${1:-}" in
   --help|-h|help) print_worktree_usage; exit 0 ;;

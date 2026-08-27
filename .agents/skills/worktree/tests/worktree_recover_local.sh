@@ -128,7 +128,7 @@ git -C "$ROOT/main" remote add origin "$ROOT/origin.git"
 git -C "$ROOT/main" push -q -u origin main
 mkdir -p "$ROOT/main/.shared"
 printf 'shared\n' >"$ROOT/main/.shared/value.txt"
-cat >"$ROOT/main/.env" <<'CONFIG'
+cat >"$ROOT/main/.env.local" <<'CONFIG'
 WORKTREE_BASE_DIR="../recovery-trees"
 WORKTREE_SYMLINKS=".shared"
 WORKTREE_RELATIVE_SYMLINKS="links/base=../base.txt"

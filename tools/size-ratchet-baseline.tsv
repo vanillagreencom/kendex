@@ -62,7 +62,7 @@ pi-extensions/pi-web-tools/src/tools/web-fetch.ts	634
 pi-extensions/pi-web-tools/src/tools/web-research.ts	445
 pi-extensions/pi-web-tools/tests/youtube-video.test.ts	844
 skills/decider/scripts/decisions	484
-skills/deep-research/scripts/deep-research	524
+skills/deep-research/scripts/deep-research	523
 skills/github/scripts/commands/pr-merge.sh	717
 skills/github/scripts/git-diff-summary	961
 skills/github/scripts/lib/gh-auth.sh	479
@@ -101,7 +101,7 @@ skills/linear/scripts/lib/attachments.sh	527
 skills/linear/scripts/lib/cache.sh	618
 skills/linear/scripts/lib/common.sh	780
 skills/linear/scripts/lib/formatters.sh	631
-skills/orch/scripts/approval-wait	1181
+skills/orch/scripts/approval-wait	1182
 skills/orch/scripts/ci-wait	671
 skills/orch/scripts/dev-artifact-check	482
 skills/orch/scripts/dev-return-write	430
@@ -121,7 +121,7 @@ skills/preflight/scripts/preflight	1188
 skills/review-gate/scripts/pr-watch.sh	854
 skills/review-gate/scripts/review-predicate-selftest.sh	2514
 skills/review-gate/scripts/review-predicate.sh	1512
-skills/review-gate/scripts/validate.sh	494
+skills/review-gate/scripts/validate.sh	509
 skills/review-gate/templates/review-gate-writer.yml	658
 skills/review-gate/tests/e2e-sandbox.sh	898
 skills/review-gate/tests/pr-watch.test.sh	1158

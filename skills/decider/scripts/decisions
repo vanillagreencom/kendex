@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # Help is answered before project configuration is read: sourcing a repo's
-# .env under --help would execute repository-controlled shell code.
+# .env.local under --help would execute repository-controlled shell code.
 show_help() {
   cat << 'EOF'
 Decision Lookup Tool

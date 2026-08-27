@@ -162,7 +162,7 @@ assert_path_exists "$DEFAULT_ROOT/repo-a/base.txt" "cleanup never touches the ma
 
 invalid_cleanup_path=$(cd "$DEFAULT_ROOT/repo-a" && "$WORKTREE_SCRIPT" create issue-invalid-cleanup)
 merge_worktree_branch "$DEFAULT_ROOT/repo-a" "$invalid_cleanup_path" issue-invalid-cleanup
-printf 'WORKTREE_SYMLINKS="../outside"\n' >"$DEFAULT_ROOT/repo-a/.env"
+printf 'WORKTREE_SYMLINKS="../outside"\n' >"$DEFAULT_ROOT/repo-a/.env.local"
 set +e
 (cd "$DEFAULT_ROOT/repo-a" && "$WORKTREE_SCRIPT" cleanup >"$DEFAULT_ROOT/invalid-cleanup.out" 2>"$DEFAULT_ROOT/invalid-cleanup.err")
 invalid_cleanup_code=$?
@@ -170,12 +170,12 @@ set -e
 assert_eq "$invalid_cleanup_code" "0" "cleanup does not depend on current setup-path configuration"
 assert_path_absent "$invalid_cleanup_path" "cleanup removes the intact merged worktree despite invalid setup config"
 assert_branch_absent "$DEFAULT_ROOT/repo-a" "issue-invalid-cleanup" "cleanup deletes the merged branch despite invalid setup config"
-rm -f "$DEFAULT_ROOT/repo-a/.env"
+rm -f "$DEFAULT_ROOT/repo-a/.env.local"
 
 REMOVE_FAIL_ROOT="$TMP_ROOT/remove-failure"
 make_repo "$REMOVE_FAIL_ROOT"
 printf 'TEST_SHARED="shared"\n' >"$REMOVE_FAIL_ROOT/main/.env.local"
-printf 'WORKTREE_SYMLINKS=".env.local"\n' >"$REMOVE_FAIL_ROOT/main/.env"
+printf '[env]\nWORKTREE_SYMLINKS = ".env.local"\n' >"$REMOVE_FAIL_ROOT/main/kendex.settings.toml"
 remove_fail_path=$(cd "$REMOVE_FAIL_ROOT/main" && "$WORKTREE_SCRIPT" create issue-remove-failure)
 assert_eq "$(readlink "$remove_fail_path/.env.local")" "$REMOVE_FAIL_ROOT/main/.env.local" "removal-failure fixture starts with configured symlink intact"
 merge_worktree_branch "$REMOVE_FAIL_ROOT/main" "$remove_fail_path" issue-remove-failure
@@ -217,7 +217,7 @@ make_repo "$SYM_ROOT"
 mkdir -p "$SYM_ROOT/real-trees"
 # Compatibility shape: an in-repo `trees` symlink pointing at an external dir.
 ln -s "$SYM_ROOT/real-trees" "$SYM_ROOT/main/trees"
-printf 'WORKTREE_BASE_DIR="trees"\n' >"$SYM_ROOT/main/.env"
+printf 'WORKTREE_BASE_DIR="trees"\n' >"$SYM_ROOT/main/.env.local"
 
 sym_create_out=$(cd "$SYM_ROOT/main" && "$WORKTREE_SCRIPT" create issue-sym)
 assert_eq "$sym_create_out" "$SYM_ROOT/main/trees/issue-sym" "create reports the configured (symlinked) path"
@@ -236,7 +236,7 @@ assert_not_contains "$sym_again_err" "not a registered worktree" "same tree is n
 
 # Repoint the config at the physical dir: the tree registered under the
 # symlinked spelling must still be recognized and reusable in place.
-printf 'WORKTREE_BASE_DIR="%s"\n' "$SYM_ROOT/real-trees" >"$SYM_ROOT/main/.env"
+printf 'WORKTREE_BASE_DIR="%s"\n' "$SYM_ROOT/real-trees" >"$SYM_ROOT/main/.env.local"
 sym_reuse_out=$(cd "$SYM_ROOT/main" && "$WORKTREE_SCRIPT" create issue-sym --reuse)
 assert_eq "$sym_reuse_out" "$SYM_ROOT/real-trees/issue-sym" "--reuse recognizes the tree via its physical path"
 
@@ -253,7 +253,7 @@ make_repo "$FOREIGN_ROOT/other"
 git -C "$FOREIGN_ROOT/other/main" worktree add -q -b issue-foreign "$FOREIGN_ROOT/shared-trees/issue-foreign" main
 printf 'keep\n' >"$FOREIGN_ROOT/shared-trees/issue-foreign/marker"
 printf 'secret\n' >"$FOREIGN_ROOT/shared-trees/issue-foreign/.env.local"
-printf 'WORKTREE_BASE_DIR="../shared-trees"\nWORKTREE_SYMLINKS=".env.local"\n' >"$FOREIGN_ROOT/main/.env"
+printf '[env]\nWORKTREE_BASE_DIR = "../shared-trees"\nWORKTREE_SYMLINKS = ".env.local"\n' >"$FOREIGN_ROOT/main/kendex.settings.toml"
 
 set +e
 (cd "$FOREIGN_ROOT/main" && "$WORKTREE_SCRIPT" create issue-foreign --reuse >"$FOREIGN_ROOT/reuse.out" 2>"$FOREIGN_ROOT/reuse.err")

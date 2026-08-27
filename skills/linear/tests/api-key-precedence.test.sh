@@ -3,7 +3,7 @@
 #
 # Per-repo Linear workspaces make a box-global LINEAR_API_KEY export actively
 # wrong for every other repo, so the precedence is: LINEAR_API_KEY_OVERRIDE
-# (explicit inline/test channel), then project files (.env → settings [env] →
+# (explicit inline/test channel), then project files (settings [env] →
 # .env.local), then plain inherited env only when no file provides a key. When
 # an inherited key is silently shadowed by a differing file key, auth-check
 # must warn — with key fingerprints, never key material.
@@ -123,13 +123,19 @@ assert_source "override"
 assert_no_shadow_warning
 [[ "$(sent_key)" == "$OVERRIDE_KEY" ]] || fail "override key not used on the wire: $(sent_key)"
 
-echo "=== .env.local still beats .env among the project files ==="
+echo "=== a .env key is read by nothing ==="
 
+# The loader dropped the .env layer, so a key there supplies no project
+# config at all: with .env.local removed, the run resolves from the .env
+# key's absence — inherited env when set, nothing otherwise. Would fail
+# against a loader that still read .env (source would be project-config).
+mv "$PROJECT/.env.local" "$PROJECT/.env.local.aside"
 printf 'LINEAR_API_KEY=%s\n' "dot-env-key" >"$PROJECT/.env"
-run_auth
-assert_source "project-config"
-[[ "$(sent_key)" == "$FILE_KEY" ]] || fail ".env.local did not win over .env: $(sent_key)"
+run_auth LINEAR_API_KEY="$ENV_KEY"
+assert_source "environment"
+[[ "$(sent_key)" == "$ENV_KEY" ]] || fail "a .env key reached the wire: $(sent_key)"
 rm -f "$PROJECT/.env"
+mv "$PROJECT/.env.local.aside" "$PROJECT/.env.local"
 
 echo "=== inherited env is used only when no file provides a key ==="
 

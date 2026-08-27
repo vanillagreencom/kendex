@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Help is inert: every --help form is answered before repository resolution
-# and before any project env file is sourced, so a .env statement can never
-# run under --help and help works outside a git repository. check takes no
+# and before any project env file is sourced, so a .env.local statement can
+# never run under --help and help works outside a git repository. check takes no
 # target: it inspects only the main checkout, and an argument is a usage
 # error rather than a silently ignored one.
 set -euo pipefail
@@ -38,12 +38,12 @@ assert_contains() {
 
 echo "=== worktree help dispatch runs before repository and env initialization ==="
 
-# A repo whose .env records that it was sourced. Any help invocation that
-# loads project config trips the marker.
+# A repo whose .env.local records that it was sourced. Any help invocation
+# that loads project config trips the marker.
 REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO"
 git -C "$REPO" init -q
-printf 'touch "%s/env-executed"\n' "$TMP_ROOT" >"$REPO/.env"
+printf 'touch "%s/env-executed"\n' "$TMP_ROOT" >"$REPO/.env.local"
 
 for form in "--help" "-h" "help"; do
   out=$(cd "$REPO" && "$WORKTREE_SCRIPT" "$form")
@@ -76,10 +76,10 @@ assert_contains "$out" "Usage: worktree push" "late -h prints the push help"
 
 if [[ -e "$TMP_ROOT/env-executed" ]]; then
   FAIL=$((FAIL + 1))
-  printf '  FAIL  %s\n' "help sourced the project .env"
+  printf '  FAIL  %s\n' "help sourced the project .env.local"
 else
   PASS=$((PASS + 1))
-  printf '  ok    %s\n' "no help form sourced the project .env"
+  printf '  ok    %s\n' "no help form sourced the project .env.local"
 fi
 
 out=$(cd "$REPO" && "$WORKTREE_SCRIPT" list --help)
@@ -101,7 +101,7 @@ done
 
 # The top-level help states the loader's real precedence, lowest to highest.
 out=$(cd "$NOREPO" && "$WORKTREE_SCRIPT" --help)
-assert_contains "$out" ".env, then kendex.settings.toml" "help orders .env below the settings files"
+assert_contains "$out" "kendex.settings.toml [env], then" "help orders the root settings file below the rest"
 assert_contains "$out" ".kendex/settings.toml" "help names the .kendex settings file"
 assert_contains "$out" "parent environment beats every project file" "help states parent env outranks project files"
 

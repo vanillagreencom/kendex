@@ -61,7 +61,7 @@ never raises) and then re-checks.
 worktree copy — what a commit will actually record. For a pre-commit hook.
 
 Configuration (env > .env.local > .kendex/settings.toml >
-kendex.settings.toml [env] > .env > default):
+kendex.settings.toml [env] > default):
   SIZE_RATCHET_THRESHOLD   line threshold           (default 400)
   SIZE_RATCHET_CLASSES     per-path-class thresholds: `pattern=threshold`
                            entries separated by `;`, first match wins,

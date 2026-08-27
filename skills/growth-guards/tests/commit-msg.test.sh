@@ -102,18 +102,20 @@ run_stdin 'feat: settings-rejected type'
   || bad "control: settings-restricted list rejects" "rc=$RC out=$OUT"
 rm "$R/kendex.settings.toml"
 
-echo "=== the /dev/null sentinel selects NO settings source, dotenv layers included ==="
-# It named only the settings file, so .env.local (read before it) and .env
-# (read after it) kept deciding: a caller asking for built-in defaults got
-# whatever the repository's env files said.
+echo "=== a .env value is read by nothing ==="
+# The .env layer is dropped: a type list there must not restrict anything,
+# with or without the sentinel. Fails against a resolver that still reads
+# the file (the docs-only list would reject feat).
 printf 'GROWTH_GUARDS_COMMIT_TYPES=docs\n' >"$R/.env"
 run_stdin 'feat: base type'
-[ "$RC" -eq 1 ] && ok "control: without the sentinel .env restricts the list to docs" \
-  || bad "sentinel control (.env)" "rc=$RC out=$OUT"
-run_stdin 'feat: base type' "GROWTH_GUARDS_SETTINGS_FILE=/dev/null"
-[ "$RC" -eq 0 ] && ok "the sentinel skips .env (read AFTER the settings file) and the built-in list decides" \
-  || bad "sentinel skips .env" "rc=$RC out=$OUT"
+[ "$RC" -eq 0 ] && ok "a .env type list is ignored and the built-in list decides" \
+  || bad "a .env type list is ignored" "rc=$RC out=$OUT"
+rm -f "$R/.env"
 
+echo "=== the /dev/null sentinel selects NO settings source, the dotenv layer included ==="
+# It named only the settings file, so .env.local (read before it) kept
+# deciding: a caller asking for built-in defaults got whatever the
+# repository's env file said.
 printf 'GROWTH_GUARDS_COMMIT_TYPES=chore\n' >"$R/.env.local"
 run_stdin 'feat: base type'
 [ "$RC" -eq 1 ] && ok "control: without the sentinel .env.local restricts the list to chore" \
@@ -121,7 +123,7 @@ run_stdin 'feat: base type'
 run_stdin 'feat: base type' "GROWTH_GUARDS_SETTINGS_FILE=/dev/null"
 [ "$RC" -eq 0 ] && ok "the sentinel skips .env.local (read BEFORE the settings file) too" \
   || bad "sentinel skips .env.local" "rc=$RC out=$OUT"
-rm -f "$R/.env" "$R/.env.local"
+rm -f "$R/.env.local"
 
 echo "=== a failing index probe never loosens the committed type list ==="
 # The hook lane resolves tracked settings from the INDEX so a commit is judged

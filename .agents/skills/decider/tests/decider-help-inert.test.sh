@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Help is inert: decisions answers every help form before sourcing project
-# configuration, so a repository .env never runs as shell code under --help,
+# configuration, so a repository .env.local never runs as shell code under --help,
 # and help needs neither jq nor a decisions directory.
 set -euo pipefail
 
@@ -26,7 +26,7 @@ echo "=== decisions help is answered before project config loads ==="
 
 mkdir -p "$TMP/repo"
 git -C "$TMP/repo" init -q
-printf 'touch "%s/env-executed"\n' "$TMP" >"$TMP/repo/.env"
+printf 'touch "%s/env-executed"\n' "$TMP" >"$TMP/repo/.env.local"
 
 check "bare invocation prints help"
 check "help action prints help" help
@@ -40,9 +40,9 @@ check "search query -h prints help" search query -h
 check "search query --limit 2 --help prints help" search query --limit 2 --help
 
 if [[ -e "$TMP/env-executed" ]]; then
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "help sourced the project .env"
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "help sourced the project .env.local"
 else
-  PASS=$((PASS + 1)); printf '  ok    %s\n' "no help form sourced the project .env"
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "no help form sourced the project .env.local"
 fi
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"

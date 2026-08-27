@@ -98,7 +98,7 @@ printf '.agents/**\n!.agents/skills/\n!.agents/skills/review-gate/\n!.agents/ski
 printf 'runtime\n' >"$SHADOW_ROOT/main/.agents/state.json"
 printf 'engine v1\n' >"$SHADOW_ROOT/main/.agents/skills/review-gate/engine.md"
 printf 'installed skill\n' >"$SHADOW_ROOT/main/.agents/skills/deep-research/SKILL.md"
-printf 'WORKTREE_SYMLINKS=".agents"\n' >"$SHADOW_ROOT/main/.env"
+printf 'WORKTREE_SYMLINKS=".agents"\n' >"$SHADOW_ROOT/main/.env.local"
 git -C "$SHADOW_ROOT/main" add .gitignore .agents/skills/review-gate/engine.md
 git -C "$SHADOW_ROOT/main" commit -q -m 'vendor review-gate'
 push_main "$SHADOW_ROOT"
@@ -187,7 +187,7 @@ make_repo "$CLEAN_ROOT"
 mkdir -p "$CLEAN_ROOT/main/runtime"
 printf 'runtime/\n' >"$CLEAN_ROOT/main/.gitignore"
 printf 'state\n' >"$CLEAN_ROOT/main/runtime/state.json"
-printf 'WORKTREE_SYMLINKS="runtime"\n' >"$CLEAN_ROOT/main/.env"
+printf 'WORKTREE_SYMLINKS="runtime"\n' >"$CLEAN_ROOT/main/.env.local"
 git -C "$CLEAN_ROOT/main" add .gitignore
 git -C "$CLEAN_ROOT/main" commit -q -m runtime
 push_main "$CLEAN_ROOT"
@@ -211,7 +211,7 @@ make_repo "$QUOTE_ROOT"
 mkdir -p "$QUOTE_ROOT/main/.agents"
 printf 'a\n' >"$QUOTE_ROOT/main/.agents/normal.md"
 printf 'q\n' >"$QUOTE_ROOT/main/.agents/weird\"quote.md"
-printf 'WORKTREE_SYMLINKS=".agents"\n' >"$QUOTE_ROOT/main/.env"
+printf 'WORKTREE_SYMLINKS=".agents"\n' >"$QUOTE_ROOT/main/.env.local"
 git -C "$QUOTE_ROOT/main" add .agents
 git -C "$QUOTE_ROOT/main" commit -q -m quoted
 push_main "$QUOTE_ROOT"
@@ -235,7 +235,7 @@ PREDATE_ROOT="$TMP_ROOT/predate"
 make_repo "$PREDATE_ROOT"
 mkdir -p "$PREDATE_ROOT/main/.agents/skills"
 printf 'anchor\n' >"$PREDATE_ROOT/main/.agents/skills/anchor.md"
-printf 'WORKTREE_SYMLINKS=".agents"\n' >"$PREDATE_ROOT/main/.env"
+printf 'WORKTREE_SYMLINKS=".agents"\n' >"$PREDATE_ROOT/main/.env.local"
 git -C "$PREDATE_ROOT/main" add .agents/skills/anchor.md
 git -C "$PREDATE_ROOT/main" commit -q -m anchor
 push_main "$PREDATE_ROOT"
@@ -359,7 +359,7 @@ LOCK_ROOT="$TMP_ROOT/lock"
 make_repo "$LOCK_ROOT"
 mkdir -p "$LOCK_ROOT/main/.agents"
 printf 'engine\n' >"$LOCK_ROOT/main/.agents/engine.md"
-printf 'WORKTREE_SYMLINKS=".agents"\n' >"$LOCK_ROOT/main/.env"
+printf 'WORKTREE_SYMLINKS=".agents"\n' >"$LOCK_ROOT/main/.env.local"
 git -C "$LOCK_ROOT/main" add .agents/engine.md
 git -C "$LOCK_ROOT/main" commit -q -m engine
 push_main "$LOCK_ROOT"

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Pins for configuration resolution (env > kendex.settings.toml > default
-# 400) and for the fail-loud config errors: malformed excludes (reason is
+# Pins for configuration resolution (env > .env.local > .kendex/settings.toml
+# > kendex.settings.toml > default 400; .env read by nothing) and for the
+# fail-loud config errors: malformed excludes (reason is
 # mandatory), malformed/unsorted/duplicated baseline, bad threshold. Config
 # problems are exit 2, never a silent pass or a silent default.
 set -euo pipefail
@@ -149,19 +150,27 @@ echo "=== usage errors ==="
 run_raw SIZE_RATCHET_THRESHOLD=10 -- --no-such-flag || true
 [ "$RC" -eq 2 ] && ok "unknown flag is exit 2" || bad "unknown flag is exit 2" "rc=$RC out=$OUT"
 
-echo "=== env-file layering: .env.local > settings > .kendex > .env ==="
+echo "=== env-file layering: .env.local > .kendex > settings; .env ignored ==="
 new_repo layering
 mkfile f.txt 20
 git -C "$R" add -A
+# A .env threshold is read by nothing: 20 lines passes under the built-in
+# 400. Fails against a resolver that still reads the file (7 would fail it).
 printf 'SIZE_RATCHET_THRESHOLD=7\n' > "$R/.env"
 run_raw || true
-case "$OUT" in *"threshold 7"*) ok "SIZE_RATCHET_THRESHOLD from .env applies" ;; *) bad ".env layering" "rc=$RC out=$OUT" ;; esac
-printf 'SIZE_RATCHET_THRESHOLD = "9"\n' > "$R/kendex.settings.toml"
+[ "$RC" -eq 0 ] && case "$OUT" in *"threshold 400"*) true ;; *) false ;; esac \
+  && ok "SIZE_RATCHET_THRESHOLD from .env is ignored; the default 400 stands" \
+  || bad ".env is ignored" "rc=$RC out=$OUT"
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "9"\n' > "$R/kendex.settings.toml"
 run_raw || true
-case "$OUT" in *"threshold 9"*) ok "kendex.settings.toml beats .env" ;; *) bad "settings-over-.env layering" "rc=$RC out=$OUT" ;; esac
+case "$OUT" in *"threshold 9"*) ok "kendex.settings.toml applies while the .env value stays ignored" ;; *) bad "settings layering" "rc=$RC out=$OUT" ;; esac
+mkdir -p "$R/.kendex"
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "10"\n' > "$R/.kendex/settings.toml"
+run_raw || true
+case "$OUT" in *"threshold 10"*) ok ".kendex/settings.toml beats kendex.settings.toml" ;; *) bad ".kendex layering" "rc=$RC out=$OUT" ;; esac
 printf 'SIZE_RATCHET_THRESHOLD="11"\n' > "$R/.env.local"
 run_raw || true
-case "$OUT" in *"threshold 11"*) ok ".env.local beats kendex.settings.toml (quotes stripped)" ;; *) bad ".env.local layering" "rc=$RC out=$OUT" ;; esac
+case "$OUT" in *"threshold 11"*) ok ".env.local beats the settings files (quotes stripped)" ;; *) bad ".env.local layering" "rc=$RC out=$OUT" ;; esac
 printf 'export SIZE_RATCHET_THRESHOLD=13\n' > "$R/.env.local"
 run_raw || true
 case "$OUT" in *"threshold 13"*) ok "export-form dotenv assignment is recognized" ;; *) bad "export-form dotenv" "rc=$RC out=$OUT" ;; esac
@@ -171,21 +180,20 @@ case "$OUT" in *"threshold 17"*) ok "double-quoted dotenv value with inline comm
 printf 'SIZE_RATCHET_THRESHOLD="23" # say "ratchet"\n' > "$R/.env.local"
 run_raw || true
 case "$OUT" in *"threshold 23"*) ok "quote inside the trailing comment never leaks into the value" ;; *) bad "comment-quote dotenv (.env.local)" "rc=$RC out=$OUT" ;; esac
-rm -f "$R/.env.local" "$R/kendex.settings.toml"
-printf "SIZE_RATCHET_THRESHOLD='19' # note\n" > "$R/.env"
+rm -f "$R/kendex.settings.toml" "$R/.kendex/settings.toml" "$R/.env"
+printf "SIZE_RATCHET_THRESHOLD='19' # note\n" > "$R/.env.local"
 run_raw || true
-case "$OUT" in *"threshold 19"*) ok "single-quoted .env value with inline comment extracts the content" ;; *) bad "quoted+comment dotenv (.env)" "rc=$RC out=$OUT" ;; esac
-printf "SIZE_RATCHET_THRESHOLD='29' # don't raise\n" > "$R/.env"
+case "$OUT" in *"threshold 19"*) ok "single-quoted dotenv value with inline comment extracts the content" ;; *) bad "quoted+comment dotenv (single-quote)" "rc=$RC out=$OUT" ;; esac
+printf "SIZE_RATCHET_THRESHOLD='29' # don't raise\n" > "$R/.env.local"
 run_raw || true
-case "$OUT" in *"threshold 29"*) ok "apostrophe in the trailing comment never leaks into a single-quoted value" ;; *) bad "comment-apostrophe dotenv (.env)" "rc=$RC out=$OUT" ;; esac
-printf 'SIZE_RATCHET_THRESHOLD="17".5\n' > "$R/.env"
+case "$OUT" in *"threshold 29"*) ok "apostrophe in the trailing comment never leaks into a single-quoted value" ;; *) bad "comment-apostrophe dotenv" "rc=$RC out=$OUT" ;; esac
+printf 'SIZE_RATCHET_THRESHOLD="17".5\n' > "$R/.env.local"
 run_raw || true
-if [ "$RC" -ne 0 ] && case "$OUT" in *"unsupported syntax"*) true ;; *) false ;; esac; then ok "adjacent segment after a quoted value fails loud, never truncates"; else bad "adjacent-segment dotenv (.env)" "rc=$RC out=$OUT"; fi
-rm -f "$R/.env"
-printf 'SIZE_RATCHET_THRESHOLD="17"#note\n' > "$R/.env"
+if [ "$RC" -ne 0 ] && case "$OUT" in *"unsupported syntax"*) true ;; *) false ;; esac; then ok "adjacent segment after a quoted value fails loud, never truncates"; else bad "adjacent-segment dotenv" "rc=$RC out=$OUT"; fi
+printf 'SIZE_RATCHET_THRESHOLD="17"#note\n' > "$R/.env.local"
 run_raw || true
-if [ "$RC" -ne 0 ] && case "$OUT" in *"unsupported syntax"*) true ;; *) false ;; esac; then ok "adjacent # after a quoted value is a segment, not a comment — fails loud"; else bad "adjacent-hash dotenv (.env)" "rc=$RC out=$OUT"; fi
-rm -f "$R/.env"
+if [ "$RC" -ne 0 ] && case "$OUT" in *"unsupported syntax"*) true ;; *) false ;; esac; then ok "adjacent # after a quoted value is a segment, not a comment — fails loud"; else bad "adjacent-hash dotenv" "rc=$RC out=$OUT"; fi
+rm -f "$R/.env.local"
 
 echo "=== an EXISTING non-regular settings path never falls back to defaults ==="
 # A directory (FIFO/socket/device are the same shape) fails -f exactly like
@@ -244,23 +252,13 @@ run_raw SIZE_RATCHET_SETTINGS_FILE=absent.settings.toml || true
   && ok "an ABSENT plain file still falls back to the built-in default (control)" \
   || bad "an ABSENT plain file still falls back to the built-in default (control)" "rc=$RC out=$OUT"
 
-echo "=== the /dev/null sentinel selects NO settings source, dotenv layers included ==="
-# It named only the settings file, so .env.local (read before it) and .env
-# (read after it) kept deciding: a caller asking for built-in defaults got
-# whatever the repository's env files said.
+echo "=== the /dev/null sentinel selects NO settings source, the dotenv layer included ==="
+# It named only the settings file, so .env.local (read before it) kept
+# deciding: a caller asking for built-in defaults got whatever the
+# repository's env file said.
 new_repo devnull
 mkfile f.txt 10
 git -C "$R" add -A
-printf 'SIZE_RATCHET_THRESHOLD=5\n' >"$R/.env"
-run_raw || true
-[ "$RC" -eq 1 ] && case "$OUT" in *"threshold 5"*) true ;; *) false ;; esac \
-  && ok "control: without the sentinel .env supplies 5 and the 10-line file fails" \
-  || bad "devnull control (.env)" "rc=$RC out=$OUT"
-run_raw SIZE_RATCHET_SETTINGS_FILE=/dev/null || true
-[ "$RC" -eq 0 ] && case "$OUT" in *"threshold 400"*) true ;; *) false ;; esac \
-  && ok "the sentinel skips .env (read AFTER the settings file) and the built-in 400 decides" \
-  || bad "sentinel skips .env" "rc=$RC out=$OUT"
-
 printf 'SIZE_RATCHET_THRESHOLD=6\n' >"$R/.env.local"
 run_raw || true
 [ "$RC" -eq 1 ] && case "$OUT" in *"threshold 6"*) true ;; *) false ;; esac \
@@ -277,9 +275,9 @@ run_raw SIZE_RATCHET_SETTINGS_FILE=/dev/null SIZE_RATCHET_THRESHOLD=5 || true
   || bad "sentinel vs environment" "rc=$RC out=$OUT"
 
 echo "=== an EXISTING non-regular ENV-FILE source never falls through ==="
-# .env.local and .env are probed with -f like the settings file, so a
-# directory or an unresolvable symlink there is skipped exactly like an
-# absent one and a lower-precedence value silently decides.
+# .env.local is probed with -f like the settings file, so a directory or an
+# unresolvable symlink there is skipped exactly like an absent one and a
+# lower-precedence value silently decides.
 new_repo nonregularenv
 mkfile f.txt 20
 git -C "$R" add -A
@@ -292,17 +290,17 @@ run_raw || true
   || bad "a DIRECTORY at .env.local is exit 2" "rc=$RC out=$OUT"
 rmdir "$R/.env.local"
 
-ln -s missing.env "$R/.env"
+ln -s missing.env "$R/.env.local"
 run_raw || true
-[ "$RC" -eq 2 ] && case "$OUT" in *".env: settings source is a symlink that does not resolve"*) true ;; *) false ;; esac \
-  && ok "a DANGLING .env symlink is exit 2, not a silent skip" \
-  || bad "a DANGLING .env symlink is exit 2" "rc=$RC out=$OUT"
-rm -f "$R/.env"
+[ "$RC" -eq 2 ] && case "$OUT" in *".env.local: settings source is a symlink that does not resolve"*) true ;; *) false ;; esac \
+  && ok "a DANGLING .env.local symlink is exit 2, not a silent skip" \
+  || bad "a DANGLING .env.local symlink is exit 2" "rc=$RC out=$OUT"
+rm -f "$R/.env.local"
 
 run_raw || true
 [ "$RC" -eq 0 ] && case "$OUT" in *"threshold 30"*) true ;; *) false ;; esac \
-  && ok "control: with both env files absent the settings file still supplies 30" \
-  || bad "control: absent env files fall through to the settings file" "rc=$RC out=$OUT"
+  && ok "control: with .env.local absent the settings file still supplies 30" \
+  || bad "control: an absent env file falls through to the settings file" "rc=$RC out=$OUT"
 
 echo "=== an UNREADABLE settings source fails loud, never falls through ==="
 # grep exits 0/1 are measurements; anything else means the source could not
@@ -341,17 +339,17 @@ else
     || bad "control: readable settings file supplies the value" "rc=$RC out=$OUT"
   rm -f "$R/kendex.settings.toml"
 
-  printf 'SIZE_RATCHET_THRESHOLD=12\n' >"$R/.env"
-  chmod 000 "$R/.env"
+  printf 'SIZE_RATCHET_THRESHOLD=12\n' >"$R/.env.local"
+  chmod 000 "$R/.env.local"
   run_raw || true
-  [ "$RC" -eq 2 ] && case "$OUT" in *".env: unreadable while resolving a setting"*) true ;; *) false ;; esac \
-    && ok "an unreadable .env is exit 2 (falling through would have read the built-in 400)" \
-    || bad "an unreadable .env is exit 2" "rc=$RC out=$OUT"
-  chmod 600 "$R/.env"
+  [ "$RC" -eq 2 ] && case "$OUT" in *".env.local: unreadable while resolving a setting"*) true ;; *) false ;; esac \
+    && ok "an unreadable .env.local is exit 2 (falling through would have read the built-in 400)" \
+    || bad "an unreadable .env.local is exit 2" "rc=$RC out=$OUT"
+  chmod 600 "$R/.env.local"
   run_raw || true
   [ "$RC" -eq 1 ] && case "$OUT" in *"threshold 12"*) true ;; *) false ;; esac \
-    && ok "control: the same .env, readable, supplies 12 and the 20-line file fails" \
-    || bad "control: readable .env supplies the value" "rc=$RC out=$OUT"
+    && ok "control: the same .env.local, readable, supplies 12 and the 20-line file fails" \
+    || bad "control: readable .env.local supplies the value" "rc=$RC out=$OUT"
 fi
 
 echo "=== option-like configured paths ==="

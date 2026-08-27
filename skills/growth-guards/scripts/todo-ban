@@ -25,7 +25,7 @@ comment-marker shapes) across all tracked files, scanned from the index.
 Prose that quotes or names a marker word does not fire.
 
 Configuration (env > .env.local > .kendex/settings.toml >
-kendex.settings.toml [env] > .env > default):
+kendex.settings.toml [env] > default):
   GROWTH_GUARDS_TODO_EXCLUDES   exclusion-list path (default tools/todo-ban-excludes)
 Flag --excludes overrides the path setting.
 

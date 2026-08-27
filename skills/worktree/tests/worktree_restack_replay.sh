@@ -147,7 +147,7 @@ make_repo() {
   printf 'orig\n' > "$repo/file.txt"
   git -C "$repo" add file.txt
   git -C "$repo" commit -q -m base
-  printf 'WORKTREE_BASE_DIR="../trees"\n' > "$repo/.env"
+  printf 'WORKTREE_BASE_DIR="../trees"\n' > "$repo/.env.local"
 }
 
 # Feature edit on a non-conflicting file; main advances on another file, so the

@@ -136,7 +136,7 @@ echo
 echo "=== aggregation (verdict + completion) ==="
 
 # Reference aggregate_verdict implementation kept inline so this script does not
-# need to source any wrapper (which would also pull in .env loading).
+# need to source any wrapper (which would also pull in project-env loading).
 agg() {
     jq -r '
         [.[] | select(.status != "skipped")] as $effective |

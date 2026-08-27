@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Help is inert: issues.sh answers every help form before sourcing its
-# libraries — common.sh sources the repository's .env files as shell code
+# libraries — common.sh sources the repository's .env.local as shell code
 # and resolves API auth, and help needs neither.
 set -euo pipefail
 
@@ -28,7 +28,7 @@ echo "=== issues.sh help is answered before the libraries load ==="
 
 mkdir -p "$TMP/repo"
 git -C "$TMP/repo" init -q
-printf 'touch "%s/env-executed"\n' "$TMP" >"$TMP/repo/.env"
+printf 'touch "%s/env-executed"\n' "$TMP" >"$TMP/repo/.env.local"
 
 check "--help prints issue help" "$ISSUES_SH" --help
 check "help prints issue help" "$ISSUES_SH" help
@@ -42,9 +42,9 @@ check "get KEN-1 --help prints issue help" "$ISSUES_SH" get KEN-1 --help
 check "list --limit 5 -h prints issue help" "$ISSUES_SH" list --limit 5 -h
 
 if [[ -e "$TMP/env-executed" ]]; then
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "help sourced the project .env"
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "help sourced the project .env.local"
 else
-  PASS=$((PASS + 1)); printf '  ok    %s\n' "no help form sourced the project .env"
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "no help form sourced the project .env.local"
 fi
 
 # -h supplied as an option's VALUE stays data: the libraries load (the

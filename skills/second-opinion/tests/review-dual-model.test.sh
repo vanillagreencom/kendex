@@ -1155,7 +1155,7 @@ if $ANCESTOR_VISIBLE; then
   assert_eq "$rc33k" "0" "control: a non-empty exported value is a declaration"
 
   # every project source is covered, not just the settings file
-  for s33_file in .env .env.local .kendex/settings.toml; do
+  for s33_file in .env.local .kendex/settings.toml; do
     reset_counts
     rm -f "$s33_proj/kendex.settings.toml"
     mkdir -p "$s33_proj/.kendex"
@@ -1308,22 +1308,22 @@ echo "=== scenario 33c: only the [env] table of a settings file declares the key
 # file on a bare textual match sends the operator to edit a line that never
 # supplied the value.
 if $ANCESTOR_VISIBLE; then
-  # .env really supplies the value (it is sourced wholesale), while the settings
-  # file only MENTIONS the key — commented under [env], and under a table the
-  # loader never reads. The refusal must name .env and only .env.
+  # .env.local really supplies the value (it is sourced wholesale), while
+  # the settings file only MENTIONS the key — commented under [env], and
+  # under an unread table. The refusal must name .env.local alone.
   reset_counts
-  rm -f "$TMP_ROOT/out33.json" "$s33_proj/.env.local"
-  printf 'export SECOND_OPINION_CURRENT_MODEL=codex\n' > "$s33_proj/.env"
+  rm -f "$TMP_ROOT/out33.json"
+  printf 'export SECOND_OPINION_CURRENT_MODEL=codex\n' > "$s33_proj/.env.local"
   printf '[env]\n# SECOND_OPINION_CURRENT_MODEL = "claude"\nUNRELATED = "1"\n\n[notes]\nSECOND_OPINION_CURRENT_MODEL = "claude"\n' \
     > "$s33_proj/kendex.settings.toml"
   rc33p=0
   run_s33 pi SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1 || rc33p=$?
-  assert_eq "$rc33p" "1" "a project-sourced value from .env still refuses the Pi session"
-  grep -q "$s33_proj/.env" "$TMP_ROOT/last.stderr" \
+  assert_eq "$rc33p" "1" "a project-sourced value from .env.local still refuses the Pi session"
+  grep -q "$s33_proj/.env.local" "$TMP_ROOT/last.stderr" \
     || fail "the refusal does not name the file that really declared the key"
   grep -q "kendex.settings.toml" "$TMP_ROOT/last.stderr" \
     && fail "the refusal names a file whose only mentions are a comment and a non-[env] table"
-  rm -f "$s33_proj/.env"
+  rm -f "$s33_proj/.env.local"
 
   # And a key that is only mentioned, never loaded, leaves the session plainly
   # undeclared — no file named at all.

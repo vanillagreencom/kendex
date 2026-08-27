@@ -78,7 +78,7 @@ git -C "$ROOT/main" add base.txt
 git -C "$ROOT/main" commit -q -m base
 # Pin the historical sibling trees/ base so this file's path assertions stay
 # explicit; default base-dir resolution is covered by worktree_base_dir.sh.
-printf 'WORKTREE_BASE_DIR="../trees"\n' >"$ROOT/main/.env"
+printf 'WORKTREE_BASE_DIR="../trees"\n' >"$ROOT/main/.env.local"
 git init -q --bare "$ROOT/origin.git"
 git -C "$ROOT/main" remote add origin "$ROOT/origin.git"
 git -C "$ROOT/main" push -q -u origin main

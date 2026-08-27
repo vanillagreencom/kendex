@@ -106,9 +106,9 @@ src/gen/*.rs	generated bindings
 | `SIZE_RATCHET_EXCLUDES` | `tools/size-ratchet-excludes` | Exclusion-list path. |
 
 Each key resolves environment > `.env.local` > `.kendex/settings.toml` >
-committed `kendex.settings.toml` (flat `KEY = "value"` under `[env]`) >
-`.env` > default; env files use `KEY=value` or `export KEY=value`, parsed,
-never sourced. A source that exists but is unusable is a config error
+committed `kendex.settings.toml` (flat `KEY = "value"` under `[env]`; other
+tables are ignored) > default; a `.env` file is never read, and `.env.local`
+uses `KEY=value` or `export KEY=value`, parsed, never sourced. A source that exists but is unusable is a config error
 (exit 2), never a fall-through to the next layer. `--baseline` /
 `--excludes` override every source for those paths, and an empty value
 (`--baseline=`, `--baseline ""`) is a config error, never a silent fall back

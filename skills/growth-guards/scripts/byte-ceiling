@@ -37,7 +37,7 @@ the merge-base with REF; --all sweeps every tracked file. Lockfiles are
 exempt built-in; declared asset trees live in the excludes list.
 
 Configuration (env > .env.local > .kendex/settings.toml >
-kendex.settings.toml [env] > .env > default):
+kendex.settings.toml [env] > default):
   GROWTH_GUARDS_BYTE_CEILING_KB   ceiling in KB        (default 200)
   GROWTH_GUARDS_BYTE_EXCLUDES     exclusion-list path  (default tools/byte-ceiling-excludes)
 Flag --excludes overrides the path setting.

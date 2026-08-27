@@ -102,7 +102,7 @@ REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
 REVIEW_GATE_MODE = "enforce"
 
 # Review-wait quiet period in seconds — SHARED with orch's approval-wait,
-# and pr-watch.sh's awaiting-stale threshold. Set it HERE or export it, not
-# in .env: review-gate scripts do not read the .env files. Must be a
+# and pr-watch.sh's awaiting-stale threshold. Set it HERE, in .env.local,
+# or export it; a .env file is read by nothing. Must be a
 # non-negative integer (at most 9 digits); anything else fails loud.
 PR_REVIEW_WAIT_SECS = "900"

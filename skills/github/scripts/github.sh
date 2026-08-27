@@ -97,8 +97,8 @@ command="${1:-help}"
 shift || true
 
 # Help is answered before project configuration or auth is touched:
-# sourcing a repo's .env under --help would execute repository-controlled
-# shell code, and help must not fail on auth. A subcommand's --help routes
+# sourcing a repo's .env.local under --help would execute
+# repository-controlled shell code, and help must not fail on auth. A subcommand's --help routes
 # straight to its script, which prints help before any API work. The scan
 # covers every argv position — enumerating positions is how this class
 # leaks — but skips the value an option consumes, so '--pattern -h' stays

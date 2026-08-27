@@ -99,7 +99,7 @@ make_repo() {
   git -C "$root/main" commit -q -m base
   # Pin the historical sibling trees/ base so this file's path assertions stay
   # explicit; default base-dir resolution is covered by worktree_base_dir.sh.
-  printf 'WORKTREE_BASE_DIR="../trees"\n' >"$root/main/.env"
+  printf 'WORKTREE_BASE_DIR="../trees"\n' >"$root/main/.env.local"
   git init -q --bare "$root/origin.git"
   git -C "$root/main" remote add origin "$root/origin.git"
   git -C "$root/main" push -q -u origin main
@@ -266,7 +266,7 @@ assert_path_exists "$ROOT/trees/issue-orphan/owner-marker" "guard preserves inco
 # reuse is subject to the same exact registration/common-dir proof.
 IN_REPO_ROOT="$TMP_ROOT/in-repo"
 make_repo "$IN_REPO_ROOT"
-cat >"$IN_REPO_ROOT/main/.env" <<'ENV'
+cat >"$IN_REPO_ROOT/main/.env.local" <<'ENV'
 WORKTREE_BASE_DIR="trees"
 ENV
 mkdir -p "$IN_REPO_ROOT/main/trees/issue-incomplete"

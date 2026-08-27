@@ -132,7 +132,7 @@ echo "=== setup config rejects traversal and symlink-parent writes ==="
 CONFIG_ROOT="$TMP_ROOT/config"
 make_repo "$CONFIG_ROOT"
 git -C "$CONFIG_ROOT/main" worktree add -q -b issue-config "$CONFIG_ROOT/trees/issue-config" main
-printf 'WORKTREE_MKDIRS="../escape"\n' >"$CONFIG_ROOT/main/.env"
+printf 'WORKTREE_MKDIRS="../escape"\n' >"$CONFIG_ROOT/main/.env.local"
 set +e
 (cd "$CONFIG_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$CONFIG_ROOT/trees/issue-config") >"$CONFIG_ROOT/fix-invalid.out" 2>"$CONFIG_ROOT/fix-invalid.err"
 invalid_config_rc=$?
@@ -148,7 +148,7 @@ printf 'main-config\n' >"$OVERLAP_ROOT/main/config/local.txt"
 git -C "$OVERLAP_ROOT/main" add config/local.txt
 git -C "$OVERLAP_ROOT/main" commit -q -m config
 git -C "$OVERLAP_ROOT/main" worktree add -q -b issue-overlap "$OVERLAP_ROOT/trees/issue-overlap" main
-cat >"$OVERLAP_ROOT/main/.env" <<'ENV'
+cat >"$OVERLAP_ROOT/main/.env.local" <<'ENV'
 WORKTREE_SYMLINKS="config"
 WORKTREE_COPIES="config/local.txt"
 ENV
@@ -167,7 +167,7 @@ printf 'main-config\n' >"$EQUAL_ROOT/main/config/local.txt"
 git -C "$EQUAL_ROOT/main" add config/local.txt
 git -C "$EQUAL_ROOT/main" commit -q -m config
 git -C "$EQUAL_ROOT/main" worktree add -q -b issue-equal "$EQUAL_ROOT/trees/issue-equal" main
-cat >"$EQUAL_ROOT/main/.env" <<'ENV'
+cat >"$EQUAL_ROOT/main/.env.local" <<'ENV'
 WORKTREE_SYMLINKS="config/local.txt"
 WORKTREE_COPIES="config/local.txt"
 ENV
@@ -187,7 +187,7 @@ git -C "$FOLLOW_ROOT/main" commit -q -m config
 git -C "$FOLLOW_ROOT/main" worktree add -q -b issue-follow "$FOLLOW_ROOT/trees/issue-follow" main
 rm -rf "$FOLLOW_ROOT/trees/issue-follow/config"
 ln -s "$FOLLOW_ROOT/main/config" "$FOLLOW_ROOT/trees/issue-follow/config"
-printf 'WORKTREE_COPIES="config/local.txt"\n' >"$FOLLOW_ROOT/main/.env"
+printf 'WORKTREE_COPIES="config/local.txt"\n' >"$FOLLOW_ROOT/main/.env.local"
 set +e
 (cd "$FOLLOW_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$FOLLOW_ROOT/trees/issue-follow") >"$FOLLOW_ROOT/follow.out" 2>"$FOLLOW_ROOT/follow.err"
 follow_rc=$?
@@ -206,7 +206,7 @@ git -C "$LEAF_ROOT/main" worktree add -q -b issue-leaf "$LEAF_ROOT/trees/issue-l
 mkdir -p "$LEAF_ROOT/trees/issue-leaf/config"
 rm -f "$LEAF_ROOT/trees/issue-leaf/config/local.txt"
 ln -s "$LEAF_ROOT/main/config/local.txt" "$LEAF_ROOT/trees/issue-leaf/config/local.txt"
-printf 'WORKTREE_COPIES="config/local.txt"\n' >"$LEAF_ROOT/main/.env"
+printf 'WORKTREE_COPIES="config/local.txt"\n' >"$LEAF_ROOT/main/.env.local"
 set +e
 (cd "$LEAF_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$LEAF_ROOT/trees/issue-leaf") >"$LEAF_ROOT/leaf.out" 2>"$LEAF_ROOT/leaf.err"
 leaf_rc=$?
@@ -219,7 +219,7 @@ GLOB_ROOT="$TMP_ROOT/glob"
 make_repo "$GLOB_ROOT"
 mkdir -p "$GLOB_ROOT/main/tmp/expanded"
 git -C "$GLOB_ROOT/main" worktree add -q -b issue-glob "$GLOB_ROOT/trees/issue-glob" main
-printf 'WORKTREE_MKDIRS="tmp/*"\n' >"$GLOB_ROOT/main/.env"
+printf 'WORKTREE_MKDIRS="tmp/*"\n' >"$GLOB_ROOT/main/.env.local"
 set +e
 (cd "$GLOB_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$GLOB_ROOT/trees/issue-glob") >"$GLOB_ROOT/glob.out" 2>"$GLOB_ROOT/glob.err"
 glob_rc=$?
@@ -237,7 +237,7 @@ git -C "$FILE_LINK_ROOT/main" worktree add -q -b issue-file-link "$FILE_LINK_ROO
 mkdir -p "$FILE_LINK_ROOT/outside-dir"
 rm -f "$FILE_LINK_ROOT/trees/issue-file-link/tool"
 ln -s "$FILE_LINK_ROOT/outside-dir" "$FILE_LINK_ROOT/trees/issue-file-link/tool"
-printf 'WORKTREE_SYMLINKS="tool"\n' >"$FILE_LINK_ROOT/main/.env"
+printf 'WORKTREE_SYMLINKS="tool"\n' >"$FILE_LINK_ROOT/main/.env.local"
 set +e
 (cd "$FILE_LINK_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$FILE_LINK_ROOT/trees/issue-file-link") >"$FILE_LINK_ROOT/file-link.out" 2>"$FILE_LINK_ROOT/file-link.err"
 file_link_rc=$?
@@ -255,7 +255,7 @@ git -C "$FILE_DIR_ROOT/main" worktree add -q -b issue-file-dir "$FILE_DIR_ROOT/t
 rm -f "$FILE_DIR_ROOT/trees/issue-file-dir/tool"
 mkdir -p "$FILE_DIR_ROOT/trees/issue-file-dir/tool"
 printf 'keep\n' >"$FILE_DIR_ROOT/trees/issue-file-dir/tool/preserved.txt"
-printf 'WORKTREE_SYMLINKS="tool"\n' >"$FILE_DIR_ROOT/main/.env"
+printf 'WORKTREE_SYMLINKS="tool"\n' >"$FILE_DIR_ROOT/main/.env.local"
 file_dir_index_before="$(git -C "$FILE_DIR_ROOT/trees/issue-file-dir" ls-files -v tool)"
 file_dir_common="$(git -C "$FILE_DIR_ROOT/trees/issue-file-dir" rev-parse --git-common-dir)"
 set +e
@@ -273,7 +273,7 @@ make_repo "$REL_DIR_ROOT"
 git -C "$REL_DIR_ROOT/main" worktree add -q -b issue-relative-dir "$REL_DIR_ROOT/trees/issue-relative-dir" main
 mkdir -p "$REL_DIR_ROOT/trees/issue-relative-dir/local-link"
 printf 'keep-relative\n' >"$REL_DIR_ROOT/trees/issue-relative-dir/local-link/preserved.txt"
-printf 'WORKTREE_RELATIVE_SYMLINKS="local-link=../target"\n' >"$REL_DIR_ROOT/main/.env"
+printf 'WORKTREE_RELATIVE_SYMLINKS="local-link=../target"\n' >"$REL_DIR_ROOT/main/.env.local"
 set +e
 (cd "$REL_DIR_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$REL_DIR_ROOT/trees/issue-relative-dir") >"$REL_DIR_ROOT/relative-dir.out" 2>"$REL_DIR_ROOT/relative-dir.err"
 relative_dir_rc=$?

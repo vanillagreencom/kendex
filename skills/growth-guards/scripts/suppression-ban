@@ -36,7 +36,7 @@ baseline; --update lowers/removes rows to current reality (never adds,
 never raises) and then re-checks.
 
 Configuration (env > .env.local > .kendex/settings.toml >
-kendex.settings.toml [env] > .env > default):
+kendex.settings.toml [env] > default):
   GROWTH_GUARDS_SUPPRESSION_BASELINE   baseline path        (default tools/suppression-baseline.tsv)
   GROWTH_GUARDS_SUPPRESSION_EXCLUDES   exclusion-list path  (default tools/suppression-ban-excludes)
 Flags override both for the path settings.

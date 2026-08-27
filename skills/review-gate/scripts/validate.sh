@@ -205,26 +205,35 @@ else
   fi
   # INVERTED, after four spellings arrived one at a time — quoted, dotted,
   # quoted-dotted, and a key nested in an inline table. Enumerate what the
-  # loader READS, not the ways to hide from it: its probe is
-  # `^[[:space:]]*NAME[[:space:]]*=` (scripts/lib/settings.sh), the bare name
-  # at the start of its own line, then its own `=`, and nothing else.
+  # loader READS, not the ways to hide from it: the loader reads the [env]
+  # table only (scripts/lib/settings.sh), and inside it probes
+  # `^[[:space:]]*NAME[[:space:]]*=` — the bare name at the start of its own
+  # line, then its own `=`, and nothing else. A bare assignment OUTSIDE
+  # [env] is its own finding: the shape is right, the location is not, and
+  # "you misspelled it" would send its reader hunting a typo that is not
+  # there.
   #
-  # So there is NO classification here. Comments are dropped, and after that
-  # any occurrence of the REVIEW_GATE_ token on a line that is not exactly
-  # that shape is a finding — including one inside a string value, which is
-  # deliberate: every carve-out this check has had (the key position, the
-  # text before the first `=`) became the next hole. The verdict says what
-  # the rule is, so a legitimate mention is one reword away and a setting
-  # nobody reads is never reported healthy.
+  # Beyond that there is NO classification. Comments are dropped, and after
+  # that any occurrence of the REVIEW_GATE_ token on a line that is not
+  # exactly that shape is a finding — including one inside a string value,
+  # which is deliberate: every carve-out this check has had (the key
+  # position, the text before the first `=`) became the next hole. The
+  # verdict says what the rule is, so a legitimate mention is one reword
+  # away and a setting nobody reads is never reported healthy.
   keyscan="$(awk '
     { l = $0; sub(/\r$/, "", l) }
+    /^[[:space:]]*\[[A-Za-z0-9_.-]+\][[:space:]]*$/ {
+      h = l
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", h)
+      in_env = (h == "[env]")
+    }
     l ~ /^[[:space:]]*#/ { next }
     l !~ /REVIEW_GATE_/ { next }
     l ~ /^[[:space:]]*REVIEW_GATE_[A-Za-z0-9_]*[[:space:]]*=/ {
       k = l
       sub(/^[[:space:]]*/, "", k)
       sub(/[[:space:]]*=.*$/, "", k)
-      print "read " k
+      print (in_env ? "read " : "outside ") k
       next
     }
     {
@@ -234,6 +243,7 @@ else
     }
   ' "$SETTINGS_FILE")"
   assigned="$(printf '%s\n' "$keyscan" | sed -n 's/^read //p' | sort -u)"
+  outside="$(printf '%s\n' "$keyscan" | sed -n 's/^outside //p' | sort -u)"
   unread="$(printf '%s\n' "$keyscan" | sed -n 's/^unread //p')"
   unknown=""
   seams=""
@@ -266,6 +276,11 @@ EOF_ASSIGNED
     bad "$SETTINGS_FILE assigns $repo_vars as a setting — it is a GitHub REPOSITORY VARIABLE (Settings → Secrets and variables → Actions), read by a workflow expression before any checkout exists, so nothing reads it here; set it in the repository's variables instead"
   else
     ok "no GitHub repository variable is assigned as a repo setting"
+  fi
+  if [ -n "$outside" ]; then
+    bad "$SETTINGS_FILE assigns REVIEW_GATE_* key(s) outside the [env] table: $outside — the loader reads only [env], so the value written there is ignored and the gate runs on the default; move the assignment(s) under the [env] header"
+  else
+    ok "every REVIEW_GATE_* assignment sits inside the [env] table"
   fi
   if [ -n "$(printf '%s' "$unread" | tr -d '[:space:]')" ]; then
     bad "$SETTINGS_FILE names REVIEW_GATE_ in a shape the loader does not read. The loader reads ONE shape — a bare KEY at the start of its own line, followed by its own \`=\` — and everything else is unsupported syntax read by nothing, so the gate runs on the built-in default. This is deliberately unforgiving, string values included: every exception this check has carried became a place for the next spelling to hide. Rewrite, or reword a mention, on the line(s) below:

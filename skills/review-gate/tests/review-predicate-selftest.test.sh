@@ -333,34 +333,34 @@ grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/kendex.settings.toml" 
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "guides/*"\n' \
   >>"$work/rooted/repo/kendex.settings.toml"
 
-printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "gudies/*"\n' \
-  >"$work/rooted/repo/typo.settings.toml"
 grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/kendex.settings.toml" \
+  >"$work/rooted/repo/typo.settings.toml"
+printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "gudies/*"\n' \
   >>"$work/rooted/repo/typo.settings.toml"
 
-printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "gudies/*"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "gudies/*"\n' \
-  >"$work/rooted/repo/declared.settings.toml"
 grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/kendex.settings.toml" \
+  >"$work/rooted/repo/declared.settings.toml"
+printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "gudies/*"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "gudies/*"\n' \
   >>"$work/rooted/repo/declared.settings.toml"
 
-printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*Cargo.toml"\n' \
-  >"$work/rooted/repo/inert.settings.toml"
 grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/kendex.settings.toml" \
+  >"$work/rooted/repo/inert.settings.toml"
+printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*Cargo.toml"\n' \
   >>"$work/rooted/repo/inert.settings.toml"
 
-printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "guides/*"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "gudies/*"\n' \
-  >"$work/rooted/repo/orphan.settings.toml"
 grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/kendex.settings.toml" \
+  >"$work/rooted/repo/orphan.settings.toml"
+printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "guides/*"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "gudies/*"\n' \
   >>"$work/rooted/repo/orphan.settings.toml"
 
-printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "guides/*"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "guides/*"\n' \
-  >"$work/rooted/repo/falsified.settings.toml"
 grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/kendex.settings.toml" \
+  >"$work/rooted/repo/falsified.settings.toml"
+printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "guides/*"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "guides/*"\n' \
   >>"$work/rooted/repo/falsified.settings.toml"
 
-printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "gudies/*"\n' \
-  >"$work/rooted/repo/emptyexcl.settings.toml"
 grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/kendex.settings.toml" \
+  >"$work/rooted/repo/emptyexcl.settings.toml"
+printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "gudies/*"\n' \
   >>"$work/rooted/repo/emptyexcl.settings.toml"
 replay rooted "$work/rooted/repo/sub" REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/kendex.settings.toml"
 replay rootedtypo "$work/rooted/repo" REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/typo.settings.toml"

@@ -53,7 +53,7 @@ Cross-model is enforced in every mode: a run with no eligible target exits 1 nam
 
 ## Configuration
 
-Set non-sensitive defaults in `kendex.settings.toml` under `[env]`. Existing `.env.local` and `.env` values still work; `.env.local` wins. The one exception is `SECOND_OPINION_CURRENT_MODEL` — export it in the environment of the session that needs it; a value in any project file (`.env`, `kendex.settings.toml`, `.kendex/settings.toml`, `.env.local`) is refused. Project installs seed `kendex.settings.toml` from this skill's `kendex.settings.toml.example` when missing and merge only absent second-opinion keys into existing files. Keys, defaults, and the built-in `claude`/`codex` commands: `second-opinion --help`.
+Set non-sensitive defaults in `kendex.settings.toml` under `[env]`; `.env.local` wins over it, and a `.env` file is never read. The one exception is `SECOND_OPINION_CURRENT_MODEL` — export it in the environment of the session that needs it; a value in any project file (`kendex.settings.toml`, `.kendex/settings.toml`, `.env.local`) is refused. Project installs seed `kendex.settings.toml` from this skill's `kendex.settings.toml.example` when missing and merge only absent second-opinion keys into existing files. Keys, defaults, and the built-in `claude`/`codex` commands: `second-opinion --help`.
 
 ## Error Handling
 

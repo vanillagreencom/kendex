@@ -76,11 +76,11 @@ Mode resolution (--resolve-mode): prints the effective mode and exits;
 needs no auth or PR argument. Resolved FIRST is REVIEW_GATE_MODE — the
 ENGINE's per-repo gate disable, read through the review-gate engine's own
 resolver (rg_setting) when that skill is installed: set-even-empty process
-env, then the REVIEW_GATE_SETTINGS_FILE-selected settings file (/dev/null
-means defaults only), else "enforce"; a malformed or duplicate assignment
-fails loud (exit 2). The engine never reads .env files, so neither does
-this key (the PR_REVIEW_* keys keep full dotenv precedence); without the
-review-gate skill the same source set is read via the generic loader. Exactly "off" prints "off"; any other
+env, then the settings files (REVIEW_GATE_SETTINGS_FILE consults only
+itself, /dev/null means defaults only), else "enforce"; a malformed or
+duplicate assignment fails loud (exit 2). The engine skips dotenv for this
+key (the PR_REVIEW_* keys keep it); without the review-gate skill the same
+source set is read via the generic loader. Exactly "off" prints "off"; any other
 value leaves the reviewer keys authoritative. Then PR_REVIEW_GATE
 (approval|review|off) when set; otherwise the legacy PR_APPROVAL_GATE maps
 on -> approval and off -> off; both unset defaults to approval. An
@@ -92,8 +92,8 @@ only through it, and never auto-detect the mode from the
 requested-reviewer list. Mode "off" means a reviewer-less repo — the
 caller skips the wait and records the gate not-applicable.
 
-Settings (orch-env ladder: parent env > .env.local > kendex.settings.toml /
-  .kendex/settings.toml [env] > .env > default; REVIEW_GATE_MODE skips dotenv):
+Settings (orch-env ladder: parent env > .env.local > .kendex/settings.toml /
+  kendex.settings.toml [env] > default; REVIEW_GATE_MODE skips dotenv):
   PR_REVIEW_GATE        approval | review | off — see Mode resolution
                         (default approval)
   PR_REVIEW_CHECK       exact name the trusted review bot publishes on
@@ -225,7 +225,7 @@ done
 
 # --resolve-mode: print the effective reviewer-gate mode and exit. Needs no
 # auth or PR argument — REVIEW_GATE_MODE from the engine's sources (process
-# env, kendex.settings.toml); the reviewer keys via the full dotenv ladder.
+# env, the settings files); the reviewer keys via the full dotenv ladder.
 if $RESOLVE_MODE; then
   # The engine's one-switch gate disable wins over every reviewer-gate key:
   # REVIEW_GATE_MODE=off means the repo's review gate is disabled by
@@ -239,8 +239,8 @@ if $RESOLVE_MODE; then
   # Resolved through the ENGINE's own resolver so waiter and gate cannot
   # split by construction (PR #1615): rg_setting honors set-even-empty env,
   # the REVIEW_GATE_SETTINGS_FILE override (including the /dev/null
-  # force-defaults sentinel), never reads dotenv, and fails loud on a
-  # malformed or duplicate assignment — exactly as the predicate does.
+  # force-defaults sentinel), skips dotenv for this key, and fails loud on
+  # a malformed or duplicate assignment — exactly as the predicate does.
   # Subshell so the sourced lib leaks nothing; cd because the engine
   # resolves its default settings path relative to the repo root.
   rg_lib="$SCRIPT_DIR/../../review-gate/scripts/lib/settings.sh"
@@ -256,14 +256,15 @@ if $RESOLVE_MODE; then
     fi
   elif [[ -n "${REVIEW_GATE_MODE+x}" ]]; then
     # Review-gate not installed: no engine exists to split from. Mirror its
-    # source set anyway — set-even-empty env, else the repo's settings file,
-    # never dotenv.
+    # source set anyway — set-even-empty env, else the repo's settings
+    # files, never dotenv.
     engine_gate_mode="$REVIEW_GATE_MODE"
   else
     engine_gate_mode="$(
       # shellcheck source=lib/kendex-env.sh
       source "$SCRIPT_DIR/lib/kendex-env.sh"
-      kendex_load_settings_file "$PROJECT_ROOT/kendex.settings.toml"
+      kendex_load_settings_file "$PROJECT_ROOT/kendex.settings.toml" || exit 1
+      kendex_load_settings_file "$PROJECT_ROOT/.kendex/settings.toml" || exit 1
       printf '%s' "${REVIEW_GATE_MODE:-enforce}"
     )"
   fi
@@ -319,7 +320,7 @@ START_TIME="$(date +%s)"
 elapsed=0
 
 # Nudge configuration (kendex#642), read through orch-env so the standard
-# orch-env ladder (parent env > .env.local > settings files > .env > default)
+# orch-env ladder (parent env > .env.local > settings files > default)
 # applies without sourcing project env files into this process. The numeric default guard in
 # orch-env keeps NUDGE_SECS usable; 0 disables nudging.
 NUDGE_SECS="$("$SCRIPT_DIR/orch-env" PR_REVIEW_NUDGE_SECS 600)"

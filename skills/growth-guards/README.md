@@ -87,9 +87,9 @@ What each one bans, and how it is scoped: [CHECKS.md](CHECKS.md).
 
 Every key, its default and its meaning: [SKILL.md](SKILL.md). Each resolves
 environment > `.env.local` > `.kendex/settings.toml` > committed
-`kendex.settings.toml` (flat `KEY = "value"` under `[env]`) > `.env` >
-default. Per-check flags (`--excludes`, `--baseline`) override every
-source; relative paths are repo-root-relative.
+`kendex.settings.toml` (flat `KEY = "value"` under `[env]`) > default; a
+`.env` file is never read. Per-check flags (`--excludes`, `--baseline`)
+override every source; relative paths are repo-root-relative.
 
 ```toml
 [env]

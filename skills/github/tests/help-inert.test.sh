@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Help is inert: github.sh answers help and routes a subcommand's --help
 # before loading project configuration or touching auth, so a repository
-# .env never runs as shell code under --help and help cannot fail on auth.
+# .env.local never runs as shell code under --help and help cannot fail on auth.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,7 +26,7 @@ echo "=== github.sh help is answered before project config and auth ==="
 
 mkdir -p "$TMP/repo"
 git -C "$TMP/repo" init -q
-printf 'touch "%s/env-executed"\n' "$TMP" >"$TMP/repo/.env"
+printf 'touch "%s/env-executed"\n' "$TMP" >"$TMP/repo/.env.local"
 
 check "--help prints the command index" "GitHub API CLI" --help
 check "help prints the command index" "GitHub API CLI" help
@@ -52,9 +52,9 @@ else
 fi
 
 if [[ -e "$TMP/env-executed" ]]; then
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "help sourced the project .env"
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "help sourced the project .env.local"
 else
-  PASS=$((PASS + 1)); printf '  ok    %s\n' "no help form sourced the project .env"
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "no help form sourced the project .env.local"
 fi
 
 echo

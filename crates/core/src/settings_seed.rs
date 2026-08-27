@@ -221,7 +221,7 @@ pub fn merge(original: Option<&str>, entries: &[SeededEnv]) -> Option<(String, V
 
     let Some(original) = original else {
         let mut out = String::from(
-            "# Public kendex settings seeded from installed skill defaults.\n# Skill scripts read this [env] table after .env and before .env.local.\n# Keep secrets, tokens, and personal overrides in .env.local.\n\n[env]\n",
+            "# Public kendex settings seeded from installed skill defaults.\n# Skill scripts read this [env] table; process env and .env.local override it.\n# Keep secrets, tokens, and personal overrides in .env.local.\n\n[env]\n",
         );
         out.push_str(&render_entries(&missing, "\n"));
         return Some((out, added));

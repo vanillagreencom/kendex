@@ -63,7 +63,7 @@ mkdir -p "$ROOT/main/harness/skills"
 printf 'harness/**\n!harness/skills/\n!harness/skills/*.md\n' >"$ROOT/main/.gitignore"
 printf 'runtime\n' >"$ROOT/main/harness/state.json"
 printf 'v1\n' >"$ROOT/main/harness/skills/tool.md"
-printf 'WORKTREE_SYMLINKS="harness"\n' >"$ROOT/main/.env"
+printf 'WORKTREE_SYMLINKS="harness"\n' >"$ROOT/main/.env.local"
 git -C "$ROOT/main" add .gitignore harness/skills/tool.md
 git -C "$ROOT/main" commit -q -m harness
 git -C "$ROOT/main" push -q origin main

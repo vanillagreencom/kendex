@@ -2,11 +2,15 @@
 # Regression tests for kendex-env.sh project-config precedence.
 #
 # Contract (highest to lowest priority):
-#   parent-process env  >  .env.local  >  kendex.settings.toml/.kendex/settings.toml  >  .env
+#   parent-process env > .env.local > .kendex/settings.toml >
+#   kendex.settings.toml > default
+# A `.env` file is never read. The TOML reader loads the [env] table only;
+# a duplicate key inside [env], or a value outside the contract grammar
+# (single-line double-quoted, no `"`, no `\`), fails the load.
 #
 # Bug 2 (kendex#507): the settings loader clobbered caller-provided env. Parent
-# values must now win over every project file, while the .env < settings <
-# .env.local order is preserved for keys the parent did not set.
+# values must now win over every project file, while the settings < .env.local
+# order is preserved for keys the parent did not set.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,31 +34,34 @@ assert_eq() {
 
 echo "=== kendex-env precedence ==="
 
-# Shared project root for scenarios 1 and 2.
+# Shared project root for scenarios 1 and 2. The .env file is a planted
+# control: its FOO must never surface, and its QUX must stay unset.
 PROJ="$TMP_ROOT/proj"
-mkdir -p "$PROJ"
-printf 'FOO="from-env"\n' > "$PROJ/.env"
+mkdir -p "$PROJ/.kendex"
+printf 'FOO="from-dotenv"\nQUX="only-in-dotenv"\n' > "$PROJ/.env"
 cat > "$PROJ/kendex.settings.toml" <<'TOML'
 [env]
 FOO = "from-settings"
 BAR = "bar-settings"
 TOML
+printf '[env]\nBAR = "bar-nested"\n' > "$PROJ/.kendex/settings.toml"
 printf 'BAZ="from-local"\n' > "$PROJ/.env.local"
 
-# Scenario 1: no parent FOO -> settings overrides .env (existing contract).
+# Scenario 1: no parent values -> settings apply, .kendex beats the root
+# file, .env.local applies, and nothing from .env surfaces.
 set +e
 s1_out=$(
   set -euo pipefail
   source "$LIB"
   kendex_load_project_env "$PROJ"
-  printf '%s|%s|%s\n' "$FOO" "$BAR" "$BAZ"
+  printf '%s|%s|%s|%s\n' "$FOO" "$BAR" "$BAZ" "${QUX-unset}"
 )
 s1_code=$?
 set -e
 assert_eq "$s1_code" "0" "scenario 1 loads without error"
-assert_eq "$s1_out" "from-settings|bar-settings|from-local" "scenario 1: settings overrides .env; .env.local applied"
+assert_eq "$s1_out" "from-settings|bar-nested|from-local|unset" "scenario 1: settings apply, .kendex/settings.toml wins over the root file, .env.local applied, .env ignored"
 
-# Scenario 2: parent FOO exported -> parent wins over both .env and settings;
+# Scenario 2: parent FOO exported -> parent wins over the settings files;
 # a key the parent did not set (BAR) is still taken from settings.
 set +e
 s2_out=$(
@@ -67,13 +74,12 @@ s2_out=$(
 s2_code=$?
 set -e
 assert_eq "$s2_code" "0" "scenario 2 loads without error"
-assert_eq "$s2_out" "from-parent|bar-settings" "scenario 2: parent env wins over project files; other settings keys still applied"
+assert_eq "$s2_out" "from-parent|bar-nested" "scenario 2: parent env wins over project files; other settings keys still applied"
 
 # Scenario 3: the issue's exact case. Parent GH_ISSUE_PATTERN must survive a
 # conflicting lowercase pattern in project settings.
 PROJ3="$TMP_ROOT/proj3"
 mkdir -p "$PROJ3"
-printf 'FOO="from-env"\n' > "$PROJ3/.env"
 cat > "$PROJ3/kendex.settings.toml" <<'TOML'
 [env]
 GH_ISSUE_PATTERN = "cc-[0-9]+"
@@ -110,6 +116,61 @@ s4_code=$?
 set -e
 assert_eq "$s4_code" "0" "scenario 4: standalone settings load does not error without a snapshot"
 assert_eq "$s4_out" "fresh-val" "scenario 4: standalone settings load sets a fresh key"
+
+# Scenario 5: only the [env] table loads. A top-level assignment and one
+# under another table belong to other tools; the trailing comment on a
+# loaded value is dropped, and an explicit empty value is a real assignment.
+PROJ5="$TMP_ROOT/proj5"
+mkdir -p "$PROJ5"
+cat > "$PROJ5/kendex.settings.toml" <<'TOML'
+TOPLEVEL = "not-config"
+[other]
+IN_OTHER = "not-config"
+[env]
+COMMENTED = "kept"   # the comment is not part of the value
+EMPTIED = ""
+TOML
+set +e
+s5_out=$(
+  set -euo pipefail
+  export EMPTIED=parent-had-it
+  source "$LIB"
+  kendex_load_project_env "$PROJ5"
+  printf '%s|%s|%s|%s\n' "${TOPLEVEL-unset}" "${IN_OTHER-unset}" "$COMMENTED" "$EMPTIED"
+)
+s5_code=$?
+set -e
+assert_eq "$s5_code" "0" "scenario 5 loads without error"
+assert_eq "$s5_out" "unset|unset|kept|parent-had-it" "scenario 5: only [env] loads, comments are stripped, parent set-ness holds"
+
+# Scenario 6: contract violations fail the load instead of resolving on a
+# reinterpreted file. Each shape must exit nonzero with an ::error naming
+# the key — a loader that silently skipped or leniently decoded any of them
+# turns this scenario red.
+PROJ6="$TMP_ROOT/proj6"
+mkdir -p "$PROJ6"
+s6_case() { # NAME CONTENT EXPECT_SUBSTring
+  local name="$1" content="$2" want="$3" code=0 err
+  printf '%s\n' "$content" > "$PROJ6/kendex.settings.toml"
+  set +e
+  err=$(
+    set -euo pipefail
+    source "$LIB"
+    kendex_load_project_env "$PROJ6" 2>&1 >/dev/null
+  )
+  code=$?
+  set -e
+  if [[ "$code" -ne 0 && "$err" == *"$want"* ]]; then
+    PASS=$((PASS + 1)); printf '  ok    scenario 6: %s fails the load\n' "$name"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  scenario 6: %s fails the load (code=%s err=%s)\n' "$name" "$code" "$err"
+  fi
+}
+s6_case "a duplicate key inside [env]" $'[env]\nDUP = "a"\nDUP = "b"' "DUP is assigned more than once in [env]"
+s6_case "a single-quoted value" $'[env]\nSQ = \x27sv\x27' "unsupported syntax for SQ"
+s6_case "an array value" $'[env]\nARR = ["a", "b"]' "unsupported syntax for ARR"
+s6_case "a backslash in the value" $'[env]\nBS = "a\\b"' "unsupported syntax for BS"
+s6_case "an unquoted value" $'[env]\nUNQ = bare' "unsupported syntax for UNQ"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -67,7 +67,7 @@ mkdir -p "$MAIN/runtime"
 printf 'runtime/\nharnessrc\n' >"$MAIN/.gitignore"
 printf 'state\n' >"$MAIN/runtime/state.json"
 printf 'rc\n' >"$MAIN/harnessrc"
-printf 'WORKTREE_SYMLINKS="runtime harnessrc"\n' >"$MAIN/.env"
+printf 'WORKTREE_SYMLINKS="runtime harnessrc"\n' >"$MAIN/.env.local"
 git -C "$MAIN" add .gitignore
 git -C "$MAIN" commit -q -m ignore
 git -C "$MAIN" push -q origin main

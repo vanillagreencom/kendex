@@ -653,28 +653,29 @@ noenv_out=$(cd "$NOENV_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$NOENV_ROOT/t
 assert_eq "$noenv_out" "Restored symlinks in $NOENV_ROOT/trees/issue-noenv" "fix-links works without .env.local symlink"
 assert_path_absent "$NOENV_ROOT/trees/issue-noenv/.env.local" ".env.local not linked unless configured"
 
-# WORKTREE_BASE_DIR can be set in .env or .env.local. Relative values resolve
-# from the main checkout; kendex.settings.toml overrides legacy .env, and
-# .env.local overrides both. Trailing slashes are ignored.
+# WORKTREE_BASE_DIR can be set in kendex.settings.toml [env] or .env.local.
+# Relative values resolve from the main checkout; a .env file is read by
+# nothing, and .env.local overrides the settings files. Trailing slashes are
+# ignored.
 CONFIG_ROOT="$TMP_ROOT/config"
 make_repo "$CONFIG_ROOT/main"
 cat > "$CONFIG_ROOT/main/.env" <<'ENV'
 WORKTREE_BASE_DIR="../from-env"
 ENV
 config_path=$(cd "$CONFIG_ROOT/main" && "$WORKTREE_SCRIPT" path ISSUE-CONFIG)
-assert_eq "$config_path" "$CONFIG_ROOT/from-env/issue-config" ".env WORKTREE_BASE_DIR controls path"
+assert_eq "$config_path" "$CONFIG_ROOT/.worktrees/main/issue-config" "a .env WORKTREE_BASE_DIR is ignored; the default path stands"
 cat > "$CONFIG_ROOT/main/kendex.settings.toml" <<'TOML'
 [env]
 WORKTREE_BASE_DIR = "../from-settings"
-WORKTREE_MKDIRS = ["tmp", "cache"]
+WORKTREE_MKDIRS = "tmp cache"
 TOML
 config_settings_path=$(cd "$CONFIG_ROOT/main" && "$WORKTREE_SCRIPT" path ISSUE-CONFIG)
-assert_eq "$config_settings_path" "$CONFIG_ROOT/from-settings/issue-config" "kendex.settings.toml WORKTREE_BASE_DIR overrides .env"
+assert_eq "$config_settings_path" "$CONFIG_ROOT/from-settings/issue-config" "kendex.settings.toml WORKTREE_BASE_DIR applies while the .env value stays ignored"
 cat > "$CONFIG_ROOT/main/.env.local" <<ENV
 WORKTREE_BASE_DIR="$CONFIG_ROOT/from-local/"
 ENV
 config_local_path=$(cd "$CONFIG_ROOT/main" && "$WORKTREE_SCRIPT" path ISSUE-CONFIG)
-assert_eq "$config_local_path" "$CONFIG_ROOT/from-local/issue-config" ".env.local WORKTREE_BASE_DIR overrides .env"
+assert_eq "$config_local_path" "$CONFIG_ROOT/from-local/issue-config" ".env.local WORKTREE_BASE_DIR overrides kendex.settings.toml"
 
 # create uses the configured worktree parent directory, not only the path helper.
 CREATE_ROOT="$TMP_ROOT/create-custom"
@@ -691,7 +692,7 @@ case "${1:-}:${2:-}" in
 esac
 STUB
 chmod +x "$CREATE_ROOT/bin/gh"
-cat > "$CREATE_ROOT/main/.env" <<'ENV'
+cat > "$CREATE_ROOT/main/.env.local" <<'ENV'
 WORKTREE_BASE_DIR="../custom-trees"
 ENV
 custom_create_out=$(cd "$CREATE_ROOT/main" && PATH="$CREATE_ROOT/bin:$PATH" "$WORKTREE_SCRIPT" create ISSUE-CUSTOM --from main)

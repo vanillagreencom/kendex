@@ -53,7 +53,6 @@ project_declared_team=""
 if [[ -n "$PROJECT_ROOT" ]]; then
   project_declared_team="$(
     unset LINEAR_TEAM
-    kendex_source_env_file "$PROJECT_ROOT/.env"
     kendex_load_settings_file "$PROJECT_ROOT/kendex.settings.toml"
     kendex_load_settings_file "$PROJECT_ROOT/.kendex/settings.toml"
     kendex_source_env_file "$PROJECT_ROOT/.env.local"
@@ -63,7 +62,7 @@ fi
 
 team_source_file=""
 if [[ -n "$PROJECT_ROOT" ]]; then
-  for candidate in .env kendex.settings.toml .kendex/settings.toml .env.local; do
+  for candidate in kendex.settings.toml .kendex/settings.toml .env.local; do
     [[ -f "$PROJECT_ROOT/$candidate" ]] || continue
     if grep -Eq '^[[:space:]]*(export[[:space:]]+)?LINEAR_TEAM[[:space:]]*=' "$PROJECT_ROOT/$candidate"; then
       team_source_file="$candidate"

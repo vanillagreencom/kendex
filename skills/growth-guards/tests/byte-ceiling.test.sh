@@ -310,9 +310,9 @@ else
 fi
 
 echo "=== an EXISTING non-regular ENV-FILE source never falls through ==="
-# .env.local and .env are probed with -f like the settings file, so a
-# directory or an unresolvable symlink there is skipped exactly like an
-# absent one and a lower-precedence value silently decides.
+# .env.local is probed with -f like the settings file, so a directory or an
+# unresolvable symlink there is skipped exactly like an absent one and a
+# lower-precedence value silently decides.
 mkdir -p "$R/.env.local"
 run_bc_default
 [ "$RC" -eq 2 ] && case "$OUT" in *".env.local: settings source exists but is not a regular file"*) true ;; *) false ;; esac \
@@ -320,17 +320,17 @@ run_bc_default
   || bad "a DIRECTORY at .env.local is exit 2" "rc=$RC out=$OUT"
 rmdir "$R/.env.local"
 
-ln -s missing.env "$R/.env"
+ln -s missing.env "$R/.env.local"
 run_bc_default
-[ "$RC" -eq 2 ] && case "$OUT" in *".env: settings source is a symlink that does not resolve"*) true ;; *) false ;; esac \
-  && ok "a DANGLING .env symlink is exit 2, not a silent skip" \
-  || bad "a DANGLING .env symlink is exit 2" "rc=$RC out=$OUT"
-rm -f "$R/.env"
+[ "$RC" -eq 2 ] && case "$OUT" in *".env.local: settings source is a symlink that does not resolve"*) true ;; *) false ;; esac \
+  && ok "a DANGLING .env.local symlink is exit 2, not a silent skip" \
+  || bad "a DANGLING .env.local symlink is exit 2" "rc=$RC out=$OUT"
+rm -f "$R/.env.local"
 
 run_bc_default
 [ "$RC" -eq 1 ] && case "$OUT" in *"ceiling 3 KB"*) true ;; *) false ;; esac \
-  && ok "control: with both env files absent the settings file still supplies 3" \
-  || bad "control: absent env files fall through to the settings file" "rc=$RC out=$OUT"
+  && ok "control: with .env.local absent the settings file still supplies 3" \
+  || bad "control: an absent env file falls through to the settings file" "rc=$RC out=$OUT"
 
 echo "=== fail-closed: a broken blob measurement terminates, never passes ==="
 new_repo measure

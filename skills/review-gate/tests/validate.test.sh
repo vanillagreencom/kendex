@@ -34,6 +34,7 @@ for line in \
   "one adopted writer workflow" \
   "the adopted workflow is the shipped template, line for line" \
   "every REVIEW_GATE_* key assigned in" \
+  "every REVIEW_GATE_* assignment sits inside the [env] table" \
   "every REVIEW_GATE_* assignment uses the bare key name the loader reads" \
   "every committed setting resolves to a legal value"; do
   printf '%s' "$OUT" | grep -qF -- "$line" &&
@@ -159,6 +160,21 @@ sandbox
 dir="$DIR"
 printf '[env]\nREVIEW_GATE_THREADS = "off"\n' >>"$dir/kendex.settings.toml"
 expect_clean "a plain assignment under a table header is read normally" "$dir"
+
+# The loader reads the [env] table only, so a bare assignment anywhere else
+# is silently ignored at gate time — its own finding, distinct from the
+# unreadable-shape one, since the spelling is right and only the location is
+# wrong. Both hiding places are pinned: above the first header, and under an
+# unrelated table.
+sandbox
+dir="$DIR"
+printf 'REVIEW_GATE_THREADS = "off"\n[env]\nREVIEW_GATE_CONTEXT = "Review gate"\n' >"$dir/kendex.settings.toml"
+expect_fail "a bare assignment ABOVE the [env] header is a finding" "$dir" "outside the [env] table"
+
+sandbox
+dir="$DIR"
+printf '\n[notes]\nREVIEW_GATE_THREADS = "off"\n' >>"$dir/kendex.settings.toml"
+expect_fail "a bare assignment under an UNRELATED table is a finding" "$dir" "outside the [env] table"
 
 # An inline table puts the setting AFTER the line's first `=`, which is why
 # the rule judges the line rather than a position inside it.

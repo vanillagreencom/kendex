@@ -114,10 +114,11 @@ Layering and reasoning: [README](README.md).
 
 Resolution order for every key: explicit environment > `.env.local` >
 `.kendex/settings.toml` > the repo's committed `kendex.settings.toml` (flat
-`KEY = "value"` under `[env]`) > `.env` > built-in default. Only an ABSENT
-source is skipped; one that exists but is unusable is a config error (exit 2).
-`GROWTH_GUARDS_SETTINGS_FILE=/dev/null` skips `.env.local`, the settings file
-and `.env`, leaving environment variables and defaults.
+`KEY = "value"` under `[env]`; other tables are ignored) > built-in default;
+a `.env` file is never read. Only an ABSENT source is skipped; one that
+exists but is unusable is a config error (exit 2).
+`GROWTH_GUARDS_SETTINGS_FILE=/dev/null` skips `.env.local` and the settings
+files, leaving environment variables and defaults.
 
 **Excludes format** — `pattern<TAB>reason` per line (shell glob against the
 full repo-relative path; `*` crosses `/`); a pattern without a reason is a

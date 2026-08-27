@@ -1,8 +1,12 @@
 # Review-gate settings
 
-All keys resolve environment-first, then the repo's `kendex.settings.toml`,
-then the built-in default (`REVIEW_GATE_SETTINGS_FILE` overrides the file
-path, e.g. in tests). List values pack into one string with `;` separators.
+All keys resolve environment-first, then `.env.local` (`KEY=value` dotenv
+shape, parsed, never sourced), then `.kendex/settings.toml`, then the repo's
+`kendex.settings.toml`, then the built-in default (`REVIEW_GATE_SETTINGS_FILE`
+overrides the settings files and consults only itself, e.g. in tests). The
+one exception is `REVIEW_GATE_MODE`, which skips the dotenv layer — see its
+row. A `.env` file is never read. List values pack into one string with `;`
+separators.
 Commented defaults ship in this skill's `kendex.settings.toml.example`;
 per-repo wiring and values: [adoption.md](adoption.md).
 
@@ -20,10 +24,11 @@ out. `review-predicate.sh --check-config` is the value-rule half
 alone: it validates every key below and exits without reading evidence or
 needing a PR.
 
-Script-consumed keys are matched file-wide by exact name, regardless of the
-enclosing TOML table. Every such key name is reserved across the whole file:
-keep these names out of unrelated tables. The parser fails loud when the same
-name is assigned more than once anywhere in the file.
+Script-consumed keys are read from the `[env]` table only: an assignment
+under any other table (or above the first header) is ignored, and
+`validate.sh` reports it. Values are single-line double-quoted strings with
+no `"` and no `\` (the kendex settings contract). The parser fails loud when
+the same name is assigned more than once inside `[env]`.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -45,8 +50,8 @@ name is assigned more than once anywhere in the file.
 | `REVIEW_GATE_VENDORED_PATHS` | (empty) | Path globs (`;`-separated) naming the kendex render trees the `vendored` class carries, e.g. `.agents/*;.claude/skills/*`. Same closed grammar and matcher as `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`, which outranks it on a shared path; read from the default-branch checkout like every setting, so the PR under judgment cannot widen it. A hand-edit under a listed path rides, so policy-bearing paths (hook scripts, agent instruction markdown) belong in the exclusion list. A renamed file carries only when both its names are under the set. Configuration errors (exit 2, also under `--check-config`): an unsupported spelling, the class enabled over an empty set, an entry naming no literal path text (`*`, `*/*`, `*.*`). |
 | `REVIEW_GATE_CARRY_FORWARD_EXCLUDE` | (empty) | Path globs that disqualify a carry, forcing fresh evidence (use for policy-bearing markdown such as `AGENTS.md` and instruction files under `.github/`). Glob semantics and carry interaction: `review-predicate.sh --help`. Inert while `REVIEW_GATE_CARRY_FORWARD` is empty. Spelling is judged by the ENGINE, which owns the matcher, and the grammar is CLOSED: path characters plus `*`, matched against repository-relative names. `review-predicate.sh` refuses anything else as a configuration error — the `[`, `]`, `\` and `?` metacharacters, and a leading `/`, a trailing `/`, or a `.`, `..` or empty path component. A closed grammar is what ends the equivalence hunt: `[.]` and `\.` respell the `.` component the structural rules reject, so the spelling is refused rather than analysed. The refusal runs before any evaluation, so a rejected spelling never reaches the matcher. `validate.sh` relays that verdict and adds what needs the tree: an all-wildcard entry such as `*`, and a glob matching no tracked path. |
 | `REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC` | (empty) | Exclusion globs (`;`-separated, exact glob text) DECLARED to match no tracked path yet. `validate.sh` fails an exclusion glob matching nothing in the repository unless it is declared here, and reconciles the ledger in both directions: a declaration that is not an exact member of the active exclusion list is an orphan, and a declaration whose glob now matches tracked paths is stale. Read by BOTH: `review-predicate.sh` loads it on every invocation and runs the pattern-grammar check over it, so an unsupported spelling declared here is a configuration error (exit 2) like any other; the ledger reconciliation itself is `validate.sh`'s. Inert while `REVIEW_GATE_CARRY_FORWARD` is empty. |
-| `REVIEW_GATE_MODE` | `enforce` | The one-switch per-repo gate disable. `enforce` is full behavior. `off` makes the predicate answer `approved` with the attestation detail `review gate disabled by settings (REVIEW_GATE_MODE=off)` before ANY evidence read — zero API traffic, no evidence model, no thread term; the writer converges the required status to success and this context stops blocking the queue (a server-side `required_review_thread_resolution` rule still blocks on open threads). Merge-group statuses never read the mode and always post success as `merge-queue entry: post-approval by construction`. Unknown values are a config error (exit 2). Orch's submit flow reads the same key and skips its reviewer wait when `off`. RESOLUTION BOUNDARY: engine-only sources on BOTH sides — the engine and orch's `approval-wait --resolve-mode` each read process env and `kendex.settings.toml` only, never `.env`/`.env.local` (unlike `PR_REVIEW_WAIT_SECS`), so a dotenv value cannot split the waiter from the gate. Set it in `kendex.settings.toml` or export it. |
-| `PR_REVIEW_WAIT_SECS` | `900` | Review-wait quiet period in seconds — a non-negative integer of at most 9 digits after leading zeros; `.agents/skills/review-gate/scripts/pr-watch.sh` treats any other value (empty, `90s`, negative, out of range) as a configuration error (exit 2). SHARED with the orch skill (approval-wait's absent-positional budget). Read by `pr-watch.sh` as the `awaiting-stale` threshold. RESOLUTION BOUNDARY: review-gate scripts resolve env > `kendex.settings.toml` > default; orch additionally reads `.env`/`.env.local`. Set this key in `kendex.settings.toml` or export it — a `.env`-only value reaches orch but not the watcher. |
+| `REVIEW_GATE_MODE` | `enforce` | The one-switch per-repo gate disable. `enforce` is full behavior. `off` makes the predicate answer `approved` with the attestation detail `review gate disabled by settings (REVIEW_GATE_MODE=off)` before ANY evidence read — zero API traffic, no evidence model, no thread term; the writer converges the required status to success and this context stops blocking the queue (a server-side `required_review_thread_resolution` rule still blocks on open threads). Merge-group statuses never read the mode and always post success as `merge-queue entry: post-approval by construction`. Unknown values are a config error (exit 2). Orch's submit flow reads the same key and skips its reviewer wait when `off`. RESOLUTION BOUNDARY: engine-only sources on BOTH sides — the engine and orch's `approval-wait --resolve-mode` each read process env and the settings files (`.kendex/settings.toml`, `kendex.settings.toml`) only, never `.env.local` (unlike `PR_REVIEW_WAIT_SECS`), so a dotenv value cannot split the waiter from the gate. Set it in `kendex.settings.toml` or export it. |
+| `PR_REVIEW_WAIT_SECS` | `900` | Review-wait quiet period in seconds — a non-negative integer of at most 9 digits after leading zeros; `.agents/skills/review-gate/scripts/pr-watch.sh` treats any other value (empty, `90s`, negative, out of range) as a configuration error (exit 2). SHARED with the orch skill (approval-wait's absent-positional budget). Read by `pr-watch.sh` as the `awaiting-stale` threshold. RESOLUTION BOUNDARY: none left for this key — review-gate scripts and orch both resolve env > `.env.local` > `.kendex/settings.toml` > `kendex.settings.toml` > default. Set it in `kendex.settings.toml` or export it. |
 
 `REVIEW_GATE_CHECK_RUN_NAME` is NOT a settings key either: it is a GitHub
 repository variable, read by the writer workflow's relay `if:` before any
