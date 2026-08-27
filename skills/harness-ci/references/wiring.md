@@ -15,18 +15,16 @@ commits; a shallow clone holds neither endpoint.
 ```yaml
 env:
   EVENT: ${{ github.event_name }}
-  BASE: >-
-    ${{ github.event.pull_request.base.sha
-        || github.event.merge_group.base_sha
-        || github.event.before }}
-  HEAD: >-
-    ${{ github.event.pull_request.head.sha
-        || github.event.merge_group.head_sha
-        || github.sha }}
+  BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+  HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
 ```
 
 An event outside the three answers `false` on its own — an unset `BASE` needs
 no guard of yours.
+
+Keep each expression on ONE line. A folded scalar (`>-`) whose continuations
+are indented further than its first line preserves the newlines instead of
+folding them, and what looks like a wrapped expression is a multi-line one.
 
 ## Shape 1 — a `changes` job feeding job-level `if:`
 
@@ -54,10 +52,7 @@ jobs:
 
   test:
     needs: changes
-    if: >-
-      ${{ !cancelled()
-          && !(needs.changes.result == 'success'
-               && needs.changes.outputs.harness_only == 'true') }}
+    if: ${{ !cancelled() && !(needs.changes.result == 'success' && needs.changes.outputs.harness_only == 'true') }}
     runs-on: ubuntu-latest
     steps:
       # the repository's existing lane, unchanged

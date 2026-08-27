@@ -94,22 +94,20 @@ done
 [ -n "$event" ] || die "--event is required"
 [ -n "$head" ] || die "--head cannot be empty"
 
-# Prove the output file is appendable before classifying anything, so a
-# caller who named a file they cannot write learns it from an exit 2 with an
-# empty stdout rather than from a verdict that reached nobody.
-if [ -n "$output" ]; then
-  printf '' >>"$output" || die "cannot append to '$output'"
-fi
 
+# The output FILE is written before stdout, never after. A zero-length probe
+# proves only that the file opens — /dev/full and a full filesystem both accept
+# it and fail the real write — so a verdict printed first would already be on
+# stdout when the append died, and exit 2 is documented to carry no verdict.
 verdict() { # true|false [REASON]
   if [ "$#" -gt 1 ]; then
     echo "harness-only: $2; running every lane" >&2
   fi
-  printf 'harness_only=%s\n' "$1"
   if [ -n "$output" ]; then
     printf 'harness_only=%s\n' "$1" >>"$output" ||
       die "could not append the verdict to '$output'"
   fi
+  printf 'harness_only=%s\n' "$1"
   exit 0
 }
 

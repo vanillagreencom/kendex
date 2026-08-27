@@ -64,6 +64,16 @@ unwritable="$SANDBOX/no-such-dir/out.txt"
 wiring "an unwritable --output" \
   --repo "$repo" --event push --base "$base" --output "$unwritable"
 
+# A file that OPENS and then refuses the write. A zero-length probe passes on
+# /dev/full, so this is the case that proves the verdict reaches the file
+# before stdout rather than after. Linux only; announced when absent.
+if [ -c /dev/full ]; then
+  wiring "an --output that accepts the open and fails the write" \
+    --repo "$repo" --event push --base "$base" --output /dev/full
+else
+  echo "  SKIP: no /dev/full, the full-device case did not run"
+fi
+
 # --output appends beside stdout and keeps what the file already held.
 out_file="$SANDBOX/github_output"
 printf 'other_key=kept\n' >"$out_file"
