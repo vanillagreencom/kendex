@@ -77,13 +77,20 @@ impl Installed {
 }
 
 /// The scripts directory the installed helper runs first, read out of the
-/// helper itself.
+/// helper — and trusted only when the helper is the one this install
+/// generates for that directory.
 ///
-/// The installer bakes it in as a single-quoted shell assignment on its own
-/// line, so it is read back the same way. A helper that is absent,
-/// unreadable, or shaped differently than this installer writes yields
-/// nothing and the search below decides — the same outcome the helper
-/// reaches when the baked path holds no executable script.
+/// The path alone is not evidence of anything. `.git/hooks` is ordinary
+/// local state, so a `kendex-guards` carrying an `installed_scripts=` line
+/// and nothing else legitimate would redirect every guard verb at whatever
+/// executable it named. Reading the line and believing it made this the one
+/// place a guard verb could be pointed somewhere it was never installed.
+///
+/// So the whole file is compared against [`super::grammar::helper_body`]
+/// for the directory the line names — one shared definition, the same bytes the installer
+/// writes and the same ones the armed check compares against. A helper that
+/// is not exactly that is ignored and the search roots decide, which is
+/// where a repository with no helper ends up anyway.
 fn baked_scripts(repo: &super::Repo) -> Option<PathBuf> {
     let helper = repo
         .effective_hooks_dir()
@@ -95,7 +102,15 @@ fn baked_scripts(repo: &super::Repo) -> Option<PathBuf> {
         .find_map(|line| line.strip_prefix("installed_scripts='"))?
         .strip_suffix('\'')?;
     let value = unquote(quoted);
-    (!value.is_empty()).then(|| PathBuf::from(value))
+    if value.is_empty() {
+        return None;
+    }
+    // Self-consistency is the test: the file has to BE the helper an
+    // install of that directory writes, not merely mention it.
+    if text != super::grammar::helper_body(&value) {
+        return None;
+    }
+    Some(PathBuf::from(value))
 }
 
 /// The shell single-quoting the installer writes, undone.

@@ -418,3 +418,71 @@ fn a_project_below_the_git_toplevel_is_found_where_it_renders() {
     assert!(!blocked.status.success(), "{}", said(&blocked));
     assert!(said(&blocked).contains("todo-ban"), "{}", said(&blocked));
 }
+
+/// A tampered helper cannot redirect the guard verbs.
+///
+/// The helper names the scripts an armed repository runs, and the verbs read
+/// that name so they judge the copy the shim would. But a name is not
+/// evidence: `.git/hooks` is ordinary local state, so a file carrying an
+/// `installed_scripts=` line and anything else at all would point every verb
+/// at whatever executable it chose. The whole file has to be the helper an
+/// install of that directory writes, or the name is ignored.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_tampered_helper_does_not_redirect_the_guard_verbs() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
+    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
+    let armed = run_with(
+        home,
+        &root,
+        installer.to_str().unwrap(),
+        &["--repo", root.to_str().unwrap()],
+        &[],
+    );
+    assert!(armed.status.success(), "{}", said(&armed));
+
+    // Somewhere else entirely, with scripts that would announce themselves.
+    let elsewhere = home.join("elsewhere/scripts");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let marker = home.join("elsewhere-ran");
+    for lane in ["pre-commit", "commit-msg"] {
+        let path = elsewhere.join(lane);
+        std::fs::write(
+            &path,
+            format!("#!/usr/bin/env bash\ntouch {}\nexit 0\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    // A helper that names them, and is otherwise not the helper: an extra
+    // line is enough, and is what tampering actually looks like.
+    let helper = root.join(".git/hooks/kendex-guards");
+    let genuine = std::fs::read_to_string(&helper).unwrap();
+    let redirected: String = genuine
+        .lines()
+        .map(|line| match line.starts_with("installed_scripts='") {
+            true => format!("installed_scripts='{}'", elsewhere.display()),
+            false => line.to_owned(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&helper, format!("{redirected}\n# and one more thing\n")).unwrap();
+    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    // The verbs fall through to the search roots and run the real package.
+    std::fs::write(root.join("b.rs"), "// TODO: not yet\n").unwrap();
+    git_ok(home, &root, &["add", "-A"]);
+    let out = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
+    assert!(
+        !marker.exists(),
+        "a tampered helper redirected the verb: {}",
+        said(&out)
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    assert!(said(&out).contains("todo-ban"), "{}", said(&out));
+}
