@@ -35,59 +35,31 @@ pub(super) struct Owned {
 pub(super) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
     let mut files: Vec<PathBuf> = Vec::new();
     let mut edits: Vec<(PathBuf, ConfigEdit)> = Vec::new();
-    match entry.kind {
-        ItemKind::Agent => {
+    match (&entry.emitted, entry.kind) {
+        // What an install recorded landing at beats deriving a place it
+        // never took: a codex command stored as a skill tree under a name
+        // the collision rules may have changed, a skill's tree and the
+        // link a tool's directory has since moved away from.
+        (Some(emitted), _) => files.extend(emitted.paths.iter().cloned()),
+        (None, ItemKind::Agent) => {
             if let Some(dir) = native_dir(env, scope, entry.harness, ItemKind::Agent) {
                 files.push(dir.join(file_name(entry.harness, &entry.name)));
             }
         }
-        // The tree and the link this install recorded landing at. A tool's
-        // directory moves between kendex versions, and the place derived
-        // today is then one this install never wrote.
-        ItemKind::Skill if entry.emitted.is_some() => {
-            files.extend(entry.emitted.iter().flat_map(|e| e.paths.iter().cloned()));
-        }
-        ItemKind::Skill => {
-            // The directory this entry's method actually wrote. A tool that
-            // reads the shared tree as well as one of its own has two, and
-            // reading the wrong one leaves a copy install's real tree
-            // unremovable and protects a path nothing wrote.
-            let copies = entry.method == crate::manifest::Method::Copy;
-            let dir = match copies {
-                true => super::desired::own_dir(env, scope, entry.harness, ItemKind::Skill),
-                false => native_dir(env, scope, entry.harness, ItemKind::Skill),
-            };
-            if let Some(dir) = dir {
-                files.push(dir.join(crate::harness::rendered_name(entry.harness, &entry.name)));
-            }
-            // Only a shared install has a shared tree. A copy install put
-            // its bytes in the tool's own directory and never wrote that
-            // tree, so claiming it here would call somebody else's content
-            // ours — and what protects unmanaged bytes is exactly not being
-            // called ours.
-            if !copies {
-                let canonical = super::desired::skill_canonical(env, scope, &entry.name);
-                if !files.contains(&canonical) {
-                    files.push(canonical);
-                }
+        // A skill owns exactly what it recorded, and a record naming
+        // nothing owns nothing: deriving today's place for it would claim
+        // a position this install may never have written.
+        (None, ItemKind::Skill) => {}
+        (None, ItemKind::Command) => {
+            if let Some(dir) = native_dir(env, scope, entry.harness, ItemKind::Command) {
+                files.push(dir.join(super::desired_command::command_file(
+                    entry.harness,
+                    &entry.name,
+                )));
             }
         }
-        // A codex command was written as a skill tree, under a name the
-        // collision rules may have changed: the record of what landed
-        // beats deriving a path this install never took.
-        ItemKind::Command => match &entry.emitted {
-            Some(emitted) => files.extend(emitted.paths.iter().cloned()),
-            None => {
-                if let Some(dir) = native_dir(env, scope, entry.harness, ItemKind::Command) {
-                    files.push(dir.join(super::desired_command::command_file(
-                        entry.harness,
-                        &entry.name,
-                    )));
-                }
-            }
-        },
-        ItemKind::Hook => hook_owned(env, scope, entry, &mut files, &mut edits),
-        ItemKind::McpServer => {
+        (None, ItemKind::Hook) => hook_owned(env, scope, entry, &mut files, &mut edits),
+        (None, ItemKind::McpServer) => {
             if let Some(registry) = mcp_registry(env, scope, entry.harness) {
                 edits.push((
                     registry,
@@ -112,7 +84,7 @@ pub(super) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
                 ));
             }
         }
-        ItemKind::Plugin => {
+        (None, ItemKind::Plugin) => {
             if let Some(settings) = plugin_settings(env, scope, entry.harness) {
                 edits.push((
                     settings,
@@ -123,7 +95,7 @@ pub(super) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
                 ));
             }
         }
-        ItemKind::PiExtension => {}
+        (None, ItemKind::PiExtension) => {}
     }
     Owned { files, edits }
 }

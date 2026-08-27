@@ -92,8 +92,9 @@ fn recorded_paths(f: &Fixture, key: &str) -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
-/// The layout an older kendex wrote: a link at a place the current render
-/// never produces, recorded by that install as its own.
+/// The record a kendex from this version on writes, after a layout change:
+/// a link at a place the current render never produces, recorded by the
+/// install that wrote it.
 #[allow(clippy::unwrap_used)]
 fn as_written_under_the_old_layout(f: &Fixture, key: &str, link: &Path) {
     fs::create_dir_all(link.parent().unwrap()).unwrap();
@@ -129,7 +130,10 @@ fn a_link_the_render_stopped_producing_comes_off_by_its_record() {
     as_written_under_the_old_layout(&f, "skill:ship:claude", &old);
     apply_now(&f);
 
-    assert!(!old.is_symlink(), "the link nothing produces anymore stays");
+    assert!(
+        !old.is_symlink(),
+        "the link nothing produces anymore is still on disk"
+    );
     assert!(link.is_symlink() && shared.is_dir());
     assert_eq!(recorded_paths(&f, "skill:ship:claude"), vec![shared, link]);
     assert!(settled(&f));
@@ -158,8 +162,45 @@ fn an_orphaned_install_comes_off_by_the_paths_it_recorded() {
     .unwrap();
     apply::execute(&f.env, &report.plan, None).unwrap();
 
-    assert!(!old.is_symlink(), "the link nothing produces anymore stays");
+    assert!(
+        !old.is_symlink(),
+        "the link nothing produces anymore is still on disk"
+    );
     assert!(!f.project.join(".claude/skills/ship").is_symlink());
     assert!(f.project.join(".agents/skills/ship").is_dir());
     assert!(settled(&f));
+}
+
+/// An install this pass holds plans no replacement, so what it recorded
+/// is still what runs. Judged by the render instead, the old link came off
+/// while the tree it connected stayed held, and nothing was written after.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_held_install_keeps_the_link_it_recorded() {
+    let f = fixture();
+    declare(&f, "\"claude\"");
+    apply_now(&f);
+    let old = f.project.join(".claude/rules/ship");
+    as_written_under_the_old_layout(&f, "skill:ship:claude", &old);
+    fs::write(
+        f.project.join(".agents/skills/ship/SKILL.md"),
+        "edited by hand\n",
+    )
+    .unwrap();
+
+    let report = audit(&f.env, &f.scope).unwrap();
+    assert!(
+        report
+            .drift
+            .iter()
+            .any(|row| row.state == DriftState::Conflict),
+        "the edit holds the install: {:?}",
+        report.drift
+    );
+    apply::execute(&f.env, &report.plan, None).unwrap();
+
+    assert!(
+        old.is_symlink(),
+        "the held install's link came off with nothing replacing it"
+    );
 }

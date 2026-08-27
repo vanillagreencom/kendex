@@ -165,12 +165,20 @@ impl TrashGuard {
 }
 
 /// An earlier install of a still-declared item wrote somewhere this one will
-/// not: a codex command whose emitted name changed when a skill claimed it.
-/// The tree it left is ours and nobody wants it now — without this it stays
-/// on disk forever, offered by the tool under a name nobody declared.
+/// not: a codex command whose emitted name changed when a skill claimed it,
+/// a skill whose link a later layout no longer produces. What it left is
+/// ours and nobody wants it now — without this it stays on disk forever,
+/// offered by the tool under a name nobody declared, or absolute and
+/// committed.
+///
+/// Judged by the record this pass writes, not by what it rendered. An
+/// item held or refused carries its old record forward and plans no
+/// replacement, so the paths it recorded are still what runs; taking them
+/// off would leave the tool disconnected from a tree that stayed.
 pub(super) fn stale_emitted(
     state: &desired::DesiredState,
     lock: &Lock,
+    new_lock: &Lock,
     guard: &mut TrashGuard,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
@@ -181,7 +189,10 @@ pub(super) fn stale_emitted(
         let Some(previous) = entry.emitted.as_ref() else {
             continue;
         };
-        let current = item.emitted.iter().flat_map(|e| e.paths.iter());
+        let Some(recorded) = new_lock.entries.get(&item.key) else {
+            continue;
+        };
+        let current = recorded.emitted.iter().flat_map(|e| e.paths.iter());
         for path in &previous.paths {
             if current.clone().any(|kept| kept == path) {
                 continue;
