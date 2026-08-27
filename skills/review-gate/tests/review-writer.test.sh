@@ -228,7 +228,11 @@ run_writer() {
     "$@" bash "$TMP_ROOT/scripts/review-writer.sh" 2>&1
 }
 
-AWAITING="verdict=awaiting detail=awaiting a non-author review for headsha"
+# The pending status text the predicate emits for this verdict. The
+# writer is idempotent on state+description, so the fixture histories
+# below reuse this exact string.
+AWAITING_DETAIL="no review evidence at headsha yet; bots re-review each push, not a block on a human"
+AWAITING="verdict=awaiting detail=$AWAITING_DETAIL"
 APPROVED="verdict=approved detail=reviewed at head with no unresolved threads"
 CR="verdict=changes-requested detail=standing review changes requested (persists across pushes until re-approval or dismissal)"
 THREADS="verdict=threads-open detail=2 unresolved review thread(s)"
@@ -255,7 +259,7 @@ assert_contains "$(cat "$POST_LOG")" "context=Review gate" "w1: post carries the
 assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "w1: no rerun on a downward transition"
 
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$AWAITING" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"awaiting a non-author review for headsha","created_at":"'"$OLD"'"}]') || rc=$?
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"'"$AWAITING_DETAIL"'","created_at":"'"$OLD"'"}]') || rc=$?
 assert_eq "$rc" "0" "w2: the idempotent no-op exits 0"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w2: second evaluation of an unchanged state posts nothing (one entry total)"
 assert_contains "$out" "nothing to do" "w2: reports the no-op"
@@ -279,7 +283,7 @@ assert_eq "$rc" "0" "w5: approved with the same success entry exits 0"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w5: unchanged success posts nothing (idempotent)"
 
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"awaiting a non-author review for headsha","created_at":"'"$OLD"'"}]') || rc=$?
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"'"$AWAITING_DETAIL"'","created_at":"'"$OLD"'"}]') || rc=$?
 assert_eq "$rc" "0" "w6: approved over pending exits 0"
 assert_contains "$(cat "$POST_LOG")" "state=success" "w6: a reviewed head opens the gate"
 assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "w6: the writer never re-runs CI (branch protection owns that)"
@@ -290,7 +294,7 @@ assert_contains "$(cat "$POST_LOG")" "state=success" "w7: a dismissed objection 
 
 echo "=== VST-65 ordering guard (success posts only) ==="
 
-PENDING_OLD='[{"context":"Review gate","state":"pending","description":"awaiting a non-author review for headsha","created_at":"'"$OLD"'"}]'
+PENDING_OLD='[{"context":"Review gate","state":"pending","description":"'"$AWAITING_DETAIL"'","created_at":"'"$OLD"'"}]'
 
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="$PENDING_OLD" \
   STUB_GUARD_HISTORY='[{"context":"Review gate","state":"pending","description":"newer writer run","created_at":"'"$FUTURE"'"}]') || rc=$?
@@ -509,7 +513,7 @@ assert_eq "$rc" "0" "wp2: paginated projection exits 0"
 assert_contains "$(cat "$POST_LOG")" "state=success" "wp2: the projection merges every page before deciding"
 
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"awaiting a non-author review for headsha","created_at":"'"$OLD"'"}]' \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"'"$AWAITING_DETAIL"'","created_at":"'"$OLD"'"}]' \
   STUB_GUARD_HISTORY='[]' \
   STUB_GUARD_HISTORY_PAGE2='[{"context":"Review gate","state":"failure","description":"newer","created_at":"'"$FUTURE"'"}]') || rc=$?
 assert_eq "$rc" "0" "wp3: paginated guard re-read exits 0"

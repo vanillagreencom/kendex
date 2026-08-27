@@ -1337,7 +1337,7 @@ if [ "$cr" != "0" ]; then
 elif [ "$untracked" != "0" ]; then
   echo "verdict=untracked-claim detail=$untracked tracking claim(s) name no issue — write Declined: <reason>, or add the tracker/#id"
 elif [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ]; then
-  echo "verdict=awaiting detail=awaiting a non-author review for $HEAD_SHA"
+  echo "verdict=awaiting detail=no review evidence at $HEAD_SHA yet; bots re-review each push, not a block on a human"
 elif [ "$unresolved" != "0" ]; then
   echo "verdict=threads-open detail=$unresolved unresolved review thread(s)"
 elif [ "$carried" = "1" ]; then
