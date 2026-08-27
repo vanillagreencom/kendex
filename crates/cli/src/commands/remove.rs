@@ -55,6 +55,8 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
         }
         removed_any = true;
         say_split(&report, mode);
+        // While the scripts are still there to run.
+        super::repo_effects::undo(&scope, &report)?;
         kendex_core::apply::execute(env, &report.plan, None)?;
         for op in &report.plan.ops {
             say(&format!("  - {}", op.description));

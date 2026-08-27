@@ -61,6 +61,36 @@ fn fold_commit_hooks(env: &Env, checked: &mut CheckReport, scopes: &[kendex_core
         let Scope::Project { root } = scope.canonical() else {
             continue;
         };
+        // Before the install record is consulted: a package that was
+        // removed is in no record, and what it left armed is the one
+        // state here that stops every commit. Named by file, because the
+        // remedy is by hand — the uninstaller that would strip these went
+        // with the package.
+        match kendex_core::guard::stranded(&root) {
+            Ok(files) if files.is_empty() => {}
+            Ok(files) => {
+                let files: Vec<String> = files
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect();
+                report::fold(
+                    checked,
+                    "commit hooks",
+                    Class::Drift,
+                    format!(
+                        "{} armed the commit hooks and is installed nowhere in this repository, so every commit fails — delete {} or strip the lines marked `{}` from the hooks (a hook the marker says it created can go whole)",
+                        kendex_core::guard::SKILL,
+                        files.join(", "),
+                        kendex_core::guard::MARKER
+                    ),
+                );
+                continue;
+            }
+            Err(error) => {
+                report::fold(checked, "commit hooks", Class::Unknown, error.to_string());
+                continue;
+            }
+        }
         // A checkout that merely carries the files is not missing an
         // arming nobody asked for, so only a project whose own install
         // record declares the package hears about this at all.

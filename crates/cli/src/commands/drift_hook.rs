@@ -31,6 +31,7 @@ pub fn install(env: &Env, scope: &Scope, yes: bool) -> CliResult {
         }
         let report = kendex_core::engine::EngineReport {
             repo_effects: Vec::new(),
+            repo_effects_leaving: Vec::new(),
             drift: Vec::new(),
             plan,
             notes: Vec::new(),

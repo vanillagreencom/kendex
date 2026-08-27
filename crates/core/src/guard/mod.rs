@@ -21,7 +21,7 @@
 //! nonzero verdicts block a commit.
 
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::error::{CoreError, Result};
@@ -47,6 +47,12 @@ pub const SKILL: &str = "growth-guards";
 /// means not armed, which is the safe answer for all of them and needs no
 /// taxonomy to reach.
 pub const MARKER: &str = "# kendex-guards-hook";
+
+/// The helper the installer writes beside the hooks, and the line inside
+/// it that says the installer wrote it. Read for one purpose: naming the
+/// file when the package that owns it is gone.
+const HELPER: &str = "kendex-guards";
+const HELPER_MARKER: &str = "kendex growth-guards git hooks";
 
 /// The installer the package ships, relative to its own directory.
 const INSTALLER: &str = "scripts/install-git-hooks";
@@ -238,4 +244,42 @@ pub fn armed(dir: &Path) -> Result<Option<bool>> {
         }
     }
     Ok(Some(true))
+}
+
+/// The hook files this package left behind in a repository that no longer
+/// carries the package anywhere.
+///
+/// The same read as [`armed`] — the marker, in the directory git reads —
+/// with the opposite precondition: no copy of the package under any search
+/// root, in this checkout or the main one. A shim that survives its package
+/// execs a script that is not there, so every commit in the repository
+/// fails closed, and nothing else reports it: the lock no longer names the
+/// package, so the drift report has nothing to compare, and `guard check`
+/// cannot run an installer that is gone.
+///
+/// Each path that carries the marker, so the report can say which files to
+/// clean up. Empty where there is no repository, where the package is
+/// present (a broken copy is `guard check`'s to describe), or where nothing
+/// carries the marker. The execute bit is not consulted: a leftover git
+/// happens to skip is still a leftover.
+pub fn stranded(dir: &Path) -> Result<Vec<PathBuf>> {
+    let Some(repo) = Repo::probe(dir)? else {
+        return Ok(Vec::new());
+    };
+    if Installed::present(&repo).is_some() {
+        return Ok(Vec::new());
+    }
+    let hooks = repo.default_hooks_dir();
+    let mut files = Vec::new();
+    for (name, marker) in LANES
+        .iter()
+        .map(|lane| (*lane, MARKER))
+        .chain([(HELPER, HELPER_MARKER)])
+    {
+        let path = hooks.join(name);
+        if crate::fs::read_if_exists(&path)?.is_some_and(|text| text.contains(marker)) {
+            files.push(path);
+        }
+    }
+    Ok(files)
 }

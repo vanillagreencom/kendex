@@ -14,10 +14,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::model::ItemKind;
+use crate::env::Env;
+use crate::model::{ItemKind, Scope};
 use crate::repo_effects::{DeclaredEffects, declared};
 
-use super::desired::{Artifact, DesiredState};
+use super::desired::{Artifact, DesiredState, skill_canonical};
 use super::report_types::{DriftCause, DriftRow};
 use super::set_change::{SetChange, SetDirection};
 
@@ -134,4 +135,60 @@ fn blocked(drift: &[DriftRow], name: &str) -> bool {
         .iter()
         .filter(|row| row.kind == ItemKind::Skill && row.name == name)
         .any(|row| row.dead_stop() || row.cause.is_some_and(DriftCause::holds_the_write))
+}
+
+/// Every declared effect this plan takes out of the scope, once per
+/// package — the other direction of [`run`].
+///
+/// A package leaves when no harness's copy of it survives in the lock this
+/// pass writes. That is the package-level question, the same one the add
+/// side asks: a copy dropped for one tool while another keeps it is a
+/// package still installed, and its effect still wanted.
+///
+/// Read off the tree on disk, not off the desired state, because the
+/// desired state no longer has the item — that is what leaving means. The
+/// tree is still there while this plan is only planned, which is the whole
+/// window a removal has to run the uninstaller in: once the plan executes
+/// the scripts are gone, and shims that exec a script that is not there
+/// fail every commit closed. A tree already missing declares nothing here;
+/// what it left armed is `guard::stranded`'s to report.
+///
+/// Empty outside a project. An effect is a change to a repository, and the
+/// global scope is not one; `run_script` refuses it.
+pub(super) fn leaving(
+    env: &Env,
+    scope: &Scope,
+    before: &crate::lock::Lock,
+    after: &crate::lock::Lock,
+) -> Vec<DeclaredEffects> {
+    if !matches!(scope, Scope::Project { .. }) {
+        return Vec::new();
+    }
+    let skills = |lock: &crate::lock::Lock| -> BTreeSet<String> {
+        lock.entries
+            .values()
+            .filter(|entry| entry.kind == ItemKind::Skill)
+            .map(|entry| entry.name.clone())
+            .collect()
+    };
+    let staying = skills(after);
+    let mut found: BTreeMap<String, DeclaredEffects> = BTreeMap::new();
+    for name in skills(before).difference(&staying) {
+        let root = skill_canonical(env, scope, name);
+        let Ok(Some(text)) = crate::fs::read_if_exists(&root.join("SKILL.md")) else {
+            continue;
+        };
+        let Some(effects) = declared(&text) else {
+            continue;
+        };
+        found.insert(
+            name.clone(),
+            DeclaredEffects {
+                name: name.clone(),
+                root,
+                effects,
+            },
+        );
+    }
+    found.into_values().collect()
 }

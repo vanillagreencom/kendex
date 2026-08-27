@@ -219,6 +219,7 @@ fn plan_scope_once(
     plan_config_edits(env, scope, config_edits, &mut ops)?;
     let set_changes = set_changes(scope, lock, &new_lock);
     let kept = kept_members(scope, lock, &new_lock, &options.uninstalled_bundles);
+    let repo_effects_leaving = repo_effects::leaving(env, scope, lock, &new_lock);
     plan_lock_write(env, scope, disk_lock, new_lock, &mut ops)?;
     moved_notes.extend(scope_wide(scope, &mut ops)?);
 
@@ -227,6 +228,7 @@ fn plan_scope_once(
         // moves in: an effect belongs to a package this pass adds to what
         // the scope carries, and to no other.
         repo_effects: repo_effects::run(&state, &drift, &set_changes, lock),
+        repo_effects_leaving,
         drift,
         plan: Plan {
             scope: scope.clone(),
@@ -358,6 +360,7 @@ pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Eng
         kept: Vec::new(),
         safety: Vec::new(),
         repo_effects: Vec::new(),
+        repo_effects_leaving: Vec::new(),
     };
     // One fact, said once: files this build will read but not write. Which
     // of the two is legacy is kendex's problem, not the reader's.

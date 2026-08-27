@@ -223,6 +223,10 @@ pub fn confirm_and_apply(
             return Err("apply cancelled".into());
         }
     }
+    // A plan can take a package away without `remove` being the verb —
+    // a manifest edited by hand, a sweep — and its uninstaller has to run
+    // while the scripts are still there.
+    super::repo_effects::undo(&report.plan.scope, report)?;
     Ok(kendex_core::apply::execute(env, &report.plan, None)?.applied)
 }
 

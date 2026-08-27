@@ -168,6 +168,11 @@ pub struct EngineReport {
     /// land with the rest, and the effect stays pending until it is
     /// authorized on its own.
     pub repo_effects: Vec<crate::repo_effects::DeclaredEffects>,
+    /// Packages this plan takes out of the scope that declared an effect
+    /// on the repository. Trashing their files undoes none of it, so the
+    /// declared uninstaller has to run before the plan does — while the
+    /// script it names is still there to run.
+    pub repo_effects_leaving: Vec<crate::repo_effects::DeclaredEffects>,
 }
 
 #[derive(Debug, Clone, Default)]

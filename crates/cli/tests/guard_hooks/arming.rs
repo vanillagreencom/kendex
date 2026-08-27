@@ -198,6 +198,47 @@ fn check_reads_the_hooks_and_runs_nothing() {
     assert!(!marker.exists(), "check ran the repository's script");
 }
 
+/// Shims that outlived their package are named, file by file.
+///
+/// The state the install record cannot see: the package is in no lock and
+/// under no skills directory, so the drift report has nothing to compare
+/// and `guard check` has no installer to ask — while every commit execs a
+/// script that is gone. The marker in the hook files is the whole test.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn check_names_the_shims_a_removed_package_left_behind() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    std::fs::write(root.join("kendex.toml"), "schema = 6\n").unwrap();
+    install_package_undeclared(&root, &["growth-guards"]);
+    arm_by_hand(&root);
+    std::fs::remove_dir_all(root.join(".agents/skills/growth-guards")).unwrap();
+
+    // The state is real: nothing can be committed here.
+    std::fs::write(root.join("b.txt"), "later\n").unwrap();
+    git_ok(home, &root, &["add", "-A"]);
+    let blocked = crate::git(home, &root, &["commit", "-m", "feat: stranded"]);
+    assert!(!blocked.status.success(), "{}", said(&blocked));
+
+    let out = run(home, &root, "kendex", &["check"]);
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    let text = said(&out);
+    assert!(text.contains("commit hooks"), "{text}");
+    assert!(text.contains("installed nowhere"), "{text}");
+    let hooks = root.canonicalize().unwrap().join(".git/hooks");
+    for file in ["pre-commit", "commit-msg", "kendex-guards"] {
+        assert!(
+            text.contains(&hooks.join(file).display().to_string()),
+            "{file} was not named:\n{text}"
+        );
+    }
+    assert!(
+        !text.contains("guard install"),
+        "a leftover was reported as an unarmed install:\n{text}"
+    );
+}
+
 /// Arm through the package's own installer.
 ///
 /// Not a hand-written approximation: the check compares against the exact

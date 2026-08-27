@@ -97,10 +97,12 @@ fn print(disclosure: &Disclosure) {
     say("");
     match &disclosure.undo {
         Some(undo) => say(&format!("  to undo: {undo}")),
-        // Not "remove the package". Removing it takes the scripts away
-        // and leaves the effect: shims in .git/hooks outlive the tree
-        // they point at, and then fail every commit closed. What is true
-        // is that the package said nothing about undoing this.
+        // Not "remove the package". Removal runs whatever uninstaller
+        // the package declared, and this one declared none: its files
+        // would go and the effect would stay — shims in .git/hooks
+        // outlive the tree they point at, and then fail every commit
+        // closed. What is true is that the package said nothing about
+        // undoing this.
         None => say("  to undo: the package declares no way to undo it"),
     }
 }

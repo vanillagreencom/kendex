@@ -149,6 +149,56 @@ fn disarming_before_removal_leaves_the_repository_committable() {
     assert!(ok.status.success(), "{}", spoke(&ok));
 }
 
+/// `kendex remove` disarms the repository itself, before the package's
+/// files go, and says what it ran.
+///
+/// The package declares an uninstaller, and the only moment it can run is
+/// while the script is still on disk. Removing the files first left the
+/// shims pointing at nothing, and a repository nobody could commit to until
+/// they found two files under `.git/hooks` by hand.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn removing_the_package_disarms_the_repository_first() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    offer(&world, "growth-guards");
+    world.run(&[
+        "add",
+        "cat",
+        "--skill",
+        "growth-guards",
+        "-y",
+        "--allow-repo-effects",
+    ]);
+    assert!(world.at(".git/hooks/kendex-guards").is_file());
+
+    let out = world.run(&["remove", "growth-guards"]);
+    assert!(
+        out.contains("growth-guards: running scripts/install-git-hooks --uninstall"),
+        "the removal did not say what it ran:\n{out}"
+    );
+    assert!(
+        !world.at(".agents/skills/growth-guards").exists(),
+        "the package stayed:\n{out}"
+    );
+    assert!(
+        !world.at(".git/hooks/kendex-guards").exists(),
+        "the helper was left behind:\n{out}"
+    );
+    let hook = world.at(".git/hooks/pre-commit");
+    assert!(
+        !hook.exists() || !read(&hook).contains("kendex-guards-hook"),
+        "the delegating line was left behind:\n{out}"
+    );
+
+    // What the leftover would have cost: a commit, with no kendex in the
+    // picture.
+    fs::write(world.at("late.txt"), "fine\n").unwrap();
+    git_without_kendex(&world.project, &["add", "-A"]);
+    let ok = git_without_kendex(&world.project, &["commit", "-m", "feat: after removal"]);
+    assert!(ok.status.success(), "{}", spoke(&ok));
+}
+
 /// `kendex check` names an unarmed repository, in the package's own words,
 /// and says nothing once it is armed.
 #[test]
