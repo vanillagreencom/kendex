@@ -111,6 +111,9 @@ an outside contributor.
 - Consumer CI runs `review-gate`'s validate step in place of the engine
   selftest: package behaviour is proved upstream, so a repo checks only the
   configuration and wiring it owns.
+- **Breaking:** carry-forward exclusions take one grammar, path characters
+  plus `*`. Rewrite a `?`, `[...]` or backslash entry as a literal path or a
+  `*` glob — `--check-config` names the offending value.
 
 - A project's skills work on clone: every tool but Claude Code reads
   `.agents/skills` directly, and Claude's link into it is now relative, so
