@@ -99,6 +99,15 @@ Setup-path hardening:
   existing leaf symlink or file without following it, but refuse a real
   directory leaf.
 
+Dependencies:
+  No command runs a package-manager install. Installs run only in the main
+  checkout, and only when the lockfile changed; link that install into each
+  worktree with a WORKTREE_SYMLINKS entry for the node_modules path. A
+  worktree with a root package.json and no node_modules gets a warning naming
+  the main checkout instead. Limitation: linked node_modules resolves pnpm
+  workspace link: dependencies to the main checkout's source, so a worktree's
+  checks see main's copy of sibling workspace packages.
+
 Session guard:
   create never claims an ownership lease — a fresh worktree is unclaimed, and
   claiming is the calling workflow's job. The lease is a native git worktree
@@ -2470,87 +2479,20 @@ configure_worktree_git() {
   fi
 }
 
-install_worktree_dependencies() {
+# Worktrees never run a package-manager install. An install executed inside a
+# linked worktree mutates state every checkout shares: with node_modules
+# linked from the main checkout it writes through the link into the shared
+# tree, and a pnpm workspace install records workspace dependencies as links
+# into the installing tree, which dangle when the worktree is pruned.
+# Installs run only in the main checkout, and only when the lockfile changed;
+# a worktree gets dependencies via a WORKTREE_SYMLINKS entry for the
+# node_modules path. Runs after setup_worktree_links so a configured link
+# already satisfies the check.
+warn_missing_worktree_dependencies() {
   local wt="$1"
 
-  [[ -f "$wt/package.json" ]] || return 0
-  # npm is wrong for a workspace that pins another package manager: it
-  # resolves a different tree and writes a stray package-lock.json into the
-  # fresh checkout (dirty from birth, and `git add -A` would commit an npm
-  # lockfile into a pnpm monorepo). Explicit npm evidence — its own lockfile
-  # or an npm packageManager pin — wins over an incidental foreign lockfile;
-  # otherwise another manager's lockfile or pin means that repo provisions
-  # its own dependencies, so skip.
-  # The TOP-LEVEL packageManager field only — a nested look-alike (e.g.
-  # config.packageManager) is not a pin. Structural readers in preference
-  # order: node (present wherever a package.json matters), then jq; a
-  # machine with neither reads no pin, and the only cost of that miss is an
-  # automatic install skipped — never a wrong-tree install.
-  local pkg_manager="" pkg_manager_readable=1
-  if command -v node >/dev/null 2>&1; then
-    # npm itself tolerates a UTF-8 BOM, so strip it before parsing — a BOM'd
-    # pin must still read as a pin.
-    pkg_manager="$(node -e 'const m=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8").replace(/^\uFEFF/,"")).packageManager;process.stdout.write(typeof m==="string"?m:"")' "$wt/package.json" 2>/dev/null)" || pkg_manager_readable=0
-  elif command -v jq >/dev/null 2>&1; then
-    pkg_manager="$(jq -r '.packageManager // ""' "$wt/package.json" 2>/dev/null)" || pkg_manager_readable=0
-  else
-    # No structural reader: the pin is unreadable, and running npm on an
-    # unreadable pin is the wrong-tree case this gate exists to prevent.
-    pkg_manager_readable=0
-  fi
-  # Precedence: an explicit pin outranks lockfiles either way (a migration
-  # leaves stale ones behind); with no pin, npm evidence beats an incidental
-  # foreign lockfile. A manifest the reader could not parse — or no reader at
-  # all — reads no pin, so any foreign evidence makes npm the wrong call.
-  case "$pkg_manager" in
-    pnpm@*|yarn@*|bun@*) return 0 ;;
-    npm@*) ;;
-    *)
-      local npm_evidence=0 foreign_evidence=0
-      [[ -f "$wt/package-lock.json" || -f "$wt/npm-shrinkwrap.json" ]] && npm_evidence=1
-      # Foreign evidence: another manager's lockfile or a pnpm workspace
-      # manifest.
-      [[ -f "$wt/pnpm-lock.yaml" || -f "$wt/yarn.lock" || -f "$wt/bun.lockb" || -f "$wt/bun.lock" || -f "$wt/pnpm-workspace.yaml" ]] && foreign_evidence=1
-      if [[ "$pkg_manager_readable" -eq 0 ]]; then
-        # An unreadable pin installs only on unambiguous npm evidence.
-        [[ "$npm_evidence" -eq 1 && "$foreign_evidence" -eq 0 ]] || return 0
-      elif [[ "$npm_evidence" -eq 0 && "$foreign_evidence" -eq 1 ]]; then
-        return 0
-      fi
-      ;;
-  esac
-  if command -v npm >/dev/null 2>&1; then
-    # Every std fd detached: a caller capturing $(create) — stdout, or
-    # combined 2>&1 — gets EOF at once; any inherited pipe fd would make the
-    # capture wait out the whole install. Never invisible even so: a failed
-    # install leaves its full log at a stable per-worktree path.
-    (
-      cd "$wt" || exit 0
-      # The log lands in this worktree's own gitdir: private to one worktree
-      # and owner-controlled by construction, so nothing is shared with
-      # other users and there is no predictable path to pre-plant. The
-      # gitdir itself is commonly 0755 on a traversable host, so the log is
-      # created owner-only — npm output must not be readable by other
-      # accounts. The umask is scoped to that creation alone: npm and its
-      # lifecycle scripts keep the caller's umask for node_modules. The
-      # redirect below reuses the 0600 file. An unresolvable or unwritable
-      # gitdir → install still runs, just unlogged.
-      log=""
-      if gitdir="$(git rev-parse --absolute-git-dir 2>/dev/null)" &&
-        [ -n "$gitdir" ] && [ -d "$gitdir" ] &&
-        (umask 077 && rm -f -- "$gitdir/npm-install.log" &&
-          : >"$gitdir/npm-install.log") 2>/dev/null; then
-        log="$gitdir/npm-install.log"
-      fi
-      if [ -n "$log" ]; then
-        if npm install --no-audit --no-fund >"$log" 2>&1; then
-          rm -f -- "$log"
-        fi
-      else
-        npm install --no-audit --no-fund >/dev/null 2>&1
-      fi
-    ) </dev/null >/dev/null 2>&1 &
-  fi
+  [[ -f "$wt/package.json" && ! -e "$wt/node_modules" ]] || return 0
+  echo "Warning: dependencies were not installed — installs run only in the main checkout, and only when the lockfile changed. Run the install in $PROJECT_ROOT, then link its node_modules into worktrees with a WORKTREE_SYMLINKS entry." >&2
 }
 
 # Provisioning applied to a worktree that some OTHER tool created — Codex
@@ -2562,7 +2504,7 @@ setup_app_worktree() {
 
   setup_worktree_links "$wt" || return 1
   configure_worktree_git "$wt" || return 1
-  install_worktree_dependencies "$wt" || return 1
+  warn_missing_worktree_dependencies "$wt" || return 1
   # Best-effort by contract (#1032): a repo where the hooks cannot be written
   # still gets a fully provisioned worktree.
   install_worktree_autorepair_hooks

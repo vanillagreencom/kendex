@@ -11,7 +11,7 @@ Codex Desktop owns app-created worktree creation and deletion. Configure project
 "$CODEX_SOURCE_TREE_PATH/.agents/skills/worktree/scripts/worktree" codex-cleanup "$CODEX_WORKTREE_PATH"
 ```
 
-`codex-setup` applies the same symlinks, copies, mkdirs, bot remote, bot git identity, and dependency bootstrap `create` applies. `codex-branch` renames or switches the app-created branch to the lower-case issue branch; run it for issue workflows if the harness did not already normalize the branch:
+`codex-setup` applies the same symlinks, copies, mkdirs, bot remote, bot git identity, and missing-dependency warning `create` applies. `codex-branch` renames or switches the app-created branch to the lower-case issue branch; run it for issue workflows if the harness did not already normalize the branch:
 
 ```bash
 "$CODEX_SOURCE_TREE_PATH/.agents/skills/worktree/scripts/worktree" codex-branch CC-123 "$CODEX_WORKTREE_PATH"

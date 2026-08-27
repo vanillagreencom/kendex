@@ -25,6 +25,10 @@ an outside contributor.
 
 ### Changed
 
+- **Breaking:** the worktree skill no longer installs JS dependencies. Run
+  installs in the main checkout and link its `node_modules` via
+  `WORKTREE_SYMLINKS`; an unlinked JS worktree warns, naming the main checkout.
+
 - **Breaking:** kendex no longer reads the pre-2.0 mutable clone in the
   source cache. Nothing has written that layout since 2.0, so a scope whose
   only copy is there reads as Pending until `kendex refresh` fetches it.

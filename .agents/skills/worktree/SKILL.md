@@ -64,6 +64,10 @@ restore, so read them rather than re-running the same command.
 
 `scripts/worktree-session-guard` stops cleanup from destroying a worktree a session is still working in; the lease is a native Git worktree lock whose reason line carries the owner and heartbeat. Claiming is the caller's job: `create` never claims, the orchestrating workflow claims once the worktree is the session's, and `remove` releases at teardown. Probe with `status` (read-only), never `claim` — `claim` takes or rewrites the lease. Commands, exit codes, `--repo` scope, and staleness caveats: `worktree-session-guard --help`; the guard's limits: [references/session-guard.md](references/session-guard.md).
 
+## JS Dependencies
+
+No worktree command runs a package-manager install: installs run only in the main checkout, and only when the lockfile changed. Link the main checkout's install into each worktree with a `WORKTREE_SYMLINKS` entry for the `node_modules` path; a worktree whose root `package.json` has no `node_modules` gets a warning naming the main checkout instead. Limitation: linked `node_modules` resolves pnpm workspace `link:` dependencies to the main checkout's source, so a worktree's type checks and tests see main's copy of sibling workspace packages, not the branch's.
+
 ## System Dependencies
 
 `git`; authenticated `gh` for new-work PR ownership discovery; `flock` for repository-local per-issue claim serialization (the session guard prefers it and falls back to a `mkdir` mutex without it); Bash 3.2+ (macOS system bash is supported).
