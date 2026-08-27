@@ -158,9 +158,9 @@ printf '%s\n' "$changed" | sed -e 's/^/harness-only: changed: /' >&2
 # A repo that adopts skills in place keeps project source at
 # .agents/skills/<name> — kendex.toml declares them `source = "in-place"` —
 # and its adopted hook scripts under .agents/hooks: bytes kendex reads,
-# never writes. The checkout's manifest speaks for the head. A manifest
-# that cannot be read yields no carve-outs, so unknown trees stay render
-# output — the answer before in-place existed.
+# never writes. The checkout's manifests speak for the head. A missing
+# manifest yields no carve-outs; one that exists but cannot be read or
+# classified carves every skill path — false, the safe answer.
 in_place_skills=""
 manifest_carves() { # FILE -> carve lines for one manifest, "*" on a failed parse
   [ -f "$1" ] || return 0
