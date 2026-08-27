@@ -445,3 +445,74 @@ fn a_tampered_helper_does_not_redirect_the_guard_verbs() {
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
     assert!(said(&out).contains("todo-ban"), "{}", said(&out));
 }
+
+/// A package next to the git directory is not this repository's package.
+///
+/// `<main>/.git` is the ordinary layout, and the directory holding the
+/// common git dir is the main checkout there. Under `--separate-git-dir` the
+/// git directory lives outside the checkout, so its parent is an unrelated
+/// directory — and one holding a `growth-guards` of its own would have been
+/// searched and executed as this repository's commit gate.
+///
+/// Owning it is the test: the candidate's own common git dir must be this
+/// repository's, which is what the package's installer already asks.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_package_beside_an_external_git_dir_does_not_govern() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+
+    // The git directory lives outside the checkout, so `common_dir.parent()`
+    // is `outside/` — which belongs to nobody.
+    let outside = home.join("outside");
+    let root = outside.join("checkout");
+    let gitdir = outside.join("elsewhere.git");
+    std::fs::create_dir_all(&root).unwrap();
+    let init = run_with(
+        home,
+        &outside,
+        "git",
+        &[
+            "init",
+            "-q",
+            "--separate-git-dir",
+            gitdir.to_str().unwrap(),
+            root.to_str().unwrap(),
+        ],
+        &[],
+    );
+    assert!(init.status.success(), "{}", said(&init));
+    git_ok(home, &root, &["config", "user.email", "t@t"]);
+    git_ok(home, &root, &["config", "user.name", "t"]);
+
+    // A decoy beside the git directory, executable and announcing itself.
+    let decoy = outside.join(".agents/skills/growth-guards/scripts");
+    std::fs::create_dir_all(&decoy).unwrap();
+    let marker = home.join("decoy-ran");
+    for lane in ["pre-commit", "commit-msg", "install-git-hooks"] {
+        let path = decoy.join(lane);
+        std::fs::write(
+            &path,
+            format!("#!/bin/sh\ntouch {}\nexit 0\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    // The checkout itself carries nothing, which is the state a linked
+    // worktree is in — so the decoy is the only copy any search could reach.
+    let out = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
+    assert!(
+        !marker.exists(),
+        "a package beside the external git dir was executed as this \
+         repository's gate: {}",
+        said(&out)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "finding no package is a refusal, not a pass: {}",
+        said(&out)
+    );
+}

@@ -304,5 +304,46 @@ esac
 [ "$RC" -ne 0 ] && ok "so the failing gate still fails the commit" \
   || bad "commit passed with a failing sibling" "rc=$RC out=$OUT"
 
+echo "=== a project name carrying a quote does not become helper script ==="
+# Everything baked into the helper is a shell assignment inside single
+# quotes, and a value carrying a quote of its own ENDS that quote — the rest
+# of the directory name is then script, in a file git executes before every
+# commit. A name like `kid'; exit 0; #` baked a helper that exited 0 before
+# running anything, so both hooks passed everything: this package writing
+# the exact fail-open it exists to refuse.
+Q="'"
+NASTY="kid${Q}; exit 0; #"
+QR="$TMP/quoted"
+mkdir -p "$QR"
+git -C "$QR" init -q
+git -C "$QR" config user.email t@t
+git -C "$QR" config user.name t
+QP="$QR/$NASTY"
+mkdir -p "$QP/.agents/skills"
+cp -R "$SKILL_DIR" "$QP/.agents/skills/growth-guards"
+
+printf 'hello\n' >"$QR/a.txt"
+git -C "$QR" add -A
+git -C "$QR" commit -q -m "feat: base"
+OUT=""; RC=0
+OUT="$("$QP/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$QR" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "the install survives a quote in the project name" \
+  || bad "install under a quoted project name" "rc=$RC out=$OUT"
+
+# The helper still parses, and still runs the gate: a banned marker blocks.
+# Split so this file carries no marker of its own — the repo runs todo-ban
+# over its own tree.
+MARK="TO""DO"
+printf '# %s: nope\n' "$MARK" >"$QR/b.py"
+git -C "$QR" add -A
+OUT=""; RC=0
+OUT="$(cd "$QR" && git commit -m "feat: quoted" 2>&1)" || RC=$?
+[ "$RC" -ne 0 ] && ok "and the baked helper still gates the commit" \
+  || bad "the quoted name disarmed the helper" "rc=$RC out=$OUT"
+case "$OUT" in
+  *todo-ban*) ok "with the package's own verdict, not an early exit" ;;
+  *) bad "the chain did not reach todo-ban" "$OUT" ;;
+esac
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

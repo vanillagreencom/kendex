@@ -16,6 +16,11 @@ an outside contributor.
 
 ### Fixed
 
+- A directory name containing a single quote can no longer inject shell into
+  the generated git-hook helper, which could make every commit pass unchecked.
+- Under `--separate-git-dir`, a `growth-guards` package sitting beside the
+  external git directory is no longer run as the repository's commit gate.
+
 - The commit chain finds its gates in a project whose directory name ends in
   a newline; the path was truncated, so a gate that would have failed the
   commit was reported as not installed and the commit passed.

@@ -22,17 +22,32 @@ set -euo pipefail
 # The exact bytes this installer writes as the helper. Generating and
 # VERIFYING both go through here, so a checker cannot drift from a writer
 # and start blessing a helper that only resembles one.
+# One value, quoted so the helper reads it as data.
+#
+# Everything baked below is a shell assignment inside single quotes, and a
+# value carrying a single quote of its own ENDS that quote — after which the
+# rest of the directory name is script. A directory called
+# `kid'"'"'; exit 0; #` baked a helper that exited 0 before running anything,
+# so both hooks passed every commit: the fail-open this package exists to
+# refuse, written by the package itself.
+#
+# The escape is the POSIX one: close the quote, an escaped quote, reopen.
+# Every value goes through here — SCRIPT_DIR did it by hand and the two
+# added later did not, which is the whole of how this happened.
+gg_shell_quote() { # VALUE -> the value, safe inside single quotes
+  local sq="'"
+  printf '%s' "${1//$sq/$sq\\$sq$sq}"
+}
+
 helper_body() { # -> the helper this installer would write, on stdout
-  local sq="'" escaped=""
-  escaped="${SCRIPT_DIR//$sq/$sq\\$sq$sq}"
   cat <<HELPER_HEAD
 #!/bin/sh
 # Scripts directory of the install that wrote this file.
-installed_scripts='$escaped'
+installed_scripts='$(gg_shell_quote "$SCRIPT_DIR")'
 # Baked: a helper in .git/hooks cannot source a package that may be gone.
-skill_roots='$GG_SKILL_ROOTS'
+skill_roots='$(gg_shell_quote "$GG_SKILL_ROOTS")'
 # Baked too: a moved checkout still resolves the project this came from.
-project_rel='$PROJECT_REL'
+project_rel='$(gg_shell_quote "$PROJECT_REL")'
 HELPER_HEAD
   cat <<'HELPER'
 # kendex growth-guards git hooks. Managed by the growth-guards skill and

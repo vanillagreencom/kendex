@@ -111,21 +111,41 @@ impl Installed {
 /// Duplicates are dropped rather than avoided: in an ordinary single-project
 /// clone all three are the same directory.
 fn search_roots(repo: &super::Repo) -> Vec<PathBuf> {
-    let main = repo
-        .common_dir
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| repo.worktree.clone());
     let mut roots = Vec::new();
     if let Some(project) = project_root(repo) {
         roots.push(project);
     }
-    for root in [main, repo.worktree.clone()] {
+    for root in main_checkout(repo)
+        .into_iter()
+        .chain([repo.worktree.clone()])
+    {
         if !roots.contains(&root) {
             roots.push(root);
         }
     }
     roots
+}
+
+/// The main checkout, where the directory holding the common git dir really
+/// is one.
+///
+/// `<main>/.git` is the ordinary layout and the parent is the main work tree
+/// there. Under `--separate-git-dir` the git directory lives outside the
+/// checkout entirely, and its parent is then an unrelated directory —
+/// somebody's home, a directory of checkouts — which may hold a
+/// `growth-guards` of its own. A linked worktree would have executed that
+/// one: a package this repository never installed, running as its commit
+/// gate.
+///
+/// Owning it is the test, not merely being next to it: the candidate's own
+/// common git directory has to be this repository's. The package's installer
+/// asks the same question in the same way, and where the answer is no this
+/// root is not searched at all — a verb that finds nothing says so, which is
+/// the safe end of being wrong here.
+fn main_checkout(repo: &super::Repo) -> Option<PathBuf> {
+    let candidate = repo.common_dir.parent()?;
+    let owned = super::Repo::at(candidate).ok()?;
+    (owned.common_dir == repo.common_dir).then(|| candidate.to_path_buf())
 }
 
 /// The kendex project the caller is standing in: the nearest manifest at or
