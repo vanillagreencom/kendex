@@ -162,7 +162,8 @@ printf '%s\n' "$changed" | sed -e 's/^/harness-only: changed: /' >&2
 # that cannot be read yields no carve-outs, so unknown trees stay render
 # output — the answer before in-place existed.
 in_place_skills=""
-if [ -f "$repo/kendex.toml" ]; then
+manifest_carves() { # FILE -> carve lines for one manifest, "*" on a failed parse
+  [ -f "$1" ] || return 0
   # A manifest that exists but cannot be read proves nothing about the
   # tree, so a failed parse carves everything too.
   # The line parser reads the spellings kendex writes and the common hand
@@ -174,7 +175,7 @@ if [ -f "$repo/kendex.toml" ]; then
   # direction — lanes run. No legal TOML spelling of the value can answer
   # harness_only=true wrongly; the exotic ones cost lanes that run.
   sq="'"
-  in_place_skills="$(awk -v q="$sq" '
+  awk -v q="$sq" '
     BEGIN {
       d = "\""
       v = "(" d "in-place" d "|" d d d "in-place" d d d "|" q "in-place" q "|" q q q "in-place" q q q ")"
@@ -210,8 +211,15 @@ if [ -f "$repo/kendex.toml" ]; then
       if (key != "") { accounted += 1; print key }
     }
     END { if (coarse > accounted) print "*" }
-  ' "$repo/kendex.toml" 2>/dev/null)" || in_place_skills="*"
-fi
+  ' "$1" 2>/dev/null || echo "*"
+}
+# A source-catalog project keeps its install state in kendex-local.toml
+# (kendex.toml stays the catalog definition), and adoption declares in
+# place through whichever manifest is active — so both are read, unioned.
+in_place_skills="$(
+  manifest_carves "$repo/kendex.toml"
+  manifest_carves "$repo/kendex-local.toml"
+)"
 NL=$(printf "\nx")
 NL="${NL%x}"
 in_place_path() { # PATH -> 0 when the path is the repo's own in-place content

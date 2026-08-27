@@ -165,4 +165,18 @@ chmod 000 "$unread/kendex.toml"
 assert_verdict "an unreadable manifest carves everything" false --repo "$unread" --event push --base "$unreadbase" --head HEAD
 chmod 644 "$unread/kendex.toml"
 
+# A source-catalog project declares installs in kendex-local.toml; both
+# manifests are read and their carve-outs union.
+localrepo="$(new_repo local-manifest)"
+printf 'schema = 6\n[marketplace]\nname = "cat"\n' >"$localrepo/kendex.toml"
+printf 'schema = 6\n[skills.mine]\nsource = "in-place"\n' >"$localrepo/kendex-local.toml"
+commit_paths "$localrepo" "baseline" README.md
+localbase="$(git -C "$localrepo" rev-parse HEAD)"
+commit_paths "$localrepo" "edit" .agents/skills/mine/SKILL.md
+assert_verdict "a kendex-local.toml declaration carves" false --repo "$localrepo" --event push --base "$localbase" --head HEAD
+git -C "$localrepo" checkout -q -B "case" "$localbase"
+git -C "$localrepo" clean -qfd -e kendex.toml -e kendex-local.toml
+commit_paths "$localrepo" "render" .agents/skills/other/SKILL.md
+assert_verdict "an undeclared path beside a local manifest stays render" true --repo "$localrepo" --event push --base "$localbase" --head HEAD
+
 report in-place
