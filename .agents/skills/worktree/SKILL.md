@@ -77,7 +77,7 @@ No worktree command runs a package-manager install: installs run only in the mai
 
 ## System Dependencies
 
-`git`; authenticated `gh` for new-work PR ownership discovery; `flock` for repository-local per-issue claim serialization (the session guard prefers it and falls back to a `mkdir` mutex without it); Bash 3.2+ (macOS system bash is supported).
+`git`; authenticated `gh` for new-work PR ownership discovery and for proving a squash-merged branch merged in `cleanup` and `remove`; `flock` for repository-local per-issue claim serialization (the session guard prefers it and falls back to a `mkdir` mutex without it); Bash 3.2+ (macOS system bash is supported).
 
 ## Configuration
 
