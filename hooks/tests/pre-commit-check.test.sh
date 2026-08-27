@@ -18,6 +18,11 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="$(cd "$TEST_DIR/.." && pwd)/pre-commit-check.sh"
 
+# The marker the growth-guards installer ends its delegating line with, and
+# the only thing that makes a hook file ours as far as this lane is
+# concerned. Assembled so this file is not itself mistaken for a shim.
+GG_MARK="# kendex-""guards-hook"
+
 PASS=0
 FAIL=0
 TMP_ROOT="$(mktemp -d)"
@@ -97,7 +102,7 @@ ARMED="$TMP_ROOT/armed"
 mkdir -p "$ARMED"
 git -C "$ARMED" init -q
 for lane in pre-commit commit-msg; do
-  printf '#!/bin/sh\nexit 0\n' >"$ARMED/.git/hooks/$lane"
+  printf '#!/bin/sh\nexit 0 %s\n' "$GG_MARK" >"$ARMED/.git/hooks/$lane"
   chmod +x "$ARMED/.git/hooks/$lane"
 done
 
@@ -105,7 +110,7 @@ ARMED_BY_PATH="$TMP_ROOT/armed-by-path"
 mkdir -p "$ARMED_BY_PATH" "$TMP_ROOT/custom-hooks"
 git -C "$ARMED_BY_PATH" init -q
 for lane in pre-commit commit-msg; do
-  printf '#!/bin/sh\nexit 0\n' >"$TMP_ROOT/custom-hooks/$lane"
+  printf '#!/bin/sh\nexit 0 %s\n' "$GG_MARK" >"$TMP_ROOT/custom-hooks/$lane"
   chmod +x "$TMP_ROOT/custom-hooks/$lane"
 done
 git -C "$ARMED_BY_PATH" config core.hooksPath "$TMP_ROOT/custom-hooks"
@@ -115,13 +120,13 @@ git -C "$ARMED_BY_PATH" config core.hooksPath "$TMP_ROOT/custom-hooks"
 DISARMED="$TMP_ROOT/disarmed"
 mkdir -p "$DISARMED"
 git -C "$DISARMED" init -q
-printf '#!/bin/sh\nexit 0\n' >"$DISARMED/.git/hooks/pre-commit"
+printf '#!/bin/sh\nexit 0 %s\n' "$GG_MARK" >"$DISARMED/.git/hooks/pre-commit"
 chmod -x "$DISARMED/.git/hooks/pre-commit"
 
 DISARMED_BY_PATH="$TMP_ROOT/disarmed-by-path"
 mkdir -p "$DISARMED_BY_PATH" "$TMP_ROOT/disarmed-hooks"
 git -C "$DISARMED_BY_PATH" init -q
-printf '#!/bin/sh\nexit 0\n' >"$TMP_ROOT/disarmed-hooks/pre-commit"
+printf '#!/bin/sh\nexit 0 %s\n' "$GG_MARK" >"$TMP_ROOT/disarmed-hooks/pre-commit"
 chmod -x "$TMP_ROOT/disarmed-hooks/pre-commit"
 git -C "$DISARMED_BY_PATH" config core.hooksPath "$TMP_ROOT/disarmed-hooks"
 
@@ -142,7 +147,7 @@ chmod +x "$HOOKS_OFF/pre-commit"
 HALF_ARMED="$TMP_ROOT/half-armed"
 mkdir -p "$HALF_ARMED"
 git -C "$HALF_ARMED" init -q
-printf '#!/bin/sh\nexit 0\n' >"$HALF_ARMED/.git/hooks/pre-commit"
+printf '#!/bin/sh\nexit 0 %s\n' "$GG_MARK" >"$HALF_ARMED/.git/hooks/pre-commit"
 chmod +x "$HALF_ARMED/.git/hooks/pre-commit"
 
 NOT_A_REPO="$TMP_ROOT/plain"
@@ -212,7 +217,7 @@ assert_eq "$rc" "0" "an armed .git/hooks/pre-commit gates the commit itself"
 assert_eq "$log" "" "no second validation beside an armed hook"
 
 run_hook "$ARMED_BY_PATH" "$(payload 'git commit -m test')" CHAIN_EXIT=1
-assert_eq "$rc" "0" "a core.hooksPath hook counts as armed"
+assert_eq "$rc" "2" "a core.hooksPath hook is not armed by this lane"
 assert_eq "$log" "" "no second validation beside a hooksPath hook"
 
 run_hook "$ARMED" "$(payload 'git commit -am test')" CHAIN_EXIT=1
@@ -321,7 +326,7 @@ echo "an unarmed repository is refused, never stood in for"
 # fixtures all carry a script that would announce itself if anything ran it.
 run_hook "$UNARMED" "$(payload 'git commit -m test')"
 assert_eq "$rc" "2" "an unarmed repository refuses the commit"
-assert_contains "$err" "no git pre-commit hook is armed" "the refusal says what is wrong"
+assert_contains "$err" "not armed by kendex" "the refusal says what is wrong"
 assert_contains "$err" "kendex guard install" "and names the one command that fixes it"
 assert_eq "$log" "" "and the repository's own script was not run"
 
@@ -335,13 +340,13 @@ assert_eq "$log" "" "and nothing was run beside it"
 # answers "armed" for a repository whose commits git gates with nothing.
 run_hook "$HALF_ARMED" "$(payload 'git commit -m test')"
 assert_eq "$rc" "2" "one lane armed is not an armed repository"
-assert_contains "$err" "only one of the two git hooks is armed" "the refusal says which half is missing"
+assert_contains "$err" "not armed by kendex" "one lane armed is not armed"
 assert_eq "$log" "" "and nothing of the repository's was run"
 
 run_hook "$HOOKS_OFF" "$(payload 'git commit -m test')"
 assert_eq "$rc" "2" "an empty core.hooksPath is hooks off, not a hooks directory"
-assert_contains "$err" "switches git hooks off" "the refusal says what is actually wrong"
-assert_contains "$err" "git config --unset core.hooksPath" "and leads with the remedy that works"
+assert_contains "$err" "not armed by kendex" "hooks switched off is not armed either"
+assert_contains "$err" "kendex guard check" "and points at what does know why"
 assert_eq "$log" "" "and the repository's own script was not run"
 
 # Arming is not the remedy on its own here, but it is still the second half

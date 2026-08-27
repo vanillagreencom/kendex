@@ -65,7 +65,10 @@ the command; get the app with the cask below.
 - macOS: `brew install vanillagreencom/kendex/kendex`
 - Arch: `yay -S kendex-bin`
 - Windows: download the installer from
-  [kendex.ai/download](https://kendex.ai/download).
+  [kendex.ai/download](https://kendex.ai/download). The commit guards are
+  shell scripts that kendex runs through `sh`, so `guard install`, `guard
+  run` and `guard check` need the `sh` that Git for Windows ships — the
+  same one git uses to run a hook there.
 
 For the CLI on its own: `brew install vanillagreencom/kendex/kendex-cli`,
 `yay -S kendex`, or the curl

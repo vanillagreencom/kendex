@@ -123,16 +123,7 @@ done
 [ "$(git -C "$REPO" rev-parse --is-inside-work-tree 2>/dev/null || true)" = "true" ] \
   || die "not inside a git work tree: $REPO"
 
-REPO_ABS="$(cd "$REPO" && pwd)" || die "could not resolve $REPO"
-# --git-common-dir may answer relative to the repository (git predates
-# --path-format), so absolutize it here rather than assuming a git version.
-COMMON_DIR="$(git -C "$REPO_ABS" rev-parse --git-common-dir 2>/dev/null || true)"
-[ -n "$COMMON_DIR" ] || die "could not resolve the common git directory of $REPO"
-case "$COMMON_DIR" in
-  /*) ;;
-  *) COMMON_DIR="$REPO_ABS/$COMMON_DIR" ;;
-esac
-HOOKS_DIR="$COMMON_DIR/hooks"
+resolve_roots
 
 # Installing where git does not read would write files nothing runs. Removal
 # still runs: shims in $HOOKS_DIR revive the moment the setting goes away.

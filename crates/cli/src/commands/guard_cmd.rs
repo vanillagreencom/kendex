@@ -24,6 +24,8 @@ pub enum GuardCommand {
     Install,
     /// Disarm this repository's commit hooks
     Uninstall,
+    /// Ask the package whether this repository's hooks are armed
+    Check,
 }
 
 fn report(report: &GuardReport) -> ExitCode {
@@ -52,6 +54,10 @@ pub fn run(command: GuardCommand) -> Result<ExitCode, Box<dyn std::error::Error>
             Err(error) => refused(&error),
         },
         GuardCommand::Uninstall => match guard::uninstall(&cwd) {
+            Ok(done) => report(&done),
+            Err(error) => refused(&error),
+        },
+        GuardCommand::Check => match guard::check(&cwd) {
             Ok(done) => report(&done),
             Err(error) => refused(&error),
         },

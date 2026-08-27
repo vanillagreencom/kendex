@@ -7,10 +7,14 @@
 //! teammate who cloned the repo and has never heard of kendex still commits
 //! through the same gate.
 //!
-//! So kendex implements no check. These verbs find the installed copy of the
-//! package and hand it the work: arming the shims, disarming them, asking
-//! whether they are armed, and standing in as the gate where no git hook has
-//! been armed at all.
+//! kendex implements no check and no verdict. These verbs find the installed
+//! package and hand it the work, then relay what it said and how it ended.
+//!
+//! There was a second engine here — a native reader of hook files with its
+//! own grammar for what "armed" means, kept in step with the package's by
+//! hand. It never was in step. Every fix landed on one side, and the review
+//! round after found the other. So there is one engine, and it is the one
+//! that runs on a machine which never installed kendex.
 //!
 //! Exit taxonomy, the family contract the package defines and this module
 //! relays unchanged: 0 clean, 1 violations, 2 the check could not run. Both
@@ -22,41 +26,23 @@ use std::time::Duration;
 use crate::error::{CoreError, Result};
 use crate::process::Hardened;
 
-mod entrypoint;
-mod grammar;
 mod repo;
 mod resolve;
-mod shims;
 pub use repo::Repo;
-
-/// The helper body and delegating line kendex expects, for the test that
-/// keeps this crate's copy of them from drifting from the installer that
-/// writes them. Not part of any verb's surface.
-pub fn expected_helper_body(scripts_dir: &str) -> String {
-    grammar::helper_body(scripts_dir)
-}
-
-/// See [`expected_helper_body`].
-pub fn expected_call_line(hook: &str) -> String {
-    grammar::call_line(hook)
-}
 pub use resolve::Installed;
 use resolve::bind;
 
 /// The package that owns the checks and the git shims.
 pub const SKILL: &str = "growth-guards";
 
-/// Where an installed skill can sit, in the order the package's own hook
-/// helper searches them. Kept identical to that list on purpose: a repo
-/// where the shim finds a script and kendex finds a different one would gate
-/// commits one way and report them another.
-const SKILL_ROOTS: [&str; 5] = [
-    ".agents/skills",
-    ".claude/skills",
-    ".cursor/rules",
-    ".opencode/skills",
-    "skills",
-];
+/// The marker every delegating line the installer writes ends with.
+///
+/// The one thing kendex reads out of a hook file, and only to answer "did
+/// this package arm this repository". Present means armed; anything else —
+/// a foreign hook, no file at all, a `core.hooksPath` pointing elsewhere —
+/// means not armed, which is the safe answer for all of them and needs no
+/// taxonomy to reach.
+pub const MARKER: &str = "# kendex-guards-hook";
 
 /// The installer the package ships, relative to its own directory.
 const INSTALLER: &str = "scripts/install-git-hooks";
@@ -104,7 +90,6 @@ pub fn run_hook(dir: &Path, hook: &str, message_file: Option<&Path>) -> Result<G
         ));
     }
     let (repo, installed) = bind(dir, &format!("scripts/{hook}"))?;
-    let script = &installed.script;
     // The message path is resolved against the invoker's directory before
     // anything else, because the child runs from the repository root: git
     // hands the hook `.git/COMMIT_EDITMSG` relative to where it ran the
@@ -121,7 +106,7 @@ pub fn run_hook(dir: &Path, hook: &str, message_file: Option<&Path>) -> Result<G
         None => None,
     };
     let args: Vec<&str> = message.as_deref().into_iter().collect();
-    let output = Hardened::guard_hook(script, &args, &repo.worktree)
+    let output = Hardened::guard_hook(&installed.script, &args, &repo.worktree)
         .timeout(CHAIN_TIMEOUT)
         .run()
         .map_err(|error| guard_err(hook, error.to_string()))?;
@@ -144,153 +129,77 @@ fn relay(output: &std::process::Output) -> GuardReport {
 }
 
 /// Arm the shims: the package's own installer, in this repository.
-///
-/// A `core.hooksPath` pointing somewhere else is the installer's to report
-/// — it stands down and says so, because shims git never reads would only
-/// mislead. kendex knows nothing about where such a redirect came from.
 pub fn install(dir: &Path) -> Result<GuardReport> {
-    let (repo, installed) = bind(dir, INSTALLER)?;
-    installer(&repo, &installed, &[])
+    installer(dir, &[])
 }
 
 /// Disarm: the package removes its helper and its own marked line, and
 /// nothing else.
+///
+/// A package that is gone cannot disarm the shims it left, and shims whose
+/// scripts are missing fail closed on every commit — so a removal that
+/// could not run is exit 2 with the reason, never a quiet success about a
+/// repository nobody can commit to.
 pub fn uninstall(dir: &Path) -> Result<GuardReport> {
-    let mut lines = Vec::new();
-    let code = match bind(dir, INSTALLER) {
-        Ok((repo, installed)) => {
-            let report = installer(&repo, &installed, &["--uninstall"])?;
-            lines.extend(report.lines);
-            report.code
-        }
-        // The package is gone and its shims may not be. A shim whose
-        // scripts are missing fails closed on every commit, so a removal
-        // that could not run is exit 2 — reporting success here would
-        // leave a repository nobody can commit to looking disarmed.
-        Err(error) => {
-            lines.push(error.to_string());
-            if let Ok(Some(repo)) = repo::Repo::probe(dir)
-                && let Ok(live) = repo.effective_hooks_dir()
-                && let Some(stale) = shims::orphaned_shims(&live)?
-            {
-                lines.push(stale);
-            }
-            lines.push(
-                "the package's uninstaller could not run — any shims in the hooks directory must be removed by hand".to_owned(),
-            );
-            2
-        }
-    };
-    Ok(GuardReport { lines, code })
+    installer(dir, &["--uninstall"])
 }
 
-/// Whether commits here are gated, read off the hook files themselves.
+/// Ask the package whether this repository is armed, and relay its answer.
 ///
-/// This one never executes anything. `kendex check` is a read, and a
-/// checkout is other people's data: running a script out of one would mean
-/// that cloning a repository and asking after its status ran code its
-/// author chose. Everything it needs is on disk — whether the hooks git
-/// runs delegate to the package, and whether the helper they reach for is
-/// there — so it reads that and says so.
-///
-/// The package's own `--check` still exists and still speaks its full
-/// vocabulary; a person can run it, and the explicit `guard` verbs do. The
-/// difference is that those are invocations, and an invocation is consent.
-///
-/// `installed_here` says whether this project's own install record carries
-/// the package. It decides wording, never permission — nothing is executed
-/// either way. A checkout that merely carries the files, as every clone of
-/// a repository committing its harness render does, is not missing an
-/// arming nobody asked for, and saying so at every session start would be
-/// noise on repositories that never opted in.
-///
-/// `Ok(None)` where nothing is owed: not a work tree, or a repository with
-/// no shims and nothing expecting any. A verdict that could not be taken is
-/// exit 2, never a silent pass.
-pub fn armed(dir: &Path, installed_here: bool) -> Result<Option<GuardReport>> {
-    // Only "this is not a work tree" is a missing verdict. Anything else —
-    // git absent, metadata unreadable, a probe that failed — is a check
-    // that could not be taken, and reporting it as "nothing to say" would
-    // read as a pass.
-    let Some(repo) = repo::Repo::probe(dir)? else {
-        return Ok(None);
-    };
-    // Asked before any directory is read. An empty `core.hooksPath` turns
-    // hooks off outright, and git reports the repository root for it — so
-    // reading that as a hooks directory answers about the wrong place, and
-    // arming would not help: the installer stands down under any value at
-    // all, empty included. The remedy is to unset it.
-    if repo.hooks_disabled()? {
-        return Ok(installed_here.then(|| GuardReport {
-            lines: vec![format!(
-                "commit hooks are switched off in {}: core.hooksPath is set to an empty value, so git runs no hook at all — `git config --unset core.hooksPath`, then `kendex guard install`",
-                repo.worktree.display()
-            )],
-            code: 1,
-        }));
-    }
-    let live = repo.effective_hooks_dir()?;
-
-    // Without the package there is nothing to compare the helper's bytes
-    // against, and nothing to run the lanes either. Shims left behind fail
-    // every commit closed, which is worth saying; a broken install that
-    // armed nothing is worth saying too.
-    let Some(package) = Installed::resolve(&repo, INSTALLER) else {
-        if let Some(line) = shims::orphaned_shims(&live)? {
-            return Ok(Some(GuardReport {
-                lines: vec![line],
-                code: 2,
-            }));
-        }
-        if let Some(dir) = Installed::present(&repo) {
-            return Ok(Some(GuardReport {
-                lines: vec![format!(
-                    "the {SKILL} skill at {} carries no runnable {INSTALLER} — commit hooks cannot be armed until it is reinstalled (`kendex refresh`)",
-                    dir.display()
-                )],
-                code: 2,
-            }));
-        }
-        return Ok(None);
-    };
-
-    // The closed grammar decides, and it has three answers. Armed is
-    // silence. Unarmed is drift worth reporting, but only where somebody
-    // installed the package here and expects it to gate their commits — a
-    // checkout that merely carries the files, as every clone of a
-    // repository committing its harness render does, is not missing an
-    // arming nobody asked for. Anything outside the grammar is said out
-    // loud whatever the install record says: an unverifiable gate is not a
-    // clean one.
-    let scripts = package.dir.join("scripts");
-    let is_default_dir = repo.is_default_hooks_dir(&live);
-    let (shape, reasons) = shims::directory_shape(&live, &scripts, &repo.worktree, is_default_dir);
-    Ok(match shape {
-        shims::Shape::Armed => None,
-        shims::Shape::Unknown => Some(GuardReport {
-            lines: vec![format!(
-                "commit hooks in {} cannot be verified ({reasons}) — inspect them by hand, or `kendex guard install` rewrites them",
-                live.display()
-            )],
-            code: 2,
-        }),
-        shims::Shape::Unarmed if installed_here => Some(GuardReport {
-            lines: vec![format!(
-                "commit hooks are not armed in {} ({reasons}) — `kendex guard install` arms them",
-                live.display()
-            )],
-            code: 1,
-        }),
-        shims::Shape::Unarmed => None,
-    })
+/// Its `--check` is read-only and speaks the whole vocabulary — armed,
+/// drifted, dormant, unverifiable — which is exactly what a person running
+/// this verb asked for. Invoking a guard verb is the consent to run the
+/// package's scripts; `kendex check`, which nobody invoked for that, reads
+/// the marker instead and executes nothing.
+pub fn check(dir: &Path) -> Result<GuardReport> {
+    installer(dir, &["--check"])
 }
 
-fn installer(repo: &repo::Repo, installed: &Installed, args: &[&str]) -> Result<GuardReport> {
-    let root = repo.worktree.display().to_string();
-    let mut argv = vec!["--repo", root.as_str()];
+/// The installer, run from the repository it was pointed at, with its
+/// verdict relayed unchanged.
+fn installer(dir: &Path, args: &[&str]) -> Result<GuardReport> {
+    let (repo, installed) = bind(dir, INSTALLER)?;
+    let worktree = repo.worktree.to_string_lossy().into_owned();
+    let mut argv = vec!["--repo", &worktree];
     argv.extend_from_slice(args);
     let output = Hardened::guard_script(&installed.script, &argv, &repo.worktree)
         .run()
         .map_err(|error| guard_err("hooks", error.to_string()))?;
     Ok(relay(&output))
+}
+
+/// Whether this package armed this repository's commit hooks, read off the
+/// hook files and nothing else.
+///
+/// `kendex check` is a read, and a checkout is other people's data: running
+/// a script out of one would mean that cloning a repository and asking after
+/// its status ran code its author chose. So this executes nothing, and it
+/// asks the smallest question that is safe to answer from bytes alone.
+///
+/// The marker or nothing. Both lanes have to carry it, in the directory git
+/// reads with no redirect in the way, and a `core.hooksPath` set to anything
+/// at all means the answer is no — not because such a repository is
+/// necessarily ungated, but because deciding whether it is takes the grammar
+/// this module deliberately no longer has. Every uncertainty lands on "not
+/// armed", whose remedy is a command that is safe to run twice.
+///
+/// A person who wants the full vocabulary runs `kendex guard --check`, which
+/// asks the package. That is an invocation, and an invocation is consent.
+pub fn armed(dir: &Path) -> Result<bool> {
+    let Some(repo) = Repo::probe(dir)? else {
+        return Ok(false);
+    };
+    if repo.hooks_redirected()? {
+        return Ok(false);
+    }
+    let hooks = repo.default_hooks_dir();
+    for lane in LANES {
+        let Some(text) = crate::fs::read_if_exists(&hooks.join(lane))? else {
+            return Ok(false);
+        };
+        if !text.contains(MARKER) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }

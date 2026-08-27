@@ -8,6 +8,12 @@ an outside contributor.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** `kendex check` calls hooks armed only when the guard
+  package's marker is in both hook files and `core.hooksPath` is unset.
+  New `kendex guard check` asks the package, which answers in full.
+
 ### Fixed
 
 - The `harness-ci` wiring guide covers a lane that reads a path family beside

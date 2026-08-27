@@ -10,79 +10,52 @@
 # when the file was read.
 set -euo pipefail
 
-# A path with `.` dropped and `..` folded on paper, for comparing two
-# spellings of one place when neither can be resolved on disk. Never a
-# substitute for resolving: it settles no symlink, and a `..` across one
-# lands somewhere else entirely.
-lexical_dir() { # PATH -> folded path on stdout
-  local rest="${1%/}" part="" out="" lead="" last=""
-  case "$1" in /*) lead="/" ;; esac
-  local IFS=/
-  for part in $rest; do
-    case "$part" in
-      "" | .) continue ;;
-      ..)
-        last="${out##*/}"
-        if [ -z "$out" ]; then
-          # Absolute: `..` at the root is the root, which is where git and
-          # the kernel land too. Relative: the climb is real and is kept.
-          [ -n "$lead" ] || out=".."
-        elif [ "$last" = ".." ]; then
-          out="$out/.."
-        else
-          case "$out" in
-            */*) out="${out%/*}" ;;
-            *) out="" ;;
-          esac
-        fi
-        ;;
-      *) out="${out:+$out/}$part" ;;
-    esac
-  done
-  printf '%s' "${lead}${out}"
-}
-
-# Two directories are the same directory whatever they are called. Resolved
-# on disk first, which settles a symlinked checkout and a `..` together.
+# Set at all means somewhere this installer does not write, and that is the
+# whole of the classification.
 #
-# A directory that is not there yet cannot be resolved, and comparing the
-# raw spellings there answered "elsewhere" for `.git/refs/../hooks` on a
-# repository whose hooks directory git had not created — so an install that
-# should have created it stood down instead. Unresolvable falls back to the
-# folded form, which settles every spelling that differs only on paper.
-same_dir() { # A B
-  local a="" b=""
-  a="$(cd -- "$1" 2>/dev/null && pwd -P)" || a="$(lexical_dir "$1")"
-  b="$(cd -- "$2" 2>/dev/null && pwd -P)" || b="$(lexical_dir "$2")"
-  [ "$a" = "$b" ]
-}
-
-# HOOKS_PATH_ELSEWHERE is the question every mode actually asks: is git
-# reading hooks from somewhere this installer does not write?
+# It used to work out whether the configured directory was in fact this
+# repository's own — resolving on disk, folding `..` on paper, absolutizing
+# a relative value against the work tree. Each of those was correct and each
+# was another place to be subtly wrong: a `..` folded across a symlink named
+# a foreign directory the default, and a relative value resolved from the
+# wrong base stood an install down over a repository's own hooks. The
+# question is not worth its failure modes. Set means stand down, which costs
+# an arming somebody can still do by wiring the directory themselves, and
+# never writes shims into a directory git does not read.
 #
-# A core.hooksPath naming this repository's own hooks directory is not a
-# redirect — it is a project saying out loud where its hooks live, and the
-# directory it names is the one written anyway. Treating it as foreign
-# refused to arm a repository over its own spelling of the default.
-#
-# Empty is elsewhere for a different reason: it switches hooks off outright,
-# so nothing installed in any directory would run.
+# The empty value is still told apart from a path, in the MESSAGE only:
+# unsetting it and wiring a directory are different things to be told to do.
 classify_hooks_path() {
   CUSTOM_HOOKS=""
   HOOKS_PATH_SET=0
   HOOKS_PATH_ELSEWHERE=0
   CUSTOM_HOOKS="$(git -C "$REPO_ABS" config --get core.hooksPath 2>/dev/null)" \
     && HOOKS_PATH_SET=1
-  [ "$HOOKS_PATH_SET" -eq 1 ] || return 0
-  HOOKS_PATH_ELSEWHERE=1
-  [ -n "$CUSTOM_HOOKS" ] || return 0
-  local abs="$CUSTOM_HOOKS"
-  case "$abs" in
-    /*) ;;
-    *) abs="$REPO_ABS/$abs" ;;
-  esac
-  same_dir "$abs" "$HOOKS_DIR" && HOOKS_PATH_ELSEWHERE=0
+  HOOKS_PATH_ELSEWHERE="$HOOKS_PATH_SET"
   return 0
+}
+
+# The three roots every hooks question is asked against, from the one place
+# that asks them: where the caller stands, where git runs a hook from, and
+# which directory git would read hooks from with nothing in the way.
+#
+# Sets REPO_ABS, COMMON_DIR and HOOKS_DIR. Uses `die` from
+# install-git-hooks, which is the only caller.
+resolve_roots() {
+  REPO_ABS="$(cd "$REPO" && pwd)" || die "could not resolve $REPO"
+  # --git-common-dir may answer relative to the repository (git predates
+  # --path-format), so absolutize it here rather than assuming a git version.
+  COMMON_DIR="$(git -C "$REPO_ABS" rev-parse --git-common-dir 2>/dev/null || true)"
+  [ -n "$COMMON_DIR" ] || die "could not resolve the common git directory of $REPO"
+  case "$COMMON_DIR" in
+    /*) ;;
+    *) COMMON_DIR="$REPO_ABS/$COMMON_DIR" ;;
+  esac
+  # From a subdirectory git answers with traversal, and every message below
+  # quotes this path at somebody. It exists, so it can name itself.
+  COMMON_RESOLVED="$(cd -- "$COMMON_DIR" 2>/dev/null && pwd -P)" \
+    && COMMON_DIR="$COMMON_RESOLVED"
+  HOOKS_DIR="$COMMON_DIR/hooks"
 }
 
 # core.hooksPath set to the empty string switches git hooks off outright.

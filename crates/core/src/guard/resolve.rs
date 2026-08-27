@@ -10,7 +10,19 @@ use std::path::{Path, PathBuf};
 
 use crate::error::Result;
 
-use super::{SKILL, SKILL_ROOTS, guard_err};
+use super::{SKILL, guard_err};
+
+/// Where an installed skill can sit, in the order the package's own hook
+/// helper searches them. Kept identical to that list on purpose: a repo
+/// where the shim finds a script and kendex finds a different one would gate
+/// commits one way and report them another.
+const SKILL_ROOTS: [&str; 5] = [
+    ".agents/skills",
+    ".claude/skills",
+    ".cursor/rules",
+    ".opencode/skills",
+    "skills",
+];
 
 /// One resolved script of the installed package.
 pub struct Installed {
@@ -25,32 +37,22 @@ impl Installed {
     /// helper resolves it, because the two must never disagree about which
     /// copy governs a repository.
     ///
-    /// The helper's rule, in its order. First the scripts directory baked
-    /// into the helper by whichever install wrote it — that is the copy an
-    /// armed repository actually runs, and it need not be one the search
-    /// below would reach. Only then the MAIN checkout and this work tree,
-    /// and inside each the skill roots in turn, taking the first root whose
-    /// *script is executable* rather than the first directory that exists.
+    /// The helper's rule, in its order: the project root the caller stood
+    /// in, then the MAIN checkout, then this work tree — and inside each the
+    /// skill roots in turn, taking the first whose *script is executable*
+    /// rather than the first directory that exists.
     ///
-    /// Every part of that ordering decides a real case. The baked path is
-    /// what a repository armed from an unusual layout runs. Linked
-    /// worktrees share one hooks directory but need not carry their own
-    /// skills, so one is routinely gated by the main checkout's copy. And a
-    /// tool directory holding a partial or non-executable copy must not
-    /// shadow a working one beside it.
+    /// Every part of that ordering decides a real case. Linked worktrees
+    /// share one hooks directory but need not carry their own skills, so one
+    /// is routinely gated by the main checkout's copy. And a tool directory
+    /// holding a partial or non-executable copy must not shadow a working
+    /// one beside it.
+    ///
+    /// It used to consult the path baked into `.git/hooks/kendex-guards`
+    /// first. That was a read of hook content to decide what kendex runs,
+    /// which is the layer this module no longer has: the shim resolves its
+    /// own scripts at commit time, and kendex resolves its own here.
     pub fn resolve(repo: &super::Repo, relative: &str) -> Option<Installed> {
-        // The helper bakes the scripts DIRECTORY and execs a bare lane name
-        // inside it, so the baked branch joins the file name rather than the
-        // package-relative path the search below uses.
-        if let Some(scripts) = baked_scripts(repo)
-            && let Some(name) = Path::new(relative).file_name()
-        {
-            let script = scripts.join(name);
-            if is_executable(&script) {
-                let dir = scripts.parent().unwrap_or(&scripts).to_path_buf();
-                return Some(Installed { dir, script });
-            }
-        }
         for root in search_roots(repo) {
             for base in SKILL_ROOTS {
                 let dir = root.join(base).join(SKILL);
@@ -74,54 +76,6 @@ impl Installed {
                 .find(|dir| dir.exists() || dir.is_symlink())
         })
     }
-}
-
-/// The scripts directory the installed helper runs first, read out of the
-/// helper — and trusted only when the helper is the one this install
-/// generates for that directory.
-///
-/// The path alone is not evidence of anything. `.git/hooks` is ordinary
-/// local state, so a `kendex-guards` carrying an `installed_scripts=` line
-/// and nothing else legitimate would redirect every guard verb at whatever
-/// executable it named. Reading the line and believing it made this the one
-/// place a guard verb could be pointed somewhere it was never installed.
-///
-/// So the whole file is compared against [`super::grammar::helper_body`]
-/// for the directory the line names — one shared definition, the same bytes the installer
-/// writes and the same ones the armed check compares against. A helper that
-/// is not exactly that is ignored and the search roots decide, which is
-/// where a repository with no helper ends up anyway.
-fn baked_scripts(repo: &super::Repo) -> Option<PathBuf> {
-    let helper = repo
-        .effective_hooks_dir()
-        .ok()?
-        .join(super::grammar::HELPER);
-    let text = std::fs::read_to_string(helper).ok()?;
-    let quoted = text
-        .lines()
-        .find_map(|line| line.strip_prefix("installed_scripts='"))?
-        .strip_suffix('\'')?;
-    let value = unquote(quoted);
-    if value.is_empty() {
-        return None;
-    }
-    // Self-consistency is the test: the file has to BE the helper an
-    // install of that directory writes, not merely mention it.
-    if text != super::grammar::helper_body(&value) {
-        return None;
-    }
-    Some(PathBuf::from(value))
-}
-
-/// The shell single-quoting the installer writes, undone.
-///
-/// Single quotes cannot nest, so an apostrophe in the path is written as
-/// `'\''` — close, escaped quote, reopen. Reading that back literally gives
-/// a path that does not exist, and the helper would run the copy this could
-/// not find: `/home/o'brien/repo` and `/home/o'\''brien/repo` are different
-/// directories, and only one of them is anyone's.
-fn unquote(quoted: &str) -> String {
-    quoted.replace("'\\''", "'")
 }
 
 /// Where a copy of the package can be, in the order that finds the one this
@@ -215,24 +169,4 @@ pub(super) fn bind(dir: &Path, relative: &str) -> Result<(super::Repo, Installed
         });
     };
     Ok((repo, installed))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::unquote;
-
-    /// The installer builds the escape as `'` + `\` + `'` + `'`; reading it
-    /// back has to undo exactly that and leave every other character alone.
-    #[test]
-    fn an_apostrophe_in_the_path_survives_the_round_trip() {
-        assert_eq!(unquote("/home/plain/repo"), "/home/plain/repo");
-        assert_eq!(unquote("/home/o'\\''brien/repo"), "/home/o'brien/repo");
-        assert_eq!(
-            unquote("/a'\\''b/c'\\''d"),
-            "/a'b/c'd",
-            "every occurrence, not just the first"
-        );
-        // A lone backslash is a directory name, not an escape.
-        assert_eq!(unquote("/home/back\\slash"), "/home/back\\slash");
-    }
 }

@@ -61,16 +61,20 @@ fn fold_commit_hooks(env: &Env, checked: &mut CheckReport, scopes: &[kendex_core
         let Scope::Project { root } = scope.canonical() else {
             continue;
         };
-        let installed_here = installed_here(env, scope);
-        let (class, text) = match kendex_core::guard::armed(&root, installed_here) {
-            Ok(None) => continue,
-            Ok(Some(verdict)) if verdict.code == 0 => continue,
-            Ok(Some(verdict)) => (
-                match verdict.code {
-                    1 => Class::Drift,
-                    _ => Class::Unknown,
-                },
-                verdict.lines.join(" "),
+        // A checkout that merely carries the files is not missing an
+        // arming nobody asked for, so only a project whose own install
+        // record declares the package hears about this at all.
+        if !installed_here(env, scope) {
+            continue;
+        }
+        let (class, text) = match kendex_core::guard::armed(&root) {
+            Ok(true) => continue,
+            Ok(false) => (
+                Class::Drift,
+                format!(
+                    "commit hooks are not armed in {} — `kendex guard install` arms them, and `kendex guard check` says more",
+                    root.display()
+                ),
             ),
             Err(error) => (Class::Unknown, error.to_string()),
         };

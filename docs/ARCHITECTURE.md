@@ -411,8 +411,8 @@ lives in one capability table read by core and UI.
   no check — `guard install`/`guard uninstall` run the installer and `guard
   run <hook>` execs its script with git's redirects passed through, the one
   child not scrubbed because it is a hook body naming the snapshot judged.
-  `check` executes nothing: it reads the hook files, where a lane is armed
-  only if a hook git runs carries the delegating line and the helper runs.
+  `guard check` asks the package too. `kendex check` executes nothing and
+  reads one thing: our marker in both hook files, or not armed.
   So there is one implementation of every verdict and one policy dialect:
   the flat `GROWTH_GUARDS_*` / `SIZE_RATCHET_*` keys, baselines and
   excludes the scripts read from the commit. Every enabled check runs

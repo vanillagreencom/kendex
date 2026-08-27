@@ -509,52 +509,6 @@ case "$OUT" in
   *) bad "a real guard line in a symlink target was missed" "$OUT" ;;
 esac
 
-echo "=== core.hooksPath naming the default IS the default ==="
-# A project that writes its hooks directory down explicitly has not
-# redirected anything: the directory it names is the one the installer
-# writes anyway. Refusing to arm there turns a repository's own spelling of
-# the default into a reason it cannot be gated.
-for spelling in relative absolute traversed; do
-  R60="$(new_repo "explicit-$spelling")"
-  case "$spelling" in
-    relative) VALUE=".git/hooks" ;;
-    absolute) VALUE="$R60/.git/hooks" ;;
-    traversed) VALUE="$R60/.git/refs/../hooks" ;;
-  esac
-  git -C "$R60" config core.hooksPath "$VALUE"
-  install_in "$R60"
-  case "$OUT" in
-    *"NOT installed"* | *"skipped"*)
-      bad "install stood down on the default named as $spelling" "$OUT" ;;
-    *) ok "install arms a repository whose core.hooksPath is the default ($spelling)" ;;
-  esac
-  [ -x "$R60/.git/hooks/kendex-guards" ] && ok "and the helper is where git reads it ($spelling)" \
-    || bad "no helper for $spelling" "out=$OUT"
-  check_in "$R60"
-  [ "$RC" -eq 0 ] && ok "and --check reads it armed ($spelling)" \
-    || bad "--check not armed for $spelling" "rc=$RC out=$OUT"
-  case "$OUT" in
-    *"sends git"* | *"redirects git away"*)
-      bad "the default was described as a redirect ($spelling)" "$OUT" ;;
-    *) ok "and does not call it a redirect ($spelling)" ;;
-  esac
-done
-
-# The must-fail control: a hooksPath that really is somewhere else still
-# stands the installer down, so the pins above are not passing on a
-# comparison that calls every directory the default.
-R61="$(new_repo explicit-elsewhere)"
-mkdir -p "$R61/otherhooks"
-git -C "$R61" config core.hooksPath "$R61/otherhooks"
-install_in "$R61"
-case "$OUT" in
-  *"NOT installed"*) ok "must-fail: a hooksPath somewhere else still stands the installer down" ;;
-  *) bad "installed under a real redirect" "$OUT" ;;
-esac
-[ -e "$R61/.git/hooks/kendex-guards" ] \
-  && bad "wrote a helper git never reads" "out=$OUT" \
-  || ok "and wrote nothing into the directory git ignores"
-
 echo "=== an empty core.hooksPath is hooks off, in this checker too ==="
 # The third file this has come up in. Empty switches hooks off, and
 # rev-parse reports ./ for it, so measuring that directory answers about the
@@ -585,30 +539,45 @@ case "$OUT" in
   *) bad "install did not name the empty value" "$OUT" ;;
 esac
 
-echo "=== the default named equivalently, before the directory exists ==="
-# git does not always have a .git/hooks yet, and a directory that is not
-# there cannot be resolved on disk. Comparing the raw spellings there
-# answered "elsewhere" for the repository's own hooks directory, so an
-# install that should have CREATED it stood down and wrote nothing — the
-# harm being silence, not a wrong verdict.
-R63="$(new_repo no-hooks-dir)"
-rm -rf "$R63/.git/hooks"
-git -C "$R63" config core.hooksPath ".git/refs/../hooks"
-install_in "$R63"
-[ -x "$R63/.git/hooks/kendex-guards" ] \
-  && ok "install creates the hooks directory it was pointed at" \
-  || bad "install stood down over an unresolvable equivalent spelling" "out=$OUT"
-check_in "$R63"
-[ "$RC" -eq 0 ] && ok "and the result reads armed" || bad "not armed" "rc=$RC out=$OUT"
+echo "=== core.hooksPath set at all is a stand-down ==="
+# Whether the configured directory is in fact this repository's own used to
+# be worked out here — resolved on disk, `..` folded on paper, a relative
+# value absolutized against the work tree. Every one of those was another
+# way to be subtly wrong, and two of them were. Set is set: the installer
+# writes nothing git might not read, and says how to wire that directory by
+# hand. It costs an arming; it never costs a repository that reads armed
+# and gates nothing.
+for spelling in default-relative default-absolute elsewhere empty; do
+  R70="$(new_repo "set-$spelling")"
+  case "$spelling" in
+    default-relative) VALUE=".git/hooks" ;;
+    default-absolute) VALUE="$R70/.git/hooks" ;;
+    elsewhere) VALUE="$R70/otherhooks" ;;
+    empty) VALUE="" ;;
+  esac
+  git -C "$R70" config core.hooksPath "$VALUE"
+  install_in "$R70"
+  [ -e "$R70/.git/hooks/kendex-guards" ] \
+    && bad "installed under core.hooksPath ($spelling)" "out=$OUT" \
+    || ok "core.hooksPath set stands the install down ($spelling)"
+  case "$spelling" in
+    empty) case "$OUT" in
+      *"switches git hooks off"*) ok "and empty is told apart in the message" ;;
+      *) bad "empty was not named" "$OUT" ;;
+    esac ;;
+    *) case "$OUT" in
+      *"Have that directory's pre-commit run"*) ok "and a path is told how to wire it ($spelling)" ;;
+      *) bad "no wiring instruction ($spelling)" "$OUT" ;;
+    esac ;;
+  esac
+done
 
-# The must-fail control: still unresolvable, but genuinely somewhere else.
-R64="$(new_repo no-hooks-dir-elsewhere)"
-rm -rf "$R64/.git/hooks"
-git -C "$R64" config core.hooksPath "nowhere/at/all"
-install_in "$R64"
-[ -e "$R64/.git/hooks/kendex-guards" ] \
-  && bad "wrote into a directory git does not read" "out=$OUT" \
-  || ok "must-fail: an unresolvable path that is elsewhere still stands down"
+# The must-fail control: with nothing set, the same repository arms.
+R71="$(new_repo unset-arms)"
+install_in "$R71"
+[ -x "$R71/.git/hooks/kendex-guards" ] \
+  && ok "must-fail: with core.hooksPath unset the install arms" \
+  || bad "unset did not arm" "out=$OUT"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

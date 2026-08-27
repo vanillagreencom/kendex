@@ -1,10 +1,11 @@
 //! The repository a guard verb is standing in, and where git looks for its
 //! hooks.
 //!
-//! Small on purpose. kendex arms hooks through the growth-guards package
-//! and reads them back off disk; it needs to know which repository it is in,
-//! which directory git actually executes hooks from, and which one it would
-//! execute them from with no redirect in the way. Nothing else.
+//! Small on purpose, and smaller than it was. kendex arms hooks through the
+//! growth-guards package and no longer reasons about them: it needs to know
+//! which repository it is in, where the package's scripts should be run
+//! from, and where the hook files sit. What "armed" means belongs to the
+//! package.
 
 use std::path::{Path, PathBuf};
 
@@ -128,87 +129,29 @@ impl Repo {
         }
     }
 
-    /// The repository's default hooks directory, whether or not git reads
-    /// it: where a shim sits dormant behind a `core.hooksPath` redirect, and
-    /// where it goes live the moment that redirect is removed.
+    /// The hooks directory git reads with no redirect in the way.
     pub fn default_hooks_dir(&self) -> PathBuf {
         self.common_dir.join("hooks")
     }
 
-    /// Whether a hooks directory IS the default one, however it was spelled.
+    /// Whether `core.hooksPath` is set to anything at all.
     ///
-    /// `core.hooksPath` pointed at the repository's own hooks directory is a
-    /// legitimate setting — it is what a project does to say out loud where
-    /// its hooks live — and the directory it names is not foreign, it is
-    /// this one. Comparing the two as text calls it a redirect: git echoes
-    /// the configured spelling, so `.git/hooks` reached through a symlinked
-    /// checkout, or written with a `..` in it, is the same directory under
-    /// a name that does not match.
-    ///
-    /// Both sides resolve on disk, which settles symlinks and `..` together.
-    /// A directory that is not there yet cannot be resolved, so it falls
-    /// back to the lexical form — enough for the spellings that differ only
-    /// on paper, and a mismatch there costs a stand-down, never a write into
-    /// a directory this did not identify.
-    pub fn is_default_hooks_dir(&self, dir: &Path) -> bool {
-        let settled = |path: &Path| {
-            path.canonicalize()
-                .unwrap_or_else(|_| crate::fs::lexical(path))
-        };
-        settled(dir) == settled(&self.default_hooks_dir())
-    }
-
-    /// Whether `core.hooksPath` is set to an empty value, which turns hooks
-    /// off outright.
-    ///
-    /// Asked separately because git's own answer is misleading here:
-    /// `rev-parse --git-path hooks` reports `./` for an empty value, so the
-    /// directory resolves to the repository root while git runs no hook at
-    /// all. Reading that root as a hooks directory would call a repository
-    /// unarmed for the wrong reason — and if it happened to hold files named
-    /// `pre-commit` and `commit-msg` in the right shape, armed, for a
-    /// repository whose commits nothing gates.
-    pub fn hooks_disabled(&self) -> Result<bool> {
+    /// Set means git reads hooks from somewhere this does not attempt to
+    /// work out — the empty value switches them off, a relative one resolves
+    /// against the work tree, an absolute one may or may not be this same
+    /// directory under another name, and telling those apart is the grammar
+    /// that used to live here and drifted from the package's every time it
+    /// was touched. Set at all is answered "not armed", which is safe for
+    /// all of them; the package's own `--check` is what says more.
+    pub fn hooks_redirected(&self) -> Result<bool> {
         let output =
             Hardened::git(&["config", "--get", "core.hooksPath"], Some(&self.worktree)).run()?;
         match output.status.code() {
-            Some(0) => Ok(String::from_utf8_lossy(&output.stdout).trim().is_empty()),
-            // Not set at all: git reads the repository's own hooks.
-            Some(1) => Ok(false),
-            other => Err(guard_err(
-                "hooks",
-                format!(
-                    "could not read core.hooksPath in {} (git exited {other:?}): {}",
-                    self.worktree.display(),
-                    String::from_utf8_lossy(&output.stderr).trim()
-                ),
-            )),
+            Some(0) => Ok(true),
+            // Exit 1 is git for "not set", which is the only unredirected
+            // answer. Anything else is a repository this cannot read, and
+            // an unreadable one is not a repository known to be armed.
+            _ => Ok(false),
         }
-    }
-
-    /// The hooks directory git actually reads, its own answer. Under a
-    /// `core.hooksPath` redirect this is the redirected directory; without
-    /// one it is the default. Asked rather than derived, because telling
-    /// those two apart is what a check about hooks is for.
-    pub fn effective_hooks_dir(&self) -> Result<PathBuf> {
-        let output =
-            Hardened::git(&["rev-parse", "--git-path", "hooks"], Some(&self.worktree)).run()?;
-        if !output.status.success() {
-            return Err(guard_err(
-                "hooks",
-                format!(
-                    "could not resolve the hooks directory of {}",
-                    self.worktree.display()
-                ),
-            ));
-        }
-        let answer = String::from_utf8_lossy(&output.stdout);
-        let path = PathBuf::from(answer.trim());
-        // git answers relative to where it was asked when the path is
-        // inside the repository it was asked from.
-        Ok(match path.is_absolute() {
-            true => path,
-            false => self.worktree.join(path),
-        })
     }
 }

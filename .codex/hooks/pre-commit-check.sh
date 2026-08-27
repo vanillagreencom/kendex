@@ -10,6 +10,10 @@
 
 set -euo pipefail
 
+# The one thing this hook reads out of a hook file: the marker the
+# growth-guards installer ends every line it writes with.
+MARKER="# kendex-guards-hook"
+
 INPUT=$(cat)
 
 # Word-order detection, no shell parsing: the authoritative check is the
@@ -67,35 +71,21 @@ HOOKS_DIR=$(git rev-parse --git-path hooks 2>/dev/null) || {
   elsewhere_notice
   exit 0
 }
-# An empty core.hooksPath switches hooks off outright, and git's answer above
-# is actively misleading about it: rev-parse reports `./`, so the directory
-# resolves to the repository root while git runs no hook at all. A root that
-# happens to hold an executable `pre-commit` then reads as armed, and this
-# lane stands aside for a gate that does not exist. Asked before the
-# directory is read, and the value decides: set-and-empty is off, exit 1 is
-# not set at all, and anything else is a state this lane cannot name.
-HOOKS_OFF=""
-CUSTOM=""
-CUSTOM_STATUS=0
-CUSTOM=$(git config --get core.hooksPath 2>/dev/null) || CUSTOM_STATUS=$?
-case "$CUSTOM_STATUS" in
-  0) [ -n "$CUSTOM" ] || HOOKS_OFF=1 ;;
-  1) ;;
-  *)
-    echo "pre-commit-check: could not read core.hooksPath in $PWD, so whether anything gates this commit is unknown — nothing here stands in for a gate it cannot see" >&2
-    exit 2
-    ;;
-esac
-# BOTH lanes, or this lane is not standing aside for anything.
+# Armed is our marker in both hook files, in the directory git reads with
+# nothing redirecting it. That is the whole test.
 #
-# Deferring is justified by git running the whole gate, and half of it is a
-# different bargain: with commit-msg gone, git checks the content and accepts
-# any message, and the one thing this hook could still have caught — a
-# bypass that skips the message gate — is waved through as already armed.
-# The same rule the package applies to the lanes it delegates to, asked here
-# over the two files git actually executes.
+# It used to be a taxonomy: is the value empty, does it name this
+# repository's own directory under another spelling, does the file look
+# executable, does its content parse as something that reaches our scripts.
+# Every one of those questions was another way to answer "armed" about a
+# repository that was not, and several of them did. So: the marker, or not
+# armed. A `core.hooksPath` set to anything at all is not armed, because
+# deciding otherwise is the taxonomy that kept being wrong — and this lane
+# would rather check a commit twice than wave one through.
 ARMED=""
-if [ -z "$HOOKS_OFF" ] && [ -x "$HOOKS_DIR/pre-commit" ] && [ -x "$HOOKS_DIR/commit-msg" ]; then
+if [ "$(git config --get core.hooksPath 2>/dev/null; printf x)" = "x" ] \
+  && grep -qF -- "$MARKER" "$HOOKS_DIR/pre-commit" 2>/dev/null \
+  && grep -qF -- "$MARKER" "$HOOKS_DIR/commit-msg" 2>/dev/null; then
   ARMED=1
 fi
 if [ -n "$ARMED" ]; then
@@ -107,24 +97,18 @@ if [ -n "$ARMED" ]; then
 fi
 elsewhere_notice
 
-# Nothing is armed here, and this lane does not stand in.
+# Nothing here carries our marker, and this lane does not stand in.
 #
 # Arming is the one act that says a person wants this repository's committed
 # scripts to run on their commits, and it is local: git clones no hooks, so
 # a fresh checkout of anything has no execution behind it. A fallback that
 # ran the repository's own script would put that execution back — on the
 # first commit an agent attempts, out of a checkout nobody armed. So the
-# commit is refused, and the refusal names the one command that fixes it.
-# Arming is not the remedy where hooks are switched off: the installer
-# stands down under any core.hooksPath value, empty included, so the unset
-# has to come first or the next commit is refused the same way.
-if [ -n "$HOOKS_OFF" ]; then
-  echo "pre-commit-check: core.hooksPath is set and empty in $PWD, which switches git hooks off, so nothing checks this commit — run 'git config --unset core.hooksPath', then arm them with 'kendex guard install'" >&2
-  exit 2
-fi
-if [ -x "$HOOKS_DIR/pre-commit" ] || [ -x "$HOOKS_DIR/commit-msg" ]; then
-  echo "pre-commit-check: only one of the two git hooks is armed in $PWD, and both gate a commit, so this one is not fully checked — arm both with 'kendex guard install'" >&2
-  exit 2
-fi
-echo "pre-commit-check: no git pre-commit hook is armed in $PWD, so nothing checks this commit — arm them with 'kendex guard install' (this hook does not run a repository's own scripts on its behalf), or remove this hook" >&2
+# commit is refused, and the refusal names the command that fixes it.
+#
+# One message, because the flat rule has one failure: not armed. Working out
+# WHY — an empty core.hooksPath, a redirect, a foreign hook, half a pair —
+# is the taxonomy that kept answering "armed" about repositories that were
+# not. `kendex guard check` asks the package, which does know.
+echo "pre-commit-check: this repository's git hooks are not armed by kendex in $PWD, so nothing checks this commit — run 'kendex guard install' (this hook does not run a repository's own scripts on its behalf), 'kendex guard check' says what the package makes of it, or remove this hook" >&2
 exit 2
