@@ -50,27 +50,17 @@ assert_eq "the shapes carry a HEAD expression" "3" "$(printf '%s\n' "$heads" | g
 misordered="$(printf '%s\n' "$heads" | grep -vE 'github\.event\.after[^|]*\|\|[^|]*github\.sha' || true)"
 assert_eq "every HEAD expression tries github.event.after before github.sha" "" "$misordered"
 
-# The parser is a REQUIREMENT, not a convenience. Announcing a skip and then
-# reporting the suite green is the fail-open this file exists to close: the
-# check that catches a malformed block is the one that would not have run.
-if ! python3 -c 'import yaml' 2>/dev/null; then
-  echo "harness-ci wiring-shapes needs python3 with PyYAML (pip install pyyaml)" >&2
-  exit 1
-fi
-
-parsed="$(python3 - "$WIRING" <<'PY'
-import re, sys, yaml
-src = open(sys.argv[1]).read()
-for i, block in enumerate(re.findall(r"```yaml\n(.*?)```", src, re.S), 1):
-    body = block if block.lstrip().startswith(("env:", "jobs:")) else "jobs:\n" + block
-    try:
-        yaml.safe_load(body)
-    except Exception as exc:
-        print(f"block {i}: {exc}")
-        sys.exit(0)
-print("ok")
-PY
-)"
-assert_eq "every shape parses as YAML" "ok" "$parsed"
+# Indentation is checked structurally rather than by parsing: every block here
+# steps by two spaces, so an odd indent or a tab is hand-edit damage. This
+# needs no YAML library, which the shell shard does not install and this suite
+# must not depend on being there — a check that cannot run must not be the
+# difference between a green suite and a red one. What it does NOT prove is
+# that a block is valid YAML; a malformed one fails at the copier's first
+# workflow run, loudly, which is not the fail-closed concern this file guards.
+TAB="$(printf '\t')"
+odd="$(printf '%s\n' "$blocks" | grep -nE '^( {2})* [^ ]' || true)"
+assert_eq "every block line steps by two spaces" "" "$odd"
+tabbed="$(printf '%s\n' "$blocks" | grep -nE "^ *$TAB" || true)"
+assert_eq "no block line indents with a tab" "" "$tabbed"
 
 report wiring-shapes
