@@ -39,7 +39,7 @@ classify_hooks_path() { # -> 0 classified, 2 could not read the config
   CUSTOM_HOOKS=""
   HOOKS_PATH_SET=0
   HOOKS_PATH_ELSEWHERE=0
-  CUSTOM_HOOKS="$(git -C "$REPO_ABS" config --get core.hooksPath 2>/dev/null)" || status=$?
+  gg_git_path CUSTOM_HOOKS "$REPO_ABS" config --get core.hooksPath || status=$?
   case "$status" in
     0) HOOKS_PATH_SET=1 ;;
     1) ;;
@@ -59,7 +59,7 @@ resolve_roots() {
   gg_path REPO_ABS gg_physical "$REPO" || die "could not resolve $REPO"
   # --git-common-dir may answer relative to the repository (git predates
   # --path-format), so absolutize it here rather than assuming a git version.
-  COMMON_DIR="$(git -C "$REPO_ABS" rev-parse --git-common-dir 2>/dev/null || true)"
+  gg_git_path COMMON_DIR "$REPO_ABS" rev-parse --git-common-dir || COMMON_DIR=""
   [ -n "$COMMON_DIR" ] || die "could not resolve the common git directory of $REPO"
   case "$COMMON_DIR" in
     /*) ;;

@@ -484,5 +484,72 @@ case "$OUT" in
   *) bad "broken install named" "out=$OUT" ;;
 esac
 
+echo "=== the helper does not run a package beside an external git dir ==="
+# `${common%/*}` is the main checkout only in the ordinary <main>/.git
+# layout. Under --separate-git-dir the git directory lives outside the
+# checkout, so that is an unrelated directory — and one carrying its own
+# growth-guards ran here as the repository's commit gate.
+OUT_DIR="$TMP/separate"
+mkdir -p "$OUT_DIR"
+git init -q --separate-git-dir "$OUT_DIR/elsewhere.git" "$OUT_DIR/checkout"
+git -C "$OUT_DIR/checkout" config user.email t@t
+git -C "$OUT_DIR/checkout" config user.name t
+
+# A decoy beside the git directory, which is what `${common%/*}` names.
+DECOY="$OUT_DIR/.agents/skills/growth-guards/scripts"
+mkdir -p "$DECOY"
+for lane in pre-commit commit-msg; do
+  printf '#!/bin/sh\ntouch %s\nexit 0\n' "$TMP/decoy-ran" >"$DECOY/$lane"
+  chmod +x "$DECOY/$lane"
+done
+
+# The real package installs from inside the checkout, then the baked path is
+# blanked so the helper has to rediscover — which is the search under test.
+mkdir -p "$OUT_DIR/checkout/.agents/skills"
+cp -R "$SKILL_DIR" "$OUT_DIR/checkout/.agents/skills/growth-guards"
+OUT=""; RC=0
+OUT="$("$OUT_DIR/checkout/.agents/skills/growth-guards/scripts/install-git-hooks" \
+  --repo "$OUT_DIR/checkout" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "install succeeds under a separate git dir" \
+  || bad "separate-git-dir install" "rc=$RC out=$OUT"
+
+HELPER="$OUT_DIR/elsewhere.git/hooks/kendex-guards"
+[ -f "$HELPER" ] || HELPER="$OUT_DIR/checkout/.git/hooks/kendex-guards"
+sed -i "s|^installed_scripts=.*|installed_scripts=''|" "$HELPER"
+
+MARK="TO""DO"
+printf '# %s: nope\n' "$MARK" >"$OUT_DIR/checkout/b.py"
+git -C "$OUT_DIR/checkout" add -A
+OUT=""; RC=0
+OUT="$(cd "$OUT_DIR/checkout" && git commit -m "feat: separate" 2>&1)" || RC=$?
+[ -e "$TMP/decoy-ran" ] \
+  && bad "the decoy beside the git dir ran as the gate" "out=$OUT" \
+  || ok "a package beside the external git dir is not this repository's"
+[ "$RC" -ne 0 ] && ok "and the commit is blocked rather than passed" \
+  || bad "commit passed with no gate" "rc=$RC out=$OUT"
+
+echo "=== a linked worktree is still served by the main checkout ==="
+# The ownership check must not cost the ordinary case: git answers
+# --git-common-dir relative to where it is asked, so comparing it unresolved
+# would drop the real main checkout and strand every linked worktree.
+R90="$(new_repo linked-main)"
+install_in "$R90"
+printf 'hello\n' >"$R90/a.txt"
+git -C "$R90" add -A
+commit_in "$R90" "feat: base"
+git -C "$R90" worktree add -q "$TMP/wt9" -b wt9b
+sed -i "s|^installed_scripts=.*|installed_scripts=''|" "$R90/.git/hooks/kendex-guards"
+printf '# %s: nope\n' "$MARK" >"$TMP/wt9/c.py"
+git -C "$TMP/wt9" add -A
+OUT=""; RC=0
+OUT="$(cd "$TMP/wt9" && git commit -m "feat: linked" 2>&1)" || RC=$?
+case "$OUT" in
+  *todo-ban*) ok "the worktree rediscovers the main checkout's package" ;;
+  *"no executable growth-guards"*) bad "the ownership check stranded a linked worktree" "$OUT" ;;
+  *) bad "the linked worktree commit did not reach the chain" "$OUT" ;;
+esac
+[ "$RC" -ne 0 ] && ok "and its verdict blocks the commit" \
+  || bad "linked worktree commit passed" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

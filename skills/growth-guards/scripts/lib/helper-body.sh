@@ -82,25 +82,58 @@ fail() {
 # the package it would source may be gone.
 gg_nl='
 '
-gg_git_path() { # VAR ARG — VAR gets `git rev-parse ARG`, bytes intact
-  __raw="$(git rev-parse "$2" 2>/dev/null && printf x)" || { eval "$1=''"; return 1; }
+# Same name and same shape as the package's, in lib/paths.sh. Two spellings
+# of one contract is how every other pair in here drifted.
+gg_git_path() { # VAR DIR ARG... — VAR gets git's answer, bytes intact
+  __v="$1"
+  __d="$2"
+  shift 2
+  __raw="$(git -C "$__d" "$@" 2>/dev/null && printf x)" || { eval "$__v=''"; return 1; }
   __raw="${__raw%x}"
-  eval "$1=\${__raw%\"\$gg_nl\"}"
+  eval "$__v=\${__raw%\"\$gg_nl\"}"
 }
-gg_git_path common --git-common-dir || common=""
+gg_git_path common "$PWD" rev-parse --git-common-dir || common=""
 [ -n "$common" ] || fail "could not resolve the common git directory"
 case "$common" in /*) ;; *) common="$PWD/$common" ;; esac
-gg_git_path top --show-toplevel || top=""
+gg_git_path top "$PWD" rev-parse --show-toplevel || top=""
 [ -n "$top" ] || fail "could not resolve the working tree root"
 # The main checkout owns the installed skills; a linked worktree shares this
 # hooks directory but may not carry its own copy. Its own root is the
 # fallback for layouts where the git directory is not <root>/.git.
+# The directory holding the common git dir is the main checkout only in the
+# ordinary <main>/.git layout. Under --separate-git-dir the git directory
+# lives outside the checkout, so this is an unrelated directory — and one
+# with a growth-guards of its own would run here as this repository's gate.
+#
+# Owning it is the test: its own common git dir has to be ours. Where it is
+# not, the root is dropped rather than guessed at, and a search that then
+# finds nothing fails closed, which is what this helper is for.
 main="${common%/*}"
 [ -n "$main" ] || main="/"
+# In a subshell with git's redirects unset: this helper runs AS a hook, so
+# GIT_DIR is exported, and git honours it over `-C` — every directory then
+# answers with THIS repository's common dir and looks owned. Asking about
+# another directory means asking without the answer already in the room.
+main_common="$(
+  unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+  git -C "$main" rev-parse --git-common-dir 2>/dev/null && printf x
+)" || main_common=""
+main_common="${main_common%x}"
+main_common="${main_common%"$gg_nl"}"
+# git answers relative to the directory it was asked in, and $common was
+# absolutized against $PWD — so both have to be absolute before they can
+# disagree about anything but identity.
+case "${main_common:-/}" in
+  /*) ;;
+  *) main_common="$main/$main_common" ;;
+esac
+if [ -z "$main_common" ] || [ "$main_common" != "$common" ]; then
+  main=""
+fi
 if [ -n "$installed_scripts" ] && [ -x "$installed_scripts/$mode" ]; then
   exec "$installed_scripts/$mode" "$@"
 fi
-for root in "$main/$project_rel" "$top/$project_rel" "$main/" "$top/"; do
+for root in ${main:+"$main/$project_rel"} "$top/$project_rel" ${main:+"$main/"} "$top/"; do
   for base in $skill_roots; do
     if [ -x "$root$base/growth-guards/scripts/$mode" ]; then
       exec "$root$base/growth-guards/scripts/$mode" "$@"

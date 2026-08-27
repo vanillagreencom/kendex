@@ -14,6 +14,9 @@ set -euo pipefail
 
 # Sourced here rather than by each check: every one of them needs a repository
 # root, and that is a path capture.
+# not-a-path: this IS the bootstrap that loads the idiom, so it cannot use
+# it. A library directory whose name ends in a newline fails here loudly,
+# with the source unfound, rather than quietly resolving somewhere else.
 # shellcheck source=paths.sh
 source "$(dirname -- "${BASH_SOURCE[0]}")/paths.sh"
 

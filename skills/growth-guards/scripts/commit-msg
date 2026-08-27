@@ -59,6 +59,8 @@ if [ -z "$MSG_FILE" ] || [ "$MSG_FILE" = "-" ]; then
   MSG="$(cat)" || gg_collection_error "could not read the commit message from stdin"
 else
   [ -f "$MSG_FILE" ] || gg_config_error "no such message file: $MSG_FILE"
+  # not-a-path: a commit message, and trailing blank lines are not part
+  # of it — git strips them itself before the hook ever sees the file.
   MSG="$(cat -- "$MSG_FILE")" || gg_collection_error "could not read the commit message file: $MSG_FILE"
 fi
 

@@ -16,6 +16,11 @@ an outside contributor.
 
 ### Fixed
 
+- A `core.hooksPath` whose value ends in a newline no longer makes `--check`
+  inspect a different directory and report the repository as armed.
+- Under `--separate-git-dir`, the generated git-hook helper no longer runs a
+  `growth-guards` package sitting beside the external git directory.
+
 - A directory name containing a single quote can no longer inject shell into
   the generated git-hook helper, which could make every commit pass unchecked.
 - Under `--separate-git-dir`, a `growth-guards` package sitting beside the

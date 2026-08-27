@@ -124,6 +124,7 @@ done
 # A work tree, not merely a git directory: the guards read a staged index and
 # the helper resolves a working-tree root, neither of which a bare repository
 # has — installing there would report hooks that can never run.
+# not-a-path: git answers the word `true`, which has no bytes to lose.
 [ "$(git -C "$REPO" rev-parse --is-inside-work-tree 2>/dev/null || true)" = "true" ] \
   || die "not inside a git work tree: $REPO"
 
@@ -215,6 +216,7 @@ gg_owned_lines_re() {
 call_line() { # HOOK
   local hook="$1" args=""
   [ "$hook" = "pre-commit" ] || args=' "$@"'
+  # not-a-path: ends in `hooks`; also the grammar every armed hook matches.
   printf '%s' 'kendex_gg_h="$(git rev-parse --git-path hooks 2>/dev/null)/'"$HELPER_NAME"'"; [ -x "$kendex_gg_h" ] || { echo "growth-guards: hook helper $kendex_gg_h is missing or not executable; commit blocked (reinstall: kendex guard install)" >&2; exit 2; }; "$kendex_gg_h" '"$hook$args"' || exit $?; '"$HOOK_SENTINEL"
 }
 
@@ -475,7 +477,7 @@ other_worktree_still_installed() {
   gg_path repo_phys gg_physical "$REPO_ABS" || return 2
   # This checkout IS the main work tree exactly when its own git directory is
   # the common one; a linked worktree's is <common>/worktrees/<name>.
-  own_gitdir="$(git -C "$REPO_ABS" rev-parse --git-dir 2>/dev/null || true)"
+  gg_git_path own_gitdir "$REPO_ABS" rev-parse --git-dir || own_gitdir=""
   [ -n "$own_gitdir" ] || return 2
   case "$own_gitdir" in /*) ;; *) own_gitdir="$REPO_ABS/$own_gitdir" ;; esac
   gg_path own_phys gg_physical "$own_gitdir" || return 2
@@ -494,7 +496,7 @@ other_worktree_still_installed() {
     if [ -z "$main_root" ]; then
       return 2
     fi
-    guess_gitdir="$(git -C "$main_root" rev-parse --git-common-dir 2>/dev/null || true)"
+    gg_git_path guess_gitdir "$main_root" rev-parse --git-common-dir || guess_gitdir=""
     [ -n "$guess_gitdir" ] || return 2
     case "$guess_gitdir" in /*) ;; *) guess_gitdir="$main_root/$guess_gitdir" ;; esac
     gg_path guess_phys gg_physical "$guess_gitdir" || return 2
@@ -505,7 +507,7 @@ other_worktree_still_installed() {
     for entry in "$COMMON_DIR"/worktrees/*/; do
       [ -d "$entry" ] || continue
       [ -f "$entry/gitdir" ] || return 2
-      gitdir="$(cat -- "$entry/gitdir")" || return 2
+      gg_path gitdir cat -- "$entry/gitdir" || return 2
       [ -n "$gitdir" ] || return 2
       # git may register the path relative to the registration directory
       # (relocatable worktrees); resolving it against this process's cwd
@@ -591,7 +593,7 @@ if [ "$MODE" = "check" ]; then
     # relative to the work-tree root where hooks run — and answers relative
     # to the directory it was invoked in, so that is what it is absolutized
     # against.
-    REDIRECT_DIR="$(git -C "$REPO_ABS" rev-parse --git-path hooks 2>/dev/null || true)"
+    gg_git_path REDIRECT_DIR "$REPO_ABS" rev-parse --git-path hooks || REDIRECT_DIR=""
     if [ -n "$REDIRECT_DIR" ]; then
       case "$REDIRECT_DIR" in
         /*) ;;

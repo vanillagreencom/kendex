@@ -35,7 +35,7 @@ set -euo pipefail
 # reached through `.agents/` or any other link compares equal to itself.
 canonical_dir() { # PATH -> physical directory on stdout, nonzero if unreachable
   local d
-  d="$(dirname -- "$1")" || return 1
+  gg_path d dirname -- "$1" || return 1
   (cd -- "$d" 2>/dev/null && pwd -P) || return 1
 }
 

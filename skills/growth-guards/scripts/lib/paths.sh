@@ -46,3 +46,12 @@ gg_path() { # VAR COMMAND [ARGS...]
   __raw="${__raw%x}"
   eval "$__name=\${__raw%\"\$GG_NL\"}"
 }
+
+# The same, for git. Every path git answers with — a git dir, a common dir,
+# a work tree, a configured hooks path — can end in a newline, because the
+# directory it names can.
+gg_git_path() { # VAR DIR ARG... — VAR gets git's answer, bytes intact
+  local __name="$1" __dir="$2"
+  shift 2
+  gg_path "$__name" git -C "$__dir" "$@"
+}
