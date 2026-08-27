@@ -1384,9 +1384,9 @@ awaiting_sources() { # -> one eligible source per line, duplicates collapsed
       # 'approved' a COMMENTED review does not satisfy this source, so the
       # text must not send a reader to leave one.
       if [ "$MIN_STATE" = "approved" ]; then
-        echo "any non-author approval"
+        printf '%s\n' "any non-author approval"
       else
-        echo "any non-author review"
+        printf '%s\n' "any non-author review"
       fi
     else
       aw_eligible "$TRUSTED_LOGINS_N"
@@ -1397,8 +1397,10 @@ awaiting_sources() { # -> one eligible source per line, duplicates collapsed
     # way to open the gate and belongs in the list. Leaving it out told an
     # operator nothing was eligible while the recovery path they own was
     # configured and working. Empty means the source is disabled.
+    # printf, not echo: a status context is free-form, and bash's echo eats a
+    # value like -n or -e as an option and prints no name at all.
     if [ -n "$OUTAGE_CONTEXT" ]; then
-      echo "$OUTAGE_CONTEXT"
+      printf '%s\n' "$OUTAGE_CONTEXT"
     fi
   } | awk '!seen[$0]++'
 }

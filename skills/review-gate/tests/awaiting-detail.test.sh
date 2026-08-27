@@ -139,6 +139,15 @@ PR_AUTHOR="carol" TRUSTED_LOGINS="" TRUSTED_CONTEXTS="kendex-reviewer-outage" CO
 sources_are "an override matching a trusted context is listed once" \
   "any non-author review,kendex-reviewer-outage"
 
+# A status context is free-form, so it can be a string bash's echo takes as
+# an option. Printing it with echo emitted no name at all, which read as no
+# eligible source on an otherwise author-only gate.
+for opt in -n -e -E; do
+  OUTAGE_CONTEXT="$opt"
+  PR_AUTHOR="alice" TRUSTED_LOGINS="alice" TRUSTED_CONTEXTS="" COMMENT_REVIEWERS=""
+  sources_are "an override named '$opt' is still printed" "$opt"
+done
+
 OUTAGE_CONTEXT=""
 PR_AUTHOR="carol" TRUSTED_LOGINS="alice" TRUSTED_CONTEXTS="" COMMENT_REVIEWERS=""
 sources_are "an empty override context contributes nothing" "alice"
