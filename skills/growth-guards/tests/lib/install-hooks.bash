@@ -61,19 +61,12 @@ check_in() { # REPO — sets OUT and RC
   OUT="$("$installer" --repo "$1" --check 2>&1)" || RC=$?
 }
 
-# The wiring the installer's own stand-down message prescribes.
+# A core.hooksPath directory wired by hand to this skill's entry points —
+# the shape that really does gate and that `--check` declines to judge.
 wire_hooks_dir() { # REPO DIR
   local scripts="$1/.agents/skills/growth-guards/scripts"
   mkdir -p "$2"
   printf '#!/bin/sh\nexec %s/pre-commit "$@"\n' "$scripts" >"$2/pre-commit"
   printf '#!/bin/sh\nexec %s/commit-msg "$1"\n' "$scripts" >"$2/commit-msg"
   chmod +x "$2/pre-commit" "$2/commit-msg"
-}
-
-check_from() { # REPO CWD — --check with no --repo, run from CWD
-  local installer="$1/.agents/skills/growth-guards/scripts/install-git-hooks"
-  [ -x "$installer" ] || installer="$INSTALL"
-  OUT=""
-  RC=0
-  OUT="$(cd "$2" && "$installer" --check 2>&1)" || RC=$?
 }

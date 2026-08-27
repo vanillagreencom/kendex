@@ -488,6 +488,75 @@ OUT="$("$R21M/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$R
   && ok "and it restores that hook byte-for-byte" \
   || bad "removal kept the mention" "got: $(cat "$R21M/.git/hooks/pre-commit")"
 
+echo "=== a hook that only quotes a marker is not ours ==="
+# The ownership question and the shape question fail in opposite directions,
+# and these are the ownership one. Every site that asks whether a file is
+# ours asks it the same way — the marker CLOSING a line, or the created
+# marker as a line whole — so a consumer hook that mentions either in a
+# sentence is somebody else's file at every one of them.
+QUOTE_CREATED="# kendex-guards-hook created this file"
+QUOTE_SENTINEL="# kendex-guards-hook"
+
+# Install refuses a hook it cannot verify unless THIS installer wrote it.
+# A consumer hook under an interpreter we do not vouch for, mentioning the
+# created marker mid-sentence, is not ours — and rewriting its shebang, as
+# a substring read would, changes which interpreter someone else's hook
+# runs under.
+R52="$(new_repo quoter-shebang)"
+FOREIGN="$R52/.git/hooks/pre-commit"
+# A shell shebang the checker will not vouch for: an interpreter outside
+# /bin and /usr/bin, which is what reaches the created-marker question.
+printf '#!/usr/local/bin/bash\n# not %s, just talking about it\nexit 0\n' \
+  "$QUOTE_CREATED" >"$FOREIGN"
+chmod +x "$FOREIGN"
+BEFORE="$(cat "$FOREIGN")"
+install_in "$R52"
+[ "$(head -n 1 "$FOREIGN")" = "#!/usr/local/bin/bash" ] \
+  && ok "install leaves the shebang of a hook that only quotes the created marker" \
+  || bad "the quoting hook's shebang was rewritten" "$(cat "$FOREIGN")"
+[ "$(cat "$FOREIGN")" = "$BEFORE" ] && ok "and the file is byte for byte what it was" \
+  || bad "the quoting hook was edited" "$(cat "$FOREIGN")"
+case "$OUT" in
+  *"cannot be verified"*) ok "and the install says the guard is NOT installed there" ;;
+  *) bad "install did not announce the refusal" "$OUT" ;;
+esac
+
+# The symlink branch asks the same question of a target it must not edit.
+R53="$(new_repo quoter-symlink)"
+install_in "$R53"
+printf '#!/bin/sh\n# ours end in %s, this one does not\necho mine\n' \
+  "$QUOTE_SENTINEL" >"$TMP/foreign-target"
+chmod +x "$TMP/foreign-target"
+rm -f "$R53/.git/hooks/commit-msg"
+ln -s "$TMP/foreign-target" "$R53/.git/hooks/commit-msg"
+OUT=""; RC=0
+OUT="$("$R53/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$R53" --uninstall 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "uninstall succeeds beside a symlink to a hook that quotes the marker" \
+  || bad "uninstall failed" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"symlink carrying the guard line"*)
+    bad "a quoting symlink target was claimed as ours" "$OUT" ;;
+  *) ok "and does not claim the quoting target as ours" ;;
+esac
+[ -L "$R53/.git/hooks/commit-msg" ] && ok "and the symlink is left in place" \
+  || bad "the symlink went" "out=$OUT"
+
+# The must-fail control: a symlink to a target that really carries our line
+# IS claimed, so the pins above are not passing on a predicate that never
+# matches anything.
+R54="$(new_repo real-symlink)"
+install_in "$R54"
+cp "$R54/.git/hooks/pre-commit" "$TMP/real-target"
+rm -f "$R54/.git/hooks/commit-msg"
+ln -s "$TMP/real-target" "$R54/.git/hooks/commit-msg"
+OUT=""; RC=0
+OUT="$("$R54/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$R54" --uninstall 2>&1)" || RC=$?
+case "$OUT" in
+  *"symlink carrying the guard line"*)
+    ok "must-fail: a symlink to a target that does carry our line is claimed" ;;
+  *) bad "a real guard line in a symlink target was missed" "$OUT" ;;
+esac
+
 echo "=== a disabled delegate is not an install ==="
 R20="$(new_repo tampered)"
 install_in "$R20"

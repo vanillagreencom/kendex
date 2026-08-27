@@ -10,6 +10,9 @@ an outside contributor.
 
 ### Changed
 
+- **Breaking:** a `core.hooksPath` naming a directory answers "could not
+  determine" from `kendex guard check` rather than grading the hooks there;
+  unset it and run `kendex guard install`, the only remedy either verb prints.
 - **Breaking:** hooks read as armed only when the package's marker is in
   both hook files, both are executable, and `core.hooksPath` is unset;
   `guard install` stands down under any value. New: `kendex guard check`.

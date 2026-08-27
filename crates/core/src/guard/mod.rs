@@ -208,7 +208,8 @@ fn installer(dir: &Path, args: &[&str]) -> Result<GuardReport> {
 ///
 /// A `core.hooksPath` set to anything at all means the answer is no — not
 /// because such a repository is necessarily ungated, but because deciding
-/// whether it is takes the grammar this module deliberately no longer has.
+/// whether it is takes a grammar nothing here has, the package's own
+/// `--check` included: it stands down on that value rather than grade it.
 /// Every uncertainty inside a repository lands on "not armed", whose remedy
 /// is a command that is safe to run twice.
 ///

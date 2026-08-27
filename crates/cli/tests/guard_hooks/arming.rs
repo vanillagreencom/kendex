@@ -228,7 +228,7 @@ fn arm_by_hand(root: &std::path::Path) {
 /// `kendex guard check` is the package's own `--check`, relayed.
 ///
 /// The verb exists so a person can have the full vocabulary — armed,
-/// drifted, dormant, unverifiable — without kendex owning a second opinion
+/// drifted, unverifiable — without kendex owning a second opinion
 /// about what those words mean. So what is pinned here is delegation: the
 /// package's words come through, and its exit code is the verb's.
 #[test]

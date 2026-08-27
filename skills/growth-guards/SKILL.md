@@ -65,10 +65,10 @@ before removing this skill: shims whose scripts are gone block every commit. `ke
 nothing — it reads the hook files for this package's marker and the execute
 bit git needs, and says armed or not armed. The `--check` verdicts below are
 the fuller vocabulary, for a person or a verb that asks for it:
-(0 armed — in `.git/hooks` or a `core.hooksPath` directory hand-wired to this
-skill's `pre-commit` and `commit-msg`; 1 drifted, absent, or dormant behind a
-`core.hooksPath` that redirects away from the shims; 2 could not determine —
-unreadable hooks directory or an unrecognized hand-wired hook). Repeat runs
+(0 armed in `.git/hooks`; 1 drifted, absent, or `core.hooksPath` set and
+empty, which switches git hooks off; 2 could not determine — an unreadable
+hooks directory, or any `core.hooksPath` naming a directory, which sends git
+where this package does not write). Repeat runs
 are no-ops and repairs; `core.hooksPath` is never set; existing hooks keep
 their content and exit status. Full install and refusal behaviour:
 [DEVELOPMENT.md](DEVELOPMENT.md).
