@@ -30,6 +30,11 @@ case_verdict "every render tree at once" true \
   .pi/kendex/hooks/guard.ts \
   opencode.json
 
+# kendex writes opencode.jsonc where a project carries that spelling instead,
+# so both names are the one OpenCode config.
+case_verdict "the jsonc spelling of the config" true opencode.jsonc
+case_verdict "both spellings side by side" true opencode.json opencode.jsonc
+
 case_verdict "a render path beside a product path" false \
   .agents/skills/orch/SKILL.md src/main.rs
 
@@ -44,6 +49,9 @@ case_verdict ".agentsfoo is not .agents/" false .agentsfoo/notes.md
 case_verdict ".agents-old is not .agents/" false .agents-old/notes.md
 case_verdict "opencode.json.bak is not opencode.json" false opencode.json.bak
 case_verdict "a nested opencode.json is not the root one" false ui/opencode.json
+case_verdict "opencode.jsonc.bak is not opencode.jsonc" false opencode.jsonc.bak
+case_verdict "a nested opencode.jsonc is not the root one" false ui/opencode.jsonc
+case_verdict "opencode.jsonc5 is not opencode.jsonc" false opencode.jsonc5
 case_verdict ".claudefoo is not .claude/" false .claudefoo
 case_verdict "a bare .agents file is not the tree" false .agents
 

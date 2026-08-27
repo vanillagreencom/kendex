@@ -1,6 +1,6 @@
 ---
 name: harness-ci
-description: "Classifies a CI diff as harness-only — every changed path under the kendex render trees (.agents, .claude, .codex, .opencode, .cursor, .pi, opencode.json) — so heavy lanes can stand down. Ships the classifier script and its tests; the workflow wiring stays the consumer's. Load to wire, tune, or debug a repo's harness-only skip."
+description: "Classifies a CI diff as harness-only — every changed path under the kendex render trees (.agents, .claude, .codex, .opencode, .cursor, .pi, opencode.json or opencode.jsonc) — so heavy lanes can stand down. Ships the classifier script and its tests; the workflow wiring stays the consumer's. Load to wire, tune, or debug a repo's harness-only skip."
 license: MIT
 user-invocable: true
 metadata:
@@ -20,8 +20,9 @@ tags: [automation]
 output?** The classifier reads a diff's changed-file set and prints
 `harness_only=true` when every path sits under `.agents/`, `.claude/`,
 `.codex/`, `.opencode/`, `.cursor/`, `.pi/`, or is the root
-`opencode.json`. Anything else prints `false`, and so does every diff the
-classifier cannot read.
+`opencode.json` — `opencode.jsonc` where a project carries that spelling.
+Anything else prints `false`, and so does every diff the classifier cannot
+read.
 
 ```bash
 .agents/skills/harness-ci/scripts/harness-only \

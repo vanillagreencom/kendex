@@ -46,8 +46,11 @@ those trees it committed.
 ## Semantics
 
 - **The harness path set**: `.agents/`, `.claude/`, `.codex/`, `.opencode/`,
-  `.cursor/`, `.pi/`, and the root `opencode.json`. Prefixes match on the
-  separator, so `.agentsfoo/x` and `opencode.json.bak` are product paths.
+  `.cursor/`, `.pi/`, and the root OpenCode config under either spelling —
+  `opencode.json` or `opencode.jsonc`, which is the file kendex writes when a
+  project carries that one. Prefixes match on the separator and the config
+  names match whole, so `.agentsfoo/x`, `opencode.json.bak` and
+  `ui/opencode.json` are product paths.
 - **`--no-renames`, always.** Rename detection emits only the post-image, so
   `git mv src/app.ts .agents/skills/x/app.ts` would list one harness path and
   nothing else — the deletion of `src/app.ts` would go unjudged. With the

@@ -41,10 +41,15 @@ for flag in $(printf '%s\n' "$blocks" | grep -oE '(^|[[:space:]])--[a-z-]+' | tr
 done
 assert_eq "the shapes pass only flags the script accepts" "" "$unknown_flags"
 
-# Parse the blocks when PyYAML is on the runner; skipping is announced rather
-# than silent, so a missing dependency never reads as a pass.
-if python3 -c 'import yaml' 2>/dev/null; then
-  parsed="$(python3 - "$WIRING" <<'PY'
+# The parser is a REQUIREMENT, not a convenience. Announcing a skip and then
+# reporting the suite green is the fail-open this file exists to close: the
+# check that catches a malformed block is the one that would not have run.
+if ! python3 -c 'import yaml' 2>/dev/null; then
+  echo "harness-ci wiring-shapes needs python3 with PyYAML (pip install pyyaml)" >&2
+  exit 1
+fi
+
+parsed="$(python3 - "$WIRING" <<'PY'
 import re, sys, yaml
 src = open(sys.argv[1]).read()
 for i, block in enumerate(re.findall(r"```yaml\n(.*?)```", src, re.S), 1):
@@ -57,9 +62,6 @@ for i, block in enumerate(re.findall(r"```yaml\n(.*?)```", src, re.S), 1):
 print("ok")
 PY
 )"
-  assert_eq "every shape parses as YAML" "ok" "$parsed"
-else
-  echo "  SKIP: PyYAML absent, the parse check did not run"
-fi
+assert_eq "every shape parses as YAML" "ok" "$parsed"
 
 report wiring-shapes

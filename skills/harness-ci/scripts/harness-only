@@ -4,7 +4,7 @@
 # One reader of a diff's changed-file set, answering the one question CI asks
 # about it: may the heavy lanes stand down? A diff whose every path is
 # `kendex refresh` output — .agents/, .claude/, .codex/, .opencode/, .cursor/,
-# .pi/, opencode.json — carries nothing this repository builds, lints,
+# .pi/, opencode.json{,c} — carries nothing this repository builds, lints,
 # typechecks or tests. Those trees are upstream's and are tested in
 # vanillagreencom/kendex.
 #
@@ -168,7 +168,10 @@ harness_only=true
 while IFS= read -r path; do
   [ -n "$path" ] || continue
   case "$path" in
-    .agents/* | .claude/* | .codex/* | .opencode/* | .cursor/* | .pi/* | opencode.json) continue ;;
+    .agents/* | .claude/* | .codex/* | .opencode/* | .cursor/* | .pi/*) continue ;;
+    # Both spellings of the one OpenCode config: kendex writes the .jsonc file
+    # when a project carries that one instead, and it is the same artifact.
+    opencode.json | opencode.jsonc) continue ;;
   esac
   harness_only=false
   break
