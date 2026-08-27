@@ -36,6 +36,13 @@ the gate; and merge-group statuses never read the mode, posting green as
 | `changes-requested` | `failure` | A reviewer objects. Red means objection — never a build failure. |
 | (exit 2, no verdict) | *unchanged* | A read failed or config is invalid. Take NO action; retry next pass. |
 
+**Reading the gate's own pending text.** `awaiting a non-author review for
+<sha>` means no review evidence exists at that head yet — the ordinary
+re-review window after a push, not a wait for a person. The bots are the
+non-author reviewers: if a trusted one has already reviewed this head,
+dispatch the writer instead of waiting, and wait on a human only where the
+repo configures one.
+
 # Working in a consumer repo
 
 ## 1. Read the current state before changing anything
