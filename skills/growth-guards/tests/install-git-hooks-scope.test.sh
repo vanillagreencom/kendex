@@ -604,5 +604,111 @@ OUT="$("$R95/apps/one/.agents/skills/growth-guards/scripts/install-git-hooks" \
 [ "$RC" -eq 0 ] && ok "must-fail control: the arming project can disarm" \
   || bad "arming project uninstall" "rc=$RC out=$OUT"
 
+echo "=== a newline-named project can still disarm ==="
+# The project the helper was armed from is baked into it, and a directory
+# name may contain a newline — which makes the assignment span lines. A
+# read-back that gives up on that reports could-not-tell, and could-not-tell
+# keeps the shims: a repository nobody can ever disarm, which is a worse
+# failure than the one that reading carefully avoids.
+NLP="$TMP/nl-project"
+mkdir -p "$NLP"
+git -C "$NLP" init -q
+git -C "$NLP" config user.email t@t
+git -C "$NLP" config user.name t
+PDIR="$NLP/web
+"
+mkdir -p "$PDIR/.agents/skills"
+cp -R "$SKILL_DIR" "$PDIR/.agents/skills/growth-guards"
+OUT=""; RC=0
+OUT="$("$PDIR/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$NLP" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "a newline-named project arms" || bad "newline project arm" "rc=$RC out=$OUT"
+[ -f "$NLP/.git/hooks/kendex-guards" ] && ok "and the helper is written" \
+  || bad "no helper for the newline project" "out=$OUT"
+
+OUT=""; RC=0
+OUT="$("$PDIR/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$NLP" --uninstall 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "and disarms again, so the value round-tripped" \
+  || bad "newline project uninstall" "rc=$RC out=$OUT"
+[ -e "$NLP/.git/hooks/kendex-guards" ] \
+  && bad "the shims survived their own uninstall" "out=$OUT" \
+  || ok "and the shims are gone"
+
+echo "=== an unreadable worktrees directory is not an empty one ==="
+# The glob over a directory that cannot be searched stays literal, the loop
+# body never runs, and every linked work tree goes unseen — so the shared
+# shims come out while another work tree is still committing through them.
+R97="$(new_repo unreadable-worktrees)"
+install_in "$R97"
+printf 'hello\n' >"$R97/a.txt"
+git -C "$R97" add -A
+commit_in "$R97" "feat: base"
+git -C "$R97" worktree add -q "$TMP/wt97" -b wt97b
+chmod 000 "$R97/.git/worktrees"
+OUT=""; RC=0
+OUT="$("$R97/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$R97" --uninstall 2>&1)" || RC=$?
+chmod 755 "$R97/.git/worktrees"
+[ -f "$R97/.git/hooks/kendex-guards" ] \
+  && ok "the shims are kept when the work trees cannot be enumerated" \
+  || bad "shims removed on an unreadable worktrees dir" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"could not"* | *"cannot"*) ok "and the refusal says it could not tell" ;;
+  *) bad "the uninstall did not say why it stopped" "rc=$RC out=$OUT" ;;
+esac
+
+# The control: an empty worktrees directory is genuinely no linked work
+# trees, and that is not a refusal.
+R98="$(new_repo empty-worktrees)"
+install_in "$R98"
+mkdir -p "$R98/.git/worktrees"
+OUT=""; RC=0
+OUT="$("$R98/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$R98" --uninstall 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "must-fail control: an empty worktrees dir still disarms" \
+  || bad "empty worktrees dir refused" "rc=$RC out=$OUT"
+
+echo "=== every project that ever armed the shims is searched ==="
+# Three work trees, three projects at different depths. B arms, C re-arms,
+# C uninstalls. Remembering only the LAST arming loses B: its install is
+# never searched, and the shared shims come out while B is still committing
+# through them. The helper carries the whole record instead — arming appends
+# to it, and an uninstall looks under every project in it.
+R99="$TMP/record"
+mkdir -p "$R99"
+git -C "$R99" init -q
+git -C "$R99" config user.email t@t
+git -C "$R99" config user.name t
+printf '.agents/\napps/\nservices/\nlibs/\n' >"$R99/.gitignore"
+printf 'hello\n' >"$R99/a.txt"
+git -C "$R99" add .gitignore a.txt
+git -C "$R99" commit -q -m "feat: base"
+git -C "$R99" worktree add -q "$TMP/wtB" -b wtBb
+git -C "$R99" worktree add -q "$TMP/wtC" -b wtCb
+
+# Untracked installs at three different depths.
+mkdir -p "$TMP/wtB/apps/one/.agents/skills" "$TMP/wtC/services/two/.agents/skills"
+cp -R "$SKILL_DIR" "$TMP/wtB/apps/one/.agents/skills/growth-guards"
+cp -R "$SKILL_DIR" "$TMP/wtC/services/two/.agents/skills/growth-guards"
+
+# B arms, then C arms over it. Both are recorded.
+OUT=""; RC=0
+OUT="$("$TMP/wtB/apps/one/.agents/skills/growth-guards/scripts/install-git-hooks" \
+  --repo "$TMP/wtB" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "the first project arms the shared shims" || bad "B arm" "rc=$RC out=$OUT"
+OUT=""; RC=0
+OUT="$("$TMP/wtC/services/two/.agents/skills/growth-guards/scripts/install-git-hooks" \
+  --repo "$TMP/wtC" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "and a second project re-arms them" || bad "C arm" "rc=$RC out=$OUT"
+grep -q '^# armed-projects:.*apps/one/' "$R99/.git/hooks/kendex-guards" \
+  && ok "the record keeps the first project after the second arms" \
+  || bad "re-arming replaced the record" "$(grep '^# armed-projects:' "$R99/.git/hooks/kendex-guards")"
+
+# C leaves. B is still installed, so the shims stay.
+OUT=""; RC=0
+OUT="$("$TMP/wtC/services/two/.agents/skills/growth-guards/scripts/install-git-hooks" \
+  --repo "$TMP/wtC" --uninstall 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "the second project uninstalls cleanly" || bad "C uninstall" "rc=$RC out=$OUT"
+[ -f "$R99/.git/hooks/kendex-guards" ] \
+  && ok "and the first project's install keeps the shims" \
+  || bad "the shims were removed while another project still holds them" "out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -39,7 +39,46 @@ gg_shell_quote() { # VALUE -> the value, safe inside single quotes
   printf '%s' "${1//$sq/$sq\\$sq$sq}"
 }
 
+# The same value, on one line and reversibly.
+#
+# `%` first and the newline second, so that decoding in the other order is
+# unambiguous: after encoding, a `%0A` in the output can only have come from
+# a real newline, because a literal `%0A` in the input became `%250A`.
+gg_encode_line() { # VALUE -> single-line, separator-safe encoding
+  local v="${1//%/%25}"
+  v="${v//$'\n'/%0A}"
+  printf '%s' "${v// /%20}"
+}
+
+# One entry of the armed-projects record.
+#
+# A project relative path is either empty — the project IS the work tree —
+# or ends in `/`, so a lone `.` can stand for the empty one and never
+# collide with a real value.
+gg_encode_rel() { # REL -> one list entry
+  case "$1" in
+    "") printf '.' ;;
+    *) gg_encode_line "$1" ;;
+  esac
+}
+
+gg_decode_rel() { # VAR ENTRY -> sets VAR to the rel
+  local __name="$1" v="$2"
+  case "$v" in
+    ".") eval "$__name=''"; return 0 ;;
+  esac
+  v="${v//%0A/$'\n'}"
+  v="${v//%20/ }"
+  eval "$__name=\${v//%25/%}"
+}
+
 helper_body() { # -> the helper this installer would write, on stdout
+  # Encoded before the heredoc, not inside it: a loop with nested quoting in
+  # a heredoc is a parse this does not need to be right about.
+  local __record="" __one=""
+  for __one in ${PROJECT_RELS[@]+"${PROJECT_RELS[@]}"}; do
+    __record="$__record $(gg_encode_rel "$__one")"
+  done
   cat <<HELPER_HEAD
 #!/bin/sh
 # Scripts directory of the install that wrote this file.
@@ -48,6 +87,11 @@ installed_scripts='$(gg_shell_quote "$SCRIPT_DIR")'
 skill_roots='$(gg_shell_quote "$GG_SKILL_ROOTS")'
 # Baked too: a moved checkout still resolves the project this came from.
 project_rel='$(gg_shell_quote "$PROJECT_REL")'
+# Every project that has ever armed this helper, appended never replaced —
+# an uninstall from any of them looks for survivors under all of them.
+# Percent-encoded, space separated: %25 a percent, %0A a newline, %20 a
+# space, and a lone dot the project that IS the work tree.
+# armed-projects:$__record
 HELPER_HEAD
   cat <<'HELPER'
 # kendex growth-guards git hooks. Managed by the growth-guards skill and
@@ -155,17 +199,53 @@ HELPER
 # Nonzero when the value cannot be read with confidence — no helper, no line,
 # or a value carrying a newline, which a line-based read cannot see the end
 # of. The caller treats that as unknown, and unknown never removes anything.
-gg_baked_project_rel() { # VAR HELPER -> sets VAR to the baked prefix
-  local __name="$1" line="" value="" sq="'"
-  eval "$__name=''"
+# The locals carry `__` names because the caller passes the NAME of its own
+# variable: a local here that collides with it is assigned by the eval and
+# then discarded on return, which reads as an empty record rather than an
+# error. That is how this function first shipped.
+gg_baked_project_rels() { # ARRAY HELPER -> sets ARRAY to every armed rel
+  local __name="$1" __line="" __entry="" __one="" __out=()
+  eval "$__name=()"
   [ -f "$2" ] || return 1
-  line="$(grep -m1 -- "^project_rel=$sq" "$2")" || return 1
-  value="${line#project_rel=$sq}"
-  case "$value" in
-    *"$sq") value="${value%$sq}" ;;
-    # An unterminated quote means the value ran onto the next line.
-    *) return 1 ;;
-  esac
-  # Undo the escaping helper_body writes: '"'"' is one literal quote.
-  eval "$__name=\${value//$sq\\$sq$sq/$sq}"
+  # The record line, not the assignment above it: the assignment may span
+  # lines, and answering "cannot tell" for a project plainly visible here
+  # would stop an uninstall entirely — a repository nobody can disarm.
+  __line="$(grep -m1 -- '^# armed-projects:' "$2")" || return 1
+  __line="${__line#\# armed-projects:}"
+  for __entry in $__line; do
+    gg_decode_rel __one "$__entry" || return 1
+    __out+=("$__one")
+  done
+  eval "$__name=(\${__out[@]+\"\${__out[@]}\"})"
+}
+
+# The record the next helper should carry: what this one already says, plus
+# this project when this run is the arming.
+#
+# Appending is the whole point. The shims are shared, so a second project
+# arming them does not un-arm the first, and an uninstall from any project
+# has to look for survivors under all of them.
+#
+# `--check` must NOT append: it compares a helper on disk against the bytes
+# an install would write, and a check run from a project that never armed
+# anything would otherwise report every armed repository as drifted.
+# Why a record and not the current project: the shims are SHARED, so a
+# second project arming them does not un-arm the first, and two prefixes —
+# the caller's and the last arming one — is still a guess about how many
+# there are. The list is bounded by consent: it grows only when somebody
+# runs the installer in a new project.
+#
+gg_arming_record() { # ARRAY HELPER REL MODE
+  local __name="$1" __one="" __recorded=0 __record=()
+  eval "$__name=()"
+  if [ -f "$2" ]; then
+    gg_baked_project_rels __record "$2" || __record=()
+  fi
+  if [ "$4" = "install" ]; then
+    for __one in ${__record[@]+"${__record[@]}"}; do
+      [ "$__one" = "$3" ] && __recorded=1
+    done
+    [ "$__recorded" -eq 1 ] || __record+=("$3")
+  fi
+  eval "$__name=(\${__record[@]+\"\${__record[@]}\"})"
 }

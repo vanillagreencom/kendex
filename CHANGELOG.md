@@ -16,6 +16,11 @@ an outside contributor.
 
 ### Fixed
 
+- Disarming from one project keeps the commit hooks when any other project
+  that armed them is still installed, not only the most recent one.
+- A work-tree registry that cannot be read stops an uninstall rather than
+  reading as no linked work trees and removing the shared hooks.
+
 - Disarming from one project no longer removes commit hooks another project
   in a different work tree armed and is still committing through.
 

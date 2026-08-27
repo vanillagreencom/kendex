@@ -18,15 +18,21 @@ other_worktree_still_installed() {
   local repo_phys="" main_root="" gitdir="" root="" root_phys="" base="" dir="" phys="" entry=""
   local tracked_status=0
   local own_gitdir="" own_phys="" common_phys="" guess_gitdir="" guess_phys="" parent=""
-  local roots=() rels=() rel="" baked=""
+  local roots=() rels=() rel="" baked=()
   gg_path repo_phys gg_physical "$REPO_ABS" || return 2
-  # The helper is shared and remembers which project armed it. A different
-  # nested project uninstalling here must look under BOTH: its own, and the
-  # one the shims actually run from.
+  # The helper is shared and records every project that has armed it. An
+  # uninstall from any one of them has to look for survivors under all of
+  # them: the shims a project leaves behind are the shims another is still
+  # committing through.
   rels=("$PROJECT_REL")
   if [ -f "$HOOKS_DIR/$HELPER_NAME" ]; then
-    gg_baked_project_rel baked "$HOOKS_DIR/$HELPER_NAME" || return 2
-    [ "$baked" = "$PROJECT_REL" ] || rels+=("$baked")
+    gg_baked_project_rels baked "$HOOKS_DIR/$HELPER_NAME" || return 2
+    for rel in ${baked[@]+"${baked[@]}"}; do
+      case " ${rels[*]} " in
+        *" $rel "*) ;;
+        *) rels+=("$rel") ;;
+      esac
+    done
   fi
   # This checkout IS the main work tree exactly when its own git directory is
   # the common one; a linked worktree's is <common>/worktrees/<name>.
@@ -57,8 +63,19 @@ other_worktree_still_installed() {
   fi
   roots+=("$main_root")
   if [ -d "$COMMON_DIR/worktrees" ]; then
+    # A directory that cannot be read or searched enumerates as nothing: the
+    # glob stays literal, the loop body never runs, and every linked work
+    # tree goes unseen — so the shims come out while other work trees are
+    # still committing through them. Unreadable is not empty, which is this
+    # module's whole contract.
+    if [ ! -r "$COMMON_DIR/worktrees" ] || [ ! -x "$COMMON_DIR/worktrees" ]; then
+      return 2
+    fi
     for entry in "$COMMON_DIR"/worktrees/*/; do
-      [ -d "$entry" ] || continue
+      # The literal glob, which is what an empty directory leaves behind.
+      # Empty is genuinely no linked work trees, and that is not a refusal.
+      [ -e "$entry" ] || continue
+      [ -d "$entry" ] || return 2
       [ -f "$entry/gitdir" ] || return 2
       gg_path gitdir cat -- "$entry/gitdir" || return 2
       [ -n "$gitdir" ] || return 2

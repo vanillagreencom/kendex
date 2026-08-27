@@ -136,8 +136,8 @@ resolve_roots
 # still runs: shims in $HOOKS_DIR revive the moment the setting goes away.
 classify_hooks_path_or_stop
 
-# Where this copy's project sits inside the repository — see skill-roots.sh.
 gg_project_rel PROJECT_REL "$SCRIPT_DIR" "$REPO_ABS"
+gg_arming_record PROJECT_RELS "$HOOKS_DIR/$HELPER_NAME" "$PROJECT_REL" "$MODE"
 
 if [ "$HOOKS_PATH_ELSEWHERE" -eq 1 ] && [ "$MODE" = "install" ]; then
   if hooks_path_off; then
