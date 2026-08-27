@@ -306,7 +306,7 @@ Hierarchy-contract items (§ 7.0) are never `skip`: keep `action: "create"` and 
 
 **Hierarchy contract override (MUST)**: an item whose `index` is in `HIERARCHY_CONTRACT.child_indexes` is assigned `create` with `hierarchy: {"action": "make_child", "parent": [HIERARCHY_CONTRACT.parent_issue]}` per § 7.0, skipping the order below — it never resolves to `skip`, `expand`, `update`, `combine`, or `cancel`, regardless of duplicate/overlap findings.
 
-Otherwise, first match wins: creation bar failed → `skip`; in `obsolete[]` → `cancel`; the `remove` side of a `duplicates[]` pair → `skip` with the kept issue as target; in a `combine[]` `absorb[]` → `combine`; overlaps an existing issue → `expand` or `update` by scope delta; else `create` (proposed) or `valid` (existing).
+Otherwise, first match wins: creation bar failed → `skip` for a proposed item, `cancel` for an existing issue (§ 6.2 below the bar); in `obsolete[]` → `cancel`; the `remove` side of a `duplicates[]` pair → `skip` with the kept issue as target; in a `combine[]` `absorb[]` → `combine`; overlaps an existing issue → `expand` or `update` by scope delta; else `create` (proposed) or `valid` (existing).
 
 **Completed-issue guard**: `combine`, `expand`, and `update` never target a Done or Cancelled issue; new scope goes in a new issue with a `related` relation to the completed one.
 
