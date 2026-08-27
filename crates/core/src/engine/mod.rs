@@ -179,7 +179,7 @@ fn plan_scope_once(
             notes: &mut moved_notes,
         },
     )?;
-    removal::stale_emitted(&state, lock, &new_lock, &mut guard, &mut ops)?;
+    removal::stale_emitted(lock, &new_lock, &mut guard, &mut ops)?;
 
     let refused_keys = plan_pass::plan_refusals(
         env,

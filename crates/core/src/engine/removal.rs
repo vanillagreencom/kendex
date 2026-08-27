@@ -176,20 +176,16 @@ impl TrashGuard {
 /// replacement, so the paths it recorded are still what runs; taking them
 /// off would leave the tool disconnected from a tree that stayed.
 pub(super) fn stale_emitted(
-    state: &desired::DesiredState,
     lock: &Lock,
     new_lock: &Lock,
     guard: &mut TrashGuard,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
-    for item in &state.items {
-        let Some(entry) = lock.entries.get(&item.key) else {
+    for (key, recorded) in &new_lock.entries {
+        let Some(entry) = lock.entries.get(key) else {
             continue;
         };
         let Some(previous) = entry.emitted.as_ref() else {
-            continue;
-        };
-        let Some(recorded) = new_lock.entries.get(&item.key) else {
             continue;
         };
         let current = recorded.emitted.iter().flat_map(|e| e.paths.iter());
@@ -215,8 +211,8 @@ pub(super) fn stale_emitted(
             let planned = trash(
                 format!(
                     "Move {} {}'s old files to the trash",
-                    item.kind.name(),
-                    item.name
+                    recorded.kind.name(),
+                    recorded.name
                 ),
                 path.clone(),
             )?;
