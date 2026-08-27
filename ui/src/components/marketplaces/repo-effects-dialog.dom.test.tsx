@@ -42,28 +42,37 @@ const guards: Disclosure = {
     notes: ["core.hooksPath is never set."],
     companions: ["size-ratchet", "preflight"],
   },
+  name: "growth-guards",
+  summary: "Arms git hooks, so every commit runs the guard chain.",
   writes: [{ path: "/home/me/app/.git/hooks/pre-commit", shared: true }],
   companions: [
     { name: "size-ratchet", installed: true },
     { name: "preflight", installed: false },
   ],
+  notes: ["core.hooksPath is never set."],
+  removal: "run the uninstaller before removing this package",
 };
 
-const show = (queue: Disclosure[]) => {
+const show = (queue: Disclosure[], busy = false) => {
   useMarketplacesStore.setState({
     pendingEffects: { scope: PROJECT, queue },
-    busy: false,
+    busy,
   });
   mount(<RepoEffectsDialog />);
   return document.body;
 };
+
+const button = (body: HTMLElement, label: string) =>
+  Array.from(body.querySelectorAll("button")).find(
+    (b) => b.textContent === label,
+  );
 
 describe("the account a person reads", () => {
   it("carries what changes, where, who takes part, and how to undo it", () => {
     const body = show([guards]);
     const text = body.textContent ?? "";
     expect(text).toContain(repoEffectsTitle("growth-guards"));
-    expect(text).toContain(guards.declared.summary);
+    expect(text).toContain(guards.summary);
     expect(text).toContain("~/app/.git/hooks/pre-commit");
     expect(text).toContain(REPO_EFFECTS_SHARED_NOTE);
     expect(text).toContain("size-ratchet");
@@ -75,10 +84,29 @@ describe("the account a person reads", () => {
   });
 
   it("never promises a removal the package did not declare", () => {
-    const body = show([
-      { ...guards, declared: { ...guards.declared, removal: null } },
-    ]);
+    const body = show([{ ...guards, removal: null }]);
     expect(body.textContent).toContain(REPO_EFFECTS_NO_REMOVAL);
+  });
+
+  it("renders the display text as core escaped it, never the raw declaration", () => {
+    // Core hands the path through `shown`, so a direction-flipping
+    // character arrives as its escape; the raw declaration beside it
+    // still carries the character, and must not be what renders.
+    const body = show([
+      {
+        ...guards,
+        declared: {
+          ...guards.declared,
+          writes: [".git/hooks/‮pre-commit"],
+        },
+        writes: [
+          { path: "/home/me/app/.git/hooks/\\u{202e}pre-commit", shared: true },
+        ],
+      },
+    ]);
+    const text = body.textContent ?? "";
+    expect(text).toContain("\\u{202e}pre-commit");
+    expect(text).not.toContain("‮");
   });
 
   it("renders nothing when nothing is waiting", () => {
@@ -92,14 +120,12 @@ describe("the answer", () => {
   it("a yes runs exactly the declaration on screen", async () => {
     vi.mocked(commands.repoEffectsApply).mockResolvedValue({
       status: "ok",
-      data: null,
+      data: [],
     });
     const body = show([guards]);
-    const button = Array.from(body.querySelectorAll("button")).find(
-      (b) => b.textContent === REPO_EFFECTS_APPLY_LABEL,
-    );
-    expect(button).toBeDefined();
-    await userEvent.click(button as HTMLButtonElement);
+    const apply = button(body, REPO_EFFECTS_APPLY_LABEL);
+    expect(apply).toBeDefined();
+    await userEvent.click(apply as HTMLButtonElement);
     await settle();
     expect(commands.repoEffectsApply).toHaveBeenCalledWith(
       PROJECT,
@@ -111,13 +137,38 @@ describe("the answer", () => {
   it("a no runs nothing and closes", async () => {
     vi.mocked(commands.repoEffectsApply).mockClear();
     const body = show([guards]);
-    const button = Array.from(body.querySelectorAll("button")).find(
-      (b) => b.textContent === REPO_EFFECTS_DECLINE_LABEL,
+    await userEvent.click(
+      button(body, REPO_EFFECTS_DECLINE_LABEL) as HTMLButtonElement,
     );
-    await userEvent.click(button as HTMLButtonElement);
     await settle();
     expect(commands.repoEffectsApply).not.toHaveBeenCalled();
     expect(useMarketplacesStore.getState().pendingEffects).toBeNull();
+  });
+
+  it("closing the dialog is a no", async () => {
+    vi.mocked(commands.repoEffectsApply).mockClear();
+    show([guards]);
+    await userEvent.keyboard("{Escape}");
+    await settle();
+    expect(commands.repoEffectsApply).not.toHaveBeenCalled();
+    expect(useMarketplacesStore.getState().pendingEffects).toBeNull();
+  });
+
+  it("while an answer is running, neither button nor Escape answers again", async () => {
+    vi.mocked(commands.repoEffectsApply).mockClear();
+    const body = show([guards], true);
+    expect(
+      (button(body, REPO_EFFECTS_APPLY_LABEL) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(
+      (button(body, REPO_EFFECTS_DECLINE_LABEL) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    await userEvent.keyboard("{Escape}");
+    await settle();
+    expect(useMarketplacesStore.getState().pendingEffects?.queue).toEqual([
+      guards,
+    ]);
+    expect(commands.repoEffectsApply).not.toHaveBeenCalled();
   });
 
   it("a package with nothing to run gets no button that would run it", () => {

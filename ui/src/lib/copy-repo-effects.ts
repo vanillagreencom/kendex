@@ -27,8 +27,12 @@ export const REPO_EFFECTS_NOTHING_TO_RUN =
   "kendex has nothing to run for this. Arm it yourself when you are ready.";
 export const REPO_EFFECTS_DONE_LABEL = "Done";
 
+/** Shown only when the installer said nothing itself; its own last line
+ * is preferred, so a deliberate skip reads as a skip. */
 export const repoEffectsAppliedToast = (name: string) =>
   `Applied ${name}'s repository changes`;
+export const repoEffectsFailedTitle = (name: string) =>
+  `${name}'s repository changes failed`;
 export const repoEffectsDeclinedToast = (name: string) =>
   `${name} is installed; its repository changes were not applied`;
 export const repoEffectsWithheldToast = (name: string, reason: string) =>

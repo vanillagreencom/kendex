@@ -7,9 +7,11 @@ import { commands, type Disclosure, type Scope } from "@/bindings";
 import {
   repoEffectsAppliedToast,
   repoEffectsDeclinedToast,
+  repoEffectsFailedTitle,
   repoEffectsWithheldToast,
 } from "@/lib/copy-repo-effects";
 import { useMarketplacesStore } from "./marketplaces";
+import { useProblemsStore } from "./problems";
 
 vi.mock("@/bindings", () => ({
   commands: {
@@ -41,8 +43,12 @@ const disclosure = (name: string): Disclosure => ({
     notes: [],
     companions: [],
   },
+  name,
+  summary: `${name} arms hooks`,
   writes: [{ path: "/home/me/app/.git/hooks/pre-commit", shared: true }],
   companions: [],
+  notes: [],
+  removal: null,
 });
 
 const installed = (shown: Disclosure[], withheld = []) => ({
@@ -61,6 +67,7 @@ const install = (destination?: Scope) =>
 beforeEach(() => {
   vi.clearAllMocks();
   useMarketplacesStore.setState({ pendingEffects: null, busy: false });
+  useProblemsStore.getState().closeError();
 });
 
 describe("what an install leaves waiting", () => {
@@ -104,23 +111,37 @@ describe("answering", () => {
     });
   });
 
-  it("a yes runs the declaration that was shown, in that scope, and moves on", async () => {
+  it("a yes runs the declaration that was shown, in that scope, and shows the installer's own last word", async () => {
     const { toast } = await import("sonner");
     vi.mocked(commands.repoEffectsApply).mockResolvedValue({
       status: "ok",
-      data: null,
+      data: ["writing helper", "hooks: skipped — core.hooksPath is set"],
     });
     expect(await useMarketplacesStore.getState().applyRepoEffect()).toBe(true);
     expect(commands.repoEffectsApply).toHaveBeenCalledWith(
       PROJECT,
       disclosure("guards").declared,
     );
+    // Not "Applied": the installer said it armed nothing, and that is
+    // what the person reads.
     expect(toast.success).toHaveBeenCalledWith(
-      repoEffectsAppliedToast("guards"),
+      "hooks: skipped — core.hooksPath is set",
     );
     expect(useMarketplacesStore.getState().pendingEffects?.queue).toEqual([
       disclosure("linter"),
     ]);
+  });
+
+  it("a silent installer gets the canned line", async () => {
+    const { toast } = await import("sonner");
+    vi.mocked(commands.repoEffectsApply).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+    await useMarketplacesStore.getState().applyRepoEffect();
+    expect(toast.success).toHaveBeenCalledWith(
+      repoEffectsAppliedToast("guards"),
+    );
   });
 
   it("a no runs nothing and says the package is installed unarmed", async () => {
@@ -139,14 +160,20 @@ describe("answering", () => {
     expect(useMarketplacesStore.getState().pendingEffects).toBeNull();
   });
 
-  it("a failed installer is reported and the line still moves on", async () => {
+  it("a failed installer opens the error dialog with the whole account, and the line still moves on", async () => {
     const { toast } = await import("sonner");
+    const account =
+      "guards: scripts/arm exited 1 — anything it wrote before that is still there; the package declares no way to undo it\ncould not write hooks";
     vi.mocked(commands.repoEffectsApply).mockResolvedValue({
       status: "error",
-      error: "scripts/arm exited 1",
+      error: account,
     });
     expect(await useMarketplacesStore.getState().applyRepoEffect()).toBe(false);
-    expect(toast.error).toHaveBeenCalledWith("scripts/arm exited 1");
+    expect(toast.error).not.toHaveBeenCalled();
+    const { dialog } = useProblemsStore.getState();
+    expect(dialog.open).toBe(true);
+    expect(dialog.title).toBe(repoEffectsFailedTitle("guards"));
+    expect(dialog.message).toBe(account);
     expect(useMarketplacesStore.getState().pendingEffects?.queue).toEqual([
       disclosure("linter"),
     ]);

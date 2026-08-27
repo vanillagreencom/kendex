@@ -5,11 +5,10 @@
 //! was shown. The consent that follows is next door and reads nothing
 //! else. What a declaration means for THIS repository — where a path
 //! lands, who shares it, which companions are here — is core's answer,
-//! and this only prints it.
+//! already shown through `names::shown` there, and this only prints it.
 
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
-use kendex_core::names::shown;
 use kendex_core::repo_effects::{DeclaredEffects, Disclosure};
 
 use super::super::say;
@@ -32,16 +31,11 @@ pub fn disclose(
     scope: &Scope,
     effects: &[DeclaredEffects],
 ) -> Result<Vec<Disclosure>, Box<dyn std::error::Error>> {
-    if effects.is_empty() {
-        return Ok(Vec::new());
-    }
-    let installed = kendex_core::repo_effects::installed_skills(env, scope)?;
-    let offers = kendex_core::repo_effects::offers(scope, effects, &installed);
+    let offers = kendex_core::repo_effects::offers_for(env, scope, effects)?;
     for withheld in &offers.withheld {
         say(&format!(
             "{}: not disclosed — {}",
-            shown(&withheld.name),
-            withheld.reason
+            withheld.name, withheld.reason
         ));
     }
     for disclosure in &offers.shown {
@@ -51,18 +45,17 @@ pub fn disclose(
 }
 
 fn print(disclosure: &Disclosure) {
-    let effects = &disclosure.declared.effects;
-    let name = shown(&disclosure.declared.name);
+    let name = &disclosure.name;
     say("");
     say(&format!(
         "{name} changes how this repository works, beyond the files above:"
     ));
-    say(&format!("  {}", shown(&effects.summary)));
+    say(&format!("  {}", disclosure.summary));
     if !disclosure.writes.is_empty() {
         say("");
         say("  writes");
         for written in &disclosure.writes {
-            say(&format!("    {}", shown(&written.path)));
+            say(&format!("    {}", written.path));
         }
         if disclosure.writes.iter().any(|written| written.shared) {
             say("");
@@ -76,7 +69,7 @@ fn print(disclosure: &Disclosure) {
         for companion in &disclosure.companions {
             say(&format!(
                 "    {} ({})",
-                shown(&companion.name),
+                companion.name,
                 match companion.installed {
                     true => "installed",
                     false => "not installed",
@@ -89,13 +82,13 @@ fn print(disclosure: &Disclosure) {
         // growth-guards' for every package that declares any. A package
         // with something to say about its companions says it in `notes`.
     }
-    for note in &effects.notes {
+    for note in &disclosure.notes {
         say("");
-        say(&format!("  {}", shown(note)));
+        say(&format!("  {note}"));
     }
     say("");
-    match &effects.removal {
-        Some(removal) => say(&format!("  to undo: {}", shown(removal))),
+    match &disclosure.removal {
+        Some(removal) => say(&format!("  to undo: {removal}")),
         // Not "remove the package". Removing it takes the scripts away
         // and leaves the effect: shims in .git/hooks outlive the tree
         // they point at, and then fail every commit closed. What is true

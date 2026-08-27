@@ -46,7 +46,10 @@ fn the_repository_effect_is_disclosed_and_not_applied_without_a_yes() {
     assert!(out.contains("every commit in this repository"), "{out}");
     assert!(out.contains(".git/hooks/pre-commit"), "{out}");
     assert!(out.contains(".git/hooks/commit-msg"), "{out}");
-    assert!(out.contains("size-ratchet"), "no companion line:\n{out}");
+    assert!(
+        out.contains("size-ratchet (not installed)"),
+        "no companion line:\n{out}"
+    );
     assert!(out.contains("to undo:"), "{out}");
 
     // The refusal names the flag rather than leaving the reader to find it.
@@ -187,4 +190,20 @@ fn apply_discloses_a_hand_declared_package_and_waits_for_its_own_yes() {
         armed.at(".git/hooks/kendex-guards").is_file(),
         "the yes did not arm the hooks:\n{out}"
     );
+}
+
+/// Which companions are here is kendex's answer, not the package's: one
+/// installed before the declaring package reads as installed in its block.
+#[test]
+fn a_companion_already_here_reads_as_installed() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    offer(&world, "size-ratchet");
+    offer(&world, "growth-guards");
+    world.run(&["add", "cat", "--skill", "size-ratchet", "-y"]);
+    let spoken = world.try_run(&["add", "cat", "--skill", "growth-guards", "-y"]);
+    let out = spoke(&spoken);
+    assert!(spoken.status.success(), "{out}");
+    assert!(out.contains("size-ratchet (installed)"), "{out}");
+    assert!(out.contains("preflight (not installed)"), "{out}");
 }

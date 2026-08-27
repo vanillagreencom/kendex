@@ -175,7 +175,8 @@ pub fn install(
     apply::execute(env, &report.plan, None).map_err(|e| e.to_string())?;
     // After the write, because the script an effect runs is the one this
     // install just put on disk.
-    let repo_effects = crate::repo_effects::offers(env, &target, &report)?;
+    let repo_effects = kendex_core::repo_effects::offers_for(env, &target, &report.repo_effects)
+        .map_err(|e| e.to_string())?;
     let packages = browse::packages(
         env,
         &Catalog::Subscription {

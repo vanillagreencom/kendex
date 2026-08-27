@@ -16,7 +16,7 @@ mod packages;
 mod paths;
 pub mod recovery;
 pub mod repo_effects;
-mod sources;
+pub mod sources;
 mod unsubscribe;
 mod whole_file;
 mod window;

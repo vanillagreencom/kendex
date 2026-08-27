@@ -92,12 +92,12 @@ away. A delegating line it may not edit (a symlinked hook) keeps the helper
 in place and fails the removal rather than stranding a hook with no guard to
 reach.
 
-Nothing runs this installer on a package lifecycle event today: `kendex guard
-install`, `kendex guard uninstall` and `kendex guard check` are the verbs
-that invoke it, and
+The installer runs on `kendex guard install` and on the separate yes an
+install offers — in the terminal (`kendex add`, a collection add, `kendex
+apply`) and in the app. `kendex guard uninstall` and `kendex guard check`
+invoke it too. `kendex remove` does not run the uninstaller (KEN-674):
 disarming before removing the skill is the caller's to do — shims whose
-scripts are gone block every commit. Wiring `kendex add` / `refresh` /
-`remove` to it arrives with the repo-effects declaration (KEN-663 part 2).
+scripts are gone block every commit.
 
 `--check` is the read-only counterpart: it writes nothing — not even the
 hooks directory — and answers whether the shims are armed. `0`: the helper

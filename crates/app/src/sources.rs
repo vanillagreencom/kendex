@@ -99,6 +99,17 @@ pub fn bundle_install(
     hold: bool,
 ) -> Result<BundleInstalled, String> {
     let env = env()?;
+    install_bundle(&env, &scope, source, name, hold)
+}
+
+/// The bundle install itself, against the environment it is given.
+pub fn install_bundle(
+    env: &Env,
+    scope: &Scope,
+    source: String,
+    name: String,
+    hold: bool,
+) -> Result<BundleInstalled, String> {
     let request = AddRequest {
         source: Some(source),
         bundles: vec![name],
@@ -106,11 +117,16 @@ pub fn bundle_install(
         hold,
         ..AddRequest::default()
     };
-    let report = engine_ops::add(&env, &scope, &request).map_err(|e| e.to_string())?;
-    apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
-    let repo_effects = crate::repo_effects::offers(&env, &scope, &report)?;
+    let report = engine_ops::add(env, scope, &request).map_err(|e| e.to_string())?;
+    apply::execute(env, &report.plan, None).map_err(|e| e.to_string())?;
+    let repo_effects = kendex_core::repo_effects::offers_for(env, scope, &report.repo_effects)
+        .map_err(|e| e.to_string())?;
+    let mut bundles = Vec::new();
+    for scope in all_scopes(env)? {
+        bundles.extend(source_ops::list_bundles(env, &scope).map_err(|e| e.to_string())?);
+    }
     Ok(BundleInstalled {
-        bundles: bundles_overview()?,
+        bundles,
         repo_effects,
     })
 }

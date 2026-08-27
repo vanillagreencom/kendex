@@ -180,7 +180,7 @@ export const commands = {
 	 *  to be offerable, and one removed since must not read as present.
 	 */
 	installTargets: (scope: Scope, kinds: ItemKind[]) => typedError<InstallTarget[], string>(__TAURI_INVOKE("install_targets", { scope, kinds })),
-	repoEffectsApply: (scope: Scope, declared: DeclaredEffects) => typedError<null, string>(__TAURI_INVOKE("repo_effects_apply", { scope, declared })),
+	repoEffectsApply: (scope: Scope, declared: DeclaredEffects) => typedError<string[], string>(__TAURI_INVOKE("repo_effects_apply", { scope, declared })),
 	/**
 	 *  Subscribe a scope to a marketplace: `owner/repo[@rev]`, a git URL, a
 	 *  GitHub tree URL, a skills.sh package URL, or a local folder.
@@ -710,6 +710,7 @@ export type CatalogSummary = {
  *  installed in this scope.
  */
 export type Companion = {
+	/**  Display text: shown once, printed as it is. */
 	name: string,
 	installed: boolean,
 };
@@ -871,11 +872,19 @@ export type DirectoryView = {
 /**
  *  What a person reads before saying yes to one package's effect, and the
  *  declaration that yes runs.
+ * 
+ *  The display fields are the declaration's own words as they go on the
+ *  screen; `declared` is the same words untouched, for the command that
+ *  runs the effect. A surface reads the former and hands back the latter.
  */
 export type Disclosure = {
 	declared: DeclaredEffects,
+	name: string,
+	summary: string,
 	writes: Written[],
 	companions: Companion[],
+	notes: string[],
+	removal: string | null,
 };
 
 /**
@@ -2401,6 +2410,7 @@ export type VersionSel =
 
 /**  An effect that was neither shown nor offered, and why. */
 export type Withheld = {
+	/**  Display text: shown once, printed as it is. */
 	name: string,
 	reason: string,
 };
@@ -2422,7 +2432,7 @@ export type WriteRefused =
 export type Written = {
 	/**
 	 *  Absolute, because the whole value of the line is that a reader can
-	 *  go and look.
+	 *  go and look. Display text: shown once, printed as it is.
 	 */
 	path: string,
 	/**

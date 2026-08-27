@@ -30,7 +30,13 @@ import { useMarketplacesStore } from "@/stores/marketplaces";
  *  a package does to the repository beyond the files kendex manages, and
  *  whether to let it. One package at a time, each with its own yes, in the
  *  order the install reported them. The package's files are already in;
- *  closing this leaves them in and the repository as it was. */
+ *  closing this leaves them in and the repository as it was.
+ *
+ *  Every word of the package's on screen is core's display text, already
+ *  escaped once there: a direction-flipping character in a declared path
+ *  would otherwise read as a different file from the one being
+ *  authorized. Nothing here reads the raw declaration except to hand it
+ *  back. */
 export function RepoEffectsDialog() {
   const pending = useMarketplacesStore((s) => s.pendingEffects);
   const busy = useMarketplacesStore((s) => s.busy);
@@ -49,9 +55,7 @@ export function RepoEffectsDialog() {
     >
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>
-            {repoEffectsTitle(disclosure.declared.name)}
-          </DialogTitle>
+          <DialogTitle>{repoEffectsTitle(disclosure.name)}</DialogTitle>
           <DialogDescription>{REPO_EFFECTS_STANDING}</DialogDescription>
         </DialogHeader>
         <DisclosureBody disclosure={disclosure} />
@@ -82,11 +86,10 @@ export function RepoEffectsDialog() {
  *  fact kendex knows about this machine; nothing here explains what a
  *  declaration means, because that is the package's contract. */
 function DisclosureBody({ disclosure }: { disclosure: Disclosure }) {
-  const effects = disclosure.declared;
   const shared = disclosure.writes.some((written) => written.shared);
   return (
     <div className="space-y-4 text-sm">
-      <p className="font-medium">{effects.summary}</p>
+      <p className="font-medium">{disclosure.summary}</p>
       {disclosure.writes.length > 0 ? (
         <section className="space-y-1.5">
           <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
@@ -123,7 +126,7 @@ function DisclosureBody({ disclosure }: { disclosure: Disclosure }) {
           </ul>
         </section>
       ) : null}
-      {effects.notes.map((note) => (
+      {disclosure.notes.map((note) => (
         <p key={note} className="text-muted-foreground">
           {note}
         </p>
@@ -135,10 +138,10 @@ function DisclosureBody({ disclosure }: { disclosure: Disclosure }) {
         {/* Never "remove the package": removing it takes the scripts away
             and leaves the effect. What is true is what the package said. */}
         <p className="text-muted-foreground">
-          {effects.removal ?? REPO_EFFECTS_NO_REMOVAL}
+          {disclosure.removal ?? REPO_EFFECTS_NO_REMOVAL}
         </p>
       </section>
-      {effects.installer === null ? (
+      {disclosure.declared.installer === null ? (
         <p className="text-muted-foreground">{REPO_EFFECTS_NOTHING_TO_RUN}</p>
       ) : null}
     </div>

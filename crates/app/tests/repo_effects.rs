@@ -10,7 +10,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use kendex_app::marketplaces::install::{InstallItem, install};
+use kendex_app::marketplaces::install::{InstallItem, Installed, install};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::model::{ItemKind, Scope};
 
@@ -54,7 +54,8 @@ fn copy_tree(from: &Path, to: &Path) {
 }
 
 /// A git project subscribed to a catalog that offers the repository's own
-/// growth-guards package beside an inert one, with Claude on the machine.
+/// growth-guards and size-ratchet packages beside an inert one, plus a
+/// bundle carrying growth-guards, with Claude on the machine.
 #[allow(clippy::unwrap_used)]
 fn fixture() -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
@@ -62,14 +63,21 @@ fn fixture() -> Fixture {
     let project = home.join("dev/app");
     let catalog = home.join("catalog");
     let shipped = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../skills/growth-guards")
+        .join("../../skills")
         .canonicalize()
         .unwrap();
-    copy_tree(&shipped, &catalog.join("skills/growth-guards"));
+    for skill in ["growth-guards", "size-ratchet"] {
+        copy_tree(&shipped.join(skill), &catalog.join("skills").join(skill));
+    }
     fs::create_dir_all(catalog.join("skills/deploy")).unwrap();
     fs::write(
         catalog.join("skills/deploy/SKILL.md"),
         "---\nname: deploy\ndescription: ship the service\n---\nRun the deploy.\n",
+    )
+    .unwrap();
+    fs::write(
+        catalog.join("kendex.toml"),
+        "[bundles.guards]\ndescription = \"the commit gate\"\nskills = [\"growth-guards\"]\n",
     )
     .unwrap();
     fs::create_dir_all(home.join(".claude")).unwrap();
@@ -96,22 +104,36 @@ fn fixture() -> Fixture {
     }
 }
 
-fn install_skill(f: &Fixture, name: &str) -> kendex_app::marketplaces::install::Installed {
+fn install_skills(f: &Fixture, names: &[&str], bundle: Option<&str>) -> Installed {
     install(
         &f.env,
         f.scope.clone(),
         "cat".to_owned(),
-        vec![InstallItem {
-            kind: ItemKind::Skill,
-            name: name.to_owned(),
-        }],
-        None,
+        names
+            .iter()
+            .map(|name| InstallItem {
+                kind: ItemKind::Skill,
+                name: (*name).to_owned(),
+            })
+            .collect(),
+        bundle.map(str::to_owned),
         None,
         false,
         None,
         None,
     )
-    .unwrap_or_else(|error| panic!("install {name}: {error}"))
+    .unwrap_or_else(|error| panic!("install {names:?} {bundle:?}: {error}"))
+}
+
+fn companion<'a>(
+    offer: &'a kendex_core::repo_effects::Disclosure,
+    name: &str,
+) -> &'a kendex_core::repo_effects::Companion {
+    offer
+        .companions
+        .iter()
+        .find(|c| c.name == name)
+        .unwrap_or_else(|| panic!("no companion {name}: {:?}", offer.companions))
 }
 
 /// Installing writes the package and hands back its account — what
@@ -121,7 +143,7 @@ fn install_skill(f: &Fixture, name: &str) -> kendex_app::marketplaces::install::
 #[allow(clippy::unwrap_used)]
 fn the_effect_comes_back_unrun_and_a_separate_yes_arms_it() {
     let f = fixture();
-    let installed = install_skill(&f, "growth-guards");
+    let installed = install_skills(&f, &["growth-guards"], None);
 
     assert!(
         f.project
@@ -141,8 +163,8 @@ fn the_effect_comes_back_unrun_and_a_separate_yes_arms_it() {
     let [offer] = installed.repo_effects.shown.as_slice() else {
         panic!("one offer: {:?}", installed.repo_effects);
     };
-    assert_eq!(offer.declared.name, "growth-guards");
-    assert!(offer.declared.effects.summary.contains("every commit"));
+    assert_eq!(offer.name, "growth-guards");
+    assert!(offer.summary.contains("every commit"));
     let hooks = f.project.join(".git/hooks");
     let written: Vec<&str> = offer.writes.iter().map(|w| w.path.as_str()).collect();
     assert!(
@@ -150,18 +172,68 @@ fn the_effect_comes_back_unrun_and_a_separate_yes_arms_it() {
         "{written:?}"
     );
     assert!(offer.writes.iter().all(|w| w.shared), "{:?}", offer.writes);
-    let size_ratchet = offer
-        .companions
-        .iter()
-        .find(|c| c.name == "size-ratchet")
-        .unwrap();
-    assert!(!size_ratchet.installed, "{:?}", offer.companions);
-    assert!(offer.declared.effects.removal.is_some());
+    assert!(!companion(offer, "size-ratchet").installed);
+    assert!(offer.removal.is_some());
 
-    kendex_app::repo_effects::apply(&f.scope, &offer.declared).unwrap();
+    let said = kendex_app::repo_effects::apply(&f.scope, &offer.declared).unwrap();
     assert!(
         f.project.join(".git/hooks/kendex-guards").is_file(),
         "the yes did not arm the hooks"
+    );
+    // The installer's own last word is what the window shows.
+    assert!(
+        said.last().is_some_and(|line| line.contains("armed")),
+        "{said:?}"
+    );
+}
+
+/// A companion already in the scope is reported as installed — the one
+/// fact about companions kendex answers rather than the package.
+#[test]
+fn a_companion_already_here_reads_as_installed() {
+    let f = fixture();
+    let first = install_skills(&f, &["size-ratchet"], None);
+    assert!(first.repo_effects.is_empty(), "{:?}", first.repo_effects);
+    let installed = install_skills(&f, &["growth-guards"], None);
+    let [offer] = installed.repo_effects.shown.as_slice() else {
+        panic!("one offer: {:?}", installed.repo_effects);
+    };
+    assert!(companion(offer, "size-ratchet").installed);
+    assert!(!companion(offer, "preflight").installed);
+}
+
+/// A set that carries a declaring package brings the same offer, on both
+/// of the app's bundle routes.
+#[test]
+fn a_bundle_carrying_the_package_brings_its_offer() {
+    let f = fixture();
+    let installed = install_skills(&f, &[], Some("guards"));
+    assert_eq!(
+        installed.repo_effects.shown.len(),
+        1,
+        "{:?}",
+        installed.repo_effects
+    );
+    assert_eq!(installed.repo_effects.shown[0].name, "growth-guards");
+
+    let g = fixture();
+    let installed = kendex_app::sources::install_bundle(
+        &g.env,
+        &g.scope,
+        "cat".to_owned(),
+        "guards".to_owned(),
+        false,
+    )
+    .unwrap_or_else(|error| panic!("bundle_install: {error}"));
+    assert_eq!(
+        installed.repo_effects.shown.len(),
+        1,
+        "{:?}",
+        installed.repo_effects
+    );
+    assert!(
+        !g.project.join(".git/hooks/kendex-guards").exists(),
+        "the bundle install armed the hooks with nobody asked"
     );
 }
 
@@ -170,7 +242,7 @@ fn the_effect_comes_back_unrun_and_a_separate_yes_arms_it() {
 #[test]
 fn an_inert_package_brings_no_offer() {
     let f = fixture();
-    let installed = install_skill(&f, "deploy");
+    let installed = install_skills(&f, &["deploy"], None);
     assert!(
         installed.repo_effects.is_empty(),
         "{:?}",

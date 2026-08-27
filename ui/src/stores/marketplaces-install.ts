@@ -14,6 +14,7 @@ import { commands } from "@/bindings";
 import {
   repoEffectsAppliedToast,
   repoEffectsDeclinedToast,
+  repoEffectsFailedTitle,
   repoEffectsWithheldToast,
 } from "@/lib/copy-repo-effects";
 import {
@@ -21,6 +22,7 @@ import {
   refreshDownstream,
   subscription,
 } from "./marketplaces-shared";
+import { useProblemsStore } from "./problems";
 
 /** One install: what to put where, and — when the picker was used — which
  * tools it lands on and how the files get there. Each half of `delivery` is
@@ -140,8 +142,12 @@ export function installActions(set: Set, get: Get): InstallActions {
     },
 
     /** Run the installer of the package at the head of the line, here and
-     *  now. A failure is reported and the line moves on: the package stays
-     *  installed either way, and the declaration says where to look. */
+     *  now, and show its own last word: an installer that deliberately
+     *  armed nothing says so and exits clean, and a canned "Applied" over
+     *  it would tell the person the repository is armed when it is not.
+     *  A failure is the one account of a possibly half-written repository,
+     *  so it opens the error dialog rather than flashing past in a toast;
+     *  the line moves on either way, the package staying installed. */
     applyRepoEffect: async () => {
       const pending = get().pendingEffects;
       if (!pending) return false;
@@ -156,12 +162,16 @@ export function installActions(set: Set, get: Get): InstallActions {
       } finally {
         set({ busy: false });
       }
-      advance();
       if (response.status === "error") {
-        toast.error(response.error);
+        useProblemsStore.getState().showError({
+          title: repoEffectsFailedTitle(head.name),
+          message: response.error,
+        });
+        advance();
         return false;
       }
-      toast.success(repoEffectsAppliedToast(head.declared.name));
+      advance();
+      toast.success(response.data.at(-1) ?? repoEffectsAppliedToast(head.name));
       return true;
     },
 
@@ -170,7 +180,7 @@ export function installActions(set: Set, get: Get): InstallActions {
     declineRepoEffect: () => {
       const pending = get().pendingEffects;
       if (!pending) return;
-      toast.info(repoEffectsDeclinedToast(pending.queue[0].declared.name));
+      toast.info(repoEffectsDeclinedToast(pending.queue[0].name));
       advance();
     },
   };

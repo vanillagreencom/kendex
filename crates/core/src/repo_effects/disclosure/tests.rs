@@ -73,11 +73,11 @@ fn git_paths_land_in_the_common_dir_and_read_as_shared() {
         &BTreeSet::new(),
     );
     assert!(offers.withheld.is_empty(), "{offers:?}");
-    let [shown] = offers.shown.as_slice() else {
+    let [disclosure] = offers.shown.as_slice() else {
         panic!("one disclosure: {offers:?}");
     };
-    let [hook, workflow] = shown.writes.as_slice() else {
-        panic!("two paths: {shown:?}");
+    let [hook, workflow] = disclosure.writes.as_slice() else {
+        panic!("two paths: {disclosure:?}");
     };
     assert_eq!(
         hook.path,
@@ -114,6 +114,15 @@ fn without_a_repository_only_git_writers_are_withheld() {
     );
     assert_eq!(offers.withheld.len(), 1, "{offers:?}");
     assert_eq!(offers.withheld[0].name, "guards");
+    // The reason carries git's own answer: not being in a repository wants
+    // a different remedy from a bare one or a git that could not run.
+    assert!(
+        offers.withheld[0]
+            .reason
+            .contains("not inside a git repository"),
+        "{}",
+        offers.withheld[0].reason
+    );
     assert_eq!(offers.shown.len(), 1, "{offers:?}");
     assert_eq!(offers.shown[0].declared.name, "linter");
     assert!(!offers.shown[0].writes[0].shared);
@@ -132,6 +141,8 @@ fn nothing_is_offered_outside_a_project() {
 
 /// Companion presence is answered from what the scope carries, in the
 /// order the package named them.
+/// Every value the package chose reaches the screen through `shown`: a
+/// direction-flipping character in a name is printed as its escape.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn companions_are_answered_from_the_installed_set() {
@@ -156,4 +167,18 @@ fn companions_are_answered_from_the_installed_set() {
             },
         ]
     );
+
+    let mut forged = declared(&["tools/\u{202e}tnil"], &["pre\u{200b}flight"]);
+    forged.effects.summary = "arms\u{1b}[2Jhooks".to_owned();
+    let escaped = super::offers(&project(tmp.path()), &[forged], &installed);
+    let block = &escaped.shown[0];
+    assert!(
+        block.writes[0].path.ends_with("tools/\\u{202e}tnil"),
+        "{}",
+        block.writes[0].path
+    );
+    assert_eq!(block.companions[0].name, "pre\\u{200b}flight");
+    assert_eq!(block.summary, "arms\\u{1b}[2Jhooks");
+    // And the raw declaration is untouched, for the yes to run.
+    assert_eq!(block.declared.effects.summary, "arms\u{1b}[2Jhooks");
 }

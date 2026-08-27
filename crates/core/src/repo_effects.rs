@@ -26,7 +26,9 @@ mod declaration;
 pub mod disclosure;
 use declaration::split_script;
 pub use declaration::{RepoEffects, declared};
-pub use disclosure::{Companion, Disclosure, Offers, Withheld, Written, installed_skills, offers};
+pub use disclosure::{
+    Companion, Disclosure, Offers, Withheld, Written, installed_skills, offers, offers_for,
+};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -85,6 +87,113 @@ fn err(message: impl Into<String>) -> crate::error::CoreError {
         message: message.into(),
     }
 }
+
+/// Run one package's declared installer, here and now, and judge its exit.
+///
+/// The run is the whole of it: what it wrote is on disk for anyone to look
+/// at, and nothing kendex stores decides what a later run does. Every
+/// surface that has a yes calls this, so a package with nothing to run and
+/// an installer that failed read the same on each of them.
+pub fn arm(
+    scope: &crate::model::Scope,
+    declared: &DeclaredEffects,
+) -> std::result::Result<crate::guard::GuardReport, ArmError> {
+    let Some(installer) = &declared.effects.installer else {
+        return Err(ArmError::NothingToRun {
+            name: declared.name.clone(),
+        });
+    };
+    let report = run_script(scope, &declared.root, installer)?;
+    if report.code != 0 {
+        return Err(ArmError::Failed {
+            name: declared.name.clone(),
+            installer: installer.clone(),
+            code: report.code,
+            undo: declared.effects.undo(),
+            report: Box::new(report),
+        });
+    }
+    Ok(report)
+}
+
+/// Why a yes did not arm the repository.
+#[derive(Debug)]
+pub enum ArmError {
+    /// The package declared no installer: the disclosure ends with what the
+    /// reader runs themselves, and kendex has nothing to launch.
+    NothingToRun { name: String },
+    /// The installer ran and exited nonzero. kendex takes no pre-image and
+    /// rolls nothing back, so an installer that wrote three files and
+    /// failed on the fourth leaves three files, and a message promising
+    /// otherwise is the one thing that would stop somebody looking. The
+    /// package's own lines are carried so a surface can show them.
+    Failed {
+        name: String,
+        installer: String,
+        code: u8,
+        /// How the package says to undo it, or nothing where it said
+        /// nothing — never a claim the package did not make.
+        undo: Option<String>,
+        report: Box<crate::guard::GuardReport>,
+    },
+    /// The installer could not be run at all. Boxed: the error is a rare
+    /// path and the common `Ok` should not pay for its size.
+    Run(Box<crate::error::CoreError>),
+}
+
+impl std::fmt::Display for ArmError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::names::shown;
+        match self {
+            ArmError::NothingToRun { name } => write!(
+                f,
+                "{}: no installer to run — arm it yourself when you are ready",
+                shown(name)
+            ),
+            ArmError::Failed {
+                name,
+                installer,
+                code,
+                undo,
+                ..
+            } => {
+                write!(
+                    f,
+                    "{}: {} exited {code} — anything it wrote before that is still there; ",
+                    shown(name),
+                    shown(installer)
+                )?;
+                match undo {
+                    Some(undo) => write!(f, "to undo: {}", shown(undo)),
+                    None => write!(f, "the package declares no way to undo it"),
+                }
+            }
+            ArmError::Run(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for ArmError {}
+
+impl From<crate::error::CoreError> for ArmError {
+    fn from(error: crate::error::CoreError) -> Self {
+        ArmError::Run(Box::new(error))
+    }
+}
+
+impl RepoEffects {
+    /// What the package says undoes its effect: the uninstaller it declared
+    /// where there is one, else its removal text, else nothing.
+    pub fn undo(&self) -> Option<String> {
+        self.uninstaller
+            .as_ref()
+            .map(|script| format!("run `{script}` from the repository root"))
+            .or_else(|| self.removal.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests;
 
 /// One package's declaration, with the package it came from — what a plan
 /// carries out to the surfaces that disclose it.

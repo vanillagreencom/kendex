@@ -60,12 +60,7 @@ pub(super) fn run(
     // out — and an unrelated `add` then armed a package whose effect had
     // been declined. The effect belongs to the package, so the question is
     // about the package: was this name anywhere in the scope before.
-    let already_here: BTreeSet<&str> = before
-        .entries
-        .values()
-        .filter(|entry| entry.kind == ItemKind::Skill)
-        .map(|entry| entry.name.as_str())
-        .collect();
+    let already_here = crate::lock::skill_names(before);
     let installed: BTreeSet<&str> = added
         .iter()
         .filter(|change| {
