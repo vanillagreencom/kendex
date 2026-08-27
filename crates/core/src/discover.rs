@@ -94,7 +94,10 @@ pub fn any_dir(root: &Path, found: &mut dyn FnMut(&Path) -> bool) -> bool {
         if name.starts_with('.') || SKIP_DIRS.contains(&name) {
             continue;
         }
-        if path.is_dir() && !path.is_symlink() && any_dir(&path, found) {
+        // `file_type` does not follow the link, so a symlinked directory
+        // reads as not-a-directory and is pruned by the same test — one
+        // stat off the entry rather than two off the path.
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) && any_dir(&path, found) {
             return true;
         }
     }

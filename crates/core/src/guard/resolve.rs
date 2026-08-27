@@ -91,15 +91,20 @@ impl Installed {
     /// searches from where the caller stands, which is the right copy to
     /// RUN, while a hooks directory is shared by every project in the work
     /// tree and by every linked work tree of it. So the whole work tree and
-    /// the whole main checkout are walked, every directory asked for a
-    /// skills root holding the package — a copy anywhere in them is what
-    /// the shared shims run.
+    /// the whole main checkout are walked — every directory the project
+    /// walk's pruning leaves — each asked for a skills root holding the
+    /// package, because a copy anywhere in them is what the shared shims
+    /// run.
     ///
     /// Every directory, not every discovered project: a repository whose
     /// root carries a harness marker IS a project to the discovery walk,
     /// which stops there and never sees the nested project that armed the
     /// hooks. The main checkout is resolved once, for the roots `present`
-    /// searches and for the walk alike — it costs two git processes.
+    /// searches and for the walk alike — it costs two git processes, and
+    /// the trees are deduplicated before the walk for the same reason
+    /// `search_roots_with` deduplicates its roots: in an ordinary clone the
+    /// main checkout IS this work tree, and walking it twice is the whole
+    /// exhaustive walk paid over again for the same answer.
     ///
     /// [`present`]: Installed::present
     pub fn anywhere(repo: &super::Repo) -> bool {
@@ -116,8 +121,12 @@ impl Installed {
         {
             return true;
         }
-        std::iter::once(&repo.worktree)
-            .chain(main.iter())
+        let mut trees = vec![repo.worktree.clone()];
+        if let Some(main) = main.filter(|main| *main != repo.worktree) {
+            trees.push(main);
+        }
+        trees
+            .iter()
             .any(|tree| crate::discover::any_dir(tree, &mut carries))
     }
 
