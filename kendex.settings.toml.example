@@ -216,10 +216,12 @@ REVIEW_GATE_API_ATTEMPTS = "1"
 
 REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
 
-# Carry-safe delta classes ("docs", "comments"; empty = off): ancestor
-# evidence extends to head when the delta is entirely carry-safe. Never a
-# waiver — code changes always need fresh evidence. CAVEAT: "comments" is
-# line-lexical and cannot see heredocs; "docs" has no such caveat.
+# Carry-safe delta classes ("docs", "comments", "vendored"; empty = off):
+# ancestor evidence extends to head when the delta is entirely carry-safe.
+# "vendored" carries the files .kendex-lock.json records, each proven by
+# content against the lock at head. Never a waiver — code changes always
+# need fresh evidence. CAVEAT: "comments" is line-lexical and cannot see
+# heredocs; "docs" and "vendored" have no such caveat.
 REVIEW_GATE_CARRY_FORWARD = ""
 
 # Path globs that DISQUALIFY a carry — for policy-bearing markdown obeyed

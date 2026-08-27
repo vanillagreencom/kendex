@@ -13,7 +13,7 @@ use crate::model::Scope;
 use super::config_edits::ConfigEditPlan;
 use super::desired::{Artifact, Desired};
 use super::file_plan::{plan_file, plan_written_file};
-use super::item_record::{registration, rendered_hash};
+use super::item_record::{registration, rendered_files, rendered_hash};
 use super::tree_plan::plan_tree;
 use super::written::Written;
 use crate::configedit::ConfigEdit;
@@ -136,14 +136,20 @@ pub(super) fn plan_item(
         Some(entry) if !dirty && !hash_moved => entry.installed_at.clone(),
         _ => timestamp(),
     };
-    new_lock
-        .entries
-        .insert(item.key.clone(), record(item, existing, installed_at));
+    new_lock.entries.insert(
+        item.key.clone(),
+        record(item, scope, existing, installed_at),
+    );
     Ok(())
 }
 
 /// What this pass records about the installation it just planned.
-fn record(item: &Desired, existing: Option<&LockEntry>, installed_at: String) -> LockEntry {
+fn record(
+    item: &Desired,
+    scope: &Scope,
+    existing: Option<&LockEntry>,
+    installed_at: String,
+) -> LockEntry {
     LockEntry {
         name: item.name.clone(),
         kind: item.kind,
@@ -155,6 +161,7 @@ fn record(item: &Desired, existing: Option<&LockEntry>, installed_at: String) ->
         source_hash: item.hash.clone(),
         source_commit: item.source_commit.clone(),
         rendered_hash: rendered_hash(&item.artifact),
+        rendered_files: rendered_files(&item.artifact, scope),
         enabled: item.enabled,
         upstream_skills: item.upstream_skills.clone(),
         emitted: item.emitted.clone(),

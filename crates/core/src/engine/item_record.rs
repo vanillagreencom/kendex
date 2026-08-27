@@ -7,10 +7,13 @@
 //! upstream changing a file, is not the person's doing, and a pass that
 //! could not tell the difference said it was.
 
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use crate::configedit::ConfigEdit;
+use crate::hash::content_hash;
 use crate::lock::LockEntry;
+use crate::model::Scope;
 
 use super::desired::{Artifact, Desired};
 
@@ -339,3 +342,59 @@ pub(super) fn rendered_hash(artifact: &Artifact) -> Option<String> {
         Artifact::Registration { script: None, .. } => None,
     }
 }
+
+/// Every file this artifact writes, by path relative to the project root,
+/// each with the plain hash of its bytes — the per-file half of the
+/// record `rendered_hash` keeps as one number. Project scope only: the
+/// reader this serves has the repository and nothing else, and a global
+/// install has no repository to be relative to. The link a symlink
+/// delivery adds beside the canonical tree is not a file kendex wrote
+/// bytes into, so it is not recorded.
+pub(super) fn rendered_files(artifact: &Artifact, scope: &Scope) -> BTreeMap<String, String> {
+    let Scope::Project { root } = scope else {
+        return BTreeMap::new();
+    };
+    let written: Vec<(PathBuf, &[u8])> = match artifact {
+        Artifact::File { path, bytes } => vec![(path.clone(), bytes.as_slice())],
+        Artifact::Tree {
+            canonical, files, ..
+        } => files
+            .iter()
+            .map(|(rel, bytes)| (canonical.join(rel), bytes.as_slice()))
+            .collect(),
+        Artifact::Registration {
+            script: Some((path, bytes)),
+            ..
+        } => vec![(path.clone(), bytes.as_slice())],
+        Artifact::Registration { script: None, .. } => Vec::new(),
+    };
+    written
+        .into_iter()
+        .map(|(path, bytes)| (relative_to(root, &path), content_hash(bytes)))
+        .collect()
+}
+
+/// The path as a repository names it: `/`-separated, root stripped. Every
+/// project-scope artifact path is built by joining onto this root, spelled
+/// as the scope spells it or canonically, so a path under neither is a
+/// planner defect, never a case to record around.
+fn relative_to(root: &Path, path: &Path) -> String {
+    let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let rel = path
+        .strip_prefix(root)
+        .or_else(|_| path.strip_prefix(&canonical))
+        .unwrap_or_else(|_| {
+            panic!(
+                "{} is not under the project root {}",
+                path.display(),
+                root.display()
+            )
+        });
+    rel.components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+#[cfg(test)]
+mod tests;

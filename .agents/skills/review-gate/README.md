@@ -75,9 +75,9 @@ any unresolved review thread blocks whatever else is present, and a failed
 evidence read says so loudly and posts nothing rather than guessing.
 
 Push a new commit and evidence resets — it is bound to the exact head. The
-one exception is opt-in **carry-forward**: a docs-only or comment-only change
-can carry the previous head's review, so fixing a typo after review does not
-restart the cycle.
+one exception is opt-in **carry-forward**: a docs-only or comment-only change,
+or a kendex render whose bytes match the kendex lock, can carry the previous
+head's review, so fixing a typo after review does not restart the cycle.
 
 ## Settings
 

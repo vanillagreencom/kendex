@@ -161,22 +161,29 @@ then built-in defaults — lib/settings.sh; list values pack with ';'):
                                             silently disable a merge gate
 
 Carry-forward engine:
-  REVIEW_GATE_CARRY_FORWARD    Carry-safe delta classes ('docs', 'comments';
-      ';' or '|' separated; empty = off — exact-head evidence only). When NO
-      evidence exists at head, a qualifying review object at an ancestor
-      commit N still satisfies the evidence term if the N->head diff
-      classifies ENTIRELY into the enabled classes, or the trees are
+  REVIEW_GATE_CARRY_FORWARD    Carry-safe delta classes ('docs', 'comments',
+      'vendored'; ';' or '|' separated; empty = off — exact-head evidence
+      only). When NO evidence exists at head, a qualifying review object at
+      an ancestor commit N still satisfies the evidence term if the N->head
+      diff classifies ENTIRELY into the enabled classes, or the trees are
       identical. Classes: 'docs' = docs-only files (*.md / *.markdown by
       extension); 'comments' = comment-only changes to code files
       (per-extension comment-token table; added/removed/renamed files,
-      patch-less files, and unknown extensions refuse). Only the NEWEST
-      ancestor candidate decides. A delta at the compare API's 300-file cap
-      refuses carry. Never a waiver: real evidence must exist, and only
-      EXTENDS across a delta a review would not re-examine; code changes
-      always require fresh evidence, and changes-requested / unresolved
-      threads still fail closed with carried evidence. The 'comments'
-      classifier is line-lexical (blind to heredocs and multiline strings) —
-      enable it only where that residual risk is acceptable.
+      patch-less files, and unknown extensions refuse); 'vendored' = files
+      the repository's kendex lock (.kendex-lock.json) records as kendex's
+      own render, proven by content: each changed file's bytes at head must
+      hash to what the lock at head records for it, the lock's own change
+      must be explained entirely by files so proven, and a recorded file
+      the delta changes to anything else refuses the whole carry — a
+      hand-edit under a render tree never carries as 'docs'. Only the
+      NEWEST ancestor candidate decides. A delta at the compare API's
+      300-file cap refuses carry. Never a waiver: real evidence must exist,
+      and only EXTENDS across a delta a review would not re-examine; code
+      changes always require fresh evidence, and changes-requested /
+      unresolved threads still fail closed with carried evidence. The
+      'comments' classifier is line-lexical (blind to heredocs and
+      multiline strings) — enable it only where that residual risk is
+      acceptable.
   REVIEW_GATE_CARRY_FORWARD_EXCLUDE    Path globs (';'-separated,
       shell-style; '*' matches '/' too — fnmatch without FNM_PATHNAME) that
       disqualify a carry: any file in the N->head delta matching an
@@ -344,13 +351,16 @@ esac
 # Carry-forward classes: ';' (engine list convention) or '|' (the shape the
 # ask was filed with) both split. An unknown class is a config error — a typo
 # must never silently widen or narrow what carries.
+rg_class_enabled() { # CLASS — 0 when REVIEW_GATE_CARRY_FORWARD lists it
+  printf '%s' "$CARRY_FORWARD" | tr ';|' '\n\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -qx -- "$1"
+}
 while IFS= read -r cls; do
   cls="$(printf '%s' "$cls" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
   [ -z "$cls" ] && continue
   case "$cls" in
-    docs|comments) ;;
+    docs|comments|vendored) ;;
     *)
-      echo "::error::review-predicate: REVIEW_GATE_CARRY_FORWARD class must be 'docs' or 'comments', got '$cls'" >&2
+      echo "::error::review-predicate: REVIEW_GATE_CARRY_FORWARD class must be 'docs', 'comments' or 'vendored', got '$cls'" >&2
       exit 2
       ;;
   esac
@@ -1161,7 +1171,9 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
     # name. So exclusion matching first demands provable record boundaries:
     # any control character in any filename refuses the carry (fresh review
     # required), the same completeness posture as the 300-entry cap.
-    if [ -n "$CARRY_EXCLUDE" ]; then
+    # The vendored class reads the same list by name, into a GraphQL query
+    # and a line-based verdict, so it demands the same provable boundaries.
+    if [ -n "$CARRY_EXCLUDE" ] || rg_class_enabled vendored; then
       # \p{Cc} (the Unicode control category), NOT a class range written
       # with \uNNNN escapes: jq's Oniguruma mis-handles those inside [...]
       # (observed on jq 1.8.2: such a class matches plain ASCII names), and
@@ -1176,6 +1188,8 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
         echo "::warning::compare $base...$HEAD_SHA contains a filename with control characters: exclusion matching cannot be proven; refusing carry-forward" >&2
         break
       fi
+    fi
+    if [ -n "$CARRY_EXCLUDE" ]; then
       delta_files="$(jq -r '.files[] | .filename // ""' <<<"$cmp")" || {
         echo "::error::could not list the $base...$HEAD_SHA delta files for exclusion matching" >&2
         exit 2
@@ -1201,19 +1215,40 @@ EOF_EXCL_FILES
         break
       fi
     fi
+    # The vendored class proves files by content against the kendex lock
+    # (lib/carry-vendored.sh, a program of its own under strict mode) before
+    # the name-based classes see the delta: a recorded file the delta changed
+    # to anything but kendex's own bytes refuses the carry there, so it can
+    # never fall through to "docs". It reads through THIS shell's gh_read,
+    # exported with the retry budget, so its reads keep the one discipline.
+    VENDORED_FILES=""
+    if rg_class_enabled vendored; then
+      export -f gh_read
+      export API_ATTEMPTS API_RETRY_DELAY GH_REPO HEAD_SHA
+      vendored_rc=0
+      VENDORED_FILES="$(printf '%s' "$cmp" | "$script_dir/lib/carry-vendored.sh" "$base")" || vendored_rc=$?
+      case "$vendored_rc" in
+        0) ;;
+        1) break ;;
+        *) exit 2 ;;
+      esac
+    fi
     # Classify every changed file into an ENABLED class; anything else —
     # code lines, added/removed/renamed files under "comments", binary or
     # patch-less files, unknown extensions — refuses the whole carry.
-    carry_ok="$(jq -r --arg classes "$CARRY_FORWARD" '
+    carry_ok="$(jq -r --arg classes "$CARRY_FORWARD" --arg vendored "$VENDORED_FILES" '
       ($classes | split("[;|]"; "") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $cl
       | def comment_token:
           if test("\\.(sh|bash|py|rb|toml|yml|yaml)$") then "#"
           elif test("\\.(js|mjs|cjs|ts|tsx|jsx|rs|go|c|h|cc|cpp|hpp|java|kt|swift)$") then "//"
           else null end;
-      [ .files[]
+      ($vendored | split("\n") | map(select(length > 0))) as $vf
+      | [ .files[]
         | . as $f
         | (.filename // "") as $fn
-        | if (($cl | index("docs")) != null)
+        | if ($vf | index($fn)) != null
+          then "vendored"
+          elif (($cl | index("docs")) != null)
              and ($f.status != "renamed")
              and (($f.previous_filename // "") == "")
              and ($fn | test("\\.(md|markdown)$"))

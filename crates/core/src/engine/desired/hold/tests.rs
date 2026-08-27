@@ -54,6 +54,7 @@ fn entry(name: &str, commit: Option<&str>, reasons: &[Reason]) -> LockEntry {
         source_hash: "x".to_owned(),
         source_commit: commit.map(str::to_owned),
         rendered_hash: None,
+        rendered_files: Default::default(),
         enabled: true,
         upstream_skills: None,
         emitted: None,

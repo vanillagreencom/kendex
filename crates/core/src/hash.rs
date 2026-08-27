@@ -131,6 +131,14 @@ pub fn hash_bytes(bytes: &[u8]) -> String {
     hex(&hasher.finalize())
 }
 
+/// Plain SHA-256 of one file's bytes, as `sha256sum` prints it. Unframed on
+/// purpose: this is the hash a reader outside kendex verifies a rendered
+/// file against, and a reader outside kendex has `sha256sum`, not this
+/// module.
+pub fn content_hash(bytes: &[u8]) -> String {
+    hex(&Sha256::digest(bytes))
+}
+
 /// The hash an in-memory rendered tree will have once written — mirrors
 /// `hash_tree` so plans can compare desired vs. disk without materializing.
 pub fn hash_files(files: &[(std::path::PathBuf, Vec<u8>)]) -> String {

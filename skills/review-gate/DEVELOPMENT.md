@@ -12,12 +12,15 @@ Paths are as installed in a consuming repo, under
 | File | What it is |
 |------|------------|
 | `scripts/review-predicate.sh` | Answers "is this head reviewed?" — verdict on stdout, exit 2 means no verdict, take no action. `--check-config` runs its settings-validation phase alone. Resolves which sources could open the gate at this head, and calls the composer below for the awaiting verdict's description. |
+| `scripts/lib/carry-vendored.sh` | The `vendored` class's proof, a program the predicate runs inside its carry walk: the kendex lock at head and at the carry base through GraphQL blob objects, each recorded file's bytes against its record, the lock's own change against the files proven. Reads through the predicate's exported `gh_read`. |
+| `tests/lib/gh-shim.sh` | The fake `gh` every offline proof puts on PATH: fixtures by endpoint, real jq for `--jq`, blob objects by `(sha, path)`, fail switches. |
+| `tests/lib/selftest-fixtures.sh` | The fixture writers, one per endpoint shape, shared by the selftest and `tests/carry-vendored.test.sh`. |
 | `scripts/awaiting-detail.sh` | Fits that resolved source list into the 140 characters GitHub keeps of a status description. Decides no eligibility of its own. Required at runtime: the predicate exits 2 with no verdict if it fails. |
 | `scripts/review-writer.sh` | Posts that answer as the commit status. The whole writer. |
 | `scripts/validate.sh` | The consumer-facing tool: is this repo's install sound? Runtime, settings, carry-forward exclusions, then the workflow half below, whose verdicts it relays and counts. |
 | `scripts/validate-workflow.sh` | Is the adopted copy still the shipped template? Equality, not re-derivation: see § Equality, not re-derivation. Usable on its own when only the workflow copy changed. |
 | `scripts/pr-watch.sh` | The agent-side reducer: "does any open PR need attention right now?" Silence on stdout + exit 0 means nothing needs you, which makes it a one-line loop/cron predicate; `--heal` also dispatches the writer once on a stale gate. |
-| `scripts/review-predicate-selftest.sh` | Offline proof of the decision table. An ENGINE proof: it runs here, in the catalog repo, on every change. |
+| `scripts/review-predicate-selftest.sh` | Offline proof of the decision table. An ENGINE proof: it runs here, in the catalog repo, on every change. The `vendored` class's full table is `tests/carry-vendored.test.sh`; the selftest keeps its approve and near-miss pair. |
 | `tests/e2e-sandbox.sh` | Live replay against a throwaway repo — re-run it before changing the engine. |
 
 ## Where each proof runs

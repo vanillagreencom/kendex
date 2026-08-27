@@ -19,6 +19,9 @@ an outside contributor.
 - `kendex remove <name> --keep-declaration` takes the files away and leaves
   kendex.toml untouched, so the next `kendex refresh` installs what it
   declares again. Fixing a broken install no longer needs the manifest restored.
+- The project lock records each file kendex wrote with its `sha256sum`, and
+  `REVIEW_GATE_CARRY_FORWARD` gains a `vendored` class that reads it: a
+  `kendex refresh` push carries review, a hand-edit under a render tree does not.
 
 ### Changed
 

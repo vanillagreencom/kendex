@@ -136,6 +136,7 @@ mod tests {
                 source_hash: "x".to_owned(),
                 source_commit: None,
                 rendered_hash: None,
+                rendered_files: Default::default(),
                 enabled: true,
                 upstream_skills: None,
                 emitted: None,

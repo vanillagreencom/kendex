@@ -149,6 +149,15 @@ pub struct LockEntry {
     /// reported as a conflict, never overwritten.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rendered_hash: Option<String>,
+    /// Every file the apply wrote, by path relative to the project root,
+    /// with the plain SHA-256 of its bytes. Project scope only: this is
+    /// the record a reader with the repository and no kendex — a merge
+    /// gate deciding whether a push is kendex's own output — checks a
+    /// file against, so it names paths a repository knows and a hash
+    /// `sha256sum` reproduces. `rendered_hash` answers "did this tree
+    /// move"; this answers "which of its files, and to what".
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub rendered_files: BTreeMap<String, String>,
     pub enabled: bool,
     /// Agents only: the source's skill set at last sync, so upstream
     /// additions merge in while user removals stay durable — deterministic
