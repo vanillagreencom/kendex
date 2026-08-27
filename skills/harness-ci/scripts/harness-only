@@ -163,10 +163,31 @@ printf '%s\n' "$changed" | sed -e 's/^/harness-only: changed: /' >&2
 # output — the answer before in-place existed.
 in_place_skills=""
 if [ -f "$repo/kendex.toml" ]; then
-  in_place_skills="$(awk '
-    /^\[skills\./ { name = $0; sub(/^\[skills\./, "", name); sub(/\].*$/, "", name); next }
-    /^\[/ { name = "" }
-    name != "" && $0 ~ /^source[ \t]*=[ \t]*"in-place"[ \t]*$/ { print name }
+  # The spellings kendex writes plus the hand edits a manifest legally
+  # carries: leading whitespace, a [skills.name] or [skills."quoted name"]
+  # header (spaces around the dotted key included), single or double
+  # quotes, and a trailing comment after the value. An exotic spelling
+  # beyond these reads as render output — the answer before in-place
+  # existed.
+  sq="'"
+  in_place_skills="$(awk -v q="$sq" '
+    {
+      line = $0
+      sub(/^[ \t]+/, "", line)
+    }
+    line ~ /^\[[ \t]*skills[ \t]*\./ {
+      name = line
+      sub(/^\[[ \t]*skills[ \t]*\.[ \t]*/, "", name)
+      sub(/[ \t]*\][ \t]*(#.*)?$/, "", name)
+      if (name ~ "^\"[^\"]*\"$" || name ~ ("^" q "[^" q "]*" q "$")) {
+        name = substr(name, 2, length(name) - 2)
+      }
+      next
+    }
+    line ~ /^\[/ { name = "" }
+    name != "" && line ~ ("^source[ \t]*=[ \t]*(\"in-place\"|" q "in-place" q ")[ \t]*(#.*)?$") {
+      print name
+    }
   ' "$repo/kendex.toml" 2>/dev/null)" || in_place_skills=""
 fi
 in_place_path() { # PATH -> 0 when the path is the repo's own in-place content
