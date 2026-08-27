@@ -60,7 +60,11 @@ an outside contributor.
 
 - **Breaking:** every skill resolves settings as env > `.env.local` >
   `.kendex/settings.toml` > `kendex.settings.toml` > default, `[env]` table
-  only; `.env` is silently ignored (use `.env.local`); duplicates error.
+  only; a lingering `.env` is silently ignored (use `.env.local`).
+
+- **Breaking:** settings values are single-line double-quoted strings with no
+  `"` or `\`; any other shape, a duplicate key, or an unparseable table header
+  fails the load. `REVIEW_GATE_MODE` alone never reads `.env.local`.
 
 - **Breaking:** kendex no longer reads the pre-2.0 mutable clone in the
   source cache. Nothing has written that layout since 2.0, so a scope whose

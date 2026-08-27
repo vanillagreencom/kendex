@@ -80,7 +80,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
-kendex_load_project_env "$PROJECT_ROOT"
+# This script runs without errexit, so the loader's refusal must be checked
+# here: continuing past it would select a lane from whatever exported before
+# the bad line — a successful-looking answer from partial configuration.
+kendex_load_project_env "$PROJECT_ROOT" || {
+  echo "$PROG: refusing to run on a rejected settings load (see error above)" >&2
+  exit 1
+}
 # shellcheck source=lib/lane-claims.sh
 source "$SCRIPT_DIR/lib/lane-claims.sh"
 # The lib carries the strict mode its other callers run under. This one is

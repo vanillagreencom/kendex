@@ -28,7 +28,9 @@ Script-consumed keys are read from the `[env]` table only: an assignment
 under any other table (or above the first header) is ignored, and
 `validate.sh` reports it. Values are single-line double-quoted strings with
 no `"` and no `\` (the kendex settings contract). The parser fails loud when
-the same name is assigned more than once inside `[env]`.
+the same name is assigned more than once inside `[env]`, and on any
+`[`-leading line that is not a lone `[name]` header — an unparsed header
+would silently misfile every assignment after it.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -61,8 +63,9 @@ trigger relays on. Wiring: [adoption.md](adoption.md).
 Two env-only PER-INVOCATION seams are NOT settings keys:
 
 - `REVIEW_GATE_SETTINGS_FILE` — overrides the settings-file path (e.g. in
-  tests, or a caller resolving settings for a different checkout). Falling
-  back to built-in defaults covers an ABSENT PLAIN FILE only: a path that
+  tests, or a caller resolving settings for a different checkout).
+  Set-but-empty is unset: `""` names no file, so the default sources apply.
+  Falling back to built-in defaults covers an ABSENT PLAIN FILE only: a path that
   exists as a directory, FIFO, socket or device, a symlink that does not
   resolve, or a file that exists but cannot be READ is a configuration
   error every reader fails loud on. A symlink that resolves to a readable

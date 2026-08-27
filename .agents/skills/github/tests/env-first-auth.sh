@@ -259,6 +259,26 @@ output=$(load_token GH_TOKEN=op://vault/github/main)
 assert_eq "$output" "ghs_FILEBOT123" "unresolved env token allows direct project token"
 assert_file_missing "$TMP_ROOT/op.calls" "direct project token avoids op for inherited op reference"
 
+# The op-retry project-env load stays best-effort (|| true) for token
+# ABSENCE, but its stderr is open: a refused settings load must surface the
+# loader's ::error instead of a bare no-token failure blaming auth.
+rm -f "$TMP_ROOT/repo/.env.local"
+printf '[env]\nDUP = "a"\nDUP = "b"\n' > "$TMP_ROOT/repo/kendex.settings.toml"
+rc=0
+output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" bash -c '
+  source "'"$REPO_ROOT"'/skills/github/scripts/lib/gh-auth.sh"
+  kendex_github_load_token "$PWD"
+') 2>"$TMP_ROOT/load-refused.err" ) || rc=$?
+assert_eq "$rc" "1" "a refused settings load still reports no token (absence stays best-effort)"
+if grep -q "assigned more than once" "$TMP_ROOT/load-refused.err"; then
+  PASS=$((PASS + 1))
+  printf '  ok    the refused settings load surfaces its diagnostic on the no-token path\n'
+else
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  the refused settings load surfaces its diagnostic on the no-token path\n        stderr: %s\n' "$(cat "$TMP_ROOT/load-refused.err")"
+fi
+rm -f "$TMP_ROOT/repo/kendex.settings.toml"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -9,8 +9,9 @@
 #   parent-process env > .env.local > .kendex/settings.toml >
 #   kendex.settings.toml > default
 # A `.env` file is never read. The TOML reader loads the [env] table only;
-# a duplicate key inside [env], or a value outside the contract grammar
-# (single-line double-quoted, no `"`, no `\`), fails the load.
+# a duplicate key inside [env], a value outside the contract grammar
+# (single-line double-quoted, no `"`, no `\`), or a `[`-leading line that
+# is not a lone [name] header, fails the load.
 #
 # Bug 2 (kendex#507): the settings loader clobbered caller-provided env. Parent
 # values must now win over every project file, while the settings < .env.local
@@ -147,18 +148,34 @@ set -e
 assert_eq "$s5_code" "0" "scenario 5 loads without error"
 assert_eq "$s5_out" "unset|unset|kept|parent-had-it" "scenario 5: only [env] loads, comments are stripped, parent set-ness holds"
 
+# Scenario 5b: the same explicit empty value IS the assignment when the
+# parent does not set the key — set-but-empty after the load, never unset
+# and never a fallthrough to some other layer.
+set +e
+s5b_out=$(
+  set -euo pipefail
+  source "$LIB"
+  kendex_load_project_env "$PROJ5"
+  printf '%s|%s\n' "${EMPTIED+isset}" "${EMPTIED-unset}"
+)
+s5b_code=$?
+set -e
+assert_eq "$s5b_code" "0" "scenario 5b loads without error"
+assert_eq "$s5b_out" "isset|" "scenario 5b: an explicit empty value is a real set-but-empty assignment when no parent value exists"
+
 # Scenario 6: contract violations fail the load instead of resolving on a
 # reinterpreted file. Each shape must exit nonzero with an ::error naming
 # the key — a loader that silently skipped or leniently decoded any of them
 # turns this scenario red.
 PROJ6="$TMP_ROOT/proj6"
 mkdir -p "$PROJ6"
-s6_case() { # NAME CONTENT EXPECT_SUBSTring
-  local name="$1" content="$2" want="$3" code=0 err
+s6_case() { # NAME CONTENT EXPECT_SUBSTRING [EXPORT_ASSIGNMENT]
+  local name="$1" content="$2" want="$3" exported="${4:-}" code=0 err
   printf '%s\n' "$content" > "$PROJ6/kendex.settings.toml"
   set +e
   err=$(
     set -euo pipefail
+    [[ -z "$exported" ]] || export "$exported"
     source "$LIB"
     kendex_load_project_env "$PROJ6" 2>&1 >/dev/null
   )
@@ -171,10 +188,21 @@ s6_case() { # NAME CONTENT EXPECT_SUBSTring
   fi
 }
 s6_case "a duplicate key inside [env]" $'[env]\nDUP = "a"\nDUP = "b"' "DUP is assigned more than once in [env]"
+# The malformed-file checks run BEFORE the parent-env skip: a parent export
+# of the same key must not turn a refused file into a loadable one.
+s6_case "a duplicate key the parent also exports" $'[env]\nDUP = "a"\nDUP = "b"' "DUP is assigned more than once in [env]" "DUP=parent-value"
+# `seen` spans the whole file, not one section run: re-entering [env]
+# through another table is the same ambiguity as two adjacent lines.
+s6_case "a duplicate split across re-entered [env] sections" $'[env]\nDUP = "a"\n[other]\nX = "x"\n[env]\nDUP = "b"' "DUP is assigned more than once in [env]"
 s6_case "a single-quoted value" $'[env]\nSQ = \x27sv\x27' "unsupported syntax for SQ"
 s6_case "an array value" $'[env]\nARR = ["a", "b"]' "unsupported syntax for ARR"
 s6_case "a backslash in the value" $'[env]\nBS = "a\\b"' "unsupported syntax for BS"
 s6_case "an unquoted value" $'[env]\nUNQ = bare' "unsupported syntax for UNQ"
+# Headers are held to the same fail-loud standard: a `[`-leading line the
+# reader cannot parse hides ([env] with a trailing comment) or leaks (a
+# quoted foreign header after [env]) whole tables if it passes as content.
+s6_case "a commented [env] header" $'[env] # comment\nHIDDEN = "x"' "unsupported table header shape"
+s6_case "a quoted foreign header after [env]" $'[env]\nGOOD = "y"\n["notes"]\nLEAK = "z"' "unsupported table header shape"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

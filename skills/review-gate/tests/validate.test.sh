@@ -176,6 +176,14 @@ dir="$DIR"
 printf '\n[notes]\nREVIEW_GATE_THREADS = "off"\n' >>"$dir/kendex.settings.toml"
 expect_fail "a bare assignment under an UNRELATED table is a finding" "$dir" "outside the [env] table"
 
+# A header the loader cannot parse corrupts every classification after it
+# ([env] with a trailing comment hides the whole table), so it is its own
+# finding rather than an ignored line.
+sandbox
+dir="$DIR"
+printf '\n[env] # comment\nREVIEW_GATE_THREADS = "off"\n' >>"$dir/kendex.settings.toml"
+expect_fail "a header the loader cannot parse is its own finding" "$dir" "table header(s) the loader cannot parse"
+
 # An inline table puts the setting AFTER the line's first `=`, which is why
 # the rule judges the line rather than a position inside it.
 sandbox

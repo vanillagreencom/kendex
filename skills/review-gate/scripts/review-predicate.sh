@@ -80,8 +80,9 @@ comment BODY is never trusted to establish trust; it is read only to BIND
 the evidence to a specific commit, so a stale comment cannot vouch for a
 later push.
 
-Settings (explicit environment first, then the repo's kendex.settings.toml,
-then built-in defaults — lib/settings.sh; list values pack with ';'):
+Settings (explicit environment > .env.local > .kendex/settings.toml >
+kendex.settings.toml [env] > built-in defaults — lib/settings.sh; full
+ladder and exceptions in references/settings.md; list values pack with ';'):
   REVIEW_GATE_TRUSTED_STATUS_CONTEXTS       (b) check/status names; empty
                                             disables the source
   REVIEW_GATE_CHECKRUN_SKIP_PATTERNS        (b) pass-without-analysis markers,

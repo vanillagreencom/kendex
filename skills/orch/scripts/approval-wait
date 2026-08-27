@@ -79,8 +79,10 @@ resolver (rg_setting) when that skill is installed: set-even-empty process
 env, then the settings files (REVIEW_GATE_SETTINGS_FILE consults only
 itself, /dev/null means defaults only), else "enforce"; a malformed or
 duplicate assignment fails loud (exit 2). The engine skips dotenv for this
-key (the PR_REVIEW_* keys keep it); without the review-gate skill the same
-source set is read via the generic loader. Exactly "off" prints "off"; any other
+key (the PR_REVIEW_* keys keep it). Without the review-gate skill:
+set-even-empty process env, then the two settings files via the generic
+loader (REVIEW_GATE_SETTINGS_FILE is not consulted; a refused load exits
+1). Exactly "off" prints "off"; any other
 value leaves the reviewer keys authoritative. Then PR_REVIEW_GATE
 (approval|review|off) when set; otherwise the legacy PR_APPROVAL_GATE maps
 on -> approval and off -> off; both unset defaults to approval. An
@@ -312,7 +314,8 @@ fi
 PR_NUM="${POSITIONAL[0]}"
 POLL_INTERVAL="${POSITIONAL[1]:-15}"
 # Absent positional resolves through the per-repo quiet-period setting:
-# env > kendex.settings.toml > 900. orch-env's numeric-default guard keeps
+# env > .env.local > .kendex/settings.toml > kendex.settings.toml > 900.
+# orch-env's numeric-default guard keeps
 # a non-numeric setting from breaking the deadline arithmetic. An explicit
 # positional arg always wins (callers that pass one keep exact behavior).
 MAX_WAIT="${POSITIONAL[2]:-$("$SCRIPT_DIR/orch-env" PR_REVIEW_WAIT_SECS 900)}"
@@ -390,7 +393,7 @@ REVIEW_CHECK_NAME="$("$SCRIPT_DIR/orch-env" PR_REVIEW_CHECK "")"
 # never blocks the fleet. An open thread can never reach this path: an
 # unresolved thread exits the poll loop as "comments" first, so a real comment
 # is never bypassed. The --on-timeout flag overrides the setting for explicit
-# callers and tests; same env > kendex.settings.toml > default precedence.
+# callers and tests; same orch-env settings ladder as MAX_WAIT above.
 ON_TIMEOUT="${ON_TIMEOUT_FLAG:-$("$SCRIPT_DIR/orch-env" PR_REVIEW_ON_TIMEOUT block)}"
 case "$ON_TIMEOUT" in
   block|proceed) ;;

@@ -222,6 +222,10 @@ else
   # away and a setting nobody reads is never reported healthy.
   keyscan="$(awk '
     { l = $0; sub(/\r$/, "", l) }
+    l ~ /^[[:space:]]*\[/ && l !~ /^[[:space:]]*\[[A-Za-z0-9_.-]+\][[:space:]]*$/ {
+      print "badheader line " NR ": " l
+      next
+    }
     /^[[:space:]]*\[[A-Za-z0-9_.-]+\][[:space:]]*$/ {
       h = l
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", h)
@@ -241,10 +245,11 @@ else
       gsub(/[[:space:]]+$/, "", l)
       print "unread " l
     }
-  ' "$SETTINGS_FILE")"
+  ' < "$SETTINGS_FILE")"
   assigned="$(printf '%s\n' "$keyscan" | sed -n 's/^read //p' | sort -u)"
   outside="$(printf '%s\n' "$keyscan" | sed -n 's/^outside //p' | sort -u)"
   unread="$(printf '%s\n' "$keyscan" | sed -n 's/^unread //p')"
+  badheaders="$(printf '%s\n' "$keyscan" | sed -n 's/^badheader //p')"
   unknown=""
   seams=""
   repo_vars=""
@@ -281,6 +286,18 @@ EOF_ASSIGNED
     bad "$SETTINGS_FILE assigns REVIEW_GATE_* key(s) outside the [env] table: $outside — the loader reads only [env], so the value written there is ignored and the gate runs on the default; move the assignment(s) under the [env] header"
   else
     ok "every REVIEW_GATE_* assignment sits inside the [env] table"
+  fi
+  # Headers decide which assignments load, so a header shape the loader
+  # cannot parse corrupts every classification after it: `[env] # comment`
+  # hides the whole table, and a quoted or doubled header after [env] leaves
+  # foreign keys reading as [env] keys. The loader refuses these files;
+  # findings about lines below a malformed header describe the corrupted
+  # read, so fix the header first.
+  if [ -n "$badheaders" ]; then
+    bad "$SETTINGS_FILE has table header(s) the loader cannot parse (a header is a lone [name] on its own line, with no comment and no second bracket):
+$(printf '%s\n' "$badheaders" | sed 's/^/        /')"
+  else
+    ok "every table header parses as a lone [name]"
   fi
   if [ -n "$(printf '%s' "$unread" | tr -d '[:space:]')" ]; then
     bad "$SETTINGS_FILE names REVIEW_GATE_ in a shape the loader does not read. The loader reads ONE shape — a bare KEY at the start of its own line, followed by its own \`=\` — and everything else is unsupported syntax read by nothing, so the gate runs on the built-in default. This is deliberately unforgiving, string values included: every exception this check has carried became a place for the next spelling to hide. Rewrite, or reword a mention, on the line(s) below:

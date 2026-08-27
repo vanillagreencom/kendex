@@ -88,5 +88,24 @@ printf '[env]\nGROWTH_GUARDS_TT = "kept" # comment\n' >"$R/kendex.settings.toml"
 resolve GROWTH_GUARDS_TT "dflt"
 [ "$RC" -eq 0 ] && [ "$OUT" = "kept" ] && ok "a trailing comment is dropped from the decoded value" || bad "trailing comment decode" "rc=$RC out=$OUT"
 
+echo "=== a header the parser cannot read fails loud ==="
+# Headers decide which assignments load: `[env] # comment` passing as
+# content hides the whole table behind silent defaults.
+printf '[env] # comment\nGROWTH_GUARDS_TT = "hidden"\n' >"$R/kendex.settings.toml"
+resolve GROWTH_GUARDS_TT "dflt"
+[ "$RC" -ne 0 ] && grep -q "unsupported table header shape" "$TMP/err" && ok "a commented [env] header is a config error, not an invisible table" || bad "commented [env] header errors" "rc=$RC out=$OUT"
+
+echo "=== a SET-but-EMPTY settings-file override is unset, not a source ==="
+# "" names no file: consulting only it resolved every key to its built-in
+# default with nothing said. /dev/null stays the one force-defaults handle.
+printf '[env]\nGROWTH_GUARDS_TT = "fromrepo"\n' >"$R/kendex.settings.toml"
+OUT=""; RC=0
+OUT="$(cd "$R" && { unset GROWTH_GUARDS_TT 2>/dev/null; env GROWTH_GUARDS_SETTINGS_FILE= bash -c '
+    set -euo pipefail
+    source "$0"
+    gg_setting "$1" "$2"
+  ' "$SKILL_DIR/scripts/lib/settings.sh" GROWTH_GUARDS_TT "dflt" 2>"$TMP/err"; })" || RC=$?
+[ "$RC" -eq 0 ] && [ "$OUT" = "fromrepo" ] && ok "a SET-but-EMPTY GROWTH_GUARDS_SETTINGS_FILE reads the default sources" || bad "set-but-empty override reads default sources" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

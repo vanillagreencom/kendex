@@ -20,7 +20,11 @@
 # double-quoted string with no `"` and no `\` (an optional trailing `#`
 # comment allowed) is a configuration error that fails the load — both
 # resolver families read exactly this shape, so a value either decodes
-# identically everywhere or fails loud here.
+# identically everywhere or fails loud here. Headers are held to the same
+# standard: a line starting with `[` must be a lone `[name]` header, and
+# any other `[`-leading shape fails the load — headers decide which
+# assignments load, so one this reader cannot parse must never pass as an
+# ignorable line.
 
 # Parent-process env snapshot (name/value pairs). Bash 3.2 (macOS system
 # bash) has no associative arrays, so the snapshot is a pair of parallel
@@ -64,15 +68,24 @@ kendex_load_settings_file() {
   local file="$1"
   [[ -f "$file" ]] || return 0
 
-  local section="" line key value seen=" "
+  local section="" line key value seen=" " lineno=0
   while IFS= read -r line || [[ -n "$line" ]]; do
+    lineno=$((lineno + 1))
     line="${line%$'\r'}"
     line="$(kendex_trim "$line")"
     [[ -z "$line" || "$line" == \#* ]] && continue
 
-    if [[ "$line" =~ ^\[([A-Za-z0-9_.-]+)\]$ ]]; then
-      section="${BASH_REMATCH[1]}"
-      continue
+    # A `[`-leading line is a header or an error, never content: `[env] # c`
+    # would hide the whole table behind silent defaults, and a quoted or
+    # doubled header after [env] would leave foreign keys loading as [env]
+    # keys.
+    if [[ "$line" == \[* ]]; then
+      if [[ "$line" =~ ^\[([A-Za-z0-9_.-]+)\]$ ]]; then
+        section="${BASH_REMATCH[1]}"
+        continue
+      fi
+      echo "::error::$file:$lineno: unsupported table header shape (a header is a lone [name] on its own line, with no comment and no second bracket)" >&2
+      return 1
     fi
 
     [[ "$section" == "env" && "$line" == *=* ]] || continue

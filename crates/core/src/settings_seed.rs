@@ -1,8 +1,10 @@
 //! `kendex.settings.toml` seeding — skills ship a
 //! `kendex.settings.toml.example` and their `[env]` entries merge into the
 //! project's settings file, write-if-absent per key: comment blocks travel
-//! with their key, and uniqueness is file-wide because the shell-side
-//! reader is not TOML-table-aware.
+//! with their key. The shell-side readers consume the `[env]` table only,
+//! but the presence check here stays file-wide, conservatively: seeding
+//! must never add a key that some assignment outside `[env]` already
+//! names.
 //!
 //! Seeded comments stay current ([`refresh`]): the lock keeps, per key, the
 //! FNV-1a hash of the comment block last written by seeding, and a key's

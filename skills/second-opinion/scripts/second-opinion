@@ -777,16 +777,24 @@ resolve_current_model() {
 # — kendex_load_settings_file reads no other table, so a same-named key under
 # one never became this value.
 file_declares_current_model() {
-  local file="$1" kind="$2" line trimmed in_env=1
+  local file="$1" kind="$2" line trimmed in_env=1 lineno=0
   [[ "$kind" != "toml" ]] || in_env=0
   # `|| [[ -n "$line" ]]` so a final line with no trailing newline is still read.
   while IFS= read -r line || [[ -n "$line" ]]; do
+    lineno=$((lineno + 1))
     trimmed="$(kendex_trim "$line")"
     # Blank and comment lines. No test covers the comment arm on its own: the
     # anchored match below already rejects anything starting with `#`, so this
     # is the guard that keeps that true if the match ever loosens.
     case "$trimmed" in ""|\#*) continue ;; esac
-    if [[ "$kind" == "toml" && "$trimmed" == \[*\] ]]; then
+    # A `[`-leading line is a header or an error, never content — the same
+    # rule kendex_load_settings_file applies, and this probe must not read a
+    # file the loader refuses.
+    if [[ "$kind" == "toml" && "$trimmed" == \[* ]]; then
+      if [[ ! "$trimmed" =~ ^\[[A-Za-z0-9_.-]+\]$ ]]; then
+        echo "::error::$file:$lineno: unsupported table header shape (a header is a lone [name] on its own line, with no comment and no second bracket)" >&2
+        return 2
+      fi
       if [[ "$trimmed" == "[env]" ]]; then in_env=1; else in_env=0; fi
       continue
     fi
@@ -805,14 +813,21 @@ file_declares_current_model() {
 # told. Same set kendex_load_project_env reads, in its load order. Only ever
 # called on a refusal path.
 declaring_project_files() {
-  local f kind found=""
+  local f kind found="" status
   for f in "$PROJECT_ROOT/kendex.settings.toml" \
            "$PROJECT_ROOT/.kendex/settings.toml" "$PROJECT_ROOT/.env.local"; do
     [[ -f "$f" ]] || continue
     case "$f" in *.toml) kind="toml" ;; *) kind="env" ;; esac
-    if file_declares_current_model "$f" "$kind"; then
-      found="${found:+$found, }$f"
-    fi
+    status=0
+    file_declares_current_model "$f" "$kind" || status=$?
+    case "$status" in
+      0) found="${found:+$found, }$f" ;;
+      1) ;;
+      # A file the probe cannot parse is a configuration error (already on
+      # stderr), not a "does not declare it" — naming the wrong file would
+      # send the operator to edit the wrong line.
+      *) return 1 ;;
+    esac
   done
   printf '%s' "$found"
 }

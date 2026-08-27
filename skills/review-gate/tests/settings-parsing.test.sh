@@ -237,5 +237,96 @@ rm -f "$TMP/layers/.kendex/settings.toml"
 layer REVIEW_GATE_MODE "enforce"
 [[ "$RC" -eq 0 && "$OUT" == "enforce" ]] && ok "REVIEW_GATE_MODE falls to the default over a dotenv-only value" || bad "REVIEW_GATE_MODE falls to the default over a dotenv-only value" "rc=$RC out=$OUT"
 
+echo "=== the dotenv layer reads every supported shape and refuses the rest ==="
+# Quoted values end at the FIRST closing delimiter, a trailing # comment is
+# dropped, and a shape the parser cannot read fails NONZERO — truncating an
+# adjacent segment would silently load an unintended value.
+dot() { # NAME DEFAULT — resolve inside the layered fixture
+  OUT=""; RC=0
+  OUT="$(cd "$TMP/layers" && { unset "$1" REVIEW_GATE_SETTINGS_FILE 2>/dev/null; rg_setting "$1" "$2" 2>"$TMP/err"; })" || RC=$?
+}
+printf 'REVIEW_GATE_TD="spaced value" # note\n' >"$TMP/layers/.env.local"
+dot REVIEW_GATE_TD "dflt"
+[[ "$RC" -eq 0 && "$OUT" == "spaced value" ]] && ok "double-quoted dotenv value with a trailing comment extracts the content" || bad "quoted+comment dotenv" "rc=$RC out=$OUT"
+
+printf 'REVIEW_GATE_TD="900" # say "quiet"\n' >"$TMP/layers/.env.local"
+dot REVIEW_GATE_TD "dflt"
+[[ "$RC" -eq 0 && "$OUT" == "900" ]] && ok "a quote inside the trailing comment never leaks into the value" || bad "comment-quote dotenv" "rc=$RC out=$OUT"
+
+printf 'export REVIEW_GATE_TD=42\n' >"$TMP/layers/.env.local"
+dot REVIEW_GATE_TD "dflt"
+[[ "$RC" -eq 0 && "$OUT" == "42" ]] && ok "export-form dotenv assignment is recognized" || bad "export-form dotenv" "rc=$RC out=$OUT"
+
+printf "REVIEW_GATE_TD='19' # note\n" >"$TMP/layers/.env.local"
+dot REVIEW_GATE_TD "dflt"
+[[ "$RC" -eq 0 && "$OUT" == "19" ]] && ok "single-quoted dotenv value with a trailing comment extracts the content" || bad "single-quoted dotenv" "rc=$RC out=$OUT"
+
+printf "REVIEW_GATE_TD='29' # don't raise\n" >"$TMP/layers/.env.local"
+dot REVIEW_GATE_TD "dflt"
+[[ "$RC" -eq 0 && "$OUT" == "29" ]] && ok "an apostrophe in the trailing comment never leaks into a single-quoted value" || bad "comment-apostrophe dotenv" "rc=$RC out=$OUT"
+
+printf 'REVIEW_GATE_TD="17".5\n' >"$TMP/layers/.env.local"
+dot REVIEW_GATE_TD "dflt"
+[[ "$RC" -ne 0 ]] && grep -q "unsupported syntax" "$TMP/err" && ok "an adjacent segment after a quoted value fails loud, never truncates" || bad "adjacent-segment dotenv" "rc=$RC out=$OUT"
+
+printf 'REVIEW_GATE_TD="17"#note\n' >"$TMP/layers/.env.local"
+dot REVIEW_GATE_TD "dflt"
+[[ "$RC" -ne 0 ]] && grep -q "unsupported syntax" "$TMP/err" && ok "an adjacent # after a quoted value is a segment, not a comment — fails loud" || bad "adjacent-hash dotenv" "rc=$RC out=$OUT"
+
+echo "=== an UNUSABLE .env.local fails loud, never falls through ==="
+# The dotenv layer sits ABOVE the settings files, so silently skipping an
+# unusable .env.local would resolve from a lower layer — same silent-value
+# swap the settings-file shapes above pin.
+rm -f "$TMP/layers/.env.local"
+mkdir -p "$TMP/layers/.env.local"
+dot REVIEW_GATE_TD "dflt"
+[[ "$RC" -ne 0 ]] && grep -q "not a regular file" "$TMP/err" && ok "a DIRECTORY at .env.local is a config error, not a skipped layer" || bad "directory .env.local" "rc=$RC out=$OUT"
+rmdir "$TMP/layers/.env.local"
+
+ln -s missing.env "$TMP/layers/.env.local"
+dot REVIEW_GATE_TD "dflt"
+[[ "$RC" -ne 0 ]] && grep -q "does not resolve" "$TMP/err" && ok "a DANGLING symlink at .env.local is a config error, not a skipped layer" || bad "dangling .env.local" "rc=$RC out=$OUT"
+rm -f "$TMP/layers/.env.local"
+
+if [ "$(id -u)" -eq 0 ]; then
+  echo "  skip  unreadable-.env.local pin needs a non-root reader (chmod 000 cannot deny root)"
+else
+  printf 'REVIEW_GATE_TD="secret"\n' >"$TMP/layers/.env.local"
+  chmod 000 "$TMP/layers/.env.local"
+  dot REVIEW_GATE_TD "dflt"
+  [[ "$RC" -ne 0 ]] && grep -q "unreadable while resolving a setting" "$TMP/err" && ok "an UNREADABLE .env.local is a config error, not a skipped layer" || bad "unreadable .env.local" "rc=$RC out=$OUT"
+  rm -f "$TMP/layers/.env.local"
+fi
+
+echo "=== a SET-but-EMPTY settings-file override is unset, not a source ==="
+# "" names no file: consulting only it resolved every key to its built-in
+# default with nothing said (an empty trusted-logins default widens the
+# gate). Empty must read the default sources; /dev/null stays the one
+# force-defaults handle.
+printf '[env]\nREVIEW_GATE_TE = "fromrepo"\n' >"$TMP/layers/kendex.settings.toml"
+OUT=""; RC=0
+OUT="$(cd "$TMP/layers" && { unset REVIEW_GATE_TE 2>/dev/null; REVIEW_GATE_SETTINGS_FILE= rg_setting REVIEW_GATE_TE "dflt" 2>"$TMP/err"; })" || RC=$?
+[[ "$RC" -eq 0 && "$OUT" == "fromrepo" ]] && ok "a SET-but-EMPTY REVIEW_GATE_SETTINGS_FILE reads the default sources" || bad "set-but-empty settings-file override" "rc=$RC out=$OUT"
+
+echo "=== a header the parser cannot read fails loud ==="
+# Headers decide which assignments load: `[env] # comment` passing as
+# content hides the whole table behind silent defaults, and a quoted
+# foreign header after [env] leaves foreign keys reading as [env] keys.
+run_setting $'[env] # comment\nREVIEW_GATE_TH = "hidden"' REVIEW_GATE_TH "dflt"
+[[ "$RC" -ne 0 ]] && grep -q "unsupported table header shape" "$TMP/err" && ok "a commented [env] header is a config error, not an invisible table" || bad "commented [env] header" "rc=$RC out=$OUT"
+
+run_setting $'[env]\nx = "y"\n["notes"]\nREVIEW_GATE_TH = "leak"' REVIEW_GATE_TH "dflt"
+[[ "$RC" -ne 0 ]] && grep -q "unsupported table header shape" "$TMP/err" && ok "a quoted foreign header after [env] is a config error, not a leaked key" || bad "quoted foreign header" "rc=$RC out=$OUT"
+
+echo "=== an =-containing relative settings path stays a file operand ==="
+# awk parses an operand containing `=` as a variable assignment: the source
+# passes the file checks, awk reads no input, and every key resolves to its
+# built-in default with nothing said. Red-first: fails against an awk
+# invocation taking the path as an operand instead of stdin.
+printf '[env]\nREVIEW_GATE_TQ = "eqfile"\n' > "$TMP/policy=on.toml"
+OUT=""; RC=0
+OUT="$(cd "$TMP" && { unset REVIEW_GATE_TQ 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="policy=on.toml" rg_setting REVIEW_GATE_TQ "dflt" 2>"$TMP/err"; })" || RC=$?
+[[ "$RC" -eq 0 && "$OUT" == "eqfile" ]] && ok "an =-containing relative settings path reads its value (no silent-defaults fallback)" || bad "=-containing settings path" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

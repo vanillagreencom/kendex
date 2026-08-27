@@ -1,5 +1,5 @@
 # Public kendex settings seeded from installed skill defaults.
-# Skill scripts read this [env] table after .env and before .env.local.
+# Skill scripts read this [env] table; process env and .env.local override it.
 # Keep secrets, tokens, and personal overrides in .env.local.
 
 [env]

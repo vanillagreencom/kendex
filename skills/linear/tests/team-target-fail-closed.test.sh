@@ -413,4 +413,13 @@ run_linear_env_team "" issues create --title "Empty export"
 assert_refused "issues create with an exported empty LINEAR_TEAM"
 clear_settings
 
+# A malformed settings file refuses the whole CLI at startup: no command
+# runs on a partial read, so team provenance can never quote a value from a
+# file the loader rejected.
+printf '[env]\nLINEAR_TEAM = "Partial"\nDUP = "a"\nDUP = "b"\n' >"$PROJECT/kendex.settings.toml"
+run_linear auth-check
+[[ "$RC" -ne 0 ]] || fail "auth-check ran on a refused settings load: $OUT"
+grep -q "assigned more than once" "$ERR_FILE" || fail "the refusal does not name the settings defect: $(cat "$ERR_FILE")"
+clear_settings
+
 echo "all pass"

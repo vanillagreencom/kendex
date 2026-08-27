@@ -184,6 +184,46 @@ assert_eq "$rc" "2" "resolve: a duplicate REVIEW_GATE_MODE assignment fails loud
 assert_contains "$(cat "$stderr")" "assigned more than once" "resolve: the duplicate diagnostic names the cause"
 rm -f "$TMP_ROOT/repo/kendex.settings.toml"
 
+# Without the review-gate skill, the generic-loader fallback reads the same
+# two settings files — .kendex/settings.toml included — and a refused load
+# terminates instead of resolving a mode from a partial read. The orch skill
+# is a REAL COPY here, not a symlink: through a symlinked orch the engine
+# lib still resolves via the link target's siblings and the fallback never
+# runs.
+mkdir -p "$TMP_ROOT/repo2/.agents/skills"
+cp -r "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo2/.agents/skills/orch"
+# github supplies only the shared gh-auth shim target; a symlink is fine —
+# the engine lookup resolves through orch's own physical path, not this one.
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/repo2/.agents/skills/github"
+git -C "$TMP_ROOT/repo2" init -q
+run_resolve_mode_fallback() {
+  (cd "$TMP_ROOT/repo2" \
+    && PATH="$TMP_ROOT/argbin:$PATH" \
+       env "$@" .agents/skills/orch/scripts/approval-wait --resolve-mode)
+}
+mkdir -p "$TMP_ROOT/repo2/.kendex"
+cat > "$TMP_ROOT/repo2/.kendex/settings.toml" <<'EOF'
+[env]
+REVIEW_GATE_MODE = "off"
+EOF
+assert_eq "$(run_resolve_mode_fallback)" "off" "resolve: the generic-loader fallback reads .kendex/settings.toml"
+cat > "$TMP_ROOT/repo2/.kendex/settings.toml" <<'EOF'
+[env]
+REVIEW_GATE_MODE = "off"
+REVIEW_GATE_MODE = "enforce"
+EOF
+stderr="$TMP_ROOT/fallback-dup.err"
+set +e
+fallback_out=$(run_resolve_mode_fallback 2>"$stderr")
+rc=$?
+set -e
+# Exit 1, not the engine's 2: the code pins that the FALLBACK branch ran and
+# refused, and the empty stdout that no mode was resolved from the partial
+# read.
+assert_eq "$rc" "1" "resolve: a duplicate assignment fails the fallback loud (fallback exit 1, not the engine's 2)" "$stderr"
+assert_eq "$fallback_out" "" "resolve: the refused fallback load resolves no mode" "$stderr"
+assert_contains "$(cat "$stderr")" "assigned more than once" "resolve: the fallback duplicate diagnostic names the cause"
+
 echo "=== -h/--help answer in the arg parser (KEN-556) ==="
 
 # Usage must terminate before auth or any gh call — --help was once consumed

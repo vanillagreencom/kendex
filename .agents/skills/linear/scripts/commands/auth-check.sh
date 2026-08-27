@@ -53,8 +53,11 @@ project_declared_team=""
 if [[ -n "$PROJECT_ROOT" ]]; then
   project_declared_team="$(
     unset LINEAR_TEAM
-    kendex_load_settings_file "$PROJECT_ROOT/kendex.settings.toml"
-    kendex_load_settings_file "$PROJECT_ROOT/.kendex/settings.toml"
+    # Command substitution does not inherit errexit, so a refused load must
+    # exit here explicitly — reading LINEAR_TEAM off a partially loaded file
+    # would report provenance from a file the loader rejected.
+    kendex_load_settings_file "$PROJECT_ROOT/kendex.settings.toml" || exit 1
+    kendex_load_settings_file "$PROJECT_ROOT/.kendex/settings.toml" || exit 1
     kendex_source_env_file "$PROJECT_ROOT/.env.local"
     printf '%s' "${LINEAR_TEAM:-}"
   )" || project_declared_team=""

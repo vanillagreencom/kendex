@@ -3,8 +3,8 @@
 # executed) by every scripts/* check.
 #
 # Standalone by design: a consumer that installs only growth-guards has no
-# review-gate tree to source its settings loader from. This one adds the
-# dotenv layers and the index-scoped resolution the hook lanes need.
+# review-gate tree to source its settings loader from. This copy's one
+# divergence is the index-scoped resolution the hook lanes need.
 #
 # Resolution order for every key read through gg_setting (the GROWTH_GUARDS_*
 # family):
@@ -263,21 +263,32 @@ gg_settings_grep() { # REGEX FILE — matching lines on stdout; 1 = no match
 }
 
 # The [env] table's lines. A table header is a lone [name] on its own line
-# (whitespace tolerated); any other line never changes the section, and the
-# lines before the first header belong to no table. awk failing to read the
-# source is an unreadable source and fails loud, same discipline as
-# gg_settings_grep.
-gg_env_table() { # FILE — [env]-table lines on stdout; 2 + ::error when unreadable
+# (whitespace tolerated); a `[`-leading line in ANY other shape is a
+# configuration error — headers decide which assignments load, so
+# `[env] # comment` passing as content hides the whole table behind silent
+# defaults, and a quoted or doubled header after [env] leaves foreign keys
+# reading as [env] keys. Lines before the first header belong to no table.
+# The source is fed on stdin, never as an operand: awk parses an operand
+# containing `=` as a variable assignment and would read no input while the
+# resolver silently returns defaults. awk failing to read the source is an
+# unreadable source and fails loud, same discipline as gg_settings_grep.
+gg_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
+                 # malformed header; 2 + ::error when unreadable
   local status=0
-  awk '
-    /^[[:space:]]*\[[A-Za-z0-9_.-]+\][[:space:]]*$/ {
+  awk -v src="$1" '
+    /^[[:space:]]*\[/ && !/^[[:space:]]*\[[A-Za-z0-9_.-]+\][[:space:]]*$/ {
+      printf "::error::%s:%d: unsupported table header shape (a header is a lone [name] on its own line, with no comment and no second bracket)\n", src, NR > "/dev/stderr"
+      exit 3
+    }
+    /^[[:space:]]*\[/ {
       header = $0
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", header)
       in_env = (header == "[env]")
       next
     }
     in_env { print }
-  ' "$1" || status=$?
+  ' < "$1" || status=$?
+  [ "$status" -ne 3 ] || return 1
   if [ "$status" -ne 0 ]; then
     echo "::error::$1: unreadable while resolving a setting (awk exit $status)" >&2
     return 2
@@ -341,7 +352,10 @@ gg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   fi
   # Nested project settings override the root file (the standard loader
   # order); an explicit GROWTH_GUARDS_SETTINGS_FILE consults only itself.
-  if [ -n "${GROWTH_GUARDS_SETTINGS_FILE+x}" ]; then
+  # Set-but-EMPTY is unset: "" names no file, and consulting only it would
+  # resolve every key to its built-in default with nothing said — /dev/null
+  # (answered above) is the one force-defaults handle.
+  if [ -n "${GROWTH_GUARDS_SETTINGS_FILE:-}" ]; then
     set -- "$GROWTH_GUARDS_SETTINGS_FILE"
   else
     set -- ".kendex/settings.toml" "kendex.settings.toml"

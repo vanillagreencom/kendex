@@ -92,7 +92,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `approval-wait` | Poll the reviewer gate; `--resolve-mode` prints the effective gate mode. `--help` + [references/gates.md](references/gates.md) |
 | `ci-wait` | Block until CI completes on a PR. `--help` + [references/gates.md](references/gates.md) |
 | `queue-wait` | Block until a merge-queue / auto-merge outcome. `--help` + [references/gates.md](references/gates.md) |
-| `orch-env` | Effective value of a kendex `[env]` setting (process env > `kendex.settings.toml` > default) |
+| `orch-env` | Effective value of a kendex `[env]` setting (process env > `.env.local` > `.kendex/settings.toml` > `kendex.settings.toml` > default) |
 | `spawn-adapter` | Resolve Codex spawn parameters (`spawn`) and the runtime thread budget (`slots`) |
 | `open-terminal` | Terminal handoff; model, effort, and permission flags via `--launch-flags`. `--help` |
 | `lanes` | Enumerate harness auth lanes; `pick` prints the launch env prefix for the least-loaded qualifying lane, exit 3 when none qualifies. `--help` |

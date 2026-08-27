@@ -195,6 +195,22 @@ run_raw || true
 if [ "$RC" -ne 0 ] && case "$OUT" in *"unsupported syntax"*) true ;; *) false ;; esac; then ok "adjacent # after a quoted value is a segment, not a comment — fails loud"; else bad "adjacent-hash dotenv" "rc=$RC out=$OUT"; fi
 rm -f "$R/.env.local"
 
+# Headers decide which assignments load: `[env] # comment` passing as
+# content hides the whole table behind the silent built-in 400. The nested
+# file goes too — it answers first and would mask the root file entirely.
+rm -rf "$R/.kendex"
+printf '[env] # comment\nSIZE_RATCHET_THRESHOLD = "9"\n' > "$R/kendex.settings.toml"
+run_raw || true
+[ "$RC" -eq 2 ] && case "$OUT" in *"unsupported table header shape"*) true ;; *) false ;; esac \
+  && ok "a commented [env] header is exit 2, not an invisible table" \
+  || bad "commented [env] header is exit 2" "rc=$RC out=$OUT"
+
+# "" names no file: consulting only it resolved every key to its built-in
+# default with nothing said. /dev/null stays the one force-defaults handle.
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "9"\n' > "$R/kendex.settings.toml"
+run_raw SIZE_RATCHET_SETTINGS_FILE= || true
+case "$OUT" in *"threshold 9"*) ok "a SET-but-EMPTY settings-file override reads the default sources" ;; *) bad "set-but-empty override reads default sources" "rc=$RC out=$OUT" ;; esac
+
 echo "=== an EXISTING non-regular settings path never falls back to defaults ==="
 # A directory (FIFO/socket/device are the same shape) fails -f exactly like
 # an absent file, so the configured settings would be skipped with nothing

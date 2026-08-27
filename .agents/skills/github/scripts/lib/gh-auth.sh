@@ -265,8 +265,12 @@ kendex_github_load_token() {
       local lib_dir
       lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
       # shellcheck source=kendex-env.sh
-      source "$lib_dir/kendex-env.sh" >/dev/null 2>&1 || true
-      kendex_load_project_env "$project_root" >/dev/null 2>&1 || true
+      # || true keeps token absence best-effort, but stderr stays open: the
+      # loader can refuse a malformed settings file, and discarding its
+      # ::error leaves a bare no-token failure blaming auth for a settings
+      # defect.
+      source "$lib_dir/kendex-env.sh" >/dev/null || true
+      kendex_load_project_env "$project_root" >/dev/null || true
       kendex_github_select_auth_token "$mode" || true
     )
   fi
