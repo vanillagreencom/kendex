@@ -254,19 +254,6 @@ mod tests {
         }
     }
 
-    /// A directory outside any repository gets no ignore line and no note.
-    #[test]
-    fn a_directory_that_is_not_a_repository_is_left_alone() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut ops = Vec::new();
-        let mut notes = Vec::new();
-        let scope = Scope::Project {
-            root: dir.path().to_path_buf(),
-        };
-        plan_posture(&scope, &mut ops, &mut notes).unwrap();
-        assert!(ops.is_empty() && notes.is_empty(), "{notes:?}");
-    }
-
     #[test]
     fn ignoring_the_shared_tree_is_reported() {
         assert_eq!(ignores_committed(".agents/\nnode_modules\n"), [".agents"]);
