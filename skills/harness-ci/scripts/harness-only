@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# harness-only — is this diff nothing but kendex render output?
+#
+# One reader of a diff's changed-file set, answering the one question CI asks
+# about it: may the heavy lanes stand down? A diff whose every path is
+# `kendex refresh` output — .agents/, .claude/, .codex/, .opencode/, .cursor/,
+# .pi/, opencode.json — carries nothing this repository builds, lints,
+# typechecks or tests. Those trees are upstream's and are tested in
+# vanillagreencom/kendex.
+#
+# Usage:
+#   harness-only --event EVENT [--base REF] [--head REF]
+#                [--repo DIR] [--output FILE]
+#
+#   --event   pull_request | merge_group | push. Any other event answers false.
+#   --base    the base endpoint: the PR base sha, the merge group's base sha,
+#             or a push's `before` sha.
+#   --head    the head endpoint. Default HEAD.
+#   --repo    classify this checkout instead of the working directory.
+#   --output  append the verdict line to this file. Default $GITHUB_OUTPUT.
+#
+# stdout carries the verdict line and nothing else: harness_only=true|false.
+# The changed paths and the reason behind a false go to stderr, where the job
+# log shows them.
+#
+# Exit 0 on any verdict. Exit 2 on a WIRING error — an unknown flag, a missing
+# --event, an unwritable --output. Those are never transient, so they must not
+# be absorbed as a classification: the step goes red and the caller sees it.
+#
+# Fail-closed everywhere. An unknown event, a missing or unresolvable
+# endpoint, an unreadable diff and an empty diff all answer false, which runs
+# every lane.
+#
+# Strict mode throughout. Every failure a verdict can be read from is handled
+# on the spot with an explicit `||`; anything left over is a defect in this
+# script, and a red step is the honest report of one.
+set -euo pipefail
+
+event=""
+base=""
+head="HEAD"
+repo="."
+output="${GITHUB_OUTPUT:-}"
+
+usage() {
+  cat <<'USAGE'
+Usage: harness-only --event EVENT [--base REF] [--head REF]
+                    [--repo DIR] [--output FILE]
+
+  --event   pull_request | merge_group | push. Any other event answers false.
+  --base    the base endpoint: the PR base sha, the merge group's base sha,
+            or a push's `before` sha.
+  --head    the head endpoint. Default HEAD.
+  --repo    classify this checkout instead of the working directory.
+  --output  append the verdict line to this file. Default $GITHUB_OUTPUT.
+
+Prints harness_only=true|false on stdout. Exit 2 on a wiring error.
+USAGE
+}
+
+die() { # MESSAGE — a wiring error, never a verdict
+  echo "harness-only: $1" >&2
+  exit 2
+}
+
+# `shift 2` past the end of "$@" returns non-zero and shifts nothing. Every
+# value-taking flag proves its value is there first, rather than leaving the
+# argument loop to exit on a shift.
+need_value() { # FLAG REMAINING
+  [ "$2" -ge 2 ] || die "$1 needs a value"
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --event) need_value "$1" "$#"; event="$2"; shift 2 ;;
+    --base) need_value "$1" "$#"; base="$2"; shift 2 ;;
+    --head) need_value "$1" "$#"; head="$2"; shift 2 ;;
+    --repo) need_value "$1" "$#"; repo="$2"; shift 2 ;;
+    --output) need_value "$1" "$#"; output="$2"; shift 2 ;;
+    -h | --help) usage; exit 0 ;;
+    *) die "unknown argument '$1'" ;;
+  esac
+done
+
+[ -n "$event" ] || die "--event is required"
+[ -n "$head" ] || die "--head cannot be empty"
+
+# Prove the output file is appendable before classifying anything, so a
+# caller who named a file they cannot write learns it from an exit 2 with an
+# empty stdout rather than from a verdict that reached nobody.
+if [ -n "$output" ]; then
+  printf '' >>"$output" || die "cannot append to '$output'"
+fi
+
+verdict() { # true|false [REASON]
+  if [ "$#" -gt 1 ]; then
+    echo "harness-only: $2; running every lane" >&2
+  fi
+  printf 'harness_only=%s\n' "$1"
+  if [ -n "$output" ]; then
+    printf 'harness_only=%s\n' "$1" >>"$output" ||
+      die "could not append the verdict to '$output'"
+  fi
+  exit 0
+}
+
+# core.quotePath=false keeps non-ASCII paths raw instead of C-quoted. git still
+# quotes a path holding a newline or a double quote, and a quoted path starts
+# with `"`, matches no harness prefix, and answers false — fail-closed, which is
+# the right answer for a path this line-oriented reader cannot represent.
+git_repo() { git -C "$repo" -c core.quotePath=false "$@"; }
+
+# Three-dot on pull_request: the base branch moves under an open PR, and only
+# the merge base isolates what the PR itself changed.
+#
+# Two endpoints, no dots, on push and merge_group. A force-push leaves the
+# `before` sha off HEAD's history, and three-dot would then measure from a
+# merge base where the product files the push discarded never existed, reading
+# the whole push as render-only. A merge group's base is an ancestor of its
+# head by construction, so the two forms agree there; the endpoint form is
+# what stays correct if that ever stops holding.
+case "$event" in
+  pull_request) range_style=merge_base ;;
+  merge_group | push) range_style=endpoints ;;
+  *) verdict false "no diff endpoints are defined for event '$event'" ;;
+esac
+
+[ -n "$base" ] || verdict false "no base endpoint was given for event '$event'"
+
+for endpoint in "$base" "$head"; do
+  git_repo cat-file -e "${endpoint}^{commit}" 2>/dev/null ||
+    verdict false "endpoint '$endpoint' does not resolve to a commit"
+done
+
+if [ "$range_style" = merge_base ]; then
+  range="$base...$head"
+  changed="$(git_repo diff --name-only --no-renames "$range")" ||
+    verdict false "the diff '$range' is unreadable"
+else
+  changed="$(git_repo diff --name-only --no-renames "$base" "$head")" ||
+    verdict false "the diff '$base' '$head' is unreadable"
+fi
+
+# An empty list is not "nothing to run": it is also what a diff that silently
+# read nothing looks like, and neither answer is worth a waiver.
+[ -n "$changed" ] ||
+  verdict false "the diff between '$base' and '$head' is empty"
+
+printf '%s\n' "$changed" | sed -e 's/^/harness-only: changed: /' >&2
+
+# --no-renames, and it is load-bearing. With rename detection on,
+# `git diff --name-only` emits only the POST-image path, so moving a product
+# file INTO a render tree lists one harness path and nothing else — the diff
+# classifies harness-only and the lanes that would have judged the deletion
+# never run.
+#
+# Matched with bash's own `case` rather than by piping into grep. Every
+# external matcher here has a failure mode whose signature is empty output,
+# and empty output is indistinguishable from "every path was a harness path".
+harness_only=true
+while IFS= read -r path; do
+  [ -n "$path" ] || continue
+  case "$path" in
+    .agents/* | .claude/* | .codex/* | .opencode/* | .cursor/* | .pi/* | opencode.json) continue ;;
+  esac
+  harness_only=false
+  break
+done <<<"$changed"
+
+verdict "$harness_only"

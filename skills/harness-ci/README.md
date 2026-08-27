@@ -1,0 +1,96 @@
+# harness-ci
+
+A repository that commits its kendex render gets diffs that touch nothing it
+builds, lints, typechecks or tests. This package ships the one function that
+recognises them — changed paths in, `harness_only=true|false` out — plus the
+tests that prove the semantics, run in kendex CI on every change.
+
+Opt-in: running CI over harness directories is a policy choice, and a repo
+that wants it simply does not install this.
+
+## The contract
+
+**This package never touches `.github/`.** The classifier is portable; a
+workflow is not. Installing into a stranger's CI renames jobs, drops
+required contexts, and wedges merge queues.
+
+What a consumer owns is one thin step calling the rendered script, written
+by hand, once. What upstream owns is the answer that step gets. Copy a shape
+from [references/wiring.md](references/wiring.md).
+
+## Usage
+
+```bash
+.agents/skills/harness-ci/scripts/harness-only \
+  --event pull_request --base "$BASE_SHA" --head "$HEAD_SHA"
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--event` | `pull_request`, `merge_group` or `push`. Any other event answers `false`. |
+| `--base` | The PR base sha, the merge group's base sha, or a push's `before` sha. |
+| `--head` | The head endpoint. Default `HEAD`. |
+| `--repo` | Classify this checkout instead of the working directory. |
+| `--output` | Append the verdict line to this file. Default `$GITHUB_OUTPUT`. |
+
+Checkout with `fetch-depth: 0`: the classifier diffs two real commits, and a
+shallow clone does not hold both.
+
+## Semantics
+
+- **The harness path set**: `.agents/`, `.claude/`, `.codex/`, `.opencode/`,
+  `.cursor/`, `.pi/`, and the root `opencode.json`. Prefixes match on the
+  separator, so `.agentsfoo/x` and `opencode.json.bak` are product paths.
+- **`--no-renames`, always.** Rename detection emits only the post-image, so
+  `git mv src/app.ts .agents/skills/x/app.ts` would list one harness path and
+  nothing else — the deletion of `src/app.ts` would go unjudged. With the
+  flag, both paths are listed and the diff answers `false`.
+- **Merge base on `pull_request`** (`base...head`): the base branch moves
+  under an open PR, and only the merge base isolates what the PR changed.
+- **Two endpoints on `push` and `merge_group`** (`base head`): a force-push
+  leaves the `before` sha off the head's history, and a merge base there is a
+  commit the push already discarded — measuring from it reads a push that
+  dropped product work as render-only. A merge group's base is an ancestor of
+  its head by construction, so the two forms agree there.
+- **Verdict channel**: `stdout` carries `harness_only=true|false` and nothing
+  else. Changed paths and failure reasons go to `stderr`.
+- **Exit codes**: `0` with every verdict; `2` on a wiring error (unknown
+  flag, missing `--event`, unwritable `--output`), which prints no verdict.
+
+## Fail-closed
+
+Anything the classifier cannot prove answers `false`, which runs every lane:
+
+- an unclassified event
+- a missing, empty, or unresolvable endpoint — the all-zero sha a first push
+  sends included
+- a diff git cannot read
+- an empty changed-file set, which is also what a diff that read nothing
+  looks like
+- a path git had to quote (an embedded newline or quote character), which
+  matches no harness prefix
+
+There is no flag that turns any of these into a `true`.
+
+## Tests
+
+`tests/` runs in kendex CI on every change to this repository:
+
+| Suite | Covers |
+| --- | --- |
+| `path-set` | Every render tree, mixed diffs, deletions, the near-miss paths |
+| `rename-into-render` | The `git mv` into a render tree, and the control proving the flag is load-bearing |
+| `event-ranges` | The force-push case, the moving base branch, merge groups |
+| `fail-closed` | Unclassified events, unresolvable endpoints, empty and unreadable diffs |
+| `wiring-errors` | Exit 2 on bad calls, `--output` and `$GITHUB_OUTPUT` behaviour |
+| `bash32-portability` | No Bash 4+ syntax; consumer runners include macOS system Bash |
+
+Run one locally with `bash skills/harness-ci/tests/path-set.test.sh`.
+
+## Upgrades
+
+The script is upstream's. `kendex refresh` rewrites the render tree, and a
+local edit to `.agents/skills/harness-ci/` is drift that the next refresh
+overwrites. Send changes to
+[vanillagreencom/kendex](https://github.com/vanillagreencom/kendex) via
+`kendex report`.

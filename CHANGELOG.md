@@ -66,6 +66,9 @@ an outside contributor.
 
 ### Added
 
+- New optional `harness-ci` skill: a classifier that answers whether a CI diff
+  touches nothing but the kendex render trees, so heavy lanes can stand down.
+  It ships the script and its tests only — the workflow step stays yours.
 - Installing asks where it goes: the app and `kendex add` at a terminal offer
   every supported tool with the ones you have pre-checked, plus symlink or
   copy delivery. `--harness`, `--all-harnesses`, `--method` do it flag-only.
