@@ -55,30 +55,31 @@ tree's copy wins; a first commit skips preflight with a note; a size-ratchet
 that rejects `--staged` in its first-line parser diagnostic is a stated skip —
 any other failure blocks); the batch over staged content; then the
 repo-root-relative executable named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL`.
-`commit-msg` runs the message gate. Both BLOCK on the exit contract, fail
+`commit-msg` runs the message gate. Both BLOCK on the exit contract and fail
 closed on a guard that could not run; `git commit --no-verify` is the bypass.
-The `kendex guard` verbs invoke this installer: `install`, `uninstall`
-(`--uninstall`) and `check` (`--check`). Arming and disarming are
-repository-level: every work tree and nested project shares one hooks
-directory, so an uninstall from any of them disarms the repository. Disarm
-before removing this skill: shims whose scripts are gone block every commit. `kendex check` invokes
-nothing — it reads the hook files for this package's marker and the execute
-bit git needs, and says armed or not armed. The `--check` verdicts below are
-the fuller vocabulary, for a person or a verb that asks for it:
-(0 armed in `.git/hooks`; 1 drifted, absent, or `core.hooksPath` set and
-empty, which switches git hooks off; 2 could not determine — an unreadable
-hooks directory, or any `core.hooksPath` naming a directory, which is
-outside this verifier's contract: it reads `.git/hooks` only). Repeat runs
-are no-ops and repairs; `core.hooksPath` is never set; existing hooks keep
-their content and exit status. Full install and refusal behaviour:
-[DEVELOPMENT.md](DEVELOPMENT.md).
 
-The git hooks are the authoritative gate: they run for every committer, and
-they need no kendex binary — the shim execs this skill's committed scripts.
-kendex arms and reports, and implements no check of its own. The
-`pre-commit-check` harness hook stands aside where BOTH git hooks are armed,
-refuses commands that would sidestep them, and refuses the commit otherwise — it never runs these scripts on a repository's behalf.
-Layering and reasoning: [README](README.md).
+The `kendex guard` verbs invoke this installer: `install`, `uninstall`
+(`--uninstall`) and `check` (`--check`). Repeat runs are no-ops and repairs,
+`core.hooksPath` is never set, and existing hooks keep their content and exit
+status. Arming and disarming are repository-level: every work tree and nested
+project shares one hooks directory, so an uninstall from any of them disarms
+the repository. Disarm before removing this skill — shims whose scripts are
+gone block every commit.
+
+`kendex check` reads the hook files for this package's marker and the execute
+bit git needs, and says armed or not armed; it invokes nothing. `--check` is
+the fuller vocabulary for a caller that asks for it: `0` armed in
+`.git/hooks`, `1` drifted, absent, or `core.hooksPath` set and empty (which
+switches git hooks off), `2` could not determine — an unreadable hooks
+directory, or any `core.hooksPath` naming a directory, which is outside this
+verifier's contract: it reads `.git/hooks` only. Full install and refusal
+behaviour: [DEVELOPMENT.md](DEVELOPMENT.md).
+
+The git hooks are the authoritative gate and need no kendex binary; kendex
+arms and reports, and implements no check of its own. The `pre-commit-check`
+harness hook stands aside where BOTH git hooks are armed, refuses commands
+that would sidestep them, and refuses the commit otherwise. It never runs
+these scripts on a repository's behalf. Layering: [README](README.md).
 
 ## Configuration
 
@@ -106,6 +107,7 @@ full repo-relative path; `*` crosses `/`); a pattern without a reason is a
 config error. **Baseline format** — `path<TAB>count`, `LC_ALL=C` sorted,
 unique paths, positive counts.
 
-What each check bans and how it is scoped: [CHECKS.md](CHECKS.md). Seeding
-a first baseline and CI wiring: [README.md](README.md). Marker shapes, per-language suppression patterns,
-and the hook install and removal contract: [DEVELOPMENT.md](DEVELOPMENT.md).
+What each check bans and how it is scoped: [CHECKS.md](CHECKS.md). Seeding a
+first baseline and CI wiring: [README.md](README.md). Marker shapes,
+per-language suppression patterns, and the hook install and removal contract:
+[DEVELOPMENT.md](DEVELOPMENT.md).

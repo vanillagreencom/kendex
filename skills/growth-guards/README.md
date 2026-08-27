@@ -35,12 +35,14 @@ below cover local commits.
 The installer writes a helper into `.git/hooks` plus one marked delegating
 line in `pre-commit` and `commit-msg` — never `core.hooksPath`; an existing
 hook keeps its content and exit status; repeat runs are no-ops and repairs.
-`--uninstall` drops only the helper and our line. `--check` writes nothing:
-`0` armed in `.git/hooks`, `1` drifted, absent, or `core.hooksPath` set and
-empty (which switches git hooks off), `2` could not determine — which any
-`core.hooksPath` naming a directory is, because this package reads
-`.git/hooks` only, whatever that value resolves to. Never a silent pass. `kendex guard install` runs the installer and `kendex guard
-uninstall` runs `--uninstall`.
+`--uninstall` drops only the helper and our line. `kendex guard install` and
+`kendex guard uninstall` invoke those two.
+
+`--check` writes nothing: `0` armed in `.git/hooks`, `1` drifted, absent, or
+`core.hooksPath` set and empty (which switches git hooks off), `2` could not
+determine — which any `core.hooksPath` naming a directory is: this package
+reads `.git/hooks` only, whatever that value resolves to. Never a silent
+pass.
 
 `pre-commit` judges ONE commit snapshot: `size-ratchet --staged` and
 `preflight --staged` when the committing work tree or this install
@@ -54,38 +56,28 @@ shims BLOCK and fail closed — `1` carries the check's remediation text,
 
 Two layers, and only one of them is authoritative.
 
-**The git hooks are the gate.** They run for every committer — a person at a
-terminal, any AI harness, a script, an editor's commit button — because git
-runs them, not because anything asked. They need no kendex binary at commit time: the shim
-execs this skill's committed scripts. Git never clones `.git/hooks`, so a
-fresh clone carries the scripts but no shims — one `kendex guard install`
-arms them, and from then on every commit is gated by committed shell and
-git, on a machine that has never installed kendex. That is the whole reason
-the checks are shell and travel with the repository.
+**The git hooks are the gate.** Git runs them for every committer — a person
+at a terminal, any AI harness, a script, an editor's commit button. They need
+no kendex binary: the shim execs this skill's committed scripts. Git never
+clones `.git/hooks`, so a fresh clone carries the scripts but no shims. One
+`kendex guard install` arms them, and every commit after that is gated by
+committed shell and git on a machine that has never installed kendex.
 
-**kendex only arms and reports.** `kendex guard install` runs the installer
-above; `kendex guard uninstall` runs `--uninstall`; `kendex check` reads the hook files
-itself — armed, not armed, or could not tell — and runs nothing out of a
-checkout, because reading a repository's status must not execute its code.
-kendex implements no check of its own; the verdicts a commit is judged by
-are all this skill's.
+**kendex only arms and reports.** `kendex guard install` and `kendex guard
+uninstall` invoke the installer; `kendex check` reads the hook files and says
+armed, not armed, or could not tell. It runs nothing out of a checkout and
+implements no check of its own — the verdicts a commit is judged by are all
+this skill's.
 
-**The `pre-commit-check` harness hook never stands in.** Where BOTH git
-hooks are armed — this package's marker in `pre-commit` and `commit-msg`,
-both executable — it steps aside: git runs the gate itself, and validating
-twice would only double the wait. Half of it is not a gate: with
-`commit-msg` gone, git checks the content and takes any message. It does one thing the git hook
-cannot — refuse a command that would sidestep an armed hook (`--no-verify`, the
-short flag, or injected git configuration), because git would skip the
-message gate too and nothing can check a message it never sees. And where
-nothing is armed it refuses the commit, naming `kendex guard install`. It
-runs no script of the repository's on anyone's behalf: arming is the local
-act that asks for that, and a fresh clone has no hooks and so no execution
-behind it. It gates its own working directory and no other.
-
-Order, then: git hooks where they exist, and a refusal where they do not. No
-layer ever passes a commit another layer would have blocked, and no layer
-runs a repository's code that nobody armed.
+**The `pre-commit-check` harness hook never stands in.** Where BOTH git hooks
+are armed — this package's marker in `pre-commit` and `commit-msg`, both
+executable — it steps aside and lets git run the gate. Half-armed is not
+armed: with `commit-msg` missing, git takes any message. The hook does the
+one thing a git hook cannot, refusing a command that would sidestep an armed
+hook (`--no-verify`, the short flag, injected git configuration), and where
+nothing is armed it refuses the commit and names `kendex guard install`. It
+gates its own working directory and no other, and runs no script of the
+repository's on anyone's behalf.
 
 ## The checks
 

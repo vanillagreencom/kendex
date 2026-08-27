@@ -12,8 +12,7 @@ gate is disabled, and merge-queue statuses post success unread as
 description — [references/settings.md](references/settings.md) §
 `REVIEW_GATE_MODE`.
 
-It does **not** run or inspect your tests. That is branch protection's job,
-and keeping the two apart is what makes this small enough to trust.
+It does **not** run or inspect your tests. That is branch protection's job.
 
 ## What you do
 
