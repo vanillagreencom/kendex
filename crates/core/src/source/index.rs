@@ -63,8 +63,8 @@ pub struct IndexPackage {
     pub kind: &'static str,
     pub name: String,
     pub description: Option<String>,
-    /// What a directory row shows: the header's `summary`, else its
-    /// `description`.
+    /// The header's `summary`, else its `description`, so a consumer reads
+    /// one field for the line beside the name.
     pub summary: Option<String>,
     pub tags: Vec<Tag>,
     pub safety: IndexSafety,

@@ -32,7 +32,7 @@ fn fixture_home() -> tempfile::TempDir {
     fs::create_dir_all(home.join("catalog/skills/gh")).unwrap();
     fs::write(
         home.join("catalog/skills/gh/SKILL.md"),
-        "---\nname: gh\n---\nBody.\n",
+        "---\nname: gh\nsummary: Work with GitHub from the terminal\n---\nBody.\n",
     )
     .unwrap();
     fs::create_dir_all(home.join("catalog/agents")).unwrap();
@@ -158,6 +158,20 @@ fn marketplace_browse_lists_a_subscriptions_packages() {
         .collect();
     assert!(names.contains(&"gh"), "{listed:#}");
     assert!(names.contains(&"helper"), "{listed:#}");
+
+    // The text listing shows each package's summary beside its name, the
+    // same line the app's Packages row shows.
+    let text = kendex(
+        home,
+        &project,
+        &["marketplace", "browse", "cat", "--scope", "project"],
+    );
+    assert!(text.status.success());
+    let stdout = String::from_utf8_lossy(&text.stdout);
+    assert!(
+        stdout.contains("cat::gh  (skill) [available]  — Work with GitHub from the terminal"),
+        "{stdout}"
+    );
 
     // The community directory is not built yet and says so instead of
     // pretending it is empty.

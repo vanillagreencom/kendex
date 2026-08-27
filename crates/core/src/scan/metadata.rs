@@ -150,20 +150,18 @@ pub fn from_markdown(text: &str) -> Metadata {
     let Ok(parsed) = frontmatter::parse_tolerant(yaml) else {
         return Metadata::default();
     };
+    let prose = |key: &str| {
+        parsed
+            .map
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
     from_words(
-        prose(&parsed.map, "description"),
-        prose(&parsed.map, "summary"),
+        prose("description"),
+        prose("summary"),
         parsed.map.string_list("tags").unwrap_or_default(),
     )
-}
-
-/// One prose field, trimmed; blank is the same as absent.
-fn prose(map: &frontmatter::Map, key: &str) -> Option<String> {
-    map.get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .map(str::to_owned)
 }
 
 /// Like [`from_markdown`], for the TOML kinds.
@@ -191,12 +189,15 @@ pub fn from_toml(text: &str) -> Metadata {
 }
 
 /// Sorts and dedupes so two files listing the same tags in different orders
-/// describe themselves identically.
+/// describe themselves identically, and trims the prose fields so a blank
+/// one is absent, whichever header format wrote it.
 fn from_words(
     description: Option<String>,
     summary: Option<String>,
     words: Vec<String>,
 ) -> Metadata {
+    let description = description.as_deref().and_then(prose);
+    let summary = summary.as_deref().and_then(prose);
     let mut tags: Vec<Tag> = Vec::new();
     let mut unknown_tags: Vec<String> = Vec::new();
     for word in words {
@@ -227,6 +228,12 @@ fn from_words(
         tags,
         unknown_tags,
     }
+}
+
+/// One prose field, trimmed; blank is the same as absent.
+fn prose(text: &str) -> Option<String> {
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_owned())
 }
 
 #[cfg(test)]

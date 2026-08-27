@@ -70,12 +70,12 @@ pub fn run_browse(
         return Ok(());
     }
     for (scope, marketplace, package) in rows {
-        let description = package
-            .description
-            .map(|d| format!("  — {d}"))
+        let summary = package
+            .summary
+            .map(|text| format!("  — {text}"))
             .unwrap_or_default();
         out(&format!(
-            "{}  {marketplace}::{}  ({}) [{}]{description}",
+            "{}  {marketplace}::{}  ({}) [{}]{summary}",
             scope.label(),
             package.name,
             package.kind.name(),

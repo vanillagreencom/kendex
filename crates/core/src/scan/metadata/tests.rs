@@ -43,6 +43,11 @@ fn a_summary_is_read_beside_the_description_and_stands_in_for_it() {
         from_toml("command = \"db\"\n").summary_or_description(),
         None
     );
+    // A blank summary in TOML is absent too, the same rule as the markdown
+    // header, so the row falls back to the description.
+    let blank = from_toml("description = \"a db\"\nsummary = \"  \"\n");
+    assert_eq!(blank.summary, None);
+    assert_eq!(blank.summary_or_description(), Some("a db"));
 }
 
 #[test]

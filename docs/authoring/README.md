@@ -75,10 +75,9 @@ catalog.
 
 - Skill: `skills/<name>/SKILL.md` with frontmatter `name` (matching the folder)
   and `description`. Extra files in the folder ship with it.
-- Any kind with a header may add `summary`: the line a marketplace row shows
-  and search reads. `description` is what an agent reads to decide whether to
-  load the item; the two read differently. Without a `summary` the row shows
-  the `description`.
+- A skill, command, or MCP server may add `summary`: the line a marketplace
+  row shows and search reads, where `description` is what an agent reads to
+  decide whether to load the item. Without one the row shows the `description`.
 - Agent: `agents/<name>.md` with frontmatter `name` and `description`; optional
   `model`, `color`, and tool allow and deny lists.
 - Hook: `hooks/<name>.sh` with a comment header naming `event` (for example
