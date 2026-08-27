@@ -2,9 +2,10 @@
 //! table reads for its From column.
 //!
 //! The lock is the durable provenance record (invariant 4), so it decides:
-//! an entry from the reserved `local` source is the user's own content —
-//! forked, when `[forks]` says what it replaced — and any other entry names
-//! the subscription it installed from. What the scanner observes and the
+//! an entry from a reserved source — `local`, or `in-place` for a project
+//! skill adopted where it sits — is the user's own content, forked when
+//! `[forks]` says what it replaced, and any other entry names the
+//! subscription it installed from. What the scanner observes and the
 //! lock cannot account for is unmanaged, reported and never touched.
 
 use std::collections::BTreeMap;
@@ -15,7 +16,7 @@ use specta::Type;
 use crate::env::Env;
 use crate::error::Result;
 use crate::lock::LockFile;
-use crate::manifest::{LOCAL_SOURCE_NAME, Manifest, ManifestFile};
+use crate::manifest::{INPLACE_SOURCE_NAME, LOCAL_SOURCE_NAME, Manifest, ManifestFile};
 use crate::model::{HarnessId, ItemKind, Scope};
 
 /// Where one installation came from.
@@ -95,7 +96,7 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
 }
 
 fn origin_of(manifest: &Manifest, entry: &crate::lock::LockEntry) -> Origin {
-    if entry.source == LOCAL_SOURCE_NAME {
+    if entry.source == LOCAL_SOURCE_NAME || entry.source == INPLACE_SOURCE_NAME {
         return Origin::Own {
             forked_from: manifest
                 .forks

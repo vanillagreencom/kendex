@@ -57,6 +57,9 @@ an outside contributor.
   every Bash call it matches on a host without it — install jq wherever the hook
   runs. Its own parser stopped at the first quote, mis-refusing `cd "$d" && ls`.
 
+- The Library's From column says "Your own" for a skill adopted in place;
+  it read as a marketplace with no repository.
+
 - The `block-bare-cd` hook refuses a bare `cd` with no path. It changes to
   `$HOME` for every later tool call, the move the hook exists to stop, and
   only `cd <path>` was caught before.

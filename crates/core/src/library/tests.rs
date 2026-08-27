@@ -61,9 +61,15 @@ fn origins_are_read_off_the_lock_manifest_and_scan() {
         version: crate::lock::LOCK_VERSION,
         ..Lock::default()
     };
-    for (name, source) in [("gh", "cat"), ("fk", "local"), ("mine", "local")] {
+    for (name, source) in [
+        ("gh", "cat"),
+        ("fk", "local"),
+        ("mine", "local"),
+        ("here", "in-place"),
+    ] {
         let repo = match source {
             "cat" => "owner/repo",
+            "in-place" => "",
             _ => "local",
         };
         lock.entries.insert(
@@ -94,6 +100,7 @@ fn origins_are_read_off_the_lock_manifest_and_scan() {
         }
     );
     assert_eq!(origin("mine"), Origin::Own { forked_from: None });
+    assert_eq!(origin("here"), Origin::Own { forked_from: None });
     assert_eq!(origin("stray"), Origin::Unmanaged);
     let stray = rows
         .iter()
