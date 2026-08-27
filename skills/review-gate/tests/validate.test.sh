@@ -109,10 +109,9 @@ expect_clean "a freshly adopted repo passes every check" "$dir"
 run_validate "$dir"
 for line in \
   "one adopted writer workflow" \
-  "the relay job's permissions are exactly \`actions: write\` and nothing else" \
-  "the relay job checks nothing out" \
-  "the relay job holds no concurrency group" \
-  "the write job's concurrency group is the literal" \
+  "the adopted workflow is the shipped template, line for line" \
+  "every REVIEW_GATE_* key assigned in" \
+  "every REVIEW_GATE_* assignment uses the bare key name the loader reads" \
   "every committed setting resolves to a legal value"; do
   printf '%s' "$OUT" | grep -qF -- "$line" &&
     ok "reports: $line" ||
@@ -242,6 +241,21 @@ dir="$DIR"
 settings "$dir" REVIEW_GATE_COMMENT_REVIEWERS "bot[bot]:Reviewed commit:"
 expect_clean "a well-formed comment-reviewer pair still passes" "$dir"
 
+# A refused load must be a FINDING. Collapsing it into an empty value makes
+# every exclusion check below report a clean sheet against a list the engine
+# would have refused. The prophylactic key is the one nothing else validates:
+# --check-config never reads it, so this is its only reader.
+sandbox
+dir="$DIR"
+printf 'REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ["a", "b"]\n' >>"$dir/kendex.settings.toml"
+expect_fail "unsupported syntax on a validator-only key is a finding, not an empty value" "$dir" "could not be read"
+printf '%s' "$OUT" | grep -qF "unsupported syntax" &&
+  ok "the loader's own diagnostic is preserved" ||
+  bad "the loader's own diagnostic is preserved" "$OUT"
+printf '%s' "$OUT" | grep -qF "no exclusion globs to check" &&
+  bad "the skipped checks do not claim an empty list" "$OUT" ||
+  ok "the skipped checks do not claim an empty list"
+
 echo "=== carry-forward exclusions ==="
 
 sandbox
@@ -286,7 +300,14 @@ settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/*"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "docs/*"
 expect_fail "a declaration whose glob now matches no longer holds" "$dir" "no longer holds"
 
-echo "=== the adopted workflow ==="
+echo "=== the adopted workflow is the template ==="
+
+mutate() { # DIR SED-EXPR
+  local wf="$1/.github/workflows/review-gate-writer.yml"
+  sed -i.bak "$2" "$wf"
+  rm -f "$wf.bak"
+  commit "$1"
+}
 
 sandbox
 dir="$DIR"
@@ -306,221 +327,84 @@ dir="$DIR"
 cp "$dir/.github/workflows/review-gate-writer.yml" "$dir/.github/workflows/scratch.yml"
 expect_clean "an UNTRACKED workflow copy is not counted as a second writer" "$dir"
 
-mutate() { # DIR SED-EXPR
-  local wf="$1/.github/workflows/review-gate-writer.yml"
-  sed -i.bak "$2" "$wf"
-  rm -f "$wf.bak"
-  commit "$1"
+# ONE assertion, many spellings. Every case below satisfied some earlier
+# derived check while breaking the contract — a flipped operator, an appended
+# `|| true`, a substring activity type, an inline flow mapping, a foreign
+# `repository:`, a downgraded permission. Under equality they are one thing:
+# the copy stopped being a copy. Adding a spelling to this list needs no new
+# rule in the validator, which is the point of the model.
+diverges() { # NAME SED-EXPR
+  sandbox
+  dir="$DIR"
+  mutate "$dir" "$2"
+  expect_fail "$1" "$dir" "has diverged from the shipped template"
 }
 
+diverges "a flipped && between the relay's negative terms" \
+  "s/ && github.event_name != 'schedule'/ || github.event_name != 'schedule'/"
+diverges "an appended || true on the write job's if" \
+  "s/^    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'\$/& || true/"
+diverges "a conjunction where the write job needs a disjunction" \
+  "s/^    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'\$/    if: github.event_name == 'workflow_dispatch' \&\& github.event_name == 'schedule'/"
+diverges "a foreign repository: input on a privileged checkout" \
+  "s|^          persist-credentials: false\$|          repository: attacker/public-repo\n          persist-credentials: false|"
+diverges "an activity type list missing opened but containing reopened" \
+  "s/^    types: \[opened, synchronize, reopened\]\$/    types: [synchronize, reopened]/"
+diverges "an inline flow mapping on the status trigger key line" \
+  "s/^  status: {}\$/  status: { types: [success] }/"
+diverges "a downgraded statuses permission on the write job" \
+  "s/^      statuses: write\$/      statuses: read/"
+diverges "an extra permission scope on the relay" \
+  "s/^      actions: write\$/      actions: write\n      packages: read/"
+diverges "a pruned workflow_dispatch trigger" \
+  "s/^  workflow_dispatch: {}\$//"
+diverges "a deleted cron floor" \
+  "/^  schedule:\$/,/^    - cron:/d"
+diverges "a guard step whose nonzero exit was deleted" \
+  "/^            exit 1\$/d"
+diverges "a checkout pinning a hardcoded branch" \
+  "s|ref: \${{ github.event.repository.default_branch }}|ref: main|"
+diverges "a checkout that keeps its credentials" \
+  "/^          persist-credentials: false\$/d"
+diverges "a dropped relay env: binding" \
+  "/^      DISPATCH_REF: /d"
+
+# Appending a whole job is the same one thing.
 sandbox
 dir="$DIR"
-mutate "$dir" "s/^      actions: write$/      actions: write\n      statuses: write/"
-expect_fail "a relay granted statuses:write is named" "$dir" "statuses: write"
-
-sandbox
-dir="$DIR"
-mutate "$dir" "s|^    steps:$|    steps:\n      - uses: actions/checkout@v5\n|"
-expect_fail "a checkout added to the relay is named" "$dir" "the relay job checks out code"
-
-sandbox
-dir="$DIR"
-mutate "$dir" "s/ \&\& github.event_name != 'schedule'//"
-expect_fail "a relay if: that stopped excluding a converge leg" "$dir" "no longer excludes: schedule"
-
-sandbox
-dir="$DIR"
-mutate "$dir" "/^      DISPATCH_REF: /d"
-expect_fail "a dropped relay env: binding is named" "$dir" "lost: DISPATCH_REF"
-
-sandbox
-dir="$DIR"
-mutate "$dir" "s/^  workflow_dispatch: {}$//"
-expect_fail "a pruned workflow_dispatch trigger is named" "$dir" "trigger 'workflow_dispatch' is missing"
-
-sandbox
-dir="$DIR"
-mutate "$dir" "s/^  status: {}$/  status:\n    types: [success]/"
-expect_fail "a filtered status trigger is named" "$dir" "the status trigger is filtered"
-
-sandbox
-dir="$DIR"
-mutate "$dir" "s|ref: \${{ github.event.repository.default_branch }}|ref: \${{ github.event.repository.default_branch \|\| 'trunk' }}|"
-expect_fail "a re-introduced hardcoded default-branch fallback is named" "$dir" "hardcoded branch name"
-
-sandbox
-dir="$DIR"
-mutate "$dir" "0,/^          persist-credentials: false$/{/^          persist-credentials: false$/d;}"
-expect_fail "a checkout that keeps its credentials is named" "$dir" "persist-credentials: false"
-
-sandbox
-dir="$DIR"
-mutate "$dir" "s|^  workflow_dispatch: {}$|  check_run:\n    types: [created, completed]\n  workflow_dispatch: {}|"
-expect_clean "the check_run opt-in passes while the relay reads the repository variable" "$dir"
-printf '%s' "$OUT" | grep -qF "REVIEW_GATE_CHECK_RUN_NAME" &&
-  ok "the opt-in reminds the operator to set the repository variable" ||
-  bad "the opt-in reminds the operator to set the repository variable" "$OUT"
-
-sandbox
-dir="$DIR"
-mutate "$dir" "s|^  workflow_dispatch: {}$|  check_run:\n    types: [created, completed]\n  workflow_dispatch: {}|"
-# '#' delimiter: the expression being deleted carries '|' itself.
-mutate "$dir" "s# \&\& (github.event_name != 'check_run' || github.event.check_run.name == vars.REVIEW_GATE_CHECK_RUN_NAME)##"
-expect_fail "check_run opted in without the variable term relays every CI job" "$dir" "does not read vars.REVIEW_GATE_CHECK_RUN_NAME"
-
-echo "=== the checks are closed, not word-deep ==="
-
-# A workflow that MENTIONS the writer is not a workflow that RUNS it. The
-# relay's own comments name review-writer.sh, and so does the missing-file
-# guard and its error string — matching the word finds files that execute
-# nothing.
-sandbox
-dir="$DIR"
-{
-  printf 'name: Mentions the writer\n'
-  printf '"on":\n  workflow_dispatch: {}\n'
-  printf 'jobs:\n  talk:\n    runs-on: ubuntu-latest\n    steps:\n'
-  printf '      - name: say the name\n'
-  printf "        run: echo 'this job never runs .agents/skills/review-gate/scripts/review-writer.sh'\n"
-} >"$dir/.github/workflows/mentions.yml"
-commit "$dir"
-expect_clean "a workflow that only NAMES review-writer.sh is not a second writer" "$dir"
-
-# The relay's permission check must be CLOSED. A blocklist of five named
-# scopes passes every scope nobody thought to name.
-sandbox
-dir="$DIR"
-mutate "$dir" "s/^      actions: write$/      actions: write\n      packages: read/"
-expect_fail "an UNNAMED extra relay scope is caught (packages, in no blocklist)" "$dir" "packages: read"
-
-# The relay is IDENTIFIED by its permissions mapping, so a job that lost
-# `actions: write` is reported as a missing relay, not as a mis-scoped one.
-sandbox
-dir="$DIR"
-mutate "$dir" "/^      actions: write$/d"
-expect_fail "a relay stripped of actions:write is reported missing, not passed over" "$dir" "no job holding"
-
-# The single-writer group must be a LITERAL. A per-run expression is a group
-# of one, which is no throttle at all.
-sandbox
-dir="$DIR"
-mutate "$dir" "s|^      group: review-gate-writer$|      group: review-gate-writer-\${{ github.run_id }}|"
-expect_fail "a per-run concurrency group is not a single writer" "$dir" "computed per run"
-
-sandbox
-dir="$DIR"
-mutate "$dir" "s/^      cancel-in-progress: false$/      cancel-in-progress: true/"
-expect_fail "a group that cancels in progress is caught" "$dir" "not false"
-
-# Per checkout, not per file: the write job's checkout is the second one, so
-# the merge-group job's compliant checkout would mask it in a whole-file count.
-sandbox
-dir="$DIR"
-mutate "$dir" "/as in the merge-group job/,/persist-credentials: false/ s|ref: .*|ref: main|"
-expect_fail "an unsafe SECOND checkout is not masked by a safe first one" "$dir" "pins 'main'"
-
-sandbox
-dir="$DIR"
-mutate "$dir" "/as in the merge-group job/,/persist-credentials: false/ s|^          ref: .*||"
-expect_fail "a checkout pinning no ref at all is caught" "$dir" "pins no \`ref:\`"
-
-# DISPATCH_REF decides which ENGINE the converge pass runs, so its VALUE is
-# the contract; presence alone would pass a relay dispatching another branch.
-sandbox
-dir="$DIR"
-mutate "$dir" "s|^      DISPATCH_REF: .*|      DISPATCH_REF: \${{ github.ref }}|"
-expect_fail "a relay dispatching a non-default ref is caught by value, not presence" "$dir" "DISPATCH_REF is"
-
-# The guard step this PR added is itself a contract: without it a consumer
-# keeps the bare expression and gets actions/checkout's silent fallback.
-sandbox
-dir="$DIR"
-mutate "$dir" "/^          DEFAULT_BRANCH: /d"
-expect_fail "a checkout whose default-branch guard was deleted is caught" "$dir" "without the guard step"
-
-echo "=== blocks, not the whole file ==="
-
-# Every case here passes a WHOLE-FILE grep and fails the contract. They are
-# one class: a check that reads the file instead of the block it means.
-
-append_job() { # DIR TEXT — add a job at the end of the adopted workflow
-  printf '%s\n' "$2" >>"$1/.github/workflows/review-gate-writer.yml"
-  commit "$1"
-}
-
-# Roles are COUNTED. A second job in a role is not a duplicate of the one
-# inspected; it is an uninspected job holding the same powers.
-sandbox
-dir="$DIR"
-append_job "$dir" '  second-relay:
+printf '%s\n' '  second-relay:
     runs-on: ubuntu-latest
     permissions:
       actions: write
     steps:
       - name: dispatch
-        run: echo dispatch'
-expect_fail "a SECOND relay job is counted, not overwritten" "$dir" "jobs holding \`actions: write\`"
+        run: echo dispatch' >>"$dir/.github/workflows/review-gate-writer.yml"
+commit "$dir"
+expect_fail "an appended job is a divergence" "$dir" "has diverged from the shipped template"
 
+# The BOUNDARY, stated rather than left to be discovered: comments are
+# compared out. A copy whose prose was reworded is still the template.
 sandbox
 dir="$DIR"
-append_job "$dir" '  second-writer:
-    runs-on: ubuntu-latest
-    permissions:
-      statuses: write
-    steps:
-      - name: converge
-        run: |
-          exec .agents/skills/review-gate/scripts/review-writer.sh'
-expect_fail "a SECOND write job is counted, not overwritten" "$dir" "2 write jobs"
+mutate "$dir" "s|^# Copy it VERBATIM.*|# this repo reworded the header|"
+expect_clean "a reworded COMMENT is not a divergence" "$dir"
 
+# The one legitimate addition: the opt-in's two trigger lines.
 sandbox
 dir="$DIR"
-append_job "$dir" '  second-queue:
-    if: github.event_name == '"'"'merge_group'"'"'
-    runs-on: ubuntu-latest
-    permissions:
-      statuses: write
-    steps:
-      - name: post
-        run: |
-          exec .agents/skills/review-gate/scripts/review-writer.sh'
-expect_fail "a SECOND merge-group job is counted, not overwritten" "$dir" "2 merge-group jobs"
+mutate "$dir" "s|^  workflow_dispatch: {}\$|  check_run:\n    types: [created, completed]\n  workflow_dispatch: {}|"
+expect_clean "the check_run opt-in's two lines are allowed" "$dir"
+printf '%s' "$OUT" | grep -qF "REVIEW_GATE_CHECK_RUN_NAME" &&
+  ok "the opt-in still names the repository variable equality cannot check" ||
+  bad "the opt-in still names the repository variable equality cannot check" "$OUT"
 
-# A job renamed after the trigger it replaced satisfies `^  schedule:` in a
-# whole-file grep while the cron floor is gone.
+# ...and only those two. An opt-in plus any other edit still diverges.
 sandbox
 dir="$DIR"
-mutate "$dir" "/^  schedule:$/,/^    - cron:/d"
-mutate "$dir" "s/^  write:$/  schedule:/"
-expect_fail "a JOB named after a deleted trigger does not satisfy it" "$dir" "trigger 'schedule' is missing"
+mutate "$dir" "s|^  workflow_dispatch: {}\$|  check_run:\n    types: [created, completed]\n  workflow_dispatch: {}|"
+mutate "$dir" "s/^      statuses: write\$/      statuses: read/"
+expect_fail "the opt-in allowance does not cover a second edit" "$dir" "has diverged from the shipped template"
 
-# A comment naming the repository variable satisfies a whole-file grep while
-# the relay's if: no longer reads it.
-sandbox
-dir="$DIR"
-mutate "$dir" "s|^  workflow_dispatch: {}$|  check_run:\n    types: [created, completed]\n  workflow_dispatch: {}|"
-mutate "$dir" "s# \\&\\& (github.event_name != 'check_run' || github.event.check_run.name == vars.REVIEW_GATE_CHECK_RUN_NAME)##"
-mutate "$dir" "s|^permissions:$|# see vars.REVIEW_GATE_CHECK_RUN_NAME for the opt-in\npermissions:|"
-expect_fail "a COMMENT naming the variable does not satisfy the check_run guard" "$dir" "does not read vars.REVIEW_GATE_CHECK_RUN_NAME"
-
-# The guard's refusal is the point, not its mention: without the nonzero exit
-# it reports the fault and checks the unpinned ref out anyway.
-sandbox
-dir="$DIR"
-mutate "$dir" "/^            exit 1$/d"
-expect_fail "a guard step whose nonzero exit was deleted is not a guard" "$dir" "without the guard step"
-
-# An absent checkout must never read as a satisfied guard.
-sandbox
-dir="$DIR"
-mutate "$dir" "/as in the merge-group job/,/persist-credentials: false/d"
-expect_fail "a privileged job that checks nothing out is named" "$dir" "checks nothing out"
-
-# Activity types, not just the trigger key.
-sandbox
-dir="$DIR"
-mutate "$dir" "s/^    types: \[opened, synchronize, reopened\]$/    types: [opened]/"
-expect_fail "a typed trigger pruned to [opened] is caught" "$dir" "missing activity type"
 
 echo "=== the workflow half stands alone ==="
 
@@ -551,13 +435,23 @@ wfout="$(cd "$dir" && "./$WORKFLOW_REL" 2>&1)" || wfrc=$?
 [ "$wfrc" -eq 1 ] && ok "validate-workflow.sh alone reports findings as exit 1" ||
   bad "validate-workflow.sh alone reports findings as exit 1 (rc=$wfrc)" "$wfout"
 
+# Without the shipped template there is nothing to compare against, and a
+# missing comparand must be "could not run", never a pass.
+sandbox
+dir="$DIR"
+rm "$dir/.agents/skills/review-gate/templates/review-gate-writer.yml"
+wfrc=0
+(cd "$dir" && "./$WORKFLOW_REL" >/dev/null 2>&1) || wfrc=$?
+[ "$wfrc" -eq 2 ] && ok "a missing shipped template is exit 2, never a pass" ||
+  bad "a missing shipped template is exit 2, never a pass" "rc=$wfrc"
+
 # The driver must FOLD the peer tool's verdicts in, never lose them: a
 # summary counting only its own three groups would report a clean sheet
 # while the workflow group was reporting failures.
 sandbox
 dir="$DIR"
 mutate "$dir" "/^      DISPATCH_REF: /d"
-expect_fail "the driver relays and counts the peer tool's failures" "$dir" "lost: DISPATCH_REF"
+expect_fail "the driver relays and counts the peer tool's failures" "$dir" "has diverged from the shipped template"
 printf '%s' "$OUT" | grep -qE 'review-gate validate: [1-9][0-9]* check\(s\) failed' &&
   ok "the driver's summary counts the folded failure" ||
   bad "the driver's summary counts the folded failure" "$OUT"

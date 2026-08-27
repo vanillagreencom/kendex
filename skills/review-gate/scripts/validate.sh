@@ -42,12 +42,13 @@ Four groups run, in this order:
               named as what they are; the value rules come from
               `review-predicate.sh --check-config`, never a copy of them.
   carry       every REVIEW_GATE_CARRY_FORWARD_EXCLUDE glob is
-              repository-relative, matches at least one tracked path, and is
-              not universal; every prophylactic declaration names an active
-              exclusion that still matches nothing.
-  workflow    the adopted .github/workflows/ copy still carries the writer
-              contract — delegated to validate-workflow.sh, whose --help
-              lists what it asserts.
+              repository-relative, matches a tracked path, and is not
+              universal; every prophylactic declaration names an active
+              exclusion that still matches nothing. A value the loader
+              refuses is a finding, never an empty list.
+  workflow    the adopted .github/workflows/ copy is still the shipped
+              template, line for line — delegated to validate-workflow.sh,
+              whose --help states the model and the two allowed deltas.
 
 The environment is scrubbed of every REVIEW_GATE_* key before settings are
 read: what is validated is what the repository COMMITS, not what this shell
@@ -246,22 +247,43 @@ fi
 
 group "carry-forward exclusions"
 
-read_setting() { # NAME — value on stdout; nonzero when the loader refused it
-  "${scrub[@]}" bash -c '
+CARRY_TMP="$(mktemp -d)" || die "could not create a scratch directory"
+trap 'rm -rf "$CARRY_TMP"' EXIT
+
+# The loader's DIAGNOSTIC is kept and a refusal is a finding: collapsing a
+# failed read into an empty value would read as "no exclusions configured"
+# and report a clean sheet. The PROPHYLACTIC key is the one nothing else
+# validates — the predicate never reads it — so here is its only reader.
+CARRY_LOAD_FAILED=0
+carry_setting() { # KEY — sets CARRY_VALUE; a refusal is a FAIL row, not ""
+  local rc=0
+  CARRY_VALUE=""
+  CARRY_VALUE="$("${scrub[@]}" bash -c '
     . "$1/scripts/lib/settings.sh"
     rg_setting "$2" ""
-  ' _ "$SKILL_DIR" "$1" 2>/dev/null
+  ' _ "$SKILL_DIR" "$1" 2>"$CARRY_TMP/err")" || rc=$?
+  [ "$rc" -eq 0 ] && return 0
+  CARRY_LOAD_FAILED=1
+  CARRY_VALUE=""
+  bad "$SETTINGS_FILE: $1 could not be read — a refused load is a configuration error, never an empty value:
+$(sed 's/^/        /' "$CARRY_TMP/err")"
+  return 0
 }
 
 list_items() { # PACKED — one trimmed, non-empty item per line
   printf '%s' "$1" | tr ';' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d'
 }
 
-CARRY_FORWARD="$(read_setting REVIEW_GATE_CARRY_FORWARD)" || CARRY_FORWARD=""
-CARRY_EXCLUDE="$(read_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE)" || CARRY_EXCLUDE=""
-CARRY_PROPHYLACTIC="$(read_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC)" || CARRY_PROPHYLACTIC=""
+carry_setting REVIEW_GATE_CARRY_FORWARD
+CARRY_FORWARD="$CARRY_VALUE"
+carry_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE
+CARRY_EXCLUDE="$CARRY_VALUE"
+carry_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC
+CARRY_PROPHYLACTIC="$CARRY_VALUE"
 
-if [ -z "$CARRY_FORWARD" ]; then
+if [ "$CARRY_LOAD_FAILED" -eq 1 ]; then
+  note "the exclusion checks below are SKIPPED — a value above could not be read, and checking the empty list it would otherwise default to reports a clean sheet"
+elif [ -z "$CARRY_FORWARD" ]; then
   note "REVIEW_GATE_CARRY_FORWARD is empty — carry-forward is off and these exclusions are inert; they are checked anyway, because dead config bites on the day the class is turned on"
 fi
 
@@ -307,7 +329,8 @@ glob_hits '__review-gate-validate-no-such-path__/*'
 exclude_items="$(list_items "$CARRY_EXCLUDE")"
 prophylactic_items="$(list_items "$CARRY_PROPHYLACTIC")"
 
-if [ -z "$exclude_items" ]; then
+if [ "$CARRY_LOAD_FAILED" -eq 1 ]; then : # the refusal above said why
+elif [ -z "$exclude_items" ]; then
   note "REVIEW_GATE_CARRY_FORWARD_EXCLUDE is empty — no exclusion globs to check"
 else
   while IFS= read -r pat; do
@@ -340,7 +363,8 @@ fi
 # The ledger is reconciled in BOTH directions: a declaration whose exclusion
 # is gone waives nothing, and a declaration whose glob now matches keeps a
 # live exclusion out of the checks above.
-if [ -z "$prophylactic_items" ]; then
+if [ "$CARRY_LOAD_FAILED" -eq 1 ]; then : # ditto
+elif [ -z "$prophylactic_items" ]; then
   note "REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC is empty — no declarations to reconcile"
 else
   while IFS= read -r pat; do

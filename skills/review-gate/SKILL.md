@@ -127,9 +127,8 @@ Everything else has a working default. Full table:
 | carry-exclude … anchored with a leading '/' | Drop the anchor: compare filenames are repository-relative. |
 | prophylactic declaration … | Reconcile the ledger — every declaration names an active exclusion that still matches nothing. |
 | no tracked workflow … runs review-writer.sh | Adopt (§2), or `git add` the workflow: Actions runs only what is committed. |
-| the relay job … | Restore the template's relay verbatim. The relay holds `actions: write` and nothing else, checks nothing out, holds no concurrency group, and refuses the converge legs. |
-| trigger '…' is missing | Restore it. `workflow_dispatch` is the relay's dispatch target; losing it strips every event-fast path down to the cron floor. |
-| a hardcoded branch name | Replace with `${{ github.event.repository.default_branch }}`; the guard step refuses an empty resolution. |
+| has diverged from the shipped template | Re-copy `templates/review-gate-writer.yml` over the adopted file. The template carries no per-repo values, so a copy that differs is a copy someone edited; the line named under the verdict says where. Keep only the `check_run` opt-in's two trigger lines if that opt-in is on. |
+| could not be read | A committed value the loader refuses — the indented diagnostic names the key and the shape it rejected. Fix the assignment; an unreadable value is never an empty one. |
 | is not executable / does not parse | Re-run `kendex refresh` and commit the result. |
 
 ## 5. Operations
@@ -234,7 +233,8 @@ nothing else.
 # validate THIS repo's installation (env: none) — the consumer's CI step
 .agents/skills/review-gate/scripts/validate.sh
 
-# the adopted-workflow contract alone, when only the workflow copy changed
+# is the adopted workflow still the shipped template? (equality, not
+# re-derivation) — usable alone when only the workflow copy changed
 .agents/skills/review-gate/scripts/validate-workflow.sh
 
 # verdict for one head (env: GH_REPO, PR_NUMBER, HEAD_SHA[, PR_AUTHOR])

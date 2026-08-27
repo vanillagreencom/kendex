@@ -14,7 +14,7 @@ Paths are as installed in a consuming repo, under
 | `scripts/review-predicate.sh` | Answers "is this head reviewed?" — verdict on stdout, exit 2 means no verdict, take no action. `--check-config` runs its settings-validation phase alone. |
 | `scripts/review-writer.sh` | Posts that answer as the commit status. The whole writer. |
 | `scripts/validate.sh` | The consumer-facing tool: is this repo's install sound? Runtime, settings, carry-forward exclusions, then the workflow half below, whose verdicts it relays and counts. |
-| `scripts/validate-workflow.sh` | The adopted-workflow contract alone. Split at the one seam the check has — everything here reads `.github/workflows/` and nothing else does — and usable on its own when only the workflow copy changed. Built on a block spine: see § Blocks, not the file. |
+| `scripts/validate-workflow.sh` | Is the adopted copy still the shipped template? Equality, not re-derivation: see § Equality, not re-derivation. Usable on its own when only the workflow copy changed. |
 | `scripts/pr-watch.sh` | The agent-side reducer: "does any open PR need attention right now?" Silence on stdout + exit 0 means nothing needs you, which makes it a one-line loop/cron predicate; `--heal` also dispatches the writer once on a stale gate. |
 | `scripts/review-predicate-selftest.sh` | Offline proof of the decision table. An ENGINE proof: it runs here, in the catalog repo, on every change. |
 | `tests/e2e-sandbox.sh` | Live replay against a throwaway repo — re-run it before changing the engine. |
@@ -48,25 +48,31 @@ near-miss that must not. Two layers: a mechanism layer with forced
 configurations, and a configured layer that re-derives the battery from the
 invoking repo's own resolved settings.
 
-## Blocks, not the file
+## Equality, not re-derivation
 
-`validate-workflow.sh` asks every question of an EXTRACTED BLOCK — the `on:`
-mapping, one job's mapping, one step — never of the workflow file. Four
-primitives do the extraction and every check is built on them:
+`validate-workflow.sh` compares the adopted copy against the shipped template
+line by line, over every line that is not a comment or blank. Two deltas are
+allowed and nothing else: the `check_run` opt-in's two trigger lines, and — in
+the catalog repository only — the `skills/` script path in place of the
+vendored `.agents/skills/` one. Any other difference is one failure naming the
+first divergent line, and the remedy never varies: re-copy the template.
 
-| Primitive | Answers |
-|---|---|
-| `block_under FILE KEY-ERE` | the lines nested under the first matching key, by indentation |
-| `split_children BLOCK DEST PREFIX` | one file per immediate child of a mapping — `jobs:` gives a file per job, `on:` a file per trigger |
-| `key_value BLOCK KEY` | the scalar after `KEY:` among a block's immediate children |
-| `split_steps JOB DEST` | one file per step, with the `- ` marker rewritten to two spaces so the three primitives above work on a step unchanged |
+It re-derives nothing, and that is the design rather than an economy. Deriving
+the contract — this job's permissions, that expression's terms, these activity
+types — is a YAML-and-expressions parser written in bash, and it has an
+asymptote: a flipped `&&`, an appended `|| true`, an activity type matched as
+a substring, an inline flow mapping on the trigger key line, a foreign
+`repository:` input on a checkout. Each is a new rule, and the next spelling
+is a new hole. Equality has no such gap, because the template carries no
+per-repo values: a copy that differs is a copy someone edited.
 
-The distinction is between "does the workflow do this?" and "does this text
-appear somewhere?". The second question is answered yes by a comment naming
-a variable, by a job renamed after the trigger it replaced, and by a second
-copy of a role that nothing then inspects. Roles are counted for the same
-reason: a duplicate is an uninspected job holding the same powers, not a
-harmless copy of the one that was checked.
+What equality cannot express is checked on its own, and there is one such
+thing: with the `check_run` opt-in enabled, the reviewer's check name lives in
+a GitHub repository variable rather than in the file.
+
+The boundary, stated so it is not discovered: comments are compared out. A
+copy whose prose was reworded is still the template — the catalog's own copy
+reworded its header — and a comment gates nothing.
 
 ## Evidence reads
 
@@ -108,5 +114,8 @@ values. The two per-repo knobs it once held are gone —
   carries, so opting in is uncommenting the trigger and setting a variable.
 
 `tests/review-writer-template.test.sh` pins both, against the template and
-against this repo's own adopted copy. `validate.sh` asserts the same contract
-in a consumer, phrased as a verdict a repo owner can act on.
+against this repo's own adopted copy — that suite is where the workflow's
+MEANING is asserted, and it runs here, upstream, on every change. A consumer
+asserts nothing about meaning: `validate-workflow.sh` asks only whether its
+copy is still this file. The two questions live in the two places that can
+answer them.
