@@ -38,10 +38,10 @@ Four groups run, in this order:
               parses under `bash -n`.
   settings    the committed file is TRACKED (CI checks out nothing else), and
               every REVIEW_GATE_* assignment is one the engine reads, spelt
-              the way it reads it (bare key, no quotes), and legal. Unknown
-              keys, per-invocation seams and repository variables are each
-              named as what they are; the value rules come from
-              `review-predicate.sh --check-config`, never a copy of them.
+              the ONE way it reads them (a bare key, then its own `=`), and
+              legal. Unknown keys, per-invocation seams and repository
+              variables are each named as what they are; the value rules come
+              from `review-predicate.sh --check-config`, never a copy of them.
   carry       every REVIEW_GATE_CARRY_FORWARD_EXCLUDE glob is
               repository-relative, matches a tracked path, and is not
               universal; every prophylactic declaration names an active
@@ -178,22 +178,36 @@ else
   else
     bad "$SETTINGS_FILE is present but UNTRACKED — CI checks out tracked files only, so every value below is validated here and absent there; the gate would run on the built-in defaults. \`git add $SETTINGS_FILE\`"
   fi
-  # Two scans, because the loader makes the distinction: its presence probe
-  # is `^[[:space:]]*NAME[[:space:]]*=` (scripts/lib/settings.sh), which
-  # matches the BARE key and nothing else. TOML says a quoted key is the same
-  # key; this engine's parser says it is no key at all. Reading both shapes as
-  # one would report a quoted assignment as a healthy setting while the gate
-  # ran on the built-in default.
-  # The TOML BARE-KEY charset, not the ledger's shape: scanning `[A-Z0-9_]*`
-  # reads `REVIEW_GATE_MODEe` as `REVIEW_GATE_MODE`, finds it known, and
-  # passes the one spelling the engine silently ignores.
-  assigned="$(sed -n 's/^[[:space:]]*\(REVIEW_GATE_[A-Za-z0-9_-]*\)[[:space:]]*=.*/\1/p' "$SETTINGS_FILE" | sort -u)"
-  quoted="$(sed -n "s/^[[:space:]]*[\"']\(REVIEW_GATE_[A-Za-z0-9_-]*\)[\"'][[:space:]]*=.*/\1/p" "$SETTINGS_FILE" | sort -u)"
-  # A DOTTED key is the third spelling TOML allows and the loader does not
-  # read: its probe wants the bare name followed by its `=`, so
-  # `REVIEW_GATE_MODE.typo = "off"` is invisible to the engine and, scanned
-  # for the bare shape alone, invisible here too.
-  dotted="$(sed -n 's/^[[:space:]]*\(REVIEW_GATE_[A-Za-z0-9_-]*\)[[:space:]]*\.[[:space:]]*[A-Za-z0-9_.[:space:]-]*=.*/\1/p' "$SETTINGS_FILE" | sort -u)"
+  # INVERTED, after quoted keys, dotted keys and quoted-dotted keys each
+  # arrived as its own spelling: enumerate what the loader READS, not the
+  # ways to hide from it. Its probe is `^[[:space:]]*NAME[[:space:]]*=`
+  # (scripts/lib/settings.sh) — the bare name, then its own `=`, and nothing
+  # else. So one pass classifies every assignment line by shape: a line
+  # whose KEY POSITION (the text before its first `=`) names a REVIEW_GATE_
+  # key either has that exact shape and is read, or does not and is read by
+  # nothing. Quoting, dotting, quoted dotting and whatever spelling comes
+  # next all land in the second class without a rule of their own.
+  keyscan="$(awk '
+    { l = $0; sub(/\r$/, "", l) }
+    l ~ /^[[:space:]]*#/ { next }
+    { i = index(l, "=") }
+    i == 0 { next }
+    substr(l, 1, i - 1) !~ /REVIEW_GATE_/ { next }
+    l ~ /^[[:space:]]*REVIEW_GATE_[A-Za-z0-9_]*[[:space:]]*=/ {
+      k = l
+      sub(/^[[:space:]]*/, "", k)
+      sub(/[[:space:]]*=.*$/, "", k)
+      print "read " k
+      next
+    }
+    {
+      gsub(/^[[:space:]]+/, "", l)
+      gsub(/[[:space:]]+$/, "", l)
+      print "unread " l
+    }
+  ' "$SETTINGS_FILE")"
+  assigned="$(printf '%s\n' "$keyscan" | sed -n 's/^read //p' | sort -u)"
+  unread="$(printf '%s\n' "$keyscan" | sed -n 's/^unread //p')"
   unknown=""
   seams=""
   repo_vars=""
@@ -226,13 +240,9 @@ EOF_ASSIGNED
   else
     ok "no GitHub repository variable is assigned as a repo setting"
   fi
-  if [ -n "$(printf '%s' "$dotted" | tr -d '[:space:]')" ]; then
-    bad "$SETTINGS_FILE assigns REVIEW_GATE_* key(s) with a DOTTED name: $(printf '%s' "$dotted" | tr '\n' ' ')— valid TOML, but the loader reads the bare name followed by its own \`=\`, so these assignments are read by nothing and the gate runs on the built-in default; drop the dotted suffix"
-  else
-    ok "no REVIEW_GATE_* assignment hides behind a dotted key"
-  fi
-  if [ -n "$(printf '%s' "$quoted" | tr -d '[:space:]')" ]; then
-    bad "$SETTINGS_FILE assigns REVIEW_GATE_* key(s) with a QUOTED name: $(printf '%s' "$quoted" | tr '\n' ' ')— valid TOML, but the loader's presence probe matches the bare name only, so these assignments are read by nothing and the gate runs on the built-in default; drop the quotes"
+  if [ -n "$(printf '%s' "$unread" | tr -d '[:space:]')" ]; then
+    bad "$SETTINGS_FILE names REVIEW_GATE_* key(s) in a shape the loader does not read — valid TOML, read by nothing, so the gate runs on the built-in default. The loader reads the BARE name followed by its own \`=\`; quoted, dotted and quoted-dotted keys are all read by nothing. Strip the decoration from:
+$(printf '%s\n' "$unread" | sed 's/^/        /')"
   else
     ok "every REVIEW_GATE_* assignment uses the bare key name the loader reads"
   fi

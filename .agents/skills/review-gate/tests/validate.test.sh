@@ -211,12 +211,12 @@ fi
 sandbox
 dir="$DIR"
 printf '"REVIEW_GATE_THREADS" = "off"\n' >>"$dir/kendex.settings.toml"
-expect_fail "a QUOTED key name is read by nothing and is named" "$dir" "QUOTED name"
+expect_fail "a QUOTED key name is read by nothing and is named" "$dir" "a shape the loader does not read"
 
 sandbox
 dir="$DIR"
 printf "'REVIEW_GATE_THREADS' = \"off\"\n" >>"$dir/kendex.settings.toml"
-expect_fail "a single-quoted key name is caught the same way" "$dir" "QUOTED name"
+expect_fail "a single-quoted key name is caught the same way" "$dir" "a shape the loader does not read"
 
 # The bare form is what the loader reads, so it must NOT trip the quoted
 # check — an over-broad matcher would fail every sound repo.
@@ -229,17 +229,36 @@ expect_clean "the bare key form the loader reads still passes" "$dir"
 sandbox
 dir="$DIR"
 printf 'REVIEW_GATE_MODE.typo = "off"\n' >>"$dir/kendex.settings.toml"
-expect_fail "a DOTTED key is read by nothing and is named" "$dir" "DOTTED name"
+expect_fail "a DOTTED key is read by nothing and is named" "$dir" "a shape the loader does not read"
 
 sandbox
 dir="$DIR"
 printf 'REVIEW_GATE_MODE . typo = "off"\n' >>"$dir/kendex.settings.toml"
-expect_fail "a dotted key with whitespace around the dot is caught too" "$dir" "DOTTED name"
+expect_fail "a dotted key with whitespace around the dot is caught too" "$dir" "a shape the loader does not read"
+
+# The model is INVERTED, so the spellings below need no rule of their own:
+# each is simply not the one shape the loader reads.
+sandbox
+dir="$DIR"
+printf '"REVIEW_GATE_MODE".typo = "off"\n' >>"$dir/kendex.settings.toml"
+expect_fail "a quoted-then-dotted key is read by nothing" "$dir" "a shape the loader does not read"
+
+sandbox
+dir="$DIR"
+printf 'REVIEW_GATE_THREADS."x" = "off"\n' >>"$dir/kendex.settings.toml"
+expect_fail "a dotted-then-quoted key is read by nothing" "$dir" "a shape the loader does not read"
 
 sandbox
 dir="$DIR"
 printf '[env]\nREVIEW_GATE_THREADS = "off"\n' >>"$dir/kendex.settings.toml"
-expect_clean "a plain assignment under a table header is not read as dotted" "$dir"
+expect_clean "a plain assignment under a table header is read normally" "$dir"
+
+# A REVIEW_GATE_ name in a VALUE is not a key, and flagging it would fail
+# every repo that mentions one in a comment-shaped setting.
+sandbox
+dir="$DIR"
+settings "$dir" PR_REVIEW_NUDGE "ask about REVIEW_GATE_MODE"
+expect_clean "a REVIEW_GATE_ name in a value position is not a key" "$dir"
 
 # A repository VARIABLE assigned as a setting gets its own diagnosis: the
 # name is real, so "you misspelled it" would send its reader hunting a typo
@@ -260,7 +279,10 @@ expect_fail "a lowercase-suffixed typo is scanned and named" "$dir" "REVIEW_GATE
 sandbox
 dir="$DIR"
 printf 'REVIEW_GATE_MODE-x = "off"\n' >>"$dir/kendex.settings.toml"
-expect_fail "a dashed TOML key the engine cannot read is named" "$dir" "REVIEW_GATE_MODE-x"
+expect_fail "a dashed TOML key the engine cannot read is named" "$dir" "a shape the loader does not read"
+printf '%s' "$OUT" | grep -qF 'REVIEW_GATE_MODE-x = "off"' &&
+  ok "the unread line is quoted back, so the fix is on the page" ||
+  bad "the unread line is quoted back, so the fix is on the page" "$OUT"
 
 # --check-config's contract is that it validates EVERY setting. A grammar
 # rule below its stop point would report a legal configuration that the next
