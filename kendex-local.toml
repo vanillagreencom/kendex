@@ -223,6 +223,15 @@ harnesses = [
 ]
 enabled = true
 
+[skills.growth-guards]
+source = "."
+harnesses = [
+    "claude",
+    "codex",
+    "pi",
+]
+enabled = true
+
 [skills.iced-rs]
 source = "."
 harnesses = [
@@ -340,6 +349,24 @@ harnesses = [
 ]
 enabled = true
 
+[hooks.block-repo-copy]
+source = "."
+harnesses = [
+    "claude",
+    "codex",
+    "pi",
+]
+enabled = true
+
+[hooks.block-unsafe-rm]
+source = "."
+harnesses = [
+    "claude",
+    "codex",
+    "pi",
+]
+enabled = true
+
 [hooks.post-edit-lint]
 source = "."
 harnesses = [
@@ -358,9 +385,27 @@ harnesses = [
 ]
 enabled = true
 
+[hooks.session-drift-check]
+source = "."
+harnesses = [
+    "claude",
+    "codex",
+    "pi",
+]
+enabled = true
+
 [hooks.task-completed-check]
 source = "."
 harnesses = ["claude"]
+enabled = true
+
+[bundles.commit-guards]
+source = "."
+harnesses = [
+    "claude",
+    "codex",
+    "pi",
+]
 enabled = true
 
 [skill-instructions]

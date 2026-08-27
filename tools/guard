@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# kendex guardrails — deterministic checks, run as the pre-commit hook.
+# kendex guardrails — the repo-specific rules, run as the last lane of the
+# growth-guards pre-commit chain (GROWTH_GUARDS_PRE_COMMIT_LOCAL). Every rule
+# a shipped package already judges is that package's: size-ratchet caps lines,
+# byte-ceiling caps bytes, todo-ban catches work markers, suppression-ban
+# catches blanket allows, conflict-markers catches merge markers. What is here
+# is what none of them ships.
 # Checks the working tree, not the staged index — accepted trade-off:
 # agents commit whole files; partial staging is out of scope.
 set -uo pipefail
@@ -12,74 +17,15 @@ say() {
 
 files=$({ git ls-files; git diff --cached --name-only; } | sort -u)
 
-# The size-ratchet's test classes, whatever the extension: room up to 800,
-# and never a raise.
-is_test_path() {
-  case "$1" in */tests/* | */test/* | */__tests__/* | */tests.rs | *test_util.rs | *.test.*) return 0 ;; esac
-  return 1
-}
-
-# Over the hard cap, a file is the size-ratchet's to govern once a baseline
-# row names its exact count (the ratchet rejects any other row): a row
-# already at HEAD, or — for anything but a test — one this change adds or
-# raises under RATCHET_RAISE=1, merging fragments back into one concept.
-frozen() { # PATH LINES
-  awk -F'\t' -v p="$1" -v n="$2" '$1 == p && $2 == n { f = 1 } END { exit !f }' tools/size-ratchet-baseline.tsv 2>/dev/null || return 1
-  git show HEAD:tools/size-ratchet-baseline.tsv 2>/dev/null | awk -F'\t' -v p="$1" '$1 == p { f = 1 } END { exit !f }' && return 0
-  [ "${RATCHET_RAISE:-}" = "1" ] && ! is_test_path "$1"
-}
-
-while IFS= read -r f; do
-  [ -f "$f" ] || continue
-
-  # Size ceiling: no binary/asset bloat (lockfiles exempt).
-  case "$f" in
-    *.lock | package-lock.json) : ;;
-    agents/* | skills/* | hooks/* | pi-extensions/* | skill-templates/*) : ;; # catalog content, not app source
-    .agents/* | .claude/skills/* | .claude/agents/* | .claude/hooks/* | \
-      .codex/agents/* | .codex/hooks/* | .pi/agents/* | .pi/kendex/hooks/*) : ;; # kendex's render of the catalog content above
-    docs/img/*) : ;; # README screenshots and the tour gif
-    *) [ "$(wc -c <"$f")" -gt 204800 ] &&
-      say "$f is over 200 KB — assets and binaries don't belong here" ;;
-  esac
-
-  # Line caps: split files before they exceed these. Binary assets are
-  # governed by the size ceiling above, not by line counts.
-  case "$f" in
-    *.md | *.lock | *.json | *.svg | *.png | *.ico | *.icns) continue ;;
-    agents/* | skills/* | hooks/* | pi-extensions/* | skill-templates/*) continue ;; # catalog content
-    .agents/* | .claude/skills/* | .claude/agents/* | .claude/hooks/* | \
-      .codex/agents/* | .codex/hooks/* | .pi/agents/* | .pi/kendex/hooks/*) continue ;; # its render
-    docs/img/*) continue ;; # binary images
-    ui/src/components/ui/* | ui/src/bindings.ts) continue ;; # generated: shadcn, tauri-specta
-    kendex-local.toml) continue ;; # kendex writes it, one table per declared item — the CLI owns its shape, so it cannot be split
-    .github/workflows/*) continue ;; # declarative pipelines, one file per workflow by GitHub's contract — a workflow cannot be split without severing its jobs
-    *.rs) cap=400 ;;
-    *.ts | *.tsx) cap=250 ;;
-    *) cap=400 ;;
-  esac
-  is_test_path "$f" && cap=800
-  lines=$(wc -l <"$f")
-  [ "$lines" -gt "$cap" ] || continue
-  frozen "$f" "$lines" && continue
-  if is_test_path "$f"; then
-    say "$f is $lines lines (cap $cap) — split at a concept seam; a test is never raised"
-  else
-    say "$f is $lines lines (cap $cap) — split at a concept seam the reader never crosses back over; never shatter one concept to duck the count. Fragments merged back into one concept are a raise: RATCHET_RAISE=1 with the file's row in tools/size-ratchet-baseline.tsv"
-  fi
-done <<<"$files"
-
-# Content rules over hand-written source. Usage: scan <grep-ERE> [path-ERE]
+# Content rules over hand-written source. Every caller names the tree it
+# means, so the only blanket skips left are the generated files inside those
+# trees. Usage: scan <grep-ERE> <path-ERE>
 scan() {
-  local pat=$1 filter=${2:-.} f
+  local pat=$1 filter=$2 f
   while IFS= read -r f; do
     [ -f "$f" ] || continue
     case "$f" in
-      tools/* | ui/src/components/ui/* | ui/src/bindings.ts) continue ;;
-      agents/* | skills/* | hooks/* | pi-extensions/* | skill-templates/*) continue ;; # catalog content
-      .agents/* | .claude/skills/* | .claude/agents/* | .claude/hooks/* | \
-        .codex/agents/* | .codex/hooks/* | .pi/agents/* | .pi/kendex/hooks/*) continue ;; # its render
-      *.md | *.lock | *.json | *.svg) continue ;;
+      ui/src/components/ui/* | ui/src/bindings.ts) continue ;; # generated: shadcn, tauri-specta
     esac
     [[ "$f" =~ $filter ]] || continue
     grep -nHE "$pat" "$f" || true
@@ -141,29 +87,6 @@ if [ "${RATCHET_RAISE:-}" != "1" ] && git cat-file -e HEAD:tools/size-ratchet-ba
   [ -n "$raised" ] && say "size-ratchet baseline rows went up — split at a seam; RATCHET_RAISE=1 only when the new lines are the fix with no seam, or fragments of one concept merged back into one file:
 $raised"
 fi
-
-# The commit-guard implementation bans the marker shapes below, so it must
-# name them — in its patterns, its messages, and its fixtures. Only these
-# shape scans skip it; every other rule still applies there.
-guard_impl='^crates/core/src/guard/|^crates/cli/src/commands/guard_cmd\.rs|^crates/(core|cli)/tests/guard_|^crates/cli/tests/install_ux/guarding\.rs'
-
-hits=$(scan 'TODO|FIXME|HACK' | grep -vE "$guard_impl")
-[ -n "$hits" ] && {
-  echo "$hits" | head -5
-  say "unfinished-work markers — finish it now or record it outside code"
-}
-
-hits=$(scan '#!\[allow' | grep -vE "$guard_impl")
-[ -n "$hits" ] && {
-  echo "$hits"
-  say "module-wide #![allow] — fix the lint instead of silencing the file"
-}
-
-hits=$(scan 'allow\((dead_code|unused)' | grep -vE "$guard_impl")
-[ -n "$hits" ] && {
-  echo "$hits"
-  say "allow(dead_code/unused) — delete the code instead of keeping it warm"
-}
 
 # Every module that reads a catalog's own bytes is listed, so a raw read of a
 # catalog path is caught wherever it is added. source/browse/safety.rs is not

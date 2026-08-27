@@ -162,17 +162,13 @@ jobs:
           fi
           exit "$fail"
 
-      - name: tools/guard suite
-        if: matrix.shard == 'shell'
-        run: bash tools/tests/guard.test.sh
-
-      - name: hook suites
+      - name: tools and hook suites
         if: matrix.shard == 'shell'
         run: |
           set -u
           fail=0
           failed=""
-          for t in hooks/tests/*.sh; do
+          for t in tools/tests/*.test.sh hooks/tests/*.sh; do
             echo "=== $t"
             if ! bash "$t"; then
               echo "FAILED: $t"

@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
-# Conventional commits; git-generated messages pass through.
-head -1 "$1" | grep -qE '^((feat|fix|docs|chore|refactor|test|perf|ci|build)(\([a-z0-9-]+\))?!?: .{1,72}|(Merge|Revert|fixup!|squash!|amend!) .*)$' || {
-  echo "commit-msg: use conventional format: type(scope): subject (subject <= 72 chars)"
-  exit 1
+# The repo's own commit-message rule, run after the growth-guards commit-msg
+# shim: that shim judges the conventional-commit header, this judges the
+# changelog. Only a commit-msg hook sees the subject, so the [no-changelog]
+# escape hatch cannot live in the pre-commit lane.
+#
+# Exit codes follow the guard family: 0 clean, 1 violation, 2 could not run.
+set -uo pipefail
+
+[ $# -ge 1 ] && [ -r "$1" ] || {
+  echo "commit-msg: no readable message file — the changelog rule could not run"
+  exit 2
+}
+staged=$(git diff --cached --name-only) || {
+  echo "commit-msg: could not read the staged file list — the changelog rule could not run"
+  exit 2
 }
 
 # Code changes ship with a changelog entry; [no-changelog] is the escape
-# hatch for pure refactors. Only commit-msg sees the subject, so the rule
-# lives here rather than in the pre-commit guard.
-staged=$(git diff --cached --name-only)
+# hatch for pure refactors.
 if echo "$staged" | grep -qE '^(crates|ui)/' &&
   ! echo "$staged" | grep -qx 'CHANGELOG.md' &&
   ! head -1 "$1" | grep -qF '[no-changelog]'; then

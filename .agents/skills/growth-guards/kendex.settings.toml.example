@@ -1,0 +1,13 @@
+[env]
+
+# GROWTH GUARDS — repo growth checks (growth-guards skill).
+# Project-scope `kendex add` / `kendex refresh` merge these defaults into
+# <project>/kendex.settings.toml (never overwriting existing keys). Every
+# other GROWTH_GUARDS_* key ships a working default; the full list is in the
+# skill's SKILL.md.
+
+# Repo-local check the pre-commit shim runs LAST: a repo-root-relative
+# executable following the family exit contract (0 clean, 1 violations,
+# else "could not complete"); any nonzero blocks the commit, and so does a
+# missing or non-executable value. Empty = no repo-local check.
+GROWTH_GUARDS_PRE_COMMIT_LOCAL = ""

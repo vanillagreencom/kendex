@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+# pre-commit — the staged-scope guard chain, shaped for the git pre-commit
+# hook (the installed .git/hooks/kendex-guards shim execs it): size-ratchet
+# and preflight when the committing work tree or this install carries those
+# sibling skills, then `growth-guards all`, then the repo-local entry named
+# by GROWTH_GUARDS_PRE_COMMIT_LOCAL. Every lane announces itself, a skipped
+# or unconfigured one included.
+#
+# Every step runs before the verdict, so one commit attempt reports every
+# blocker. Aggregation fails CLOSED: exit 2 if any step could not complete,
+# else 1 if any found violations, else 0. Both nonzero verdicts block.
+set -euo pipefail
+
+GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
+GG_BOOT="${GG_BOOT%x}"
+# The one newline `pwd` added; anything before it is the path.
+SCRIPT_DIR="${GG_BOOT%$'\n'}"
+GG_CHECK="pre-commit"
+# shellcheck source=lib/paths.sh
+source "$SCRIPT_DIR/lib/paths.sh"
+# shellcheck source=lib/skill-roots.sh
+source "$SCRIPT_DIR/lib/skill-roots.sh"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/settings.sh
+source "$SCRIPT_DIR/lib/settings.sh"
+
+usage() {
+  cat <<'EOF'
+usage: pre-commit
+
+Runs the staged-scope guard chain: size-ratchet and preflight (each resolved
+from the committing work tree first, then from the install beside this
+skill), the growth-guards batch, then the optional repo-local entry. Takes no
+arguments — git passes none to pre-commit. Wire it through the installed shim:
+`install-git-hooks --repo <root>`.
+
+Configuration (env > .env.local > .kendex/settings.toml >
+kendex.settings.toml [env] > .env > default):
+  GROWTH_GUARDS_PRE_COMMIT_LOCAL   repo-root-relative executable to run last
+                                   (default "": no repo-local entry)
+Every GROWTH_GUARDS_* key the batch reads applies here unchanged.
+
+Exit codes: 0 clean; 1 violations; 2 usage/config/collection error. Both
+nonzero codes block the commit.
+EOF
+}
+
+case "${1-}" in
+  -h | --help)
+    usage
+    exit 0
+    ;;
+esac
+[ $# -eq 0 ] || gg_config_error "takes no arguments (see --help)"
+
+gg_repo_root_cd
+
+gg_settings_index_mode
+
+had_violations=0
+had_errors=0
+
+run_step() { # LABEL COMMAND [ARGS...] — runs one step and folds its verdict
+  local label="$1" status=0
+  shift
+  echo "=== pre-commit: $label"
+  "$@" || status=$?
+  case "$status" in
+    0) ;;
+    1) had_violations=1 ;;
+    *)
+      had_errors=1
+      echo "pre-commit: step '$label' did not complete (exit $status)"
+      ;;
+  esac
+}
+
+# Sibling gates resolve against the COMMITTING work tree first: the shim may
+# exec this script from a shared install in another checkout (linked worktrees
+# share one hooks directory), whose branch state must not decide which gates
+# exist for this commit — and a re-vendored copy in this tree gates it, not
+# the install it replaces. The roots mirror the shim's rediscovery list, which
+# covers a consumer's .agents/skills shape and kendex's own skills/ layout;
+# the install beside this script serves only a tree carrying no copy.
+
+# Whether the SKILL is present decides, not whether its script happens to be
+# runnable: a present skill with a missing, dangling or unexecutable script
+# is a broken install, and the chain must never pass by losing a gate. -L
+# catches a dangling symlink, which -e reports as absent.
+# The roots resolve_sibling walked, for a skip to name. A diagnostic that
+# lists one of two searched places is worse than none: it sends the reader
+# to the directory that was never the problem.
+gg_searched_roots() {
+  local project=""
+  gg_project_root project "$SCRIPT_DIR" || project=""
+  [ "$project" = "$PWD" ] && project=""
+  case "$project" in
+    "") printf '%s' "$PWD" ;;
+    *) printf '%s and %s' "$PWD" "$project" ;;
+  esac
+}
+
+resolve_sibling() { # SKILL — skill directory on stdout; 1 when no side carries it
+  local skill="$1" base="" dir="" root="" project=""
+  # The committing tree first, then the project this copy is installed
+  # under. That order is the re-vendor rule: a tree carrying its own copy of
+  # a gate gates its own commit with it, so $PWD outranks everything.
+  #
+  # The project root is the addition. git runs a hook from the work-tree top
+  # level, which is the project root only when the two are the same
+  # directory; where a kendex project sits below it the siblings are beside
+  # THIS copy and nowhere near $PWD, and a sibling that failed was a gate
+  # reporting nothing while the chain exited 0.
+  gg_project_root project "$SCRIPT_DIR" || project=""
+  [ "$project" = "$PWD" ] && project=""
+  for root in "$PWD" "$project"; do
+    [ -n "$root" ] || continue
+    for base in $GG_SKILL_ROOTS; do
+      dir="$root/$base/$skill"
+      if [ -e "$dir" ] || [ -L "$dir" ]; then
+        printf '%s\n' "$dir"
+        return 0
+      fi
+    done
+  done
+  dir="$SCRIPT_DIR/../../$skill"
+  if [ -e "$dir" ] || [ -L "$dir" ]; then
+    printf '%s\n' "$dir"
+    return 0
+  fi
+  return 1
+}
+
+if SIZE_RATCHET_SKILL="$(resolve_sibling size-ratchet)"; then
+  SIZE_RATCHET="$SIZE_RATCHET_SKILL/scripts/size-ratchet"
+  [ -x "$SIZE_RATCHET" ] || gg_config_error "the size-ratchet skill is installed at $SIZE_RATCHET_SKILL but $SIZE_RATCHET is missing or not executable — reinstall it"
+  # A consuming repo may replace the vendored script with its own gate — a
+  # fork without the --staged interface, wired through its own hooks. This
+  # chain owns only the kendex-shape script, and the ONE
+  # deterministic signal is the run itself: an argument parser that rejects
+  # --staged says so in its own first line. No help-prose inference — two
+  # reviewers proved usage-shape detection cannot converge.
+  echo "=== pre-commit: size-ratchet"
+  sr_run_status=0
+  sr_run_out="$("$SIZE_RATCHET" --staged 2>&1)" || sr_run_status=$?
+  [ -n "$sr_run_out" ] && printf '%s\n' "$sr_run_out"
+  # The rejection is a PARSER diagnostic: the whole first line, in the
+  # tool-prefixed shapes an argument parser emits. Guard-family tools stamp
+  # diagnostics with the ::error:: annotation; strip exactly that prefix so
+  # the shapes below see the tool's own line. A config diagnostic that
+  # merely ECHOES the phrase inside a longer line never matches.
+  sr_first_line="${sr_run_out%%$'\n'*}"
+  sr_first_line="${sr_first_line#::error::}"
+  sr_rejects_staged=0
+  if [ "$sr_run_status" -eq 2 ]; then
+    case "$sr_first_line" in
+      "size-ratchet: unknown argument '--staged'"*|"size-ratchet: unrecognized option '--staged'"*|"size-ratchet: unrecognized option: --staged"*|"size-ratchet: invalid option: --staged"*|"size-ratchet: invalid option -- staged"*)
+        sr_rejects_staged=1
+        ;;
+    esac
+  fi
+  case "$sr_run_status:$sr_rejects_staged" in
+    0:*) ;;
+    1:*) had_violations=1 ;;
+    2:1)
+      echo "=== pre-commit: size-ratchet at $SIZE_RATCHET rejects --staged (repo-local replacement) — skipped; this repo's own wiring owns that gate"
+      ;;
+    *)
+      had_errors=1
+      echo "pre-commit: step 'size-ratchet' did not complete (exit $sr_run_status)"
+      ;;
+  esac
+else
+  echo "=== pre-commit: size-ratchet not installed — skipped (no size-ratchet skill under $(gg_searched_roots) ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../size-ratchet)"
+fi
+
+# Same sibling contract for preflight: its --staged lanes judge the same
+# blobs, and a human committing outside any harness gets the deterministic
+# checks CI would otherwise report first.
+if PREFLIGHT_SKILL="$(resolve_sibling preflight)"; then
+  PREFLIGHT="$PREFLIGHT_SKILL/scripts/preflight"
+  [ -x "$PREFLIGHT" ] || gg_config_error "the preflight skill is installed at $PREFLIGHT_SKILL but $PREFLIGHT is missing or not executable — reinstall it"
+  if git rev-parse --verify --quiet HEAD >/dev/null; then
+    run_step preflight "$PREFLIGHT" --staged
+  else
+    # The very first commit has nothing to diff --staged against; blocking
+    # a repository's birth is not this chain's job.
+    echo "=== pre-commit: first commit — preflight --staged has no base; skipped"
+  fi
+else
+  echo "=== pre-commit: preflight not installed — skipped (no preflight skill under $(gg_searched_roots) ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../preflight)"
+fi
+
+BATCH="$SCRIPT_DIR/growth-guards"
+[ -x "$BATCH" ] || gg_config_error "$BATCH is missing or not executable — reinstall the growth-guards skill"
+run_step "growth-guards all" "$BATCH" all
+
+LOCAL_RAW="$(gg_setting GROWTH_GUARDS_PRE_COMMIT_LOCAL "")" || exit 2
+if [ -n "$LOCAL_RAW" ]; then
+  LOCAL_ENTRY="$(gg_config_path "$LOCAL_RAW" GROWTH_GUARDS_PRE_COMMIT_LOCAL)" || exit 2
+  [ -x "$LOCAL_ENTRY" ] || gg_config_error "GROWTH_GUARDS_PRE_COMMIT_LOCAL names '$LOCAL_ENTRY', which is missing or not executable"
+  # The family contract applies: 0 clean, 1 violations, anything else "could
+  # not complete". Every nonzero blocks either way.
+  run_step "repo-local: $LOCAL_ENTRY" "./$LOCAL_ENTRY"
+else
+  # Announced like every ran or skipped lane: silence here is
+  # indistinguishable from a lane the chain lost.
+  echo "=== pre-commit: repo-local entry: none configured"
+fi
+
+if [ "$had_errors" -eq 1 ]; then
+  echo "pre-commit: a guard could not complete — commit blocked; fix the errors above (bypass only with git commit --no-verify)"
+  exit 2
+fi
+if [ "$had_violations" -eq 1 ]; then
+  echo "pre-commit: violations — commit blocked; see the failures above"
+  exit 1
+fi
+echo "pre-commit: OK — staged guard chain clean"

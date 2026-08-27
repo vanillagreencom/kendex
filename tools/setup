@@ -1,10 +1,23 @@
 #!/usr/bin/env bash
-# Install git hooks — run once per clone.
+# Arm the commit guards — run once per clone.
+#
+# The growth-guards installer owns .git/hooks. Its pre-commit line runs the
+# package chain, which ends in tools/guard (GROWTH_GUARDS_PRE_COMMIT_LOCAL).
+# The commit-msg chain has no such repo-local lane, so this repo's own rule is
+# appended below the installer's line. Whether the shims are armed is the
+# installer's verdict to give, not this script's to infer from a file that
+# exists: git may be reading hooks from somewhere else entirely.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-for pair in pre-commit:guard commit-msg:commit-msg; do
-  printf '#!/usr/bin/env bash\nexec "$(git rev-parse --show-toplevel)/tools/%s" "$@"\n' \
-    "${pair##*:}" >".git/hooks/${pair%%:*}"
-  chmod +x ".git/hooks/${pair%%:*}"
-done
-echo "hooks installed"
+
+INSTALLER=.agents/skills/growth-guards/scripts/install-git-hooks
+"$INSTALLER"
+"$INSTALLER" --check || {
+  echo "setup: the guard shims are not armed (the check above says why), so the repo's commit-msg lane was not wired" >&2
+  exit 1
+}
+
+msg="$(git rev-parse --git-common-dir)/hooks/commit-msg"
+lane='exec "$(git rev-parse --show-toplevel)/tools/commit-msg" "$@"'
+grep -qxF "$lane" "$msg" || printf '%s\n' "$lane" >>"$msg"
+echo "hooks armed; repo commit-msg lane wired"

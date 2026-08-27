@@ -209,16 +209,16 @@ BOT_REMOTE_NAME = ""
 # Where the decider skill keeps architecture decision records.
 DECISIONS_DIR = "docs/decisions"
 
-# The repo's own validation command: the same checks the pre-commit hook
-# runs, so a skill validating a change gets the answer that will gate it.
+# The repo's own validation command, over the working tree: the lane of the
+# commit chain that judges uncommitted work. The package lanes read the index
+# instead, so they answer at `git commit`, not here.
 DEV_VALIDATE_CMD = "tools/guard"
 
 # The repo-root executable the guard chain runs last, after size-ratchet,
 # preflight and the growth-guards batch. tools/guard holds this repository's
-# own rules — the line caps, the prose rules, fmt, clippy, the test run — and
-# no OTHER lane of the chain runs them, so without this key a fresh clone
-# arms hooks that gate none of them. DEV_VALIDATE_CMD above names the same
-# command for a skill that wants the answer before committing.
+# own rules — the prose rules, the CHANGELOG rules, the repo-specific scans,
+# fmt, clippy, the test run — and no OTHER lane of the chain runs them, so
+# without this key a fresh clone arms hooks that gate none of them.
 GROWTH_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"
 
 GH_BOT_USERNAME = ""
@@ -234,8 +234,8 @@ ORCH_STATE_DIR = "tmp"
 
 # File-size ratchet classes: the ceiling a path gets when it is not the
 # default. Tests and generated READMEs earn room the default does not give;
-# ui/ TypeScript mirrors the 250 cap tools/guard holds it to, over exactly
-# the guard's domain, so a row the guard accepts is never stale here.
+# ui/ TypeScript is held to 250, tighter than Rust, because a component that
+# long has stopped being one component.
 SIZE_RATCHET_CLASSES = "*/README.md=120;*/tests/*=800;*/test/*=800;*/__tests__/*=800;*/tests.rs=800;*test_util.rs=800;*.test.*=800;ui/*.ts=250;ui/*.tsx=250"
 
 # ── Worktrees ────────────────────────────────────────────────────────────
@@ -246,6 +246,10 @@ SIZE_RATCHET_CLASSES = "*/README.md=120;*/tests/*=800;*/test/*=800;*/__tests__/*
 # .codex and .opencode are named whole: nothing under them is tracked.
 # .claude and .pi are named child by child: they hold tracked files
 # (.claude/CLAUDE.md, .pi/prompts) beside kendex-rendered, gitignored ones.
+# A DIRECTORY entry over tracked content is safe — worktree setup keeps it a
+# real directory and links only the untracked children. A single tracked FILE
+# is not: it becomes a link git cannot write through, so .claude/settings.json
+# is absent here and each worktree carries git's own copy.
 WORKTREE_BASE_DIR = "~/dev/.worktrees/kendex"
 WORKTREE_COPIES = ".kendex-lock.json"
 WORKTREE_DEFAULT_BRANCH = "main"
@@ -259,7 +263,7 @@ WORKTREE_MKDIRS = "tmp"
 # the changed manifests — never in a linked worktree, whose install would
 # write through the link. .gitignore's bare `node_modules` pattern covers
 # the symlink.
-WORKTREE_SYMLINKS = ".env.local .agents .cache .codex .opencode .pi/agents .pi/kendex .claude/agents .claude/hooks .claude/skills .claude/settings.json ui/node_modules"
+WORKTREE_SYMLINKS = ".env.local .agents .cache .codex .opencode .pi/agents .pi/kendex .claude/agents .claude/hooks .claude/skills ui/node_modules"
 
 # Nothing needs one: .claude/CLAUDE.md is a tracked symlink, so it arrives
 # through git, and naming it here would shadow tracked content.
