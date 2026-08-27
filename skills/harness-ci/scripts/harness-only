@@ -236,12 +236,19 @@ in_place_path() { # PATH -> 0 when the path is the repo's own in-place content
   case "$in_place_skills" in
     "*" | "*"$NL* | *$NL"*" | *$NL"*"$NL*) return 0 ;;
   esac
+  # A declared name matches as a path prefix, so a namespaced declaration
+  # (skills."plugin/item") covers its whole tree like a plain one.
   rest="${1#.agents/skills/}"
-  skill="${rest%%/*}"
-  case "$in_place_skills" in
-    "$skill" | "$skill"$'\n'* | *$'\n'"$skill" | *$'\n'"$skill"$'\n'*) return 0 ;;
-    *) return 1 ;;
-  esac
+  skill="$rest"
+  while :; do
+    case "$in_place_skills" in
+      "$skill" | "$skill"$'\n'* | *$'\n'"$skill" | *$'\n'"$skill"$'\n'*) return 0 ;;
+    esac
+    case "$skill" in
+      */*) skill="${skill%/*}" ;;
+      *) return 1 ;;
+    esac
+  done
 }
 
 # --no-renames, and it is load-bearing. With rename detection on,

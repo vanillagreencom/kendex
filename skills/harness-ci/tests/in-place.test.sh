@@ -181,4 +181,17 @@ git -C "$localrepo" clean -qfd -e kendex.toml -e kendex-local.toml
 commit_paths "$localrepo" "render" .agents/skills/other/SKILL.md
 assert_verdict "an undeclared path beside a local manifest stays render" true --repo "$localrepo" --event push --base "$localbase" --head HEAD
 
+# A namespaced declaration covers its whole tree: the declared name matches
+# as a path prefix, not as the first segment.
+ns="$(new_repo namespaced)"
+printf 'schema = 6\n[skills."plugin/item"]\nsource = "in-place"\n' >"$ns/kendex.toml"
+commit_paths "$ns" "baseline" README.md
+nsbase="$(git -C "$ns" rev-parse HEAD)"
+commit_paths "$ns" "edit" .agents/skills/plugin/item/SKILL.md
+assert_verdict "a namespaced declaration carves its tree" false --repo "$ns" --event push --base "$nsbase" --head HEAD
+git -C "$ns" checkout -q -B "case" "$nsbase"
+git -C "$ns" clean -qfd -e kendex.toml
+commit_paths "$ns" "sibling" .agents/skills/plugin-other/SKILL.md
+assert_verdict "a sibling outside the namespace stays render" true --repo "$ns" --event push --base "$nsbase" --head HEAD
+
 report in-place
