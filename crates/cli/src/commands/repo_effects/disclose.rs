@@ -12,7 +12,12 @@ use kendex_core::repo_effects::DeclaredEffects;
 use super::super::say;
 
 /// The block, in the order a reader needs it: what changes, what is
-/// written, what survives, what the chain will do here, and how to undo it.
+/// written, which packages take part, whatever the package itself wants
+/// read, and how to undo it.
+///
+/// Every line of it is either the package's own words or a fact kendex
+/// knows about this machine. Nothing here explains what a declaration
+/// MEANS: that is the package's contract, and kendex is not a party to it.
 ///
 /// On the human channel, with the question it belongs to. This is not
 /// output a caller composes with — it is the context for `[y/N]`, and the
@@ -87,11 +92,11 @@ pub fn disclose<'a>(scope: &Scope, pending: &[&'a DeclaredEffects]) -> Vec<&'a D
             for companion in &effects.companions {
                 say(&format!("    {}", shown(companion)));
             }
-            say("");
-            say("  the chain resolves each of those when a commit is made:");
-            say("  one that is installed runs its lane, one that is not is an");
-            say("  announced skip, and one that is there but cannot run stops");
-            say("  the commit rather than skipping it");
+            // The names, and nothing about what they mean. What a
+            // companion's presence or absence does is the package's own
+            // contract, and kendex stating it here stated growth-guards'
+            // for every package that declares any. A package with something
+            // to say about its companions says it in `notes`.
         }
         for note in &effects.notes {
             say("");
