@@ -265,6 +265,18 @@ TRUSTED_LOGINS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS "")" || ex
 MIN_STATE="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_MIN_STATE "any")" || exit 2
 ERROR_PATTERNS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS "encountered an error and was unable to review")" || exit 2
 THREADS_MODE="$(rg_setting REVIEW_GATE_THREADS "enforce")" || exit 2
+
+# ONE parse of each packed trust list, here at the single place the settings
+# are resolved. Every consumer below works from these: the configuration
+# checks, the evidence reads, and the awaiting label. Entry boundaries and
+# emptiness are decided once, so a value like " ; , " cannot be an open trust
+# model to one reader and a named list to another.
+rg_pack() { # RAW SEPARATORS -> one trimmed, non-empty entry per line
+  printf '%s\n' "$1" | tr "$2" '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;/^$/d'
+}
+TRUSTED_LOGINS_N="$(rg_pack "$TRUSTED_LOGINS" ';,')"
+TRUSTED_CONTEXTS_N="$(rg_pack "$TRUSTED_CONTEXTS" ';')"
+COMMENT_REVIEWERS_N="$(rg_pack "$COMMENT_REVIEWERS" ';')"
 API_ATTEMPTS="$(rg_setting REVIEW_GATE_API_ATTEMPTS "1")" || exit 2
 API_RETRY_DELAY="$(rg_setting REVIEW_GATE_API_RETRY_DELAY_SECONDS "2")" || exit 2
 CARRY_FORWARD="$(rg_setting REVIEW_GATE_CARRY_FORWARD "")" || exit 2
@@ -374,14 +386,13 @@ if [ "$OUTAGE_CONTEXT" = "$GATE_CONTEXT_SELF" ]; then
   exit 2
 fi
 while IFS= read -r ctx; do
-  ctx="$(printf '%s' "$ctx" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
   [ -z "$ctx" ] && continue
   if [ "$ctx" = "$GATE_CONTEXT_SELF" ]; then
     echo "::error::review-predicate: REVIEW_GATE_TRUSTED_STATUS_CONTEXTS includes REVIEW_GATE_CONTEXT ('$GATE_CONTEXT_SELF') — the gate's own status cannot be its own review evidence" >&2
     exit 2
   fi
 done <<EOF_GATE_CTX
-$(printf '%s' "$TRUSTED_CONTEXTS" | tr ';' '\n')
+$TRUSTED_CONTEXTS_N
 EOF_GATE_CTX
 
 # The exclusion pattern GRAMMAR, and the one judge of it. Callers that need
@@ -448,7 +459,6 @@ rg_check_patterns REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "$CARRY_EXCLUDE
 # a PR to evaluate — otherwise --check-config reports a legal configuration
 # that the next live run exits 2 on.
 while IFS= read -r cfg_pair; do
-  cfg_pair="$(printf '%s' "$cfg_pair" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
   [ -z "$cfg_pair" ] && continue
   cfg_login="${cfg_pair%%:*}"
   cfg_pattern="${cfg_pair#*:}"
@@ -457,7 +467,7 @@ while IFS= read -r cfg_pair; do
     exit 2
   fi
 done <<EOF_COMMENT_CFG
-$(printf '%s' "$COMMENT_REVIEWERS" | tr ';' '\n')
+$COMMENT_REVIEWERS_N
 EOF_COMMENT_CFG
 
 # Every configuration rule above has now run, and --check-config stops HERE:
@@ -588,9 +598,9 @@ ATTESTATION_DEF='def not_errored_attestation($mk):
 # by a newer CHANGES_REQUESTED from that same login — a trailing COMMENTED
 # never withdraws an approval.
 got="$(jq --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
-        --arg trusted "$TRUSTED_LOGINS" --arg minstate "$MIN_STATE" \
+        --arg trusted "$TRUSTED_LOGINS_N" --arg minstate "$MIN_STATE" \
         --arg errmarks "$ERROR_PATTERNS" "$ATTESTATION_DEF"'
-  ($trusted | split("[;,\n]+"; "") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $t
+  ($trusted | split("\n") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $t
   | ($errmarks | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $mk
   | [ .[]
       | select(.commit_id == $sha and .state != "DISMISSED" and .state != "PENDING" and .user.login != $author)
@@ -716,7 +726,6 @@ else
 fi
 check=0
 while IFS= read -r ctx; do
-  ctx="$(printf '%s' "$ctx" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
   [ -z "$ctx" ] && continue
   ctx_uri="$(jq -rn --arg s "$ctx" '$s|@uri')"
   # --paginate emits one OBJECT per page for this endpoint; jq -s merges the
@@ -883,7 +892,7 @@ while IFS= read -r ctx; do
   }
   check=$((check + check_runs + check_status))
 done <<EOF
-$(printf '%s' "$TRUSTED_CONTEXTS" | tr ';' '\n')
+$TRUSTED_CONTEXTS_N
 EOF
 
 # Comment-form clean-pass evidence: some reviewers post NEITHER a review
@@ -899,7 +908,7 @@ EOF
 # match every head. The trust anchor is the author login plus the LITERAL
 # binding pattern immediately preceding the sha slot, not the quoting.
 comment_hits=0
-if [ -n "$COMMENT_REVIEWERS" ]; then
+if [ -n "$COMMENT_REVIEWERS_N" ]; then
   # Two steps, not a pipe — same pagination/fail-loud/zero-byte reasons as
   # the reviews read above.
   raw_comments="$(gh_read "repos/$GH_REPO/issues/$PR_NUMBER/comments?per_page=100" --paginate)" || {
@@ -921,7 +930,6 @@ if [ -n "$COMMENT_REVIEWERS" ]; then
     exit 2
   }
   while IFS= read -r pair; do
-    pair="$(printf '%s' "$pair" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
     [ -z "$pair" ] && continue
     # Grammar was proved in the configuration phase above, which is the one
     # site for it; this loop only splits what that pass accepted.
@@ -951,7 +959,7 @@ if [ -n "$COMMENT_REVIEWERS" ]; then
     }
     comment_hits=$((comment_hits + hits))
   done <<EOF
-$(printf '%s' "$COMMENT_REVIEWERS" | tr ';' '\n')
+$COMMENT_REVIEWERS_N
 EOF
 fi
 
@@ -1050,9 +1058,9 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
   # carry could matter), newest-first, distinct, never the head itself,
   # bounded so a force-push-heavy PR cannot turn the walk into an API storm.
   carry_candidates="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
-      --arg trusted "$TRUSTED_LOGINS" --arg minstate "$MIN_STATE" \
+      --arg trusted "$TRUSTED_LOGINS_N" --arg minstate "$MIN_STATE" \
       --arg errmarks "$ERROR_PATTERNS" "$ATTESTATION_DEF"'
-    ($trusted | split("[;,\n]+"; "") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $t
+    ($trusted | split("\n") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $t
     | ($errmarks | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $mk
     | [ .[]
         | select(.state != "DISMISSED" and .state != "PENDING" and .user.login != $author)
@@ -1332,11 +1340,16 @@ fi
 
 # One packed list -> trimmed, non-empty entries, one per line. FILTER_AUTHOR
 # drops the PR author, whose own review and comment are never evidence.
-aw_entries() { # LIST SEPARATORS FILTER_AUTHOR
-  printf '%s\n' "$1" | tr "$2" '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' |
+# The PR author is never evidence, so a source keyed on their login is not a
+# way to open this gate and must not be named as one. LOGIN_HALF takes what
+# precedes the first colon, which is how the comment-form evidence loop reads
+# a pair — the label names the string that loop matches on.
+aw_eligible() { # LIST [LOGIN_HALF]
+  printf '%s\n' "$1" |
     while IFS= read -r aw_item; do
+      [ "${2:-0}" = 1 ] && aw_item="${aw_item%%:*}"
       [ -z "$aw_item" ] && continue
-      [ "$3" = 1 ] && [ "$aw_item" = "$PR_AUTHOR" ] && continue
+      [ "$aw_item" = "$PR_AUTHOR" ] && continue
       printf '%s\n' "$aw_item"
     done
 }
@@ -1350,7 +1363,11 @@ aw_entries() { # LIST SEPARATORS FILTER_AUTHOR
 # awaiting-detail.sh only fits the answer into GitHub's description limit.
 awaiting_sources() { # -> one eligible source per line, duplicates collapsed
   {
-    if [ -z "$TRUSTED_LOGINS" ]; then
+    # The same normalized list the evidence read is given, so an empty trust
+    # list is empty for both. Emptiness is tested BEFORE the author filter: a
+    # list holding only the author is a named list nothing can satisfy, not
+    # an open one.
+    if [ -z "$TRUSTED_LOGINS_N" ]; then
       # The minimum state is part of the policy, not decoration: under
       # 'approved' a COMMENTED review does not satisfy this source, so the
       # text must not send a reader to leave one.
@@ -1360,10 +1377,10 @@ awaiting_sources() { # -> one eligible source per line, duplicates collapsed
         echo "any non-author review"
       fi
     else
-      aw_entries "$TRUSTED_LOGINS" ';,' 1
+      aw_eligible "$TRUSTED_LOGINS_N"
     fi
-    aw_entries "$TRUSTED_CONTEXTS" ';' 0
-    aw_entries "$(printf '%s' "$COMMENT_REVIEWERS" | sed 's/:[^;]*//g')" ';' 1
+    printf '%s\n' "$TRUSTED_CONTEXTS_N" | sed '/^$/d'
+    aw_eligible "$COMMENT_REVIEWERS_N" 1
   } | awk '!seen[$0]++'
 }
 

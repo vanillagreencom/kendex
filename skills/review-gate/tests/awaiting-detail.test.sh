@@ -46,10 +46,23 @@ else
   ok "the composer models no trust setting of its own"
 fi
 
+# One representation, shared. The evidence reads and the label must be given
+# the SAME packed lists, or a value can be an open trust model to one and a
+# named list to the other.
+if grep -q -- '--arg trusted "\$TRUSTED_LOGINS"' "$PRED"; then
+  bad "the evidence read is given the normalized trust list" "it is given the raw value"
+else
+  ok "the evidence read is given the normalized trust list"
+fi
+[ "$(grep -c 'rg_pack "\$TRUSTED_LOGINS" ' "$PRED")" = 1 ] \
+  && ok "the trust list is parsed exactly once" \
+  || bad "the trust list is parsed exactly once" "$(grep -c 'rg_pack "\$TRUSTED_LOGINS" ' "$PRED") parse sites"
+
 # ---------------------------------------------------------------- layer 1 ---
 # The predicate's own resolution, extracted from the script rather than
 # restated, so a rule that changes there changes here.
-eval "$(sed -n '/^aw_entries() {/,/^}/p' "$PRED")"
+eval "$(sed -n '/^rg_pack() {/,/^}/p' "$PRED")"
+eval "$(sed -n '/^aw_eligible() {/,/^}/p' "$PRED")"
 eval "$(sed -n '/^awaiting_sources() {/,/^}/p' "$PRED")"
 if declare -F awaiting_sources >/dev/null; then
   ok "the predicate's source resolution is extractable"
@@ -59,8 +72,15 @@ else
 fi
 
 MIN_STATE="any"
+# Each case is written in the raw settings a repo commits, and packs them
+# through the predicate's own rg_pack — the single parse every consumer of
+# these lists shares.
 sources_are() { # CASE, EXPECTED (comma-joined)
-  local got; got="$(awaiting_sources | tr '\n' ',' | sed 's/,$//')"
+  local got
+  TRUSTED_LOGINS_N="$(rg_pack "$TRUSTED_LOGINS" ';,')"
+  TRUSTED_CONTEXTS_N="$(rg_pack "$TRUSTED_CONTEXTS" ';')"
+  COMMENT_REVIEWERS_N="$(rg_pack "$COMMENT_REVIEWERS" ';')"
+  got="$(awaiting_sources | tr '\n' ',' | sed 's/,$//')"
   [ "$got" = "$2" ] && ok "$1" || bad "$1" "$got"
 }
 
@@ -98,6 +118,25 @@ sources_are "a login reachable two ways is listed once" "alice"
 # must not claim otherwise.
 PR_AUTHOR="alice" TRUSTED_LOGINS="alice" TRUSTED_CONTEXTS="" COMMENT_REVIEWERS="alice:REVIEWED-CLEAN"
 sources_are "an author-only configuration leaves no eligible source" ""
+
+# A delimiter-only trust list is what the evidence jq calls an EMPTY trust
+# list — it splits, trims and drops empties before deciding — so it is the
+# open trust model here too. Testing the raw value said the opposite: no
+# eligible source, on a gate that would accept any non-author review.
+PR_AUTHOR="carol" TRUSTED_LOGINS=" ; , " TRUSTED_CONTEXTS="" COMMENT_REVIEWERS=""
+sources_are "a delimiter-only trust list is the open trust model" \
+  "any non-author review"
+
+PR_AUTHOR="carol" TRUSTED_LOGINS="   " TRUSTED_CONTEXTS="Analysis" COMMENT_REVIEWERS=""
+sources_are "a whitespace-only trust list keeps the open model beside a context" \
+  "any non-author review,Analysis"
+
+# The comment-form evidence loop trims the PAIR and then takes everything
+# before the first colon, so a login with inner whitespace is matched as
+# 'alice ' — the label has to name that same string, not a tidier one.
+PR_AUTHOR="carol" TRUSTED_LOGINS="" TRUSTED_CONTEXTS="" COMMENT_REVIEWERS=" alice :Reviewed commit: "
+sources_are "a comment login is labelled as the evidence loop splits it" \
+  "any non-author review,alice "
 
 # The review-object minimum state is policy, not decoration: under 'approved'
 # a COMMENTED review does not satisfy the open trust model, so the text must
