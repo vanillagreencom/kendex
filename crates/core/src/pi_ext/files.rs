@@ -158,11 +158,13 @@ mod tests {
         assert!(inside(base, "/etc/passwd", "p").is_err());
     }
 
-    /// A name a dangling link holds is a name that is taken. `exists` says
-    /// it is free, the move onto it then replaces the link where the two
-    /// share a filesystem and fails where they do not — either way what
-    /// the trash was keeping is lost. Both seconds the call can land in
-    /// are seeded, so the clock cannot decide the outcome.
+    /// A name a dangling link holds is a name that is taken, and `exists`
+    /// says it is free. What the move onto it then does depends on the
+    /// shape: a directory is refused (ENOTDIR from rename, then EEXIST
+    /// from the copy) and the uninstall aborts, while anything else is
+    /// renamed straight over the link and the trash loses what it held.
+    /// The guard is for both. Both seconds the call can land in are
+    /// seeded, so the clock cannot decide which name it reaches for.
     #[cfg(unix)]
     #[test]
     fn a_trash_name_a_dangling_link_holds_is_not_taken() {
@@ -198,11 +200,9 @@ mod tests {
             .filter(|path| path.join("package.json").is_file())
             .collect();
         assert_eq!(landed.len(), 1, "{landed:?}");
-        assert!(
-            landed[0].to_string_lossy().contains("-1-pi-hooks"),
-            "{:?}",
-            landed[0]
-        );
+        // Somewhere other than the two names that were already taken —
+        // which counter it got is the clock's business, not this test's.
+        assert!(!held.contains(&landed[0]), "{:?}", landed[0]);
     }
 
     /// The installed copy replaced by a link whose target is gone, with the
