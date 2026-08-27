@@ -25,6 +25,10 @@ an outside contributor.
 - `kendex check` reads a repository's hook files itself instead of running
   its guard scripts, so reading a clone's status executes none of its code.
   It answers armed, not armed, or cannot tell, and never guesses.
+- A commit hook that lost its execute bit no longer reads as armed. Git
+  skips such a hook silently, so the harness gate stood aside for a gate
+  that ran nothing and the commit went through unchecked.
+
 - An install whose `pre-commit` or `commit-msg` script is missing or not
   executable reads as not armed rather than armed, in the package's own
   `--check` as well as in `kendex check` — that state blocks every commit.

@@ -2,9 +2,7 @@
 //! verbs, the migration off the retired arming, and what `kendex check`
 //! says about a repository in each state.
 
-use crate::{
-    armed_repo, git, git_ok, install_package, install_package_undeclared, repo, run, said,
-};
+use crate::{install_package, install_package_undeclared, repo, run, said};
 
 /// Disarming removes only the helper and the package's own marked line;
 /// the hook someone else wrote survives it.
@@ -193,4 +191,45 @@ fn the_check_verb_relays_the_packages_own_verdict() {
     let checked = run(home, &root, "kendex", &["guard", "check"]);
     assert_eq!(checked.status.code(), Some(0), "{}", said(&checked));
     assert!(said(&checked).contains("armed"), "{}", said(&checked));
+}
+
+/// A hook git will not run is not an armed repository.
+///
+/// The marker says this package armed the file; the execute bit says git
+/// will execute it. Git skips a hook without one in silence, so a marker in
+/// a file it ignores describes a gate that is not there — and every reader
+/// of the marker stands aside for it.
+///
+/// Executability is git's own rule about hook files, not this package's
+/// about their contents, which is why asking it is not the grammar this
+/// crate deliberately no longer has.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_hook_git_will_not_run_is_not_armed() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
+    let armed = run(home, &root, "kendex", &["guard", "install"]);
+    assert!(armed.status.success(), "{}", said(&armed));
+
+    // The control: armed is the silent verdict.
+    let clean = said(&run(home, &root, "kendex", &["check"]));
+    assert!(!clean.contains("commit hooks"), "{clean}");
+
+    // The marker stays; only the bit git reads goes.
+    let hook = root.join(".git/hooks/pre-commit");
+    assert!(
+        std::fs::read_to_string(&hook)
+            .unwrap()
+            .contains("kendex-guards-hook")
+    );
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    let out = said(&run(home, &root, "kendex", &["check"]));
+    assert!(
+        out.contains("commit hooks"),
+        "a hook git will not run still read armed: {out}"
+    );
 }

@@ -30,7 +30,7 @@ mod repo;
 mod resolve;
 pub use repo::Repo;
 pub use resolve::Installed;
-use resolve::bind;
+use resolve::{bind, is_executable};
 
 /// The package that owns the checks and the git shims.
 pub const SKILL: &str = "growth-guards";
@@ -176,9 +176,15 @@ fn installer(dir: &Path, args: &[&str]) -> Result<GuardReport> {
 /// its status ran code its author chose. So this executes nothing, and it
 /// asks the smallest question that is safe to answer from bytes alone.
 ///
-/// The marker or nothing. Both lanes have to carry it, in the directory git
-/// reads with no redirect in the way, and a `core.hooksPath` set to anything
-/// at all means the answer is no — not because such a repository is
+/// The marker and the execute bit. Both lanes have to carry the marker, in
+/// the directory git reads with no redirect in the way, and both have to be
+/// files git will actually run — git skips a hook without `+x` in silence,
+/// so a marker in a file it ignores describes a gate that is not there.
+/// Executability is git's own rule about hook files rather than anything
+/// this package puts in them, which is why reading it is not the grammar
+/// this module deliberately no longer has.
+///
+/// A `core.hooksPath` set to anything at all means the answer is no — not because such a repository is
 /// necessarily ungated, but because deciding whether it is takes the grammar
 /// this module deliberately no longer has. Every uncertainty lands on "not
 /// armed", whose remedy is a command that is safe to run twice.
@@ -194,10 +200,11 @@ pub fn armed(dir: &Path) -> Result<bool> {
     }
     let hooks = repo.default_hooks_dir();
     for lane in LANES {
-        let Some(text) = crate::fs::read_if_exists(&hooks.join(lane))? else {
+        let path = hooks.join(lane);
+        let Some(text) = crate::fs::read_if_exists(&path)? else {
             return Ok(false);
         };
-        if !text.contains(MARKER) {
+        if !text.contains(MARKER) || !is_executable(&path) {
             return Ok(false);
         }
     }

@@ -150,13 +150,23 @@ git -C "$HALF_ARMED" init -q
 printf '#!/bin/sh\nexit 0 %s\n' "$GG_MARK" >"$HALF_ARMED/.git/hooks/pre-commit"
 chmod +x "$HALF_ARMED/.git/hooks/pre-commit"
 
+# Marked on both lanes, and one of them is a file git will not execute.
+MARKED_NOT_EXEC="$TMP_ROOT/marked-not-exec"
+mkdir -p "$MARKED_NOT_EXEC"
+git -C "$MARKED_NOT_EXEC" init -q
+for lane in pre-commit commit-msg; do
+  printf '#!/bin/sh\nexit 0 %s\n' "$GG_MARK" >"$MARKED_NOT_EXEC/.git/hooks/$lane"
+  chmod +x "$MARKED_NOT_EXEC/.git/hooks/$lane"
+done
+chmod -x "$MARKED_NOT_EXEC/.git/hooks/pre-commit"
+
 NOT_A_REPO="$TMP_ROOT/plain"
 mkdir -p "$NOT_A_REPO"
 
 # Every fixture carries a package whose script would announce itself if
 # anything ran it. Nothing may: this hook defers to an armed hook or
 # refuses, and never runs a repository's own scripts on its behalf.
-for fixture in "$UNARMED" "$ARMED" "$ARMED_BY_PATH" "$DISARMED" "$DISARMED_BY_PATH" "$HOOKS_OFF" "$HALF_ARMED"; do
+for fixture in "$UNARMED" "$ARMED" "$ARMED_BY_PATH" "$DISARMED" "$DISARMED_BY_PATH" "$HOOKS_OFF" "$HALF_ARMED" "$MARKED_NOT_EXEC"; do
   scripts="$fixture/.agents/skills/growth-guards/scripts"
   mkdir -p "$scripts"
   {
@@ -338,6 +348,15 @@ assert_eq "$log" "" "and nothing was run beside it"
 # at the repository root is what `--git-path hooks` points at when the value
 # is empty, so reading that directory answers about the wrong place — and
 # answers "armed" for a repository whose commits git gates with nothing.
+# Both lanes marked, one of them without the bit git needs. Git skips such
+# a hook in silence, so deferring to its marker stands this lane aside for
+# a gate that does not run. Both lanes are marked deliberately: the missing
+# bit has to be the only thing wrong, or the pin passes on the other lane.
+run_hook "$MARKED_NOT_EXEC" "$(payload 'git commit -m test')"
+assert_eq "$rc" "2" "a marked hook without the execute bit is not armed"
+assert_contains "$err" "not armed by kendex" "and the refusal says so"
+assert_eq "$log" "" "and nothing of the repository's was run"
+
 run_hook "$HALF_ARMED" "$(payload 'git commit -m test')"
 assert_eq "$rc" "2" "one lane armed is not an armed repository"
 assert_contains "$err" "not armed by kendex" "one lane armed is not armed"

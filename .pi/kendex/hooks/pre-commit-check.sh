@@ -72,7 +72,12 @@ HOOKS_DIR=$(git rev-parse --git-path hooks 2>/dev/null) || {
   exit 0
 }
 # Armed is our marker in both hook files, in the directory git reads with
-# nothing redirecting it. That is the whole test.
+# nothing redirecting it, in files git will actually run. That is the whole
+# test.
+#
+# The execute bit is git's rule about hook files, not this package's about
+# their contents: git skips a hook without one, silently, so deferring to a
+# marker in a file git ignores stands this lane aside for nothing at all.
 #
 # It used to be a taxonomy: is the value empty, does it name this
 # repository's own directory under another spelling, does the file look
@@ -84,6 +89,7 @@ HOOKS_DIR=$(git rev-parse --git-path hooks 2>/dev/null) || {
 # would rather check a commit twice than wave one through.
 ARMED=""
 if [ "$(git config --get core.hooksPath 2>/dev/null; printf x)" = "x" ] \
+  && [ -x "$HOOKS_DIR/pre-commit" ] && [ -x "$HOOKS_DIR/commit-msg" ] \
   && grep -qF -- "$MARKER" "$HOOKS_DIR/pre-commit" 2>/dev/null \
   && grep -qF -- "$MARKER" "$HOOKS_DIR/commit-msg" 2>/dev/null; then
   ARMED=1

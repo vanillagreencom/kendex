@@ -129,7 +129,7 @@ fn project_root(repo: &super::Repo) -> Option<PathBuf> {
     }
 }
 
-fn is_executable(path: &Path) -> bool {
+pub(super) fn is_executable(path: &Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
