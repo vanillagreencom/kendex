@@ -32,6 +32,8 @@ require "$skill" 'no open issue, active branch, or one-line fix already covers i
 require "$skill" 'without a new investigation' 'finishable-as-written test'
 require "$skill" 'declined with one line' 'declined items get one line, not an issue'
 require "$skill" 'severe-sounding edge case that no real input reaches' 'severe-edge-case exclusion'
+require "$skill" 'hypothetical of low severity' 'hypothetical low-severity exclusion'
+require "$skill" 'critical harm or financial loss' 'critical-harm exception'
 require "$skill" 'Burn down more than you create' 'burn-down rule'
 require "$skill" 'created N / closed M' 'net reporting obligation'
 require "$skill" 'Ask about work, never about mechanics' 'question-scope rule'
@@ -48,6 +50,7 @@ done
 
 tpm_audit="$SKILL_DIR/workflows/tpm-audit.md"
 require "$tpm_audit" '10\.1 Apply the Creation Bar' 'creation bar gate before action assignment'
+require "$tpm_audit" 'below_bar: true, test, who_hits_it' 'below-bar evidence shape'
 require "$tpm_audit" 'naming the test it failed|naming the failed creation-bar test' 'skip reason names the failing test'
 require "$tpm_audit" 'cancellation sweep' 'cancellation sweep is a named obligation'
 require "$tpm_audit" 'A gap that nothing depends on and no user would notice is declined' 'architecture gaps face the same bar'
