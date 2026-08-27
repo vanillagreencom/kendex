@@ -83,6 +83,10 @@ an outside contributor.
   `$HOME` for every later tool call, the move the hook exists to stop, and
   only `cd <path>` was caught before.
 
+- `worktree`: the recovery text consumers copy into `AGENTS.md` no longer calls a
+  `.agents` directory broken. A repo that commits its render has tracked files
+  there, so the entry is a real directory and only a missing child link is a fault.
+
 - `worktree`: an untracked `.gitignore` under a tracked-content `WORKTREE_SYMLINKS`
   entry is copied, not symlinked, so the worktree ignores what the main checkout
   ignores and git stops warning `unable to access ... Too many levels of symbolic links`.

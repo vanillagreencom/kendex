@@ -27,7 +27,7 @@ Limits worth knowing before relying on the guard:
 - Mutations serialize through `flock(1)` when it is on PATH and a `mkdir` mutex otherwise (stock macOS ships no flock) — a capability, not a platform — so **wherever the repository's common dir is writable, the claim is mandatory**.
 - `git worktree remove -f -f` and `rm -rf` still destroy a claimed worktree; `status` and `list` exist to attribute that afterwards.
 
-Recovering a broken `.agents` link in a worktree, the app-created-worktree hooks, and the deeper failure semantics are documented in `SKILL.md` and `references/`.
+Recovering a broken `.agents` entry in a worktree, the app-created-worktree hooks, and the deeper failure semantics are documented in `SKILL.md` and `references/`.
 
 ## Setup
 
@@ -59,4 +59,4 @@ Point `WORKTREE_SYMLINKS` at untracked paths. A directory entry containing track
 
 Codex Desktop owns creation, branch metadata, and teardown for its own worktrees — wire the project setup and cleanup hooks to `codex-setup` / `codex-cleanup`, which apply the same provisioning `create` does. Branch normalization to the lower-case issue branch runs automatically under `orch`; invoke `codex-branch <ID> "$CODEX_WORKTREE_PATH"` by hand only for a raw worktree workflow that does not go through `orch`.
 
-`claude-setup` / `claude-cleanup` are the Claude Code equivalents for `--worktree` sessions, `isolation: worktree` subagents, and desktop parallel sessions, all of which run a bare `git worktree add` that leaves no `.agents`, `.claude/*` links, or `.env.local`. Wire `claude-setup` into the consumer repo's `.claude/settings.json` `WorktreeCreate` hook, and keep it in **project-level** settings so it covers every Claude config-dir variant on the machine.
+`claude-setup` / `claude-cleanup` are the Claude Code equivalents for `--worktree` sessions, `isolation: worktree` subagents, and desktop parallel sessions, all of which run a bare `git worktree add`. That gives the worktree whatever the branch tracks, committed `.agents` and `.claude/*` content included, and nothing else: no `.env.local`, no symlinks for the untracked entries or the untracked children under a tracked one, no copies, no scratch dirs, no bot identity or remote. Wire `claude-setup` into the consumer repo's `.claude/settings.json` `WorktreeCreate` hook, and keep it in **project-level** settings so it covers every Claude config-dir variant on the machine.

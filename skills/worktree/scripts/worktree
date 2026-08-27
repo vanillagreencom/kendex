@@ -4758,8 +4758,8 @@ case "${1:-}" in
   claude-setup)
     # Claude Code owns worktree creation for `--worktree` sessions, subagents
     # with `isolation: worktree`, and desktop parallel sessions — all of which
-    # run a bare `git worktree add` and so produce a worktree with no `.agents`,
-    # no `.claude/*` links and no `.env.local`. Wire this from a consumer repo's
+    # run a bare `git worktree add`, so tracked content arrives and the
+    # untracked machine-local layer does not. Wire this from a consumer repo's
     # `.claude/settings.json` WorktreeCreate hook; because that hook lives in
     # PROJECT-level settings it applies to every Claude config-dir variant on
     # the machine (CLAUDE_CONFIG_DIR only moves user-level config).

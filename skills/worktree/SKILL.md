@@ -43,21 +43,27 @@ Worktrees live at `<parent-of-checkout>/.worktrees/<checkout-name>/{id}`, outsid
 
 When an execution policy rejects top-level `git rebase` porcelain, never retry the porcelain and never substitute a raw `--force` push — add `--replay` to the guarded restack (`create --help`); the controls stay `restack continue|skip|abort <ID>`.
 
-## Recovering a broken `.agents` link
+## Recovering a broken `.agents` entry
 
-Route by shape, not by whether `test -L .agents` passes — the routing table and the tracked-content link mechanics are under `fix-links --help`. Run `fix-links` **from the main checkout**: the worktree's own copy of the script is reached *through* the broken link. Until it is fixed, do not trust that tree for local verification.
+Route by shape, not by whether `test -L .agents` passes — the routing table and the tracked-content link mechanics are under `fix-links --help`. Run `fix-links` **from the main checkout**: the worktree's own copy of the script is reached *through* the entry being repaired. Until it is fixed, do not trust that tree for local verification.
 
 **Consumers: carry this inline in the tracked `AGENTS.md` / `CLAUDE.md`; do not point here** (this section is read *through* `.agents`). Copy it verbatim:
 
 ```text
-Broken `.agents` in a worktree (missing, or a real directory): from the MAIN checkout run
-`.agents/skills/worktree/scripts/worktree fix-links <ID|PATH>` — never from the worktree,
-and never `git checkout -- .agents` (the path holds no tracked content, so the command
-changes nothing while the link stays broken). A genuinely corrupt tracked file is the other
-case: `git checkout -- <path>`, run in the checkout the file really lives in (the main
-checkout when the path sits under a configured symlink). `fix-links` reports success only
-when every configured entry ended healthy; a non-zero exit names the paths it did not
-restore, so read them rather than re-running the same command.
+Broken `.agents` in a worktree: from the MAIN checkout run
+`.agents/skills/worktree/scripts/worktree fix-links <ID|PATH>`, never from the worktree.
+The command is the same for both shapes; what counts as broken is not. A repo that
+commits its render has tracked files under `.agents`, so the entry is a REAL DIRECTORY
+by design, holding those files plus one symlink per untracked child, and the fault is
+normally a child: missing its symlink, or sitting there as a real path. Where nothing
+under `.agents` is tracked the entry itself must be a symlink, and
+`git checkout -- .agents` is never the repair there (the path holds no tracked content,
+so the command changes nothing while the link stays broken). A genuinely modified or
+corrupt TRACKED file is the other case: `git checkout -- <path>`, run in the checkout
+the file really lives in (the main checkout when the path sits under a configured
+symlink). `fix-links` reports success only when every configured entry ended healthy;
+a non-zero exit names the paths it did not restore, so read them rather than re-running
+the same command.
 ```
 
 ## Session guard (ownership leases)
