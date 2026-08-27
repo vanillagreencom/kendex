@@ -40,13 +40,10 @@ pub(super) fn plan_posture(
         return Ok(());
     };
     // Nothing to commit to, nothing to ignore for. A project that is not a
-    // repository gets no file it never had. git says where the repository
-    // is: guessing `<root>/.git` misses a linked worktree, whose `.git` is
-    // a file, and a `--separate-git-dir` layout, whose `.git` is one
-    // everywhere.
-    let Ok(repo) = Repo::at(root) else {
+    // repository gets no file it never had.
+    if !root.join(".git").exists() {
         return Ok(());
-    };
+    }
     let path = root.join(".gitignore");
     let text = crate::fs::read_if_exists(&path)?.unwrap_or_default();
     for ignored in ignores_committed(&text) {
@@ -57,14 +54,25 @@ pub(super) fn plan_posture(
     // The exclude file lives in this clone's git dir, shared by its linked
     // worktrees and nobody else: a line there hides the tree from git
     // status on this machine, so what kendex changes in it never reaches a
-    // commit, and no pull can put that right.
-    let exclude = repo.common_dir.join("info/exclude");
-    let rules = crate::fs::read_if_exists(&exclude)?.unwrap_or_default();
-    for ignored in ignores_committed(&rules) {
-        notes.push(format!(
-            "{} ignores {ignored} — git status on this machine never shows what kendex changes there, and no commit or pull carries that rule; remove it from this clone's git dir",
-            exclude.display()
-        ));
+    // commit, and no pull can put that right. git says where that dir is:
+    // guessing `<root>/.git` misses a linked worktree, whose `.git` is a
+    // file, and a `--separate-git-dir` layout, whose `.git` is one
+    // everywhere. Where git cannot answer, the file goes unchecked and the
+    // note says so; the lock line below is still owed.
+    match Repo::at(root) {
+        Ok(repo) => {
+            let exclude = repo.common_dir.join("info/exclude");
+            let rules = crate::fs::read_if_exists(&exclude)?.unwrap_or_default();
+            for ignored in ignores_committed(&rules) {
+                notes.push(format!(
+                    "{} ignores {ignored} — git status on this machine never shows what kendex changes there, and no commit or pull carries that rule; remove it from this clone's git dir",
+                    exclude.display()
+                ));
+            }
+        }
+        Err(e) => notes.push(format!(
+            "git could not open this repository, so its info/exclude was not checked: {e}"
+        )),
     }
     let Some(updated) = with_lock_ignored(&text) else {
         return Ok(());
