@@ -188,6 +188,13 @@ pub enum CoreError {
     #[error("'{name}' not found in source '{source_name}'")]
     ItemNotInSource { name: String, source_name: String },
 
+    /// A fork of content already the user's own: forking an in-place tree
+    /// would demote the content of record to a render of a hidden copy.
+    #[error(
+        "'{name}' is already yours — it comes from the {origin} source, so there is nothing to fork"
+    )]
+    AlreadyOwn { name: String, origin: String },
+
     /// A tree carrying both `SKILL.md` and `SKILL.md.disabled` has two
     /// claims on one file; a fork keeps neither until it is told which.
     #[error(

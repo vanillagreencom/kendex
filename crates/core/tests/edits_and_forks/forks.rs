@@ -265,3 +265,45 @@ fn forking_a_skill_whose_native_link_was_repointed_reads_the_managed_tree() {
     );
     assert!(foreign.join("secret.md").is_file());
 }
+
+/// Content that is already the user's own has nothing to fork: a local
+/// fork forked again, and a skill declared in place — where a fork would
+/// turn the tree of record into a render of a hidden copy.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn forking_the_users_own_content_is_refused() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    commit(&w.upstream, "one");
+    declare(&w, "[skills.gh]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    fs::write(
+        skill_file(&w),
+        "---\nname: gh\ndescription: mine\n---\nMine.\n",
+    )
+    .unwrap();
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    let err = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap_err();
+    assert!(
+        matches!(&err, CoreError::AlreadyOwn { name, origin } if name == "gh" && origin == "local"),
+        "{err}"
+    );
+
+    let here = w.home.join("app/.agents/skills/here");
+    fs::create_dir_all(&here).unwrap();
+    fs::write(
+        here.join("SKILL.md"),
+        "---\nname: here\ndescription: mine\n---\nHere.\n",
+    )
+    .unwrap();
+    declare(&w, "[skills.here]\nsource = \"in-place\"\n");
+    let before = manifest_text(&w);
+    let err = fork::fork(&w.env, &w.scope, ItemKind::Skill, "here", HarnessId::Claude).unwrap_err();
+    assert!(
+        matches!(&err, CoreError::AlreadyOwn { name, origin } if name == "here" && origin == "in-place"),
+        "{err}"
+    );
+    assert_eq!(manifest_text(&w), before);
+    assert!(!w.home.join("app/.kendex-local/skills/here").exists());
+}

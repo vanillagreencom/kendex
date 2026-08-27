@@ -12,7 +12,7 @@ use super::ops::manifest_for_mutation;
 use crate::apply::{Op, Plan, PlannedOp, Pre};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::manifest::{self, ForkProvenance, LOCAL_SOURCE_NAME};
+use crate::manifest::{self, ForkProvenance, INPLACE_SOURCE_NAME, LOCAL_SOURCE_NAME};
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::local_source_root;
 
@@ -50,6 +50,12 @@ pub fn fork(
             name: name.to_owned(),
         });
     };
+    if decl.source == LOCAL_SOURCE_NAME || decl.source == INPLACE_SOURCE_NAME {
+        return Err(CoreError::AlreadyOwn {
+            name: name.to_owned(),
+            origin: decl.source.clone(),
+        });
+    }
     let edited = edited_rendering(env, scope, kind, name, harness)?;
     let captured = capture(kind, &edited)?;
     let mut ops = capture_ops(env, scope, kind, name, &edited, captured)?;

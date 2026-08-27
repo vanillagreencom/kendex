@@ -64,6 +64,10 @@ an outside contributor.
   (it read as a marketplace with no repository), and the Mine import
   inventory reads such a skill's bytes from the tree it sits in.
 
+- `kendex fork` refuses an item that is already yours — `local`, or a skill
+  adopted `in-place`, whose tree of record a fork would quietly demote to a
+  render of a hidden copy.
+
 - The `block-bare-cd` hook refuses a bare `cd` with no path. It changes to
   `$HOME` for every later tool call, the move the hook exists to stop, and
   only `cd <path>` was caught before.
