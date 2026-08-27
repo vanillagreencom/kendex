@@ -16,8 +16,10 @@ docs/reviews/
 # `kendex refresh` writes here itself.
 .env.local
 
-# The linear skill's local cache
-.cache/
+# The linear skill's local cache. Bare, not `.cache/`. A trailing-slash
+# pattern matches a real directory but not a symlink pointing at one, and
+# every worktree links this path (WORKTREE_SYMLINKS).
+.cache
 
 # Filled-in local working copies of docs (backed up privately, never committed).
 docs/*-local.md
