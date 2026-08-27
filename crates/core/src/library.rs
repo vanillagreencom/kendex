@@ -30,9 +30,13 @@ pub enum Origin {
     /// Installed from a subscription: its declared alias and its repository
     /// (or path) as the lock recorded them.
     Marketplace { source: String, repo: String },
-    /// The user's own content in the local source — adopted, or forked off
-    /// a marketplace item, in which case this names what it replaced.
-    Own { forked_from: Option<String> },
+    /// The user's own content — adopted or forked (`forked_from` names what
+    /// a fork replaced), with `source` naming the reserved source that holds
+    /// it: `local` for a capture, `in-place` for a tree read where it sits.
+    Own {
+        forked_from: Option<String>,
+        source: String,
+    },
     /// On disk and observed, managed by nothing.
     Unmanaged,
 }
@@ -98,6 +102,7 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
 fn origin_of(manifest: &Manifest, entry: &crate::lock::LockEntry) -> Origin {
     if entry.source == LOCAL_SOURCE_NAME || entry.source == INPLACE_SOURCE_NAME {
         return Origin::Own {
+            source: entry.source.clone(),
             forked_from: manifest
                 .forks
                 .get(&entry.kind)

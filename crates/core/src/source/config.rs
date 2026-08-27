@@ -131,7 +131,12 @@ pub fn source_config(sealed: &SealedSource, display: &str) -> Result<SourceConfi
 /// discovered third-party repo's never do.
 pub fn source_config_for(sealed: &SealedSource, provenance: &str) -> Result<SourceConfig> {
     let mut config = source_config(sealed, crate::source::repo_leaf(provenance))?;
-    if provenance == crate::manifest::LOCAL_SOURCE_NAME && config.mode == CatalogMode::Discovered {
+    // The reserved sources share one shape — `skills/<name>` under the
+    // root — so both read explicitly rather than by discovery.
+    if (provenance == crate::manifest::LOCAL_SOURCE_NAME
+        || provenance == crate::manifest::INPLACE_SOURCE_NAME)
+        && config.mode == CatalogMode::Discovered
+    {
         config.mode = CatalogMode::Explicit;
     }
     Ok(config)

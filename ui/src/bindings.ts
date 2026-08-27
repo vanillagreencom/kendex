@@ -1673,10 +1673,11 @@ export type Origin =
  */
 { origin: "marketplace"; source: string; repo: string } | 
 /**
- *  The user's own content in the local source — adopted, or forked off
- *  a marketplace item, in which case this names what it replaced.
+ *  The user's own content — adopted or forked (`forked_from` names what
+ *  a fork replaced), with `source` naming the reserved source that holds
+ *  it: `local` for a capture, `in-place` for a tree read where it sits.
  */
-{ origin: "own"; forkedFrom: string | null } | 
+{ origin: "own"; forkedFrom: string | null; source: string } | 
 /**  On disk and observed, managed by nothing. */
 { origin: "unmanaged" };
 

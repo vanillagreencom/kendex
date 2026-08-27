@@ -96,11 +96,16 @@ fn origins_are_read_off_the_lock_manifest_and_scan() {
     assert_eq!(
         origin("fk"),
         Origin::Own {
-            forked_from: Some("owner/repo".to_owned())
+            forked_from: Some("owner/repo".to_owned()),
+            source: "local".to_owned()
         }
     );
-    assert_eq!(origin("mine"), Origin::Own { forked_from: None });
-    assert_eq!(origin("here"), Origin::Own { forked_from: None });
+    let own = |source: &str| Origin::Own {
+        forked_from: None,
+        source: source.to_owned(),
+    };
+    assert_eq!(origin("mine"), own("local"));
+    assert_eq!(origin("here"), own("in-place"));
     assert_eq!(origin("stray"), Origin::Unmanaged);
     let stray = rows
         .iter()

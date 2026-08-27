@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -249,3 +250,51 @@ fn a_stale_hash_refuses_instead_of_copying_moved_bytes() {
 }
 
 mod review;
+
+/// A skill adopted in place: its bytes live under the project's shared
+/// `.agents` tree, and the owned row reads from there — before KEN-700 the
+/// read went to the local source, found nothing, and the only claim left
+/// was whatever an unlocked harness happened to observe.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_in_place_skill_is_an_own_candidate_read_from_its_tree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let project = tmp.path().join("app");
+    skill(&project.join(".agents/skills"), "here", "in place bytes");
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 6\n[skills.here]\nsource = \"in-place\"\n",
+    )
+    .unwrap();
+    let project = project.canonicalize().unwrap();
+    let scope = Scope::Project { root: project };
+    let mut lock = Lock {
+        version: crate::lock::LOCK_VERSION,
+        ..Lock::default()
+    };
+    lock.entries.insert(
+        crate::lock::entry_key(ItemKind::Skill, "here", HarnessId::Claude),
+        entry(ItemKind::Skill, "here", "in-place", ""),
+    );
+    crate::lock::save(&crate::lock::lock_path(&env, &scope), &lock).unwrap();
+
+    let rows = crate::library::provenance(&env, std::slice::from_ref(&scope)).unwrap();
+    let own_row = rows
+        .iter()
+        .find(|r| r.name == "here" && matches!(r.origin, crate::library::Origin::Own { .. }))
+        .unwrap_or_else(|| panic!("no own row: {rows:?}"));
+    let reads = origins_of(&env, own_row, &BTreeMap::new());
+    let [(group, bytes, location, _)] = reads.as_slice() else {
+        panic!("one owned read expected, got {}", reads.len());
+    };
+    assert!(matches!(group, CandidateGroup::Own));
+    assert!(bytes.is_some());
+    assert!(location.contains(".agents/skills/here"), "{location}");
+
+    // The candidate the wizard lists carries those bytes, so the skill is
+    // importable; identical observed claims may still govern its group.
+    let candidates = inventory(&env, &[scope]).unwrap();
+    let here = find(&candidates, "here");
+    assert!(here.origins.iter().any(|o| !o.hash.is_empty()));
+}

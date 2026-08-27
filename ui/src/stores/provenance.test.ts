@@ -15,7 +15,7 @@ const ROWS: ProvenanceRow[] = [
     kind: "skill",
     name: "gh",
     harness: "claude",
-    origin: { origin: "own", forkedFrom: "kendex" },
+    origin: { origin: "own", forkedFrom: "kendex", source: "local" },
   },
   {
     scope: { scope: "global" },
@@ -38,7 +38,7 @@ describe("the From column's join", () => {
     // a fork there does not relabel the global install.
     expect(
       originFor(ROWS, "skill", "gh", [{ scope: "project", root: "/work/app" }]),
-    ).toEqual({ origin: "own", forkedFrom: "kendex" });
+    ).toEqual({ origin: "own", forkedFrom: "kendex", source: "local" });
     // A same-named item of another kind never borrows this one's origin.
     expect(originFor(ROWS, "hook", "gh", [{ scope: "global" }])).toBeNull();
   });
@@ -50,13 +50,15 @@ describe("the From column's join", () => {
     expect(
       originTitle({ origin: "marketplace", source: "kendex", repo: "r" }),
     ).toBe("r");
-    expect(originLabel({ origin: "own", forkedFrom: "kendex" })).toBe(
-      "Your own",
-    );
-    expect(originTitle({ origin: "own", forkedFrom: "kendex" })).toBe(
-      "forked from kendex",
-    );
-    expect(originTitle({ origin: "own", forkedFrom: null })).toBeUndefined();
+    expect(
+      originLabel({ origin: "own", forkedFrom: "kendex", source: "local" }),
+    ).toBe("Your own");
+    expect(
+      originTitle({ origin: "own", forkedFrom: "kendex", source: "local" }),
+    ).toBe("forked from kendex");
+    expect(
+      originTitle({ origin: "own", forkedFrom: null, source: "local" }),
+    ).toBeUndefined();
     expect(originLabel({ origin: "unmanaged" })).toBe("Not managed");
     expect(originLabel(null)).toBe("");
   });

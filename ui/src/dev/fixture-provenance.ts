@@ -33,7 +33,7 @@ export function provenance(): ProvenanceRow[] {
       kind: "skill",
       name: "release-notes",
       harness: "claude",
-      origin: { origin: "own", forkedFrom: KENDEX_REPO },
+      origin: { origin: "own", forkedFrom: KENDEX_REPO, source: "local" },
     },
     {
       scope: GLOBAL,

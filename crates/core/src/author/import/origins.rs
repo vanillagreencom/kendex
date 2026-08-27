@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::library::Origin;
-use crate::manifest::{LOCAL_SOURCE_NAME, Manifest, ManifestFile};
+use crate::manifest::{INPLACE_SOURCE_NAME, Manifest, ManifestFile};
 use crate::model::{ItemKind, Scope};
 use crate::source_read::SealedSource;
 
@@ -50,9 +50,19 @@ pub(super) fn origins_of(
     observed: &BTreeMap<(Scope, ItemKind, String), PathBuf>,
 ) -> Vec<OriginRead> {
     match &row.origin {
-        Origin::Own { .. } => {
-            let root = crate::source::local_source_root(env, &row.scope);
-            match catalog_bytes(&root, LOCAL_SOURCE_NAME, row) {
+        Origin::Own { source, .. } => {
+            // The reserved source names where the bytes live: the local
+            // capture, or the shared tree an in-place skill is read from
+            // (a scope with no such tree holds no in-place rows).
+            let root = if source == INPLACE_SOURCE_NAME {
+                match crate::source::inplace_source_root(&row.scope) {
+                    Some(root) => root,
+                    None => return Vec::new(),
+                }
+            } else {
+                crate::source::local_source_root(env, &row.scope)
+            };
+            match catalog_bytes(&root, source, row) {
                 Some((bytes, location, read_from)) => {
                     vec![(CandidateGroup::Own, bytes, location, Some(read_from))]
                 }
