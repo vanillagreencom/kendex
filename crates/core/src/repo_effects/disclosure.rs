@@ -67,7 +67,11 @@ pub struct Disclosure {
     pub writes: Vec<Written>,
     pub companions: Vec<Companion>,
     pub notes: Vec<String>,
-    pub removal: Option<String>,
+    /// How the package says to undo the effect: the uninstaller it declared
+    /// where there is one, else its removal text, else nothing. The same
+    /// answer the failure message gives, so a person who reads the block
+    /// and a person whose installer failed are told the same command.
+    pub undo: Option<String>,
 }
 
 /// An effect that was neither shown nor offered, and why.
@@ -178,7 +182,7 @@ pub fn offers(scope: &Scope, effects: &[DeclaredEffects], installed: &BTreeSet<S
             name: shown(&declared.name),
             summary: shown(&declared.effects.summary),
             notes: declared.effects.notes.iter().map(|n| shown(n)).collect(),
-            removal: declared.effects.removal.as_deref().map(shown),
+            undo: declared.undo(root).as_deref().map(shown),
             declared: declared.clone(),
             writes,
             companions,

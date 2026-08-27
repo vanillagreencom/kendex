@@ -92,6 +92,38 @@ fn git_paths_land_in_the_common_dir_and_read_as_shared() {
     assert!(!workflow.shared, "{workflow:?}");
 }
 
+/// The block names the command that undoes the effect, not only the prose
+/// a package may have written about it. A package declaring an uninstaller
+/// and no removal text used to read as declaring no way to undo it.
+#[test]
+fn a_declared_uninstaller_is_what_the_block_says_to_run() {
+    let root = PathBuf::from("/repo");
+    let mut effects = declared(&[], &[]);
+    effects.root = root.join(".agents/skills/guards");
+    effects.effects.uninstaller = Some("scripts/arm --off".to_owned());
+
+    let undo = |declared: DeclaredEffects| {
+        offers(&project(&root), &[declared], &BTreeSet::new()).shown[0]
+            .undo
+            .clone()
+    };
+    assert_eq!(
+        undo(effects.clone()).as_deref(),
+        Some("run `'.agents/skills/guards/scripts/arm' '--off'` from the repository root")
+    );
+
+    // No uninstaller: the package's own removal text, as before.
+    let mut prose = effects.clone();
+    prose.effects.uninstaller = None;
+    prose.effects.removal = Some("delete the hooks by hand".to_owned());
+    assert_eq!(undo(prose).as_deref(), Some("delete the hooks by hand"));
+
+    // Neither: no claim is invented for the package.
+    let mut silent = effects;
+    silent.effects.uninstaller = None;
+    assert_eq!(undo(silent), None);
+}
+
 /// Where the repository cannot be read, a package that writes into `.git`
 /// is withheld — a block naming a path that does not exist is worse than
 /// none — while one that writes nowhere near it is still shown.

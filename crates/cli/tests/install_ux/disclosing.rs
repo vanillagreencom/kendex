@@ -24,6 +24,18 @@ fn the_repository_effect_is_disclosed_and_not_applied_without_a_yes() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
     offer(&world, "growth-guards");
+    // One declared write outside `.git`, so the block carries both kinds.
+    // The shared claim is about the repository's own directory, and a file
+    // that lives in this checkout must not be swept into it.
+    let declaration = world.catalog.join("skills/growth-guards/SKILL.md");
+    let text = fs::read_to_string(&declaration).unwrap();
+    let anchor = "    - \".git/hooks/commit-msg\"\n";
+    assert!(text.contains(anchor), "the declaration moved");
+    fs::write(
+        &declaration,
+        text.replace(anchor, &format!("{anchor}    - \".github/x\"\n")),
+    )
+    .unwrap();
     let spoken = world.try_run(&["add", "cat", "--skill", "growth-guards", "-y"]);
     assert!(spoken.status.success(), "{}", spoke(&spoken));
     let asked = String::from_utf8_lossy(&spoken.stderr).into_owned();
@@ -51,6 +63,19 @@ fn the_repository_effect_is_disclosed_and_not_applied_without_a_yes() {
         "no companion line:\n{out}"
     );
     assert!(out.contains("to undo:"), "{out}");
+
+    // Marked path by path. A sentence under the whole list said the
+    // repository shares every file in it, including the checkout-local one.
+    assert!(out.contains(".git/hooks/pre-commit  (shared)"), "{out}");
+    assert!(
+        out.lines()
+            .any(|line| line.trim_end().ends_with(".github/x")),
+        "the checkout-local path was marked shared:\n{out}"
+    );
+    assert!(
+        out.contains("the paths marked shared are the repository's"),
+        "{out}"
+    );
 
     // The refusal names the flag rather than leaving the reader to find it.
     assert!(

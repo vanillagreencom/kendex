@@ -169,7 +169,7 @@ function guardDisclosure(root: string, testsInstalled: boolean): Disclosure {
     name: declared.name,
     summary: declared.summary,
     notes: declared.notes,
-    removal: declared.removal,
+    undo: "run `'.agents/skills/guard/scripts/install-git-hooks' '--uninstall'` from the repository root",
     writes: [
       { path: `${root}/.git/hooks/kendex-guards`, shared: true },
       { path: `${root}/.git/hooks/pre-commit`, shared: true },

@@ -173,9 +173,17 @@ fn the_effect_comes_back_unrun_and_a_separate_yes_arms_it() {
     );
     assert!(offer.writes.iter().all(|w| w.shared), "{:?}", offer.writes);
     assert!(!companion(offer, "size-ratchet").installed);
-    assert!(offer.removal.is_some());
+    // The declared uninstaller, resolved where it really sits and quoted
+    // as a command — not the package's removal prose, which says to run it.
+    assert_eq!(
+        offer.undo.as_deref(),
+        Some(
+            "run `'.agents/skills/growth-guards/scripts/install-git-hooks' '--uninstall'` \
+             from the repository root"
+        )
+    );
 
-    let said = kendex_app::repo_effects::apply(&f.scope, &offer.declared).unwrap();
+    let said = kendex_app::repo_effects::apply(&f.env, &f.scope, &offer.declared).unwrap();
     assert!(
         f.project.join(".git/hooks/kendex-guards").is_file(),
         "the yes did not arm the hooks"
@@ -184,6 +192,37 @@ fn the_effect_comes_back_unrun_and_a_separate_yes_arms_it() {
     assert!(
         said.last().is_some_and(|line| line.contains("armed")),
         "{said:?}"
+    );
+}
+
+/// The yes is for the package the window was shown, not for whatever root
+/// comes back with it. Arming confines a program to the root it is handed,
+/// so a root the caller chose would confine nothing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_root_this_scope_never_installed_is_refused() {
+    let f = fixture();
+    let installed = install_skills(&f, &["growth-guards"], None);
+    let [offer] = installed.repo_effects.shown.as_slice() else {
+        panic!("one offer: {:?}", installed.repo_effects);
+    };
+
+    let forged = kendex_core::repo_effects::DeclaredEffects {
+        root: PathBuf::from("/"),
+        effects: kendex_core::repo_effects::RepoEffects {
+            installer: Some("bin/sh -c id".to_owned()),
+            ..offer.declared.effects.clone()
+        },
+        ..offer.declared.clone()
+    };
+    let error = kendex_app::repo_effects::apply(&f.env, &f.scope, &forged).unwrap_err();
+    assert!(
+        error.contains("no record of installing it there"),
+        "{error}"
+    );
+    assert!(
+        !f.project.join(".git/hooks/kendex-guards").exists(),
+        "the forged root armed the hooks"
     );
 }
 

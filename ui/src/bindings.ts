@@ -881,7 +881,13 @@ export type Disclosure = {
 	writes: Written[],
 	companions: Companion[],
 	notes: string[],
-	removal: string | null,
+	/**
+	 *  How the package says to undo the effect: the uninstaller it declared
+	 *  where there is one, else its removal text, else nothing. The same
+	 *  answer the failure message gives, so a person who reads the block
+	 *  and a person whose installer failed are told the same command.
+	 */
+	undo: string | null,
 };
 
 /**

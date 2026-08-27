@@ -12,8 +12,9 @@ import {
   REPO_EFFECTS_APPLY_LABEL,
   REPO_EFFECTS_DECLINE_LABEL,
   REPO_EFFECTS_DONE_LABEL,
-  REPO_EFFECTS_NO_REMOVAL,
+  REPO_EFFECTS_NO_UNDO,
   REPO_EFFECTS_NOTHING_TO_RUN,
+  REPO_EFFECTS_SHARED_MARK,
   REPO_EFFECTS_SHARED_NOTE,
   repoEffectsTitle,
 } from "@/lib/copy-repo-effects";
@@ -50,7 +51,7 @@ const guards: Disclosure = {
     { name: "preflight", installed: false },
   ],
   notes: ["core.hooksPath is never set."],
-  removal: "run the uninstaller before removing this package",
+  undo: "run `'.agents/skills/growth-guards/scripts/install-git-hooks' '--uninstall'` from the repository root",
 };
 
 const show = (queue: Disclosure[], busy = false) => {
@@ -79,13 +80,33 @@ describe("the account a person reads", () => {
     expect(text).toContain(COMPANION_INSTALLED);
     expect(text).toContain(COMPANION_NOT_INSTALLED);
     expect(text).toContain("core.hooksPath is never set.");
-    expect(text).toContain("run the uninstaller before removing this package");
+    expect(text).toContain(guards.undo ?? "");
     expect(text).not.toContain(REPO_EFFECTS_NOTHING_TO_RUN);
   });
 
-  it("never promises a removal the package did not declare", () => {
-    const body = show([{ ...guards, removal: null }]);
-    expect(body.textContent).toContain(REPO_EFFECTS_NO_REMOVAL);
+  it("never promises an undo the package did not declare", () => {
+    const body = show([{ ...guards, undo: null }]);
+    expect(body.textContent).toContain(REPO_EFFECTS_NO_UNDO);
+  });
+
+  it("marks the shared paths one by one, never the checkout-local ones", () => {
+    // A package writing into `.git/hooks` and into `.github` writes one
+    // file every work tree sees and one only this checkout has.
+    const body = show([
+      {
+        ...guards,
+        writes: [
+          { path: "/home/me/app/.git/hooks/pre-commit", shared: true },
+          { path: "/home/me/app/.github/x", shared: false },
+        ],
+      },
+    ]);
+    const marked = Array.from(body.querySelectorAll("li")).filter((li) =>
+      li.textContent?.includes(REPO_EFFECTS_SHARED_MARK),
+    );
+    expect(marked).toHaveLength(1);
+    expect(marked[0].textContent).toContain("~/app/.git/hooks/pre-commit");
+    expect(body.textContent).toContain(REPO_EFFECTS_SHARED_NOTE);
   });
 
   it("renders the display text as core escaped it, never the raw declaration", () => {

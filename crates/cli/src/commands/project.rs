@@ -119,7 +119,7 @@ fn offer_to_manage(env: &Env, root: &std::path::Path) {
             item.kind.name(),
             kendex_core::names::shown(&item.name),
             item.tools.join(", "),
-            quoted(root),
+            kendex_core::names::quoted(&root.display().to_string()),
             item.kind.name(),
             kendex_core::names::shown(&item.name),
         ));
@@ -162,11 +162,4 @@ fn grouped(rows: &[kendex_core::engine::DriftRow]) -> Vec<Offer> {
         }
     }
     items.into_iter().map(|(_, offer)| offer).collect()
-}
-
-/// A path a shell reads back as the one path it names. Single quotes take
-/// everything literally, and the only character they cannot hold is the
-/// single quote itself, which closes and reopens around an escaped one.
-fn quoted(path: &std::path::Path) -> String {
-    format!("'{}'", path.display().to_string().replace('\'', "'\\''"))
 }

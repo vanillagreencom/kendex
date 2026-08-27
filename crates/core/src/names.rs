@@ -4,6 +4,9 @@
 //! cannot be one is refused where it is written down rather than where it
 //! fails. Plugin-registry-shaped catalogs add a second rule: a name may carry
 //! one `<plugin>/<leaf>` segment pair, and nothing more.
+//!
+//! And what catalog text looks like on its way out: `shown` for a screen,
+//! `quoted` for a command a person is going to paste.
 
 /// Room for the separator a namespaced name expands to, the `.disabled`
 /// parking suffix, and Copilot's `.agent.md` — inside the 255-byte
@@ -125,6 +128,17 @@ fn is_deceptive(c: char) -> bool {
         | '\u{2066}'..='\u{2069}' // bidi isolates
         | '\u{FEFF}'              // zero-width no-break space (BOM)
     )
+}
+
+/// A word a shell reads back as the one word it names. Single quotes take
+/// everything literally, and the only character they cannot hold is the
+/// single quote itself, which closes and reopens around an escaped one.
+///
+/// Every word, not the ones that look dangerous. Which characters are live
+/// is the shell's judgement and not this function's, and anything kendex
+/// prints as a command to paste is a command somebody runs.
+pub fn quoted(word: &str) -> String {
+    format!("'{}'", word.replace('\'', "'\\''"))
 }
 
 /// Why this item name cannot be installed. A name from a plugin-registry-shaped

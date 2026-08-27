@@ -15,8 +15,9 @@ import {
   REPO_EFFECTS_COMPANIONS_LABEL,
   REPO_EFFECTS_DECLINE_LABEL,
   REPO_EFFECTS_DONE_LABEL,
-  REPO_EFFECTS_NO_REMOVAL,
+  REPO_EFFECTS_NO_UNDO,
   REPO_EFFECTS_NOTHING_TO_RUN,
+  REPO_EFFECTS_SHARED_MARK,
   REPO_EFFECTS_SHARED_NOTE,
   REPO_EFFECTS_STANDING,
   REPO_EFFECTS_UNDO_LABEL,
@@ -97,8 +98,15 @@ function DisclosureBody({ disclosure }: { disclosure: Disclosure }) {
           </h3>
           <ul className="space-y-0.5">
             {disclosure.writes.map((written) => (
-              <li key={written.path} className="break-all font-mono text-xs">
-                {abbreviateHome(written.path)}
+              <li key={written.path} className="flex items-baseline gap-2">
+                <span className="break-all font-mono text-xs">
+                  {abbreviateHome(written.path)}
+                </span>
+                {written.shared ? (
+                  <span className="text-xs text-muted-foreground">
+                    {REPO_EFFECTS_SHARED_MARK}
+                  </span>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -138,7 +146,7 @@ function DisclosureBody({ disclosure }: { disclosure: Disclosure }) {
         {/* Never "remove the package": removing it takes the scripts away
             and leaves the effect. What is true is what the package said. */}
         <p className="text-muted-foreground">
-          {disclosure.removal ?? REPO_EFFECTS_NO_REMOVAL}
+          {disclosure.undo ?? REPO_EFFECTS_NO_UNDO}
         </p>
       </section>
       {disclosure.declared.installer === null ? (

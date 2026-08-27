@@ -48,7 +48,7 @@ const disclosure = (name: string): Disclosure => ({
   writes: [{ path: "/home/me/app/.git/hooks/pre-commit", shared: true }],
   companions: [],
   notes: [],
-  removal: null,
+  undo: null,
 });
 
 const installed = (shown: Disclosure[], withheld = []) => ({

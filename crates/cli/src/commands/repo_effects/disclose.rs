@@ -54,13 +54,21 @@ fn print(disclosure: &Disclosure) {
     if !disclosure.writes.is_empty() {
         say("");
         say("  writes");
+        // Marked one by one. A package that writes into `.git/hooks` and
+        // into `.github` writes one file every work tree sees and one only
+        // this checkout has, and a sentence under the whole list claimed
+        // the first about both.
         for written in &disclosure.writes {
-            say(&format!("    {}", written.path));
+            let mark = match written.shared {
+                true => "  (shared)",
+                false => "",
+            };
+            say(&format!("    {}{mark}", written.path));
         }
         if disclosure.writes.iter().any(|written| written.shared) {
             say("");
-            say("  that directory is the repository's, not this checkout's:");
-            say("  every work tree of it shares these files");
+            say("  the paths marked shared are the repository's, not this");
+            say("  checkout's: every work tree of it sees those files");
         }
     }
     if !disclosure.companions.is_empty() {
@@ -87,12 +95,12 @@ fn print(disclosure: &Disclosure) {
         say(&format!("  {note}"));
     }
     say("");
-    match &disclosure.removal {
-        Some(removal) => say(&format!("  to undo: {removal}")),
+    match &disclosure.undo {
+        Some(undo) => say(&format!("  to undo: {undo}")),
         // Not "remove the package". Removing it takes the scripts away
         // and leaves the effect: shims in .git/hooks outlive the tree
         // they point at, and then fail every commit closed. What is true
         // is that the package said nothing about undoing this.
-        None => say("  to undo: the package declares no removal instructions"),
+        None => say("  to undo: the package declares no way to undo it"),
     }
 }

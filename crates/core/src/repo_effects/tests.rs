@@ -78,9 +78,10 @@ fn a_package_with_no_installer_has_nothing_to_run() {
 fn a_failed_installer_reports_the_exit_and_the_declared_undo() {
     let tmp = tempfile::tempdir().unwrap();
     // A checkout path with a space in it, which is where an absolute
-    // program word would split into a program and an argument.
+    // program word would split into a program and an argument, and a
+    // package directory carrying the characters a shell acts on.
     let repo = tmp.path().join("My Project");
-    let root = repo.join(".agents/skills/guards");
+    let root = repo.join(".agents/skills/gu'ards $x;");
     fs::create_dir_all(&repo).unwrap();
     let scope = Scope::Project { root: repo };
     script(&root, "arm", "echo 'could not write hooks' >&2\nexit 1");
@@ -98,7 +99,8 @@ fn a_failed_installer_reports_the_exit_and_the_declared_undo() {
     assert_eq!(
         said,
         "guards: arm exited 1 — anything it wrote before that is still there; \
-         to undo: run `.agents/skills/guards/arm --off` from the repository root"
+         to undo: run `'.agents/skills/gu'\\''ards $x;/arm' '--off'` \
+         from the repository root"
     );
 
     // No uninstaller: the removal text is what the package said instead.
@@ -118,7 +120,7 @@ fn a_failed_installer_reports_the_exit_and_the_declared_undo() {
         arm_settled(&scope, &package(&outside, Some("arm"), Some("arm --off"))).unwrap_err();
     assert!(
         error.to_string().ends_with(&format!(
-            "to undo: run `'{}' --off` from the repository root",
+            "to undo: run `'{}' '--off'` from the repository root",
             outside.join("arm").display()
         )),
         "{error}"

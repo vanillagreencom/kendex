@@ -11,14 +11,16 @@ export const REPO_EFFECTS_STANDING =
   "The package's own files are installed. This is the part removing it does not undo, and it waits for your yes.";
 
 export const REPO_EFFECTS_WRITES_LABEL = "Writes";
+/** Marks one written path, so a package writing both into `.git` and into
+ * the checkout does not have the first claimed about the second. */
+export const REPO_EFFECTS_SHARED_MARK = "shared";
 export const REPO_EFFECTS_SHARED_NOTE =
-  "That directory belongs to the repository, not this checkout: every work tree shares these files.";
+  "The paths marked shared belong to the repository, not this checkout: every work tree sees those files.";
 export const REPO_EFFECTS_COMPANIONS_LABEL = "Companion packages";
 export const COMPANION_INSTALLED = "installed";
 export const COMPANION_NOT_INSTALLED = "not installed";
 export const REPO_EFFECTS_UNDO_LABEL = "To undo";
-export const REPO_EFFECTS_NO_REMOVAL =
-  "The package declares no removal instructions.";
+export const REPO_EFFECTS_NO_UNDO = "The package declares no way to undo it.";
 
 export const REPO_EFFECTS_APPLY_LABEL = "Apply repository changes";
 export const REPO_EFFECTS_DECLINE_LABEL = "Not now";

@@ -131,6 +131,36 @@ pub fn arm(
     Ok(report)
 }
 
+/// Where this scope recorded one installed skill's tree, as the install
+/// wrote it down.
+///
+/// What a surface asks before arming a declaration it took back from
+/// something it does not control. `arm` checks only that the program sits
+/// inside the root it was handed, which is the caller's answer checked
+/// against itself: a root of `/` passes it with any program underneath.
+///
+/// Read off the lock rather than derived. A copy delivery puts the tree in
+/// the harness's own directory instead of the shared one, so a derivation
+/// naming `.agents/skills/<name>` would refuse a package that is installed
+/// perfectly well — the same reason removal and refresh read the record
+/// instead of deriving a path the install never took.
+pub fn recorded_roots(
+    env: &crate::env::Env,
+    scope: &crate::model::Scope,
+    name: &str,
+) -> crate::error::Result<std::collections::BTreeSet<std::path::PathBuf>> {
+    let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
+    Ok(lock
+        .entries
+        .values()
+        .filter(|entry| entry.kind == crate::model::ItemKind::Skill && entry.name == name)
+        .filter_map(|entry| entry.emitted.as_ref())
+        // The tree, never the link beside it: a link is where a tool reads
+        // the package through, not a directory its scripts live in.
+        .filter_map(|emitted| emitted.paths.first().cloned())
+        .collect())
+}
+
 /// Why a yes did not arm the repository.
 #[derive(Debug)]
 pub enum ArmError {
@@ -212,10 +242,11 @@ impl DeclaredEffects {
     /// package is `arm`'s question, settled in `resolve_script` for the
     /// program it is about to run; this one is a line to read.
     ///
-    /// Either spelling is quoted where it carries whitespace: this is a
-    /// command to paste, and a checkout at `~/My Project` would otherwise
-    /// name a program ending at `My` with an argument after it. Only the
-    /// program; the declared arguments go out as the package wrote them.
+    /// Every word goes out through `names::quoted`, the program and each
+    /// declared argument alike. This is a command to paste: a checkout at
+    /// `~/My Project` would otherwise name a program ending at `My`, and a
+    /// `;` or a backtick a package declared would be live in the shell it
+    /// is pasted into rather than the argument kendex itself passes.
     fn undo(&self, repo: &std::path::Path) -> Option<String> {
         self.effects
             .uninstaller
@@ -228,12 +259,8 @@ impl DeclaredEffects {
                     .unwrap_or(whole.as_path())
                     .display()
                     .to_string();
-                let quoted = match path.contains(char::is_whitespace) {
-                    true => format!("'{path}'"),
-                    false => path,
-                };
-                let command = std::iter::once(quoted)
-                    .chain(args.into_iter().map(str::to_owned))
+                let command = std::iter::once(crate::names::quoted(&path))
+                    .chain(args.into_iter().map(crate::names::quoted))
                     .collect::<Vec<_>>()
                     .join(" ");
                 format!("run `{command}` from the repository root")
