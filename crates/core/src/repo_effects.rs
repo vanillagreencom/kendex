@@ -25,7 +25,7 @@
 mod declaration;
 pub mod disclosure;
 use declaration::split_script;
-pub use declaration::{RepoEffects, declared};
+pub use declaration::{Declaration, RepoEffects, declaration, declared};
 pub use disclosure::{
     Companion, Disclosure, Offers, Withheld, Written, installed_skills, offers, offers_for,
     touches_git,
@@ -111,7 +111,7 @@ pub fn run_script(
     launch_script(repo, &program, argv)
 }
 
-fn err(message: impl Into<String>) -> crate::error::CoreError {
+pub(crate) fn err(message: impl Into<String>) -> crate::error::CoreError {
     crate::error::CoreError::Guard {
         check: "repo-effects".to_owned(),
         message: message.into(),

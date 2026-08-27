@@ -121,3 +121,59 @@ fn a_removal_carries_the_effects_of_what_it_takes_away() {
         after.repo_effects_leaving
     );
 }
+
+/// A declaration that will not read stops the removal, with everything the
+/// package left behind still in place.
+///
+/// The armed shim is the reason. Reading a malformed declaration as "this
+/// package declares nothing" is a removal that runs no uninstaller and
+/// takes the scripts away regardless, and every commit in the repository
+/// then fails on a hook delegating to a file that is gone. A locally
+/// edited `SKILL.md` gets there: the frontmatter no longer parses, and the
+/// removal discards the edit anyway.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_declaration_that_will_not_read_stops_the_removal() {
+    let f = fixture();
+    let install = audit(&f.env, &f.scope).unwrap();
+    apply::execute(&f.env, &install.plan, None).unwrap();
+
+    let tree = f.project.join(".agents/skills/armer");
+    let hooks = f.project.join(".git/hooks");
+    fs::create_dir_all(&hooks).unwrap();
+    let shim = hooks.join("pre-commit");
+    fs::write(&shim, "#!/bin/sh\nexec .agents/skills/armer/scripts/arm\n").unwrap();
+
+    // The declaration is edited on disk into frontmatter that will not
+    // parse — the block is still there, and kendex can no longer read it.
+    let declaration = tree.join("SKILL.md");
+    let edited = fs::read_to_string(&declaration)
+        .unwrap()
+        .replace("  installer:", " installer: \"unclosed\n  quoted:");
+    fs::write(&declaration, &edited).unwrap();
+
+    let error = ops::remove(&f.env, &f.scope, &["armer".to_owned()], None, false)
+        .expect_err("a declaration kendex cannot read was read as declaring nothing");
+    let said = error.to_string();
+    assert!(
+        said.contains("SKILL.md") && said.contains("repo-effects"),
+        "the error names neither the file nor why: {said}"
+    );
+
+    assert!(
+        tree.join("scripts/arm").is_file(),
+        "the scripts the shim delegates to are gone"
+    );
+    assert!(shim.is_file(), "the armed hook outlived its script");
+    assert!(
+        fs::read_to_string(f.project.join("kendex.toml"))
+            .unwrap()
+            .contains("[skills.armer]"),
+        "the manifest forgot a package that is still installed"
+    );
+    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
+    assert!(
+        lock.entries.values().any(|entry| entry.name == "armer"),
+        "the lock forgot a package that is still installed"
+    );
+}

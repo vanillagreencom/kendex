@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::env::Env;
 use crate::error::Result;
 use crate::model::{ItemKind, Scope};
-use crate::repo_effects::{DeclaredEffects, declared};
+use crate::repo_effects::{Declaration, DeclaredEffects, declaration, declared};
 
 use super::desired::{Artifact, DesiredState, read_dirs, skill_canonical};
 use super::report_types::{DriftCause, DriftRow};
@@ -153,9 +153,10 @@ fn blocked(drift: &[DriftRow], name: &str) -> bool {
 /// scripts are gone, and shims that exec a script that is not there fail
 /// every commit closed. A tree already missing declares nothing here; what
 /// it left armed is `guard::stranded`'s to report. A tree that is there and
-/// cannot be read is neither: the error stops the plan with the package
-/// still installed, rather than reporting a declaration of nothing and
-/// letting the removal take the scripts out from under armed shims.
+/// cannot be read is neither, and neither is one whose declaration will not
+/// parse: either error stops the plan with the package still installed,
+/// rather than reporting a declaration of nothing and letting the removal
+/// take the scripts out from under armed shims.
 ///
 /// Empty outside a project. An effect is a change to a repository, and the
 /// global scope is not one; `run_script` refuses it.
@@ -171,17 +172,20 @@ pub(super) fn leaving(
     let staying = skill_names(after);
     let mut found: BTreeMap<String, DeclaredEffects> = BTreeMap::new();
     for name in skill_names(before).difference(&staying) {
-        let Some((root, text)) = installed_tree(env, scope, before, name)? else {
+        let Some(installed) = installed_tree(env, scope, before, name)? else {
             continue;
         };
-        let Some(effects) = declared(&text) else {
-            continue;
+        let effects = match declaration(&installed.text) {
+            Declaration::Effects(effects) => effects,
+            // A package that declares nothing has nothing to undo.
+            Declaration::Absent => continue,
+            Declaration::Unreadable => return Err(unreadable(&installed.declaration)),
         };
         found.insert(
             (*name).to_owned(),
             DeclaredEffects {
                 name: (*name).to_owned(),
-                root,
+                root: installed.root,
                 effects,
             },
         );
@@ -204,6 +208,28 @@ fn skill_names(lock: &crate::lock::Lock) -> BTreeSet<&str> {
 /// The two names an installed skill's declaration can sit under: the
 /// second is what a switched-off installation keeps its content as.
 const DECLARATION_NAMES: [&str; 2] = ["SKILL.md", "SKILL.md.disabled"];
+
+/// A departing package's installed tree, and the declaration file read out
+/// of it — a path rather than the two names, because it is what an error
+/// about the declaration has to name for anyone to go and fix it.
+#[derive(Debug)]
+struct Installed {
+    root: std::path::PathBuf,
+    declaration: std::path::PathBuf,
+    text: String,
+}
+
+/// A declaration that will not read stops the plan with the package still
+/// installed, the same as a file that will not read at all. Calling it a
+/// package that declares nothing is what leaves hook shims delegating to
+/// scripts the removal has taken away, and the plan that does it previews
+/// as an ordinary removal.
+fn unreadable(at: &std::path::Path) -> crate::error::CoreError {
+    crate::repo_effects::err(format!(
+        "{}: this package's repo-effects declaration will not read, so kendex cannot tell whether it has an uninstaller to run — repair the frontmatter, then remove the package",
+        at.display()
+    ))
+}
 
 /// Where a departing package's tree sits on disk, and its declaration.
 ///
@@ -231,7 +257,7 @@ fn installed_tree(
     scope: &Scope,
     before: &crate::lock::Lock,
     name: &str,
-) -> Result<Option<(std::path::PathBuf, String)>> {
+) -> Result<Option<Installed>> {
     let canonical = crate::harness::canonical_name(name);
     let mut candidates = vec![skill_canonical(env, scope, name)];
     for entry in before
@@ -245,8 +271,13 @@ fn installed_tree(
     }
     for root in candidates {
         for file in DECLARATION_NAMES {
-            if let Some(text) = crate::fs::read_if_exists(&root.join(file))? {
-                return Ok(Some((root, text)));
+            let declaration = root.join(file);
+            if let Some(text) = crate::fs::read_if_exists(&declaration)? {
+                return Ok(Some(Installed {
+                    root,
+                    declaration,
+                    text,
+                }));
             }
         }
     }
@@ -283,9 +314,10 @@ mod tests {
         .unwrap();
 
         let found = installed_tree(&env, &scope, &lock, "armer").unwrap();
-        let (at, text) = found.expect("the disabled declaration was read as an absent one");
-        assert_eq!(at, tree);
-        assert!(text.contains("name: armer"), "{text}");
+        let found = found.expect("the disabled declaration was read as an absent one");
+        assert_eq!(found.root, tree);
+        assert_eq!(found.declaration, tree.join("SKILL.md.disabled"));
+        assert!(found.text.contains("name: armer"), "{}", found.text);
     }
 
     /// A candidate with no `SKILL.md` is a candidate to move past; a
@@ -318,7 +350,7 @@ mod tests {
         let declaration = tree.join("SKILL.md");
         fs::write(&declaration, "---\nname: armer\n---\nBody.\n").unwrap();
         let readable = installed_tree(&env, &scope, &lock, "armer").unwrap();
-        assert_eq!(readable.map(|(at, _)| at), Some(tree));
+        assert_eq!(readable.map(|found| found.root), Some(tree));
 
         fs::set_permissions(&declaration, fs::Permissions::from_mode(0o000)).unwrap();
         // Root reads a mode-000 file, so there is no unreadable file to make.

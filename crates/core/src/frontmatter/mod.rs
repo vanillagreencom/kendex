@@ -87,16 +87,29 @@ impl Map {
     }
 }
 
-/// Split a `---` frontmatter block from the body. The terminator is a line
-/// holding exactly `---` (or `...`) plus optional trailing whitespace.
-pub fn split(text: &str) -> Result<(&str, &str), String> {
-    let after_marker = text.strip_prefix("---").ok_or("file has no frontmatter")?;
+/// The text after a frontmatter opener line, or `None` where the file
+/// opens no block. Its own step because "no block at all" and "a block
+/// that never ends" are different answers for a reader deciding whether a
+/// declaration is absent or unreadable, and [`split`] reports one error
+/// for both.
+fn opened(text: &str) -> Option<&str> {
+    let after_marker = text.strip_prefix("---")?;
     let opener_rest = after_marker.trim_start_matches([' ', '\t']);
-    let rest = opener_rest
+    opener_rest
         .strip_prefix('\r')
         .unwrap_or(opener_rest)
         .strip_prefix('\n')
-        .ok_or("file has no frontmatter")?;
+}
+
+/// Whether the file opens a frontmatter block, whatever follows it.
+pub fn opens(text: &str) -> bool {
+    opened(text).is_some()
+}
+
+/// Split a `---` frontmatter block from the body. The terminator is a line
+/// holding exactly `---` (or `...`) plus optional trailing whitespace.
+pub fn split(text: &str) -> Result<(&str, &str), String> {
+    let rest = opened(text).ok_or("file has no frontmatter")?;
     let mut offset = 0;
     for line in rest.split_inclusive('\n') {
         let trimmed = line.trim_end();

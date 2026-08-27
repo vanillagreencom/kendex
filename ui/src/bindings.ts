@@ -1985,12 +1985,8 @@ export type RepoEffects = {
 	 */
 	installer: string | null,
 	/**
-	 *  The script that undoes the effect.
-	 * 
-	 *  Declared, not yet run: nothing in kendex executes it, and `remove`
-	 *  takes the package's files away with the effect still applied. The
-	 *  disclosure names it so a person can run it themselves, which is the
-	 *  whole of what it does today. KEN-674 carries wiring it into removal.
+	 *  The script that undoes the effect. A plan that takes the package
+	 *  out of a scope runs it first, while the file is still there.
 	 */
 	uninstaller: string | null,
 	/**  How to undo the effect by hand, for the disclosure's last line. */

@@ -18,6 +18,49 @@ fn a_package_declaring_nothing_reads_as_nothing() {
     assert!(declared("no frontmatter at all\n").is_none());
 }
 
+/// Absent and unreadable are the same `None` to a caller that arms an
+/// effect and different answers to one that undoes it: the first package
+/// has no uninstaller, the second may have one kendex could not read, and
+/// removing the second as though it were the first strands whatever it
+/// armed.
+#[test]
+fn an_unreadable_declaration_is_not_an_absent_one() {
+    assert_eq!(
+        declaration(DECLARED),
+        Declaration::Effects(declared(DECLARED).expect("declared"))
+    );
+    for absent in ["---\nname: deploy\n---\nbody\n", "no frontmatter at all\n"] {
+        assert_eq!(
+            declaration(absent),
+            Declaration::Absent,
+            "a package that declares nothing: {absent}"
+        );
+    }
+    let unreadable = [
+        // The block is there and its YAML is broken — the whole
+        // frontmatter fails to parse, so the key is never even looked for.
+        "---\nname: x\nrepo-effects:\n  summary: s\n installer: \"scripts/run\n---\nbody\n",
+        // The block is there and is not a block.
+        "---\nname: x\nrepo-effects: arms things\n---\nbody\n",
+        // The block is there and one field will not read.
+        "---\nname: x\nrepo-effects:\n  summary: s\n  writes:\n    a: b\n---\nbody\n",
+        // Frontmatter that opens and never closes is frontmatter kendex
+        // could not read, whatever it says.
+        "---\nname: x\nrepo-effects:\n  summary: s\n  uninstaller: scripts/off\nbody\n",
+    ];
+    for text in unreadable {
+        assert_eq!(
+            declaration(text),
+            Declaration::Unreadable,
+            "read as an answer about the package: {text}"
+        );
+        assert!(
+            declared(text).is_none(),
+            "arming reads it as nothing: {text}"
+        );
+    }
+}
+
 /// A summary is what the disclosure is made of; without one there is
 /// nothing to show, so there is nothing to authorize either.
 #[test]
