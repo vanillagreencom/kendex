@@ -363,6 +363,14 @@ else
         bad "carry-exclude '$pat' is anchored with a leading '/' — compare filenames are repository-relative, so this glob can never match and the paths it names are NOT excluded"
         continue
         ;;
+      ../* | */../*)
+        # STRUCTURALLY dead, like the leading '/', and so not waivable: a
+        # prophylactic declaration says "no tracked match TODAY", and this
+        # one cannot match on any day, so accepting the declaration would
+        # convert a guaranteed no-match into a clean result.
+        bad "carry-exclude '$pat' is parent-relative — compare filenames are repository-relative and never begin with '../', so this glob can never match, today or after the paths it names exist; declaring it prophylactic does not make it reachable"
+        continue
+        ;;
     esac
     glob_hits "$pat"
     if [ -z "$GLOB_FIRST" ]; then
@@ -439,7 +447,13 @@ EOF_WF
   # command failure, or a file damaged down to `exit 1` that is still
   # executable and still parses — and folding zero counted failures from it
   # reports a clean sheet for a check that never ran.
-  if [ "$wf_rc" -eq 1 ] && [ "$wf_bad" -eq 0 ]; then
+  # A peer that printed NO verdict at all inspected nothing, whatever it
+  # exited: a truncated or replaced file that parses and exits 0 passes the
+  # runtime group, folds zero counts, and leaves this summary speaking for a
+  # check that never ran.
+  if [ "$((wf_ok + wf_bad))" -eq 0 ]; then
+    bad "the adopted-workflow check printed no verdict at all — it inspected nothing, so the workflow is unchecked here whatever its exit code said; re-run \`kendex refresh\` and commit the result"
+  elif [ "$wf_rc" -eq 1 ] && [ "$wf_bad" -eq 0 ]; then
     bad "the adopted-workflow check exited 1 without printing a single FAIL verdict — it failed in a way it could not name, so nothing here knows whether the workflow was checked at all; re-run \`kendex refresh\` and commit the result"
   elif [ "$wf_rc" -eq 0 ] && [ "$wf_bad" -gt 0 ]; then
     bad "the adopted-workflow check printed $wf_bad FAIL verdict(s) but exited 0 — its verdicts and its exit code disagree, so neither can be trusted"

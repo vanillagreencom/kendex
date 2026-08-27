@@ -311,6 +311,19 @@ dir="$DIR"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "/AGENTS.md"
 expect_fail "a leading-'/' anchor can never match and fails" "$dir" "anchored with a leading '/'"
 
+# Parent-relative is dead the same way, and so not waivable: a declaration
+# says "no tracked match TODAY", and this one cannot match on any day.
+sandbox
+dir="$DIR"
+settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "../future/*"
+expect_fail "a parent-relative glob can never match and fails" "$dir" "parent-relative"
+
+sandbox
+dir="$DIR"
+settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "../future/*"
+settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "../future/*"
+expect_fail "declaring a parent-relative glob prophylactic does not rescue it" "$dir" "parent-relative"
+
 sandbox
 dir="$DIR"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "*"
@@ -611,7 +624,14 @@ sandbox
 dir="$DIR"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$dir/$WORKFLOW_REL"
 chmod +x "$dir/$WORKFLOW_REL"
-expect_fail "a peer exiting 1 while naming nothing is not a clean sheet" "$dir" "without printing a single FAIL verdict"
+expect_fail "a peer exiting 1 while naming nothing is not a clean sheet" "$dir" "printed no verdict at all"
+
+# Exit 0 with nothing said is the same emptiness wearing a passing code.
+sandbox
+dir="$DIR"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$dir/$WORKFLOW_REL"
+chmod +x "$dir/$WORKFLOW_REL"
+expect_fail "a peer exiting 0 while naming nothing is not a clean sheet" "$dir" "printed no verdict at all"
 
 sandbox
 dir="$DIR"
