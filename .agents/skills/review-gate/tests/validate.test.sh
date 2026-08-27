@@ -571,6 +571,21 @@ dir="$DIR"
 chmod -x "$dir/$WORKFLOW_REL"
 expect_fail "a peer tool that cannot be run is a FAIL, never a silent skip" "$dir" "validate-workflow.sh is missing or not executable"
 
+# The peer's exit code and its verdicts must AGREE. A file damaged down to
+# `exit 1` is still executable and still parses, so the runtime group passes
+# it and the driver would otherwise fold zero failures into a clean sheet.
+sandbox
+dir="$DIR"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$dir/$WORKFLOW_REL"
+chmod +x "$dir/$WORKFLOW_REL"
+expect_fail "a peer exiting 1 while naming nothing is not a clean sheet" "$dir" "without printing a single FAIL verdict"
+
+sandbox
+dir="$DIR"
+printf '#!/usr/bin/env bash\nprintf "FAIL  something\\n"\nexit 0\n' >"$dir/$WORKFLOW_REL"
+chmod +x "$dir/$WORKFLOW_REL"
+expect_fail "a peer whose verdicts and exit code disagree is a finding" "$dir" "disagree"
+
 echo "=== the installed engine ==="
 
 sandbox

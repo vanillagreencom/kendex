@@ -410,11 +410,11 @@ fi
 # -------------------------------------------------------------- workflow ---
 group "adopted writer workflow"
 
-# A PEER TOOL, run as a subprocess: it is the one group whose vocabulary —
-# job blocks, triggers, permission scopes — is shared with nothing else
-# here, and it stands alone for anyone changing only the workflow copy. Its
-# verdict lines are relayed and its counts folded in, so this summary still
-# speaks for every check that ran.
+# A PEER TOOL, run as a subprocess: it is the one group whose subject —
+# the adopted workflow file — is shared with nothing else here, and it
+# stands alone for anyone changing only that copy. Its verdict lines are
+# relayed and its counts folded in, so this summary still speaks for every
+# check that ran.
 workflow_tool="$SKILL_DIR/scripts/validate-workflow.sh"
 if [ ! -x "$workflow_tool" ]; then
   bad "cannot check the adopted workflow: scripts/validate-workflow.sh is missing or not executable (the runtime group above says which)"
@@ -434,6 +434,16 @@ else
   done <<EOF_WF
 $wf_out
 EOF_WF
+  # The exit code and the verdicts must AGREE. A peer that exits 1 having
+  # named nothing failed in a way it could not describe — an unhandled
+  # command failure, or a file damaged down to `exit 1` that is still
+  # executable and still parses — and folding zero counted failures from it
+  # reports a clean sheet for a check that never ran.
+  if [ "$wf_rc" -eq 1 ] && [ "$wf_bad" -eq 0 ]; then
+    bad "the adopted-workflow check exited 1 without printing a single FAIL verdict — it failed in a way it could not name, so nothing here knows whether the workflow was checked at all; re-run \`kendex refresh\` and commit the result"
+  elif [ "$wf_rc" -eq 0 ] && [ "$wf_bad" -gt 0 ]; then
+    bad "the adopted-workflow check printed $wf_bad FAIL verdict(s) but exited 0 — its verdicts and its exit code disagree, so neither can be trusted"
+  fi
   PASS=$((PASS + wf_ok))
   FAILED=$((FAILED + wf_bad))
 fi
