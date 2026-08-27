@@ -266,9 +266,16 @@ sandbox
 dir="$DIR"
 settings "$dir" PR_REVIEW_NUDGE "ask about REVIEW_GATE_MODE"
 expect_fail "a name mentioned in a value is flagged, and the verdict says to reword" "$dir" "a shape the loader does not read"
-printf '%s' "$OUT" | grep -qF "reword it" &&
+printf '%s' "$OUT" | grep -qF "reword a mention" &&
   ok "the over-flag names its own remedy" ||
   bad "the over-flag names its own remedy" "$OUT"
+
+# No classification at all: the token on a line that is not the accepted
+# shape is a finding, with or without an `=` anywhere on it.
+sandbox
+dir="$DIR"
+printf 'notes = [\n  "REVIEW_GATE_MODE",\n]\n' >>"$dir/kendex.settings.toml"
+expect_fail "the token on a line carrying no assignment at all is a finding" "$dir" "a shape the loader does not read"
 
 # A SYMLINK is not committed content: CI checks out the link, and everything
 # here would read the target's bytes.
@@ -348,32 +355,50 @@ expect_fail "a glob matching no tracked path is dead config" "$dir" "matches no 
 sandbox
 dir="$DIR"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "/AGENTS.md"
-expect_fail "a leading-'/' anchor can never match and fails" "$dir" "can never match a repository-relative path"
+expect_fail "a leading-'/' anchor can never match and fails" "$dir" "is not a supported pattern"
 
 # Parent-relative is dead the same way, and so not waivable: a declaration
 # says "no tracked match TODAY", and this one cannot match on any day.
 sandbox
 dir="$DIR"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "../future/*"
-expect_fail "a parent-relative glob can never match and fails" "$dir" "can never match a repository-relative path"
+expect_fail "a parent-relative glob can never match and fails" "$dir" "is not a supported pattern"
 
 sandbox
 dir="$DIR"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "../future/*"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "../future/*"
-expect_fail "declaring a parent-relative glob prophylactic does not rescue it" "$dir" "can never match a repository-relative path"
+expect_fail "declaring a parent-relative glob prophylactic does not rescue it" "$dir" "is not a supported pattern"
 
 # The rule is REACHABILITY, not a list of anchors: a dot-relative glob and an
 # embedded dot component are unreachable for the same reason.
 sandbox
 dir="$DIR"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "./future/*"
-expect_fail "a dot-relative glob can never match and fails" "$dir" "can never match a repository-relative path"
+expect_fail "a dot-relative glob can never match and fails" "$dir" "is not a supported pattern"
 
 sandbox
 dir="$DIR"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/./guide.md"
-expect_fail "an embedded dot component can never match and fails" "$dir" "can never match a repository-relative path"
+expect_fail "an embedded dot component can never match and fails" "$dir" "is not a supported pattern"
+
+# A bracket class is the fourth spelling of this class, so the rule is now a
+# CLOSED supported set rather than a list of anchors to refuse.
+sandbox
+dir="$DIR"
+settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "[.]/future/*"
+expect_fail "a bracket-class glob is unsupported spelling" "$dir" "is not a supported pattern"
+
+sandbox
+dir="$DIR"
+settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "[.]/future/*"
+settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "[.]/future/*"
+expect_fail "declaring a bracket-class glob prophylactic does not rescue it" "$dir" "is not a supported pattern"
+
+sandbox
+dir="$DIR"
+settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE 'docs/\*.md'
+expect_fail "a backslash escape is unsupported spelling" "$dir" "is not a supported pattern"
 
 # ...and an ordinary glob with a dot in a NAME is reachable and stays so.
 sandbox
@@ -602,6 +627,15 @@ sandbox
 dir="$DIR"
 mutate "$dir" "s|^  workflow_dispatch: {}$|  check_run:\n  workflow_dispatch: {}\n    types: [created, completed]|"
 expect_fail "the opt-in's two lines must be adjacent" "$dir" "PARTIAL check_run opt-in"
+
+# BLANK lines are compared. Inside a `run: |` block scalar a blank is script
+# content, and one after a backslash continuation changes what the shell
+# runs, so two workflows that behave differently must not compare equal.
+sandbox
+dir="$DIR"
+# `G` appends the empty hold space, i.e. a blank line after each match.
+mutate "$dir" "/^          set -u\$/G"
+expect_fail "an inserted blank line inside a run: block is a divergence" "$dir" "has diverged from the shipped template"
 
 # The BOUNDARY, stated rather than left to be discovered: comments are
 # compared out. A copy whose prose was reworded is still the template.

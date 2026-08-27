@@ -180,22 +180,23 @@ else
   else
     bad "$SETTINGS_FILE is present but UNTRACKED — CI checks out tracked files only, so every value below is validated here and absent there; the gate would run on the built-in defaults. \`git add $SETTINGS_FILE\`"
   fi
-  # INVERTED, after quoted, dotted, quoted-dotted and nested-inline-table
-  # keys each arrived as its own spelling: enumerate what the loader READS,
-  # not the ways to hide from it. Its probe is `^[[:space:]]*NAME[[:space:]]*=`
-  # (scripts/lib/settings.sh) — the bare name, then its own `=`, and nothing
-  # else. Every non-comment line mentioning a REVIEW_GATE_ name is judged
-  # against that one shape: matching it is read, anything else is read by
-  # nothing. The LINE is judged, not a position inside it — scoping to the
-  # text before the first `=` was itself a hole, since an inline table puts
-  # the setting after it. This over-flags a name mentioned in a VALUE, which
-  # is the safe direction and is what the verdict text says to do about it.
+  # INVERTED, after four spellings arrived one at a time — quoted, dotted,
+  # quoted-dotted, and a key nested in an inline table. Enumerate what the
+  # loader READS, not the ways to hide from it: its probe is
+  # `^[[:space:]]*NAME[[:space:]]*=` (scripts/lib/settings.sh), the bare name
+  # at the start of its own line, then its own `=`, and nothing else.
+  #
+  # So there is NO classification here. Comments are dropped, and after that
+  # any occurrence of the REVIEW_GATE_ token on a line that is not exactly
+  # that shape is a finding — including one inside a string value, which is
+  # deliberate: every carve-out this check has had (the key position, the
+  # text before the first `=`) became the next hole. The verdict says what
+  # the rule is, so a legitimate mention is one reword away and a setting
+  # nobody reads is never reported healthy.
   keyscan="$(awk '
     { l = $0; sub(/\r$/, "", l) }
     l ~ /^[[:space:]]*#/ { next }
     l !~ /REVIEW_GATE_/ { next }
-    { i = index(l, "=") }
-    i == 0 { next }
     l ~ /^[[:space:]]*REVIEW_GATE_[A-Za-z0-9_]*[[:space:]]*=/ {
       k = l
       sub(/^[[:space:]]*/, "", k)
@@ -244,7 +245,7 @@ EOF_ASSIGNED
     ok "no GitHub repository variable is assigned as a repo setting"
   fi
   if [ -n "$(printf '%s' "$unread" | tr -d '[:space:]')" ]; then
-    bad "$SETTINGS_FILE names REVIEW_GATE_* key(s) in a shape the loader does not read — valid TOML, read by nothing, so the gate runs on the built-in default. The loader reads the BARE name at the start of its own line, followed by its own \`=\`: quoted, dotted, quoted-dotted and inline-table keys are all read by nothing. Strip the decoration from the line(s) below; if one of them only MENTIONS a key name in its value, reword it:
+    bad "$SETTINGS_FILE names REVIEW_GATE_ in a shape the loader does not read. The loader reads ONE shape — a bare KEY at the start of its own line, followed by its own \`=\` — and everything else is unsupported syntax read by nothing, so the gate runs on the built-in default. This is deliberately unforgiving, string values included: every exception this check has carried became a place for the next spelling to hide. Rewrite, or reword a mention, on the line(s) below:
 $(printf '%s\n' "$unread" | sed 's/^/        /')"
   else
     ok "every REVIEW_GATE_* assignment uses the bare key name the loader reads"
@@ -306,21 +307,34 @@ $(sed 's/^/        /' "$CARRY_TMP/err")"
   return 0
 }
 
-# INVERTED, after a leading '/' and a parent-relative '../' each arrived as
-# its own case: the reachable shape is what is small and closed. Git compares
-# repository-relative names, which carry no leading '/' and no '.' or '..'
-# component, so a glob built from any of those is unreachable on every day —
-# not merely today, which is why the prophylactic ledger must not reach it. A
-# declaration waives "no tracked match TODAY"; nothing waives never.
-unreachable_glob() { # GLOB — 0 when no repository-relative path can match it
+# A CLOSED SPELLING, after a leading '/', a parent-relative '../', a
+# dot-relative './' and a bracketed '[.]/' each arrived as its own case. The
+# unreachable set has no end to enumerate; the SUPPORTED one is small, so it
+# is the one written down: path literals, '*', '**' and '?', with no bracket
+# class, no backslash escape, and no '/' anchor or '.'/'..' component — none
+# of which a repository-relative git path can carry. Anything richer is
+# refused as unsupported rather than guessed at, and refused BEFORE the
+# prophylactic ledger: a declaration waives "no match in the repository
+# today", and nothing waives a pattern that can never match at all.
+unsupported_glob() { # GLOB — prints the reason when the spelling is refused
   local rest="$1" comp
   case "$1" in
-    /*) return 0 ;;
+    /*)
+      printf '%s' "it is anchored with a leading '/'"
+      return 0
+      ;;
+    *'['* | *']'* | *'\'*)
+      printf '%s' "it uses a bracket class or a backslash escape, which the engine's matcher does not support"
+      return 0
+      ;;
   esac
   while [ -n "$rest" ]; do
     comp="${rest%%/*}"
     case "$comp" in
-      . | ..) return 0 ;;
+      . | ..)
+        printf '%s' "it carries a '$comp' path component"
+        return 0
+        ;;
     esac
     case "$rest" in
       */*) rest="${rest#*/}" ;;
@@ -395,10 +409,10 @@ elif [ -z "$exclude_items" ]; then
 else
   while IFS= read -r pat; do
     [ -z "$pat" ] && continue
-    if unreachable_glob "$pat"; then
-      bad "carry-exclude '$pat' can never match a repository-relative path — git names files like \`docs/guide.md\`, with no leading '/' and no '.' or '..' component, so this glob is unreachable today and on every future day. Declaring it prophylactic does not make it reachable"
+    glob_why="$(unsupported_glob "$pat")" && {
+      bad "carry-exclude '$pat' is not a supported pattern: $glob_why. The supported spelling is path literals with '*', '**' and '?' — git names files like \`docs/guide.md\`, so a pattern outside that can never match on any day, and declaring it prophylactic does not make it reachable"
       continue
-    fi
+    }
     glob_hits "$pat"
     if [ -z "$GLOB_FIRST" ]; then
       if grep -qxF -- "$pat" <<<"$prophylactic_items"; then
@@ -431,6 +445,10 @@ else
       bad "prophylactic declaration '$pat' is not an entry in REVIEW_GATE_CARRY_FORWARD_EXCLUDE — a waiver without its glob is stale config; remove the declaration, or restore the exclusion it waives"
       continue
     fi
+    glob_why="$(unsupported_glob "$pat")" && {
+      bad "prophylactic declaration '$pat' is not a supported pattern: $glob_why. A declaration waives \`no match in the repository today\`; it does not make an unsupported spelling reachable"
+      continue
+    }
     glob_hits "$pat"
     if [ -n "$GLOB_FIRST" ]; then
       bad "prophylactic declaration '$pat' no longer holds: the glob now matches '$GLOB_FIRST' — remove the declaration so the live exclusion is checked"

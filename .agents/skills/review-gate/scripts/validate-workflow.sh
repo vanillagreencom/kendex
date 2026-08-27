@@ -106,13 +106,16 @@ esac
 # guard's error string.
 EXEC_WRITER_RE='^[[:space:]]*exec[[:space:]]+[^[:space:]]*review-writer\.sh[[:space:]]*$'
 
-# Comments and blank lines are dropped wherever a file is read. Prose is
-# reworded legitimately — the catalog's own copy says so in its header — and
-# a comment gates nothing; what is read is every line that decides behavior.
+# COMMENT-ONLY lines are dropped, and nothing else. Prose is reworded
+# legitimately — the catalog's own copy says so in its header — and a comment
+# gates nothing. A BLANK line is not in that class: inside a `run: |` block
+# scalar it is script content, and a blank after a backslash continuation
+# changes what the shell runs, so dropping blanks would compare two
+# workflows that behave differently and call them equal.
 # One sed, not a grep chain: a `grep -v` that filters everything exits 1, and
 # the `|| true` that would paper over it also papers over an exit 2.
-code_lines() { # FILE — the file's code lines, trailing space stripped
-  sed -e 's/[[:space:]]*$//' -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$1"
+code_lines() { # FILE — the file without comment-only lines, trailing space stripped
+  sed -e 's/[[:space:]]*$//' -e '/^[[:space:]]*#/d' "$1"
 }
 
 # ========================= find the adopted copy ===========================
