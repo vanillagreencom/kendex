@@ -16,6 +16,9 @@ an outside contributor.
 
 ### Fixed
 
+- Disarming from one project no longer removes commit hooks another project
+  in a different work tree armed and is still committing through.
+
 - A `core.hooksPath` whose value ends in a newline no longer makes `--check`
   inspect a different directory and report the repository as armed.
 - Under `--separate-git-dir`, the generated git-hook helper no longer runs a

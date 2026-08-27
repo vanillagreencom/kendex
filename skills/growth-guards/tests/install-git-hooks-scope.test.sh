@@ -551,5 +551,58 @@ esac
 [ "$RC" -ne 0 ] && ok "and its verdict blocks the commit" \
   || bad "linked worktree commit passed" "rc=$RC out=$OUT"
 
+echo "=== a survivor in a DIFFERENT nested project keeps the shims ==="
+# The shims are shared by every work tree, and the helper remembers which
+# project armed them. Survivor detection applied the UNINSTALLING copy's
+# project path to every work tree — so a package armed from a different
+# nested project was looked for in the wrong place, found nowhere, and the
+# shared hooks were removed while that work tree was still committing
+# through them.
+R95="$TMP/nested-survivor"
+mkdir -p "$R95/apps/one/.agents/skills"
+git -C "$R95" init -q
+git -C "$R95" config user.email t@t
+git -C "$R95" config user.name t
+# Untracked on purpose: a copy the repository TRACKS is its own content
+# checked out again, which the one-repository-one-install rule already
+# discounts. A separate install is one the repository does not carry.
+printf '.agents/\napps/\nservices/\n' >"$R95/.gitignore"
+cp -R "$SKILL_DIR" "$R95/apps/one/.agents/skills/growth-guards"
+printf 'hello\n' >"$R95/a.txt"
+git -C "$R95" add .gitignore a.txt
+git -C "$R95" commit -q -m "feat: base"
+
+# Armed from apps/one — that project is what the helper bakes.
+OUT=""; RC=0
+OUT="$("$R95/apps/one/.agents/skills/growth-guards/scripts/install-git-hooks" \
+  --repo "$R95" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "the nested project arms the shared shims" \
+  || bad "nested arm" "rc=$RC out=$OUT"
+
+# A second work tree carrying its own copy at a DIFFERENT depth, untracked
+# there, which is what makes it somebody else's install.
+git -C "$R95" worktree add -q "$TMP/wt95" -b wt95b
+mkdir -p "$TMP/wt95/services/two/.agents/skills"
+cp -R "$SKILL_DIR" "$TMP/wt95/services/two/.agents/skills/growth-guards"
+
+# Uninstalling from the SECOND project must see the first as a survivor and
+# leave the shared shims alone.
+OUT=""; RC=0
+OUT="$("$TMP/wt95/services/two/.agents/skills/growth-guards/scripts/install-git-hooks" \
+  --repo "$TMP/wt95" --uninstall 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "uninstall from the other nested project exits 0" \
+  || bad "cross-project uninstall" "rc=$RC out=$OUT"
+[ -f "$R95/.git/hooks/kendex-guards" ] \
+  && ok "and the shims another project armed are kept" \
+  || bad "the shared shims were removed" "out=$OUT"
+
+# The control: the arming project's own uninstall still disarms, or the rule
+# above would just be "never remove anything".
+OUT=""; RC=0
+OUT="$("$R95/apps/one/.agents/skills/growth-guards/scripts/install-git-hooks" \
+  --repo "$R95" --uninstall 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "must-fail control: the arming project can disarm" \
+  || bad "arming project uninstall" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

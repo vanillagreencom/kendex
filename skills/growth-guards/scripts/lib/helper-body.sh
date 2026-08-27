@@ -143,3 +143,29 @@ done
 fail "no executable growth-guards $mode script at $installed_scripts, nor under $main or $top (project '$project_rel', roots $skill_roots)"
 HELPER
 }
+
+# The project a helper was armed from, read back out of it.
+#
+# The shims are shared by every work tree of a repository, and the helper
+# carries the project of whichever one armed them. Uninstalling from a
+# DIFFERENT nested project has to know that, or it looks for survivors under
+# its own project's path, finds none, and removes hooks another work tree is
+# still committing through.
+#
+# Nonzero when the value cannot be read with confidence — no helper, no line,
+# or a value carrying a newline, which a line-based read cannot see the end
+# of. The caller treats that as unknown, and unknown never removes anything.
+gg_baked_project_rel() { # VAR HELPER -> sets VAR to the baked prefix
+  local __name="$1" line="" value="" sq="'"
+  eval "$__name=''"
+  [ -f "$2" ] || return 1
+  line="$(grep -m1 -- "^project_rel=$sq" "$2")" || return 1
+  value="${line#project_rel=$sq}"
+  case "$value" in
+    *"$sq") value="${value%$sq}" ;;
+    # An unterminated quote means the value ran onto the next line.
+    *) return 1 ;;
+  esac
+  # Undo the escaping helper_body writes: '"'"' is one literal quote.
+  eval "$__name=\${value//$sq\\$sq$sq/$sq}"
+}
