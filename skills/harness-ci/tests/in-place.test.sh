@@ -122,4 +122,18 @@ crlfbase="$(git -C "$crlf" rev-parse HEAD)"
 commit_paths "$crlf" "edit" .agents/skills/mine/SKILL.md
 assert_verdict "a CRLF manifest still carves" false --repo "$crlf" --event push --base "$crlfbase" --head HEAD
 
+# An unclassifiable spelling degrades to the coarse carve: an in-place value
+# the name extraction cannot account for makes every skill path project
+# source rather than a guessed name set.
+coarse="$(new_repo coarse)"
+printf 'schema = 6\nskills = { mine = { source = "in-place" } }\n' >"$coarse/kendex.toml"
+commit_paths "$coarse" "baseline" README.md
+coarsebase="$(git -C "$coarse" rev-parse HEAD)"
+commit_paths "$coarse" "edit" .agents/skills/mine/SKILL.md
+assert_verdict "an inline whole-table declaration carves its skill" false --repo "$coarse" --event push --base "$coarsebase" --head HEAD
+git -C "$coarse" checkout -q -B "case" "$coarsebase"
+git -C "$coarse" clean -qfd -e kendex.toml
+commit_paths "$coarse" "sibling" .agents/skills/other/SKILL.md
+assert_verdict "the coarse carve covers every skill path" false --repo "$coarse" --event push --base "$coarsebase" --head HEAD
+
 report in-place

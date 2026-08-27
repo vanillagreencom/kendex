@@ -163,23 +163,25 @@ printf '%s\n' "$changed" | sed -e 's/^/harness-only: changed: /' >&2
 # output — the answer before in-place existed.
 in_place_skills=""
 if [ -f "$repo/kendex.toml" ]; then
-  # Every spelling a declaration legally wears: section headers (quoted
-  # names, spaces around the dotted key), inline tables and dotted keys
-  # (single-line by TOML 1.0, so a line parser sees them whole), either
-  # quote style, indentation, trailing comments. Over-matching is the safe
-  # direction — a carve too wide only runs lanes that could have stood
-  # down.
+  # The line parser reads the spellings kendex writes and the common hand
+  # edits; completeness is not load-bearing. Every line that carries a
+  # quoted in-place token is counted, and any the name extraction cannot
+  # account for degrades to the coarse carve: every .agents/skills path
+  # reads as project source. Over-matching is the safe direction — lanes
+  # run. No legal TOML spelling can answer harness_only=true wrongly.
   sq="'"
   in_place_skills="$(awk -v q="$sq" '
     BEGIN {
       d = "\""
       v = "(" d "in-place" d "|" d d d "in-place" d d d "|" q "in-place" q "|" q q q "in-place" q q q ")"
       src = "source[ \t]*=[ \t]*" v
+      tok = "(" d "in-place" d "|" q "in-place" q ")"
     }
     {
       line = $0
       sub(/\r$/, "", line)
       sub(/^[ \t]+/, "", line)
+      if (line ~ tok) coarse += 1
     }
     line ~ /^\[[ \t]*skills[ \t]*\][ \t]*(#.*)?$/ { in_skills = 1; name = ""; next }
     line ~ /^\[[ \t]*skills[ \t]*\./ {
@@ -193,17 +195,20 @@ if [ -f "$repo/kendex.toml" ]; then
       next
     }
     line ~ /^\[/ { in_skills = 0; name = "" }
-    name != "" && line ~ ("^" src "[ \t]*(#.*)?$") { print name }
+    name != "" && line ~ ("^" src "[ \t]*(#.*)?$") { accounted += 1; print name; next }
     (in_skills || line ~ /^skills[ \t]*\./) && line ~ src {
       key = line
       sub(/^skills[ \t]*\.[ \t]*/, "", key)
       if (key ~ /^"/) { sub(/^"/, "", key); sub(/".*$/, "", key) }
       else if (key ~ ("^" q)) { sub("^" q, "", key); key = substr(key, 1, index(key, q) - 1) }
       else { sub(/[ \t=.].*$/, "", key) }
-      if (key != "") print key
+      if (key != "") { accounted += 1; print key }
     }
+    END { if (coarse > accounted) print "*" }
   ' "$repo/kendex.toml" 2>/dev/null)" || in_place_skills=""
 fi
+NL=$(printf "\nx")
+NL="${NL%x}"
 in_place_path() { # PATH -> 0 when the path is the repo's own in-place content
   local rest skill
   case "$1" in
@@ -212,6 +217,11 @@ in_place_path() { # PATH -> 0 when the path is the repo's own in-place content
     *) return 1 ;;
   esac
   [ -n "$in_place_skills" ] || return 1
+  # The coarse carve: an in-place mention the extraction could not account
+  # for makes every skill path project source rather than guessing names.
+  case "$in_place_skills" in
+    "*" | "*"$NL* | *$NL"*" | *$NL"*"$NL*) return 0 ;;
+  esac
   rest="${1#.agents/skills/}"
   skill="${rest%%/*}"
   case "$in_place_skills" in
