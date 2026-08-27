@@ -77,6 +77,12 @@ source = "in-place"
 
 [ skills . spaced ]
 source = 'in-place'
+
+[skills.tripled]
+source = """in-place"""
+
+[skills.lit3]
+source = '''in-place'''
 MANIFEST
 commit_paths "$spell" "baseline" README.md
 spellbase="$(git -C "$spell" rev-parse HEAD)"
@@ -91,6 +97,8 @@ spell_case "an indented declaration with a value comment" false .agents/skills/i
 spell_case "spaces around the dotted key, single-quoted value" false .agents/skills/spaced/SKILL.md
 spell_case "an inline table under the skills table" false .agents/skills/tabled/SKILL.md
 spell_case "a dotted entry under the skills table" false .agents/skills/dotted/SKILL.md
+spell_case "a multiline-basic-string value" false .agents/skills/tripled/SKILL.md
+spell_case "a multiline-literal-string value" false .agents/skills/lit3/SKILL.md
 
 # Top-level dotted spellings live in their own manifest: TOML lets one style
 # define the skills table, not both.

@@ -171,7 +171,11 @@ if [ -f "$repo/kendex.toml" ]; then
   # down.
   sq="'"
   in_place_skills="$(awk -v q="$sq" '
-    BEGIN { src = "source[ \t]*=[ \t]*(\"in-place\"|" q "in-place" q ")" }
+    BEGIN {
+      d = "\""
+      v = "(" d "in-place" d "|" d d d "in-place" d d d "|" q "in-place" q "|" q q q "in-place" q q q ")"
+      src = "source[ \t]*=[ \t]*" v
+    }
     {
       line = $0
       sub(/\r$/, "", line)
