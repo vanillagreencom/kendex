@@ -52,18 +52,25 @@ jobs:
         with:
           node-version: "22"
       - name: Install the freely installable harness CLIs
-        # codex is pinned: 0.150.1 declares its platform binaries as aliases
-        # to @openai/codex@<version>-<platform> tags that were never
-        # published, and an optional dependency that cannot resolve does not
-        # fail an install — so the launcher installs and then refuses to run.
-        # Lift the pin once a later release resolves its own binaries (KEN-675).
+        # Every CLI tracks latest deliberately: this job exists to notice
+        # when a harness stops reading what kendex wrote.
+        #
+        # The version check is not a formality. A launcher published ahead of
+        # its own platform binaries installs clean — an optional dependency
+        # that cannot resolve does not fail an install — and then refuses to
+        # run, which surfaced as a panic inside a Rust test with a stack
+        # trace that pointed nowhere near the cause. Here it fails on the
+        # line that caused it (KEN-675).
         run: |
           npm install -g \
             opencode-ai \
             @google/gemini-cli \
-            @openai/codex@0.150.0 \
+            @openai/codex \
             @anthropic-ai/claude-code
-          codex --version
+          # Only CLIs whose version flag is confirmed; adding one means
+          # confirming it first, because a wrong probe here reds the build
+          # for a reason that has nothing to do with kendex.
+          for cli in opencode codex claude; do "$cli" --version; done
       - name: Round-trip the emitted trees
         env:
           KENDEX_CLI_SMOKE: "1"
