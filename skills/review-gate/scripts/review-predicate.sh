@@ -1393,6 +1393,13 @@ awaiting_sources() { # -> one eligible source per line, duplicates collapsed
     fi
     printf '%s\n' "$TRUSTED_CONTEXTS_N" | sed '/^$/d'
     aw_eligible "$COMMENT_REVIEWERS_N" 1
+    # The operator override is evidence this predicate accepts, so it is a
+    # way to open the gate and belongs in the list. Leaving it out told an
+    # operator nothing was eligible while the recovery path they own was
+    # configured and working. Empty means the source is disabled.
+    if [ -n "$OUTAGE_CONTEXT" ]; then
+      echo "$OUTAGE_CONTEXT"
+    fi
   } | awk '!seen[$0]++'
 }
 

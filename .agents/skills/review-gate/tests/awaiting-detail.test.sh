@@ -72,6 +72,9 @@ else
 fi
 
 MIN_STATE="any"
+# The operator override is a source too; cases that are not about it disable
+# it the way a repo does, with an empty context.
+OUTAGE_CONTEXT=""
 # Each case is written in the raw settings a repo commits, and packs them
 # through the predicate's own rg_pack — the single parse every consumer of
 # these lists shares.
@@ -117,7 +120,28 @@ sources_are "a login reachable two ways is listed once" "alice"
 # Every configured source is the author: nothing is eligible, and the status
 # must not claim otherwise.
 PR_AUTHOR="alice" TRUSTED_LOGINS="alice" TRUSTED_CONTEXTS="" COMMENT_REVIEWERS="alice:REVIEWED-CLEAN"
-sources_are "an author-only configuration leaves no eligible source" ""
+sources_are "an author-only configuration with no override leaves nothing eligible" ""
+
+# The operator override is evidence this predicate accepts, so it is a way to
+# open the gate. Reporting nothing eligible while it is configured pointed an
+# operator away from the recovery path they own.
+OUTAGE_CONTEXT="kendex-reviewer-outage"
+PR_AUTHOR="alice" TRUSTED_LOGINS="alice" TRUSTED_CONTEXTS="" COMMENT_REVIEWERS="alice:REVIEWED-CLEAN"
+sources_are "an author-only configuration still names the configured override" \
+  "kendex-reviewer-outage"
+
+PR_AUTHOR="carol" TRUSTED_LOGINS="alice" TRUSTED_CONTEXTS="Analysis" COMMENT_REVIEWERS=""
+sources_are "the override joins the ordinary sources" \
+  "alice,Analysis,kendex-reviewer-outage"
+
+# An override context equal to a trusted status context is one source.
+PR_AUTHOR="carol" TRUSTED_LOGINS="" TRUSTED_CONTEXTS="kendex-reviewer-outage" COMMENT_REVIEWERS=""
+sources_are "an override matching a trusted context is listed once" \
+  "any non-author review,kendex-reviewer-outage"
+
+OUTAGE_CONTEXT=""
+PR_AUTHOR="carol" TRUSTED_LOGINS="alice" TRUSTED_CONTEXTS="" COMMENT_REVIEWERS=""
+sources_are "an empty override context contributes nothing" "alice"
 
 # A delimiter-only trust list is what the evidence jq calls an EMPTY trust
 # list — it splits, trims and drops empties before deciding — so it is the

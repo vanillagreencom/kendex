@@ -43,8 +43,9 @@ settings and filtered the way the evidence read filters them — the PR author
 never appears, and an empty trust list reads as `any non-author review` (or
 `approval` under `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "approved"`). Past
 140 characters the sha shortens to 12 and the names that do not fit are
-counted (`and N more`). `no configured source is eligible here` means every
-configured login is the author.
+counted (`and N more`). A configured operator override is a source too, and
+is named with the rest. `no configured source is eligible here` means every
+configured login is the author and no override is set.
 
 Act on the names, not on the pending state: where they are bots and one has
 already reviewed this head, dispatch the writer instead of waiting.
