@@ -206,6 +206,8 @@ Never add to `obsolete[]` without code verification.
 
 With `DECISION_REF` present, also detect issues the decision made unnecessary by changing the approach (not the scope): read the decision (`.agents/skills/decider/scripts/decisions get [DECISION_REF]`), extract the patterns it explicitly replaced, search the comparison set for issues implementing them, exclude anything already in `supersedes[]`, and record confidence 100 with evidence `{decision_eliminated: true, decision_ref, eliminated_pattern}`.
 
+**Below the bar.** Every active issue in the comparison set is re-read against the creation bar as it stands today. One that fails it — a hypothetical of low severity, an edge case no real input reaches, a coverage ask with no regression, a refactor with no behavior change, a guard bred by a review round — goes to `obsolete[]` with confidence 100 and evidence `{below_bar: true, test, who_hits_it}`: `test` names the failed test, `who_hits_it` is the one-line user story and how often a user meets it. Critical-harm and financial-loss edge cases never go here.
+
 ### 6.3 Project Fit
 
 Compare each input issue against every project definition. A scope matching another project better, or a child sitting in a different project from its parent, goes to `wrong_project[]`. A dependency on work in another project is recorded as a relation, not a move. The current assignment is not evidence.

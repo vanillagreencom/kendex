@@ -49,7 +49,7 @@ Returned inline by `tpm-audit.md` and written by the caller to `tmp/audit-projec
 | `agent_mismatch[]` | `id`, `title`, `current`, `should_be`, `reason`, `signals[]` (`replace_category: agent` implied) |
 | `label_cooccurrence[]` | `id`, `title`, `present`, `missing`, `reason` (`add` implied) |
 | `duplicates[]` | `keep`, `remove`, `reason` |
-| `obsolete[]` | `issue`, `reason`, `confidence`, `evidence` = `{completed_by[], files_verified[], deliverables_checked[]}` or `{decision_eliminated: true, decision_ref, eliminated_pattern}` |
+| `obsolete[]` | `issue`, `reason`, `confidence`, `evidence` = `{completed_by[], files_verified[], deliverables_checked[]}` or `{decision_eliminated: true, decision_ref, eliminated_pattern}` or `{below_bar: true, test, who_hits_it}` |
 | `wrong_project[]` | `issue`, `title`, `from`, `to`, `to_id`, `reason` |
 | `hierarchy[]` | `action` (`make_parent`\|`make_child`\|`bundle`\|`update_parent_desc`), `issue`\|`issues[]`, `parent`\|`children[]`\|`new_parent_title`, optional `retitle`, `reason` |
 | `combine[]` | `target`, `absorb[]`, `reason` |
