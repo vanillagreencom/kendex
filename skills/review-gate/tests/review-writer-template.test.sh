@@ -112,6 +112,16 @@ else
   printf '  note  %s\n' "no adopted workflow found at ${SELF_ADOPTION:-<no enclosing repo root>} — asserting the template only"
 fi
 
+# The relay's `if:` has ONE correct spelling — the template carries no
+# per-repo values — so the pin is the string itself.
+RELAY_IF_EXPECTED="    if: github.event_name != 'merge_group' && github.event_name != 'workflow_dispatch' && github.event_name != 'schedule' && (github.event_name != 'check_run' || github.event.check_run.name == vars.REVIEW_GATE_CHECK_RUN_NAME)"
+
+# Its own must-fail control: an equality pin is only worth its verdict if it
+# rejects the edit it was written for.
+[[ "$RELAY_IF_EXPECTED || true" != "$RELAY_IF_EXPECTED" ]] &&
+  { PASS=$((PASS + 1)); printf '  ok    %s\n' "control: the relay if: pin rejects an appended '|| true'"; } ||
+  { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "control: the relay if: pin would accept an appended '|| true'"; }
+
 # ------------------------------------------------------------------ pins ----
 
 pin_workflows() { # file, label
@@ -140,23 +150,12 @@ pin_workflows() { # file, label
   else
     FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the write job's if: is exactly the two converge legs (VST-210: no PR-attached leg holds the evictable group)"
   fi
-  # TERM-WISE, not full-line: the expression carries the check_run opt-in's
-  # name term, and a consumer may still add a leg of their own. What must
-  # survive any such edit are the three exclusions — without them a converge
-  # leg relays and the self-dispatch loop has no throttle — and the check_run
-  # term, which is what moved the reviewer's check NAME out of this
-  # expression and into a repository variable.
-  local if_line if_missing term
+  # BYTE-EQUAL, not term-wise: an appended `|| true` leaves all four tokens
+  # in place and makes the expression always true, so the relay runs on the
+  # converge legs it exists to exclude.
+  local if_line
   if_line="$(grep -m 1 -E '^    if: ' <<<"$relay_block" || true)"
-  if_missing=""
-  for term in "github.event_name != 'merge_group'" "github.event_name != 'workflow_dispatch'" "github.event_name != 'schedule'" "github.event.check_run.name == vars.REVIEW_GATE_CHECK_RUN_NAME"; do
-    grep -qF -- "$term" <<<"$if_line" || if_missing="${if_missing:+$if_missing }[$term]"
-  done
-  if [[ -n "$if_line" && -z "$if_missing" ]]; then
-    PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: the relay's if: keeps all three NEGATIVE terms and the check_run name term (a newly added PR-attached trigger relays by default, both dispatch targets are excluded so no loop exists, and the reviewer's check name stays a repository variable)"
-  else
-    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n        missing from the relay if: %s\n' "$tag" "tpl: the relay's if: keeps all three NEGATIVE terms and the check_run name term (a newly added PR-attached trigger relays by default, both dispatch targets are excluded so no loop exists, and the reviewer's check name stays a repository variable)" "${if_missing:-<no if: line at all>}"
-  fi
+  assert_eq "$if_line" "$RELAY_IF_EXPECTED" "[$tag] tpl: the relay's if: is EXACTLY the expected expression (a term-wise check passes an appended '|| true', which makes it always true and relays every converge leg)"
 
   # EVERY status STATE converges (no state filter of ANY spelling): under
   # newest-row evidence semantics a success→pending/failure transition is a
@@ -383,15 +382,15 @@ pin_workflows() { # file, label
   # An empty resolution is REFUSED, not papered over with a branch name: the
   # guard step runs before each checkout and reds the job. Counted, for the
   # same reason the checkouts are.
-  count="$(grep -c 'default_branch resolved empty' "$wf" || true)"
-  assert_eq "$count" "2" "[$tag] tpl: BOTH engine jobs refuse an empty default-branch resolution before checking anything out"
-  count="$(grep -cE '^          DEFAULT_BRANCH: ' "$wf" || true)"
-  assert_eq "$count" "2" "[$tag] tpl: each guard step binds the DEFAULT_BRANCH it tests (an unbound read would refuse every run)"
+  # ORDER, not ingredients: counting both says nothing about which runs
+  # first, and a guard AFTER its checkout has already let the unpinned ref
+  # onto disk. G for a guard's binding, C for a checkout, in file order.
+  assert_eq "$(awk '/^          DEFAULT_BRANCH: / { printf "G" } /^      - uses: actions\/checkout/ { printf "C" } END { printf "\n" }' "$wf")" \
+    "GCGC" "[$tag] tpl: each engine job's default-branch guard PRECEDES its checkout (counting the two ingredients passes a guard that runs after the ref is already on disk)"
   # The REFUSAL is the point, not the diagnostic beside it: a guard whose
   # exit went to 0 prints the same line and checks the unpinned ref out
-  # anyway. Counted per guard, in the guard's own indentation.
-  # Bound to the guard's OWN diagnostic, not counted file-wide: the two
-  # missing-engine guards also exit 1, and counting those would pass a
+  # anyway. Bound to the guard's OWN diagnostic, not counted file-wide: the
+  # two missing-engine guards also exit 1, and counting those would pass a
   # default-branch guard whose refusal was removed.
   count="$(awk '
     /default_branch resolved empty/ { w = 3; next }

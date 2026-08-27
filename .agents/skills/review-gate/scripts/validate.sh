@@ -105,6 +105,12 @@ group "runtime"
 
 # lib/settings.sh is sourced, never executed, so it is checked for syntax
 # but not for an executable bit.
+#
+# Paths below are SKILL-relative, and every remediation naming one has to be
+# runnable where the reader is standing — the repository root, which is where
+# this script cd'd. A skill outside the repository leaves the prefix
+# unstripped, which is an absolute path and still names the right file.
+SKILL_REL="${SKILL_DIR#"$REPO_ROOT"/}"
 for rel in scripts/review-predicate.sh scripts/review-writer.sh \
   scripts/pr-watch.sh scripts/validate.sh scripts/validate-workflow.sh \
   scripts/lib/settings.sh; do
@@ -123,7 +129,7 @@ for rel in scripts/review-predicate.sh scripts/review-writer.sh \
       if [ -x "$path" ]; then
         ok "$rel is present, executable and parses"
       else
-        bad "$rel is not executable — CI runs it directly, so a lost mode bit reds the writer on every leg (\`git update-index --chmod=+x $rel\`)"
+        bad "$rel is not executable — CI runs it directly, so a lost mode bit reds the writer on every leg (\`git update-index --chmod=+x $SKILL_REL/$rel\`)"
       fi
       ;;
   esac
