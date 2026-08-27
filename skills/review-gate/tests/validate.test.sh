@@ -213,6 +213,35 @@ dir="$DIR"
 settings "$dir" REVIEW_GATE_CHECK_RUN_NAME "CodeRabbit"
 expect_fail "a GitHub repository variable assigned as a setting is named as one" "$dir" "REPOSITORY VARIABLE"
 
+# The scan must use the TOML bare-key charset, not the ledger's shape: an
+# uppercase-only scan reads REVIEW_GATE_MODEe as REVIEW_GATE_MODE, finds it
+# known, and passes the one spelling the engine silently ignores.
+sandbox
+dir="$DIR"
+printf 'REVIEW_GATE_MODEe = "off"\n' >>"$dir/kendex.settings.toml"
+expect_fail "a lowercase-suffixed typo is scanned and named" "$dir" "REVIEW_GATE_MODEe"
+
+sandbox
+dir="$DIR"
+printf 'REVIEW_GATE_MODE-x = "off"\n' >>"$dir/kendex.settings.toml"
+expect_fail "a dashed TOML key the engine cannot read is named" "$dir" "REVIEW_GATE_MODE-x"
+
+# --check-config's contract is that it validates EVERY setting. A grammar
+# rule below its stop point would report a legal configuration that the next
+# live run exits 2 on.
+sandbox
+dir="$DIR"
+settings "$dir" REVIEW_GATE_COMMENT_REVIEWERS "missing-colon"
+expect_fail "a malformed comment-reviewer pair is caught without a PR" "$dir" "a committed setting is not legal"
+printf '%s' "$OUT" | grep -qF "malformed REVIEW_GATE_COMMENT_REVIEWERS" &&
+  ok "the grammar rule's own error rides out, so the fix is named" ||
+  bad "the grammar rule's own error rides out, so the fix is named" "$OUT"
+
+sandbox
+dir="$DIR"
+settings "$dir" REVIEW_GATE_COMMENT_REVIEWERS "bot[bot]:Reviewed commit:"
+expect_clean "a well-formed comment-reviewer pair still passes" "$dir"
+
 echo "=== carry-forward exclusions ==="
 
 sandbox
@@ -408,6 +437,90 @@ sandbox
 dir="$DIR"
 mutate "$dir" "/^          DEFAULT_BRANCH: /d"
 expect_fail "a checkout whose default-branch guard was deleted is caught" "$dir" "without the guard step"
+
+echo "=== blocks, not the whole file ==="
+
+# Every case here passes a WHOLE-FILE grep and fails the contract. They are
+# one class: a check that reads the file instead of the block it means.
+
+append_job() { # DIR TEXT — add a job at the end of the adopted workflow
+  printf '%s\n' "$2" >>"$1/.github/workflows/review-gate-writer.yml"
+  commit "$1"
+}
+
+# Roles are COUNTED. A second job in a role is not a duplicate of the one
+# inspected; it is an uninspected job holding the same powers.
+sandbox
+dir="$DIR"
+append_job "$dir" '  second-relay:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: dispatch
+        run: echo dispatch'
+expect_fail "a SECOND relay job is counted, not overwritten" "$dir" "jobs holding \`actions: write\`"
+
+sandbox
+dir="$DIR"
+append_job "$dir" '  second-writer:
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+    steps:
+      - name: converge
+        run: |
+          exec .agents/skills/review-gate/scripts/review-writer.sh'
+expect_fail "a SECOND write job is counted, not overwritten" "$dir" "2 write jobs"
+
+sandbox
+dir="$DIR"
+append_job "$dir" '  second-queue:
+    if: github.event_name == '"'"'merge_group'"'"'
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+    steps:
+      - name: post
+        run: |
+          exec .agents/skills/review-gate/scripts/review-writer.sh'
+expect_fail "a SECOND merge-group job is counted, not overwritten" "$dir" "2 merge-group jobs"
+
+# A job renamed after the trigger it replaced satisfies `^  schedule:` in a
+# whole-file grep while the cron floor is gone.
+sandbox
+dir="$DIR"
+mutate "$dir" "/^  schedule:$/,/^    - cron:/d"
+mutate "$dir" "s/^  write:$/  schedule:/"
+expect_fail "a JOB named after a deleted trigger does not satisfy it" "$dir" "trigger 'schedule' is missing"
+
+# A comment naming the repository variable satisfies a whole-file grep while
+# the relay's if: no longer reads it.
+sandbox
+dir="$DIR"
+mutate "$dir" "s|^  workflow_dispatch: {}$|  check_run:\n    types: [created, completed]\n  workflow_dispatch: {}|"
+mutate "$dir" "s# \\&\\& (github.event_name != 'check_run' || github.event.check_run.name == vars.REVIEW_GATE_CHECK_RUN_NAME)##"
+mutate "$dir" "s|^permissions:$|# see vars.REVIEW_GATE_CHECK_RUN_NAME for the opt-in\npermissions:|"
+expect_fail "a COMMENT naming the variable does not satisfy the check_run guard" "$dir" "does not read vars.REVIEW_GATE_CHECK_RUN_NAME"
+
+# The guard's refusal is the point, not its mention: without the nonzero exit
+# it reports the fault and checks the unpinned ref out anyway.
+sandbox
+dir="$DIR"
+mutate "$dir" "/^            exit 1$/d"
+expect_fail "a guard step whose nonzero exit was deleted is not a guard" "$dir" "without the guard step"
+
+# An absent checkout must never read as a satisfied guard.
+sandbox
+dir="$DIR"
+mutate "$dir" "/as in the merge-group job/,/persist-credentials: false/d"
+expect_fail "a privileged job that checks nothing out is named" "$dir" "checks nothing out"
+
+# Activity types, not just the trigger key.
+sandbox
+dir="$DIR"
+mutate "$dir" "s/^    types: \[opened, synchronize, reopened\]$/    types: [opened]/"
+expect_fail "a typed trigger pruned to [opened] is caught" "$dir" "missing activity type"
 
 echo "=== the workflow half stands alone ==="
 

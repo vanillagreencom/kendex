@@ -170,8 +170,11 @@ else
   # key; this engine's parser says it is no key at all. Reading both shapes as
   # one would report a quoted assignment as a healthy setting while the gate
   # ran on the built-in default.
-  assigned="$(sed -n 's/^[[:space:]]*\(REVIEW_GATE_[A-Z0-9_]*\)[[:space:]]*=.*/\1/p' "$SETTINGS_FILE" | sort -u)"
-  quoted="$(sed -n "s/^[[:space:]]*[\"']\(REVIEW_GATE_[A-Z0-9_]*\)[\"'][[:space:]]*=.*/\1/p" "$SETTINGS_FILE" | sort -u)"
+  # The TOML BARE-KEY charset, not the ledger's shape: scanning `[A-Z0-9_]*`
+  # reads `REVIEW_GATE_MODEe` as `REVIEW_GATE_MODE`, finds it known, and
+  # passes the one spelling the engine silently ignores.
+  assigned="$(sed -n 's/^[[:space:]]*\(REVIEW_GATE_[A-Za-z0-9_-]*\)[[:space:]]*=.*/\1/p' "$SETTINGS_FILE" | sort -u)"
+  quoted="$(sed -n "s/^[[:space:]]*[\"']\(REVIEW_GATE_[A-Za-z0-9_-]*\)[\"'][[:space:]]*=.*/\1/p" "$SETTINGS_FILE" | sort -u)"
   unknown=""
   seams=""
   repo_vars=""

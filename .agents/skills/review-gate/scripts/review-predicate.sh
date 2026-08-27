@@ -378,6 +378,24 @@ done <<EOF_GATE_CTX
 $(printf '%s' "$TRUSTED_CONTEXTS" | tr ';' '\n')
 EOF_GATE_CTX
 
+# Comment-reviewer GRAMMAR, validated with every other setting rather than at
+# the moment the evidence loop first reads a pair. A malformed entry is a
+# configuration error, and a configuration error has to be answerable without
+# a PR to evaluate — otherwise --check-config reports a legal configuration
+# that the next live run exits 2 on.
+while IFS= read -r cfg_pair; do
+  cfg_pair="$(printf '%s' "$cfg_pair" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  [ -z "$cfg_pair" ] && continue
+  cfg_login="${cfg_pair%%:*}"
+  cfg_pattern="${cfg_pair#*:}"
+  if [ -z "$cfg_login" ] || [ -z "$cfg_pattern" ] || [ "$cfg_login" = "$cfg_pair" ]; then
+    echo "::error::review-predicate: malformed REVIEW_GATE_COMMENT_REVIEWERS entry '$cfg_pair' (need 'login:binding-pattern')" >&2
+    exit 2
+  fi
+done <<EOF_COMMENT_CFG
+$(printf '%s' "$COMMENT_REVIEWERS" | tr ';' '\n')
+EOF_COMMENT_CFG
+
 # Every configuration rule above has now run, and --check-config stops HERE:
 # the last point before the predicate needs a PR. A rule moved below this
 # statement is a visible edit, not a silent hole in what the flag covers.
@@ -841,12 +859,10 @@ if [ -n "$COMMENT_REVIEWERS" ]; then
   while IFS= read -r pair; do
     pair="$(printf '%s' "$pair" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
     [ -z "$pair" ] && continue
+    # Grammar was proved in the configuration phase above, which is the one
+    # site for it; this loop only splits what that pass accepted.
     login="${pair%%:*}"
     pattern="${pair#*:}"
-    if [ -z "$login" ] || [ -z "$pattern" ] || [ "$login" = "$pair" ]; then
-      echo "::error::review-predicate: malformed REVIEW_GATE_COMMENT_REVIEWERS entry '$pair' (need 'login:binding-pattern')" >&2
-      exit 2
-    fi
     # The binding pattern is a LITERAL prefix (regex-quoted here), not a
     # regex: trust config must not be able to smuggle in a permissive match.
     hits="$(jq --arg sha "$HEAD_SHA" --arg bot "$login" --arg author "$PR_AUTHOR" \
