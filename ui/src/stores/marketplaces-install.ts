@@ -15,6 +15,7 @@ import {
   repoEffectsAppliedToast,
   repoEffectsDeclinedToast,
   repoEffectsFailedTitle,
+  repoEffectsSaidTitle,
   repoEffectsWithheldToast,
 } from "@/lib/copy-repo-effects";
 import {
@@ -69,6 +70,10 @@ export interface InstallActions {
 
 type Set = (partial: object | ((state: Installed) => object)) => void;
 type Get = () => { pendingEffects: PendingEffects | null };
+
+/** The last line with anything in it, or nothing said at all. */
+const spoken = (lines: string[]) =>
+  lines.filter((line) => line.trim() !== "").at(-1);
 
 export function installActions(set: Set, get: Get): InstallActions {
   /** Take the package at the head of the line off it, closing the dialog
@@ -171,10 +176,21 @@ export function installActions(set: Set, get: Get): InstallActions {
         return false;
       }
       advance();
+      const { stdout, stderr } = response.data;
       // The last line it printed, not the last element: relay keeps the
       // installer's trailing blank lines, and an empty toast says nothing.
-      const said = response.data.filter((line) => line.trim() !== "").at(-1);
-      toast.success(said ?? repoEffectsAppliedToast(head.name));
+      const summary = spoken(stdout) ?? spoken(stderr);
+      toast.success(summary ?? repoEffectsAppliedToast(head.name));
+      // An installer can exit clean and still have skipped its work — the
+      // reason, and what to do about it, go to stderr while the summary
+      // goes to stdout. A toast is one line, so the account a person has
+      // to act on gets the dialog the app opens for exactly that.
+      if (spoken(stderr) !== undefined) {
+        useProblemsStore.getState().showError({
+          title: repoEffectsSaidTitle(head.name),
+          message: [...stderr, ...stdout].join("\n"),
+        });
+      }
       return true;
     },
 

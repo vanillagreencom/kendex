@@ -74,7 +74,10 @@ describe("the account a person reads", () => {
     const text = body.textContent ?? "";
     expect(text).toContain(repoEffectsTitle("growth-guards"));
     expect(text).toContain(guards.summary);
-    expect(text).toContain("~/app/.git/hooks/pre-commit");
+    // The path as core settled it, never an abbreviation: a guess at the
+    // home directory names a location other than the one being authorized.
+    expect(text).toContain("/home/me/app/.git/hooks/pre-commit");
+    expect(text).not.toContain("~/app");
     expect(text).toContain(REPO_EFFECTS_SHARED_NOTE);
     expect(text).toContain("size-ratchet");
     expect(text).toContain(COMPANION_INSTALLED);
@@ -105,7 +108,9 @@ describe("the account a person reads", () => {
       li.textContent?.includes(REPO_EFFECTS_SHARED_MARK),
     );
     expect(marked).toHaveLength(1);
-    expect(marked[0].textContent).toContain("~/app/.git/hooks/pre-commit");
+    expect(marked[0].textContent).toContain(
+      "/home/me/app/.git/hooks/pre-commit",
+    );
     expect(body.textContent).toContain(REPO_EFFECTS_SHARED_NOTE);
   });
 
@@ -141,7 +146,7 @@ describe("the answer", () => {
   it("a yes runs exactly the declaration on screen", async () => {
     vi.mocked(commands.repoEffectsApply).mockResolvedValue({
       status: "ok",
-      data: [],
+      data: { stdout: [], stderr: [] },
     });
     const body = show([guards]);
     const apply = button(body, REPO_EFFECTS_APPLY_LABEL);

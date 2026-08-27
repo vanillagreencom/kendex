@@ -8,6 +8,7 @@
 #![cfg(unix)]
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use kendex_app::marketplaces::install::{InstallItem, Installed, install};
@@ -75,6 +76,25 @@ fn fixture() -> Fixture {
         "---\nname: deploy\ndescription: ship the service\n---\nRun the deploy.\n",
     )
     .unwrap();
+    // A package whose installer exits clean and writes to both channels —
+    // the shipped shape of growth-guards skipping its work: the summary on
+    // stdout, the reason and the remedy on stderr.
+    let noisy = catalog.join("skills/noisy/scripts");
+    fs::create_dir_all(&noisy).unwrap();
+    fs::write(
+        catalog.join("skills/noisy/SKILL.md"),
+        "---\nname: noisy\ndescription: says something on both channels\n\
+         repo-effects:\n  summary: \"arms nothing here\"\n  \
+         installer: \"scripts/arm\"\n---\nBody.\n",
+    )
+    .unwrap();
+    fs::write(
+        noisy.join("arm"),
+        "#!/bin/sh\necho 'core.hooksPath is set; unset it and run this again' >&2\n\
+         echo 'hooks: skipped'\n",
+    )
+    .unwrap();
+    fs::set_permissions(noisy.join("arm"), fs::Permissions::from_mode(0o755)).unwrap();
     fs::write(
         catalog.join("kendex.toml"),
         "[bundles.guards]\ndescription = \"the commit gate\"\nskills = [\"growth-guards\"]\n",
@@ -190,8 +210,30 @@ fn the_effect_comes_back_unrun_and_a_separate_yes_arms_it() {
     );
     // The installer's own last word is what the window shows.
     assert!(
-        said.last().is_some_and(|line| line.contains("armed")),
+        said.stdout
+            .last()
+            .is_some_and(|line| line.contains("armed")),
         "{said:?}"
+    );
+}
+
+/// A clean exit is not a silent one. An installer that skipped its work
+/// says why on stderr, and stdout alone is the half of that account which
+/// does not say what to do about it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_clean_exit_carries_both_channels() {
+    let f = fixture();
+    let installed = install_skills(&f, &["noisy"], None);
+    let [offer] = installed.repo_effects.shown.as_slice() else {
+        panic!("one offer: {:?}", installed.repo_effects);
+    };
+
+    let said = kendex_app::repo_effects::apply(&f.env, &f.scope, &offer.declared).unwrap();
+    assert_eq!(said.stdout, vec!["hooks: skipped".to_owned()]);
+    assert_eq!(
+        said.stderr,
+        vec!["core.hooksPath is set; unset it and run this again".to_owned()]
     );
 }
 

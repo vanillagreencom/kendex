@@ -24,7 +24,6 @@ import {
   REPO_EFFECTS_WRITES_LABEL,
   repoEffectsTitle,
 } from "@/lib/copy-repo-effects";
-import { abbreviateHome } from "@/lib/drift-merge";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 
 /** The second question an install can ask, rendered once in App.tsx: what
@@ -99,8 +98,14 @@ function DisclosureBody({ disclosure }: { disclosure: Disclosure }) {
           <ul className="space-y-0.5">
             {disclosure.writes.map((written) => (
               <li key={written.path} className="flex items-baseline gap-2">
-                <span className="break-all font-mono text-xs">
-                  {abbreviateHome(written.path)}
+                {/* The path core settled, character for character. An
+                    abbreviation guesses at a home directory, so a project
+                    under another account read as one under this one — a
+                    different location from the one being authorized, and a
+                    different string from the terminal's for the same
+                    declaration. Length is the layout's problem. */}
+                <span className="min-w-0 break-all font-mono text-xs">
+                  {written.path}
                 </span>
                 {written.shared ? (
                   <span className="text-xs text-muted-foreground">

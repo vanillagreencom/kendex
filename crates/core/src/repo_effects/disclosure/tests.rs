@@ -92,6 +92,56 @@ fn git_paths_land_in_the_common_dir_and_read_as_shared() {
     assert!(!workflow.shared, "{workflow:?}");
 }
 
+/// A `.git` path spelled the ways a person spells paths still lands in the
+/// git directory. A doubled separator, a `.` hop, and the directory named
+/// on its own all used to read as the checkout's own files.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_git_path_is_read_by_components_not_by_prefix() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().canonicalize().unwrap().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "--quiet", "-b", "main"]);
+    let common = crate::guard::Repo::at(&repo).unwrap().common_dir;
+
+    let spellings = [
+        ".git//hooks/pre-commit",
+        ".git/./hooks/pre-commit",
+        "./.git/hooks/pre-commit",
+    ];
+    for spelling in spellings {
+        let offers = offers(
+            &project(&repo),
+            &[declared(&[spelling], &[])],
+            &BTreeSet::new(),
+        );
+        let [disclosure] = offers.shown.as_slice() else {
+            panic!("{spelling}: one disclosure: {offers:?}");
+        };
+        let [written] = disclosure.writes.as_slice() else {
+            panic!("{spelling}: one path: {disclosure:?}");
+        };
+        assert_eq!(
+            written.path,
+            common.join("hooks/pre-commit").display().to_string(),
+            "{spelling}"
+        );
+        assert!(written.shared, "{spelling}: {written:?}");
+    }
+
+    // The git directory named on its own, with nothing under it.
+    let offers = offers(
+        &project(&repo),
+        &[declared(&[".git"], &[])],
+        &BTreeSet::new(),
+    );
+    let [written] = offers.shown[0].writes.as_slice() else {
+        panic!("one path: {offers:?}");
+    };
+    assert_eq!(written.path, common.display().to_string());
+    assert!(written.shared, "{written:?}");
+}
+
 /// The block names the command that undoes the effect, not only the prose
 /// a package may have written about it. A package declaring an uninstaller
 /// and no removal text used to read as declaring no way to undo it.

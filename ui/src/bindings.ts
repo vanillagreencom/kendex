@@ -177,7 +177,7 @@ export const commands = {
 	 *  to be offerable, and one removed since must not read as present.
 	 */
 	installTargets: (scope: Scope, kinds: ItemKind[]) => typedError<InstallTarget[], string>(__TAURI_INVOKE("install_targets", { scope, kinds })),
-	repoEffectsApply: (scope: Scope, declared: DeclaredEffects) => typedError<string[], string>(__TAURI_INVOKE("repo_effects_apply", { scope, declared })),
+	repoEffectsApply: (scope: Scope, declared: DeclaredEffects) => typedError<Said, string>(__TAURI_INVOKE("repo_effects_apply", { scope, declared })),
 	/**
 	 *  Subscribe a scope to a marketplace: `owner/repo[@rev]`, a git URL, a
 	 *  GitHub tree URL, a skills.sh package URL, or a local folder.
@@ -2069,6 +2069,19 @@ export type RowExits = {
 export type SafetyScore = {
 	score: number,
 	deductions: Deduction[],
+};
+
+/**
+ *  What an installer said, kept by channel.
+ * 
+ *  Both of them, on a clean exit as much as a failed one. growth-guards
+ *  exits 0 when `core.hooksPath` is configured and puts its summary on
+ *  stdout and the warning, the value it found, and the remedy on stderr —
+ *  so stdout alone is the half of the account that does not say what to do.
+ */
+export type Said = {
+	stdout: string[],
+	stderr: string[],
 };
 
 export type ScanResult = {

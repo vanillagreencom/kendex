@@ -8,6 +8,7 @@ import {
   repoEffectsAppliedToast,
   repoEffectsDeclinedToast,
   repoEffectsFailedTitle,
+  repoEffectsSaidTitle,
   repoEffectsWithheldToast,
 } from "@/lib/copy-repo-effects";
 import { useMarketplacesStore } from "./marketplaces";
@@ -103,6 +104,9 @@ describe("what an install leaves waiting", () => {
 
 describe("answering", () => {
   beforeEach(() => {
+    // The dialog is module state: a case that asserts none opened has to
+    // start from none open.
+    useProblemsStore.getState().closeError();
     useMarketplacesStore.setState({
       pendingEffects: {
         scope: PROJECT,
@@ -115,7 +119,10 @@ describe("answering", () => {
     const { toast } = await import("sonner");
     vi.mocked(commands.repoEffectsApply).mockResolvedValue({
       status: "ok",
-      data: ["writing helper", "hooks: skipped — core.hooksPath is set"],
+      data: {
+        stdout: ["writing helper", "hooks: skipped — core.hooksPath is set"],
+        stderr: [],
+      },
     });
     expect(await useMarketplacesStore.getState().applyRepoEffect()).toBe(true);
     expect(commands.repoEffectsApply).toHaveBeenCalledWith(
@@ -136,7 +143,7 @@ describe("answering", () => {
     const { toast } = await import("sonner");
     vi.mocked(commands.repoEffectsApply).mockResolvedValue({
       status: "ok",
-      data: [],
+      data: { stdout: [], stderr: [] },
     });
     await useMarketplacesStore.getState().applyRepoEffect();
     expect(toast.success).toHaveBeenCalledWith(
@@ -148,7 +155,7 @@ describe("answering", () => {
     const { toast } = await import("sonner");
     vi.mocked(commands.repoEffectsApply).mockResolvedValue({
       status: "ok",
-      data: ["hooks armed", "", "  "],
+      data: { stdout: ["hooks armed", "", "  "], stderr: [] },
     });
     await useMarketplacesStore.getState().applyRepoEffect();
     expect(toast.success).toHaveBeenCalledWith("hooks armed");
@@ -158,12 +165,41 @@ describe("answering", () => {
     const { toast } = await import("sonner");
     vi.mocked(commands.repoEffectsApply).mockResolvedValue({
       status: "ok",
-      data: ["", ""],
+      data: { stdout: ["", ""], stderr: [] },
     });
     await useMarketplacesStore.getState().applyRepoEffect();
     expect(toast.success).toHaveBeenCalledWith(
       repoEffectsAppliedToast("guards"),
     );
+  });
+
+  it("a clean exit with something on stderr still reaches the person", async () => {
+    const { toast } = await import("sonner");
+    vi.mocked(commands.repoEffectsApply).mockResolvedValue({
+      status: "ok",
+      data: {
+        stdout: ["hooks: skipped"],
+        stderr: ["core.hooksPath is set", "unset it and run this again"],
+      },
+    });
+    expect(await useMarketplacesStore.getState().applyRepoEffect()).toBe(true);
+    // The summary is the headline; the remedy is the part a toast drops.
+    expect(toast.success).toHaveBeenCalledWith("hooks: skipped");
+    const { dialog } = useProblemsStore.getState();
+    expect(dialog.open).toBe(true);
+    expect(dialog.title).toBe(repoEffectsSaidTitle("guards"));
+    expect(dialog.message).toBe(
+      "core.hooksPath is set\nunset it and run this again\nhooks: skipped",
+    );
+  });
+
+  it("a clean exit with nothing on stderr opens no dialog", async () => {
+    vi.mocked(commands.repoEffectsApply).mockResolvedValue({
+      status: "ok",
+      data: { stdout: ["hooks armed"], stderr: ["", "  "] },
+    });
+    await useMarketplacesStore.getState().applyRepoEffect();
+    expect(useProblemsStore.getState().dialog.open).toBe(false);
   });
 
   it("a no runs nothing and says the package is installed unarmed", async () => {

@@ -12,10 +12,23 @@ use kendex_core::env::Env;
 use kendex_core::model::Scope;
 use kendex_core::repo_effects::{ArmError, DeclaredEffects};
 
+/// What an installer said, kept by channel.
+///
+/// Both of them, on a clean exit as much as a failed one. growth-guards
+/// exits 0 when `core.hooksPath` is configured and puts its summary on
+/// stdout and the warning, the value it found, and the remedy on stderr —
+/// so stdout alone is the half of the account that does not say what to do.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct Said {
+    pub stdout: Vec<String>,
+    pub stderr: Vec<String>,
+}
+
 /// Run one package's declared installer, here and now, and hand back what
-/// it printed: an installer that deliberately arms nothing says so on
-/// stdout and exits 0, and the window shows its words rather than a
-/// verdict of its own.
+/// it printed: an installer that deliberately arms nothing says so and
+/// exits 0, and the window shows its words rather than a verdict of its
+/// own.
 ///
 /// The declaration comes back from the window exactly as the install handed
 /// it over, the way the terminal keeps it in hand between the block and the
@@ -29,7 +42,7 @@ use kendex_core::repo_effects::{ArmError, DeclaredEffects};
 /// The rest of the declaration is used as passed. It decides what runs
 /// under a root kendex chose, which is the same ground the disclosure was
 /// written on.
-pub fn apply(env: &Env, scope: &Scope, declared: &DeclaredEffects) -> Result<Vec<String>, String> {
+pub fn apply(env: &Env, scope: &Scope, declared: &DeclaredEffects) -> Result<Said, String> {
     let recorded = kendex_core::repo_effects::recorded_roots(env, scope, &declared.name)
         .map_err(|error| error.to_string())?;
     if !recorded.contains(&declared.root) {
@@ -39,7 +52,10 @@ pub fn apply(env: &Env, scope: &Scope, declared: &DeclaredEffects) -> Result<Vec
         ));
     }
     match kendex_core::repo_effects::arm(scope, declared) {
-        Ok(report) => Ok(report.stdout),
+        Ok(report) => Ok(Said {
+            stdout: report.stdout,
+            stderr: report.stderr,
+        }),
         // The one wording, with the package's own lines under it where the
         // installer got far enough to say anything — the account of a
         // possibly half-written repository has to reach the person whole.
@@ -63,7 +79,7 @@ pub fn apply(env: &Env, scope: &Scope, declared: &DeclaredEffects) -> Result<Vec
 
 #[tauri::command(async)]
 #[specta::specta]
-pub fn repo_effects_apply(scope: Scope, declared: DeclaredEffects) -> Result<Vec<String>, String> {
+pub fn repo_effects_apply(scope: Scope, declared: DeclaredEffects) -> Result<Said, String> {
     let env = Env::detect().map_err(|error| error.to_string())?;
     apply(&env, &scope, &declared)
 }

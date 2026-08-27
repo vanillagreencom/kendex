@@ -35,6 +35,10 @@ export const repoEffectsAppliedToast = (name: string) =>
   `Applied ${name}'s repository changes`;
 export const repoEffectsFailedTitle = (name: string) =>
   `${name}'s repository changes failed`;
+/** A clean exit with something on stderr: the installer skipped its work,
+ * or did it with a caveat, and said so on the channel a toast drops. */
+export const repoEffectsSaidTitle = (name: string) =>
+  `What ${name}'s installer said`;
 export const repoEffectsDeclinedToast = (name: string) =>
   `${name} is installed; its repository changes were not applied`;
 export const repoEffectsWithheldToast = (name: string, reason: string) =>

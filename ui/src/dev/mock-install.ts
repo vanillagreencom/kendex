@@ -137,9 +137,12 @@ export const installHandlers: Record<string, Handler> = {
     if (declared.installer === null) {
       return Promise.reject(`${declared.name} declares nothing kendex can run`);
     }
-    return [
-      "growth-guards git hooks: pre-commit and commit-msg armed in .git/hooks",
-    ];
+    return {
+      stdout: [
+        "growth-guards git hooks: pre-commit and commit-msg armed in .git/hooks",
+      ],
+      stderr: [],
+    };
   },
 };
 

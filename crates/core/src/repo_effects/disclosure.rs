@@ -18,7 +18,7 @@
 //! contract, and kendex is not a party to it.
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -204,7 +204,11 @@ pub fn installed_skills(env: &Env, scope: &Scope) -> crate::error::Result<BTreeS
 /// is under the project.
 fn lands_at(root: &Path, git_dir: Option<&Path>, declared: &str) -> PathBuf {
     match (under_git(declared), git_dir) {
-        (Some(rest), Some(dir)) => dir.join(rest),
+        (Some(rest), Some(dir)) => match rest.as_os_str().is_empty() {
+            // The git directory itself, named on its own.
+            true => dir.to_path_buf(),
+            false => dir.join(rest),
+        },
         // Unreachable while a package with any `.git` target is withheld
         // above; a path is still the honest answer if that ever changes.
         (Some(_), None) | (None, _) => root.join(declared),
@@ -212,10 +216,25 @@ fn lands_at(root: &Path, git_dir: Option<&Path>, declared: &str) -> PathBuf {
 }
 
 /// The part of a declared path that sits under the git directory.
-fn under_git(declared: &str) -> Option<&str> {
-    declared
-        .strip_prefix(".git/")
-        .or_else(|| declared.strip_prefix("./.git/"))
+///
+/// Read as components, not as a text prefix. `writes` accepts a path
+/// spelled `.git//hooks/pre-commit` or `.git/./hooks/pre-commit` — a
+/// doubled separator and a `.` are both ordinary in a path somebody typed —
+/// and stripping the text `.git/` off those left a remainder beginning with
+/// `/`, which `lands_at` joined as an absolute path. The file was then
+/// disclosed as this checkout's when it is the whole repository's, on the
+/// one screen where that distinction is what is being authorized. `.git`
+/// alone matched nothing and landed under the project.
+fn under_git(declared: &str) -> Option<PathBuf> {
+    let mut components = Path::new(declared)
+        .components()
+        .filter(|component| !matches!(component, Component::CurDir));
+    match components.next() {
+        Some(Component::Normal(first)) if first == std::ffi::OsStr::new(".git") => {
+            Some(components.collect())
+        }
+        _ => None,
+    }
 }
 
 /// Whether anything this package declares lands in the git directory.
