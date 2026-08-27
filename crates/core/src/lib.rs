@@ -31,6 +31,7 @@ pub mod quality;
 pub mod registry;
 pub mod remote;
 pub mod render;
+pub mod repo_effects;
 pub mod report;
 pub mod scan;
 pub mod settings;

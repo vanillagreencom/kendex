@@ -8,6 +8,12 @@ an outside contributor.
 
 ## [Unreleased]
 
+### Added
+
+- A package that changes the repository beyond kendex's own folders says so
+  at install and waits for its own yes, good for that run alone. Declining
+  installs it unarmed; no terminal declines unless `--allow-repo-effects`.
+
 ### Changed
 
 - **Breaking:** `byte-ceiling`'s staged lane now judges a file a commit

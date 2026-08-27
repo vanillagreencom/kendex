@@ -67,6 +67,18 @@ impl DriftCause {
         matches!(self, DriftCause::LocalEdit | DriftCause::Both)
     }
 
+    /// Whether the plan leaves the files where they are because of this.
+    ///
+    /// Every cause but one does. `UpstreamChanged` is the plain "newer
+    /// content is available" case, which a plan simply writes; all the rest
+    /// need an explicit choice first, so until one is made the tree on disk
+    /// is the tree that was there. Named as the question rather than as a
+    /// list, because a caller that lists them is a caller to revisit the day
+    /// a cause is added.
+    pub fn holds_the_write(self) -> bool {
+        !matches!(self, DriftCause::UpstreamChanged)
+    }
+
     /// Whether files kendex did not write are what this row is about — the
     /// causes every surface offers a way out of.
     pub fn in_the_way(self) -> bool {
@@ -150,6 +162,12 @@ pub struct EngineReport {
     /// What the safety rules found in the content this plan would write.
     /// Advisory: everything installs, and the rows are worth reading.
     pub safety: Vec<ItemSafety>,
+    /// Packages in this plan that change the repository outside the folders
+    /// kendex manages. The plan's own lines describe none of this, and the
+    /// `apply? [y/N]` that covers those lines does not cover it: the files
+    /// land with the rest, and the effect stays pending until it is
+    /// authorized on its own.
+    pub repo_effects: Vec<crate::repo_effects::DeclaredEffects>,
 }
 
 #[derive(Debug, Clone, Default)]

@@ -127,7 +127,7 @@ pub fn run_hook(dir: &Path, hook: &str, message_file: Option<&Path>) -> Result<G
 /// The package's words and its verdict, both kept. A guard's report is the
 /// remediation text a committer acts on, so it travels whole; a status the
 /// platform cannot name is "could not run", never a pass.
-fn relay(output: &std::process::Output) -> GuardReport {
+pub(crate) fn relay(output: &std::process::Output) -> GuardReport {
     let split = |stream: &[u8]| -> Vec<String> {
         String::from_utf8_lossy(stream)
             .lines()

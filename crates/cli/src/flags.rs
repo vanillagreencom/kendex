@@ -64,6 +64,9 @@ pub struct AddFlags {
     /// Hold what this installs at today's version (manual updates)
     #[arg(long)]
     hold: bool,
+    /// Say yes to the repository changes a package declares
+    #[arg(long)]
+    allow_repo_effects: bool,
 }
 
 impl AddFlags {
@@ -88,6 +91,7 @@ impl AddFlags {
             clobber: self.clobber,
             no_auto_skills: self.no_auto_skills,
             hold: self.hold,
+            allow_repo_effects: self.allow_repo_effects,
         }
     }
 }

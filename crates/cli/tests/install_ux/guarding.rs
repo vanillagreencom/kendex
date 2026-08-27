@@ -15,7 +15,7 @@ use crate::{World, git, read, said};
 /// This repository's own copy of a package, dropped into the fixture
 /// catalog where `kendex add` will find it.
 #[allow(clippy::unwrap_used)]
-fn offer(world: &World, skill: &str) {
+pub fn offer(world: &World, skill: &str) {
     let source = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../skills")
         .canonicalize()
@@ -45,7 +45,7 @@ fn copy_tree(from: &Path, to: &Path) {
 /// git in a directory, with a PATH that holds no kendex — the state a
 /// teammate's machine is in.
 #[allow(clippy::unwrap_used)]
-fn git_without_kendex(dir: &Path, args: &[&str]) -> std::process::Output {
+pub fn git_without_kendex(dir: &Path, args: &[&str]) -> std::process::Output {
     std::process::Command::new("git")
         .args(["-c", "user.email=t@t", "-c", "user.name=t"])
         .args(args)
@@ -58,7 +58,7 @@ fn git_without_kendex(dir: &Path, args: &[&str]) -> std::process::Output {
         .unwrap()
 }
 
-fn spoke(output: &std::process::Output) -> String {
+pub fn spoke(output: &std::process::Output) -> String {
     let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&output.stderr));
     text

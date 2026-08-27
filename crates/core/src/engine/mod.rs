@@ -83,6 +83,7 @@ use unmanaged::unmanaged_rows;
 
 mod compared;
 pub use compared::Comparison;
+mod repo_effects;
 mod report_types;
 pub use report_types::{DriftCause, DriftRow, DriftState, EngineReport, ItemWarning, PlanOptions};
 
@@ -219,6 +220,10 @@ fn plan_scope_once(
     moved_notes.extend(scope_wide(scope, &mut ops)?);
 
     let mut report = EngineReport {
+        // Ahead of the moves out of `state` below, and read before `drift`
+        // moves in: an effect belongs to a package this pass adds to what
+        // the scope carries, and to no other.
+        repo_effects: repo_effects::run(&state, &drift, &set_changes, lock),
         drift,
         plan: Plan {
             scope: scope.clone(),
@@ -343,6 +348,7 @@ pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Eng
         sweepable: Vec::new(),
         kept: Vec::new(),
         safety: Vec::new(),
+        repo_effects: Vec::new(),
     };
     // One fact, said once: files this build will read but not write. Which
     // of the two is legacy is kendex's problem, not the reader's.

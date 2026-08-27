@@ -15,7 +15,7 @@ use kendex_core::source_ops::{self, SourceAction};
 use super::engine_common::{print_report, print_safety};
 use super::{CliResult, say};
 
-pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool) -> CliResult {
+pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -> CliResult {
     let collection = collections::resolve(&CurlFetch, id)?;
     let steps = source_ops::collection_steps(env, scope, &collection)?;
     say(&format!(
@@ -65,10 +65,29 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool) -> CliResult {
     for step in &steps {
         prevalidate(env, step)?;
     }
+    let mut settled = Vec::new();
     for step in steps {
-        install_step(env, scope, step)?;
+        settled.push(install_step(env, scope, step)?);
     }
     say("collection installed — every member is in the lock at its resolved commit");
+
+    // One screen for the collection, and one question.
+    //
+    // A package can arrive by more than one route in a single command — the
+    // repository that carries it, and a dependency of something else — and a
+    // person should read what it does to their repository once. Collapsed by
+    // name over the settled plans, which is the same set each plan already
+    // answers for itself.
+    let mut once: std::collections::BTreeMap<&str, &kendex_core::repo_effects::DeclaredEffects> =
+        std::collections::BTreeMap::new();
+    for report in &settled {
+        for effect in super::repo_effects::pending(scope, report) {
+            once.entry(effect.name.as_str()).or_insert(effect);
+        }
+    }
+    let pending: Vec<&kendex_core::repo_effects::DeclaredEffects> = once.into_values().collect();
+    let shown_to_them = super::repo_effects::disclose(scope, &pending);
+    super::repo_effects::walkthrough(scope, &shown_to_them, allow_effects)?;
     Ok(())
 }
 
@@ -79,7 +98,7 @@ fn install_step(
     env: &Env,
     scope: &Scope,
     step: kendex_core::source_ops::CollectionStep,
-) -> CliResult {
+) -> Result<kendex_core::engine::EngineReport, Box<dyn std::error::Error>> {
     let reused = matches!(step.action, SourceAction::Reuse { .. });
     let source = match step.action {
         SourceAction::Reuse { name } => name,
@@ -142,7 +161,9 @@ fn install_step(
             kendex_core::apply::execute(env, &pinned.plan, None)?;
         }
     }
-    Ok(())
+    // The step's own plan goes back to the caller, which discloses over the
+    // whole collection at once. Nothing here runs an effect.
+    Ok(report)
 }
 
 /// Fetch one step's repository at its snapshot commit and prove every

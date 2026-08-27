@@ -15,6 +15,7 @@
 mod adopting;
 mod cloning;
 mod coexistence;
+mod disclosing;
 mod guarding;
 mod installing;
 

@@ -29,6 +29,7 @@ pub struct AddArgs {
     pub clobber: bool,
     pub no_auto_skills: bool,
     pub hold: bool,
+    pub allow_repo_effects: bool,
 }
 
 fn split(values: &[String]) -> Vec<String> {
@@ -55,7 +56,7 @@ pub fn run(env: &Env, args: AddArgs) -> CliResult {
         && let Ok(kendex_core::source_ref::SourceRef::Collection { id }) =
             kendex_core::source_ref::parse_typed(reference)
     {
-        return super::add_collection::run(env, &scope, &id, args.yes);
+        return super::add_collection::run(env, &scope, &id, args.yes, args.allow_repo_effects);
     }
 
     let agents = split(&args.agent);
@@ -145,7 +146,12 @@ pub fn run(env: &Env, args: AddArgs) -> CliResult {
         other => other?,
     };
     print_report(env, &report);
+    let pending = super::repo_effects::pending(&scope, &report);
     confirm_and_execute(env, &report, args.yes)?;
+    // Disclosed after the write, because the script an effect runs is the
+    // one this install just put on disk.
+    let shown_to_them = super::repo_effects::disclose(&scope, &pending);
+    super::repo_effects::walkthrough(&scope, &shown_to_them, args.allow_repo_effects)?;
     say("done");
     Ok(())
 }

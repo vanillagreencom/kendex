@@ -24,6 +24,7 @@ pub mod pin;
 pub mod project;
 pub mod refresh;
 pub mod remove;
+pub mod repo_effects;
 pub mod report;
 pub mod show;
 pub mod source_cmd;
