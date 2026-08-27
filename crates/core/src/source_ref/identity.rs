@@ -1,8 +1,11 @@
 //! One string per repository, whatever a declaration spells it as.
 //! Subscription dedup, the default-source pick, update grouping and the
 //! Community directory's row matching compare what these return rather
-//! than raw declarations, so `.git`, case and URL shape never split one
-//! repository in two.
+//! than raw declarations. How much that folds depends on the host: a
+//! GitHub reference folds whole, so `.git`, a trailing slash, case and
+//! URL shape never split one repository in two. Anywhere else only
+//! `.git`, a trailing slash and the case of the scheme and host come
+//! off — two URL shapes of one repository there stay two strings.
 //!
 //! The mirror store is not one of them: it keys off the clone URL
 //! (`remote::store::repo_key`), which answers a different question —
@@ -43,11 +46,12 @@ pub fn owner_repo(reference: &str) -> Option<String> {
         .then(|| format!("{owner}/{repo}"))
 }
 
-/// One string per repository, however it is spelled: GitHub spellings
-/// fold to `github.com/<owner>/<repo>` in lowercase, and other remotes
-/// lose only the endings that say nothing (`.git`, a trailing `/`).
-/// Duplicate detection compares these, never raw declarations — `.git`
-/// and case are one repo.
+/// One string per repository, however it is spelled. A GitHub reference
+/// folds whole: every shape [`owner_repo`] accepts becomes
+/// `github.com/<owner>/<repo>`, lowercased. On any other host only the
+/// endings that say nothing come off — `.git`, a trailing `/` — with the
+/// scheme and host lowercased and the path's case kept, so a shorthand
+/// and its scp-style URL are two identities there.
 pub fn repo_identity(repo: &str) -> String {
     if let Some(owner_repo) = owner_repo(repo) {
         return format!("github.com/{owner_repo}");
