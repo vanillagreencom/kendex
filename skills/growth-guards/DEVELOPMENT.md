@@ -17,6 +17,10 @@ docs live in README.md.
   read-only halves of `install-git-hooks --check`: the verdict over the
   shims this installer writes, and the whole-file grammar for a hook
   someone hand-wired under `core.hooksPath`
+- `scripts/lib/hooks-path.sh` — where git reads hooks from, and whether
+  that is the directory this installer writes
+- `scripts/lib/skill-roots.sh` — the one definition of the skills roots
+  every search here uses, including the copy baked into the helper
 - `kendex.settings.toml.example` — settings template for consumers
 - `SKILL.md` — agent-facing skill definition
 - `README.md` — consumer documentation
@@ -46,8 +50,9 @@ cannot hide a tracked file from it.
 
 The installer writes three files into the repository's `.git/hooks` (never
 `core.hooksPath`, which redirects the whole directory and would disable the
-repository's existing hooks; where a repo already sets it, the install is a
-reported skip and only removal still runs):
+repository's existing hooks; where a repo already sets it — to any value,
+its own hooks directory included — the install is a reported skip, while
+removal and `--check` still run):
 
 | File | Content |
 |---|---|
@@ -89,7 +94,8 @@ in place and fails the removal rather than stranding a hook with no guard to
 reach.
 
 Nothing runs this installer on a package lifecycle event today: `kendex guard
-install` and `kendex guard uninstall` are the two verbs that invoke it, and
+install`, `kendex guard uninstall` and `kendex guard check` are the verbs
+that invoke it, and
 disarming before removing the skill is the caller's to do — shims whose
 scripts are gone block every commit. Wiring `kendex add` / `refresh` /
 `remove` to it arrives with the repo-effects declaration (KEN-663 part 2).

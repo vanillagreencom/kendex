@@ -7,10 +7,11 @@
 //! install into any of those three produced a package the guard verbs could
 //! not find, and a repository armed from it read as having no package.
 //!
-//! There is a second copy of this list in the package's `install-git-hooks`,
-//! and `guard_hooks::the_search_roots_match_the_installers_own_list` pins
-//! them to each other. That pin cannot catch this: two duplicates agreeing
-//! is no evidence that either is right. This one asks the adapters.
+//! The package has its own copy, in `scripts/lib/skill-roots.sh`, and
+//! `guard_hooks::the_search_roots_match_the_installers_own_list` pins the
+//! two to each other. That pin cannot catch this: two copies agreeing is no
+//! evidence that either is right, and for three rounds they agreed on a
+//! wrong list. This one asks the adapters that write the directories.
 
 use std::collections::BTreeSet;
 use std::path::Path;

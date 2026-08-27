@@ -28,16 +28,13 @@ HOOK_SENTINEL="# kendex-guards-hook"
 # consumer's own shebang-only hook, which is indistinguishable by content.
 # It carries the sentinel, so the same filter strips it.
 CREATED_MARKER="# kendex-guards-hook created this file"
-# Every project-scope skills directory a kendex install can write, plus the
-# source layout kendex itself has. kendex pins its copy against the adapters.
-SKILL_ROOTS=".agents/skills .claude/skills .cursor/skills .gemini/skills .github/skills .opencode/skills skills"
 # Whole interpreter names only: '.*sh' would match #!/usr/bin/fish and treat
 # POSIX-sh syntax as runnable by a hook that cannot run it.
 SH_SHEBANG_RE='^#![[:space:]]*([^[:space:]]*/)?(env[[:space:]]+)?(sh|bash|dash|ksh|zsh)([[:space:]]|$)'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# --check's two read-only halves: the verdict over our own install, and the
-# whole-file grammar for a hand-wired hook. Split out because they are read
-# where the rest of this file writes, and they are large enough to read alone.
+# The read-only halves of --check, and the roots every search here uses.
+# shellcheck source=lib/skill-roots.sh
+source "$SCRIPT_DIR/lib/skill-roots.sh"
 # shellcheck source=lib/hook-entrypoint.sh
 source "$SCRIPT_DIR/lib/hook-entrypoint.sh"
 # shellcheck source=lib/hook-check.sh
@@ -160,6 +157,8 @@ helper_body() { # -> the helper this installer would write, on stdout
 #!/bin/sh
 # Scripts directory of the install that wrote this file.
 installed_scripts='$escaped'
+# Baked: a helper in .git/hooks cannot source a package that may be gone.
+skill_roots='$GG_SKILL_ROOTS'
 HELPER_HEAD
   cat <<'HELPER'
 # kendex growth-guards git hooks. Managed by the growth-guards skill and
@@ -169,8 +168,6 @@ HELPER_HEAD
 #
 # Blocks whenever the guard it should run cannot be reached: a gate that
 # cannot run is never a pass.
-skill_roots=".agents/skills .claude/skills .cursor/rules .opencode/skills skills"
-
 mode="${1-}"
 case "$mode" in
   pre-commit | commit-msg) shift ;;
@@ -600,7 +597,7 @@ other_worktree_still_installed() {
     if [ "$root_phys" = "$repo_phys" ]; then
       continue
     fi
-    for base in $SKILL_ROOTS; do
+    for base in $GG_SKILL_ROOTS; do
       dir="$root/$base/growth-guards/scripts"
       # BOTH entry points, because both hooks are retained: a survivor that
       # cannot serve commit-msg would leave that hook failing closed forever.
@@ -638,8 +635,10 @@ if [ "$MODE" = "check" ]; then
     echo "growth-guards git hooks: NOT armed — core.hooksPath is set and empty, which switches git hooks off, so commits are NOT gated; $HOOKS_OFF_REMEDY"
     exit 1
   fi
-  # A core.hooksPath naming this repository's own hooks directory is not a
-  # redirect, so it takes the plain path below and is described as what it is.
+  # Any set value is a redirect as far as this is concerned, its own hooks
+  # directory included: working out whether a configured directory really is
+  # this repository's own was the grammar that kept answering armed about
+  # repositories that were not.
   if [ "$HOOKS_PATH_ELSEWHERE" -eq 1 ]; then
     # git owns the resolution of core.hooksPath — absolute, ~-prefixed, or
     # relative to the work-tree root where hooks run — and answers relative

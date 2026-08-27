@@ -420,8 +420,8 @@ lives in one capability table read by core and UI.
   and a measurement that fails is exit 2 rather than a silent pass. Which
   repository a commit targets is git's question, answered where the target
   has an armed hook: the `pre-commit-check` PreToolUse hook only
-  word-matches for a commit, defers to the armed git pre-commit hook of its
-  own working directory, and refuses the commit where none is armed rather
+  word-matches for a commit, defers where both git hooks of its own working
+  directory carry the marker and run, and refuses the commit otherwise rather
   than running the repository's own scripts on its behalf: arming is the
   local act that asks for that, and a clone carries no hooks. Sidestepping an armed one (`--no-verify`, `-n`) or injecting git
   config (`-c`, `--config-env`, `GIT_CONFIG_*`) is refused: git would skip

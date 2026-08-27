@@ -49,8 +49,6 @@ an outside contributor.
 - A blocked commit is told to run `kendex guard install`, which restores the
   helper, instead of `kendex refresh`, which does not.
 
-- `kendex check` reads a repository's hook files instead of running its guard
-  scripts, so asking after a clone's status executes none of its code.
 - The guard verbs find the package under the project's own root, so a kendex
   project below the git top level is no longer reported as having none.
 - **Breaking:** the `pre-commit-check` hook refuses a commit where no git

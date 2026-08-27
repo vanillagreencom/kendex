@@ -140,8 +140,13 @@ case "$OUT" in
     ok "the size-ratchet skip names the work-tree probe" ;;
   *) bad "size-ratchet skip names the tree probe" "out=$OUT" ;;
 esac
+# Derived, not restated: this used to carry its own copy of the list and so
+# pinned the shape of a message rather than the roots actually probed —
+# which is how it went on passing while the list it named was stale.
+# shellcheck source=../scripts/lib/skill-roots.sh
+. "$SKILL_DIR/scripts/lib/skill-roots.sh"
 case "$OUT" in
-  *"(.agents/skills .claude/skills .cursor/rules .opencode/skills skills)"*)
+  *"($GG_SKILL_ROOTS)"*)
     ok "the skip names every probed skills root" ;;
   *) bad "skip names the probed roots" "out=$OUT" ;;
 esac

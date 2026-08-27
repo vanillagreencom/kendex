@@ -74,9 +74,8 @@ their content and exit status. Full install and refusal behaviour:
 The git hooks are the authoritative gate: they run for every committer, and
 they need no kendex binary — the shim execs this skill's committed scripts.
 kendex arms and reports, and implements no check of its own. The
-`pre-commit-check` harness hook stands aside where a git hook is armed,
-refuses commands that would sidestep one, and refuses the commit where
-nothing is armed — it never runs these scripts on a repository's behalf.
+`pre-commit-check` harness hook stands aside where BOTH git hooks are armed,
+refuses commands that would sidestep them, and refuses the commit otherwise — it never runs these scripts on a repository's behalf.
 Layering and reasoning: [README](README.md).
 
 ## Configuration

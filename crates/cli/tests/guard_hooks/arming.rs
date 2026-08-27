@@ -295,13 +295,18 @@ fn a_hook_git_will_not_run_is_not_armed() {
     );
 }
 
-/// The search roots kendex walks are the ones the installer walks.
+/// The search roots kendex walks are the ones the package walks.
 ///
 /// Two lists of the same directories in two languages, and the last pair of
 /// those drifted for nine review rounds. This one survives because the
 /// verbs have to find the copy an armed repository runs: a kendex that
-/// looked somewhere the installer does not would report on a package no
+/// looked somewhere the package does not would report on a package no
 /// commit ever reaches.
+///
+/// It reads `lib/skill-roots.sh`, which is the shell side's only definition
+/// — the installer, the helper baked into `.git/hooks` and the pre-commit
+/// chain all take it from there. When there were four, this pin read one of
+/// them and the other three went stale behind it.
 ///
 /// Token equality, not a parse. The shell list is one space-separated
 /// string by construction, and comparing them as sets would pass a pair
@@ -309,16 +314,16 @@ fn a_hook_git_will_not_run_is_not_armed() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_search_roots_match_the_installers_own_list() {
-    let installer = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../skills/growth-guards/scripts/install-git-hooks")
+    let definition = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../skills/growth-guards/scripts/lib/skill-roots.sh")
         .canonicalize()
         .unwrap();
-    let text = std::fs::read_to_string(&installer).unwrap();
+    let text = std::fs::read_to_string(&definition).unwrap();
     let line = text
         .lines()
-        .find_map(|line| line.strip_prefix("SKILL_ROOTS=\""))
+        .find_map(|line| line.strip_prefix("GG_SKILL_ROOTS=\""))
         .and_then(|rest| rest.strip_suffix('"'))
-        .expect("the installer declares SKILL_ROOTS as one quoted string");
+        .expect("the package declares GG_SKILL_ROOTS as one quoted string");
     let theirs: Vec<&str> = line.split_whitespace().collect();
     assert_eq!(
         theirs,

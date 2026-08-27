@@ -69,9 +69,11 @@ checkout, because reading a repository's status must not execute its code.
 kendex implements no check of its own; the verdicts a commit is judged by
 are all this skill's.
 
-**The `pre-commit-check` harness hook never stands in.** Where a git
-pre-commit hook is armed, it steps aside: git runs the gate itself, and
-validating twice would only double the wait. It does one thing the git hook
+**The `pre-commit-check` harness hook never stands in.** Where BOTH git
+hooks are armed — this package's marker in `pre-commit` and `commit-msg`,
+both executable — it steps aside: git runs the gate itself, and validating
+twice would only double the wait. Half of it is not a gate: with
+`commit-msg` gone, git checks the content and takes any message. It does one thing the git hook
 cannot — refuse a command that would sidestep an armed hook (`--no-verify`, the
 short flag, or injected git configuration), because git would skip the
 message gate too and nothing can check a message it never sees. And where

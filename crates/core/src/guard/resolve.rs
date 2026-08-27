@@ -23,9 +23,10 @@ use super::{SKILL, guard_err};
 /// were missing, so a `method = copy` install into any of the three was a
 /// package the guard verbs could not find.
 ///
-/// The package's hook helper searches the same list. A repository where the
-/// shim finds a script and kendex finds a different one would gate commits
-/// one way and report them another.
+/// The package searches the same list, from a single definition in
+/// `lib/skill-roots.sh` that the installer bakes into the helper it writes.
+/// A repository where the shim finds a script and kendex finds a different
+/// one would gate commits one way and report them another.
 pub const SKILL_ROOTS: [&str; 7] = [
     ".agents/skills",
     ".claude/skills",

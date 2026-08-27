@@ -216,8 +216,9 @@ DEV_VALIDATE_CMD = "tools/guard"
 # The repo-root executable the guard chain runs last, after size-ratchet,
 # preflight and the growth-guards batch. tools/guard holds this repository's
 # own rules — the line caps, the prose rules, fmt, clippy, the test run — and
-# nothing else runs it, so without this key a fresh clone arms hooks that
-# gate none of them.
+# no OTHER lane of the chain runs them, so without this key a fresh clone
+# arms hooks that gate none of them. DEV_VALIDATE_CMD above names the same
+# command for a skill that wants the answer before committing.
 GROWTH_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"
 
 GH_BOT_USERNAME = ""

@@ -13,6 +13,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GG_CHECK="pre-commit"
+# shellcheck source=lib/skill-roots.sh
+source "$SCRIPT_DIR/lib/skill-roots.sh"
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 # shellcheck source=lib/settings.sh
@@ -76,7 +78,6 @@ run_step() { # LABEL COMMAND [ARGS...] — runs one step and folds its verdict
 # the install it replaces. The roots mirror the shim's rediscovery list, which
 # covers a consumer's .agents/skills shape and kendex's own skills/ layout;
 # the install beside this script serves only a tree carrying no copy.
-SKILL_ROOTS=".agents/skills .claude/skills .cursor/rules .opencode/skills skills"
 
 # Whether the SKILL is present decides, not whether its script happens to be
 # runnable: a present skill with a missing, dangling or unexecutable script
@@ -84,7 +85,7 @@ SKILL_ROOTS=".agents/skills .claude/skills .cursor/rules .opencode/skills skills
 # catches a dangling symlink, which -e reports as absent.
 resolve_sibling() { # SKILL — skill directory on stdout; 1 when no side carries it
   local skill="$1" base="" dir=""
-  for base in $SKILL_ROOTS; do
+  for base in $GG_SKILL_ROOTS; do
     dir="$PWD/$base/$skill"
     if [ -e "$dir" ] || [ -L "$dir" ]; then
       printf '%s\n' "$dir"
@@ -139,7 +140,7 @@ if SIZE_RATCHET_SKILL="$(resolve_sibling size-ratchet)"; then
       ;;
   esac
 else
-  echo "=== pre-commit: size-ratchet not installed — skipped (no size-ratchet skill under $PWD ($SKILL_ROOTS), nor at $SCRIPT_DIR/../../size-ratchet)"
+  echo "=== pre-commit: size-ratchet not installed — skipped (no size-ratchet skill under $PWD ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../size-ratchet)"
 fi
 
 # Same sibling contract for preflight: its --staged lanes judge the same
@@ -156,7 +157,7 @@ if PREFLIGHT_SKILL="$(resolve_sibling preflight)"; then
     echo "=== pre-commit: first commit — preflight --staged has no base; skipped"
   fi
 else
-  echo "=== pre-commit: preflight not installed — skipped (no preflight skill under $PWD ($SKILL_ROOTS), nor at $SCRIPT_DIR/../../preflight)"
+  echo "=== pre-commit: preflight not installed — skipped (no preflight skill under $PWD ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../preflight)"
 fi
 
 BATCH="$SCRIPT_DIR/growth-guards"
