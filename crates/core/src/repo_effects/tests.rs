@@ -34,7 +34,7 @@ fn arm_settled(
 ) -> std::result::Result<crate::guard::GuardReport, ArmError> {
     for _ in 0..50 {
         match arm(scope, declared) {
-            Err(ArmError::Run(error)) if error.to_string().contains("Text file busy") => {
+            Err(error) if error.to_string().contains("Text file busy") => {
                 std::thread::sleep(std::time::Duration::from_millis(20));
             }
             outcome => return outcome,
@@ -90,10 +90,15 @@ fn a_failed_installer_reports_the_exit_and_the_declared_undo() {
     assert_eq!(*code, 1);
     assert_eq!(report.stderr, vec!["could not write hooks".to_owned()]);
     let said = error.to_string();
+    // The uninstaller resolved under the package, not the relative path the
+    // declaration wrote: read from the repository root, that names nothing.
     assert_eq!(
         said,
-        "guards: arm exited 1 — anything it wrote before that is still there; \
-         to undo: run `arm --off` from the repository root"
+        format!(
+            "guards: arm exited 1 — anything it wrote before that is still there; \
+             to undo: run `{} --off` from the repository root",
+            root.join("arm").display()
+        )
     );
 
     // No uninstaller: the removal text is what the package said instead.
@@ -115,6 +120,58 @@ fn a_failed_installer_reports_the_exit_and_the_declared_undo() {
             .ends_with("the package declares no way to undo it"),
         "{error}"
     );
+}
+
+/// An installer kendex could not get an exit status from reads like a
+/// failed one, not like a script that never ran: it was handed to the
+/// operating system, so what it wrote — if anything — is still there.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_installer_that_never_reported_still_names_the_undo() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let scope = Scope::Project { root: repo };
+    let root = tmp.path().join("pkg");
+    // Present and inside the package, so it resolves; not executable, so
+    // the failure lands where kendex can no longer say what happened.
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("arm"), "#!/bin/sh\nexit 0\n").unwrap();
+
+    let error = arm(&scope, &package(&root, Some("arm"), Some("arm --off"))).unwrap_err();
+    assert!(
+        matches!(&error, ArmError::Unfinished { name, .. } if name == "guards"),
+        "{error}"
+    );
+    let said = error.to_string();
+    assert!(said.starts_with("guards: arm did not finish ("), "{said}");
+    assert!(
+        said.ends_with(&format!(
+            " — anything it wrote before that is still there; \
+             to undo: run `{} --off` from the repository root",
+            root.join("arm").display()
+        )),
+        "{said}"
+    );
+}
+
+/// A program that resolves to nothing never ran, and says so: no partial
+/// write to warn about and no undo to offer.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_program_that_does_not_resolve_reports_only_that() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let scope = Scope::Project { root: repo };
+    let root = tmp.path().join("pkg");
+    fs::create_dir_all(&root).unwrap();
+
+    let error = arm(&scope, &package(&root, Some("arm"), Some("arm --off"))).unwrap_err();
+    assert!(matches!(&error, ArmError::Run(_)), "{error}");
+    assert!(!error.to_string().contains("still there"), "{error}");
 }
 
 /// A clean exit hands the installer's own lines back, so the surface can

@@ -66,17 +66,20 @@ pub fn source_toggle(scope: Scope, name: String, enabled: bool) -> Result<Vec<So
     run_and_list(&env, report)
 }
 
-/// Every curated set every catalog offers, across every scope — what the
-/// Catalogs page lists under each source.
+/// Every curated set every catalog offers, across every scope.
+fn list_all_bundles(env: &Env) -> Result<Vec<BundleRow>, String> {
+    let mut rows = Vec::new();
+    for scope in all_scopes(env)? {
+        rows.extend(source_ops::list_bundles(env, &scope).map_err(|e| e.to_string())?);
+    }
+    Ok(rows)
+}
+
+/// What the Catalogs page lists under each source — one query.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn bundles_overview() -> Result<Vec<BundleRow>, String> {
-    let env = env()?;
-    let mut rows = Vec::new();
-    for scope in all_scopes(&env)? {
-        rows.extend(source_ops::list_bundles(&env, &scope).map_err(|e| e.to_string())?);
-    }
-    Ok(rows)
+    list_all_bundles(&env()?)
 }
 
 /// What a bundle install hands back: every set as it stands now, and the
@@ -121,12 +124,8 @@ pub fn install_bundle(
     apply::execute(env, &report.plan, None).map_err(|e| e.to_string())?;
     let repo_effects = kendex_core::repo_effects::offers_for(env, scope, &report.repo_effects)
         .map_err(|e| e.to_string())?;
-    let mut bundles = Vec::new();
-    for scope in all_scopes(env)? {
-        bundles.extend(source_ops::list_bundles(env, &scope).map_err(|e| e.to_string())?);
-    }
     Ok(BundleInstalled {
-        bundles,
+        bundles: list_all_bundles(env)?,
         repo_effects,
     })
 }

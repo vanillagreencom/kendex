@@ -144,6 +144,28 @@ describe("answering", () => {
     );
   });
 
+  it("a trailing blank line is not the installer's last word", async () => {
+    const { toast } = await import("sonner");
+    vi.mocked(commands.repoEffectsApply).mockResolvedValue({
+      status: "ok",
+      data: ["hooks armed", "", "  "],
+    });
+    await useMarketplacesStore.getState().applyRepoEffect();
+    expect(toast.success).toHaveBeenCalledWith("hooks armed");
+  });
+
+  it("an installer that printed only blank lines gets the canned line", async () => {
+    const { toast } = await import("sonner");
+    vi.mocked(commands.repoEffectsApply).mockResolvedValue({
+      status: "ok",
+      data: ["", ""],
+    });
+    await useMarketplacesStore.getState().applyRepoEffect();
+    expect(toast.success).toHaveBeenCalledWith(
+      repoEffectsAppliedToast("guards"),
+    );
+  });
+
   it("a no runs nothing and says the package is installed unarmed", async () => {
     const { toast } = await import("sonner");
     useMarketplacesStore.getState().declineRepoEffect();

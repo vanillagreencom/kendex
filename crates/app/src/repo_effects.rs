@@ -19,30 +19,29 @@ use kendex_core::repo_effects::{ArmError, DeclaredEffects};
 /// The declaration comes back from the window exactly as the install handed
 /// it over, the way the terminal keeps it in hand between the block and the
 /// prompt. Its root is confined the way every scope root the window passes
-/// is: `run_script` resolves the program under it and refuses one that
-/// leaves it.
+/// is: arming resolves the program under it and refuses one that leaves
+/// it.
 pub fn apply(scope: &Scope, declared: &DeclaredEffects) -> Result<Vec<String>, String> {
     match kendex_core::repo_effects::arm(scope, declared) {
         Ok(report) => Ok(report.stdout),
-        // The one wording, with the package's own lines under it — the
-        // account of a possibly half-written repository has to reach the
-        // person whole.
-        Err(error @ ArmError::Failed { .. }) => {
-            let ArmError::Failed { report, .. } = &error else {
-                unreachable!("matched above");
+        // The one wording, with the package's own lines under it where the
+        // installer got far enough to say anything — the account of a
+        // possibly half-written repository has to reach the person whole.
+        Err(error) => {
+            let said: Vec<&str> = match &error {
+                ArmError::Failed { report, .. } => report
+                    .stderr
+                    .iter()
+                    .chain(&report.stdout)
+                    .map(String::as_str)
+                    .collect(),
+                _ => Vec::new(),
             };
-            let said: Vec<&str> = report
-                .stderr
-                .iter()
-                .chain(&report.stdout)
-                .map(String::as_str)
-                .collect();
             Err(match said.is_empty() {
                 true => error.to_string(),
                 false => format!("{error}\n{}", said.join("\n")),
             })
         }
-        Err(error) => Err(error.to_string()),
     }
 }
 

@@ -97,11 +97,8 @@ pub fn apply(scope: &Scope, declared: &DeclaredEffects) -> CliResult {
             relay(&report);
             Ok(())
         }
-        Err(kendex_core::repo_effects::ArmError::NothingToRun { .. }) => {
-            say(&kendex_core::repo_effects::ArmError::NothingToRun {
-                name: declared.name.clone(),
-            }
-            .to_string());
+        Err(error @ kendex_core::repo_effects::ArmError::NothingToRun { .. }) => {
+            say(&error.to_string());
             Ok(())
         }
         Err(error) => {

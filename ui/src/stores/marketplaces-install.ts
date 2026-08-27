@@ -171,7 +171,10 @@ export function installActions(set: Set, get: Get): InstallActions {
         return false;
       }
       advance();
-      toast.success(response.data.at(-1) ?? repoEffectsAppliedToast(head.name));
+      // The last line it printed, not the last element: relay keeps the
+      // installer's trailing blank lines, and an empty toast says nothing.
+      const said = response.data.filter((line) => line.trim() !== "").at(-1);
+      toast.success(said ?? repoEffectsAppliedToast(head.name));
       return true;
     },
 

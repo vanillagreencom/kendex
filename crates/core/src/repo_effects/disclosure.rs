@@ -112,7 +112,7 @@ pub fn offers_for(
 /// The offers a plan's effects earn in this scope.
 ///
 /// Empty outside a project. A repository effect is a change to a
-/// repository, and the global scope is not one: `run_script` refuses it, so
+/// repository, and the global scope is not one: `arm` refuses it, so
 /// an effect offered there is a question whose yes cannot be honoured.
 ///
 /// `installed` names the skills the scope carries now.

@@ -127,10 +127,7 @@ export const commands = {
 	 *  (offline caches keep serving); hard failures surface as the error.
 	 */
 	sourcesRefresh: () => typedError<string[], string>(__TAURI_INVOKE("sources_refresh")),
-	/**
-	 *  Every curated set every catalog offers, across every scope — what the
-	 *  Catalogs page lists under each source.
-	 */
+	/**  What the Catalogs page lists under each source — one query. */
 	bundlesOverview: () => typedError<BundleRow[], string>(__TAURI_INVOKE("bundles_overview")),
 	/**
 	 *  Install a set whole. Its members derive from the catalog, so this declares

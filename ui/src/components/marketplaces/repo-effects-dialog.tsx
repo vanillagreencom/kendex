@@ -35,8 +35,8 @@ import { useMarketplacesStore } from "@/stores/marketplaces";
  *  Every word of the package's on screen is core's display text, already
  *  escaped once there: a direction-flipping character in a declared path
  *  would otherwise read as a different file from the one being
- *  authorized. Nothing here reads the raw declaration except to hand it
- *  back. */
+ *  authorized. Nothing here displays the raw declaration; it is read only
+ *  for whether an installer exists, and handed back untouched. */
 export function RepoEffectsDialog() {
   const pending = useMarketplacesStore((s) => s.pendingEffects);
   const busy = useMarketplacesStore((s) => s.busy);

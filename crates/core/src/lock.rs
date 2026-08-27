@@ -233,13 +233,9 @@ pub fn parse_entry_key(key: &str) -> Option<(ItemKind, &str, HarnessId)> {
     Some((kind, name, HarnessId::parse(harness)?))
 }
 
-/// Where this scope's lock lives. Off the canonical root, like every
-/// scope-path derivation (`manifest::manifest_path`): the path must
-/// compare equal to the ones the engine's plan speaks, whatever spelling
-/// the scope arrived under.
-/// The skills a lock carries, by name. A lock row is per installation, so a
-/// skill fanned out to three tools is one name here — the shape every
-/// question about "is this package in the scope" wants.
+/// The skills a lock carries, by name. A lock row is per harness, so a
+/// skill fanned out to three tools has three rows and one name here — the
+/// shape every question about "is this package in the scope" wants.
 pub fn skill_names(lock: &Lock) -> std::collections::BTreeSet<String> {
     lock.entries
         .values()
@@ -248,6 +244,10 @@ pub fn skill_names(lock: &Lock) -> std::collections::BTreeSet<String> {
         .collect()
 }
 
+/// Where this scope's lock lives. Off the canonical root, like every
+/// scope-path derivation (`manifest::manifest_path`): the path must
+/// compare equal to the ones the engine's plan speaks, whatever spelling
+/// the scope arrived under.
 pub fn lock_path(env: &Env, scope: &Scope) -> PathBuf {
     match &scope.canonical() {
         Scope::Global => env.global_lock_file(),
