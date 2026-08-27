@@ -127,7 +127,10 @@ fn pre_rename_project(home: &Path) -> PathBuf {
 #[allow(clippy::unwrap_used)]
 fn a_blocked_refresh_ends_on_a_ledger_naming_every_outcome_and_its_next_step() {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
+    // Canonical once, where the fixture's root enters (invariant 17): the
+    // ledger prints the root kendex resolved, and a temporary directory is
+    // routinely behind a symlink.
+    let home = &tmp.path().canonicalize().unwrap();
     let project = pre_rename_project(home);
 
     let printed = said(&kendex(
@@ -202,7 +205,10 @@ fn a_blocked_refresh_ends_on_a_ledger_naming_every_outcome_and_its_next_step() {
 #[allow(clippy::unwrap_used)]
 fn a_clean_refresh_ends_on_the_count_alone() {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
+    // Canonical once, where the fixture's root enters (invariant 17): the
+    // ledger prints the root kendex resolved, and a temporary directory is
+    // routinely behind a symlink.
+    let home = &tmp.path().canonicalize().unwrap();
     let project = home.join("dev/app");
     let catalog = home.join("catalog");
     skill(&catalog, "tidy", "Nothing alarming here.\n");
@@ -232,7 +238,10 @@ fn a_clean_refresh_ends_on_the_count_alone() {
 #[allow(clippy::unwrap_used)]
 fn a_current_scope_with_findings_still_reads_up_to_date() {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
+    // Canonical once, where the fixture's root enters (invariant 17): the
+    // ledger prints the root kendex resolved, and a temporary directory is
+    // routinely behind a symlink.
+    let home = &tmp.path().canonicalize().unwrap();
     let project = home.join("dev/app");
     let catalog = home.join("catalog");
     skill(&catalog, "tidy", RISKY);
@@ -274,7 +283,10 @@ fn a_current_scope_with_findings_still_reads_up_to_date() {
 #[allow(clippy::unwrap_used)]
 fn an_up_to_date_apply_claims_no_changes() {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
+    // Canonical once, where the fixture's root enters (invariant 17): the
+    // ledger prints the root kendex resolved, and a temporary directory is
+    // routinely behind a symlink.
+    let home = &tmp.path().canonicalize().unwrap();
     let project = home.join("dev/app");
     let catalog = home.join("catalog");
     skill(&catalog, "tidy", "Nothing alarming here.\n");
@@ -311,7 +323,10 @@ fn a_shared_command_is_named_only_where_it_settles_every_skipped_item() {
     // Adopt-only: a folder shared by hand, which the take-over must never
     // write over, so no scope-wide command covers it.
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
+    // Canonical once, where the fixture's root enters (invariant 17): the
+    // ledger prints the root kendex resolved, and a temporary directory is
+    // routinely behind a symlink.
+    let home = &tmp.path().canonicalize().unwrap();
     let project = home.join("dev/app");
     let catalog = home.join("catalog");
     skill(&catalog, "deploy", "Upstream.\n");
@@ -345,7 +360,10 @@ fn a_shared_command_is_named_only_where_it_settles_every_skipped_item() {
     // Mixed: one replaceable conflict beside an install the reader edited.
     // The take-over settles the first and never touches the second.
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
+    // Canonical once, where the fixture's root enters (invariant 17): the
+    // ledger prints the root kendex resolved, and a temporary directory is
+    // routinely behind a symlink.
+    let home = &tmp.path().canonicalize().unwrap();
     let project = home.join("dev/app");
     let catalog = home.join("catalog");
     skill(&catalog, "tidy", "Upstream.\n");
@@ -413,7 +431,10 @@ fn a_shared_command_is_named_only_where_it_settles_every_skipped_item() {
 #[allow(clippy::unwrap_used)]
 fn a_take_over_that_settles_every_item_still_withholds_the_adopt_half() {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
+    // Canonical once, where the fixture's root enters (invariant 17): the
+    // ledger prints the root kendex resolved, and a temporary directory is
+    // routinely behind a symlink.
+    let home = &tmp.path().canonicalize().unwrap();
     let project = home.join("dev/app");
     let catalog = home.join("catalog");
     // A name a shell would read as more than one argument is never printed
@@ -465,7 +486,10 @@ fn a_take_over_that_settles_every_item_still_withholds_the_adopt_half() {
 #[allow(clippy::unwrap_used)]
 fn the_flagged_count_matches_the_safety_block_above_it() {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
+    // Canonical once, where the fixture's root enters (invariant 17): the
+    // ledger prints the root kendex resolved, and a temporary directory is
+    // routinely behind a symlink.
+    let home = &tmp.path().canonicalize().unwrap();
     let project = home.join("dev/app");
     let catalog = home.join("catalog");
     skill(&catalog, "guard", RISKY);
@@ -509,7 +533,10 @@ fn the_flagged_count_matches_the_safety_block_above_it() {
 #[allow(clippy::unwrap_used)]
 fn a_verbose_refresh_says_everything_the_compact_one_does() {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
+    // Canonical once, where the fixture's root enters (invariant 17): the
+    // ledger prints the root kendex resolved, and a temporary directory is
+    // routinely behind a symlink.
+    let home = &tmp.path().canonicalize().unwrap();
     let project = pre_rename_project(home);
 
     let printed = said(&kendex(

@@ -69,7 +69,12 @@ fn a_dangling_link_in_the_local_source_dir_moves_with_it() {
 #[test]
 fn a_pipe_in_the_local_source_dir_refuses_planning_by_name() {
     let tmp = tempfile::tempdir().unwrap();
-    let root = tmp.path().join("app");
+    // Canonical where the root enters (invariant 17): `rename_ops` fixes
+    // the scope root itself, so the path it names in the refusal is the
+    // resolved one, and a temporary directory is routinely behind a
+    // symlink.
+    let home = tmp.path().canonicalize().unwrap();
+    let root = home.join("app");
     let old_local = root.join(".vstack-local");
     std::fs::create_dir_all(old_local.join("skills/x")).unwrap();
     std::fs::write(old_local.join("skills/x/SKILL.md"), "v1").unwrap();
@@ -83,7 +88,7 @@ fn a_pipe_in_the_local_source_dir_refuses_planning_by_name() {
     )
     .unwrap();
     std::fs::write(root.join("vstack.toml"), "schema = 5\n").unwrap();
-    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let env = Env::fake(&home, FakeOs::Linux);
     let scope = Scope::Project { root };
 
     let error = rename_ops(&env, &scope).unwrap_err();

@@ -19,6 +19,10 @@ an outside contributor.
 
 ### Fixed
 
+- On macOS the commit hooks were written but never made executable, so git
+  ignored both and an armed repository gated nothing. `guard install` reports
+  armed only when the bit is really there.
+
 - `guard` verbs run from a linked worktree find the package under the same
   project path in the main checkout, not only at its top level.
 

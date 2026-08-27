@@ -173,7 +173,7 @@ write_helper() { # PATH
   helper_body >"$tmp" || { rm -f -- "$tmp"; return 1; }
   # mktemp creates 0600; a hook must be readable and executable by whoever
   # git runs as, which on a shared repository is not only its owner.
-  chmod 0755 "$tmp" 2>/dev/null && mv -f -- "$tmp" "$helper" || {
+  chmod -- 0755 "$tmp" 2>/dev/null && mv -f -- "$tmp" "$helper" || {
     rm -f -- "$tmp"
     return 1
   }
@@ -239,12 +239,12 @@ strip_final_newline() { # FILE — drop one trailing newline byte if present
   mv -f -- "$1.trim" "$1"
 }
 
-# git ignores a hook without the executable bit, so a bit that is not there
-# and cannot be restored is a guard that never runs — never a success.
+# git ignores a hook without the bit, so one that cannot be restored is a
+# guard that never runs. `--` before the mode: bash32-portability has the why.
 ensure_hook_executable() { # HOOK PATH
   local hook="$1" path="$2"
   [ -x "$path" ] && return 0
-  chmod +x -- "$path" 2>/dev/null && [ -x "$path" ] && return 0
+  chmod -- +x "$path" 2>/dev/null && [ -x "$path" ] && return 0
   hook_warn "$path is not executable and could not be made so; git ignores it — the $hook guard is NOT armed"
 }
 

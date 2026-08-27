@@ -52,6 +52,13 @@ pub fn adopt(
     name: &str,
     harnesses: &[HarnessId],
 ) -> Result<Plan> {
+    // A plan entry, so the root is fixed here and nowhere downstream
+    // (invariant 17). Without it this planner met two spellings of one
+    // directory: positions come from the caller's scope while the tree a
+    // link points at comes back resolved off disk, so on a checkout behind
+    // a symlink — macOS fronts `/var` with `/private/var` — a plan trashed
+    // a link under one name and renamed the tree under the other.
+    let scope = &scope.canonical();
     // A hook is a script plus an entry in each tool's registry, not a file
     // at a position — it has its own planner rather than a case inside
     // this one.
