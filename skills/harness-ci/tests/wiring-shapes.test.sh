@@ -53,15 +53,31 @@ assert_eq "every HEAD expression tries github.event.after before github.sha" "" 
 # Both lane-condition variants ship, and the one that fails open is labelled
 # as such. A reader who finds only the single-gate form wires it into a lane
 # that also reads a path family and gets a silent skip — the shape memsira hit.
+#
+# Pinned WHOLE, not by prefix or by the comment label beside them. These two
+# lines are the deliverable: a reader copies one and must not copy the other,
+# so a character changed anywhere in either is a different condition, and an
+# assertion that stops at `!= 'success' ||` would not see it.
 doc="$(cat "$WIRING")"
 case "$doc" in
   *"SECOND gate"*) ;;
   *) assert_eq "the two-gate variant is documented" "present" "absent" ;;
 esac
-assert_eq "the two-gate form is spelled out" 1 \
-  "$(printf '%s\n' "$doc" | grep -cF "needs.changes.result != 'success' ||")"
-assert_eq "the fail-open form is labelled WRONG" 1 \
-  "$(printf '%s\n' "$doc" | grep -cF '# WRONG when a family predicate is present')"
+
+wrong_if="  if: \${{ !cancelled() && needs.changes.outputs.frontend == 'true' && !(needs.changes.result == 'success' && needs.changes.outputs.harness_only == 'true') }}"
+right_if="  if: \${{ !cancelled() && (needs.changes.result != 'success' || (needs.changes.outputs.frontend == 'true' && needs.changes.outputs.harness_only != 'true')) }}"
+
+assert_eq "the fail-open form is shown verbatim, exactly once" 1 \
+  "$(printf '%s\n' "$doc" | grep -cxF "$wrong_if")"
+assert_eq "the working form is shown verbatim, exactly once" 1 \
+  "$(printf '%s\n' "$doc" | grep -cxF "$right_if")"
+
+# The label has to stay ON the fail-open block. Both lines are legal YAML and
+# a reader tells them apart by that comment alone, so its position is part of
+# what is pinned, not just its presence somewhere in the file.
+assert_eq "the WRONG label sits on the line above the fail-open form" \
+  "  # WRONG when a family predicate is present" \
+  "$(printf '%s\n' "$doc" | grep -B1 -xF "$wrong_if" | head -1)"
 
 # Indentation is checked structurally rather than by parsing: every block here
 # steps by two spaces, so an odd indent or a tab is hand-edit damage. This
