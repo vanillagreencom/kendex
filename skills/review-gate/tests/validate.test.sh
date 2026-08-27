@@ -623,6 +623,19 @@ pad_continuation() { # DIR — cancel the first backslash continuation
   commit "$1"
 }
 
+crlf_payload_line() { # DIR — give one payload line a CRLF ending
+  local wf="$1/.github/workflows/review-gate-writer.yml"
+  awk 'done != 1 && /^          set -u$/ { printf "%s\r\n", $0; done = 1; next } { print }' \
+    "$wf" >"$wf.new"
+  mv "$wf.new" "$wf"
+  commit "$1"
+}
+
+sandbox
+dir="$DIR"
+crlf_payload_line "$dir"
+expect_fail "a CRLF line ending inside a payload is a divergence" "$dir" "has diverged from the shipped template"
+
 sandbox
 dir="$DIR"
 pad_continuation "$dir"

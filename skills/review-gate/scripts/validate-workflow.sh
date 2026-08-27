@@ -112,22 +112,28 @@ EXEC_WRITER_RE='^[[:space:]]*exec[[:space:]]+[^[:space:]]*review-writer\.sh[[:sp
 # dropped anywhere. YAML prose is reworded legitimately — the catalog's own
 # copy says so in its header — and a YAML comment gates nothing.
 #
-# INSIDE a `run: |` scalar none of that holds: those lines are shell payload,
-# so a `#` line is a shell comment that can comment out a joined command, and
-# trailing whitespace after a backslash cancels the continuation. Both edits
-# change what runs, so inside a scalar the bytes are compared as they are.
-# Blank lines are compared everywhere for the same reason.
+# INSIDE a `run: |` scalar none of that holds: those lines are shell payload.
+# A `#` line there is a shell comment that can comment out a joined command,
+# trailing whitespace after a backslash cancels the continuation, a blank is
+# script content, and a CRLF ending is a CRLF ending. So inside a scalar
+# NOTHING is normalized — the bytes are compared as they are, which is what
+# keeps a shell-significant byte from being erased by a rule written for
+# YAML. Blank lines are compared everywhere for the same reason.
 code_lines() { # FILE — YAML comment-only lines dropped outside block scalars
   awk '
     {
-      line = $0
+      raw = $0
+      line = raw
       sub(/\r$/, "", line)
       match(line, /^[[:space:]]*/)
       ind = RLENGTH
       body = substr(line, ind + 1)
     }
     inblock {
-      if (body == "" || ind > blockind) { print line; next }
+      # RAW, not the CR-stripped copy: a payload line ending CRLF is a shell
+      # script line ending CRLF, which behaves differently. Inside a scalar
+      # NOTHING is normalized, so no shell-significant byte can be erased.
+      if (body == "" || ind > blockind) { print raw; next }
       inblock = 0
     }
     body ~ /^#/ { next }

@@ -52,10 +52,13 @@ invoking repo's own resolved settings.
 
 `validate-workflow.sh` compares the adopted copy against the shipped template
 line by line. A YAML comment-only line is the one thing dropped, and only
-OUTSIDE a block scalar. Inside a `run: |` the lines are shell payload, so the
-bytes are compared as they are: a `#` line there is a shell comment that can
-comment out a joined command, trailing whitespace after a backslash cancels
-the continuation, and a blank line is script content. Two deltas are
+OUTSIDE a block scalar. Inside a `run: |` the lines are shell payload, so NOTHING
+is normalized and the bytes are compared as they are: a `#` line there is a
+shell comment that can comment out a joined command, trailing whitespace
+after a backslash cancels the continuation, a blank line is script content,
+and a CRLF ending is a CRLF ending. Normalization applies to YAML-structure
+lines and nowhere else, which is what keeps a rule written for YAML from
+erasing a shell-significant byte. Two deltas are
 allowed and nothing else. Any other difference is one failure naming the
 first divergent line, and the remedy never varies: re-copy the template.
 
