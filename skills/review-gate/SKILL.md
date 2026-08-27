@@ -37,11 +37,14 @@ the gate; and merge-group statuses never read the mode, posting green as
 | (exit 2, no verdict) | *unchanged* | A read failed or config is invalid. Take NO action; retry next pass. |
 
 **Reading the gate's own pending text.** `no review evidence at <sha> yet;
-expected from <names>` is the `awaiting` verdict. The names are the repo's
-own configured evidence sources, so the text says who this repo is waiting
-for: bots there means the ordinary re-review window after a push, and a
-person's name means a person. Past 140 characters the sha shortens to 12 and
-the names that do not fit are counted (`and N more`).
+expected from <names>` is the `awaiting` verdict. The names are the sources
+that could still open the gate at that head, resolved from the repo's own
+settings and filtered the way the evidence read filters them — the PR author
+never appears, and an empty trust list reads as `any non-author review` (or
+`approval` under `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "approved"`). Past
+140 characters the sha shortens to 12 and the names that do not fit are
+counted (`and N more`). `no configured source is eligible here` means every
+configured login is the author.
 
 Act on the names, not on the pending state: where they are bots and one has
 already reviewed this head, dispatch the writer instead of waiting.

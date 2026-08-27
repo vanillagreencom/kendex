@@ -1,81 +1,65 @@
 #!/usr/bin/env bash
-# The awaiting verdict's status description, composed from the evidence
-# sources a repo's resolved settings actually enable. review-predicate.sh
-# calls this on its awaiting arm and prints the result as the pending status.
+# The awaiting verdict's status description. review-predicate.sh calls this on
+# its awaiting arm and prints the result as the pending status.
 #
-# The gate is configuration-driven, so the text names what THIS repo is
-# waiting for instead of asserting who reviews: a repo whose trust lists hold
-# only human logins reads those people's names, a repo trusting bots reads the
-# bots. Nothing is resolved here — the caller passes its already-resolved
-# values, and lib/settings.sh stays the one resolver.
+# This script decides NOTHING about evidence. Which sources could still open
+# the gate at this head is the predicate's judgment — it resolves the trust
+# settings, applies each source's policy and filters the PR author — and it
+# passes the answer in. All that happens here is fitting that answer into the
+# 140 characters GitHub keeps of a commit-status description.
 #
-# Inputs (environment): HEAD_SHA, TRUSTED_LOGINS, TRUSTED_CONTEXTS,
-# COMMENT_REVIEWERS. Output: the description on stdout, no trailing newline.
+# The text names what THIS repo is waiting for rather than asserting who
+# reviews: a gate whose trust lists hold only human logins reads those
+# people's names, a gate trusting bots reads the bots.
 #
-# GitHub truncates a commit-status description at 140 characters, and a real
-# trust list is longer than that on its own. So the sha shortens to its
-# 12-character prefix before any name is dropped, and the names that still do
-# not fit are counted rather than cut mid-word.
+# Inputs (environment): HEAD_SHA, and SOURCES as one eligible source per line.
+# Output: the description on stdout, no trailing newline.
+#
+# A real trust list is longer than the whole limit on its own, so the sha
+# shortens to its 12-character prefix before any name is dropped, and the
+# names that still do not fit are counted rather than cut mid-word.
 set -euo pipefail
 
 RG_STATUS_LIMIT=140
 
 HEAD_SHA="${HEAD_SHA:-}"
-TRUSTED_LOGINS="${TRUSTED_LOGINS:-}"
-TRUSTED_CONTEXTS="${TRUSTED_CONTEXTS:-}"
-COMMENT_REVIEWERS="${COMMENT_REVIEWERS:-}"
-
-# A packed list -> one name per line, whitespace trimmed, blanks dropped.
-# SEPARATORS is the tr set for that setting's own packing.
-names_of() { # LIST SEPARATORS
-  local item
-  # printf '%s\n', never '%s': an unterminated last line is not read at all,
-  # which would drop the only entry of a single-name list.
-  printf '%s\n' "$1" | tr "$2" '\n' | while IFS= read -r item; do
-    item="${item#"${item%%[![:space:]]*}"}"
-    item="${item%"${item##*[![:space:]]}"}"
-    [ -n "$item" ] && printf '%s\n' "$item"
-  done
-  return 0
-}
-
-# Every evidence source the settings name, in the decision table's order:
-# trusted review-object logins, trusted status/check contexts, then the
-# comment-form reviewers — their login half only, since the binding pattern is
-# not a name a reader can act on.
-sources() { # -> one name per line, duplicates collapsed
-  {
-    names_of "$TRUSTED_LOGINS" ';,'
-    names_of "$TRUSTED_CONTEXTS" ';'
-    names_of "$COMMENT_REVIEWERS" ';' | sed 's/:.*$//'
-  } | awk '!seen[$0]++'
-}
+SOURCES="${SOURCES:-}"
 
 full_form="no review evidence at $HEAD_SHA yet; expected from "
 short_form="no review evidence at ${HEAD_SHA:0:12} yet; expected from "
 
-names="$(sources)"
 count=0
-[ -n "$names" ] && count="$(printf '%s\n' "$names" | wc -l | tr -d ' ')"
+[ -n "$SOURCES" ] && count="$(printf '%s\n' "$SOURCES" | wc -l | tr -d ' ')"
 
-# Empty trust lists mean any non-author review is evidence. That is a source
-# too, so it is named rather than leaving the clause blank.
+# No eligible source at all — a repo whose only trusted login is the PR
+# author reaches this. Saying "expected from" nothing would read as a
+# truncated status, so it names the state instead.
 if [ "$count" = "0" ]; then
-  detail="${full_form}any non-author review"
-  [ "${#detail}" -le "$RG_STATUS_LIMIT" ] || detail="${short_form}any non-author review"
+  detail="no review evidence at $HEAD_SHA yet; no configured source is eligible here"
+  if [ "${#detail}" -gt "$RG_STATUS_LIMIT" ]; then
+    detail="no review evidence at ${HEAD_SHA:0:12} yet; no configured source is eligible here"
+  fi
   printf '%s' "$detail"
   exit 0
 fi
 
-joined="$(printf '%s\n' "$names" | tr '\n' ',' | sed 's/,$//; s/,/, /g')"
+joined="$(printf '%s\n' "$SOURCES" | tr '\n' ',' | sed 's/,$//; s/,/, /g')"
 detail="$full_form$joined"
 if [ "${#detail}" -le "$RG_STATUS_LIMIT" ]; then
   printf '%s' "$detail"
   exit 0
 fi
 
-# The full sha does not fit beside the names. Shorten it once, then fill the
-# remaining budget with whole names and count whatever is left over.
+# The full sha does not fit beside the names. Shorten it and try the whole
+# list again BEFORE reserving room for any remainder clause — reserving first
+# would drop a name that the short form has room for.
+detail="$short_form$joined"
+if [ "${#detail}" -le "$RG_STATUS_LIMIT" ]; then
+  printf '%s' "$detail"
+  exit 0
+fi
+
+# Still over. Fill the remaining budget with whole names and count the rest.
 kept=0
 shown=""
 while IFS= read -r name; do
@@ -90,7 +74,7 @@ while IFS= read -r name; do
     break
   fi
 done <<EOF
-$names
+$SOURCES
 EOF
 
 if [ "$kept" = "0" ] && [ "$count" = "1" ]; then

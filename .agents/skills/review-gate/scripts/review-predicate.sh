@@ -1330,6 +1330,43 @@ while :; do
 done
 fi
 
+# One packed list -> trimmed, non-empty entries, one per line. FILTER_AUTHOR
+# drops the PR author, whose own review and comment are never evidence.
+aw_entries() { # LIST SEPARATORS FILTER_AUTHOR
+  printf '%s\n' "$1" | tr "$2" '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' |
+    while IFS= read -r aw_item; do
+      [ -z "$aw_item" ] && continue
+      [ "$3" = 1 ] && [ "$aw_item" = "$PR_AUTHOR" ] && continue
+      printf '%s\n' "$aw_item"
+    done
+}
+
+# The sources that could still open the gate at THIS head, under the same
+# rules the evaluation above applied: an empty review-object trust list
+# accepts any non-author review, a named list accepts those logins, and the
+# author is never evidence under either. Trusted status contexts are check
+# names rather than logins, so no author filter applies there. The awaiting
+# status is composed from this list — eligibility is decided here, and
+# awaiting-detail.sh only fits the answer into GitHub's description limit.
+awaiting_sources() { # -> one eligible source per line, duplicates collapsed
+  {
+    if [ -z "$TRUSTED_LOGINS" ]; then
+      # The minimum state is part of the policy, not decoration: under
+      # 'approved' a COMMENTED review does not satisfy this source, so the
+      # text must not send a reader to leave one.
+      if [ "$MIN_STATE" = "approved" ]; then
+        echo "any non-author approval"
+      else
+        echo "any non-author review"
+      fi
+    else
+      aw_entries "$TRUSTED_LOGINS" ';,' 1
+    fi
+    aw_entries "$TRUSTED_CONTEXTS" ';' 0
+    aw_entries "$(printf '%s' "$COMMENT_REVIEWERS" | sed 's/:[^;]*//g')" ';' 1
+  } | awk '!seen[$0]++'
+}
+
 echo "PR #$PR_NUMBER head $HEAD_SHA: reviews=$got clean-analysis=$check comment-form=$comment_hits outage-marker=$outageok carried=$carried changes-requested=$cr unresolved-threads=$unresolved untracked-claims=$untracked (threads=$THREADS_MODE)" >&2
 
 if [ "$cr" != "0" ]; then
@@ -1337,7 +1374,16 @@ if [ "$cr" != "0" ]; then
 elif [ "$untracked" != "0" ]; then
   echo "verdict=untracked-claim detail=$untracked tracking claim(s) name no issue — write Declined: <reason>, or add the tracker/#id"
 elif [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ]; then
-  echo "verdict=awaiting detail=$(HEAD_SHA="$HEAD_SHA" TRUSTED_LOGINS="$TRUSTED_LOGINS" TRUSTED_CONTEXTS="$TRUSTED_CONTEXTS" COMMENT_REVIEWERS="$COMMENT_REVIEWERS" "$script_dir/awaiting-detail.sh")"
+  # Captured, never interpolated straight into the echo: a composer that
+  # failed would otherwise leave an empty description on a verdict that still
+  # printed, and a status is the only thing a reader gets.
+  awaiting_rc=0
+  awaiting_detail="$(HEAD_SHA="$HEAD_SHA" SOURCES="$(awaiting_sources)" "$script_dir/awaiting-detail.sh")" || awaiting_rc=$?
+  if [ "$awaiting_rc" != 0 ] || [ -z "$awaiting_detail" ]; then
+    echo "::error::review-predicate: scripts/awaiting-detail.sh failed (exit $awaiting_rc) — no verdict" >&2
+    exit 2
+  fi
+  echo "verdict=awaiting detail=$awaiting_detail"
 elif [ "$unresolved" != "0" ]; then
   echo "verdict=threads-open detail=$unresolved unresolved review thread(s)"
 elif [ "$carried" = "1" ]; then

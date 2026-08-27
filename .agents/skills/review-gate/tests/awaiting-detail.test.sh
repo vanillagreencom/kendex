@@ -3,11 +3,10 @@
 # acts on wrongly — read as an approval block, it stalls a PR that only has to
 # wait for evidence at the new head — so what it says is pinned here.
 #
-# The text is DERIVED from the repo's resolved evidence settings, never
-# asserted: a gate trusting only human logins must name those people, and a
-# gate trusting bots must name the bots. These cases drive the composer the
-# predicate itself calls, across both sha forms and the 140-character limit
-# GitHub truncates a commit-status description at.
+# Two layers, one judge each. review-predicate.sh decides WHICH sources could
+# still open the gate at this head (its resolution is extracted below, never
+# restated), and awaiting-detail.sh only fits that answer into the 140
+# characters GitHub keeps of a status description.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PRED="$SCRIPT_DIR/../scripts/review-predicate.sh"
@@ -17,7 +16,7 @@ ok()  { PASS=$((PASS+1)); echo "  ok    $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  FAIL  $1"; echo "        got: $2"; }
 
 SHA='a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'
-TRUSTED_LOGINS="" TRUSTED_CONTEXTS="" COMMENT_REVIEWERS=""
+
 # GitHub's own cap, restated here so a loosened constant in the composer is a
 # failure rather than a silently wider status the API then truncates.
 RG_STATUS_LIMIT=140
@@ -25,19 +24,98 @@ grep -qx "RG_STATUS_LIMIT=$RG_STATUS_LIMIT" "$COMPOSER" \
   && ok "the composer caps at $RG_STATUS_LIMIT characters" \
   || bad "the composer caps at $RG_STATUS_LIMIT characters" "constant drifted"
 
-# The predicate must actually route its awaiting arm through this composer: a
-# copy of the text left in the arm would pass every case below while
-# production said something else.
-grep -q 'verdict=awaiting detail=\$(.*awaiting-detail\.sh' "$PRED" \
-  && ok "the predicate's awaiting arm calls the composer" \
-  || bad "the predicate's awaiting arm calls the composer" "the arm does not call awaiting-detail.sh"
+# The predicate must route its awaiting arm through the composer and hand it
+# the resolved list: a copy of either judgment left elsewhere would pass every
+# case below while production said something else.
+grep -q 'SOURCES="\$(awaiting_sources)".*awaiting-detail\.sh' "$PRED" \
+  && ok "the awaiting arm passes the predicate's resolved sources to the composer" \
+  || bad "the awaiting arm passes the predicate's resolved sources to the composer" "the arm does not"
+grep -q 'verdict=awaiting detail=\$awaiting_detail' "$PRED" \
+  && ok "the arm prints a captured description, not a substitution inside echo" \
+  || bad "the arm prints a captured description, not a substitution inside echo" "still interpolated"
+# A composer that failed must take the verdict with it: `exit 2` inside a
+# command substitution would leave only the subshell, so the guard has to sit
+# outside one.
+grep -q 'awaiting_detail.*|| awaiting_rc=\$?' "$PRED" \
+  && grep -q 'awaiting-detail.sh failed' "$PRED" \
+  && ok "a failed composer is captured and exits 2 before any verdict" \
+  || bad "a failed composer is captured and exits 2 before any verdict" "no failure guard"
+if grep -q 'TRUSTED_LOGINS\|TRUSTED_CONTEXTS\|COMMENT_REVIEWERS' "$COMPOSER"; then
+  bad "the composer models no trust setting of its own" "it reads a trust setting"
+else
+  ok "the composer models no trust setting of its own"
+fi
 
-want() { # CASE, EXPECTED
-  local got
-  got="$(HEAD_SHA="$SHA" TRUSTED_LOGINS="$TRUSTED_LOGINS" \
-    TRUSTED_CONTEXTS="$TRUSTED_CONTEXTS" COMMENT_REVIEWERS="$COMMENT_REVIEWERS" \
-    "$COMPOSER")"
+# ---------------------------------------------------------------- layer 1 ---
+# The predicate's own resolution, extracted from the script rather than
+# restated, so a rule that changes there changes here.
+eval "$(sed -n '/^aw_entries() {/,/^}/p' "$PRED")"
+eval "$(sed -n '/^awaiting_sources() {/,/^}/p' "$PRED")"
+if declare -F awaiting_sources >/dev/null; then
+  ok "the predicate's source resolution is extractable"
+else
+  echo "FAIL: could not extract awaiting_sources from $PRED"
+  exit 1
+fi
+
+MIN_STATE="any"
+sources_are() { # CASE, EXPECTED (comma-joined)
+  local got; got="$(awaiting_sources | tr '\n' ',' | sed 's/,$//')"
   [ "$got" = "$2" ] && ok "$1" || bad "$1" "$got"
+}
+
+# An empty review-object trust list accepts any non-author review, and a
+# configured status context does not withdraw that. Reporting only the context
+# would hide a way to unblock the gate.
+PR_AUTHOR="carol" TRUSTED_LOGINS="" TRUSTED_CONTEXTS="Analysis" COMMENT_REVIEWERS=""
+sources_are "an empty trust list keeps any non-author review beside a context" \
+  "any non-author review,Analysis"
+
+# The author's own review and comment are never evidence, so a trust list that
+# names the author must not send anyone to ask them.
+PR_AUTHOR="alice" TRUSTED_LOGINS="alice;bob" TRUSTED_CONTEXTS="" COMMENT_REVIEWERS=""
+sources_are "a trusted login equal to the author is omitted" "bob"
+
+PR_AUTHOR="alice" TRUSTED_LOGINS="bob" TRUSTED_CONTEXTS="" COMMENT_REVIEWERS="alice:REVIEWED-CLEAN"
+sources_are "a comment reviewer equal to the author is omitted" "bob"
+
+# A status context is a check name, not a login, so it survives an author of
+# the same name.
+PR_AUTHOR="Analysis" TRUSTED_LOGINS="bob" TRUSTED_CONTEXTS="Analysis" COMMENT_REVIEWERS=""
+sources_are "a status context is not author-filtered" "bob,Analysis"
+
+PR_AUTHOR="carol" TRUSTED_LOGINS="alice" TRUSTED_CONTEXTS="Analysis" COMMENT_REVIEWERS="botty[bot]:Reviewed commit:"
+sources_are "every source kind contributes, comment reviewers by login" \
+  "alice,Analysis,botty[bot]"
+
+PR_AUTHOR="carol" TRUSTED_LOGINS=" alice ; bob " TRUSTED_CONTEXTS="" COMMENT_REVIEWERS=""
+sources_are "packed entries are trimmed" "alice,bob"
+
+PR_AUTHOR="carol" TRUSTED_LOGINS="alice" TRUSTED_CONTEXTS="" COMMENT_REVIEWERS="alice:REVIEWED-CLEAN"
+sources_are "a login reachable two ways is listed once" "alice"
+
+# Every configured source is the author: nothing is eligible, and the status
+# must not claim otherwise.
+PR_AUTHOR="alice" TRUSTED_LOGINS="alice" TRUSTED_CONTEXTS="" COMMENT_REVIEWERS="alice:REVIEWED-CLEAN"
+sources_are "an author-only configuration leaves no eligible source" ""
+
+# The review-object minimum state is policy, not decoration: under 'approved'
+# a COMMENTED review does not satisfy the open trust model, so the text must
+# not send a reader to leave one.
+MIN_STATE="approved"
+PR_AUTHOR="carol" TRUSTED_LOGINS="" TRUSTED_CONTEXTS="" COMMENT_REVIEWERS=""
+sources_are "min_state=approved words the open trust model as an approval" \
+  "any non-author approval"
+MIN_STATE="any"
+PR_AUTHOR="carol" TRUSTED_LOGINS="" TRUSTED_CONTEXTS="" COMMENT_REVIEWERS=""
+sources_are "min_state=any keeps the review wording" "any non-author review"
+
+# ---------------------------------------------------------------- layer 2 ---
+# The composer, driven by a resolved list exactly as the predicate hands it in.
+want() { # CASE, SOURCES, EXPECTED
+  local got
+  got="$(HEAD_SHA="$SHA" SOURCES="$2" "$COMPOSER")"
+  [ "$got" = "$3" ] && ok "$1" || bad "$1" "$got"
   if [ "${#got}" -le "$RG_STATUS_LIMIT" ]; then
     ok "$1 — fits the $RG_STATUS_LIMIT-character status limit (${#got})"
   else
@@ -45,53 +123,54 @@ want() { # CASE, EXPECTED
   fi
 }
 
-# A human-only gate: bot sources empty, one person trusted. The text names that
-# person and never promises automation the configuration does not provide.
-TRUSTED_LOGINS="alice" TRUSTED_CONTEXTS="" COMMENT_REVIEWERS=""
-want "human-only gate names the human" \
+want "one human reads as that person's name" "alice" \
   "no review evidence at $SHA yet; expected from alice"
 
-TRUSTED_LOGINS="alice;bob" TRUSTED_CONTEXTS="" COMMENT_REVIEWERS=""
-want "every trusted login is named" \
-  "no review evidence at $SHA yet; expected from alice, bob"
-
-# Each source kind contributes, and a comment-form entry contributes its login
-# half only — the binding pattern is not a name a reader can act on.
-TRUSTED_LOGINS="alice" TRUSTED_CONTEXTS="Analysis" COMMENT_REVIEWERS="botty[bot]:Reviewed commit:"
-want "status contexts and comment reviewers are named too" \
-  "no review evidence at $SHA yet; expected from alice, Analysis, botty[bot]"
-
-# A name reachable two ways is one source, not two.
-TRUSTED_LOGINS="alice" TRUSTED_CONTEXTS="" COMMENT_REVIEWERS="alice:REVIEWED-CLEAN"
-want "a login named by two settings is listed once" \
-  "no review evidence at $SHA yet; expected from alice"
-
-# Empty trust lists mean any non-author review is evidence. That is a source,
-# so it is named rather than leaving the clause blank.
-TRUSTED_LOGINS="" TRUSTED_CONTEXTS="" COMMENT_REVIEWERS=""
-want "nothing configured names the open trust model" \
+want "the open trust model is named" "any non-author review" \
   "no review evidence at $SHA yet; expected from any non-author review"
 
-# Whitespace around packed entries belongs to the settings file, not to a name.
-TRUSTED_LOGINS=" alice ; bob " TRUSTED_CONTEXTS="" COMMENT_REVIEWERS=""
-want "packed entries are trimmed" \
-  "no review evidence at $SHA yet; expected from alice, bob"
+want "every source is listed while they fit" "$(printf 'alice\nAnalysis\nbotty[bot]')" \
+  "no review evidence at $SHA yet; expected from alice, Analysis, botty[bot]"
+
+want "no eligible source names the state, never a blank clause" "" \
+  "no review evidence at $SHA yet; no configured source is eligible here"
 
 # Past the limit: the sha shortens to its 12-character prefix before any name
 # is dropped, and the names that still do not fit are counted.
-TRUSTED_LOGINS="coderabbitai[bot];copilot-pull-request-reviewer[bot];qodo-code-review[bot];chatgpt-codex-connector[bot];bmethod"
-TRUSTED_CONTEXTS="CodeRabbit;copilot-pull-request-reviewer"
-COMMENT_REVIEWERS="chatgpt-codex-connector[bot]:Reviewed commit:;bmethod:REVIEWED-CLEAN"
 want "a list past the limit shortens the sha and counts the remainder" \
+  "$(printf 'coderabbitai[bot]\ncopilot-pull-request-reviewer[bot]\nqodo-code-review[bot]\nchatgpt-codex-connector[bot]\nbmethod\nCodeRabbit\ncopilot-pull-request-reviewer')" \
   "no review evidence at ${SHA:0:12} yet; expected from coderabbitai[bot], copilot-pull-request-reviewer[bot] and 5 more"
 
+# Boundary: a list whose SHORT form lands on the limit keeps every name.
+# Reserving room for a remainder clause before testing that form dropped the
+# last name from a list that fitted.
+short_prefix="no review evidence at ${SHA:0:12} yet; expected from "
+pad() { printf 'n%.0s' $(seq 1 "$1"); }
+two_names() { # TOTAL -> two names whose short form is exactly TOTAL characters
+  local first second rest
+  first="$(pad 20)"
+  rest=$(($1 - ${#short_prefix} - ${#first} - 2))
+  second="$(pad "$rest")"
+  printf '%s\n%s' "$first" "$second"
+}
+for total in 130 139 140; do
+  names="$(two_names "$total")"
+  want "a short-form list of exactly $total characters keeps every name" \
+    "$names" \
+    "$short_prefix$(printf '%s' "$names" | tr '\n' ',' | sed 's/,/, /g')"
+done
+
+# One character past it, and the remainder is counted rather than cut.
+names="$(two_names 141)"
+want "a short-form list one character over counts the remainder" "$names" \
+  "$short_prefix$(printf '%s' "$names" | head -1) and 1 more"
+
 # One name wider than the whole budget: a count, never a name cut mid-word.
-TRUSTED_LOGINS="$(printf 'x%.0s' $(seq 1 200))" TRUSTED_CONTEXTS="" COMMENT_REVIEWERS=""
-want "a name too wide to show becomes a count" \
+want "a name too wide to show becomes a count" "$(printf 'x%.0s' $(seq 1 200))" \
   "no review evidence at ${SHA:0:12} yet; expected from 1 configured reviewer"
 
-TRUSTED_LOGINS="$(printf 'x%.0s' $(seq 1 200));$(printf 'y%.0s' $(seq 1 200))"
 want "the count is plural for more than one" \
+  "$(printf 'x%.0s' $(seq 1 200); echo; printf 'y%.0s' $(seq 1 200))" \
   "no review evidence at ${SHA:0:12} yet; expected from 2 configured reviewers"
 
 echo "$PASS passed, $FAIL failed"
