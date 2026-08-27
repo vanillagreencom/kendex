@@ -81,6 +81,14 @@ pub enum ConfigEdit {
     OpencodeRemoveInstruction {
         reference: String,
     },
+    /// opencode.json: cut the `instructions[]` rows under `prefix` — the
+    /// directory kendex renders instruction files into — down to `keep`,
+    /// the rows the current pass renders. A row pointing anywhere else is
+    /// the person's and stays.
+    OpencodePruneInstructions {
+        prefix: String,
+        keep: Vec<String>,
+    },
     /// codex config.toml: text-level `[features] hooks = true` merge that
     /// preserves comments and ordering.
     CodexEnableHooksFeature,
@@ -188,6 +196,19 @@ impl ConfigEdit {
             ConfigEdit::OpencodeRemoveInstruction { reference } => {
                 if let Some(list) = object.get_mut("instructions").and_then(Value::as_array_mut) {
                     list.retain(|v| v.as_str() != Some(reference));
+                    if list.is_empty() {
+                        object.shift_remove("instructions");
+                    }
+                }
+                Ok(())
+            }
+            ConfigEdit::OpencodePruneInstructions { prefix, keep } => {
+                if let Some(list) = object.get_mut("instructions").and_then(Value::as_array_mut) {
+                    list.retain(|v| {
+                        v.as_str().is_none_or(|row| {
+                            !row.starts_with(prefix) || keep.iter().any(|k| k == row)
+                        })
+                    });
                     if list.is_empty() {
                         object.shift_remove("instructions");
                     }

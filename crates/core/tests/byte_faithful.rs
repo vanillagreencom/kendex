@@ -39,6 +39,10 @@ fn every_config_edit_is_byte_stable_on_reapply() {
             reference: "instructions/x.md".into(),
             bash_permission: true,
         },
+        ConfigEdit::OpencodePruneInstructions {
+            prefix: "instructions/".into(),
+            keep: vec!["instructions/x.md".into()],
+        },
         ConfigEdit::CodexEnableHooksFeature,
         ConfigEdit::UpsertMarkerBlock {
             name: "pi".into(),

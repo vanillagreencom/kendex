@@ -44,6 +44,7 @@ mod removal;
 mod scope_writes;
 mod scoring;
 mod set_change;
+mod stale;
 mod takeover;
 mod targets;
 mod tree_plan;
@@ -180,7 +181,7 @@ fn plan_scope_once(
             notes: &mut moved_notes,
         },
     )?;
-    removal::stale_emitted(lock, &new_lock, &mut guard, &mut ops)?;
+    stale::stale_emitted(lock, &new_lock, &mut guard, &mut ops)?;
 
     let refused_keys = plan_pass::plan_refusals(
         env,
@@ -214,6 +215,7 @@ fn plan_scope_once(
     // Written here and nowhere else: every entry this pass keeps is in
     // the record by now, the sweep's carry-forwards included.
     pi_hooks_move::record_finished(&mut new_lock, &moved_out);
+    stale::stale_instruction_rows(env, scope, lock, &new_lock, &mut config_edits)?;
     plan_config_edits(env, scope, config_edits, &mut ops)?;
     let set_changes = set_changes(scope, lock, &new_lock);
     let kept = kept_members(scope, lock, &new_lock, &options.uninstalled_bundles);

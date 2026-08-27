@@ -164,64 +164,6 @@ impl TrashGuard {
     }
 }
 
-/// An earlier install of a still-declared item wrote somewhere this one will
-/// not: a codex command whose emitted name changed when a skill claimed it,
-/// a skill whose link a later layout no longer produces. What it left is
-/// ours and nobody wants it now — without this it stays on disk forever,
-/// offered by the tool under a name nobody declared, or absolute and
-/// committed.
-///
-/// Judged by the record this pass writes, not by what it rendered. An
-/// item held or refused carries its old record forward and plans no
-/// replacement, so the paths it recorded are still what runs; taking them
-/// off would leave the tool disconnected from a tree that stayed.
-pub(super) fn stale_emitted(
-    lock: &Lock,
-    new_lock: &Lock,
-    guard: &mut TrashGuard,
-    ops: &mut Vec<PlannedOp>,
-) -> Result<()> {
-    for (key, recorded) in &new_lock.entries {
-        let Some(entry) = lock.entries.get(key) else {
-            continue;
-        };
-        let Some(previous) = entry.emitted.as_ref() else {
-            continue;
-        };
-        let current = recorded.emitted.iter().flat_map(|e| e.paths.iter());
-        for path in &previous.paths {
-            if current.clone().any(|kept| kept == path) {
-                continue;
-            }
-            if !path.exists() && !path.is_symlink() {
-                continue;
-            }
-            // Bytes that cannot be proven ours stay put — a re-shaped
-            // artifact must not cost the user an edit they made under the
-            // old shape.
-            if !path.is_symlink()
-                && entry.rendered_hash.as_ref().is_none_or(|rendered| {
-                    crate::hash::hash_tree(path)
-                        .map(|disk| &disk != rendered)
-                        .unwrap_or(true)
-                })
-            {
-                continue;
-            }
-            let planned = trash(
-                format!(
-                    "Move {} {}'s old files to the trash",
-                    recorded.kind.name(),
-                    recorded.name
-                ),
-                path.clone(),
-            )?;
-            guard.extend(ops, [planned]);
-        }
-    }
-    Ok(())
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn orphans(
     env: &Env,

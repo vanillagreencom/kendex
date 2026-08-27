@@ -79,7 +79,11 @@ A `PreToolUse` hook matching `Bash` additionally sets
 
 The plan preview, the report and the tool's card all carry an advisory
 notice (`advisory_notice`, `crates/core/src/engine/targets.rs`). Disabling renames
-the instruction file to `.disabled` and removes the config reference.
+the instruction file to `.disabled` and removes the config reference. The
+rows under the instructions directory are the current render set, no more:
+a refresh cuts rows there that nothing renders anymore, and never touches
+rows pointing anywhere else (`stale_instruction_rows`,
+`crates/core/src/engine/stale.rs`).
 
 ## Validation
 

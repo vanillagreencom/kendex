@@ -51,6 +51,32 @@ fn another_writers_key_order_is_kept_and_is_not_drift() {
     assert!(is_clean(&f), "a key another tool appended is not drift");
 }
 
+/// The instructions rows under kendex's render directory are the current
+/// render set, no more: a row left by a render nothing records — an older
+/// naming, a dropped lock — leaves with its file, while the person's own
+/// rows ride through untouched.
+#[test]
+fn stale_instruction_rows_leave_with_the_files_nothing_renders() {
+    let f = fixture("[hooks.audit]\nsource = \"cat\"\nharnesses = [\"opencode\"]\n");
+    apply_now(&f);
+
+    let config = f.project.join("opencode.json");
+    let mut doc = json(&config);
+    let rows = doc["instructions"].as_array_mut().unwrap();
+    rows.push(".opencode/instructions/vstack-hook-old.md".into());
+    rows.push("AGENTS.md".into());
+    fs::write(&config, serde_json::to_string_pretty(&doc).unwrap() + "\n").unwrap();
+
+    apply_now(&f);
+    let refreshed = json(&config);
+    assert_eq!(
+        refreshed["instructions"],
+        serde_json::json!([".opencode/instructions/kendex-hook-audit.md", "AGENTS.md"]),
+        "the stale row goes with its file; the person's row stays"
+    );
+    assert!(is_clean(&f));
+}
+
 /// A settings file kendex cannot read back blocks that registration alone
 /// — named, with the file — while the rest of the scope still plans.
 #[test]

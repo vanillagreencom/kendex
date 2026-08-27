@@ -52,6 +52,10 @@ an outside contributor.
 
 ### Fixed
 
+- A refresh cuts opencode.json's `instructions` rows under the instructions
+  directory down to what it renders now, so a row for a file no refresh
+  renders anymore leaves with its file. Rows pointing elsewhere are untouched.
+
 - The `task-completed-check` hook counts untracked files as changes, and blocks
   on any nonzero clippy exit or a git that cannot say what changed. It passed
   all three before: a new-file-only task, a killed clippy, an unreadable repo.

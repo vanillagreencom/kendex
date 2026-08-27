@@ -76,6 +76,17 @@ pub(crate) enum HookTarget {
     Rule { path: PathBuf },
 }
 
+/// How an instructions row spells the directory kendex renders opencode
+/// instruction files into, at this scope. The rows hook_target writes and
+/// the rows the stale-row sweep claims both read this, so the spelling
+/// written and the spelling swept can never disagree.
+pub(super) fn opencode_instruction_prefix(scope: &Scope) -> &'static str {
+    match scope {
+        Scope::Global => "instructions/",
+        Scope::Project { .. } => ".opencode/instructions/",
+    }
+}
+
 pub(crate) fn hook_target(
     env: &Env,
     scope: &Scope,
@@ -135,10 +146,7 @@ pub(crate) fn hook_target(
             };
             let dir = base.join("instructions");
             let file = format!("kendex-hook-{name}.md");
-            let reference = match scope {
-                Scope::Global => format!("instructions/{file}"),
-                Scope::Project { .. } => format!(".opencode/instructions/{file}"),
-            };
+            let reference = format!("{}{file}", opencode_instruction_prefix(scope));
             Some(HookTarget::Instruction {
                 path: dir.join(&file),
                 config: crate::harness::opencode::config_file(env, scope),

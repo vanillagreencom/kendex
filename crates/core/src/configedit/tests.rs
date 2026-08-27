@@ -70,6 +70,31 @@ fn opencode_instruction_and_codex_feature_edits() {
     assert_eq!(value["mcp"]["db"]["type"], "local");
     assert_eq!(value["permission"]["bash"]["*"], "ask");
 
+    let prune = ConfigEdit::OpencodePruneInstructions {
+        prefix: ".opencode/instructions/".into(),
+        keep: vec![".opencode/instructions/kendex-hook-guard.md".into()],
+    };
+    let doc = r#"{"instructions": [".opencode/instructions/kendex-hook-guard.md", ".opencode/instructions/vstack-hook-old.md", "AGENTS.md"]}"#;
+    let pruned = prune.apply(doc).unwrap();
+    assert_eq!(prune.apply(&pruned).unwrap(), pruned);
+    let value: Value = serde_json::from_str(&pruned).unwrap();
+    assert_eq!(
+        value["instructions"],
+        serde_json::json!([".opencode/instructions/kendex-hook-guard.md", "AGENTS.md"]),
+        "rows under the render directory are cut to the render set; the person's stay"
+    );
+    let emptied = ConfigEdit::OpencodePruneInstructions {
+        prefix: ".opencode/instructions/".into(),
+        keep: Vec::new(),
+    }
+    .apply(r#"{"instructions": [".opencode/instructions/vstack-hook-old.md"]}"#)
+    .unwrap();
+    let value: Value = serde_json::from_str(&emptied).unwrap();
+    assert!(
+        value.get("instructions").is_none(),
+        "an emptied array is a key the user never wrote"
+    );
+
     let toml = "# my config\nmodel = \"gpt\"\n\n[features]\nexperimental = true\n";
     let enabled = ConfigEdit::CodexEnableHooksFeature.apply(toml).unwrap();
     assert!(enabled.contains("# my config"));
