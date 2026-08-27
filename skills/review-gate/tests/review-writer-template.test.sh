@@ -149,7 +149,7 @@ pin_workflows() { # file, label
   local if_line if_missing term
   if_line="$(grep -m 1 -E '^    if: ' <<<"$relay_block" || true)"
   if_missing=""
-  for term in "github.event_name != 'merge_group'" "github.event_name != 'workflow_dispatch'" "github.event_name != 'schedule'" "vars.REVIEW_GATE_CHECK_RUN_NAME"; do
+  for term in "github.event_name != 'merge_group'" "github.event_name != 'workflow_dispatch'" "github.event_name != 'schedule'" "github.event.check_run.name == vars.REVIEW_GATE_CHECK_RUN_NAME"; do
     grep -qF -- "$term" <<<"$if_line" || if_missing="${if_missing:+$if_missing }[$term]"
   done
   if [[ -n "$if_line" && -z "$if_missing" ]]; then
@@ -387,6 +387,20 @@ pin_workflows() { # file, label
   assert_eq "$count" "2" "[$tag] tpl: BOTH engine jobs refuse an empty default-branch resolution before checking anything out"
   count="$(grep -cE '^          DEFAULT_BRANCH: ' "$wf" || true)"
   assert_eq "$count" "2" "[$tag] tpl: each guard step binds the DEFAULT_BRANCH it tests (an unbound read would refuse every run)"
+  # The REFUSAL is the point, not the diagnostic beside it: a guard whose
+  # exit went to 0 prints the same line and checks the unpinned ref out
+  # anyway. Counted per guard, in the guard's own indentation.
+  # Bound to the guard's OWN diagnostic, not counted file-wide: the two
+  # missing-engine guards also exit 1, and counting those would pass a
+  # default-branch guard whose refusal was removed.
+  count="$(awk '
+    /default_branch resolved empty/ { w = 3; next }
+    w > 0 {
+      if ($0 ~ /^[[:space:]]*exit[[:space:]]+[1-9]/) { n++; w = 0 } else w--
+    }
+    END { print n + 0 }
+  ' "$wf")"
+  assert_eq "$count" "2" "[$tag] tpl: BOTH guard steps exit NONZERO on an empty resolution (the diagnostic without the refusal checks out the event's ref regardless)"
   rc=0; grep -qE -- "default_branch \|\|" "$wf" || rc=$?
   case "$rc" in
     1) PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: no ref falls back to a hardcoded branch name — the copy carries no per-repo values" ;;
