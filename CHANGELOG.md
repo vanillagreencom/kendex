@@ -50,6 +50,9 @@ an outside contributor.
   `$HOME` for every later tool call, the move the hook exists to stop, and
   only `cd <path>` was caught before.
 
+- `worktree`: an untracked `.gitignore` under a tracked-content `WORKTREE_SYMLINKS`
+  entry is copied, not symlinked, so the worktree ignores what the main checkout
+  ignores and git stops warning `unable to access ... Too many levels of symbolic links`.
 - The settings template no longer seeds `.cursor` into `WORKTREE_SYMLINKS`, so
   `worktree fix-links` passes in repos that do not use Cursor; a repo that
   does adds it back in its own `kendex.settings.toml`.

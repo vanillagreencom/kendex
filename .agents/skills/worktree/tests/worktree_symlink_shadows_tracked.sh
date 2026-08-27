@@ -275,6 +275,69 @@ set -e
 assert_eq "$merge_status2" "0" "the merge that introduces the tracked child succeeds"
 assert_real "$PREDATE_WT/.agents/skills/late.md" "the merge wrote the newly-tracked child as a real file"
 
+echo "=== an untracked .gitignore under a tracked-content entry is copied, not linked (KEN-685) ==="
+
+# Git refuses to read an ignore file through a symlink, so a linked
+# .gitignore applies none of its rules in the worktree and prints "unable to
+# access" on every command. drovr's shape: `.opencode/agents` is tracked,
+# `.opencode/.gitignore` is untracked and ignores itself plus bun.lock.
+IGN_ROOT="$TMP_ROOT/ignore"
+make_repo "$IGN_ROOT"
+mkdir -p "$IGN_ROOT/main/.opencode/agents"
+printf 'agent\n' >"$IGN_ROOT/main/.opencode/agents/dev.md"
+printf 'bun.lock\n.gitignore\n' >"$IGN_ROOT/main/.opencode/.gitignore"
+printf 'lock\n' >"$IGN_ROOT/main/.opencode/bun.lock"
+printf 'WORKTREE_SYMLINKS=".opencode"\n' >"$IGN_ROOT/main/.env"
+git -C "$IGN_ROOT/main" add .opencode/agents/dev.md
+git -C "$IGN_ROOT/main" commit -q -m 'track opencode agents'
+push_main "$IGN_ROOT"
+assert_eq "$(git -C "$IGN_ROOT/main" status --porcelain -- .opencode)" "" "main ignores bun.lock through the untracked .gitignore"
+
+set +e
+IGN_WT="$( (cd "$IGN_ROOT/main" && "$WORKTREE_SCRIPT" create ignore-check) 2>"$IGN_ROOT/err" )"
+ign_status=$?
+set -e
+assert_eq "$ign_status" "0" "create succeeds for the entry holding an untracked .gitignore"
+[[ -n "$IGN_WT" && -d "$IGN_WT" ]] || { echo "FATAL: worktree not created: $(cat "$IGN_ROOT/err")"; exit 1; }
+
+assert_real "$IGN_WT/.opencode/.gitignore" "the .gitignore is a real file in the worktree, not a link"
+assert_eq "$(cat "$IGN_WT/.opencode/.gitignore")" "$(cat "$IGN_ROOT/main/.opencode/.gitignore")" "the copy has main's content"
+assert_real "$IGN_WT/.opencode/agents/dev.md" "the tracked file beside it stays a real file"
+
+# The proof: the worktree ignores what main ignores, and git stops complaining.
+printf 'lock\n' >"$IGN_WT/.opencode/bun.lock"
+assert_eq "$(git -C "$IGN_WT" status --porcelain 2>&1)" "" "bun.lock is ignored in the worktree"
+assert_lacks "$(git -C "$IGN_WT" status 2>&1)" "unable to access" "git prints no ignore-file access warning"
+
+echo "=== the .gitignore copy follows main on the next pass, and a legacy link heals to a copy ==="
+
+printf 'bun.lock\n.gitignore\nnode_modules/\n' >"$IGN_ROOT/main/.opencode/.gitignore"
+set +e
+(cd "$IGN_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$IGN_WT") >/dev/null 2>"$IGN_ROOT/err2"
+ign_fix_status=$?
+set -e
+assert_eq "$ign_fix_status" "0" "fix-links succeeds after main's .gitignore changed"
+assert_lacks "$(cat "$IGN_ROOT/err2")" "Warning" "fix-links stays quiet while re-copying"
+assert_eq "$(cat "$IGN_WT/.opencode/.gitignore")" "$(cat "$IGN_ROOT/main/.opencode/.gitignore")" "the copy picked up main's change"
+
+# A worktree provisioned by the older skill holds a link where the copy belongs.
+rm -f "$IGN_WT/.opencode/.gitignore"
+ln -s "$IGN_ROOT/main/.opencode/.gitignore" "$IGN_WT/.opencode/.gitignore"
+set +e
+(cd "$IGN_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$IGN_WT") >/dev/null 2>"$IGN_ROOT/err3"
+ign_legacy_status=$?
+set -e
+assert_eq "$ign_legacy_status" "0" "fix-links succeeds on a legacy linked .gitignore"
+assert_real "$IGN_WT/.opencode/.gitignore" "the legacy link became a copy"
+assert_eq "$(git -C "$IGN_WT" status --porcelain 2>&1)" "" "the healed worktree ignores bun.lock again"
+
+# fix-links judges the copy's content: a worktree edit is drift it closes.
+printf 'edited\n' >"$IGN_WT/.opencode/.gitignore"
+set +e
+(cd "$IGN_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$IGN_WT") >/dev/null 2>&1
+set -e
+assert_eq "$(cat "$IGN_WT/.opencode/.gitignore")" "$(cat "$IGN_ROOT/main/.opencode/.gitignore")" "a worktree edit to the copy is overwritten by main's file"
+
 echo "=== a locked index during legacy heal reports failure, not a swallowed success (#850) ==="
 
 # The old code discarded failures from --no-assume-unchanged and the missing-
