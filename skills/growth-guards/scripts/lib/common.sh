@@ -12,6 +12,11 @@
 
 set -euo pipefail
 
+# Sourced here rather than by each check: every one of them needs a repository
+# root, and that is a path capture.
+# shellcheck source=paths.sh
+source "$(dirname -- "${BASH_SOURCE[0]}")/paths.sh"
+
 GG_TAB="$(printf '\t')"
 GG_VIOLATIONS=0
 # Cleanup state is per-process. An INHERITED value must never decide what a
@@ -51,7 +56,7 @@ gg_tmpdir() { # per-run scratch directory in GG_TMP, removed at exit
 
 gg_repo_root_cd() { # cd to the repository root; all configured paths are repo-relative
   local root
-  root="$(git rev-parse --show-toplevel)" || gg_config_error "not inside a git repository"
+  gg_path root git rev-parse --show-toplevel || gg_config_error "not inside a git repository"
   cd -- "$root" || gg_config_error "cannot cd to repository root '$root'"
 }
 

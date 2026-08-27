@@ -258,5 +258,51 @@ esac
 [ "$RC" -ne 0 ] && ok "and its failure fails the commit" \
   || bad "nested sibling failed and the commit passed" "rc=$RC out=$OUT"
 
+echo "=== a project directory whose name ends in a newline ==="
+# `$(...)` strips trailing newlines, and a directory name may end in one. The
+# PROJECT root is the path that matters: it is derived from where this script
+# lives, handed back to a caller, made relative, baked into the helper and
+# read again by the chain. Every one of those was a capture, and a capture
+# lost the last byte — so the sibling search looked under a directory that is
+# not there, announced the gate as not installed, and the commit passed while
+# the gate would have failed it.
+NL="$TMP/nlrepo"
+mkdir -p "$NL"
+git -C "$NL" init -q
+git -C "$NL" config user.email t@t
+git -C "$NL" config user.name t
+# The project directory itself ends in a newline.
+PROJ="$NL/web
+"
+mkdir -p "$PROJ/.agents/skills" "$PROJ/.github/skills"
+cp -R "$SKILL_DIR" "$PROJ/.agents/skills/growth-guards"
+mkdir -p "$PROJ/.github/skills/preflight/scripts"
+cat >"$PROJ/.github/skills/preflight/scripts/preflight" <<'PREFLIGHT'
+#!/bin/sh
+echo "preflight: refusing this commit"
+exit 1
+PREFLIGHT
+chmod +x "$PROJ/.github/skills/preflight/scripts/preflight"
+
+printf 'hello\n' >"$NL/a.txt"
+git -C "$NL" add -A
+git -C "$NL" commit -q -m "feat: base"
+OUT=""; RC=0
+OUT="$("$PROJ/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$NL" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "the install resolves a newline-terminated project" \
+  || bad "install under a newline-named project" "rc=$RC out=$OUT"
+
+printf 'more\n' >"$NL/b.txt"
+git -C "$NL" add -A
+OUT=""; RC=0
+OUT="$(cd "$NL" && git commit -m "feat: nl" 2>&1)" || RC=$?
+case "$OUT" in
+  *"preflight: refusing this commit"*) ok "and the chain still finds the project's siblings" ;;
+  *"preflight not installed"*) bad "the sibling was lost with the newline" "$OUT" ;;
+  *) bad "preflight neither ran nor announced a skip" "$OUT" ;;
+esac
+[ "$RC" -ne 0 ] && ok "so the failing gate still fails the commit" \
+  || bad "commit passed with a failing sibling" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

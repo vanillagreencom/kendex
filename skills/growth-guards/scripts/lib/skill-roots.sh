@@ -37,12 +37,15 @@ GG_SKILL_ROOTS=".agents/skills .claude/skills .cursor/skills .gemini/skills .git
 # skill root, and stripping the root off names the project. Nonzero when
 # the copy is not under a root this package knows, which is the source
 # layout and a caller that should fall back to the git top level.
-gg_project_root() { # SCRIPT_DIR -> project root on stdout
-  local holder="" base=""
-  holder="$(cd -- "$1/../.." 2>/dev/null && pwd -P)" || return 1
+gg_project_root() { # VAR SCRIPT_DIR -> sets VAR to the project root
+  local __name="$1" holder="" base=""
+  gg_path holder gg_physical "$2/../.." || return 1
   for base in $GG_SKILL_ROOTS; do
     case "$holder" in
-      */"$base") printf '%s' "${holder%"/$base"}"; return 0 ;;
+      */"$base")
+        eval "$__name=\${holder%\"/\$base\"}"
+        return 0
+        ;;
     esac
   done
   return 1
@@ -54,11 +57,12 @@ gg_project_root() { # SCRIPT_DIR -> project root on stdout
 # Empty when the project IS the work-tree root, which is most repositories,
 # and carrying its own trailing slash so callers join it without minting a
 # `.` segment into every path they then print.
-gg_project_rel() { # SCRIPT_DIR WORKTREE -> relative prefix on stdout
-  local project="" worktree=""
-  project="$(gg_project_root "$1")" || return 0
-  worktree="$(cd -- "$2" 2>/dev/null && pwd -P)" || return 0
+gg_project_rel() { # VAR SCRIPT_DIR WORKTREE -> sets VAR to the prefix
+  local __name="$1" project="" worktree=""
+  eval "$__name=''"
+  gg_project_root project "$2" || return 0
+  gg_path worktree gg_physical "$3" || return 0
   case "$project" in
-    "$worktree"/*) printf '%s/' "${project#"$worktree"/}" ;;
+    "$worktree"/*) eval "$__name=\"\${project#\"\$worktree/\"}/\"" ;;
   esac
 }

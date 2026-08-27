@@ -31,10 +31,17 @@ CREATED_MARKER="# kendex-guards-hook created this file"
 # Whole interpreter names only: '.*sh' would match #!/usr/bin/fish and treat
 # POSIX-sh syntax as runnable by a hook that cannot run it.
 SH_SHEBANG_RE='^#![[:space:]]*([^[:space:]]*/)?(env[[:space:]]+)?(sh|bash|dash|ksh|zsh)([[:space:]]|$)'
-SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
+GG_BOOT="${GG_BOOT%x}"
+# The one newline `pwd` added; anything before it is the path.
+SCRIPT_DIR="${GG_BOOT%$'\n'}"
 # The read-only halves of --check, and the roots every search here uses.
+# shellcheck source=lib/paths.sh
+source "$SCRIPT_DIR/lib/paths.sh"
 # shellcheck source=lib/skill-roots.sh
 source "$SCRIPT_DIR/lib/skill-roots.sh"
+# shellcheck source=lib/helper-body.sh
+source "$SCRIPT_DIR/lib/helper-body.sh"
 # shellcheck source=lib/hook-entrypoint.sh
 source "$SCRIPT_DIR/lib/hook-entrypoint.sh"
 # shellcheck source=lib/hook-check.sh
@@ -127,7 +134,7 @@ resolve_roots
 classify_hooks_path_or_stop
 
 # Where this copy's project sits inside the repository — see skill-roots.sh.
-PROJECT_REL="$(gg_project_rel "$SCRIPT_DIR" "$REPO_ABS")"
+gg_project_rel PROJECT_REL "$SCRIPT_DIR" "$REPO_ABS"
 
 if [ "$HOOKS_PATH_ELSEWHERE" -eq 1 ] && [ "$MODE" = "install" ]; then
   if hooks_path_off; then
@@ -146,73 +153,6 @@ if [ "$MODE" != "check" ]; then
   mkdir -p -- "$HOOKS_DIR" || die "could not create $HOOKS_DIR"
 fi
 
-# The helper is POSIX sh and self-contained. It takes this install's own
-# scripts directory first, then rediscovers one from the MAIN checkout (linked
-# worktrees share this hooks directory and may carry no skills of their own),
-# so a moved or re-installed checkout repairs itself.
-# The exact bytes this installer writes as the helper. Generating and
-# VERIFYING both go through here, so a checker cannot drift from a writer
-# and start blessing a helper that only resembles one.
-helper_body() { # -> the helper this installer would write, on stdout
-  local sq="'" escaped=""
-  escaped="${SCRIPT_DIR//$sq/$sq\\$sq$sq}"
-  cat <<HELPER_HEAD
-#!/bin/sh
-# Scripts directory of the install that wrote this file.
-installed_scripts='$escaped'
-# Baked: a helper in .git/hooks cannot source a package that may be gone.
-skill_roots='$GG_SKILL_ROOTS'
-# Baked too: a moved checkout still resolves the project this came from.
-project_rel='$PROJECT_REL'
-HELPER_HEAD
-  cat <<'HELPER'
-# kendex growth-guards git hooks. Managed by the growth-guards skill and
-# rewritten on every install — do not edit.
-#
-# usage: kendex-guards pre-commit | kendex-guards commit-msg MSGFILE
-#
-# Blocks whenever the guard it should run cannot be reached: a gate that
-# cannot run is never a pass.
-mode="${1-}"
-case "$mode" in
-  pre-commit | commit-msg) shift ;;
-  *)
-    echo "kendex-guards: usage: kendex-guards pre-commit | commit-msg MSGFILE" >&2
-    exit 2
-    ;;
-esac
-
-# Exit 2 is the family's "could not complete", distinct from a check's
-# exit 1 verdict. Both block the commit.
-fail() {
-  echo "kendex-guards: $*" >&2
-  echo "  The commit is blocked because a guard could not run. Re-arm the shims with 'kendex guard install', or bypass this commit with 'git commit --no-verify'." >&2
-  exit 2
-}
-
-common="$(git rev-parse --git-common-dir 2>/dev/null)" || common=""
-[ -n "$common" ] || fail "could not resolve the common git directory"
-case "$common" in /*) ;; *) common="$PWD/$common" ;; esac
-top="$(git rev-parse --show-toplevel 2>/dev/null)" || top=""
-[ -n "$top" ] || fail "could not resolve the working tree root"
-# The main checkout owns the installed skills; a linked worktree shares this
-# hooks directory but may not carry its own copy. Its own root is the
-# fallback for layouts where the git directory is not <root>/.git.
-main="${common%/*}"
-[ -n "$main" ] || main="/"
-if [ -n "$installed_scripts" ] && [ -x "$installed_scripts/$mode" ]; then
-  exec "$installed_scripts/$mode" "$@"
-fi
-for root in "$main/$project_rel" "$top/$project_rel" "$main/" "$top/"; do
-  for base in $skill_roots; do
-    if [ -x "$root$base/growth-guards/scripts/$mode" ]; then
-      exec "$root$base/growth-guards/scripts/$mode" "$@"
-    fi
-  done
-done
-fail "no executable growth-guards $mode script at $installed_scripts, nor under $main or $top (project '$project_rel', roots $skill_roots)"
-HELPER
-}
 write_helper() { # PATH
   local helper="$1" tmp=""
   # Non-destructive even against a name collision: never write through a
@@ -532,14 +472,14 @@ other_worktree_still_installed() {
   local tracked_status=0
   local own_gitdir="" own_phys="" common_phys="" guess_gitdir="" guess_phys="" parent=""
   local roots=()
-  repo_phys="$(cd -- "$REPO_ABS" 2>/dev/null && pwd -P)" || return 2
+  gg_path repo_phys gg_physical "$REPO_ABS" || return 2
   # This checkout IS the main work tree exactly when its own git directory is
   # the common one; a linked worktree's is <common>/worktrees/<name>.
   own_gitdir="$(git -C "$REPO_ABS" rev-parse --git-dir 2>/dev/null || true)"
   [ -n "$own_gitdir" ] || return 2
   case "$own_gitdir" in /*) ;; *) own_gitdir="$REPO_ABS/$own_gitdir" ;; esac
-  own_phys="$(cd -- "$own_gitdir" 2>/dev/null && pwd -P)" || return 2
-  common_phys="$(cd -- "$COMMON_DIR" 2>/dev/null && pwd -P)" || return 2
+  gg_path own_phys gg_physical "$own_gitdir" || return 2
+  gg_path common_phys gg_physical "$COMMON_DIR" || return 2
   if [ "$own_phys" = "$common_phys" ]; then
     main_root="$REPO_ABS"
   else
@@ -557,7 +497,7 @@ other_worktree_still_installed() {
     guess_gitdir="$(git -C "$main_root" rev-parse --git-common-dir 2>/dev/null || true)"
     [ -n "$guess_gitdir" ] || return 2
     case "$guess_gitdir" in /*) ;; *) guess_gitdir="$main_root/$guess_gitdir" ;; esac
-    guess_phys="$(cd -- "$guess_gitdir" 2>/dev/null && pwd -P)" || return 2
+    gg_path guess_phys gg_physical "$guess_gitdir" || return 2
     [ "$guess_phys" = "$common_phys" ] || return 2
   fi
   roots+=("$main_root")
@@ -598,7 +538,7 @@ other_worktree_still_installed() {
       done
       continue
     fi
-    root_phys="$(cd -- "$root" 2>/dev/null && pwd -P)" || return 2
+    gg_path root_phys gg_physical "$root" || return 2
     if [ "$root_phys" = "$repo_phys" ]; then
       continue
     fi
@@ -611,7 +551,7 @@ other_worktree_still_installed() {
       if [ ! -x "$dir/pre-commit" ] || [ ! -x "$dir/commit-msg" ]; then
         continue
       fi
-      phys="$(cd -- "$dir" 2>/dev/null && pwd -P)" || continue
+      gg_path phys gg_physical "$dir" || continue
       case "$phys" in
         "$repo_phys" | "$repo_phys"/*) continue ;;
       esac
@@ -659,7 +599,7 @@ if [ "$MODE" = "check" ]; then
       esac
       # git answers relative to the invocation directory, so from a
       # subdirectory the path carries traversal; the directory names itself.
-      if REDIRECT_RESOLVED="$(cd -- "$REDIRECT_DIR" 2>/dev/null && pwd)"; then
+      if gg_path REDIRECT_RESOLVED gg_physical "$REDIRECT_DIR"; then
         REDIRECT_DIR="$REDIRECT_RESOLVED"
       fi
       REDIRECT_VERDICT=0

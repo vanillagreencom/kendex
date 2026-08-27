@@ -11,8 +11,13 @@
 # else 1 if any found violations, else 0. Both nonzero verdicts block.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
+GG_BOOT="${GG_BOOT%x}"
+# The one newline `pwd` added; anything before it is the path.
+SCRIPT_DIR="${GG_BOOT%$'\n'}"
 GG_CHECK="pre-commit"
+# shellcheck source=lib/paths.sh
+source "$SCRIPT_DIR/lib/paths.sh"
 # shellcheck source=lib/skill-roots.sh
 source "$SCRIPT_DIR/lib/skill-roots.sh"
 # shellcheck source=lib/common.sh
@@ -88,7 +93,7 @@ run_step() { # LABEL COMMAND [ARGS...] — runs one step and folds its verdict
 # to the directory that was never the problem.
 gg_searched_roots() {
   local project=""
-  project="$(gg_project_root "$SCRIPT_DIR")" || project=""
+  gg_project_root project "$SCRIPT_DIR" || project=""
   [ "$project" = "$PWD" ] && project=""
   case "$project" in
     "") printf '%s' "$PWD" ;;
@@ -107,7 +112,7 @@ resolve_sibling() { # SKILL — skill directory on stdout; 1 when no side carrie
   # directory; where a kendex project sits below it the siblings are beside
   # THIS copy and nowhere near $PWD, and a sibling that failed was a gate
   # reporting nothing while the chain exited 0.
-  project="$(gg_project_root "$SCRIPT_DIR")" || project=""
+  gg_project_root project "$SCRIPT_DIR" || project=""
   [ "$project" = "$PWD" ] && project=""
   for root in "$PWD" "$project"; do
     [ -n "$root" ] || continue

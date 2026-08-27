@@ -16,6 +16,10 @@ an outside contributor.
 
 ### Fixed
 
+- The commit chain finds its gates in a project whose directory name ends in
+  a newline; the path was truncated, so a gate that would have failed the
+  commit was reported as not installed and the commit passed.
+
 - The commit chain finds its sibling gates in a kendex project that sits
   below the git top level; they were skipped as not installed, so a gate
   that would have failed the commit reported nothing.
