@@ -52,12 +52,18 @@ jobs:
         with:
           node-version: "22"
       - name: Install the freely installable harness CLIs
+        # codex is pinned: 0.150.1 declares its platform binaries as aliases
+        # to @openai/codex@<version>-<platform> tags that were never
+        # published, and an optional dependency that cannot resolve does not
+        # fail an install — so the launcher installs and then refuses to run.
+        # Lift the pin once a later release resolves its own binaries (KEN-675).
         run: |
           npm install -g \
             opencode-ai \
             @google/gemini-cli \
-            @openai/codex \
+            @openai/codex@0.150.0 \
             @anthropic-ai/claude-code
+          codex --version
       - name: Round-trip the emitted trees
         env:
           KENDEX_CLI_SMOKE: "1"
