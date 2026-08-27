@@ -82,6 +82,11 @@ one_line() { # filename, status -> one compare files[] entry with a one-line pat
 -before
 +after'
 }
+renamed() { # previous-filename, filename -> one renamed compare files[] entry
+  jq -n --arg prev "$1" --arg fn "$2" --arg patch '@@ -1 +1 @@
+-before
++after' '{filename:$fn,status:"renamed",previous_filename:$prev,patch:$patch}'
+}
 RENDER_SH="$(one_line ".agents/skills/hello/scripts/run.sh" modified)"
 RENDER_TOML="$(one_line ".agents/skills/hello/kendex.settings.toml.example" added)"
 RENDER_JSON="$(one_line ".agents/skills/hello/schema.json" removed)"
@@ -136,6 +141,26 @@ compare_fix ahead "[$(one_line ".agents/skills/hello/run.sh
 .agents/skills/evil.sh" modified)]"
 run "a filename with a control character refuses — line-based matching cannot be proven" awaiting "control characters"
 
+echo "=== a rename is judged by both its names ==="
+
+reset
+compare_fix ahead "[$(renamed ".agents/skills/hello/scripts/run.sh" ".agents/skills/hello/scripts/start.sh")]"
+run "a rename wholly inside the set carries" approved
+
+reset
+compare_fix ahead "[$(renamed "src/main.rs" ".agents/skills/hello/scripts/run.sh")]"
+run "a rename INTO the set from outside it refuses — the source was never covered" awaiting
+
+reset
+CFG_CARRY_EXCLUDE=".agents/skills/hello/AGENTS.md"
+compare_fix ahead "[$(renamed ".agents/skills/hello/AGENTS.md" ".agents/skills/hello/scripts/run.sh")]"
+run "a rename OUT of an excluded path refuses on the exclusion, not the class" awaiting "matched by REVIEW_GATE_CARRY_FORWARD_EXCLUDE"
+
+reset
+compare_fix ahead "[$(renamed ".agents/skills/hello/ru
+n.sh" ".agents/skills/hello/scripts/run.sh")]"
+run "a control character in the SOURCE name refuses — boundaries are unprovable either way" awaiting "control characters"
+
 reset
 reviews_set "$(review "reviewer" CHANGES_REQUESTED "2026-01-02T00:00:00Z" "$OTHER")"
 compare_fix ahead "[$RENDER_SH]"
@@ -156,12 +181,27 @@ run "the class enabled over an empty set exits 2" "" "names no path"
 reset
 CFG_VENDORED_PATHS=".agents/*;*"
 compare_fix ahead "[$RENDER_SH]"
-run "an entry of wildcards alone exits 2" "" "wildcards alone"
+run "an entry of wildcards alone exits 2" "" "names no literal path text"
 
 reset
 CFG_VENDORED_PATHS="**"
 compare_fix ahead "[$RENDER_SH]"
-run "a set that is only wildcards exits 2" "" "wildcards alone"
+run "a set that is only wildcards exits 2" "" "names no literal path text"
+
+reset
+CFG_VENDORED_PATHS="*/*"
+compare_fix ahead "[$RENDER_SH]"
+run "wildcards around a separator exit 2 — '*' crosses '/'" "" "names no literal path text"
+
+reset
+CFG_VENDORED_PATHS="*.*"
+compare_fix ahead "[$RENDER_SH]"
+run "wildcards around a dot exit 2 — a dot names nothing" "" "names no literal path text"
+
+reset
+CFG_VENDORED_PATHS="skills/*/scripts/*"
+compare_fix ahead "[$(one_line "skills/hello/scripts/run.sh" modified)]"
+run "a multi-segment glob with literal components loads and carries" approved
 
 reset
 CFG_CARRY="docs"

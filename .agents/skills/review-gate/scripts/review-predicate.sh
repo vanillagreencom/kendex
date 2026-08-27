@@ -187,9 +187,9 @@ Carry-forward engine:
       grammar and matcher) naming the kendex render trees the 'vendored'
       class carries, e.g. '.agents/*;.claude/skills/*'. Read from the
       default-branch checkout like every setting, so the PR under judgment
-      cannot widen it. Configuration errors (exit 2): an unsupported
-      spelling, the class enabled over an empty set, or an entry of
-      wildcards alone.
+      cannot widen it; a rename carries only with BOTH names under the set.
+      Configuration errors (exit 2): an unsupported spelling, the class
+      enabled over an empty set, an entry naming no literal path ('*/*').
   REVIEW_GATE_CARRY_FORWARD_EXCLUDE    Path globs (';'-separated,
       shell-style; '*' matches '/' too — fnmatch without FNM_PATHNAME) that
       disqualify a carry: any file in the N->head delta matching an
@@ -481,23 +481,24 @@ EOF_PATTERNS
 CARRY_EXCLUDE_PROPHYLACTIC="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "")" || exit 2
 rg_check_patterns REVIEW_GATE_CARRY_FORWARD_EXCLUDE "$CARRY_EXCLUDE"
 rg_check_patterns REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "$CARRY_EXCLUDE_PROPHYLACTIC"
-# The vendored path set is judged by the same grammar, and by two rules of
-# its own: the class cannot be enabled over an empty set (an unbounded
-# class would carry every file), and no entry may be wildcards alone (the
-# same class by another spelling). Both hold whether or not the class is
-# on, so a set written ahead of enabling it is checked the day it is written.
+# The vendored path set is judged by the same grammar and by two rules of
+# its own: no empty set under an enabled class, and no entry without literal
+# path text — an unbounded class by either spelling. Both hold whether or not
+# the class is on, so a set written ahead of enabling it is checked at once.
 rg_check_patterns REVIEW_GATE_VENDORED_PATHS "$VENDORED_PATHS"
 VENDORED_PATHS_N="$(rg_pack "$VENDORED_PATHS" ';')" || rg_pack_failed REVIEW_GATE_VENDORED_PATHS
 if rg_class_enabled vendored && [ -z "$VENDORED_PATHS_N" ]; then
   echo "::error::review-predicate: REVIEW_GATE_CARRY_FORWARD enables 'vendored' but REVIEW_GATE_VENDORED_PATHS names no path — the class carries only what the committed path set names" >&2
   exit 2
 fi
+# A literal NAME character, not merely one that is not '*': `case` globbing
+# crosses '/', so '*/*' matches nearly every nested path; only a name bounds.
 while IFS= read -r vp; do
   [ -z "$vp" ] && continue
   case "$vp" in
-    *[!*]*) ;;
+    *[[:alnum:]]*) ;;
     *)
-      echo "::error::review-predicate: REVIEW_GATE_VENDORED_PATHS entry '$vp' is wildcards alone — it would carry every file; name the render tree" >&2
+      echo "::error::review-predicate: REVIEW_GATE_VENDORED_PATHS entry '$vp' names no literal path text — '*' crosses '/', so it would carry nearly every file; name the render tree" >&2
       exit 2
       ;;
   esac
@@ -1189,20 +1190,18 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
     # still change agent behavior — AGENTS.md and other instruction markdown
     # are "docs" by extension yet are obeyed mechanically, so a push editing
     # them deserves fresh review. Any changed file matching an exclusion glob
-    # refuses the whole carry. Matching is shell-style via `case` ('*'
-    # crosses '/', so '*AGENTS.md' covers the file at any depth); patterns
-    # never touch the filesystem. Older candidates' deltas are supersets, so
-    # stop walking — same shape as the 300-entry refusal above.
-    # Identical-tree carries never reach here (no delta, nothing to
-    # exclude). The matching loop below is line-based, and a git filename
-    # MAY legally embed a newline — split across lines, such a name could
-    # dodge a compound glob (`skills/*.md` misses `skills/foo\nbar.md`
-    # tested as two records) while the classifier still carries the intact
-    # name. So exclusion matching first demands provable record boundaries:
-    # any control character in any filename refuses the carry (fresh review
-    # required), the same completeness posture as the 300-entry cap.
-    # The vendored class matches the same list by name, line by line, so it
-    # demands the same provable boundaries.
+    # refuses the whole carry; older candidates' deltas are supersets, so
+    # stop walking, and identical-tree carries never reach here. Matching is
+    # shell-style via `case` ('*' crosses '/', so '*AGENTS.md' covers the
+    # file at any depth) and never touches the filesystem. It is also line-
+    # based, and a git filename MAY legally embed a newline: split across
+    # lines such a name dodges a compound glob (`skills/*.md` misses
+    # `skills/foo\nbar.md` read as two records) while the classifier carries
+    # it intact — so any control character in any filename refuses the carry,
+    # the completeness posture of the 300-entry cap. The vendored class reads
+    # the same list and needs the same boundaries. A RENAME contributes BOTH
+    # names (GitHub reports the source in .previous_filename): a rename out
+    # of an excluded path relocates the very file the exclusion holds back.
     delta_files=""
     if [ -n "$CARRY_EXCLUDE" ] || rg_class_enabled vendored; then
       # \p{Cc} (the Unicode control category), NOT a class range written
@@ -1211,7 +1210,7 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
       # a scan that matches everything would silently disable carry-forward
       # wherever exclusions are configured. The selftest's surgical
       # non-match case pins the false-positive direction.
-      ctrl_hit="$(jq '[.files[] | (.filename // "") | test("\\p{Cc}")] | any' <<<"$cmp")" || {
+      ctrl_hit="$(jq '[.files[] | ((.filename // ""), (.previous_filename // "")) | test("\\p{Cc}")] | any' <<<"$cmp")" || {
         echo "::error::could not scan the $base...$HEAD_SHA delta filenames for control characters" >&2
         exit 2
       }
@@ -1219,7 +1218,7 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
         echo "::warning::compare $base...$HEAD_SHA contains a filename with control characters: exclusion matching cannot be proven; refusing carry-forward" >&2
         break
       fi
-      delta_files="$(jq -r '.files[] | .filename // ""' <<<"$cmp")" || {
+      delta_files="$(jq -r '.files[] | (.filename // ""), (.previous_filename // "")' <<<"$cmp")" || {
         echo "::error::could not list the $base...$HEAD_SHA delta files for exclusion matching" >&2
         exit 2
       }
@@ -1252,7 +1251,8 @@ EOF_EXCL_FILES
     # exclusions already rely on (the settings are read from the default
     # branch, so the PR under judgment cannot widen the set). Matching is
     # the exclusion matcher's, and an exclusion on the same path has already
-    # refused above: the deny list outranks the class.
+    # refused above: the deny list outranks the class. A rename needs BOTH
+    # names in the set; one from outside deletes a file it never covered.
     VENDORED_FILES=""
     if rg_class_enabled vendored; then
       while IFS= read -r fn; do
@@ -1283,7 +1283,7 @@ EOF_VENDORED_FILES
       | [ .files[]
         | . as $f
         | (.filename // "") as $fn
-        | if ($vf | index($fn)) != null
+        | if ($vf | index($fn)) != null and (($f.previous_filename // "") as $p | $p == "" or ($vf | index($p)) != null)
           then "vendored"
           elif (($cl | index("docs")) != null)
              and ($f.status != "renamed")
