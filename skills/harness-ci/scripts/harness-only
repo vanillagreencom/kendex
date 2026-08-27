@@ -181,7 +181,8 @@ manifest_carves() { # FILE -> carve lines for one manifest, "*" on a failed pars
       v = "(" d "in-place" d "|" d d d "in-place" d d d "|" q "in-place" q "|" q q q "in-place" q q q ")"
       src = "source[ \t]*=[ \t]*" v
       esc = "\\\\[uU]"
-      mlsrc = "source[ \t]*=[ \t]*(" d d d "|" q q q ")"
+      k = "(" d "|" q ")?"
+      mlsrc = k "source" k "[ \t]*=[ \t]*(" d d d "|" q q q ")"
     }
     {
       line = $0
