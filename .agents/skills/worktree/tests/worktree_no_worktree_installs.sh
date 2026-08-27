@@ -13,7 +13,9 @@
 #   4. a repo without a root package.json gets no warning;
 #   5. a nested node_modules entry (ui-style) with no main-checkout source
 #      warns on create, and fix-links links it once the install exists;
-#   6. a root node_modules entry with no source warns exactly once.
+#   6. a root node_modules entry with no source warns exactly once;
+#   7. repair-links, the git-hook path, warns too when the main-checkout
+#      source disappears after the worktree was created.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -174,6 +176,30 @@ if [ "$WARN_COUNT" = "1" ]; then
 else
   bad "single warning for a configured root entry" "count=$WARN_COUNT stderr: $(cat "$STDERR_ROOT")"
 fi
+
+echo "=== repair-links warns when the main-checkout source disappears ==="
+ROOT="$TMP_ROOT/repair"
+make_repo "$ROOT" repo
+mkdir -p "$ROOT/repo/ui/node_modules/dep"
+printf '{ "name": "ui", "devDependencies": {} }\n' >"$ROOT/repo/ui/package.json"
+git -C "$ROOT/repo" add ui/package.json
+git -C "$ROOT/repo" commit -q -m "js: nested ui package"
+git -C "$ROOT/repo" push -q origin main
+printf 'WORKTREE_SYMLINKS="ui/node_modules"\n' >"$ROOT/repo/.env"
+(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-repair >/dev/null 2>&1)
+WT_REPAIR="$ROOT/.worktrees/repo/issue-repair"
+[ -L "$WT_REPAIR/ui/node_modules" ] && ok "repair case starts from a linked worktree" \
+  || bad "repair case starts linked" "no symlink at $WT_REPAIR/ui/node_modules"
+rm -rf "$ROOT/repo/ui/node_modules"
+STDERR_REPAIR="$TMP_ROOT/repair-stderr.log"
+(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" repair-links "$WT_REPAIR" >/dev/null 2>"$STDERR_REPAIR")
+if grep -q "dependencies were not installed" "$STDERR_REPAIR" &&
+  grep -qF "$ROOT/repo/ui/node_modules" "$STDERR_REPAIR"; then
+  ok "repair-links warns instead of skipping the vanished source in silence"
+else
+  bad "repair-links missing-source warning" "stderr: $(cat "$STDERR_REPAIR")"
+fi
+assert_no_pm_calls "repair repo: no package manager invoked" || true
 
 echo "=== a repo without package.json gets no warning ==="
 ROOT="$TMP_ROOT/plain"

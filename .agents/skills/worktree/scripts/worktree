@@ -102,13 +102,12 @@ Setup-path hardening:
 Dependencies:
   No command runs a package-manager install. Installs run only in the main
   checkout, and only when the lockfile changed; link that install into each
-  worktree with a WORKTREE_SYMLINKS entry for the node_modules path. A
-  worktree with a root package.json and no node_modules gets a warning naming
-  the main checkout instead, as does a configured node_modules entry (root or
-  nested) whose main-checkout source is missing. Limitation: linked
-  node_modules resolves pnpm workspace dependencies (workspace:/link:) to the
-  main checkout's source, so a worktree's checks see main's copy of sibling
-  workspace packages.
+  worktree with a WORKTREE_SYMLINKS entry for the node_modules path. A warning
+  names the main checkout when a worktree has a root package.json and no
+  node_modules, and when a configured node_modules entry beside a worktree
+  package.json has no main-checkout source. Limitation: linked node_modules
+  resolves pnpm workspace dependencies (workspace:/link:) to main's source, so
+  a worktree's checks see main's copy of sibling workspace packages.
 
 Session guard:
   create never claims an ownership lease — a fresh worktree is unclaimed, and
@@ -1793,8 +1792,8 @@ collect_unrestored_links() {
   for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
     path="$(normalize_worktree_config_path WORKTREE_SYMLINKS "$path" 2>/dev/null)" || continue
     if [[ ! -e "$PROJECT_ROOT/$path" ]]; then
-      # setup skips this entry entirely, so the link is absent afterwards with
-      # nothing printed. Only the main checkout can resolve it.
+      # setup skips this entry entirely; outside a node_modules entry it prints
+      # nothing, so only this line names it.
       printf '%s (no such path in the main checkout — create it there, or drop it from WORKTREE_SYMLINKS)\n' "$path"
       continue
     fi
@@ -2255,31 +2254,38 @@ quarantine_and_relink_path() {
   return 1
 }
 
+# The one test and message for a WORKTREE_SYMLINKS entry with no main-checkout
+# source, shared by the two skip sites so they cannot drift. Warns, and returns
+# 0, only for a node_modules entry beside a worktree package.json: skipping
+# that one in silence surfaces later as the worktree's own checks failing.
+warn_missing_symlink_source() {
+  local wt="$1" path="$2"
+  [[ "${path##*/}" == node_modules && -f "$wt/${path%node_modules}package.json" ]] || return 1
+  echo "Warning: dependencies were not installed — WORKTREE_SYMLINKS entry '$path' has no source at $PROJECT_ROOT/$path. Run the install in the main checkout ($PROJECT_ROOT), then rerun fix-links to link it." >&2
+}
+
 # Re-assert configured WORKTREE_SYMLINKS in one worktree. Cheap on the healthy
 # path (one readlink per entry); repair is quarantine_and_relink_path above.
 repair_worktree_links() {
-  local wt="$1" path="" src="" dst="" repaired="" blocked=false
+  local wt="$1" path="" src="" repaired="" blocked=false
   validate_worktree_setup_config || return 1
 
   split_worktree_config_words "${WORKTREE_SYMLINKS:-}"
   for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
     path="$(normalize_worktree_config_path WORKTREE_SYMLINKS "$path" 2>/dev/null)" || continue
     src="$PROJECT_ROOT/$path"
-    dst="$wt/$path"
-    [[ -e "$src" ]] || continue
+    [[ -e "$src" ]] || { warn_missing_symlink_source "$wt" "$path" || true; continue; }
     # An entry with tracked content underneath never becomes a parent link
     # (VST-37): its healthy state is a real directory holding per-child links,
-    # and symlink_into_worktree heals that state idempotently (clears stale
-    # assume-unchanged bits, restores missing tracked files, re-links
-    # untracked children — through the same quarantine as any other child,
-    # since link_untracked_children calls quarantine_and_relink_path too).
-    #
+    # which symlink_into_worktree heals idempotently — stale assume-unchanged
+    # bits cleared, missing tracked files restored, untracked children re-linked
+    # through the same quarantine as any other child, since
+    # link_untracked_children calls quarantine_and_relink_path too.
     # Ask BOTH indexes (#964): checking only $wt here means a branch that
     # predates a path becoming tracked on main takes the quarantine branch
-    # below instead. If $dst is already a healthy symlink from an earlier run,
-    # quarantine_and_relink_path returns success on sight without ever
-    # re-deciding the shape, so the entry never converts to the per-child
-    # layout main's tracked content now requires.
+    # below instead, where a destination already healthy from an earlier run
+    # returns success on sight without ever re-deciding the shape — so the
+    # entry never converts to the per-child layout main's content now requires.
     if [[ -d "$src" ]] &&
        { [[ -n "$(git -C "$wt" ls-files -- "$path/" 2>/dev/null)" ]] ||
          [[ -n "$(git -C "$PROJECT_ROOT" ls-files -- "$path/" 2>/dev/null || true)" ]]; }; then
@@ -2377,7 +2383,7 @@ restore_unshadowed_worktree_setup() {
 }
 
 setup_worktree_links() {
-  local wt="$1"
+  local wt="$1" root_nm_warned=0
   validate_worktree_setup_config || return 1
 
   # Project-configured mkdirs (run first so subsequent symlinks/copies can
@@ -2391,15 +2397,11 @@ setup_worktree_links() {
 
   # Project-configured symlinks
   split_worktree_config_words "${WORKTREE_SYMLINKS:-}"
-  local root_nm_warned=0
   for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
     path="$(normalize_worktree_config_path WORKTREE_SYMLINKS "$path")" || return 1
     if [[ -e "$PROJECT_ROOT/$path" ]]; then
       symlink_into_worktree "$path" "$wt" || return 1
-    elif [[ "${path##*/}" == node_modules && -f "$wt/${path%node_modules}package.json" ]]; then
-      # An uninstalled main checkout, not a config mistake: a silent skip
-      # resurfaces as the worktree's own checks failing with the wrong cause.
-      echo "Warning: dependencies were not installed — WORKTREE_SYMLINKS entry '$path' has no source at $PROJECT_ROOT/$path. Run the install in the main checkout ($PROJECT_ROOT), then rerun fix-links to link it." >&2
+    elif warn_missing_symlink_source "$wt" "$path"; then
       [[ "$path" == node_modules ]] && root_nm_warned=1
     fi
   done
@@ -2432,8 +2434,7 @@ setup_worktree_links() {
       echo "Warning: Ignoring invalid WORKTREE_RELATIVE_SYMLINKS entry '$spec' (expected path=target)" >&2
       continue
     fi
-    local path="${spec%%=*}"
-    local target="${spec#*=}"
+    local path="${spec%%=*}" target="${spec#*=}"
     path="$(normalize_worktree_config_path WORKTREE_RELATIVE_SYMLINKS "$path")" || return 1
     validate_relative_symlink_target "$spec" "$target" || return 1
     ensure_worktree_path_safe "$wt" "$path" false || return 1
@@ -2459,11 +2460,10 @@ setup_worktree_links() {
     exclude_from_worktree_index "$wt" "$path"
   done
 
-  # Worktrees never run a package-manager install — run inside a linked
-  # worktree it mutates state every checkout shares (a linked node_modules
-  # writes through into the shared tree; pnpm records workspace deps as links
-  # into the installing tree). Installs run only in the main checkout; a root
-  # package.json with nothing linked warns, unless the loop already did.
+  # Installs run only in the main checkout: inside a linked worktree they write
+  # node_modules through into the checkout every worktree shares, and a pnpm
+  # workspace install records its deps as links into the installing tree. A root
+  # package.json with nothing linked warns, unless the root entry warned above.
   if [[ "$root_nm_warned" -eq 0 && -f "$wt/package.json" && ! -e "$wt/node_modules" ]]; then
     echo "Warning: dependencies were not installed — installs run only in the main checkout. Run the install in $PROJECT_ROOT, then link its node_modules into worktrees with a WORKTREE_SYMLINKS entry." >&2
   fi
