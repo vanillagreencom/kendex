@@ -5,6 +5,13 @@ human, or whatever mix your repo uses. One predicate answers "is this exact
 head reviewed?", one workflow posts that answer as a commit status your
 branch rules require.
 
+A green gate is not always proof of a review: under `REVIEW_GATE_MODE = "off"`
+the predicate reads no evidence at all and posts success attesting that the
+gate is disabled, and merge-queue statuses post success unread as
+"merge-queue entry: post-approval by construction". Both say so in the status
+description — [references/settings.md](references/settings.md) §
+`REVIEW_GATE_MODE`.
+
 It does **not** run or inspect your tests. That is branch protection's job,
 and keeping the two apart is what makes this small enough to trust.
 
@@ -80,6 +87,13 @@ Every per-repo value is a `REVIEW_GATE_*` key in your own
 built-in default). Nothing repo-specific is hard-coded anywhere else. The
 keys most repos set are the gate's status context, the reviewer contexts and
 logins to trust, and whether carry-forward is on.
+
+One name is not a settings key: `REVIEW_GATE_CHECK_RUN_NAME` is a **GitHub
+repository variable**, set under Settings → Secrets and variables → Actions.
+The relay reads it in a workflow expression, before any checkout exists, so
+the settings file cannot supply it — and `validate.sh` rejects it there,
+where it would resolve to nothing. It matters only with the opt-in
+`check_run` trigger ([references/adoption.md](references/adoption.md)).
 
 Full key table and the security reasoning behind the trust keys:
 [references/settings.md](references/settings.md). Per-repo decision axes:

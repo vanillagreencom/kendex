@@ -109,10 +109,10 @@ expect_clean "a freshly adopted repo passes every check" "$dir"
 run_validate "$dir"
 for line in \
   "one adopted writer workflow" \
-  "the relay job holds actions:write and no other permission" \
+  "the relay job's permissions are exactly \`actions: write\` and nothing else" \
   "the relay job checks nothing out" \
   "the relay job holds no concurrency group" \
-  "the write job holds the single-writer concurrency group" \
+  "the write job's concurrency group is the literal" \
   "every committed setting resolves to a legal value"; do
   printf '%s' "$OUT" | grep -qF -- "$line" &&
     ok "reports: $line" ||
@@ -185,6 +185,34 @@ envout="$(cd "$dir" && REVIEW_GATE_MODE=enforce "./$VALIDATE_REL" 2>&1)" || envr
   bad "an exported value does not launder an illegal committed one" "rc=$envrc
 $envout"
 
+# A QUOTED key is valid TOML and invisible to the loader, whose presence
+# probe matches the bare name only. Reporting it as a healthy setting is the
+# silent-default class this whole group exists to catch.
+sandbox
+dir="$DIR"
+printf '"REVIEW_GATE_THREADS" = "off"\n' >>"$dir/kendex.settings.toml"
+expect_fail "a QUOTED key name is read by nothing and is named" "$dir" "QUOTED name"
+
+sandbox
+dir="$DIR"
+printf "'REVIEW_GATE_THREADS' = \"off\"\n" >>"$dir/kendex.settings.toml"
+expect_fail "a single-quoted key name is caught the same way" "$dir" "QUOTED name"
+
+# The bare form is what the loader reads, so it must NOT trip the quoted
+# check — an over-broad matcher would fail every sound repo.
+sandbox
+dir="$DIR"
+settings "$dir" REVIEW_GATE_THREADS "off"
+expect_clean "the bare key form the loader reads still passes" "$dir"
+
+# A repository VARIABLE assigned as a setting gets its own diagnosis: the
+# name is real, so "you misspelled it" would send its reader hunting a typo
+# that is not there.
+sandbox
+dir="$DIR"
+settings "$dir" REVIEW_GATE_CHECK_RUN_NAME "CodeRabbit"
+expect_fail "a GitHub repository variable assigned as a setting is named as one" "$dir" "REPOSITORY VARIABLE"
+
 echo "=== carry-forward exclusions ==="
 
 sandbox
@@ -241,7 +269,7 @@ sandbox
 dir="$DIR"
 cp "$dir/.github/workflows/review-gate-writer.yml" "$dir/.github/workflows/second-writer.yml"
 commit "$dir"
-expect_fail "two writers is two writers" "$dir" "tracked workflows run review-writer.sh"
+expect_fail "two writers is two writers" "$dir" "tracked workflows execute review-writer.sh"
 
 # An untracked copy is not the repo's writer: Actions runs what is committed.
 sandbox
@@ -259,7 +287,7 @@ mutate() { # DIR SED-EXPR
 sandbox
 dir="$DIR"
 mutate "$dir" "s/^      actions: write$/      actions: write\n      statuses: write/"
-expect_fail "a relay granted statuses:write is named" "$dir" "beyond actions:write"
+expect_fail "a relay granted statuses:write is named" "$dir" "statuses: write"
 
 sandbox
 dir="$DIR"
@@ -310,6 +338,62 @@ mutate "$dir" "s|^  workflow_dispatch: {}$|  check_run:\n    types: [created, co
 # '#' delimiter: the expression being deleted carries '|' itself.
 mutate "$dir" "s# \&\& (github.event_name != 'check_run' || github.event.check_run.name == vars.REVIEW_GATE_CHECK_RUN_NAME)##"
 expect_fail "check_run opted in without the variable term relays every CI job" "$dir" "does not read vars.REVIEW_GATE_CHECK_RUN_NAME"
+
+echo "=== the checks are closed, not word-deep ==="
+
+# A workflow that MENTIONS the writer is not a workflow that RUNS it. The
+# relay's own comments name review-writer.sh, and so does the missing-file
+# guard and its error string — matching the word finds files that execute
+# nothing.
+sandbox
+dir="$DIR"
+{
+  printf 'name: Mentions the writer\n'
+  printf '"on":\n  workflow_dispatch: {}\n'
+  printf 'jobs:\n  talk:\n    runs-on: ubuntu-latest\n    steps:\n'
+  printf '      - name: say the name\n'
+  printf "        run: echo 'this job never runs .agents/skills/review-gate/scripts/review-writer.sh'\n"
+} >"$dir/.github/workflows/mentions.yml"
+commit "$dir"
+expect_clean "a workflow that only NAMES review-writer.sh is not a second writer" "$dir"
+
+# The relay's permission check must be CLOSED. A blocklist of five named
+# scopes passes every scope nobody thought to name.
+sandbox
+dir="$DIR"
+mutate "$dir" "s/^      actions: write$/      actions: write\n      packages: read/"
+expect_fail "an UNNAMED extra relay scope is caught (packages, in no blocklist)" "$dir" "packages: read"
+
+# The relay is IDENTIFIED by its permissions mapping, so a job that lost
+# `actions: write` is reported as a missing relay, not as a mis-scoped one.
+sandbox
+dir="$DIR"
+mutate "$dir" "/^      actions: write$/d"
+expect_fail "a relay stripped of actions:write is reported missing, not passed over" "$dir" "no job holding"
+
+# The single-writer group must be a LITERAL. A per-run expression is a group
+# of one, which is no throttle at all.
+sandbox
+dir="$DIR"
+mutate "$dir" "s|^      group: review-gate-writer$|      group: review-gate-writer-\${{ github.run_id }}|"
+expect_fail "a per-run concurrency group is not a single writer" "$dir" "computed per run"
+
+sandbox
+dir="$DIR"
+mutate "$dir" "s/^      cancel-in-progress: false$/      cancel-in-progress: true/"
+expect_fail "a group that cancels in progress is caught" "$dir" "not false"
+
+# Per checkout, not per file: the write job's checkout is the second one, so
+# the merge-group job's compliant checkout would mask it in a whole-file count.
+sandbox
+dir="$DIR"
+mutate "$dir" "/as in the merge-group job/,/persist-credentials: false/ s|ref: .*|ref: main|"
+expect_fail "an unsafe SECOND checkout is not masked by a safe first one" "$dir" "pins 'main'"
+
+sandbox
+dir="$DIR"
+mutate "$dir" "/as in the merge-group job/,/persist-credentials: false/ s|^          ref: .*||"
+expect_fail "a checkout pinning no ref at all is caught" "$dir" "pins no \`ref:\`"
 
 echo "=== the workflow half stands alone ==="
 

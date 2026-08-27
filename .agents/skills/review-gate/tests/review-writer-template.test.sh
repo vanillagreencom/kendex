@@ -15,13 +15,13 @@
 # .github/workflows/review-gate-writer.yml found by walking up to the
 # enclosing repo. That copy is what actually gates PRs and is hand-maintained,
 # so template-only assertions would prove the behavior of a file CI never
-# runs. In a CONSUMER the adopted copy is normally PRESENT and legitimately
-# differs from the template (its own default branch in the ADAPT markers, an
-# optional check_run guard) — so the pins and the relay battery run against it
-# there too, and every ADAPT-bearing pin asserts the SHAPE the ADAPT preserves
-# rather than the catalog's own value; only the catalog additionally pins the
-# literal. The whole-file drift check is a self-adoption-only invariant. Only
-# the template is asserted when no adopted copy is found at all.
+# runs. The template is copied VERBATIM — it carries no per-repo values — so
+# the pins below assert the same literals in both copies. Two divergence
+# classes remain, and neither is a value anyone types: this repo's
+# self-adoption swaps the vendored script path for the tracked one, and a
+# consumer that opted into check_run has uncommented two trigger lines. The
+# whole-file drift check is scoped to self-adoption for the second of those.
+# Only the template is asserted when no adopted copy is found at all.
 #
 # THE RELAY NEVER REDS is the invariant every relay case asserts, over both
 # the runner's shells AND over its own environment (each env: binding dropped
@@ -90,10 +90,10 @@ while [[ "$_dir" != "/" ]]; do
   _dir="$(dirname "$_dir")"
 done
 
-# CATALOG or CONSUMER. Which one this is decides two things: whether the
-# adopted copy is this repo's own artifact or a consumer's ADAPTed one (its
-# label, and whether the whole-file drift check is meaningful), and whether
-# the ADAPT'd literals may be pinned as literals at all.
+# CATALOG or CONSUMER. It decides the adopted copy's label, and whether the
+# whole-file drift check is meaningful: in the catalog the two files are one
+# artifact modulo the vendored path, and in a consumer the check_run opt-in
+# is a legitimate difference the diff cannot tell from drift.
 IS_CATALOG=0
 [[ "$SKILL_ROOT" == */skills/review-gate && "$SKILL_ROOT" != */.agents/* ]] && IS_CATALOG=1
 ADOPTED_LABEL="adopted copy"
@@ -117,10 +117,6 @@ fi
 pin_workflows() { # file, label
   local wf="$1" tag="$2"
   local write_block relay_block rc count
-  # The ADAPT-shape regexes below match a quoted branch name; a literal
-  # apostrophe inside a single-quoted pattern is unwritable, so hold one here.
-  local q="'"
-
 
   pin() { # needle, name
     if grep -qF -- "$1" "$wf"; then
@@ -342,7 +338,7 @@ pin_workflows() { # file, label
   esac
   assert_contains "$relay_block" "workflow_dispatch|schedule)" "[$tag] tpl: the relay step refuses to dispatch when it ran on a converge leg"
   # WORKFLOW_REF reads like a convenience — it exists so a renamed copy needs
-  # no ADAPT — which is exactly why it is the binding a consumer hand-edit is
+  # no edit at all — which is exactly why it is the binding a consumer is
   # most likely to drop. Its absence now degrades to the warn-and-defer path
   # rather than a red, but a dropped line still means no converge pass is
   # ever requested, so it is pinned as well as defaulted.
@@ -617,7 +613,7 @@ relay_battery() { # file, label
   relay_run "$step" 0 "o/r/.github/workflows/gate.yml@refs/heads/trunk" "0"
   assert_eq "$RELAY_CALLS" \
     "gh api -i -X POST repos/o/r/actions/workflows/gate.yml/dispatches -f ref=main" \
-    "[$tag] relay2: a RENAMED consumer copy dispatches its own file (github.workflow_ref is read, not a hardcoded name — no ADAPT line)"
+    "[$tag] relay2: a RENAMED consumer copy dispatches its own file (github.workflow_ref is read, not a hardcoded name — nothing to edit on rename)"
 
   relay_run "$step" 1 "$ref" "0"
   assert_eq "$RELAY_RC" "0" "[$tag] relay3: fork pull_request_review (read-only token) is a GREEN no-op, never a red run"
@@ -807,9 +803,9 @@ $rl_ok"
 
   # --- the invariant over the step's ENVIRONMENT ------------------------
   # The step runs under `set -u`, so its never-reds guarantee is only as good
-  # as its env: block. Every binding sits in repo-owned YAML that adoption.md
-  # tells consumers to hand-edit — the check_run guard goes on this job's
-  # if:, and the ADAPT'd dispatch ref is three lines from WORKFLOW_REF — so a
+  # as its env: block. Every binding sits in repo-owned YAML a consumer may
+  # touch — the check_run opt-in uncomments trigger lines a few lines above
+  # this job, and nothing stops a hand-edit reaching the block itself — so a
   # dropped line is a live class, not a hypothetical. Unbound, each of these
   # kills the step before it prints anything, on every PR-attached run,
   # permanently. relay_run asserts rc 0 under both shells for each.
@@ -862,25 +858,25 @@ done
 # weaker than byte-identity for a script that exists in two hand-maintained
 # places — a divergence the cases do not happen to probe would otherwise ship.
 # The step is pure logic with no vendored paths in it, so unlike the rest of
-# the file it has no legitimate ADAPT reason to differ.
+# the file it has no legitimate reason to differ in any copy.
 # WHOLE-FILE drift, not just the relay step: a cross-copy tooth covering only
 # the extracted step leaves a stale claim anywhere else in the adopted copy
-# unchecked. Comments are compared out because ADAPT deliberately rewords
-# them (vendored paths, default-branch notes) — prose drift between the copies
-# is therefore NOT machine-checkable here and stays a review concern; what IS
-# checked is that every line of CODE matches once the vendored script path is
+# unchecked. Comments are compared out because the self-adoption header
+# rewords them (vendored paths) — prose drift between the copies is therefore
+# NOT machine-checkable here and stays a review concern; what IS checked is
+# that every line of CODE matches once the vendored script path is
 # normalized, which is the class that changes behavior.
 # Scoped to SELF-adoption (IS_CATALOG, decided above). In the catalog the two
 # files are the same artifact modulo the vendored script path, so any other
-# code difference is drift. In a CONSUMER they are legitimately different: the
-# adopted copy carries the repo's own ADAPTs (its default branch in the
-# `|| 'main'` fallbacks, possibly a check_run guard on the relay's if:), so
-# diffing them there would report intended configuration as drift. The
+# code difference is drift. In a CONSUMER one difference is legitimate and
+# indistinguishable from drift by diff: the check_run opt-in uncomments two
+# trigger lines, which a code diff reads as added code. A consumer's copy is
+# checked by the pins above and by validate-workflow.sh instead. The
 # relay-step byte-identity check below stays unconditional — that script
-# carries no branch name and no vendored path, so it is ADAPT-free even for a
-# consumer.
+# carries no vendored path and no opt-in, so it is the same bytes in every
+# copy.
 if [[ "${#WORKFLOWS[@]}" -eq 2 && "$IS_CATALOG" -eq 0 ]]; then
-  printf '  note  %s\n' "adopted copy carries this repo's own ADAPTs (not the catalog) — whole-file drift not checked; the relay step's byte-identity still is"
+  printf '  note  %s\n' "adopted copy may carry the check_run opt-in, which a code diff cannot tell from drift — whole-file drift not checked; the relay step's byte-identity still is"
 fi
 if [[ "${#WORKFLOWS[@]}" -eq 2 && "$IS_CATALOG" -eq 1 ]]; then
   _norm() { # strip comments and blank lines, normalize the vendored path
@@ -902,7 +898,7 @@ if [[ "${#RELAY_STEPS[@]}" -eq 2 ]]; then
   # real drift would then look like a silent early finish rather than a FAIL.
   rc=0; diff -q "${RELAY_STEPS[0]}" "${RELAY_STEPS[1]}" >/dev/null 2>&1 || rc=$?
   case "$rc" in
-    0) PASS=$((PASS + 1)); printf '  ok    %s\n' "relay: the template's and the adopted copy's relay steps are byte-identical (the step carries no ADAPT, so any drift is unintended)" ;;
+    0) PASS=$((PASS + 1)); printf '  ok    %s\n' "relay: the template's and the adopted copy's relay steps are byte-identical (the step is the same bytes in every copy, so any drift is unintended)" ;;
     1) FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "relay: the two copies' relay steps DIVERGED — a template edit was not mirrored into the adopted workflow"
        diff "${RELAY_STEPS[0]}" "${RELAY_STEPS[1]}" | head -20 ;;
     *) FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "relay: the extracted relay steps could not be compared (diff read error) — drift is unproven, not disproven" ;;

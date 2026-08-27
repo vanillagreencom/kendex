@@ -36,22 +36,18 @@ Four groups run, in this order:
 
   runtime     every engine script this repo needs is present, executable and
               parses under `bash -n`.
-  settings    the committed settings file assigns no unknown REVIEW_GATE_*
-              key (a typo resolves as "unset", so the value written there is
-              silently ignored) and no per-invocation env seam, and every
-              value it does assign is legal — that half delegates to
-              `review-predicate.sh --check-config`, so the rules are the
-              engine's own rather than a copy of them.
+  settings    every REVIEW_GATE_* assignment is one the engine reads, spelt
+              the way it reads it (bare key, no quotes), and legal. Unknown
+              keys, per-invocation seams and repository variables are each
+              named as what they are; the value rules come from
+              `review-predicate.sh --check-config`, never a copy of them.
   carry       every REVIEW_GATE_CARRY_FORWARD_EXCLUDE glob is
               repository-relative, matches at least one tracked path, and is
-              not universal; every REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC
-              declaration names an active exclusion that still matches
-              nothing.
+              not universal; every prophylactic declaration names an active
+              exclusion that still matches nothing.
   workflow    the adopted .github/workflows/ copy still carries the writer
-              contract: the triggers the relay/converge split needs, a relay
-              that holds actions:write and nothing else, checks nothing out,
-              holds no concurrency group and refuses the converge legs, and
-              a write job holding the single-writer group.
+              contract — delegated to validate-workflow.sh, whose --help
+              lists what it asserts.
 
 The environment is scrubbed of every REVIEW_GATE_* key before settings are
 read: what is validated is what the repository COMMITS, not what this shell
@@ -138,10 +134,9 @@ group "settings"
 SETTINGS_FILE="${REVIEW_GATE_SETTINGS_FILE:-kendex.settings.toml}"
 
 # The key ledger is the skill's own shipped example, so this tool cannot
-# drift from what the engine documents: a key added there is known here on
-# the same commit. REVIEW_GATE_OUTAGE_CONTEXT is the one deliberate addition
-# — the legacy override name, still resolved by the predicate and
-# deliberately absent from the example, which models the v2 posture.
+# drift from what the engine documents. REVIEW_GATE_OUTAGE_CONTEXT is the one
+# deliberate addition: the legacy override name, still resolved by the
+# predicate and deliberately absent from the example, which models v2.
 EXAMPLE="$SKILL_DIR/kendex.settings.toml.example"
 [ -f "$EXAMPLE" ] ||
   die "$EXAMPLE is missing — it is the ledger of known keys, and without it an unknown-key scan would pass everything"
@@ -156,21 +151,38 @@ grep -q '^REVIEW_GATE_CONTEXT$' <<<"$KNOWN_KEYS" ||
 ENV_ONLY_SEAMS="REVIEW_GATE_SETTINGS_FILE
 REVIEW_GATE_STATUS_SNAPSHOT_FILE"
 
+# A GitHub repository variable, read by a workflow expression before any
+# checkout exists. It is refused here on its own line rather than as an
+# unknown key: the name is real and the value is wanted, just not in a file
+# the workflow cannot see, and "you misspelled it" would send its reader
+# looking for a typo that is not there.
+REPO_VARIABLES="REVIEW_GATE_CHECK_RUN_NAME"
+
 if [ "$SETTINGS_FILE" = "/dev/null" ]; then
   note "REVIEW_GATE_SETTINGS_FILE=/dev/null — settings are forced to built-in defaults; no committed file is being validated"
 elif [ ! -f "$SETTINGS_FILE" ]; then
   note "$SETTINGS_FILE is absent — every key resolves to its built-in default, which is a valid install carrying no per-repo values"
 else
   ok "$SETTINGS_FILE is present"
-  # Assignments only, at any indentation, quoted or bare — the same shapes
-  # the loader's own presence probe accepts.
-  assigned="$(sed -n "s/^[[:space:]]*[\"']\{0,1\}\(REVIEW_GATE_[A-Z0-9_]*\)[\"']\{0,1\}[[:space:]]*=.*/\1/p" "$SETTINGS_FILE" | sort -u)"
+  # Two scans, because the loader makes the distinction: its presence probe
+  # is `^[[:space:]]*NAME[[:space:]]*=` (scripts/lib/settings.sh), which
+  # matches the BARE key and nothing else. TOML says a quoted key is the same
+  # key; this engine's parser says it is no key at all. Reading both shapes as
+  # one would report a quoted assignment as a healthy setting while the gate
+  # ran on the built-in default.
+  assigned="$(sed -n 's/^[[:space:]]*\(REVIEW_GATE_[A-Z0-9_]*\)[[:space:]]*=.*/\1/p' "$SETTINGS_FILE" | sort -u)"
+  quoted="$(sed -n "s/^[[:space:]]*[\"']\(REVIEW_GATE_[A-Z0-9_]*\)[\"'][[:space:]]*=.*/\1/p" "$SETTINGS_FILE" | sort -u)"
   unknown=""
   seams=""
+  repo_vars=""
   while IFS= read -r key; do
     [ -z "$key" ] && continue
     if grep -qxF -- "$key" <<<"$ENV_ONLY_SEAMS"; then
       seams="${seams:+$seams }$key"
+      continue
+    fi
+    if grep -qxF -- "$key" <<<"$REPO_VARIABLES"; then
+      repo_vars="${repo_vars:+$repo_vars }$key"
       continue
     fi
     grep -qxF -- "$key" <<<"$KNOWN_KEYS" || unknown="${unknown:+$unknown }$key"
@@ -186,6 +198,16 @@ EOF_ASSIGNED
     bad "$SETTINGS_FILE assigns per-invocation env seam(s): $seams — these are caller handles, never repo settings; delete the assignment(s)"
   else
     ok "no per-invocation env seam is assigned as a repo setting"
+  fi
+  if [ -n "$repo_vars" ]; then
+    bad "$SETTINGS_FILE assigns $repo_vars as a setting — it is a GitHub REPOSITORY VARIABLE (Settings → Secrets and variables → Actions), read by a workflow expression before any checkout exists, so nothing reads it here; set it in the repository's variables instead"
+  else
+    ok "no GitHub repository variable is assigned as a repo setting"
+  fi
+  if [ -n "$(printf '%s' "$quoted" | tr -d '[:space:]')" ]; then
+    bad "$SETTINGS_FILE assigns REVIEW_GATE_* key(s) with a QUOTED name: $(printf '%s' "$quoted" | tr '\n' ' ')— valid TOML, but the loader's presence probe matches the bare name only, so these assignments are read by nothing and the gate runs on the built-in default; drop the quotes"
+  else
+    ok "every REVIEW_GATE_* assignment uses the bare key name the loader reads"
   fi
 fi
 
