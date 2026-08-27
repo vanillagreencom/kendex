@@ -39,6 +39,10 @@ an outside contributor.
 
 ### Fixed
 
+- The `block-bare-cd` hook refuses a bare `cd` with no path. It changes to
+  `$HOME` for every later tool call, the move the hook exists to stop, and
+  only `cd <path>` was caught before.
+
 - The settings template no longer seeds `.cursor` into `WORKTREE_SYMLINKS`, so
   `worktree fix-links` passes in repos that do not use Cursor; a repo that
   does adds it back in its own `kendex.settings.toml`.

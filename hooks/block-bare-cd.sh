@@ -12,15 +12,16 @@ set -euo pipefail
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | grep -o '"command"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"command"[[:space:]]*:[[:space:]]*"//;s/"$//' 2>/dev/null || true)
 
-# Fast exit if no cd in command
-if ! echo "$COMMAND" | grep -q 'cd '; then
+# Fast exit if no cd in command. A bare `cd` goes to $HOME, the change this
+# hook exists to stop, so end of line counts the same as a following space.
+if ! echo "$COMMAND" | grep -qE 'cd([[:space:]]|$)'; then
   exit 0
 fi
 
 # Check for bare top-level cd (not in subshell or &&-chained with other work)
 # Simple heuristic: if the command is just "cd /path" with nothing else meaningful
 STRIPPED=$(echo "$COMMAND" | sed 's/^[[:space:]]*//')
-if echo "$STRIPPED" | grep -qE '^cd[[:space:]]+[^&|;]+$'; then
+if echo "$STRIPPED" | grep -qE '^cd([[:space:]]+[^&|;]*)?$'; then
   echo "Bare 'cd' changes working directory permanently across tool calls." >&2
   echo "Use a subshell instead: (cd /path && command)" >&2
   exit 2
