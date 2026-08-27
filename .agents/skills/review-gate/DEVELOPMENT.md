@@ -60,10 +60,13 @@ first divergent line, and the remedy never varies: re-copy the template.
   requires `skills/` and a consumer requires the vendored `.agents/skills/`,
   and each rejects the other's. Rewriting both sides would make either pass
   anywhere.
-- **The `check_run` opt-in**, which is two lines or none. A trigger without
-  its `types:` child fires on every activity type or is refused outright, and
-  the child without its trigger lands under whatever precedes it, so the two
-  are required adjacent and in order.
+- **The `check_run` opt-in**, which is two lines or none, in one place. The
+  expected side is built by uncommenting the template's own two lines where
+  they sit, so the pair is allowed exactly where the template documents it —
+  a pair appended under `jobs:` is not a trigger and is a divergence like any
+  other edit. A trigger without its `types:` child fires on every activity
+  type or is refused outright, and the child without its trigger lands under
+  whatever precedes it, so the two are required adjacent and in order.
 
 It re-derives nothing, and that is the design rather than an economy. Deriving
 the contract — this job's permissions, that expression's terms, these activity

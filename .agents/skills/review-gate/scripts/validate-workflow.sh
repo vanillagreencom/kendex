@@ -28,9 +28,10 @@ The template is copied VERBATIM — it carries no per-repo values — so the
 check is equality, line by line, over every line that is not a comment or
 blank. Two deltas are legitimate and allowed:
 
-  * the two `check_run` opt-in lines uncommented — both, adjacent, or
-    neither, since a trigger without its `types:` child fires on every
-    activity type and the child alone lands under whatever precedes it; and
+  * the two `check_run` opt-in lines uncommented WHERE THE TEMPLATE CARRIES
+    them — both, adjacent, or neither, since a trigger without its `types:`
+    child fires on every activity type, the child alone lands under whatever
+    precedes it, and the pair anywhere else is not a trigger at all; and
   * the script path each repo kind actually runs: `skills/` in the catalog,
     the vendored `.agents/skills/` in a consumer. Each rejects the other's.
 
@@ -144,7 +145,6 @@ code_lines() { # FILE — the file's code lines, trailing space stripped
   sed -e 's/[[:space:]]*$//' -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$1"
 }
 
-code_lines "$TEMPLATE" >"$TMP/template.code"
 code_lines "$adopted" >"$TMP/adopted.code"
 
 # The EXPECTED side only. Rewriting both sides makes the two spellings
@@ -154,18 +154,17 @@ code_lines "$adopted" >"$TMP/adopted.code"
 # copy still on `.agents/` diverges; a consumer's expected spelling is the
 # vendored path the template already ships, so nothing is rewritten and a
 # copy on `skills/` diverges.
-if [ "$IS_CATALOG" -eq 1 ]; then
-  sed -i.bak 's#\.agents/skills/review-gate/#skills/review-gate/#g' "$TMP/template.code"
-  rm -f "$TMP/template.code.bak"
-fi
 
-# The opt-in's two lines are the one ADDITION a copy may carry, and they are
-# ONE addition: uncommenting the trigger without its `types:` child leaves
-# GitHub either firing on every activity type or refusing the trigger, and
-# uncommenting the child alone leaves a `types:` under whatever precedes it.
-# Both lines, adjacent and in order, or neither. They are removed from the
-# adopted side before the comparison rather than special-cased inside it, so
-# the comparison itself stays a plain equality.
+# The opt-in is the one ADDITION a copy may carry, and it is ONE addition in
+# ONE place. Rather than deleting the pair from the adopted side — which
+# accepts it anywhere, including under `jobs:`, where it is not a trigger at
+# all — the EXPECTED side is built with the template's own two commented
+# lines uncommented IN PLACE. Position then costs nothing to enforce: the
+# comparison stays a plain equality, and a pair anywhere else is a
+# divergence like any other edit.
+TEMPLATE_OPT_TRIGGER='  #   check_run:'
+TEMPLATE_OPT_TYPES='  #     types: [created, completed]'
+
 first_match_line() { # FILE LITERAL — line number of the first exact match, or empty
   local out rc=0
   out="$(grep -nxF -- "$2" "$1")" || rc=$?
@@ -175,16 +174,34 @@ first_match_line() { # FILE LITERAL — line number of the first exact match, or
   printf '%s' "${out%%:*}"
 }
 
+# The allowance is DERIVED from the template, never hardcoded beside it: if
+# the shipped file stops carrying the commented pair, this tool must stop
+# claiming to know what uncommenting it looks like.
+[ -n "$(first_match_line "$TEMPLATE" "$TEMPLATE_OPT_TRIGGER")" ] &&
+  [ -n "$(first_match_line "$TEMPLATE" "$TEMPLATE_OPT_TYPES")" ] ||
+  die "$TEMPLATE no longer carries the commented check_run opt-in this tool derives its one allowance from"
+
 CHECK_RUN_ENABLED=0
 cr_n="$(first_match_line "$TMP/adopted.code" '  check_run:')"
 ty_n="$(first_match_line "$TMP/adopted.code" '    types: [created, completed]')"
 if [ -n "$cr_n" ] && [ -n "$ty_n" ] && [ "$ty_n" = "$((cr_n + 1))" ]; then
   CHECK_RUN_ENABLED=1
-  sed -e '/^  check_run:$/d' -e '/^    types: \[created, completed\]$/d' \
-    "$TMP/adopted.code" >"$TMP/adopted.trimmed"
-  mv "$TMP/adopted.trimmed" "$TMP/adopted.code"
 elif [ -n "$cr_n" ] || [ -n "$ty_n" ]; then
   bad "$adopted carries a PARTIAL check_run opt-in — the trigger line and its \`types: [created, completed]\` child opt in together or not at all: a trigger without the child fires on every activity type or is refused outright, and the child without its trigger lands under whatever precedes it. Uncomment both template lines, adjacent, or neither"
+fi
+
+if [ "$CHECK_RUN_ENABLED" -eq 1 ]; then
+  sed -e "s|^${TEMPLATE_OPT_TRIGGER}\$|  check_run:|" \
+    -e "s|^  #     types: \\[created, completed\\]\$|    types: [created, completed]|" \
+    "$TEMPLATE" >"$TMP/template.raw"
+else
+  cat "$TEMPLATE" >"$TMP/template.raw"
+fi
+code_lines "$TMP/template.raw" >"$TMP/template.code"
+
+if [ "$IS_CATALOG" -eq 1 ]; then
+  sed -i.bak 's#\.agents/skills/review-gate/#skills/review-gate/#g' "$TMP/template.code"
+  rm -f "$TMP/template.code.bak"
 fi
 
 # diff exits 0 same, 1 differing, and anything higher is trouble reading the

@@ -184,6 +184,27 @@ envout="$(cd "$dir" && REVIEW_GATE_MODE=enforce "./$VALIDATE_REL" 2>&1)" || envr
   bad "an exported value does not launder an illegal committed one" "rc=$envrc
 $envout"
 
+# PRESENT is not COMMITTED. CI checks out tracked files only, so an untracked
+# settings file is validated here and absent there, and the gate runs on the
+# built-in defaults instead of the values this check just approved.
+sandbox
+dir="$DIR"
+(cd "$dir" && git rm -q --cached kendex.settings.toml && git commit -q -m "untrack the settings file")
+expect_fail "an UNTRACKED settings file is a finding, not a pass" "$dir" "present but UNTRACKED"
+
+# ...and the explicit caller handle is exempt, since it names a path that was
+# never required to live in the repository.
+sandbox
+dir="$DIR"
+(cd "$dir" && git rm -q --cached kendex.settings.toml && git commit -q -m "untrack the settings file")
+envrc=0
+envout="$(cd "$dir" && REVIEW_GATE_SETTINGS_FILE=kendex.settings.toml "./$VALIDATE_REL" 2>&1)" || envrc=$?
+if [ "$envrc" -eq 0 ] && printf '%s' "$envout" | grep -qF "not required to be tracked"; then
+  ok "an explicitly named settings file is exempt from the tracked requirement"
+else
+  bad "an explicitly named settings file is exempt from the tracked requirement (rc=$envrc)" "$envout"
+fi
+
 # A QUOTED key is valid TOML and invisible to the loader, whose presence
 # probe matches the bare name only. Reporting it as a healthy setting is the
 # silent-default class this whole group exists to catch.
@@ -382,6 +403,17 @@ printf '%s\n' '  second-relay:
 commit "$dir"
 expect_fail "an appended job is a divergence" "$dir" "has diverged from the shipped template"
 
+# The opt-in is one addition in ONE PLACE. The expected side is built by
+# uncommenting the template's own two lines where they sit, so a pair
+# appended somewhere else — under `jobs:`, where it is not a trigger at all —
+# is a divergence like any other edit.
+sandbox
+dir="$DIR"
+printf '%s\n' '  check_run:
+    types: [created, completed]' >>"$dir/.github/workflows/review-gate-writer.yml"
+commit "$dir"
+expect_fail "the opt-in pair appended OUTSIDE the on: block is a divergence" "$dir" "has diverged from the shipped template"
+
 # The script-path spelling is not interchangeable: each repo kind has ONE
 # correct spelling, and normalizing both sides would make either pass in
 # either place. A consumer runs the vendored copy.
@@ -459,7 +491,7 @@ expect_clean "a reworded COMMENT is not a divergence" "$dir"
 # The one legitimate addition: the opt-in's two trigger lines.
 sandbox
 dir="$DIR"
-mutate "$dir" "s|^  workflow_dispatch: {}\$|  check_run:\n    types: [created, completed]\n  workflow_dispatch: {}|"
+mutate "$dir" "s|^  #   check_run:\$|  check_run:|; s|^  #     types: \[created, completed\]\$|    types: [created, completed]|"
 expect_clean "the check_run opt-in's two lines are allowed" "$dir"
 printf '%s' "$OUT" | grep -qF "REVIEW_GATE_CHECK_RUN_NAME" &&
   ok "the opt-in still names the repository variable equality cannot check" ||
@@ -468,7 +500,7 @@ printf '%s' "$OUT" | grep -qF "REVIEW_GATE_CHECK_RUN_NAME" &&
 # ...and only those two. An opt-in plus any other edit still diverges.
 sandbox
 dir="$DIR"
-mutate "$dir" "s|^  workflow_dispatch: {}\$|  check_run:\n    types: [created, completed]\n  workflow_dispatch: {}|"
+mutate "$dir" "s|^  #   check_run:\$|  check_run:|; s|^  #     types: \[created, completed\]\$|    types: [created, completed]|"
 mutate "$dir" "s/^      statuses: write\$/      statuses: read/"
 expect_fail "the opt-in allowance does not cover a second edit" "$dir" "has diverged from the shipped template"
 

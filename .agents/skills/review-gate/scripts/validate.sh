@@ -36,7 +36,8 @@ Four groups run, in this order:
 
   runtime     every engine script this repo needs is present, executable and
               parses under `bash -n`.
-  settings    every REVIEW_GATE_* assignment is one the engine reads, spelt
+  settings    the committed file is TRACKED (CI checks out nothing else), and
+              every REVIEW_GATE_* assignment is one the engine reads, spelt
               the way it reads it (bare key, no quotes), and legal. Unknown
               keys, per-invocation seams and repository variables are each
               named as what they are; the value rules come from
@@ -164,7 +165,19 @@ if [ "$SETTINGS_FILE" = "/dev/null" ]; then
 elif [ ! -f "$SETTINGS_FILE" ]; then
   note "$SETTINGS_FILE is absent — every key resolves to its built-in default, which is a valid install carrying no per-repo values"
 else
-  ok "$SETTINGS_FILE is present"
+  # PRESENT is not COMMITTED. CI checks out tracked files only, so an
+  # untracked settings file validates here with the intended trust values
+  # while the gate runs on the built-in defaults — the widest possible split
+  # between what was checked and what runs. An explicit
+  # REVIEW_GATE_SETTINGS_FILE is a caller handle pointing anywhere, so it is
+  # exempt and says so.
+  if [ -n "${REVIEW_GATE_SETTINGS_FILE:-}" ]; then
+    note "$SETTINGS_FILE is present (named by REVIEW_GATE_SETTINGS_FILE, so it is not required to be tracked)"
+  elif git ls-files --error-unmatch -- "$SETTINGS_FILE" >/dev/null 2>&1; then
+    ok "$SETTINGS_FILE is present and tracked"
+  else
+    bad "$SETTINGS_FILE is present but UNTRACKED — CI checks out tracked files only, so every value below is validated here and absent there; the gate would run on the built-in defaults. \`git add $SETTINGS_FILE\`"
+  fi
   # Two scans, because the loader makes the distinction: its presence probe
   # is `^[[:space:]]*NAME[[:space:]]*=` (scripts/lib/settings.sh), which
   # matches the BARE key and nothing else. TOML says a quoted key is the same
