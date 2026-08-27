@@ -24,8 +24,9 @@
 # log shows them.
 #
 # Exit 0 on any verdict. Exit 2 on a WIRING error — an unknown flag, a missing
-# --event, an unwritable --output. Those are never transient, so they must not
-# be absorbed as a classification: the step goes red and the caller sees it.
+# --event, a flag where a value belongs, an unwritable --output. Those are
+# never transient, so they must not be absorbed as a classification: the step
+# goes red and the caller sees it.
 #
 # Fail-closed everywhere. An unknown event, a missing or unresolvable
 # endpoint, an unreadable diff and an empty diff all answer false, which runs
@@ -66,17 +67,25 @@ die() { # MESSAGE — a wiring error, never a verdict
 # `shift 2` past the end of "$@" returns non-zero and shifts nothing. Every
 # value-taking flag proves its value is there first, rather than leaving the
 # argument loop to exit on a shift.
-need_value() { # FLAG REMAINING
+#
+# A flag-shaped value is the same wiring error one step later: `--event --base`
+# would take `--base` as the event, classify it as unrecognised, and hand back
+# a verdict for a call that named no event at all. No option here takes a value
+# that starts with a dash; a path that does is reachable as `./-name`.
+need_value() { # FLAG REMAINING NEXT
   [ "$2" -ge 2 ] || die "$1 needs a value"
+  case "$3" in
+    -?*) die "$1 needs a value, got the flag '$3'" ;;
+  esac
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --event) need_value "$1" "$#"; event="$2"; shift 2 ;;
-    --base) need_value "$1" "$#"; base="$2"; shift 2 ;;
-    --head) need_value "$1" "$#"; head="$2"; shift 2 ;;
-    --repo) need_value "$1" "$#"; repo="$2"; shift 2 ;;
-    --output) need_value "$1" "$#"; output="$2"; shift 2 ;;
+    --event) need_value "$1" "$#" "${2:-}"; event="$2"; shift 2 ;;
+    --base) need_value "$1" "$#" "${2:-}"; base="$2"; shift 2 ;;
+    --head) need_value "$1" "$#" "${2:-}"; head="$2"; shift 2 ;;
+    --repo) need_value "$1" "$#" "${2:-}"; repo="$2"; shift 2 ;;
+    --output) need_value "$1" "$#" "${2:-}"; output="$2"; shift 2 ;;
     -h | --help) usage; exit 0 ;;
     *) die "unknown argument '$1'" ;;
   esac

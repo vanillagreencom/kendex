@@ -41,7 +41,7 @@ contexts, and wedge merge queues in repositories it knows nothing about.
 The contract is one thin step the consumer writes and owns, calling the
 rendered script. Adoption edits the consumer's workflow by hand, once.
 
-## The two rules to hold when wiring it
+## The rules to hold when wiring it
 
 **Classify inside a job, never in `on.<event>.paths`.** A path filter stops
 the workflow from starting, the required context is never created, and a
@@ -49,8 +49,14 @@ merge queue waits forever on a check nothing will report.
 
 **Keep the required-context job unconditional.** Gate the expensive lanes —
 job-level `if:` off a `changes` job's output, or step-level `if:` inside an
-aggregate — and let the aggregate that carries the required name run on
-every event, accepting `skipped` lanes as passes.
+aggregate — and let the aggregate that carries the required name run on every
+event.
+
+**A job-level `if:` needs a status function.** Without one it keeps the
+implicit `success()` and skips the lane whenever the classifying job failed,
+which stands the expensive lanes down on exactly the diffs nothing classified.
+An aggregate accepts a `skipped` lane only after checking that the classifier
+ran and cleared the diff.
 
 ## Reading a verdict
 
@@ -60,9 +66,9 @@ read directly. The changed paths and the reason behind a `false` go to
 `$GITHUB_OUTPUT`) appends the same line for a step output.
 
 Exit `0` accompanies every verdict, `true` or `false`. Exit `2` is a wiring
-error — an unknown flag, a missing `--event`, an `--output` the process
-cannot append to — and prints nothing on stdout, turning the step red
-instead of passing a guess off as a classification.
+error — an unknown flag, a missing `--event`, a flag where a value belongs, an
+`--output` the process cannot append to — and prints nothing on stdout,
+turning the step red instead of passing a guess off as a classification.
 
 ## Fail-closed
 

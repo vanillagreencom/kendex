@@ -43,6 +43,21 @@ wiring "--repo with no value" --event push --base "$base" --repo
 wiring "--output with no value" --repo "$repo" --event push --base "$base" --output
 wiring "an empty --head" --repo "$repo" --event push --base "$base" --head ""
 
+# A flag where a value belongs. Consuming it would classify '--base' as an
+# unrecognised event and hand back a verdict for a call that named no event.
+wiring "--event followed by another flag" --repo "$repo" --event --base "$base"
+wiring "--base followed by another flag" --repo "$repo" --event push --base --head
+wiring "--head followed by another flag" \
+  --repo "$repo" --event push --base "$base" --head --output
+wiring "--repo followed by another flag" --repo --event push --base "$base"
+wiring "--output followed by another flag" \
+  --repo "$repo" --event push --base "$base" --output --head
+
+# A lone dash and a dash-led path are values, not flags: only a flag shape
+# (a dash with something after it) is refused.
+verdict_dash="$(classify --repo "$repo" --event push --base "$base" --head "-" || true)"
+assert_eq "a lone dash is taken as a value" "harness_only=false" "$verdict_dash"
+
 # An --output the process cannot append to is wiring, not data: the caller
 # asked for a file and would otherwise get silence.
 unwritable="$SANDBOX/no-such-dir/out.txt"

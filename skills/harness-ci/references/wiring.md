@@ -54,14 +54,22 @@ jobs:
 
   test:
     needs: changes
-    if: needs.changes.outputs.harness_only != 'true'
+    if: >-
+      ${{ !cancelled()
+          && !(needs.changes.result == 'success'
+               && needs.changes.outputs.harness_only == 'true') }}
     runs-on: ubuntu-latest
     steps:
       # the repository's existing lane, unchanged
 ```
 
-`!= 'true'` and never `== 'false'`: a `changes` job that failed hands
-downstream jobs an empty string, and the lane must run on it.
+**The status function is load-bearing, and the condition names
+`needs.changes.result` on purpose.** A job-level `if:` carrying no status
+function keeps the implicit `success()`, so a plain
+`needs.changes.outputs.harness_only != 'true'` SKIPS the lane whenever the
+`changes` job fails — a checkout error or an `harness-only` exit 2 would stand
+the expensive lanes down rather than run them. `!cancelled()` lifts that, and
+the lane then skips on one condition only: the classifier ran and said `true`.
 
 ## Shape 2 — a step inside an aggregate job
 
@@ -93,8 +101,10 @@ jobs:
         run: make build test
 ```
 
-The job keeps its name, runs on every event, and reports the required
-context whatever the verdict.
+The job keeps its name, runs on every event, and reports the required context
+whatever the verdict. No status function is needed here: a STEP-level `if:` is
+evaluated only after the steps before it succeeded, so a classify step exiting
+2 fails the job outright and the gated steps never run.
 
 ## Shape 3 — merge queues, where the required context must report
 
@@ -105,7 +115,8 @@ the workflow from starting. The required context is never created, and the
 queue waits on a check nothing will report.
 
 **Keep the job that carries the required name unconditional.** Gate the
-lanes; let the aggregate run always and accept a skipped lane as a pass.
+lanes; let the aggregate run always. A skipped lane is a pass only when the
+classifier is the reason it skipped.
 
 ```yaml
   ci-ok:
@@ -114,22 +125,36 @@ lanes; let the aggregate run always and accept a skipped lane as a pass.
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: every lane that ran succeeded
+      - name: the classifier ran and every lane that skipped was told to
         env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          HARNESS_ONLY: ${{ needs.changes.outputs.harness_only }}
           RESULTS: ${{ needs.test.result }} ${{ needs.build.result }}
         run: |
           set -u
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "changes=$CHANGES_RESULT (required: success)"
+            exit 1
+          fi
           for result in $RESULTS; do
             case "$result" in
-              success | skipped) ;;
+              success) ;;
+              skipped)
+                if [ "$HARNESS_ONLY" != "true" ]; then
+                  echo "a lane skipped on a diff the classifier did not clear"
+                  exit 1
+                fi
+                ;;
               *) echo "lane result: $result"; exit 1 ;;
             esac
           done
 ```
 
-`if: always()` is load-bearing. Without it, a skipped lane skips the
+Both halves close a fail-open. Without `if: always()` a skipped lane skips the
 aggregate too, and a skipped required context satisfies the ruleset with no
-lane having run — the fail-open this shape closes.
+lane having run. Without the `CHANGES_RESULT` and `HARNESS_ONLY` checks the
+aggregate accepts `skipped` from any cause, so a `changes` job that died turns
+the required context green with nothing built.
 
 Every trigger the ruleset requires the context on must appear under `on:`,
 `merge_group` included. A required context that a merge group never produces

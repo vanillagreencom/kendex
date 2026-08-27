@@ -36,6 +36,13 @@ from [references/wiring.md](references/wiring.md).
 Checkout with `fetch-depth: 0`: the classifier diffs two real commits, and a
 shallow clone does not hold both.
 
+**Install with the default symlink delivery.** That writes the shared
+`.agents/skills/harness-ci/` tree every harness reads, which is the path above
+and the path in every wiring example. `--method copy` writes each tool its own
+tree instead (`.claude/skills/harness-ci/`, and so on) and writes no `.agents`
+tree at all — a repo on copy delivery has to point its step at whichever of
+those trees it committed.
+
 ## Semantics
 
 - **The harness path set**: `.agents/`, `.claude/`, `.codex/`, `.opencode/`,
@@ -54,8 +61,9 @@ shallow clone does not hold both.
   its head by construction, so the two forms agree there.
 - **Verdict channel**: `stdout` carries `harness_only=true|false` and nothing
   else. Changed paths and failure reasons go to `stderr`.
-- **Exit codes**: `0` with every verdict; `2` on a wiring error (unknown
-  flag, missing `--event`, unwritable `--output`), which prints no verdict.
+- **Exit codes**: `0` with every verdict; `2` on a wiring error (unknown flag,
+  missing `--event`, a flag where a value belongs, unwritable `--output`),
+  which prints no verdict.
 
 ## Fail-closed
 
@@ -81,8 +89,8 @@ There is no flag that turns any of these into a `true`.
 | `path-set` | Every render tree, mixed diffs, deletions, the near-miss paths |
 | `rename-into-render` | The `git mv` into a render tree, and the control proving the flag is load-bearing |
 | `event-ranges` | The force-push case, the moving base branch, merge groups |
-| `fail-closed` | Unclassified events, unresolvable endpoints, empty and unreadable diffs |
-| `wiring-errors` | Exit 2 on bad calls, `--output` and `$GITHUB_OUTPUT` behaviour |
+| `fail-closed` | Unclassified events, unresolvable endpoints, an empty diff, a merge-base diff git refuses, a path git had to quote |
+| `wiring-errors` | Exit 2 on bad calls (a flag where a value belongs included), `--output` and `$GITHUB_OUTPUT` behaviour |
 | `bash32-portability` | No Bash 4+ syntax; consumer runners include macOS system Bash |
 
 Run one locally with `bash skills/harness-ci/tests/path-set.test.sh`.
