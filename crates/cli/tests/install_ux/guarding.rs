@@ -265,6 +265,64 @@ fn removing_a_copied_package_disarms_the_repository_too() {
     assert!(ok.status.success(), "{}", spoke(&ok));
 }
 
+/// Switching an installation off renames its declaration and disarms
+/// nothing, so a package that was installed, armed, then disabled still
+/// has live shims — and removing it has to run the uninstaller like any
+/// other removal.
+///
+/// Probing only `SKILL.md` read this package as one that declares
+/// nothing, and the removal took the scripts out from under the shims.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn removing_a_disabled_package_disarms_the_repository_too() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    offer(&world, "growth-guards");
+    world.run(&[
+        "add",
+        "cat",
+        "--skill",
+        "growth-guards",
+        "-y",
+        "--allow-repo-effects",
+    ]);
+    assert!(world.at(".git/hooks/kendex-guards").is_file());
+
+    // Switch it off, the way the manifest says it: the declaration is
+    // renamed and the shims are left exactly where they were.
+    world.declare_no_items(&["claude"]);
+    let off_manifest = format!(
+        "{}\n[skills.growth-guards]\nsource = \"cat\"\nenabled = false\n",
+        world.manifest()
+    );
+    fs::write(world.at("kendex.toml"), off_manifest).unwrap();
+    let off = world.run(&["apply", "-y"]);
+    let tree = world.at(".agents/skills/growth-guards");
+    assert!(
+        tree.join("SKILL.md.disabled").is_file() && !tree.join("SKILL.md").exists(),
+        "the switch did not rename the declaration:\n{off}"
+    );
+    assert!(
+        world.at(".git/hooks/kendex-guards").is_file(),
+        "nothing disarms on the switch:\n{off}"
+    );
+
+    let out = world.run(&["remove", "growth-guards"]);
+    assert!(
+        out.contains("growth-guards: running scripts/install-git-hooks --uninstall"),
+        "the removal did not say what it ran:\n{out}"
+    );
+    assert!(!world.at(".agents/skills/growth-guards").exists(), "{out}");
+    assert!(
+        !world.at(".git/hooks/kendex-guards").exists(),
+        "the helper was left behind:\n{out}"
+    );
+    fs::write(world.at("late.txt"), "fine\n").unwrap();
+    git_without_kendex(&world.project, &["add", "-A"]);
+    let ok = git_without_kendex(&world.project, &["commit", "-m", "feat: after removal"]);
+    assert!(ok.status.success(), "{}", spoke(&ok));
+}
+
 /// An uninstaller that fails stops the removal with the package still
 /// installed: the other order trashes the scripts and leaves exactly the
 /// stranded state this exists to prevent.
@@ -338,24 +396,14 @@ fn applying_a_manifest_without_the_package_disarms_first() {
     ]);
     assert!(world.at(".git/hooks/kendex-guards").is_file());
 
-    let manifest = world.manifest();
-    assert!(manifest.contains("[skills.growth-guards]"), "{manifest}");
-    let mut kept = String::new();
-    let mut dropping = false;
-    for line in manifest.lines() {
-        if line.trim() == "[skills.growth-guards]" {
-            dropping = true;
-            continue;
-        }
-        if dropping && line.starts_with('[') {
-            dropping = false;
-        }
-        if !dropping {
-            kept.push_str(line);
-            kept.push('\n');
-        }
-    }
-    fs::write(world.at("kendex.toml"), kept).unwrap();
+    assert!(
+        world.manifest().contains("[skills.growth-guards]"),
+        "{}",
+        world.manifest()
+    );
+    // The manifest a hand edit arrives at: the source and the tools the
+    // add wrote, and no package.
+    world.declare_no_items(&["claude"]);
 
     let out = world.run(&["apply", "-y"]);
     assert!(

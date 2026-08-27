@@ -201,18 +201,31 @@ fn skill_names(lock: &crate::lock::Lock) -> BTreeSet<&str> {
         .collect()
 }
 
-/// Where a departing package's tree sits on disk, and its `SKILL.md`.
+/// The two names an installed skill's declaration can sit under: the
+/// second is what a switched-off installation keeps its content as.
+const DECLARATION_NAMES: [&str; 2] = ["SKILL.md", "SKILL.md.disabled"];
+
+/// Where a departing package's tree sits on disk, and its declaration.
 ///
 /// The shared tree first, then every directory the departing rows' own
 /// tools read skills from: a copy delivery writes the package into the
 /// tool's own directory and the shared tree may not exist at all, so
 /// reading only `.agents/skills` found no declaration for exactly the
 /// install whose scripts were about to be trashed. The first copy that
-/// carries a `SKILL.md` is the one whose scripts run.
+/// carries a declaration is the one whose scripts run.
 ///
-/// A candidate with no `SKILL.md` is skipped; a candidate whose `SKILL.md`
-/// will not read is an error, because the alternative is to call a package
-/// that declares an uninstaller a package that declares nothing.
+/// Both spellings, because switching an installation off renames its
+/// `SKILL.md` to `SKILL.md.disabled` and nothing disarms on that switch:
+/// probing the enabled name alone read a package that was installed,
+/// armed, then disabled as a package that declares nothing, and the
+/// removal took its scripts out from under shims still delegating to
+/// them. A tree carrying both names never installs — `desired_skill`
+/// refuses it — so which one is read is not a question here.
+///
+/// A candidate with neither name is skipped; a candidate whose
+/// declaration will not read is an error, because the alternative is to
+/// call a package that declares an uninstaller a package that declares
+/// nothing.
 fn installed_tree(
     env: &Env,
     scope: &Scope,
@@ -231,8 +244,10 @@ fn installed_tree(
         }
     }
     for root in candidates {
-        if let Some(text) = crate::fs::read_if_exists(&root.join("SKILL.md"))? {
-            return Ok(Some((root, text)));
+        for file in DECLARATION_NAMES {
+            if let Some(text) = crate::fs::read_if_exists(&root.join(file))? {
+                return Ok(Some((root, text)));
+            }
         }
     }
     Ok(None)
@@ -245,6 +260,33 @@ mod tests {
 
     use super::*;
     use crate::env::FakeOs;
+
+    /// A switched-off installation keeps its declaration under the
+    /// `.disabled` name, and it is the same declaration: the removal that
+    /// finds it is the one that runs the uninstaller before the scripts go.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn a_switched_off_installation_still_declares_what_it_armed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().to_path_buf();
+        let env = Env::fake(&home, FakeOs::Linux);
+        let root = home.join("dev/app");
+        let scope = Scope::Project { root: root.clone() };
+        let lock = crate::lock::Lock::default();
+
+        let tree = root.join(".agents/skills/armer");
+        fs::create_dir_all(&tree).unwrap();
+        fs::write(
+            tree.join("SKILL.md.disabled"),
+            "---\nname: armer\n---\nBody.\n",
+        )
+        .unwrap();
+
+        let found = installed_tree(&env, &scope, &lock, "armer").unwrap();
+        let (at, text) = found.expect("the disabled declaration was read as an absent one");
+        assert_eq!(at, tree);
+        assert!(text.contains("name: armer"), "{text}");
+    }
 
     /// A candidate with no `SKILL.md` is a candidate to move past; a
     /// candidate whose `SKILL.md` will not read is the end of the search.

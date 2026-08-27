@@ -143,6 +143,27 @@ impl World {
         );
     }
 
+    /// The manifest with the catalog and the tools, and no items — what a
+    /// hand edit that drops every package arrives at.
+    ///
+    /// Built here rather than by editing the generated text: dropping a
+    /// table line by line reads a multiline string's contents as structure.
+    pub fn declare_no_items(&self, harnesses: &[&str]) {
+        let tools = harnesses
+            .iter()
+            .map(|harness| format!("\"{harness}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        write(
+            &self.project.join("kendex.toml"),
+            &format!(
+                "schema = 6\n\n[sources.cat]\npath = \"{}\"\nenabled = true\n\n\
+                 [install]\nharnesses = [{tools}]\nmethod = \"symlink\"\n",
+                self.catalog.display()
+            ),
+        );
+    }
+
     pub fn run(&self, args: &[&str]) -> String {
         run(&self.home, &self.project, args)
     }
