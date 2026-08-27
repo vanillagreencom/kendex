@@ -100,14 +100,14 @@ Setup-path hardening:
   directory leaf.
 
 Dependencies:
-  No command runs a package-manager install. Installs run only in the main
-  checkout, and only when the lockfile changed; link that install into each
-  worktree with a WORKTREE_SYMLINKS entry for the node_modules path. A warning
-  names the main checkout when a worktree has a root package.json and no
-  node_modules, and when a configured node_modules entry beside a worktree
-  package.json has no main-checkout source. Limitation: linked node_modules
+  No command runs a package-manager install: installs run only in the main
+  checkout, and only when the lockfile changed. Link it into each worktree
+  with a WORKTREE_SYMLINKS entry for the node_modules path. A configured
+  node_modules entry beside a worktree package.json always warns when its
+  source is missing; a root package.json with nothing linked warns wherever
+  links are set up, but not from repair-links. Limitation: linked node_modules
   resolves pnpm workspace dependencies (workspace:/link:) to main's source, so
-  a worktree's checks see main's copy of sibling workspace packages.
+  a worktree's checks see main's copy of sibling packages.
 
 Session guard:
   create never claims an ownership lease — a fresh worktree is unclaimed, and
@@ -452,11 +452,11 @@ Git-hook auto-repair:
   core.hooksPath is never used or modified: when it is set, the install is
   skipped with a warning — add a repair-links call to those hooks manually.
   The helper no-ops in the main checkout and in repos without the skill
-  installed, and never fails the git operation it runs after. Repair is the
-  fix-links logic with one extra guarantee: a materialized path holding
-  files git does not track (untracked OR ignored) is never clobbered; the
-  hook warns loudly, names the files, and points at manual fix-links after
-  the data has been moved or deleted.
+  installed, and never fails the git operation it runs after. Repair
+  re-asserts the configured WORKTREE_SYMLINKS entries only, with one extra
+  guarantee: a materialized path holding files git does not track (untracked
+  OR ignored) is never clobbered; the hook warns loudly, names the files, and
+  points at manual fix-links after the data has been moved or deleted.
 EOF
 }
 
@@ -4673,7 +4673,7 @@ case "${1:-}" in
     # Codex Desktop owns worktree creation. This command applies the same
     # project-local setup that `create` applies after git has already created
     # the worktree: env/config symlinks, configured copies/dirs, optional bot
-    # git config, optional bot remote, and lightweight dependency bootstrap.
+    # git config, and optional bot remote.
     ARG="${2:-}"
     if [[ -z "$ARG" ]]; then
       WT_PATH="$PWD"
