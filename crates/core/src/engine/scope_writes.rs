@@ -20,7 +20,8 @@ use super::{DriftRow, DriftState, config_edits};
 mod manifest_text;
 pub(super) use manifest_text::plan_schema_upgrade;
 
-/// Whether this op is the manifest's write.
+/// Whether this op is the manifest's full-rewrite save. The surgical
+/// schema edit is a plain `WriteFile` and is not one.
 pub fn writes_manifest(op: &PlannedOp) -> bool {
     matches!(op.op, Op::WriteManifest { .. })
 }

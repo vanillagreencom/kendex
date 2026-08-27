@@ -75,10 +75,11 @@ fn a_declaration_under_the_base_agents_key_holds_on_the_first_apply() {
     );
 }
 
-/// Keeping the declaration means the plan writes the manifest nowhere —
-/// not even the planner's own save, which carries the undeclared copy the
-/// removal was planned against. An agent whose upstream skill list grew is
-/// what makes the planner want that save.
+/// Keeping the declaration means the plan writes the manifest nowhere, so
+/// the upstream skill merge that would want a save waits for the refresh:
+/// the agent renders and records as it stands, and the refresh merges what
+/// upstream added. An agent whose upstream skill list grew is what makes
+/// the planner want that save.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn keeping_the_declaration_drops_the_planners_own_manifest_save() {
@@ -93,6 +94,19 @@ fn keeping_the_declaration_drops_the_planners_own_manifest_save() {
     add_skill(&w.source, "rust-perf");
     let path = super::manifest::manifest_path(&w.env, &scope);
     let before = fs::read_to_string(&path).unwrap();
+    let rendered = w.home.join("dev/app/.claude/agents/rust.md");
+    let rendered_before = fs::read_to_string(&rendered).unwrap();
+    let recorded = |w: &super::World| {
+        super::load_lock(&super::lock_path(&w.env, &scope))
+            .unwrap()
+            .entries
+            .values()
+            .find(|entry| entry.name == "rust")
+            .unwrap()
+            .upstream_skills
+            .clone()
+    };
+    let recorded_before = recorded(&w);
     assert!(
         super::persists_manifest(&super::audit(&w.env, &scope).unwrap().plan.ops),
         "the fixture must make the planner save the manifest on its own"
@@ -108,4 +122,16 @@ fn keeping_the_declaration_drops_the_planners_own_manifest_save() {
     assert_eq!(fs::read_to_string(&path).unwrap(), before);
     assert!(before.contains("[skills.gh]"));
     assert!(!w.home.join("dev/app/.claude/skills/gh").exists());
+    assert_eq!(fs::read_to_string(&rendered).unwrap(), rendered_before);
+    assert_eq!(recorded(&w), recorded_before);
+
+    // The refresh after it still sees the addition and merges it.
+    let next = super::audit(&w.env, &scope).unwrap();
+    let merged = next.plan.ops.iter().find_map(|op| match &op.op {
+        super::apply::Op::WriteManifest { manifest, .. } => {
+            Some(manifest.agent_skills["rust"].clone())
+        }
+        _ => None,
+    });
+    assert_eq!(merged.unwrap(), ["gh", "rust-perf"]);
 }

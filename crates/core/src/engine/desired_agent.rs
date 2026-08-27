@@ -2,7 +2,7 @@ use crate::error::Result;
 use crate::hash::installation_hash;
 use crate::lock::entry_key;
 use crate::manifest::{CustomHook, FrontmatterOverrides, HookAgents, Manifest, Method};
-use crate::mapping::{EffectiveSkills, effective_skills};
+use crate::mapping::EffectiveSkills;
 use crate::model::{HarnessId, ItemKind};
 use crate::render::agent::{
     EffectiveAgent, RenderedAgent, Role, SourceAgent, file_name, generate, hooks_for_agent,
@@ -10,63 +10,8 @@ use crate::render::agent::{
 };
 use crate::render::permission::PermissionIntent;
 use crate::render::validate::validate_agent;
-use crate::source::list_items;
 
 use super::desired::{Artifact, Desired, DesiredState, ItemCtx, native_dir};
-
-/// The agent's skill list, merging anything upstream added since the last
-/// sync back into the manifest so the declaration keeps saying what the
-/// agent actually renders with.
-fn assigned_skills(
-    ctx: &ItemCtx,
-    role: Option<Role>,
-    updated_manifest: &mut Manifest,
-    manifest_changed: &mut bool,
-) -> EffectiveSkills {
-    let available = list_items(ctx.sealed, ctx.config, ItemKind::Skill);
-    let recorded = ctx.harnesses.iter().find_map(|h| {
-        ctx.lock
-            .entries
-            .get(&entry_key(ItemKind::Agent, ctx.name, *h))
-            .and_then(|entry| entry.upstream_skills.clone())
-    });
-    let skills = effective_skills(
-        ctx.name,
-        role,
-        ctx.manifest,
-        ctx.config,
-        &available,
-        recorded.as_deref(),
-    );
-    if skills.manifest_additions.is_empty() {
-        return skills;
-    }
-    let entry = updated_manifest
-        .agent_skills
-        .entry(merge_key(ctx.manifest, ctx.name))
-        .or_default();
-    for skill in &skills.manifest_additions {
-        if !entry.contains(skill) {
-            entry.push(skill.clone());
-        }
-    }
-    *manifest_changed = true;
-    skills
-}
-
-/// The `agent_skills` key the effective list was read from. Writing
-/// additions anywhere else creates an entry that shadows the one being read,
-/// and the shadowed skills silently vanish from the next rendering.
-fn merge_key(manifest: &Manifest, name: &str) -> String {
-    if manifest.agent_skills.contains_key(name) {
-        return name.to_owned();
-    }
-    let stripped = crate::mapping::skill_match_prefix(name);
-    match manifest.agent_skills.contains_key(stripped) {
-        true => stripped.to_owned(),
-        false => name.to_owned(),
-    }
-}
 
 /// The agent as this tool will know it, or `None` where that is the agent
 /// the catalog already wrote. Each tool answers to the name the rendered
@@ -182,7 +127,8 @@ pub(super) fn desired_agent(
             remediation: None,
         });
     }
-    let skills = assigned_skills(ctx, parsed.role, updated_manifest, manifest_changed);
+    let skills =
+        super::agent_skills::assigned_skills(ctx, parsed.role, updated_manifest, manifest_changed);
     for harness in ctx.harnesses.clone() {
         let Some(native) = native_dir(ctx.env, ctx.scope, harness, ItemKind::Agent) else {
             continue;

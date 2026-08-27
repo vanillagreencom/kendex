@@ -8,6 +8,7 @@ use crate::manifest::{self, Manifest, ManifestFile};
 use crate::model::Scope;
 
 pub mod adopt;
+mod agent_skills;
 pub(crate) mod bundles;
 mod catalog;
 mod config_edits;
@@ -268,7 +269,13 @@ fn desired_pass<'a>(
     options: &PlanOptions,
 ) -> Result<(std::borrow::Cow<'a, Manifest>, desired::DesiredState)> {
     let (planning, held_pins) = desired::hold::planning_manifest(declared, lock, options);
-    let mut state = desired_state(env, scope, planning.as_ref(), lock)?;
+    let mut state = desired_state(
+        env,
+        scope,
+        planning.as_ref(),
+        lock,
+        options.hold_upstream_skills,
+    )?;
     if let (Some(pins), Some(update)) = (&held_pins, state.manifest_update.as_mut()) {
         pins.unpin(update);
     }

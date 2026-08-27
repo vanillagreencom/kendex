@@ -1,6 +1,6 @@
 .github/workflows/review-gate-writer.yml	662
 .github/workflows/skill-tests.yml	402
-crates/core/src/engine/desired_agent.rs	458
+crates/core/src/engine/desired_agent.rs	404
 crates/core/src/engine/detach.rs	603
 crates/core/src/engine/pi_hooks_move/migrated.rs	540
 crates/core/src/engine/pi_hooks_move/mod.rs	502

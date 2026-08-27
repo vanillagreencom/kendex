@@ -206,17 +206,24 @@ pub fn desired_state(
     scope: &Scope,
     manifest: &Manifest,
     lock: &Lock,
+    hold_upstream_skills: bool,
 ) -> Result<DesiredState> {
-    let first = compute(env, scope, manifest, lock)?;
+    let first = compute(env, scope, manifest, lock, hold_upstream_skills)?;
     let Some(merged) = first.manifest_update else {
         return Ok(first);
     };
-    let mut second = compute(env, scope, &merged, lock)?;
+    let mut second = compute(env, scope, &merged, lock, hold_upstream_skills)?;
     second.manifest_update = Some(merged);
     Ok(second)
 }
 
-fn compute(env: &Env, scope: &Scope, manifest: &Manifest, lock: &Lock) -> Result<DesiredState> {
+fn compute(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    lock: &Lock,
+    hold_upstream_skills: bool,
+) -> Result<DesiredState> {
     let mut state = DesiredState::default();
     let mut updated_manifest = manifest.clone();
     let mut manifest_changed = false;
@@ -258,6 +265,7 @@ fn compute(env: &Env, scope: &Scope, manifest: &Manifest, lock: &Lock) -> Result
                 scope,
                 manifest,
                 lock,
+                hold_upstream_skills,
                 config: &config,
                 sealed: &sealed,
                 name,
@@ -304,6 +312,7 @@ pub(super) struct ItemCtx<'a> {
     pub(super) scope: &'a Scope,
     pub(super) manifest: &'a Manifest,
     pub(super) lock: &'a Lock,
+    pub(super) hold_upstream_skills: bool,
     pub(super) config: &'a crate::source::SourceConfig,
     pub(super) sealed: &'a SealedSource,
     pub(super) name: &'a str,

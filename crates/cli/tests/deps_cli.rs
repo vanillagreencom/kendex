@@ -305,11 +305,9 @@ fn keeping_the_declaration_lets_a_refresh_install_it_again() {
     assert!(project.join(".claude/skills/dev").exists());
 
     let output = kendex(home, &project, &["remove", "github", "--keep-declaration"]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let said = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "{said}");
+    assert!(said.contains("dev requires github"), "{said}");
     assert!(!project.join(".claude/skills/github").exists());
     assert_eq!(
         fs::read_to_string(project.join("kendex.toml")).unwrap(),

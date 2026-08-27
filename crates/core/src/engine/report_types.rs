@@ -172,6 +172,12 @@ pub struct EngineReport {
 
 #[derive(Debug, Clone, Default)]
 pub struct PlanOptions {
+    /// Render each agent with the skills its declaration holds and keep the
+    /// lock's upstream record as it is, leaving what upstream added since
+    /// for the next refresh to merge into kendex.toml. The removal that
+    /// keeps declarations sets this: its plan writes no manifest, so a merge
+    /// rendered and recorded here would never reach the file.
+    pub hold_upstream_skills: bool,
     /// Remove orphaned (locked-but-undeclared) artifacts. Refresh keeps
     /// them (v1 semantics); reconcile and `remove` clean them up.
     pub remove_orphans: bool,
