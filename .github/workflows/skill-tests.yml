@@ -324,6 +324,9 @@ jobs:
           persist-credentials: false
       - name: review-gate selftest against this repo's settings
         run: skills/review-gate/scripts/review-predicate-selftest.sh
+      # kendex adopts its own gate, so it takes the consumer's check too.
+      - name: review-gate validate against this repo's installation
+        run: skills/review-gate/scripts/validate.sh
 
   preflight:
     # Dogfoods the preflight skill on this repo's own PR diffs. PR-time on

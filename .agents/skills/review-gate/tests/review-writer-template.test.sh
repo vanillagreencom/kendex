@@ -144,21 +144,22 @@ pin_workflows() { # file, label
   else
     FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the write job's if: is exactly the two converge legs (VST-210: no PR-attached leg holds the evictable group)"
   fi
-  # TERM-WISE, not full-line: adoption.md invites a consumer to hand-add a
-  # check_run name guard to this very expression, so a byte-equality pin fails
-  # the repos that followed the documented instruction. What must survive any
-  # such edit are the three exclusions — without them a converge leg relays and
-  # the self-dispatch loop has no throttle.
+  # TERM-WISE, not full-line: the expression carries the check_run opt-in's
+  # name term, and a consumer may still add a leg of their own. What must
+  # survive any such edit are the three exclusions — without them a converge
+  # leg relays and the self-dispatch loop has no throttle — and the check_run
+  # term, which is what moved the reviewer's check NAME out of this
+  # expression and into a repository variable.
   local if_line if_missing term
   if_line="$(grep -m 1 -E '^    if: ' <<<"$relay_block" || true)"
   if_missing=""
-  for term in "github.event_name != 'merge_group'" "github.event_name != 'workflow_dispatch'" "github.event_name != 'schedule'"; do
+  for term in "github.event_name != 'merge_group'" "github.event_name != 'workflow_dispatch'" "github.event_name != 'schedule'" "vars.REVIEW_GATE_CHECK_RUN_NAME"; do
     grep -qF -- "$term" <<<"$if_line" || if_missing="${if_missing:+$if_missing }[$term]"
   done
   if [[ -n "$if_line" && -z "$if_missing" ]]; then
-    PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: the relay's if: keeps all three NEGATIVE terms (a newly added PR-attached trigger relays by default, and both dispatch targets are excluded so no loop exists)"
+    PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: the relay's if: keeps all three NEGATIVE terms and the check_run name term (a newly added PR-attached trigger relays by default, both dispatch targets are excluded so no loop exists, and the reviewer's check name stays a repository variable)"
   else
-    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n        missing from the relay if: %s\n' "$tag" "tpl: the relay's if: keeps all three NEGATIVE terms (a newly added PR-attached trigger relays by default, and both dispatch targets are excluded so no loop exists)" "${if_missing:-<no if: line at all>}"
+    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n        missing from the relay if: %s\n' "$tag" "tpl: the relay's if: keeps all three NEGATIVE terms and the check_run name term (a newly added PR-attached trigger relays by default, both dispatch targets are excluded so no loop exists, and the reviewer's check name stays a repository variable)" "${if_missing:-<no if: line at all>}"
   fi
 
   # EVERY status STATE converges (no state filter of ANY spelling): under
@@ -246,11 +247,14 @@ pin_workflows() { # file, label
   # dispatch whatever engine lives on a non-default branch — silently
   # breaking the default-branch-defined-writer guarantee the design rests
   # on. Two teeth: the exact literal is present on the relay, and no OTHER
-  # DISPATCH_REF value can exist anywhere.
-  if grep -qE -- "DISPATCH_REF: \\\$\{\{ github\.event\.repository\.default_branch \|\| ${q}[^${q}]+${q} \}\}" <<<"$relay_block"; then
-    PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: the relay dispatches onto the DEFAULT branch with the empty-expression fallback"
+  # DISPATCH_REF value can exist anywhere. BARE, with no `|| 'branch'`
+  # fallback: the fallback was a per-repo value in a file that must carry
+  # none, and an empty resolution now lands on the step's missing-env guard,
+  # which warns and exits 0 rather than reddening a PR-attached leg.
+  if grep -qF -- 'DISPATCH_REF: ${{ github.event.repository.default_branch }}' <<<"$relay_block"; then
+    PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: the relay dispatches onto the DEFAULT branch, with no per-repo fallback to keep in sync"
   else
-    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the relay's DISPATCH_REF is not the default-branch expression — the converge pass would run a non-default-branch engine"
+    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the relay's DISPATCH_REF is not the bare default-branch expression — either the converge pass runs a non-default-branch engine, or a hardcoded fallback branch is back in a file that must carry no per-repo values"
   fi
   # The env: BINDING, at its own indentation — the step reads the same name
   # into a defaulted local, and counting that as a second binding would make
@@ -377,13 +381,20 @@ pin_workflows() { # file, label
   fi
   pin "github.event.pull_request.head.repo.full_name != github.repository" "tpl: fork pull_request_review read-only flag"
   # BOTH engine checkouts are counted: a one-match pin would stay green if
-  # either job regressed to the bare expression.
-  count="$(grep -cE -- "ref: \\\$\{\{ github\.event\.repository\.default_branch \|\| ${q}[^${q}]+${q} \}\}" "$wf" || true)"
-  assert_eq "$count" "2" "[$tag] tpl: BOTH checkouts pin the default branch with the empty-expression fallback"
-  rc=0; grep -qF -- 'ref: ${{ github.event.repository.default_branch }}' "$wf" || rc=$?
+  # either job regressed.
+  count="$(grep -cF -- 'ref: ${{ github.event.repository.default_branch }}' "$wf" || true)"
+  assert_eq "$count" "2" "[$tag] tpl: BOTH checkouts pin the bare default-branch expression"
+  # An empty resolution is REFUSED, not papered over with a branch name: the
+  # guard step runs before each checkout and reds the job. Counted, for the
+  # same reason the checkouts are.
+  count="$(grep -c 'default_branch resolved empty' "$wf" || true)"
+  assert_eq "$count" "2" "[$tag] tpl: BOTH engine jobs refuse an empty default-branch resolution before checking anything out"
+  count="$(grep -cE '^          DEFAULT_BRANCH: ' "$wf" || true)"
+  assert_eq "$count" "2" "[$tag] tpl: each guard step binds the DEFAULT_BRANCH it tests (an unbound read would refuse every run)"
+  rc=0; grep -qE -- "default_branch \|\|" "$wf" || rc=$?
   case "$rc" in
-    1) PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: no checkout uses the bare default_branch expression" ;;
-    0) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: a checkout regressed to the bare default_branch expression (empty resolution would reach actions/checkout's own fallback)" ;;
+    1) PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: no ref falls back to a hardcoded branch name — the copy carries no per-repo values" ;;
+    0) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: a hardcoded default-branch fallback is back — the copy would need a per-repo edit again, and a wrong value dispatches a branch that does not exist" ;;
     *) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the workflow could not be read (grep error)" ;;
   esac
 }
@@ -393,23 +404,6 @@ for i in "${!WORKFLOWS[@]}"; do
   pin_workflows "${WORKFLOWS[$i]}" "${WORKFLOW_LABELS[$i]}"
 done
 
-# The ADAPT'd literal itself — CATALOG ONLY. The three pins above accept any
-# quoted fallback branch because adoption.md instructs consumers to change it,
-# and a literal pin there fails exactly the repos that followed the
-# instruction. In this repo the value is not config to be discovered, so it is
-# pinned here: two checkouts and the relay's DISPATCH_REF, all on 'main'.
-_bad=""
-if [[ "$IS_CATALOG" -eq 1 ]]; then
-  for i in "${!WORKFLOWS[@]}"; do
-    _count="$(grep -cF -- "github.event.repository.default_branch || 'main'" "${WORKFLOWS[$i]}" || true)"
-    [[ "$_count" == "3" ]] || _bad="${_bad:+$_bad, }${WORKFLOW_LABELS[$i]}=$_count"
-  done
-  if [[ -z "$_bad" ]]; then
-    PASS=$((PASS + 1)); printf '  ok    %s\n' "tpl: this repo's own ADAPT value is 'main' at all three sites (both checkouts and the relay's DISPATCH_REF)"
-  else
-    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected 3 per copy, got: %s\n' "tpl: this repo's ADAPT value must be 'main' at all three sites — a wrong fallback dispatches a branch that does not exist, and every dispatch 422s into the cron floor" "$_bad"
-  fi
-fi
 
 # ---------------------------------------------------- relay step behavior ---
 

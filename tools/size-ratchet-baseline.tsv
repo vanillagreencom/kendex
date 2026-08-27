@@ -1,4 +1,5 @@
-.github/workflows/review-gate-writer.yml	652
+.github/workflows/review-gate-writer.yml	662
+.github/workflows/skill-tests.yml	403
 crates/core/src/engine/desired_agent.rs	458
 crates/core/src/engine/detach.rs	603
 crates/core/src/engine/pi_hooks_move/migrated.rs	540
@@ -121,12 +122,12 @@ skills/orch/workflows/review-pr.md	452
 skills/preflight/scripts/preflight	1061
 skills/review-gate/scripts/pr-watch.sh	854
 skills/review-gate/scripts/review-predicate-selftest.sh	2638
-skills/review-gate/scripts/review-predicate.sh	1250
-skills/review-gate/templates/review-gate-writer.yml	649
+skills/review-gate/scripts/review-predicate.sh	1272
+skills/review-gate/templates/review-gate-writer.yml	658
 skills/review-gate/tests/e2e-sandbox.sh	898
 skills/review-gate/tests/pr-watch.test.sh	1158
 skills/review-gate/tests/review-predicate-selftest.test.sh	929
-skills/review-gate/tests/review-writer-template.test.sh	920
+skills/review-gate/tests/review-writer-template.test.sh	914
 skills/second-opinion/scripts/second-opinion	2602
 skills/second-opinion/tests/cli-failure-gate.test.sh	1211
 skills/second-opinion/tests/lane-scratch-durability.test.sh	999

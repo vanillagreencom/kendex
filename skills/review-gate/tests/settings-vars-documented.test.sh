@@ -64,6 +64,24 @@ for v in $vars; do
         fi
       done
       continue ;;
+    # A GitHub REPOSITORY VARIABLE, read by a workflow expression before any
+    # checkout exists — so the settings file cannot supply it and an
+    # assignment there would advertise a knob that resolves to nothing.
+    # Documented with the check_run opt-in it belongs to.
+    REVIEW_GATE_CHECK_RUN_NAME)
+      if ! grep -q "$v" "$SKILL_DIR/references/adoption.md"; then
+        echo "FAIL: $v (repository variable) must stay documented in references/adoption.md"
+        fail=1
+      fi
+      for example in "$SKILL_DIR/kendex.settings.toml.example" \
+                     "$SKILL_DIR/../../kendex.settings.toml.example"; do
+        [ -f "$example" ] || continue
+        if forbidden_assignment_matches "$v" "$example"; then
+          echo "FAIL: $v is a repository variable, not a settings key, but is assigned in $example"
+          fail=1
+        fi
+      done
+      continue ;;
   esac
   if ! grep -q "^$v = " "$SKILL_DIR/kendex.settings.toml.example"; then
     echo "FAIL: $v missing from the skill's kendex.settings.toml.example"

@@ -44,9 +44,46 @@ reject_case "explicitly empty argument" ""
 reject_case "empty argument then flag" "" --wibble
 reject_case "--help with a trailing argument" --help extra
 reject_case "repeated -h" -h -h
+reject_case "--check-config with a trailing argument" --check-config extra
+reject_case "repeated --check-config" --check-config --check-config
 
 out=$("$PREDICATE" --help)
 grep -qF "no positional arguments" <<<"$out" && ok "--help states the no-positionals contract" || bad "--help states the no-positionals contract"
+grep -qF -- "--check-config" <<<"$out" && ok "--help documents the config-only flag" || bad "--help documents the config-only flag"
+
+echo "=== --check-config validates settings without a PR or an evidence read ==="
+
+# GH_REPO / PR_NUMBER / HEAD_SHA deliberately unset: the flag's whole point
+# is answering before the predicate needs a PR. A required-env error here
+# would mean the stop moved below the env check and the flag became
+# unusable from a repo checkout.
+cfg_rc=0
+cfg_err=""
+cfg_out=$(env -u GH_REPO -u PR_NUMBER -u HEAD_SHA -u REVIEW_GATE_MODE \
+  REVIEW_GATE_SETTINGS_FILE=/dev/null "$PREDICATE" --check-config 2>"$TEST_DIR/.stderr") || cfg_rc=$?
+cfg_err=$(cat "$TEST_DIR/.stderr"); rm -f "$TEST_DIR/.stderr"
+[[ "$cfg_rc" -eq 0 ]] && ok "--check-config exits 0 on a legal configuration with no PR env" ||
+  bad "--check-config exits 0 on a legal configuration with no PR env (got $cfg_rc: $cfg_err)"
+grep -q "^verdict=" <<<"$cfg_out" && bad "--check-config emits no verdict line" ||
+  ok "--check-config emits no verdict line"
+
+# The failing direction, one per rule class: a value the predicate refuses
+# must refuse HERE too, or the flag would report a clean configuration that
+# closes the gate on the next real run.
+config_reject() { # NAME KEY VALUE
+  local rc=0 err
+  env -u GH_REPO -u PR_NUMBER -u HEAD_SHA REVIEW_GATE_SETTINGS_FILE=/dev/null \
+    "$2=$3" "$PREDICATE" --check-config >/dev/null 2>"$TEST_DIR/.stderr" || rc=$?
+  err=$(cat "$TEST_DIR/.stderr"); rm -f "$TEST_DIR/.stderr"
+  [[ "$rc" -eq 2 ]] && ok "--check-config refuses $1" || bad "--check-config refuses $1 (got $rc)"
+  grep -qF "$2" <<<"$err" && ok "--check-config names $2 in its error" || bad "--check-config names $2 in its error"
+}
+
+config_reject "an unknown mode" REVIEW_GATE_MODE bogus
+config_reject "an out-of-range sha floor" REVIEW_GATE_SHA_PREFIX_FLOOR 2
+config_reject "a zero retry budget" REVIEW_GATE_API_ATTEMPTS 0
+config_reject "an unknown carry class" REVIEW_GATE_CARRY_FORWARD prose
+config_reject "an empty gate context" REVIEW_GATE_CONTEXT ""
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

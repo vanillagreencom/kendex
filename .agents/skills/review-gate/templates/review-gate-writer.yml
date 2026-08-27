@@ -2,7 +2,7 @@
 # — the v2 SINGLE WRITER (review-gate v2 single-writer plan, Change 1/1b;
 # vanillagreencom/kendex#1099). Copy once into .github/workflows/ in the adoption PR; the file is
 # REPO-OWNED after the copy — `kendex refresh` does not sync workflow YAML.
-# Lines marked ADAPT are per-repo values. This one workflow replaces the old
+# Copy it VERBATIM — it carries no per-repo values. This one workflow replaces the old
 # four-workflow mesh (the PR-side gate pair, approval-rerun, approval-sweep,
 # review-gate-queue): exactly one writer, default-branch-defined, which
 # posts the gate commit status on every leg that reaches it
@@ -130,24 +130,23 @@ name: Review gate writer
   # `pr-watch.sh --heal` and a manual kick already use. Removing this
   # trigger silently strips every event-fast path down to the cron floor.
   workflow_dispatch: {}
-  # NO check_run trigger here, deliberately — per-repo OPT-IN only (plan
-  # round-2 finding R3): every ordinary CI job completion fires
-  # check_run events, and an early-exit that needs the settings file
-  # needs a checkout, which bills the 1-minute minimum per run on private
-  # repos. A repo whose reviewer publishes check-runs AND NOTHING ELSE adds:
+  # check_run is a per-repo OPT-IN, shipped commented out: every ordinary
+  # CI job completion fires check_run events, and each one that reaches a
+  # job bills the 1-minute minimum on private repos. A repo whose reviewer
+  # publishes check-runs AND NOTHING ELSE uncomments these two lines and
+  # sets the repository variable REVIEW_GATE_CHECK_RUN_NAME to the
+  # reviewer's check name — the name is a VARIABLE, never an edit to the
+  # relay's if:, whose check_run term already reads it. An unset variable
+  # matches no check name, so the trigger without the variable relays
+  # nothing; a job-level skip bills nothing.
   #   check_run:
   #     types: [created, completed]
-  # plus a job-level guard on the RELAY job's if: matching the reviewer's
-  # check name literally (the file is repo-owned after copy, so the
-  # hardcoded name is config); a job-level skip bills nothing. The guard
-  # goes on the RELAY, not the write job: check_run is a PR-attached leg,
-  # and the relay's if: is a negative list precisely so a newly added
-  # trigger relays by default instead of silently doing nothing. `created`
-  # matters under newest-run semantics: a reviewer STARTING a fresh round
-  # withdraws its own older clean success, and without the created leg that
-  # downward transition waits for the run's completion or the cron floor.
-  # Repos without the opt-in converge withdrawals on the cron floor — the
-  # same accepted class as thread resolution.
+  # The term is on the RELAY, not the write job: check_run is a PR-attached
+  # leg. `created` matters under newest-run semantics: a reviewer STARTING
+  # a fresh round withdraws its own older clean success, and without the
+  # created leg that downward transition waits for the run's completion or
+  # the cron floor. Repos without the opt-in converge withdrawals on the
+  # cron floor — the same accepted class as thread resolution.
 
 permissions:
   contents: read
@@ -184,16 +183,22 @@ jobs:
       # kendex.settings.toml — pinned to the DEFAULT branch: the ruleset
       # requires whatever context name MAIN's config declares, and nothing
       # queued may run under this job's write-capable token.
+      # FAIL CLOSED ahead of the checkout: an empty default_branch would
+      # make actions/checkout fall back to the EVENT's own ref — on this
+      # job's only leg that is the queue's synthetic ref, i.e. queued code
+      # under a write-capable token. Refusing carries no per-repo value.
+      - name: Require the repository default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -u
+          if [ -z "${DEFAULT_BRANCH:-}" ]; then
+            echo "::error::github.event.repository.default_branch resolved empty; refusing to check out an unpinned ref"
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # `|| 'main'` fallback: if the default_branch expression ever
-          # resolved empty here, actions/checkout would fall back to its
-          # own default ref — on this job's only event (merge_group, per
-          # the job-level if:) that is the merge group's synthetic ref,
-          # i.e. queued code instead of MAIN's config under this job's
-          # write-capable token. The fallback value is repo-owned config:
-          # ADAPT it to the repo's default branch on copy.
-          ref: ${{ github.event.repository.default_branch || 'main' }}
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - name: Post success (queue entries are post-approval by construction)
         run: |
@@ -220,7 +225,7 @@ jobs:
     # below claims) and merge_group are excluded; anything else — today's
     # PR-attached legs and any trigger a consumer adds later — relays.
     # Excluding the dispatch target is also what makes a loop impossible.
-    if: github.event_name != 'merge_group' && github.event_name != 'workflow_dispatch' && github.event_name != 'schedule'
+    if: github.event_name != 'merge_group' && github.event_name != 'workflow_dispatch' && github.event_name != 'schedule' && (github.event_name != 'check_run' || github.event.check_run.name == vars.REVIEW_GATE_CHECK_RUN_NAME)
     runs-on: ubuntu-latest
     # 5 minutes with room to spare for the worst case the step can produce:
     # two dispatch attempts plus the retry backoff, which is capped at 120s
@@ -247,18 +252,19 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
       # The relay's own second loop breaker — see the step guard. The job
-      # if: above is the first, and it is the line adoption.md tells a
-      # consumer to hand-edit for the check_run opt-in.
+      # if: above is the first, and it needs no consumer edit: its
+      # check_run term reads the repository variable.
       EVENT_NAME: ${{ github.event_name }}
       # workflow_dispatch requires a BRANCH ref, and the engine is
       # default-branch-defined — never github.ref, which on the
       # pull_request_target leg is the PR's BASE branch (not necessarily
-      # the default one). Same `|| 'main'` fallback and same repo-owned
-      # ADAPT as the checkouts in the other jobs.
-      DISPATCH_REF: ${{ github.event.repository.default_branch || 'main' }}
+      # the default one). No fallback branch name, so no per-repo value:
+      # an empty resolution is caught by the step's missing-env guard,
+      # which warns and exits 0 rather than reddening a PR-attached leg.
+      DISPATCH_REF: ${{ github.event.repository.default_branch }}
       # owner/repo/.github/workflows/<file>@refs/heads/<branch> — this
       # workflow dispatching ITSELF, derived from its own ref so a repo
-      # that renames its copy needs no ADAPT and no name-match.
+      # that renames its copy needs no edit and no name-match.
       WORKFLOW_REF: ${{ github.workflow_ref }}
       # Plan finding 2: pull_request_review on a FORK PR carries a
       # read-only token, which cannot dispatch. Flagged here (this is the
@@ -579,17 +585,20 @@ jobs:
       # data only through the API (see the security note). The
       # pull_request_target leg reaches the relay above, which checks out
       # nothing at all.
+      # FAIL CLOSED ahead of the checkout, as in the merge-group job: a
+      # fallback to the EVENT's own ref runs another branch's engine.
+      - name: Require the repository default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -u
+          if [ -z "${DEFAULT_BRANCH:-}" ]; then
+            echo "::error::github.event.repository.default_branch resolved empty; refusing to check out an unpinned ref"
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # `|| 'main'` fallback: if the default_branch expression ever
-          # resolved empty on some event leg, actions/checkout would fall
-          # back to the EVENT's own default ref, which is not necessarily
-          # the default branch — e.g. the PR's BASE branch on the
-          # pull_request_target leg (a PR targeting a non-default branch
-          # would run THAT branch's engine under the writer's write-capable
-          # token). The fallback value is repo-owned config: ADAPT it to
-          # the repo's default branch on copy.
-          ref: ${{ github.event.repository.default_branch || 'main' }}
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       - name: Evaluate and converge the gate

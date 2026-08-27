@@ -72,6 +72,9 @@ an outside contributor.
 - New optional `harness-ci` skill: a classifier that answers whether a CI diff
   touches nothing but the kendex render trees, so heavy lanes can stand down.
   It ships the script and its tests only — the workflow step stays yours.
+- `review-gate` ships `scripts/validate.sh` — one CI step reporting whether a
+  repo's own gate install is sound: engine runnable, `REVIEW_GATE_*` values
+  legal, exclusions live, adopted workflow still meeting the template.
 - Installing asks where it goes: the app and `kendex add` at a terminal offer
   every supported tool with the ones you have pre-checked, plus symlink or
   copy delivery. `--harness`, `--all-harnesses`, `--method` do it flag-only.
@@ -101,6 +104,13 @@ an outside contributor.
   orchestration, code-review, research, and commit-guards.
 
 ### Changed
+
+- The `review-gate` writer workflow copies verbatim: no per-repo values left.
+  Adopted copies drop each `default_branch || 'branch'` fallback for the bare
+  expression, and a `check_run` opt-in reads `REVIEW_GATE_CHECK_RUN_NAME`.
+- Consumer CI runs `review-gate`'s validate step in place of the engine
+  selftest: package behaviour is proved upstream, so a repo checks only the
+  configuration and wiring it owns.
 
 - A project's skills work on clone: every tool but Claude Code reads
   `.agents/skills` directly, and Claude's link into it is now relative, so

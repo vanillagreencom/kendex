@@ -9,7 +9,8 @@ set -u
 
 print_usage() {
   cat <<'USAGE'
-Usage: review-predicate.sh [--help]   (env-driven; no positional arguments)
+Usage: review-predicate.sh [--help | --check-config]   (otherwise env-driven,
+                                                        no positional arguments)
 
 The single source of truth for "is this PR head reviewed?". Callers:
 review-writer.sh (the single writer, which converges the merge-blocking
@@ -30,6 +31,13 @@ Exit codes:
   2  an evidence read failed or the configuration is invalid; NO verdict was
      reached. Callers must treat this as "take no action", never as awaiting:
      acting on a transient API failure could flip a healthy PR's merge state.
+
+--check-config resolves and validates every setting below, prints one line,
+and exits WITHOUT reading any evidence or requiring GH_REPO / PR_NUMBER /
+HEAD_SHA: 0 = every value is legal, 2 = a value is not (the ::error names
+it). It is the settings half of validate.sh, which adds the repository-tree
+and workflow-wiring checks around it. Gate mode is validated, never applied
+— "off" reports a valid configuration, it does not short-circuit this flag.
 
 Predicate: review evidence present for the CURRENT head — any of
   (a) a review OBJECT at the exact head from a non-author, non-dismissed,
@@ -206,13 +214,19 @@ USAGE
 }
 
 # The predicate is env-driven: zero arguments evaluate, exactly one
-# -h/--help prints usage, and every other argument list — an explicitly
-# empty argument included — is a configuration error with no verdict. A
-# misspelled or stale wrapper flag must never fall through to a normal
-# gate evaluation, so validation is by argument count, not by position.
+# -h/--help prints usage, exactly one --check-config validates settings and
+# stops, and every other argument list — an explicitly empty argument
+# included — is a configuration error with no verdict. A misspelled or stale
+# wrapper flag must never fall through to a normal gate evaluation, so
+# validation is by argument count, not by position.
+CHECK_CONFIG_ONLY=0
 if [ "$#" -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
   print_usage
   exit 0
+fi
+if [ "$#" -eq 1 ] && [ "$1" = "--check-config" ]; then
+  CHECK_CONFIG_ONLY=1
+  shift
 fi
 if [ "$#" -gt 0 ]; then
   echo "review-predicate.sh: unknown argument list ($# argument(s), first: '${1}') — env-driven, no positional arguments (run --help)" >&2
@@ -363,6 +377,14 @@ while IFS= read -r ctx; do
 done <<EOF_GATE_CTX
 $(printf '%s' "$TRUSTED_CONTEXTS" | tr ';' '\n')
 EOF_GATE_CTX
+
+# Every configuration rule above has now run, and --check-config stops HERE:
+# the last point before the predicate needs a PR. A rule moved below this
+# statement is a visible edit, not a silent hole in what the flag covers.
+if [ "$CHECK_CONFIG_ONLY" = "1" ]; then
+  echo "review-predicate: configuration is valid"
+  exit 0
+fi
 
 for required in GH_REPO PR_NUMBER HEAD_SHA; do
   if [ -z "$(eval "echo \${$required:-}")" ]; then
