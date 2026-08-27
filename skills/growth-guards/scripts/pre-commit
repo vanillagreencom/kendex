@@ -11,7 +11,7 @@
 # else 1 if any found violations, else 0. Both nonzero verdicts block.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GG_CHECK="pre-commit"
 # shellcheck source=lib/skill-roots.sh
 source "$SCRIPT_DIR/lib/skill-roots.sh"
@@ -83,14 +83,41 @@ run_step() { # LABEL COMMAND [ARGS...] — runs one step and folds its verdict
 # runnable: a present skill with a missing, dangling or unexecutable script
 # is a broken install, and the chain must never pass by losing a gate. -L
 # catches a dangling symlink, which -e reports as absent.
+# The roots resolve_sibling walked, for a skip to name. A diagnostic that
+# lists one of two searched places is worse than none: it sends the reader
+# to the directory that was never the problem.
+gg_searched_roots() {
+  local project=""
+  project="$(gg_project_root "$SCRIPT_DIR")" || project=""
+  [ "$project" = "$PWD" ] && project=""
+  case "$project" in
+    "") printf '%s' "$PWD" ;;
+    *) printf '%s and %s' "$PWD" "$project" ;;
+  esac
+}
+
 resolve_sibling() { # SKILL — skill directory on stdout; 1 when no side carries it
-  local skill="$1" base="" dir=""
-  for base in $GG_SKILL_ROOTS; do
-    dir="$PWD/$base/$skill"
-    if [ -e "$dir" ] || [ -L "$dir" ]; then
-      printf '%s\n' "$dir"
-      return 0
-    fi
+  local skill="$1" base="" dir="" root="" project=""
+  # The committing tree first, then the project this copy is installed
+  # under. That order is the re-vendor rule: a tree carrying its own copy of
+  # a gate gates its own commit with it, so $PWD outranks everything.
+  #
+  # The project root is the addition. git runs a hook from the work-tree top
+  # level, which is the project root only when the two are the same
+  # directory; where a kendex project sits below it the siblings are beside
+  # THIS copy and nowhere near $PWD, and a sibling that failed was a gate
+  # reporting nothing while the chain exited 0.
+  project="$(gg_project_root "$SCRIPT_DIR")" || project=""
+  [ "$project" = "$PWD" ] && project=""
+  for root in "$PWD" "$project"; do
+    [ -n "$root" ] || continue
+    for base in $GG_SKILL_ROOTS; do
+      dir="$root/$base/$skill"
+      if [ -e "$dir" ] || [ -L "$dir" ]; then
+        printf '%s\n' "$dir"
+        return 0
+      fi
+    done
   done
   dir="$SCRIPT_DIR/../../$skill"
   if [ -e "$dir" ] || [ -L "$dir" ]; then
@@ -140,7 +167,7 @@ if SIZE_RATCHET_SKILL="$(resolve_sibling size-ratchet)"; then
       ;;
   esac
 else
-  echo "=== pre-commit: size-ratchet not installed — skipped (no size-ratchet skill under $PWD ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../size-ratchet)"
+  echo "=== pre-commit: size-ratchet not installed — skipped (no size-ratchet skill under $(gg_searched_roots) ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../size-ratchet)"
 fi
 
 # Same sibling contract for preflight: its --staged lanes judge the same
@@ -157,7 +184,7 @@ if PREFLIGHT_SKILL="$(resolve_sibling preflight)"; then
     echo "=== pre-commit: first commit — preflight --staged has no base; skipped"
   fi
 else
-  echo "=== pre-commit: preflight not installed — skipped (no preflight skill under $PWD ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../preflight)"
+  echo "=== pre-commit: preflight not installed — skipped (no preflight skill under $(gg_searched_roots) ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../preflight)"
 fi
 
 BATCH="$SCRIPT_DIR/growth-guards"

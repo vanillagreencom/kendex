@@ -365,8 +365,8 @@ lives in one capability table read by core and UI.
   whose namespace it sits in; a cross-read (Copilot reading Claude Code's
   skills and settings) is an input to effective state, never a second
   installation.
-- Fresh manifest schema + one-time v1 importer; no compat shims. v1
-  extras/theme packs are not carried over.
+- Fresh manifest schema, no importer and no compat shims: a v1 manifest or
+  lock is refused, moved aside by hand, and the install starts fresh.
 - **Old product names read as an import, not a second format**
   (`crates/core/src/rename.rs`) — the one amendment to "no compat shims".
   New scopes write `kendex.toml` / `.kendex-lock.json` / `.kendex-local`. A

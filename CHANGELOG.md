@@ -16,6 +16,12 @@ an outside contributor.
 
 ### Fixed
 
+- The commit chain finds its sibling gates in a kendex project that sits
+  below the git top level; they were skipped as not installed, so a gate
+  that would have failed the commit reported nothing.
+- `kendex check` no longer reports commit-hook drift at a project whose only
+  `growth-guards` item is an agent of that name rather than the skill.
+
 - The guard verbs work in a checkout whose path is not valid UTF-8 or
   contains a newline; they used to report a path that does not exist.
 

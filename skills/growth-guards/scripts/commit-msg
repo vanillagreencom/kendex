@@ -8,7 +8,7 @@
 # unreadable message file is a collection error, never a pass).
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GG_CHECK="commit-msg"
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"

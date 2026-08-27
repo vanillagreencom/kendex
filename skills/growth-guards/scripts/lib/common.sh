@@ -52,7 +52,7 @@ gg_tmpdir() { # per-run scratch directory in GG_TMP, removed at exit
 gg_repo_root_cd() { # cd to the repository root; all configured paths are repo-relative
   local root
   root="$(git rev-parse --show-toplevel)" || gg_config_error "not inside a git repository"
-  cd "$root" || gg_config_error "cannot cd to repository root '$root'"
+  cd -- "$root" || gg_config_error "cannot cd to repository root '$root'"
 }
 
 # A hook lane judges ONE commit, configuration included: tracked settings

@@ -56,7 +56,7 @@ classify_hooks_path() { # -> 0 classified, 2 could not read the config
 # Sets REPO_ABS, COMMON_DIR and HOOKS_DIR. Uses `die` from
 # install-git-hooks, which is the only caller.
 resolve_roots() {
-  REPO_ABS="$(cd "$REPO" && pwd)" || die "could not resolve $REPO"
+  REPO_ABS="$(cd -- "$REPO" && pwd)" || die "could not resolve $REPO"
   # --git-common-dir may answer relative to the repository (git predates
   # --path-format), so absolutize it here rather than assuming a git version.
   COMMON_DIR="$(git -C "$REPO_ABS" rev-parse --git-common-dir 2>/dev/null || true)"

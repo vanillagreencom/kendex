@@ -93,9 +93,17 @@ fn installed_here(env: &Env, scope: &kendex_core::model::Scope) -> bool {
         // someone saying they do not want this gate here, and reporting it
         // as unarmed drift every session start argues with them about a
         // choice they already made.
-        lock.entries
-            .values()
-            .any(|entry| entry.name == kendex_core::guard::SKILL && entry.enabled)
+        //
+        // And the SKILL of that name, not anything of that name. A name is
+        // not unique across kinds — an agent called growth-guards is a
+        // legal thing to install — and reading one as consent to a commit
+        // gate reports hook drift, every session, at a project that never
+        // asked for hooks and has no way to make the report stop.
+        lock.entries.values().any(|entry| {
+            entry.name == kendex_core::guard::SKILL
+                && entry.kind == kendex_core::model::ItemKind::Skill
+                && entry.enabled
+        })
     })
 }
 

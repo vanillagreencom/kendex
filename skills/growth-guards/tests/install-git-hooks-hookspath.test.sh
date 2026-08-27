@@ -579,5 +579,23 @@ install_in "$R71"
   && ok "must-fail: with core.hooksPath unset the install arms" \
   || bad "unset did not arm" "out=$OUT"
 
+echo "=== a repository path that begins with a dash is a path ==="
+# `cd "$REPO"` reads a leading dash as an option: `--repo -P` became `cd -P`,
+# which succeeds in the WRONG directory rather than failing. `--` ends the
+# option list, and a directory named `-P` is a directory somebody can make.
+DASHED="$TMP/-P"
+mkdir -p "$DASHED/.agents/skills"
+git -C "$DASHED" init -q
+git -C "$DASHED" config user.email t@t
+git -C "$DASHED" config user.name t
+cp -R "$SKILL_DIR" "$DASHED/.agents/skills/growth-guards"
+OUT=""; RC=0
+OUT="$(cd "$TMP" && "$DASHED/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "-P" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "an install under a dash-named repository succeeds" \
+  || bad "dash-named repo install" "rc=$RC out=$OUT"
+[ -x "$DASHED/.git/hooks/kendex-guards" ] \
+  && ok "and the shims land in that repository, not the caller's directory" \
+  || bad "shims did not land in the dash-named repo" "out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

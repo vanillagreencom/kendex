@@ -213,5 +213,50 @@ case "$OUT" in
   *) ok "the none-configured line stays out of the configured lane" ;;
 esac
 
+echo "=== a project below the git top level finds its own siblings ==="
+# kendex renders into the PROJECT's root, and a repository can hold several.
+# git runs a hook from the WORK TREE root, so every search anchored there
+# looked past a nested project entirely: the sibling gates were beside the
+# installed copy and nowhere near $PWD. A gate that is not found is a gate
+# that reports nothing, and the chain exited 0 while preflight failed.
+R80="$TMP/nested"
+mkdir -p "$R80/apps/web/.agents/skills" "$R80/apps/web/.github/skills"
+git -C "$R80" init -q
+git -C "$R80" config user.email t@t
+git -C "$R80" config user.name t
+cp -R "$SKILL_DIR" "$R80/apps/web/.agents/skills/growth-guards"
+
+# Under a DIFFERENT root of the same project, so the pin needs the project
+# anchor and the full root list at once.
+mkdir -p "$R80/apps/web/.github/skills/preflight/scripts"
+cat >"$R80/apps/web/.github/skills/preflight/scripts/preflight" <<'PREFLIGHT'
+#!/bin/sh
+echo "preflight: refusing this commit"
+exit 1
+PREFLIGHT
+chmod +x "$R80/apps/web/.github/skills/preflight/scripts/preflight"
+
+# A base commit before arming: preflight compares against one and announces
+# a skip without it, which would pass this pin for the wrong reason.
+printf 'hello\n' >"$R80/a.txt"
+git -C "$R80" add -A
+git -C "$R80" commit -q -m "feat: base"
+"$R80/apps/web/.agents/skills/growth-guards/scripts/install-git-hooks" \
+  --repo "$R80" >/dev/null 2>&1
+
+printf 'more\n' >"$R80/b.txt"
+git -C "$R80" add -A
+OUT=""; RC=0
+OUT="$(cd "$R80" && git commit -m "feat: nested" 2>&1)" || RC=$?
+case "$OUT" in
+  *"preflight: refusing this commit"*)
+    ok "the chain ran the nested project's preflight" ;;
+  *"preflight not installed"*)
+    bad "the nested preflight was never found" "$OUT" ;;
+  *) bad "preflight neither ran nor announced a skip" "$OUT" ;;
+esac
+[ "$RC" -ne 0 ] && ok "and its failure fails the commit" \
+  || bad "nested sibling failed and the commit passed" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

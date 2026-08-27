@@ -9,7 +9,7 @@
 # check could not complete, else 1 if any found violations, else 0.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GG_CHECK="growth-guards"
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"

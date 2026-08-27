@@ -332,3 +332,48 @@ fn the_search_roots_match_the_installers_own_list() {
         kendex_core::guard::SEARCH_ROOTS
     );
 }
+
+/// An item named growth-guards that is not the skill is not consent.
+///
+/// The lock is keyed by more than a name — an agent may legally be called
+/// `growth-guards` — and reading any enabled entry of that name as "this
+/// project asked for commit hooks" reports drift at a project that never
+/// did, every session, with no way to make it stop short of renaming
+/// somebody else's agent.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_agent_of_the_same_name_is_not_consent_to_commit_hooks() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    // A project that declares an AGENT called growth-guards and no skill.
+    let agents = home.join("catalog/agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    std::fs::write(
+        agents.join("growth-guards.md"),
+        "---\nname: growth-guards\ndescription: an agent, not the skill\n\
+         model: opus\nrole: engineer\n---\nbody\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("kendex.toml"),
+        format!(
+            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n",
+            home.join("catalog").display()
+        ),
+    )
+    .unwrap();
+    let added = run(
+        home,
+        &root,
+        "kendex",
+        &["add", "cat", "--agent", "growth-guards", "-y"],
+    );
+    assert!(added.status.success(), "{}", said(&added));
+
+    let out = said(&run(home, &root, "kendex", &["check"]));
+    assert!(
+        !out.contains("commit hooks"),
+        "an agent of that name was read as consent to commit hooks: {out}"
+    );
+}
