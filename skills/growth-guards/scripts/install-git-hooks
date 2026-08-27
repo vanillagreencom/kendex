@@ -166,20 +166,20 @@ if [ "$HOOKS_PATH_ELSEWHERE" -eq 1 ] && [ "$MODE" = "install" ]; then
     # Not "git ignores $HOOKS_DIR": the value may resolve to that very
     # directory, and which one git reads is the question this installer
     # deliberately stopped answering.
-    warn "core.hooksPath is set ($(hooks_path_shown)); this installer writes $HOOKS_DIR only and will not write behind a configured hooks path, so the guard shims were NOT installed"
+    warn "core.hooksPath is set ($(gg_shown "$CUSTOM_HOOKS")); this installer writes $(gg_shown "$HOOKS_DIR") only and will not write behind a configured hooks path, so the guard shims were NOT installed"
   fi
   # One remedy, and it is the one that arms. Telling somebody to wire that
   # directory by hand prescribes a shape --check has no way to verify, so it
   # trades a repository that is not gated for one that is gated and can
   # never say so.
   hooks_path_origins
-  echo "growth-guards git hooks: skipped — core.hooksPath is set ($(hooks_path_shown))"
+  echo "growth-guards git hooks: skipped — core.hooksPath is set ($(gg_shown "$CUSTOM_HOOKS"))"
   exit 0
 fi
 
 # --check is read-only down to the hooks directory itself.
 if [ "$MODE" != "check" ]; then
-  mkdir -p -- "$HOOKS_DIR" || die "could not create $HOOKS_DIR"
+  mkdir -p -- "$HOOKS_DIR" || die "could not create $(gg_shown "$HOOKS_DIR")"
 fi
 
 write_helper() { # PATH
@@ -188,11 +188,11 @@ write_helper() { # PATH
   # symlink, never replace a non-regular file, never overwrite content
   # missing our marker.
   if [ -L "$helper" ] || { [ -e "$helper" ] && [ ! -f "$helper" ]; }; then
-    warn "$helper exists and is not a regular file; refusing to replace it"
+    warn "$(gg_shown "$helper") exists and is not a regular file; refusing to replace it"
     return 1
   fi
   if [ -f "$helper" ] && ! grep -qF -- "$HELPER_MARKER" "$helper" 2>/dev/null; then
-    warn "$helper exists but was not written by this installer; refusing to overwrite it"
+    warn "$(gg_shown "$helper") exists but was not written by this installer; refusing to overwrite it"
     return 1
   fi
   tmp="$(mktemp "$helper.tmp.XXXXXX")" || return 1
@@ -274,7 +274,7 @@ ensure_hook_executable() { # HOOK PATH
   local hook="$1" path="$2"
   [ -x "$path" ] && return 0
   chmod -- +x "$path" 2>/dev/null && [ -x "$path" ] && return 0
-  hook_warn "$path is not executable and could not be made so; git ignores it — the $hook guard is NOT armed"
+  hook_warn "$(gg_shown "$path") is not executable and could not be made so; git ignores it — the $hook guard is NOT armed"
 }
 
 install_hook() { # HOOK
@@ -284,26 +284,26 @@ install_hook() { # HOOK
   # through it, or materializing a dangling target (which passes `! -e`),
   # would modify content this install does not own.
   if [ -L "$path" ]; then
-    hook_warn "$path is a symlink; not modifying its target — the $hook guard is NOT installed"
+    hook_warn "$(gg_shown "$path") is a symlink; not modifying its target — the $hook guard is NOT installed"
     return 0
   fi
   if [ ! -e "$path" ]; then
     printf '#!/bin/sh\n%s\n%s\n' "$line" "$CREATED_MARKER" >"$path" 2>/dev/null || {
-      hook_warn "could not write $path — the $hook guard is NOT installed"
+      hook_warn "could not write $(gg_shown "$path") — the $hook guard is NOT installed"
       return 0
     }
     ensure_hook_executable "$hook" "$path"
     return 0
   fi
   if [ ! -f "$path" ]; then
-    hook_warn "$path exists and is not a regular file — the $hook guard is NOT installed"
+    hook_warn "$(gg_shown "$path") exists and is not a regular file — the $hook guard is NOT installed"
     return 0
   fi
   # Checked BEFORE the already-current fast path: our line under an
   # interpreter that cannot run it is not an armed hook, whoever changed the
   # shebang.
   if ! head -n 1 "$path" | grep -qE "$SH_SHEBANG_RE"; then
-    hook_warn "$path is not a POSIX-shell script; not modifying it — the $hook guard is NOT installed"
+    hook_warn "$(gg_shown "$path") is not a POSIX-shell script; not modifying it — the $hook guard is NOT installed"
     return 0
   fi
   # The SAME predicate --check applies, so an install cannot report success
@@ -313,7 +313,7 @@ install_hook() { # HOOK
   # reporting NOT installed forever. Its shebang is rewritten below.
   if ! gg_trusted_interpreter "$(head -n 1 "$path")" \
     && ! grep -qxF -- "$CREATED_MARKER" "$path" 2>/dev/null; then
-    hook_warn "$path runs under an interpreter that cannot be verified ($(head -n 1 "$path")); not modifying it — the $hook guard is NOT installed. Use a #! naming a shell in /bin or /usr/bin directly."
+    hook_warn "$(gg_shown "$path") runs under an interpreter that cannot be verified ($(gg_shown "$(head -n 1 "$path")")); not modifying it — the $hook guard is NOT installed. Use a #! naming a shell in /bin or /usr/bin directly."
     return 0
   fi
   # Idempotence keys on the EXACT delegate AT ITS POSITION — line 2, straight
@@ -328,7 +328,7 @@ install_hook() { # HOOK
     return 0
   fi
   if [ ! -x "$path" ]; then
-    hook_warn "$path exists but is not executable (a disabled hook); not modifying it — the $hook guard is NOT installed"
+    hook_warn "$(gg_shown "$path") exists but is not executable (a disabled hook); not modifying it — the $hook guard is NOT installed"
     return 0
   fi
   # Read before the filter strips the marker with our line, re-asserted below:
@@ -339,7 +339,7 @@ install_hook() { # HOOK
   # substitution would strip a missing final newline, and the foreign bytes
   # must come back exactly as they were.
   rest="$(mktemp "$path.rest.XXXXXX")" || {
-    hook_warn "could not create a temporary file beside $path — the $hook guard is NOT installed"
+    hook_warn "could not create a temporary file beside $(gg_shown "$path") — the $hook guard is NOT installed"
     return 0
   }
   # Ours, by shape — see gg_owned_lines_re. grep -v exits 1 when it prints
@@ -347,19 +347,19 @@ install_hook() { # HOOK
   tail -n +2 "$path" | grep -vE "$(gg_owned_lines_re)" >"$rest" || status=$?
   if [ "$status" -gt 1 ]; then
     rm -f -- "$rest"
-    hook_warn "could not read $path — the $hook guard is NOT installed"
+    hook_warn "could not read $(gg_shown "$path") — the $hook guard is NOT installed"
     return 0
   fi
   if ! ends_with_newline "$path" && ! strip_final_newline "$rest"; then
     rm -f -- "$rest"
-    hook_warn "could not preserve the end of $path — the $hook guard is NOT installed"
+    hook_warn "could not preserve the end of $(gg_shown "$path") — the $hook guard is NOT installed"
     return 0
   fi
   # Written back through the existing file, not renamed over it: the hook keeps
   # its inode, mode, and any links a consumer's tooling holds.
   tmp="$(mktemp "$path.tmp.XXXXXX")" || {
     rm -f -- "$rest"
-    hook_warn "could not create a temporary file beside $path — the $hook guard is NOT installed"
+    hook_warn "could not create a temporary file beside $(gg_shown "$path") — the $hook guard is NOT installed"
     return 0
   }
   # The shebang is re-emitted TERMINATED even when the original file ended at
@@ -383,7 +383,7 @@ install_hook() { # HOOK
     cat -- "$rest"
   } >"$tmp" 2>/dev/null || ! mv -f -- "$tmp" "$path" 2>/dev/null; then
     rm -f -- "$tmp" "$rest"
-    hook_warn "could not rewrite $path — the $hook guard is NOT installed"
+    hook_warn "could not rewrite $(gg_shown "$path") — the $hook guard is NOT installed"
     return 0
   fi
   rm -f -- "$rest"
@@ -402,9 +402,9 @@ uninstall_hook() { # HOOK — drop our line; drop the file when only ours was in
     sentinel_status=0
     grep -qE "$(gg_owned_lines_re)" "$path" 2>/dev/null || sentinel_status=$?
     if [ "$sentinel_status" -eq 0 ]; then
-      hook_warn "$path is a symlink carrying the guard line; remove it by hand — its target is not ours to edit"
+      hook_warn "$(gg_shown "$path") is a symlink carrying the guard line; remove it by hand — its target is not ours to edit"
     elif [ "$sentinel_status" -gt 1 ]; then
-      hook_warn "$path is a symlink whose target could not be read; it was left in place"
+      hook_warn "$(gg_shown "$path") is a symlink whose target could not be read; it was left in place"
     fi
     return 0
   fi
@@ -415,7 +415,7 @@ uninstall_hook() { # HOOK — drop our line; drop the file when only ours was in
   sentinel_status=0
   grep -qE "$(gg_owned_lines_re)" "$path" 2>/dev/null || sentinel_status=$?
   if [ "$sentinel_status" -gt 1 ]; then
-    hook_warn "could not read $path to check for the guard line; it was left in place"
+    hook_warn "could not read $(gg_shown "$path") to check for the guard line; it was left in place"
     return 0
   fi
   [ "$sentinel_status" -eq 0 ] || return 0
@@ -423,7 +423,7 @@ uninstall_hook() { # HOOK — drop our line; drop the file when only ours was in
   created=0
   grep -qxF -- "$CREATED_MARKER" "$path" 2>/dev/null && created=1
   tmp="$(mktemp "$path.tmp.XXXXXX")" || {
-    hook_warn "could not create a temporary file beside $path; its guard line was left in place"
+    hook_warn "could not create a temporary file beside $(gg_shown "$path"); its guard line was left in place"
     return 0
   }
   # Ours, by shape — the same rule the repair uses, so the two cannot
@@ -432,12 +432,12 @@ uninstall_hook() { # HOOK — drop our line; drop the file when only ours was in
   grep -vE "$(gg_owned_lines_re)" "$path" >"$tmp" || status=$?
   if [ "$status" -gt 1 ]; then
     rm -f -- "$tmp"
-    hook_warn "could not read $path; its guard line was left in place"
+    hook_warn "could not read $(gg_shown "$path"); its guard line was left in place"
     return 0
   fi
   if ! ends_with_newline "$path" && ! strip_final_newline "$tmp"; then
     rm -f -- "$tmp"
-    hook_warn "could not preserve the end of $path; its guard line was left in place"
+    hook_warn "could not preserve the end of $(gg_shown "$path"); its guard line was left in place"
     return 0
   fi
   # Only a hook this installer CREATED goes away outright; a consumer's own
@@ -447,7 +447,7 @@ uninstall_hook() { # HOOK — drop our line; drop the file when only ours was in
   body="$(grep -cvE '^([[:space:]]*|#!.*)$' "$tmp")" || status=$?
   if [ "$status" -gt 1 ]; then
     rm -f -- "$tmp"
-    hook_warn "could not inspect $path; its guard line was left in place"
+    hook_warn "could not inspect $(gg_shown "$path"); its guard line was left in place"
     return 0
   fi
   if [ "$created" -eq 1 ] && [ "$body" -eq 0 ]; then
@@ -461,7 +461,7 @@ uninstall_hook() { # HOOK — drop our line; drop the file when only ours was in
     || ! cat "$tmp" >"$tmp.mode" 2>/dev/null \
     || ! mv -f -- "$tmp.mode" "$path" 2>/dev/null; then
     rm -f -- "$tmp" "$tmp.mode"
-    hook_warn "could not rewrite $path; its guard line was left in place"
+    hook_warn "could not rewrite $(gg_shown "$path"); its guard line was left in place"
     return 0
   fi
   rm -f -- "$tmp"
@@ -485,13 +485,13 @@ if [ "$MODE" = "check" ]; then
     fi
     # Where the value sends git is not claimed, because it is not measured:
     # it may well name $HOOKS_DIR under another spelling.
-    echo "growth-guards git hooks: could not determine whether commits are gated — core.hooksPath is set ($(hooks_path_shown)), and a configured hooks path is outside this verifier's contract: it reads $HOOKS_DIR only; git's report of where it is set is on stderr, or read the configured directory yourself"
+    echo "growth-guards git hooks: could not determine whether commits are gated — core.hooksPath is set ($(gg_shown "$CUSTOM_HOOKS")), and a configured hooks path is outside this verifier's contract: it reads $(gg_shown "$HOOKS_DIR") only; git's report of where it is set is on stderr, or read the configured directory yourself"
     exit 2
   fi
   check_hooks_dir || VERDICT=$?
   case "$VERDICT" in
-    0) echo "growth-guards git hooks: armed — pre-commit and commit-msg gate commits in $HOOKS_DIR" ;;
-    1) echo "growth-guards git hooks: NOT armed — $CHECK_REASONS ($HOOKS_DIR); run 'kendex guard install' (or this installer) to re-arm" ;;
+    0) echo "growth-guards git hooks: armed — pre-commit and commit-msg gate commits in $(gg_shown "$HOOKS_DIR")" ;;
+    1) echo "growth-guards git hooks: NOT armed — $CHECK_REASONS ($(gg_shown "$HOOKS_DIR")); run 'kendex guard install' (or this installer) to re-arm" ;;
     *) echo "growth-guards git hooks: could not determine whether the shims are armed — $CHECK_REASONS" ;;
   esac
   exit "$VERDICT"
@@ -520,29 +520,29 @@ if [ "$MODE" = "uninstall" ]; then
     && [ -f "$helper" ] && [ ! -L "$helper" ] \
     && grep -qF -- "$HELPER_MARKER" "$helper" 2>/dev/null; then
     rm -f -- "$helper" || {
-      hook_warn "could not remove $helper"
+      hook_warn "could not remove $(gg_shown "$helper")"
     }
   fi
   if [ "$FAILED" -eq 1 ]; then
-    echo "growth-guards git hooks: removal incomplete — see the warnings above ($HOOKS_DIR)"
+    echo "growth-guards git hooks: removal incomplete — see the warnings above ($(gg_shown "$HOOKS_DIR"))"
     exit 1
   fi
   case "$REMOVED" in
-    *[!\ ]*) echo "growth-guards git hooks: removed from$REMOVED in $HOOKS_DIR" ;;
-    *) echo "growth-guards git hooks: nothing to remove in $HOOKS_DIR" ;;
+    *[!\ ]*) echo "growth-guards git hooks: removed from$REMOVED in $(gg_shown "$HOOKS_DIR")" ;;
+    *) echo "growth-guards git hooks: nothing to remove in $(gg_shown "$HOOKS_DIR")" ;;
   esac
   exit 0
 fi
 
 if ! write_helper "$HOOKS_DIR/$HELPER_NAME"; then
-  echo "growth-guards git hooks: NOT installed — could not write $HOOKS_DIR/$HELPER_NAME"
+  echo "growth-guards git hooks: NOT installed — could not write $(gg_shown "$HOOKS_DIR")/$HELPER_NAME"
   exit 1
 fi
 install_hook pre-commit
 install_hook commit-msg
 
 if [ "$FAILED" -eq 1 ]; then
-  echo "growth-guards git hooks: incomplete — see the warnings above ($HOOKS_DIR)"
+  echo "growth-guards git hooks: incomplete — see the warnings above ($(gg_shown "$HOOKS_DIR"))"
   exit 1
 fi
-echo "growth-guards git hooks: pre-commit and commit-msg armed in $HOOKS_DIR"
+echo "growth-guards git hooks: pre-commit and commit-msg armed in $(gg_shown "$HOOKS_DIR")"

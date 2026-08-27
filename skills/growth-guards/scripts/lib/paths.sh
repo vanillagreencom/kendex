@@ -55,3 +55,19 @@ gg_git_path() { # VAR DIR ARG... — VAR gets git's answer, bytes intact
   shift 2
   gg_path "$__name" git -C "$__dir" "$@"
 }
+
+# Showing a path without losing the line.
+#
+# The counterpart of the capture above, and the same class from the other
+# end. A path keeps every byte it has, so it may carry a newline — which
+# ends a message this tool promises is one line, and puts the rest of a
+# verdict where a caller reading the first line never sees it — or an ESC,
+# which reaches a terminal as control codes rather than as a name.
+#
+# Both are somebody else's bytes deciding what a message does. %q renders
+# any of them on one line, escapes what a terminal would act on, and shows
+# an empty value as '' instead of as nothing at all. Every value that is not
+# this package's own constant goes through here on its way into a message.
+gg_shown() { # VALUE -> the value on one line, safe to print
+  printf '%q' "$1"
+}

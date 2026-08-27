@@ -81,11 +81,11 @@ check_delegated_lanes() { # -> 0 both lanes runnable, 1 not
   for lane in pre-commit commit-msg; do
     program="$SCRIPT_DIR/$lane"
     if [ ! -f "$program" ]; then
-      add_reason "$lane is missing from $SCRIPT_DIR, so every commit is blocked rather than guarded"
+      add_reason "$lane is missing from $(gg_shown "$SCRIPT_DIR"), so every commit is blocked rather than guarded"
       return 1
     fi
     if [ ! -x "$program" ]; then
-      add_reason "$lane in $SCRIPT_DIR is not executable, so every commit is blocked rather than guarded"
+      add_reason "$lane in $(gg_shown "$SCRIPT_DIR") is not executable, so every commit is blocked rather than guarded"
       return 1
     fi
   done
@@ -126,7 +126,7 @@ check_hook() { # HOOK -> 0 armed, 1 not armed, 2 could not determine
       ;;
   esac
   if ! gg_trusted_interpreter "$shebang"; then
-    add_reason "$hook runs under an interpreter this check cannot vouch for ($shebang)"
+    add_reason "$hook runs under an interpreter this check cannot vouch for ($(gg_shown "$shebang"))"
     return 2
   fi
   if [ "$second" != "$line" ]; then
@@ -155,17 +155,17 @@ check_hook() { # HOOK -> 0 armed, 1 not armed, 2 could not determine
 check_hooks_dir() { # -> 0 armed, 1 not armed, 2 could not determine
   local drifted=0 unknown=0 status=0
   if [ ! -e "$HOOKS_DIR" ]; then
-    add_reason "$HOOKS_DIR does not exist"
+    add_reason "$(gg_shown "$HOOKS_DIR") does not exist"
     return 1
   fi
   if [ ! -d "$HOOKS_DIR" ]; then
-    add_reason "$HOOKS_DIR is not a directory"
+    add_reason "$(gg_shown "$HOOKS_DIR") is not a directory"
     return 1
   fi
   # An unsearchable directory makes every probe below read as absent, which
   # would misreport failure-to-measure as drift.
   if [ ! -r "$HOOKS_DIR" ] || [ ! -x "$HOOKS_DIR" ]; then
-    add_reason "$HOOKS_DIR cannot be read"
+    add_reason "$(gg_shown "$HOOKS_DIR") cannot be read"
     return 2
   fi
   # 3 is a helper this installer cannot vouch for: unknown, never drift, and

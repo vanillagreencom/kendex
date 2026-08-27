@@ -137,7 +137,7 @@ hooks_path_origins() { # -> the stand-down text, on stderr
   # Nothing is dropped or reordered: one line in, one line out.
   while IFS= read -r line; do
     listed=1
-    printf '  %q\n' "$line" >&2
+    printf '  %s\n' "$(gg_shown "$line")" >&2
   done < <(git -C "$REPO_ABS" config --show-origin --show-scope --get-all core.hooksPath 2>/dev/null)
   # git prints at least one line for a value that is set, so nothing read
   # means nothing to read. That covers the failure and the empty answer
@@ -147,15 +147,4 @@ hooks_path_origins() { # -> the stand-down text, on stderr
     echo "  Its origin could not be listed." >&2
   fi
   echo "  $HOOKS_PATH_REMEDY" >&2
-}
-
-# The configured value, rendered for a message that promises to be one line.
-#
-# CUSTOM_HOOKS is bytes git handed back, and a config value may carry a
-# newline: interpolated raw, it splits the single summary line this tool
-# promises, and the tail lands where a caller reading the first line never
-# sees it. %q renders any byte on one line, quotes an empty value visibly,
-# and escapes what a terminal would otherwise act on.
-hooks_path_shown() { # -> CUSTOM_HOOKS on one line, on stdout
-  printf '%q' "$CUSTOM_HOOKS"
 }
