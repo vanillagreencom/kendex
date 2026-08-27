@@ -36,6 +36,7 @@ Review and QA-review belong to the reviewer skill: [`../reviewer/workflows/revie
 - An `else` that "shouldn't happen" is a bug: assert or return an error, never continue silently.
 - Plain words over jargon: name things by what they do. Comments say why, never what or when — no temporal markers, no references to the change that wrote them. Commit bodies explain intent, never narrate the diff.
 - Delete unused code completely — no compat shims, no `_renamed` vars, no "removed" comments.
+- Never re-implement a judgment another component owns — delegate. Delegation impossible = design escalation in your return, never a twin.
 - Stale docs are bugs: contradicting a committed doc means updating it in the same change.
 
 ## Round Contract

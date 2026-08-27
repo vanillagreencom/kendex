@@ -54,11 +54,13 @@ Don't:
 - References to AI conversations, review rounds, or issue archaeology.
 - Claims broader than what the adjacent code or assertion actually enforces.
 
-Same rules for docs, READMEs, and skill/agent files: state the rule or behavior, never its provenance or justification.
+Same rules for docs, READMEs, and skill/agent files: state the rule or behavior, never its provenance or justification. Their reader is an agent — write the shortest unambiguous rule and delete sentences nothing acts on.
 
 ## Over-Engineering
 
 Build only what was asked. No speculative abstractions, no error handling for impossible scenarios, no generalization before a third caller exists. Delete wrappers that only forward.
+
+One judge per question: never re-implement a decision (classify, validate, parse, detect state) another component or language already owns — delegate. A second spelling is a defect even when both copies agree. Package behavior lives in the package's shipped scripts; a host binary only locates, execs, and surfaces results.
 
 ## Cleanup
 
