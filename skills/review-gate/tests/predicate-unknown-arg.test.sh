@@ -88,6 +88,24 @@ config_reject "an empty gate context" REVIEW_GATE_CONTEXT ""
 # legal configuration and then failed the next live evaluation.
 config_reject "a malformed comment-reviewer pair" REVIEW_GATE_COMMENT_REVIEWERS "missing-colon"
 config_reject "a comment-reviewer pair with an empty login" REVIEW_GATE_COMMENT_REVIEWERS ":pattern"
+# Exclusion-pattern spelling is judged HERE and nowhere else: the matcher
+# lives in this file, so a second grammar elsewhere can only drift from it.
+config_reject "an exclusion anchored with a leading '/'" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "/AGENTS.md"
+config_reject "a parent-relative exclusion" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "../future/*"
+config_reject "a dot-relative exclusion" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "./future/*"
+config_reject "an exclusion with an empty path component" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs//guide.md"
+config_reject "an exclusion ending in '/'" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/"
+config_reject "an unreachable PROPHYLACTIC declaration" REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "../future/*"
+
+# ...and the spellings the matcher HONORS are legal. Refusing these was the
+# drift: a bracket class and a backslash escape both work in `case`.
+for spelling in '[.]/future/*' 'docs/\*.md' 'docs/?.md' '*AGENTS.md'; do
+  rc=0
+  env -u GH_REPO -u PR_NUMBER -u HEAD_SHA REVIEW_GATE_SETTINGS_FILE=/dev/null \
+    REVIEW_GATE_CARRY_FORWARD_EXCLUDE="$spelling" "$PREDICATE" --check-config >/dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 0 ] && ok "--check-config accepts the live spelling '$spelling'" ||
+    bad "--check-config accepts the live spelling '$spelling' (got $rc)"
+done
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

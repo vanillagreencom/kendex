@@ -42,11 +42,13 @@ Four groups run, in this order:
               legal. Unknown keys, per-invocation seams and repository
               variables are each named as what they are; the value rules come
               from `review-predicate.sh --check-config`, never a copy of them.
-  carry       every REVIEW_GATE_CARRY_FORWARD_EXCLUDE glob is
-              repository-relative, matches a tracked path, and is not
-              universal; every prophylactic declaration names an active
-              exclusion that still matches nothing. A value the loader
-              refuses is a finding, never an empty list.
+  carry       every REVIEW_GATE_CARRY_FORWARD_EXCLUDE glob matches a
+              tracked path and is not universal; every prophylactic
+              declaration names an active exclusion that still matches
+              nothing. A value the loader refuses is a finding, never an
+              empty list. Pattern SPELLING is not judged here — the engine
+              owns that grammar, and `--check-config` above relays its
+              verdict, so this tool cannot drift from the matcher.
   workflow    the adopted .github/workflows/ copy is still the shipped
               template, line for line — delegated to validate-workflow.sh,
               whose --help states the model and the two allowed deltas.
@@ -313,51 +315,6 @@ $(sed 's/^/        /' "$CARRY_TMP/err")"
   return 0
 }
 
-# A CLOSED SPELLING, after a leading '/', a parent-relative '../', a
-# dot-relative './' and a bracketed '[.]/' each arrived as its own case. The
-# unreachable set has no end to enumerate; the SUPPORTED one is small, so it
-# is the one written down: path literals, '*', '**' and '?', with no bracket
-# class, no backslash escape, and no '/' anchor or '.'/'..' component — none
-# of which a repository-relative git path can carry. Anything richer is
-# refused as unsupported rather than guessed at, and refused BEFORE the
-# prophylactic ledger: a declaration waives "no match in the repository
-# today", and nothing waives a pattern that can never match at all.
-unsupported_glob() { # GLOB — prints the reason when the spelling is refused
-  local rest="$1" comp
-  case "$1" in
-    /*)
-      printf '%s' "it is anchored with a leading '/'"
-      return 0
-      ;;
-    *'['* | *']'* | *'\'*)
-      printf '%s' "it uses a bracket class or a backslash escape, which the engine's matcher does not support"
-      return 0
-      ;;
-    */)
-      printf '%s' "it ends with a '/', and git names files rather than directories"
-      return 0
-      ;;
-  esac
-  while [ -n "$rest" ]; do
-    comp="${rest%%/*}"
-    case "$comp" in
-      "")
-        printf '%s' "it carries an empty path component"
-        return 0
-        ;;
-      . | ..)
-        printf '%s' "it carries a '$comp' path component"
-        return 0
-        ;;
-    esac
-    case "$rest" in
-      */*) rest="${rest#*/}" ;;
-      *) rest="" ;;
-    esac
-  done
-  return 1
-}
-
 list_items() { # PACKED — one trimmed, non-empty item per line
   printf '%s' "$1" | tr ';' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d'
 }
@@ -423,10 +380,6 @@ elif [ -z "$exclude_items" ]; then
 else
   while IFS= read -r pat; do
     [ -z "$pat" ] && continue
-    glob_why="$(unsupported_glob "$pat")" && {
-      bad "carry-exclude '$pat' is not a supported pattern: $glob_why. The supported spelling is path literals with '*', '**' and '?' — git names files like \`docs/guide.md\`, so a pattern outside that can never match on any day, and declaring it prophylactic does not make it reachable"
-      continue
-    }
     glob_hits "$pat"
     if [ -z "$GLOB_FIRST" ]; then
       if grep -qxF -- "$pat" <<<"$prophylactic_items"; then
@@ -459,10 +412,6 @@ else
       bad "prophylactic declaration '$pat' is not an entry in REVIEW_GATE_CARRY_FORWARD_EXCLUDE — a waiver without its glob is stale config; remove the declaration, or restore the exclusion it waives"
       continue
     fi
-    glob_why="$(unsupported_glob "$pat")" && {
-      bad "prophylactic declaration '$pat' is not a supported pattern: $glob_why. A declaration waives \`no match in the repository today\`; it does not make an unsupported spelling reachable"
-      continue
-    }
     glob_hits "$pat"
     if [ -n "$GLOB_FIRST" ]; then
       bad "prophylactic declaration '$pat' no longer holds: the glob now matches '$GLOB_FIRST' — remove the declaration so the live exclusion is checked"

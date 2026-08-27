@@ -336,48 +336,52 @@ expect_clean "live exclusion globs pass" "$dir"
 
 setting_fails "a glob matching no tracked path is dead config" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "no-such-directory/*.md" "matches no tracked path"
 
-setting_fails "a leading-'/' anchor can never match and fails" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "/AGENTS.md" "is not a supported pattern"
+# Pattern SPELLING is the engine's call, relayed through --check-config: one
+# grammar, in the matcher's own file, so this tool cannot drift from it.
+setting_fails "a leading-'/' anchor is refused by the engine and relayed" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "/AGENTS.md" "a committed setting is not legal"
+printf '%s' "$OUT" | grep -qF "can never match" &&
+  ok "the engine's own reason rides out in the verdict" ||
+  bad "the engine's own reason rides out in the verdict" "$OUT"
 
 # Parent-relative is dead the same way, and so not waivable: a declaration
 # says "no tracked match TODAY", and this one cannot match on any day.
-setting_fails "a parent-relative glob can never match and fails" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "../future/*" "is not a supported pattern"
+setting_fails "a parent-relative glob is refused by the engine" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "../future/*" "a committed setting is not legal"
 
 sandbox
 dir="$DIR"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "../future/*"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "../future/*"
-expect_fail "declaring a parent-relative glob prophylactic does not rescue it" "$dir" "is not a supported pattern"
+expect_fail "declaring an unreachable pattern prophylactic does not rescue it" "$dir" "a committed setting is not legal"
 
 # The rule is REACHABILITY, not a list of anchors: a dot-relative glob and an
 # embedded dot component are unreachable for the same reason.
-setting_fails "a dot-relative glob can never match and fails" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "./future/*" "is not a supported pattern"
+setting_fails "a dot-relative glob is refused by the engine" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "./future/*" "a committed setting is not legal"
 
-setting_fails "an embedded dot component can never match and fails" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/./guide.md" "is not a supported pattern"
+setting_fails "an embedded dot component is refused by the engine" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/./guide.md" "a committed setting is not legal"
 
-# A bracket class is the fourth spelling of this class, so the rule is now a
-# CLOSED supported set rather than a list of anchors to refuse.
-setting_fails "a bracket-class glob is unsupported spelling" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "[.]/future/*" "is not a supported pattern"
+# The matcher HONORS bracket classes and backslash escapes, so nothing may
+# refuse them as spelling — refusing them was this tool keeping a second
+# grammar that had drifted from the engine's. They are ordinary patterns that
+# happen to match no tracked path, which is the tree check's business.
+setting_fails "a bracket-class glob is a live spelling that matches nothing here" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "[.]/future/*" "matches no tracked path"
 
 sandbox
 dir="$DIR"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "[.]/future/*"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "[.]/future/*"
-expect_fail "declaring a bracket-class glob prophylactic does not rescue it" "$dir" "is not a supported pattern"
+expect_clean "a bracket-class glob declared prophylactic is accepted, as any live spelling is" "$dir"
 
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE 'docs/\*.md'
-expect_fail "a backslash escape is unsupported spelling" "$dir" "is not a supported pattern"
+setting_fails "a backslash escape is a live spelling that matches nothing here" REVIEW_GATE_CARRY_FORWARD_EXCLUDE 'docs/\*.md' "matches no tracked path"
 
 # An EMPTY component is unreachable for the same reason a '.' one is: git
 # names carry neither. A trailing '/' is the same thing spelt at the end.
-setting_fails "an empty path component is unsupported spelling" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs//guide.md" "is not a supported pattern"
+setting_fails "an empty path component is refused by the engine" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs//guide.md" "a committed setting is not legal"
 
 sandbox
 dir="$DIR"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "docs/"
-expect_fail "a trailing '/' is unsupported, declaration or not" "$dir" "is not a supported pattern"
+expect_fail "a trailing '/' is refused, declaration or not" "$dir" "a committed setting is not legal"
 
 # ...and an ordinary glob with a dot in a NAME is reachable and stays so.
 setting_clean "a dot inside a filename is not a dot component" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/*.md"

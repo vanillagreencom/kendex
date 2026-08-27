@@ -30,8 +30,15 @@ The split is deliberate, and it is the line between a tool and a test suite.
 - **Repo-own checks run in the consumer.** `validate.sh` asks only questions
   whose answer depends on the calling repository: its files, its committed
   settings, its tracked paths, its adopted workflow. It re-runs no engine
-  behaviour, and its settings half calls `review-predicate.sh --check-config`
-  rather than restating any value rule.
+  behaviour, and it judges no value or pattern itself — its settings half
+  calls `review-predicate.sh --check-config` and relays the answer.
+
+ONE JUDGE per rule, and the judge is whoever owns the mechanism. The
+exclusion matcher lives in `review-predicate.sh`, so exclusion-pattern
+spelling is refused there and nowhere else; a second grammar in the validator
+could only drift from the matcher, and did — it refused bracket classes the
+`case` matcher honors. What `validate.sh` keeps is what the engine cannot
+answer: facts about the calling repository's tree.
 
 `--check-config` stops at the last point before the predicate needs a PR to
 evaluate. Every configuration rule sits above that stop — the comment-reviewer

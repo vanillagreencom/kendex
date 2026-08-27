@@ -185,7 +185,12 @@ Carry-forward engine:
       carry (AGENTS.md and other agent/reviewer instruction markdown —
       kendex#1115). Empty = no exclusions. Identical-tree carries are
       unaffected (no delta, nothing to exclude). Inert while
-      REVIEW_GATE_CARRY_FORWARD is empty.
+      REVIEW_GATE_CARRY_FORWARD is empty. A pattern that can never match a
+      repository-relative name — a leading '/', a trailing '/', or a '.',
+      '..' or empty path component — is a configuration error (exit 2),
+      here and under --check-config: it is dead config, not a guard for
+      paths that do not exist yet. Bracket classes, '?' and backslash
+      escapes are honored by the matcher and are legal.
 
 Per-invocation env seams (never settings keys):
   REVIEW_GATE_SETTINGS_FILE         Overrides the settings-file path (tests,
@@ -377,6 +382,57 @@ while IFS= read -r ctx; do
 done <<EOF_GATE_CTX
 $(printf '%s' "$TRUSTED_CONTEXTS" | tr ';' '\n')
 EOF_GATE_CTX
+
+# Carry-exclusion PATTERNS are matched with `case "$filename" in $pattern)`
+# against compare filenames, which git reports repository-relative: no leading
+# '/', no '.' or '..' component, no empty component, no trailing '/'. A
+# pattern carrying any of those can never match, on any day, so it is dead
+# config rather than a future-facing guard — and a prophylactic declaration,
+# which asserts only "no match in the repository TODAY", cannot make it
+# reachable. Everything the matcher honors is honored here: bracket classes,
+# '?' and backslash escapes are legal spellings and are not refused.
+#
+# This is the ONE judge of exclusion-pattern spelling. Callers that need the
+# verdict ask for it (`--check-config`) rather than keeping a second grammar
+# that drifts from this matcher.
+rg_unreachable_pattern() { # PATTERN — the reason on stdout when nothing matches
+  local rest="$1" comp
+  case "$1" in
+    /*) printf '%s' "a leading '/'"; return 0 ;;
+    */) printf '%s' "a trailing '/'"; return 0 ;;
+  esac
+  while [ -n "$rest" ]; do
+    comp="${rest%%/*}"
+    case "$comp" in
+      "") printf '%s' "an empty path component"; return 0 ;;
+      . | ..) printf '%s' "a '$comp' path component"; return 0 ;;
+    esac
+    case "$rest" in
+      */*) rest="${rest#*/}" ;;
+      *) rest="" ;;
+    esac
+  done
+  return 1
+}
+
+rg_check_patterns() { # KEY PACKED — exit 2 on the first unreachable pattern
+  local pat why
+  while IFS= read -r pat; do
+    pat="$(printf '%s' "$pat" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    [ -z "$pat" ] && continue
+    why="$(rg_unreachable_pattern "$pat")" || continue
+    echo "::error::review-predicate: $1 pattern '$pat' can never match — compare filenames are repository-relative and this carries $why" >&2
+    exit 2
+  done <<EOF_PATTERNS
+$(printf '%s' "$2" | tr ';' '\n')
+EOF_PATTERNS
+}
+
+# The prophylactic ledger is acted on by no evidence path here; it is read so
+# its patterns face the same one judge as the live exclusions.
+CARRY_EXCLUDE_PROPHYLACTIC="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "")" || exit 2
+rg_check_patterns REVIEW_GATE_CARRY_FORWARD_EXCLUDE "$CARRY_EXCLUDE"
+rg_check_patterns REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "$CARRY_EXCLUDE_PROPHYLACTIC"
 
 # Comment-reviewer GRAMMAR, validated with every other setting rather than at
 # the moment the evidence loop first reads a pair. A malformed entry is a
