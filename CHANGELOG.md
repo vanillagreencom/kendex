@@ -63,6 +63,10 @@ an outside contributor.
   what it renders now, so a row kendex wrote leaves with its render. Every
   other row is untouched; rows a pre-rename tool wrote are removed by hand once.
 
+- Removing a skill whose harness copies are only partly present now finishes.
+  A link whose target was already gone failed the move to the trash with "No
+  such file or directory" and rolled the whole removal back, on every retry.
+
 - The `task-completed-check` hook counts untracked files as changes, and blocks
   on any nonzero clippy exit or a git that cannot say what changed. It passed
   all three before: a new-file-only task, a killed clippy, an unreadable repo.

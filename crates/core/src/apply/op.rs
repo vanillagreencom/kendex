@@ -146,6 +146,18 @@ impl Op {
                 fs::rename(from, to).map_err(|e| CoreError::io(from, e))
             }
             Op::Trash { path, pre } => {
+                // A removal asks for one end state: nothing at this path.
+                // A copy that is already gone is that end state, so it is
+                // satisfied rather than failed — an installation whose
+                // harness copies are only partly present would otherwise
+                // roll its whole removal back on the missing one and stay
+                // half-present with no way forward. Nothing here is
+                // nothing to protect either, so the precondition, which
+                // binds the op to bytes it may take, has nothing to bind
+                // to. A path still holding something is proven as before.
+                if !path.exists() && !path.is_symlink() {
+                    return Ok(());
+                }
                 pre.check(path)?;
                 let trash = env.trash_dir();
                 fs::create_dir_all(&trash).map_err(|e| CoreError::io(&trash, e))?;
@@ -155,13 +167,7 @@ impl Op {
                     .unwrap_or_else(|| "item".to_owned());
                 let dest = unique_in(&trash, &base);
                 if fs::rename(path, &dest).is_err() {
-                    // Cross-device: copy then remove.
-                    if path.is_dir() {
-                        crate::fs::copy_tree(path, &dest)?;
-                    } else {
-                        fs::copy(path, &dest).map_err(|e| CoreError::io(path, e))?;
-                    }
-                    crate::fs::remove_any(path)?;
+                    relocate(path, &dest)?;
                 }
                 Ok(())
             }
@@ -213,6 +219,30 @@ impl Op {
             } => git_config_swap(file, key, expected.as_deref(), value.as_deref()),
         }
     }
+}
+
+/// rename(2) refused the move, so the artifact is reproduced in the trash
+/// and taken away here. The trash on another filesystem than the artifact
+/// is the everyday shape, not a rarity: a project under its own mount is
+/// removed into a trash under the home directory.
+///
+/// A link is remade as a link, and that question is asked first, because
+/// both of the other two read through one. `is_dir` on a link to a
+/// directory sends the shared tree it points at into the trash while only
+/// the link is taken away, and `copy` on a link whose target is gone —
+/// which is what a half-present installation looks like — fails with the
+/// target's ENOENT under the link's name, aborting the removal that was
+/// called to clear it.
+fn relocate(path: &Path, dest: &Path) -> Result<()> {
+    if path.is_symlink() {
+        let target = fs::read_link(path).map_err(|e| CoreError::io(path, e))?;
+        crate::fs::make_symlink(&target, dest)?;
+    } else if path.is_dir() {
+        crate::fs::copy_tree(path, dest)?;
+    } else {
+        fs::copy(path, dest).map_err(|e| CoreError::io(path, e))?;
+    }
+    crate::fs::remove_any(path)
 }
 
 fn write_tree(root: &Path, files: &[(PathBuf, Vec<u8>)], pre: &Pre) -> Result<()> {
@@ -335,3 +365,6 @@ impl Plan {
         self.ops.is_empty()
     }
 }
+
+#[cfg(test)]
+mod tests;

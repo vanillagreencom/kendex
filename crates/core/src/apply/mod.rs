@@ -281,4 +281,73 @@ mod tests {
         assert_eq!(trashed.len(), 1);
         assert!(trashed[0].path().join("SKILL.md").is_file());
     }
+
+    /// An installation whose harness copies are only partly present: the
+    /// plan named a copy that is no longer there. The removal reaches the
+    /// end state that copy was planned for, so the rest of it lands
+    /// instead of rolling back and leaving the item half-present with no
+    /// way forward.
+    #[test]
+    fn a_copy_already_gone_does_not_take_the_removal_with_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_in(tmp.path());
+        let present = tmp.path().join("here/SKILL.md");
+        fs::create_dir_all(present.parent().unwrap()).unwrap();
+        fs::write(&present, "content").unwrap();
+
+        let plan = Plan {
+            scope: Scope::Global,
+            ops: vec![
+                PlannedOp {
+                    description: "remove the copy that is gone".into(),
+                    op: Op::Trash {
+                        path: tmp.path().join("gone"),
+                        pre: Pre::HashIs {
+                            hash: "whatever the plan saw".into(),
+                        },
+                    },
+                },
+                PlannedOp {
+                    description: "remove the copy that is here".into(),
+                    op: Op::Trash {
+                        path: present.clone(),
+                        pre: Pre::Any,
+                    },
+                },
+            ],
+        };
+
+        assert_eq!(execute(&env, &plan, None).unwrap().applied, 2);
+        assert!(!present.exists());
+    }
+
+    /// The other half of the same rule: a copy that is still there, and
+    /// not the bytes the plan proved it could take, stops the apply.
+    #[test]
+    fn a_copy_that_changed_still_stops_the_removal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_in(tmp.path());
+        let edited = tmp.path().join("edited.md");
+        fs::write(&edited, "not what the plan read").unwrap();
+
+        let plan = Plan {
+            scope: Scope::Global,
+            ops: vec![PlannedOp {
+                description: "remove the edited copy".into(),
+                op: Op::Trash {
+                    path: edited.clone(),
+                    pre: Pre::HashIs {
+                        hash: "what the plan read".into(),
+                    },
+                },
+            }],
+        };
+
+        let error = execute(&env, &plan, None).unwrap_err();
+        assert!(matches!(error, CoreError::RolledBack { .. }));
+        assert_eq!(
+            fs::read_to_string(&edited).unwrap(),
+            "not what the plan read"
+        );
+    }
 }
