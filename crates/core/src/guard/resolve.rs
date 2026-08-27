@@ -12,14 +12,26 @@ use crate::error::Result;
 
 use super::{SKILL, guard_err};
 
-/// Where an installed skill can sit, in the order the package's own hook
-/// helper searches them. Kept identical to that list on purpose: a repo
-/// where the shim finds a script and kendex finds a different one would gate
-/// commits one way and report them another.
-pub const SKILL_ROOTS: [&str; 5] = [
+/// Where an installed skill can sit: every project skills directory a
+/// kendex install writes, plus the source layout kendex itself has.
+///
+/// It is the harness adapters' own list — `a_root_for_every_harness_skills_
+/// surface` pins it against them, not merely against the shell copy below,
+/// because two duplicates agreeing is no evidence that either is right.
+/// `.cursor/rules` used to be here and is not a skills directory at all;
+/// cursor's own adapter says so, and `.gemini/skills` and `.github/skills`
+/// were missing, so a `method = copy` install into any of the three was a
+/// package the guard verbs could not find.
+///
+/// The package's hook helper searches the same list. A repository where the
+/// shim finds a script and kendex finds a different one would gate commits
+/// one way and report them another.
+pub const SKILL_ROOTS: [&str; 7] = [
     ".agents/skills",
     ".claude/skills",
-    ".cursor/rules",
+    ".cursor/skills",
+    ".gemini/skills",
+    ".github/skills",
     ".opencode/skills",
     "skills",
 ];

@@ -436,8 +436,8 @@ lives in one capability table read by core and UI.
   hooks directory inside the git directory with `core.hooksPath` pointed at
   it, and converted v1 settings on demand; neither is detected, undone, or
   converted here. `guard install` runs the package's installer, which
-  stands down and reports when `core.hooksPath` sends git anywhere but the
-  repository's own hooks directory — whoever set that value undoes it, and
+  stands down and reports when `core.hooksPath` is set to any value at all,
+  its own hooks directory included — whoever set it undoes it, and
   the changelog says which artifacts an old install left behind.
 - **A registration is reconciled, not added to.** What a hook registered
   is recorded (`engine::item_record`); a catalog moving it to another

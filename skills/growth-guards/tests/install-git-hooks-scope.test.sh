@@ -99,13 +99,15 @@ printf 'hello\n' >"$R18D/a.txt"
 git -C "$R18D" add a.txt
 commit_in "$R18D" "feat: add a"
 git -C "$R18D" worktree add -q "$TMP/wt5" -b wt5b
-# A copy-method install for Cursor: a skills root the survivor check must know.
-mkdir -p "$TMP/wt5/.cursor/rules"
-cp -R "$SKILL_DIR" "$TMP/wt5/.cursor/rules/growth-guards"
+# A copy-method install for Cursor: a skills root the survivor check must
+# know. `.cursor/skills` is that root — `.cursor/rules` is where Cursor
+# keeps rules, holds no skills, and was searched here by mistake.
+mkdir -p "$TMP/wt5/.cursor/skills"
+cp -R "$SKILL_DIR" "$TMP/wt5/.cursor/skills/growth-guards"
 OUT=""; RC=0
 OUT="$("$R18D/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$R18D" --uninstall 2>&1)" || RC=$?
 [ "$RC" -eq 0 ] && ok "uninstall beside a Cursor install exits 0" || bad "cursor survivor uninstall exits 0" "rc=$RC out=$OUT"
-[ -f "$R18D/.git/hooks/kendex-guards" ] && ok "a survivor under .cursor/rules keeps the shared shims" \
+[ -f "$R18D/.git/hooks/kendex-guards" ] && ok "a survivor under .cursor/skills keeps the shared shims" \
   || bad "cursor survivor keeps shims" "out=$OUT"
 
 R18E="$(new_repo shared-partial)"

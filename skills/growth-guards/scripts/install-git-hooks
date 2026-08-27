@@ -29,8 +29,8 @@ HOOK_SENTINEL="# kendex-guards-hook"
 # It carries the sentinel, so the same filter strips it.
 CREATED_MARKER="# kendex-guards-hook created this file"
 # Every project-scope skills directory a kendex install can write, plus the
-# source layout kendex itself has. Keep in step with the CLI's skills_dir.
-SKILL_ROOTS=".agents/skills .claude/skills .cursor/rules .opencode/skills skills"
+# source layout kendex itself has. kendex pins its copy against the adapters.
+SKILL_ROOTS=".agents/skills .claude/skills .cursor/skills .gemini/skills .github/skills .opencode/skills skills"
 # Whole interpreter names only: '.*sh' would match #!/usr/bin/fish and treat
 # POSIX-sh syntax as runnable by a hook that cannot run it.
 SH_SHEBANG_RE='^#![[:space:]]*([^[:space:]]*/)?(env[[:space:]]+)?(sh|bash|dash|ksh|zsh)([[:space:]]|$)'

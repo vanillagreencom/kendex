@@ -22,9 +22,6 @@ an outside contributor.
 - The `harness-ci` wiring guide covers a lane that reads a path family beside
   the render verdict; the single-gate condition it shipped skipped that lane
   whenever the classifying job died.
-- `kendex check` no longer runs a repository's own guard scripts unless this
-  machine installed that package and the script still matches what it
-  installed: reading a clone's status runs none of its code.
 - `kendex check` reads a repository's hook files itself instead of running
   its guard scripts, so reading a clone's status executes none of its code.
   It answers armed, not armed, or cannot tell, and never guesses.
@@ -46,8 +43,9 @@ an outside contributor.
 - The `pre-commit-check` hook no longer stands aside for a repository-root
   file git never runs when `core.hooksPath` is set: any value at all reads
   as not armed.
-- A hook of your own that quotes a guard marker in a comment is left alone:
-  it is no longer refused, rewritten, or reported as a stale guard shim.
+- A hook of your own that mentions a guard marker mid-line is left alone: it
+  is no longer refused, rewritten, or reported as a stale shim. A line that
+  ENDS with the marker is still treated as the installer's own.
 - A blocked commit is told to run `kendex guard install`, which restores the
   helper, instead of `kendex refresh`, which does not.
 
