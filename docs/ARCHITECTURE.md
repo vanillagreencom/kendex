@@ -538,8 +538,8 @@ lives in one capability table read by core and UI.
   `/`); two split points both naming refs, or a branch and tag sharing a
   name, refuse naming every candidate; offline, normalization refuses
   before any write. One repository per scope by canonical identity
-  (`.git`, case, redirect spellings are one repo), the refusal naming the
-  existing subscription. The default marketplace is found by repo: two
+  (`repo_identity` folds `.git`, a trailing slash, every GitHub spelling,
+  and host case), the refusal naming the existing subscription. The default marketplace is found by repo: two
   prefer the seeded name, else refuse naming both; none is a typed error.
   Installing into a project from a personal subscription copies the
   declaration into the project in that plan — one scope mutated, the

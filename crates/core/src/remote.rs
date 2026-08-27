@@ -10,8 +10,10 @@ pub mod store;
 /// The cache key a declared repo string resolves under. Keyed off the
 /// clone URL, not `source_ref::repo_identity`: the URL is what carries the
 /// host and the `KENDEX_GIT_BASE` rebase, so two hosts serving one
-/// `owner/repo` keep separate mirrors. Spellings that differ only in case
-/// or URL shape therefore key apart and each fetch their own copy.
+/// `owner/repo` keep separate mirrors. The only fold is `repo_key`'s own —
+/// a trailing slash and a `.git` suffix — so case, a `www.` host, `http`
+/// against `https`, and the scp-style `git@` form each key apart and fetch
+/// their own copy.
 pub fn cache_key(env: &Env, repo: &str) -> String {
     store::repo_key(&clone_url(env, repo))
 }
