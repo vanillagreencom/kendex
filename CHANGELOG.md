@@ -16,6 +16,9 @@ an outside contributor.
 - A package that changes the repository beyond kendex's own folders says so
   at install and waits for its own yes, good for that run alone. Declining
   installs it unarmed; no terminal declines unless `--allow-repo-effects`.
+- The app asks the same question: installing such a package from a
+  marketplace or bundle shows what it changes, writes, and how to undo it,
+  with its own Apply. `kendex apply` asks too for a hand-declared package.
 - `kendex remove <name> --keep-declaration` takes the files away and leaves
   kendex.toml untouched, so the next `kendex refresh` installs what it
   declares again. Fixing a broken install no longer needs the manifest restored.

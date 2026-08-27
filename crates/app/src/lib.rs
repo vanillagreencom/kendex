@@ -9,12 +9,13 @@ mod editor;
 // and for how the Linux app is packaged.
 #[cfg(target_os = "linux")]
 mod launch_env;
-mod marketplaces;
+pub mod marketplaces;
 mod mine;
 mod native;
 mod packages;
 mod paths;
 pub mod recovery;
+pub mod repo_effects;
 mod sources;
 mod unsubscribe;
 mod whole_file;
@@ -79,6 +80,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             marketplaces::marketplace_package_file,
             marketplaces::install::marketplace_install,
             marketplaces::install::install_targets,
+            repo_effects::repo_effects_apply,
             marketplaces::marketplace_subscribe,
             unsubscribe::marketplace_unsubscribe_preview,
             unsubscribe::marketplace_unsubscribe,

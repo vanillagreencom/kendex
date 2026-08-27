@@ -19,12 +19,10 @@ pub struct RepoEffects {
     /// One line: what installing this changes about the repository.
     pub summary: String,
     /// Repo-relative paths the package writes outside the managed trees.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub writes: Vec<String>,
     /// The script, relative to the package directory, that applies the
     /// effect. Absent means kendex has nothing to run and the disclosure
     /// ends with what the reader should run themselves.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installer: Option<String>,
     /// The script that undoes the effect.
     ///
@@ -32,21 +30,17 @@ pub struct RepoEffects {
     /// takes the package's files away with the effect still applied. The
     /// disclosure names it so a person can run it themselves, which is the
     /// whole of what it does today. KEN-674 carries wiring it into removal.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uninstaller: Option<String>,
     /// How to undo the effect by hand, for the disclosure's last line.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub removal: Option<String>,
     /// Lines the package wants read before anyone says yes — what its
     /// effect actually does, in its own words. The package writes these
     /// because only it knows them; kendex supplies the parts it owns, the
     /// paths and the authorization and the removal command.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
     /// Packages whose presence changes what this one does. Whether each is
     /// installed here is a fact about this repository rather than about the
     /// package, so the declaration names them and kendex answers.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub companions: Vec<String>,
 }
 

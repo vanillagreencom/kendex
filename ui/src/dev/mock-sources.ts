@@ -75,7 +75,10 @@ export const sourceHandlers: Record<string, Handler> = {
     );
     if (!row) return Promise.reject(`no bundle named '${name}' here`);
     row.installed = true;
-    return store.state.bundles;
+    return {
+      bundles: store.state.bundles,
+      repoEffects: { shown: [], withheld: [] },
+    };
   },
   sources_refresh: () => {
     for (const row of store.state.sources) {

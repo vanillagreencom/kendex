@@ -79,6 +79,15 @@ pub fn bundles_overview() -> Result<Vec<BundleRow>, String> {
     Ok(rows)
 }
 
+/// What a bundle install hands back: every set as it stands now, and the
+/// repository effects its members brought for the window to ask about.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BundleInstalled {
+    pub bundles: Vec<BundleRow>,
+    pub repo_effects: kendex_core::repo_effects::Offers,
+}
+
 /// Install a set whole. Its members derive from the catalog, so this declares
 /// one name and applies the plan that follows from it.
 #[tauri::command(async)]
@@ -88,7 +97,7 @@ pub fn bundle_install(
     source: String,
     name: String,
     hold: bool,
-) -> Result<Vec<BundleRow>, String> {
+) -> Result<BundleInstalled, String> {
     let env = env()?;
     let request = AddRequest {
         source: Some(source),
@@ -99,7 +108,11 @@ pub fn bundle_install(
     };
     let report = engine_ops::add(&env, &scope, &request).map_err(|e| e.to_string())?;
     apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
-    bundles_overview()
+    let repo_effects = crate::repo_effects::offers(&env, &scope, &report)?;
+    Ok(BundleInstalled {
+        bundles: bundles_overview()?,
+        repo_effects,
+    })
 }
 
 /// Re-resolve every enabled remote across every scope. Returns warnings

@@ -34,6 +34,9 @@ pub struct ApplyArgs {
     /// installs in this scope — the old files move to the trash
     #[arg(long)]
     replace_unmanaged: bool,
+    /// Say yes to the repository changes a newly installed package declares
+    #[arg(long)]
+    allow_repo_effects: bool,
 }
 
 pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
@@ -72,6 +75,10 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
         print_unmanaged(&report.drift);
         if !args.plan {
             confirm_and_execute(env, &report, args.yes)?;
+            // A declaration written by hand installs here, and it gets the
+            // same account and the same separate yes an `add` gives it.
+            let shown_to_them = super::repo_effects::disclose(env, &scope, &report.repo_effects)?;
+            super::repo_effects::walkthrough(&scope, &shown_to_them, args.allow_repo_effects)?;
             // The deep work just ran; record it for the session-start check.
             if let Err(error) = kendex_core::drift::snapshot::record(env, &scope) {
                 say(&format!("warning: snapshot not derived ({error})"));

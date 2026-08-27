@@ -136,7 +136,7 @@ export const commands = {
 	 *  Install a set whole. Its members derive from the catalog, so this declares
 	 *  one name and applies the plan that follows from it.
 	 */
-	bundleInstall: (scope: Scope, source: string, name: string, hold: boolean) => typedError<BundleRow[], string>(__TAURI_INVOKE("bundle_install", { scope, source, name, hold })),
+	bundleInstall: (scope: Scope, source: string, name: string, hold: boolean) => typedError<BundleInstalled, string>(__TAURI_INVOKE("bundle_install", { scope, source, name, hold })),
 	/**
 	 *  Every subscription across every scope — the Marketplaces page's one
 	 *  query.
@@ -169,7 +169,7 @@ export const commands = {
 	 *  carry the picker's answer; absent, the scope's own install defaults
 	 *  decide, brought up to date against this machine by the add itself.
 	 */
-	marketplaceInstall: (scope: Scope, source: string, items: InstallItem[], bundle: string | null, destination: { scope: "global" } | { scope: "project"; root: string } | null, hold: boolean, harnesses: HarnessId[] | null, method: "symlink" | "copy" | null) => typedError<AvailablePackage[], string>(__TAURI_INVOKE("marketplace_install", { scope, source, items, bundle, destination, hold, harnesses, method })),
+	marketplaceInstall: (scope: Scope, source: string, items: InstallItem[], bundle: string | null, destination: { scope: "global" } | { scope: "project"; root: string } | null, hold: boolean, harnesses: HarnessId[] | null, method: "symlink" | "copy" | null) => typedError<Installed, string>(__TAURI_INVOKE("marketplace_install", { scope, source, items, bundle, destination, hold, harnesses, method })),
 	/**
 	 *  Where an install of these kinds could land, for the picker the install
 	 *  flow draws. Two filters, both read from core: which tools can take the
@@ -180,6 +180,7 @@ export const commands = {
 	 *  to be offerable, and one removed since must not read as present.
 	 */
 	installTargets: (scope: Scope, kinds: ItemKind[]) => typedError<InstallTarget[], string>(__TAURI_INVOKE("install_targets", { scope, kinds })),
+	repoEffectsApply: (scope: Scope, declared: DeclaredEffects) => typedError<null, string>(__TAURI_INVOKE("repo_effects_apply", { scope, declared })),
 	/**
 	 *  Subscribe a scope to a marketplace: `owner/repo[@rev]`, a git URL, a
 	 *  GitHub tree URL, a skills.sh package URL, or a local folder.
@@ -573,6 +574,15 @@ export type BundleDetail = {
 	collision: string | null,
 };
 
+/**
+ *  What a bundle install hands back: every set as it stands now, and the
+ *  repository effects its members brought for the window to ask about.
+ */
+export type BundleInstalled = {
+	bundles: BundleRow[],
+	repoEffects: Offers,
+};
+
 /**  One member of a curated set, with where it stands here. */
 export type BundleMemberRow = {
 	kind: ItemKind,
@@ -695,6 +705,15 @@ export type CatalogSummary = {
 	subscription: SubscriptionRef | null,
 };
 
+/**
+ *  A package whose presence changes what this one does, and whether it is
+ *  installed in this scope.
+ */
+export type Companion = {
+	name: string,
+	installed: boolean,
+};
+
 /**  How the content in the way compares with the install it blocks. */
 export type Comparison = {
 	/**
@@ -766,6 +785,24 @@ export type CustomHook_Serialize = {
 	agents: HookAgents,
 };
 
+/**
+ *  One package's declaration, with the package it came from — what a plan
+ *  carries out to the surfaces that disclose it.
+ */
+export type DeclaredEffects = {
+	name: string,
+	/**
+	 *  The package directory the scripts resolve against, once installed.
+	 * 
+	 *  A path, not a string of one. `display().to_string()` turns any byte
+	 *  that is not UTF-8 into U+FFFD, which is a different filename — so an
+	 *  authorized effect resolved a path nobody has, for a package that had
+	 *  just landed perfectly well. The same class #1669 closed on the guard
+	 *  side, here for the same reason.
+	 */
+	root: string,
+} & RepoEffects;
+
 /**  One rule firing once, and what it cost. */
 export type Deduction = {
 	rule: string,
@@ -829,6 +866,16 @@ export type DirectoryView = {
 	 */
 	fetchedAt: string,
 	stale: boolean,
+};
+
+/**
+ *  What a person reads before saying yes to one package's effect, and the
+ *  declaration that yes runs.
+ */
+export type Disclosure = {
+	declared: DeclaredEffects,
+	writes: Written[],
+	companions: Companion[],
 };
 
 /**
@@ -1257,6 +1304,16 @@ export type InstallTarget = {
 	sharesTheUniversalTree: boolean,
 };
 
+/**
+ *  What an install hands back: the subscription's packages as they stand
+ *  now, and the repository effects the install brought — read and asked
+ *  about in the window, because nothing here ran them.
+ */
+export type Installed = {
+	packages: AvailablePackage[],
+	repoEffects: Offers,
+};
+
 /**  One declared item: `[agents.<name>]` / `[skills.<name>]`. */
 export type ItemDecl = ItemDecl_Serialize | ItemDecl_Deserialize;
 
@@ -1660,6 +1717,15 @@ export type OfferPreview = {
 	bytes: string,
 };
 
+/**
+ *  Everything a run has to say about repository effects: the blocks to
+ *  read and ask about, and the packages it could not account for.
+ */
+export type Offers = {
+	shown: Disclosure[],
+	withheld: Withheld[],
+};
+
 export type OpSupport = {
 	project: boolean,
 	global: boolean,
@@ -1892,6 +1958,44 @@ export type QualityScore = {
 	 *  replace it.
 	 */
 	penaltyPercent: number,
+};
+
+/**  A package's declared effects on the repository it installs into. */
+export type RepoEffects = {
+	/**  One line: what installing this changes about the repository. */
+	summary: string,
+	/**  Repo-relative paths the package writes outside the managed trees. */
+	writes: string[],
+	/**
+	 *  The script, relative to the package directory, that applies the
+	 *  effect. Absent means kendex has nothing to run and the disclosure
+	 *  ends with what the reader should run themselves.
+	 */
+	installer: string | null,
+	/**
+	 *  The script that undoes the effect.
+	 * 
+	 *  Declared, not yet run: nothing in kendex executes it, and `remove`
+	 *  takes the package's files away with the effect still applied. The
+	 *  disclosure names it so a person can run it themselves, which is the
+	 *  whole of what it does today. KEN-674 carries wiring it into removal.
+	 */
+	uninstaller: string | null,
+	/**  How to undo the effect by hand, for the disclosure's last line. */
+	removal: string | null,
+	/**
+	 *  Lines the package wants read before anyone says yes — what its
+	 *  effect actually does, in its own words. The package writes these
+	 *  because only it knows them; kendex supplies the parts it owns, the
+	 *  paths and the authorization and the removal command.
+	 */
+	notes: string[],
+	/**
+	 *  Packages whose presence changes what this one does. Whether each is
+	 *  installed here is a fact about this repository rather than about the
+	 *  package, so the declaration names them and kendex answers.
+	 */
+	companions: string[],
 };
 
 export type ReportRouteView = {
@@ -2295,6 +2399,12 @@ export type VersionSel =
 /**  What is installed on disk right now. */
 { at: "installed" };
 
+/**  An effect that was neither shown nor offered, and why. */
+export type Withheld = {
+	name: string,
+	reason: string,
+};
+
 /**
  *  Why a whole-file write did not happen. Refusing is a normal answer
  *  here, not a failure, so it is a shape the page can act on rather than
@@ -2307,6 +2417,21 @@ export type WriteRefused =
  *  writing this copy would put that back.
  */
 { kind: "stale" } | { kind: "failed"; message: string };
+
+/**  One path the package writes, where it actually lands. */
+export type Written = {
+	/**
+	 *  Absolute, because the whole value of the line is that a reader can
+	 *  go and look.
+	 */
+	path: string,
+	/**
+	 *  Inside the repository's common git directory, which every work tree
+	 *  of the repository shares — so this file is the repository's, not
+	 *  this checkout's.
+	 */
+	shared: boolean,
+};
 
 export type ZoomState = {
 	/**

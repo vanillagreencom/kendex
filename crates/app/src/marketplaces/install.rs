@@ -8,14 +8,16 @@
 
 use kendex_core::apply;
 use kendex_core::engine::ops::{self as engine_ops, AddRequest};
+use kendex_core::env::Env;
 use kendex_core::manifest::Method;
 use kendex_core::model::{HarnessId, ItemKind, Scope};
+use kendex_core::repo_effects::Offers;
 use kendex_core::source_ops;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use super::{AvailablePackage, env, marketplace_packages};
-use kendex_core::source::browse::Catalog;
+use super::{AvailablePackage, env};
+use kendex_core::source::browse::{self, Catalog};
 
 /// One row of the install picker: a tool the scope can install to, whether
 /// this machine has it, and whether it reads the shared `.agents` tree
@@ -68,6 +70,16 @@ pub struct InstallItem {
     pub name: String,
 }
 
+/// What an install hands back: the subscription's packages as they stand
+/// now, and the repository effects the install brought — read and asked
+/// about in the window, because nothing here ran them.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct Installed {
+    pub packages: Vec<AvailablePackage>,
+    pub repo_effects: Offers,
+}
+
 /// Install packages or a curated set from one subscription. `destination`
 /// redirects the install from the scope being browsed into a project: the
 /// project gains the personal subscription first (§4.1), then the add runs
@@ -86,11 +98,37 @@ pub fn marketplace_install(
     hold: bool,
     harnesses: Option<Vec<HarnessId>>,
     method: Option<Method>,
-) -> Result<Vec<AvailablePackage>, String> {
+) -> Result<Installed, String> {
+    let env = env()?;
+    install(
+        &env,
+        scope,
+        source,
+        items,
+        bundle,
+        destination,
+        hold,
+        harnesses,
+        method,
+    )
+}
+
+/// The install itself, against the environment it is given.
+#[allow(clippy::too_many_arguments)]
+pub fn install(
+    env: &Env,
+    scope: Scope,
+    source: String,
+    items: Vec<InstallItem>,
+    bundle: Option<String>,
+    destination: Option<Scope>,
+    hold: bool,
+    harnesses: Option<Vec<HarnessId>>,
+    method: Option<Method>,
+) -> Result<Installed, String> {
     if items.is_empty() && bundle.is_none() {
         return Err("nothing selected to install".to_owned());
     }
-    let env = env()?;
     let target = destination.unwrap_or_else(|| scope.clone());
     let redirected = target != scope;
     if redirected {
@@ -129,14 +167,25 @@ pub fn marketplace_install(
     // plan: a refused install leaves the project subscribed to nothing.
     let report = match &target {
         Scope::Project { root } if redirected => {
-            source_ops::install_project_from_personal(&env, root, &source, &request)
+            source_ops::install_project_from_personal(env, root, &source, &request)
         }
-        _ => engine_ops::add(&env, &target, &request),
+        _ => engine_ops::add(env, &target, &request),
     }
     .map_err(|e| e.to_string())?;
-    apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
-    marketplace_packages(Catalog::Subscription {
-        scope: target,
-        source,
+    apply::execute(env, &report.plan, None).map_err(|e| e.to_string())?;
+    // After the write, because the script an effect runs is the one this
+    // install just put on disk.
+    let repo_effects = crate::repo_effects::offers(env, &target, &report)?;
+    let packages = browse::packages(
+        env,
+        &Catalog::Subscription {
+            scope: target,
+            source,
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(Installed {
+        packages,
+        repo_effects,
     })
 }

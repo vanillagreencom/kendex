@@ -135,5 +135,5 @@ skills/size-ratchet/scripts/size-ratchet	1092
 skills/worktree/scripts/worktree	4803
 skills/worktree/scripts/worktree-session-guard	1197
 skills/worktree/tests/worktree_session_guard.sh	1282
-ui/src/stores/marketplaces.ts	283
+ui/src/stores/marketplaces.ts	282
 ui/src/stores/settings.ts	521

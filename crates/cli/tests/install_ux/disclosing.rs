@@ -140,3 +140,51 @@ fn the_yes_to_a_repository_effect_is_spent_where_it_is_given() {
         spoke(&passes)
     );
 }
+
+/// What a person writes into `kendex.toml` to declare the package without
+/// an `add`: where it installs to, and the package itself.
+const DECLARED_BY_HAND: &str =
+    "\n[install]\nharnesses = [\"claude\"]\n\n[skills.growth-guards]\nsource = \"cat\"\n";
+
+/// A declaration written by hand installs through `kendex apply`, and the
+/// package it installs gets the same account and the same separate yes an
+/// `add` would have given it — the walkthrough belongs to the install, not
+/// to the verb that started it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn apply_discloses_a_hand_declared_package_and_waits_for_its_own_yes() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    offer(&world, "growth-guards");
+    fs::write(world.at("kendex.toml"), world.manifest() + DECLARED_BY_HAND).unwrap();
+
+    let spoken = world.try_run(&["apply", "-y"]);
+    assert!(spoken.status.success(), "{}", spoke(&spoken));
+    let out = spoke(&spoken);
+    assert!(
+        out.contains("changes how this repository works"),
+        "apply installed the package without its account:\n{out}"
+    );
+    assert!(out.contains("--allow-repo-effects"), "{out}");
+    assert!(
+        world
+            .at(".agents/skills/growth-guards/scripts/install-git-hooks")
+            .is_file(),
+        "the package did not install:\n{out}"
+    );
+    assert!(
+        !world.at(".git/hooks/kendex-guards").exists(),
+        "apply armed the hooks with nobody there to say yes:\n{out}"
+    );
+
+    // The same flag means yes here too, in a repository that never said it.
+    let armed = World::new(&["claude"]);
+    armed.declare_catalog();
+    offer(&armed, "growth-guards");
+    fs::write(armed.at("kendex.toml"), armed.manifest() + DECLARED_BY_HAND).unwrap();
+    let out = armed.run(&["apply", "-y", "--allow-repo-effects"]);
+    assert!(
+        armed.at(".git/hooks/kendex-guards").is_file(),
+        "the yes did not arm the hooks:\n{out}"
+    );
+}

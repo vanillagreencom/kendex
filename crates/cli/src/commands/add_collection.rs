@@ -81,12 +81,13 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
     let mut once: std::collections::BTreeMap<&str, &kendex_core::repo_effects::DeclaredEffects> =
         std::collections::BTreeMap::new();
     for report in &settled {
-        for effect in super::repo_effects::pending(scope, report) {
+        for effect in &report.repo_effects {
             once.entry(effect.name.as_str()).or_insert(effect);
         }
     }
-    let pending: Vec<&kendex_core::repo_effects::DeclaredEffects> = once.into_values().collect();
-    let shown_to_them = super::repo_effects::disclose(scope, &pending);
+    let pending: Vec<kendex_core::repo_effects::DeclaredEffects> =
+        once.into_values().cloned().collect();
+    let shown_to_them = super::repo_effects::disclose(env, scope, &pending)?;
     super::repo_effects::walkthrough(scope, &shown_to_them, allow_effects)?;
     Ok(())
 }

@@ -23,8 +23,10 @@
 //! and rendering it as a warning teaches people to click past the one
 //! notice they most need to read.
 mod declaration;
+pub mod disclosure;
 use declaration::split_script;
 pub use declaration::{RepoEffects, declared};
+pub use disclosure::{Companion, Disclosure, Offers, Withheld, Written, installed_skills, offers};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;

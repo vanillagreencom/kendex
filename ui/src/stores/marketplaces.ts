@@ -13,7 +13,7 @@ import {
 import { MARKETPLACES_NEEDS_CHECK_NOTE } from "@/lib/copy-marketplaces";
 import { settled } from "@/lib/settled";
 import { landings } from "./landings";
-import { type InstallRequest, installActions } from "./marketplaces-install";
+import { type InstallActions, installActions } from "./marketplaces-install";
 import {
   bundleKey,
   catalogKey,
@@ -116,7 +116,7 @@ async function settle<F extends Exclude<keyof ReadCaches, "readErrors">>(
   }
 }
 
-interface MarketplacesState {
+interface MarketplacesState extends InstallActions {
   rows: MarketplaceRow[];
   /** Each opened catalog's offered packages, by [catalogKey]. */
   packages: Record<string, AvailablePackage[]>;
@@ -160,7 +160,6 @@ interface MarketplacesState {
   ) => Promise<boolean>;
   toggle: (scope: Scope, source: string, enabled: boolean) => Promise<void>;
   checkForUpdates: () => Promise<void>;
-  install: (request: InstallRequest) => Promise<boolean>;
 }
 
 // Overview reads overlap — Home's mount-time load against the page's own,
@@ -279,5 +278,5 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
   },
 
   ...sourceActions(set, get),
-  ...installActions(set),
+  ...installActions(set, get),
 }));

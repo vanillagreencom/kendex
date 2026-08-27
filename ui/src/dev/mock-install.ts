@@ -1,6 +1,12 @@
 // Installing from a subscription: a bundle or loose items, optionally
 // redirected into a project that gains the subscription on the way.
-import type { HarnessId, InstallItem, ItemKind, Scope } from "@/bindings";
+import type {
+  Disclosure,
+  HarnessId,
+  InstallItem,
+  ItemKind,
+  Scope,
+} from "@/bindings";
 import { BUNDLE_SPECS } from "./fixture-catalog";
 import { packagesKey } from "./fixture-marketplaces";
 import { marketplaceRow, offeredHere } from "./mock-catalog";
@@ -114,6 +120,57 @@ export const installHandlers: Record<string, Handler> = {
       }
       pkg.state = "installed";
     }
-    return offered;
+    // The mock catalog's guard package declares what it does to the
+    // repository, so the dev app asks the second question for it — and,
+    // installed into a project, answers which companion is already here.
+    const shown = wanted
+      .filter((want) => want.name === "guard")
+      .map(() =>
+        guardDisclosure(
+          target.scope === "project" ? target.root : "/home/me",
+          offered.some((p) => p.name === "tests" && p.state === "installed"),
+        ),
+      );
+    return { packages: offered, repoEffects: { shown, withheld: [] } };
+  },
+  repo_effects_apply: ({ declared }: { declared: Disclosure["declared"] }) => {
+    if (declared.installer === null) {
+      return Promise.reject(`${declared.name} declares nothing kendex can run`);
+    }
+    return null;
   },
 };
+
+function guardDisclosure(root: string, testsInstalled: boolean): Disclosure {
+  return {
+    declared: {
+      name: "guard",
+      root: `${root}/.agents/skills/guard`,
+      summary:
+        "Arms git pre-commit and commit-msg hooks, so every commit in this repository runs the guard chain — for everyone who commits here, not only for kendex.",
+      writes: [
+        ".git/hooks/kendex-guards",
+        ".git/hooks/pre-commit",
+        ".git/hooks/commit-msg",
+      ],
+      installer: "scripts/install-git-hooks",
+      uninstaller: "scripts/install-git-hooks --uninstall",
+      removal:
+        "run the uninstaller before removing this package: it drops only the helper and one marked line, leaving any hook you wrote.",
+      notes: [
+        "An existing pre-commit or commit-msg hook keeps its content and its exit status: one marked line goes in after the shebang and falls through to what was already there.",
+        "Both hooks block on any nonzero verdict and fail closed on a guard that could not run.",
+      ],
+      companions: ["tests", "size-ratchet"],
+    },
+    writes: [
+      { path: `${root}/.git/hooks/kendex-guards`, shared: true },
+      { path: `${root}/.git/hooks/pre-commit`, shared: true },
+      { path: `${root}/.git/hooks/commit-msg`, shared: true },
+    ],
+    companions: [
+      { name: "tests", installed: testsInstalled },
+      { name: "size-ratchet", installed: false },
+    ],
+  };
+}

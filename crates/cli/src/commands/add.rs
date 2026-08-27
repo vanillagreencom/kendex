@@ -146,11 +146,10 @@ pub fn run(env: &Env, args: AddArgs) -> CliResult {
         other => other?,
     };
     print_report(env, &report);
-    let pending = super::repo_effects::pending(&scope, &report);
     confirm_and_execute(env, &report, args.yes)?;
     // Disclosed after the write, because the script an effect runs is the
     // one this install just put on disk.
-    let shown_to_them = super::repo_effects::disclose(&scope, &pending);
+    let shown_to_them = super::repo_effects::disclose(env, &scope, &report.repo_effects)?;
     super::repo_effects::walkthrough(&scope, &shown_to_them, args.allow_repo_effects)?;
     say("done");
     Ok(())
