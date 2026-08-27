@@ -178,11 +178,11 @@ Carry-forward engine:
       the NEWEST ancestor candidate decides. A delta at the compare API's
       300-file cap refuses carry. Never a waiver: real evidence must exist,
       and only EXTENDS across a delta a review would not re-examine; code
-      changes always require fresh evidence, and changes-requested /
-      unresolved threads still fail closed with carried evidence. The
-      'comments' classifier is line-lexical (blind to heredocs and
-      multiline strings) — enable it only where that residual risk is
-      acceptable.
+      changes OUTSIDE the enabled classes require fresh evidence, and
+      changes-requested / unresolved threads still fail closed with carried
+      evidence. The 'comments' classifier is line-lexical (blind to
+      heredocs and multiline strings) — enable it only where that residual
+      risk is acceptable.
   REVIEW_GATE_VENDORED_PATHS    Path globs (';'-separated; the exclusion
       grammar and matcher) naming the kendex render trees the 'vendored'
       class carries, e.g. '.agents/*;.claude/skills/*'. Read from the
@@ -1093,11 +1093,11 @@ fi
 # and an IDENTICAL tree (rebase residue, empty commits — the VST-58 shape)
 # always carries once any class is enabled. This is NOT the retired
 # docs-only waiver: real evidence must exist, and only EXTENDS across a
-# delta review would not re-examine — code changes always require fresh
-# evidence, and the changes-requested and thread terms below still fail
-# closed with carried evidence exactly as with head evidence. Only the
-# NEWEST ancestor candidate decides: an older candidate's delta is a
-# superset, so walking further back can only widen what carries.
+# delta review would not re-examine — code changes OUTSIDE the enabled
+# classes require fresh evidence, and the changes-requested and thread
+# terms below still fail closed with carried evidence exactly as with head
+# evidence. Only the NEWEST ancestor candidate decides: an older
+# candidate's delta is a superset, walking back only widens what carries.
 carried=0
 carry_base=""
 carry_kind=""
@@ -1252,7 +1252,7 @@ EOF_EXCL_FILES
     # branch, so the PR under judgment cannot widen the set). Matching is
     # the exclusion matcher's, and an exclusion on the same path has already
     # refused above: the deny list outranks the class. A rename needs BOTH
-    # names in the set; one from outside deletes a file it never covered.
+    # names in the set; a source outside it, or none given at all, refuses.
     VENDORED_FILES=""
     if rg_class_enabled vendored; then
       while IFS= read -r fn; do
@@ -1283,7 +1283,7 @@ EOF_VENDORED_FILES
       | [ .files[]
         | . as $f
         | (.filename // "") as $fn
-        | if ($vf | index($fn)) != null and (($f.previous_filename // "") as $p | $p == "" or ($vf | index($p)) != null)
+        | if ($vf | index($fn)) != null and (($f.previous_filename // "") as $p | ($f.status != "renamed" and $p == "") or ($p != "" and ($vf | index($p)) != null))
           then "vendored"
           elif (($cl | index("docs")) != null)
              and ($f.status != "renamed")

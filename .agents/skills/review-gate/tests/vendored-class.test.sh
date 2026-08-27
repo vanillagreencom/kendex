@@ -162,6 +162,14 @@ n.sh" ".agents/skills/hello/scripts/run.sh")]"
 run "a control character in the SOURCE name refuses — boundaries are unprovable either way" awaiting "control characters"
 
 reset
+compare_fix ahead "[$(one_line ".agents/skills/hello/scripts/run.sh" renamed)]"
+run "status renamed with no previous_filename refuses — an unprovable source is not a source in the set" awaiting
+
+reset
+compare_fix ahead "[$(one_line ".agents/skills/hello/scripts/run.sh" renamed | jq '.previous_filename = null')]"
+run "status renamed with a null previous_filename refuses for the same reason" awaiting
+
+reset
 reviews_set "$(review "reviewer" CHANGES_REQUESTED "2026-01-02T00:00:00Z" "$OTHER")"
 compare_fix ahead "[$RENDER_SH]"
 run "carried evidence never outranks a standing changes-requested" changes-requested
