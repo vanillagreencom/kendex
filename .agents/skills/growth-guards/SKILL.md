@@ -10,6 +10,23 @@ metadata:
   bugs: "https://github.com/vanillagreencom/kendex/issues"
   version: "1.0.0"
 tags: [automation]
+repo-effects:
+  summary: "Arms git pre-commit and commit-msg hooks, so every commit in this repository runs the guard chain — for everyone who commits here, not only for kendex."
+  writes:
+    - ".git/hooks/kendex-guards"
+    - ".git/hooks/pre-commit"
+    - ".git/hooks/commit-msg"
+  installer: "scripts/install-git-hooks"
+  uninstaller: "scripts/install-git-hooks --uninstall"
+  removal: "run the uninstaller before removing this package: it drops only the helper and one marked line, leaving any hook you wrote. kendex remove does not run it for you, so shims left behind would exec scripts that are gone and fail every commit closed"
+  companions:
+    - "size-ratchet"
+    - "preflight"
+  notes:
+    - "An existing pre-commit or commit-msg hook keeps its content and its exit status: one marked line goes in after the shebang and falls through to what was already there. core.hooksPath is never set."
+    - "The chain runs in order: size-ratchet --staged, preflight --staged, the growth-guards batch (todo-ban, byte-ceiling, suppression-ban, conflict-markers), then the repo-root executable named by GROWTH_GUARDS_PRE_COMMIT_LOCAL. A companion that is not installed is an announced skip, never a silently missing check, and one that is installed but cannot run stops the commit rather than skipping it."
+    - "Both hooks block on any nonzero verdict and fail closed on a guard that could not run. Passing git's no-verify flag bypasses one commit, and skips the message gate with it."
+    - "The gate needs no kendex binary once armed: git runs this package's committed scripts, so a machine that never installed kendex still gates commits. Arming does not travel, though — git clones no hooks and this package never sets core.hooksPath — so every clone is armed once, by whoever clones it."
 ---
 
 # Growth Guards
@@ -32,7 +49,7 @@ Each check is also invocable as `scripts/CHECK`.
 | Check | Verdict |
 |---|---|
 | **todo-ban** | Any work marker (TODO, FIXME, HACK, XXX in comment-marker shapes) in a tracked, non-excluded file fails. No baseline. Prose naming a marker word does not fire. |
-| **byte-ceiling** | A file a change puts over the ceiling (default 200 KB) fails. `--staged` (default) gates staged additions, modifications and type changes, with rename detection at exact content only; `--base REF` gates the additions since merge-base; `--all` sweeps every committed file. Lockfiles are exempt built-in. |
+| **byte-ceiling** | A tracked file over the ceiling (default 200 KB) fails. `--staged` (default) gates every file the commit adds, modifies or changes the type of; `--base REF` only the files added since merge-base; `--all` sweeps every tracked file. Lockfiles are exempt built-in. |
 | **suppression-ban** | Blanket lint suppressions fail flat: module-wide rust `allow` inner attributes, file-level ruff/flake8 noqa, the bare `eslint-disable` block form, bare or `all` nolint, biome's `biome-ignore-all` / unscoped `biome-ignore-start` / rule-less `biome-ignore lint` and group forms. Bare rust `allow(dead_code)`/`allow(unused*)` attributes are counted per file against a tighten-only baseline; `--update` lowers/removes rows, never adds or raises one. A per-line suppression naming its lint with a stated reason stays legal. |
 | **conflict-markers** | An unresolved merge-conflict marker in a tracked, non-excluded file fails: the open/base/close trio (seven `<`, seven vertical bars, seven `>`) at column 0, each followed by a space or end of line. No baseline. Indented or quoted occurrences and the bare seven-equals separator do not fire. |
 | **commit-msg** | Header must be `type(scope)!: subject` (scope and `!` optional). Uppercase issue keys (`fix(ABC-123)`) and `#`-number scopes pass; git-generated messages (Merge/Revert/Reapply, fixup!/squash!/amend!) pass unchanged. Takes the message file or stdin. |
