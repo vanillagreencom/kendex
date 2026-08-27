@@ -32,6 +32,12 @@ echo "=== orch review disposition-by-rule lint ==="
 # Selection-menu shapes, matched only in the fix-disposition section (§ 4).
 # Scoping to § 4 keeps an unrelated ask elsewhere in the workflow from
 # tripping this, and keeps the lint honest about WHERE the regression lands.
+#
+# Every call feeds grep through a herestring, never a pipe: `grep -q` exits at
+# the first match, a pipe would deliver SIGPIPE to awk, and `pipefail` would
+# promote awk's 141 into a failed check for a contract that is present. Whether
+# the race is lost depends on how much awk still has buffered, so it grows with
+# the section's length.
 section_4() { awk '/^## 4\./{on=1;next} /^## 5\./{on=0} on' "$1"; }
 section_7() { awk '/^## 7\./{on=1;next} /^## 8\./{on=0} on' "$1"; }
 
@@ -39,7 +45,7 @@ MENU_RE='(multi-select|Apply fixes\?|Create issues for these\?|items selected|Fi
 
 check_no_menu() {
   local doc="$1" label="$2"
-  if section_4 "$doc" | grep -qEi "$MENU_RE"; then
+  if grep -qEi "$MENU_RE" <<<"$(section_4 "$doc")"; then
     fail "$label"
     return 1
   fi
@@ -51,19 +57,19 @@ check_no_menu "$REVIEW_WF" "review.md § 4 presents no selection menu over findi
 # review-pr.md is the PR-gating twin: same findings, same reviewers, so the
 # same rule. § 4 handles review items, § 7 the QA items by explicit reference
 # to the § 4 pattern — both must stay menu-free.
-if section_4 "$REVIEW_PR_WF" | grep -qEi "$MENU_RE"; then
+if grep -qEi "$MENU_RE" <<<"$(section_4 "$REVIEW_PR_WF")"; then
   fail "review-pr.md § 4 presents a selection menu or gates fixes on a decision mode"
 else
   pass "review-pr.md § 4 presents no selection menu over findings"
 fi
 
-if section_7 "$REVIEW_PR_WF" | grep -qEi "$MENU_RE"; then
+if grep -qEi "$MENU_RE" <<<"$(section_7 "$REVIEW_PR_WF")"; then
   fail "review-pr.md § 7 presents a selection menu or gates QA fixes on a decision mode"
 else
   pass "review-pr.md § 7 presents no selection menu over QA findings"
 fi
 
-if section_4 "$REVIEW_PR_WF" | grep -q 'Disposition is by rule, not by prompt'; then
+if grep -q 'Disposition is by rule, not by prompt' <<<"$(section_4 "$REVIEW_PR_WF")"; then
   pass "review-pr.md § 4 states the disposition-by-rule contract"
 else
   fail "review-pr.md § 4 lost the disposition-by-rule contract"
@@ -71,7 +77,7 @@ fi
 
 # EVERY decision mode, not just auto-recommended — the regression this pins is
 # a mode check creeping back in front of the fix round.
-if section_4 "$REVIEW_PR_WF" | grep -q 'in EVERY decision mode'; then
+if grep -q 'in EVERY decision mode' <<<"$(section_4 "$REVIEW_PR_WF")"; then
   pass "review-pr.md § 4 binds the rule to every decision mode"
 else
   fail "review-pr.md § 4 lost the every-decision-mode binding"
@@ -120,10 +126,20 @@ fi
 echo
 echo "--- planted controls ---"
 
+# A sed program that matches nothing leaves the fixture identical to the
+# source, and the control then reports a lint miss for a guard that works. Say
+# so instead: the fixture, not the lint, is what broke. These run inside a
+# command substitution, where an increment to FAIL would be lost with the
+# subshell, so the note goes to a file the parent reads back below.
+UNPLANTED="$TMP_ROOT/unplanted"
+: > "$UNPLANTED"
+note_unplanted() { printf 'control %s planted nothing — its sed program matched no text\n' "$1" >> "$UNPLANTED"; }
+
 plant() {
   # $1 = control name, $2 = sed program applied to review.md
   local scratch="$TMP_ROOT/$1.md"
   sed "$2" "$REVIEW_WF" > "$scratch"
+  cmp -s "$scratch" "$REVIEW_WF" && note_unplanted "$1"
   printf '%s' "$scratch"
 }
 
@@ -131,11 +147,12 @@ plant_pr() {
   # $1 = control name, $2 = sed program applied to review-pr.md
   local scratch="$TMP_ROOT/pr-$1.md"
   sed "$2" "$REVIEW_PR_WF" > "$scratch"
+  cmp -s "$scratch" "$REVIEW_PR_WF" && note_unplanted "$1"
   printf '%s' "$scratch"
 }
 
 CTRL="$(plant menu 's/^Omit empty categories\. \*\*Disposition is by rule.*$/Omit empty categories, then ask `Apply fixes?` as a multi-select over blockers and fix suggestions./')"
-if section_4 "$CTRL" | grep -qEi "$MENU_RE"; then
+if grep -qEi "$MENU_RE" <<<"$(section_4 "$CTRL")"; then
   pass "lint flags a reintroduced Apply fixes? multi-select"
 else
   fail "lint MISSED a reintroduced Apply fixes? multi-select"
@@ -158,28 +175,28 @@ fi
 # Scoping control: an ask OUTSIDE § 4 must not trip the lint, or ordinary
 # edits elsewhere in the workflow would fail it for the wrong reason.
 CTRL="$(plant scope 's/^## 5\. Summary$/## 5. Summary\n\nAsk `Keep going?` as a multi-select./')"
-if section_4 "$CTRL" | grep -qEi "$MENU_RE"; then
+if grep -qEi "$MENU_RE" <<<"$(section_4 "$CTRL")"; then
   fail "lint false-flagged a multi-select outside § 4"
 else
   pass "lint scopes the menu check to § 4"
 fi
 
 CTRL="$(plant_pr mode 's/^\*\*Disposition is by rule.*$/Resolve the decision mode with orch-env ORCH_DECISION_MODE ask, then ask `Fix blockers?`./')"
-if section_4 "$CTRL" | grep -qEi "$MENU_RE"; then
+if grep -qEi "$MENU_RE" <<<"$(section_4 "$CTRL")"; then
   pass "lint flags a decision-mode gate reintroduced in review-pr § 4"
 else
   fail "lint MISSED a decision-mode gate reintroduced in review-pr § 4"
 fi
 
-CTRL="$(plant_pr qa 's/^Follow the § 4 pattern — collect, present, delegate.*$/Follow the § 4 pattern — collect, present, resolve the decision mode, delegate./')"
-if section_7 "$CTRL" | grep -qEi "$MENU_RE"; then
+CTRL="$(plant_pr qa 's/^Follow the § 4 pattern .*$/Follow the § 4 pattern — resolve the decision mode, then delegate./')"
+if grep -qEi "$MENU_RE" <<<"$(section_7 "$CTRL")"; then
   pass "lint flags a decision-mode gate reintroduced in review-pr § 7"
 else
   fail "lint MISSED a decision-mode gate reintroduced in review-pr § 7"
 fi
 
 CTRL="$(plant_pr every 's/in EVERY decision mode/under auto-recommended/')"
-if section_4 "$CTRL" | grep -q 'in EVERY decision mode'; then
+if grep -q 'in EVERY decision mode' <<<"$(section_4 "$CTRL")"; then
   fail "lint MISSED a narrowed decision-mode binding"
 else
   pass "lint flags a narrowed decision-mode binding"
@@ -202,11 +219,15 @@ fi
 # Scoping control for review-pr: dev-fix's own standalone ask lives in a
 # different workflow and must not be dragged in by these checks.
 CTRL="$(plant_pr scope 's/^## 5\. Verdict Pass$/## 5. Verdict Pass\n\nAsk `Fix blockers?` here./')"
-if section_4 "$CTRL" | grep -qEi "$MENU_RE"; then
+if grep -qEi "$MENU_RE" <<<"$(section_4 "$CTRL")"; then
   fail "lint false-flagged a menu outside review-pr § 4"
 else
   pass "lint scopes the review-pr menu check to § 4"
 fi
+
+while IFS= read -r unplanted_note; do
+  [[ -n "$unplanted_note" ]] && fail "$unplanted_note"
+done < "$UNPLANTED"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

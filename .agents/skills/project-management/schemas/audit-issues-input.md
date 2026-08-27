@@ -68,7 +68,7 @@ Input file for `audit-issues --issues`, written by the caller at `[worktree-path
 | `labels` | Before create | Full issue-label set, validated against live inventory and project taxonomy before creation |
 | `category` | Yes | Always `issue` — fix items never reach the audit |
 | `found_by` | Yes | Agent that identified it |
-| `origin` | Yes | `suggestion`, `escalated` (blockers dev could not fix), `skipped` (items dev deliberately skipped), `planned`, or `discovered` |
+| `origin` | Yes | `suggestion`, `escalated` (items no dev round resolved: blockers dev could not fix, plus items outstanding at the review cycle cap), `skipped` (items dev deliberately skipped), `planned`, or `discovered` |
 | `blocks_items` / `blocked_by_items` | No | Indexes of other items in this batch |
 | `blocks_issues` / `blocked_by_issues` | No | Existing issue IDs |
 
