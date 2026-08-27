@@ -118,6 +118,15 @@ echo "task-completed-check: an untracked file seen from a subdirectory"
 run_hook "$REPO/src" FAKE_RC=0
 assert_contains "$(cat "$ARGS_LOG")" "clippy" "the whole repository is scanned from a subdirectory"
 
+echo "task-completed-check: a non-ASCII path is still a Rust file"
+REPO="$(new_repo unicode)"
+printf 'pub fn added() {}\n' >"$REPO/src/über.rs"
+run_hook "$REPO" FAKE_RC=0
+assert_contains "$(cat "$ARGS_LOG")" "clippy" "an untracked src/über.rs reaches the gate"
+fgit -C "$REPO" add -A
+run_hook "$REPO" FAKE_RC=0
+assert_contains "$(cat "$ARGS_LOG")" "clippy" "a staged src/über.rs reaches the gate"
+
 echo "task-completed-check: ignored paths stay out of the changed set"
 REPO="$(new_repo ignored)"
 printf 'target/\n' >"$REPO/.gitignore"
@@ -190,7 +199,7 @@ REPO="$(new_repo nocargo)"
 printf 'pub fn added() {}\n' >"$REPO/src/added.rs"
 NOCARGO_BIN="$TMP_ROOT/nocargo"
 mkdir -p "$NOCARGO_BIN"
-for tool in bash cat git grep sed sort head tail dirname; do
+for tool in bash cat git grep sed sort head tail tr dirname; do
   real="$(command -v "$tool" 2>/dev/null || true)"
   [ -n "$real" ] && [ -f "$real" ] && ln -sf "$real" "$NOCARGO_BIN/$tool"
 done

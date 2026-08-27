@@ -26,10 +26,13 @@ git_failed() { # SUBCOMMAND OUTPUT — an unreadable changed set is not an empty
 
 # What counts as changed: the worktree, the index, and untracked non-ignored
 # paths. Without that last set a task whose only work is a new file presents
-# an empty changed set and skips the gate entirely.
-CHANGED=$(git diff --name-only 2>&1) || git_failed 'diff' "$CHANGED"
-STAGED=$(git diff --cached --name-only 2>&1) || git_failed 'diff --cached' "$STAGED"
-UNTRACKED=$(git ls-files --others --exclude-standard --full-name -- :/ 2>&1) ||
+# an empty changed set and skips the gate entirely. `-z` asks for the paths
+# themselves. Line-oriented git output C-quotes a non-ASCII path, and a
+# quoted path ends in a quote rather than in .rs.
+CHANGED=$(git diff --name-only -z 2>&1 | tr '\0' '\n') || git_failed 'diff' "$CHANGED"
+STAGED=$(git diff --cached --name-only -z 2>&1 | tr '\0' '\n') ||
+  git_failed 'diff --cached' "$STAGED"
+UNTRACKED=$(git ls-files --others --exclude-standard --full-name -z -- :/ 2>&1 | tr '\0' '\n') ||
   git_failed 'ls-files' "$UNTRACKED"
 ALL_CHANGED=$(printf '%s\n%s\n%s' "$CHANGED" "$STAGED" "$UNTRACKED" | sort -u | sed '/^$/d')
 
@@ -61,7 +64,10 @@ if echo "$ALL_CHANGED" | grep -qE '\.rs$'; then
     fi
   fi
 
-  if ! OUTPUT=$(cargo clippy "${MANIFEST_ARGS[@]}" --workspace --all-targets -- -D warnings 2>&1); then
+  # A repository whose root holds Cargo.toml leaves MANIFEST_ARGS empty, and
+  # bash 3.2 under `set -u` reads an empty array as an unbound variable.
+  # Hence the guarded expansion.
+  if ! OUTPUT=$(cargo clippy ${MANIFEST_ARGS[@]+"${MANIFEST_ARGS[@]}"} --workspace --all-targets -- -D warnings 2>&1); then
     # The exit status is the verdict. Diagnostic lines are only how the
     # failure is reported, so a run that produced none — a missing cargo, a
     # killed build — falls back to the tail of whatever it did print.
