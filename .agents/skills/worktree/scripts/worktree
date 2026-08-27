@@ -368,10 +368,11 @@ Recovery routing — route by shape, not by whether 'test -L' passes:
   - An untracked-only WORKTREE_SYMLINKS entry must be a symlink. Missing, or
     a real directory instead: fix-links, from the main checkout.
   - An entry with tracked content underneath is a real directory BY DESIGN,
-    holding the tracked files plus one symlink per untracked child. A child
+    holding the tracked files plus one symlink per untracked child, except
+    an untracked .gitignore, which is a copy of main's file. A child
     missing its link, or itself a real path: fix-links (heals per child;
     never overwrites a child holding data git does not track — reported
-    instead).
+    instead; the .gitignore copy is the one child it re-copies on drift).
   - A genuinely modified or corrupt TRACKED file: 'git checkout -- <path>',
     run in the checkout the file really lives in.
   'git checkout -- <entry>' is never the recovery for an untracked-only
@@ -399,12 +400,12 @@ Symlink entries that shadow tracked content:
   symlinked, recursing into children that mix tracked and untracked content.
   A newly installed skill under the entry is linked on the next
   create/fix-links/auto-repair pass. One child is copied instead of linked:
-  an untracked .gitignore, because git refuses to read an ignore file
-  through a symlink ("unable to access ... Too many levels of symbolic
-  links") and would apply none of its rules. The main checkout's file is
-  the source: every pass re-copies it when the content differs, so a
-  change on main reaches the worktree on the next pass and an edit made
-  to the worktree copy is overwritten. Each untracked child goes through the
+  an untracked .gitignore, because git refuses to read .gitignore through
+  a symlink ("unable to access ... Too many levels of symbolic links") and
+  would apply none of its rules. The main checkout's file is the source:
+  every pass re-copies it when the content differs, so a change on main
+  reaches the worktree on the next pass and an edit made to the worktree
+  copy is overwritten. Every other untracked child goes through the
   same quarantine as a top-level entry: a child that has materialized as a
   real file or directory holding data git does not track, or that differs
   from the index, is reported and left in place, never overwritten. A child
@@ -1330,23 +1331,23 @@ atomic_symlink_swap() {
   return 1
 }
 
-# An untracked child named .gitignore is COPIED into the worktree, never
-# symlinked (KEN-685). Git refuses to read an ignore file through a symlink:
-# every command prints "unable to access '<path>/.gitignore': Too many levels
-# of symbolic links" and applies none of its rules, so whatever main's file
-# ignores becomes stageable in every worktree, which is exactly what
-# `git add -A` then commits.
-#
+# The one untracked child COPIED into the worktree, not symlinked (KEN-685):
+# a regular file named .gitignore. Git refuses to read .gitignore through a
+# symlink ("unable to access ...: Too many levels of symbolic links") and
+# applies none of its rules, so whatever main's file ignores becomes stageable
+# and `git add -A` commits it. The repair path and both detectors share this
+# predicate so they agree by construction. $1 is the name, $2 its path in main.
+is_copied_ignore_child() {
+  [[ "$1" == .gitignore && -f "$2" ]]
+}
+
 # Drift policy: main owns the file. Every create/fix-links/auto-repair pass
-# re-copies when the content differs, so a change in the main checkout reaches
-# the worktrees on the next pass, and an edit made to the worktree copy is
-# overwritten by that same pass. The copy is the tool's own artifact, not user
-# data, so the quarantine's never-overwrite rule does not apply to it. A
-# symlink left by an earlier skill version is replaced the same way.
-#
-# The copy gets the same info/exclude entry the symlink used to get: main's
-# file is untracked, so nothing in the index would otherwise keep the copy out
-# of `git status` in a repo whose ignore file does not ignore itself.
+# re-copies when the content differs, so a change on main reaches the
+# worktrees next pass and an edit to the worktree copy is overwritten. The
+# copy is the tool's own artifact, not user data, so the quarantine's
+# never-overwrite rule does not apply; a legacy symlink is replaced the same
+# way. It gets the info/exclude entry the symlink got: main's file is
+# untracked, so nothing else hides the copy when it does not ignore itself.
 ignore_file_copy_matches() {
   local src="$1" dst="$2"
   [[ -f "$dst" && ! -L "$dst" ]] && cmp -s "$src" "$dst"
@@ -1354,25 +1355,28 @@ ignore_file_copy_matches() {
 
 copy_ignore_file_into_worktree() {
   local wt="$1" path="$2"
-  local src="$PROJECT_ROOT/$path" dst="$wt/$path" tmp=""
+  local src="$PROJECT_ROOT/$path" dst="$wt/$path" tmp="" err="" effect=""
   ensure_worktree_path_safe "$wt" "$path" false || return 1
   exclude_from_worktree_index "$wt" "$path" false
   ignore_file_copy_matches "$src" "$dst" && return 0
   if [[ -d "$dst" && ! -L "$dst" ]]; then
-    echo "Warning: '$path' in $wt is a directory where main's ignore file should be copied; leaving it alone." >&2
+    echo "Warning: '$path' in $wt is a directory where main's .gitignore should be copied; leaving it alone." >&2
     return 1
   fi
-  # Built beside the destination and renamed over it, so a reader never finds
-  # the path absent (the same window atomic_symlink_swap closes). rename(2)
-  # replaces a symlink destination itself rather than following it.
+  # Built beside the destination and renamed over it (atomic_symlink_swap's
+  # GNU -T / BSD -h pair, no delete-first fallback), so a reader never finds
+  # the path absent; rename(2) replaces a symlink destination, not its target.
+  # The temp name is cleared first: cp writes THROUGH a stale symlink there.
   tmp="$dst.wt-tmp.$$"
-  if cp "$src" "$tmp" 2>/dev/null &&
-     { mv -T "$tmp" "$dst" 2>/dev/null || mv -h "$tmp" "$dst" 2>/dev/null ||
-       { rm -f "$dst" 2>/dev/null && mv -f "$tmp" "$dst" 2>/dev/null; }; }; then
+  rm -f "$tmp" 2>/dev/null
+  if err="$(cp "$src" "$tmp" 2>&1)" &&
+     { err="$(mv -T "$tmp" "$dst" 2>&1)" || err="$(mv -h "$tmp" "$dst" 2>&1)"; }; then
     return 0
   fi
   rm -f "$tmp" 2>/dev/null
-  echo "Warning: could not copy '$path' into $wt; its ignore rules are not applied there." >&2
+  effect="its ignore rules are not applied there"
+  [[ -f "$dst" && ! -L "$dst" ]] && effect="the previous copy stays in effect, not main's current rules"
+  echo "Warning: could not copy '$path' into $wt (${err:-no diagnostic}); $effect." >&2
   return 1
 }
 
@@ -1496,9 +1500,7 @@ link_untracked_children() {
     classify_index_entry "$PROJECT_ROOT" "$rel"
     [[ -n "$CIE_EXACT" ]] && exact=1
     [[ -n "$CIE_DESCENDANTS" ]] && descendants=1
-    if [[ -z "$exact" && -z "$descendants" && "$name" == .gitignore && -f "$child" ]]; then
-      # Git will not read an ignore file through a symlink; see
-      # copy_ignore_file_into_worktree for the copy and its drift policy.
+    if [[ -z "$exact" && -z "$descendants" ]] && is_copied_ignore_child "$name" "$child"; then
       copy_ignore_file_into_worktree "$wt" "$rel" || unresolved="$unresolved  - $rel (copy failed — see warning above)"$'\n'
     elif [[ -z "$exact" && -z "$descendants" ]]; then
       # Nothing tracked here: ordinary symlink treatment, own exclude entry.
@@ -1669,9 +1671,8 @@ collect_materialized_child_links() {
     [[ -n "$CIE_EXACT" ]] && exact=1
     [[ -n "$CIE_DESCENDANTS" ]] && descendants=1
     if [[ -z "$exact" && -z "$descendants" ]]; then
-      # An untracked .gitignore is a real file BY DESIGN (KEN-685), never a
-      # materialized link; fix-links judges its content, not this detector.
-      [[ "$name" == .gitignore && -f "$child" ]] && continue
+      # A copied child is a real file by design; fix-links judges its content.
+      is_copied_ignore_child "$name" "$child" && continue
       [[ -e "$wt/$rel" && ! -L "$wt/$rel" ]] && printf '%s\n' "$rel"
     elif [[ -z "$exact" ]]; then
       # `|| capped=1`: a depth-capped deeper subtree must not abort this
@@ -1740,15 +1741,14 @@ collect_unhealthy_child_links() {
       collect_unhealthy_child_links "$rel" "$wt" $((depth + 1))
       continue
     fi
-    if [[ "$name" == .gitignore && -f "$child" ]]; then
-      # Healthy is a real file with main's content (KEN-685): a symlink here
-      # is the shape git refuses to read, and stale content is the drift the
-      # repair pass exists to close.
+    if is_copied_ignore_child "$name" "$child"; then
+      # Healthy is a real file with main's content; a symlink is the shape git
+      # refuses to read, stale content the drift the repair pass closes.
       ignore_file_copy_matches "$child" "$wt/$rel" && continue
       if [[ -L "$wt/$rel" ]]; then
-        printf '%s (a symlink, expected a copy of main'"'"'s ignore file)\n' "$rel"
+        printf '%s (a symlink, expected a copy of main'"'"'s .gitignore)\n' "$rel"
       elif [[ -e "$wt/$rel" ]]; then
-        printf '%s (differs from main'"'"'s ignore file)\n' "$rel"
+        printf '%s (differs from main'"'"'s .gitignore)\n' "$rel"
       else
         printf '%s (absent)\n' "$rel"
       fi

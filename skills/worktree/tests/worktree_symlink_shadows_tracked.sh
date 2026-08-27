@@ -277,21 +277,24 @@ assert_real "$PREDATE_WT/.agents/skills/late.md" "the merge wrote the newly-trac
 
 echo "=== an untracked .gitignore under a tracked-content entry is copied, not linked (KEN-685) ==="
 
-# Git refuses to read an ignore file through a symlink, so a linked
-# .gitignore applies none of its rules in the worktree and prints "unable to
-# access" on every command. drovr's shape: `.opencode/agents` is tracked,
-# `.opencode/.gitignore` is untracked and ignores itself plus bun.lock.
+# Git refuses to read .gitignore through a symlink, so a linked one applies
+# none of its rules in the worktree and prints "unable to access" on every
+# command. drovr's shape: `.opencode/agents` is tracked, `.opencode/.gitignore`
+# is untracked and ignores bun.lock. It does NOT ignore itself: the copy in the
+# worktree is kept out of `git status` only by the info/exclude entry setup
+# writes for it, so the status assertions below prove that entry too.
 IGN_ROOT="$TMP_ROOT/ignore"
 make_repo "$IGN_ROOT"
 mkdir -p "$IGN_ROOT/main/.opencode/agents"
 printf 'agent\n' >"$IGN_ROOT/main/.opencode/agents/dev.md"
-printf 'bun.lock\n.gitignore\n' >"$IGN_ROOT/main/.opencode/.gitignore"
+printf 'bun.lock\n' >"$IGN_ROOT/main/.opencode/.gitignore"
 printf 'lock\n' >"$IGN_ROOT/main/.opencode/bun.lock"
 printf 'WORKTREE_SYMLINKS=".opencode"\n' >"$IGN_ROOT/main/.env"
 git -C "$IGN_ROOT/main" add .opencode/agents/dev.md
 git -C "$IGN_ROOT/main" commit -q -m 'track opencode agents'
 push_main "$IGN_ROOT"
-assert_eq "$(git -C "$IGN_ROOT/main" status --porcelain -- .opencode)" "" "main ignores bun.lock through the untracked .gitignore"
+assert_eq "$(git -C "$IGN_ROOT/main" status --porcelain -- .opencode/bun.lock)" "" "main ignores bun.lock through the untracked .gitignore"
+assert_eq "$(git -C "$IGN_ROOT/main" status --porcelain -- .opencode)" "?? .opencode/.gitignore" "main's .gitignore is untracked and does not hide itself"
 
 set +e
 IGN_WT="$( (cd "$IGN_ROOT/main" && "$WORKTREE_SCRIPT" create ignore-check) 2>"$IGN_ROOT/err" )"
@@ -309,9 +312,18 @@ printf 'lock\n' >"$IGN_WT/.opencode/bun.lock"
 assert_eq "$(git -C "$IGN_WT" status --porcelain 2>&1)" "" "bun.lock is ignored in the worktree"
 assert_lacks "$(git -C "$IGN_WT" status 2>&1)" "unable to access" "git prints no ignore-file access warning"
 
+# push is the one command that runs the materialization detector; the copy
+# must read as the expected shape there, not as a real path where a link belongs.
+set +e
+(cd "$IGN_ROOT/main" && "$WORKTREE_SCRIPT" push ignore-check --no-rebase -u) >/dev/null 2>"$IGN_ROOT/perr"
+ign_push_status=$?
+set -e
+assert_eq "$ign_push_status" "0" "push succeeds from the worktree holding the copy"
+assert_lacks "$(cat "$IGN_ROOT/perr")" "harness paths in this worktree" "push does not report the copy as a materialized link"
+
 echo "=== the .gitignore copy follows main on the next pass, and a legacy link heals to a copy ==="
 
-printf 'bun.lock\n.gitignore\nnode_modules/\n' >"$IGN_ROOT/main/.opencode/.gitignore"
+printf 'bun.lock\nnode_modules/\n' >"$IGN_ROOT/main/.opencode/.gitignore"
 set +e
 (cd "$IGN_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$IGN_WT") >/dev/null 2>"$IGN_ROOT/err2"
 ign_fix_status=$?
