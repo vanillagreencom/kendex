@@ -76,8 +76,8 @@ EXEC_WRITER_RE='^[[:space:]]*exec[[:space:]]+[^[:space:]]*review-writer\.sh[[:sp
 
 # A job's `permissions:` mapping, one "key: value" per line — what makes a
 # CLOSED assertion possible, where a named-scope blocklist passes every scope
-# nobody thought to name. "!scalar VALUE" reports the non-mapping spellings
-# (`permissions: read-all`, `permissions: {}`), which are answers too.
+# nobody named. "!scalar VALUE" reports `permissions: read-all` and
+# `permissions: {}`, which are answers too.
 job_permissions() { # BLOCK-FILE
   awk '
     {
@@ -135,6 +135,19 @@ checkout_steps() { # FILE — "LINE<TAB>REF<TAB>PERSIST-CREDENTIALS"
   ' "$1"
 }
 
+# The fail-closed guard the template puts ahead of every checkout. Without
+# it a default_branch that resolves empty reaches actions/checkout's OWN
+# fallback — the event's ref — in silence, which is the whole reason the
+# template stopped carrying a hardcoded branch name.
+guarded_checkout() { # BLOCK-FILE — 0 when a guard precedes the first checkout
+  local first_co
+  first_co="$(awk '/^ *- uses: actions\/checkout/ { print NR; exit }' "$1")"
+  [ -n "$first_co" ] || return 0
+  awk -v n="$first_co" 'NR < n && /DEFAULT_BRANCH: \$\{\{ github\.event\.repository\.default_branch \}\}/ { found = 1 }
+       END { exit !found }' "$1" || return 1
+  awk -v n="$first_co" 'NR < n && /-z "\$\{DEFAULT_BRANCH/ { found = 1 } END { exit !found }' "$1"
+}
+
 unquote() { # VALUE — surrounding whitespace and quotes removed
   printf '%s' "$1" | sed "s/^[[:space:]]*//;s/[[:space:]]*\$//;s/^[\"']//;s/[\"']\$//"
 }
@@ -145,7 +158,7 @@ trap 'rm -rf "$TMP"' EXIT
 rg_check_adopted_workflow() { # SCRATCH-DIR — verdict lines on stdout
   local tmp="$1"
   local adopted adopted_count relay writer queue key blk over relay_if missing
-  local env_missing binding leg scope writer_if checkouts trigger wf perm_count
+  local env_missing binding leg scope writer_if checkouts trigger wf dref
   local crec crest cline cref ccreds wgroup wcancel
 
   # TRACKED files only: Actions runs what is committed, so an untracked
@@ -217,12 +230,10 @@ EOF_WORKFLOWS
       ok "the relay job is present (the only job holding actions: write)"
       # CLOSED, not a blocklist: every entry other than `actions: write` is
       # over-scope, whatever it is named. Job-level permissions REPLACE the
-      # workflow default, so this mapping is the whole scope.
+      # workflow default, so this mapping is the relay's whole scope.
       over=""
-      perm_count=0
       while IFS= read -r entry; do
         [ -n "$entry" ] || continue
-        perm_count=$((perm_count + 1))
         case "$entry" in
           "actions: write") ;;
           *) over="${over:+$over; }$entry" ;;
@@ -232,8 +243,6 @@ $(job_permissions "$relay")
 EOF_RELAY_PERMS
       if [ -n "$over" ]; then
         bad "the relay job's permissions are not exactly \`actions: write\` — it also holds: $over. Job-level permissions replace the workflow default, so this mapping is its complete scope"
-      elif [ "$perm_count" -ne 1 ]; then
-        bad "the relay job's permissions mapping has $perm_count entries where one is the contract (\`actions: write\`)"
       else
         ok "the relay job's permissions are exactly \`actions: write\` and nothing else"
       fi
@@ -273,15 +282,24 @@ EOF_RELAY_PERMS
       else
         ok "the relay job's \`env:\` block carries every binding the step reads"
       fi
+      # DISPATCH_REF's VALUE, not its presence: it is the one expression
+      # deciding which ENGINE the converge pass runs, and github.ref here is
+      # the PR's base branch on the pull_request_target leg.
+      dref="$(first_match '^ +DISPATCH_REF: ' "$relay")"
+      dref="$(unquote "${dref#*DISPATCH_REF:}")"
+      if [ "$dref" = '${{ github.event.repository.default_branch }}' ]; then
+        ok "the relay dispatches onto the repository default branch"
+      else
+        bad "the relay's DISPATCH_REF is '${dref:-<unset>}', not \`\${{ github.event.repository.default_branch }}\` — the converge pass would run whatever engine lives on that ref"
+      fi
     fi
 
     if [ -z "$writer" ]; then
       bad "$adopted has no converge job holding \`statuses: write\` and running review-writer.sh — nothing evaluates the gate"
     else
       ok "the write job is present (statuses: write, runs review-writer.sh)"
-      # The group name must be a LITERAL: an expression that varies per run
-      # gives every run its own group, which is no throttle at all, spelled
-      # to look like one.
+      # The group name must be a LITERAL: an expression varying per run gives
+      # every run its own group — no throttle, spelled to look like one.
       wgroup="$(first_match '^ +group: ' "$writer")"
       wgroup="$(unquote "${wgroup#*group:}")"
       wcancel="$(first_match '^ +cancel-in-progress: ' "$writer")"
@@ -319,15 +337,22 @@ EOF_RELAY_PERMS
       done
     fi
 
+    for blk in ${writer:+"$writer"} ${queue:+"$queue"}; do
+      if guarded_checkout "$blk"; then
+        ok "$(basename "$blk" | sed 's/^job\.//') refuses an empty default branch before checking anything out"
+      else
+        bad "$(basename "$blk" | sed 's/^job\.//') checks out without the guard step that refuses an empty \`github.event.repository.default_branch\` — an empty resolution reaches actions/checkout's own fallback, the EVENT's ref, in silence"
+      fi
+    done
+
     if [ -z "$queue" ]; then
       bad "$adopted has no merge_group job posting the gate context — queue entries would sit without the required status and never merge"
     else
       ok "the merge-group job posts the gate context on queue shas"
     fi
 
-    # PER CHECKOUT, each named by its line. A file-wide count is satisfied by
-    # one compliant checkout while its sibling runs the event's own ref, or
-    # keeps the token on disk, in silence.
+    # PER CHECKOUT, each named by its line: a file-wide count is satisfied by
+    # one compliant checkout while its sibling runs the event's own ref.
     checkouts=0
     while IFS= read -r crec; do
       [ -n "$crec" ] || continue

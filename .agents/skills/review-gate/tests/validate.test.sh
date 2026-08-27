@@ -395,6 +395,20 @@ dir="$DIR"
 mutate "$dir" "/as in the merge-group job/,/persist-credentials: false/ s|^          ref: .*||"
 expect_fail "a checkout pinning no ref at all is caught" "$dir" "pins no \`ref:\`"
 
+# DISPATCH_REF decides which ENGINE the converge pass runs, so its VALUE is
+# the contract; presence alone would pass a relay dispatching another branch.
+sandbox
+dir="$DIR"
+mutate "$dir" "s|^      DISPATCH_REF: .*|      DISPATCH_REF: \${{ github.ref }}|"
+expect_fail "a relay dispatching a non-default ref is caught by value, not presence" "$dir" "DISPATCH_REF is"
+
+# The guard step this PR added is itself a contract: without it a consumer
+# keeps the bare expression and gets actions/checkout's silent fallback.
+sandbox
+dir="$DIR"
+mutate "$dir" "/^          DEFAULT_BRANCH: /d"
+expect_fail "a checkout whose default-branch guard was deleted is caught" "$dir" "without the guard step"
+
 echo "=== the workflow half stands alone ==="
 
 WORKFLOW_REL=".agents/skills/review-gate/scripts/validate-workflow.sh"
