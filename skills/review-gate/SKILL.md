@@ -37,10 +37,14 @@ the gate; and merge-group statuses never read the mode, posting green as
 | (exit 2, no verdict) | *unchanged* | A read failed or config is invalid. Take NO action; retry next pass. |
 
 **Reading the gate's own pending text.** `no review evidence at <sha> yet;
-bots re-review each push, not a block on a human` is the `awaiting` verdict:
-the ordinary re-review window after a push, never a wait for a person. If a
-trusted reviewer has already reviewed this head, dispatch the writer instead
-of waiting; wait on a human only where the repo configures one.
+expected from <names>` is the `awaiting` verdict. The names are the repo's
+own configured evidence sources, so the text says who this repo is waiting
+for: bots there means the ordinary re-review window after a push, and a
+person's name means a person. Past 140 characters the sha shortens to 12 and
+the names that do not fit are counted (`and N more`).
+
+Act on the names, not on the pending state: where they are bots and one has
+already reviewed this head, dispatch the writer instead of waiting.
 
 # Working in a consumer repo
 

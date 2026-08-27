@@ -535,25 +535,6 @@ echo "--- mechanism layer (forced configuration)"
 # has become unconditionally true and every case below is meaningless.
 reset
 run "no evidence at all" awaiting
-# The awaiting detail is the one verdict a reader acts on wrongly: read as an
-# approval block, it stalls a PR that only has to wait out the re-review
-# window. Pin the exact line, and its fit inside the status API's 140-char
-# description limit with a full 40-char sha substituted.
-awaiting_detail="$(PATH="$shim:$PATH" GH_SHIM_FIXTURES="$fixtures" \
-  REVIEW_GATE_SETTINGS_FILE=/dev/null REVIEW_GATE_MODE=enforce \
-  GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$AUTHOR" \
-  "$predicate" 2>/dev/null)"
-awaiting_detail="${awaiting_detail#verdict=awaiting detail=}"
-cases=$((cases + 1))
-if [ "$awaiting_detail" != "no review evidence at $HEAD yet; bots re-review each push, not a block on a human" ]; then
-  echo "FAIL  awaiting detail drifted: '$awaiting_detail'" >&2
-  failures=$((failures + 1))
-elif [ "${#awaiting_detail}" -gt 140 ]; then
-  echo "FAIL  awaiting detail is ${#awaiting_detail} characters; the status API truncates at 140" >&2
-  failures=$((failures + 1))
-else
-  echo "ok    awaiting: the pending detail is exact and fits the 140-char status limit"
-fi
 
 reset
 export GH_SHIM_FAIL=reviews
