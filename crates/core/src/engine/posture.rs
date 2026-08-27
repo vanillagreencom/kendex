@@ -11,6 +11,7 @@
 
 use crate::apply::{Op, PlannedOp, Pre};
 use crate::error::Result;
+use crate::guard::Repo;
 use crate::model::Scope;
 
 /// The line kendex owns, anchored to the project root so a same-named file
@@ -39,10 +40,13 @@ pub(super) fn plan_posture(
         return Ok(());
     };
     // Nothing to commit to, nothing to ignore for. A project that is not a
-    // repository gets no file it never had.
-    if !root.join(".git").exists() {
+    // repository gets no file it never had. git says where the repository
+    // is: guessing `<root>/.git` misses a linked worktree, whose `.git` is
+    // a file, and a `--separate-git-dir` layout, whose `.git` is one
+    // everywhere.
+    let Ok(repo) = Repo::at(root) else {
         return Ok(());
-    }
+    };
     let path = root.join(".gitignore");
     let text = crate::fs::read_if_exists(&path)?.unwrap_or_default();
     for ignored in ignores_committed(&text) {
@@ -50,19 +54,17 @@ pub(super) fn plan_posture(
             ".gitignore ignores {ignored} — a teammate who clones this repository gets no skills until that line goes"
         ));
     }
-    // The exclude file is this checkout's alone: a line there hides the
-    // tree from git status here and nowhere else, so what kendex changes
-    // in it never reaches a commit and no pull can put that right. A
-    // linked worktree's `.git` is a file naming the main checkout, whose
-    // own refresh reads the exclude file they share.
-    let git = root.join(".git");
-    if git.is_dir() {
-        let exclude = crate::fs::read_if_exists(&git.join("info/exclude"))?.unwrap_or_default();
-        for ignored in ignores_committed(&exclude) {
-            notes.push(format!(
-                ".git/info/exclude ignores {ignored} — changes kendex makes there never show in git status on this machine, so nothing commits them; that line is local to this checkout"
-            ));
-        }
+    // The exclude file lives in this clone's git dir, shared by its linked
+    // worktrees and nobody else: a line there hides the tree from git
+    // status on this machine, so what kendex changes in it never reaches a
+    // commit, and no pull can put that right.
+    let exclude = repo.common_dir.join("info/exclude");
+    let rules = crate::fs::read_if_exists(&exclude)?.unwrap_or_default();
+    for ignored in ignores_committed(&rules) {
+        notes.push(format!(
+            "{} ignores {ignored} — git status on this machine never shows what kendex changes there, and no commit or pull carries that rule; remove it from this clone's git dir",
+            exclude.display()
+        ));
     }
     let Some(updated) = with_lock_ignored(&text) else {
         return Ok(());
@@ -196,27 +198,73 @@ mod tests {
         );
     }
 
-    /// The exclude file hides a tree from this checkout alone, so the note
-    /// names it as the checkout's own. A linked worktree keeps `.git` as a
-    /// file and reads its exclude through the main checkout, which gets the
-    /// note instead.
-    #[test]
-    fn an_exclude_rule_on_the_shared_tree_is_reported_for_this_checkout() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().to_path_buf();
-        std::fs::create_dir_all(root.join(".git/info")).unwrap();
-        std::fs::write(root.join(".git/info/exclude"), ".agents/\n").unwrap();
-        let scope = Scope::Project { root: root.clone() };
-        let mut notes = Vec::new();
-        plan_posture(&scope, &mut Vec::new(), &mut notes).unwrap();
-        assert_eq!(notes.len(), 1, "{notes:?}");
-        assert!(notes[0].starts_with(".git/info/exclude ignores .agents —"));
+    /// git in a fixture: a HOME of its own so no real global config reaches
+    /// it, and an identity so it can commit.
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let home = dir.to_str().expect("fixture paths are text");
+        let out = crate::process::Hardened::git(args, Some(dir))
+            .env("HOME", home)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .run()
+            .expect("git runs");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
 
-        std::fs::remove_dir_all(root.join(".git")).unwrap();
-        std::fs::write(root.join(".git"), "gitdir: /elsewhere/.git/worktrees/x\n").unwrap();
+    fn posture_notes(root: &std::path::Path) -> Vec<String> {
+        let scope = Scope::Project {
+            root: root.to_path_buf(),
+        };
         let mut notes = Vec::new();
         plan_posture(&scope, &mut Vec::new(), &mut notes).unwrap();
-        assert!(notes.is_empty(), "{notes:?}");
+        notes
+    }
+
+    /// The exclude file is read where git keeps it. A linked worktree has
+    /// `.git` as a file and shares the main checkout's exclude, so the same
+    /// rule is reported from both, naming the one file to edit.
+    #[test]
+    fn an_exclude_rule_on_the_shared_tree_is_reported_from_every_checkout() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("main");
+        std::fs::create_dir_all(&main).unwrap();
+        git(&main, &["init", "-q", "-b", "main"]);
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "start"]);
+        git(&main, &["worktree", "add", "-q", "../linked"]);
+        let linked = dir.path().join("linked");
+        assert!(linked.join(".git").is_file());
+        assert!(posture_notes(&main).is_empty());
+        assert!(posture_notes(&linked).is_empty());
+
+        std::fs::write(main.join(".git/info/exclude"), ".agents/\n").unwrap();
+        for root in [&main, &linked] {
+            let notes = posture_notes(root);
+            assert_eq!(notes.len(), 1, "{notes:?}");
+            assert!(
+                notes[0].contains("info/exclude ignores .agents —"),
+                "{notes:?}"
+            );
+            assert!(!notes[0].contains("linked"), "{notes:?}");
+        }
+    }
+
+    /// A directory outside any repository gets no ignore line and no note.
+    #[test]
+    fn a_directory_that_is_not_a_repository_is_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ops = Vec::new();
+        let mut notes = Vec::new();
+        let scope = Scope::Project {
+            root: dir.path().to_path_buf(),
+        };
+        plan_posture(&scope, &mut ops, &mut notes).unwrap();
+        assert!(ops.is_empty() && notes.is_empty(), "{notes:?}");
     }
 
     #[test]
