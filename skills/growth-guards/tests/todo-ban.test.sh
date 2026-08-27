@@ -149,6 +149,37 @@ run_tb
 run_tb --no-such-flag
 [ "$RC" -eq 2 ] && ok "unknown flag is exit 2" || bad "unknown flag is exit 2" "rc=$RC out=$OUT"
 
+# A row is a shell glob against the whole path, so every `*` in it crosses
+# `/`. A reader who writes `**/name/**` meaning "that vendored tree wherever
+# it is rendered" gets "any directory called name, at any depth" — and the
+# first-party one goes quiet with it, which is the one thing this file's own
+# header forbids.
+echo "=== excludes: a row anchored at a root does not exempt that name elsewhere ==="
+new_repo cross
+mkdir -p "$R/vendor/thing" "$R/crates/thing/src" "$R/tools"
+printf '// %s: vendored upstream marker\n' "$TD" >"$R/vendor/thing/lib.rs"
+printf '// %s: our own marker\n' "$TD" >"$R/crates/thing/src/lib.rs"
+printf 'vendor/thing/**\tvendored third-party code\n' >"$R/tools/todo-ban-excludes"
+git -C "$R" add -A
+run_tb
+[ "$RC" -eq 1 ] && case "$OUT" in
+  *"crates/thing/src/lib.rs"*) ok "the first-party tree of the same name still fails" ;;
+  *) bad "the anchored row exempted the wrong tree" "rc=$RC out=$OUT" ;;
+esac || bad "the first-party marker was silenced" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"vendor/thing/lib.rs"*) bad "the anchored row did not silence its own tree" "out=$OUT" ;;
+  *) ok "and the vendored tree it names is silent" ;;
+esac
+
+# The control: the crossing shorthand does silence both, which is why a row
+# is written out per root rather than spelled `**/thing/**`.
+printf '**/thing/**\tthe shorthand that crosses\n' >"$R/tools/todo-ban-excludes"
+git -C "$R" add -A
+run_tb
+[ "$RC" -eq 0 ] \
+  && ok "must-fail control: the crossing shorthand silences the first-party tree too" \
+  || bad "the crossing shorthand did not cross" "rc=$RC out=$OUT"
+
 echo "=== fail-closed: a broken scan terminates, never passes ==="
 new_repo grepfail
 printf 'clean file\n' >"$R/ok.txt"
