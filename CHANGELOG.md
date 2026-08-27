@@ -39,6 +39,10 @@ an outside contributor.
 
 ### Fixed
 
+- The settings template no longer seeds `.cursor` into `WORKTREE_SYMLINKS`, so
+  `worktree fix-links` passes in repos that do not use Cursor; a repo that
+  does adds it back in its own `kendex.settings.toml`.
+
 - On macOS the commit hooks were written but never made executable, so git
   ignored both and an armed repository gated nothing. `guard install` reports
   armed only when the bit is really there.
