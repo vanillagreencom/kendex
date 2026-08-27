@@ -98,10 +98,10 @@ impl Installed {
     /// tree is what the shared shims run, and a search that never looked
     /// there reports it as a leftover to delete.
     ///
-    /// Every directory of every one of those trees, not every discovered
-    /// project: a repository whose root carries a harness marker IS a
-    /// project to the discovery walk, which stops there and never sees the
-    /// nested project that armed the hooks.
+    /// Every directory the project walk's pruning leaves in every one of
+    /// those trees, not every discovered project: a repository whose root
+    /// carries a harness marker IS a project to the discovery walk, which
+    /// stops there and never sees the nested project that armed the hooks.
     ///
     /// The cheap probe comes first, because the roots `present` searches
     /// are where the copy nearly always is and answering from them skips
