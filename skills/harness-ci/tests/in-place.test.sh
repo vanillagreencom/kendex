@@ -154,4 +154,15 @@ for exotic in 'source = "in\u002Dplace"' 'split' 'header'; do
   assert_verdict "an escaped or split spelling degrades to the carve ($exotic)" false --repo "$ex" --event push --base "$exbase" --head HEAD
 done
 
+# A manifest that exists but cannot be read proves nothing: the parser's
+# failure carves everything rather than clearing the carve-outs.
+unread="$(new_repo unreadable)"
+printf 'schema = 6\n[skills.mine]\nsource = "in-place"\n' >"$unread/kendex.toml"
+commit_paths "$unread" "baseline" README.md
+unreadbase="$(git -C "$unread" rev-parse HEAD)"
+commit_paths "$unread" "edit" .agents/skills/mine/SKILL.md
+chmod 000 "$unread/kendex.toml"
+assert_verdict "an unreadable manifest carves everything" false --repo "$unread" --event push --base "$unreadbase" --head HEAD
+chmod 644 "$unread/kendex.toml"
+
 report in-place

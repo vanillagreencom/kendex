@@ -163,6 +163,8 @@ printf '%s\n' "$changed" | sed -e 's/^/harness-only: changed: /' >&2
 # output — the answer before in-place existed.
 in_place_skills=""
 if [ -f "$repo/kendex.toml" ]; then
+  # A manifest that exists but cannot be read proves nothing about the
+  # tree, so a failed parse carves everything too.
   # The line parser reads the spellings kendex writes and the common hand
   # edits; completeness is not load-bearing. Every line that could take
   # part in spelling the value — a bare in-place mention, a \u/\U escape
@@ -208,7 +210,7 @@ if [ -f "$repo/kendex.toml" ]; then
       if (key != "") { accounted += 1; print key }
     }
     END { if (coarse > accounted) print "*" }
-  ' "$repo/kendex.toml" 2>/dev/null)" || in_place_skills=""
+  ' "$repo/kendex.toml" 2>/dev/null)" || in_place_skills="*"
 fi
 NL=$(printf "\nx")
 NL="${NL%x}"
