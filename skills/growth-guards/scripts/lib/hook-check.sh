@@ -1,10 +1,15 @@
-#!/usr/bin/env bash
+# shellcheck shell=bash
 # --check's verdict machinery over the shims this installer writes: is the
 # helper ours, does each hook still carry our line, and what does a whole
 # directory add up to. Read-only throughout — nothing here writes.
 #
 # Sourced by install-git-hooks, which owns the marker constants and the
 # helper_body it compares against; hand-wired hooks are hook-entrypoint.sh's.
+# Strict on its own terms rather than on its caller's: a reader of one of
+# these functions should not have to go find out which shell options were
+# on when the file was read.
+set -euo pipefail
+
 # --check: nothing below this comment's section writes. Component findings
 # are folded into the single stdout verdict line, so a caller that sees only
 # the summary still learns what is wrong and where.

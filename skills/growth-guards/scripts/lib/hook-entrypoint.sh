@@ -1,12 +1,18 @@
-#!/usr/bin/env bash
+# shellcheck shell=bash
 # The second shape --check accepts: a hook someone hand-wired under a
 # core.hooksPath directory that execs this skill's scripts directly. It is a
 # whole-file grammar over a foreign file, which is why it is its own unit —
 # nothing here knows what an install looks like, only whether a given file
 # runs our entry point when git executes it.
 #
-# Sourced by install-git-hooks, which owns SCRIPT_DIR and SH_SHEBANG_RE.
+# Sourced by install-git-hooks, which owns SCRIPT_DIR and SH_SHEBANG_RE —
+# but strict on its own terms rather than on its caller's: a reader of one
+# of these functions should not have to go find out which shell options
+# were on when the file was read.
+set -euo pipefail
+
 # The one shape the stand-down message prescribes for a core.hooksPath
+
 # directory, matched as a WHOLE FILE rather than searched for line by line:
 # a POSIX-sh shebang, then exactly one command, and that command is this
 # skill's entry point for the hook (optionally through `exec`, optionally
