@@ -21,6 +21,9 @@
 pub(super) const HELPER: &str = "kendex-guards";
 /// The marker ending every delegating line the installer writes.
 pub(super) const SENTINEL: &str = "# kendex-guards-hook";
+/// The line the installer leaves in a hook it created itself, which is the
+/// only thing telling one from a consumer's own shebang-only hook.
+pub(super) const CREATED: &str = "# kendex-guards-hook created this file";
 
 /// The fixed tail of the helper the installer writes, byte for byte.
 const HELPER_TAIL: &str = r#"# kendex growth-guards git hooks. Managed by the growth-guards skill and
@@ -91,7 +94,7 @@ pub(super) fn call_line(hook: &str) -> String {
     };
     format!(
         "kendex_gg_h=\"$(git rev-parse --git-path hooks 2>/dev/null)/{HELPER}\"; \
-[ -x \"$kendex_gg_h\" ] || {{ echo \"growth-guards: hook helper $kendex_gg_h is missing or not executable; commit blocked (reinstall: kendex refresh)\" >&2; exit 2; }}; \
+[ -x \"$kendex_gg_h\" ] || {{ echo \"growth-guards: hook helper $kendex_gg_h is missing or not executable; commit blocked (reinstall: kendex guard install)\" >&2; exit 2; }}; \
 \"$kendex_gg_h\" {hook}{args} || exit $?; {SENTINEL}"
     )
 }

@@ -50,7 +50,7 @@ impl ScopeCheck<'_> {
                 Ok(crate::manifest::ManifestFile::Absent) => None,
                 Ok(crate::manifest::ManifestFile::Legacy { .. }) => {
                     sections.unknown.push(unknown(format!(
-                        "{prefix}v1 manifest — not checked until it is imported"
+                        "{prefix}v1 manifest — not checked; move it aside or delete it"
                     )));
                     None
                 }

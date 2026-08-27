@@ -38,11 +38,11 @@ pub enum CoreError {
     },
 
     #[error(
-        "{path} is a v1 manifest (no schema key) — migration required; v2 never modifies v1 files (the importer arrives with the release)"
+        "{path} is a v1 manifest (no schema key) — no importer exists; move it aside or delete it, then install fresh"
     )]
     LegacyManifest { path: PathBuf },
 
-    #[error("{path} is a v1 vstack lock — migration required; v2 never modifies v1 files")]
+    #[error("{path} is a v1 vstack lock — no importer exists; move it aside or delete it")]
     LegacyLock { path: PathBuf },
 
     #[error(

@@ -172,6 +172,15 @@ hook_runs_entry_point() { # HOOK PATH -> 0 yes, 1 no (recognizably), 3 unrecogni
       */"$hook") ;;
       *) continue ;;
     esac
+    # git runs a hook from the work tree's top level, so a relative command
+    # word resolves against THAT, never against wherever this check happens
+    # to be running. Judging it from this process's own directory answers a
+    # question about a different file: the same wiring would read armed from
+    # inside the repository and unarmed from anywhere else.
+    case "$cmd" in
+      /*) ;;
+      *) cmd="$REPO_ABS/$cmd" ;;
+    esac
     if [ ! -f "$cmd" ] || [ ! -x "$cmd" ]; then
       continue
     fi

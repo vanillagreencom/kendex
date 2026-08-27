@@ -146,9 +146,13 @@ kendex adopt skill handmade                             # manage an existing ite
 kendex apply --plan                                     # preview the full reconcile
 ```
 
-Coming from v1: nothing is migrated. Install kendex fresh, then remove the
-old artifacts by hand — the `kendex-hooks`/`vstack-hooks` directory, the
-`core.hooksPath` pointing at it, and v1 guard settings.
+Coming from v1: nothing is migrated, and no importer arrives — install
+kendex fresh and retire the old artifacts by hand. A v1 `vstack.toml` (no
+`schema` key) or `.vstack-lock.json` left in a scope is found and refused
+by every command that would write there, so those two go first: rename them
+aside to keep them, or delete them. Then remove the `kendex-hooks` /
+`vstack-hooks` directory, the `core.hooksPath` pointing at it, and v1 guard
+settings, and arm the new hooks with `kendex guard install`.
 
 ## Engine rules
 
@@ -171,7 +175,7 @@ old artifacts by hand — the `kendex-hooks`/`vstack-hooks` directory, the
 | `source add/remove/enable/disable/refresh` | manage catalogs per scope |
 | `project add/remove/list/discover` | the app's project registry |
 | `report` | file an issue, routed to the asset's owner |
-| `update`, `update-pi`, `import`, `init` | self-update, Pi packages, v1 migration, catalog scaffolding |
+| `update`, `update-pi`, `init` | self-update, Pi packages, catalog scaffolding |
 
 Scopes: `--scope project|global|all` (v1 aliases `p/local`, `g/user`,
 `both/*`), `-g` as a shortcut for global.

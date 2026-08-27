@@ -19,6 +19,17 @@ an outside contributor.
 - `kendex check` reads a repository's hook files itself instead of running
   its guard scripts, so reading a clone's status executes none of its code.
   It answers armed, not armed, or cannot tell, and never guesses.
+- The `pre-commit-check` hook reads an empty `core.hooksPath` as hooks
+  switched off, naming the unset that fixes it, instead of standing aside for
+  a repository-root file git never runs.
+- `kendex check` reports an install whose `pre-commit` or `commit-msg` script
+  is missing or not executable, which blocks every commit, instead of
+  reporting it armed.
+- A hook of your own that quotes a guard marker in a comment is left alone:
+  it is no longer refused, rewritten, or reported as a stale guard shim.
+- A blocked commit is told to run `kendex guard install`, which restores the
+  helper, instead of `kendex refresh`, which does not.
+
 - `kendex check` reads a repository's hook files instead of running its guard
   scripts, so a clone's status executes none of its code. It answers armed,
   not armed, or cannot tell over both documented hook shapes, and never guesses.

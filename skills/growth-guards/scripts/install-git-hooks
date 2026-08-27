@@ -280,7 +280,7 @@ gg_owned_lines_re() {
 call_line() { # HOOK
   local hook="$1" args=""
   [ "$hook" = "pre-commit" ] || args=' "$@"'
-  printf '%s' 'kendex_gg_h="$(git rev-parse --git-path hooks 2>/dev/null)/'"$HELPER_NAME"'"; [ -x "$kendex_gg_h" ] || { echo "growth-guards: hook helper $kendex_gg_h is missing or not executable; commit blocked (reinstall: kendex refresh)" >&2; exit 2; }; "$kendex_gg_h" '"$hook$args"' || exit $?; '"$HOOK_SENTINEL"
+  printf '%s' 'kendex_gg_h="$(git rev-parse --git-path hooks 2>/dev/null)/'"$HELPER_NAME"'"; [ -x "$kendex_gg_h" ] || { echo "growth-guards: hook helper $kendex_gg_h is missing or not executable; commit blocked (reinstall: kendex guard install)" >&2; exit 2; }; "$kendex_gg_h" '"$hook$args"' || exit $?; '"$HOOK_SENTINEL"
 }
 
 # Line tools terminate their last line, which would permanently add a newline
@@ -347,7 +347,7 @@ install_hook() { # HOOK
   # `#!/usr/bin/env bash`, and refusing there would strand a working install
   # reporting NOT installed forever. Its shebang is rewritten below.
   if ! gg_trusted_interpreter "$(head -n 1 "$path")" \
-    && ! grep -qF -- "$CREATED_MARKER" "$path" 2>/dev/null; then
+    && ! grep -qxF -- "$CREATED_MARKER" "$path" 2>/dev/null; then
     hook_warn "$path runs under an interpreter that cannot be verified ($(head -n 1 "$path")); not modifying it — the $hook guard is NOT installed. Use a #! naming a shell in /bin or /usr/bin directly."
     return 0
   fi
@@ -369,7 +369,7 @@ install_hook() { # HOOK
   # Read before the filter strips the marker with our line, re-asserted below:
   # a repair must not turn a hook we created into one that looks foreign.
   local created=0
-  grep -qF -- "$CREATED_MARKER" "$path" 2>/dev/null && created=1
+  grep -qxF -- "$CREATED_MARKER" "$path" 2>/dev/null && created=1
   # Everything but the shebang and our own lines, kept in a FILE: a command
   # substitution would strip a missing final newline, and the foreign bytes
   # must come back exactly as they were.
@@ -435,7 +435,7 @@ uninstall_hook() { # HOOK — drop our line; drop the file when only ours was in
     # while the helper goes would block every commit. A target that cannot be
     # inspected is unknown, and unknown is treated as carrying it.
     sentinel_status=0
-    grep -qF -- "$HOOK_SENTINEL" "$path" 2>/dev/null || sentinel_status=$?
+    grep -qE "$(gg_owned_lines_re)" "$path" 2>/dev/null || sentinel_status=$?
     if [ "$sentinel_status" -eq 0 ]; then
       hook_warn "$path is a symlink carrying the guard line; remove it by hand — its target is not ours to edit"
     elif [ "$sentinel_status" -gt 1 ]; then
@@ -456,7 +456,7 @@ uninstall_hook() { # HOOK — drop our line; drop the file when only ours was in
   [ "$sentinel_status" -eq 0 ] || return 0
   # Read before the filter strips the marker with our line.
   created=0
-  grep -qF -- "$CREATED_MARKER" "$path" 2>/dev/null && created=1
+  grep -qxF -- "$CREATED_MARKER" "$path" 2>/dev/null && created=1
   tmp="$(mktemp "$path.tmp.XXXXXX")" || {
     hook_warn "could not create a temporary file beside $path; its guard line was left in place"
     return 0

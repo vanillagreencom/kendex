@@ -375,7 +375,7 @@ pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Eng
         || matches!(lock_file, LockFile::Legacy { .. })
     {
         report.notes.push(
-            "This scope's vstack files are from version 1 — kendex reads them, but changes nothing here until they are migrated"
+            "This scope's vstack files are from version 1 — kendex reads them and writes nothing here until they are moved aside or deleted"
                 .into(),
         );
     }

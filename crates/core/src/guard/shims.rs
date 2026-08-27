@@ -23,7 +23,7 @@ use std::path::Path;
 
 use crate::error::Result;
 
-use super::grammar::{HELPER, SENTINEL, call_line, helper_body};
+use super::grammar::{CREATED, HELPER, SENTINEL, call_line, helper_body};
 use super::{LANES, SKILL};
 
 /// What one artifact is, in the closed grammar's terms.
@@ -274,18 +274,41 @@ pub(super) fn helper_shape(hooks: &Path, scripts_dir: &Path) -> Finding {
     let Ok(text) = std::fs::read_to_string(&path) else {
         return finding(Shape::Unknown, format!("helper {HELPER} could not be read"));
     };
-    match text == helper_body(&scripts_dir.to_string_lossy()) {
-        true => finding(
-            Shape::Armed,
-            format!("helper {HELPER} is the installed one"),
-        ),
-        false => finding(
+    if text != helper_body(&scripts_dir.to_string_lossy()) {
+        return finding(
             Shape::Unknown,
             format!(
                 "helper {HELPER} is not the one this install generates, so what it runs cannot be verified"
             ),
-        ),
+        );
     }
+    // Being ours settles what the helper WOULD run, not that running it
+    // gates anything. It execs one program per lane and exits 2 where the
+    // program is missing or not executable, so an install that lost either
+    // one refuses every commit — and calling that armed describes a
+    // repository whose commits are blocked as one whose commits are checked.
+    for lane in LANES {
+        let program = scripts_dir.join(lane);
+        if !program.is_file() {
+            return finding(
+                Shape::Unarmed,
+                format!("{lane} is missing from {}", scripts_dir.display()),
+            );
+        }
+        if !is_executable(&program) {
+            return finding(
+                Shape::Unarmed,
+                format!(
+                    "{lane} in {} is not executable, so every commit is blocked rather than guarded",
+                    scripts_dir.display()
+                ),
+            );
+        }
+    }
+    finding(
+        Shape::Armed,
+        format!("helper {HELPER} is the installed one"),
+    )
 }
 
 /// Every artifact's shape in one hooks directory, folded.
@@ -337,13 +360,27 @@ pub(super) fn directory_shape(
 /// gone. Asking the shape question here would leave exactly that repository
 /// unreported: blocked, and told nothing about why.
 ///
-/// So ownership is any historic marker, which is what the sentinel is for,
-/// and it is the one place a substring read is the right answer.
+/// So ownership is any historic marker, which is what the sentinel is for —
+/// read the way the package's own installer reads it, as a line the marker
+/// CLOSES. A substring claims a consumer's hook that merely quotes the
+/// marker in a comment and reports it as our stale shim, which is the same
+/// mistake as the shape question, pointed the other way.
+/// Whether a hook file carries a line this installer wrote, by shape.
+///
+/// The package's `gg_owned_lines_re` in one predicate: the sentinel CLOSING
+/// a line, or the created-marker line whole. Split on `\n` rather than
+/// `lines()`, which would strip a carriage return the shell keeps and let a
+/// CRLF file answer for a rule written about a line ending in the marker.
+fn ours_by_shape(text: &str) -> bool {
+    text.split('\n')
+        .any(|line| line.ends_with(SENTINEL) || line == CREATED)
+}
+
 pub(super) fn orphaned_shims(hooks: &Path) -> Result<Option<String>> {
     let mut found = Vec::new();
     for lane in LANES {
         let path = hooks.join(lane);
-        if crate::fs::read_if_exists(&path)?.is_some_and(|text| text.contains(SENTINEL)) {
+        if crate::fs::read_if_exists(&path)?.is_some_and(|text| ours_by_shape(&text)) {
             found.push(lane.to_owned());
         }
     }

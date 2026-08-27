@@ -67,7 +67,26 @@ HOOKS_DIR=$(git rev-parse --git-path hooks 2>/dev/null) || {
   elsewhere_notice
   exit 0
 }
-if [ -x "$HOOKS_DIR/pre-commit" ]; then
+# An empty core.hooksPath switches hooks off outright, and git's answer above
+# is actively misleading about it: rev-parse reports `./`, so the directory
+# resolves to the repository root while git runs no hook at all. A root that
+# happens to hold an executable `pre-commit` then reads as armed, and this
+# lane stands aside for a gate that does not exist. Asked before the
+# directory is read, and the value decides: set-and-empty is off, exit 1 is
+# not set at all, and anything else is a state this lane cannot name.
+HOOKS_OFF=""
+CUSTOM=""
+CUSTOM_STATUS=0
+CUSTOM=$(git config --get core.hooksPath 2>/dev/null) || CUSTOM_STATUS=$?
+case "$CUSTOM_STATUS" in
+  0) [ -n "$CUSTOM" ] || HOOKS_OFF=1 ;;
+  1) ;;
+  *)
+    echo "pre-commit-check: could not read core.hooksPath in $PWD, so whether anything gates this commit is unknown — nothing here stands in for a gate it cannot see" >&2
+    exit 2
+    ;;
+esac
+if [ -z "$HOOKS_OFF" ] && [ -x "$HOOKS_DIR/pre-commit" ]; then
   BYPASS=$(printf '%s' "$WORDS" | grep -oE ' (--no-veri[a-z]*|-[a-zA-Z]*n[a-zA-Z]*|-c|--config-env[^ ]*|GIT_CONFIG_[^ ]*) ' | head -1) \
     || BYPASS=$(printf '%s' "$WORDS" | grep -oiE ' config .* hookspath ' | head -1) \
     || exit 0
@@ -84,5 +103,12 @@ elsewhere_notice
 # ran the repository's own script would put that execution back — on the
 # first commit an agent attempts, out of a checkout nobody armed. So the
 # commit is refused, and the refusal names the one command that fixes it.
+# Arming is not the remedy where hooks are switched off: the installer
+# stands down under any core.hooksPath value, empty included, so the unset
+# has to come first or the next commit is refused the same way.
+if [ -n "$HOOKS_OFF" ]; then
+  echo "pre-commit-check: core.hooksPath is set and empty in $PWD, which switches git hooks off, so nothing checks this commit — run 'git config --unset core.hooksPath', then arm them with 'kendex guard install'" >&2
+  exit 2
+fi
 echo "pre-commit-check: no git pre-commit hook is armed in $PWD, so nothing checks this commit — arm them with 'kendex guard install' (this hook does not run a repository's own scripts on its behalf), or remove this hook" >&2
 exit 2

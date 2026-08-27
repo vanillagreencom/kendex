@@ -121,13 +121,24 @@ printf '#!/bin/sh\nexit 0\n' >"$TMP_ROOT/disarmed-hooks/pre-commit"
 chmod -x "$TMP_ROOT/disarmed-hooks/pre-commit"
 git -C "$DISARMED_BY_PATH" config core.hooksPath "$TMP_ROOT/disarmed-hooks"
 
+# core.hooksPath set and EMPTY switches hooks off, and git's answer about it
+# misleads: `rev-parse --git-path hooks` reports `./`, so the directory
+# resolves to the repository root. This fixture puts an executable
+# `pre-commit` exactly there — the trap — while git runs nothing at all.
+HOOKS_OFF="$TMP_ROOT/hooks-off"
+mkdir -p "$HOOKS_OFF"
+git -C "$HOOKS_OFF" init -q
+git -C "$HOOKS_OFF" config core.hooksPath ""
+printf '#!/bin/sh\nexit 0\n' >"$HOOKS_OFF/pre-commit"
+chmod +x "$HOOKS_OFF/pre-commit"
+
 NOT_A_REPO="$TMP_ROOT/plain"
 mkdir -p "$NOT_A_REPO"
 
 # Every fixture carries a package whose script would announce itself if
 # anything ran it. Nothing may: this hook defers to an armed hook or
 # refuses, and never runs a repository's own scripts on its behalf.
-for fixture in "$UNARMED" "$ARMED" "$ARMED_BY_PATH" "$DISARMED" "$DISARMED_BY_PATH"; do
+for fixture in "$UNARMED" "$ARMED" "$ARMED_BY_PATH" "$DISARMED" "$DISARMED_BY_PATH" "$HOOKS_OFF"; do
   scripts="$fixture/.agents/skills/growth-guards/scripts"
   mkdir -p "$scripts"
   {
@@ -304,6 +315,20 @@ assert_eq "$log" "" "and the repository's own script was not run"
 run_hook "$DISARMED" "$(payload 'git commit -m test')"
 assert_eq "$rc" "2" "a hook git will not execute is unarmed too"
 assert_eq "$log" "" "and nothing was run beside it"
+
+# The one direction this lane must never fail in. An executable pre-commit
+# at the repository root is what `--git-path hooks` points at when the value
+# is empty, so reading that directory answers about the wrong place — and
+# answers "armed" for a repository whose commits git gates with nothing.
+run_hook "$HOOKS_OFF" "$(payload 'git commit -m test')"
+assert_eq "$rc" "2" "an empty core.hooksPath is hooks off, not a hooks directory"
+assert_contains "$err" "switches git hooks off" "the refusal says what is actually wrong"
+assert_contains "$err" "git config --unset core.hooksPath" "and leads with the remedy that works"
+assert_eq "$log" "" "and the repository's own script was not run"
+
+# Arming is not the remedy on its own here, but it is still the second half
+# of it, so the line names both in the order they have to happen.
+assert_contains "$err" "kendex guard install" "arming is named after the unset"
 
 echo
 echo "no kendex binary anywhere"
