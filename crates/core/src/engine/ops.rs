@@ -155,7 +155,10 @@ fn removal(
         if kinds.contains(&ItemKind::Plugin) {
             manifest.plugins.remove(name);
         }
-        if kinds.contains(&ItemKind::Agent) {
+        // A reviewer agent reads its base agent's skill list by prefix, so
+        // the entry outlives the agent while the declaration is kept:
+        // surviving agents render from the file that stays.
+        if disown && kinds.contains(&ItemKind::Agent) {
             manifest.agent_skills.remove(name);
         }
         if kinds.contains(&ItemKind::Skill) {

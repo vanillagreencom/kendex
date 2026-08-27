@@ -20,17 +20,12 @@ use super::{DriftRow, DriftState, config_edits};
 mod manifest_text;
 pub(super) use manifest_text::plan_schema_upgrade;
 
-/// Whether this op is the manifest's full-rewrite save. The surgical
-/// schema edit is a plain `WriteFile` and is not one.
-pub fn writes_manifest(op: &PlannedOp) -> bool {
-    matches!(op.op, Op::WriteManifest { .. })
-}
-
 /// Whether a plan already persists the manifest. A caller about to insert
 /// its own save must know: a second write to the same file binds to bytes
 /// the first one replaces and could never run.
 pub fn persists_manifest(ops: &[PlannedOp]) -> bool {
-    ops.iter().any(writes_manifest)
+    ops.iter()
+        .any(|op| matches!(op.op, Op::WriteManifest { .. }))
 }
 
 /// The precondition the plan's one manifest write binds to: the base of
