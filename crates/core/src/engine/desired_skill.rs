@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::error::Result;
 use crate::hash::{hash_files, installation_hash};
-use crate::lock::entry_key;
+use crate::lock::{EmittedArtifact, entry_key};
 use crate::manifest::Method;
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::render::skill::render_skill;
@@ -159,6 +159,20 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
                 ),
             }
         };
+        let artifact = Artifact::Tree {
+            canonical,
+            files: variant.files.clone(),
+            link,
+        };
+        // Where the tree and the link landed goes on the record. A tool's
+        // directory moves between kendex versions, and a pass that derived
+        // the place again would name one this install never wrote — the
+        // link it did write is then findable only through the record.
+        let emitted = Some(EmittedArtifact {
+            kind: ItemKind::Skill,
+            name: group.installed.clone(),
+            paths: artifact.paths(),
+        });
         for harness in &group.members {
             state.items.push(Desired {
                 key: entry_key(ItemKind::Skill, ctx.name, *harness),
@@ -180,13 +194,9 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
                     *harness,
                 )?,
                 upstream_skills: None,
-                emitted: None,
+                emitted: emitted.clone(),
                 reasons: ctx.reasons_for(*harness),
-                artifact: Artifact::Tree {
-                    canonical: canonical.clone(),
-                    files: variant.files.clone(),
-                    link: link.clone(),
-                },
+                artifact: artifact.clone(),
             });
         }
     }

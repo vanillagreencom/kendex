@@ -35,8 +35,9 @@ pub struct Desired {
     pub recorded_fork: bool,
     pub hash: String,
     pub upstream_skills: Option<Vec<String>>,
-    /// Set when the artifact is not this kind's native form — the lock
-    /// records it so removal targets what was written.
+    /// Set where deriving the place again could name another one — a
+    /// command stored as a skill, a skill's tree and link — so the lock
+    /// records it and removal targets what was written.
     pub emitted: Option<crate::lock::EmittedArtifact>,
     /// Every reason this installation is wanted, derived fresh each pass.
     pub reasons: BTreeSet<crate::lock::Reason>,

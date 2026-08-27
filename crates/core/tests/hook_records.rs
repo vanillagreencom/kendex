@@ -389,3 +389,61 @@ fn a_recorded_entry_moved_by_hand_does_not_hold_the_hook() {
     let settled = audit(&f.env, &f.scope).unwrap();
     assert!(settled.plan.ops.is_empty(), "{:?}", settled.plan.ops);
 }
+
+/// A render that changes the command's spelling — the machine's own path
+/// giving way to one a clone can follow — is a move like any other: the
+/// entry the record names comes out, and the new spelling goes in alone.
+/// Keyed on the rendered command, the upsert would find nothing to replace
+/// and the hook would fire twice on the machine that installed it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_command_spelled_another_way_replaces_the_entry_it_left() {
+    let f = fixture("[hooks.guard]\nsource = \"cat\"\n");
+    let manifest = f.project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        text.replace("harnesses = [\"claude\"]", "harnesses = [\"codex\"]"),
+    )
+    .unwrap();
+    apply_now(&f);
+
+    let registry = f.project.join(".codex/hooks.json");
+    let commands = || -> Vec<String> {
+        let value: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&registry).unwrap()).unwrap();
+        value["hooks"]["PreToolUse"]
+            .as_array()
+            .unwrap_or(&Vec::new())
+            .iter()
+            .flat_map(|group| group["hooks"].as_array().cloned().unwrap_or_default())
+            .map(|handler| handler["command"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let portable = commands();
+    assert_eq!(portable.len(), 1);
+    assert!(portable[0].contains("git rev-parse"), "{portable:?}");
+
+    // What an older kendex left: the machine's path, in the document and
+    // in the record alike.
+    let absolute = format!("bash {}", f.project.join(".codex/hooks/guard.sh").display());
+    fs::write(
+        &registry,
+        fs::read_to_string(&registry)
+            .unwrap()
+            .replace(&portable[0].replace('"', "\\\""), &absolute),
+    )
+    .unwrap();
+    assert_eq!(commands(), vec![absolute.clone()], "the rewrite took");
+    let lock_path = f.project.join(".kendex-lock.json");
+    let mut lock: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&lock_path).unwrap()).unwrap();
+    lock["entries"]["hook:guard:codex"]["registration"]["command"] =
+        serde_json::Value::String(absolute);
+    fs::write(&lock_path, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
+    apply_now(&f);
+
+    assert_eq!(commands(), portable, "one entry, spelled the new way");
+    let settled = audit(&f.env, &f.scope).unwrap();
+    assert!(settled.plan.ops.is_empty(), "{:?}", settled.plan.ops);
+}

@@ -116,7 +116,7 @@ lives in one capability table read by core and UI.
    restores the sharing from kendex's copy; the confirm names the folder and every
    tool reading it. A link at anything else stays a conflict.
    Ownership is what kendex wrote, read from the positions lock entries
-   actually wrote (including paths recorded under another kind's name) —
+   recorded writing (a skill's tree and link, a command's tree as a skill) —
    never from the lock key alone, and never from an entry merely being on
    the books. A link the user put at a shared config file or a manifest
    (dotfiles) is not foreign: the edit goes through it, link kept, and the

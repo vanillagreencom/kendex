@@ -41,6 +41,12 @@ pub(super) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
                 files.push(dir.join(file_name(entry.harness, &entry.name)));
             }
         }
+        // The tree and the link this install recorded landing at. A tool's
+        // directory moves between kendex versions, and the place derived
+        // today is then one this install never wrote.
+        ItemKind::Skill if entry.emitted.is_some() => {
+            files.extend(entry.emitted.iter().flat_map(|e| e.paths.iter().cloned()));
+        }
         ItemKind::Skill => {
             // The directory this entry's method actually wrote. A tool that
             // reads the shared tree as well as one of its own has two, and
