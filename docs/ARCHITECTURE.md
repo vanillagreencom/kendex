@@ -388,7 +388,7 @@ lives in one capability table read by core and UI.
   executor of an `EngineReport`), and `guard run <hook>` execs its script with git's redirects passed through, the
   one child not scrubbed because it is a hook body naming the snapshot judged. `guard check` asks the package too.
   `kendex check` executes nothing: our marker in both hook files, both executable, hooksPath unset, or not armed — and the
-  marker with no copy of the package anywhere in this work tree or the main checkout is a leftover it names by file (`guard::stranded`).
+  marker with no copy of the package in any work tree sharing those hooks is a leftover it names by file (`guard::stranded`).
   So there is one implementation of every verdict and one policy dialect:
   the flat `GROWTH_GUARDS_*` / `SIZE_RATCHET_*` keys, baselines and
   excludes the scripts read from the commit. Every enabled check runs

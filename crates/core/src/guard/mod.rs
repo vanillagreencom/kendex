@@ -244,12 +244,13 @@ pub fn armed(repo: &Repo) -> Result<bool> {
 /// carries the package anywhere.
 ///
 /// The same read as [`armed`] — the marker, in the directory git reads —
-/// with the opposite precondition: no copy of the package under any kendex
-/// project in the work tree, nor in the main checkout's. A shim that
-/// survives its package execs a script that is not there, so every commit
-/// in the repository fails closed, and nothing else reports it: the lock no
-/// longer names the package, so the drift report has nothing to compare,
-/// and `guard check` cannot run an installer that is gone.
+/// with the opposite precondition: no copy of the package anywhere the
+/// shared hooks gate, which is every work tree attached to this common git
+/// dir. A shim that survives its package execs a script that is not there,
+/// so every commit in the repository fails closed, and nothing else reports
+/// it: the lock no longer names the package, so the drift report has
+/// nothing to compare, and `guard check` cannot run an installer that is
+/// gone.
 ///
 /// Cheapest question first. The hook files are read before anything is
 /// spawned, because a repository with no marker in them is the ordinary
@@ -257,11 +258,16 @@ pub fn armed(repo: &Repo) -> Result<bool> {
 /// process behind `hooks_redirected` and the search behind
 /// `Installed::anywhere`.
 ///
-/// Repository-wide, not project-wide. Every project in a work tree shares
-/// one hooks directory, so a project without the package beside one that
-/// armed it is a gated repository, not a stranded one — and the advice
-/// here, followed, would have disarmed the gate the other project asked
-/// for.
+/// Hooks-directory-wide, not project-wide and not work-tree-wide. Every
+/// project in a work tree shares one hooks directory, and so does every
+/// work tree attached to the same common git dir — so a project or a work
+/// tree without the package beside one that armed it is a gated
+/// repository, not a stranded one, and the advice here, followed, would
+/// have disarmed the gate that other copy asked for.
+///
+/// A domain that could not be read in full yields the error rather than an
+/// empty list: the caller reports "could not check" instead of telling a
+/// reader to delete hook files that may be gating a copy nobody could see.
 ///
 /// Each lane that carries the marker, and the helper by its name beside
 /// them, so the report can say which files to clean up. The marker is the
@@ -281,7 +287,7 @@ pub fn stranded(repo: &Repo) -> Result<Vec<PathBuf>> {
             files.push(path);
         }
     }
-    if files.is_empty() || repo.hooks_redirected()? || Installed::anywhere(repo) {
+    if files.is_empty() || repo.hooks_redirected()? || Installed::anywhere(repo)? {
         return Ok(Vec::new());
     }
     let helper = hooks.join(HELPER);

@@ -537,3 +537,128 @@ fn each_of_the_packages_streams_is_relayed_on_its_own() {
         "stdout is the summary and nothing else: {stdout:?}"
     );
 }
+
+/// A copy in a SIBLING work tree gates this one, and is not a leftover.
+///
+/// `.git/hooks` lives in the common git directory, so one copy of it runs
+/// for every work tree attached to that directory — not just this one and
+/// the main checkout. A search that looks only at those two calls the
+/// shared shims stranded from any third work tree and tells the reader to
+/// delete files the sibling's copy is still using, on a repository where
+/// every commit is gated perfectly well.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_copy_in_a_sibling_work_tree_is_not_a_leftover() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    git_ok(home, &root, &["worktree", "add", "--quiet", "../armer"]);
+    git_ok(home, &root, &["worktree", "add", "--quiet", "../reader"]);
+    let armer = home.join("armer");
+    let reader = home.join("reader");
+
+    // The package is installed and armed in one linked work tree. Neither
+    // the main checkout nor the other work tree carries a copy.
+    std::fs::create_dir_all(armer.join(".agents")).unwrap();
+    install_package(home, &armer, &["growth-guards"]);
+    let armed = run(home, &armer, "kendex", &["guard", "install"]);
+    assert!(armed.status.success(), "{}", said(&armed));
+
+    // The reader is a project of its own with no copy and no record of one
+    // — everything the diagnosis sees short of the sibling.
+    std::fs::create_dir_all(reader.join(".agents")).unwrap();
+    std::fs::write(reader.join("kendex.toml"), "schema = 6\n").unwrap();
+    assert!(!root.join(".agents/skills/growth-guards").exists());
+    assert!(!reader.join(".agents/skills/growth-guards").exists());
+
+    let out = run(home, &reader, "kendex", &["check"]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "the sibling's copy went unfound: {}",
+        said(&out)
+    );
+    assert!(!said(&out).contains("commit hooks"), "{}", said(&out));
+
+    // The must-fail control: with every copy gone the shims really are
+    // stranded, and the same reader says so by file. Every skills root and
+    // links as well as trees, because an install fans out to each tool
+    // directory the work tree has and links the rest at the first.
+    for base in kendex_core::guard::SEARCH_ROOTS {
+        let copy = armer.join(base).join(kendex_core::guard::SKILL);
+        match copy.is_symlink() {
+            true => std::fs::remove_file(&copy).unwrap(),
+            false if copy.exists() => std::fs::remove_dir_all(&copy).unwrap(),
+            false => {}
+        }
+    }
+    let out = run(home, &reader, "kendex", &["check"]);
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    let text = said(&out);
+    assert!(
+        text.contains("installed in no project of this repository"),
+        "{text}"
+    );
+    let hooks = root.canonicalize().unwrap().join(".git/hooks");
+    for file in ["pre-commit", "commit-msg", "kendex-guards"] {
+        assert!(
+            text.contains(&hooks.join(file).display().to_string()),
+            "{file} was not named:\n{text}"
+        );
+    }
+}
+
+/// A search domain that could not be read in full is a verdict that could
+/// not be taken, never a leftover.
+///
+/// "No copy anywhere" is the premise behind advice to delete a
+/// repository's hook files. A directory the walk cannot open holds an
+/// unknown number of copies, so folding it into "nothing here" makes the
+/// destructive half of the diagnosis fire on a repository nobody has
+/// looked at.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_search_domain_it_cannot_read_is_could_not_check_not_a_leftover() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    std::fs::write(root.join("kendex.toml"), "schema = 6\n").unwrap();
+    install_package_undeclared(&root, &["growth-guards"]);
+    arm_by_hand(&root);
+    std::fs::remove_dir_all(root.join(".agents/skills/growth-guards")).unwrap();
+
+    // The control: with the whole tree readable, this is the drift verdict
+    // that names the files to delete.
+    let out = said(&run(home, &root, "kendex", &["check"]));
+    assert!(
+        out.contains("installed in no project of this repository"),
+        "{out}"
+    );
+
+    // One directory of the domain, unopenable. Nothing else changes.
+    let locked = root.join("locked");
+    std::fs::create_dir(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read_dir(&locked).is_ok() {
+        // Permission bits do not stop this process — running as root, where
+        // there is no unreadable directory to build.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+    let out = run(home, &root, "kendex", &["check"]);
+    let text = said(&out);
+    let code = out.status.code();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_eq!(code, Some(2), "could-not-check was not reported: {text}");
+    assert!(
+        !text.contains("installed in no project of this repository"),
+        "an unreadable directory read as a repository with no copy:\n{text}"
+    );
+    assert!(
+        text.contains(&locked.display().to_string()),
+        "the directory it could not read is not named:\n{text}"
+    );
+}

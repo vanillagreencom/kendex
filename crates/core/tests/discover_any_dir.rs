@@ -34,12 +34,20 @@ fn carries(dir: &Path) -> bool {
     dir.join(PACKAGE).is_dir()
 }
 
+/// The walk over a whole tree, asserted to have seen all of it. A test
+/// about which directories are reached has nothing to say if part of the
+/// tree could not be read.
+#[allow(clippy::unwrap_used)]
+fn found(tmp: &tempfile::TempDir, carries: &mut dyn FnMut(&Path) -> bool) -> bool {
+    any_dir(tmp.path(), carries).unwrap()
+}
+
 /// "It has no depth cap, because a copy at depth six is a copy." The walk
 /// this replaced stopped at `MAX_DEPTH` of 5.
 #[test]
 fn a_copy_at_depth_six_is_found() {
     let tmp = tree(&[&format!("one/two/three/four/five/six/{PACKAGE}")]);
-    assert!(any_dir(tmp.path(), &mut carries));
+    assert!(found(&tmp, &mut carries));
 }
 
 /// "It does not stop at a project": a repository whose own root carries a
@@ -48,7 +56,7 @@ fn a_copy_at_depth_six_is_found() {
 #[test]
 fn a_project_marker_at_the_root_does_not_stop_the_walk() {
     let tmp = tree(&[".claude/skills", &format!("apps/web/{PACKAGE}")]);
-    assert!(any_dir(tmp.path(), &mut carries));
+    assert!(found(&tmp, &mut carries));
 }
 
 /// "The same pruning as the project walk — hidden directories, the build
@@ -68,7 +76,7 @@ fn a_copy_behind_a_pruned_directory_is_not_found() {
     ] {
         let tmp = tree(&[&format!("{pruned}/nested/{PACKAGE}")]);
         assert!(
-            !any_dir(tmp.path(), &mut carries),
+            !found(&tmp, &mut carries),
             "walked into {pruned}, which the pruning rules exclude"
         );
     }
@@ -85,12 +93,13 @@ fn a_symlink_to_an_ancestor_is_not_descended() {
     std::os::unix::fs::symlink(tmp.path(), tmp.path().join("a/up")).unwrap();
 
     let mut asked: Vec<PathBuf> = Vec::new();
-    let found = any_dir(tmp.path(), &mut |dir| {
+    let hit = any_dir(tmp.path(), &mut |dir| {
         asked.push(dir.to_path_buf());
         false
-    });
+    })
+    .unwrap();
 
-    assert!(!found);
+    assert!(!hit);
     // Three real directories and no fourth: the link was never entered, so
     // the walk terminated instead of circling through it.
     asked.sort();
@@ -101,4 +110,71 @@ fn a_symlink_to_an_ancestor_is_not_descended() {
     ];
     want.sort();
     assert_eq!(asked, want);
+}
+
+/// "A part of the domain that could not be traversed is reported, never
+/// counted as empty." A directory the walk cannot open is not a directory
+/// with nothing in it, and `guard::stranded` turns "nothing anywhere" into
+/// advice to delete a repository's hook files.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_directory_that_cannot_be_read_is_not_an_absence() {
+    let Some(tmp) = with_a_locked_dir() else {
+        return;
+    };
+    let error = any_dir(tmp.path(), &mut carries)
+        .expect_err("an unreadable directory read as a tree holding no copy");
+    unlock(&tmp);
+    assert!(
+        error.to_string().contains("locked"),
+        "the failure does not name the directory: {error}"
+    );
+}
+
+/// "A hit still wins": the walk carries the failure along instead of
+/// stopping on it, so a copy in a readable part of the tree is found
+/// whatever else could not be read. Anything less would report a repository
+/// that plainly carries the package as one whose state is unknown.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_copy_beside_an_unreadable_directory_is_still_found() {
+    let Some(tmp) = with_a_locked_dir() else {
+        return;
+    };
+    fs::create_dir_all(tmp.path().join("readable").join(PACKAGE)).unwrap();
+    let hit = any_dir(tmp.path(), &mut carries);
+    unlock(&tmp);
+    assert!(
+        hit.unwrap(),
+        "a readable copy was lost to an unreadable peer"
+    );
+}
+
+/// A tree with one directory this process cannot open, or `None` where the
+/// permission bits do not stop this process — running as root, where there
+/// is no unreadable directory to build.
+#[cfg(unix)]
+#[allow(clippy::unwrap_used)]
+fn with_a_locked_dir() -> Option<tempfile::TempDir> {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tree(&["locked/nested"]);
+    let locked = tmp.path().join("locked");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    match fs::read_dir(&locked).is_err() {
+        true => Some(tmp),
+        false => {
+            unlock(&tmp);
+            None
+        }
+    }
+}
+
+/// Readable again, so the temporary directory can be removed.
+#[cfg(unix)]
+#[allow(clippy::unwrap_used)]
+fn unlock(tmp: &tempfile::TempDir) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(tmp.path().join("locked"), fs::Permissions::from_mode(0o755)).unwrap();
 }

@@ -73,22 +73,33 @@ fn one_path(dir: &Path, flag: &str) -> Result<Option<PathBuf>> {
     if bytes.is_empty() {
         return Ok(None);
     }
+    path_from(bytes, flag).map(Some)
+}
+
+/// The bytes git wrote, as a path.
+///
+/// On unix a filename is bytes and travels as bytes. Elsewhere it has to be
+/// text, and bytes that are not are an error rather than a lossy conversion:
+/// `from_utf8_lossy` turns any byte that is not UTF-8 into U+FFFD, which is
+/// not a filename, so every verb would then name a path nobody has for a
+/// repository that is perfectly fine.
+fn path_from(bytes: Vec<u8>, what: &str) -> Result<PathBuf> {
     #[cfg(unix)]
-    let path = {
+    {
         use std::os::unix::ffi::OsStringExt;
-        PathBuf::from(std::ffi::OsString::from_vec(bytes))
-    };
+        let _ = what;
+        Ok(PathBuf::from(std::ffi::OsString::from_vec(bytes)))
+    }
     #[cfg(not(unix))]
-    let path = {
+    {
         let text = String::from_utf8(bytes).map_err(|_| {
             guard_err(
                 "hooks",
-                format!("git answered {flag} with bytes that are not text"),
+                format!("git answered {what} with bytes that are not text"),
             )
         })?;
-        PathBuf::from(text)
-    };
-    Ok(Some(path))
+        Ok(PathBuf::from(text))
+    }
 }
 
 impl Repo {
@@ -188,6 +199,63 @@ impl Repo {
     /// The hooks directory git reads with no redirect in the way.
     pub fn default_hooks_dir(&self) -> PathBuf {
         self.common_dir.join("hooks")
+    }
+
+    /// Every work tree attached to this repository's common git directory,
+    /// canonical and deduplicated, in git's own order — the main checkout
+    /// first, then the linked ones.
+    ///
+    /// The domain of "does this repository carry the package". The hooks
+    /// directory lives in the common git dir, so one copy of it gates every
+    /// work tree attached to that dir, and a sibling work tree is reachable
+    /// from no path under this one. git is the only thing that knows the
+    /// whole set.
+    ///
+    /// `-z` rather than plain porcelain, because a path is bytes. The plain
+    /// format writes one per line, so a checkout whose name contains a
+    /// newline — legal on unix, and a name a person can create — becomes two
+    /// records naming two directories that do not exist. `-z` terminates
+    /// each field with NUL and leaves the bytes alone.
+    ///
+    /// A registration whose directory is gone is dropped rather than
+    /// reported: git prunes those lazily, and a work tree that is not there
+    /// holds no copy of anything. That is a definite answer, unlike a
+    /// directory that is there and cannot be read, which is why only the
+    /// first is silent.
+    pub fn worktrees(&self) -> Result<Vec<PathBuf>> {
+        let output = Hardened::git(
+            &["worktree", "list", "--porcelain", "-z"],
+            Some(&self.worktree),
+        )
+        .run()?;
+        if !output.status.success() {
+            return Err(guard_err(
+                "hooks",
+                format!(
+                    "could not list the work trees of {} (git exited {:?}): {}",
+                    self.worktree.display(),
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+            ));
+        }
+        let mut trees = Vec::new();
+        for field in output.stdout.split(|byte| *byte == b'\0') {
+            let Some(path) = field.strip_prefix(b"worktree ") else {
+                continue;
+            };
+            let path = path_from(path.to_vec(), "worktree list")?;
+            match path.canonicalize() {
+                Ok(path) => {
+                    if !trees.contains(&path) {
+                        trees.push(path);
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(CoreError::io(&path, error)),
+            }
+        }
+        Ok(trees)
     }
 
     /// Whether `core.hooksPath` is set to anything at all.
