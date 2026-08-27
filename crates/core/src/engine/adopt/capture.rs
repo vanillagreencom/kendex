@@ -110,6 +110,7 @@ pub(super) fn capture_ops(
         ops.push(PlannedOp {
             description: format!("trash the local source's earlier copy of {name}"),
             op: Op::Trash {
+                absent_is_done: false,
                 path: local_item.to_path_buf(),
                 pre: Pre::HashIs {
                     hash: crate::hash::hash_tree(local_item)?,
@@ -137,6 +138,7 @@ pub(super) fn capture_ops(
         ops.push(PlannedOp {
             description: format!("trash the unmanaged original at {}", original.display()),
             op: Op::Trash {
+                absent_is_done: false,
                 path: original.clone(),
                 pre: Pre::Any,
             },

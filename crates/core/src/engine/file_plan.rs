@@ -199,6 +199,7 @@ pub(super) fn set_aside(path: &std::path::Path, pre: Pre) -> PlannedOp {
             crate::names::shown(&path.display().to_string())
         ),
         op: Op::Trash {
+            absent_is_done: false,
             path: path.to_path_buf(),
             pre,
         },

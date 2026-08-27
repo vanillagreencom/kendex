@@ -322,6 +322,7 @@ fn trash(description: String, path: &Path, proven: &str, sink: &mut Sink) {
         [PlannedOp {
             description,
             op: crate::apply::Op::Trash {
+                absent_is_done: false,
                 path: path.to_path_buf(),
                 pre: crate::apply::Pre::PlainHashIs {
                     hash: proven.to_owned(),

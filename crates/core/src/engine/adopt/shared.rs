@@ -195,6 +195,7 @@ pub(super) fn shared_capture_ops(
         ops.push(PlannedOp {
             description: format!("trash the local source's earlier copy of {name}"),
             op: Op::Trash {
+                absent_is_done: false,
                 path: local_item.to_path_buf(),
                 pre: Pre::HashIs {
                     hash: crate::hash::hash_tree(local_item)?,
@@ -216,6 +217,7 @@ pub(super) fn shared_capture_ops(
             shared.target.display()
         ),
         op: Op::Trash {
+            absent_is_done: false,
             path: shared.target.clone(),
             pre: Pre::HashIs {
                 hash: crate::hash::hash_tree(&shared.target)?,
@@ -226,6 +228,7 @@ pub(super) fn shared_capture_ops(
         ops.push(PlannedOp {
             description: format!("clear the link at {}", link.display()),
             op: Op::Trash {
+                absent_is_done: false,
                 path: link.clone(),
                 pre: Pre::SymlinkTo {
                     target: raw.clone(),

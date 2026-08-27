@@ -59,6 +59,7 @@ pub(super) fn plan_link(
                     item.name
                 ),
                 op: Op::Trash {
+                    absent_is_done: false,
                     path: link.to_path_buf(),
                     pre: Pre::HashIs { hash },
                 },
@@ -157,6 +158,7 @@ fn respell(
     ops.push(PlannedOp {
         description: why,
         op: Op::Trash {
+            absent_is_done: false,
             path: link.to_path_buf(),
             pre: Pre::SymlinkTo { target: points_to },
         },

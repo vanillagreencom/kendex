@@ -63,6 +63,37 @@ fn fork_keeps_the_name_pauses_updates_and_survives_refresh() {
     );
 }
 
+/// The edited install being deleted between the plan and the apply aborts
+/// it. The capture reads those bytes at plan time and binds its own
+/// precondition to where they are going, so the trash op over the edited
+/// tree is the only thing holding the plan to the artifact it read. A
+/// trash op that answers "already gone, so we are done" belongs to a
+/// removal and nowhere else: here it would leave a fork made of bytes the
+/// disk no longer has.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_edited_install_deleted_after_planning_fails_the_fork() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    commit(&w.upstream, "one");
+    declare(&w, "[skills.gh]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    fs::write(
+        skill_file(&w),
+        "---\nname: gh\ndescription: mine\n---\nMy fork.\n",
+    )
+    .unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
+    fs::remove_dir_all(w.home.join("app/.agents/skills/gh")).unwrap();
+
+    assert!(apply::execute(&w.env, &plan, None).is_err());
+    assert!(
+        !w.home.join("app/.kendex-local/skills/gh").exists(),
+        "no fork made of bytes the disk no longer has"
+    );
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn rename_fork_moves_the_declaration_and_refuses_depended_on_names() {

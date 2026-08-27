@@ -93,6 +93,7 @@ pub(super) fn relocate_ops(
         ops.push(PlannedOp {
             description: format!("clear the link at {}", link.display()),
             op: Op::Trash {
+                absent_is_done: false,
                 path: link.clone(),
                 pre: Pre::SymlinkTo {
                     target: raw.clone(),
@@ -114,6 +115,7 @@ pub(super) fn relocate_ops(
             ops.push(PlannedOp {
                 description: format!("trash what is already at {}", home.display()),
                 op: Op::Trash {
+                    absent_is_done: false,
                     path: home.to_path_buf(),
                     pre: Pre::HashIs {
                         hash: crate::hash::hash_tree(home)?,
@@ -145,6 +147,7 @@ pub(super) fn relocate_ops(
         ops.push(PlannedOp {
             description: format!("trash the second copy at {}", path.display()),
             op: Op::Trash {
+                absent_is_done: false,
                 path: path.clone(),
                 pre: Pre::tree_as_is(path)?,
             },

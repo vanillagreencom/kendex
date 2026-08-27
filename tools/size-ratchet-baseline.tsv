@@ -3,7 +3,7 @@
 crates/core/src/engine/desired_agent.rs	404
 crates/core/src/engine/detach.rs	603
 crates/core/src/engine/pi_hooks_move/migrated.rs	540
-crates/core/src/engine/pi_hooks_move/mod.rs	502
+crates/core/src/engine/pi_hooks_move/mod.rs	503
 crates/core/src/engine/pi_hooks_move/preflight.rs	765
 crates/core/src/error.rs	423
 crates/core/src/remote/store.rs	405

@@ -70,7 +70,13 @@ pub(super) fn trash(description: String, path: PathBuf) -> Result<PlannedOp> {
     };
     Ok(PlannedOp {
         description,
-        op: Op::Trash { path, pre },
+        op: Op::Trash {
+            path,
+            pre,
+            // The end state a removal asks for is that nothing is here,
+            // and a copy already gone is that end state.
+            absent_is_done: true,
+        },
     })
 }
 

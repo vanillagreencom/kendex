@@ -236,6 +236,7 @@ fn capture_ops(
         ops.push(PlannedOp {
             description: format!("trash the local source's earlier copy of {name}"),
             op: Op::Trash {
+                absent_is_done: false,
                 path: local_item.clone(),
                 pre: Pre::HashIs {
                     hash: crate::hash::hash_tree(&local_item)?,
@@ -262,6 +263,7 @@ fn capture_ops(
     ops.push(PlannedOp {
         description: format!("clear the edited install of {name} for re-render"),
         op: Op::Trash {
+            absent_is_done: false,
             pre: Pre::HashIs {
                 hash: crate::hash::hash_tree(edited)?,
             },

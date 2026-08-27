@@ -41,7 +41,18 @@ pub enum Op {
         to_pre: Pre,
     },
     /// Removal never deletes: the artifact moves to the trash.
-    Trash { path: PathBuf, pre: Pre },
+    Trash {
+        path: PathBuf,
+        pre: Pre,
+        /// Whether nothing at `path` is this op's end state. A removal
+        /// asks for exactly that, so a copy already gone satisfies it.
+        /// Every other Trash is half of a pair — the bytes it takes were
+        /// captured into the same plan, or a write after it replaces
+        /// them — and absence there means the bytes the plan read are not
+        /// the bytes on disk, which nothing but the precondition catches.
+        /// Set by the removal planner and nowhere else.
+        absent_is_done: bool,
+    },
     /// Apply every structured edit destined for one config file in a single
     /// mutation with a single precondition — two registrations into one
     /// settings file must both land in one apply. Unrelated keys always
@@ -145,37 +156,11 @@ impl Op {
                 }
                 fs::rename(from, to).map_err(|e| CoreError::io(from, e))
             }
-            Op::Trash { path, pre } => {
-                // A removal asks for one end state: nothing at this path.
-                // A copy that is already gone is that end state, so it is
-                // satisfied rather than failed — an installation whose
-                // harness copies are only partly present would otherwise
-                // roll its whole removal back on the missing one and stay
-                // half-present with no way forward. Nothing here is
-                // nothing to protect either, so the precondition, which
-                // binds the op to bytes it may take, has nothing to bind
-                // to.
-                //
-                // Absence proven by the stat, never inferred from its
-                // failure: an unreadable path is one this op knows nothing
-                // about, and calling it removed would take the item off the
-                // books while its files stay installed and still load. Asked
-                // without following a link, so a link whose target is gone is
-                // still here and still proven.
-                match fs::symlink_metadata(path) {
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-                    Err(error) => return Err(CoreError::io(path, error)),
-                    Ok(_) => {}
-                }
-                pre.check(path)?;
-                let trash = env.trash_dir();
-                fs::create_dir_all(&trash).map_err(|e| CoreError::io(&trash, e))?;
-                let base = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "item".to_owned());
-                crate::fs::move_any(path, &unique_in(&trash, &base))
-            }
+            Op::Trash {
+                path,
+                pre,
+                absent_is_done,
+            } => trash(env, path, pre, *absent_is_done),
             Op::EditFile { path, edits, pre } => {
                 pre.check(path)?;
                 let current = crate::fs::read_if_exists(path)?.unwrap_or_default();
@@ -224,6 +209,43 @@ impl Op {
             } => git_config_swap(file, key, expected.as_deref(), value.as_deref()),
         }
     }
+}
+
+/// Move one artifact to the trash. Removal never deletes, so every op that
+/// takes something off disk lands here.
+fn trash(env: &Env, path: &Path, pre: &Pre, absent_is_done: bool) -> Result<()> {
+    // A removal asks for one end state: nothing at this path. A copy that
+    // is already gone is that end state, so it is satisfied rather than
+    // failed — an installation whose harness copies are only partly
+    // present would otherwise roll its whole removal back on the missing
+    // one and stay half-present with no way forward. Nothing here is
+    // nothing to protect either, so the precondition, which binds the op
+    // to bytes it may take, has nothing to bind to. Every other Trash
+    // falls through to that precondition and is refused exactly as it
+    // always was.
+    //
+    // Absence proven by the stat, never inferred from its failure: an
+    // unreadable path is one this op knows nothing about, and calling it
+    // removed would take the item off the books while its files stay
+    // installed and still load. Asked without following a link, so a link
+    // whose target is gone is still here and still proven.
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if absent_is_done {
+                return Ok(());
+            }
+        }
+        Err(error) => return Err(CoreError::io(path, error)),
+        Ok(_) => {}
+    }
+    pre.check(path)?;
+    let trash = env.trash_dir();
+    fs::create_dir_all(&trash).map_err(|e| CoreError::io(&trash, e))?;
+    let base = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "item".to_owned());
+    crate::fs::move_any(path, &unique_in(&trash, &base))
 }
 
 fn write_tree(root: &Path, files: &[(PathBuf, Vec<u8>)], pre: &Pre) -> Result<()> {

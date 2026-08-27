@@ -198,6 +198,7 @@ fn move_ops(
         .map(|(path, pre)| PlannedOp {
             description: format!("clear the broken link at {}", path.display()),
             op: Op::Trash {
+                absent_is_done: false,
                 path: path.clone(),
                 pre: pre.clone(),
             },

@@ -197,6 +197,7 @@ fn write_ops(
                 item.name
             ),
             op: Op::Trash {
+                absent_is_done: false,
                 path: canonical.to_path_buf(),
                 pre: Pre::SymlinkTo {
                     target: target.clone(),

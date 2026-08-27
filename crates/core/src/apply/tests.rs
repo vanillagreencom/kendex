@@ -157,6 +157,7 @@ fn trash_receives_removals() {
         ops: vec![PlannedOp {
             description: "remove skill".into(),
             op: Op::Trash {
+                absent_is_done: true,
                 path: victim.clone(),
                 pre: Pre::Any,
             },
@@ -188,6 +189,7 @@ fn a_copy_already_gone_does_not_take_the_removal_with_it() {
             PlannedOp {
                 description: "remove the copy that is gone".into(),
                 op: Op::Trash {
+                    absent_is_done: true,
                     path: tmp.path().join("gone"),
                     pre: Pre::HashIs {
                         hash: "whatever the plan saw".into(),
@@ -197,6 +199,7 @@ fn a_copy_already_gone_does_not_take_the_removal_with_it() {
             PlannedOp {
                 description: "remove the copy that is here".into(),
                 op: Op::Trash {
+                    absent_is_done: true,
                     path: present.clone(),
                     pre: Pre::Any,
                 },
@@ -226,6 +229,7 @@ fn a_link_whose_target_is_gone_still_goes_to_the_trash() {
         ops: vec![PlannedOp {
             description: "remove the link".into(),
             op: Op::Trash {
+                absent_is_done: true,
                 path: link.clone(),
                 pre: Pre::SymlinkTo {
                     target: gone.clone(),
@@ -271,6 +275,7 @@ fn a_link_crosses_a_filesystem_boundary_into_the_trash() {
         ops: vec![PlannedOp {
             description: "remove the link".into(),
             op: Op::Trash {
+                absent_is_done: true,
                 path: link.clone(),
                 pre: Pre::SymlinkTo {
                     target: gone.clone(),
@@ -312,6 +317,7 @@ fn a_copy_that_cannot_be_read_stops_the_removal() {
         ops: vec![PlannedOp {
             description: "remove the copy nothing can read".into(),
             op: Op::Trash {
+                absent_is_done: true,
                 path: victim.clone(),
                 pre: Pre::Any,
             },
@@ -340,6 +346,7 @@ fn a_copy_that_changed_still_stops_the_removal() {
         ops: vec![PlannedOp {
             description: "remove the edited copy".into(),
             op: Op::Trash {
+                absent_is_done: true,
                 path: edited.clone(),
                 pre: Pre::HashIs {
                     hash: "what the plan read".into(),
