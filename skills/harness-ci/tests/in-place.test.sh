@@ -136,12 +136,15 @@ git -C "$coarse" clean -qfd -e kendex.toml
 commit_paths "$coarse" "sibling" .agents/skills/other/SKILL.md
 assert_verdict "the coarse carve covers every skill path" false --repo "$coarse" --event push --base "$coarsebase" --head HEAD
 
-# The escape and split-string avenues land in the coarse net too: neither
-# line spells in-place, both decode to it.
-for exotic in 'source = "in\u002Dplace"' 'split'; do
+# The escape and split-string avenues land in the coarse net too — an
+# escaped value, an escaped section-header key, a value split across lines:
+# none spells in-place where the extractor reads names, all decode to it.
+for exotic in 'source = "in\u002Dplace"' 'split' 'header'; do
   ex="$(new_repo "exotic-$RANDOM")"
   if [ "$exotic" = split ]; then
     printf 'schema = 6\n[skills.mine]\nsource = """in\\\n-place"""\n' >"$ex/kendex.toml"
+  elif [ "$exotic" = header ]; then
+    printf 'schema = 6\n[skills."mi\\u006Ee"]\nsource = "in-place"\n' >"$ex/kendex.toml"
   else
     printf 'schema = 6\n[skills.mine]\n%s\n' "$exotic" >"$ex/kendex.toml"
   fi
