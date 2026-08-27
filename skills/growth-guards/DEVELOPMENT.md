@@ -92,12 +92,15 @@ away. A delegating line it may not edit (a symlinked hook) keeps the helper
 in place and fails the removal rather than stranding a hook with no guard to
 reach.
 
-The installer runs on `kendex guard install` and on the separate yes an
-install offers — in the terminal (`kendex add`, a collection add, `kendex
-apply`) and in the app. `kendex guard uninstall` and `kendex guard check`
-invoke it too. `kendex remove` does not run the uninstaller (KEN-674):
-disarming before removing the skill is the caller's to do — shims whose
-scripts are gone block every commit.
+kendex runs this installer through the `repo-effects` declaration in
+`SKILL.md`: `kendex add --allow-repo-effects`, or a yes at the prompt in the
+terminal or in the app, runs it after the files land. Every CLI verb that
+drops the package — `kendex remove`, an `apply` or `refresh` whose plan takes
+it away, `marketplace unsubscribe --remove-packages` — runs `--uninstall`
+while the scripts are still on disk, because shims whose scripts are gone
+block every commit. `kendex guard install`, `kendex guard uninstall` and
+`kendex guard check` invoke it directly. `kendex check` reads nothing but the
+hook files: it names shims a deleted package left behind.
 
 `--check` is the read-only counterpart: it writes nothing — not even the
 hooks directory — and answers whether the shims are armed. `0`: the helper

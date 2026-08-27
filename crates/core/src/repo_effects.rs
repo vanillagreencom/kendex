@@ -28,6 +28,7 @@ use declaration::split_script;
 pub use declaration::{RepoEffects, declared};
 pub use disclosure::{
     Companion, Disclosure, Offers, Withheld, Written, installed_skills, offers, offers_for,
+    touches_git,
 };
 
 use serde::{Deserialize, Serialize};

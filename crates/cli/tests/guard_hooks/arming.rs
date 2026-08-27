@@ -225,7 +225,10 @@ fn check_names_the_shims_a_removed_package_left_behind() {
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
     let text = said(&out);
     assert!(text.contains("commit hooks"), "{text}");
-    assert!(text.contains("installed nowhere"), "{text}");
+    assert!(
+        text.contains("installed in no project of this repository"),
+        "{text}"
+    );
     let hooks = root.canonicalize().unwrap().join(".git/hooks");
     for file in ["pre-commit", "commit-msg", "kendex-guards"] {
         assert!(
@@ -237,6 +240,56 @@ fn check_names_the_shims_a_removed_package_left_behind() {
         !text.contains("guard install"),
         "a leftover was reported as an unarmed install:\n{text}"
     );
+
+    // With hooks redirected git reads none of these, so no commit fails
+    // and nothing is claimed about one.
+    git_ok(home, &root, &["config", "core.hooksPath", ".husky"]);
+    let out = run(home, &root, "kendex", &["check"]);
+    assert!(
+        !said(&out).contains("commit hooks"),
+        "a redirected repository was reported as failing every commit:\n{}",
+        said(&out)
+    );
+}
+
+/// One repository, two kendex projects, one hooks directory. The project
+/// without the package is gated by the one that armed it — not stranded —
+/// and the advice to delete the shims would have disarmed its neighbour.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_neighbouring_project_carrying_the_package_is_not_a_leftover() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    std::fs::create_dir_all(home.join(".claude")).unwrap();
+    let root = home.join("mono");
+    let api = root.join("apps/api");
+    let web = root.join("apps/web");
+    std::fs::create_dir_all(api.join(".agents")).unwrap();
+    std::fs::create_dir_all(web.join(".agents")).unwrap();
+    git_ok(home, &root, &["init", "--quiet", "-b", "main"]);
+    git_ok(home, &root, &["config", "user.email", "t@t"]);
+    git_ok(home, &root, &["config", "user.name", "t"]);
+    std::fs::write(root.join("a.txt"), "hi\n").unwrap();
+    git_ok(home, &root, &["add", "-A"]);
+    git_ok(home, &root, &["commit", "--quiet", "-m", "feat: base"]);
+    install_package(home, &api, &["growth-guards"]);
+    let armed = run(home, &api, "kendex", &["guard", "install"]);
+    assert!(armed.status.success(), "{}", said(&armed));
+    std::fs::write(web.join("kendex.toml"), "schema = 6\n").unwrap();
+
+    let out = run(home, &web, "kendex", &["check"]);
+    assert!(
+        !said(&out).contains("commit hooks"),
+        "a gated repository was reported as stranded:\n{}",
+        said(&out)
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+
+    // The control: a commit from the project without the package runs the
+    // neighbour's chain and passes.
+    std::fs::write(web.join("b.txt"), "fine\n").unwrap();
+    git_ok(home, &web, &["add", "-A"]);
+    git_ok(home, &web, &["commit", "--quiet", "-m", "feat: from web"]);
 }
 
 /// Arm through the package's own installer.

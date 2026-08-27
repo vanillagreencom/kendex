@@ -238,7 +238,13 @@ fn under_git(declared: &str) -> Option<PathBuf> {
 }
 
 /// Whether anything this package declares lands in the git directory.
-fn touches_git(effects: &RepoEffects) -> bool {
+///
+/// Public because undoing an effect asks it too: a package that writes
+/// nowhere near `.git` was offered in a plain directory and has something
+/// to undo there, and one that writes into `.git` was never offered at all.
+/// The same reading on both sides, so an effect is armed and disarmed under
+/// one test rather than two spellings of one.
+pub fn touches_git(effects: &RepoEffects) -> bool {
     effects.writes.iter().any(|path| under_git(path).is_some())
 }
 

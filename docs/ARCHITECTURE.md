@@ -383,12 +383,12 @@ lives in one capability table read by core and UI.
   `.agents/skills` — size-ratchet, todo-ban, byte-ceiling, suppression-ban, conflict-markers,
   commit-msg, and preflight's staged lanes. git's own `.git/hooks` shims run them: no kendex binary is in the
   path at commit time, and since git clones no hooks, a clone carries the scripts and one `guard install`
-  arms them. kendex implements no check — `guard install`/`guard uninstall` run the installer, a plan that
-  takes a package out of a scope runs its declared uninstaller before the files go (`engine::repo_effects::leaving`),
-  and `guard run <hook>` execs its script with git's redirects passed through, the one child not scrubbed
-  because it is a hook body naming the snapshot judged. `guard check` asks the package too. `kendex check`
-  executes nothing: our marker in both hook files, both executable, hooksPath unset, or not armed — and the
-  marker with no package under any skills root is a leftover it names by file (`guard::stranded`).
+  arms them. kendex implements no check — `guard install`/`guard uninstall` run the installer, every CLI verb
+  that drops a package runs its declared uninstaller before the files go (`engine_common::apply_report`, the one
+  executor of an `EngineReport`), and `guard run <hook>` execs its script with git's redirects passed through, the
+  one child not scrubbed because it is a hook body naming the snapshot judged. `guard check` asks the package too.
+  `kendex check` executes nothing: our marker in both hook files, both executable, hooksPath unset, or not armed —
+  and the marker with the package under no project of the repository is a leftover it names by file (`guard::stranded`).
   So there is one implementation of every verdict and one policy dialect:
   the flat `GROWTH_GUARDS_*` / `SIZE_RATCHET_*` keys, baselines and
   excludes the scripts read from the commit. Every enabled check runs

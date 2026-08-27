@@ -18,7 +18,7 @@ use crate::env::Env;
 use crate::model::{ItemKind, Scope};
 use crate::repo_effects::{DeclaredEffects, declared};
 
-use super::desired::{Artifact, DesiredState, skill_canonical};
+use super::desired::{Artifact, DesiredState, read_dirs, skill_canonical};
 use super::report_types::{DriftCause, DriftRow};
 use super::set_change::{SetChange, SetDirection};
 
@@ -148,10 +148,10 @@ fn blocked(drift: &[DriftRow], name: &str) -> bool {
 /// Read off the tree on disk, not off the desired state, because the
 /// desired state no longer has the item — that is what leaving means. The
 /// tree is still there while this plan is only planned, which is the whole
-/// window a removal has to run the uninstaller in: once the plan executes
-/// the scripts are gone, and shims that exec a script that is not there
-/// fail every commit closed. A tree already missing declares nothing here;
-/// what it left armed is `guard::stranded`'s to report.
+/// window the CLI has to run the uninstaller in: once the plan executes the
+/// scripts are gone, and shims that exec a script that is not there fail
+/// every commit closed. A tree already missing declares nothing here; what
+/// it left armed is `guard::stranded`'s to report.
 ///
 /// Empty outside a project. An effect is a change to a repository, and the
 /// global scope is not one; `run_script` refuses it.
@@ -164,31 +164,66 @@ pub(super) fn leaving(
     if !matches!(scope, Scope::Project { .. }) {
         return Vec::new();
     }
-    let skills = |lock: &crate::lock::Lock| -> BTreeSet<String> {
-        lock.entries
-            .values()
-            .filter(|entry| entry.kind == ItemKind::Skill)
-            .map(|entry| entry.name.clone())
-            .collect()
-    };
-    let staying = skills(after);
+    let staying = skill_names(after);
     let mut found: BTreeMap<String, DeclaredEffects> = BTreeMap::new();
-    for name in skills(before).difference(&staying) {
-        let root = skill_canonical(env, scope, name);
-        let Ok(Some(text)) = crate::fs::read_if_exists(&root.join("SKILL.md")) else {
+    for name in skill_names(before).difference(&staying) {
+        let Some((root, text)) = installed_tree(env, scope, before, name) else {
             continue;
         };
         let Some(effects) = declared(&text) else {
             continue;
         };
         found.insert(
-            name.clone(),
+            (*name).to_owned(),
             DeclaredEffects {
-                name: name.clone(),
+                name: (*name).to_owned(),
                 root,
                 effects,
             },
         );
     }
     found.into_values().collect()
+}
+
+/// The packages a lock carries, by name: the package, not any tool's copy
+/// of it. A lock row is per harness, and an effect belongs to the package —
+/// so both directions ask whether the NAME is in the scope, never whether
+/// one tool's row is.
+fn skill_names(lock: &crate::lock::Lock) -> BTreeSet<&str> {
+    lock.entries
+        .values()
+        .filter(|entry| entry.kind == ItemKind::Skill)
+        .map(|entry| entry.name.as_str())
+        .collect()
+}
+
+/// Where a departing package's tree sits on disk, and its `SKILL.md`.
+///
+/// The shared tree first, then every directory the departing rows' own
+/// tools read skills from: a copy delivery writes the package into the
+/// tool's own directory and the shared tree may not exist at all, so
+/// reading only `.agents/skills` found no declaration for exactly the
+/// install whose scripts were about to be trashed. The first copy that
+/// carries a `SKILL.md` is the one whose scripts run.
+fn installed_tree(
+    env: &Env,
+    scope: &Scope,
+    before: &crate::lock::Lock,
+    name: &str,
+) -> Option<(std::path::PathBuf, String)> {
+    let canonical = crate::harness::canonical_name(name);
+    let mut candidates = vec![skill_canonical(env, scope, name)];
+    for entry in before
+        .entries
+        .values()
+        .filter(|entry| entry.kind == ItemKind::Skill && entry.name == name)
+    {
+        for dir in read_dirs(env, scope, entry.harness, ItemKind::Skill) {
+            candidates.push(dir.join(&canonical));
+        }
+    }
+    candidates.into_iter().find_map(|root| {
+        let text = crate::fs::read_if_exists(&root.join("SKILL.md")).ok()??;
+        Some((root, text))
+    })
 }

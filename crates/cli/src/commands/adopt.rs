@@ -2,7 +2,7 @@ use kendex_core::engine::{adopt, audit};
 use kendex_core::env::Env;
 use kendex_core::model::{HarnessId, ItemKind};
 
-use super::engine_common::print_safety;
+use super::engine_common::{apply_report, print_safety};
 use super::{CliResult, resolve_scopes, say};
 use crate::scope::ScopeFilter;
 
@@ -46,7 +46,7 @@ pub fn run(
     // beside the write, like every other write path.
     let report = audit(env, &scope)?;
     print_safety(&report);
-    kendex_core::apply::execute(env, &report.plan, None)?;
+    apply_report(env, &report)?;
     say(&format!("adopted {} '{}'", kind.name(), name));
     Ok(())
 }

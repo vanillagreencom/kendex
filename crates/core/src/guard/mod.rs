@@ -48,11 +48,9 @@ pub const SKILL: &str = "growth-guards";
 /// taxonomy to reach.
 pub const MARKER: &str = "# kendex-guards-hook";
 
-/// The helper the installer writes beside the hooks, and the line inside
-/// it that says the installer wrote it. Read for one purpose: naming the
-/// file when the package that owns it is gone.
+/// The helper the installer writes beside the hooks. Nothing else writes a
+/// file of this name under `.git/hooks`, so the path alone identifies it.
 const HELPER: &str = "kendex-guards";
-const HELPER_MARKER: &str = "kendex growth-guards git hooks";
 
 /// The installer the package ships, relative to its own directory.
 const INSTALLER: &str = "scripts/install-git-hooks";
@@ -219,67 +217,72 @@ fn installer(dir: &Path, args: &[&str]) -> Result<GuardReport> {
 /// Every uncertainty inside a repository lands on "not armed", whose remedy
 /// is a command that is safe to run twice.
 ///
-/// `None` is the state that is not a verdict: there is no repository here at
-/// all, so there is nothing to arm and no drift to report. Folding it into
-/// "not armed" told a scope with no work tree to run `kendex guard install`,
-/// which exits 2 there — advice that cannot be taken, every session.
+/// Over a repository the caller already probed: whether there is one here
+/// at all is the caller's question, and probing it again for every read
+/// spends three git processes per answer.
 ///
 /// A person who wants the full vocabulary runs `kendex guard check`, which
 /// asks the package. That is an invocation, and an invocation is consent.
-pub fn armed(dir: &Path) -> Result<Option<bool>> {
-    let Some(repo) = Repo::probe(dir)? else {
-        return Ok(None);
-    };
+pub fn armed(repo: &Repo) -> Result<bool> {
     if repo.hooks_redirected()? {
-        return Ok(Some(false));
+        return Ok(false);
     }
     let hooks = repo.default_hooks_dir();
     for lane in LANES {
         let path = hooks.join(lane);
         let Some(text) = crate::fs::read_if_exists(&path)? else {
-            return Ok(Some(false));
+            return Ok(false);
         };
         if !text.contains(MARKER) || !is_executable(&path) {
-            return Ok(Some(false));
+            return Ok(false);
         }
     }
-    Ok(Some(true))
+    Ok(true)
 }
 
 /// The hook files this package left behind in a repository that no longer
 /// carries the package anywhere.
 ///
 /// The same read as [`armed`] — the marker, in the directory git reads —
-/// with the opposite precondition: no copy of the package under any search
-/// root, in this checkout or the main one. A shim that survives its package
-/// execs a script that is not there, so every commit in the repository
-/// fails closed, and nothing else reports it: the lock no longer names the
-/// package, so the drift report has nothing to compare, and `guard check`
-/// cannot run an installer that is gone.
+/// with the opposite precondition: no copy of the package under any kendex
+/// project in the work tree, nor in the main checkout's. A shim that
+/// survives its package execs a script that is not there, so every commit
+/// in the repository fails closed, and nothing else reports it: the lock no
+/// longer names the package, so the drift report has nothing to compare,
+/// and `guard check` cannot run an installer that is gone.
 ///
-/// Each path that carries the marker, so the report can say which files to
-/// clean up. Empty where there is no repository, where the package is
-/// present (a broken copy is `guard check`'s to describe), or where nothing
-/// carries the marker. The execute bit is not consulted: a leftover git
-/// happens to skip is still a leftover.
-pub fn stranded(dir: &Path) -> Result<Vec<PathBuf>> {
-    let Some(repo) = Repo::probe(dir)? else {
-        return Ok(Vec::new());
-    };
-    if Installed::present(&repo).is_some() {
-        return Ok(Vec::new());
-    }
+/// Cheapest question first. The hook files are read before anything is
+/// spawned, because a repository with no marker in them is the ordinary
+/// case and this runs at every session start; only a marker earns the git
+/// process behind `hooks_redirected` and the search behind
+/// `Installed::anywhere`.
+///
+/// Repository-wide, not project-wide. Every project in a work tree shares
+/// one hooks directory, so a project without the package beside one that
+/// armed it is a gated repository, not a stranded one — and the advice
+/// here, followed, would have disarmed the gate the other project asked
+/// for.
+///
+/// Each path that carries the marker, or the helper by its name, so the
+/// report can say which files to clean up. Empty where `core.hooksPath` is
+/// set: git reads no hook here, so nothing fails, and what a redirected
+/// directory means is a grammar this module does not have. The execute bit
+/// is not consulted: a leftover git happens to skip is still a leftover.
+pub fn stranded(repo: &Repo) -> Result<Vec<PathBuf>> {
     let hooks = repo.default_hooks_dir();
     let mut files = Vec::new();
-    for (name, marker) in LANES
-        .iter()
-        .map(|lane| (*lane, MARKER))
-        .chain([(HELPER, HELPER_MARKER)])
-    {
-        let path = hooks.join(name);
-        if crate::fs::read_if_exists(&path)?.is_some_and(|text| text.contains(marker)) {
+    for lane in LANES {
+        let path = hooks.join(lane);
+        if crate::fs::read_if_exists(&path)?.is_some_and(|text| text.contains(MARKER)) {
             files.push(path);
         }
+    }
+    let helper = hooks.join(HELPER);
+    if helper.is_file() {
+        files.push(helper);
+    }
+    if files.is_empty() || repo.hooks_redirected()? || Installed::anywhere(repo)? {
+        return Ok(Vec::new());
     }
     Ok(files)
 }

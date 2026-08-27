@@ -2,6 +2,7 @@ use clap::Subcommand;
 use kendex_core::env::Env;
 use kendex_core::{remote, source_ops};
 
+use super::engine_common::apply_report;
 use super::{CliResult, out, resolve_scopes, say};
 use crate::scope::ScopeFilter;
 
@@ -58,18 +59,18 @@ pub fn run(env: &Env, command: SourceCommand, filter: ScopeFilter) -> CliResult 
             }
             SourceCommand::Add { name, reference } => {
                 let report = source_ops::add_source(env, &scope, name, reference)?;
-                kendex_core::apply::execute(env, &report.plan, None)?;
+                apply_report(env, &report)?;
                 say(&format!("{}: declared source '{name}'", scope.label()));
             }
             SourceCommand::Remove { name } => {
                 let report = source_ops::remove_source(env, &scope, name)?;
-                kendex_core::apply::execute(env, &report.plan, None)?;
+                apply_report(env, &report)?;
                 say(&format!("{}: removed source '{name}'", scope.label()));
             }
             SourceCommand::Enable { name } | SourceCommand::Disable { name } => {
                 let enabled = matches!(command, SourceCommand::Enable { .. });
                 let report = source_ops::toggle_source(env, &scope, name, enabled)?;
-                kendex_core::apply::execute(env, &report.plan, None)?;
+                apply_report(env, &report)?;
                 say(&format!(
                     "{}: source '{name}' {}",
                     scope.label(),

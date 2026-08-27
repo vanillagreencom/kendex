@@ -70,9 +70,9 @@ an outside contributor.
   ancestry into the default branch, or the pull request whose head commit is
   the branch tip. Squash merges collect, and every keep now names its reason.
 
-- `kendex remove` runs a package's declared uninstaller before its files go,
-  so removing `growth-guards` disarms the commit hooks instead of leaving
-  shims that fail every commit. `kendex check` names shims left behind.
+- `kendex remove`, and any apply, refresh or unsubscribe that drops a package,
+  runs its declared uninstaller before the files go, so dropping `growth-guards`
+  disarms the commit hooks. `kendex check` names shims a removed package left.
 
 - A refresh cuts opencode.json's `kendex-hook-` `instructions` rows down to
   what it renders now, so a row kendex wrote leaves with its render. Every

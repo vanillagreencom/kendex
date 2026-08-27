@@ -2,6 +2,7 @@ use clap::Subcommand;
 use kendex_core::env::Env;
 use kendex_core::source_ops;
 
+use super::engine_common::apply_report;
 use super::{CliResult, out, resolve_scopes, say};
 use crate::scope::ScopeFilter;
 
@@ -169,12 +170,12 @@ fn run_unsubscribe(
     // Nothing installed: a plain confirm, whichever flag (or none) was passed.
     if closure.items.is_empty() {
         let report = kendex_core::source_ops::remove_source(env, &scope, name)?;
-        kendex_core::apply::execute(env, &report.plan, None)?;
+        apply_report(env, &report)?;
         say(&format!("{}: unsubscribed from '{name}'", scope.label()));
         return Ok(());
     }
 
-    let plan = match (remove_packages, keep_packages) {
+    match (remove_packages, keep_packages) {
         (false, false) => {
             return Err(format!(
                 "'{name}' has {} package(s) installed — pass --remove-packages to uninstall them or --keep-packages to keep them as your own",
@@ -182,10 +183,16 @@ fn run_unsubscribe(
             )
             .into());
         }
-        (_, true) => detach::source(env, &scope, name)?,
-        (true, _) => detach::remove(env, &scope, name, discard_edits)?.plan,
-    };
-    kendex_core::apply::execute(env, &plan, None)?;
+        // A bare plan: keeping moves tables, and takes no package away.
+        (_, true) => {
+            let plan = detach::source(env, &scope, name)?;
+            kendex_core::apply::execute(env, &plan, None)?;
+        }
+        (true, _) => {
+            let report = detach::remove(env, &scope, name, discard_edits)?;
+            apply_report(env, &report)?;
+        }
+    }
     if keep_packages {
         // Keeping moved the catalog's mapping tables into the manifest, so
         // the install records are re-synced here — otherwise every kept
@@ -195,7 +202,7 @@ fn run_unsubscribe(
             &scope,
             &kendex_core::engine::PlanOptions::default(),
         )?;
-        kendex_core::apply::execute(env, &resync.plan, None)?;
+        apply_report(env, &resync)?;
     }
     let kept = if keep_packages { "kept" } else { "removed" };
     say(&format!(
@@ -252,7 +259,7 @@ fn run_subscribe(
     for note in &subscribed.report.notes {
         say(note);
     }
-    kendex_core::apply::execute(env, &subscribed.report.plan, None)?;
+    apply_report(env, &subscribed.report)?;
     // Subscribing fetches so counts can land; a failure costs the
     // counts, never the subscription.
     if let Ok(Some(manifest)) =

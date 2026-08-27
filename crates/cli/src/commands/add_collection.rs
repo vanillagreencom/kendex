@@ -12,7 +12,7 @@ use kendex_core::model::Scope;
 use kendex_core::registry::{CurlFetch, collections};
 use kendex_core::source_ops::{self, SourceAction};
 
-use super::engine_common::{print_report, print_safety};
+use super::engine_common::{apply_report, print_report, print_safety};
 use super::{CliResult, say};
 
 pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -> CliResult {
@@ -105,7 +105,7 @@ fn install_step(
         SourceAction::Reuse { name } => name,
         SourceAction::Subscribe { reference } => {
             let subscribed = source_ops::subscribe(env, scope, &reference, None)?;
-            kendex_core::apply::execute(env, &subscribed.report.plan, None)?;
+            apply_report(env, &subscribed.report)?;
             say(&format!(
                 "{}: subscribed to '{}'",
                 scope.label(),
@@ -154,12 +154,12 @@ fn install_step(
         },
     )?;
     print_report(env, &report);
-    kendex_core::apply::execute(env, &report.plan, None)?;
+    apply_report(env, &report)?;
     if reused && let Some(commit) = &step.commit {
         for (kind, name) in &members {
             let pinned = kendex_core::package::set_rev(env, scope, *kind, name, Some(commit))?;
             print_safety(&pinned);
-            kendex_core::apply::execute(env, &pinned.plan, None)?;
+            apply_report(env, &pinned)?;
         }
     }
     // The step's own plan goes back to the caller, which discloses over the

@@ -61,54 +61,60 @@ fn fold_commit_hooks(env: &Env, checked: &mut CheckReport, scopes: &[kendex_core
         let Scope::Project { root } = scope.canonical() else {
             continue;
         };
-        // Before the install record is consulted: a package that was
-        // removed is in no record, and what it left armed is the one
-        // state here that stops every commit. Named by file, because the
-        // remedy is by hand — the uninstaller that would strip these went
-        // with the package.
-        match kendex_core::guard::stranded(&root) {
-            Ok(files) if files.is_empty() => {}
-            Ok(files) => {
-                let files: Vec<String> = files
-                    .iter()
-                    .map(|path| path.display().to_string())
-                    .collect();
-                report::fold(
-                    checked,
-                    "commit hooks",
-                    Class::Drift,
-                    format!(
-                        "{} armed the commit hooks and is installed nowhere in this repository, so every commit fails — delete {} or strip the lines marked `{}` from the hooks (a hook the marker says it created can go whole)",
-                        kendex_core::guard::SKILL,
-                        files.join(", "),
-                        kendex_core::guard::MARKER
-                    ),
-                );
-                continue;
-            }
+        // One probe per scope, shared by both reads below: each costs git
+        // processes, and this runs at every session start.
+        //
+        // No repository here is no verdict: there is nothing to arm and no
+        // drift to report. Folding it into "not armed" told a scope with no
+        // work tree to run `kendex guard install`, which exits 2 there —
+        // advice that cannot be taken, every session.
+        let repo = match kendex_core::guard::Repo::probe(&root) {
+            Ok(Some(repo)) => repo,
+            Ok(None) => continue,
             Err(error) => {
                 report::fold(checked, "commit hooks", Class::Unknown, error.to_string());
                 continue;
             }
-        }
+        };
         // A checkout that merely carries the files is not missing an
         // arming nobody asked for, so only a project whose own install
-        // record declares the package hears about this at all.
-        if !installed_here(env, scope) {
-            continue;
-        }
-        let (class, text) = match kendex_core::guard::armed(&root) {
-            // Armed, or no repository at all: neither is something a
-            // reader can act on, and the second has no remedy to offer.
-            Ok(None | Some(true)) => continue,
-            Ok(Some(false)) => (
-                Class::Drift,
-                format!(
-                    "commit hooks are not armed in {} — `kendex guard install` arms them, and `kendex guard check` says more",
-                    root.display()
+        // record declares the package hears about unarmed hooks. One whose
+        // record does NOT is where a removal may have left shims behind:
+        // the package is in no record, and what it left armed is the one
+        // state here that stops every commit. Named by file, because the
+        // remedy is by hand — the uninstaller that would strip these went
+        // with the package.
+        let (class, text) = match installed_here(env, scope) {
+            false => match kendex_core::guard::stranded(&repo) {
+                Ok(files) if files.is_empty() => continue,
+                Ok(files) => {
+                    let files: Vec<String> = files
+                        .iter()
+                        .map(|path| path.display().to_string())
+                        .collect();
+                    (
+                        Class::Drift,
+                        format!(
+                            "{} armed the commit hooks and is installed in no project of this repository, so every commit fails — delete {} or strip the lines marked `{}` from the hooks (a hook the marker says it created can go whole)",
+                            kendex_core::guard::SKILL,
+                            files.join(", "),
+                            kendex_core::guard::MARKER
+                        ),
+                    )
+                }
+                Err(error) => (Class::Unknown, error.to_string()),
+            },
+            true => match kendex_core::guard::armed(&repo) {
+                Ok(true) => continue,
+                Ok(false) => (
+                    Class::Drift,
+                    format!(
+                        "commit hooks are not armed in {} — `kendex guard install` arms them, and `kendex guard check` says more",
+                        root.display()
+                    ),
                 ),
-            ),
-            Err(error) => (Class::Unknown, error.to_string()),
+                Err(error) => (Class::Unknown, error.to_string()),
+            },
         };
         report::fold(checked, "commit hooks", class, text);
     }

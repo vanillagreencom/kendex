@@ -223,9 +223,20 @@ pub fn confirm_and_apply(
             return Err("apply cancelled".into());
         }
     }
-    // A plan can take a package away without `remove` being the verb —
-    // a manifest edited by hand, a sweep — and its uninstaller has to run
-    // while the scripts are still there.
+    apply_report(env, report)
+}
+
+/// Execute a report's plan — the one way a CLI verb holding an
+/// `EngineReport` writes it.
+///
+/// A plan can take a package away whatever the verb — `remove`, a manifest
+/// edited by hand and applied, a sweep, an unsubscribe that drops its
+/// packages — and the package's declared uninstaller has to run while the
+/// scripts it names are still on disk. Executing `report.plan` directly
+/// skips that, so no verb does: every report goes through here, and only a
+/// bare `Plan` with no report behind it (a fork's move, an adopt's) is
+/// executed on its own.
+pub fn apply_report(env: &Env, report: &EngineReport) -> Result<usize, Box<dyn std::error::Error>> {
     super::repo_effects::undo(&report.plan.scope, report)?;
     Ok(kendex_core::apply::execute(env, &report.plan, None)?.applied)
 }

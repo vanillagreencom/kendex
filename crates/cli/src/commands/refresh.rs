@@ -3,7 +3,8 @@ use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
 
 use super::engine_common::{
-    confirm_and_apply, print_conflicts, print_drift, print_notes, print_safety, refresh_failures,
+    apply_report, confirm_and_apply, print_conflicts, print_drift, print_notes, print_safety,
+    refresh_failures,
 };
 use super::ledger::say_ledger;
 use super::{CliResult, resolve_scopes, say};
@@ -121,9 +122,7 @@ pub fn run(
         // what it installs still ends on the same ledger, since the
         // outcomes it has to report are the same either way.
         let applied: Result<usize, String> = match report.set_changes.is_empty() {
-            true => kendex_core::apply::execute(env, &report.plan, None)
-                .map(|outcome| outcome.applied)
-                .map_err(|error| error.to_string()),
+            true => apply_report(env, &report).map_err(|error| error.to_string()),
             false => {
                 print_set_changes(&scope, &report);
                 confirm_and_apply(env, &report, yes).map_err(|error| error.to_string())

@@ -85,6 +85,36 @@ impl Installed {
         None
     }
 
+    /// Whether any kendex project in this repository carries the package.
+    ///
+    /// The question `stranded` asks, and a wider one than [`present`]: that
+    /// searches from where the caller stands, which is the right copy to
+    /// RUN, while a hooks directory is shared by every project in the work
+    /// tree and by every linked work tree of it. So every project under
+    /// this work tree and under the main checkout is searched — a copy in
+    /// any of them is what the shared shims run.
+    ///
+    /// [`present`]: Installed::present
+    pub fn anywhere(repo: &super::Repo) -> Result<bool> {
+        if Installed::present(repo).is_some() {
+            return Ok(true);
+        }
+        let mut trees = vec![repo.worktree.clone()];
+        trees.extend(main_checkout(repo));
+        for tree in trees {
+            for project in crate::discover::discover_projects(&tree)? {
+                if SKILL_ROOTS
+                    .iter()
+                    .map(|base| project.join(base).join(SKILL))
+                    .any(|dir| dir.exists() || dir.is_symlink())
+                {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
     /// Whether any copy of the package is here at all, for a message that
     /// tells "no package installed" from "a package whose scripts are
     /// broken" — two different things to do something about.

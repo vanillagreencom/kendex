@@ -199,6 +199,177 @@ fn removing_the_package_disarms_the_repository_first() {
     assert!(ok.status.success(), "{}", spoke(&ok));
 }
 
+/// A project that is not a git work tree has nothing armed to undo, and
+/// removing the package from it does not run an uninstaller that would
+/// refuse the directory.
+///
+/// The disclosure already stands down there — an effect writing into `.git`
+/// is not offered where the git directory cannot be resolved — so the
+/// removal has to stand down the same way, or every removal from a plain
+/// directory fails over hooks it never had.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn removing_from_a_plain_directory_runs_no_uninstaller() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    offer(&world, "growth-guards");
+    fs::remove_dir_all(world.at(".git")).unwrap();
+    let added = world.try_run(&["add", "cat", "--skill", "growth-guards", "-y"]);
+    assert!(added.status.success(), "{}", spoke(&added));
+
+    let removed = world.try_run(&["remove", "growth-guards"]);
+    let out = spoke(&removed);
+    assert!(removed.status.success(), "{out}");
+    assert!(!out.contains("running scripts/install-git-hooks"), "{out}");
+    assert!(out.contains("not inside a git work tree"), "{out}");
+    assert!(
+        !world.at(".agents/skills/growth-guards").exists(),
+        "the package stayed:\n{out}"
+    );
+}
+
+/// A copy delivery writes the package into the tool's own directory and
+/// the shared tree may not exist at all; the removal still finds the
+/// declaration and disarms.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn removing_a_copied_package_disarms_the_repository_too() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    offer(&world, "growth-guards");
+    let out = world.run(&[
+        "add",
+        "cat",
+        "--skill",
+        "growth-guards",
+        "-y",
+        "--copy",
+        "--allow-repo-effects",
+    ]);
+    assert!(
+        world.at(".claude/skills/growth-guards/SKILL.md").is_file(),
+        "no copy in the tool's directory:\n{out}"
+    );
+    assert!(world.at(".git/hooks/kendex-guards").is_file(), "{out}");
+
+    let out = world.run(&["remove", "growth-guards"]);
+    assert!(
+        out.contains("growth-guards: running scripts/install-git-hooks --uninstall"),
+        "{out}"
+    );
+    assert!(!world.at(".claude/skills/growth-guards").exists(), "{out}");
+    assert!(!world.at(".git/hooks/kendex-guards").exists(), "{out}");
+    fs::write(world.at("late.txt"), "fine\n").unwrap();
+    git_without_kendex(&world.project, &["add", "-A"]);
+    let ok = git_without_kendex(&world.project, &["commit", "-m", "feat: after removal"]);
+    assert!(ok.status.success(), "{}", spoke(&ok));
+}
+
+/// An uninstaller that fails stops the removal with the package still
+/// installed: the other order trashes the scripts and leaves exactly the
+/// stranded state this exists to prevent.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_failing_uninstaller_keeps_the_package_installed() {
+    use std::os::unix::fs::PermissionsExt;
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    offer(&world, "growth-guards");
+    // The catalog's installer, wrapped: everything passes through except
+    // the uninstall, which refuses.
+    let installer = world
+        .catalog
+        .join("skills/growth-guards/scripts/install-git-hooks");
+    let real = installer.with_file_name("install-git-hooks.real");
+    fs::rename(&installer, &real).unwrap();
+    fs::write(
+        &installer,
+        "#!/usr/bin/env bash\ncase \" $* \" in *\" --uninstall \"*) echo 'refusing to disarm' >&2; exit 1;; esac\nexec \"$(dirname \"$0\")/install-git-hooks.real\" \"$@\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&installer, fs::Permissions::from_mode(0o755)).unwrap();
+    world.run(&[
+        "add",
+        "cat",
+        "--skill",
+        "growth-guards",
+        "-y",
+        "--allow-repo-effects",
+    ]);
+    assert!(world.at(".git/hooks/kendex-guards").is_file());
+
+    let removed = world.try_run(&["remove", "growth-guards"]);
+    let out = spoke(&removed);
+    assert!(!removed.status.success(), "the removal went ahead:\n{out}");
+    assert!(out.contains("refusing to disarm"), "{out}");
+    assert!(out.contains("exited 1"), "{out}");
+    assert!(out.contains("its files stay in place"), "{out}");
+    assert!(
+        world.at(".agents/skills/growth-guards").is_dir(),
+        "the scripts were trashed:\n{out}"
+    );
+    assert!(
+        world.manifest().contains("[skills.growth-guards]"),
+        "the declaration went:\n{}",
+        world.manifest()
+    );
+    assert!(
+        world.at(".git/hooks/kendex-guards").is_file(),
+        "the helper went while the uninstall refused:\n{out}"
+    );
+}
+
+/// A package can leave without `remove` being the verb. A manifest edited
+/// by hand and applied takes the package away, and the uninstaller runs
+/// there too, while the scripts are still on disk.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn applying_a_manifest_without_the_package_disarms_first() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    offer(&world, "growth-guards");
+    world.run(&[
+        "add",
+        "cat",
+        "--skill",
+        "growth-guards",
+        "-y",
+        "--allow-repo-effects",
+    ]);
+    assert!(world.at(".git/hooks/kendex-guards").is_file());
+
+    let manifest = world.manifest();
+    assert!(manifest.contains("[skills.growth-guards]"), "{manifest}");
+    let mut kept = String::new();
+    let mut dropping = false;
+    for line in manifest.lines() {
+        if line.trim() == "[skills.growth-guards]" {
+            dropping = true;
+            continue;
+        }
+        if dropping && line.starts_with('[') {
+            dropping = false;
+        }
+        if !dropping {
+            kept.push_str(line);
+            kept.push('\n');
+        }
+    }
+    fs::write(world.at("kendex.toml"), kept).unwrap();
+
+    let out = world.run(&["apply", "-y"]);
+    assert!(
+        out.contains("growth-guards: running scripts/install-git-hooks --uninstall"),
+        "{out}"
+    );
+    assert!(!world.at(".agents/skills/growth-guards").exists(), "{out}");
+    assert!(!world.at(".git/hooks/kendex-guards").exists(), "{out}");
+    fs::write(world.at("late.txt"), "fine\n").unwrap();
+    git_without_kendex(&world.project, &["add", "-A"]);
+    let ok = git_without_kendex(&world.project, &["commit", "-m", "feat: after apply"]);
+    assert!(ok.status.success(), "{}", spoke(&ok));
+}
+
 /// `kendex check` names an unarmed repository, in the package's own words,
 /// and says nothing once it is armed.
 #[test]
