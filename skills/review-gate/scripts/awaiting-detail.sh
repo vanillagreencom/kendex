@@ -43,7 +43,10 @@ if [ "$count" = "0" ]; then
   exit 0
 fi
 
-joined="$(printf '%s\n' "$SOURCES" | tr '\n' ',' | sed 's/,$//; s/,/, /g')"
+# Joined by RECORD, never by character: a status context is free-form and may
+# hold a comma, and rewriting every comma into ", " advertised `lint,build` as
+# the nonexistent `lint, build`.
+joined="$(printf '%s\n' "$SOURCES" | awk 'NR == 1 { printf "%s", $0; next } { printf ", %s", $0 }')"
 detail="$full_form$joined"
 if [ "${#detail}" -le "$RG_STATUS_LIMIT" ]; then
   printf '%s' "$detail"

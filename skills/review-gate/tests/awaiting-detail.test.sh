@@ -263,6 +263,15 @@ want "the open trust model is named" "any non-author review" \
 want "every source is listed while they fit" "$(printf 'alice\nAnalysis\nbotty[bot]')" \
   "no review evidence at $SHA yet; expected from alice, Analysis, botty[bot]"
 
+# A status context is free-form and may hold a comma. Joining by character
+# rewrote every comma into ", ", advertising `lint,build` as a context that
+# does not exist.
+want "a comma inside a context survives the join" "$(printf 'lint,build\nalice')" \
+  "no review evidence at $SHA yet; expected from lint,build, alice"
+
+want "a lone comma-bearing context is unchanged" "lint,build" \
+  "no review evidence at $SHA yet; expected from lint,build"
+
 want "no eligible source names the state, never a blank clause" "" \
   "no review evidence at $SHA yet; no configured source is eligible here"
 
