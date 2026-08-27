@@ -16,6 +16,10 @@ an outside contributor.
 
 ### Changed
 
+- **Breaking:** kendex no longer reads the pre-2.0 mutable clone in the
+  source cache. Nothing has written that layout since 2.0, so a scope whose
+  only copy is there reads as Pending until `kendex refresh` fetches it.
+
 - **Breaking:** `byte-ceiling`'s staged lane now judges a file a commit
   changes, not only one it adds, and reads type changes and moved-and-grown
   files too. A repo that edits an oversized file needs a row for it.

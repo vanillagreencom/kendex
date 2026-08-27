@@ -96,17 +96,15 @@ pub fn sync(env: &Env, repo: &str, rev: Option<&str>) -> Result<Resolution> {
     };
     let Some(commit) = store::resolve_ref(&mirror, selector) else {
         // The mirror cannot name this selector: nothing was fetched, or the
-        // branch or tag is gone upstream. The pre-2.0 clone is the last
-        // thing left that might hold content.
-        return match (legacy_resolution(env, repo), fetched) {
-            (Some(resolution), _) => Ok(resolution),
+        // branch or tag is gone upstream.
+        return match fetched {
             // Nothing was ever fetched: the fetch failure is the whole
             // story, and "pinned" or "cached" would both be untrue.
-            (None, Err(error)) => Err(CoreError::FetchFailed {
+            Err(error) => Err(CoreError::FetchFailed {
                 repo: repo.to_owned(),
                 reason: error.to_string(),
             }),
-            (None, Ok(())) => Err(CoreError::PinUnavailable {
+            Ok(()) => Err(CoreError::PinUnavailable {
                 repo: repo.to_owned(),
                 pin: selector.to_owned(),
                 reason: "no such branch or tag".to_owned(),
@@ -157,13 +155,7 @@ pub fn cached(env: &Env, repo: &str, rev: Option<&str>) -> Result<Option<Resolut
             }
         }
     }
-    // A pin is answered by that commit or not at all. The pre-2.0 clone
-    // sits on whatever it last reset to, which is a different commit's
-    // content under a name that promised one.
-    match store::is_pin(selector) {
-        true => Ok(None),
-        false => Ok(legacy_resolution(env, repo)),
-    }
+    Ok(None)
 }
 
 /// Every fetch stamps its mirror, success or failure, so freshness and
@@ -182,21 +174,6 @@ fn stamp_fetch(env: &Env, key: &str, mirror: &std::path::Path, fetched: &Result<
         ),
         Err(error) => crate::drift::stamps::record_failure(env, key, &error.to_string(), now),
     };
-}
-
-/// The v0.1 mutable clone, read where the new layout has nothing yet: an
-/// offline first run after an update still resolves. Nothing writes to it
-/// and nothing deletes it — the first successful refresh publishes a
-/// per-commit checkout and this stops being consulted.
-fn legacy_resolution(env: &Env, repo: &str) -> Option<Resolution> {
-    let legacy = store::legacy_clone(env, repo);
-    store::legacy_head(&legacy).map(|commit| Resolution {
-        commit,
-        root: legacy,
-        warning: Some(format!(
-            "{repo}: reading the pre-2.0 cache; the next refresh replaces it"
-        )),
-    })
 }
 
 /// Fetch every enabled remote source's mirror, pins included. `sync`
@@ -312,8 +289,7 @@ pub fn cache_head(env: &Env, repo: &str, rev: Option<&str>) -> Option<String> {
     let key = cache_key(env, repo);
     let commit = match rev.filter(|rev| store::is_pin(rev)) {
         Some(pin) => pin.to_owned(),
-        None => store::resolve_ref(&store::mirror_dir(env, &key), rev.unwrap_or("HEAD"))
-            .or_else(|| legacy_resolution(env, repo).map(|resolution| resolution.commit))?,
+        None => store::resolve_ref(&store::mirror_dir(env, &key), rev.unwrap_or("HEAD"))?,
     };
     Some(commit.chars().take(7).collect())
 }

@@ -288,49 +288,6 @@ fn one_repository_spelled_three_ways_keeps_one_cache_entry() {
     assert_ne!(key, store::repo_key("https://other.test/owner/repo"));
 }
 
-/// The v0.1 mutable clone still answers while the new layout has nothing,
-/// so an offline first run after an update is not a dead end. Nothing
-/// deletes it; the first successful refresh simply stops needing it.
-#[test]
-fn the_pre_2_0_clone_is_read_until_a_refresh_replaces_it() {
-    let f = fixture();
-    let legacy = store::legacy_clone(&f.env, REPO);
-    fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-    git(
-        f.env.source_cache_dir().as_path(),
-        &[
-            "clone",
-            "--quiet",
-            &clone_url(&f.env, REPO),
-            &legacy.display().to_string(),
-        ],
-    );
-
-    let migrated = cached(&f.env, REPO, None).unwrap().unwrap();
-    assert_eq!(migrated.root, legacy);
-    assert!(migrated.warning.unwrap().contains("pre-2.0"));
-
-    // A pin is answered by its own commit or not at all: the old clone
-    // sits on whatever it last reset to, which is not what was pinned.
-    assert!(
-        cached(&f.env, REPO, Some(&"b".repeat(40)))
-            .unwrap()
-            .is_none()
-    );
-
-    let refreshed = sync(&f.env, REPO, None).unwrap();
-    assert!(
-        refreshed
-            .root
-            .starts_with(f.env.source_cache_dir().join("commits"))
-    );
-    assert!(legacy.is_dir(), "a user's cache is never deleted for them");
-    assert_eq!(
-        cached(&f.env, REPO, None).unwrap().unwrap().root,
-        refreshed.root
-    );
-}
-
 /// The lock lives as long as its guard and not a moment longer — an
 /// abandoned lock file would wedge a repository until someone deleted it.
 #[test]

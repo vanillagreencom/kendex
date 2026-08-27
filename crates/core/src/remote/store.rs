@@ -76,12 +76,6 @@ fn receipt_path(env: &Env, key: &str, commit: &str) -> PathBuf {
         .join(format!("{commit}.published"))
 }
 
-/// The v0.1 mutable clone for a repository, kept readable for as long as it
-/// exists: an offline first run after an update still has content to serve.
-pub fn legacy_clone(env: &Env, repo: &str) -> PathBuf {
-    env.source_cache_dir().join(repo.replace('/', "_"))
-}
-
 /// Where cached safety scores for one published commit live — beside the
 /// commit's receipt, never inside its tree: a write into the checkout would
 /// break the tree signature the receipt vouches for.
@@ -245,15 +239,6 @@ pub fn has_commit(mirror: &Path, commit: &str) -> bool {
     Hardened::git_bare(mirror, &["cat-file", "-e", &format!("{commit}^{{commit}}")])
         .run()
         .is_ok_and(|output| output.status.success())
-}
-
-/// The commit a v0.1 mutable clone is sitting on.
-pub fn legacy_head(clone: &Path) -> Option<String> {
-    clone
-        .join(".git")
-        .is_dir()
-        .then(|| stdout(Hardened::git_in(clone, &["rev-parse", "HEAD"])))
-        .flatten()
 }
 
 /// A published checkout, if the cache holds this commit unmodified. A
