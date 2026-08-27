@@ -39,14 +39,27 @@ function commandWords(command: string): string {
 }
 
 /**
+ * A `git` word followed, adjacent or later, by a `commit` word. Linear scans:
+ * ` git commit ` shares its middle space, so the search for ` commit ` starts
+ * at the space that ends ` git `. A regex over the same words backtracks once
+ * per `git` word and stalls Pi's event loop on a long command.
+ */
+function wordsNameGitCommit(words: string): boolean {
+	const git = words.indexOf(" git ");
+	return git >= 0 && words.indexOf(" commit ", git + 4) >= 0;
+}
+
+/**
  * Word-order detection of a git commit. This gate only decides whether the
  * commit is deferred or refused, so a miss here skips a refusal, never a
- * check, and `git log --grep=commit` merely pays for a verdict it did not need.
+ * check. Over-matching runs the other way: `git log --grep commit` is a
+ * commit to this gate, which is free where a hook is armed and costs a
+ * refusal to reword where nothing is.
  *
  * Mirrors `hooks/pre-commit-check.sh`.
  */
 export function isGitCommit(command: string): boolean {
-	return / git( .*)? commit /.test(commandWords(command));
+	return wordsNameGitCommit(commandWords(command));
 }
 
 const MOVES_REPOSITORIES = / (cd|-C|--git-dir[^ ]*|--work-tree[^ ]*|GIT_DIR[^ ]*|GIT_WORK_TREE[^ ]*) /;
@@ -55,13 +68,18 @@ const MOVES_REPOSITORIES = / (cd|-C|--git-dir[^ ]*|--work-tree[^ ]*|GIT_DIR[^ ]*
  * A word that tells git to skip its hooks or injects configuration that
  * could: git's no-verify flag spelled out or cut to any unique prefix, `-n`
  * alone or inside a short-flag cluster, a `-c` word, a `--config-env` word, a
- * `GIT_CONFIG_*` assignment, or a `git config` write of `core.hooksPath`.
+ * `GIT_CONFIG_*` assignment, or a `git config` line naming `core.hooksPath`
+ * in any case (a read on the same line is refused with the write; the key
+ * is matched wherever it stands after `config`).
  */
 function bypassWord(words: string): string | null {
 	const flag = / (--no-veri[a-z]*|-[a-zA-Z]*n[a-zA-Z]*|-c|--config-env[^ ]*|GIT_CONFIG_[^ ]*) /.exec(words);
 	if (flag) return flag[1];
-	const configWrite = / config .* hookspath /i.exec(words);
-	return configWrite ? configWrite[0].trim() : null;
+	const lower = words.toLowerCase();
+	const config = lower.indexOf(" config ");
+	if (config < 0) return null;
+	const key = lower.indexOf(" hookspath ", config + 8);
+	return key < 0 ? null : words.slice(config, key + " hookspath ".length).trim();
 }
 
 export type PreCommitVerdict =
@@ -125,7 +143,7 @@ async function hooksArmed(hooksDir: string, cwd: string): Promise<boolean> {
  */
 export async function preCommitGate(command: string, cwd: string): Promise<PreCommitVerdict> {
 	const words = commandWords(command);
-	if (!/ git( .*)? commit /.test(words)) return { kind: "allow" };
+	if (!wordsNameGitCommit(words)) return { kind: "allow" };
 
 	const moves = MOVES_REPOSITORIES.test(words);
 	const elsewhere = moves

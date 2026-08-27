@@ -18,10 +18,13 @@ function runGit(args: string[], cwd: string): void {
 	}
 }
 
+// A global init.templateDir can leave git init without a hooks directory,
+// so the fixture makes the one it writes into.
 function initRepo(root: string, name: string): string {
 	const dir = join(root, name);
 	mkdirSync(dir, { recursive: true });
 	runGit(["init", "-q"], dir);
+	mkdirSync(join(dir, ".git", "hooks"), { recursive: true });
 	return dir;
 }
 
@@ -54,12 +57,20 @@ describe("pre-commit gate: the bash hook's contract", () => {
 	let hooksOff: string;
 	let halfArmed: string;
 	let markedNotExec: string;
+	let foreign: string;
 	let notARepo: string;
 	// Bare PATH: the armed hook gates a commit with no binary involved, and the
-	// refusal for an unarmed one needs none either.
-	let savedPath: string | undefined;
+	// refusal for an unarmed one needs none either. Git reads no config of the
+	// developer's: a global core.hooksPath would disarm every fixture.
+	const savedEnv: Record<string, string | undefined> = {};
+	const isolatedEnv: Record<string, string> = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
 
 	beforeAll(() => {
+		for (const [name, value] of Object.entries(isolatedEnv)) {
+			savedEnv[name] = process.env[name];
+			process.env[name] = value;
+		}
+
 		unarmed = initRepo(root, "unarmed");
 
 		armed = initRepo(root, "armed");
@@ -102,10 +113,18 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		writeHook(join(markedNotExec, ".git", "hooks"), "pre-commit", false);
 		writeHook(join(markedNotExec, ".git", "hooks"), "commit-msg");
 
+		// Both lanes executable where git reads them, and neither is ours: a
+		// hook somebody else installed is not kendex's arming.
+		foreign = initRepo(root, "foreign");
+		for (const lane of ["pre-commit", "commit-msg"]) {
+			writeFileSync(join(foreign, ".git", "hooks", lane), "#!/bin/sh\nexit 0\n");
+			chmodSync(join(foreign, ".git", "hooks", lane), 0o755);
+		}
+
 		notARepo = join(root, "plain");
 		mkdirSync(notARepo);
 
-		for (const repo of [unarmed, armed, armedByPath, disarmed, disarmedByPath, hooksOff, halfArmed, markedNotExec]) {
+		for (const repo of [unarmed, armed, armedByPath, disarmed, disarmedByPath, hooksOff, halfArmed, markedNotExec, foreign]) {
 			plantAnnouncingScript(repo, ranLog);
 		}
 
@@ -115,13 +134,15 @@ describe("pre-commit gate: the bash hook's contract", () => {
 			const found = spawnSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).stdout.trim();
 			if (found) spawnSync("ln", ["-sf", found, join(bin, tool)]);
 		}
-		savedPath = process.env.PATH;
+		savedEnv.PATH = process.env.PATH;
 		process.env.PATH = bin;
 	});
 
 	afterAll(() => {
-		if (savedPath === undefined) delete process.env.PATH;
-		else process.env.PATH = savedPath;
+		for (const [name, value] of Object.entries(savedEnv)) {
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
 		rmSync(root, { recursive: true, force: true });
 	});
 
@@ -147,6 +168,21 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		// Over-matching is the design: a miss skips a refusal, never a check.
 		expect(isGitCommit("echo git commit")).toBe(true);
 		expect(isGitCommit("git status && echo commit")).toBe(true);
+		expect(isGitCommit("commit git")).toBe(false);
+	});
+
+	test("a long command is judged in linear time", async () => {
+		// One backtrack per git word turns a few thousand of them into a
+		// second on Pi's event loop before the tool runs.
+		const command = " git x".repeat(4000);
+		const started = performance.now();
+		expect(isGitCommit(command)).toBe(false);
+		expect(await preCommitGate(command, armed)).toEqual({ kind: "allow" });
+		expect(performance.now() - started).toBeLessThan(50);
+
+		const { verdict } = await gate(armed, `git config --local core.hooksPath /dev/null &&${command} && git commit -m x`);
+		if (verdict.kind !== "refuse") throw new Error("unreachable");
+		expect(verdict.reason).toContain("bypasses this repository's armed git hooks");
 	});
 
 	test("a non-commit command is left alone", async () => {
@@ -187,6 +223,14 @@ describe("pre-commit gate: the bash hook's contract", () => {
 			expect(verdict.reason).toContain("not armed by kendex");
 			expect(ran).toBe("");
 		}
+	});
+
+	test("an executable pair without the marker is somebody else's hooks, not armed", async () => {
+		const { verdict, ran } = await gate(foreign, "git commit -m test");
+		expect(verdict.kind).toBe("refuse");
+		if (verdict.kind !== "refuse") throw new Error("unreachable");
+		expect(verdict.reason).toContain("not armed by kendex");
+		expect(ran).toBe("");
 	});
 
 	test("one lane armed is not an armed repository", async () => {
