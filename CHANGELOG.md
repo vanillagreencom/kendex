@@ -70,7 +70,7 @@ an outside contributor.
   A copy that was already gone, or a link whose target was, failed the move to
   the trash and rolled the whole removal back, on every retry.
 
-- harness-ci's `harness-only` reads the checkout's `kendex.toml` and answers
+- harness-ci's `harness-only` reads the checkout's manifests and answers
   `false` for a diff touching an in-place skill or an `.agents/hooks` script:
   project source under a render path no longer stands CI lanes down.
 
