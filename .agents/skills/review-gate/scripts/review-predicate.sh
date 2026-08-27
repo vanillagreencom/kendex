@@ -271,12 +271,24 @@ THREADS_MODE="$(rg_setting REVIEW_GATE_THREADS "enforce")" || exit 2
 # checks, the evidence reads, and the awaiting label. Entry boundaries and
 # emptiness are decided once, so a value like " ; , " cannot be an open trust
 # model to one reader and a named list to another.
+# pipefail inside, checked at every caller: this decides the trust boundary,
+# and the last stage of the pipeline returns 0 on empty output. A `tr` that
+# died would leave a RESTRICTED list looking empty, which the evidence read
+# takes as "any non-author" — the trust list would open the gate it was set
+# to close. A broken pipeline is exit 2 with no verdict instead.
 rg_pack() { # RAW SEPARATORS -> one trimmed, non-empty entry per line
-  printf '%s\n' "$1" | tr "$2" '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;/^$/d'
+  ( set -o pipefail
+    printf '%s\n' "$1" | tr "$2" '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;/^$/d' )
 }
-TRUSTED_LOGINS_N="$(rg_pack "$TRUSTED_LOGINS" ';,')"
-TRUSTED_CONTEXTS_N="$(rg_pack "$TRUSTED_CONTEXTS" ';')"
-COMMENT_REVIEWERS_N="$(rg_pack "$COMMENT_REVIEWERS" ';')"
+# Called OUTSIDE the substitutions below: an `exit` inside `$( )` would leave
+# the subshell and the predicate would carry on with the empty value.
+rg_pack_failed() { # KEY
+  echo "::error::review-predicate: could not normalize $1 (broken pipeline) — no verdict" >&2
+  exit 2
+}
+TRUSTED_LOGINS_N="$(rg_pack "$TRUSTED_LOGINS" ';,')" || rg_pack_failed REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS
+TRUSTED_CONTEXTS_N="$(rg_pack "$TRUSTED_CONTEXTS" ';')" || rg_pack_failed REVIEW_GATE_TRUSTED_STATUS_CONTEXTS
+COMMENT_REVIEWERS_N="$(rg_pack "$COMMENT_REVIEWERS" ';')" || rg_pack_failed REVIEW_GATE_COMMENT_REVIEWERS
 API_ATTEMPTS="$(rg_setting REVIEW_GATE_API_ATTEMPTS "1")" || exit 2
 API_RETRY_DELAY="$(rg_setting REVIEW_GATE_API_RETRY_DELAY_SECONDS "2")" || exit 2
 CARRY_FORWARD="$(rg_setting REVIEW_GATE_CARRY_FORWARD "")" || exit 2

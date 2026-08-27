@@ -77,10 +77,14 @@ done <<EOF
 $SOURCES
 EOF
 
+# "source", not "reviewer": SOURCES also carries trusted status and check
+# contexts, and one long context is exactly the value that exhausts this
+# budget. Counting it as a reviewer would send a reader looking for a person
+# who is not configured.
 if [ "$kept" = "0" ] && [ "$count" = "1" ]; then
-  printf '%s' "${short_form}1 configured reviewer"
+  printf '%s' "${short_form}1 configured source"
 elif [ "$kept" = "0" ]; then
-  printf '%s' "$short_form$count configured reviewers"
+  printf '%s' "$short_form$count configured sources"
 elif [ "$kept" = "$count" ]; then
   printf '%s' "$short_form$shown"
 else

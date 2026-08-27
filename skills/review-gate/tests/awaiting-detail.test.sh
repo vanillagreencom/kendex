@@ -149,6 +149,34 @@ MIN_STATE="any"
 PR_AUTHOR="carol" TRUSTED_LOGINS="" TRUSTED_CONTEXTS="" COMMENT_REVIEWERS=""
 sources_are "min_state=any keeps the review wording" "any non-author review"
 
+# The normalization decides the trust boundary, so a broken pipeline must be
+# exit 2 with no verdict. Without pipefail the last stage returns 0 on empty
+# output, and a RESTRICTED trust list would read as "any non-author" — the
+# list would open the gate it was set to close.
+stub_dir="$(mktemp -d)"
+trap 'rm -rf "$stub_dir"' EXIT
+printf '#!/usr/bin/env bash\nexit 1\n' > "$stub_dir/tr"
+chmod +x "$stub_dir/tr"
+broken_rc=0
+broken_out="$(PATH="$stub_dir:$PATH" REVIEW_GATE_SETTINGS_FILE=/dev/null \
+  REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS="alice" \
+  GH_REPO=owner/repo PR_NUMBER=1 HEAD_SHA="$SHA" PR_AUTHOR=bob \
+  bash "$PRED" --check-config 2>&1)" || broken_rc=$?
+if [ "$broken_rc" = 2 ]; then
+  ok "a broken normalization pipeline exits 2"
+else
+  bad "a broken normalization pipeline exits 2" "exit $broken_rc"
+fi
+case "$broken_out" in
+  *"could not normalize REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS"*)
+    ok "the failure names the list it could not normalize" ;;
+  *) bad "the failure names the list it could not normalize" "$broken_out" ;;
+esac
+case "$broken_out" in
+  *verdict=*) bad "a broken normalization emits no verdict" "$broken_out" ;;
+  *) ok "a broken normalization emits no verdict" ;;
+esac
+
 # ---------------------------------------------------------------- layer 2 ---
 # The composer, driven by a resolved list exactly as the predicate hands it in.
 want() { # CASE, SOURCES, EXPECTED
@@ -205,12 +233,17 @@ want "a short-form list one character over counts the remainder" "$names" \
   "$short_prefix$(printf '%s' "$names" | head -1) and 1 more"
 
 # One name wider than the whole budget: a count, never a name cut mid-word.
-want "a name too wide to show becomes a count" "$(printf 'x%.0s' $(seq 1 200))" \
-  "no review evidence at ${SHA:0:12} yet; expected from 1 configured reviewer"
+want "a source too wide to show becomes a count" "$(printf 'x%.0s' $(seq 1 200))" \
+  "no review evidence at ${SHA:0:12} yet; expected from 1 configured source"
+
+# A trusted status context is not a reviewer, and it is the value that
+# realistically exhausts the budget — the count must not name a person.
+want "a lone oversized status context is counted as a source" "$(printf 'C%.0s' $(seq 1 200))" \
+  "no review evidence at ${SHA:0:12} yet; expected from 1 configured source"
 
 want "the count is plural for more than one" \
   "$(printf 'x%.0s' $(seq 1 200); echo; printf 'y%.0s' $(seq 1 200))" \
-  "no review evidence at ${SHA:0:12} yet; expected from 2 configured reviewers"
+  "no review evidence at ${SHA:0:12} yet; expected from 2 configured sources"
 
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ] || exit 1
