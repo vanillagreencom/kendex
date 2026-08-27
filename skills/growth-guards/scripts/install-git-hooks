@@ -478,12 +478,12 @@ if [ "$MODE" = "check" ]; then
   if [ "$HOOKS_PATH_ELSEWHERE" -eq 1 ]; then
     hooks_path_origins
     if hooks_path_off; then
-      echo "growth-guards git hooks: NOT armed — core.hooksPath is set and empty, which switches git hooks off, so commits are NOT gated; the files that set it are listed on stderr"
+      echo "growth-guards git hooks: NOT armed — core.hooksPath is set and empty, which switches git hooks off, so commits are NOT gated; git's report of where it is set is on stderr"
       exit 1
     fi
     # Where the value sends git is not claimed, because it is not measured:
     # it may well name $HOOKS_DIR under another spelling.
-    echo "growth-guards git hooks: could not determine whether commits are gated — core.hooksPath is set ('$CUSTOM_HOOKS'), and a configured hooks path is outside this verifier's contract: it reads $HOOKS_DIR only; the files that set it are listed on stderr, or read the configured directory yourself"
+    echo "growth-guards git hooks: could not determine whether commits are gated — core.hooksPath is set ('$CUSTOM_HOOKS'), and a configured hooks path is outside this verifier's contract: it reads $HOOKS_DIR only; git's report of where it is set is on stderr, or read the configured directory yourself"
     exit 2
   fi
   check_hooks_dir || VERDICT=$?

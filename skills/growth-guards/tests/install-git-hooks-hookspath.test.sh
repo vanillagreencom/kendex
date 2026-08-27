@@ -32,8 +32,8 @@ case "$OUT" in
   *) bad "the verdict does not name the cause" "$OUT" ;;
 esac
 case "$OUT" in
-  *"core.hooksPath is set from:"*) ok "and lists the files that set it" ;;
-  *) bad "no origin listing" "$OUT" ;;
+  *"core.hooksPath is set."*) ok "and states that the value is set" ;;
+  *) bad "no stand-down statement" "$OUT" ;;
 esac
 install_in "$R62"
 case "$OUT" in
@@ -66,9 +66,9 @@ for spelling in default-relative default-absolute elsewhere empty; do
   # shape `--check` has no way to verify, so following it left a repository
   # permanently unable to say whether it was gated.
   case "$OUT" in
-    *"core.hooksPath is set from:"*"unset core.hooksPath in each file listed above"*)
-      ok "and it lists the files that set it, then says to unset them ($spelling)" ;;
-    *) bad "no origin listing and remedy ($spelling)" "$OUT" ;;
+    *"core.hooksPath is set."*"Clear the setting at its source, then run kendex guard install."*)
+      ok "and it states the setting, then says to clear it at its source ($spelling)" ;;
+    *) bad "no stand-down text ($spelling)" "$OUT" ;;
   esac
   case "$OUT" in
     *"Have that directory's pre-commit run"*)
@@ -125,14 +125,17 @@ case "$OUT" in
   *) ok "and claims nothing about where git reads hooks from" ;;
 esac
 case "$OUT" in
-  *"core.hooksPath is set from:"*) ok "and lists the files that set it" ;;
-  *) bad "no origin listing" "$OUT" ;;
+  *"core.hooksPath is set."*) ok "and states that the value is set" ;;
+  *) bad "no stand-down statement" "$OUT" ;;
 esac
-# Nothing composed: a command this tool wrote is a prediction about somebody
-# else's configuration, and predicting that is what cost two rounds.
+# Recovery output is data, never a command line to paste
+# (docs/ARCHITECTURE.md). Every earlier shape of this remedy was a command
+# this file composed, and every one of them was wrong about somebody's
+# configuration.
 case "$OUT" in
-  *"config --unset"* | *"--unset-all"*) bad "a composed unset command came back" "$OUT" ;;
-  *) ok "and composes no unset command of its own" ;;
+  *"config --unset"* | *"--unset-all"* | *"git -C"*)
+    bad "a pasteable command came back in the stand-down" "$OUT" ;;
+  *) ok "and offers no command to paste" ;;
 esac
 case "$OUT" in
   *"wire that directory"* | *"Have that directory's pre-commit run"*)
@@ -184,11 +187,12 @@ check_in "$R80"
 [ "$RC" -eq 0 ] && ok "must-fail: unsetting the value arms the same repository again" \
   || bad "unset re-arms" "rc=$RC out=$OUT"
 
-echo "=== the remedy is git's own accounting, not a composed command ==="
-# Two rounds went on composing an unset and being wrong about it: the local
-# file for a value that lives elsewhere, then the right scope but the wrong
-# file when an include supplies the key. git already knows which files set
-# it, so git is quoted and the instruction is about those files.
+echo "=== the stand-down is a statement, git's report, and one sentence ==="
+# docs/ARCHITECTURE.md: recovery output presents its parameters as data,
+# never a command line to paste. Three earlier shapes of this remedy each
+# composed a command and each was wrong about a configuration nobody here
+# can see. What is printed now is git's own report, unedited, and a sentence
+# naming no path and no command.
 R90="$(new_repo origin-listing)"
 install_in "$R90"
 git config --global core.hooksPath "$R90/globalhooks"
@@ -200,40 +204,39 @@ check_in "$R90"
 [ "$RC" -eq 2 ] && ok "a global core.hooksPath stands the checker down" \
   || bad "global hooksPath checks 2" "rc=$RC out=$OUT"
 case "$OUT" in
-  *"core.hooksPath is set from:"*) ok "and heads the listing of what sets it" ;;
-  *) bad "no origin listing" "$OUT" ;;
+  *"core.hooksPath is set."*) ok "and states that the value is set" ;;
+  *) bad "no stand-down statement" "$OUT" ;;
 esac
-# git's own words: the scope, and the FILE. A global value names the global
-# file, which is the one a local unset would have missed.
+# git's own words, unedited: the scope and the origin as git spells them.
 case "$OUT" in
-  *global*"$HOME/.gitconfig"*) ok "and names the global scope and its file, as git reports them" ;;
-  *) bad "the global origin is not named" "$OUT" ;;
+  *global*"$HOME/.gitconfig"*) ok "and git's report of the origin reaches the reader as git wrote it" ;;
+  *) bad "git's report is not there" "$OUT" ;;
 esac
 case "$OUT" in
-  *"unset core.hooksPath in each file listed above"*) ok "and says to unset it in each listed file" ;;
-  *) bad "no instruction after the listing" "$OUT" ;;
+  *"Clear the setting at its source, then run kendex guard install."*)
+    ok "and closes with one sentence naming no path and no command" ;;
+  *) bad "the closing sentence is missing" "$OUT" ;;
 esac
-# The structural pin: no command is composed, so there is no composed
-# command to be wrong.
+# The rule, as a pin: nothing pasteable, and no path of this file's own.
 case "$OUT" in
-  *"config --unset"* | *"--unset-all"*) bad "a composed unset command came back" "$OUT" ;;
-  *) ok "and composes no unset command" ;;
+  *"config --unset"* | *"--unset-all"* | *"git -C"*)
+    bad "a pasteable command came back" "$OUT" ;;
+  *) ok "and offers no command to paste" ;;
 esac
 
 # The install lane prints the same block, from the same function.
 install_in "$R90"
 case "$OUT" in
-  *"core.hooksPath is set from:"*global*"unset core.hooksPath in each file listed above"*)
-    ok "and the install lane prints the same listing and instruction" ;;
+  *"core.hooksPath is set."*"Clear the setting at its source, then run kendex guard install."*)
+    ok "and the install lane prints the same block" ;;
   *) bad "install printed something else" "$OUT" ;;
 esac
 git config --global --unset-all core.hooksPath
 
-echo "=== an included file is listed as itself ==="
+echo "=== an included file is reported as git reports it ==="
 # The case that makes a composed unset wrong even with the scope right:
-# include.path pulls the key in from another file, git reports it under the
-# INCLUDING scope but with its own path, and a scoped unset edits
-# .git/config while the included file goes on setting it.
+# include.path pulls the key in from another file, and git names that file
+# under the INCLUDING scope. Nothing here has to know that — git says it.
 R91="$(new_repo included-origin)"
 install_in "$R91"
 printf '[core]\n\thooksPath = %s/includedhooks\n' "$R91" >"$R91/extra.cfg"
@@ -246,16 +249,69 @@ check_in "$R91"
 [ "$RC" -eq 2 ] && ok "an included core.hooksPath stands the checker down" \
   || bad "included hooksPath checks 2" "rc=$RC out=$OUT"
 case "$OUT" in
-  *"$R91/extra.cfg"*) ok "and the listing names the included file itself" \
-    ;;
+  *"$R91/extra.cfg"*) ok "and git's report names the included file itself" ;;
   *) bad "the included file is not named" "$OUT" ;;
 esac
 # The must-fail control for the whole design: unsetting only what the scope
-# names leaves the value in force, which is why no scoped command is printed.
+# names leaves the value in force, which is why no scoped command is offered.
 git -C "$R91" config --local --unset-all core.hooksPath 2>/dev/null || true
 [ "$(git -C "$R91" config --get core.hooksPath || true)" = "$R91/includedhooks" ] \
   && ok "must-fail: a scoped local unset leaves the included value in force" \
   || bad "the scoped unset cleared the included value" "$(git -C "$R91" config --get core.hooksPath || true)"
+
+echo "=== an origin that is not a file is reported as that ==="
+# git answers `command line:` for a value carried in the environment or on
+# the command line. There is no file to clear and nothing here claims there
+# is: git's word for it goes through unedited.
+R92="$(new_repo command-origin)"
+install_in "$R92"
+OUT=""; RC=0
+OUT="$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$R92/envhooks" \
+  "$R92/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$R92" --check 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && ok "a command-line core.hooksPath stands the checker down" \
+  || bad "command-line hooksPath checks 2" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"command line:"*) ok "and git's report says command line, not a file" ;;
+  *) bad "the command-line origin is not reported" "$OUT" ;;
+esac
+case "$OUT" in
+  *file:*) bad "an origin that is not a file was reported as one" "$OUT" ;;
+  *) ok "and nothing calls that origin a file" ;;
+esac
+
+echo "=== a report git will not produce is said to be missing ==="
+# The verdict does not depend on the listing: a git that cannot produce it
+# still stands the checker down, and the text says the origin is missing
+# rather than inventing one.
+R93="$(new_repo origin-unlistable)"
+install_in "$R93"
+git -C "$R93" config core.hooksPath "$R93/somehooks"
+mkdir -p "$TMP/gitshim"
+REAL_GIT="$(command -v git)"
+printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = "--show-origin" ] && exit 1; done\nexec %s "$@"\n' "$REAL_GIT" >"$TMP/gitshim/git"
+chmod +x "$TMP/gitshim/git"
+OUT=""; RC=0
+OUT="$(PATH="$TMP/gitshim:$PATH" "$R93/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$R93" --check 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && ok "the verdict is unchanged when the origin cannot be listed" \
+  || bad "unlistable origin changed the verdict" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"Its origin could not be listed."*) ok "and it says the origin could not be listed" ;;
+  *) bad "the missing listing is not stated" "$OUT" ;;
+esac
+case "$OUT" in
+  *"Clear the setting at its source, then run kendex guard install."*)
+    ok "and still closes with the same sentence" ;;
+  *) bad "the closing sentence is missing" "$OUT" ;;
+esac
+# The must-fail control: the same shim with a working --show-origin reports
+# an origin, so the case above is the shim's refusal and not a dead branch.
+OUT=""; RC=0
+OUT="$("$R93/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$R93" --check 2>&1)" || RC=$?
+case "$OUT" in
+  *"Its origin could not be listed."*) bad "must-fail: a working git still reported no origin" "$OUT" ;;
+  *file:*) ok "must-fail: the same repository with a working git reports an origin" ;;
+  *) bad "no origin from a working git" "$OUT" ;;
+esac
 
 echo "=== a repository path that begins with a dash is a path ==="
 # `cd "$REPO"` reads a leading dash as an option: `--repo -P` became `cd -P`,

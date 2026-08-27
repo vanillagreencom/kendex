@@ -138,23 +138,29 @@ nobody had thought of. A `core.hooksPath` set and EMPTY is the exception,
 and only because it needs no reading: it switches git hooks off, so it is
 `1` with the unset as its remedy.
 
-That remedy composes no command. `hooks_path_origins` prints what git says
-about the value — `git config --show-origin --show-scope --get-all
-core.hooksPath`, verbatim, one line per file and scope that contributes it —
-and then one sentence: unset `core.hooksPath` in each file listed, then run
-`kendex guard install`. Both modes print the same block, on stderr, so
-`--check` keeps its single stdout line.
+That remedy is data, not a command. `docs/ARCHITECTURE.md` rules it:
+recovery instructions present their parameters as data, never a pasteable
+command line. `hooks_path_origins` prints three things — that
+`core.hooksPath` is set, git's own report of where from (`git config
+--show-origin --show-scope --get-all core.hooksPath`, unedited), and one
+sentence naming no path and no command: clear the setting at its source,
+then run `kendex guard install`. Both modes print the same block, on
+stderr, so `--check` keeps its single stdout line.
 
-Composing the command instead was wrong twice. Unsetting the local file
-misses a value that lives elsewhere; reading the scope and unsetting there
+Composing a command instead was wrong three times. Unsetting the local file
+misses a value that lives elsewhere. Reading the scope and unsetting there
 still has to be right about `--unset-all`, about a second file the winning
 value shadows, and about `include.path`, which pulls the key in from a file
-reported under the INCLUDING scope but with its own path — so a scoped
+git reports under the INCLUDING scope with its own path — so a scoped
 `--unset` edits `.git/config` and leaves the included file setting it. Each
-of those is this package predicting what a person's configuration will do to
-a command it wrote for them. git already knows, so git is quoted. Where git
-will not produce the listing, the command to run by hand is named rather
-than an origin invented.
+was this package predicting what a person's configuration would do to a
+command it wrote for them.
+
+Nothing here asserts what an origin is, either. git answers `command line:`
+for a value carried in the environment or on the command line, where there
+is no file to clear at all, and that answer goes through as git wrote it. A
+report git will not produce is stated as missing rather than stood in for,
+and the verdict is the same either way.
 
 The cost is one arming: a directory hand-wired to these scripts really does
 gate, and `--check` says `2` about it rather than `0`. That is why the

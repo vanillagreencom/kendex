@@ -101,39 +101,38 @@ hooks_path_off() { # -> 0 when hooks are switched off
   [ "$HOOKS_PATH_SET" -eq 1 ] && [ -z "$CUSTOM_HOOKS" ]
 }
 
-# The remedy is git's own accounting of the value, printed, not a command
-# this file composed.
+# The stand-down text: one statement, git's own report, one sentence.
 #
-# Composing one has been wrong twice. The first spelling unset the local
-# file for a value that lived elsewhere; the second read the scope and still
-# had to be right about `--unset-all`, about an `include.path` bringing the
-# key in from a file no scope names, and about a second file the winning
-# value shadows. Each of those is this tool predicting what somebody's
-# configuration will do to a command it wrote for them, and each prediction
-# has been a finding.
+# docs/ARCHITECTURE.md rules it — recovery instructions present their
+# parameters as data, never a pasteable command line — and this is the
+# fourth shape the remedy has taken, each earlier one a command this file
+# composed and was wrong about. Unsetting the local file missed a value
+# living elsewhere. Reading the scope still had to be right about
+# `--unset-all`, about a second file the winning value shadows, and about
+# `include.path`, which git reports under the INCLUDING scope with the
+# included file's own path. Each was this package predicting what somebody's
+# configuration would do to a command it wrote for them.
 #
-# git already knows. `--show-origin --show-scope --get-all` names every file
-# and every scope that contributes the key — an included file appears under
-# the scope that pulled it in, with its own path, which is exactly the file
-# a scoped `--unset` would miss. Printing that verbatim leaves nothing
-# composed to be wrong about, and points the instruction at the files rather
-# than at a command.
+# So nothing is written for anyone to run. git reports where the value comes
+# from, unedited — a file, the command line, whatever a later git learns to
+# say — and the sentence after it names no path and no command. Nothing here
+# asserts what an origin IS, which is the assertion that kept being wrong.
 #
 # Arming is not the whole of it: the installer stands down under any value
-# at all, empty included, so the unset comes first.
-HOOKS_PATH_REMEDY="unset core.hooksPath in each file listed above, then run 'kendex guard install'"
+# at all, empty included, so clearing the setting comes first.
+HOOKS_PATH_REMEDY="Clear the setting at its source, then run kendex guard install."
 
 # Both modes print this block, so both say the same thing about the same
 # repository. It goes to stderr in each: --check keeps one verdict line on
 # stdout, and the install lane already reports there.
-hooks_path_origins() { # -> git's accounting of core.hooksPath, on stderr
-  echo "  core.hooksPath is set from:" >&2
-  # git's own words, indented and otherwise untouched. A listing git will not
-  # produce is not stood in for — an invented origin is the composing this
-  # function exists to stop — so the command to run by hand is named instead.
-  if ! git -C "$REPO_ABS" config --show-origin --show-scope --get-all core.hooksPath 2>/dev/null \
-    | sed 's/^/    /' >&2; then
-    echo "    (git would not list them; run: git -C $REPO_ABS config --show-origin --show-scope --get-all core.hooksPath)" >&2
+hooks_path_origins() { # -> the stand-down text, on stderr
+  echo "  core.hooksPath is set." >&2
+  # git's report reaches the reader as git wrote it: stdout onto this
+  # stream, its own diagnostics dropped. A report git will not produce is
+  # said to be missing rather than stood in for, and the verdict does not
+  # depend on it either way.
+  if ! git -C "$REPO_ABS" config --show-origin --show-scope --get-all core.hooksPath >&2 2>/dev/null; then
+    echo "  Its origin could not be listed." >&2
   fi
   echo "  $HOOKS_PATH_REMEDY" >&2
 }
