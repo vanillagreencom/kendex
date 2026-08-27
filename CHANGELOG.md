@@ -39,6 +39,10 @@ an outside contributor.
 
 ### Fixed
 
+- The `task-completed-check` hook counts untracked files as changes, so a task
+  whose only work is a new Rust file still runs clippy, and it now blocks on
+  any nonzero clippy exit rather than only on output lines starting `error`.
+
 - The `block-bare-cd` hook refuses a bare `cd` with no path. It changes to
   `$HOME` for every later tool call, the move the hook exists to stop, and
   only `cd <path>` was caught before.

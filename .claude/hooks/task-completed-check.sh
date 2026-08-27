@@ -14,10 +14,24 @@ set -euo pipefail
 # Consume stdin
 cat > /dev/null
 
-# Check for changed source files
-CHANGED=$(git diff --name-only 2>/dev/null || true)
-STAGED=$(git diff --cached --name-only 2>/dev/null || true)
-ALL_CHANGED=$(printf '%s\n%s' "$CHANGED" "$STAGED" | sort -u | grep -v '^$' || true)
+# No repository, nothing to gate. Every later git call is asked inside one,
+# so a failure there is a broken run, not an absent one.
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+
+git_failed() { # SUBCOMMAND OUTPUT — an unreadable changed set is not an empty one
+  echo "task-completed-check: git $1 failed, so what changed is unknown:" >&2
+  printf '%s\n' "$2" >&2
+  exit 2
+}
+
+# What counts as changed: the worktree, the index, and untracked non-ignored
+# paths. Without that last set a task whose only work is a new file presents
+# an empty changed set and skips the gate entirely.
+CHANGED=$(git diff --name-only 2>&1) || git_failed 'diff' "$CHANGED"
+STAGED=$(git diff --cached --name-only 2>&1) || git_failed 'diff --cached' "$STAGED"
+UNTRACKED=$(git ls-files --others --exclude-standard --full-name -- :/ 2>&1) ||
+  git_failed 'ls-files' "$UNTRACKED"
+ALL_CHANGED=$(printf '%s\n%s\n%s' "$CHANGED" "$STAGED" "$UNTRACKED" | sort -u | sed '/^$/d')
 
 if [ -z "$ALL_CHANGED" ]; then
   exit 0
@@ -31,8 +45,7 @@ if echo "$ALL_CHANGED" | grep -qE '\.rs$'; then
   # clippy` from cwd unconditionally and surfaced "could not find
   # Cargo.toml" as a clippy error.
   MANIFEST_ARGS=()
-  REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
-  if [ -n "$REPO_ROOT" ] && [ ! -f "$REPO_ROOT/Cargo.toml" ]; then
+  if [ ! -f "$REPO_ROOT/Cargo.toml" ]; then
     MANIFEST=$(echo "$ALL_CHANGED" | grep -E '\.rs$' | while IFS= read -r path; do
       dir=$(dirname "$path")
       while [ -n "$dir" ] && [ "$dir" != "." ] && [ "$dir" != "/" ]; do
@@ -48,13 +61,14 @@ if echo "$ALL_CHANGED" | grep -qE '\.rs$'; then
     fi
   fi
 
-  OUTPUT=$(cargo clippy "${MANIFEST_ARGS[@]}" --workspace --all-targets -- -D warnings 2>&1 || true)
-  # grep no-match exits 1 — swallow under pipefail so an empty result is success.
-  ISSUES=$(echo "$OUTPUT" | grep -E '^error' | head -15 || true)
-
-  if [ -n "$ISSUES" ]; then
-    echo "Clippy errors found — fix before completing task:" >&2
-    echo "$ISSUES" >&2
+  if ! OUTPUT=$(cargo clippy "${MANIFEST_ARGS[@]}" --workspace --all-targets -- -D warnings 2>&1); then
+    # The exit status is the verdict. Diagnostic lines are only how the
+    # failure is reported, so a run that produced none — a missing cargo, a
+    # killed build — falls back to the tail of whatever it did print.
+    ISSUES=$(printf '%s\n' "$OUTPUT" | grep -E '^error' | head -15 || true)
+    [ -n "$ISSUES" ] || ISSUES=$(printf '%s\n' "$OUTPUT" | tail -15)
+    echo "Clippy failed — fix before completing task:" >&2
+    printf '%s\n' "$ISSUES" >&2
     exit 2
   fi
 fi
