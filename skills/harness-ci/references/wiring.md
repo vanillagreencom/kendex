@@ -16,7 +16,7 @@ commits; a shallow clone holds neither endpoint.
 env:
   EVENT: ${{ github.event_name }}
   BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
-  HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+  HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
 ```
 
 An event outside the three answers `false` on its own — an unset `BASE` needs
@@ -25,6 +25,14 @@ no guard of yours.
 Keep each expression on ONE line. A folded scalar (`>-`) whose continuations
 are indented further than its first line preserves the newlines instead of
 folding them, and what looks like a wrapped expression is a multi-line one.
+
+`github.event.after` sits AHEAD of `github.sha`, never instead of it. On a
+branch-deletion push `after` is the all-zero sha while `github.sha` is the
+default branch tip, so a bare `github.sha` fallback hands the classifier two
+real commits and a verdict on a diff nobody asked about; the all-zero sha
+resolves to no commit and answers `false`. `github.sha` stays last, so an
+event carrying no `after` still resolves a head and fails closed on the event
+rather than on a missing endpoint.
 
 ## Shape 1 — a `changes` job feeding job-level `if:`
 
@@ -45,7 +53,7 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
-          HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
         run: >-
           .agents/skills/harness-ci/scripts/harness-only
           --event "$EVENT" --base "$BASE" --head "$HEAD"
@@ -83,7 +91,7 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
-          HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
         run: >-
           .agents/skills/harness-ci/scripts/harness-only
           --event "$EVENT" --base "$BASE" --head "$HEAD"

@@ -41,6 +41,15 @@ for flag in $(printf '%s\n' "$blocks" | grep -oE '(^|[[:space:]])--[a-z-]+' | tr
 done
 assert_eq "the shapes pass only flags the script accepts" "" "$unknown_flags"
 
+# The push endpoints come from the event payload, with `github.sha` LAST. On a
+# branch-deletion push `github.event.after` is the all-zero sha and
+# `github.sha` is the default branch tip, so a HEAD expression reaching
+# `github.sha` before `after` would hand the classifier two real commits.
+heads="$(printf '%s\n' "$blocks" | grep -F 'HEAD:' || true)"
+assert_eq "the shapes carry a HEAD expression" "3" "$(printf '%s\n' "$heads" | grep -c 'HEAD:')"
+misordered="$(printf '%s\n' "$heads" | grep -vE 'github\.event\.after[^|]*\|\|[^|]*github\.sha' || true)"
+assert_eq "every HEAD expression tries github.event.after before github.sha" "" "$misordered"
+
 # The parser is a REQUIREMENT, not a convenience. Announcing a skip and then
 # reporting the suite green is the fail-open this file exists to close: the
 # check that catches a malformed block is the one that would not have run.

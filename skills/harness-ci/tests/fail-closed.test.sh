@@ -36,6 +36,9 @@ closed "an empty base endpoint" \
 closed "the all-zero base a first push sends" \
   --repo "$repo" --event push \
   --base 0000000000000000000000000000000000000000 --head "$head"
+closed "the all-zero head a branch-deletion push sends" \
+  --repo "$repo" --event push \
+  --base "$base" --head 0000000000000000000000000000000000000000
 closed "a base that names no object" \
   --repo "$repo" --event push --base 1234567890123456789012345678901234567890 --head "$head"
 closed "a head that names no object" \
