@@ -70,6 +70,10 @@ an outside contributor.
   A copy that was already gone, or a link whose target was, failed the move to
   the trash and rolled the whole removal back, on every retry.
 
+- harness-ci's `harness-only` reads the checkout's `kendex.toml` and answers
+  `false` for a diff touching an in-place skill or an `.agents/hooks` script:
+  project source under a render path no longer stands CI lanes down.
+
 - The `task-completed-check` hook counts untracked files as changes, and blocks
   on any nonzero clippy exit or a git that cannot say what changed. It passed
   all three before: a new-file-only task, a killed clippy, an unreadable repo.

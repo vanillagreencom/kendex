@@ -155,6 +155,36 @@ fi
 
 printf '%s\n' "$changed" | sed -e 's/^/harness-only: changed: /' >&2
 
+# A repo that adopts skills in place keeps project source at
+# .agents/skills/<name> — kendex.toml declares them `source = "in-place"` —
+# and its adopted hook scripts under .agents/hooks: bytes kendex reads,
+# never writes. The checkout's manifest speaks for the head. A manifest
+# that cannot be read yields no carve-outs, so unknown trees stay render
+# output — the answer before in-place existed.
+in_place_skills=""
+if [ -f "$repo/kendex.toml" ]; then
+  in_place_skills="$(awk '
+    /^\[skills\./ { name = $0; sub(/^\[skills\./, "", name); sub(/\].*$/, "", name); next }
+    /^\[/ { name = "" }
+    name != "" && $0 ~ /^source[ \t]*=[ \t]*"in-place"[ \t]*$/ { print name }
+  ' "$repo/kendex.toml" 2>/dev/null)" || in_place_skills=""
+fi
+in_place_path() { # PATH -> 0 when the path is the repo's own in-place content
+  local rest skill
+  case "$1" in
+    .agents/hooks/*) return 0 ;;
+    .agents/skills/*/*) ;;
+    *) return 1 ;;
+  esac
+  [ -n "$in_place_skills" ] || return 1
+  rest="${1#.agents/skills/}"
+  skill="${rest%%/*}"
+  case "$in_place_skills" in
+    "$skill" | "$skill"$'\n'* | *$'\n'"$skill" | *$'\n'"$skill"$'\n'*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # --no-renames, and it is load-bearing. With rename detection on,
 # `git diff --name-only` emits only the POST-image path, so moving a product
 # file INTO a render tree lists one harness path and nothing else — the diff
@@ -168,7 +198,15 @@ harness_only=true
 while IFS= read -r path; do
   [ -n "$path" ] || continue
   case "$path" in
-    .agents/* | .claude/* | .codex/* | .opencode/* | .cursor/* | .pi/*) continue ;;
+    .agents/*)
+      # In-place content under the render tree is project source.
+      if in_place_path "$path"; then
+        harness_only=false
+        break
+      fi
+      continue
+      ;;
+    .claude/* | .codex/* | .opencode/* | .cursor/* | .pi/*) continue ;;
     # Both spellings of the one OpenCode config: kendex writes the .jsonc file
     # when a project carries that one instead, and it is the same artifact.
     opencode.json | opencode.jsonc) continue ;;
