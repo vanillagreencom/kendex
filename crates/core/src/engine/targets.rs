@@ -145,7 +145,10 @@ pub(crate) fn hook_target(
                 Scope::Project { root } => root.join(".opencode"),
             };
             let dir = base.join("instructions");
-            let file = format!("kendex-hook-{name}.md");
+            let file = format!(
+                "{}{name}.md",
+                crate::harness::opencode::HOOK_INSTRUCTION_MARKER
+            );
             let reference = format!("{}{file}", opencode_instruction_prefix(scope));
             Some(HookTarget::Instruction {
                 path: dir.join(&file),

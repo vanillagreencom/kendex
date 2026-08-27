@@ -51,10 +51,12 @@ fn another_writers_key_order_is_kept_and_is_not_drift() {
     assert!(is_clean(&f), "a key another tool appended is not drift");
 }
 
-/// The instructions rows under kendex's render directory are the current
-/// render set, no more: a row left by a render nothing records — an older
-/// naming, a dropped lock — leaves with its file, while the person's own
-/// rows ride through untouched.
+/// The marker-named instructions rows are the current render set, no
+/// more: a row a dropped lock stopped accounting for leaves with its
+/// file. The instructions directory itself is a shared surface, so a row
+/// there without kendex's filename marker — the person's own file, a
+/// pre-rename tool's render — rides through untouched, like every row
+/// pointing anywhere else.
 #[test]
 fn stale_instruction_rows_leave_with_the_files_nothing_renders() {
     let f = fixture("[hooks.audit]\nsource = \"cat\"\nharnesses = [\"opencode\"]\n");
@@ -63,7 +65,8 @@ fn stale_instruction_rows_leave_with_the_files_nothing_renders() {
     let config = f.project.join("opencode.json");
     let mut doc = json(&config);
     let rows = doc["instructions"].as_array_mut().unwrap();
-    rows.push(".opencode/instructions/vstack-hook-old.md".into());
+    rows.push(".opencode/instructions/kendex-hook-old.md".into());
+    rows.push(".opencode/instructions/my-notes.md".into());
     rows.push("AGENTS.md".into());
     fs::write(&config, serde_json::to_string_pretty(&doc).unwrap() + "\n").unwrap();
 
@@ -71,10 +74,61 @@ fn stale_instruction_rows_leave_with_the_files_nothing_renders() {
     let refreshed = json(&config);
     assert_eq!(
         refreshed["instructions"],
-        serde_json::json!([".opencode/instructions/kendex-hook-audit.md", "AGENTS.md"]),
-        "the stale row goes with its file; the person's row stays"
+        serde_json::json!([
+            ".opencode/instructions/kendex-hook-audit.md",
+            ".opencode/instructions/my-notes.md",
+            "AGENTS.md"
+        ]),
+        "the marker-named stale row goes; unmarked rows stay wherever they point"
     );
     assert!(is_clean(&f));
+}
+
+/// The sweep runs only where the lock shows kendex registering opencode
+/// instruction rows. A scope with no opencode hooks holds nothing of
+/// kendex's in that config — even a marker-named row is not the sweep's
+/// to take, because no record says kendex wrote it.
+#[test]
+fn a_scope_with_no_opencode_hooks_never_edits_the_instructions_rows() {
+    let f = fixture("[hooks.guard]\nsource = \"cat\"\n");
+    let config = f.project.join("opencode.json");
+    let doc = serde_json::json!({
+        "instructions": [".opencode/instructions/kendex-hook-stray.md", "AGENTS.md"]
+    });
+    let written = serde_json::to_string_pretty(&doc).unwrap() + "\n";
+    fs::write(&config, &written).unwrap();
+
+    apply_now(&f);
+    apply_now(&f);
+    assert_eq!(
+        fs::read_to_string(&config).unwrap(),
+        written,
+        "a config kendex has no opencode-hook record for is never edited"
+    );
+}
+
+/// An opencode config the sweep cannot read back is skipped, never a
+/// scope error: the registration into it already reports the conflict,
+/// named with the file, while the rest of the scope still plans.
+#[test]
+fn an_unreadable_opencode_config_is_the_registrations_conflict_not_a_sweep_error() {
+    let f = fixture("[hooks.audit]\nsource = \"cat\"\nharnesses = [\"opencode\"]\n");
+    apply_now(&f);
+    let config = f.project.join("opencode.json");
+    fs::write(&config, "{ // my note\n  \"instructions\": []\n}\n").unwrap();
+
+    let report = audit(&f.env, &f.scope).expect("an unreadable config must not fail the scope");
+    let conflict = report
+        .drift
+        .iter()
+        .find(|row| row.name == "audit")
+        .expect("the hook is reported");
+    assert_eq!(conflict.state, DriftState::Conflict);
+    assert!(
+        conflict.detail.contains("opencode.json"),
+        "{}",
+        conflict.detail
+    );
 }
 
 /// A settings file kendex cannot read back blocks that registration alone

@@ -70,13 +70,15 @@ pub(super) fn stale_emitted(
     Ok(())
 }
 
-/// The instructions rows in opencode's config that point into the
-/// directory kendex renders instruction files into, cut down to what the
-/// record this pass writes still renders — `stale_emitted` for rows
-/// instead of files. An entry-by-entry removal only finds rows a record
-/// leads to; a row an older render spelled differently, or one whose
-/// record a reinstall dropped, stays in the file forever, naming a file
-/// that is gone. Rows pointing anywhere else are the person's and stay.
+/// The instructions rows carrying kendex's own filename marker under the
+/// directory it renders into, cut down to what the record this pass
+/// writes still renders — `stale_emitted` for rows instead of files. An
+/// entry-by-entry removal only finds rows a record leads to; a row whose
+/// record a reinstall dropped stays in the file forever, naming a file
+/// that is gone. The marker is the claim: the directory is a shared
+/// surface, so a row without it — the person's own file there, or a
+/// pre-rename tool's render — is not this sweep's to take, exactly as the
+/// scan surface observes only marker-named files there.
 ///
 /// Planned only where the lock — old or new — shows kendex registering
 /// instruction rows at this scope: a config kendex never wrote into holds
@@ -120,7 +122,11 @@ pub(super) fn stale_instruction_rows(
         return Ok(());
     };
     let edit = crate::configedit::ConfigEdit::OpencodePruneInstructions {
-        prefix: super::targets::opencode_instruction_prefix(scope).to_owned(),
+        prefix: format!(
+            "{}{}",
+            super::targets::opencode_instruction_prefix(scope),
+            crate::harness::opencode::HOOK_INSTRUCTION_MARKER
+        ),
         keep,
     };
     let Ok(updated) = edit.apply(&current) else {

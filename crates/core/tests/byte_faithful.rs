@@ -40,8 +40,8 @@ fn every_config_edit_is_byte_stable_on_reapply() {
             bash_permission: true,
         },
         ConfigEdit::OpencodePruneInstructions {
-            prefix: "instructions/".into(),
-            keep: vec!["instructions/x.md".into()],
+            prefix: "instructions/kendex-hook-".into(),
+            keep: vec!["instructions/kendex-hook-x.md".into()],
         },
         ConfigEdit::CodexEnableHooksFeature,
         ConfigEdit::UpsertMarkerBlock {

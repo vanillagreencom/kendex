@@ -82,9 +82,10 @@ pub enum ConfigEdit {
         reference: String,
     },
     /// opencode.json: cut the `instructions[]` rows under `prefix` — the
-    /// directory kendex renders instruction files into — down to `keep`,
-    /// the rows the current pass renders. A row pointing anywhere else is
-    /// the person's and stays.
+    /// spelling every reference kendex renders starts with, directory and
+    /// filename marker both — down to `keep`, the rows the current pass
+    /// renders. A row not carrying that spelling is somebody else's and
+    /// stays, whoever put it in the directory.
     OpencodePruneInstructions {
         prefix: String,
         keep: Vec<String>,

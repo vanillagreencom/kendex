@@ -8,6 +8,12 @@ pub struct Opencode;
 
 const PLUGIN_EXTS: &[&str] = &["js", "ts", "mjs", "cjs"];
 
+/// The filename marker every instruction file kendex renders carries. The
+/// render (`hook_target`), the scan surface below, and the stale-row sweep
+/// all read this one spelling, so what is written, observed, and claimed
+/// as kendex's can never diverge.
+pub(crate) const HOOK_INSTRUCTION_MARKER: &str = "kendex-hook-";
+
 fn global_config_file(root: &Path, env: &Env) -> PathBuf {
     if let Some(explicit) = env.var("OPENCODE_CONFIG") {
         return PathBuf::from(explicit);
@@ -99,7 +105,7 @@ fn surfaces(kind: ItemKind, base: &Path, config: PathBuf, shared: Option<&Path>)
         ItemKind::Hook => vec![Surface::FileDir {
             dir: base.join("instructions"),
             exts: &["md"],
-            prefixes: &["kendex-hook-"],
+            prefixes: &[HOOK_INSTRUCTION_MARKER],
         }],
         ItemKind::Command => vec![
             Surface::files(base.join("commands"), &["md"]),
