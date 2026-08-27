@@ -51,6 +51,10 @@ an outside contributor.
   a review thread's tracking claim at the gate, and a `Fixed in <sha>` reply
   is never a claim, whatever its prose says.
 
+- `kendex refresh` says when this checkout's `.git/info/exclude` ignores
+  `.agents`, as it already did for `.gitignore`. An exclude rule hides the
+  tree from git status on one machine only, so its changes never commit.
+
 - On macOS the commit hooks were written but never made executable, so git
   ignored both and an armed repository gated nothing. `guard install` reports
   armed only when the bit is really there.

@@ -50,6 +50,20 @@ pub(super) fn plan_posture(
             ".gitignore ignores {ignored} — a teammate who clones this repository gets no skills until that line goes"
         ));
     }
+    // The exclude file is this checkout's alone: a line there hides the
+    // tree from git status here and nowhere else, so what kendex changes
+    // in it never reaches a commit and no pull can put that right. A
+    // linked worktree's `.git` is a file naming the main checkout, whose
+    // own refresh reads the exclude file they share.
+    let git = root.join(".git");
+    if git.is_dir() {
+        let exclude = crate::fs::read_if_exists(&git.join("info/exclude"))?.unwrap_or_default();
+        for ignored in ignores_committed(&exclude) {
+            notes.push(format!(
+                ".git/info/exclude ignores {ignored} — changes kendex makes there never show in git status on this machine, so nothing commits them; that line is local to this checkout"
+            ));
+        }
+    }
     let Some(updated) = with_lock_ignored(&text) else {
         return Ok(());
     };
@@ -180,6 +194,29 @@ mod tests {
             with_lock_ignored("!.kendex-lock.json\n").is_some(),
             "a negation on its own leaves it tracked"
         );
+    }
+
+    /// The exclude file hides a tree from this checkout alone, so the note
+    /// names it as the checkout's own. A linked worktree keeps `.git` as a
+    /// file and reads its exclude through the main checkout, which gets the
+    /// note instead.
+    #[test]
+    fn an_exclude_rule_on_the_shared_tree_is_reported_for_this_checkout() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        std::fs::create_dir_all(root.join(".git/info")).unwrap();
+        std::fs::write(root.join(".git/info/exclude"), ".agents/\n").unwrap();
+        let scope = Scope::Project { root: root.clone() };
+        let mut notes = Vec::new();
+        plan_posture(&scope, &mut Vec::new(), &mut notes).unwrap();
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].starts_with(".git/info/exclude ignores .agents —"));
+
+        std::fs::remove_dir_all(root.join(".git")).unwrap();
+        std::fs::write(root.join(".git"), "gitdir: /elsewhere/.git/worktrees/x\n").unwrap();
+        let mut notes = Vec::new();
+        plan_posture(&scope, &mut Vec::new(), &mut notes).unwrap();
+        assert!(notes.is_empty(), "{notes:?}");
     }
 
     #[test]
