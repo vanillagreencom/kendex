@@ -1,6 +1,7 @@
 ---
 name: app-deploy
 description: "Load when asked to cut, ship, or release a kendex version."
+summary: "Releases a kendex version: bumps versions, finalizes the changelog, tags per docs/RELEASING.md."
 ---
 
 # Release kendex

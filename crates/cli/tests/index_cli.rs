@@ -54,7 +54,11 @@ fn a_discovered_layout_indexes_with_descriptions_and_tags() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("tools");
     fs::create_dir_all(&root).unwrap();
-    skill(&root, "gh", "tags: [git]\n");
+    skill(
+        &root,
+        "gh",
+        "tags: [git]\nsummary: Work with GitHub from the terminal\n",
+    );
     skill(&root, "deploy", "");
 
     let json = index_json(tmp.path(), &root);
@@ -68,7 +72,11 @@ fn a_discovered_layout_indexes_with_descriptions_and_tags() {
     let gh = packages.iter().find(|p| p["name"] == "gh").unwrap();
     assert_eq!(gh["kind"], "skill");
     assert_eq!(gh["description"], "about gh");
+    assert_eq!(gh["summary"], "Work with GitHub from the terminal");
     assert_eq!(gh["tags"], serde_json::json!(["git"]));
+    // A package without a summary is listed by its description, never blank.
+    let deploy = packages.iter().find(|p| p["name"] == "deploy").unwrap();
+    assert_eq!(deploy["summary"], "about deploy");
     assert!(gh["safety"]["score"].as_u64().unwrap() <= 100);
     let found = json["found"].as_array().unwrap();
     assert!(

@@ -13,6 +13,7 @@ use serde::Serialize;
 use crate::check_catalog;
 use crate::error::Result;
 use crate::model::ItemKind;
+use crate::scan::metadata::Metadata;
 use crate::source_read::SealedSource;
 use crate::tags::Tag;
 
@@ -62,6 +63,9 @@ pub struct IndexPackage {
     pub kind: &'static str,
     pub name: String,
     pub description: Option<String>,
+    /// What a directory row shows: the header's `summary`, else its
+    /// `description`.
+    pub summary: Option<String>,
     pub tags: Vec<Tag>,
     pub safety: IndexSafety,
 }
@@ -127,12 +131,18 @@ pub fn index(sealed: &SealedSource, display: &str) -> Result<MarketplaceIndex> {
     let mut packages = Vec::new();
     for item in &report.items {
         let path = sealed.root().join(&item.file);
-        let (description, tags) = describe(sealed, item.kind, &path)?;
+        let header = header(sealed, item.kind, &path)?;
         packages.push(IndexPackage {
             kind: item.kind.name(),
             name: safe_text(&item.name, MAX_TEXT),
-            description,
-            tags,
+            description: header
+                .description
+                .as_deref()
+                .map(|text| safe_text(text, MAX_DESCRIPTION)),
+            summary: header
+                .summary_or_description()
+                .map(|text| safe_text(text, MAX_DESCRIPTION)),
+            tags: header.tags,
             safety: IndexSafety {
                 score: item.advisory.safety.score,
             },
@@ -189,31 +199,21 @@ fn bundle_rows(sealed: &SealedSource, config: &super::SourceConfig) -> Result<Ve
         .collect())
 }
 
-/// What the item says about itself: a description and the tags its header
-/// carries. Read through the sealed source, decoded lossily — a header is
-/// worth reading even beside one bad byte, and the safety pass has already
-/// reported that byte.
-fn describe(
-    sealed: &SealedSource,
-    kind: ItemKind,
-    path: &std::path::Path,
-) -> Result<(Option<String>, Vec<Tag>)> {
+/// What the item says about itself in its own header. Read through the
+/// sealed source, decoded lossily — a header is worth reading even beside
+/// one bad byte, and the safety pass has already reported that byte.
+fn header(sealed: &SealedSource, kind: ItemKind, path: &std::path::Path) -> Result<Metadata> {
     let file = match kind {
         ItemKind::Skill => path.join("SKILL.md"),
         ItemKind::Agent | ItemKind::Command | ItemKind::McpServer => path.to_path_buf(),
-        _ => return Ok((None, Vec::new())),
+        _ => return Ok(Metadata::default()),
     };
     if !sealed.is_file(&file) {
-        return Ok((None, Vec::new()));
+        return Ok(Metadata::default());
     }
     let text = String::from_utf8_lossy(&sealed.read(&file)?).into_owned();
-    let meta = match kind {
+    Ok(match kind {
         ItemKind::McpServer => crate::scan::metadata::from_toml(&text),
         _ => crate::scan::metadata::from_markdown(&text),
-    };
-    Ok((
-        meta.description
-            .map(|text| safe_text(&text, MAX_DESCRIPTION)),
-        meta.tags,
-    ))
+    })
 }

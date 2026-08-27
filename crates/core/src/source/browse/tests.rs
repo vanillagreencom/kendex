@@ -94,10 +94,38 @@ fn packages_listed_for_a_plain_discovered_marketplace() {
     let gh = rows.iter().find(|row| row.name == "gh").expect("gh listed");
     assert_eq!(gh.kind, ItemKind::Skill);
     assert_eq!(gh.description.as_deref(), Some("does gh things"));
+    assert_eq!(gh.summary.as_deref(), Some("does gh things"));
     assert_eq!(gh.tags, vec![Tag::Review]);
     assert_eq!(gh.state, InstallState::Available);
     assert_eq!(gh.collision, None);
     assert!(rows.iter().any(|row| row.name == "extra"));
+}
+
+/// The Packages row shows the summary when the header writes one and the
+/// description when it does not.
+#[test]
+fn a_package_row_reads_the_summary_over_the_description() {
+    let tmp = tempfile::tempdir().unwrap();
+    let catalog = tmp.path().join("catalog");
+    let dir = catalog.join("skills/gh");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("SKILL.md"),
+        "---\nname: gh\ndescription: Load to work a pull request.\nsummary: Threads, reviews, CI logs, merges.\n---\nbody\n",
+    )
+    .unwrap();
+    let (env, scope) = project(tmp.path(), &sources_decl(&catalog));
+
+    let rows = packages(&env, &cat(&scope)).unwrap();
+    let gh = rows.iter().find(|row| row.name == "gh").unwrap();
+    assert_eq!(
+        gh.description.as_deref(),
+        Some("Load to work a pull request.")
+    );
+    assert_eq!(
+        gh.summary.as_deref(),
+        Some("Threads, reviews, CI logs, merges.")
+    );
 }
 
 #[test]

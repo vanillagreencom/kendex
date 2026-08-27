@@ -1,6 +1,7 @@
 ---
 name: my-skill
-description: What this skill does and when to use it. Agents read this line to decide when to load the skill, so be specific.
+description: When to load this skill. Agents read this line to decide whether to load it, so be specific.
+summary: What this skill does. Marketplace rows show this line and search reads it.
 license: MIT
 metadata:
   author: your-name

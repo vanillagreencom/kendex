@@ -111,9 +111,9 @@ function PackageRow({
             <div className="truncate font-medium">
               {packageDisplayName(row)}
             </div>
-            {row.description ? (
+            {row.summary ? (
               <div className="truncate text-xs text-muted-foreground">
-                {row.description}
+                {row.summary}
               </div>
             ) : null}
           </div>

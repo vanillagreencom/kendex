@@ -1,6 +1,7 @@
 ---
 name: kendex-issues
 description: "Load to monitor kendex's issue queue continuously or to run one fix-and-propagate cycle."
+summary: "Stewards the kendex issue queue on a self-paced loop: watches open PRs, polls Linear, triages, fixes defects through orch, merges, propagates with kendex refresh."
 ---
 
 # kendex Issue Steward

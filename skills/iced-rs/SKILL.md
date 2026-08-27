@@ -1,6 +1,7 @@
 ---
 name: iced-rs
 description: "Load whenever building or debugging an Iced UI."
+summary: "Iced 0.14 GUI reference: custom widgets via iced::advanced, overlays, Canvas, Shader, pane_grid, theming, subscriptions, Elm architecture, with a bundled full-API reference."
 license: MIT
 user-invocable: true
 metadata:

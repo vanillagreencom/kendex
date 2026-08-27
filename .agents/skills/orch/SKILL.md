@@ -1,6 +1,7 @@
 ---
 name: orch
 description: "PRIMARY AGENT ONLY. Load to orchestrate a Linear or GitHub work item from preparation through merge."
+summary: "Work-item orchestration for Linear or GitHub issues: prepare, delegate implementation, review, submit, merge, hand off, and oversee fleets of sessions."
 license: MIT
 user-invocable: true
 dependencies:
@@ -14,19 +15,6 @@ metadata:
   version: "3.0.0"
 tags: [automation]
 ---
-
-<!-- kendex:project-instructions:start -->
-## Project Instructions
-
-## Benchmarking orchestration changes
-
-The orch-drill ablation rig A/B-benchmarks orchestration changes: launch a
-drill per its README and compare wall clock and phase timings against the
-recorded baselines before shipping a workflow change. It is a separate
-repository, `bmethod/orch-drill`, not part of this checkout. Clone it wherever
-you keep repositories and run the drill from there.
-
-<!-- kendex:project-instructions:end -->
 
 # Orchestration
 

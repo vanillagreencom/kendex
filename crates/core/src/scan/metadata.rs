@@ -1,5 +1,5 @@
-//! What an item says about itself in its own header: a description, and the
-//! tags naming what it is for.
+//! What an item says about itself in its own header: a description, a
+//! summary, and the tags naming what it is for.
 //!
 //! The reading is `crate::frontmatter`'s job, not this module's. A header is
 //! YAML, and YAML has comments, block sequences, quoting and folded scalars
@@ -19,7 +19,11 @@ const HEADER_BYTES: usize = 64 * 1024;
 /// The header of one item.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Metadata {
+    /// The line an agent reads to decide whether to load the item.
     pub description: Option<String>,
+    /// The line a marketplace row shows and search reads: what the item
+    /// does, written for a person browsing.
+    pub summary: Option<String>,
     /// Recognised tags, deduped, in vocabulary order.
     pub tags: Vec<Tag>,
     /// Words written where a tag belonged that are not tags.
@@ -27,6 +31,13 @@ pub struct Metadata {
 }
 
 impl Metadata {
+    /// What a marketplace row says about the item. A package that writes no
+    /// summary is shown its description: the load trigger says less than a
+    /// summary would, and more than a blank row.
+    pub fn summary_or_description(&self) -> Option<&str> {
+        self.summary.as_deref().or(self.description.as_deref())
+    }
+
     /// One line naming what could not be understood and the nearest thing
     /// that would have worked. `None` when everything parsed.
     ///
@@ -139,17 +150,20 @@ pub fn from_markdown(text: &str) -> Metadata {
     let Ok(parsed) = frontmatter::parse_tolerant(yaml) else {
         return Metadata::default();
     };
-    let description = parsed
-        .map
-        .get("description")
+    from_words(
+        prose(&parsed.map, "description"),
+        prose(&parsed.map, "summary"),
+        parsed.map.string_list("tags").unwrap_or_default(),
+    )
+}
+
+/// One prose field, trimmed; blank is the same as absent.
+fn prose(map: &frontmatter::Map, key: &str) -> Option<String> {
+    map.get(key)
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|text| !text.is_empty())
-        .map(str::to_owned);
-    from_words(
-        description,
-        parsed.map.string_list("tags").unwrap_or_default(),
-    )
+        .map(str::to_owned)
 }
 
 /// Like [`from_markdown`], for the TOML kinds.
@@ -167,18 +181,22 @@ pub fn from_toml(text: &str) -> Metadata {
                 .collect()
         })
         .unwrap_or_default();
-    from_words(
+    let prose = |key: &str| {
         table
-            .get("description")
-            .and_then(|d| d.as_str())
-            .map(str::to_owned),
-        words,
-    )
+            .get(key)
+            .and_then(|value| value.as_str())
+            .map(str::to_owned)
+    };
+    from_words(prose("description"), prose("summary"), words)
 }
 
 /// Sorts and dedupes so two files listing the same tags in different orders
 /// describe themselves identically.
-fn from_words(description: Option<String>, words: Vec<String>) -> Metadata {
+fn from_words(
+    description: Option<String>,
+    summary: Option<String>,
+    words: Vec<String>,
+) -> Metadata {
     let mut tags: Vec<Tag> = Vec::new();
     let mut unknown_tags: Vec<String> = Vec::new();
     for word in words {
@@ -205,6 +223,7 @@ fn from_words(description: Option<String>, words: Vec<String>) -> Metadata {
     });
     Metadata {
         description,
+        summary,
         tags,
         unknown_tags,
     }

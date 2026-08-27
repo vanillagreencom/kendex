@@ -1,6 +1,7 @@
 ---
 name: decider
 description: "Load to create, search, or supersede an architecture decision record."
+summary: "Architecture decision records: templates, creation, search, supersession tracking, and INDEX maintenance."
 license: MIT
 user-invocable: true
 metadata:

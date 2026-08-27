@@ -58,6 +58,9 @@ pub struct AvailablePackage {
     pub kind: ItemKind,
     pub name: String,
     pub description: Option<String>,
+    /// What the row shows and search reads: the header's `summary`, else
+    /// its `description`.
+    pub summary: Option<String>,
     pub tags: Vec<Tag>,
     /// The curated sets of this catalog that carry it.
     pub bundles: Vec<String>,
@@ -117,6 +120,7 @@ pub fn packages(env: &Env, catalog: &Catalog) -> Result<Vec<AvailablePackage>> {
                 state: browsed.state(kind, &name),
                 collision: browsed.collision(kind, &name),
                 description: header.description.as_deref().map(names::shown),
+                summary: header.summary_or_description().map(names::shown),
                 tags: header.tags,
                 bundles,
                 kind,
@@ -177,8 +181,9 @@ pub fn bundle(env: &Env, catalog: &Catalog, bundle_name: &str) -> Result<BundleD
     })
 }
 
-/// The description and tags an item writes in its own header, read through
-/// the sealed source with the same vocabulary reading the scanner uses.
+/// The description, summary and tags an item writes in its own header, read
+/// through the sealed source with the same vocabulary reading the scanner
+/// uses.
 fn item_header(browsed: &Browsed, kind: ItemKind, name: &str) -> crate::scan::metadata::Metadata {
     let Some(path) = super::find_item(&browsed.sealed, &browsed.config, kind, name) else {
         return Default::default();

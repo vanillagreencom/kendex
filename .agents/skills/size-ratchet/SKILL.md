@@ -1,6 +1,7 @@
 ---
 name: size-ratchet
 description: "Load to add, tune, or debug the size ratchet, its baseline, or SIZE_RATCHET_* settings."
+summary: "Tighten-only file-size gate: tracked files over their threshold are frozen in a baseline TSV that only moves down."
 license: MIT
 user-invocable: true
 metadata:

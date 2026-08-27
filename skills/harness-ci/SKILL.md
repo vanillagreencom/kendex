@@ -1,6 +1,7 @@
 ---
 name: harness-ci
 description: "Load to wire, tune, or debug a repo's harness-only skip."
+summary: "Classifies a CI diff as harness-only, every changed path under a kendex render tree, so heavy lanes can stand down; ships the classifier script and its tests."
 license: MIT
 user-invocable: true
 metadata:

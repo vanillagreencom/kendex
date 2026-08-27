@@ -1,6 +1,7 @@
 ---
 name: price-handling
 description: "Load when comparing, rounding, formatting, or parsing prices, or designing price types."
+summary: "f64 price patterns for trading systems: comparing prices, rounding to tick size, formatting for display and broker APIs, parsing market feeds, designing price types."
 license: MIT
 user-invocable: true
 metadata:

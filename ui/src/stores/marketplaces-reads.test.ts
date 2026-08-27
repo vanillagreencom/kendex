@@ -22,6 +22,7 @@ const offered = (name: string) => [
     kind: "skill" as const,
     name,
     description: null,
+    summary: null,
     tags: [],
     bundles: [],
     state: "available" as const,

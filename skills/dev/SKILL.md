@@ -1,6 +1,7 @@
 ---
 name: dev
 description: "Load when implementing an issue or applying review fixes as a dev agent."
+summary: "Dev-agent workflows for implementing an issue and applying review fixes, invoked by orch or specialist agents."
 license: MIT
 user-invocable: true
 dependencies:

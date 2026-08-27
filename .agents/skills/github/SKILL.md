@@ -1,6 +1,7 @@
 ---
 name: github
 description: "Load to work a GitHub pull request: threads, comments, reviews, CI logs, merges."
+summary: "GitHub API CLI for pull requests: threads, comments, reviews, CI logs, merging, and cross-PR analysis."
 license: MIT
 user-invocable: true
 metadata:

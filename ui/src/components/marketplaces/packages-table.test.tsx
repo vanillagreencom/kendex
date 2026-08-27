@@ -43,6 +43,7 @@ const row: AvailablePackage = {
   kind: "skill",
   name: "gh",
   description: null,
+  summary: null,
   tags: [],
   bundles: [],
   state: "available",
@@ -84,6 +85,31 @@ const trigger = (html: string): string =>
   html.match(
     /<button[^>]*data-slot="tooltip-trigger"[^>]*>(.*?)<\/button>/,
   )?.[1] ?? "";
+
+// The description is the agent's load trigger; the row is for a person, so
+// it shows the summary and never the trigger beside it.
+describe("the line under the package name", () => {
+  it("is the summary, not the description", () => {
+    stub.scores = {};
+    const html = renderToStaticMarkup(
+      <PackagesTable
+        entries={[
+          {
+            catalog,
+            row: {
+              ...row,
+              description: "Load to work a pull request.",
+              summary: "Threads, reviews, CI logs, merges.",
+            },
+          },
+        ]}
+        showMarketplace={false}
+      />,
+    );
+    expect(html).toContain("Threads, reviews, CI logs, merges.");
+    expect(html).not.toContain("Load to work a pull request.");
+  });
+});
 
 describe("the safety dot in the packages list", () => {
   it("carries the caveat beside the number, since this row installs here", () => {

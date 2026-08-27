@@ -1,6 +1,7 @@
 ---
 name: review-gate
 description: "Load to wire, adopt, tune, or debug a repo's review gate or its REVIEW_GATE_* settings."
+summary: "Org-wide PR review gate: one predicate answers whether this exact head is reviewed, one writer posts the answer as a merge-blocking commit status."
 license: MIT
 user-invocable: true
 metadata:

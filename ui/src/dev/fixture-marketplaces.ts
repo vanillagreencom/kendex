@@ -30,6 +30,7 @@ const packageList = (offered: Offered[], installed: string[]) =>
       kind: pkg.kind,
       name: pkg.name,
       description: pkg.description,
+      summary: pkg.description,
       tags: pkg.tags,
       bundles: pkg.bundles,
       state: installed.includes(`${pkg.kind} ${pkg.name}`)

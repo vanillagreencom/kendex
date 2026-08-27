@@ -81,7 +81,7 @@ export function PackagesTab() {
         if (
           needle &&
           !pkg.name.toLowerCase().includes(needle) &&
-          !(pkg.description ?? "").toLowerCase().includes(needle)
+          !(pkg.summary ?? "").toLowerCase().includes(needle)
         )
           continue;
         out.push({ catalog: subscription(row.scope, row.name), row: pkg });

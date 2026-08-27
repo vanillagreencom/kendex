@@ -10,6 +10,9 @@ an outside contributor.
 
 ### Added
 
+- A package header may carry `summary`, the line the Packages tab shows and
+  searches and `kendex index` exports beside `description`; without one the
+  description stands in. Every kendex skill now has one.
 - A package that changes the repository beyond kendex's own folders says so
   at install and waits for its own yes, good for that run alone. Declining
   installs it unarmed; no terminal declines unless `--allow-repo-effects`.

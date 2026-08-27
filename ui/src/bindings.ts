@@ -526,6 +526,11 @@ export type AvailablePackage = {
 	kind: ItemKind,
 	name: string,
 	description: string | null,
+	/**
+	 *  What the row shows and search reads: the header's `summary`, else
+	 *  its `description`.
+	 */
+	summary: string | null,
 	tags: Tag[],
 	/**  The curated sets of this catalog that carry it. */
 	bundles: string[],
