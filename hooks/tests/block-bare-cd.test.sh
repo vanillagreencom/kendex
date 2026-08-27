@@ -7,10 +7,11 @@
 # argument is optional on both sides of the check: a bare `cd` goes to $HOME,
 # which is the same permanent move as `cd /tmp`.
 #
-# The command reaches the hook JSON-encoded, so the decode is pinned too: a
-# quoted operand carries \" escapes, and a parser that stops at the first
-# quote truncates the chain that scopes the move. Both decode paths are
-# exercised — jq, and the fallback on a PATH without it.
+# The command reaches the hook JSON-encoded, and jq is the only thing that
+# reads it: a quoted operand carries \" escapes, and the parser this replaced
+# stopped at the first one, truncating the chain that scopes the move. A
+# payload jq cannot read, or one naming a command that is not a string, is
+# refused rather than skipped.
 #
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
 # (the pre-fix hook, a no-op hook) run against these same assertions.
@@ -48,20 +49,14 @@ run_hook() { # command -> rc, stderr in ERR_FILE
   set -e
 }
 
-# A PATH without jq exercises the escape-aware fallback decoder.
-NOJQ_BIN="$TMP_ROOT/nojq"
-mkdir -p "$NOJQ_BIN"
-# type -P, not command -v: grep and friends are shell functions in some
-# interactive environments, and a function name symlinks to nothing.
-for tool in cat sed grep head; do
-  real="$(type -P "$tool" 2>/dev/null || true)"
-  [ -n "$real" ] && [ -x "$real" ] || continue
-  ln -sf "$real" "$NOJQ_BIN/$tool"
-done
-run_hook_nojq() { # command -> rc, stderr in ERR_FILE
+run_payload() { # raw-json [PATH] -> rc, stderr in ERR_FILE
   set +e
-  json_for "$1" | env -i HOME="$HOME" PWD="$PWD" PATH="$NOJQ_BIN" "$BASH_BIN" "$HOOK" \
-    >/dev/null 2>"$ERR_FILE"
+  if [ -n "${2:-}" ]; then
+    printf '%s' "$1" | env -i HOME="$HOME" PWD="$PWD" PATH="$2" "$BASH_BIN" "$HOOK" \
+      >/dev/null 2>"$ERR_FILE"
+  else
+    printf '%s' "$1" | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
+  fi
   rc=$?
   set -e
 }
@@ -73,6 +68,7 @@ run_hook '   cd';         assert_eq "$rc" 2 'leading whitespace does not hide a 
 run_hook 'cd /tmp';       assert_eq "$rc" 2 'cd with a path is refused'
 run_hook 'cd ~/dev';      assert_eq "$rc" 2 'cd to a home-relative path is refused'
 run_hook 'cd ..';         assert_eq "$rc" 2 'cd .. is refused'
+run_hook 'cd "$repo"';    assert_eq "$rc" 2 'a quoted operand alone is still a bare cd'
 
 echo "=== block-bare-cd: the refusal names the cause and the rewrite ==="
 run_hook 'cd'
@@ -82,65 +78,41 @@ assert_contains "$ERR_FILE" '(cd /path && command)' 'the refusal names the subsh
 echo "=== block-bare-cd: accepted shapes ==="
 run_hook '(cd /tmp && ls)';   assert_eq "$rc" 0 'a subshell-scoped cd passes'
 run_hook 'cd /tmp && ls';     assert_eq "$rc" 0 'a cd chained with the real work passes'
+run_hook 'cd "$repo" && ls';  assert_eq "$rc" 0 'a quoted operand does not truncate the chain behind it'
+run_hook 'cd "/a b" && make'; assert_eq "$rc" 0 'a quoted path with a space keeps its chain'
 run_hook 'echo cd';           assert_eq "$rc" 0 'a command that only mentions cd passes'
 run_hook 'cdr --version';     assert_eq "$rc" 0 'a command whose name merely starts with cd passes'
 run_hook 'ls -la';            assert_eq "$rc" 0 'an unrelated command passes'
 run_hook 'git checkout main'; assert_eq "$rc" 0 'a command with no cd at all passes'
 
-echo "=== block-bare-cd: a quoted operand does not truncate the command ==="
-run_hook 'cd "$repo" && ls';       assert_eq "$rc" 0 'cd "$repo" && ls is scoped work, not a bare cd'
-run_hook 'cd "$repo"';             assert_eq "$rc" 2 'cd "$repo" alone is still a bare cd'
-run_hook 'cd "/a b" && make';      assert_eq "$rc" 0 'a quoted path with a space does not hide the chain'
-run_hook 'echo "cd \"x\"" > note'; assert_eq "$rc" 0 'a quoted cd inside a string is not a bare cd'
-
-echo "=== block-bare-cd: the same decisions without jq ==="
-run_hook_nojq 'cd "$repo" && ls';  assert_eq "$rc" 0 'without jq, the escape-aware fallback keeps the chain'
-run_hook_nojq 'cd "$repo"';        assert_eq "$rc" 2 'without jq, a quoted bare cd is still refused'
-run_hook_nojq 'cd';                assert_eq "$rc" 2 'without jq, a bare cd with no target is refused'
-run_hook_nojq 'ls -la';            assert_eq "$rc" 0 'without jq, an unrelated command passes'
-
-echo "=== block-bare-cd: a quoted operator is an operand, not a separator ==="
-run_hook 'cd "a;b"';               assert_eq "$rc" 2 'a quoted ; does not turn a bare cd into a chain'
-run_hook "cd 'a&b'";               assert_eq "$rc" 2 'a single-quoted & does not either'
-run_hook 'cd "a|b" && ls';         assert_eq "$rc" 0 'a real chain after a quoted | still passes'
-
-echo "=== block-bare-cd: both decoders agree on JSON escapes ==="
-# The fallback decodes only \" and \\. Anything it would have to interpret is
-# refused, so it can never pass what jq refuses.
-for payload in '{"tool_input":{"command":"cd\t/tmp"}}' '{"tool_input":{"command":"ls\ncd"}}'; do
-  set +e
-  printf '%s' "$payload" | "$BASH_BIN" "$HOOK" >/dev/null 2>&1; with_jq=$?
-  printf '%s' "$payload" | env -i HOME="$HOME" PWD="$PWD" PATH="$NOJQ_BIN" "$BASH_BIN" "$HOOK" \
-    >/dev/null 2>"$ERR_FILE"; rc=$?
-  set -e
-  assert_eq "$rc" 2 "without jq, an escape it cannot decode refuses: $payload"
-  assert_eq "$with_jq" 2 "jq decodes the same escape to a bare cd: $payload"
-done
-
-echo "=== block-bare-cd: no text tools ==="
-set +e
-printf '%s' '{"tool_input":{"command":"cd /tmp"}}' \
-  | env -i PATH=/nonexistent "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"; rc=$?
-set -e
-assert_eq "$rc" 2 'a PATH with no text tools refuses rather than no-opping every check'
-assert_contains "$ERR_FILE" 'unavailable to read the payload' 'the refusal names the missing tools'
-
-echo "=== block-bare-cd: an undecodable payload refuses ==="
-set +e
-printf '%s' '{"tool_input":{"command":"cd /tmp"' | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"; rc=$?
-set -e
+echo "=== block-bare-cd: a payload it cannot read refuses ==="
+run_payload '{"tool_input":{"command":"cd /tmp"'
 assert_eq "$rc" 2 'a truncated JSON payload refuses rather than skipping the guard'
 assert_contains "$ERR_FILE" 'not valid JSON' 'the parse refusal names the cause'
-set +e
-printf '%s' '{"tool_input":{"command":"cd /tmp' \
-  | env -i HOME="$HOME" PWD="$PWD" PATH="$NOJQ_BIN" "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"; rc=$?
-set -e
-assert_eq "$rc" 2 'without jq, an unterminated command string refuses'
-assert_contains "$ERR_FILE" 'could not decode' 'the no-jq refusal names the cause'
-set +e
-printf '%s' '{"tool_input":{"command":""}}' | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"; rc=$?
-set -e
-assert_eq "$rc" 0 'an empty command is decoded, not a decode failure'
+run_payload '{"tool_input":{"command":123}}'
+assert_eq "$rc" 2 'a command that is not a string refuses'
+run_payload '{"tool_input":"cd /tmp"}'
+assert_eq "$rc" 2 'a tool_input that is not an object refuses'
+run_payload '{"tool_input":{"command":""}}'
+assert_eq "$rc" 0 'an empty command is read, not a read failure'
+run_payload '{"tool_name":"Bash","tool_input":{}}'
+assert_eq "$rc" 0 'a payload naming no command passes'
+
+echo "=== block-bare-cd: without the tools that read the payload ==="
+NOJQ_BIN="$TMP_ROOT/nojq"
+mkdir -p "$NOJQ_BIN"
+# type -P, not command -v: grep and friends are shell functions in some
+# interactive environments, and a function name symlinks to nothing.
+for tool in cat sed grep; do
+  real="$(type -P "$tool" 2>/dev/null || true)"
+  [ -n "$real" ] && [ -x "$real" ] || continue
+  ln -sf "$real" "$NOJQ_BIN/$tool"
+done
+run_payload '{"tool_input":{"command":"cd /tmp"}}' "$NOJQ_BIN"
+assert_eq "$rc" 2 'no jq refuses rather than guessing at the payload'
+assert_contains "$ERR_FILE" 'required to read the hook payload' 'the refusal names what is missing'
+run_payload '{"tool_input":{"command":"cd /tmp"}}' /nonexistent
+assert_eq "$rc" 2 'no text tools at all refuses too'
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
