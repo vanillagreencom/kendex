@@ -34,7 +34,7 @@ fn arm_settled(
 ) -> std::result::Result<crate::guard::GuardReport, ArmError> {
     for _ in 0..50 {
         match arm(scope, declared) {
-            Err(error) if error.to_string().contains("Text file busy") => {
+            Err(ArmError::Run(error)) if error.to_string().contains("Text file busy") => {
                 std::thread::sleep(std::time::Duration::from_millis(20));
             }
             outcome => return outcome,
@@ -77,10 +77,12 @@ fn a_package_with_no_installer_has_nothing_to_run() {
 #[allow(clippy::unwrap_used)]
 fn a_failed_installer_reports_the_exit_and_the_declared_undo() {
     let tmp = tempfile::tempdir().unwrap();
-    let repo = tmp.path().join("repo");
+    // A checkout path with a space in it, which is where an absolute
+    // program word would split into a program and an argument.
+    let repo = tmp.path().join("My Project");
+    let root = repo.join(".agents/skills/guards");
     fs::create_dir_all(&repo).unwrap();
     let scope = Scope::Project { root: repo };
-    let root = tmp.path().join("pkg");
     script(&root, "arm", "echo 'could not write hooks' >&2\nexit 1");
 
     let error = arm_settled(&scope, &package(&root, Some("arm"), Some("arm --off"))).unwrap_err();
@@ -90,15 +92,13 @@ fn a_failed_installer_reports_the_exit_and_the_declared_undo() {
     assert_eq!(*code, 1);
     assert_eq!(report.stderr, vec!["could not write hooks".to_owned()]);
     let said = error.to_string();
-    // The uninstaller resolved under the package, not the relative path the
-    // declaration wrote: read from the repository root, that names nothing.
+    // Where the uninstaller really is, spelled from where the sentence
+    // tells the reader to stand — not the relative path the declaration
+    // wrote, which names nothing from the repository root.
     assert_eq!(
         said,
-        format!(
-            "guards: arm exited 1 — anything it wrote before that is still there; \
-             to undo: run `{} --off` from the repository root",
-            root.join("arm").display()
-        )
+        "guards: arm exited 1 — anything it wrote before that is still there; \
+         to undo: run `.agents/skills/guards/arm --off` from the repository root"
     );
 
     // No uninstaller: the removal text is what the package said instead.
@@ -107,6 +107,20 @@ fn a_failed_installer_reports_the_exit_and_the_declared_undo() {
         error
             .to_string()
             .ends_with("to undo: delete the hooks by hand"),
+        "{error}"
+    );
+
+    // A package that does not sit under the project is written whole, and
+    // the space in it is quoted rather than left to split the word.
+    let outside = tmp.path().join("some where");
+    script(&outside, "arm", "exit 1");
+    let error =
+        arm_settled(&scope, &package(&outside, Some("arm"), Some("arm --off"))).unwrap_err();
+    assert!(
+        error.to_string().ends_with(&format!(
+            "to undo: run `'{}' --off` from the repository root",
+            outside.join("arm").display()
+        )),
         "{error}"
     );
 
@@ -119,40 +133,6 @@ fn a_failed_installer_reports_the_exit_and_the_declared_undo() {
             .to_string()
             .ends_with("the package declares no way to undo it"),
         "{error}"
-    );
-}
-
-/// An installer kendex could not get an exit status from reads like a
-/// failed one, not like a script that never ran: it was handed to the
-/// operating system, so what it wrote — if anything — is still there.
-#[cfg(unix)]
-#[test]
-#[allow(clippy::unwrap_used)]
-fn an_installer_that_never_reported_still_names_the_undo() {
-    let tmp = tempfile::tempdir().unwrap();
-    let repo = tmp.path().join("repo");
-    fs::create_dir_all(&repo).unwrap();
-    let scope = Scope::Project { root: repo };
-    let root = tmp.path().join("pkg");
-    // Present and inside the package, so it resolves; not executable, so
-    // the failure lands where kendex can no longer say what happened.
-    fs::create_dir_all(&root).unwrap();
-    fs::write(root.join("arm"), "#!/bin/sh\nexit 0\n").unwrap();
-
-    let error = arm(&scope, &package(&root, Some("arm"), Some("arm --off"))).unwrap_err();
-    assert!(
-        matches!(&error, ArmError::Unfinished { name, .. } if name == "guards"),
-        "{error}"
-    );
-    let said = error.to_string();
-    assert!(said.starts_with("guards: arm did not finish ("), "{said}");
-    assert!(
-        said.ends_with(&format!(
-            " — anything it wrote before that is still there; \
-             to undo: run `{} --off` from the repository root",
-            root.join("arm").display()
-        )),
-        "{said}"
     );
 }
 

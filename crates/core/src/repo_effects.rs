@@ -43,11 +43,6 @@ pub const KEY: &str = "repo-effects";
 /// directory, and canonicalized back into it: a symlink placed inside the
 /// package after install must not reach a program outside it. Arguments are
 /// passed as words, never through a shell.
-///
-/// Split from the launch on purpose. Nothing here starts a process, so a
-/// failure at this stage is one where the script provably never ran — and
-/// that is the only thing that lets `arm` tell "could not run it" apart
-/// from "ran, and may have written something".
 fn resolve_script<'a>(
     scope: &'a crate::model::Scope,
     root: &std::path::Path,
@@ -123,22 +118,13 @@ pub fn arm(
         });
     };
     let (repo, program, argv) = resolve_script(scope, &declared.root, installer)?;
-    // Past this line the installer has been handed to the operating system,
-    // so every failure is one where it may already have written something —
-    // a kill, a timeout, an exec that failed for a reason nobody can see
-    // from here. That reads like a nonzero exit, not like "could not run".
-    let report = launch_script(repo, &program, argv).map_err(|error| ArmError::Unfinished {
-        name: declared.name.clone(),
-        installer: installer.clone(),
-        undo: declared.undo(),
-        error: Box::new(error),
-    })?;
+    let report = launch_script(repo, &program, argv)?;
     if report.code != 0 {
         return Err(ArmError::Failed {
             name: declared.name.clone(),
             installer: installer.clone(),
             code: report.code,
-            undo: declared.undo(),
+            undo: declared.undo(repo),
             report: Box::new(report),
         });
     }
@@ -165,22 +151,8 @@ pub enum ArmError {
         undo: Option<String>,
         report: Box<crate::guard::GuardReport>,
     },
-    /// The installer was handed to the operating system and no exit status
-    /// came back — a timeout, a kill, an exec that failed after the fork.
-    /// Whether it wrote anything is unknowable from here, so this says what
-    /// `Failed` says: what it wrote is still there, and here is the undo.
-    Unfinished {
-        name: String,
-        installer: String,
-        undo: Option<String>,
-        /// Boxed for the same reason as `Run`.
-        error: Box<crate::error::CoreError>,
-    },
-    /// The installer could not be run at all: the scope is not a project,
-    /// or the program does not resolve inside the package. Every one of
-    /// those is settled before anything is launched, so nothing ran and
-    /// nothing was written. Boxed: the error is a rare path and the common
-    /// `Ok` should not pay for its size.
+    /// The installer could not be run at all. Boxed: the error is a rare
+    /// path and the common `Ok` should not pay for its size.
     Run(Box<crate::error::CoreError>),
 }
 
@@ -200,22 +172,16 @@ impl std::fmt::Display for ArmError {
                 undo,
                 ..
             } => {
-                write!(f, "{}: {} exited {code}", shown(name), shown(installer))?;
-                aftermath(f, undo.as_deref())
-            }
-            ArmError::Unfinished {
-                name,
-                installer,
-                undo,
-                error,
-            } => {
                 write!(
                     f,
-                    "{}: {} did not finish ({error})",
+                    "{}: {} exited {code} — anything it wrote before that is still there; ",
                     shown(name),
                     shown(installer)
                 )?;
-                aftermath(f, undo.as_deref())
+                match undo {
+                    Some(undo) => write!(f, "to undo: {}", shown(undo)),
+                    None => write!(f, "the package declares no way to undo it"),
+                }
             }
             ArmError::Run(error) => write!(f, "{error}"),
         }
@@ -223,17 +189,6 @@ impl std::fmt::Display for ArmError {
 }
 
 impl std::error::Error for ArmError {}
-
-/// The tail every outcome that may have written something carries: nothing
-/// was rolled back, and what the package itself says undoes it.
-fn aftermath(f: &mut std::fmt::Formatter<'_>, undo: Option<&str>) -> std::fmt::Result {
-    use crate::names::shown;
-    write!(f, " — anything it wrote before that is still there; ")?;
-    match undo {
-        Some(undo) => write!(f, "to undo: {}", shown(undo)),
-        None => write!(f, "the package declares no way to undo it"),
-    }
-}
 
 impl From<crate::error::CoreError> for ArmError {
     fn from(error: crate::error::CoreError) -> Self {
@@ -245,19 +200,39 @@ impl DeclaredEffects {
     /// What the package says undoes its effect: the uninstaller it declared
     /// where there is one, else its removal text, else nothing.
     ///
-    /// The uninstaller is resolved under the package the way `arm` resolves
-    /// the installer, because a declared script is package-relative and this
-    /// line sends a person to the repository root, where that relative path
-    /// names nothing. Only the program is resolved; the declared arguments
-    /// go out as the package wrote them, and the cwd the line asks for is
-    /// still the one kendex would have run it in.
-    fn undo(&self) -> Option<String> {
+    /// The uninstaller is a package-relative script and this line sends a
+    /// person to `repo` to run it, where that relative path names nothing.
+    /// So the declared program is joined onto the package directory and
+    /// written relative to `repo`, which is where the sentence already tells
+    /// them to stand — the spelling a project install always has, since the
+    /// package sits under the project. A program somewhere else is written
+    /// whole.
+    ///
+    /// The join is all of it. Whether that path exists and stays inside the
+    /// package is `arm`'s question, settled in `resolve_script` for the
+    /// program it is about to run; this one is a line to read.
+    ///
+    /// Either spelling is quoted where it carries whitespace: this is a
+    /// command to paste, and a checkout at `~/My Project` would otherwise
+    /// name a program ending at `My` with an argument after it. Only the
+    /// program; the declared arguments go out as the package wrote them.
+    fn undo(&self, repo: &std::path::Path) -> Option<String> {
         self.effects
             .uninstaller
             .as_ref()
             .map(|script| {
                 let (program, args) = split_script(script);
-                let command = std::iter::once(self.root.join(program).display().to_string())
+                let whole = self.root.join(program);
+                let path = whole
+                    .strip_prefix(repo)
+                    .unwrap_or(whole.as_path())
+                    .display()
+                    .to_string();
+                let quoted = match path.contains(char::is_whitespace) {
+                    true => format!("'{path}'"),
+                    false => path,
+                };
+                let command = std::iter::once(quoted)
                     .chain(args.into_iter().map(str::to_owned))
                     .collect::<Vec<_>>()
                     .join(" ");
