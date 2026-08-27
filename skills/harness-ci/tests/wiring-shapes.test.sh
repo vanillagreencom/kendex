@@ -50,6 +50,19 @@ assert_eq "the shapes carry a HEAD expression" "3" "$(printf '%s\n' "$heads" | g
 misordered="$(printf '%s\n' "$heads" | grep -vE 'github\.event\.after[^|]*\|\|[^|]*github\.sha' || true)"
 assert_eq "every HEAD expression tries github.event.after before github.sha" "" "$misordered"
 
+# Both lane-condition variants ship, and the one that fails open is labelled
+# as such. A reader who finds only the single-gate form wires it into a lane
+# that also reads a path family and gets a silent skip — the shape memsira hit.
+doc="$(cat "$WIRING")"
+case "$doc" in
+  *"SECOND gate"*) ;;
+  *) assert_eq "the two-gate variant is documented" "present" "absent" ;;
+esac
+assert_eq "the two-gate form is spelled out" 1 \
+  "$(printf '%s\n' "$doc" | grep -cF "needs.changes.result != 'success' ||")"
+assert_eq "the fail-open form is labelled WRONG" 1 \
+  "$(printf '%s\n' "$doc" | grep -cF '# WRONG when a family predicate is present')"
+
 # Indentation is checked structurally rather than by parsing: every block here
 # steps by two spaces, so an odd indent or a tab is hand-edit damage. This
 # needs no YAML library, which the shell shard does not install and this suite

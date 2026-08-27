@@ -74,6 +74,35 @@ function keeps the implicit `success()`, so a plain
 the expensive lanes down rather than run them. `!cancelled()` lifts that, and
 the lane then skips on one condition only: the classifier ran and said `true`.
 
+### When the lane has a SECOND gate
+
+The condition above is complete only where the harness verdict is the lane's
+ONLY gate. A repo whose lanes also read a path family — `needs.changes.outputs.
+frontend == 'true'`, a `rust` flag, a `docs` flag — needs a different shape,
+and the one above silently fails open there:
+
+```yaml
+  # WRONG when a family predicate is present
+  if: ${{ !cancelled() && needs.changes.outputs.frontend == 'true' && !(needs.changes.result == 'success' && needs.changes.outputs.harness_only == 'true') }}
+```
+
+A `changes` job that died publishes NO outputs, so `frontend` reads as an
+empty string, the `== 'true'` term is false, and the lane skips exactly when
+nothing classified it. `!cancelled()` cannot lift that — it is the family term
+failing, not the implicit `success()`.
+
+Lift the family term behind the job's result instead:
+
+```yaml
+  # RIGHT: a dead classifier runs the lane, whatever the family says
+  if: ${{ !cancelled() && (needs.changes.result != 'success' || (needs.changes.outputs.frontend == 'true' && needs.changes.outputs.harness_only != 'true')) }}
+```
+
+Read it as: never on a cancelled run; otherwise run whenever the
+classification is missing, and skip only when it arrived and cleared the lane.
+An event term (`github.event_name == 'merge_group'`) stays outside the
+parentheses — it is a tier decision, not a classification.
+
 ## Shape 2 — a step inside an aggregate job
 
 For workflows that already run one job and gate the expensive tail of it.

@@ -59,6 +59,12 @@ which stands the expensive lanes down on exactly the diffs nothing classified.
 An aggregate accepts a `skipped` lane only after checking that the classifier
 ran and cleared the diff.
 
+**A lane reading a path family beside the verdict needs more than the status
+function.** A dead classifying job publishes no outputs, so the family term
+reads empty and skips the lane on its own. Lift it behind
+`needs.changes.result != 'success'` — the two-gate shape in
+[references/wiring.md](references/wiring.md).
+
 ## Reading a verdict
 
 `stdout` carries the verdict line alone, so `$(harness-only …)` is safe to
