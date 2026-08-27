@@ -253,12 +253,29 @@ dir="$DIR"
 printf '[env]\nREVIEW_GATE_THREADS = "off"\n' >>"$dir/kendex.settings.toml"
 expect_clean "a plain assignment under a table header is read normally" "$dir"
 
-# A REVIEW_GATE_ name in a VALUE is not a key, and flagging it would fail
-# every repo that mentions one in a comment-shaped setting.
+# An inline table puts the setting AFTER the line's first `=`, which is why
+# the rule judges the line rather than a position inside it.
+sandbox
+dir="$DIR"
+printf 'container = { REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "trusted[bot]" }\n' >>"$dir/kendex.settings.toml"
+expect_fail "a key nested in an inline table is read by nothing" "$dir" "a shape the loader does not read"
+
+# The cost of judging the line: a name mentioned in a VALUE is flagged too.
+# That is the safe direction, and the verdict says to reword it.
 sandbox
 dir="$DIR"
 settings "$dir" PR_REVIEW_NUDGE "ask about REVIEW_GATE_MODE"
-expect_clean "a REVIEW_GATE_ name in a value position is not a key" "$dir"
+expect_fail "a name mentioned in a value is flagged, and the verdict says to reword" "$dir" "a shape the loader does not read"
+printf '%s' "$OUT" | grep -qF "reword it" &&
+  ok "the over-flag names its own remedy" ||
+  bad "the over-flag names its own remedy" "$OUT"
+
+# A SYMLINK is not committed content: CI checks out the link, and everything
+# here would read the target's bytes.
+sandbox
+dir="$DIR"
+(cd "$dir" && rm kendex.settings.toml && printf '[env]\nREVIEW_GATE_CONTEXT = "Review gate"\n' >real-settings.toml && ln -s real-settings.toml kendex.settings.toml && git add -A && git commit -q -m "symlink the settings file")
+expect_fail "a SYMLINKED settings file is a finding" "$dir" "is a SYMLINK"
 
 # A repository VARIABLE assigned as a setting gets its own diagnosis: the
 # name is real, so "you misspelled it" would send its reader hunting a typo
@@ -438,6 +455,14 @@ dir="$DIR"
 } >"$dir/.github/workflows/mentions.yml"
 commit "$dir"
 expect_clean "a workflow naming the engine only in a COMMENT is not a writer" "$dir"
+
+# A symlinked workflow is the same hazard on the other side: the comparison
+# would read the target's bytes while CI checks out the link.
+sandbox
+dir="$DIR"
+(cd "$dir/.github/workflows" && mv review-gate-writer.yml real-writer.yml && ln -s real-writer.yml review-gate-writer.yml)
+commit "$dir"
+expect_fail "a SYMLINKED workflow is a finding, not a skip" "$dir" "is a SYMLINK"
 
 # An untracked copy is not the repo's writer: Actions runs what is committed.
 sandbox

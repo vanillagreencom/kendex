@@ -173,26 +173,29 @@ else
   # exempt and says so.
   if [ -n "${REVIEW_GATE_SETTINGS_FILE:-}" ]; then
     note "$SETTINGS_FILE is present (named by REVIEW_GATE_SETTINGS_FILE, so it is not required to be tracked)"
+  elif [ -L "$SETTINGS_FILE" ]; then
+    bad "$SETTINGS_FILE is a SYMLINK — everything below would read its target's bytes, while CI checks out the link itself and the engine resolves whatever sits there. Commit the real file, or name the shared one with REVIEW_GATE_SETTINGS_FILE, which is the handle for a path outside this repository"
   elif git ls-files --error-unmatch -- "$SETTINGS_FILE" >/dev/null 2>&1; then
     ok "$SETTINGS_FILE is present and tracked"
   else
     bad "$SETTINGS_FILE is present but UNTRACKED — CI checks out tracked files only, so every value below is validated here and absent there; the gate would run on the built-in defaults. \`git add $SETTINGS_FILE\`"
   fi
-  # INVERTED, after quoted keys, dotted keys and quoted-dotted keys each
-  # arrived as its own spelling: enumerate what the loader READS, not the
-  # ways to hide from it. Its probe is `^[[:space:]]*NAME[[:space:]]*=`
+  # INVERTED, after quoted, dotted, quoted-dotted and nested-inline-table
+  # keys each arrived as its own spelling: enumerate what the loader READS,
+  # not the ways to hide from it. Its probe is `^[[:space:]]*NAME[[:space:]]*=`
   # (scripts/lib/settings.sh) — the bare name, then its own `=`, and nothing
-  # else. So one pass classifies every assignment line by shape: a line
-  # whose KEY POSITION (the text before its first `=`) names a REVIEW_GATE_
-  # key either has that exact shape and is read, or does not and is read by
-  # nothing. Quoting, dotting, quoted dotting and whatever spelling comes
-  # next all land in the second class without a rule of their own.
+  # else. Every non-comment line mentioning a REVIEW_GATE_ name is judged
+  # against that one shape: matching it is read, anything else is read by
+  # nothing. The LINE is judged, not a position inside it — scoping to the
+  # text before the first `=` was itself a hole, since an inline table puts
+  # the setting after it. This over-flags a name mentioned in a VALUE, which
+  # is the safe direction and is what the verdict text says to do about it.
   keyscan="$(awk '
     { l = $0; sub(/\r$/, "", l) }
     l ~ /^[[:space:]]*#/ { next }
+    l !~ /REVIEW_GATE_/ { next }
     { i = index(l, "=") }
     i == 0 { next }
-    substr(l, 1, i - 1) !~ /REVIEW_GATE_/ { next }
     l ~ /^[[:space:]]*REVIEW_GATE_[A-Za-z0-9_]*[[:space:]]*=/ {
       k = l
       sub(/^[[:space:]]*/, "", k)
@@ -241,7 +244,7 @@ EOF_ASSIGNED
     ok "no GitHub repository variable is assigned as a repo setting"
   fi
   if [ -n "$(printf '%s' "$unread" | tr -d '[:space:]')" ]; then
-    bad "$SETTINGS_FILE names REVIEW_GATE_* key(s) in a shape the loader does not read — valid TOML, read by nothing, so the gate runs on the built-in default. The loader reads the BARE name followed by its own \`=\`; quoted, dotted and quoted-dotted keys are all read by nothing. Strip the decoration from:
+    bad "$SETTINGS_FILE names REVIEW_GATE_* key(s) in a shape the loader does not read — valid TOML, read by nothing, so the gate runs on the built-in default. The loader reads the BARE name at the start of its own line, followed by its own \`=\`: quoted, dotted, quoted-dotted and inline-table keys are all read by nothing. Strip the decoration from the line(s) below; if one of them only MENTIONS a key name in its value, reword it:
 $(printf '%s\n' "$unread" | sed 's/^/        /')"
   else
     ok "every REVIEW_GATE_* assignment uses the bare key name the loader reads"

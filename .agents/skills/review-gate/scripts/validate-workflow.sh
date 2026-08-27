@@ -122,7 +122,16 @@ code_lines() { # FILE — the file's code lines, trailing space stripped
 adopted=""
 adopted_count=0
 while IFS= read -r wf; do
-  [ -n "$wf" ] && [ -f "$wf" ] || continue
+  [ -n "$wf" ] || continue
+  # A tracked SYMLINK is not tracked content: everything here would read the
+  # target's bytes while CI checks out the link. It is refused rather than
+  # skipped, since skipping is how a repo ends up with no writer found and a
+  # clean verdict.
+  if [ -L "$wf" ]; then
+    bad "$wf is a SYMLINK — its target's bytes are what this check would compare, while CI checks out the link itself. Commit the workflow as a real file"
+    continue
+  fi
+  [ -f "$wf" ] || continue
   # grep 0/1 are the measurement; anything higher is an unreadable workflow,
   # and skipping one silently is how a repo ends up with no writer and a
   # clean verdict.
@@ -158,7 +167,7 @@ ok "one adopted writer workflow: $adopted"
 engine_refs=0
 engine_ref_files=""
 while IFS= read -r wf; do
-  [ -n "$wf" ] && [ -f "$wf" ] || continue
+  [ -n "$wf" ] && [ -f "$wf" ] && [ ! -L "$wf" ] || continue
   code_lines "$wf" >"$TMP/wf.code"
   ref_rc=0
   grep -qF -- 'review-writer.sh' "$TMP/wf.code" || ref_rc=$?

@@ -9,9 +9,11 @@ per-repo wiring and values: [adoption.md](adoption.md).
 A repo checks its own resolved values with
 `.agents/skills/review-gate/scripts/validate.sh`, which also reconciles the
 carry-forward exclusions against tracked paths and names any key the engine
-does not read. The parser reads ONE key shape — the bare name followed by its
-own `=` — so a quoted, dotted or quoted-dotted key is valid TOML that resolves
-to nothing; `validate.sh` reports every assignment written any other way. `review-predicate.sh --check-config` is the value-rule half
+does not read. The parser reads ONE key shape — the bare name at the start of
+its own line, followed by its own `=` — so a quoted, dotted, quoted-dotted or
+inline-table key is valid TOML that resolves to nothing; `validate.sh` reports
+every line written any other way, and refuses a settings file that is a
+symlink, whose target's bytes are not what CI checks out. `review-predicate.sh --check-config` is the value-rule half
 alone: it validates every key below and exits without reading evidence or
 needing a PR.
 
