@@ -6,7 +6,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use kendex_core::apply;
-use kendex_core::engine::{DriftState, PlanOptions, adopt::adopt, audit, ops, plan_scope};
+use kendex_core::engine::{
+    DriftState, PlanOptions, adopt::adopt, audit, ops, persists_manifest, plan_scope,
+};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::error::CoreError;
 use kendex_core::lock::{load as load_lock, lock_path};

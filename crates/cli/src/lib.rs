@@ -64,7 +64,7 @@ enum Command {
         /// Keep what nothing needs anymore
         #[arg(long, conflicts_with = "sweep")]
         no_sweep: bool,
-        /// Take the files away but leave kendex.toml alone; refresh installs them again
+        /// Take the files away and leave kendex.toml untouched; refresh installs what it declares again
         #[arg(long, conflicts_with_all = ["sweep", "no_sweep"])]
         keep_declaration: bool,
     },

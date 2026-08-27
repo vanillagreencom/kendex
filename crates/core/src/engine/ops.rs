@@ -110,8 +110,8 @@ pub fn uninstall(env: &Env, scope: &Scope, names: &[String]) -> Result<EngineRep
 
 /// The removal both verbs share. The plan is made against a manifest
 /// without the declarations either way; `disown` is whether that manifest
-/// becomes the file. Kept declared, nothing in the plan may write the
-/// manifest: the planner's own save carries the same undeclared copy.
+/// becomes the file. Kept declared, the planner's own save — it carries
+/// the same undeclared copy — comes out of the plan.
 fn removal(
     env: &Env,
     scope: &Scope,
@@ -186,18 +186,16 @@ fn removal(
             ..PlanOptions::default()
         },
     )?;
-    report
-        .notes
-        .extend(unreadable_origins(env, scope, &manifest, &lock, names));
+    report.notes.extend(unreadable_origins(
+        env, scope, &manifest, &lock, names, disown,
+    ));
     if disown {
         ensure_manifest_persisted(env, scope, &manifest, &mut report)?;
     } else {
-        let manifest_path = manifest::manifest_path(env, scope);
-        report.plan.ops.retain(|op| match &op.op {
-            Op::WriteManifest { .. } => false,
-            Op::WriteFile { path, .. } => *path != manifest_path,
-            _ => true,
-        });
+        report
+            .plan
+            .ops
+            .retain(|op| !crate::engine::writes_manifest(op));
     }
     Ok(report)
 }
@@ -278,14 +276,16 @@ fn still_derived(
 /// The catalogs behind what is going away that cannot be read right now.
 /// What else still wants an item is written in its catalog, so an unreadable
 /// one means the preview cannot show the whole consequence of the removal.
-/// The removal itself stands either way — the record already says what has
-/// to stay removed.
+/// The removal itself stands either way: disowning, the record already says
+/// what has to stay removed; keeping the declaration, nothing is recorded,
+/// and the refresh that puts things back cannot read that catalog either.
 fn unreadable_origins(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
     lock: &Lock,
     names: &[String],
+    disown: bool,
 ) -> Vec<String> {
     let mut sources: Vec<String> = lock
         .entries
@@ -304,8 +304,12 @@ fn unreadable_origins(
             )
         })
         .map(|source| {
+            let stands = match disown {
+                true => "the removal stands, and what has to stay removed is recorded",
+                false => "the removal stands, and refresh cannot install anything from that catalog until it reads again",
+            };
             format!(
-                "the catalog '{source}' cannot be read right now, so this preview cannot show everything that still wants what is going — the removal stands, and what has to stay removed is recorded"
+                "the catalog '{source}' cannot be read right now, so this preview cannot show everything that still wants what is going — {stands}"
             )
         })
         .collect()

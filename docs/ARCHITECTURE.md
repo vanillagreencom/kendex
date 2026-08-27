@@ -686,12 +686,12 @@ lives in one capability table read by core and UI.
   a bundle: members whose only edges came from it go; members also
   requested, required by a survivor, or carried by another installed bundle
   stay — the preview names both halves and the reason. A member the user
-  removes is a suppression, the same durable removal a dependency gets:
-  refresh honors it; the audit reports the bundle installed with members
-  held back. Writing it asks both the lock and the catalogs, recording
-  anything either names. A removal naming an installation goes even with
-  its catalog unreadable; one nobody named is kept. Declaring the item
-  outranks a suppression: it installs and the contradiction is reported.
+  removes is a suppression, as a dependency's is: refresh honors it, while
+  `--keep-declaration` writes none and refresh puts it back; the audit
+  reports the bundle with members held back. Writing it asks the lock and
+  the catalogs, recording anything either names. A removal naming an
+  installation goes even with its catalog unreadable; one nobody named is
+  kept. Declaring the item outranks a suppression: it installs, reported.
   Two sets carrying one member and asking for it differently: the tools are
   both, a set switched on installs it switched on, anything else is a
   finding naming both sets. Authoring lives with the catalog —

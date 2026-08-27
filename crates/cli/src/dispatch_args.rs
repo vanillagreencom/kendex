@@ -1,11 +1,13 @@
 //! The two dispatch helpers whose flag-untangling outgrew the command
-//! table: `check` (catalog vs. scope) and `remove` (sweep resolution).
+//! table: `check` (catalog vs. scope) and `remove` (what happens to the
+//! declaration, and the sweep answer).
 
 use crate::scope::ScopeFilter;
 use kendex_core::env::Env;
 use std::process::ExitCode;
 
 use crate::commands;
+use crate::commands::remove::Removal;
 
 pub(crate) fn check(
     env: &Env,
@@ -37,13 +39,11 @@ pub(crate) fn remove(
     keep_declaration: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::Project)?;
-    if keep_declaration {
-        return commands::remove::uninstall(env, names, filter);
-    }
-    let sweep = match (sweep, no_sweep) {
-        (true, _) => Some(true),
-        (_, true) => Some(false),
-        _ => None,
+    let mode = match (keep_declaration, sweep, no_sweep) {
+        (true, _, _) => Removal::KeepDeclaration,
+        (_, true, _) => Removal::Disown { sweep: Some(true) },
+        (_, _, true) => Removal::Disown { sweep: Some(false) },
+        _ => Removal::Disown { sweep: None },
     };
-    commands::remove::run(env, names, filter, sweep)
+    commands::remove::run(env, names, filter, mode)
 }

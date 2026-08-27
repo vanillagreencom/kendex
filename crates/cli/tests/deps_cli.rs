@@ -276,7 +276,10 @@ fn keeping_the_declaration_lets_a_refresh_install_it_again() {
         String::from_utf8_lossy(&output.stderr)
     );
     let said = String::from_utf8_lossy(&output.stderr).into_owned();
-    assert!(said.contains("refresh installs it again"), "{said}");
+    assert!(
+        said.contains("refresh installs what it declares again"),
+        "{said}"
+    );
     assert!(!project.join(".claude/skills/dev").exists());
     assert!(
         project.join(".claude/skills/github").exists(),
@@ -286,6 +289,11 @@ fn keeping_the_declaration_lets_a_refresh_install_it_again() {
         fs::read_to_string(project.join("kendex.toml")).unwrap(),
         before,
         "the manifest was written"
+    );
+    let lock = fs::read_to_string(project.join(".kendex-lock.json")).unwrap();
+    assert!(
+        !lock.contains("skill:dev:"),
+        "the record still holds dev: {lock}"
     );
 
     let output = kendex(home, &project, &["refresh", "--yes"]);
@@ -308,6 +316,8 @@ fn keeping_the_declaration_lets_a_refresh_install_it_again() {
         before,
         "a dependency taken this way is not held back"
     );
+    let lock = fs::read_to_string(project.join(".kendex-lock.json")).unwrap();
+    assert!(!lock.contains("skill:github:"), "{lock}");
     let output = kendex(home, &project, &["refresh", "--yes"]);
     assert!(
         output.status.success(),
@@ -316,10 +326,14 @@ fn keeping_the_declaration_lets_a_refresh_install_it_again() {
     );
     assert!(project.join(".claude/skills/github").exists());
 
-    let output = kendex(
-        home,
-        &project,
-        &["remove", "dev", "--keep-declaration", "--sweep"],
-    );
-    assert!(!output.status.success(), "a sweep contradicts keeping");
+    for flag in ["--sweep", "--no-sweep"] {
+        let output = kendex(
+            home,
+            &project,
+            &["remove", "dev", "--keep-declaration", flag],
+        );
+        let said = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert!(!output.status.success(), "{flag} contradicts keeping");
+        assert!(said.contains("cannot be used with"), "{said}");
+    }
 }

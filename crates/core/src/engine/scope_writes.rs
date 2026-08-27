@@ -20,12 +20,16 @@ use super::{DriftRow, DriftState, config_edits};
 mod manifest_text;
 pub(super) use manifest_text::plan_schema_upgrade;
 
+/// Whether this op is the manifest's write.
+pub fn writes_manifest(op: &PlannedOp) -> bool {
+    matches!(op.op, Op::WriteManifest { .. })
+}
+
 /// Whether a plan already persists the manifest. A caller about to insert
 /// its own save must know: a second write to the same file binds to bytes
 /// the first one replaces and could never run.
 pub fn persists_manifest(ops: &[PlannedOp]) -> bool {
-    ops.iter()
-        .any(|op| matches!(op.op, Op::WriteManifest { .. }))
+    ops.iter().any(writes_manifest)
 }
 
 /// The precondition the plan's one manifest write binds to: the base of

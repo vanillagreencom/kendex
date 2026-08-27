@@ -8,80 +8,63 @@ use kendex_core::model::Scope;
 use super::{CliResult, resolve_scopes, say};
 use crate::scope::ScopeFilter;
 
-/// `sweep` is the answer to "and the things only these items needed?" —
-/// `None` means nobody has answered yet.
-pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, sweep: Option<bool>) -> CliResult {
+/// What a removal does with the declaration.
+#[derive(Clone, Copy)]
+pub enum Removal {
+    /// Drop it. `sweep` is the answer to "and the things only these items
+    /// needed?" — `None` means nobody has answered yet.
+    Disown { sweep: Option<bool> },
+    /// Keep it: the files go, kendex.toml stays as it is, and the next
+    /// refresh installs what it declares again. Nothing to ask about a
+    /// sweep — what these items pull in is wanted back with them.
+    KeepDeclaration,
+}
+
+pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) -> CliResult {
     if names.is_empty() {
-        say("usage: kendex remove <name>… [--scope project|global|all]");
+        say("usage: kendex remove <name>… [--keep-declaration] [--scope project|global|all]");
         return Ok(());
     }
     let mut removed_any = false;
     for scope in resolve_scopes(env, filter)? {
-        let report = match ops::remove(env, &scope, &names, None, sweep.unwrap_or(false)) {
+        let planned = match mode {
+            Removal::Disown { sweep } => {
+                ops::remove(env, &scope, &names, None, sweep.unwrap_or(false))
+            }
+            Removal::KeepDeclaration => ops::uninstall(env, &scope, &names),
+        };
+        let report = match planned {
             Ok(report) => report,
             // A scope without a v2 manifest has nothing of ours to remove.
             Err(error) if super::engine_common::is_legacy(&error) => continue,
             Err(error) => return Err(error.into()),
         };
-        let report = match answer(env, &scope, &names, report, sweep)? {
-            Some(report) => report,
-            None => continue,
+        let report = match mode {
+            Removal::Disown { sweep } => answer(env, &scope, &names, report, sweep)?,
+            Removal::KeepDeclaration => report,
         };
-        // What still wants a removed item says so now, not on the next audit.
+        // What still wants a removed item says so now, not on the next
+        // audit. Kept declared, a dependency's "kept removed" is true only
+        // until the refresh the closing line names; the warning carries no
+        // type to tell it from the rest, so it prints with them.
         for warning in &report.warnings {
             say(&format!("warning: {}: {}", warning.name, warning.message));
         }
-        if takes_anything(&report) {
-            removed_any = true;
-            say_split(&report);
-            take_away(env, &report)?;
-        }
-    }
-    if !removed_any {
-        say("Nothing removed");
-    }
-    Ok(())
-}
-
-/// `--keep-declaration`: the files go, kendex.toml stays as it is, and the
-/// next refresh installs the items again. Nothing to ask about a sweep —
-/// what these items pull in is wanted back with them — and nothing to warn
-/// about: whatever needed them gets them back the same way.
-pub fn uninstall(env: &Env, names: Vec<String>, filter: ScopeFilter) -> CliResult {
-    if names.is_empty() {
-        say("usage: kendex remove <name>… --keep-declaration [--scope project|global|all]");
-        return Ok(());
-    }
-    let mut removed_any = false;
-    for scope in resolve_scopes(env, filter)? {
-        let report = match ops::uninstall(env, &scope, &names) {
-            Ok(report) => report,
-            Err(error) if super::engine_common::is_legacy(&error) => continue,
-            Err(error) => return Err(error.into()),
-        };
         if !takes_anything(&report) {
             continue;
         }
         removed_any = true;
-        // The planner's reasons read as disowning ("no longer declared
-        // here"); here the declaration stays, so only the kept rows carry
-        // theirs.
-        for change in &report.set_changes {
-            if change.direction == kendex_core::engine::SetDirection::Remove {
-                say(&format!(
-                    "removing {} {} for {}",
-                    change.kind.name(),
-                    change.name,
-                    change.harness.display_name()
-                ));
-            }
+        say_split(&report, mode);
+        kendex_core::apply::execute(env, &report.plan, None)?;
+        for op in &report.plan.ops {
+            say(&format!("  - {}", op.description));
         }
-        say_kept(&report);
-        take_away(env, &report)?;
-        say(&format!(
-            "{}: still declared in kendex.toml; refresh installs it again",
-            scope.label()
-        ));
+        if matches!(mode, Removal::KeepDeclaration) {
+            say(&format!(
+                "{}: kendex.toml unchanged; refresh installs what it declares again",
+                scope.label()
+            ));
+        }
     }
     if !removed_any {
         say("Nothing removed");
@@ -98,34 +81,27 @@ fn takes_anything(report: &EngineReport) -> bool {
         .any(|op| matches!(op.op, Op::Trash { .. } | Op::WriteLock { .. }))
 }
 
-fn take_away(env: &Env, report: &EngineReport) -> CliResult {
-    kendex_core::apply::execute(env, &report.plan, None)?;
-    for op in &report.plan.ops {
-        say(&format!("  - {}", op.description));
-    }
-    Ok(())
-}
-
 /// What the removal decided. Taking a bundle away takes some of what it
 /// carried and leaves the rest, so both halves are said out loud, each with
 /// what accounts for it — otherwise the user is left guessing which members
-/// survived and why.
-fn say_split(report: &EngineReport) {
+/// survived and why. The planner's reason for a removal reads as disowning
+/// ("no longer declared here"), so with the declaration kept only the kept
+/// rows carry theirs.
+fn say_split(report: &EngineReport, mode: Removal) {
     for change in &report.set_changes {
         if change.direction == kendex_core::engine::SetDirection::Remove {
+            let reason = match mode {
+                Removal::Disown { .. } => format!(" — {}", change.reason),
+                Removal::KeepDeclaration => String::new(),
+            };
             say(&format!(
-                "removing {} {} for {} — {}",
+                "removing {} {} for {}{reason}",
                 change.kind.name(),
                 change.name,
-                change.harness.display_name(),
-                change.reason
+                change.harness.display_name()
             ));
         }
     }
-    say_kept(report);
-}
-
-fn say_kept(report: &EngineReport) {
     for kept in &report.kept {
         say(&format!(
             "keeping {} {} for {} — {}",
@@ -147,9 +123,9 @@ fn answer(
     names: &[String],
     report: EngineReport,
     sweep: Option<bool>,
-) -> Result<Option<EngineReport>, Box<dyn std::error::Error>> {
+) -> Result<EngineReport, Box<dyn std::error::Error>> {
     if sweep.is_some() || report.sweepable.is_empty() {
-        return Ok(Some(report));
+        return Ok(report);
     }
     let leftovers: Vec<String> = report
         .sweepable
@@ -171,7 +147,7 @@ fn answer(
     let mut answer = String::new();
     std::io::stdin().read_line(&mut answer)?;
     match matches!(answer.trim(), "y" | "Y" | "yes") {
-        true => Ok(Some(ops::remove(env, scope, names, None, true)?)),
-        false => Ok(Some(report)),
+        true => Ok(ops::remove(env, scope, names, None, true)?),
+        false => Ok(report),
     }
 }

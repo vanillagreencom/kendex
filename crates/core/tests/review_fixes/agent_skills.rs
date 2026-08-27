@@ -74,3 +74,38 @@ fn a_declaration_under_the_base_agents_key_holds_on_the_first_apply() {
         "the prefix match the declaration replaced does not come back: {rendered}"
     );
 }
+
+/// Keeping the declaration means the plan writes the manifest nowhere —
+/// not even the planner's own save, which carries the undeclared copy the
+/// removal was planned against. An agent whose upstream skill list grew is
+/// what makes the planner want that save.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn keeping_the_declaration_drops_the_planners_own_manifest_save() {
+    let w = world();
+    let scope = project(&w);
+    declare(
+        &w,
+        &scope,
+        "[skills.gh]\nsource = \"cat\"\n\n[agents.rust]\nsource = \"cat\"\n\n[agent-skills]\nrust = [\"gh\"]\n",
+    );
+    apply_now(&w, &scope);
+    add_skill(&w.source, "rust-perf");
+    let path = super::manifest::manifest_path(&w.env, &scope);
+    let before = fs::read_to_string(&path).unwrap();
+    assert!(
+        super::persists_manifest(&super::audit(&w.env, &scope).unwrap().plan.ops),
+        "the fixture must make the planner save the manifest on its own"
+    );
+
+    let report = super::ops::uninstall(&w.env, &scope, &["gh".to_owned()]).unwrap();
+    assert!(
+        !super::persists_manifest(&report.plan.ops),
+        "{:?}",
+        report.plan.ops
+    );
+    super::apply::execute(&w.env, &report.plan, None).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    assert!(before.contains("[skills.gh]"));
+    assert!(!w.home.join("dev/app/.claude/skills/gh").exists());
+}

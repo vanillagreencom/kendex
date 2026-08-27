@@ -72,7 +72,7 @@ pub fn installed_paths(
 }
 
 use desired::desired_state;
-pub use scope_writes::persists_manifest;
+pub use scope_writes::{persists_manifest, writes_manifest};
 use scope_writes::{
     plan_config_edits, plan_lock_write, plan_manifest_write, plan_settings_seed, source_revisions,
 };
