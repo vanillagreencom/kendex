@@ -20,15 +20,10 @@ git_failed() { # SUBCOMMAND OUTPUT — an unreadable changed set is not an empty
   exit 2
 }
 
-# No repository, nothing to gate. Exit 128 is the one failure that says so.
-# A git that will not execute exits 126 or 127, and every later git call is
-# asked inside a repository, where a failure is a broken run.
-PROBE_RC=0
-REPO_ROOT=$(git rev-parse --show-toplevel 2>&1) || PROBE_RC=$?
-if [ "$PROBE_RC" -ne 0 ]; then
-  [ "$PROBE_RC" -eq 128 ] || git_failed 'rev-parse' "$REPO_ROOT"
-  exit 0
-fi
+# A git that cannot answer blocks, with no reading of the failure that means
+# "nothing to gate": rev-parse exits 128 outside a repository and inside one
+# whose metadata it cannot read, and the hook has no way to tell which.
+REPO_ROOT=$(git rev-parse --show-toplevel 2>&1) || git_failed 'rev-parse' "$REPO_ROOT"
 
 # What counts as changed: the worktree, the index, and untracked non-ignored
 # paths. Without that last set a task whose only work is a new file presents

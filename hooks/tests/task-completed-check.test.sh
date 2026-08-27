@@ -158,13 +158,21 @@ assert_contains "$err" "Clippy failed" "names the failure when there is no outpu
 run_hook "$REPO" FAKE_RC=0 FAKE_OUT="error: this line is not a verdict"
 assert_eq "$rc" 0 "a successful run is not blocked by the word error in its output"
 
-echo "task-completed-check: outside a repository"
+echo "task-completed-check: the repository probe has no passing failure"
 NOREPO="$TMP_ROOT/norepo"
 mkdir -p "$NOREPO"
 printf 'pub fn added() {}\n' >"$NOREPO/added.rs"
 run_hook "$NOREPO" FAKE_RC=0
-assert_eq "$rc" 0 "no repository to ask means nothing to gate"
-assert_eq "$(cat "$ARGS_LOG")" "" "no repository never invokes cargo"
+assert_eq "$rc" 2 "a directory that is not a repository blocks"
+assert_eq "$(cat "$ARGS_LOG")" "" "a failed probe never invokes cargo"
+# The same 128 from inside a checkout git cannot read. Nothing in the status
+# or the message separates the two, so neither may stand the gate down.
+REPO="$(new_repo badconfig)"
+printf 'pub fn added() {}\n' >"$REPO/src/added.rs"
+printf 'this is not a config line\n' >"$REPO/.git/config"
+run_hook "$REPO" FAKE_RC=0
+assert_eq "$rc" 2 "an unreadable .git/config blocks"
+assert_contains "$err" "rev-parse failed" "names the probe that could not answer"
 
 echo "task-completed-check: a changed set larger than the pipe buffer"
 REPO="$(new_repo bigset)"
@@ -222,7 +230,7 @@ set +e
   >/dev/null 2>"$TMP_ROOT/stderr"
 rc=$?
 set -e
-assert_eq "$rc" 2 "a git that will not run blocks rather than standing down"
+assert_eq "$rc" 2 "a git that will not run blocks too"
 
 echo "task-completed-check: no cargo on PATH"
 REPO="$(new_repo nocargo)"
