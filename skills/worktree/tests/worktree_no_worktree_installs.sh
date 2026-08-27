@@ -8,14 +8,18 @@
 # Asserted here:
 #   1. no package manager (npm, pnpm, yarn, bun) is ever invoked by create;
 #   2. a JS worktree with no node_modules gets the warning, and the warning
-#      names the main checkout;
+#      names the main checkout — on fix-links as well as on create, since the
+#      check lives in setup_worktree_links and every caller reaches it;
 #   3. a WORKTREE_SYMLINKS node_modules entry satisfies the check silently;
 #   4. a repo without a root package.json gets no warning;
 #   5. a nested node_modules entry (ui-style) with no main-checkout source
 #      warns on create, and fix-links links it once the install exists;
-#   6. a root node_modules entry with no source warns exactly once;
+#   6. a root node_modules entry with no source warns exactly once, and that
+#      one warning is the configured-entry message, not the generic fallback;
 #   7. repair-links, the git-hook path, warns too when the main-checkout
-#      source disappears after the worktree was created.
+#      source disappears after the worktree was created;
+#   8. a configured node_modules entry with no package.json beside it in the
+#      worktree stays silent.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -108,6 +112,15 @@ if grep -q "dependencies were not installed" "$STDERR_PNPM"; then
 else
   bad "pnpm warning" "stderr: $(cat "$STDERR_PNPM")"
 fi
+# The fallback lives in setup_worktree_links, so every caller reaches it, not
+# just create. fix-links pins one of the other invocation modes.
+STDERR_PNPM_FIX="$TMP_ROOT/pnpm-fixlinks-stderr.log"
+(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" fix-links "$WT_PNPM" >/dev/null 2>"$STDERR_PNPM_FIX")
+if grep -q "dependencies were not installed" "$STDERR_PNPM_FIX"; then
+  ok "fix-links warns on an unlinked JS worktree too, not only create"
+else
+  bad "fix-links fallback warning" "stderr: $(cat "$STDERR_PNPM_FIX")"
+fi
 
 echo "=== a WORKTREE_SYMLINKS node_modules entry satisfies the check silently ==="
 ROOT="$TMP_ROOT/linked"
@@ -176,6 +189,14 @@ if [ "$WARN_COUNT" = "1" ]; then
 else
   bad "single warning for a configured root entry" "count=$WARN_COUNT stderr: $(cat "$STDERR_ROOT")"
 fi
+# Both messages contain the counted substring, so the count alone cannot tell
+# them apart: name the one that must be there and the one that must not.
+if grep -qF "WORKTREE_SYMLINKS entry 'node_modules' has no source at $ROOT/repo/node_modules" "$STDERR_ROOT" &&
+  ! grep -qF "installs run only in the main checkout" "$STDERR_ROOT"; then
+  ok "that one warning is the configured-entry message, not the generic fallback"
+else
+  bad "configured-entry message identity" "stderr: $(cat "$STDERR_ROOT")"
+fi
 
 echo "=== repair-links warns when the main-checkout source disappears ==="
 ROOT="$TMP_ROOT/repair"
@@ -200,6 +221,18 @@ else
   bad "repair-links missing-source warning" "stderr: $(cat "$STDERR_REPAIR")"
 fi
 assert_no_pm_calls "repair repo: no package manager invoked" || true
+
+echo "=== a configured entry with no package.json beside it stays silent ==="
+ROOT="$TMP_ROOT/nopkg"
+make_repo "$ROOT" repo
+printf 'WORKTREE_SYMLINKS="ui/node_modules"\n' >"$ROOT/repo/.env"
+STDERR_NOPKG="$TMP_ROOT/nopkg-stderr.log"
+(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-nopkg >/dev/null 2>"$STDERR_NOPKG")
+if grep -q "dependencies were not installed" "$STDERR_NOPKG"; then
+  bad "no package.json means no dependency warning" "stderr: $(cat "$STDERR_NOPKG")"
+else
+  ok "a configured node_modules entry with no ui/package.json stays silent"
+fi
 
 echo "=== a repo without package.json gets no warning ==="
 ROOT="$TMP_ROOT/plain"
