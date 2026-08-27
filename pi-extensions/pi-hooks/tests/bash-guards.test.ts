@@ -58,6 +58,7 @@ describe("pre-commit gate: the bash hook's contract", () => {
 	let halfArmed: string;
 	let markedNotExec: string;
 	let foreign: string;
+	let mixed: string;
 	let notARepo: string;
 	// Bare PATH: the armed hook gates a commit with no binary involved, and the
 	// refusal for an unarmed one needs none either. Git reads no config of the
@@ -121,10 +122,17 @@ describe("pre-commit gate: the bash hook's contract", () => {
 			chmodSync(join(foreign, ".git", "hooks", lane), 0o755);
 		}
 
+		// Ours on the content lane, somebody else's on the message lane: the
+		// marker has to be read on both, not on pre-commit alone.
+		mixed = initRepo(root, "mixed");
+		writeHook(join(mixed, ".git", "hooks"), "pre-commit");
+		writeFileSync(join(mixed, ".git", "hooks", "commit-msg"), "#!/bin/sh\nexit 0\n");
+		chmodSync(join(mixed, ".git", "hooks", "commit-msg"), 0o755);
+
 		notARepo = join(root, "plain");
 		mkdirSync(notARepo);
 
-		for (const repo of [unarmed, armed, armedByPath, disarmed, disarmedByPath, hooksOff, halfArmed, markedNotExec, foreign]) {
+		for (const repo of [unarmed, armed, armedByPath, disarmed, disarmedByPath, hooksOff, halfArmed, markedNotExec, foreign, mixed]) {
 			plantAnnouncingScript(repo, ranLog);
 		}
 
@@ -172,13 +180,14 @@ describe("pre-commit gate: the bash hook's contract", () => {
 	});
 
 	test("a long command is judged in linear time", async () => {
-		// One backtrack per git word turns a few thousand of them into a
-		// second on Pi's event loop before the tool runs.
-		const command = " git x".repeat(4000);
+		// One backtrack per git word turns twenty thousand of them into more
+		// than a second on Pi's event loop before the tool runs; the linear
+		// scan stays three orders of magnitude under the bound.
+		const command = " git x".repeat(20000);
 		const started = performance.now();
 		expect(isGitCommit(command)).toBe(false);
 		expect(await preCommitGate(command, armed)).toEqual({ kind: "allow" });
-		expect(performance.now() - started).toBeLessThan(50);
+		expect(performance.now() - started).toBeLessThan(250);
 
 		const { verdict } = await gate(armed, `git config --local core.hooksPath /dev/null &&${command} && git commit -m x`);
 		if (verdict.kind !== "refuse") throw new Error("unreachable");
@@ -227,6 +236,14 @@ describe("pre-commit gate: the bash hook's contract", () => {
 
 	test("an executable pair without the marker is somebody else's hooks, not armed", async () => {
 		const { verdict, ran } = await gate(foreign, "git commit -m test");
+		expect(verdict.kind).toBe("refuse");
+		if (verdict.kind !== "refuse") throw new Error("unreachable");
+		expect(verdict.reason).toContain("not armed by kendex");
+		expect(ran).toBe("");
+	});
+
+	test("a marked pre-commit beside an unmarked commit-msg is not armed", async () => {
+		const { verdict, ran } = await gate(mixed, "git commit -m test");
 		expect(verdict.kind).toBe("refuse");
 		if (verdict.kind !== "refuse") throw new Error("unreachable");
 		expect(verdict.reason).toContain("not armed by kendex");

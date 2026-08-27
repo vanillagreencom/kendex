@@ -15,7 +15,7 @@ First-class Pi port of the kendex safety hooks listed below. Each hook is indepe
 
 `block-unsafe-rm` has no Pi port; it declares `harnesses:` without `pi`, so kendex reports Pi as `unsupported` for it rather than claiming enforcement that does not exist.
 
-These implement the same safety goals as their matching bash hooks in `kendex/hooks/`, with Pi-specific mechanics where the in-process event loop needs different handling. The pre-commit gate carries the bash hook's contract exactly; `kendex/hooks/tests/pre-commit-check.test.sh` and this package's `tests/bash-guards.test.ts` run the same fixtures and commands.
+These implement the same safety goals as their matching bash hooks in `kendex/hooks/`, with Pi-specific mechanics where the in-process event loop needs different handling. The pre-commit gate carries the bash hook's contract exactly; this package's `tests/bash-guards.test.ts` runs the fixtures and commands of `kendex/hooks/tests/pre-commit-check.test.sh` and adds foreign-hooks fixtures and a long-command check.
 
 ## Install
 
