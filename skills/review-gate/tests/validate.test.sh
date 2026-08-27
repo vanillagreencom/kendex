@@ -462,6 +462,15 @@ dir="$DIR"
 commit "$dir"
 expect_fail "a SYMLINKED workflow is a finding, not a skip" "$dir" "is a SYMLINK"
 
+# A NON-ASCII workflow name is C-quoted by `git ls-files` in text mode, so a
+# line-based read hands `-f` the quoted spelling and skips the file — which
+# is how a second writer hides behind its own name.
+sandbox
+dir="$DIR"
+cp "$dir/.github/workflows/review-gate-writer.yml" "$dir/.github/workflows/rêview-writer.yml"
+commit "$dir"
+expect_fail "a second writer under a NON-ASCII name is still counted" "$dir" "tracked workflows execute review-writer.sh"
+
 # An untracked copy is not the repo's writer: Actions runs what is committed.
 sandbox
 dir="$DIR"

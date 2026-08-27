@@ -153,9 +153,18 @@ code_lines() { # FILE — YAML comment-only lines dropped outside block scalars
 
 # TRACKED files only: Actions runs what is committed, so an untracked
 # workflow on someone's disk is not this repo's writer.
+#
+# NUL-delimited, and the listing's own failure is fatal. In text mode
+# `git ls-files` C-QUOTES a path that is non-ASCII or carries a special
+# character, so `-f` would then see the quoted spelling, skip the file
+# silently, and let a second writer hide behind its own name; a pathname may
+# also contain a newline, which a line-based read splits in two.
+git ls-files -z -- '.github/workflows/*.yml' '.github/workflows/*.yaml' >"$TMP/workflows" ||
+  die "could not list this repository's tracked workflows"
+
 adopted=""
 adopted_count=0
-while IFS= read -r wf; do
+while IFS= read -r -d '' wf; do
   [ -n "$wf" ] || continue
   # A tracked SYMLINK is not tracked content: everything here would read the
   # target's bytes while CI checks out the link. It is refused rather than
@@ -175,9 +184,7 @@ while IFS= read -r wf; do
   [ "$wf_rc" -eq 0 ] || continue
   adopted_count=$((adopted_count + 1))
   adopted="$wf"
-done <<EOF_WORKFLOWS
-$(git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml')
-EOF_WORKFLOWS
+done <"$TMP/workflows"
 
 if [ "$adopted_count" -eq 0 ]; then
   bad "no tracked workflow under .github/workflows/ EXECUTES review-writer.sh — nothing writes this repo's gate status; copy templates/review-gate-writer.yml in (references/adoption.md)"
@@ -200,7 +207,7 @@ ok "one adopted writer workflow: $adopted"
 # a person has to look at, whether or not it turns out to run it.
 engine_refs=0
 engine_ref_files=""
-while IFS= read -r wf; do
+while IFS= read -r -d '' wf; do
   [ -n "$wf" ] && [ -f "$wf" ] && [ ! -L "$wf" ] || continue
   code_lines "$wf" >"$TMP/wf.code"
   ref_rc=0
@@ -209,9 +216,7 @@ while IFS= read -r wf; do
   [ "$ref_rc" -eq 0 ] || continue
   engine_refs=$((engine_refs + 1))
   engine_ref_files="${engine_ref_files:+$engine_ref_files, }$wf"
-done <<EOF_REFS
-$(git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml')
-EOF_REFS
+done <"$TMP/workflows"
 
 if [ "$engine_refs" -gt 1 ]; then
   bad "$engine_refs tracked workflows name review-writer.sh outside a comment ($engine_ref_files) — the gate has exactly one writer by design, and a second workflow reaching the engine by any spelling can post gate statuses outside the single-writer group. Read it and delete the reference, or the workflow"
