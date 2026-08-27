@@ -3,9 +3,10 @@
 # reviewed?". Shipped by the kendex review-gate skill and vendored into
 # consumers at .agents/skills/review-gate/scripts/. The authoritative caller
 # contract — evidence forms, trust model, settings keys, the carry-forward
-# engine, env seams, output, and exit codes — is print_usage below: run with
-# --help.
+# engine, env seams, output, exit codes — is print_usage below: run --help.
 set -u
+# A merge gate must never let an inherited BASHOPTS decide which paths match.
+shopt -u nocasematch nocaseglob extglob 2>/dev/null || true
 
 print_usage() {
   cat <<'USAGE'
@@ -1094,10 +1095,9 @@ fi
 # always carries once any class is enabled. This is NOT the retired
 # docs-only waiver: real evidence must exist, and only EXTENDS across a
 # delta review would not re-examine — code changes OUTSIDE the enabled
-# classes require fresh evidence, and the changes-requested and thread
-# terms below still fail closed with carried evidence exactly as with head
-# evidence. Only the NEWEST ancestor candidate decides: an older
-# candidate's delta is a superset, walking back only widens what carries.
+# classes require fresh evidence, and changes-requested and threads still
+# fail closed with carried evidence. Only the NEWEST ancestor decides: an
+# older candidate's delta is a superset, walking back only widens carry.
 carried=0
 carry_base=""
 carry_kind=""

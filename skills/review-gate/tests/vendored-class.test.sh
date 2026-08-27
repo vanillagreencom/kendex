@@ -29,6 +29,7 @@ chmod +x "$shim/gh"
 CFG_CARRY="vendored"
 CFG_VENDORED_PATHS=".agents/*"
 CFG_CARRY_EXCLUDE=""
+CFG_BASHOPTS=""
 
 cases=0
 failures=0
@@ -36,7 +37,8 @@ run() { # case-name, expected-verdict ("" = exit 2, no verdict), [stderr must co
   local name="$1" want="$2" reason="${3:-}" want_exit=0 line rc=0 verdict
   [ -n "$want" ] || want_exit=2
   cases=$((cases + 1))
-  line="$(PATH="$shim:$PATH" GH_SHIM_FIXTURES="$fixtures" \
+  line="$(env ${CFG_BASHOPTS:+"BASHOPTS=$CFG_BASHOPTS"} \
+    PATH="$shim:$PATH" GH_SHIM_FIXTURES="$fixtures" \
     REVIEW_GATE_SETTINGS_FILE=/dev/null \
     REVIEW_GATE_TRUSTED_STATUS_CONTEXTS="" REVIEW_GATE_COMMENT_REVIEWERS="" \
     REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS="" \
@@ -76,6 +78,7 @@ reset() { # a reviewed ancestor, nothing at head, the class on over .agents/*
   CFG_CARRY="vendored"
   CFG_VENDORED_PATHS=".agents/*"
   CFG_CARRY_EXCLUDE=""
+  CFG_BASHOPTS=""
 }
 one_line() { # filename, status -> one compare files[] entry with a one-line patch
   delta_file "$1" "$2" '@@ -1 +1 @@
@@ -168,6 +171,11 @@ run "status renamed with no previous_filename refuses — an unprovable source i
 reset
 compare_fix ahead "[$(one_line ".agents/skills/hello/scripts/run.sh" renamed | jq '.previous_filename = null')]"
 run "status renamed with a null previous_filename refuses for the same reason" awaiting
+
+reset
+CFG_BASHOPTS=nocasematch
+compare_fix ahead "[$(one_line ".AGENTS/skills/hello/scripts/run.sh" modified)]"
+run "an inherited nocasematch never widens the set — a case-folded path refuses" awaiting
 
 reset
 reviews_set "$(review "reviewer" CHANGES_REQUESTED "2026-01-02T00:00:00Z" "$OTHER")"
