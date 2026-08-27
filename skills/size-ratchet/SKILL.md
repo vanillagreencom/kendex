@@ -1,6 +1,6 @@
 ---
 name: size-ratchet
-description: "Tighten-only file-size gate: tracked files over their threshold (default 400, per-class via SIZE_RATCHET_CLASSES) are frozen in a baseline TSV that only moves down. Load to add, tune, or debug the ratchet, its baseline, or SIZE_RATCHET_* settings."
+description: "Load to add, tune, or debug the size ratchet, its baseline, or SIZE_RATCHET_* settings."
 license: MIT
 user-invocable: true
 metadata:

@@ -1,6 +1,6 @@
 ---
 name: worktree
-description: "Git worktree management: create, list, remove isolated working copies with env/config symlinks."
+description: "Load to create, list, remove, push, or repair a git worktree."
 license: MIT
 user-invocable: true
 argument-hint: "create <ID> [--base <branch>] [--from <ref>] [--pr <N>] [--reuse|--restack|--recover-local] [--replay] | restack continue|skip|abort <ID|path> | list | remove <ID|path>"

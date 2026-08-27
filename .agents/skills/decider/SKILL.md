@@ -1,6 +1,6 @@
 ---
 name: decider
-description: "Architecture Decision Record (ADR) and architectural decision document management: templates, creation, search, supersession tracking, and INDEX maintenance."
+description: "Load to create, search, or supersede an architecture decision record."
 license: MIT
 user-invocable: true
 metadata:

@@ -1,6 +1,6 @@
 ---
 name: deep-research
-description: "Exa-powered deep research producing an evidence-backed findings.md report. Load for research tasks, architectural investigations, and vendor, library, or technology comparisons."
+description: "Load for research tasks, architectural investigations, and vendor, library, or technology comparisons."
 license: MIT
 user-invocable: true
 argument-hint: "report [query] --output findings.md"

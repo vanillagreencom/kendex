@@ -1,11 +1,6 @@
 ---
 name: kendex-issues
-description: >
-  Steward the vanillagreencom/kendex issue queue on a self-paced loop: watch
-  open PRs, poll Linear (team KEN), triage, fix genuine kendex defects through
-  the orch skill, merge, propagate with kendex refresh, reschedule. A thin
-  wrapper over orch, github, review-gate and linear. Use when asked to monitor
-  kendex's issues continuously or to run one fix-and-propagate cycle.
+description: "Load to monitor kendex's issue queue continuously or to run one fix-and-propagate cycle."
 ---
 
 # kendex Issue Steward

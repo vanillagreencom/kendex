@@ -1,6 +1,6 @@
 ---
 name: code-quality
-description: "Generic code-authoring standards for dev agents: correctness over convenience, no fail-open branches, comment rules, over-engineering limits, prove-your-guards. Load before writing or modifying code."
+description: "Load before writing or modifying code."
 license: MIT
 user-invocable: true
 metadata:

@@ -1,6 +1,6 @@
 ---
 name: second-opinion
-description: "Cross-model second opinion: review, challenge, audit, and consult via an external AI CLI (Claude ↔ Codex)."
+description: "Load for a cross-model review, challenge, audit, or quick consult."
 license: MIT
 user-invocable: true
 argument-hint: "review [scope] | challenge [description] | audit [path] | quick [question]"

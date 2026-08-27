@@ -1,6 +1,6 @@
 ---
 name: linear
-description: "Bash CLI over Linear's GraphQL API with a local cache. Load for ANY Linear interaction: reading, searching, creating, or updating an issue, project, cycle, milestone, initiative, or label."
+description: "Load for any Linear read or write: issues, projects, cycles, milestones, initiatives, labels."
 license: MIT
 user-invocable: true
 metadata:

@@ -1,6 +1,6 @@
 ---
 name: orch
-description: "PRIMARY AGENT ONLY — work-item orchestration for Linear or GitHub issues: prepare, delegate implementation, review, submit, merge, hand off, and oversee fleets of sessions."
+description: "PRIMARY AGENT ONLY. Load to orchestrate a Linear or GitHub work item from preparation through merge."
 license: MIT
 user-invocable: true
 dependencies:

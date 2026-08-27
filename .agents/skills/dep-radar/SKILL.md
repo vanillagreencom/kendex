@@ -1,6 +1,6 @@
 ---
 name: dep-radar
-description: "Sweeps every pinned version in the repo — deps, SDKs, vendored forks, model weights — checks upstream, and lands upgrades with their fallout in one PR per surface. Load to run or tune a dependency sweep."
+description: "Load to run or tune a dependency sweep."
 license: MIT
 user-invocable: true
 dependencies:

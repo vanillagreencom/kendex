@@ -1,6 +1,6 @@
 ---
 name: growth-guards
-description: "Five repo growth guards beside size-ratchet — todo-ban, byte-ceiling, suppression-ban, conflict-markers, commit-msg — and the git hook shims that run them. Load to add, tune, or debug a check, the hooks, or GROWTH_GUARDS_* settings."
+description: "Load to add, tune, or debug a repo growth guard, its git hooks, or GROWTH_GUARDS_* settings."
 license: MIT
 user-invocable: true
 metadata:

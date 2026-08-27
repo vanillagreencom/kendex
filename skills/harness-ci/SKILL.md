@@ -1,6 +1,6 @@
 ---
 name: harness-ci
-description: "Classifies a CI diff as harness-only — every changed path under the kendex render trees (.agents, .claude, .codex, .opencode, .cursor, .pi, opencode.json or opencode.jsonc) — so heavy lanes can stand down. Ships the classifier script and its tests; the workflow wiring stays the consumer's. Load to wire, tune, or debug a repo's harness-only skip."
+description: "Load to wire, tune, or debug a repo's harness-only skip."
 license: MIT
 user-invocable: true
 metadata:

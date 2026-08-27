@@ -1,6 +1,6 @@
 ---
 name: project-management
-description: "TPM-orchestrated planning, audit, roadmap, and research-driven decomposition. Owns the user-facing wrappers (cycle-plan, audit-issues, roadmap-*, research-*) and the underlying TPM execution workflows."
+description: "Load to plan a cycle, audit issues, build a roadmap, or decompose research into issues."
 license: MIT
 user-invocable: true
 dependencies:
