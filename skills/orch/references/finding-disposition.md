@@ -16,7 +16,7 @@ One pass, in order; the first verdict stands.
 3. **Related?** The test is semantic — about the problem or the change — not file membership. An out-of-diff file documenting the mechanism being fixed is related; a nearby improvement unrelated to the problem is not. Unrelated → `issue` regardless of size.
 4. **Size?** Small enough to apply here → `fix`. Needs delegation, tracking, history, or new files → `issue`.
 
-Size tripwire, checked before every round's dispositions: the PR's diffstat against its first push. Past 2x, the round is one cut back to the Done-when and every thread on the cut code closes with the deleting sha, whatever the findings say one by one.
+Size tripwire, checked before every round's dispositions: the PR's diffstat against the commit its first review was posted on (`gh api repos/<owner>/<repo>/pulls/<n>/reviews --jq '.[0].commit_id'`; a force-push does not move it). Past 2x, the round is one cut back to the Done-when and every thread on the cut code closes with the deleting sha, whatever the findings say one by one.
 
 Uncertain about category, prefer `fix` (if related); uncertain about relevance, prefer `issue`; if neither fits, omit. A finding that lives in a PR review thread ends as exactly one reply — `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: <ID>` (the merge gate rejects a tracking claim naming no issue); local and pre-PR reviews record the same verdicts in the review artifact instead. Under thread enforcement, any human comment in a PR review thread carrying a track-word (track/tracked/tracking/tracks) and no issue id trips the gate, prose included — write "committed" for git-tracked files.
 
@@ -43,7 +43,7 @@ An `issue` signal is necessary but not sufficient. Every candidate carries its s
 - **Decision revisits** — a recorded decision the finding argues should change.
 - **Unexplained anomalies with evidence** — observed and reproducible, cause unknown; filed as an investigation issue whose deliverable is the diagnosis.
 
-Never for a race between two invocations on one machine, a crash between two writes, an input no shipped producer emits, or a hole in a mechanism that itself came from a review round: those are declined, not filed.
+Never for a race between two invocations on one machine, a crash between two writes, an input no shipped producer emits, or a hole in a mechanism that itself came from a review round: those are declined, not filed. The one exception is a security or data-loss defect a shipped path reaches, which follows the rows above.
 
 The audit pipeline applies project-management's creation bar (its SKILL.md § Disposition) as the final authority; these classes describe what clears it.
 
