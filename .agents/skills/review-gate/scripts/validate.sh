@@ -303,6 +303,30 @@ $(sed 's/^/        /' "$CARRY_TMP/err")"
   return 0
 }
 
+# INVERTED, after a leading '/' and a parent-relative '../' each arrived as
+# its own case: the reachable shape is what is small and closed. Git compares
+# repository-relative names, which carry no leading '/' and no '.' or '..'
+# component, so a glob built from any of those is unreachable on every day —
+# not merely today, which is why the prophylactic ledger must not reach it. A
+# declaration waives "no tracked match TODAY"; nothing waives never.
+unreachable_glob() { # GLOB — 0 when no repository-relative path can match it
+  local rest="$1" comp
+  case "$1" in
+    /*) return 0 ;;
+  esac
+  while [ -n "$rest" ]; do
+    comp="${rest%%/*}"
+    case "$comp" in
+      . | ..) return 0 ;;
+    esac
+    case "$rest" in
+      */*) rest="${rest#*/}" ;;
+      *) rest="" ;;
+    esac
+  done
+  return 1
+}
+
 list_items() { # PACKED — one trimmed, non-empty item per line
   printf '%s' "$1" | tr ';' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d'
 }
@@ -368,20 +392,10 @@ elif [ -z "$exclude_items" ]; then
 else
   while IFS= read -r pat; do
     [ -z "$pat" ] && continue
-    case "$pat" in
-      /*)
-        bad "carry-exclude '$pat' is anchored with a leading '/' — compare filenames are repository-relative, so this glob can never match and the paths it names are NOT excluded"
-        continue
-        ;;
-      ../* | */../*)
-        # STRUCTURALLY dead, like the leading '/', and so not waivable: a
-        # prophylactic declaration says "no tracked match TODAY", and this
-        # one cannot match on any day, so accepting the declaration would
-        # convert a guaranteed no-match into a clean result.
-        bad "carry-exclude '$pat' is parent-relative — compare filenames are repository-relative and never begin with '../', so this glob can never match, today or after the paths it names exist; declaring it prophylactic does not make it reachable"
-        continue
-        ;;
-    esac
+    if unreachable_glob "$pat"; then
+      bad "carry-exclude '$pat' can never match a repository-relative path — git names files like \`docs/guide.md\`, with no leading '/' and no '.' or '..' component, so this glob is unreachable today and on every future day. Declaring it prophylactic does not make it reachable"
+      continue
+    fi
     glob_hits "$pat"
     if [ -z "$GLOB_FIRST" ]; then
       if grep -qxF -- "$pat" <<<"$prophylactic_items"; then

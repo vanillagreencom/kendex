@@ -331,20 +331,38 @@ expect_fail "a glob matching no tracked path is dead config" "$dir" "matches no 
 sandbox
 dir="$DIR"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "/AGENTS.md"
-expect_fail "a leading-'/' anchor can never match and fails" "$dir" "anchored with a leading '/'"
+expect_fail "a leading-'/' anchor can never match and fails" "$dir" "can never match a repository-relative path"
 
 # Parent-relative is dead the same way, and so not waivable: a declaration
 # says "no tracked match TODAY", and this one cannot match on any day.
 sandbox
 dir="$DIR"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "../future/*"
-expect_fail "a parent-relative glob can never match and fails" "$dir" "parent-relative"
+expect_fail "a parent-relative glob can never match and fails" "$dir" "can never match a repository-relative path"
 
 sandbox
 dir="$DIR"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "../future/*"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "../future/*"
-expect_fail "declaring a parent-relative glob prophylactic does not rescue it" "$dir" "parent-relative"
+expect_fail "declaring a parent-relative glob prophylactic does not rescue it" "$dir" "can never match a repository-relative path"
+
+# The rule is REACHABILITY, not a list of anchors: a dot-relative glob and an
+# embedded dot component are unreachable for the same reason.
+sandbox
+dir="$DIR"
+settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "./future/*"
+expect_fail "a dot-relative glob can never match and fails" "$dir" "can never match a repository-relative path"
+
+sandbox
+dir="$DIR"
+settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/./guide.md"
+expect_fail "an embedded dot component can never match and fails" "$dir" "can never match a repository-relative path"
+
+# ...and an ordinary glob with a dot in a NAME is reachable and stays so.
+sandbox
+dir="$DIR"
+settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/*.md"
+expect_clean "a dot inside a filename is not a dot component" "$dir"
 
 sandbox
 dir="$DIR"
