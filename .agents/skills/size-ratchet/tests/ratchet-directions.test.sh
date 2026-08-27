@@ -284,6 +284,20 @@ run_sr
   && ok "a test row under the threshold is stale" \
   || bad "a test row under the threshold is stale" "rc=$RC out=$OUT"
 case "$OUT" in *"test baseline row"*) bad "one root cause is reported once" "$OUT" ;; *) ok "one root cause is reported once" ;; esac
+# A placeholder committed empty is not a row set: judging against it would
+# call every row of the first real baseline one this change added.
+new_repo emptyhead
+mkdir -p "$R/tools"
+: >"$R/$BASE"
+mkfile keep.txt 5
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: an empty baseline placeholder"
+mkfile w.test.txt 15
+printf 'w.test.txt\t15\n' >"$R/$BASE"
+git -C "$R" add -A
+run_sr
+[ "$RC" -eq 0 ] && ok "a zero-row HEAD baseline is no baseline, so the first test row passes" \
+  || bad "a zero-row HEAD baseline is no baseline, so the first test row passes" "rc=$RC out=$OUT"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

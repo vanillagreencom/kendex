@@ -4,10 +4,10 @@
 # is gated by the default modes, so adoption needs no cleanup first.
 #
 # Modes (mutually exclusive):
-#   --staged (default)  files added or changed in the staged diff (the
-#                       pre-commit shim). A tracked file edited past the
-#                       ceiling arrives the same way a new one does, so the
-#                       staged lane judges both.
+#   --staged (default)  files added, changed, or type-changed in the staged
+#                       diff (the pre-commit shim). A committed file edited
+#                       past the ceiling arrives the same way a new one does,
+#                       so the staged lane judges both.
 #   --base REF          files added since merge-base with REF (CI on a PR)
 #   --all               every tracked file (full sweep)
 #
@@ -111,14 +111,20 @@ emit_candidate() { # SHA PATH
 
 case "$MODE" in
   staged)
-    # M as well as A: editing a tracked file past the ceiling puts the same
-    # bytes in history as adding one, and a lane that reads only additions
-    # passes it. An add/add conflict is classified U, which the filter drops:
-    # the addition disappears from the record set and the run reports "0
-    # staged file(s) checked", so a file of any size passes the ceiling. The
-    # index modes refuse an unresolved merge rather than measure around it.
+    # M and T as well as A: editing a file past the ceiling, or replacing a
+    # symlink with one, puts the same bytes in history as adding it, and a
+    # lane reading only additions passes both. Rename detection is held to
+    # EXACT content here for the same reason: at any lower similarity a
+    # renamed file that also grew is one R record the filter drops, so the
+    # growth arrives unjudged. At 100% a moved-and-grown file is a delete
+    # plus an addition, and the addition is measured; a pure move still
+    # pairs and is still exempt. An add/add conflict is classified U, which
+    # the filter drops: the addition disappears from the record set and the
+    # run reports "0 staged file(s) checked", so a file of any size passes
+    # the ceiling. The index modes refuse an unresolved merge rather than
+    # measure around it.
     gg_require_merged_index
-    git -c diff.renames=true diff --cached --raw --no-abbrev -z --diff-filter=AM >"$GG_TMP/raw.z" || gg_collection_error "git diff --cached failed collecting staged additions and changes"
+    git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% --diff-filter=AMT >"$GG_TMP/raw.z" || gg_collection_error "git diff --cached failed collecting staged additions and changes"
     ;;
   base)
     git rev-parse --verify --quiet "$BASE_REF^{commit}" >/dev/null || gg_config_error "--base ref '$BASE_REF' does not name a commit"
@@ -145,8 +151,8 @@ esac
 
 if [ "$MODE" != "all" ]; then
   # --raw -z records alternate "meta NUL path NUL"; meta is
-  # ":srcmode dstmode srcsha dstsha status". Only A and M survive the
-  # diff-filter, and neither renames a path, so each record carries one.
+  # ":srcmode dstmode srcsha dstsha status". Only A, M and T survive the
+  # diff-filter, none of which renames a path, so each record carries one.
   while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
     set -- $meta
     dstmode="$2"

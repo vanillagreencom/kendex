@@ -6,7 +6,9 @@
 # The commit-msg chain has no such repo-local lane, so this repo's own rule is
 # spliced in directly below the installer's delegate line: appended at the end
 # it would sit under whatever else the hook already runs, and a body that
-# exits first would leave the changelog rule unreachable.
+# exits first would leave the changelog rule unreachable. The lane is called,
+# never exec'd, and only its refusal ends the hook — the same shape the
+# installer's own line has, so a consumer body below still runs.
 #
 # Whether the shims are armed is the installer's verdict to give, not this
 # script's to infer from a file that exists: git may be reading hooks from
@@ -17,7 +19,7 @@ cd "$(git rev-parse --show-toplevel)"
 INSTALLER=.agents/skills/growth-guards/scripts/install-git-hooks
 # Trailing marker on the installer's own delegate line.
 SENTINEL="# kendex-guards-hook"
-LANE='exec "$(git rev-parse --show-toplevel)/tools/commit-msg" "$@"'
+LANE='"$(git rev-parse --show-toplevel)/tools/commit-msg" "$@" || exit $?'
 
 not_armed() {
   echo "setup: the guard shims are not armed (the report above says why). A clone armed by the old tools/setup carries hooks the installer will not rewrite, because it refuses an interpreter it cannot verify: delete .git/hooks/pre-commit AND .git/hooks/commit-msg, then run this again." >&2

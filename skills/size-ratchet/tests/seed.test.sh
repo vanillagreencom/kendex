@@ -400,5 +400,30 @@ done
   && ok "--seed leaves no staging debris in tools/" \
   || bad "--seed staging debris" "leftover:$leftovers"
 
+echo "=== a baseline committed empty is not a row set to judge against ==="
+# Every bootstrap commits the placeholder first and seeds second. A zero-row
+# HEAD copy would make each seeded test row read as one this change added.
+R="$TMP/seed-empty"
+mkdir -p "$R/tools"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+: >"$R/tools/size-ratchet-baseline.tsv"
+mkfile placeholder.txt 5
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: an empty baseline placeholder"
+mkfile pkg/tests/big.sh 30
+git -C "$R" add -A
+run_sr --seed
+[ "$RC" -eq 0 ] && ok "--seed over a committed empty baseline exits 0" \
+  || bad "--seed over a committed empty baseline exits 0" "rc=$RC out=$OUT"
+grep -qxF "$(printf 'pkg/tests/big.sh\t30')" "$R/tools/size-ratchet-baseline.tsv" \
+  && ok "the test row is seeded like any other" \
+  || bad "the test row is seeded like any other" "$(cat "$R/tools/size-ratchet-baseline.tsv")"
+git -C "$R" add -A
+run_sr
+[ "$RC" -eq 0 ] && ok "the seeded repo passes the plain check" \
+  || bad "the seeded repo passes the plain check" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

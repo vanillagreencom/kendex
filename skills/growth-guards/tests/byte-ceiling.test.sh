@@ -101,6 +101,43 @@ git -C "$R" mv seed.bin moved.bin
 run_bc
 [ "$RC" -eq 0 ] && ok "renaming an existing large file is not an addition (rename detection pinned on)" \
   || bad "rename is not an addition" "rc=$RC out=$OUT"
+# A move that also grows is not a move: below exact similarity it would be one
+# R record the filter drops, and the growth would arrive unjudged.
+new_repo movedgrown
+mkbytes carried.bin 1
+git -C "$R" add -A
+git -C "$R" commit -qm "seed: a file under the ceiling"
+git -C "$R" mv carried.bin elsewhere.bin
+mkbytes elsewhere.bin 5
+git -C "$R" add -A
+run_bc
+[ "$RC" -eq 1 ] && case "$OUT" in *"elsewhere.bin"*"5120 bytes"*) true ;; *) false ;; esac \
+  && ok "a file moved AND grown past the ceiling fails at its new path" \
+  || bad "a file moved AND grown past the ceiling fails at its new path" "rc=$RC out=$OUT"
+# A type change carries a new blob too: the symlink's target was a few bytes.
+new_repo typechange
+mkbytes payload.bin 5
+ln -s payload.bin "$R/thing"
+git -C "$R" add -A
+git -C "$R" commit -qm "seed: a symlink beside its target"
+rm "$R/thing"
+mkbytes thing 5
+git -C "$R" add -A
+run_bc
+[ "$RC" -eq 1 ] && case "$OUT" in *"thing"*"5120 bytes"*) true ;; *) false ;; esac \
+  && ok "a symlink replaced by an oversized regular file fails (type change)" \
+  || bad "a symlink replaced by an oversized regular file fails (type change)" "rc=$RC out=$OUT"
+new_repo grown2
+mkbytes seed.bin 5
+git -C "$R" add -A
+git -C "$R" commit -qm "seed: an oversized tracked file"
+rm "$R/seed.bin"
+ln -s payload "$R/seed.bin"
+git -C "$R" add -A
+run_bc
+[ "$RC" -eq 0 ] && ok "control: a file replaced BY a symlink is not sized content" \
+  || bad "control: a file replaced BY a symlink is not sized content" "rc=$RC out=$OUT"
+R="$TMP/grown" # back to the renamed fixture; the copy case below builds on it
 cp "$R/moved.bin" "$R/second-copy.bin" 2>/dev/null || true
 printf 'x' >>"$R/second-copy.bin"
 git -C "$R" add -A

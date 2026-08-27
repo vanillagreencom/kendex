@@ -1037,9 +1037,11 @@ is_test_class() { # PATH
   return 1
 }
 
-# HEAD's copy of the baseline, or "" when HEAD carries none — an unborn HEAD,
-# a first seed, a baseline this change introduces. A git failure is never
-# "absent": read_head_file_mode refuses on one.
+# HEAD's copy of the baseline, or "" when HEAD carries no ROW SET to compare —
+# an unborn HEAD, a baseline this change introduces, or one committed empty as
+# a placeholder, which every bootstrap does: --seed then writes the first rows,
+# and against a zero-row HEAD every one of them would read as newly added. A
+# git failure is never "absent": read_head_file_mode refuses on one.
 HEAD_BASELINE=""
 read_head_baseline() {
   HEAD_BASELINE=""
@@ -1050,6 +1052,7 @@ read_head_baseline() {
     *) return 0 ;; # not a regular file at HEAD; there is no row set to compare
   esac
   git show "HEAD:$BASELINE_FILE" >"$TMP/baseline.head" || collection_error "could not read $BASELINE_FILE from HEAD — refusing to judge test rows against a baseline it could not read"
+  [ "$(count_nonempty_lines "$TMP/baseline.head")" -gt 0 ] || return 0
   HEAD_BASELINE="$TMP/baseline.head"
 }
 

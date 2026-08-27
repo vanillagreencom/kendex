@@ -10,6 +10,12 @@ an outside contributor.
 
 ### Changed
 
+- **Breaking:** `byte-ceiling`'s staged lane now judges a file a commit
+  changes, not only one it adds, and reads type changes and moved-and-grown
+  files too. A repo that edits an oversized file needs a row for it.
+- **Breaking:** `size-ratchet` refuses a test-class baseline row that HEAD's
+  baseline does not carry or carries lower. Rows already at HEAD keep; a
+  test that outgrew its class threshold is split, never frozen.
 - **Breaking:** a `core.hooksPath` naming a directory answers "could not
   determine" from `kendex guard check`; the stand-down prints git's own
   report of where it is set, then says to clear it at its source and arm.

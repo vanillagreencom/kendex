@@ -214,8 +214,10 @@ that actually enter history, independent of worktree state. Rename detection
 is pinned on, so moving an existing large file is judged in neither default
 mode; a copy is an addition (it duplicates the bytes in the tree). Symlinks
 and submodule gitlinks are not sized content. The staged lane reads
-additions and modifications; `--base` reads additions alone, because a PR's
-diff against its merge base has no pre-commit moment to answer at.
+additions, modifications and type changes, and holds rename detection to
+exact content so a file that moved AND grew is judged as the addition it
+is; `--base` reads additions alone, because a PR's diff against its merge
+base has no pre-commit moment to answer at.
 
 Exempt built-in (exact basename): `Cargo.lock`, `package-lock.json`,
 `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`,

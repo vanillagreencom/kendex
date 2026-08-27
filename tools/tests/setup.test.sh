@@ -37,7 +37,7 @@ new_fixture() { # NAME — a clone-shaped repo carrying the package and these to
 
 new_fixture repo
 SENTINEL="# kendex-guards-hook"
-LANE='exec "$(git rev-parse --show-toplevel)/tools/commit-msg" "$@"'
+LANE='"$(git rev-parse --show-toplevel)/tools/commit-msg" "$@" || exit $?'
 
 echo "=== a fresh clone is not armed until setup runs ==="
 { [ ! -e "$HOOKS/pre-commit" ] && [ ! -e "$HOOKS/commit-msg" ]; } \
@@ -119,6 +119,22 @@ RC=0
 OUT="$(git -C "$R" commit -m "docs: $(printf 'x%.0s' $(seq 1 66))" 2>&1)" || RC=$?
 [ "$RC" -eq 0 ] && ok "a 72-character subject passes" \
   || bad "a 72-character subject passes" "rc=$RC out=$OUT"
+# -F keeps comment lines (cleanup=whitespace), so the header is not line 1.
+# Reading the first physical line would measure the comment and pass.
+printf '# a comment git keeps\n\n%s\n' "$LONG" >"$TMP/msg-with-comment"
+printf 'c\n' >>"$R/README.md"
+git -C "$R" add -A
+RC=0
+OUT="$(git -C "$R" commit -F "$TMP/msg-with-comment" 2>&1)" || RC=$?
+[ "$RC" -ne 0 ] && case "$OUT" in *"subject is 76 characters"*) true ;; *) false ;; esac \
+  && ok "the header is the first non-blank non-comment line, not line 1" \
+  || bad "the header is the first non-blank non-comment line, not line 1" "rc=$RC out=$OUT"
+printf 'f\n' >>"$R/README.md"
+git -C "$R" add -A
+RC=0
+OUT="$(git -C "$R" commit -m "fixup! $(printf 'x%.0s' $(seq 1 70))" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "a long fixup! subject passes — the exemption is the package's whole list" \
+  || bad "a long fixup! subject passes — the exemption is the package's whole list" "rc=$RC out=$OUT"
 
 echo "=== the lane goes above the hook's own body, not after it ==="
 new_fixture own-hook
@@ -147,6 +163,11 @@ OUT="$(git -C "$R" commit -m "feat: a crate change" 2>&1)" || RC=$?
 [ "$RC" -ne 0 ] && case "$OUT" in *"without a CHANGELOG.md entry"*) true ;; *) false ;; esac \
   && ok "the changelog rule still runs, though the hook body exits before the end" \
   || bad "the changelog rule still runs, though the hook body exits before the end" "rc=$RC out=$OUT"
+RC=0
+OUT="$(git -C "$R" commit -m "feat: a crate change [no-changelog]" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && case "$OUT" in *"consumer hook ran"*) true ;; *) false ;; esac \
+  && ok "a passing lane hands the hook back to the consumer's own body" \
+  || bad "a passing lane hands the hook back to the consumer's own body" "rc=$RC out=$OUT"
 
 echo "=== a clone armed by the old setup names both hooks to delete ==="
 new_fixture legacy

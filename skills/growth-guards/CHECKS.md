@@ -19,9 +19,11 @@ legacy file a change leaves alone, so adoption needs no cleanup first.
 Lockfiles are exempt built-in by exact basename; declared asset trees go in
 excludes with a reason.
 
-- `--staged` (default) — files added or changed in the staged diff
-  (pre-commit). Editing a tracked file past the ceiling puts the same bytes
-  in history as adding one, so the staged lane judges both.
+- `--staged` (default) — files added, changed, or type-changed in the staged
+  diff (pre-commit). Editing a committed file past the ceiling puts the same
+  bytes in history as adding one, so the staged lane judges both; rename
+  detection is held to exact content, so a file that moved and grew is
+  judged at its new path.
 - `--base REF` — files added since the merge-base with REF (CI on a PR).
 - `--all` — every tracked file (audits; pair with excludes rows).
 

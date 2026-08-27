@@ -17,6 +17,8 @@ GG_CHECK="commit-msg"
 source "$SCRIPT_DIR/lib/common.sh"
 # shellcheck source=lib/settings.sh
 source "$SCRIPT_DIR/lib/settings.sh"
+# shellcheck source=lib/commit-header.sh
+source "$SCRIPT_DIR/lib/commit-header.sh"
 
 usage() {
   cat <<'EOF'
@@ -78,31 +80,18 @@ for t in $TYPES; do
 done
 [ -n "$TYPE_ALT" ] || gg_config_error "GROWTH_GUARDS_COMMIT_TYPES resolved empty — at least one type is required"
 
-# Header = first line that is neither blank nor a '#' comment (git strips
-# comment lines before recording the message).
-HEADER=""
-while IFS= read -r ln || [ -n "$ln" ]; do
-  ln="${ln%$'\r'}"
-  case "$ln" in
-    "" | "#"*) continue ;;
-  esac
-  HEADER="$ln"
-  break
-done <<EOF
-$MSG
-EOF
+gg_commit_header "$MSG"
+HEADER="$GG_COMMIT_HEADER"
 
 if [ -z "$HEADER" ]; then
   echo "commit-msg FAIL empty commit message (no non-comment content)"
   exit 1
 fi
 
-case "$HEADER" in
-  "Merge "* | "Revert "* | "Reapply "* | "fixup! "* | "squash! "* | "amend! "*)
-    echo "commit-msg: OK — git-generated header accepted: $HEADER"
-    exit 0
-    ;;
-esac
+if gg_git_generated_header "$HEADER"; then
+  echo "commit-msg: OK — git-generated header accepted: $HEADER"
+  exit 0
+fi
 
 HEADER_ERE="^($TYPE_ALT)(\([#A-Za-z0-9 _.,/-]+\))?!?: [^[:space:]]"
 match_status=0
