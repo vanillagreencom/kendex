@@ -86,16 +86,30 @@ pub fn declared(skill_md: &str) -> Option<RepoEffects> {
 /// Refusing the WHOLE declaration rather than the one field, because a
 /// partial disclosure is the dangerous kind: it reads as complete.
 fn list(map: &Map, key: &str) -> Option<Vec<String>> {
-    match map.get(key) {
-        None | Some(Value::Null) => Some(Vec::new()),
-        // Every member, or none of it. `string_list` drops what it cannot
-        // read, so a list with one map in it came back shorter and the block
-        // printed a shorter list — the same fail-open as the wrong shape,
-        // one level down, and harder to notice because what it produces
-        // looks exactly like a correct answer.
-        Some(Value::List(items)) if items.iter().any(|item| item.as_str().is_none()) => None,
-        Some(_) => map.string_list(key),
-    }
+    let Some(value) = map.get(key) else {
+        return Some(Vec::new());
+    };
+    let Value::List(items) = value else {
+        // Absent is empty; anything else present has to be a list.
+        //
+        // `string_list` also accepts a scalar and splits it on commas, which
+        // is a convenience these fields must not have: every one of them is
+        // a list of PATHS, and a comma is a character a filename may
+        // contain. A package writing `.git/hooks/a,b` would have had it read
+        // as two files that do not exist, in the block a person authorizes.
+        return matches!(value, Value::Null).then(Vec::new);
+    };
+    items
+        .iter()
+        .map(|item| {
+            let text = item.as_str()?.trim();
+            // And every member has to say something. `string_list` drops the
+            // empty ones, which comes back as a shorter list — the fail-open
+            // this whole reader exists to refuse, and the worst kind because
+            // what it produces looks exactly like a correct answer.
+            (!text.is_empty()).then(|| text.to_owned())
+        })
+        .collect()
 }
 
 /// The written paths, each of which has to stay inside the repository.
@@ -269,6 +283,40 @@ mod tests {
         let good = "---\nname: x\nrepo-effects:\n  summary: s\n  writes:\n    - .git/hooks/pre-commit\n    - ./tools/guard\n---\nbody\n";
         let effects = declared(good).expect("contained paths read");
         assert_eq!(effects.writes.len(), 2);
+    }
+
+    /// A path field is a list, and only a list.
+    ///
+    /// The reader these grew from also took a scalar and split it on commas.
+    /// Every one of these fields is a list of PATHS, and a comma is a
+    /// character a filename may contain — so `.git/hooks/a,b` would have
+    /// been read as two files that do not exist, in the block a person
+    /// authorizes. And a member that trims to nothing is dropped by that
+    /// same reader, which comes back as a shorter list.
+    #[test]
+    fn a_path_field_is_a_list_and_every_member_says_something() {
+        let not_lists = [
+            "  writes: .git/hooks/pre-commit,.git/hooks/commit-msg\n",
+            "  companions: size-ratchet,preflight\n",
+            "  notes: one,two\n",
+        ];
+        for field in not_lists {
+            let text = format!("---\nname: x\nrepo-effects:\n  summary: s\n{field}---\nbody\n");
+            assert!(
+                declared(&text).is_none(),
+                "a comma-separated scalar was read as a list: {field}"
+            );
+        }
+
+        let empty_member = "---\nname: x\nrepo-effects:\n  summary: s\n  writes:\n    - .git/hooks/pre-commit\n    - \"   \"\n---\nbody\n";
+        assert!(
+            declared(empty_member).is_none(),
+            "a member that says nothing came back as a shorter list"
+        );
+
+        // A real list of one still reads, which is what the rule is for.
+        let good = "---\nname: x\nrepo-effects:\n  summary: s\n  writes:\n    - .git/hooks/pre-commit\n---\nbody\n";
+        assert_eq!(declared(good).expect("a list reads").writes.len(), 1);
     }
 
     /// A list with a member kendex cannot read is not a shorter list.
