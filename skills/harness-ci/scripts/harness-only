@@ -219,7 +219,7 @@ manifest_carves() { # FILE -> carve lines for one manifest, "*" on a failed pars
       }
     }
     END { if (coarse > accounted) print "*" }
-  ' "$1" 2>/dev/null || echo "*"
+  ' <"$1" 2>/dev/null || echo "*"
 }
 # A source-catalog project keeps its install state in kendex-local.toml
 # (kendex.toml stays the catalog definition), and adoption declares in

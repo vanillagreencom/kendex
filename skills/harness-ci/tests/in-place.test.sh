@@ -196,4 +196,13 @@ git -C "$ns" clean -qfd -e kendex.toml
 commit_paths "$ns" "sibling" .agents/skills/plugin-other/SKILL.md
 assert_verdict "a sibling outside the namespace stays render" true --repo "$ns" --event push --base "$nsbase" --head HEAD
 
+# An equals sign in the repository path must not turn the manifest operand
+# into an awk variable assignment: the manifest reaches awk by redirection.
+eqrepo="$(new_repo "work=tree")"
+printf 'schema = 6\n[skills.mine]\nsource = "in-place"\n' >"$eqrepo/kendex.toml"
+commit_paths "$eqrepo" "baseline" README.md
+eqbase="$(git -C "$eqrepo" rev-parse HEAD)"
+commit_paths "$eqrepo" "edit" .agents/skills/mine/SKILL.md
+assert_verdict "an equals-sign repo path still carves" false --repo "$eqrepo" --event push --base "$eqbase" --head HEAD
+
 report in-place
