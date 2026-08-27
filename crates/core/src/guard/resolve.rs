@@ -104,19 +104,38 @@ impl Installed {
 /// The project root comes first, because that is where `kendex add` renders
 /// and a kendex project does not have to be the git top level: a repository
 /// holding several projects renders each under its own root, and searching
-/// only the top level finds none of them. Then the helper's own two roots —
-/// the main checkout, because linked worktrees share a hooks directory and
-/// need not carry their own skills, and then this work tree.
+/// only the top level finds none of them.
+///
+/// Then the SAME project inside the main checkout. A linked worktree shares
+/// the hooks directory and need not carry its own skills, so it is routinely
+/// gated by the main checkout's copy — and in a repository whose projects sit
+/// under `apps/web` the copy is at `<main>/apps/web`, not at `<main>`.
+/// Looking only at the top level found nothing there and reported a package
+/// the commit hook was running perfectly well as missing.
+///
+/// The two bare roots come last, in the helper's own order: the main checkout
+/// and then this work tree.
 ///
 /// Duplicates are dropped rather than avoided: in an ordinary single-project
-/// clone all three are the same directory.
+/// clone every one of these is the same directory.
 fn search_roots(repo: &super::Repo) -> Vec<PathBuf> {
+    let project = project_root(repo);
+    let main = main_checkout(repo);
+    // The project path carried across, and only when it IS a path under this
+    // work tree: a project root that is not below it has no counterpart to
+    // map, and joining an absolute path would silently replace the checkout.
+    let mirrored = match (&main, &project) {
+        (Some(main), Some(project)) => project
+            .strip_prefix(&repo.worktree)
+            .ok()
+            .map(|rel| main.join(rel)),
+        _ => None,
+    };
     let mut roots = Vec::new();
-    if let Some(project) = project_root(repo) {
-        roots.push(project);
-    }
-    for root in main_checkout(repo)
+    for root in project
         .into_iter()
+        .chain(mirrored)
+        .chain(main)
         .chain([repo.worktree.clone()])
     {
         if !roots.contains(&root) {

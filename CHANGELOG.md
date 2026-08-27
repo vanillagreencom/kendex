@@ -13,21 +13,14 @@ an outside contributor.
 - **Breaking:** hooks read as armed only when the package's marker is in
   both hook files, both are executable, and `core.hooksPath` is unset;
   `guard install` stands down under any value. New: `kendex guard check`.
+- **Breaking:** `guard uninstall` disarms the repository. Every work tree and
+  nested project shares one set of commit hooks, so an uninstall from any of
+  them takes the hooks; they no longer stay behind for another project.
 
 ### Fixed
 
-- A project directory whose name contains a tab, a space, a glob character or
-  a quote is recorded and recognised correctly by the commit-hook installer,
-  and never masks another project's name.
-
-- Disarming from one project keeps the commit hooks when any other project
-  that armed them is still installed, not only the most recent one.
-- A work-tree registry that cannot be read stops an uninstall rather than
-  reading as no linked work trees and removing the shared hooks.
-
-- Disarming from one project no longer removes commit hooks another project
-  armed and is still committing through, whether that project sits in a
-  different work tree or elsewhere in the same checkout.
+- `guard` verbs run from a linked worktree find the package under the same
+  project path in the main checkout, not only at its top level.
 
 - A `core.hooksPath` whose value ends in a newline no longer makes `--check`
   inspect a different directory and report the repository as armed.

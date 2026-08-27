@@ -58,8 +58,10 @@ repo-root-relative executable named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL`.
 `commit-msg` runs the message gate. Both BLOCK on the exit contract, fail
 closed on a guard that could not run; `git commit --no-verify` is the bypass.
 The `kendex guard` verbs invoke this installer: `install`, `uninstall`
-(`--uninstall`) and `check` (`--check`). Disarm before removing this skill:
-shims whose scripts are gone block every commit. `kendex check` invokes
+(`--uninstall`) and `check` (`--check`). Arming and disarming are
+repository-level: every work tree and nested project shares one hooks
+directory, so an uninstall from any of them disarms the repository. Disarm
+before removing this skill: shims whose scripts are gone block every commit. `kendex check` invokes
 nothing — it reads the hook files for this package's marker and the execute
 bit git needs, and says armed or not armed. The `--check` verdicts below are
 the fuller vocabulary, for a person or a verb that asks for it:

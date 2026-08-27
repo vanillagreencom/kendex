@@ -253,6 +253,51 @@ fn a_linked_worktree_is_served_by_the_main_checkouts_copy() {
     );
 }
 
+/// The main checkout is searched at the PROJECT's path, not only at its top
+/// level.
+///
+/// A repository whose projects sit under `apps/web` installs the package at
+/// `<main>/apps/web/.agents/skills`. A linked worktree carries the committed
+/// manifest but no `.agents`, so resolving from `<linked>/apps/web` has to
+/// cross to `<main>/apps/web` — searching `<main>` alone finds nothing and
+/// reports a package the commit hook is running perfectly well as missing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_main_checkout_is_searched_at_the_projects_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    let project = root.join("apps/web");
+    std::fs::create_dir_all(project.join(".agents")).unwrap();
+    install_package(home, &project, &["growth-guards"]);
+    let install = run(home, &project, "kendex", &["guard", "install"]);
+    assert!(install.status.success(), "{}", said(&install));
+
+    // The manifest is committed and the render is not, which is what a
+    // linked worktree of such a repository actually contains.
+    std::fs::write(root.join(".gitignore"), ".agents/\n").unwrap();
+    git_ok(home, &root, &["add", ".gitignore", "apps/web/kendex.toml"]);
+    git_ok(
+        home,
+        &root,
+        &["commit", "--quiet", "-m", "feat: the project"],
+    );
+    git_ok(home, &root, &["worktree", "add", "--quiet", "../linked"]);
+    let there = home.join("linked/apps/web");
+    assert!(
+        there.join("kendex.toml").is_file() && !there.join(".agents").exists(),
+        "the linked worktree carries the manifest and no render"
+    );
+
+    let out = run(home, &there, "kendex", &["guard", "check"]);
+    assert!(
+        !said(&out).contains("no growth-guards skill"),
+        "the main checkout's copy went unfound: {}",
+        said(&out)
+    );
+    assert!(said(&out).contains("armed"), "{}", said(&out));
+}
+
 /// A tool directory holding a broken copy must not shadow a working one
 /// beside it: the helper takes the first root whose script is executable,
 /// and so does this.

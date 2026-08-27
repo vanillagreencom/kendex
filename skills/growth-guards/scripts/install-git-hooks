@@ -42,8 +42,6 @@ source "$SCRIPT_DIR/lib/paths.sh"
 source "$SCRIPT_DIR/lib/skill-roots.sh"
 # shellcheck source=lib/helper-body.sh
 source "$SCRIPT_DIR/lib/helper-body.sh"
-# shellcheck source=lib/survivor.sh
-source "$SCRIPT_DIR/lib/survivor.sh"
 # shellcheck source=lib/hook-entrypoint.sh
 source "$SCRIPT_DIR/lib/hook-entrypoint.sh"
 # shellcheck source=lib/hook-check.sh
@@ -137,7 +135,6 @@ resolve_roots
 classify_hooks_path_or_stop
 
 gg_project_rel PROJECT_REL "$SCRIPT_DIR" "$REPO_ABS"
-gg_arming_record PROJECT_RELS "$HOOKS_DIR/$HELPER_NAME" "$PROJECT_REL" "$MODE"
 
 if [ "$HOOKS_PATH_ELSEWHERE" -eq 1 ] && [ "$MODE" = "install" ]; then
   if hooks_path_off; then
@@ -442,37 +439,6 @@ uninstall_hook() { # HOOK — drop our line; drop the file when only ours was in
   REMOVED="$REMOVED $hook"
 }
 
-# Every work tree on this common git directory shares one hooks directory, so
-# a checkout that still has the skill installed still needs the shims. Only a
-# SEPARATE install counts — a worktree whose skills directory links back into
-# the checkout being uninstalled from is the same install — so candidates are
-# compared by physical path.
-#
-# Roots come from the per-worktree `gitdir` files, not `worktree list`, whose
-# line-oriented output cannot represent a path containing a newline. Anything
-# unreadable here is "cannot tell", never "none".
-#
-# Returns 0 with the surviving scripts directory on stdout, 1 when there is
-# none, 2 when the question could not be answered.
-# Whether a path is content the work tree at $1 tracks — the test for "this
-# is the same install, checked out again" rather than a separate one.
-#
-# Fails closed: a git that cannot answer returns 2, which the caller turns
-# into "could not enumerate" and leaves the shims alone. Guessing either way
-# disarms a repository that still needs the gate, or strands one that does
-# not.
-tracked_here() { # ROOT PATH -> 0 tracked, 1 not tracked, 2 unknown
-  local root="$1" path="$2" status=0
-  git -C "$root" ls-files --error-unmatch -- "$path" >/dev/null 2>&1 || status=$?
-  case "$status" in
-    0) return 0 ;;
-    1) return 1 ;;
-    *) return 2 ;;
-  esac
-}
-
-
-
 if [ "$MODE" = "check" ]; then
   VERDICT=0
   if hooks_path_off; then
@@ -539,26 +505,19 @@ if [ "$MODE" = "check" ]; then
   exit "$VERDICT"
 fi
 
+# Uninstall disarms the repository, and asks nothing about who else is here.
+#
+# It used to hunt for a surviving install in another work tree or another
+# nested project and keep the shims for it. Five rounds of review found five
+# holes in that hunt, the last of which — a record of armed projects that
+# only ever grew — left a repository two projects could never disarm at all.
+# Every hole was the same mistake: guessing on someone else's behalf.
+#
+# So consent is repository-level, the level the hooks themselves are at.
+# Every work tree and every nested project shares one hooks directory and one
+# set of shims, and running the installer is what arms them. Running the
+# uninstaller is what disarms them, for the repository, whoever runs it.
 if [ "$MODE" = "uninstall" ]; then
-  other=""
-  survivor_status=0
-  other="$(other_worktree_still_installed)" || survivor_status=$?
-  if [ "$survivor_status" -gt 1 ]; then
-    warn "could not enumerate this repository's work trees; the shims were left in place rather than risk disarming one that still needs them"
-    echo "growth-guards git hooks: kept — the work-tree list under $COMMON_DIR/worktrees could not be read"
-    exit 1
-  fi
-  if [ "$survivor_status" -eq 0 ]; then
-    # The helper still names the scripts about to be deleted, so point it at
-    # the install that survives before leaving the shims in place.
-    SCRIPT_DIR="$other"
-    if ! write_helper "$HOOKS_DIR/$HELPER_NAME"; then
-      echo "growth-guards git hooks: kept for $other, but the helper could not be retargeted to it"
-      exit 1
-    fi
-    echo "growth-guards git hooks: kept — retargeted to $other, a separate install this repository does not track"
-    exit 0
-  fi
   REMOVED=""
   uninstall_hook pre-commit
   uninstall_hook commit-msg
