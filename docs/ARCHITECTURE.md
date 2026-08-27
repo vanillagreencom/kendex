@@ -35,7 +35,7 @@ Scope (global | project) · Harness (adapter + capability table) · ItemKind
 Item (logical: kind + name from a source) · Installation (item × harness ×
 scope — what locks, drift rows, and applies track) · Bundle (a curated set a
 catalog offers under one name, installed as one declaration) · Source (path |
-git; registry reserved post-release) · Manifest · Lock (provenance + hash, and each written file's) ·
+git; registry reserved post-release) · Manifest · Lock (provenance + hash) ·
 Observation (scanner truth) · Drift. Core modules mirror the verbs: `model`, `scan`,
 `manifest`, `diff`, `apply`, `source`, `harness/` (one file per harness).
 

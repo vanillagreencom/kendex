@@ -67,6 +67,7 @@ ACTIVE_API_DELAY="$(rg_setting REVIEW_GATE_API_RETRY_DELAY_SECONDS "2")" || exit
 ACTIVE_CARRY="$(rg_setting REVIEW_GATE_CARRY_FORWARD "")" || exit 1
 ACTIVE_CARRY_EXCLUDE="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE "")" || exit 1
 ACTIVE_CARRY_EXCLUDE_PROPHYLACTIC="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "")" || exit 1
+ACTIVE_VENDORED_PATHS="$(rg_setting REVIEW_GATE_VENDORED_PATHS "")" || exit 1
 # The repo's ACTIVE mode is validated here but NEVER copied into behavior
 # cases (reset() pins enforce — under a committed "off" every awaiting/
 # objection case would answer approved and red the required selftest job).
@@ -157,6 +158,7 @@ run() { # case-name, expected-verdict, expected-exit
     REVIEW_GATE_STATUS_SNAPSHOT_FILE="$CFG_SNAPSHOT" \
     REVIEW_GATE_CARRY_FORWARD="$CFG_CARRY" \
     REVIEW_GATE_CARRY_FORWARD_EXCLUDE="$CFG_CARRY_EXCLUDE" \
+    REVIEW_GATE_VENDORED_PATHS="$CFG_VENDORED_PATHS" \
     REVIEW_GATE_MODE="$CFG_GATE_MODE" \
     GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$CFG_PR_AUTHOR" \
     "$predicate" 2>/dev/null)"
@@ -181,7 +183,7 @@ reset() {
   printf '[]\n' >"$fixtures/statuses.json"
   threads >"$fixtures/graphql.json"
   jq -n --arg a "$AUTHOR" '{user:{login:$a}}' >"$fixtures/pull.json"
-  rm -f "$fixtures"/*.page2.json "$fixtures"/graphql.cursor-*.json "$fixtures"/blob-*.json "$fixtures"/.failcount.* "$fixtures"/.urls.log
+  rm -f "$fixtures"/*.page2.json "$fixtures"/graphql.cursor-*.json "$fixtures"/.failcount.* "$fixtures"/.urls.log
   unset GH_SHIM_FAIL GH_SHIM_FAIL_TIMES GH_SHIM_EMPTY || true
   CFG_THREADS="$ACTIVE_THREADS"
   CFG_API_ATTEMPTS="$ACTIVE_API_ATTEMPTS"
@@ -192,6 +194,7 @@ reset() {
   CFG_API_DELAY="0"
   CFG_CARRY="$ACTIVE_CARRY"
   CFG_CARRY_EXCLUDE="$ACTIVE_CARRY_EXCLUDE"
+  CFG_VENDORED_PATHS="$ACTIVE_VENDORED_PATHS"
   # PINNED to enforce, never the repo's ACTIVE value: mode "off" is a bypass
   # switch, not a trust surface — under it every behavior case would answer
   # approved and the suite would fail, turning a deliberately disabled gate
@@ -1785,39 +1788,25 @@ reset
 CFG_CARRY="everything"
 run "carry: an unknown carry class is a config error" "" 2
 
-# The vendored class: a file the kendex lock records carries only as
-# kendex's own bytes, proven against the lock at head, never by path. The
-# full decision table is tests/carry-vendored.test.sh; the pair here is the
-# approve and its near-miss — the hand-edit that "docs" would have carried.
-RENDER_PATH=".agents/skills/hello/SKILL.md"
-vendored_refresh() { # the genuine shape: lock and file move to the new render together
-  lock_fix "$OTHER" "$RENDER_PATH=$(sha256_of "old render")"
-  lock_fix "$HEAD" "$RENDER_PATH=$(sha256_of "new render")"
-  blob "$HEAD" "$RENDER_PATH" "new render"
-  compare_fix ahead "[$(delta_file "$RENDER_PATH" modified '@@ -1 +1 @@
--old render
-+new render'),$(delta_file ".kendex-lock.json" modified '@@ -1 +1 @@
--old record
-+new record')]"
-}
+# The vendored class (KEN-666): a delta file under a path the repository
+# committed in REVIEW_GATE_VENDORED_PATHS is kendex's own render and carries
+# whatever its extension. The approve and its near-miss live here; the
+# class's full table, each refusal pinned by reason, is
+# tests/vendored-class.test.sh.
+RENDER_DELTA="$(delta_file ".agents/skills/hello/scripts/run.sh" modified '@@ -1 +1 @@
+-do_the_thing
++do_the_other_thing')"
 reset
 carry_candidate
-CFG_CARRY="vendored"
-vendored_refresh
-run "carry: a kendex refresh (lock + render, bytes as recorded) carries under 'vendored'" approved
+CFG_CARRY="vendored"; CFG_VENDORED_PATHS=".agents/*"
+compare_fix ahead "[$RENDER_DELTA]"
+run "vendored: a render-tree code delta carries under the committed path set" approved
 
 reset
 carry_candidate
-CFG_CARRY="docs|vendored"
-vendored_refresh
-blob "$HEAD" "$RENDER_PATH" "hand-edited render"
-run "carry: a hand-edit to a recorded .md refuses with 'docs' on — content decides, not the extension" awaiting
-
-reset
-carry_candidate
-CFG_CARRY="docs"
-vendored_refresh
-run "carry: the same refresh does NOT carry with 'vendored' off (the lock is not docs)" awaiting
+CFG_CARRY="docs"; CFG_VENDORED_PATHS=".agents/*"
+compare_fix ahead "[$RENDER_DELTA]"
+run "vendored off: the same delta refuses — a path set alone enables nothing" awaiting
 
 # ================================================================ configured ===
 # The same discipline against THIS repo's resolved trust settings.
@@ -2460,6 +2449,7 @@ if [ -n "$ACTIVE_OUTAGE" ]; then
     REVIEW_GATE_CONTEXT="$CFG_GATE_CONTEXT" REVIEW_GATE_THREADS="$CFG_THREADS" \
     REVIEW_GATE_CARRY_FORWARD="$CFG_CARRY" \
     REVIEW_GATE_CARRY_FORWARD_EXCLUDE="$CFG_CARRY_EXCLUDE" \
+    REVIEW_GATE_VENDORED_PATHS="$CFG_VENDORED_PATHS" \
     REVIEW_GATE_MODE="$CFG_GATE_MODE" \
     GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$CFG_PR_AUTHOR" \
     "$predicate" 2>/dev/null)" || detail_rc=$?

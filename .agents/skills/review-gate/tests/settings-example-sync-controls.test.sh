@@ -76,7 +76,7 @@ fx="$(fixture insync)"
 rc="$(run_fixture "$fx")"
 expect_rc insync "$rc" 0
 expect_out "$fx" "the verdict" "pass: settings-example-sync"
-expect_out "$fx" "every comparison ran" "56 passed, 0 failed, 0 skipped"
+expect_out "$fx" "every comparison ran" "59 passed, 0 failed, 0 skipped"
 ok "in-sync templates pass, and the run reports the count it measured"
 
 # --- must-fail control: root template ABSENT ------------------------------
@@ -90,7 +90,7 @@ rm -f "$fx/kendex.settings.toml.example"
 rc="$(run_fixture "$fx")"
 expect_rc noroot "$rc" 0
 expect_out "$fx" "skips are printed" "  skip  REVIEW_GATE_MODE cross-template comparison"
-expect_out "$fx" "skips are counted, skill side still measured" "22 passed, 0 failed, 17 skipped"
+expect_out "$fx" "skips are counted, skill side still measured" "23 passed, 0 failed, 18 skipped"
 expect_no_out "$fx" "an unmeasured run must never report a clean one" "0 skipped"
 [ -s "$fx.out" ] || note "noroot: the suite produced no output at all"
 ok "an absent root template is a counted, printed skip — never a silent green run"

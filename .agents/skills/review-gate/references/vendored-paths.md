@@ -9,8 +9,8 @@ problem; configuration answers break the gate.
 **Evidence.** The gate's evidence term needs a trusted non-author review object
 at the exact head, or one of the other forms in [settings.md](settings.md).
 `REVIEW_GATE_CARRY_FORWARD` only extends evidence that already exists. A tree
-kendex renders carries under the `vendored` class, proven file by file
-against the kendex lock; any other byte-pinned tree sits in
+kendex renders carries under the `vendored` class when
+`REVIEW_GATE_VENDORED_PATHS` names it; any other byte-pinned tree sits in
 `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`, forcing fresh evidence on this PR class.
 
 **Threads.** The predicate counts `reviewThreads`, and the zero-bypass
@@ -124,8 +124,8 @@ Do not fix it locally, and do not file the same finding from each consumer.
    improvement, not silence — decide whether that is worth the wiring.
 5. Mirror the rule in the repo's reviewer-guidance file, for reviewers that do
    not read path-scoped instructions.
-6. Change no gate settings. A tree the kendex lock records carries only
-   through the `vendored` class, which proves its bytes; any other vendored
+6. Change no gate settings. A kendex render tree carries only through the
+   `vendored` class and `REVIEW_GATE_VENDORED_PATHS`; any other vendored
    tree stays in `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`, and
    `REVIEW_GATE_TRUSTED_STATUS_CONTEXTS` never widens to a CI check as a
    substitute for review.

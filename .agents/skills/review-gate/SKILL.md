@@ -129,7 +129,8 @@ Everything else has a working default. Full table:
 | `REVIEW_GATE_COMMENT_REVIEWERS` | Only for a comment-form reviewer: `login:binding-prefix`. |
 | `REVIEW_GATE_OVERRIDE_CONTEXT` | The operator override status context. |
 | `REVIEW_GATE_THREADS` | `enforce`, unless a server-side zero-bypass thread ruleset is the enforcement point. |
-| `REVIEW_GATE_CARRY_FORWARD` | Off by default. Turn on `docs`/`comments` where re-review of review-inert deltas is unwanted; `vendored` where kendex render pushes should carry — it proves each recorded file's bytes against the kendex lock, so a hand-edit under a render tree still needs fresh evidence. |
+| `REVIEW_GATE_CARRY_FORWARD` | Off by default. Turn on `docs`/`comments` where re-review of review-inert deltas is unwanted; `vendored` where `kendex refresh` pushes should carry, with the render trees listed in `REVIEW_GATE_VENDORED_PATHS`. |
+| `REVIEW_GATE_VENDORED_PATHS` | The render trees `vendored` trusts as kendex output, e.g. `.agents/*;.claude/skills/*`. A hand-edit under them rides; keep hook scripts and instruction markdown in `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`, which wins. |
 | `REVIEW_GATE_MODE` | `enforce`. `off` is the one-switch disable, and it attests rather than evaluates. |
 
 ## 4. Repair, when validate reports FAIL
@@ -200,10 +201,10 @@ Evidence for the CURRENT head is any of:
 
 With `REVIEW_GATE_CARRY_FORWARD` (off by default), evidence at an ancestor
 carries to head when the delta is provably in a class review would not
-re-examine — docs-only, comment-only, kendex's own render proven against
-its lock, identical tree. Never a waiver: real evidence must exist, code
-changes always require fresh evidence, and the fail-closed terms still
-apply.
+re-examine — docs-only, comment-only, a committed kendex render tree,
+identical tree. Never a waiver: real evidence must exist, code changes
+outside those classes always require fresh evidence, and the fail-closed
+terms still apply.
 
 Changes-requested and unresolved threads always fail closed. Every evidence
 read fails LOUD (exit 2, no verdict). Read bounds, retry budget and thread

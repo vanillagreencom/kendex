@@ -183,13 +183,18 @@ REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
 
 # Evidence carry-forward across carry-safe deltas ("docs", "comments",
 # "vendored"; empty = off): ancestor evidence extends to head when the delta
-# is entirely carry-safe. "vendored" carries the files .kendex-lock.json
-# records, each proven by content against the lock at head, so a refresh
-# carries and a hand-edit under a render tree does not. Never a waiver —
-# code changes always need fresh evidence, and changes-requested / threads
-# still fail closed. CAVEAT: "comments" is line-lexical and cannot see
-# heredocs; "docs" and "vendored" have no such caveat.
+# is entirely carry-safe. "vendored" carries every file under a path
+# REVIEW_GATE_VENDORED_PATHS names, whatever its extension. Never a waiver —
+# code changes outside the classes always need fresh evidence, and
+# changes-requested / threads still fail closed. CAVEAT: "comments" is
+# line-lexical and cannot see heredocs; "docs" has no such caveat.
 REVIEW_GATE_CARRY_FORWARD = ""
+
+# The kendex render trees "vendored" trusts as kendex output, e.g.
+# ".agents/*;.claude/skills/*" — bytes under them carry unreviewed, so hook
+# scripts and instruction markdown belong in the exclusion list, which wins.
+# Enabling "vendored" over an empty set is a config error.
+REVIEW_GATE_VENDORED_PATHS = ""
 
 # Path globs that DISQUALIFY a carry — for policy-bearing markdown obeyed
 # mechanically (e.g. "*AGENTS.md;.github/*"), which deserves fresh review.

@@ -18,7 +18,6 @@ fn entry(kind: ItemKind, name: &str, source: &str, repo: &str) -> LockEntry {
         source_hash: "hash".to_owned(),
         source_commit: None,
         rendered_hash: None,
-        rendered_files: Default::default(),
         enabled: true,
         upstream_skills: None,
         emitted: None,

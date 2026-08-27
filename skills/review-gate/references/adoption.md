@@ -174,7 +174,8 @@ here. Full key table: [settings.md](settings.md).
 | `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE` | `any` counts COMMENTED reviews (for bots that never APPROVE); `approved` requires an APPROVED verdict. |
 | `REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS` | Default closes the errored-auto-review gap; override where a repo's reviewer words its attestation differently; empty is an explicit opt-out. |
 | `REVIEW_GATE_THREADS` | `enforce` unless the server-side zero-bypass thread ruleset is the enforcement point and CI-side latency is unwanted. |
-| `REVIEW_GATE_CARRY_FORWARD` | Off by default. Enable `docs`/`comments` classes where re-review of provably review-inert deltas is not wanted, and `vendored` where a `kendex refresh` push should carry: it proves every recorded file against the kendex lock, so a hand-edit under a render tree never rides. |
+| `REVIEW_GATE_CARRY_FORWARD` | Off by default. Enable `docs`/`comments` classes where re-review of provably review-inert deltas is not wanted, and `vendored` where a `kendex refresh` push should carry. |
+| `REVIEW_GATE_VENDORED_PATHS` | With `vendored`: the render trees to trust as kendex output (`.agents/*;.claude/skills/*` and the harness dirs kendex writes). Bytes under them are not reviewed on carry, so hook scripts and instruction markdown stay in `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`. |
 
 ## Migrating a v1 consumer (rerun/sweep-era wiring)
 

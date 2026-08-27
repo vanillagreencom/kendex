@@ -170,13 +170,12 @@ Carry-forward engine:
       extension); 'comments' = comment-only changes to code files
       (per-extension comment-token table; added/removed/renamed files,
       patch-less files, and unknown extensions refuse); 'vendored' = files
-      the repository's kendex lock (.kendex-lock.json) records as kendex's
-      own render, proven by content: each changed file's bytes at head must
-      hash to what the lock at head records for it, the lock's own change
-      must be explained entirely by files so proven, and a recorded file
-      the delta changes to anything else refuses the whole carry — a
-      hand-edit under a render tree never carries as 'docs'. Only the
-      NEWEST ancestor candidate decides. A delta at the compare API's
+      under a path REVIEW_GATE_VENDORED_PATHS names, whatever their
+      extension or status — the repository's committed kendex render trees,
+      trusted as kendex output without review of their bytes (so a
+      hand-edit under one rides; keep policy-bearing paths in
+      REVIEW_GATE_CARRY_FORWARD_EXCLUDE, which outranks the class). Only
+      the NEWEST ancestor candidate decides. A delta at the compare API's
       300-file cap refuses carry. Never a waiver: real evidence must exist,
       and only EXTENDS across a delta a review would not re-examine; code
       changes always require fresh evidence, and changes-requested /
@@ -184,6 +183,13 @@ Carry-forward engine:
       'comments' classifier is line-lexical (blind to heredocs and
       multiline strings) — enable it only where that residual risk is
       acceptable.
+  REVIEW_GATE_VENDORED_PATHS    Path globs (';'-separated; the exclusion
+      grammar and matcher) naming the kendex render trees the 'vendored'
+      class carries, e.g. '.agents/*;.claude/skills/*'. Read from the
+      default-branch checkout like every setting, so the PR under judgment
+      cannot widen it. Configuration errors (exit 2): an unsupported
+      spelling, the class enabled over an empty set, or an entry of
+      wildcards alone.
   REVIEW_GATE_CARRY_FORWARD_EXCLUDE    Path globs (';'-separated,
       shell-style; '*' matches '/' too — fnmatch without FNM_PATHNAME) that
       disqualify a carry: any file in the N->head delta matching an
@@ -300,6 +306,7 @@ API_ATTEMPTS="$(rg_setting REVIEW_GATE_API_ATTEMPTS "1")" || exit 2
 API_RETRY_DELAY="$(rg_setting REVIEW_GATE_API_RETRY_DELAY_SECONDS "2")" || exit 2
 CARRY_FORWARD="$(rg_setting REVIEW_GATE_CARRY_FORWARD "")" || exit 2
 CARRY_EXCLUDE="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE "")" || exit 2
+VENDORED_PATHS="$(rg_setting REVIEW_GATE_VENDORED_PATHS "")" || exit 2
 GATE_MODE="$(rg_setting REVIEW_GATE_MODE "enforce")" || exit 2
 
 # Configuration errors are exit 2 (no verdict), same contract as a failed
@@ -474,6 +481,29 @@ EOF_PATTERNS
 CARRY_EXCLUDE_PROPHYLACTIC="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "")" || exit 2
 rg_check_patterns REVIEW_GATE_CARRY_FORWARD_EXCLUDE "$CARRY_EXCLUDE"
 rg_check_patterns REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "$CARRY_EXCLUDE_PROPHYLACTIC"
+# The vendored path set is judged by the same grammar, and by two rules of
+# its own: the class cannot be enabled over an empty set (an unbounded
+# class would carry every file), and no entry may be wildcards alone (the
+# same class by another spelling). Both hold whether or not the class is
+# on, so a set written ahead of enabling it is checked the day it is written.
+rg_check_patterns REVIEW_GATE_VENDORED_PATHS "$VENDORED_PATHS"
+VENDORED_PATHS_N="$(rg_pack "$VENDORED_PATHS" ';')" || rg_pack_failed REVIEW_GATE_VENDORED_PATHS
+if rg_class_enabled vendored && [ -z "$VENDORED_PATHS_N" ]; then
+  echo "::error::review-predicate: REVIEW_GATE_CARRY_FORWARD enables 'vendored' but REVIEW_GATE_VENDORED_PATHS names no path — the class carries only what the committed path set names" >&2
+  exit 2
+fi
+while IFS= read -r vp; do
+  [ -z "$vp" ] && continue
+  case "$vp" in
+    *[!*]*) ;;
+    *)
+      echo "::error::review-predicate: REVIEW_GATE_VENDORED_PATHS entry '$vp' is wildcards alone — it would carry every file; name the render tree" >&2
+      exit 2
+      ;;
+  esac
+done <<EOF_VENDORED_PATHS
+$VENDORED_PATHS_N
+EOF_VENDORED_PATHS
 
 # Comment-reviewer GRAMMAR, validated with every other setting rather than at
 # the moment the evidence loop first reads a pair. A malformed entry is a
@@ -1171,8 +1201,9 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
     # name. So exclusion matching first demands provable record boundaries:
     # any control character in any filename refuses the carry (fresh review
     # required), the same completeness posture as the 300-entry cap.
-    # The vendored class reads the same list by name, into a GraphQL query
-    # and a line-based verdict, so it demands the same provable boundaries.
+    # The vendored class matches the same list by name, line by line, so it
+    # demands the same provable boundaries.
+    delta_files=""
     if [ -n "$CARRY_EXCLUDE" ] || rg_class_enabled vendored; then
       # \p{Cc} (the Unicode control category), NOT a class range written
       # with \uNNNN escapes: jq's Oniguruma mis-handles those inside [...]
@@ -1188,12 +1219,12 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
         echo "::warning::compare $base...$HEAD_SHA contains a filename with control characters: exclusion matching cannot be proven; refusing carry-forward" >&2
         break
       fi
-    fi
-    if [ -n "$CARRY_EXCLUDE" ]; then
       delta_files="$(jq -r '.files[] | .filename // ""' <<<"$cmp")" || {
         echo "::error::could not list the $base...$HEAD_SHA delta files for exclusion matching" >&2
         exit 2
       }
+    fi
+    if [ -n "$CARRY_EXCLUDE" ]; then
       excluded=""
       while IFS= read -r fn; do
         [ -z "$fn" ] && continue
@@ -1215,23 +1246,29 @@ EOF_EXCL_FILES
         break
       fi
     fi
-    # The vendored class proves files by content against the kendex lock
-    # (lib/carry-vendored.sh, a program of its own under strict mode) before
-    # the name-based classes see the delta: a recorded file the delta changed
-    # to anything but kendex's own bytes refuses the carry there, so it can
-    # never fall through to "docs". It reads through THIS shell's gh_read,
-    # exported with the retry budget, so its reads keep the one discipline.
+    # The vendored class (KEN-666): a delta file under a path the repository
+    # committed in REVIEW_GATE_VENDORED_PATHS is kendex's own render, and
+    # carries whatever its extension or status — under the trust model the
+    # exclusions already rely on (the settings are read from the default
+    # branch, so the PR under judgment cannot widen the set). Matching is
+    # the exclusion matcher's, and an exclusion on the same path has already
+    # refused above: the deny list outranks the class.
     VENDORED_FILES=""
     if rg_class_enabled vendored; then
-      export -f gh_read
-      export API_ATTEMPTS API_RETRY_DELAY GH_REPO HEAD_SHA
-      vendored_rc=0
-      VENDORED_FILES="$(printf '%s' "$cmp" | "$script_dir/lib/carry-vendored.sh" "$base")" || vendored_rc=$?
-      case "$vendored_rc" in
-        0) ;;
-        1) break ;;
-        *) exit 2 ;;
-      esac
+      while IFS= read -r fn; do
+        [ -z "$fn" ] && continue
+        while IFS= read -r pat; do
+          [ -z "$pat" ] && continue
+          case "$fn" in
+            $pat) VENDORED_FILES="$VENDORED_FILES$fn
+"; break ;;
+          esac
+        done <<EOF_VENDORED_PATS
+$VENDORED_PATHS_N
+EOF_VENDORED_PATS
+      done <<EOF_VENDORED_FILES
+$delta_files
+EOF_VENDORED_FILES
     fi
     # Classify every changed file into an ENABLED class; anything else —
     # code lines, added/removed/renamed files under "comments", binary or
