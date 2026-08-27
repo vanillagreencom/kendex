@@ -25,8 +25,10 @@ Checks that THIS repository's adopted review-gate writer workflow is still
 the shipped template.
 
 The template is copied VERBATIM — it carries no per-repo values — so the
-check is equality, line by line, over every line that is not a comment or
-blank. Two deltas are legitimate and allowed:
+check is equality, line by line. A YAML comment-only line is dropped, and
+only outside a block scalar: inside a `run: |` the lines are shell payload,
+where a comment, a blank and trailing whitespace all change what runs. Two
+deltas are legitimate and allowed:
 
   * the two `check_run` opt-in lines uncommented WHERE THE TEMPLATE CARRIES
     them — both, adjacent, or neither, since a trigger without its `types:`
@@ -106,16 +108,39 @@ esac
 # guard's error string.
 EXEC_WRITER_RE='^[[:space:]]*exec[[:space:]]+[^[:space:]]*review-writer\.sh[[:space:]]*$'
 
-# COMMENT-ONLY lines are dropped, and nothing else. Prose is reworded
-# legitimately — the catalog's own copy says so in its header — and a comment
-# gates nothing. A BLANK line is not in that class: inside a `run: |` block
-# scalar it is script content, and a blank after a backslash continuation
-# changes what the shell runs, so dropping blanks would compare two
-# workflows that behave differently and call them equal.
-# One sed, not a grep chain: a `grep -v` that filters everything exits 1, and
-# the `|| true` that would paper over it also papers over an exit 2.
-code_lines() { # FILE — the file without comment-only lines, trailing space stripped
-  sed -e 's/[[:space:]]*$//' -e '/^[[:space:]]*#/d' "$1"
+# COMMENT-ONLY lines are dropped OUTSIDE a block scalar, and nothing else is
+# dropped anywhere. YAML prose is reworded legitimately — the catalog's own
+# copy says so in its header — and a YAML comment gates nothing.
+#
+# INSIDE a `run: |` scalar none of that holds: those lines are shell payload,
+# so a `#` line is a shell comment that can comment out a joined command, and
+# trailing whitespace after a backslash cancels the continuation. Both edits
+# change what runs, so inside a scalar the bytes are compared as they are.
+# Blank lines are compared everywhere for the same reason.
+code_lines() { # FILE — YAML comment-only lines dropped outside block scalars
+  awk '
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      match(line, /^[[:space:]]*/)
+      ind = RLENGTH
+      body = substr(line, ind + 1)
+    }
+    inblock {
+      if (body == "" || ind > blockind) { print line; next }
+      inblock = 0
+    }
+    body ~ /^#/ { next }
+    {
+      out = line
+      sub(/[[:space:]]+$/, "", out)
+      print out
+      if (body ~ /:[[:space:]]*[|>][-+0-9]*[[:space:]]*$/) {
+        inblock = 1
+        blockind = ind
+      }
+    }
+  ' "$1"
 }
 
 # ========================= find the adopted copy ===========================

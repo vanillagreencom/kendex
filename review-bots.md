@@ -47,6 +47,15 @@ These are known, deliberate trade-offs. Raising them again is noise:
   convergence supersedes it, and the merge queue re-checks at admission.
 - **Threads arriving after merge-queue admission are procedural, not a
   gate defect.** The handling is dequeue → fix → re-arm.
+- **An adopted review-gate workflow is validated by verbatim EQUALITY
+  against the shipped template.** `validate-workflow.sh` asks one question —
+  is this copy still `templates/review-gate-writer.yml`? — and re-derives
+  nothing about what the workflow means. What the template MEANS is asserted
+  upstream in `skills/review-gate/tests/review-writer-template.test.sh`,
+  which is the only place that can answer it. A finding that
+  `validate-workflow.sh` fails to evaluate an expression, enumerate an
+  activity type, or reason about a job's permissions is settled: name the
+  gap in the upstream suite instead.
 
 - **No test-coverage asks for instruction markdown or for `tools/guard`
   rules in a change that adds no guard test lane.** What a test must

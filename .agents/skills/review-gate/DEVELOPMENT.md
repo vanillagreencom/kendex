@@ -51,9 +51,11 @@ invoking repo's own resolved settings.
 ## Equality, not re-derivation
 
 `validate-workflow.sh` compares the adopted copy against the shipped template
-line by line, over every line that is not a comment. Blanks are compared:
-inside a `run: |` block scalar a blank is script content, and one after a
-backslash continuation changes what the shell runs. Two deltas are
+line by line. A YAML comment-only line is the one thing dropped, and only
+OUTSIDE a block scalar. Inside a `run: |` the lines are shell payload, so the
+bytes are compared as they are: a `#` line there is a shell comment that can
+comment out a joined command, trailing whitespace after a backslash cancels
+the continuation, and a blank line is script content. Two deltas are
 allowed and nothing else. Any other difference is one failure naming the
 first divergent line, and the remedy never varies: re-copy the template.
 

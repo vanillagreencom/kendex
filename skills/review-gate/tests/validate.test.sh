@@ -637,6 +637,31 @@ dir="$DIR"
 mutate "$dir" "/^          set -u\$/G"
 expect_fail "an inserted blank line inside a run: block is a divergence" "$dir" "has diverged from the shipped template"
 
+# Inside a `run: |` scalar the lines are shell PAYLOAD, so the two things
+# tolerated in YAML are not tolerable there: a `#` line is a shell comment
+# that can comment out a joined command, and trailing whitespace after a
+# backslash cancels the continuation. Both change what runs.
+# awk, not sed: the mutation is "append a space to the first continuation",
+# and expressing that through two layers of quoting is how it goes wrong.
+pad_continuation() { # DIR — cancel the first backslash continuation
+  local wf="$1/.github/workflows/review-gate-writer.yml"
+  awk 'padded != 1 && /\\$/ { print $0 " "; padded = 1; next } { print }' "$wf" >"$wf.new"
+  mv "$wf.new" "$wf"
+  commit "$1"
+}
+
+sandbox
+dir="$DIR"
+pad_continuation "$dir"
+expect_fail "trailing space after a backslash continuation is a divergence" "$dir" "has diverged from the shipped template"
+
+sandbox
+dir="$DIR"
+mutate "$dir" "0,/^          set -u\$/{/^          set -u\$/a\\
+          # a shell comment inside the payload
+}"
+expect_fail "a comment inside a run: payload is a divergence" "$dir" "has diverged from the shipped template"
+
 # The BOUNDARY, stated rather than left to be discovered: comments are
 # compared out. A copy whose prose was reworded is still the template.
 sandbox
