@@ -19,6 +19,11 @@ an outside contributor.
 - `kendex check` reads a repository's hook files itself instead of running
   its guard scripts, so reading a clone's status executes none of its code.
   It answers armed, not armed, or cannot tell, and never guesses.
+- `core.hooksPath` set to a repository's own hooks directory no longer stops
+  `kendex guard install` from arming it, whatever spelling the value uses.
+- The growth-guards `--check` reads an empty `core.hooksPath` as hooks
+  switched off, rather than measuring the repository root in its place.
+
 - The `pre-commit-check` hook reads an empty `core.hooksPath` as hooks
   switched off, naming the unset that fixes it, instead of standing aside for
   a repository-root file git never runs.

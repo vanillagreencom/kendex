@@ -547,3 +547,74 @@ fn an_empty_hooks_path_is_hooks_switched_off() {
     let out = git(home, &root, &["commit", "-m", "feat: ungated"]);
     assert!(out.status.success(), "git runs no hook: {}", said(&out));
 }
+
+/// core.hooksPath naming this repository's own hooks directory is not a
+/// redirect, however it is spelled.
+///
+/// A project writing its hooks directory down explicitly has redirected
+/// nothing — the directory it names is the one the installer writes anyway.
+/// Comparing the two as text calls it foreign, because git echoes the
+/// configured spelling: a `..` in the value, or a checkout reached through a
+/// symlink, is the same directory under a name that does not match.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_default_hooks_directory_named_explicitly_is_still_the_default() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
+    let key = "core.hooksPath";
+
+    // Arming has to work at all: the installer stands down under a redirect,
+    // and the repository's own spelling of its own directory is not one.
+    for value in [
+        ".git/hooks".to_owned(),
+        root.join(".git/hooks").display().to_string(),
+        root.join(".git/refs/../hooks").display().to_string(),
+    ] {
+        git_ok(home, &root, &["config", key, &value]);
+        let armed = run(home, &root, "kendex", &["guard", "install"]);
+        assert!(armed.status.success(), "{value}: {}", said(&armed));
+        assert!(
+            root.join(".git/hooks/kendex-guards").is_file(),
+            "the default spelled `{value}` was not armed: {}",
+            said(&armed)
+        );
+        let out = said(&run(home, &root, "kendex", &["check"]));
+        assert!(
+            !out.contains("commit hooks"),
+            "the default spelled `{value}` did not read armed: {out}"
+        );
+        run(home, &root, "kendex", &["guard", "uninstall"]);
+    }
+
+    // And it has to reach the right grammar. In the default directory the
+    // installer would have written its line, so anything else there is
+    // drift; only a directory git was redirected TO is read for a hand-wired
+    // arrangement. A `..` in the value is still the default directory, so a
+    // foreign hook in it is unverifiable drift — not a hand-wiring that
+    // simply does not name us, which is what the other grammar would answer.
+    git_ok(
+        home,
+        &root,
+        &[
+            "config",
+            key,
+            &root.join(".git/refs/../hooks").display().to_string(),
+        ],
+    );
+    let hook = root.join(".git/hooks/pre-commit");
+    std::fs::write(&hook, "#!/bin/sh\nexit 0\n").unwrap();
+    #[allow(clippy::unwrap_used)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let out = said(&run(home, &root, "kendex", &["check"]));
+    assert!(
+        out.contains("does not carry the guard line"),
+        "a foreign hook in the default directory was judged by the hand-wired \
+         grammar, so the `..` spelling read as a redirect: {out}"
+    );
+    assert!(!out.contains("does not run this install's"), "{out}");
+}

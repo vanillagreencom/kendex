@@ -263,7 +263,7 @@ pub fn armed(dir: &Path, installed_here: bool) -> Result<Option<GuardReport>> {
     // loud whatever the install record says: an unverifiable gate is not a
     // clean one.
     let scripts = package.dir.join("scripts");
-    let is_default_dir = live == repo.default_hooks_dir();
+    let is_default_dir = repo.is_default_hooks_dir(&live);
     let (shape, reasons) = shims::directory_shape(&live, &scripts, &repo.worktree, is_default_dir);
     Ok(match shape {
         shims::Shape::Armed => None,

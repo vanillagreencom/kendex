@@ -77,6 +77,14 @@ fn relative(base: &Path, target: &Path) -> Option<PathBuf> {
     (!out.as_os_str().is_empty()).then_some(out)
 }
 
+/// A path with `.` dropped and `..` folded on paper, for comparing two
+/// spellings of one place when neither can be resolved on disk. Never a
+/// substitute for `canonicalize`: it settles no symlink, and a `..` across
+/// one lands somewhere else entirely.
+pub(crate) fn lexical(path: &Path) -> PathBuf {
+    normalize(path).unwrap_or_else(|| path.to_path_buf())
+}
+
 /// A path with `.` dropped and `..` folded lexically. `None` where the `..`
 /// components climb past the root, which no real path does.
 fn normalize(path: &Path) -> Option<PathBuf> {

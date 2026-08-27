@@ -42,6 +42,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/hook-entrypoint.sh"
 # shellcheck source=lib/hook-check.sh
 source "$SCRIPT_DIR/lib/hook-check.sh"
+# shellcheck source=lib/hooks-path.sh
+source "$SCRIPT_DIR/lib/hooks-path.sh"
 
 usage() {
   cat <<'EOF'
@@ -132,19 +134,19 @@ case "$COMMON_DIR" in
 esac
 HOOKS_DIR="$COMMON_DIR/hooks"
 
-# Installing under core.hooksPath would write files git never reads. Removal
-# still runs: shims left in .git/hooks reactivate the moment the setting goes
-# away. PRESENCE decides, not value — set to the empty string it still
-# redirects git away from .git/hooks.
-CUSTOM_HOOKS=""
-HOOKS_PATH_SET=0
-if CUSTOM_HOOKS="$(git -C "$REPO_ABS" config --get core.hooksPath 2>/dev/null)"; then
-  HOOKS_PATH_SET=1
-fi
-if [ "$HOOKS_PATH_SET" -eq 1 ] && [ "$MODE" = "install" ]; then
-  warn "core.hooksPath is set ('$CUSTOM_HOOKS'); git ignores .git/hooks, so the guard shims were NOT installed"
-  echo "  Have that directory's pre-commit run $SCRIPT_DIR/pre-commit, and its commit-msg run $SCRIPT_DIR/commit-msg \"\$1\"." >&2
-  echo "growth-guards git hooks: skipped — core.hooksPath is set ($CUSTOM_HOOKS)"
+# Installing where git does not read would write files nothing runs. Removal
+# still runs: shims in $HOOKS_DIR revive the moment the setting goes away.
+classify_hooks_path
+
+if [ "$HOOKS_PATH_ELSEWHERE" -eq 1 ] && [ "$MODE" = "install" ]; then
+  if [ -z "$CUSTOM_HOOKS" ]; then
+    warn "core.hooksPath is set and empty, which switches git hooks off entirely, so the guard shims were NOT installed"
+    echo "  Run 'git config --unset core.hooksPath', then install again." >&2
+  else
+    warn "core.hooksPath is set ('$CUSTOM_HOOKS'); git ignores $HOOKS_DIR, so the guard shims were NOT installed"
+    echo "  Have that directory's pre-commit run $SCRIPT_DIR/pre-commit, and its commit-msg run $SCRIPT_DIR/commit-msg \"\$1\"." >&2
+  fi
+  echo "growth-guards git hooks: skipped — core.hooksPath is set ('$CUSTOM_HOOKS')"
   exit 0
 fi
 
@@ -641,7 +643,17 @@ other_worktree_still_installed() {
 
 if [ "$MODE" = "check" ]; then
   VERDICT=0
-  if [ "$HOOKS_PATH_SET" -eq 1 ]; then
+  # Set and empty is not a redirect to anywhere; it switches hooks off, and
+  # git's own answer misleads about it — `rev-parse --git-path hooks` reports
+  # `./`, so the directory below would resolve to the repository root and be
+  # measured in place of a directory git never reads.
+  if [ "$HOOKS_PATH_SET" -eq 1 ] && [ -z "$CUSTOM_HOOKS" ]; then
+    echo "growth-guards git hooks: NOT armed — core.hooksPath is set and empty, which switches git hooks off, so commits are NOT gated; run 'git config --unset core.hooksPath', then 'kendex guard install'"
+    exit 1
+  fi
+  # A core.hooksPath naming this repository's own hooks directory is not a
+  # redirect, so it takes the plain path below and is described as what it is.
+  if [ "$HOOKS_PATH_ELSEWHERE" -eq 1 ]; then
     # git owns the resolution of core.hooksPath — absolute, ~-prefixed, or
     # relative to the work-tree root where hooks run — and answers relative
     # to the directory it was invoked in, so that is what it is absolutized

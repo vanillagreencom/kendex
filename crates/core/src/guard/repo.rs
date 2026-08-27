@@ -135,6 +135,29 @@ impl Repo {
         self.common_dir.join("hooks")
     }
 
+    /// Whether a hooks directory IS the default one, however it was spelled.
+    ///
+    /// `core.hooksPath` pointed at the repository's own hooks directory is a
+    /// legitimate setting — it is what a project does to say out loud where
+    /// its hooks live — and the directory it names is not foreign, it is
+    /// this one. Comparing the two as text calls it a redirect: git echoes
+    /// the configured spelling, so `.git/hooks` reached through a symlinked
+    /// checkout, or written with a `..` in it, is the same directory under
+    /// a name that does not match.
+    ///
+    /// Both sides resolve on disk, which settles symlinks and `..` together.
+    /// A directory that is not there yet cannot be resolved, so it falls
+    /// back to the lexical form — enough for the spellings that differ only
+    /// on paper, and a mismatch there costs a stand-down, never a write into
+    /// a directory this did not identify.
+    pub fn is_default_hooks_dir(&self, dir: &Path) -> bool {
+        let settled = |path: &Path| {
+            path.canonicalize()
+                .unwrap_or_else(|_| crate::fs::lexical(path))
+        };
+        settled(dir) == settled(&self.default_hooks_dir())
+    }
+
     /// Whether `core.hooksPath` is set to an empty value, which turns hooks
     /// off outright.
     ///
