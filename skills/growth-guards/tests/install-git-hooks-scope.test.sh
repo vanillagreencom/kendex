@@ -710,5 +710,54 @@ OUT="$("$TMP/wtC/services/two/.agents/skills/growth-guards/scripts/install-git-h
   && ok "and the first project's install keeps the shims" \
   || bad "the shims were removed while another project still holds them" "out=$OUT"
 
+echo "=== the armed-project record survives every byte a name may hold ==="
+# The encoder was a list of characters to escape and a tab was not on it, so
+# a tab-named project became two entries in the record and named nothing.
+# Every such list is one somebody has to have finished; this names the SAFE
+# set instead — letters, digits and . _ / - — and encodes every other byte.
+#
+# So the pin uses a name carrying one of each awkward class at once: tab,
+# newline, space, a quote, glob characters and a percent sign.
+TAB="$(printf '\t')"
+SQ="'"
+NASTY="p${TAB}q r${SQ}s*?[x]%25"
+NLR="$TMP/alphabet"
+mkdir -p "$NLR"
+git -C "$NLR" init -q
+git -C "$NLR" config user.email t@t
+git -C "$NLR" config user.name t
+PROJ="$NLR/$NASTY
+"
+mkdir -p "$PROJ/.agents/skills"
+cp -R "$SKILL_DIR" "$PROJ/.agents/skills/growth-guards"
+INST="$PROJ/.agents/skills/growth-guards/scripts/install-git-hooks"
+
+OUT=""; RC=0
+OUT="$("$INST" --repo "$NLR" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "a project named with every awkward class arms" \
+  || bad "awkward-name arm" "rc=$RC out=$OUT"
+
+# One entry, not several: a separator that slipped through would split it.
+ENTRIES="$(grep -m1 '^# armed-projects:' "$NLR/.git/hooks/kendex-guards" \
+  | sed 's/^# armed-projects://' | wc -w)"
+[ "$ENTRIES" = "1" ] && ok "and the record holds it as ONE entry" \
+  || bad "the record split the name into $ENTRIES entries" \
+  "$(grep -m1 '^# armed-projects:' "$NLR/.git/hooks/kendex-guards")"
+
+# --check regenerates the record from the file and compares bytes, so a
+# round trip that lost anything reports the helper as not ours.
+OUT=""; RC=0
+OUT="$("$INST" --repo "$NLR" --check 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "and --check still recognises its own helper" \
+  || bad "the record did not round-trip" "rc=$RC out=$OUT"
+
+OUT=""; RC=0
+OUT="$("$INST" --repo "$NLR" --uninstall 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "and the project can disarm again" \
+  || bad "awkward-name uninstall" "rc=$RC out=$OUT"
+[ -e "$NLR/.git/hooks/kendex-guards" ] \
+  && bad "the shims survived their own uninstall" "out=$OUT" \
+  || ok "with the shims gone"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

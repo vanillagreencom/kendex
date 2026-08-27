@@ -44,10 +44,30 @@ gg_shell_quote() { # VALUE -> the value, safe inside single quotes
 # `%` first and the newline second, so that decoding in the other order is
 # unambiguous: after encoding, a `%0A` in the output can only have come from
 # a real newline, because a literal `%0A` in the input became `%250A`.
+# A closed alphabet, not a list of characters to escape.
+#
+# The list was `%`, newline and space, and a tab went through it — became a
+# separator in the record, and one project read back as two prefixes that
+# name nothing. Every list of dangerous characters is a list somebody has to
+# have finished, and this one was not. So the safe set is named instead:
+# letters, digits, and `. _ / -`, which is what a path is made of. Every
+# other byte is `%XX`, whatever it is.
+#
+# Byte-wise under LC_ALL=C, because a filename is bytes: a multi-byte
+# character encoded as one code point would not survive the round trip.
 gg_encode_line() { # VALUE -> single-line, separator-safe encoding
-  local v="${1//%/%25}"
-  v="${v//$'\n'/%0A}"
-  printf '%s' "${v// /%20}"
+  local LC_ALL=C out="" i=0 c="" hex=""
+  for ((i = 0; i < ${#1}; i++)); do
+    c="${1:i:1}"
+    case "$c" in
+      [A-Za-z0-9._/-]) out="$out$c" ;;
+      *)
+        printf -v hex '%%%02X' "'$c"
+        out="$out$hex"
+        ;;
+    esac
+  done
+  printf '%s' "$out"
 }
 
 # One entry of the armed-projects record.
@@ -63,13 +83,30 @@ gg_encode_rel() { # REL -> one list entry
 }
 
 gg_decode_rel() { # VAR ENTRY -> sets VAR to the rel
-  local __name="$1" v="$2"
-  case "$v" in
-    ".") eval "$__name=''"; return 0 ;;
+  local LC_ALL=C __name="$1" __rest="$2" __out="" __byte=""
+  case "$__rest" in
+    ".")
+      eval "$__name=''"
+      return 0
+      ;;
   esac
-  v="${v//%0A/$'\n'}"
-  v="${v//%20/ }"
-  eval "$__name=\${v//%25/%}"
+  while [ -n "$__rest" ]; do
+    case "$__rest" in
+      %[0-9A-Fa-f][0-9A-Fa-f]*)
+        # printf -v, never a command substitution: capturing a decoded byte
+        # would lose it exactly when it is the newline this encodes for.
+        printf -v __byte '%b' "\\x${__rest:1:2}"
+        __out="$__out$__byte"
+        __rest="${__rest:3}"
+        ;;
+      %*) return 1 ;;
+      *)
+        __out="$__out${__rest:0:1}"
+        __rest="${__rest:1}"
+        ;;
+    esac
+  done
+  eval "$__name=\$__out"
 }
 
 helper_body() { # -> the helper this installer would write, on stdout
@@ -89,8 +126,8 @@ skill_roots='$(gg_shell_quote "$GG_SKILL_ROOTS")'
 project_rel='$(gg_shell_quote "$PROJECT_REL")'
 # Every project that has ever armed this helper, appended never replaced —
 # an uninstall from any of them looks for survivors under all of them.
-# Percent-encoded, space separated: %25 a percent, %0A a newline, %20 a
-# space, and a lone dot the project that IS the work tree.
+# Space separated, and every byte outside [A-Za-z0-9._/-] is %XX. A lone
+# dot is the project that IS the work tree.
 # armed-projects:$__record
 HELPER_HEAD
   cat <<'HELPER'
@@ -212,10 +249,23 @@ gg_baked_project_rels() { # ARRAY HELPER -> sets ARRAY to every armed rel
   # would stop an uninstall entirely — a repository nobody can disarm.
   __line="$(grep -m1 -- '^# armed-projects:' "$2")" || return 1
   __line="${__line#\# armed-projects:}"
+  # One space is the separator, and nothing here is a glob. The default IFS
+  # splits on tabs too — which is how a tab in a project name became two
+  # entries — and an unquoted expansion would match the filesystem.
+  local __ifs="$IFS" __noglob=0 __status=0
+  case "$-" in *f*) __noglob=1 ;; esac
+  IFS=' '
+  set -f
   for __entry in $__line; do
-    gg_decode_rel __one "$__entry" || return 1
+    gg_decode_rel __one "$__entry" || {
+      __status=1
+      break
+    }
     __out+=("$__one")
   done
+  IFS="$__ifs"
+  [ "$__noglob" -eq 1 ] || set +f
+  [ "$__status" -eq 0 ] || return 1
   eval "$__name=(\${__out[@]+\"\${__out[@]}\"})"
 }
 

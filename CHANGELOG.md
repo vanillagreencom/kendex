@@ -16,6 +16,9 @@ an outside contributor.
 
 ### Fixed
 
+- A project directory whose name contains a tab, a glob character or a quote
+  is recorded and recognised correctly by the commit-hook installer.
+
 - Disarming from one project keeps the commit hooks when any other project
   that armed them is still installed, not only the most recent one.
 - A work-tree registry that cannot be read stops an uninstall rather than
