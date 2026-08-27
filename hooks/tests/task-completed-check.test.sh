@@ -166,6 +166,20 @@ run_hook "$NOREPO" FAKE_RC=0
 assert_eq "$rc" 0 "no repository to ask means nothing to gate"
 assert_eq "$(cat "$ARGS_LOG")" "" "no repository never invokes cargo"
 
+echo "task-completed-check: a changed set larger than the pipe buffer"
+REPO="$(new_repo bigset)"
+printf 'pub fn added() {}\n' >"$REPO/src/added.rs"
+# Sorts after src/, and long enough that the filter cannot have read it all
+# before an early-exiting reader would have quit on src/added.rs.
+mkdir -p "$REPO/zpad"
+i=0
+while [ "$i" -lt 1200 ]; do
+  : >"$REPO/zpad/padding-$i-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  i=$((i + 1))
+done
+run_hook "$REPO" FAKE_RC=0
+assert_contains "$(cat "$ARGS_LOG")" "clippy" "an early .rs path is still found past the pipe buffer"
+
 echo "task-completed-check: git cannot answer what changed"
 REPO="$(new_repo brokengit)"
 printf 'pub fn added() {}\n' >"$REPO/src/added.rs"
@@ -193,6 +207,22 @@ rc=$?
 set -e
 assert_eq "$rc" 2 "an unreadable changed set blocks rather than passing"
 assert_contains "$(cat "$TMP_ROOT/stderr")" "unable to read index" "carries git's own failure"
+
+echo "task-completed-check: no git on PATH"
+REPO="$(new_repo nogit)"
+printf 'pub fn added() {}\n' >"$REPO/src/added.rs"
+NOGIT_BIN="$TMP_ROOT/nogit"
+mkdir -p "$NOGIT_BIN"
+for tool in bash cat sed sort head tail tr dirname; do
+  real="$(command -v "$tool" 2>/dev/null || true)"
+  [ -n "$real" ] && [ -f "$real" ] && ln -sf "$real" "$NOGIT_BIN/$tool"
+done
+set +e
+( cd "$REPO" && env -i HOME="$TMP_ROOT" PATH="$NOGIT_BIN" "$NOGIT_BIN/bash" "$HOOK" <<<'{}' ) \
+  >/dev/null 2>"$TMP_ROOT/stderr"
+rc=$?
+set -e
+assert_eq "$rc" 2 "a git that will not run blocks rather than standing down"
 
 echo "task-completed-check: no cargo on PATH"
 REPO="$(new_repo nocargo)"

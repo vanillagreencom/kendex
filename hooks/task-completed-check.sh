@@ -14,15 +14,21 @@ set -euo pipefail
 # Consume stdin
 cat > /dev/null
 
-# No repository, nothing to gate. Every later git call is asked inside one,
-# so a failure there is a broken run, not an absent one.
-REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-
 git_failed() { # SUBCOMMAND OUTPUT — an unreadable changed set is not an empty one
   echo "task-completed-check: git $1 failed, so what changed is unknown:" >&2
   printf '%s\n' "$2" >&2
   exit 2
 }
+
+# No repository, nothing to gate. Exit 128 is the one failure that says so.
+# A git that will not execute exits 126 or 127, and every later git call is
+# asked inside a repository, where a failure is a broken run.
+PROBE_RC=0
+REPO_ROOT=$(git rev-parse --show-toplevel 2>&1) || PROBE_RC=$?
+if [ "$PROBE_RC" -ne 0 ]; then
+  [ "$PROBE_RC" -eq 128 ] || git_failed 'rev-parse' "$REPO_ROOT"
+  exit 0
+fi
 
 # What counts as changed: the worktree, the index, and untracked non-ignored
 # paths. Without that last set a task whose only work is a new file presents
@@ -40,8 +46,11 @@ if [ -z "$ALL_CHANGED" ]; then
   exit 0
 fi
 
-# Check for Rust files
-if echo "$ALL_CHANGED" | grep -qE '\.rs$'; then
+# Check for Rust files. Neither filter may stop reading early: `grep -q` and
+# `head -1` exit at their first match, and under pipefail the SIGPIPE that
+# kills the producer becomes the pipeline's status — 141, read as no match.
+RUST_CHANGED=$(printf '%s\n' "$ALL_CHANGED" | sed -n '/\.rs$/p')
+if [ -n "$RUST_CHANGED" ]; then
   # Locate Cargo.toml so the hook works when the manifest is nested
   # (kendex's own `cli/Cargo.toml` is the canonical case) and when the
   # hook is invoked from a subdirectory. Earlier versions ran `cargo
@@ -49,7 +58,7 @@ if echo "$ALL_CHANGED" | grep -qE '\.rs$'; then
   # Cargo.toml" as a clippy error.
   MANIFEST_ARGS=()
   if [ ! -f "$REPO_ROOT/Cargo.toml" ]; then
-    MANIFEST=$(echo "$ALL_CHANGED" | grep -E '\.rs$' | while IFS= read -r path; do
+    MANIFEST=$(printf '%s\n' "$RUST_CHANGED" | while IFS= read -r path; do
       dir=$(dirname "$path")
       while [ -n "$dir" ] && [ "$dir" != "." ] && [ "$dir" != "/" ]; do
         if [ -f "$REPO_ROOT/$dir/Cargo.toml" ]; then
@@ -58,7 +67,7 @@ if echo "$ALL_CHANGED" | grep -qE '\.rs$'; then
         fi
         dir=$(dirname "$dir")
       done
-    done | head -1)
+    done | sed -n 1p)
     if [ -n "$MANIFEST" ]; then
       MANIFEST_ARGS=(--manifest-path "$MANIFEST")
     fi
