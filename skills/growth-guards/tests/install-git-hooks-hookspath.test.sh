@@ -32,8 +32,8 @@ case "$OUT" in
   *) bad "the verdict does not name the cause" "$OUT" ;;
 esac
 case "$OUT" in
-  *"--unset-all core.hooksPath"*) ok "and leads with the remedy that works" ;;
-  *) bad "no unset in the remedy" "$OUT" ;;
+  *"core.hooksPath is set from:"*) ok "and lists the files that set it" ;;
+  *) bad "no origin listing" "$OUT" ;;
 esac
 install_in "$R62"
 case "$OUT" in
@@ -66,9 +66,9 @@ for spelling in default-relative default-absolute elsewhere empty; do
   # shape `--check` has no way to verify, so following it left a repository
   # permanently unable to say whether it was gated.
   case "$OUT" in
-    *"To arm this repository, run git -C "*"--unset-all core.hooksPath"*)
-      ok "and the remedy printed is the one that arms ($spelling)" ;;
-    *) bad "no unset remedy ($spelling)" "$OUT" ;;
+    *"core.hooksPath is set from:"*"unset core.hooksPath in each file listed above"*)
+      ok "and it lists the files that set it, then says to unset them ($spelling)" ;;
+    *) bad "no origin listing and remedy ($spelling)" "$OUT" ;;
   esac
   case "$OUT" in
     *"Have that directory's pre-commit run"*)
@@ -125,8 +125,14 @@ case "$OUT" in
   *) ok "and claims nothing about where git reads hooks from" ;;
 esac
 case "$OUT" in
-  *"--unset-all core.hooksPath"*) ok "and carries the remedy that arms" ;;
-  *) bad "no unset remedy" "$OUT" ;;
+  *"core.hooksPath is set from:"*) ok "and lists the files that set it" ;;
+  *) bad "no origin listing" "$OUT" ;;
+esac
+# Nothing composed: a command this tool wrote is a prediction about somebody
+# else's configuration, and predicting that is what cost two rounds.
+case "$OUT" in
+  *"config --unset"* | *"--unset-all"*) bad "a composed unset command came back" "$OUT" ;;
+  *) ok "and composes no unset command of its own" ;;
 esac
 case "$OUT" in
   *"wire that directory"* | *"Have that directory's pre-commit run"*)
@@ -178,12 +184,12 @@ check_in "$R80"
 [ "$RC" -eq 0 ] && ok "must-fail: unsetting the value arms the same repository again" \
   || bad "unset re-arms" "rc=$RC out=$OUT"
 
-echo "=== the remedy names the scope that actually holds the value ==="
-# `git config --unset` writes the LOCAL file. Told that for a value set
-# globally, the person runs it, git exits 5 because the local file has no
-# such key, and the next install stands down for the reason they were told
-# to fix. The scope git reports is the scope the remedy names.
-R90="$(new_repo scoped-remedy)"
+echo "=== the remedy is git's own accounting, not a composed command ==="
+# Two rounds went on composing an unset and being wrong about it: the local
+# file for a value that lives elsewhere, then the right scope but the wrong
+# file when an include supplies the key. git already knows which files set
+# it, so git is quoted and the instruction is about those files.
+R90="$(new_repo origin-listing)"
 install_in "$R90"
 git config --global core.hooksPath "$R90/globalhooks"
 [ -z "$(git -C "$R90" config --local --get core.hooksPath || true)" ] \
@@ -194,38 +200,62 @@ check_in "$R90"
 [ "$RC" -eq 2 ] && ok "a global core.hooksPath stands the checker down" \
   || bad "global hooksPath checks 2" "rc=$RC out=$OUT"
 case "$OUT" in
-  *"config --global --unset-all core.hooksPath"*) ok "and the remedy unsets it in the global scope" ;;
-  *) bad "the remedy does not name the global scope" "$OUT" ;;
+  *"core.hooksPath is set from:"*) ok "and heads the listing of what sets it" ;;
+  *) bad "no origin listing" "$OUT" ;;
+esac
+# git's own words: the scope, and the FILE. A global value names the global
+# file, which is the one a local unset would have missed.
+case "$OUT" in
+  *global*"$HOME/.gitconfig"*) ok "and names the global scope and its file, as git reports them" ;;
+  *) bad "the global origin is not named" "$OUT" ;;
 esac
 case "$OUT" in
-  *"git -C '$R90' config --global"*) ok "and names the repository, so it works from anywhere" ;;
-  *) bad "the remedy does not name the repository" "$OUT" ;;
+  *"unset core.hooksPath in each file listed above"*) ok "and says to unset it in each listed file" ;;
+  *) bad "no instruction after the listing" "$OUT" ;;
+esac
+# The structural pin: no command is composed, so there is no composed
+# command to be wrong.
+case "$OUT" in
+  *"config --unset"* | *"--unset-all"*) bad "a composed unset command came back" "$OUT" ;;
+  *) ok "and composes no unset command" ;;
 esac
 
-# The install lane derives it the same way, from the same one definition.
+# The install lane prints the same block, from the same function.
 install_in "$R90"
 case "$OUT" in
-  *"config --global --unset-all core.hooksPath"*) ok "and the install prints the same scoped remedy" ;;
-  *) bad "install printed an unscoped remedy" "$OUT" ;;
+  *"core.hooksPath is set from:"*global*"unset core.hooksPath in each file listed above"*)
+    ok "and the install lane prints the same listing and instruction" ;;
+  *) bad "install printed something else" "$OUT" ;;
 esac
+git config --global --unset-all core.hooksPath
 
-# The remedy has to be a command that WORKS: run it, and the repository arms.
-eval "git -C '$R90' config --global --unset-all core.hooksPath"
-install_in "$R90"
-[ -x "$R90/.git/hooks/kendex-guards" ] \
-  && ok "and running that remedy really does let the install arm" \
-  || bad "the printed remedy did not arm the repository" "out=$OUT"
+echo "=== an included file is listed as itself ==="
+# The case that makes a composed unset wrong even with the scope right:
+# include.path pulls the key in from another file, git reports it under the
+# INCLUDING scope but with its own path, and a scoped unset edits
+# .git/config while the included file goes on setting it.
+R91="$(new_repo included-origin)"
+install_in "$R91"
+printf '[core]\n\thooksPath = %s/includedhooks\n' "$R91" >"$R91/extra.cfg"
+git -C "$R91" config include.path "$R91/extra.cfg"
+[ "$(git -C "$R91" config --get core.hooksPath)" = "$R91/includedhooks" ] \
+  && ok "the control: the value really does come from the included file" \
+  || bad "the include did not supply the value" "$(git -C "$R91" config --get core.hooksPath || true)"
 
-# The must-fail control: the unscoped remedy this replaced — spelled exactly
-# as it used to print — fails on the same repository, which is the defect the
-# scope lookup exists for.
-git config --global core.hooksPath "$R90/globalhooks"
-UNSCOPED_RC=0
-git -C "$R90" config --unset core.hooksPath 2>/dev/null || UNSCOPED_RC=$?
-[ "$UNSCOPED_RC" -eq 5 ] \
-  && ok "must-fail: the unscoped unset exits 5 against a global value" \
-  || bad "unscoped unset against a global value" "rc=$UNSCOPED_RC"
-git config --global --unset core.hooksPath
+check_in "$R91"
+[ "$RC" -eq 2 ] && ok "an included core.hooksPath stands the checker down" \
+  || bad "included hooksPath checks 2" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"$R91/extra.cfg"*) ok "and the listing names the included file itself" \
+    ;;
+  *) bad "the included file is not named" "$OUT" ;;
+esac
+# The must-fail control for the whole design: unsetting only what the scope
+# names leaves the value in force, which is why no scoped command is printed.
+git -C "$R91" config --local --unset-all core.hooksPath 2>/dev/null || true
+[ "$(git -C "$R91" config --get core.hooksPath || true)" = "$R91/includedhooks" ] \
+  && ok "must-fail: a scoped local unset leaves the included value in force" \
+  || bad "the scoped unset cleared the included value" "$(git -C "$R91" config --get core.hooksPath || true)"
 
 echo "=== a repository path that begins with a dash is a path ==="
 # `cd "$REPO"` reads a leading dash as an option: `--repo -P` became `cd -P`,

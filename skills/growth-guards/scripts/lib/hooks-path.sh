@@ -101,45 +101,39 @@ hooks_path_off() { # -> 0 when hooks are switched off
   [ "$HOOKS_PATH_SET" -eq 1 ] && [ -z "$CUSTOM_HOOKS" ]
 }
 
-# The one remedy, so install and check say the same thing — derived, never
-# remembered.
+# The remedy is git's own accounting of the value, printed, not a command
+# this file composed.
 #
-# `git config --unset` writes the LOCAL file. A value that lives in the
-# global, system, or per-worktree file is untouched by that, and git exits 5
-# for an unset that matched nothing: the person runs what they were told,
-# sees a failure, and the next install stands down for the reason they were
-# told to fix. So the file git actually answered from is the one named.
-# `--show-scope` reports it, and the repository is named too, because the
-# remedy has to work from wherever it is pasted.
+# Composing one has been wrong twice. The first spelling unset the local
+# file for a value that lived elsewhere; the second read the scope and still
+# had to be right about `--unset-all`, about an `include.path` bringing the
+# key in from a file no scope names, and about a second file the winning
+# value shadows. Each of those is this tool predicting what somebody's
+# configuration will do to a command it wrote for them, and each prediction
+# has been a finding.
 #
-# `--unset-all` rather than `--unset`: one file may carry the key twice, and
-# `--unset` refuses that outright, which is the same dead end by a different
-# route. For a single value the two behave alike.
+# git already knows. `--show-origin --show-scope --get-all` names every file
+# and every scope that contributes the key — an included file appears under
+# the scope that pulled it in, with its own path, which is exactly the file
+# a scoped `--unset` would miss. Printing that verbatim leaves nothing
+# composed to be wrong about, and points the instruction at the files rather
+# than at a command.
 #
 # Arming is not the whole of it: the installer stands down under any value
 # at all, empty included, so the unset comes first.
-hooks_path_remedy() { # -> what to run, on stdout, no trailing newline
-  local scope="" repo=""
-  repo="$(gg_shell_quote "$REPO_ABS")"
-  # not-a-path: only the scope WORD is read here. `--show-scope` prefixes the
-  # value with its scope and a tab, and the value half is dropped — it is
-  # already in CUSTOM_HOOKS, captured through gg_git_path above.
-  scope="$(git -C "$REPO_ABS" config --show-scope --get core.hooksPath 2>/dev/null)" || scope=""
-  scope="${scope%%$'\t'*}"
-  case "$scope" in
-    # No file holds it: `git -c` and the GIT_CONFIG_* family set it for one
-    # command, and there is nothing to unset.
-    command)
-      printf '%s' "re-run without the core.hooksPath git passes on the command line (-c, or GIT_CONFIG_*), then 'kendex guard install'"
-      ;;
-    local | global | system | worktree)
-      printf '%s' "run git -C '$repo' config --$scope --unset-all core.hooksPath, then 'kendex guard install'"
-      ;;
-    # git predates --show-scope, or the read failed. Naming a scope that may
-    # be wrong is the defect this function exists for, so it names the
-    # command that finds the file instead.
-    *)
-      printf '%s' "unset core.hooksPath in the file that sets it (git -C '$repo' config --show-origin --get core.hooksPath names it), then 'kendex guard install'"
-      ;;
-  esac
+HOOKS_PATH_REMEDY="unset core.hooksPath in each file listed above, then run 'kendex guard install'"
+
+# Both modes print this block, so both say the same thing about the same
+# repository. It goes to stderr in each: --check keeps one verdict line on
+# stdout, and the install lane already reports there.
+hooks_path_origins() { # -> git's accounting of core.hooksPath, on stderr
+  echo "  core.hooksPath is set from:" >&2
+  # git's own words, indented and otherwise untouched. A listing git will not
+  # produce is not stood in for — an invented origin is the composing this
+  # function exists to stop — so the command to run by hand is named instead.
+  if ! git -C "$REPO_ABS" config --show-origin --show-scope --get-all core.hooksPath 2>/dev/null \
+    | sed 's/^/    /' >&2; then
+    echo "    (git would not list them; run: git -C $REPO_ABS config --show-origin --show-scope --get-all core.hooksPath)" >&2
+  fi
+  echo "  $HOOKS_PATH_REMEDY" >&2
 }

@@ -13,9 +13,9 @@
 #
 # Exit codes: 0 shims in place (or deliberately skipped, stated on stdout);
 # 1 one or more shims could not be installed; 2 usage error. --check is
-# read-only: 0 armed in .git/hooks, 1 drifted or absent, 2 could not
-# determine — which every core.hooksPath naming a directory is, whatever it
-# resolves to.
+# read-only: 0 armed in .git/hooks, 1 drifted, absent, or core.hooksPath set
+# and empty (git hooks off), 2 could not determine — which every
+# core.hooksPath naming a directory is, whatever it resolves to.
 set -euo pipefail
 
 HELPER_NAME="kendex-guards"
@@ -170,7 +170,7 @@ if [ "$HOOKS_PATH_ELSEWHERE" -eq 1 ] && [ "$MODE" = "install" ]; then
   # directory by hand prescribes a shape --check has no way to verify, so it
   # trades a repository that is not gated for one that is gated and can
   # never say so.
-  echo "  To arm this repository, $(hooks_path_remedy)." >&2
+  hooks_path_origins
   echo "growth-guards git hooks: skipped — core.hooksPath is set ('$CUSTOM_HOOKS')"
   exit 0
 fi
@@ -476,13 +476,14 @@ if [ "$MODE" = "check" ]; then
   # somebody wrote a hook nobody had thought of. This package reads the
   # directory it writes, and says so under every configured value.
   if [ "$HOOKS_PATH_ELSEWHERE" -eq 1 ]; then
+    hooks_path_origins
     if hooks_path_off; then
-      echo "growth-guards git hooks: NOT armed — core.hooksPath is set and empty, which switches git hooks off, so commits are NOT gated; $(hooks_path_remedy)"
+      echo "growth-guards git hooks: NOT armed — core.hooksPath is set and empty, which switches git hooks off, so commits are NOT gated; the files that set it are listed on stderr"
       exit 1
     fi
     # Where the value sends git is not claimed, because it is not measured:
     # it may well name $HOOKS_DIR under another spelling.
-    echo "growth-guards git hooks: could not determine whether commits are gated — core.hooksPath is set ('$CUSTOM_HOOKS'), and a configured hooks path is outside this verifier's contract: it reads $HOOKS_DIR only; $(hooks_path_remedy), or read the configured directory yourself"
+    echo "growth-guards git hooks: could not determine whether commits are gated — core.hooksPath is set ('$CUSTOM_HOOKS'), and a configured hooks path is outside this verifier's contract: it reads $HOOKS_DIR only; the files that set it are listed on stderr, or read the configured directory yourself"
     exit 2
   fi
   check_hooks_dir || VERDICT=$?

@@ -36,8 +36,9 @@ The installer writes a helper into `.git/hooks` plus one marked delegating
 line in `pre-commit` and `commit-msg` — never `core.hooksPath`; an existing
 hook keeps its content and exit status; repeat runs are no-ops and repairs.
 `--uninstall` drops only the helper and our line. `--check` writes nothing:
-`0` armed in `.git/hooks`, `1` drifted or absent, `2` could not determine —
-which any `core.hooksPath` naming a directory is, because this package reads
+`0` armed in `.git/hooks`, `1` drifted, absent, or `core.hooksPath` set and
+empty (which switches git hooks off), `2` could not determine — which any
+`core.hooksPath` naming a directory is, because this package reads
 `.git/hooks` only, whatever that value resolves to. Never a silent pass. `kendex guard install` runs the installer and `kendex guard
 uninstall` runs `--uninstall`.
 
