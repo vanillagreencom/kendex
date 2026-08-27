@@ -327,10 +327,18 @@ unsupported_glob() { # GLOB — prints the reason when the spelling is refused
       printf '%s' "it uses a bracket class or a backslash escape, which the engine's matcher does not support"
       return 0
       ;;
+    */)
+      printf '%s' "it ends with a '/', and git names files rather than directories"
+      return 0
+      ;;
   esac
   while [ -n "$rest" ]; do
     comp="${rest%%/*}"
     case "$comp" in
+      "")
+        printf '%s' "it carries an empty path component"
+        return 0
+        ;;
       . | ..)
         printf '%s' "it carries a '$comp' path component"
         return 0

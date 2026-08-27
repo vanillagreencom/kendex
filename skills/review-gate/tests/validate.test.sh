@@ -76,6 +76,20 @@ settings() { # DIR KEY VALUE
   printf '%s = "%s"\n' "$2" "$3" >>"$1/kendex.settings.toml"
 }
 
+setting_fails() { # NAME KEY VALUE SUBSTRING — one setting, one expectation
+  sandbox
+  dir="$DIR"
+  settings "$dir" "$2" "$3"
+  expect_fail "$1" "$dir" "$4"
+}
+
+setting_clean() { # NAME KEY VALUE — one setting, expected to pass
+  sandbox
+  dir="$DIR"
+  settings "$dir" "$2" "$3"
+  expect_clean "$1" "$dir"
+}
+
 expect_clean() { # NAME DIR
   run_validate "$2"
   if [ "$RC" -eq 0 ] && ! printf '%s' "$OUT" | grep -q '^FAIL'; then
@@ -144,28 +158,16 @@ fi
 
 echo "=== settings ==="
 
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_CONTXET "Review gate"
-expect_fail "a misspelled REVIEW_GATE_* key is named, not ignored" "$dir" "REVIEW_GATE_CONTXET"
+setting_fails "a misspelled REVIEW_GATE_* key is named, not ignored" REVIEW_GATE_CONTXET "Review gate" "REVIEW_GATE_CONTXET"
 
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_SETTINGS_FILE "other.toml"
-expect_fail "a per-invocation env seam assigned as a repo setting fails" "$dir" "per-invocation env seam"
+setting_fails "a per-invocation env seam assigned as a repo setting fails" REVIEW_GATE_SETTINGS_FILE "other.toml" "per-invocation env seam"
 
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_MODE "bogus"
-expect_fail "an illegal value fails with the engine's own diagnosis" "$dir" "a committed setting is not legal"
+setting_fails "an illegal value fails with the engine's own diagnosis" REVIEW_GATE_MODE "bogus" "a committed setting is not legal"
 printf '%s' "$OUT" | grep -qF "REVIEW_GATE_MODE must be 'enforce' or 'off'" &&
   ok "the engine's own ::error rides out in the verdict" ||
   bad "the engine's own ::error rides out in the verdict" "$OUT"
 
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_SHA_PREFIX_FLOOR "2"
-expect_fail "an out-of-range numeric setting fails" "$dir" "a committed setting is not legal"
+setting_fails "an out-of-range numeric setting fails" REVIEW_GATE_SHA_PREFIX_FLOOR "2" "a committed setting is not legal"
 
 sandbox
 dir="$DIR"
@@ -220,10 +222,7 @@ expect_fail "a single-quoted key name is caught the same way" "$dir" "a shape th
 
 # The bare form is what the loader reads, so it must NOT trip the quoted
 # check — an over-broad matcher would fail every sound repo.
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_THREADS "off"
-expect_clean "the bare key form the loader reads still passes" "$dir"
+setting_clean "the bare key form the loader reads still passes" REVIEW_GATE_THREADS "off"
 
 # A DOTTED key is the third spelling TOML allows and the loader ignores.
 sandbox
@@ -262,10 +261,7 @@ expect_fail "a key nested in an inline table is read by nothing" "$dir" "a shape
 
 # The cost of judging the line: a name mentioned in a VALUE is flagged too.
 # That is the safe direction, and the verdict says to reword it.
-sandbox
-dir="$DIR"
-settings "$dir" PR_REVIEW_NUDGE "ask about REVIEW_GATE_MODE"
-expect_fail "a name mentioned in a value is flagged, and the verdict says to reword" "$dir" "a shape the loader does not read"
+setting_fails "a name mentioned in a value is flagged, and the verdict says to reword" PR_REVIEW_NUDGE "ask about REVIEW_GATE_MODE" "a shape the loader does not read"
 printf '%s' "$OUT" | grep -qF "reword a mention" &&
   ok "the over-flag names its own remedy" ||
   bad "the over-flag names its own remedy" "$OUT"
@@ -287,10 +283,7 @@ expect_fail "a SYMLINKED settings file is a finding" "$dir" "is a SYMLINK"
 # A repository VARIABLE assigned as a setting gets its own diagnosis: the
 # name is real, so "you misspelled it" would send its reader hunting a typo
 # that is not there.
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_CHECK_RUN_NAME "CodeRabbit"
-expect_fail "a GitHub repository variable assigned as a setting is named as one" "$dir" "REPOSITORY VARIABLE"
+setting_fails "a GitHub repository variable assigned as a setting is named as one" REVIEW_GATE_CHECK_RUN_NAME "CodeRabbit" "REPOSITORY VARIABLE"
 
 # The scan must use the TOML bare-key charset, not the ledger's shape: an
 # uppercase-only scan reads REVIEW_GATE_MODEe as REVIEW_GATE_MODE, finds it
@@ -311,18 +304,12 @@ printf '%s' "$OUT" | grep -qF 'REVIEW_GATE_MODE-x = "off"' &&
 # --check-config's contract is that it validates EVERY setting. A grammar
 # rule below its stop point would report a legal configuration that the next
 # live run exits 2 on.
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_COMMENT_REVIEWERS "missing-colon"
-expect_fail "a malformed comment-reviewer pair is caught without a PR" "$dir" "a committed setting is not legal"
+setting_fails "a malformed comment-reviewer pair is caught without a PR" REVIEW_GATE_COMMENT_REVIEWERS "missing-colon" "a committed setting is not legal"
 printf '%s' "$OUT" | grep -qF "malformed REVIEW_GATE_COMMENT_REVIEWERS" &&
   ok "the grammar rule's own error rides out, so the fix is named" ||
   bad "the grammar rule's own error rides out, so the fix is named" "$OUT"
 
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_COMMENT_REVIEWERS "bot[bot]:Reviewed commit:"
-expect_clean "a well-formed comment-reviewer pair still passes" "$dir"
+setting_clean "a well-formed comment-reviewer pair still passes" REVIEW_GATE_COMMENT_REVIEWERS "bot[bot]:Reviewed commit:"
 
 # A refused load must be a FINDING. Collapsing it into an empty value makes
 # every exclusion check below report a clean sheet against a list the engine
@@ -347,22 +334,13 @@ settings "$dir" REVIEW_GATE_CARRY_FORWARD "docs"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "AGENTS.md;docs/*"
 expect_clean "live exclusion globs pass" "$dir"
 
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "no-such-directory/*.md"
-expect_fail "a glob matching no tracked path is dead config" "$dir" "matches no tracked path"
+setting_fails "a glob matching no tracked path is dead config" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "no-such-directory/*.md" "matches no tracked path"
 
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "/AGENTS.md"
-expect_fail "a leading-'/' anchor can never match and fails" "$dir" "is not a supported pattern"
+setting_fails "a leading-'/' anchor can never match and fails" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "/AGENTS.md" "is not a supported pattern"
 
 # Parent-relative is dead the same way, and so not waivable: a declaration
 # says "no tracked match TODAY", and this one cannot match on any day.
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "../future/*"
-expect_fail "a parent-relative glob can never match and fails" "$dir" "is not a supported pattern"
+setting_fails "a parent-relative glob can never match and fails" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "../future/*" "is not a supported pattern"
 
 sandbox
 dir="$DIR"
@@ -372,22 +350,13 @@ expect_fail "declaring a parent-relative glob prophylactic does not rescue it" "
 
 # The rule is REACHABILITY, not a list of anchors: a dot-relative glob and an
 # embedded dot component are unreachable for the same reason.
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "./future/*"
-expect_fail "a dot-relative glob can never match and fails" "$dir" "is not a supported pattern"
+setting_fails "a dot-relative glob can never match and fails" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "./future/*" "is not a supported pattern"
 
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/./guide.md"
-expect_fail "an embedded dot component can never match and fails" "$dir" "is not a supported pattern"
+setting_fails "an embedded dot component can never match and fails" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/./guide.md" "is not a supported pattern"
 
 # A bracket class is the fourth spelling of this class, so the rule is now a
 # CLOSED supported set rather than a list of anchors to refuse.
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "[.]/future/*"
-expect_fail "a bracket-class glob is unsupported spelling" "$dir" "is not a supported pattern"
+setting_fails "a bracket-class glob is unsupported spelling" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "[.]/future/*" "is not a supported pattern"
 
 sandbox
 dir="$DIR"
@@ -400,16 +369,20 @@ dir="$DIR"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE 'docs/\*.md'
 expect_fail "a backslash escape is unsupported spelling" "$dir" "is not a supported pattern"
 
-# ...and an ordinary glob with a dot in a NAME is reachable and stays so.
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/*.md"
-expect_clean "a dot inside a filename is not a dot component" "$dir"
+# An EMPTY component is unreachable for the same reason a '.' one is: git
+# names carry neither. A trailing '/' is the same thing spelt at the end.
+setting_fails "an empty path component is unsupported spelling" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs//guide.md" "is not a supported pattern"
 
 sandbox
 dir="$DIR"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "*"
-expect_fail "an all-wildcard exclusion fails" "$dir" "matches EVERY tracked path"
+settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/"
+settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "docs/"
+expect_fail "a trailing '/' is unsupported, declaration or not" "$dir" "is not a supported pattern"
+
+# ...and an ordinary glob with a dot in a NAME is reachable and stays so.
+setting_clean "a dot inside a filename is not a dot component" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/*.md"
+
+setting_fails "an all-wildcard exclusion fails" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "*" "matches EVERY tracked path"
 
 sandbox
 dir="$DIR"
