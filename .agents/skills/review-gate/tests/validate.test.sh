@@ -225,6 +225,17 @@ dir="$DIR"
 settings "$dir" REVIEW_GATE_THREADS "off"
 expect_clean "the bare key form the loader reads still passes" "$dir"
 
+# A DOTTED key is the third spelling TOML allows and the loader ignores.
+sandbox
+dir="$DIR"
+printf 'REVIEW_GATE_MODE.typo = "off"\n' >>"$dir/kendex.settings.toml"
+expect_fail "a DOTTED key is read by nothing and is named" "$dir" "DOTTED name"
+
+sandbox
+dir="$DIR"
+printf '[env]\nREVIEW_GATE_THREADS = "off"\n' >>"$dir/kendex.settings.toml"
+expect_clean "a plain assignment under a table header is not read as dotted" "$dir"
+
 # A repository VARIABLE assigned as a setting gets its own diagnosis: the
 # name is real, so "you misspelled it" would send its reader hunting a typo
 # that is not there.

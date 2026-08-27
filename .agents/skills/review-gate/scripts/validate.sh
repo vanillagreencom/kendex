@@ -189,6 +189,11 @@ else
   # passes the one spelling the engine silently ignores.
   assigned="$(sed -n 's/^[[:space:]]*\(REVIEW_GATE_[A-Za-z0-9_-]*\)[[:space:]]*=.*/\1/p' "$SETTINGS_FILE" | sort -u)"
   quoted="$(sed -n "s/^[[:space:]]*[\"']\(REVIEW_GATE_[A-Za-z0-9_-]*\)[\"'][[:space:]]*=.*/\1/p" "$SETTINGS_FILE" | sort -u)"
+  # A DOTTED key is the third spelling TOML allows and the loader does not
+  # read: its probe wants the bare name followed by its `=`, so
+  # `REVIEW_GATE_MODE.typo = "off"` is invisible to the engine and, scanned
+  # for the bare shape alone, invisible here too.
+  dotted="$(sed -n 's/^[[:space:]]*\(REVIEW_GATE_[A-Za-z0-9_-]*\)\.[A-Za-z0-9_.-]*[[:space:]]*=.*/\1/p' "$SETTINGS_FILE" | sort -u)"
   unknown=""
   seams=""
   repo_vars=""
@@ -220,6 +225,11 @@ EOF_ASSIGNED
     bad "$SETTINGS_FILE assigns $repo_vars as a setting — it is a GitHub REPOSITORY VARIABLE (Settings → Secrets and variables → Actions), read by a workflow expression before any checkout exists, so nothing reads it here; set it in the repository's variables instead"
   else
     ok "no GitHub repository variable is assigned as a repo setting"
+  fi
+  if [ -n "$(printf '%s' "$dotted" | tr -d '[:space:]')" ]; then
+    bad "$SETTINGS_FILE assigns REVIEW_GATE_* key(s) with a DOTTED name: $(printf '%s' "$dotted" | tr '\n' ' ')— valid TOML, but the loader reads the bare name followed by its own \`=\`, so these assignments are read by nothing and the gate runs on the built-in default; drop the dotted suffix"
+  else
+    ok "no REVIEW_GATE_* assignment hides behind a dotted key"
   fi
   if [ -n "$(printf '%s' "$quoted" | tr -d '[:space:]')" ]; then
     bad "$SETTINGS_FILE assigns REVIEW_GATE_* key(s) with a QUOTED name: $(printf '%s' "$quoted" | tr '\n' ' ')— valid TOML, but the loader's presence probe matches the bare name only, so these assignments are read by nothing and the gate runs on the built-in default; drop the quotes"
