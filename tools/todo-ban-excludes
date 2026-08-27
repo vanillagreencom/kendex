@@ -3,3 +3,4 @@
 # Format: pattern<TAB>reason (gitignore-style against the repo-relative path; ** crosses /).
 
 skills/iced-rs/**	vendored upstream iced source and examples bundled as the skill's API reference — upstream's markers are not this repo's work
+**/iced-rs/**	the same vendored tree under every root kendex renders it to; a rule written against the catalog path alone leaves the committed render to be scanned as first-party

@@ -114,7 +114,7 @@ fn the_guards_travel_with_the_repository_and_gate_a_clone() {
     // Arming in the clone is the one act that needs a tool. After it, the
     // gate is committed shell and git, and nothing else.
     crate::run(&world.home, &clone, &["guard", "install"]);
-    fs::write(clone.join("late.rs"), "// TODO: not yet\n").unwrap();
+    fs::write(clone.join("late.rs"), "// TO".to_owned() + "DO: not yet\n").unwrap();
     git_without_kendex(&clone, &["add", "-A"]);
     let blocked = git_without_kendex(&clone, &["commit", "-m", "feat: adds a marker"]);
     assert!(!blocked.status.success(), "{}", spoke(&blocked));
