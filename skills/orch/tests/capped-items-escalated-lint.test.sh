@@ -195,15 +195,58 @@ fi
 # surfacing no NEW blocker routes to § 8, and a blocker re-reported every
 # round is not new: without the write it leaves the loop live with its stale
 # `fixed_items` entry standing, and § 8 reports it as fixed.
-s7_exit() { section_7 "$1" | awk '/Before that exit routes/ { on = 1 } on && /^#/ { on = 0 } on'; }
+s7_exit() { section_7 "$1" | awk '/^### Converged/ { on = 1; next } on && /^## / { on = 0 } on'; }
 EXIT7="$(s7_exit "$REVIEW_PR_WF")"
 if [[ -n "$EXIT7" ]] \
    && grep -q -F 'escalated_items' <<<"$EXIT7" \
    && grep -q -F 'fixed_items' <<<"$EXIT7" \
    && grep -q -F 'qa-review' <<<"$EXIT7"; then
-  pass "§ 7's convergence exit records re-found items before § 8"
+  pass "§ 7's Converged exit records outstanding items before § 8"
 else
-  fail "§ 7's convergence exit lost its escalate-and-supersede write"
+  fail "§ 7's Converged exit lost its escalate-and-supersede write"
+fi
+
+# The exit's three load-bearing lines. Each check reads the one line that
+# carries its rule: a token scan over the whole slice cannot tell the
+# convergence test from the disposition set from the recorded reason, and a
+# control narrowing one of them would leave the token standing in another.
+s7_converged() { s7_exit "$1" | grep -F 'Converged** means'; }
+s7_dispo()     { s7_exit "$1" | grep -F 'On the way out'; }
+s7_write()     { s7_exit "$1" | grep -F -- '--slurpfile art'; }
+
+# --- 12: convergence tests both item classes --------------------------------
+# Two consecutive re-checks with no new BLOCKER satisfy a blocker-only test
+# whatever the suggestions say, so the last re-check could smuggle a new
+# `category == "fix"` suggestion past the exit.
+if grep -q -F 'category == "fix"' <<<"$(s7_converged "$REVIEW_PR_WF")"; then
+  pass "converging needs no new suggestion, not just no new blocker"
+else
+  fail "the convergence test ignores suggestions"
+fi
+
+# --- 13: the disposition set is both classes, whatever fixed_items holds -----
+# Scoped to what `fixed_items` lists, a suggestion first raised on the final
+# re-check reaches § 8 in neither bucket and § 8 re-derives it as a decline.
+DISPO="$(s7_dispo "$REVIEW_PR_WF")"
+if grep -q -F 'category == "fix"' <<<"$DISPO" \
+   && grep -q -F 'blocker' <<<"$DISPO" \
+   && grep -q -F 'fixed_items' <<<"$DISPO"; then
+  pass "the exit dispositions blockers and suggestions alike, listed or not"
+else
+  fail "the exit's disposition set covers only part of what is outstanding"
+fi
+
+# --- 14: the recorded reason is § 7's own, never § 4's cap -------------------
+# § 7 runs no cap, so the cap's reason string in its write is a false reason in
+# the summary § 8 posts. Read the write itself: the prose around it explains
+# the reason and would satisfy a slice-wide grep on its own.
+WRITE7="$(s7_write "$REVIEW_PR_WF")"
+if grep -q -F 'outstanding at the review cycle cap' <<<"$WRITE7"; then
+  fail "§ 7's write records the cap's reason in a section that runs no cap"
+elif grep -q -F 'QA loop converged with the item unresolved' <<<"$WRITE7"; then
+  pass "§ 7's write records its own reason, not the cap's"
+else
+  fail "§ 7's write records no reason of its own"
 fi
 
 # --- planted controls: prove each check can fail ----------------------------
@@ -372,7 +415,7 @@ else
 fi
 
 # § 7's retaining rule reverted to the blanket exclusion.
-QA_REVERT='s/, and excluding a .fixed_items. entry only when this round.s QA artifact does not report it again//; s/A re-found item is retained on purpose[^.]*[.] //; s/Before that exit routes to § 8[^.]*[.] //'
+QA_REVERT='s/, and excluding a .fixed_items. entry only when this round.s QA artifact does not report it again//; s/A re-found item is retained on purpose[^.]*[.] //; s/, whether or not .fixed_items. already lists it//; s/which drops any superseded .fixed_items. entry and records/which records/; /--slurpfile art/d'
 if ! plant_pr qa "$QA_REVERT"; then
   fail "qa control planted nothing — its sed program matched no text"
 elif s7_has "$CTRL" 'fixed_items'; then
@@ -383,12 +426,39 @@ fi
 
 # § 7's exit reverted to routing straight to § 8, which is the shape that let
 # a re-reported blocker leave the loop reported as fixed.
-if ! plant_pr s7exit 's/Before that exit routes to § 8[^.]*[.] //'; then
+if ! plant_pr s7exit '/^### Converged/,/^## 8[.]/d'; then
   fail "§ 7 exit control planted nothing — its sed program matched no text"
 elif [[ -n "$(s7_exit "$CTRL")" ]]; then
   fail "lint MISSED a § 7 exit that records nothing before § 8"
 else
   pass "lint flags a § 7 exit that records nothing before § 8"
+fi
+
+# The blocker-only convergence test.
+if ! plant_pr s7conv 's/no new blocker AND no new .category == "fix". suggestion/no new blocker/'; then
+  fail "§ 7 convergence control planted nothing — its sed program matched no text"
+elif grep -q -F 'category == "fix"' <<<"$(s7_converged "$CTRL")"; then
+  fail "lint MISSED a convergence test that ignores suggestions"
+else
+  pass "lint flags a convergence test that ignores suggestions"
+fi
+
+# The blocker-only disposition set: suggestions drop out on the way out.
+if ! plant_pr s7sugg 's/every blocker and every .category == "fix". suggestion this round.s QA artifacts report/every blocker this round.s QA artifacts report/'; then
+  fail "§ 7 suggestion control planted nothing — its sed program matched no text"
+elif grep -q -F 'category == "fix"' <<<"$(s7_dispo "$CTRL")"; then
+  fail "lint MISSED a § 7 exit that dispositions blockers only"
+else
+  pass "lint flags a § 7 exit that dispositions blockers only"
+fi
+
+# The borrowed reason: § 4's cap string recorded by a section that runs no cap.
+if ! plant_pr s7reason 's/QA loop converged with the item unresolved/outstanding at the review cycle cap/'; then
+  fail "§ 7 reason control planted nothing — its sed program matched no text"
+elif grep -q -F 'QA loop converged with the item unresolved' <<<"$(s7_write "$CTRL")"; then
+  fail "lint MISSED a § 7 write recording the cap's reason"
+else
+  pass "lint flags a § 7 write recording the cap's reason"
 fi
 
 SCRATCH_SCHEMA="$TMP_ROOT/schema.md"
