@@ -100,13 +100,17 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
     // on what it wrote, skipped and flagged like any other. The parts are
     // the ones each step already counted, never re-derived.
     let applied: usize = settled.iter().map(|step| step.applied).sum();
-    // `None` where no step had anything to do, the way `add` reads it: a
-    // run that wrote nothing because there was nothing to write is up to
-    // date, and one that wrote nothing because it was refused is not.
-    let count = settled
-        .iter()
-        .any(|step| !step.report.plan.is_empty())
-        .then_some(applied);
+    // Read off what the run applied, not off the member plans alone: a
+    // reused source whose member is already declared plans nothing and
+    // still writes — its subscription, or the pin that holds it at the
+    // snapshot — and a ledger deciding from the plan would call that run
+    // up to date over changes it had just made. `None` only where
+    // nothing was planned and nothing was written, the way `add` reads a
+    // scope that had nothing to do.
+    let count = wrote_count(
+        applied,
+        settled.iter().any(|step| !step.report.plan.is_empty()),
+    );
     let mut blocked: Vec<Blocked> = Vec::new();
     let mut scored: Vec<kendex_core::engine::ItemSafety> = Vec::new();
     for step in settled {
@@ -123,6 +127,17 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
         &scored,
     );
     Ok(())
+}
+
+/// Whether the run has a count to report, and what it is.
+///
+/// `None` only where nothing was planned and nothing was written, which
+/// is how `add` reads a scope that had nothing to do. Reading it off the
+/// member plans alone said "up to date" over a run that wrote: a reused
+/// source whose member is already declared plans nothing and still writes
+/// its subscription, or the pin holding it at the snapshot.
+fn wrote_count(applied: usize, planned_anything: bool) -> Option<usize> {
+    (applied > 0 || planned_anything).then_some(applied)
 }
 
 /// What one step wrote, and what it could not. The collection's closing
@@ -248,4 +263,24 @@ fn prevalidate(env: &Env, step: &kendex_core::source_ops::CollectionStep) -> Cli
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrote_count;
+
+    /// A run that wrote reports what it wrote, whatever the member plans
+    /// said. The pin and the subscription are writes the member plan
+    /// never carries, so a ledger deciding from that plan alone called a
+    /// run that had just changed the scope up to date.
+    #[test]
+    fn a_run_that_wrote_never_reads_as_up_to_date() {
+        // The defect: empty member plans, and writes all the same.
+        assert_eq!(wrote_count(2, false), Some(2));
+        // Unchanged where the plan carried the work.
+        assert_eq!(wrote_count(4, true), Some(4));
+        assert_eq!(wrote_count(0, true), Some(0));
+        // Nothing planned and nothing written is the one silent case.
+        assert_eq!(wrote_count(0, false), None);
+    }
 }

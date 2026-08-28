@@ -26,6 +26,8 @@
 
 use std::io::IsTerminal;
 
+use kendex_core::names::shown;
+
 use kendex_core::engine::EngineReport;
 use kendex_core::model::Scope;
 use kendex_core::repo_effects::{DeclaredEffects, Disclosure};
@@ -65,7 +67,7 @@ pub fn walkthrough(scope: &Scope, shown_to_them: &[Disclosure], allowed: bool) -
 /// needs `--allow-repo-effects` said out loud: a scripted install or a CI
 /// run must never arm a repository's hooks because nobody was there to
 /// decline.
-pub fn confirm(pending: &[Disclosure], allowed: bool) -> Result<bool, String> {
+pub fn confirm(pending: &[Disclosure], allowed: bool) -> Result<bool, Box<dyn std::error::Error>> {
     if pending.is_empty() {
         return Ok(false);
     }
@@ -84,7 +86,10 @@ pub fn confirm(pending: &[Disclosure], allowed: bool) -> Result<bool, String> {
     // is still open before it reads, so the question cannot reach the
     // reader ahead of the disclosure it is about. Its plain rendering is
     // the same bytes this site used to write itself, `[y/N] ` included.
-    crate::ui::confirm(&question).map_err(|error| error.to_string())
+    // Handed on as it came back, never as its text: a cancel is an
+    // io::Error whose kind main reads to exit 130, and a String would
+    // leave it looking like any other failure.
+    Ok(crate::ui::confirm(&question)?)
 }
 
 /// Run one package's installer, here and now, and relay what it said.
@@ -178,7 +183,7 @@ pub fn undo(scope: &Scope, report: &EngineReport) -> CliResult {
         .any(|declared| kendex_core::repo_effects::touches_git(&declared.effects))
         && kendex_core::guard::Repo::probe(root)?.is_some();
     for declared in leaving {
-        let name = &declared.name;
+        let name = shown(&declared.name);
         if kendex_core::repo_effects::touches_git(&declared.effects) && !git_here {
             say(&format!(
                 "{name}: not inside a git work tree, so nothing it armed is here to undo"
@@ -189,13 +194,13 @@ pub fn undo(scope: &Scope, report: &EngineReport) -> CliResult {
             say(&format!(
                 "{name}: declares no uninstaller — what it changed about this repository stays{}",
                 match &declared.effects.removal {
-                    Some(removal) => format!("; to undo: {removal}"),
+                    Some(removal) => format!("; to undo: {}", shown(removal)),
                     None => String::new(),
                 }
             ));
             continue;
         };
-        say(&format!("{name}: running {uninstaller}"));
+        say(&format!("{name}: running {}", shown(uninstaller)));
         let report = run(scope, declared, uninstaller)?;
         if report.code != 0 {
             // No verb named: under an apply or a refresh the package is
@@ -204,7 +209,8 @@ pub fn undo(scope: &Scope, report: &EngineReport) -> CliResult {
             return Err(format!(
                 "{name}: {} exited {} — its files stay in place; \
                  fix what it reported and run this again",
-                uninstaller, report.code
+                shown(uninstaller),
+                report.code
             )
             .into());
         }

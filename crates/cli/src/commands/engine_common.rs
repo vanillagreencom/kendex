@@ -78,6 +78,7 @@ fn plural(n: usize) -> &'static str {
 /// to be said here: seen in `list` and nowhere else, it reads as checked
 /// and passing rather than as never looked at.
 pub fn print_unmanaged(drift: &[DriftRow]) {
+    use kendex_core::names::shown;
     let rows: Vec<&DriftRow> = drift
         .iter()
         .filter(|row| row.state == DriftState::Unmanaged)
@@ -93,12 +94,14 @@ pub fn print_unmanaged(drift: &[DriftRow]) {
         if rows.len() == 1 { "" } else { "s" }
     ));
     for row in rows.iter().take(UNMANAGED_SHOWN) {
+        // Names and paths read off a tree kendex did not write: printed as
+        // what they are, never as the escape sequences they might hold.
         say(&format!(
             "  - {} {} [{}] {}",
             row.kind.name(),
-            row.name,
+            shown(&row.name),
             row.harness.display_name(),
-            row.detail
+            shown(&row.detail)
         ));
     }
     if rows.len() > UNMANAGED_SHOWN {
@@ -126,9 +129,9 @@ pub fn print_safety(report: &EngineReport) {
 
 /// Where a scored package sits, as its score line says so: an
 /// installation belongs to a tool, a catalog item to a path inside its
-/// catalog. Naming the two shapes keeps the caller from hand-building a
-/// subject string, so the printer can word the line the same way for
-/// both.
+/// catalog. Naming the two shapes is what keeps the caller from
+/// hand-building a subject string, so every score line is worded the same
+/// way and escapes the same parts of itself.
 pub enum ScoredAt<'a> {
     /// The tool whose copy of the item was scored.
     Harness(HarnessId),
@@ -152,23 +155,26 @@ pub enum ScoredAt<'a> {
 /// to carry it for a reader who has no colour, and this printer emits
 /// none.
 ///
-/// Nothing here escapes anything: every line leaves through `ui`, which
-/// escapes what it prints once, for every caller.
+/// Every part that came off a file kendex did not write is escaped here
+/// rather than by the caller — the name, the catalog path, the finding
+/// messages and their locations. A harness's display name is kendex's own
+/// string and is printed as it is.
 pub fn print_advisory(
     kind: ItemKind,
     name: &str,
     at: ScoredAt<'_>,
     advisory: &kendex_core::quality::AuditResult,
 ) {
+    use kendex_core::names::shown;
     let at = match at {
         ScoredAt::Harness(harness) => format!(" for {}", harness.display_name()),
         ScoredAt::CatalogPath("") => String::new(),
-        ScoredAt::CatalogPath(path) => format!(" at {path}"),
+        ScoredAt::CatalogPath(path) => format!(" at {}", shown(path)),
     };
     say(&format!(
         "safety: {} {}{at} scores {}/100",
         kind.name(),
-        name,
+        shown(name),
         advisory.safety.score
     ));
     for finding in &advisory.findings {
@@ -176,12 +182,12 @@ pub fn print_advisory(
         // no place to name; the claim still prints, without empty parens.
         let at = match finding.location.is_empty() {
             true => String::new(),
-            false => format!(" ({})", finding.location),
+            false => format!(" ({})", shown(&finding.location)),
         };
         say(&format!(
             "  [{}] {}{at}",
             finding.severity.name(),
-            finding.message
+            shown(&finding.message)
         ));
     }
     print_skipped(advisory);
@@ -195,7 +201,7 @@ fn print_skipped(advisory: &kendex_core::quality::AuditResult) {
     say(&format!(
         "  not fully checked: {} rule(s) had nothing to read — {}",
         advisory.skipped.len(),
-        first.reason
+        kendex_core::names::shown(&first.reason)
     ));
 }
 

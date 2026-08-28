@@ -41,7 +41,7 @@ pub fn ask(
     already_chosen: bool,
     method: Option<Method>,
     yes: bool,
-) -> Result<Chosen, String> {
+) -> Result<Chosen, Box<dyn std::error::Error>> {
     if already_chosen || yes || !std::io::stdin().is_terminal() {
         return Ok(Chosen {
             harnesses: None,
@@ -77,7 +77,7 @@ pub fn ask(
     // An install to nothing is refused by the engine either way; caught
     // here it costs a re-read instead of the whole command.
     if picked.is_empty() {
-        return Err("no tool was chosen — pick at least one, or accept the default".to_owned());
+        return Err("no tool was chosen — pick at least one, or accept the default".into());
     }
     let method = match method {
         Some(method) => Some(method),
@@ -98,7 +98,10 @@ fn shared_home(scope: &Scope) -> &'static str {
     }
 }
 
-fn read_selection(rows: &[HarnessId], detected: &[HarnessId]) -> Result<Vec<HarnessId>, String> {
+fn read_selection(
+    rows: &[HarnessId],
+    detected: &[HarnessId],
+) -> Result<Vec<HarnessId>, Box<dyn std::error::Error>> {
     let answer = prompt("tools? ")?;
     let answer = answer.trim();
     if answer.eq_ignore_ascii_case("all") {
@@ -126,16 +129,18 @@ fn read_selection(rows: &[HarnessId], detected: &[HarnessId]) -> Result<Vec<Harn
     Ok(chosen)
 }
 
-fn read_method() -> Result<Method, String> {
+fn read_method() -> Result<Method, Box<dyn std::error::Error>> {
     say("Delivery: 1) symlink — one shared copy every tool reads  2) copy — a tree each");
     let answer = prompt("delivery? [1] ")?;
     match answer.trim() {
         "" | "1" | "symlink" => Ok(Method::Symlink),
         "2" | "copy" => Ok(Method::Copy),
-        other => Err(format!("'{other}' is not 1 or 2")),
+        other => Err(format!("'{other}' is not 1 or 2").into()),
     }
 }
 
-fn prompt(label: &str) -> Result<String, String> {
-    crate::ui::ask(label).map_err(|e| e.to_string())
+/// A cancel comes back as the `io::Error` it is, never as its text: main
+/// reads its kind to exit 130, and a String would hide that.
+fn prompt(label: &str) -> Result<String, Box<dyn std::error::Error>> {
+    Ok(crate::ui::ask(label)?)
 }

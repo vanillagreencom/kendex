@@ -117,7 +117,10 @@ fn say_row(
     let harness = entry.harness.name();
     let bad = match problem {
         Some(row) => {
-            fail(&format!("✗ {kind} {name} [{harness}]: {}", row.detail));
+            fail(&format!(
+                "✗ {kind} {name} [{harness}]: {}",
+                kendex_core::names::shown(&row.detail)
+            ));
             true
         }
         None if unreachable_source => {

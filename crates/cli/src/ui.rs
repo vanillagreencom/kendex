@@ -18,16 +18,17 @@
 //! is somebody reading the bytes, whatever stderr is attached to.
 //! `KENDEX_UI` takes `plain` or `pretty` and overrides the detection.
 //!
-//! **Text from a catalog is escaped here, once, line by line.** Every
-//! human line can carry a name, a message or a path somebody else wrote,
-//! and a control character in one of those rewrites the terminal around
-//! it. The printer is the one place that sees all of them, so it escapes
-//! what it prints and no call site has to remember to. The escaping is
-//! per line, never over the whole message: a caller that wrote a break
-//! meant one, and escaping the message whole would hand the reader the
-//! two characters `\n` where its paragraph used to be. [`out`] is the
-//! exception: it carries JSON and other machine content, and must stay
-//! byte-exact.
+//! **This module escapes nothing.** A line arrives composed, and by then
+//! a newline inside a name somebody else wrote is indistinguishable from
+//! a break the caller meant — so escaping here would either flatten the
+//! caller's paragraphs or let a filename forge output lines. Text off a
+//! catalog, a lock or a tree kendex did not write is escaped with
+//! `names::shown` where it is interpolated, by the site that knows which
+//! half of its sentence is foreign.
+//!
+//! What this module does do is honour a break: a message carrying one is
+//! said a line at a time, so `kendex diff`'s blank line before a file
+//! heading is a blank line in both renderings.
 //!
 //! **A line said right before a wait has to be drawn first.** A block is
 //! held open until something follows it, so a verb that says where it is
@@ -40,8 +41,6 @@ mod prompt;
 
 pub use blocks::{finish, flush, intro};
 pub use prompt::{ask, confirm, spinner};
-
-use kendex_core::names::shown;
 
 use std::io::{IsTerminal, Write};
 use std::sync::OnceLock;
@@ -70,9 +69,12 @@ fn capable() -> bool {
         {
             // Silently falling back would leave a machine framed or plain
             // for a reason nobody could see in the output.
+            // The one foreign fragment this module interpolates itself,
+            // escaped here like any other: the value came off the
+            // environment, and this line is the only place it is printed.
             write_line(&format!(
                 "warning: KENDEX_UI={} is not plain, pretty or auto — detecting instead",
-                shown(value)
+                kendex_core::names::shown(value)
             ));
         }
         asked
@@ -121,19 +123,6 @@ pub fn mode() -> Mode {
     }
 }
 
-/// A message's lines, each escaped on its own. The one place the split
-/// happens, so what [`escaped`] returns and what [`tell`] prints cannot
-/// drift apart: a break the caller wrote survives, and untrusted text
-/// inside a line still cannot act on the terminal.
-fn lines(text: &str) -> impl Iterator<Item = String> + '_ {
-    text.split('\n').map(shown)
-}
-
-/// A message escaped without being flattened.
-pub(crate) fn escaped(text: &str) -> String {
-    lines(text).collect::<Vec<_>>().join("\n")
-}
-
 fn write_line(line: &str) {
     let _ = writeln!(std::io::stderr(), "{line}");
 }
@@ -173,10 +162,10 @@ pub fn fail(line: &str) {
 /// blank line in the framed one closes the block above it, which is what
 /// a caller writing `\n` before a heading was asking for.
 fn tell(tone: Tone, text: &str) {
-    for line in lines(text) {
+    for line in text.split('\n') {
         match mode() {
-            Mode::Plain => write_line(&line),
-            Mode::Pretty => blocks::said(tone, &line),
+            Mode::Plain => write_line(line),
+            Mode::Pretty => blocks::said(tone, line),
         }
     }
 }
@@ -185,26 +174,23 @@ fn tell(tone: Tone, text: &str) {
 /// that has one. Held open — with nothing after it, this is the line the
 /// frame closes on rather than one more block inside it.
 pub fn ledger(head: &str, steps: &[String]) {
-    let head = escaped(head);
-    let steps: Vec<String> = steps.iter().map(|step| escaped(step)).collect();
     if mode() == Mode::Plain {
-        write_line(&head);
-        for step in &steps {
+        write_line(head);
+        for step in steps {
             write_line(&format!("  {step}"));
         }
         return;
     }
-    blocks::open(Tone::Done, &head, true, &steps);
+    blocks::open(Tone::Done, head, true, steps);
 }
 
 /// The last line of a run that failed. Plain mode prints what it always
 /// printed; a frame closes on it in the failure style.
 pub fn outro_fail(line: &str) {
-    let line = escaped(line);
     if mode() == Mode::Plain {
-        return write_line(&line);
+        return write_line(line);
     }
-    blocks::fail_frame(&line);
+    blocks::fail_frame(line);
 }
 
 #[cfg(test)]
@@ -220,31 +206,6 @@ mod tests {
         for ignored in ["auto", "", "Pretty", "1", "true", "plane"] {
             assert_eq!(wanted(ignored), None, "{ignored:?} was read as an answer");
         }
-    }
-
-    /// A break the caller wrote is structure and survives; a control
-    /// character inside a line is content and does not. Both halves in
-    /// one test, because a fix for either one alone regresses the other,
-    /// and this is the split `tell` prints through as well.
-    #[test]
-    fn a_break_survives_the_escaping_and_a_control_character_does_not() {
-        // What `kendex diff` writes before every file heading. Escaped
-        // whole, the blank line became the two characters a reader sees
-        // as a backslash and an n.
-        assert_eq!(escaped("\nSKILL.md  +2 -1"), "\nSKILL.md  +2 -1");
-        assert_eq!(escaped("first\nsecond\nthird"), "first\nsecond\nthird");
-        assert_eq!(escaped("trailing\n"), "trailing\n");
-        assert_eq!(escaped(""), "");
-        assert_eq!(escaped("\n"), "\n");
-
-        assert_eq!(escaped("we\u{1b}[31mird"), "we\\u{1b}[31mird");
-        assert_eq!(
-            escaped("one\nwe\u{1b}[31mird\ntwo"),
-            "one\nwe\\u{1b}[31mird\ntwo"
-        );
-        // A tab is a control character too, and a carriage return is the
-        // one that would redraw the line the reader is looking at.
-        assert_eq!(escaped("a\tb\rc"), "a\\tb\\rc");
     }
 
     /// One redirected stream is enough to make a run plain: a pipe on

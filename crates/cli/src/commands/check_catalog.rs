@@ -57,20 +57,27 @@ fn machine(report: &CatalogCheck, ok: bool) -> CliResult {
 /// safety pass prints as the advisory block every other verb prints, fix
 /// lines and all left out — the score decides nothing here either.
 fn lines(report: &CatalogCheck) {
+    use kendex_core::names::shown;
     for finding in &report.catalog {
         say(&format!(
             "[{}] {}: {}: {}",
-            finding.severity, finding.pass, finding.file, finding.message
+            finding.severity,
+            finding.pass,
+            shown(&finding.file),
+            shown(&finding.message)
         ));
-        say(&format!("    fix: {}", finding.fix));
+        say(&format!("    fix: {}", shown(&finding.fix)));
     }
     for item in &report.items {
         for finding in &item.structural {
             say(&format!(
                 "[{}] {}: {}: {}",
-                finding.severity, finding.pass, finding.file, finding.message
+                finding.severity,
+                finding.pass,
+                shown(&finding.file),
+                shown(&finding.message)
             ));
-            say(&format!("    fix: {}", finding.fix));
+            say(&format!("    fix: {}", shown(&finding.fix)));
         }
         print_advisory(
             item.kind,

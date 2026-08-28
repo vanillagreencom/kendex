@@ -9,7 +9,7 @@
 
 use std::io::Write;
 
-use super::{Mode, escaped, mode};
+use super::{Mode, mode};
 
 /// Ask. The caller has already established there is somebody to ask: a
 /// run needing an answer with no terminal on stdin refuses before its
@@ -23,9 +23,7 @@ pub fn confirm(question: &str) -> std::io::Result<bool> {
     // question asked over an undrawn block is asked about the block
     // before it, and the answer decides a write.
     super::flush();
-    // The same escaping every other human line gets: a question naming
-    // packages read off a catalog is asked on the same terminal.
-    let asked = format!("{} [y/N]", escaped(question));
+    let asked = format!("{question} [y/N]");
     let answer = match mode() {
         Mode::Pretty => cliclack::input(asked)
             .default_input("N")
@@ -51,11 +49,24 @@ pub fn confirm(question: &str) -> std::io::Result<bool> {
 /// without coming through one of these.
 pub fn ask(label: &str) -> std::io::Result<String> {
     super::flush();
-    let _ = write!(std::io::stderr(), "{}", escaped(label));
-    let _ = std::io::stderr().flush();
-    let mut typed = String::new();
-    std::io::stdin().read_line(&mut typed)?;
-    Ok(typed)
+    match mode() {
+        // The widget [`confirm`] uses, so the question and the answer land
+        // inside the frame the run opened rather than at column 0 beside
+        // it. Empty is an answer here — both callers read it as "accept
+        // what is already selected" — so the input is not required, and
+        // the label's trailing space is the plain rendering's cursor gap,
+        // not part of the question.
+        Mode::Pretty => cliclack::input(label.trim_end())
+            .required(false)
+            .interact::<String>(),
+        Mode::Plain => {
+            let _ = write!(std::io::stderr(), "{label}");
+            let _ = std::io::stderr().flush();
+            let mut typed = String::new();
+            std::io::stdin().read_line(&mut typed)?;
+            Ok(typed)
+        }
+    }
 }
 
 /// What counts as a yes. Everything else is a no, the empty line
@@ -81,7 +92,7 @@ pub fn spinner(label: &str) -> Task {
         return Task(None);
     }
     let bar = cliclack::spinner();
-    bar.start(escaped(label));
+    bar.start(label);
     Task(Some(bar))
 }
 

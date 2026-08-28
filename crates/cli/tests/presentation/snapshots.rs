@@ -156,34 +156,60 @@ fn remove() {
 }
 
 /// A name off a tree kendex did not write reaches the terminal as its own
-/// characters in either rendering, never as the escape it would act on.
+/// characters, never as the escape or the line break it would act on.
+///
+/// The escaping is per fragment, at the site that knows which half of its
+/// sentence is foreign — never over the composed line, where a newline
+/// somebody else wrote is indistinguishable from a break the caller meant
+/// and a filename can forge output lines of its own.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_name_carrying_a_control_character_is_inert_in_both_renderings() {
-    // Every printer, not one of them: the escaping is the `ui` module's
-    // and no call site repeats it, so a verb reaching a different one of
-    // its functions has to come out the same way.
-    for args in [
-        &["refresh", "-y", "--scope", "project"][..],
-        &["apply", "--plan", "--scope", "project"][..],
-    ] {
-        for ui in ["plain", "pretty"] {
-            let tmp = tempfile::tempdir().unwrap();
-            let home = tmp.path();
-            // The item name cannot carry one — names refuse them — so the
-            // directory the project sits in is where one reaches a line.
-            let project = home.join("we\u{1b}[31mird");
-            blocked_project_at(home, &project);
-            let printed = said(&kendex(home, &project, ui, args));
-            assert!(
-                printed.contains("we\\u{1b}[31mird"),
-                "the place was not printed as what it is ({args:?}, {ui}): {printed}"
-            );
-            assert!(
-                !printed.contains('\u{1b}'),
-                "a control character reached the terminal ({args:?}, {ui}): {printed:?}"
-            );
-        }
+fn a_name_off_a_foreign_tree_cannot_forge_a_line() {
+    for ui in ["plain", "pretty"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let project = home.join("dev/app");
+        blocked_project_at(home, &project);
+        // Content nothing manages, named with the two characters that
+        // would act on a terminal: a break, and an escape sequence.
+        let stray = project.join(".claude/skills/we\nir\u{1b}[31md");
+        fs::create_dir_all(&stray).unwrap();
+        fs::write(
+            stray.join("SKILL.md"),
+            "---\nname: weird\ndescription: nobody declared this\n---\nbody\n",
+        )
+        .unwrap();
+
+        let printed = said(&kendex(
+            home,
+            &project,
+            ui,
+            &["apply", "--plan", "--scope", "project"],
+        ));
+        assert!(
+            printed.contains("we\\nir\\u{1b}[31md"),
+            "the name was not printed as what it is ({ui}): {printed}"
+        );
+        assert!(
+            !printed.contains('\u{1b}'),
+            "a control character reached the terminal ({ui}): {printed:?}"
+        );
+        // The line it appears on is one line. Escaped after the message
+        // was composed, the break inside the name split this in two.
+        let carrying: Vec<&str> = printed
+            .lines()
+            .filter(|line| line.contains("we\\nir"))
+            .collect();
+        assert_eq!(
+            carrying.len(),
+            1,
+            "the name was spread over {} lines ({ui}): {printed}",
+            carrying.len()
+        );
+        assert!(
+            carrying[0].contains("[Claude Code]"),
+            "the name forged a line of its own ({ui}): {printed}"
+        );
     }
 }
 
