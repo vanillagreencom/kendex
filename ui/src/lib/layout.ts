@@ -27,3 +27,8 @@ const WIDE_PAGES = new Set([
 export function isWidePage(page: string): boolean {
   return WIDE_PAGES.has(page);
 }
+
+// One row lane for the sidebar. Nav items and the account row share the
+// height, the gutters and the gap, so their icon column and their text
+// column line up from the top of the column to the bottom.
+export const SIDEBAR_ROW = "flex h-9 items-center gap-2.5 rounded-lg px-2";

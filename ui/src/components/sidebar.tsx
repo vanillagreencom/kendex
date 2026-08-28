@@ -11,9 +11,11 @@ import {
 } from "lucide-react";
 import { useEffect } from "react";
 import { commands } from "@/bindings";
+import { SidebarAccount } from "@/components/sidebar-account";
 import { SidebarNotice } from "@/components/sidebar-notice";
 import { Button } from "@/components/ui/button";
 import { UPDATES_ATTENTION_TITLE } from "@/lib/copy";
+import { SIDEBAR_ROW } from "@/lib/layout";
 import { rescanEverything } from "@/lib/rescan";
 import { isSearchShortcutKey } from "@/lib/search-shortcut";
 import { visibleUpdateCount } from "@/lib/update-groups";
@@ -22,12 +24,10 @@ import { type Page, useNavStore } from "@/stores/nav";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 
-// One row shape for every nav item, so the icon column and the text column
-// line up down the whole sidebar. The transparent border is load-bearing:
-// the selected row shows one, and without it here every other row would
-// shift a pixel when selection moved.
-const NAV_ROW =
-  "flex h-9 items-center gap-2.5 rounded-lg border border-transparent px-2 font-mono text-sm";
+// A nav item is the shared sidebar row in the nav's own typeface. The
+// transparent border is load-bearing: the selected row shows one, and
+// without it here every other row would shift a pixel when selection moved.
+const NAV_ROW = `${SIDEBAR_ROW} border border-transparent font-mono text-sm`;
 
 const NAV: { page: Page; label: string; icon: typeof Home }[] = [
   { page: "home", label: "Home", icon: Home },
@@ -125,6 +125,7 @@ export function Sidebar() {
         ))}
       </nav>
       <SidebarNotice />
+      <SidebarAccount />
     </aside>
   );
 }
