@@ -71,10 +71,12 @@ kendex.settings.toml [env] > .env > default):
   SIZE_RATCHET_EXCLUDES    exclusion-list path      (default tools/size-ratchet-excludes)
 Flags override both for the path settings.
 
-A baselined row rises only by a hand edit, in two cases, never for a test
-row: the added lines are the fix and the file has no concept seam, or
-fragments of one concept are merged back into one file. This script does not
-police that; where a repo gates it, the commit carries RATCHET_RAISE=1.
+A baselined row rises only by a hand edit, in two cases and only for a
+hand-written file: the added lines are the fix and the file has no concept
+seam, or fragments of one concept are merged back into one file. Never for
+tests, docs, comments, or lines a review round asked for; generated and
+vendored content is excluded, not raised. This script does not police that;
+where a repo gates it, the commit carries RATCHET_RAISE=1.
 
 Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 EOF
