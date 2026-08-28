@@ -336,6 +336,10 @@ case "$OUT" in
   *--staged*) ok "--help documents --staged" ;;
   *) bad "--help documents --staged" "out=$OUT" ;;
 esac
+case "$OUT" in
+  *RATCHET_RAISE*) ok "--help documents the raise" ;;
+  *) bad "--help documents the raise" "out=$OUT" ;;
+esac
 
 echo "=== a failing HEAD probe cannot hand authority to a recreated source ==="
 # Staged deletion + worktree recreation: the commit carries threshold 100,

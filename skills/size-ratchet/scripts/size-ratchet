@@ -71,10 +71,10 @@ kendex.settings.toml [env] > .env > default):
   SIZE_RATCHET_EXCLUDES    exclusion-list path      (default tools/size-ratchet-excludes)
 Flags override both for the path settings.
 
-RATCHET_RAISE=1 on the commit raises a hand-edited row; the commit gate reads
-it, not this script. Two cases, never for a test row: the added lines are the
-fix and the file has no concept seam, or fragments of one concept are merged
-back into one file.
+A baselined row rises only by a hand edit, in two cases, never for a test
+row: the added lines are the fix and the file has no concept seam, or
+fragments of one concept are merged back into one file. This script does not
+police that; where a repo gates it, the commit carries RATCHET_RAISE=1.
 
 Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 EOF
