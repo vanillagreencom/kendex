@@ -296,3 +296,32 @@ fn either_quoted_spelling_is_ambiguous_and_blocks_a_seed() {
         );
     }
 }
+
+/// The same shape reaching the editor: a key that exists only inside a
+/// string an array element opened is not a site, so no span is ever
+/// produced for it and an edit naming it refuses.
+#[test]
+fn a_key_inside_a_string_an_array_element_opened_is_not_writable() {
+    for open in ["\"\"\"", "'''"] {
+        let file = format!("BLOB = [\n  [{open}\n[env]\nMODE = \"shadow\"\n{open}]\n]\n");
+        // Without the carried state this reads as a writable value with a
+        // span inside BLOB — a save would put the new bytes in the middle
+        // of somebody else's string.
+        assert_eq!(current(&file, "MODE"), Current::Absent, "{open}");
+        assert!(sites(&file).iter().all(|site| site.key != "MODE"), "{open}");
+        let refused = apply_edits(
+            &file,
+            &[set("noise", "MODE", "loud")],
+            &[seeded("noise", "MODE", "MODE = \"quiet\"")],
+            Path::new("/w/kendex.settings.toml"),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                refused,
+                CoreError::SettingsRefused(SettingsRefusal::Value { .. })
+            ),
+            "{open}: {refused:?}"
+        );
+    }
+}

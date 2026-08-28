@@ -224,3 +224,26 @@ fn a_basic_key_decodes_its_escapes_and_a_literal_key_does_not() {
         Some("a\\u00".to_owned())
     );
 }
+
+/// A `[` line that also opens a multiline string. It is a table line by
+/// its first character AND a line the next one continues, and a branch
+/// that answers the first question while forgetting the second lets every
+/// following line read as structure — including an assignment sitting
+/// inside the string, which is a byte span an editor would write into.
+#[test]
+fn a_bracket_line_that_opens_a_string_still_carries_it() {
+    for open in ["\"\"\"", "'''"] {
+        let text =
+            format!("BLOB = [\n  [{open}\n[env]\nMODE = \"shadow\"\n{open}]\n]\nREAL = \"yes\"\n");
+        let kinds = kinds(&text);
+        assert!(
+            kinds[2..5].iter().all(|kind| *kind == Line::InValue),
+            "{open}: the string's own lines are the string — {kinds:?}"
+        );
+        assert_eq!(
+            keys(&text),
+            vec!["BLOB".to_owned(), "REAL".to_owned()],
+            "{open}"
+        );
+    }
+}

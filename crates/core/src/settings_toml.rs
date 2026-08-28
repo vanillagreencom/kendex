@@ -28,11 +28,19 @@
 //! differ on purpose — the check is strict where seeding is lenient.
 //!
 //! String state is what it tracks, in all four spellings, because a string
-//! is the only thing that can put a byte offset inside a value. It does
-//! not track array nesting: a multi-line array can make a `[` look like a
-//! table header, and the worst that does is read a key as sitting outside
-//! `[env]` — which refuses the edit. Nothing there can produce a span to
-//! write into, so nothing there can damage a file.
+//! is the only thing that can put a byte offset inside a value — and it is
+//! tracked through every line, whatever that line is. A line is asked what
+//! it leaves open separately from what it is, because the two are
+//! independent: `  ["""` is a table line and a line the next one
+//! continues, and reading the second answer off the first is how the
+//! interior of a string comes back as an assignment with a writable span.
+//!
+//! Array nesting is not tracked. What that costs is bounded and is about
+//! membership only: a `[` inside a multi-line array can be taken for a
+//! table header, so a key after it may read as sitting outside `[env]`,
+//! which refuses the edit. It is not what keeps a span out of a value —
+//! that is the string state above, and an earlier version of this note
+//! argued the reverse and was wrong.
 
 use std::ops::Range;
 
@@ -165,34 +173,45 @@ pub fn line_number(index: usize) -> u32 {
 
 /// Classify one line that starts outside every string, and say which
 /// multiline it leaves open.
+///
+/// The two answers are computed apart on purpose. What a line leaves open
+/// is a property of the whole line and is read off it once, whatever the
+/// line turns out to be; deciding it inside the branches is how a branch
+/// comes to forget. `  ["""` is a table line by its first character AND a
+/// line the next one continues, and an arm that answered only the first
+/// let every line after it read as structure — including an assignment
+/// sitting inside the string, whose value span an editor would then write
+/// into. No arm can drop the state because no arm is asked for it.
 fn classify(content: &str) -> (Line<'_>, Option<Open>) {
+    (kind_of(content), scan(content, 0).1)
+}
+
+/// What the line is, given that it starts outside every string.
+fn kind_of(content: &str) -> Line<'_> {
     let trimmed = content.trim_start();
     if trimmed.is_empty() {
-        return (Line::Blank, None);
+        return Line::Blank;
     }
+    // A `#` out here comments the rest of the line, so nothing after it
+    // is read — which is also why a `#` inside a multiline never reaches
+    // this arm: a line inside one is [`Line::InValue`] and never
+    // classified at all.
     if trimmed.starts_with('#') {
-        return (Line::Comment, None);
+        return Line::Comment;
     }
-    // A header opens no value: everything after the bracket is the
-    // header's own business or a comment.
     if trimmed.starts_with('[') {
-        return (Line::Table, None);
+        return Line::Table;
     }
-    let Some((equals, open)) = top_level_equals(content) else {
-        // A line with no `=` outside a string: junk, or the interior of an
-        // array. Either way not an assignment — but a string it opened
-        // still carries.
-        return (Line::Other, scan(content, 0).1);
+    let Some(equals) = top_level_equals(content) else {
+        // No `=` outside a string: junk, or the interior of an array.
+        return Line::Other;
     };
     let (key, rest) = content.split_at(equals);
-    (
-        Line::Assignment {
-            key,
-            value: &rest[1..],
-            value_at: equals + 1,
-        },
-        open,
-    )
+    Line::Assignment {
+        key,
+        value: &rest[1..],
+        value_at: equals + 1,
+    }
 }
 
 /// One line's assignment, for a caller holding a line rather than a file.
@@ -212,25 +231,19 @@ pub fn decoded(value: &str) -> Option<String> {
     quoted_span(value, 0).map(|inner| value[inner].to_owned())
 }
 
-/// The byte offset of the first `=` no string encloses, and whatever
-/// multiline the rest of the line leaves open. `None` where the line holds
-/// no such `=`.
-fn top_level_equals(content: &str) -> Option<(usize, Option<Open>)> {
+/// The byte offset of the first `=` no string encloses. `None` where the
+/// line holds no such `=` — including a string opened where a key belongs,
+/// which is not an assignment this reader will hand out a span for.
+fn top_level_equals(content: &str) -> Option<usize> {
     let bytes = content.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
         match bytes[index] {
-            b'=' => return Some((index, scan(content, index + 1).1)),
+            b'=' => return Some(index),
             // A comment before any `=`: there is no assignment here.
             b'#' => return None,
-            b'"' | b'\'' => match string_at(content, index) {
-                // A quoted key, stepped over whole.
-                Some(end) => index = end,
-                // A multiline opened where a key belongs, or a string with
-                // no close: neither is an assignment this reader will hand
-                // out a span for, and the state still has to carry.
-                None => return None,
-            },
+            // A quoted key, stepped over whole.
+            b'"' | b'\'' => index = string_at(content, index)?,
             _ => index += 1,
         }
     }
