@@ -1,6 +1,11 @@
 import { CircleAlert, LogIn } from "lucide-react";
 import type { ReactNode } from "react";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   ACCOUNT_EXPIRED_TITLE,
   ACCOUNT_OFFLINE_LABEL,
   ACCOUNT_OFFLINE_TITLE,
@@ -19,18 +24,22 @@ import {
 } from "@/stores/account";
 import { useNavStore } from "@/stores/nav";
 
-/** The letter on the avatar: the name's first, the handle's where there is
- *  no name, and nothing where the account has neither. A blank name is no
- *  name, which is why the fallback runs on the empty string as well as on a
- *  missing one. Split by code point so a first character outside the BMP
- *  survives being taken apart, and cased by the plain call rather than the
+/** What the row calls the account: the name the server answered with, or
+ *  nothing where it has answered with none. `githubLogin` is not a second
+ *  choice for it — the field is the provider's opaque account id, not a
+ *  handle, and it is never shown. */
+const displayName = (identity: AccountIdentity | null): string =>
+  identity?.name.trim() ?? "";
+
+/** The letter on the avatar, and nothing where there is no name to take it
+ *  from. Split by code point so a first character outside the BMP survives
+ *  being taken apart, and cased by the plain call rather than the
  *  locale-aware one, whose no-argument form is host-dependent by
  *  specification: the circle wants one glyph, the same everywhere. */
 export function accountInitial(
   identity: AccountIdentity | null,
 ): string | null {
-  const source = identity?.name?.trim() || identity?.githubLogin.trim() || "";
-  const [first] = [...source];
+  const [first] = [...displayName(identity)];
   return first ? first.toUpperCase() : null;
 }
 
@@ -48,70 +57,63 @@ function Avatar({ identity }: { identity: AccountIdentity | null }) {
   );
 }
 
-/** One account row. A button wherever there is somewhere to go, plain text
- *  where the app has nothing to offer. */
+/** One account row, and the one sentence behind it.
+ *
+ *  `tip` is the sentence: a popup for a pointer, the same popup for a
+ *  keyboard because the trigger takes focus, and the trigger's own text for
+ *  a screen reader. A native title reaches none of the last two, and on the
+ *  failed-read row the sentence is the only place the reason lives.
+ *
+ *  A row with nowhere to go is still a trigger. It presses to nothing, which
+ *  is the honest answer while the account cannot be read at all. */
 function Row({
   onClick,
-  title,
+  tip,
   children,
 }: {
   onClick?: () => void;
-  title?: string;
+  tip: string;
   children: ReactNode;
 }) {
-  const shape = cn(SIDEBAR_ROW, "w-full text-sm text-muted-foreground");
-  if (!onClick)
-    return (
-      <div className={shape} title={title}>
-        {children}
-      </div>
-    );
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      className={cn(
-        shape,
-        "transition-colors hover:bg-sidebar-accent/40 hover:text-foreground",
-      )}
-    >
-      {children}
-    </button>
+    <Tooltip>
+      <TooltipTrigger
+        onClick={onClick}
+        className={cn(
+          SIDEBAR_ROW,
+          "w-full text-sm text-muted-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
+          onClick &&
+            "transition-colors hover:bg-sidebar-accent/40 hover:text-foreground",
+        )}
+      >
+        {children}
+        <span className="sr-only">{tip}</span>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-56">
+        {tip}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
 /** The text column. It takes whatever the icon lane leaves and cuts a long
- *  handle off rather than pushing the row wider than the sidebar. */
+ *  name off rather than pushing the row wider than the sidebar. */
 function Label({
-  mono,
-  title,
   className,
   children,
 }: {
-  mono?: boolean;
-  /** What a truncated line says in full. A handle wide enough to be cut is
-   *  the only line here long enough to need it. */
-  title?: string;
   className?: string;
   children: ReactNode;
 }) {
   return (
-    <span
-      title={title}
-      className={cn(
-        "min-w-0 flex-1 truncate text-left",
-        mono && "font-mono",
-        className,
-      )}
-    >
+    <span className={cn("min-w-0 flex-1 truncate text-left", className)}>
       {children}
     </span>
   );
 }
 
-/** A row's tooltip where the state's own sentence has to survive a later
- *  failed read. */
+/** A row's sentence where the state's own explanation has to survive a
+ *  later failed read. */
 const explained = (sentence: string, readError: string | null): string =>
   readError === null ? sentence : `${sentence} ${readError}`;
 
@@ -129,7 +131,6 @@ const explained = (sentence: string, readError: string | null): string =>
  *  rather than replacing it: a rejected credential and a read that could not
  *  be made are different answers, and swapping one for the other would say
  *  the wrong thing about both. */
-
 function accountRow(
   account: AccountState,
   readError: string | null,
@@ -139,7 +140,7 @@ function accountRow(
     // A read that failed says that much. One still on its way draws no row
     // rather than guessing which of the four answers is coming.
     return readError === null ? null : (
-      <Row title={readError}>
+      <Row tip={readError}>
         <CircleAlert className="size-[18px] shrink-0 opacity-70" />
         {/* The only line long enough to need the smaller step: at the nav's
             size it would truncate inside a 224px column, and half a
@@ -151,41 +152,33 @@ function accountRow(
   switch (account.kind) {
     case "signed-out":
       return (
-        <Row onClick={open} title={readError ?? ACCOUNT_ROW_TITLE}>
+        <Row onClick={open} tip={readError ?? ACCOUNT_ROW_TITLE}>
           <LogIn className="size-[18px] shrink-0 opacity-70" />
           <Label>{ACCOUNT_SIGN_IN_LABEL}</Label>
         </Row>
       );
     case "expired":
       return (
-        <Row onClick={open} title={explained(ACCOUNT_EXPIRED_TITLE, readError)}>
+        <Row onClick={open} tip={explained(ACCOUNT_EXPIRED_TITLE, readError)}>
           <LogIn className="size-[18px] shrink-0 opacity-70" />
           <Label>{ACCOUNT_SIGN_IN_AGAIN_LABEL}</Label>
         </Row>
       );
-    case "signed-in": {
-      const handle = account.identity?.githubLogin.trim();
+    case "signed-in":
       return (
-        <Row onClick={open} title={readError ?? ACCOUNT_ROW_TITLE}>
+        <Row onClick={open} tip={readError ?? ACCOUNT_ROW_TITLE}>
           <Avatar identity={account.identity} />
-          {/* The handle's own tooltip stands down while a read has
-              failed: the label covers most of the row, and a nearer title
-              would answer the hover with the handle instead of the cause. */}
-          <Label mono={Boolean(handle)} title={readError ? undefined : handle}>
-            {handle || ACCOUNT_SIGNED_IN_LABEL}
+          <Label>
+            {displayName(account.identity) || ACCOUNT_SIGNED_IN_LABEL}
           </Label>
         </Row>
       );
-    }
     case "offline":
       return (
-        <Row onClick={open} title={explained(ACCOUNT_OFFLINE_TITLE, readError)}>
+        <Row onClick={open} tip={explained(ACCOUNT_OFFLINE_TITLE, readError)}>
           <Avatar identity={account.identity} />
-          <Label
-            mono
-            title={readError ? undefined : account.identity.githubLogin}
-          >
-            {account.identity.githubLogin}
+          <Label>
+            {displayName(account.identity) || ACCOUNT_SIGNED_IN_LABEL}
           </Label>
           <span className="shrink-0 text-xs">{ACCOUNT_OFFLINE_LABEL}</span>
         </Row>

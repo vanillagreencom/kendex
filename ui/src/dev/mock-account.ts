@@ -16,7 +16,9 @@ import {
 } from "@/stores/account";
 import type { Handler } from "./mock-state";
 
-const IDENTITY = { name: "Ada Lovelace", githubLogin: "ada" };
+// The provider's account id is an opaque number the server hands back, not
+// a handle. Spelt as one here so nothing in the app can pass by showing it.
+const IDENTITY = { name: "Ada Lovelace", githubLogin: "1234567" };
 
 const SIGNED_OUT: SettledAccount = { kind: "signed-out" };
 const SIGNED_IN: SettledAccount = { kind: "signed-in", identity: IDENTITY };
