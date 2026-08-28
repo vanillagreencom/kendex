@@ -171,6 +171,7 @@ fi
 # The exception is what keeps the cap from shipping a defect the diff created.
 # Its tokens are the three reply forms: drop the exception and `Fixed in`
 # leaves the section, so the cap reads as disposition-only.
+EXCEPTION='introduces or arms'
 rule="$(cap_rule "$COMMENTS_WF")"
 # A Tracked: reply naming an issue that does not exist yet turns the merge
 # gate red. The cap rule files through § 6.2 before it replies, so the id is
@@ -183,10 +184,31 @@ else
   bad "the cap rule replies Tracked before the issue is filed" "file=$file_at reply=$track_at"
 fi
 
+# § 6.2's audit returns where it is told, and its usual target is § 6.3. On
+# the cap path that skips the exception's delegation entirely: the pass files
+# the issue, lands in § 6.3, increments and exits, and the introduced defect
+# the exception requires it to fix is never delegated.
+if grep -q -F -- '→ § 6.1' <<<"$rule"; then
+  ok "the cap path records the audit's return to § 6.1"
+else
+  bad "the cap path lets § 6.2 return to § 6.3 and skip the exception"
+fi
+
+# File, then delegate the exception, then reply. A Tracked reply needs its
+# issue to exist and a Fixed in reply needs the fix to have landed, so the
+# replies come last.
+file_step="$(first_at 'File first' <<<"$rule")"
+exc_step="$(first_at 'Then the exception' <<<"$rule")"
+reply_step="$(first_at 'Then reply' <<<"$rule")"
+if [[ "$file_step" -gt 0 ]] && [[ "$exc_step" -gt "$file_step" ]] && [[ "$reply_step" -gt "$exc_step" ]]; then
+  ok "the at-cap pass files, then delegates the exception, then replies"
+else
+  bad "the at-cap steps are out of order" "file=$file_step exception=$exc_step reply=$reply_step"
+fi
+
 # One exception, one definition. finding-disposition is what a reviewer reads
 # first; a broader claim there selects findings review-pr-comments will not
 # push a fix for.
-EXCEPTION='introduces or arms'
 if grep -q -F "$EXCEPTION" <<<"$rule" && grep -q -F "$EXCEPTION" "$DISPOSITION"; then
   ok "both sites name the exception by the same test"
 else
@@ -322,7 +344,7 @@ fi
 CTRL="$TMP_ROOT/comments-exception.md"
 if ! plant "$CTRL" "$COMMENTS_WF" '/^\*\*The one exception\.\*\*/d'; then
   bad "exception control planted nothing — its sed program matched no text"
-elif grep -q -F 'Fixed in' <<<"$(cap_rule "$CTRL")"; then
+elif grep -q -F "$EXCEPTION" <<<"$(cap_rule "$CTRL")"; then
   bad "the check MISSED a cap rule that dropped the introduced-defect exception"
 else
   ok "the check flags a cap rule that dropped the introduced-defect exception"
@@ -379,9 +401,34 @@ else
   bad "the check MISSED a second writer of the iteration counter" "total=$ctrl_total"
 fi
 
+# The audit left on its default return: filing runs and the exception never does.
+CTRL="$TMP_ROOT/comments-return.md"
+if ! plant "$CTRL" "$COMMENTS_WF" 's/invoked with its return recorded as `→ § 6.1` rather than § 6.2.s usual `→ § 6.3`/invoked as usual/'; then
+  bad "audit-return control planted nothing — its sed program matched no text"
+elif grep -q -F -- '→ § 6.1' <<<"$(cap_rule "$CTRL")"; then
+  bad "the check MISSED a cap path that lets the audit return to § 6.3"
+else
+  ok "the check flags a cap path that lets the audit return to § 6.3"
+fi
+
+# The exception's delegation moved after the replies, so a Fixed in reply
+# would name a sha that does not exist yet.
+CTRL="$TMP_ROOT/comments-order3.md"
+if ! plant "$CTRL" "$COMMENTS_WF" 's/\*\*Then the exception\*\* below, which is the only delegation and the only push this pass makes\. //'; then
+  bad "step-order control planted nothing — its sed program matched no text"
+else
+  ctrl_rule="$(cap_rule "$CTRL")"
+  ce="$(first_at 'Then the exception' <<<"$ctrl_rule")"
+  if [[ "$ce" -eq 0 ]]; then
+    ok "the check flags an at-cap pass that never delegates the exception"
+  else
+    bad "the check MISSED an at-cap pass that never delegates the exception" "exception=$ce"
+  fi
+fi
+
 # The reply-before-filing order this round removed.
 CTRL="$TMP_ROOT/comments-order.md"
-if ! plant "$CTRL" "$COMMENTS_WF" 's/and filing runs first[.] Run § 6[.]2 now for every item clearing its bar, so each issue exists before any reply names it[.] Then return here and answer/and answer/'; then
+if ! plant "$CTRL" "$COMMENTS_WF" 's/takes a disposition instead of a fix/takes a `Tracked: [ISSUE_ID]` or a `Declined: [REASON]` instead of a fix/'; then
   bad "ordering control planted nothing — its sed program matched no text"
 else
   ctrl_rule="$(cap_rule "$CTRL")"
