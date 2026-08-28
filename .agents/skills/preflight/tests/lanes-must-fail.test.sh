@@ -29,7 +29,8 @@ seed() { # NAME — fixture in $R: committed baseline, origin/main, feature bran
   # Migrations sit one directory down and more than one is committed, so a
   # deleted one is a path the glob no longer finds on disk while its siblings
   # still match: the shape that catches a setting read with globbing on.
-  mkdir -p "$R/docs" "$R/scripts" "$R/data" "$R/store/migrations"
+  mkdir -p "$R/docs" "$R/scripts" "$R/data" "$R/store/migrations" \
+    "$R/src/main/resources/db/migration"
   git -C "$R" -c init.defaultBranch=main init -q
   git -C "$R" config user.email test@example.com
   git -C "$R" config user.name test
@@ -40,6 +41,7 @@ seed() { # NAME — fixture in $R: committed baseline, origin/main, feature bran
   printf '{\n  "ok": true\n}\n' >"$R/data/config.json"
   printf 'CREATE TABLE t (id INTEGER);\n' >"$R/store/migrations/V1__init.sql"
   printf 'CREATE TABLE u (id INTEGER);\n' >"$R/store/migrations/V2__more.sql"
+  printf 'CREATE TABLE s (id INTEGER);\n' >"$R/src/main/resources/db/migration/V1__init.sql"
   git -C "$R" add -A
   git -C "$R" commit -qm init
   git clone -q --bare "$R" "$R.git"
@@ -381,6 +383,12 @@ run_pf
 fires "editing a migration the base already carried fails" "store/migrations/V1__init.sql:0: [applied-migration-edited] an applied migration was edited"
 run_pf --staged
 fires "the staged scope sees the same edit" "store/migrations/V1__init.sql:0: [applied-migration-edited]"
+
+seed migrationflyway
+printf 'CREATE TABLE s (id INTEGER); -- clearer\n' >"$R/src/main/resources/db/migration/V1__init.sql"
+git -C "$R" add -A
+run_pf
+fires "Flyway's own directory is in the default set" "src/main/resources/db/migration/V1__init.sql:0: [applied-migration-edited] an applied migration was edited"
 
 seed migrationdelete
 git -C "$R" rm -q store/migrations/V1__init.sql

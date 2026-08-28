@@ -31,7 +31,8 @@ skipped() {
 
 seed() { # NAME — fixture in $R: committed baseline, origin/main, feature branch
   R="$TMP/$1"
-  mkdir -p "$R/docs" "$R/scripts" "$R/hooks" "$R/tests" "$R/data" "$R/store/migrations"
+  mkdir -p "$R/docs" "$R/scripts" "$R/hooks" "$R/tests" "$R/data" "$R/store/migrations" \
+    "$R/src/main/resources/db/migration"
   git -C "$R" -c init.defaultBranch=main init -q
   git -C "$R" config user.email test@example.com
   git -C "$R" config user.name test
@@ -49,6 +50,8 @@ seed() { # NAME — fixture in $R: committed baseline, origin/main, feature bran
   mkdir -p "$R/store/migrations/archive"
   printf 'SELECT 1;\n' >"$R/store/migrations/archive/helper.sql"
   printf '# revision id, no checksum\n' >"$R/store/migrations/0001_initial.py"
+  printf 'CREATE TABLE s (id INTEGER);\n' >"$R/src/main/resources/db/migration/V1__init.sql"
+  printf 'CREATE OR REPLACE VIEW w AS SELECT 1;\n' >"$R/src/main/resources/db/migration/R__flyway_views.sql"
   printf 'SELECT 1;\n' >"$R/data/report.sql"
   git -C "$R" add -A
   git -C "$R" commit -qm init
@@ -670,10 +673,12 @@ chmod +x "$R/store/migrations/V1__init.sql"
 # default glob, and a runner that records a revision id without a checksum is
 # outside the default set.
 printf 'SELECT 2;\n' >"$R/store/migrations/archive/helper.sql"
+# Flyway's own directory carries the versioned shape and nothing else.
+printf 'CREATE OR REPLACE VIEW w AS SELECT 1, 2;\n' >"$R/src/main/resources/db/migration/R__flyway_views.sql"
 printf '# revision id, still no checksum\n' >"$R/store/migrations/0001_initial.py"
 git -C "$R" add -A
 run_pf
-clean "a new version, an edited note beside it, an edited .sql outside a migrations directory, an edited repeatable migration, a mode-only change, a nested .sql, and a Python migration"
+clean "a new version, an edited note beside it, an edited .sql outside a migrations directory, an edited repeatable migration in either directory, a mode-only change, a nested .sql, and a Python migration"
 printf 'CREATE TABLE t (id INTEGER); -- clearer\n' >"$R/store/migrations/V1__init.sql"
 git -C "$R" add -A
 run_pf
