@@ -1,8 +1,12 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use kendex_core::env::Env;
+use kendex_core::install_channel::{Host, HostProbe, InstallChannel, for_cli};
 use kendex_core::process::Hardened;
-use kendex_core::update_feed::{RELEASE_FEED_URL, ReleaseFeed, VersionRelation, release_notes_url};
+use kendex_core::update_feed::{
+    RELEASE_FEED_URL, ReleaseFeed, VersionRelation, app_image_url, release_notes_url,
+};
 
 use super::{CliResult, out, say};
 
@@ -50,7 +54,14 @@ fn curl_args(url: &str) -> [&str; 10] {
     ]
 }
 
-pub fn run(force: bool) -> CliResult {
+pub fn run(env: &Env, force: bool) -> CliResult {
+    let current_exe = std::env::current_exe()?;
+    let channel = for_cli(&current_exe, &Host);
+    if let InstallChannel::Managed { command } = &channel {
+        out("a package manager owns this install; update it with:");
+        out(&format!("  {command}"));
+        return Ok(());
+    }
     let feed_bytes = fetch(&feed_url())?;
     let feed = ReleaseFeed::parse(&feed_bytes)?;
     let latest = feed.version.as_str();
@@ -77,18 +88,59 @@ pub fn run(force: bool) -> CliResult {
 
     say(&format!("updating {current} → {latest}"));
     let binary = fetch(asset)?;
-    let current_exe = std::env::current_exe()?;
-    let staged = staged_path(&current_exe);
-    std::fs::write(&staged, &binary)?;
+    replace_executable(&current_exe, &binary)?;
+    out(&format!("updated to {latest}"));
+    match channel {
+        InstallChannel::Direct => update_app(env, latest)?,
+        // Nothing here is ours to replace beyond the command itself.
+        InstallChannel::Managed { .. } | InstallChannel::Unknown => {}
+    }
+    Ok(())
+}
+
+/// Bring the desktop app on this machine to the same release. The URL is
+/// built from the version the feed was validated at, never from feed text.
+/// A machine with no app of ours is the whole install already; a machine
+/// whose app cannot be replaced is told so rather than left half-updated.
+fn update_app(env: &Env, latest: &str) -> CliResult {
+    let path = env.app_image_file();
+    if !Host.exists(&path) {
+        out("no kendex desktop app here; the kendex command is the whole install");
+        return Ok(());
+    }
+    let Some(url) = app_image_url(latest, target_triple())? else {
+        out(&format!(
+            "no desktop app is published for {}; the kendex command is updated",
+            target_triple()
+        ));
+        return Ok(());
+    };
+    if !Host.replaceable(&path) {
+        return Err(format!(
+            "the kendex command is updated to {latest}; the desktop app at {} is not, because that directory refuses writes",
+            path.display()
+        )
+        .into());
+    }
+    say(&format!("updating the desktop app at {}", path.display()));
+    let image = fetch(&url)?;
+    replace_executable(&path, &image)?;
+    out(&format!("updated the desktop app to {latest}"));
+    Ok(())
+}
+
+/// Write `bytes` over an executable that may be running: the replacement
+/// lands beside it whole and takes its place by rename, which every target
+/// OS allows on a running file.
+fn replace_executable(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let staged = staged_path(path);
+    std::fs::write(&staged, bytes)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))?;
     }
-    // Replacing a running executable works via rename on every target OS.
-    std::fs::rename(&staged, &current_exe)?;
-    out(&format!("updated to {latest}"));
-    Ok(())
+    std::fs::rename(&staged, path)
 }
 
 fn missing_asset_message(

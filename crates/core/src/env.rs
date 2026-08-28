@@ -174,6 +174,12 @@ impl Env {
         self.cache_dir.join(APP_DIR).join("app-update.lock")
     }
 
+    /// The Linux desktop AppImage `install.sh` writes — the one copy of the
+    /// app the CLI is allowed to replace.
+    pub fn app_image_file(&self) -> PathBuf {
+        self.data_dir.join(APP_DIR).join("kendex.AppImage")
+    }
+
     pub fn trash_dir(&self) -> PathBuf {
         self.data_dir.join(APP_DIR).join("trash")
     }

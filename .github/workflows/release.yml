@@ -1,6 +1,7 @@
 # Release: build the CLI and the desktop app on a native runner per
-# target, then publish a GitHub Release carrying every artifact plus the
-# feed.json that `kendex update` consumes.
+# target, then publish a GitHub Release carrying every artifact, the
+# feed.json that `kendex update` consumes, and the signed latest.json the
+# app's Update button installs from.
 #
 # Tag push only: a release bundle is the most expensive job in the repo,
 # and pull requests are covered by the per-crate checks. No build cache:
@@ -110,7 +111,8 @@ jobs:
         run: cd crates/app && ../../ui/node_modules/.bin/tauri build --target ${{ matrix.target }}
         shell: bash
         env:
-          # User-supplied gates: unset keys skip updater-artifact signing.
+          # Required: every lane bundles an updater-enabled target, so
+          # an unset key fails bundling rather than skipping signing.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # macOS Developer ID signing + notarization (KEN-394) arrives
@@ -126,7 +128,9 @@ jobs:
           cp "${out}/kendex${ext}" "dist/kendex-${{ matrix.target }}${ext}"
           find "${out}/bundle" -type f \
             \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \
-               -o -name '*.dmg' -o -name '*-setup.exe' -o -name '*.msi' \) \
+               -o -name '*.dmg' -o -name '*-setup.exe' -o -name '*.msi' \
+               -o -name '*.AppImage.tar.gz' -o -name '*.AppImage.tar.gz.sig' \
+               -o -name '*-setup.exe.sig' \) \
             -exec cp {} dist/ \;
           # Tauri names the macOS updater archive after the app alone, so
           # the two Apple lanes would overwrite each other in the merged
@@ -168,6 +172,47 @@ jobs:
           }
           EOF
           cat dist/feed.json
+      # The app installs from this manifest, not from feed.json: each entry
+      # pairs a download with the minisign signature the running app checks
+      # before it replaces itself. A platform whose lane produced no signed
+      # artifact is left out; a manifest with no platforms at all means
+      # signing did not happen, which fails the job rather than publishing
+      # a release the app cannot update from.
+      - name: Write the signed update manifest
+        shell: bash
+        run: |
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
+          platforms='{}'
+          add() {
+            local key=$1 sig="" candidate
+            for candidate in dist/$2; do
+              [ -f "$candidate" ] && { sig="$candidate"; break; }
+            done
+            if [ -z "$sig" ]; then
+              echo "no signed updater artifact for ${key}"
+              return 0
+            fi
+            platforms=$(jq \
+              --arg key "$key" \
+              --arg signature "$(cat "$sig")" \
+              --arg url "${base}/$(basename "${sig%.sig}")" \
+              '.[$key] = {signature: $signature, url: $url}' <<< "$platforms")
+          }
+          add linux-x86_64 'kendex_*_amd64.AppImage.tar.gz.sig'
+          add linux-aarch64 'kendex_*_aarch64.AppImage.tar.gz.sig'
+          add darwin-x86_64 'kendex-x86_64-apple-darwin.app.tar.gz.sig'
+          add darwin-aarch64 'kendex-aarch64-apple-darwin.app.tar.gz.sig'
+          add windows-x86_64 'kendex_*_x64-setup.exe.sig'
+          if [ "$(jq 'length' <<< "$platforms")" -eq 0 ]; then
+            echo "::error::No signed updater artifacts reached dist/. Set TAURI_SIGNING_PRIVATE_KEY and re-run the tag."
+            exit 1
+          fi
+          jq -n \
+            --arg version "${GITHUB_REF_NAME#v}" \
+            --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --argjson platforms "$platforms" \
+            '{version: $version, pub_date: $pub_date, platforms: $platforms}' > dist/latest.json
+          cat dist/latest.json
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*

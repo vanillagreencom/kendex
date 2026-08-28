@@ -212,6 +212,11 @@ fn update_replaces_the_binary_from_a_local_feed() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(fs::read_to_string(&me).unwrap(), "#!/bin/sh\necho v9\n");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("no kendex desktop app here"),
+        "a machine with no app of ours says so: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
 
     // Same version → no-op without --force.
     let same = fs::read_to_string(home.join("feed.json"))
@@ -301,6 +306,79 @@ fn update_replaces_the_binary_from_a_local_feed() {
     let older = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success());
     assert!(older.contains("is newer") && !older.contains("is available"));
+}
+
+/// Half an update is the failure worth shouting about: the command is on
+/// the new release and the app beside it is not, so the run has to end
+/// non-zero saying which is which. The refusal lands before any download.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn update_reports_a_desktop_app_it_cannot_replace() {
+    let tmp = sandbox_with_catalog();
+    let home = tmp.path();
+    let bin = home.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let me = bin.join("kendex");
+    fs::copy(env!("CARGO_BIN_EXE_kendex"), &me).unwrap();
+    fs::set_permissions(&me, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let app_dir = home.join(".local/share/kendex");
+    fs::create_dir_all(&app_dir).unwrap();
+    fs::write(app_dir.join("kendex.AppImage"), "old app").unwrap();
+    fs::set_permissions(&app_dir, fs::Permissions::from_mode(0o555)).unwrap();
+    // Root writes through the mode bits, so the refusal this test needs
+    // never happens there.
+    if fs::write(app_dir.join("probe"), "").is_ok() {
+        fs::set_permissions(&app_dir, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+
+    fs::write(home.join("new-binary"), "#!/bin/sh\necho v9\n").unwrap();
+    let target = env!("KENDEX_TARGET");
+    fs::write(
+        home.join("feed.json"),
+        format!(
+            r#"{{"schema":1,"version":"9.9.9","assets":{{"{target}":"file://{}/new-binary"}}}}"#,
+            home.display()
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(&me)
+        .args(["update"])
+        .env_clear()
+        .env("HOME", home)
+        .env("KENDEX_REAL_HOME", "1")
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env(
+            "KENDEX_UPDATE_FEED",
+            format!("file://{}/feed.json", home.display()),
+        )
+        .output()
+        .unwrap();
+    fs::set_permissions(&app_dir, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(fs::read_to_string(&me).unwrap(), "#!/bin/sh\necho v9\n");
+    assert_eq!(
+        fs::read_to_string(app_dir.join("kendex.AppImage")).unwrap(),
+        "old app"
+    );
+    let publishes_an_app_image = matches!(
+        env!("KENDEX_TARGET"),
+        "x86_64-unknown-linux-gnu" | "aarch64-unknown-linux-gnu"
+    );
+    if publishes_an_app_image {
+        assert!(!output.status.success(), "{stderr}");
+        assert!(
+            stderr.contains("the kendex command is updated to 9.9.9") && stderr.contains("is not"),
+            "{stderr}"
+        );
+    } else {
+        // No AppImage is published for this target, so there is nothing to
+        // replace and nothing to refuse.
+        assert!(output.status.success(), "{stderr}");
+    }
 }
 
 #[test]

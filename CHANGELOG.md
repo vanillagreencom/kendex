@@ -22,6 +22,12 @@ an outside contributor.
 - `kendex remove <name> --keep-declaration` takes the files away and leaves
   kendex.toml untouched, so the next `kendex refresh` installs what it
   declares again. Fixing a broken install no longer needs the manifest restored.
+- The app says when a release is out and offers the one action that fits how
+  it was installed: Update now on a direct install, the package manager's own
+  command on a managed one, and release notes when neither applies.
+- `kendex update` brings the desktop app along on a direct install, and on a
+  package-manager install prints that manager's update command instead of
+  replacing files it does not own.
 - `REVIEW_GATE_CARRY_FORWARD` gains a `vendored` class: a `kendex refresh`
   push under the render trees a repo lists in `REVIEW_GATE_VENDORED_PATHS`
   carries the prior review, whatever the files' extensions.

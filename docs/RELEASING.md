@@ -15,6 +15,9 @@ Release with:
   `kendex update` downloads.
 - The desktop app bundles Tauri produces per platform (deb/rpm/AppImage,
   dmg, NSIS installer).
+- `latest.json` — the signed manifest the app's Update button installs
+  from, one `{signature, url}` per platform. The publish job writes it from
+  the `.sig` files the lanes staged and fails the job when none arrived.
 - `feed.json` — the update feed `kendex update` reads from
   `releases/latest/download/feed.json`. Publishing the draft makes the
   version "latest". New feeds carry `schema: 1`, a SemVer `version`, and an
@@ -32,9 +35,12 @@ revisit Intel support then.
 ## User-supplied gates
 
 - **Updater signing** (`TAURI_SIGNING_PRIVATE_KEY`,
-  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repo secrets): without them no
-  Tauri updater artifacts are produced (bundle code signing is the
-  separate macOS gate below). CLI self-update is unaffected.
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repo secrets): required. Every lane
+  bundles an updater-enabled target, so an unset key fails bundling with
+  "A public key has been found, but no private key" and the tag produces no
+  release. The public half is `plugins > updater > pubkey` in
+  `crates/app/tauri.conf.json`; a private key that does not match it builds
+  a release the app refuses to install. CLI self-update is unaffected.
 - **macOS signing + notarization** (the seven `APPLE_*` repo secrets:
   certificate p12 + password, signing identity, team id, and the App
   Store Connect API issuer/key-id/key): all seven set, the two mac lanes
@@ -48,7 +54,8 @@ revisit Intel support then.
 
 `cd crates/app && ../../ui/node_modules/.bin/tauri build` produces
 deb/rpm anywhere; the AppImage step needs FUSE2 for linuxdeploy and may
-fail on non-Debian hosts — the release runner covers it.
+fail on non-Debian hosts — the release runner covers it. Bundling signs
+updater artifacts, so set `TAURI_SIGNING_PRIVATE_KEY` or pass `--no-sign`.
 
 ## Version bumps
 

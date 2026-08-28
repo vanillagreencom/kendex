@@ -14,6 +14,9 @@ export const coreHandlers: Record<string, Handler> = {
     servedFeedInFuture: false,
     lastError: null,
   }),
+  app_update_channel: () => ({ kind: "direct" }),
+  // The mock browser harness has no install to replace.
+  app_update_install: () => null,
   capability_table: () => capabilityTable(),
   // No real window or OS pickers to act on in the mock browser harness.
   window_minimize: () => null,

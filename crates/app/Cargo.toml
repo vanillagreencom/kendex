@@ -10,6 +10,8 @@ name = "kendex_app"
 [dependencies]
 kendex-core.workspace = true
 serde.workspace = true
+# `tauri::generate_context!` expands the updater plugin's config through it.
+serde_json.workspace = true
 toml.workspace = true
 tauri.workspace = true
 tauri-specta.workspace = true
@@ -17,12 +19,12 @@ specta.workspace = true
 specta-typescript.workspace = true
 tauri-plugin-dialog = "2.7.2"
 tauri-plugin-opener = "2.5.4"
+tauri-plugin-updater = "2"
 
 [dev-dependencies]
 # Reads the bundled icons back: asserting what they depict is the only way
 # to catch a stale or wrongly regenerated one, and tauri already builds it.
 png = "0.18"
-serde_json.workspace = true
 tempfile.workspace = true
 
 [build-dependencies]

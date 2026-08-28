@@ -316,7 +316,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         Command::Marketplace(command) => commands::marketplace_cmd::run(&env, command)?,
         Command::Index { dir, json } => commands::index_cmd::run(dir, json)?,
         Command::Init { name, kind } => commands::init::run(name, kind)?,
-        Command::Update { force } => commands::update::run(force)?,
+        Command::Update { force } => commands::update::run(&env, force)?,
     }
     Ok(ExitCode::SUCCESS)
 }

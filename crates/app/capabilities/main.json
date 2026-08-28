@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The frameless window draws its own titlebar; dragging it invokes the ACL-gated built-in start_dragging, which needs an explicit grant. Nothing else needs one: our own commands are plain app commands, and the dialog/opener plugins are called through their Rust APIs, which never cross the ACL-gated IPC surface — granting their defaults would only open unused webview endpoints.",
+  "description": "The frameless window draws its own titlebar; dragging it invokes the ACL-gated built-in start_dragging, which needs an explicit grant. Nothing else needs one: our own commands are plain app commands, and the dialog, opener and updater plugins are called through their Rust APIs, which never cross the ACL-gated IPC surface — granting their defaults would only open unused webview endpoints.",
   "windows": ["main"],
   "permissions": ["core:window:allow-start-dragging"]
 }

@@ -169,6 +169,18 @@ fn homebrew_cask_selects_a_dmg_and_checksum_per_mac_arch() {
     );
 }
 
+/// The app calls a cask install `Direct` and offers to replace itself.
+/// Without this stanza Homebrew treats that replacement as drift and
+/// reinstalls the old version over it on the next `brew upgrade`.
+#[test]
+fn homebrew_cask_hands_the_upgrade_to_the_app() {
+    let cask = read("packaging/homebrew/kendex-cask.rb");
+    assert!(
+        cask.lines().any(|l| l.trim() == "auto_updates true"),
+        "{cask}"
+    );
+}
+
 /// Pacman arch names: `x86_64` and `aarch64`, each with its own source
 /// array, mirrored into .SRCINFO.
 #[test]

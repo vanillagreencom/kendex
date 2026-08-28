@@ -121,6 +121,98 @@ fn signing_env_is_exported_only_for_a_complete_secret_set() {
     }
 }
 
+/// Every signed artifact a full tag run leaves in `dist/`, one per lane.
+const SIGNED_ARTIFACTS: [(&str, &str); 5] = [
+    ("linux-x86_64", "kendex_5.1.0_amd64.AppImage.tar.gz"),
+    ("linux-aarch64", "kendex_5.1.0_aarch64.AppImage.tar.gz"),
+    ("darwin-x86_64", "kendex-x86_64-apple-darwin.app.tar.gz"),
+    ("darwin-aarch64", "kendex-aarch64-apple-darwin.app.tar.gz"),
+    ("windows-x86_64", "kendex_5.1.0_x64-setup.exe"),
+];
+
+/// Runs the manifest step over a `dist/` holding exactly `present`
+/// artifacts, each beside its signature, and returns the exit code and
+/// whatever `latest.json` it wrote.
+#[allow(clippy::unwrap_used)]
+fn write_manifest(present: &[&str]) -> (i32, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let dist = dir.path().join("dist");
+    fs::create_dir_all(&dist).unwrap();
+    for artifact in present {
+        fs::write(dist.join(artifact), "bytes").unwrap();
+        fs::write(
+            dist.join(format!("{artifact}.sig")),
+            format!("sig-of-{artifact}"),
+        )
+        .unwrap();
+    }
+    let workflow = workflow();
+    let script = run_script(&step(&workflow, "name: Write the signed update manifest"));
+    let status = std::process::Command::new("bash")
+        .arg("-c")
+        .arg(&script)
+        .current_dir(dir.path())
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("GITHUB_REF_NAME", "v5.1.0")
+        .env("GITHUB_REPOSITORY", "vanillagreencom/kendex")
+        .status()
+        .unwrap();
+    let manifest = fs::read_to_string(dist.join("latest.json")).unwrap_or_default();
+    (status.code().unwrap_or(-1), manifest)
+}
+
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_manifest_pairs_every_signature_with_the_artifact_it_signs() {
+    let artifacts: Vec<&str> = SIGNED_ARTIFACTS.iter().map(|(_, file)| *file).collect();
+    let (code, manifest) = write_manifest(&artifacts);
+    assert_eq!(code, 0, "a complete set must succeed");
+    let manifest: serde_json::Value = serde_json::from_str(&manifest).unwrap();
+    assert_eq!(manifest["version"].as_str(), Some("5.1.0"));
+    for (platform, artifact) in SIGNED_ARTIFACTS {
+        let entry = &manifest["platforms"][platform];
+        assert_eq!(
+            entry["signature"].as_str(),
+            Some(format!("sig-of-{artifact}").as_str()),
+            "{platform}"
+        );
+        assert_eq!(
+            entry["url"].as_str(),
+            Some(
+                format!(
+                    "https://github.com/vanillagreencom/kendex/releases/download/v5.1.0/{artifact}"
+                )
+                .as_str()
+            ),
+            "{platform}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_lane_that_produced_no_signature_is_left_out_never_written_empty() {
+    let (code, manifest) = write_manifest(&["kendex_5.1.0_amd64.AppImage.tar.gz"]);
+    assert_eq!(code, 0);
+    let manifest: serde_json::Value = serde_json::from_str(&manifest).unwrap();
+    let platforms = manifest["platforms"].as_object().unwrap();
+    assert_eq!(platforms.len(), 1);
+    assert!(platforms.contains_key("linux-x86_64"));
+}
+
+/// An unsigned release publishes a manifest the app would read as "nothing
+/// to install", so the job stops instead.
+#[cfg(unix)]
+#[test]
+fn a_release_with_nothing_signed_fails_the_job() {
+    let (code, manifest) = write_manifest(&[]);
+    assert_ne!(code, 0);
+    assert!(manifest.is_empty(), "{manifest}");
+}
+
 fn lane_triples(workflow: &str) -> Vec<&str> {
     workflow
         .lines()

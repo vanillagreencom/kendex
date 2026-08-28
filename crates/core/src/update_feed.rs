@@ -121,6 +121,23 @@ pub fn release_notes_url(version: &str) -> Result<String> {
     ))
 }
 
+/// The release download for the Linux desktop AppImage, named the way
+/// `install.sh` names it. Both halves come from values this build owns: a
+/// version that parsed as SemVer, and a target triple the release builds.
+/// Targets without an AppImage have none.
+pub fn app_image_url(version: &str, target: &str) -> Result<Option<String>> {
+    parse_version("feed", version)?;
+    // Tauri names AppImages with Debian arch words, not the Rust triple.
+    let arch = match target {
+        "x86_64-unknown-linux-gnu" => "amd64",
+        "aarch64-unknown-linux-gnu" => "aarch64",
+        _ => return Ok(None),
+    };
+    Ok(Some(format!(
+        "https://github.com/vanillagreencom/kendex/releases/download/v{version}/kendex_{version}_{arch}.AppImage"
+    )))
+}
+
 fn parse_version(source: &str, value: &str) -> Result<Version> {
     Version::parse(value).map_err(|error| CoreError::UpdateFeedMalformed {
         why: format!("{source} version '{value}' is not SemVer: {error}"),
@@ -198,6 +215,22 @@ mod tests {
                 .unwrap(),
             VersionRelation::Older
         );
+    }
+
+    #[test]
+    fn the_app_image_url_is_built_only_from_a_semver_version_and_a_known_target() {
+        assert_eq!(
+            app_image_url("5.1.0", "x86_64-unknown-linux-gnu").unwrap(),
+            Some(
+                "https://github.com/vanillagreencom/kendex/releases/download/v5.1.0/kendex_5.1.0_amd64.AppImage"
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            app_image_url("5.1.0", "aarch64-apple-darwin").unwrap(),
+            None
+        );
+        assert!(app_image_url("5.1.0 ; rm -rf /", "x86_64-unknown-linux-gnu").is_err());
     }
 
     #[test]

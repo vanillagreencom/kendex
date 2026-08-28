@@ -291,13 +291,13 @@ lives in one capability table read by core and UI.
   mid-read; a failed read shows its error with a retry, kept figures headed
   as the last kendex could check, never a definite count — least of all
   zero. Startup reads — settings, scan, audit, updates — run side by side.
-- **The app release check is cached discovery, never delivery.** Off the
-  launch path, one cross-process transaction checks the fixed GitHub feed
-  at most once per six hours and keeps the last result beside any error;
-  cache reads never follow the final link. The settings preference controls
-  automatic contact, while a manual check is explicit. Debug builds alone
-  honor `KENDEX_UPDATE_FEED`. The unsigned feed reports SemVer and whether
-  it lists a CLI binary for this target; app actions use fixed URLs only.
+- **Discovery is the unsigned feed; delivery is a signed manifest.** Off the
+  launch path, one cross-process transaction reads the fixed GitHub feed at
+  most once per six hours, keeps the last result beside any error, and never
+  follows the final link; the preference gates automatic contact, a manual
+  check is explicit, debug builds alone honor `KENDEX_UPDATE_FEED`. Replacing
+  an install needs the running path writable and outside a system prefix; a
+  package prefix names its update command instead, and anything else neither.
 - Commands that touch disk, git, or a subprocess are
   `#[tauri::command(async)]`. Only window operations stay synchronous.
 - No database: manifests, locks, and native dirs are the state; scans are

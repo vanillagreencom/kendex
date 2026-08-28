@@ -18,6 +18,10 @@ cask "kendex" do
   desc "Package manager for AI coding agents, skills, and hooks"
   homepage "https://kendex.ai"
 
+  # Homebrew's sanctioned way to let an app replace itself: the cask
+  # steps aside, and the in-app Update button owns the upgrade.
+  auto_updates true
+
   depends_on formula: "vanillagreencom/kendex/kendex-cli"
 
   app "kendex.app"

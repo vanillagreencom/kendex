@@ -11,6 +11,18 @@ export const commands = {
 	 *  when the six-hour automatic interval has elapsed.
 	 */
 	appUpdateCheck: (refresh: boolean) => typedError<AppUpdateView, string>(__TAURI_INVOKE("app_update_check", { refresh })),
+	/**
+	 *  Who owns the running bytes, so the notice offers the one action that can
+	 *  work on this machine.
+	 */
+	appUpdateChannel: () => typedError<InstallChannel, string>(__TAURI_INVOKE("app_update_channel")),
+	/**
+	 *  Replace this install with the latest release and relaunch into it. The
+	 *  separately signed updater manifest is the delivery path and verifies
+	 *  itself; the discovery feed never supplies an install URL. A failure
+	 *  leaves the running app untouched and usable.
+	 */
+	appUpdateInstall: () => typedError<null, string>(__TAURI_INVOKE("app_update_install")),
 	scanMachine: () => typedError<ScanResult, string>(__TAURI_INVOKE("scan_machine")),
 	getSettings: () => typedError<SettingsRead, string>(__TAURI_INVOKE("get_settings")),
 	/**
@@ -1274,6 +1286,21 @@ export type ImportSelection = {
 	 */
 	licenseBasis?: string | null,
 };
+
+/**  How the running install may be brought up to date. */
+export type InstallChannel = 
+/**  The running install is ours to replace. */
+{ kind: "direct" } | 
+/**
+ *  A system package manager owns these bytes; `command` brings them
+ *  current and is the only thing to offer.
+ */
+{ kind: "managed"; command: string } | 
+/**
+ *  Not recognised: say a release is out, never replace anything, never
+ *  invent a command.
+ */
+{ kind: "unknown" };
 
 export type InstallDefaults = {
 	harnesses?: HarnessId[],
