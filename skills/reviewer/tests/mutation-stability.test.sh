@@ -59,17 +59,18 @@ if [ "$rc" = 2 ]; then ok "--stability 0 is refused as zero samples"; else bad "
 rc=0; "$MS" --worktree "$REPO" --sha "$SHA" --test 'true' --mutate 2>/dev/null || rc=$?
 if [ "$rc" = 2 ]; then ok "a value-less option exits 2"; else bad "a value-less option exits 2" "rc=$rc"; fi
 
-# A build cache the caller shares across both copies must not hand the clean
-# run the mutant's artifact. git archive stamps every file with the commit
-# time, so a cache keyed on mtimes, cargo's target dir being the usual one,
-# finds nothing newer than what the mutant build left in it. check.sh is that
-# cache: it rebuilds only when the source is newer than what it holds.
+# A build cache the caller shares across both copies must answer neither run
+# with the other's artifact. check.sh is that cache, keyed the way cargo's
+# target dir is: it rebuilds for a source strictly newer than what it holds,
+# in whole seconds, the coarsest granularity a filesystem or cache keeps. Both
+# ways it can be wrong are here — the mutant reusing the control's build and
+# surviving, the clean copy reusing the mutant's and failing.
 export CACHE="$TMP/build-cache"
 mkdir -p "$CACHE"
 cat > "$REPO/check.sh" <<'T'
-if [ ! -f "$CACHE/built.sh" ] || [ lib.sh -nt "$CACHE/built.sh" ]; then
-  cp lib.sh "$CACHE/built.sh"
-fi
+built=0
+[ ! -f "$CACHE/built.sh" ] || built=$(stat -c %Y "$CACHE/built.sh")
+[ "$(stat -c %Y lib.sh)" -le "$built" ] || cp lib.sh "$CACHE/built.sh"
 . "$CACHE/built.sh"
 [ "$(add 2 3)" = 5 ]
 T
@@ -78,7 +79,8 @@ git -C "$REPO" -c user.email=t@t -c user.name=t commit -qm cached
 SHA3=$(git -C "$REPO" rev-parse HEAD)
 rc=0; out=$("$MS" --worktree "$REPO" --sha "$SHA3" --test 'bash check.sh' \
       --mutate 'sed -i "s/+/-/" lib.sh' --stability 3 --threads 2) || rc=$?
-if [ "$rc" = 0 ]; then ok "a shared mtime-keyed build cache stays stable"; else bad "a shared mtime-keyed build cache stays stable" "rc=$rc out=$out"; fi
+if [ "$rc" = 0 ]; then ok "a shared whole-second build cache reaches the right verdict"; else bad "a shared whole-second build cache reaches the right verdict" "rc=$rc out=$out"; fi
+case "$out" in "mutation: killed 1/1"*) ok "the mutant build rebuilds instead of reusing the control";; *) bad "the mutant build rebuilds instead of reusing the control" "$out";; esac
 case "$out" in *"stability: 3/3 at 2 threads") ok "the clean copy rebuilds instead of reusing the mutant";; *) bad "the clean copy rebuilds instead of reusing the mutant" "$out";; esac
 
 # A filesystem or cache that keeps whole seconds rounds an extraction and the
@@ -88,7 +90,7 @@ kept=$("$MS" --worktree "$REPO" --sha "$SHA3" --test 'bash check.sh' \
       --mutate 'sed -i "s/+/-/" lib.sh' --stability 1 --threads 2 --keep 2>&1 >/dev/null || true)
 root=$(printf '%s\n' "$kept" | sed -n 's/^kept: //p')
 if [ -d "$root/clean" ]; then
-  gap=$(( $(stat -c %Y "$root/clean/lib.sh") - $(stat -c %Y "$root/mutant/lib.sh") ))
+  gap=$(( $(stat -c %Y "$root/clean/check.sh") - $(stat -c %Y "$root/mutant/check.sh") ))
   rm -rf "$root"
   if [ "$gap" -ge 1 ]; then ok "each copy is stamped a whole second past the one before"; else bad "each copy is stamped a whole second past the one before" "gap=${gap}s"; fi
 else

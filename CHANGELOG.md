@@ -75,9 +75,9 @@ an outside contributor.
 
 ### Fixed
 
-- `mutation-stability` no longer scores a stable test as unstable when the
-  caller shares a build cache. Both copies came out of `git archive` stamped
-  with the commit's time, so cargo reran the mutant's binary for the clean run.
+- `mutation-stability` no longer reads a stable test as unstable, or a killed
+  mutant as a survivor, when the caller shares a build cache. Everything it
+  wrote to a copy is now stamped past the build before it, so cargo rebuilds.
 
 - `kendex check` names every stranded commit-hook file, not the first and half
   of the next. A deep checkout path — macOS temp directories, most nested

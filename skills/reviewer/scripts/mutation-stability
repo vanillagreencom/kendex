@@ -59,16 +59,19 @@ case "$THREADS" in *[!0-9]*|''|0) echo "--threads wants a positive integer" >&2;
 ROOT=$(mktemp -d "${TMPDIR:-/tmp}/mutation-stability.XXXXXX") || exit 2
 [ "$KEEP" = 1 ] || trap 'rm -rf "$ROOT"' EXIT
 
-extract() { # extract SHA into $1, stamped a second past the build before it
+# A build cache keyed on mtimes rebuilds only for a source STRICTLY newer than
+# what it holds, and a filesystem or cache keeping whole seconds rounds two
+# events one second apart to the same stamp. Every write this script makes to
+# a source tree waits that boundary out first, so what it wrote always outranks
+# the build before it. Without that, the cache the caller shares — usually
+# CARGO_TARGET_DIR — answers the next run with the last run's test binary.
+outrank_last_build() { sleep 1; }
+
+extract() { # extract SHA into $1, stamped past the build before it
   mkdir -p "$1" || return 1
-  # git archive stamps every file with the commit time, so a build cache the
-  # caller shares across the two copies, usually CARGO_TARGET_DIR, would find
-  # nothing newer than the artifacts it already holds and hand the clean run
-  # the mutant's test binary. -m stamps the extraction instead, and the wait
-  # puts that stamp a whole second past the last build: a filesystem or cache
-  # that keeps no fractions rounds the two to the same second otherwise, and
-  # a cache rebuilds on a strictly newer source, never an equal one.
-  sleep 1
+  # -m discards the archive's mtimes: git archive stamps every file with the
+  # commit time, older than anything a shared cache already holds.
+  outrank_last_build
   git -C "$WORKTREE" archive "$SHA" | tar -x -m -C "$1"
 }
 
@@ -84,6 +87,7 @@ if ! run_test "$ROOT/mutant" "$THREADS"; then
   exit 2
 fi
 
+outrank_last_build
 (cd "$ROOT/mutant" && bash -c "$MUTATE") || { echo "mutate command failed" >&2; exit 2; }
 
 KILLED=1
