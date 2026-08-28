@@ -86,8 +86,6 @@ interface AccountStore {
   error: string | null;
   /** Why the last account read failed, or null when it landed. */
   readError: string | null;
-  /** A read is out. The retry button is dead only while this is up. */
-  reading: boolean;
   submissions: SubmissionRow[] | null;
 
   /** The account read. Startup makes it, a return to the window repeats
@@ -116,14 +114,11 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
   signingIn: false,
   error: null,
   readError: null,
-  reading: false,
   submissions: null,
 
   load: async () => {
     const at = generation;
-    set({ reading: true });
     const answer = await readAccount();
-    set({ reading: false });
     // Signing in, signing out and cancelling all say what the account is
     // now. A read that began before one of them is older news, and would
     // put back the state the person just left.

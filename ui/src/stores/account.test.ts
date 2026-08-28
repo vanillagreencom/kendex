@@ -46,7 +46,6 @@ const fresh = () =>
     account: { kind: "loading" },
     error: null,
     readError: null,
-    reading: false,
     submissions: null,
     signingIn: false,
     userCode: null,
@@ -141,7 +140,6 @@ describe("a read that could not be made", () => {
     expect(useAccountStore.getState().readError).toContain(
       "ipc channel closed",
     );
-    expect(useAccountStore.getState().reading).toBe(false);
   });
 });
 
@@ -240,7 +238,6 @@ describe("a read racing a deliberate change", () => {
         }),
     );
     const reading = load();
-    expect(useAccountStore.getState().reading).toBe(true);
     vi.mocked(commands.accountLogout).mockResolvedValue({
       status: "ok",
       data: null,
@@ -251,8 +248,6 @@ describe("a read racing a deliberate change", () => {
     gate.land?.({ ok: { kind: "signed-in", identity: ADA } });
     await reading;
     expect(account()).toEqual({ kind: "signed-out" });
-    // The dropped read still has to put the button back.
-    expect(useAccountStore.getState().reading).toBe(false);
   });
 });
 
