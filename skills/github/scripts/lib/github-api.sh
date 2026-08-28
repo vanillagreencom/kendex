@@ -307,25 +307,35 @@ select_github_auth_token() {
 
 # Load and validate a GitHub auth token from process env or project config/env.
 # Supports direct tokens (ghp_*, gho_*, ghu_*, ghs_*, ghr_*) and 1Password references (op://...)
-# Returns: token string if valid, empty string if not configured/invalid
+# Returns: token string if valid, empty string if not configured/invalid;
+#          nonzero on a REJECTED settings load — callers run under errexit,
+#          so a malformed settings file fails the operation instead of
+#          silently mutating as the current user.
 # Outputs: diagnostic messages to stderr
 load_bot_token() {
     local token=""
 
     if ! token=$(select_github_auth_token); then
         # Load public settings, then .env.local, only when the process env
-        # did not already carry a resolved GitHub token. A FAILED load
-        # supplies no project token (the bail in the preserving-caller
-        # loader): selection is skipped and the token stays unconfigured,
-        # with the loader's ::error on stderr.
+        # did not already carry a resolved GitHub token. A REJECTED load is
+        # a loud failure, never an empty not-configured success: pr-create
+        # and pr-merge read empty as "mutate as the current user", and a
+        # settings defect must not switch the GitHub identity. Genuinely
+        # ABSENT configuration loads cleanly and keeps that fallback.
         if kendex_github_load_project_env_preserving_caller "$PROJECT_ROOT"; then
             token=$(select_github_auth_token || true)
+        else
+            echo "::error::github-api: refusing the current-user fallback on a rejected settings load (fix the settings defect named above)" >&2
+            return 1
         fi
     elif [[ "$token" == op://* ]]; then
         # An unresolved inherited token can still be overridden by project
-        # env; a FAILED load keeps the inherited reference as-is.
+        # env; the same rejected-load refusal applies.
         if kendex_github_load_project_env_preserving_caller "$PROJECT_ROOT"; then
             token=$(select_github_auth_token || true)
+        else
+            echo "::error::github-api: refusing the current-user fallback on a rejected settings load (fix the settings defect named above)" >&2
+            return 1
         fi
     fi
 
@@ -824,7 +834,10 @@ detect_bot_reviewers() {
 check_bot_token() {
     local format="${1:-safe}"
     local token
-    token=$(load_bot_token 2>/dev/null)
+    # A read-only status probe keeps its binary contract: a rejected
+    # settings load reads as not-configured here rather than aborting —
+    # the loud path belongs to the mutating commands.
+    token=$(load_bot_token 2>/dev/null) || token=""
 
     case "$format" in
     safe | json | true) # "true" for backward compat with old boolean param

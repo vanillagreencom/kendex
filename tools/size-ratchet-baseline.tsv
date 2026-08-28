@@ -66,7 +66,7 @@ skills/deep-research/scripts/deep-research	529
 skills/github/scripts/commands/pr-merge.sh	717
 skills/github/scripts/git-diff-summary	961
 skills/github/scripts/lib/gh-auth.sh	494
-skills/github/scripts/lib/github-api.sh	884
+skills/github/scripts/lib/github-api.sh	897
 skills/github/scripts/lib/verify-lib.sh	415
 skills/github/tests/git-diff-summary-cfg-test-declaration.test.sh	2128
 skills/growth-guards/scripts/install-git-hooks	548

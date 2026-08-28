@@ -300,19 +300,27 @@ else
   printf '  FAIL  the partial-read bail keeps the loader diagnostic on stderr\n        stderr: %s\n' "$(cat "$TMP_ROOT/partial-token.err")"
 fi
 
-# Same bail through github-api.sh's load_bot_token continuation sites:
-# unconfigured (empty, rc 0) with the diagnostic surfaced, never the
-# partial token and never an abort blaming auth.
+# Through github-api.sh's load_bot_token (the pr-create/pr-merge path,
+# both errexit callers) a REJECTED load is a loud failure, never an empty
+# not-configured success: empty means "mutate as the current user", and a
+# settings defect must not switch the GitHub identity.
 rc=0
 output=$(load_token 2>"$TMP_ROOT/partial-bot.err") || rc=$?
-assert_eq "$rc" "0" "load_bot_token treats the refused load as unconfigured, not an auth abort"
-assert_eq "$output" "" "load_bot_token picks no token off the partial read"
+assert_eq "$rc" "1" "load_bot_token fails LOUD on a rejected settings load (no current-user fallback)"
+assert_eq "$output" "" "no token text escapes the rejected load"
 if grep -q "assigned more than once" "$TMP_ROOT/partial-bot.err"; then
   PASS=$((PASS + 1))
   printf '  ok    load_bot_token keeps the loader diagnostic on stderr\n'
 else
   FAIL=$((FAIL + 1))
   printf '  FAIL  load_bot_token keeps the loader diagnostic on stderr\n        stderr: %s\n' "$(cat "$TMP_ROOT/partial-bot.err")"
+fi
+if grep -q "refusing the current-user fallback" "$TMP_ROOT/partial-bot.err"; then
+  PASS=$((PASS + 1))
+  printf '  ok    the refusal names the identity fallback it is preventing\n'
+else
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  the refusal names the identity fallback it is preventing\n        stderr: %s\n' "$(cat "$TMP_ROOT/partial-bot.err")"
 fi
 rm -f "$TMP_ROOT/repo/kendex.settings.toml" "$TMP_ROOT/repo/.env.local"
 
