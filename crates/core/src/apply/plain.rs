@@ -121,6 +121,13 @@ impl Plain {
     /// Put these bytes in the file, through the handle it was proved on.
     /// In place, as `fs::write` is: a crash mid-write is what the
     /// journal's pre-image exists to undo.
+    ///
+    /// Identity follows the handle and not the name — that is the whole
+    /// point — but a handle can outlive every name that reached it, and
+    /// bytes put into an inode nothing can open again are not a save. So
+    /// the last thing asked is whether the file still has a name: none
+    /// left means the file the plan proved is gone, nothing durable
+    /// happened, and that is a stale plan rather than a success.
     pub(super) fn write(self, path: &Path, bytes: &[u8]) -> Result<()> {
         let io = |e| CoreError::io(path, e);
         let mut file = match self {
@@ -130,27 +137,76 @@ impl Plain {
         file.set_len(0).map_err(io)?;
         file.rewind().map_err(io)?;
         file.write_all(bytes).map_err(io)?;
-        file.flush().map_err(io)
+        file.flush().map_err(io)?;
+        match reachable(&file) {
+            true => Ok(()),
+            false => Err(stale(path)),
+        }
     }
+}
+
+/// Whether any name still reaches this file. Unix answers exactly, from
+/// the handle; elsewhere an open file cannot usually be unlinked at all,
+/// and where the question cannot be asked the write stands as it always
+/// did.
+#[cfg(unix)]
+fn reachable(file: &fs::File) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    file.metadata().map(|meta| meta.nlink() > 0).unwrap_or(true)
+}
+
+#[cfg(not(unix))]
+fn reachable(_file: &fs::File) -> bool {
+    true
 }
 
 /// Create the file, and the directory it needs, in the order that keeps
 /// `PlanStale` honest.
 ///
 /// The exclusive create comes first, so a name somebody else won is
-/// refused before anything is made — `PlanStale` is the rollback's proof
-/// that the failing op ran nothing, and a directory left behind would make
-/// it a lie. Only a missing parent sends us back to make one, and after
-/// that the op HAS mutated, so a second failure is reported as itself
-/// however it looks.
+/// refused before anything is made. A create that loses that race is the
+/// world moving under the plan and says so: reporting it as an ordinary
+/// failure puts the op's paths in the rollback's restore set, and the
+/// rollback would then DELETE the file the winner had just written — a
+/// leftover directory is not worth somebody else's data. Where a chain
+/// had to be made first, it is unmade again, so the refusal is true to
+/// the letter and not merely in effect.
 fn create_exclusively(path: &Path) -> Result<fs::File> {
     match create_new(path) {
         Ok(file) => Ok(file),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            ensure_parent(path)?;
-            create_new(path).map_err(|error| CoreError::io(path, error))
+            let made = make_parents(path)?;
+            create_new(path).map_err(|error| {
+                unmake(&made);
+                classify(path, error)
+            })
         }
         Err(error) => Err(classify(path, error)),
+    }
+}
+
+/// Make the directory a write lands in, returning the ones that were not
+/// there, deepest first — what a refusal after this has to put back.
+fn make_parents(path: &Path) -> Result<Vec<std::path::PathBuf>> {
+    let Some(parent) = path.parent() else {
+        return Ok(Vec::new());
+    };
+    let mut made = Vec::new();
+    let mut cursor = Some(parent);
+    while let Some(dir) = cursor.filter(|dir| !dir.as_os_str().is_empty() && !dir.exists()) {
+        made.push(dir.to_path_buf());
+        cursor = dir.parent();
+    }
+    ensure_parent(path)?;
+    Ok(made)
+}
+
+/// Take back the directories this op made, deepest first. Only while they
+/// are still empty: something that moved in since is not this op's to
+/// remove, and leaving it is the safe way to be wrong.
+fn unmake(made: &[std::path::PathBuf]) {
+    for dir in made {
+        let _ = fs::remove_dir(dir);
     }
 }
 

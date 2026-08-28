@@ -47,19 +47,93 @@ fn a_swap_between_the_check_and_the_write_cannot_move_the_bytes() {
         "the hole: a following write lands at the other end of the link"
     );
 
-    // One handle, same swap.
+    // One handle, same swap. The bytes do not reach the link's target —
+    // and the write says so rather than reporting a save, because the
+    // swap unlinked the file it was proved on and an inode no name
+    // reaches is not somewhere anything was saved.
     let (_tmp, path, elsewhere) = fixture();
     fs::write(&path, "[env]\n").unwrap();
     fs::write(&elsewhere, "someone else's file\n").unwrap();
     let pre = Base::of("[env]\n").plain_pre();
     let plain = open(&path, &pre).unwrap().expect("a plain precondition");
     link_over(&path, &elsewhere);
-    plain.write(&path, b"written").unwrap();
+    let refused = plain.write(&path, b"written").unwrap_err();
+    assert!(
+        matches!(refused, CoreError::PlanStale { .. }),
+        "{refused:?}"
+    );
     assert_eq!(
         fs::read_to_string(&elsewhere).unwrap(),
         "someone else's file\n",
         "the bytes must not reach the file the link points at"
     );
+}
+
+/// A write whose file still has a name is a save, and says so. The pair
+/// to the refusal above: the check is about the file having gone, not
+/// about the name having changed — a second name is still a name.
+#[test]
+fn a_write_reports_a_save_while_any_name_still_reaches_the_file() {
+    let (tmp, path, _) = fixture();
+    fs::write(&path, "[env]\n").unwrap();
+    let also = tmp.path().join("also.toml");
+    fs::hard_link(&path, &also).unwrap();
+    let pre = Base::of("[env]\n").plain_pre();
+    let plain = open(&path, &pre).unwrap().expect("a plain precondition");
+    // The name the write was asked about is gone; the other one remains.
+    fs::remove_file(&path).unwrap();
+    plain.write(&path, b"kept").unwrap();
+    assert_eq!(fs::read_to_string(&also).unwrap(), "kept");
+}
+
+/// A create that loses the race is the world moving under the plan, so it
+/// refuses stale — and must, because reporting it as an ordinary failure
+/// puts this op's paths in the rollback's restore set and the rollback
+/// then deletes the file the winner had just written.
+#[test]
+fn a_create_that_loses_the_race_refuses_stale_and_leaves_nothing_behind() {
+    let (tmp, _, _) = fixture();
+    let nested = tmp.path().join("not-yet/deeper/kendex.settings.toml");
+    let plain = open(&nested, &Base::absent().plain_pre())
+        .unwrap()
+        .expect("a plain precondition");
+    // A writer wins the name — and the chain — before the write runs.
+    fs::create_dir_all(nested.parent().unwrap()).unwrap();
+    fs::write(&nested, "the winner's bytes\n").unwrap();
+
+    let refused = plain.write(&nested, b"[env]\n").unwrap_err();
+    assert!(
+        matches!(refused, CoreError::PlanStale { .. }),
+        "{refused:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(&nested).unwrap(),
+        "the winner's bytes\n",
+        "the winner's file must still be there for the rollback to spare"
+    );
+}
+
+/// And where this op DID have to build the chain before losing the race,
+/// it takes the chain back, so the stale refusal is true to the letter
+/// rather than only in effect.
+#[test]
+fn a_chain_made_before_a_lost_race_is_unmade_again() {
+    let (tmp, _, _) = fixture();
+    let nested = tmp.path().join("not-yet/deeper/kendex.settings.toml");
+    // `make_parents` reports what it built; the create after it loses.
+    let made = make_parents(&nested).unwrap();
+    assert_eq!(made.len(), 2, "{made:?}");
+    fs::write(&nested, "the winner's bytes\n").unwrap();
+    let taken = create_exclusively(&nested);
+    assert!(
+        matches!(taken, Err(CoreError::PlanStale { .. })),
+        "{taken:?}"
+    );
+    // The winner's file is still there, so its directory stays with it.
+    assert!(nested.exists());
+    fs::remove_file(&nested).unwrap();
+    unmake(&made);
+    assert!(!tmp.path().join("not-yet").exists());
 }
 
 /// A link already at the name never opens at all.
@@ -449,4 +523,36 @@ fn every_way_a_swap_shows_up_reads_as_a_stale_plan() {
         open(&under_a_file, &pre),
         Err(CoreError::PlanStale { .. })
     ));
+}
+
+/// "Nothing is here" is two variants, and a caller that matches one of
+/// them stops seeing the other the day a second is added. That is not
+/// hypothetical: adding `PlainAbsent` made a fork rename read a file it
+/// had always skipped, because it matched `Absent` alone.
+#[test]
+fn nothing_is_here_is_one_question_however_many_variants_spell_it() {
+    assert!(Pre::Absent.binds_nothing());
+    assert!(Pre::PlainAbsent.binds_nothing());
+    for binds_content in [
+        Pre::HashIs {
+            hash: "x".to_owned(),
+        },
+        Pre::PlainHashIs {
+            hash: "x".to_owned(),
+        },
+        Pre::TreeIs {
+            hash: "x".to_owned(),
+        },
+        Pre::SymlinkTo { target: "t".into() },
+        Pre::Any,
+    ] {
+        assert!(!binds_content.binds_nothing(), "{binds_content:?}");
+    }
+
+    // And what `plain_observed` answers for a path with nothing at it is
+    // one of the two, which is what the fork rename asks.
+    let (_tmp, path, _) = fixture();
+    assert!(Pre::plain_observed(&path).unwrap().binds_nothing());
+    fs::write(&path, "[env]\n").unwrap();
+    assert!(!Pre::plain_observed(&path).unwrap().binds_nothing());
 }
