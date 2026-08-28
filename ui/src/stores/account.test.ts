@@ -481,7 +481,11 @@ describe("which states go looking for submissions", () => {
 describe("a call refused because the sign-in expired", () => {
   const expired = { kind: "expired" as const, message: "run login again" };
 
-  const met = () => useAccountStore.getState().refused(expired);
+  /** The refusal landing under the account it was made for. */
+  const met = () =>
+    useAccountStore
+      .getState()
+      .refused(expired, useAccountStore.getState().handovers());
 
   it("goes to expired and drops the rows with it", () => {
     useAccountStore.setState({
@@ -527,12 +531,121 @@ describe("a call refused because the sign-in expired", () => {
     expect(account()).toEqual({ kind: "signed-out" });
   });
 
+  // The expiry belongs to the credential the call went out under. A
+  // submit is in flight for as long as the server takes, and the sign-in
+  // can be replaced inside that window: a sign-out, a device flow
+  // finishing behind the dialog, or `kendex login` in a terminal, which
+  // the next window focus reads. Ending the account over an expiry that
+  // is not about the credential on screen signs the person out of the
+  // one they just signed into.
+  describe("that lands after the sign-in it was made under is gone", () => {
+    const BOB = { name: "Bob", githubLogin: "bob" };
+    const ROW = {
+      repo: "ada/team-skills",
+      status: "pending",
+      status_reason: null,
+      head_commit: null,
+      indexed_at: null,
+    };
+
+    /** Submits under the account on screen, replaces the sign-in with
+     *  `replace` while it is in flight, and lands the expiry behind it.
+     *  Answers what the store settled on before the refusal, which is
+     *  what a refusal about a credential nobody holds must leave. */
+    const refusedAfter = async (replace: () => Promise<void>) => {
+      useAccountStore.setState({
+        account: { kind: "signed-in", identity: ADA },
+        submissions: [ROW],
+      });
+      const since = useAccountStore.getState().handovers();
+      await replace();
+      const settled = {
+        account: account(),
+        submissions: useAccountStore.getState().submissions,
+      };
+      useAccountStore.getState().refused(expired, since);
+      return settled;
+    };
+
+    /** Nothing the refusal did: the account and its rows as they were. */
+    const unchangedFrom = (settled: {
+      account: ReturnType<typeof account>;
+      submissions: ReturnType<typeof useAccountStore.getState>["submissions"];
+    }) => {
+      expect(account()).toEqual(settled.account);
+      expect(useAccountStore.getState().submissions).toEqual(
+        settled.submissions,
+      );
+    };
+
+    it("leaves a sign-out where it found it", async () => {
+      vi.mocked(commands.accountLogout).mockResolvedValue({
+        status: "ok",
+        data: null,
+      } as Awaited<ReturnType<typeof commands.accountLogout>>);
+      const settled = await refusedAfter(() =>
+        useAccountStore.getState().signOut(),
+      );
+      unchangedFrom(settled);
+      expect(account()).toEqual({ kind: "signed-out" });
+    });
+
+    it("leaves the credential a device flow put there in its place", async () => {
+      vi.mocked(commands.accountLoginStart).mockResolvedValue({
+        status: "ok",
+        data: {
+          deviceCode: "kxd_test",
+          userCode: "ABCD-2345",
+          verificationUrl: "https://kendex.ai/device",
+          intervalSeconds: 1,
+        },
+      } as Awaited<ReturnType<typeof commands.accountLoginStart>>);
+      vi.mocked(commands.accountLoginPoll).mockResolvedValue({
+        status: "ok",
+        data: "signed",
+      } as Awaited<ReturnType<typeof commands.accountLoginPoll>>);
+      vi.mocked(commands.openUrl).mockResolvedValue({
+        status: "ok",
+        data: null,
+      } as Awaited<ReturnType<typeof commands.openUrl>>);
+      serves({ kind: "signed-in", identity: BOB });
+
+      const settled = await refusedAfter(async () => {
+        vi.useFakeTimers();
+        const signing = useAccountStore.getState().signIn();
+        await vi.advanceTimersByTimeAsync(1100);
+        await signing;
+        vi.useRealTimers();
+      });
+
+      unchangedFrom(settled);
+      expect(account()).toEqual({ kind: "signed-in", identity: BOB });
+    });
+
+    // The route a terminal `kendex login` takes: nothing in the app signs
+    // in, and the replacement arrives as a read that finds a credential
+    // where there was already one.
+    it("leaves a credential a terminal login put there in its place", async () => {
+      serves({ kind: "signed-in", identity: BOB });
+      const settled = await refusedAfter(load);
+
+      unchangedFrom(settled);
+      expect(account()).toEqual({ kind: "signed-in", identity: BOB });
+      // The rows went with the account that owned them, at the read that
+      // saw the change of hands, not at the refusal that landed after.
+      expect(useAccountStore.getState().submissions).toBeNull();
+    });
+  });
+
   it("says nothing about the account when the refusal is anything else", () => {
     const signedIn = { kind: "signed-in" as const, identity: ADA };
     useAccountStore.setState({ account: signedIn, submissions: [] });
     useAccountStore
       .getState()
-      .refused({ kind: "failed", message: "kendex.ai could not be reached" });
+      .refused(
+        { kind: "failed", message: "kendex.ai could not be reached" },
+        useAccountStore.getState().handovers(),
+      );
     expect(account()).toEqual(signedIn);
     expect(useAccountStore.getState().submissions).toEqual([]);
   });
