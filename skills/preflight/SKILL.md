@@ -1,7 +1,7 @@
 ---
 name: preflight
 description: "Load to run, tune, or debug preflight."
-summary: "Diff-scoped deterministic pre-review checks: shell parse and shellcheck errors, fail-open bash, unwired test suites, untrapped scratch dirs, dead path citations, TODO markers, bot attributions, malformed JSON, TOML, and workflows."
+summary: "Diff-scoped deterministic pre-review checks: shell parse and shellcheck errors, fail-open bash, unwired test suites, untrapped scratch dirs, dead path citations, edited applied migrations, TODO markers, bot attributions, malformed JSON, TOML, and workflows."
 license: MIT
 user-invocable: true
 metadata:
@@ -43,6 +43,7 @@ checkout. The default base is `origin/HEAD`, then `origin/main`, then
 | `mktemp-trap` | A new shell file with an added `mktemp` invocation — the word at a command position, not named in a comment or a string — and no `trap … EXIT` anywhere in it. | built in |
 | `hardcoded-temp-path` | An added directory-creating call taking a literal absolute temp path (`/tmp/…`, `/var/tmp/…`) as (part of) its first argument — `mkdtemp`/`mkdir` and their `Sync` variants (JS/TS), `mkdtemp`/`makedirs`/`mkdir` (Python), `create_dir_all` (Rust), and a shell `mkdir -p` at a command position. Not the shape: the literal as a value (config field, fixture string, path nothing creates), a `$TMPDIR`-derived path, or a commented-out call. | built in |
 | `docs-cited-paths` | An added backticked path in a `.md` file, inside a directory the repo really has and the doc's own subtree, that names nothing tracked or on disk. Also the reverse: an added source line citing a `.md` path that names nothing tracked or on disk — URL spans and double-quoted strings are stripped first; data files (JSON/TOML/YAML/lock), test-named files, and installed-artifact subtrees (`.agents/` and the harness dirs' skills/agents/hooks/rules/instructions/packages/kendex trees) are out of scope; the same directory guards apply. | built in |
+| `applied-migration-edited` | A path the base already carried, changed, deleted or renamed, matching a configured migrations glob. `PREFLIGHT_MIGRATION_GLOBS` replaces the set (default `**/migrations/*.sql` and `**/migrations/*_*.py`, `**/` matching at any depth); an empty value turns the lane off. refinery, Flyway, Liquibase, Alembic and sqlx each record a checksum over an applied migration's name and text and refuse to open a database whose recorded checksum moved; the correction is a new migration, never an edit here. A file ADDED at a new version is not the shape, and `--all`, which reads every tracked line as added, stays quiet. | built in |
 | `todo-links` | An added `TODO:`/`FIXME(` marker — the word immediately followed by `:` or `(` — with no `#N`, `ABC-123`, or URL on the line. Prose that merely uses the word is not a marker. | built in |
 | `reviewer-attribution` | An added line crediting a transient reviewer-bot pass: a fleet bot name (qodo, copilot, coderabbit, codex, devin; `PREFLIGHT_BOT_NAMES` replaces the set) coupled to a PR/review reference — a parenthetical credit, `per <bot> review`, or `<bot> review of #N`. Prose that merely names a bot is not the shape. `CHANGELOG.md` is exempt. | built in |
 | `data-syntax` | A changed `.json` or `.toml` file no parser accepts. | jq, taplo or python3 |
@@ -56,7 +57,7 @@ Installed-artifact subtrees (`.agents/` and the harness dirs'
 skills/agents/hooks/rules/instructions/packages/kendex trees) are out of
 scope for `masked-returns`, `fail-open`, `unwired-suite`, `mktemp-trap`,
 `docs-cited-paths`, `todo-links`. `shell-syntax`, `shellcheck-errors`,
-`hardcoded-temp-path`, `reviewer-attribution`,
+`hardcoded-temp-path`, `reviewer-attribution`, `applied-migration-edited`,
 `data-syntax`, `workflow-run-syntax` stay on there. A `prompts/` or
 `commands/` tree under a harness dir keeps every lane. A lane whose tool
 is missing skips silently — it neither fails nor passes the run.

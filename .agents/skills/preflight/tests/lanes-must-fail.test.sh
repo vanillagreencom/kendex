@@ -26,7 +26,10 @@ skipped() { printf '  skip  %s (%s)\n' "$1" "$2"; }
 
 seed() { # NAME — fixture in $R: committed baseline, origin/main, feature branch
   R="$TMP/$1"
-  mkdir -p "$R/docs" "$R/scripts" "$R/data"
+  # Migrations sit one directory down and more than one is committed, so a
+  # deleted one is a path the glob no longer finds on disk while its siblings
+  # still match: the shape that catches a setting read with globbing on.
+  mkdir -p "$R/docs" "$R/scripts" "$R/data" "$R/store/migrations"
   git -C "$R" -c init.defaultBranch=main init -q
   git -C "$R" config user.email test@example.com
   git -C "$R" config user.name test
@@ -35,6 +38,8 @@ seed() { # NAME — fixture in $R: committed baseline, origin/main, feature bran
   printf '#!/usr/bin/env bash\nset -euo pipefail\necho existing\n' >"$R/scripts/existing.sh"
   printf '#!/usr/bin/env bash\necho loose\n' >"$R/scripts/loose.sh"
   printf '{\n  "ok": true\n}\n' >"$R/data/config.json"
+  printf 'CREATE TABLE t (id INTEGER);\n' >"$R/store/migrations/V1__init.sql"
+  printf 'CREATE TABLE u (id INTEGER);\n' >"$R/store/migrations/V2__more.sql"
   git -C "$R" add -A
   git -C "$R" commit -qm init
   git clone -q --bare "$R" "$R.git"
@@ -367,6 +372,28 @@ YML
 else
   skipped "workflow-run-syntax must-fail control" "no python3 with PyYAML"
 fi
+
+echo "=== lane applied-migration-edited: a migration a database has already run ==="
+seed migrationedit
+printf 'CREATE TABLE t (id INTEGER); -- clearer\n' >"$R/store/migrations/V1__init.sql"
+git -C "$R" add -A
+run_pf
+fires "editing a migration the base already carried fails" "store/migrations/V1__init.sql:0: [applied-migration-edited] an applied migration was edited"
+run_pf --staged
+fires "the staged scope sees the same edit" "store/migrations/V1__init.sql:0: [applied-migration-edited]"
+
+seed migrationdelete
+git -C "$R" rm -q store/migrations/V1__init.sql
+run_pf
+fires "deleting one is the same finding" "store/migrations/V1__init.sql:0: [applied-migration-edited] an applied migration was deleted"
+
+seed migrationrename
+# A repo that turns rename detection off would otherwise see the move as a
+# delete and an add, and the finding would not say where the file went.
+git -C "$R" config diff.renames false
+git -C "$R" mv store/migrations/V2__more.sql store/migrations/V2__later.sql
+run_pf
+fires "renaming one names where it went" "store/migrations/V2__more.sql:0: [applied-migration-edited] an applied migration was renamed to store/migrations/V2__later.sql"
 
 echo "=== the verdict line counts findings and changed files ==="
 seed verdict

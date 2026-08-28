@@ -31,7 +31,7 @@ skipped() {
 
 seed() { # NAME — fixture in $R: committed baseline, origin/main, feature branch
   R="$TMP/$1"
-  mkdir -p "$R/docs" "$R/scripts" "$R/hooks" "$R/tests" "$R/data"
+  mkdir -p "$R/docs" "$R/scripts" "$R/hooks" "$R/tests" "$R/data" "$R/store/migrations"
   git -C "$R" -c init.defaultBranch=main init -q
   git -C "$R" config user.email test@example.com
   git -C "$R" config user.name test
@@ -43,6 +43,9 @@ seed() { # NAME — fixture in $R: committed baseline, origin/main, feature bran
   printf '# History\n\nClamped in review (qodo PR #431).\n' >"$R/docs/history.md"
   printf '#!/usr/bin/env bash\necho old\nTMP="$(mktemp -d)"\n' >"$R/scripts/old.sh"
   printf '#!/usr/bin/env bash\nset -euo pipefail\n# See docs/gone.md for background.\necho old\n' >"$R/scripts/pointer.sh"
+  printf 'CREATE TABLE t (id INTEGER);\n' >"$R/store/migrations/V1__init.sql"
+  printf '# Migrations\n' >"$R/store/migrations/README.md"
+  printf 'SELECT 1;\n' >"$R/data/report.sql"
   git -C "$R" add -A
   git -C "$R" commit -qm init
   git clone -q --bare "$R" "$R.git"
@@ -648,6 +651,31 @@ if command -v shellcheck >/dev/null 2>&1; then
   fires "a vendored shellcheck error still fails" ".agents/skills/foo/scripts/exitcode:3: [shellcheck-errors] SC2242"
 else
   skipped "a vendored shellcheck error still fails" "shellcheck not on PATH"
+fi
+
+echo "=== a new migration, and its neighbours, are not an applied-migration edit ==="
+seed migrations
+printf 'CREATE TABLE w (id INTEGER);\n' >"$R/store/migrations/V2__later.sql"
+printf '# Migrations\n\nOne per change.\n' >"$R/store/migrations/README.md"
+printf 'SELECT 2;\n' >"$R/data/report.sql"
+git -C "$R" add -A
+run_pf
+clean "a migration added at a new version, an edited note beside it, and an edited .sql outside a migrations directory"
+printf 'CREATE TABLE t (id INTEGER); -- clearer\n' >"$R/store/migrations/V1__init.sql"
+git -C "$R" add -A
+run_pf
+fires "the same fixture with the base's own migration edited fails" "store/migrations/V1__init.sql:0: [applied-migration-edited]"
+run_pf --all
+# The verdict line has to be there: a run that died before reaching it carries
+# no finding either, and that is not the lane standing down.
+if case "$OUT" in
+  *"[applied-migration-edited]"*) false ;;
+  *"preflight: "*) true ;;
+  *) false ;;
+esac then
+  ok "--all reads every line as added, so the lane cannot decide and stays quiet"
+else
+  bad "--all reads every line as added, so the lane cannot decide and stays quiet" "out=$OUT"
 fi
 
 printf '\n%s passed, %s failed, %s skipped\n' "$PASS" "$FAIL" "$SKIP"

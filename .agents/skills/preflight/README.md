@@ -4,7 +4,8 @@ A diff-scoped, fail-only checker for the escape classes worth catching
 mechanically: fail-open bash, new suites no runner invokes, scratch
 directories no EXIT trap removes, directories created at hardcoded absolute
 temp paths, docs citing repo paths that do not exist, source files citing
-docs that do not exist, TODO markers with no issue behind them, reviewer-bot
+docs that do not exist, edits to a migration a database has already run,
+TODO markers with no issue behind them, reviewer-bot
 attributions in durable prose, data files no parser accepts, and workflow
 `run:` blocks their own shell cannot parse.
 

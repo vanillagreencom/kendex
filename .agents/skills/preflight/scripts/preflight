@@ -1066,6 +1066,58 @@ while IFS= read -r f; do
   done <"$REC"
 done <"$TMP/files.list"
 
+# --- lane applied-migration-edited -------------------------------------------
+# A migration a database has already run is frozen. refinery, Flyway,
+# Liquibase, Alembic and sqlx each record a checksum over the file's name and
+# text and refuse to open a database whose recorded checksum no longer
+# matches, so the edit has no forward fix: the correction would be one more
+# edit to the same frozen file. Only a path the base already carried is the
+# shape, since a file ADDED at a new version is how a correction ships, so
+# `--all`, which reads every tracked line as added, cannot decide and stays
+# quiet. An empty glob set turns the lane off.
+MIGRATION_GLOBS="${PREFLIGHT_MIGRATION_GLOBS-**/migrations/*.sql **/migrations/*_*.py}"
+
+is_migration_path() { # PATH — matches a configured glob, `**/` at any depth
+  local pat rc=1
+  # The setting holds patterns, so the word split runs with globbing off:
+  # expanded against the working directory they would become file lists.
+  set -f
+  for pat in $MIGRATION_GLOBS; do
+    case "$pat" in
+      '**/'*)
+        pat="${pat#'**/'}"
+        case "$1" in $pat | */$pat) rc=0 ;; esac
+        ;;
+      *) case "$1" in $pat) rc=0 ;; esac ;;
+    esac
+    [ "$rc" = 1 ] || break
+  done
+  set +f
+  return "$rc"
+}
+
+if [ "$MODE" != all ] && [ -n "$MIGRATION_GLOBS" ]; then
+  if [ "$MODE" = staged ]; then
+    git_diff --cached --find-renames --name-status --diff-filter=MDR -z >"$TMP/migrations.z" || env_error "git diff --cached failed"
+  else
+    git_diff --find-renames --name-status --diff-filter=MDR -z "$BASE" -- >"$TMP/migrations.z" || env_error "git diff against $BASE failed"
+  fi
+  while IFS= read -r -d '' mstatus && IFS= read -r -d '' mpath; do
+    mnew=""
+    case "$mstatus" in R*) IFS= read -r -d '' mnew || break ;; esac
+    is_migration_path "$mpath" || continue
+    case "$mstatus" in
+      D*) mverb="deleted" ;;
+      R*) mverb="renamed to $mnew" ;;
+      *) mverb="edited" ;;
+    esac
+    # A deleted or renamed path is not in the change set the lanes above walk,
+    # so the verdict would count a finding against a file it never named.
+    grep -qxF -- "$mpath" "$TMP/files.list" || FILE_COUNT=$((FILE_COUNT + 1))
+    emit "$mpath" 0 applied-migration-edited "an applied migration was $mverb — its recorded checksum no longer matches, so every database that ran it refuses to open; ship the correction as a new migration"
+  done <"$TMP/migrations.z"
+fi
+
 # --- verdict -----------------------------------------------------------------
 COUNT="$(awk 'END { print NR }' "$TMP/findings.tsv")"
 if [ "$COUNT" -gt 0 ]; then
