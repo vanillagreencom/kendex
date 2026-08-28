@@ -8,9 +8,10 @@
 # at commit time, so the fragment format has one judge rather than two
 # spellings that can drift.
 #
-# The fragments are the ones git carries under changelog.d, not the files on
-# disk: guard judges the same set, and an untracked stray nobody wrote cannot
-# stop a release.
+# The fragments are the ones git carries under changelog.d, not whatever is
+# on disk: guard judges the same set, and an untracked stray nobody wrote
+# cannot stop a release. Their content is read from the working tree, so a
+# changelog.d the index and the disk disagree about stops the write.
 #
 # Exit codes follow the guard family: 0 clean, 1 a fragment the format
 # refuses, 2 could not run. CHANGELOG.md is replaced whole or not at all.
@@ -61,6 +62,7 @@ trap cleanup EXIT
 # be a second entry, or would end the [Unreleased] section it is folded into.
 fragment_shape() { # FILE — the complaint, empty when the file is one entry
   awk '
+    BEGIN { empty = "has no entry in it — a fragment is the Markdown list item it becomes" }
     { sub(/\r$/, "") }
     /^[[:space:]]*$/ { next }
     !seen {
@@ -69,13 +71,19 @@ fragment_shape() { # FILE — the complaint, empty when the file is one entry
         print "does not open with a list marker — a fragment is the Markdown list item it becomes, opening with a hyphen and a space"
         exit
       }
+      # A marker with nothing after it is an entry that says nothing, which
+      # is the same defect as a file with no marker at all.
+      if ($0 !~ /^- [[:space:]]*[^[:space:]]/) {
+        print empty
+        exit
+      }
       next
     }
     !/^[ \t]/ {
       print "holds more than the one entry it becomes — every line after the first indents under it"
       exit
     }
-    END { if (!seen) print "has no entry in it — a fragment is the Markdown list item it becomes" }
+    END { if (!seen) print empty }
   ' "$1"
 }
 
@@ -125,6 +133,18 @@ done <"$TMP/index"
 # or it has not begun.
 [ "$refused" -eq 0 ] || exit 1
 if [ "$CHECK" -eq 1 ]; then exit 0; fi
+
+# Past here the run reads the working-tree file at each path git named, folds
+# it in and deletes it. An unstaged edit would be published and then erased
+# with nothing left carrying it, so a changelog.d that git and the disk
+# disagree about stops the run. --check never reaches this: it writes and
+# deletes nothing, and guard runs it over the tree about to be committed.
+dirty="$(git diff --name-only -- changelog.d)" ||
+  die "could not compare changelog.d against the index — the collation could not run"
+if [ -n "$dirty" ]; then
+  die "changelog.d differs between git and the working tree; the collation folds in the file on disk and then deletes it — stage or restore these first:
+$(printf '%s\n' "$dirty" | sed 's/^/  /')"
+fi
 
 LC_ALL=C sort -o "$TMP/frags" "$TMP/frags" || die "could not order the fragment list — the collation could not run"
 count=$(wc -l <"$TMP/frags") || die "could not count the fragments — the collation could not run"

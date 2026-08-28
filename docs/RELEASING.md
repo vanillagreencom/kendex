@@ -70,9 +70,11 @@ carries into `## [Unreleased]` under its section heading, in Keep a Changelog
 order and filename order within a section, then deletes the fragments; no
 fragments is a no-op. Exit codes follow the guard family: 0 clean, 1 a
 fragment the format refuses, 2 could not run — and nothing is written until
-every fragment passes, so `CHANGELOG.md` is replaced whole or not at all. A
-nonzero exit halts the release: read the message, fix the fragment or
-`CHANGELOG.md`, run it again. Then rename `## [Unreleased]` to
+every fragment passes, so `CHANGELOG.md` is replaced whole or not at all. It
+reads each fragment from the working tree, so it also refuses a `changelog.d`
+the index and the disk disagree about, rather than publishing an unstaged
+edit and deleting it. A nonzero exit halts the release: read the message, fix
+the fragment or `CHANGELOG.md`, run it again. Then rename `## [Unreleased]` to
 `## [X.Y.Z] - YYYY-MM-DD` and open a fresh empty one, which leaves the guard
 nothing gained to refuse.
 

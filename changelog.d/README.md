@@ -7,10 +7,10 @@ One CHANGELOG entry per file. Two branches never write the same
   The section is one of `added`, `changed`, `deprecated`, `removed`, `fixed`,
   `security`. Name the file after the issue: `changelog.d/fixed/<issue>.md`.
 - **Content**: exactly one Markdown list item — the first non-blank line opens
-  with `- `, every later line indents under it, and the whole entry runs at
-  most three lines. Everything `AGENTS.md` says about a CHANGELOG entry holds:
-  it is for consumers, it states an outcome, a **Breaking:** change carries
-  its migration note inline.
+  with `- ` and says something, every later line indents under it, and the
+  whole entry runs at most three lines. Everything `AGENTS.md` says about a
+  CHANGELOG entry holds: it is for consumers, it states an outcome, and a
+  **Breaking:** change carries its migration note inline.
 - **Release**: `tools/changelog-collate` folds every fragment git carries into
   `## [Unreleased]` in `CHANGELOG.md` under its section heading, in Keep a
   Changelog order and filename order within a section, then deletes the

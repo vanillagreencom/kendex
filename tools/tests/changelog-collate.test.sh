@@ -150,6 +150,17 @@ run_collate
   || bad "the whitespace-only fragment survives the refusal" "it is gone"
 
 reset
+fragment fixed marker.md $'- \n' # a marker and nothing after it
+run_collate
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/marker.md has no entry in it"*) true ;; *) false ;; esac \
+  && ok "a marker with nothing after it exits 1, naming it" \
+  || bad "a marker with nothing after it exits 1, naming it" "rc=$RC out=$OUT"
+untouched && ok "no empty list item is folded in" \
+  || bad "no empty list item is folded in" "$(diff "$TMP/before" "$R/CHANGELOG.md" || true)"
+[ -f "$R/changelog.d/fixed/marker.md" ] && ok "the marker-only fragment survives the refusal" \
+  || bad "the marker-only fragment survives the refusal" "it is gone"
+
+reset
 fragment fixed two.md '- First entry.
 - Second entry.
 '
@@ -235,6 +246,33 @@ case "$(cat "$R/CHANGELOG.md")" in *"An untracked entry"*) bad "the untracked fr
 [ -f "$R/changelog.d/fixed/untracked.md" ] && ok "the untracked fragment is not deleted" \
   || bad "the untracked fragment is not deleted" "it is gone"
 rm -f "$R/changelog.d/.DS_Store" "$R/changelog.d/fixed/untracked.md"
+
+echo "=== the write refuses a changelog.d git and the disk disagree about ==="
+# The run folds in the file on disk and then deletes it. An unstaged edit
+# would be published and erased with nothing left carrying it.
+reset
+fragment fixed ken-1.md '- The wording git carries.
+'
+printf -- '- The unstaged rewrite.\n' >"$R/changelog.d/fixed/ken-1.md"
+run_collate
+[ "$RC" -eq 2 ] && case "$OUT" in *"differs between git and the working tree"*"changelog.d/fixed/ken-1.md"*) true ;; *) false ;; esac \
+  && ok "an unstaged fragment edit exits 2, naming the path" \
+  || bad "an unstaged fragment edit exits 2, naming the path" "rc=$RC out=$OUT"
+untouched && ok "CHANGELOG.md is untouched by the dirty refusal" \
+  || bad "CHANGELOG.md is untouched by the dirty refusal" "$(diff "$TMP/before" "$R/CHANGELOG.md" || true)"
+[ -f "$R/changelog.d/fixed/ken-1.md" ] && ok "the unstaged fragment is not deleted" \
+  || bad "the unstaged fragment is not deleted" "it is gone"
+case "$(cat "$R/changelog.d/fixed/ken-1.md")" in *"unstaged rewrite"*) ok "the unstaged edit is still in the file" ;;
+  *) bad "the unstaged edit is still in the file" "$(cat "$R/changelog.d/fixed/ken-1.md")" ;; esac
+run_collate --check
+[ "$RC" -eq 0 ] && ok "--check takes the same tree: it writes and deletes nothing" \
+  || bad "--check takes the same tree: it writes and deletes nothing" "rc=$RC out=$OUT"
+git -C "$R" add -A
+run_collate
+[ "$RC" -eq 0 ] && ok "staging the edit lets the write proceed" \
+  || bad "staging the edit lets the write proceed" "rc=$RC out=$OUT"
+case "$(cat "$R/CHANGELOG.md")" in *"unstaged rewrite"*) ok "the staged wording is the one folded in" ;;
+  *) bad "the staged wording is the one folded in" "$(cat "$R/CHANGELOG.md")" ;; esac
 
 echo "=== a changelog the collator cannot read stops the run ==="
 reset
