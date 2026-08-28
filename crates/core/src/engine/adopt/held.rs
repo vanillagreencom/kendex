@@ -125,12 +125,13 @@ pub(super) struct Held {
     pub(super) seen: Seen,
 }
 
-/// What the named tools hold where this item goes, read through every
-/// boundary the adoption applies: a position it cannot find, one kendex
+/// What the named tools hold where this item goes, read through the
+/// boundaries the capture applies: a position it cannot find, one kendex
 /// already manages, one carrying both spellings of a togglable name, and
 /// copies the tools disagree on all refuse here. `adopt` plans from this
-/// and `exits` asks it, so a Keep is never offered for a set the verb
-/// would then refuse.
+/// and `exits` asks it, so a Keep is never offered for a set these
+/// refusals would meet. They are not every refusal adoption has —
+/// `can_keep_all` names the kind whose own planner holds the rest.
 ///
 /// `scope` is already canonical: positions come from the caller's scope
 /// while a link's target comes back resolved off disk (invariant 17).
@@ -216,6 +217,11 @@ pub(super) fn read_positions(
 /// tools holding copies that differ, a shared folder beside a copy held on
 /// its own — which no place can answer alone. Asked through the same reader
 /// the adoption itself uses, so the offer and the action cannot drift apart.
+///
+/// A hook is outside that. Its cross-installation refusal lives in the
+/// declaration its own planner builds, not in the capture this reads, so a
+/// hook whose tools register the item differently is still offered a keep
+/// its adoption then refuses. The answer here is yes, not a checked yes.
 pub fn can_keep_all(
     env: &Env,
     scope: &Scope,
@@ -223,7 +229,9 @@ pub fn can_keep_all(
     name: &str,
     harnesses: &[HarnessId],
 ) -> bool {
-    // A hook is a script plus a registry entry, with no capture to refuse.
+    // A hook is a script plus a registry entry, with no capture to read.
+    // What its tools disagree about is read where the declaration is
+    // built, which is not this reader, so this is an unchecked yes.
     if hooks::supports(kind) {
         return true;
     }
