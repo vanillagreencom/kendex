@@ -263,8 +263,8 @@ Failure semantics:
   exits non-zero with a diagnostic naming the lock reason and the
   'git worktree unlock' command. The branch goes only on the proof cleanup
   uses: ancestry into the default branch, or, when a squash erased that, a
-  pull request gh reports merged into the default branch whose head commit IS
-  this branch's tip. 'git branch -d' is not that proof and is not consulted —
+  pull request gh reports merged into the default branch of THIS repository
+  whose head commit IS this branch's tip. 'git branch -d' is not that proof and is not consulted —
   it deletes a branch merged into its configured UPSTREAM, which 'push' sets,
   so it passes for any pushed branch however far it is from the default
   branch. Every other answer keeps the branch, and the exit is non-zero with a
@@ -298,8 +298,8 @@ a quiet cleanup means nothing was held back.
 cleanup fetches origin, considers non-main registered worktrees, and proves
 each branch merged two ways: ancestry into origin/<default> (or the local
 default branch when the remote ref is unavailable), or, when ancestry fails,
-a pull request gh reports merged into <default> whose head commit IS this
-branch's tip. The second proof is what a squash merge needs — it rewrites the
+a pull request gh reports merged into <default> in THIS repository whose
+head commit IS this branch's tip. The second proof is what a squash merge needs — it rewrites the
 work into a new commit, so a merged branch is an ancestor of nothing. With
 merge proven, cleanup asks Git to remove the intact worktree and deletes the
 local branch.
@@ -2910,9 +2910,16 @@ merged_pr_for_branch() {
   # routine chatter — an update notice, an auth warning — land beside the
   # answer and fail the parse, turning the proof off for every branch at once.
   # Every merged PR sharing the name is scanned, not just the newest row.
-  rows="$( (cd "$PROJECT_ROOT" && gh pr list --state merged --head "$branch" \
-              --base "$DEFAULT_BRANCH" --limit 100 --json number,headRefOid \
-              --jq '.[] | "\(.headRefOid) \(.number)"') 2>"$err_file" )" || rc=$?
+  #
+  # The query answers for THIS checkout, the way reconcile-work-items does it:
+  # an inherited GH_REPO / GITHUB_REPOSITORY redirect would let another
+  # repository's same-named branch at the same commit authorize a delete here,
+  # and a fork's PR is someone else's merge, so cross-repository rows are cut.
+  rows="$( (cd "$PROJECT_ROOT" && env -u GH_REPO -u GITHUB_REPOSITORY \
+              gh pr list --state merged --head "$branch" \
+              --base "$DEFAULT_BRANCH" --limit 100 \
+              --json number,headRefOid,isCrossRepository \
+              --jq '.[] | select(.isCrossRepository | not) | "\(.headRefOid) \(.number)"') 2>"$err_file" )" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
     detail="$(tr '\n' ' ' <"$err_file")"
     rm -f "$err_file"

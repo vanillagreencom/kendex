@@ -279,9 +279,18 @@ Use the output as `MAIN_REPO_ROOT`.
    git -C [MAIN_REPO_ROOT] worktree list --porcelain
    ```
 
-   A `branch refs/heads/[PR_BRANCH]` line means a worktree still has it checked out: do not delete, and note it in § 6. No such line, and the branch exists locally and is not current → `git -C [MAIN_REPO_ROOT] branch -D "[PR_BRANCH]"`.
+   A `branch refs/heads/[PR_BRANCH]` line means a worktree still has it checked out: do not delete, and note it in § 6. No such line, and the branch exists locally and is not current → apply the predicate before deleting, never worktree ownership alone:
 
-   For `merge-pr all` or an explicit user request, also sweep the project: check each local branch with `gh pr list --head [BRANCH] --state all --json number,state`, auto-delete merged or closed branches with no worktree, leave open ones alone, and ask before removing a stale worktree or a branch with no PR. Compare `ls [TREES_DIR]/` against `worktree list --porcelain` for orphan directories, asking before removing any.
+   ```bash
+   gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
+   ```
+   ```bash
+   git -C [MAIN_REPO_ROOT] rev-parse "refs/heads/[PR_BRANCH]"
+   ```
+
+   Equal → `git -C [MAIN_REPO_ROOT] branch -D "[PR_BRANCH]"`. Different → the branch carries commits the merge did not take: keep it and report it `kept` in the § 6 `Branch` row. Never `git branch -d` here — it proves merge against the branch's configured upstream, which `worktree push` sets, so it passes for any pushed branch however far it is from `[BASE_BRANCH]`.
+
+   For `merge-pr all` or an explicit user request, also sweep the project. Check each local branch with `gh pr list --head [BRANCH] --state all --json number,state,headRefOid`, and auto-delete only a branch with no worktree whose tip equals the `headRefOid` of one of its **merged** PRs. State is not the test: a closed PR never merged anything, and a merged PR whose head differs from the tip left the extra commits reachable from this ref alone. Leave every other branch alone, and ask before removing a stale worktree or a branch with no PR. Compare `ls [TREES_DIR]/` against `worktree list --porcelain` for orphan directories, asking before removing any.
 
    Finally, when the rule selected the worktree for removal, remove it — **last** (it destroys the session cwd):
 

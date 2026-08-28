@@ -22,7 +22,8 @@
 #     every worktree an issue ever had, so matching on the name alone handed an
 #     old merged record to new work and force-deleted it;
 #   * a pull request merged into some other base is not a merge into the
-#     default branch, so it collects nothing;
+#     default branch, so it collects nothing; nor is a fork's pull request,
+#     nor an answer from whatever repository a GH_REPO redirect points at;
 #   * `remove` deletes a squash-merged branch and still keeps an unmerged one,
 #     a moved-on one, and one merged only into its own tracking upstream —
 #     `git branch -d` accepted that last case and no longer decides anything.
@@ -69,14 +70,16 @@ assert_path_absent() {
 }
 
 # `gh pr list --state merged --head <branch> --base <default>` answers from
-# GH_MERGED_PRS, a newline-separated "<branch> <base> <head-oid> <number>"
-# table, printed back in the `--jq '.[] | "\(.headRefOid) \(.number)"'` shape
-# the script asks for.
+# GH_MERGED_PRS, a newline-separated "<branch> <base> <head-oid> <number>
+# <cross-repo 0|1>" table, printed back in the
+# `--jq '.[] | "\(.headRefOid) \(.number)"'` shape the script asks for.
 #
-# The stub honours all three filters, because two of them guard a forced
-# delete: the oid column makes a name-only match visible, and a row is answered
-# only when the query asked for merged pull requests on the base it names.
-# Dropping either filter from the implementation has to fail a scenario here.
+# The stub honours every filter, because each one guards a forced delete: the
+# oid column makes a name-only match visible, a row is answered only when the
+# query asked for merged pull requests on the base it names, a cross-repository
+# row is answered only when the query did not ask to exclude them, and a query
+# carrying a GH_REPO redirect is answered for that OTHER repository. Dropping
+# any of them from the implementation has to fail a scenario here.
 #
 # GH_FAIL=1 makes the query fail the way a network or auth error does.
 # GH_STDERR_NOISE=1 prints gh's routine chatter on stderr beside a good answer.
@@ -100,22 +103,37 @@ fi
 branch=""
 base=""
 state=""
+jq_expr=""
+json_fields=""
 prev=""
 for arg in "$@"; do
   case "$prev" in
     --head) branch="$arg" ;;
     --base) base="$arg" ;;
     --state) state="$arg" ;;
+    --json) json_fields="$arg" ;;
+    --jq) jq_expr="$arg" ;;
   esac
   prev="$arg"
 done
 # An unfiltered query is not the query under test: answer nothing rather than
 # letting a scenario pass on a filter the implementation stopped sending.
 [[ "$state" == "merged" ]] || exit 0
-while read -r want want_base oid number; do
+# A redirected query answers for the repository it was pointed at, not this
+# checkout. GH_REDIRECT_OID is that other repository's same-named branch.
+if [[ -n "${GH_REPO:-}${GITHUB_REPOSITORY:-}" ]]; then
+  printf '%s %s\n' "${GH_REDIRECT_OID:-0000000}" 999
+  exit 0
+fi
+excludes_forks=0
+case "$json_fields:$jq_expr" in
+  *isCrossRepository*:*isCrossRepository*) excludes_forks=1 ;;
+esac
+while read -r want want_base oid number cross; do
   [[ -n "$want" ]] || continue
   [[ "$want" == "$branch" ]] || continue
   [[ -z "$base" || "$want_base" == "$base" ]] || continue
+  [[ "$excludes_forks" == 1 && "${cross:-0}" == 1 ]] && continue
   printf '%s %s\n' "$oid" "$number"
 done <<<"${GH_MERGED_PRS:-}"
 exit 0
@@ -247,10 +265,13 @@ echo "=== a missing gh keeps the worktree ==="
 
 # A PATH holding every tool the script reaches for EXCEPT gh. Dropping the real
 # PATH wholesale would fail for the wrong reason (no git), and shadowing gh is
-# impossible — `command -v` answers from PATH alone.
+# impossible — `command -v` answers from PATH alone. `bash` and `sh` are on the
+# list so a shebang resolved through PATH keeps working: this script's is
+# absolute today, and a scenario that died at exec would otherwise look like a
+# scenario that reached the gh probe.
 NOGH_BIN="$ROOT/bin-nogh"
 mkdir -p "$NOGH_BIN"
-for tool in git grep sed awk cat cut tr sort uniq wc head tail find ln rm rmdir \
+for tool in bash sh git grep sed awk cat cut tr sort uniq wc head tail find ln rm rmdir \
             mkdir mv cp ls readlink realpath dirname basename mktemp date id \
             hostname ps kill sleep touch chmod stat printf env flock jq; do
   tool_path="$(command -v "$tool" 2>/dev/null || true)"
@@ -261,6 +282,12 @@ if command -v gh >/dev/null 2>&1 && PATH="$NOGH_BIN" command -v gh >/dev/null 2>
 else
   pass "precondition: the gh-free PATH does not resolve gh"
 fi
+# The script must still RUN under that PATH. Without this, an exec failure
+# (127) would satisfy every "the worktree survived" assertion below while
+# never reaching the code under test.
+nogh_runs=0
+(cd "$ROOT/main" && PATH="$NOGH_BIN" "$WORKTREE_SCRIPT" --help >/dev/null 2>&1) || nogh_runs=$?
+assert_eq "$nogh_runs" "0" "precondition: the script executes under the gh-free PATH"
 
 nogh_code=0
 nogh_out=$(cd "$ROOT/main" && PATH="$NOGH_BIN" \
@@ -501,6 +528,58 @@ if grep -qF "Cleaned:" <<<"$sidebase_out"; then
 else
   pass "a pull request merged into another base collects nothing"
 fi
+
+echo "=== a fork's pull request does not vouch for this branch ==="
+
+# A cross-repository pull request is someone else's merge into someone else's
+# base. Answering with it would let a fork carrying the same branch name and
+# commit authorize a delete here.
+FORK_ROOT="$TMP_ROOT/fork"
+make_repo "$FORK_ROOT"
+add_branch_tree "$FORK_ROOT" "issue-fork"
+GH_MERGED_PRS="issue-fork main $(branch_tip "$FORK_ROOT" issue-fork) 61 1"
+export GH_MERGED_PRS
+fork_code=0
+fork_out=$(cd "$FORK_ROOT/main" && "$WORKTREE_SCRIPT" cleanup 2>"$FORK_ROOT/fork.err") || fork_code=$?
+fork_err="$(cat "$FORK_ROOT/fork.err")"
+
+assert_eq "$fork_code" "0" "cleanup exits 0 with only a fork's merged pull request"
+assert_path_exists "$FORK_ROOT/trees/issue-fork" "a fork's pull request never collects the worktree"
+assert_contains "$fork_err" "is not merged" "cleanup names the fork-only branch as unmerged"
+if grep -qF "Cleaned:" <<<"$fork_out"; then
+  fail "a fork's pull request collects nothing"
+else
+  pass "a fork's pull request collects nothing"
+fi
+
+echo "=== a GH_REPO redirect does not answer for this checkout ==="
+
+# gh reads GH_REPO and GITHUB_REPOSITORY from the environment, and a session
+# that inherited either would be asking a DIFFERENT repository whether this
+# branch is merged. Another repository's same-named branch at the same commit
+# must not authorize a delete here.
+REDIR_ROOT="$TMP_ROOT/redirect"
+make_repo "$REDIR_ROOT"
+add_branch_tree "$REDIR_ROOT" "issue-redirect"
+GH_MERGED_PRS=""
+export GH_MERGED_PRS
+GH_REDIRECT_OID="$(branch_tip "$REDIR_ROOT" issue-redirect)"
+export GH_REDIRECT_OID
+redir_code=0
+redir_out=$(cd "$REDIR_ROOT/main" && GH_REPO="someone-else/other-repo" \
+  "$WORKTREE_SCRIPT" cleanup 2>"$REDIR_ROOT/redirect.err") || redir_code=$?
+redir_err="$(cat "$REDIR_ROOT/redirect.err")"
+
+assert_eq "$redir_code" "0" "cleanup exits 0 under a GH_REPO redirect"
+assert_path_exists "$REDIR_ROOT/trees/issue-redirect" \
+  "another repository's merged pull request never collects the worktree"
+assert_contains "$redir_err" "is not merged" "cleanup names the branch as unmerged under a redirect"
+if grep -qF "Cleaned:" <<<"$redir_out"; then
+  fail "a redirected lookup collects nothing"
+else
+  pass "a redirected lookup collects nothing"
+fi
+unset GH_REDIRECT_OID
 
 echo "=== remove tells an unanswered lookup apart from a proven-unmerged branch ==="
 
