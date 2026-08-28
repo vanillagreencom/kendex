@@ -53,7 +53,7 @@ WORKTREE_RELATIVE_SYMLINKS = ".claude/CLAUDE.md=../AGENTS.md"
 WORKTREE_MKDIRS = "tmp"
 ```
 
-Point `WORKTREE_SYMLINKS` at paths git does not carry; naming a tree the repo commits links nothing. A directory entry containing tracked files stays a real directory with only its untracked children linked (an untracked `.gitignore` is copied, since git will not read one through a symlink); a tracked file entry is marked assume-unchanged before replacement. Full rules: `scripts/worktree --help` and `scripts/worktree fix-links --help`.
+Point `WORKTREE_SYMLINKS` at paths git does not carry; an entry does nothing when git carries every path under it. A directory entry containing tracked files stays a real directory with only its untracked children linked (an untracked `.gitignore` is copied, since git will not read one through a symlink); a tracked file entry is marked assume-unchanged before replacement. Full rules: `scripts/worktree --help` and `scripts/worktree fix-links --help`.
 
 ### App-created worktrees
 

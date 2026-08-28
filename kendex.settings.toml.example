@@ -14,8 +14,9 @@ WORKTREE_DEFAULT_BRANCH = "main"
 # Never point it inside the repo root — watched build outputs exhaust inotify.
 # WORKTREE_BASE_DIR = "~/dev/.worktrees/myproject"
 
-# Paths symlinked into every worktree: list only what git does not carry,
-# since naming a committed tree links nothing. Include `.env.local` only when
+# Paths symlinked into every worktree: list only what git does not carry. An
+# entry does nothing when git carries every path under it; one with untracked
+# children still links those children. Include `.env.local` only when
 # worktrees should share local secrets.
 WORKTREE_SYMLINKS = ".env.local .cache node_modules"
 

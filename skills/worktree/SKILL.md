@@ -81,4 +81,4 @@ No worktree command runs a package-manager install: installs run only in the mai
 
 ## Configuration
 
-Set non-sensitive defaults in committed `kendex.settings.toml` under `[env]`; existing `.env` and `.env.local` variables still work, and `.env.local` wins for secrets or personal overrides. **Symlink only what git does not carry** — an entry naming a committed tree links nothing: a directory holding tracked content stays a real directory, with only its untracked children linked, bar an untracked `.gitignore`, which is copied (`fix-links --help`). Variable semantics and setup-path hardening: `worktree --help`.
+Set non-sensitive defaults in committed `kendex.settings.toml` under `[env]`; existing `.env` and `.env.local` variables still work, and `.env.local` wins for secrets or personal overrides. **Symlink only what git does not carry** — an entry does nothing when git carries every path under it, and a directory holding tracked content stays a real directory with its untracked children linked, bar an untracked `.gitignore`, which is copied (`fix-links --help`). Variable semantics and setup-path hardening: `worktree --help`.

@@ -29,8 +29,8 @@ an outside contributor.
 ### Changed
 
 - The seeded `WORKTREE_SYMLINKS` default now lists only paths git does not
-  carry. Naming a committed tree links nothing, so drop such entries from
-  your own value.
+  carry. An entry does nothing when git carries every path under it, so drop
+  those from your own value; one with untracked children still links them.
 
 - **Breaking:** the worktree skill no longer installs JS dependencies. Run
   installs in the main checkout and link its `node_modules` via
