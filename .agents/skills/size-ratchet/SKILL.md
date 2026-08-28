@@ -45,8 +45,8 @@ at a concept seam*.
 inline tests needs those tests moved to the language's separate-test
 convention, not its concepts split; that move has no seam in it. In Rust
 the measure is every line inside `#[cfg(test)]`, under any module name,
-and past roughly 300 of them extraction is the whole remedy. Find a seam
-only in what remains.
+and past roughly 300 of them extraction comes first. Find a seam only if
+what remains is still over.
 
 **The ratchet serves cohesion, never defeats it.** The goal is files an
 agent can load and reason about whole: one concept per file, whole
