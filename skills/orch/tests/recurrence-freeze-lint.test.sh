@@ -65,7 +65,8 @@ strip_comments() {
 }
 
 recurrence_section() { strip_comments "$1" | awk '/^## Recurrence$/{on=1;next} /^## /{on=0} on'; }
-branch_table() { strip_comments "$1" | awk '/^## 6\./{on=1} /^### 6\.1/{on=0} on'; }
+section_6_head() { strip_comments "$1" | awk '/^## 6\./{on=1} /^### 6\.1/{on=0} on'; }
+section_6_1() { strip_comments "$1" | awk '/^### 6\.1/{on=1;next} /^### 6\.2/{on=0} on'; }
 signals_route() { strip_comments "$1" | grep -E '^\| .+ \| § Recurrence' || true; }
 
 # Every grep reads a herestring, never a pipe: `grep -q` exits at the first
@@ -153,26 +154,37 @@ check_token "$COMMENTS_WF" '`RECURRENCE`' \
 check_token "$COMMENTS_WF" '### ♻️ RECURRENCE' \
   "§ 5's triage report has a RECURRENCE bucket"
 
-# Each disposition reaches a branch in § 6.
-# A row, not a mention: the § 6 preamble names `freeze` in prose too, and a
-# bare token check would survive the row's deletion.
-branch_row() { grep -F "| $2 |" <<<"$(branch_table "$1")" || true; }
-
-for token in '`structural-close`' '`freeze`' '`declined`'; do
-  if [[ -n "$(branch_row "$COMMENTS_WF" "$token")" ]]; then
-    pass "§ 6 branches on $token"
+# Membership, not branches: what may be fixed is one set, and the gate that
+# opens the delegation reads that set rather than the Fixing rows alone.
+ELIGIBILITY="$(section_6_head "$COMMENTS_WF")"
+for token in '`fix set`' '`structural-close`' '`reply-only`' '`freeze`' '`declined`'; do
+  if grep -qF "$token" <<<"$ELIGIBILITY"; then
+    pass "§ 6 states eligibility in terms of $token"
   else
-    fail "§ 6 has no branch for $token"
+    fail "§ 6 no longer states eligibility in terms of $token"
   fi
 done
+if grep -qF '`fix set`' <<<"$(section_6_1 "$COMMENTS_WF")"; then
+  pass "§ 6.1's gate opens on the fix set, not on Fixing rows alone"
+else
+  fail "§ 6.1's gate no longer reads the fix set"
+fi
+check_token "$COMMENTS_WF" '`→ § 6.1`' \
+  "§ 6.2 returns a freeze to the reply step after filing"
 
-# Freeze's defining property survives the loop only if the cause is on disk.
-check_token "$COMMENTS_WF" "workflow-state append [ISSUE_ID] pr_comment_review.frozen_causes" \
+# The two records the recurrence check reads. A resolved thread is invisible to
+# the next pass, so a cause is recurrence only if a pass wrote it down.
+check_token "$COMMENTS_WF" "append [ISSUE_ID] pr_comment_review.patched_causes" \
+  "§ 6.1 records a patched cause where it replies and resolves"
+check_token "$COMMENTS_WF" "append [ISSUE_ID] pr_comment_review.frozen_causes" \
   "§ 6 records a frozen cause in workflow state"
+check_token "$COMMENTS_WF" ".pr_comment_review.patched_causes // []" \
+  "§ 5 reads the patched causes before triaging a pass"
 check_token "$COMMENTS_WF" ".pr_comment_review.frozen_causes // []" \
   "§ 5 reads the frozen causes before triaging a pass"
-check_token "$STATE_SCHEMA" 'frozen_causes' \
-  "the workflow-state schema documents frozen_causes"
+for token in patched_causes frozen_causes; do
+  check_token "$STATE_SCHEMA" "$token" "the workflow-state schema documents $token"
+done
 
 # One home: oversee.md points at the section instead of restating the rule.
 # A second statement names its branches, whatever words carry it.
@@ -188,10 +200,15 @@ fi
 echo
 echo "--- planted controls ---"
 
+# Every mutation below is derived from the token or the structure the live
+# assertion reads — substitute that token, or delete the region it matches —
+# never from a sentence. A control written against prose goes stale on the
+# first harmless rewording and then reports a lint miss for an intact rule.
+#
 # A program that matches nothing leaves the fixture identical to its source,
-# and the control then reports a lint miss for a guard that works. These run
-# inside a command substitution, where an increment to FAIL would die with the
-# subshell, so the note goes to a file the parent reads back.
+# which is that same failure. These run inside a command substitution, where an
+# increment to FAIL would die with the subshell, so the note goes to a file the
+# parent reads back.
 UNPLANTED="$TMP_ROOT/unplanted"
 : > "$UNPLANTED"
 note_unplanted() { printf 'control %s planted nothing — its program matched no text\n' "$1" >> "$UNPLANTED"; }
@@ -209,24 +226,32 @@ gone() {
   if grep -qF "$3" <<<"$("$1" "$2")"; then fail "lint MISSED $4"; else pass "lint flags $4"; fi
 }
 
+drop() {
+  # $1 = control name, $2 = source file, $3 = token to substitute away
+  plant "$1" "$2" "s/$(sed 's/[\/&]/\\&/g' <<<"$3")/REDACTED/g"
+}
+
 gone strip_comments "$(plant heading "$DISPOSITION" 's/^## Recurrence$/## Repeat findings/')" \
   '## Recurrence' "a renamed Recurrence section"
-gone recurrence_section "$(plant freeze "$DISPOSITION" 's/`freeze`/another fix round/g')" \
+gone recurrence_section "$(drop freeze "$DISPOSITION" '`freeze`')" \
   '`freeze`' "a dropped freeze disposition"
-gone recurrence_section "$(plant tracked "$DISPOSITION" 's/`Tracked: <ID>`/a note on the thread/')" \
+gone recurrence_section "$(drop tracked "$DISPOSITION" '`Tracked: <ID>`')" \
   '`Tracked: <ID>`' "a dropped Tracked reply form"
-gone recurrence_section "$(plant declined "$DISPOSITION" 's/`decline`d with its reason, never a second filing/filed as its own issue/')" \
+gone recurrence_section "$(drop declined "$DISPOSITION" '`decline`')" \
   '`decline`' "a frozen cause that files again instead of declining"
-gone recurrence_section "$(plant trigger "$DISPOSITION" 's/, the record `fixed_items` keeps,/,/; s/A cause `fixed_items` does not name/A cause no prior round answered/')" \
+gone recurrence_section "$(drop trigger "$DISPOSITION" '`fixed_items`')" \
   '`fixed_items`' "a trigger cut loose from the record that proves a patch"
 
-CTRL="$(plant carveout "$DISPOSITION" 's/`freeze` is available only for a cause this diff neither introduces nor arms\. An introduced or armed cause takes `structural-close`, since a round count never answers a defect the diff armed\./Either branch answers any cause./')"
-SECTION="$(recurrence_section "$CTRL")"
-if grep -qF 'introduces' <<<"$SECTION" && grep -qF 'arms' <<<"$SECTION"; then
-  fail "lint MISSED a dropped introduced-or-armed carve-out"
-else
-  pass "lint flags a dropped introduced-or-armed carve-out"
-fi
+# Two tokens, so two fixtures: dropping either must redden the carve-out.
+for token in introduces arms; do
+  CTRL="$(drop "carveout-$token" "$DISPOSITION" "$token")"
+  SECTION="$(recurrence_section "$CTRL")"
+  if grep -qF 'introduces' <<<"$SECTION" && grep -qF 'arms' <<<"$SECTION"; then
+    fail "lint MISSED a carve-out with $token dropped"
+  else
+    pass "lint flags a carve-out with $token dropped"
+  fi
+done
 
 # Scoping control: the tokens must be pinned INSIDE § Recurrence. A `freeze`
 # elsewhere in the file must not stand in for the rule.
@@ -237,7 +262,8 @@ else
   pass "lint scopes its disposition tokens to § Recurrence"
 fi
 
-CTRL="$(plant row "$DISPOSITION" 's/| § Recurrence, which allows `structural-close` or `freeze` and no further patch |/| `fix` as a structural close |/')"
+# Blanket control: delete the whole region the assertion matches.
+CTRL="$(plant row "$DISPOSITION" '/^| .* | § Recurrence/d')"
 if [[ -n "$(signals_route "$CTRL")" ]]; then
   fail "lint MISSED a signals row that answers recurrence with another fix"
 else
@@ -253,44 +279,47 @@ else
   fail "control inert planted no comment markers"
 fi
 
-gone strip_comments "$(plant router "$COMMENTS_WF" 's#\.\./references/finding-disposition\.md\#recurrence#../references/finding-disposition.md#')" \
+gone strip_comments "$(plant router "$COMMENTS_WF" 's|/finding-disposition.md#recurrence|/finding-disposition.md|g')" \
   '../references/finding-disposition.md#recurrence' "a dropped Recurrence router link"
 
-CTRL="$(plant inertrouter "$COMMENTS_WF" '/^\*\*Recurrence before the cap\.\*\*/ { print "<!--"; print; print "-->"; next } { print }' awk)"
+CTRL="$(plant inertrouter "$COMMENTS_WF" '/finding-disposition\.md#recurrence/ && !done { print "<!--"; print; print "-->"; done = 1; next } { print }' awk)"
 if grep -qF '<!--' "$CTRL"; then
   gone strip_comments "$CTRL" '../references/finding-disposition.md#recurrence' "a commented-out router paragraph"
 else
   fail "control inertrouter planted no comment markers"
 fi
 
-# Order control: the same router text, moved behind the cap, must fail.
-CTRL="$(plant order "$COMMENTS_WF" '/^\*\*Recurrence before the cap\.\*\*/d')"
-MOVED="$TMP_ROOT/order-moved.md"
-awk '{print} /^`iterations >= 5` /{print ""; print "**Recurrence before the cap.** See [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence)."}' "$CTRL" > "$MOVED"
-cmp -s "$MOVED" "$CTRL" && note_unplanted "order"
-case "$(check_order "$MOVED")" in
+# Order control: the line carrying the router token, moved behind the cap line.
+CTRL="$(plant order "$COMMENTS_WF" '/finding-disposition\.md#recurrence/ && !moved { saved = $0; moved = 1; next } { print } /iterations >= 5/ && moved && !placed { print ""; print saved; placed = 1 }' awk)"
+case "$(check_order "$CTRL")" in
   after) pass "lint flags a recurrence check moved behind the iterations cap" ;;
   *)     fail "lint MISSED a recurrence check moved behind the iterations cap" ;;
 esac
 
-gone strip_comments "$(plant autofix "$COMMENTS_WF" 's/carries a root cause § Recurrence dispositions (→ `RECURRENCE`, never an auto-fix), //')" \
+gone strip_comments "$(drop autofix "$COMMENTS_WF" '`RECURRENCE`')" \
   '`RECURRENCE`' "an auto-fix bucket that swallows recurrence items again"
+gone section_6_head "$(drop fixset "$COMMENTS_WF" '`fix set`')" \
+  '`fix set`' "an eligibility rule with no fix set"
+gone section_6_1 "$(drop gate "$COMMENTS_WF" '`fix set`')" \
+  '`fix set`' "a § 6.1 gate that stopped reading the fix set"
+gone section_6_head "$(drop replyonly "$COMMENTS_WF" '`reply-only`')" \
+  '`reply-only`' "a freeze or decline let into the push path"
+gone strip_comments "$(drop freezereturn "$COMMENTS_WF" '`→ § 6.1`')" \
+  '`→ § 6.1`' "a freeze that files without returning to reply"
+gone strip_comments "$(drop patched "$COMMENTS_WF" 'patched_causes')" \
+  'patched_causes' "a patched cause nothing records"
+gone strip_comments "$(drop frozen "$COMMENTS_WF" 'frozen_causes')" \
+  'frozen_causes' "a freeze that records no cause"
 
-CTRL="$(plant branch "$COMMENTS_WF" '/^| `freeze` | § 6.2 files the class issue FIRST/d')"
-if [[ -n "$(branch_row "$CTRL" '`freeze`')" ]]; then
-  fail "lint MISSED a deleted freeze branch"
-else
-  pass "lint flags a deleted freeze branch"
-fi
+for token in patched_causes frozen_causes; do
+  gone strip_comments "$(drop "schema-$token" "$STATE_SCHEMA" "$token")" \
+    "$token" "an undocumented $token field"
+done
 
-gone strip_comments "$(plant frozen "$COMMENTS_WF" 's/pr_comment_review\.frozen_causes/pr_comment_review.skipped/g')" \
-  'pr_comment_review.frozen_causes' "a freeze that records no cause"
-gone strip_comments "$(plant schema "$STATE_SCHEMA" 's/frozen_causes/scratch_field/g')" \
-  'frozen_causes' "an undocumented frozen_causes field"
-gone strip_comments "$(plant oversee "$OVERSEE_WF" 's#\.\./references/finding-disposition\.md\#recurrence#SKILL.md#')" \
+gone strip_comments "$(plant oversee "$OVERSEE_WF" 's|/finding-disposition.md#recurrence|/SKILL.md|g')" \
   '../references/finding-disposition.md#recurrence' "an oversee.md pointer that stopped pointing here"
 
-CTRL="$(plant restate "$OVERSEE_WF" 's/which states the branches and their limits/which allows `structural-close` or `freeze`/')"
+CTRL="$(plant restate "$OVERSEE_WF" '{ print } END { print "- Use `structural-close`, else `freeze`." }' awk)"
 if grep -qE 'structural-close|`freeze`|Tracked:' <<<"$(strip_comments "$CTRL")"; then
   pass "lint flags a rule restated in oversee.md"
 else

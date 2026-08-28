@@ -119,10 +119,10 @@ Delegate to the architecture reviewer with the domain report paths, asking for c
 
 Read every report, aggregate across agents preserving attribution, and deduplicate by (location, description), keeping the first and noting all sources. `blockers[]` and `category: "fix"` suggestions are fix items; `category: "issue"` suggestions defer to § 6.2; `questions[]` are auto-answered in § 7.
 
-**Recurrence before the cap.** A finding sharing a root cause with one a prior pass patched is dispositioned by [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence), which allows `structural-close` or `freeze` and no further patch round. Check it here, ahead of § 6.3's `iterations` cap: that cap counts rounds, and one cause recurs several times inside its budget. Read the causes this PR has already frozen first, and disposition a finding on one of them `declined` without re-triaging it:
+**Recurrence before the cap.** A finding sharing a root cause with one a prior pass patched is dispositioned by [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence), which allows `structural-close` or `freeze` and no further patch round. Check it here, ahead of § 6.3's `iterations` cap: that cap counts rounds, and one cause recurs several times inside its budget. Read what earlier passes patched and froze first, since a pass that resolved its threads leaves nothing else for this check to read: a finding sharing a cause in `patched_causes` is the recurrence this rule ends, and one sharing a cause in `frozen_causes` is `declined` without re-triaging.
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_comment_review.frozen_causes // []'
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{patched: (.pr_comment_review.patched_causes // []), frozen: (.pr_comment_review.frozen_causes // [])}'
 ```
 
 Auto-fix every valid item — do not prompt for a selection. Skip an item only when it contradicts an active decision (cite the decision id), is too vague to act on, is out of the PR's scope (→ issue), carries a root cause § Recurrence dispositions (→ `RECURRENCE`, never an auto-fix), or cannot affect real usage (decline with one line, per [SKILL.md § The Cycle](../SKILL.md#the-cycle)).
@@ -174,13 +174,7 @@ Omit empty sections and proceed straight to § 6 — no user prompt.
 
 ## 6. Apply Fixes And Loop
 
-Every § 5 RECURRENCE row takes its branch here, and none of them is another patch round:
-
-| Disposition | Route |
-|-------------|-------|
-| `structural-close` | § 6.1 delegates one closing round whose item names the generator, not the site. Cutting surface the Done-when does not require is a close |
-| `freeze` | § 6.2 files the class issue FIRST, then § 6.1 replies `Tracked: [CLASS_ISSUE_ID]` and pushes no further fix for that cause |
-| `declined` | § 6.1 replies `Declined: [REASON]` naming the class issue, and the loop never re-triages that cause |
+The `fix set` is every § 5 row marked Fixing plus every `structural-close` row: a structural close IS a fix round, one whose item names the generating surface rather than the site, and cutting surface the Done-when does not require is a close. `freeze` and `declined` rows are `reply-only` — they never join the delegation, the commit, or the push. A `freeze` files its class issue through § 6.2 first and returns to the reply step in § 6.1; a `declined` row replies there naming the class issue.
 
 A `freeze` records its cause before the reply, which is what makes the next pass decline instead of re-triage:
 
@@ -190,7 +184,7 @@ A `freeze` records its cause before the reply, which is what makes the next pass
 
 ### 6.1 Delegate Fixes
 
-**Skip if** nothing is marked Fixing and no branch above routes an item here → § 6.2.
+**Skip if** the `fix set` is empty → § 6.2.
 
 Read the round budget first. The cap governs what may be pushed, so it decides before the fix round, never after one:
 
@@ -287,11 +281,17 @@ resolving the thread does not. A decline is a decline — say so.
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.replied '{"source_id":"[THREAD_ID]","commit":"[COMMIT_SHA]","outcome":"[applied|skipped|blocked|already_fixed]"}'
 ```
 
+An applied item records its root cause here too, in the same shape a freeze uses. The thread is resolved by the line above and § 1 excludes it from the next pass, so this record is the only thing that tells a later pass the cause was patched:
+
+```bash
+.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.patched_causes '{"cause":"[ONE_LINE]","commit":"[COMMIT_SHA]"}'
+```
+
 Inline `--body` only for plain strings; a reply containing backticks or fences goes to a file and `--body-file` instead. PR-level comments and human-only threads stay deferred to § 7.
 
 ### 6.2 Create Issues
 
-**Skip if** nothing clears the filing bar in [references/finding-disposition.md](../references/finding-disposition.md). Blocked items and `category: "issue"` suggestions that do clear it go into an audit-input file at `[WORKTREE_PATH]/tmp/audit-pr-comments-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md`, with `tracker.type` set to the resolved `TRACKER` (plus `tracker.repository` for GitHub items), then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6.3`.
+**Skip if** nothing clears the filing bar in [references/finding-disposition.md](../references/finding-disposition.md). Blocked items and `category: "issue"` suggestions that do clear it go into an audit-input file at `[WORKTREE_PATH]/tmp/audit-pr-comments-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md`, with `tracker.type` set to the resolved `TRACKER` (plus `tracker.repository` for GitHub items), then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6.3`, or `→ § 6.1` for a `freeze` filed here, which still owes its thread a reply.
 
 ### 6.3 Re-Triage Or Exit
 
