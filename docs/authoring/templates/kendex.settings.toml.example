@@ -1,12 +1,14 @@
-# This file is your package's settings declaration, not a settings file
-# anyone edits. Ship it at the package root. On a project install kendex
-# merges each key below — with the comment block directly above it — into
-# the consuming repo's `kendex.settings.toml`, and never overwrites a key
-# that is already there. Users edit their values in that file, not here.
+# This file is your skill's settings declaration, not a settings file anyone
+# edits. Ship it at your skill's root: seeding runs for skills only, and the
+# same file under an agent, hook, command or MCP server installs without
+# seeding anything. On a project install kendex merges each key below — with
+# the comment block directly above it — into the consuming repo's
+# `kendex.settings.toml`, and never overwrites a key that is already there.
+# Users edit their values in that file, not here.
 #
 # Commit-safe values only. A value that must stay out of git (a token, a
 # credential, a personal identifier) never appears here as an assignment:
-# document it in your package's README as "set `MY_PACKAGE_TOKEN` in
+# document it in your skill's README as "set `MY_SKILL_TOKEN` in
 # `.env.local`", which the marketplace page renders.
 #
 # Grammar: one `[env]` table; a comment block immediately above every key,
@@ -15,7 +17,7 @@
 
 [env]
 
-# Prefix your keys with the package name, upper-snake. This comment is what
+# Prefix your keys with the skill name, upper-snake. This comment is what
 # the consumer reads beside the key in their own settings file, so say what
 # the key does and what an empty value means.
-MY_PACKAGE_TIMEOUT = "30"
+MY_SKILL_TIMEOUT = "30"

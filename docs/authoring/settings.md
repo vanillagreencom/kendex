@@ -1,15 +1,20 @@
-# Settings a package declares
+# Settings a skill declares
 
-A package ships a `kendex.settings.toml.example` at its root for the keys it
+A skill ships a `kendex.settings.toml.example` at its root for the keys it
 wants seeded. On a project install kendex merges every key in that file's
 `[env]` table, together with the comment block directly above it, into the
 consuming repo's `kendex.settings.toml`. A key already present there is left
 alone, value and all, so a reinstall never overwrites what someone edited.
 
-Not every key a package reads belongs in that file. A key it documents but
-does not seed — an opt-in that ships a working default, an override seam —
-lives in the package's own README, which the marketplace page renders. What
-follows governs the keys a template carries.
+Seeding is a skill's alone. An agent, hook, command or MCP server that ships
+one of these files installs normally and seeds nothing — the file is inert,
+and no error says so. Those kinds document their settings in their own README,
+which the marketplace page renders, and leave it to the reader to set them.
+
+Not every key a skill reads belongs in that file either. A key it documents
+but does not seed — an opt-in that ships a working default, an override seam —
+lives in the skill's own README the same way. What follows governs the keys a
+template carries.
 
 Start from
 [`templates/kendex.settings.toml.example`](templates/kendex.settings.toml.example).
@@ -30,9 +35,9 @@ whichever copy comes first. Write each key once.
 
 ## Naming
 
-Prefix keys with the package name in upper-snake — `REVIEW_GATE_MODE` for a
-package named `review-gate`. This is a convention, not something the check
-enforces: a package that deliberately ships a companion package's key is
+Prefix keys with the skill name in upper-snake — `REVIEW_GATE_MODE` for a
+skill named `review-gate`. This is a convention, not something the check
+enforces: a skill that deliberately ships a companion package's key is
 legitimate.
 
 ## Where a value comes from
@@ -53,5 +58,5 @@ environment value — as long as its own comment says so.
 
 Ship only values that are safe to commit. A key whose value must stay out of
 git — a token, a credential, a personal identifier — never appears as an
-assignment in the template. Document it in the package's README as "set `X`
+assignment in the template. Document it in the skill's README as "set `X`
 in `.env.local`" instead; the marketplace page renders that README.

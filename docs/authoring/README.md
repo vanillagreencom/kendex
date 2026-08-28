@@ -91,7 +91,7 @@ finding.
 
 ## Settings
 
-A package declares its own settings: [settings.md](settings.md).
+Only skills seed settings into a project: [settings.md](settings.md).
 
 ## Tags
 
