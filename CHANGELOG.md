@@ -60,7 +60,11 @@ an outside contributor.
 
 - **Breaking:** skills resolve settings as env > `.env.local` >
   `.kendex/settings.toml` > `kendex.settings.toml` > default, `[env]` table
-  only; `.env` is silently ignored (deep-research reads env and `.env.local` only).
+  only; a lingering `.env` is silently ignored (use `.env.local`).
+
+- Precedence exceptions: deep-research reads env and `.env.local` only, and a
+  project-file `LINEAR_API_KEY` beats an inherited one — wrong-workspace
+  protection; `LINEAR_API_KEY_OVERRIDE` is the explicit override.
 
 - **Breaking:** settings values are single-line double-quoted strings with no
   `"` or `\`; any other shape, a duplicate key, or an unparseable table header
