@@ -665,16 +665,16 @@ lives in one capability table read by core and UI.
   `source/index.rs` feeds kendex.ai under the site's own caps, refusing
   structural problems whole, dropping only unusable rows. `generation.rs` is
   the one cache mechanism: an endpoint-keyed generation written atomically
-  under `Env::registry_cache_dir`, a failed refresh serving the last fetch
-  labeled stale. `cache.rs` adds the directory's one-hour TTL; the identity
-  (`me.rs`) has none and is forgotten on sign-in, sign-out and expiry. All
-  reads go through the `Fetch` trait (curl via `Hardened`, plain http only
-  under `KENDEX_API`); tests inject transports. Bearer calls route through
-  `registry/client.rs`: one named cross-process lock serializes login,
+  under `Env::registry_cache_dir`, a failed refresh serving the last fetch as
+  stale. `cache.rs` adds the directory's one-hour TTL; the identity (`me.rs`)
+  has none, is keyed to its sign-in, and is forgotten on sign-in, sign-out and
+  expiry. All reads go through the `Fetch` trait (curl via `Hardened`, plain
+  http only under `KENDEX_API`); tests inject transports. Bearer calls route
+  through `registry/client.rs`: one named cross-process lock serializes login,
   logout and refresh rotation, saving rotations before retry. `skillssh.rs`
   pins its public wire schema and kill switch (`KENDEX_SKILLSSH=off`); a hit
-  is a lead, never an identity, and installs through the same subscribe
-  path. Collections and deep links arrive with W3/W4.
+  is a lead, never an identity, and installs through the same subscribe path.
+  Collections and deep links arrive with W3/W4.
 - **Intent in the manifest, closure in the plan, edges in the lock.** The
   manifest records choices, never consequences: items asked for, bundles
   installed, optional dependencies taken, what stays removed. A bundle's
