@@ -188,7 +188,7 @@ else
   fail "lint MISSED a decision-mode gate reintroduced in review-pr § 4"
 fi
 
-CTRL="$(plant_pr qa 's/^Follow the § 4 pattern .*$/Follow the § 4 pattern — resolve the decision mode, then delegate./')"
+CTRL="$(plant_pr qa 's/^When \*\*Converged\*\* below is false, follow the § 4 pattern .*$/When Converged below is false, resolve the decision mode, then delegate./')"
 if grep -qEi "$MENU_RE" <<<"$(section_7 "$CTRL")"; then
   pass "lint flags a decision-mode gate reintroduced in review-pr § 7"
 else

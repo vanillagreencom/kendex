@@ -210,7 +210,7 @@ fi
 # carries its rule: a token scan over the whole slice cannot tell the
 # convergence test from the disposition set from the recorded reason, and a
 # control narrowing one of them would leave the token standing in another.
-s7_converged() { s7_exit "$1" | grep -F 'Converged** means'; }
+s7_converged() { s7_exit "$1" | grep -F '**Converged** is true when'; }
 s7_dispo()     { s7_exit "$1" | grep -F 'On the way out'; }
 s7_write()     { s7_exit "$1" | grep -F -- '--slurpfile art'; }
 
@@ -231,9 +231,38 @@ if grep -q -F 'twice running' <<<"$CONV" \
 elif grep -q -F 'category == "fix"' <<<"$CONV" \
      && grep -q -F 'category == "issue"' <<<"$CONV" \
      && grep -q -F 'blocker' <<<"$CONV"; then
-  pass "converging is one re-check with no new finding of any category"
+  pass "the predicate is one pass with no new finding of any category"
 else
-  fail "the convergence test ignores a category of finding"
+  fail "the predicate ignores a category of finding"
+fi
+
+# --- 12b: every path out of QA reaches the predicate -------------------------
+# The defect this closes is not a count, it is a path deciding its own exit.
+# § 6's all-pass branch returned to § 8 around whatever § 7 required, and § 7
+# carried a **Skip if** doing the same. One predicate, no early returns.
+section_6() { strip_comments "$1" | awk '$0 == "## 6. QA Checks" { on = 1; next } on && /^## 7[.]/ { on = 0 } on'; }
+S6="$(section_6 "$REVIEW_PR_WF")"
+if grep -q -F '§ 8' <<<"$S6"; then
+  fail "§ 6 still routes to § 8 around the predicate" "$(grep -n -F '§ 8' <<<"$S6")"
+else
+  pass "§ 6 reaches the predicate instead of returning to § 8"
+fi
+if grep -q -F '**Skip if**' <<<"$(section_7 "$REVIEW_PR_WF")"; then
+  fail "§ 7 carries an early return around its own predicate"
+else
+  pass "§ 7 has no early return around its predicate"
+fi
+
+# --- 12c: a verification pass is not a fix cycle -----------------------------
+# The § 7 → § 2 pass verifies a fix that already landed. Written to the gated
+# key it is refused once the internal budget is spent, and the round reaches
+# § 5 with an unseen fix diff — which is what § 4's rule forbids in words.
+S7ALL="$(section_7 "$REVIEW_PR_WF")"
+if grep -q -F 'verification_panel' <<<"$S7ALL" \
+   && grep -q -F 'neither counts nor refuses' <<<"$S7ALL"; then
+  pass "the § 2 verification pass takes an ungated key"
+else
+  fail "the § 2 verification pass is gated by the fix-cycle cap"
 fi
 
 # --- 13: the disposition set is every category, whatever fixed_items holds ---
@@ -451,9 +480,45 @@ else
   pass "lint flags a § 7 exit that records nothing before § 8"
 fi
 
+# § 6 deciding its own exit again.
+if ! plant_pr s6exit 's/→ § 7 — every verdict, every time/→ § 8 when every verdict is pass, else § 7/'; then
+  fail "§ 6 early-return control planted nothing — its sed program matched no text"
+elif grep -q -F '§ 8' <<<"$(section_6 "$CTRL")"; then
+  pass "lint flags § 6 returning to § 8 around the predicate"
+else
+  fail "lint MISSED § 6 returning to § 8 around the predicate"
+fi
+
+# § 7 growing its own early return back.
+CTRL="$TMP_ROOT/pr-skipif.md"
+awk '
+  /^## 7\. Handle QA Items/ && !planted {
+    print; print ""
+    print "**Skip if** every QA verdict is `pass` and no fix suggestions remain → § 8."
+    planted = 1; next
+  }
+  { print }
+' "$REVIEW_PR_WF" > "$CTRL"
+if ! grep -qF '**Skip if** every QA verdict' "$CTRL"; then
+  fail "§ 7 skip-if control planted nothing — no early return was inserted"
+elif grep -q -F '**Skip if**' <<<"$(section_7 "$CTRL")"; then
+  pass "lint flags § 7 growing an early return back"
+else
+  fail "lint MISSED § 7 growing an early return back"
+fi
+
+# The verification pass routed back onto the gated key.
+if ! plant_pr s7verif 's/with its panel on .verification_panel./with its panel on `rereview_panel`/'; then
+  fail "§ 7 verification control planted nothing — its sed program matched no text"
+elif grep -q -F 'verification_panel' <<<"$(section_7 "$CTRL")"; then
+  fail "lint MISSED a verification pass gated by the fix-cycle cap"
+else
+  pass "lint flags a verification pass gated by the fix-cycle cap"
+fi
+
 # The criterion counting to two: § 6's clean branch goes to § 8, so the second
 # pass is never scheduled and the rule cannot fire.
-if ! plant_pr s7twice 's/means a re-check surfaced no new finding of any category/means a re-check surfaced no new finding of any category, twice running/'; then
+if ! plant_pr s7twice 's/report no new finding of any category/report no new finding of any category, twice running/'; then
   fail "§ 7 twice-running control planted nothing — its sed program matched no text"
 elif grep -q -F 'twice running' <<<"$(s7_converged "$CTRL")"; then
   pass "lint flags a convergence test that counts to two"

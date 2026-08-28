@@ -67,7 +67,7 @@ CI_FIX_MAX_CYCLES = "6"
 REVIEW_MAX_CYCLES = "4"
 
 # Max external review rounds on an open PR. Past it a finding gets a
-# disposition and no fix push, except a defect the diff itself introduces.
+# disposition and no fix push, except a defect the diff introduces or arms.
 REVIEW_MAX_EXTERNAL_ROUNDS = "4"
 
 # Total concurrent agent-session budget, counting the primary; "0" =
