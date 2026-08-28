@@ -165,3 +165,24 @@ MEANING is asserted, and it runs here, upstream, on every change. A consumer
 asserts nothing about meaning: `validate-workflow.sh` asks only whether its
 copy is still this file. The two questions live in the two places that can
 answer them.
+
+## The reviewer-guidance template
+
+`templates/review-bots.md` is the other half of the gate: the engine reads
+what the bots produce, this file is what the bots read. It carries the
+review economics of a repo pushed at agent speed and the ENGINE's accepted
+residual classes — properties of this package that a bot re-derives and
+proposes a fix for on every repo that ships none.
+
+Consumers copy it to their repository root and name it wherever their bots
+read instructions. It carries no per-repo values, and one marked block —
+`<!-- BEGIN repo-specific accepted residuals -->` — is the consumer's own
+half, preserved across a re-copy.
+
+Verbatim equality is not available here, so the drift check lives where the
+engine does: `tests/review-bots-template.test.sh` strips that block from
+both sides and compares this repo's own root `review-bots.md` against the
+template byte-for-byte. Changing the engine's semantics means changing the
+template in the same commit, and the suite reds until the repo's own copy
+carries it. A consumer checkout has no root copy, and the suite asserts only
+the template's structure there.

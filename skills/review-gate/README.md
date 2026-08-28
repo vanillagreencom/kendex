@@ -16,7 +16,7 @@ It does **not** run or inspect your tests. That is branch protection's job.
 
 ## What you do
 
-Three things, once.
+Four things, once.
 
 **1. Vendor the skill and commit it.** `kendex refresh` writes
 `.agents/skills/review-gate/`. GitHub Actions checks out only tracked files,
@@ -50,6 +50,15 @@ exclusions still match something in your tree, and your adopted workflow
 still meets the template's contract. One verdict line per check; exit 0 all
 clear, 1 findings, 2 could not run. It never re-runs the engine's own tests —
 those run in the kendex repo, on every change to the engine.
+
+**4. Copy the reviewer guidance.**
+`.agents/skills/review-gate/templates/review-bots.md` to your repository
+root, verbatim, and name that file wherever your bots read instructions
+(`.github/copilot-instructions.md`, `.github/instructions/`, `AGENTS.md`).
+It tells them the review economics of a repo pushed at agent speed and the
+gate's own settled trade-offs, so they stop proposing a fix for each one.
+Your repo's own settled trade-offs go inside its marked block; the rest is
+the template, re-copied when the engine changes.
 
 Wiring, rulesets, merge-queue settings, and what an adoption PR deletes:
 [references/adoption.md](references/adoption.md).

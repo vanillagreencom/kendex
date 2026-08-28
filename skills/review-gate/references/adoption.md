@@ -37,6 +37,32 @@ Held-back jobs report `skipped`, and GitHub counts skipped as satisfied.
 7. **Reviewer instruction for the vendored tree** — wire the remedy-locus
    rule from [vendored-paths.md](vendored-paths.md), never a reviewer path
    exclusion.
+8. **Reviewer guidance for the bots themselves** — copy
+   `templates/review-bots.md` to the repository root and name it wherever
+   the repo's bots read instructions (below).
+
+## Reviewer guidance — `review-bots.md`
+
+The gate reads what the bots produce; this file is what the bots read. It
+carries the review economics of a repo pushed at agent speed and the
+engine's own accepted residual classes, which a bot re-derives and proposes
+a fix for on every repo that ships none.
+
+1. Copy `.agents/skills/review-gate/templates/review-bots.md` to the
+   repository root as `review-bots.md`, VERBATIM. It carries no per-repo
+   values.
+2. Name it wherever the repo's bots read instructions — one line in
+   `.github/copilot-instructions.md`, in the repo's
+   `.github/instructions/*.instructions.md`, or in `AGENTS.md`. That line
+   is the whole wiring, and it is the consumer's one-time edit.
+3. Put this repo's own accepted residuals inside the marked block
+   (`<!-- BEGIN repo-specific accepted residuals -->`). Everything outside
+   the block is the template.
+4. Re-copy the template's half whenever the engine changes. A re-copy
+   preserves the block and nothing else.
+
+The file is reviewer context, never agent-session working instructions —
+keep it out of `AGENTS.md` itself.
 
 ## Recommended CI shape — the fast/full split
 
@@ -219,6 +245,9 @@ multi-PR *background* reducer.
 - `.agents/skills/review-gate/scripts/validate.sh` exits 0 from the repo
   root.
 - The consumer's vendored-copy drift check passes.
+- The repo's `review-bots.md` differs from
+  `.agents/skills/review-gate/templates/review-bots.md` only inside the
+  marked block.
 - The first PURE re-vendor PR after adoption carries a trusted non-author
   review object at head, and on the vendored tree no unresolved thread from a
   summary-capable reviewer, except one raising a carve-out regression (which

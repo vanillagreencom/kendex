@@ -34,6 +34,9 @@ an outside contributor.
 - `REVIEW_GATE_CARRY_FORWARD` gains a `vendored` class: a `kendex refresh`
   push under the render trees a repo lists in `REVIEW_GATE_VENDORED_PATHS`
   carries the prior review, whatever the files' extensions.
+- review-gate ships `templates/review-bots.md`, the guidance the third-party
+  review bots read: copy it to the repository root, name it wherever the bots
+  read instructions, and keep the repo's own residuals in its marked block.
 
 ### Changed
 

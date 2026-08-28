@@ -9,7 +9,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "2.1.0"
+  version: "2.2.0"
 tags: [review]
 ---
 
@@ -88,11 +88,15 @@ git add .agents/skills/review-gate
 cp .agents/skills/review-gate/templates/review-gate-writer.yml \
    .github/workflows/review-gate-writer.yml
 
-# 3. seed the repo's settings from the shipped example, then edit the
+# 3. copy the reviewer guidance the bots read, VERBATIM — this repo's own
+#    accepted residuals go inside its marked block, nothing else moves
+cp .agents/skills/review-gate/templates/review-bots.md review-bots.md
+
+# 4. seed the repo's settings from the shipped example, then edit the
 #    handful of values this repo actually decides (table below)
 $EDITOR kendex.settings.toml
 
-# 4. prove the install answers for itself
+# 5. prove the install answers for itself
 .agents/skills/review-gate/scripts/validate.sh
 ```
 
