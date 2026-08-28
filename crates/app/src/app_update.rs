@@ -100,9 +100,11 @@ pub async fn app_update_install(app: tauri::AppHandle) -> Result<(), String> {
     let install = app_install()?;
     kendex_core::install_channel::for_app(&install, &Host).allow_replacement()?;
     // Left to itself the plugin rebuilds the install path from the launch
-    // environment, unresolved, and replaces whatever that name reaches.
-    // One value answers both halves, so the file approved above is the file
-    // renamed below.
+    // environment. On Linux it rewrites the exported APPIMAGE name itself,
+    // so a link there leaves the image approved above untouched; on macOS
+    // it refuses a link anywhere in the launch path before replacing
+    // anything. Where the plugin gets that far, handing it the approved
+    // path puts both halves on one file.
     let mut builder = app.updater_builder();
     if let Some(path) = install.judged_path() {
         builder = builder.executable_path(path);
@@ -144,5 +146,69 @@ mod tests {
             selected_feed(Some(fixture), false),
             kendex_core::update_feed::RELEASE_FEED_URL
         );
+    }
+
+    /// Only the bundle is writable, so `for_app` can approve nothing else.
+    struct OnlyWritable(&'static str);
+
+    impl kendex_core::install_channel::HostProbe for OnlyWritable {
+        fn replaceable(&self, path: &std::path::Path) -> bool {
+            path == std::path::Path::new(self.0)
+        }
+
+        fn exists(&self, _: &std::path::Path) -> bool {
+            false
+        }
+
+        fn resolve(&self, path: &std::path::Path) -> std::path::PathBuf {
+            path.to_owned()
+        }
+
+        fn on_path(&self, _: &str) -> bool {
+            false
+        }
+
+        fn os_release(&self) -> Option<String> {
+            None
+        }
+    }
+
+    /// The plugin decides for itself what to replace, deriving it from the
+    /// path it is handed, so nothing kendex asserts about that path proves
+    /// the two agree. This asks the plugin.
+    ///
+    /// Getting it wrong is not a failed update. The derived path is what the
+    /// macOS installer removes before moving the new bundle in, escalating a
+    /// permission error to a shell `rm -rf` under `with administrator
+    /// privileges`. Hand over the bundle instead of the executable inside it
+    /// and the plugin climbs one level further, to the directory holding
+    /// every other app on the machine. The dependency is a caret range, so a
+    /// minor bump can move this derivation under an unchanged kendex.
+    #[test]
+    fn the_plugin_derives_the_unit_for_app_approved() {
+        let exe = "/Applications/kendex.app/Contents/MacOS/kendex";
+        let bundle = "/Applications/kendex.app";
+        let probe = OnlyWritable(bundle);
+        let install = AppInstall::mac_bundle(&probe, std::path::Path::new(exe));
+        assert_eq!(
+            kendex_core::install_channel::for_app(&install, &probe),
+            InstallChannel::Direct
+        );
+
+        let handed = install.judged_path().expect("a mac bundle carries a path");
+        let derived = tauri_plugin_updater::extract_path_from_executable(handed)
+            .expect("the plugin derives a path from an executable inside a bundle");
+        // True on every platform the function compiles for, and the property
+        // that matters: what the plugin acts on never escapes what kendex
+        // approved.
+        assert!(
+            derived.starts_with(bundle),
+            "plugin derived {} from {handed}, outside the approved {bundle}",
+            derived.display(),
+            handed = handed.display()
+        );
+        // Where the derivation runs for real it lands on the bundle exactly.
+        #[cfg(target_os = "macos")]
+        assert_eq!(derived, std::path::Path::new(bundle));
     }
 }
