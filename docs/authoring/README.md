@@ -28,6 +28,7 @@ my-marketplace/
   kendex.toml            what this marketplace says about itself
   agents/<name>.md       one agent per file
   skills/<name>/SKILL.md one folder per skill (the folder name is its name)
+  skills/<name>/kendex.settings.toml.example  what that skill's settings are
   hooks/<name>.sh        commands/<name>.md   mcp/<name>.toml
   README.md              how to subscribe
   LICENSE
@@ -87,6 +88,10 @@ catalog.
 
 A description is never guessed. An empty one stays empty and is a check
 finding.
+
+## Settings
+
+A package declares its own settings: [settings.md](settings.md).
 
 ## Tags
 
