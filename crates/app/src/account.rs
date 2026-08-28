@@ -184,19 +184,19 @@ mod tests {
         ));
     }
 
-    /// The expired refusal is all the surface has to show, so it carries
-    /// the remedy and not just the diagnosis.
+    /// The expired refusal is all the surface has to show, and the whole
+    /// sentence is the producer's: the diagnosis and the remedy that fits
+    /// what the removal did. This layer passes it through and adds
+    /// nothing, so a remedy chosen upstream cannot be overwritten here.
     #[test]
     fn the_expired_refusal_carries_the_remedy_with_the_reason() {
+        let sentence = "your sign-in has expired (invalid_grant) \u{2014} run `kendex login` again";
         let refusal = refused(CoreError::SignInExpired {
-            why: "your sign-in has expired (invalid_grant)".to_owned(),
+            why: sentence.to_owned(),
         });
         let AccountCallRefused::Expired { message } = refusal else {
             panic!("a dead sign-in is an expiry");
         };
-        assert_eq!(
-            message,
-            "your sign-in has expired (invalid_grant) — run `kendex login` again"
-        );
+        assert_eq!(message, sentence);
     }
 }
