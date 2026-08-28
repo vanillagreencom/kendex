@@ -56,16 +56,30 @@ pub fn account_login_start() -> Result<LoginStart, String> {
     })
 }
 
+/// Where one poll of the device flow left the sign-in.
+///
+/// `Signed` carries the name minted for the credential just stored, the
+/// same one a later read of this account answers with. It is here so the
+/// caller holds a named credential from the moment one exists, rather
+/// than an unnamed one until the read that follows names it.
+#[derive(Debug, Serialize, Type)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum LoginPoll {
+    Pending,
+    SlowDown,
+    Signed { sign_in: String },
+}
+
 /// One poll; the frontend owns the timer so a closed dialog stops asking.
 #[tauri::command(async)]
 #[specta::specta]
-pub fn account_login_poll(device_code: String) -> Result<String, String> {
+pub fn account_login_poll(device_code: String) -> Result<LoginPoll, String> {
     match login::poll_once(&CurlFetch, &device_code).map_err(|e| e.to_string())? {
-        Poll::Pending => Ok("pending".to_owned()),
-        Poll::SlowDown => Ok("slow-down".to_owned()),
+        Poll::Pending => Ok(LoginPoll::Pending),
+        Poll::SlowDown => Ok(LoginPoll::SlowDown),
         Poll::Signed(pair) => {
             let env = Env::detect().map_err(|e| e.to_string())?;
-            me::commit_sign_in(
+            let sign_in = me::commit_sign_in(
                 &env,
                 &KeyringStore,
                 &Credential {
@@ -78,7 +92,7 @@ pub fn account_login_poll(device_code: String) -> Result<String, String> {
                 },
             )
             .map_err(|e| e.to_string())?;
-            Ok("signed".to_owned())
+            Ok(LoginPoll::Signed { sign_in })
         }
     }
 }

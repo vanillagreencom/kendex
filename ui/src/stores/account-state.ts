@@ -13,12 +13,17 @@ export interface AccountIdentity {
  * `signed-in` carries the identity once the backend has one; a credential
  * in the keychain is enough to be signed in before then. `offline` is a
  * credential we know the owner of but could not confirm; `expired` is one
- * the server no longer accepts. */
+ * the server no longer accepts.
+ *
+ * The states that hold a credential carry `signIn`, the name core minted
+ * for that sign-in. It arrives with the credential and comes back on
+ * every read of it, so two answers can be compared for whether they are
+ * about the same sign-in. */
 export type AccountState =
   | { kind: "loading" }
   | { kind: "signed-out" }
-  | { kind: "signed-in"; identity: AccountIdentity | null }
-  | { kind: "offline"; identity: AccountIdentity }
+  | { kind: "signed-in"; identity: AccountIdentity | null; signIn: string }
+  | { kind: "offline"; identity: AccountIdentity; signIn: string }
   | { kind: "expired" };
 
 /** Every state but the one that means "not read yet". */
@@ -31,35 +36,27 @@ type WithIdentity = Extract<AccountState, { kind: "signed-in" | "offline" }>;
 export const hasCredential = (account: AccountState): account is WithIdentity =>
   account.kind === "signed-in" || account.kind === "offline";
 
-export const cachedIdentity = (
-  account: AccountState,
-): AccountIdentity | null => (hasCredential(account) ? account.identity : null);
+/** The same credential, no longer confirmed: what a read that failed
+ *  leaves when it already knew who holds it. Null when there is nothing
+ *  to go offline with, which is a credential whose name has not been read
+ *  yet, or no credential at all. */
+export const asOffline = (account: AccountState): SettledAccount | null =>
+  hasCredential(account) && account.identity
+    ? { kind: "offline", identity: account.identity, signIn: account.signIn }
+    : null;
 
-/** Whether a read landed on the credential already held, as far as a read
- *  can tell.
+/** Whether two answers are about the same sign-in.
  *
- *  The question is whether the credential changed hands, not whether its
- *  name has arrived. A credential is stored before anything knows who it
- *  belongs to, so a state with no identity at all is transitional and the
- *  read landing here is the one that names it. That is the only wildcard.
- *  Between two identities that have both been read, a null `githubLogin`
- *  is a settled fact about an account whose GitHub link was removed, and
- *  it separates them from a linked one the way any other value would.
- *
- *  What this cannot separate: two read identities that agree on
- *  everything the app is given. A read is told who the account belongs to
- *  and nothing that tells one sign-in for that person from the next, so
- *  the same person signing in again, and two unlinked accounts sharing a
- *  name, both read as the credential already held. Separating those needs
- *  a stable per-sign-in identifier the app is not handed today. */
-export const sameAccount = (
+ * Core mints `signIn` when a sign-in is committed, carries it through
+ * every token rotation, and replaces it only when another sign-in
+ * replaces the credential. So this asks the question the caller actually
+ * has, which is whether the credential changed hands, rather than
+ * inferring it from the identity: a rename leaves the same credential,
+ * and signing in again as the same person leaves a different one under
+ * the same name. Neither is visible in what a read says about who the
+ * account belongs to. */
+export const sameCredential = (
   held: AccountState,
   read: AccountState,
-): boolean => {
-  if (!hasCredential(held) || !hasCredential(read)) return false;
-  if (held.identity === null || read.identity === null) return true;
-  return (
-    held.identity.githubLogin === read.identity.githubLogin &&
-    held.identity.name === read.identity.name
-  );
-};
+): boolean =>
+  hasCredential(held) && hasCredential(read) && held.signIn === read.signIn;

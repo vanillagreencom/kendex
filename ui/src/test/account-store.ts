@@ -1,0 +1,58 @@
+// The account store's test harness: the wire answer, the reader seam, the
+// named fixtures, and the reset, shared by the files that exercise it.
+//
+// Each test file installs its own `vi.mock("@/bindings", ...)`; the
+// helpers here read through whichever mock the importing file set up.
+import { vi } from "vitest";
+import { type AccountStatus, commands } from "@/bindings";
+import { type SettledAccount, useAccountStore } from "@/stores/account";
+import { setAccountReader } from "@/stores/account-read";
+
+/** The name core mints for a sign-in; two answers about one credential
+ *  carry the same one, and a new sign-in carries a different one. */
+export const SIGN_IN = "sign-in-ada";
+export const OTHER_SIGN_IN = "sign-in-next";
+
+export const ADA = { name: "Ada Lovelace", githubLogin: "ada" };
+export const BOB = { name: "Bob", githubLogin: "bob" };
+
+/** What the real command answers: the state the backend settled on. */
+export const answers = (state: AccountStatus["state"]) =>
+  vi.mocked(commands.accountStatus).mockResolvedValue({
+    status: "ok",
+    data: { state, endpoint: "https://kendex.ai" },
+  } as Awaited<ReturnType<typeof commands.accountStatus>>);
+
+export const unreadable = (why = "keychain locked") =>
+  vi.mocked(commands.accountStatus).mockResolvedValue({
+    status: "error",
+    error: why,
+  } as Awaited<ReturnType<typeof commands.accountStatus>>);
+
+/** What a backend that has reached the server answers with. */
+export const serves = (account: SettledAccount) =>
+  setAccountReader(async () => ({ ok: account }));
+
+export const load = () => useAccountStore.getState().load();
+export const account = () => useAccountStore.getState().account;
+
+export const fresh = () =>
+  useAccountStore.setState({
+    account: { kind: "loading" },
+    error: null,
+    readError: null,
+    submissions: null,
+    signingIn: false,
+    userCode: null,
+    reading: false,
+  });
+
+/** One submission row, so a test can watch rows survive or go with the
+ *  credential that owned them. */
+export const ROW = {
+  repo: "ada/team-skills",
+  status: "pending",
+  status_reason: null,
+  head_commit: null,
+  indexed_at: null,
+};

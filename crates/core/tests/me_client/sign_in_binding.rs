@@ -359,7 +359,7 @@ fn a_rotation_mid_read_still_settles_the_answer() {
         ok(200, None, &fixture_body(&["success", "body"])),
     ]);
     match me::load(&env, &fetch, &store).expect("load") {
-        AccountState::SignedIn { identity } => assert_eq!(identity.name, "Ada Lovelace"),
+        AccountState::SignedIn { identity, .. } => assert_eq!(identity.name, "Ada Lovelace"),
         other => panic!("a rotated sign-in is the same sign-in, got {other:?}"),
     }
     assert_eq!(
@@ -375,7 +375,7 @@ fn a_rotation_mid_read_still_settles_the_answer() {
     // read opened with, or the next read would find nothing.
     let down = Canned::new(vec![away()]);
     match me::load(&env, &down, &store).expect("offline load") {
-        AccountState::Offline { identity } => assert_eq!(identity.name, "Ada Lovelace"),
+        AccountState::Offline { identity, .. } => assert_eq!(identity.name, "Ada Lovelace"),
         other => panic!("the rotated read's cache is still this sign-in's, got {other:?}"),
     }
 }
@@ -635,7 +635,7 @@ fn a_rotation_by_another_call_leaves_the_identity_cache_readable() {
 
     let down = Canned::new(vec![away()]);
     match me::load(&env, &down, &store).expect("offline load") {
-        AccountState::Offline { identity } => assert_eq!(identity.name, "Ada Lovelace"),
+        AccountState::Offline { identity, .. } => assert_eq!(identity.name, "Ada Lovelace"),
         other => panic!("the cached identity outlives a rotation, got {other:?}"),
     }
 }
@@ -664,7 +664,7 @@ fn a_rotation_that_then_fails_leaves_the_identity_cache_readable() {
 
     let down = Canned::new(vec![away()]);
     match me::load(&env, &down, &store).expect("offline load") {
-        AccountState::Offline { identity } => assert_eq!(identity.name, "Ada Lovelace"),
+        AccountState::Offline { identity, .. } => assert_eq!(identity.name, "Ada Lovelace"),
         other => panic!("the next read still has that generation, got {other:?}"),
     }
 }

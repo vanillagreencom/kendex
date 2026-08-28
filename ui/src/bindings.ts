@@ -250,7 +250,7 @@ export const commands = {
 	accountStatus: () => typedError<AccountStatus, string>(__TAURI_INVOKE("account_status")),
 	accountLoginStart: () => typedError<LoginStart, string>(__TAURI_INVOKE("account_login_start")),
 	/**  One poll; the frontend owns the timer so a closed dialog stops asking. */
-	accountLoginPoll: (deviceCode: string) => typedError<string, string>(__TAURI_INVOKE("account_login_poll", { deviceCode })),
+	accountLoginPoll: (deviceCode: string) => typedError<LoginPoll, string>(__TAURI_INVOKE("account_login_poll", { deviceCode })),
 	accountLogout: () => typedError<null, string>(__TAURI_INVOKE("account_logout")),
 	mineSubmitPreflight: (path: string) => typedError<SubmitPreflight, string>(__TAURI_INVOKE("mine_submit_preflight", { path })),
 	mineSubmit: (repo: string) => typedError<SubmittedView, AccountCallRefused>(__TAURI_INVOKE("mine_submit", { repo })),
@@ -380,10 +380,19 @@ export type AccountCallRefused = { kind: "expired"; message: string } | { kind: 
 /**
  *  What the account surfaces render, every one of them settled: the UI
  *  holds its own "not read yet" until the first answer comes back.
+ * 
+ *  The states that hold a credential carry `sign_in`, the name of the
+ *  sign-in they were read under. It is [`Credential::sign_in`]: minted
+ *  once when a sign-in is committed, carried through every rotation, and
+ *  replaced only by another sign-in. A caller holding an earlier answer
+ *  compares it to tell the credential it has from one that replaced it,
+ *  which no part of the identity can answer — a rename leaves the same
+ *  credential, and signing in again as the same person leaves a
+ *  different one under the same name.
  */
-export type AccountState = { state: "signed-out" } | { state: "signed-in"; identity: Identity } | 
+export type AccountState = { state: "signed-out" } | { state: "signed-in"; identity: Identity; sign_in: string } | 
 /**  The server could not be asked; the identity is the last good fetch. */
-{ state: "offline"; identity: Identity } | 
+{ state: "offline"; identity: Identity; sign_in: string } | 
 /**  The credential is dead server-side — signing in again is the fix. */
 { state: "expired" };
 
@@ -1549,6 +1558,16 @@ export type Line = {
 };
 
 export type LineKind = "context" | "add" | "remove";
+
+/**
+ *  Where one poll of the device flow left the sign-in.
+ * 
+ *  `Signed` carries the name minted for the credential just stored, the
+ *  same one a later read of this account answers with. It is here so the
+ *  caller holds a named credential from the moment one exists, rather
+ *  than an unnamed one until the read that follows names it.
+ */
+export type LoginPoll = { kind: "pending" } | { kind: "slow-down" } | { kind: "signed"; sign_in: string };
 
 export type LoginStart = {
 	deviceCode: string,

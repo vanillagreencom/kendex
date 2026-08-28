@@ -122,19 +122,23 @@ fn rotate_locked(
     })
 }
 
-/// Commit a completed device login without racing refresh or logout.
-/// Surfaces call `me::commit_sign_in`, which drops the previous
-/// account's cached identity around this.
-pub fn commit_login(store: &dyn CredentialStore, credential: &Credential) -> Result<()> {
+/// Commit a completed device login without racing refresh or logout, and
+/// answer the name minted for it. Surfaces call `me::commit_sign_in`,
+/// which drops the previous account's cached identity around this.
+pub fn commit_login(store: &dyn CredentialStore, credential: &Credential) -> Result<String> {
     let _guard = store.refresh_guard()?;
     // The sign-in is named here and nowhere else. A device flow mints a
     // refresh token no other sign-in has, so its digest names this one
     // without inventing a second source of uniqueness, and rotation
-    // carries the name rather than recomputing it.
+    // carries the name rather than recomputing it. It is answered rather
+    // than left to be recomputed, which would be a second place that
+    // decides what a sign-in is called.
+    let sign_in = crate::hash::hash_bytes(credential.refresh_token.as_bytes());
     store.save(&Credential {
-        sign_in: crate::hash::hash_bytes(credential.refresh_token.as_bytes()),
+        sign_in: sign_in.clone(),
         ..credential.clone()
-    })
+    })?;
+    Ok(sign_in)
 }
 
 /// Revoke and clear the current sign-in under the credential transaction lock.

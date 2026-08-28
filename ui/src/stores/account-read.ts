@@ -19,9 +19,13 @@ const settled = (wire: AccountStatus["state"]): SettledAccount => {
     case "signed-out":
       return { kind: "signed-out" };
     case "signed-in":
-      return { kind: "signed-in", identity: wire.identity };
+      return {
+        kind: "signed-in",
+        identity: wire.identity,
+        signIn: wire.sign_in,
+      };
     case "offline":
-      return { kind: "offline", identity: wire.identity };
+      return { kind: "offline", identity: wire.identity, signIn: wire.sign_in };
     case "expired":
       return { kind: "expired" };
   }

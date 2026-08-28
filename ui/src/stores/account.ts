@@ -12,9 +12,9 @@ import {
 import { readAccount } from "./account-read";
 import {
   type AccountState,
-  cachedIdentity,
+  asOffline,
   hasCredential,
-  sameAccount,
+  sameCredential,
 } from "./account-state";
 
 // The one door every surface already comes to for these.
@@ -53,9 +53,8 @@ interface AccountStore {
   signOut: () => Promise<void>;
   loadSubmissions: () => Promise<void>;
   /** How many times the account has changed hands. A call going out under
-   *  the sign-in reads this first and gives it back to `refused`, which
-   *  is how an expiry about a credential nobody holds any more is told
-   *  from one about the credential on screen. */
+   *  the sign-in reads it first and gives it back to `refused`, which
+   *  drops an expiry about a credential nobody holds any more. */
   handovers: () => number;
   /** A call made under the sign-in, read for what its refusal says about
    *  the account. Expiry is the credential ending: the sign-in is dead
@@ -123,13 +122,9 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       // away. With an identity already in hand the failure is exactly
       // offline; a credential without a name stays signed in, and a state
       // never read stays unread with the failure to show for it.
-      const identity = cachedIdentity(get().account);
-      if (identity)
-        set({
-          account: { kind: "offline", identity },
-          readError: answer.error,
-        });
-      else set({ readError: answer.error });
+      const offline = asOffline(get().account);
+      const readError = answer.error;
+      set(offline ? { account: offline, readError } : { readError });
       return;
     }
     const held = get().account;
@@ -144,8 +139,8 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       (answer.ok.kind === "signed-out" || answer.ok.kind === "offline")
     ) {
       set(credentialEnded(held));
-    } else if (sameAccount(held, answer.ok)) {
-      // The credential already held, named at last or confirmed again.
+    } else if (sameCredential(held, answer.ok)) {
+      // The same sign-in: named at last, or confirmed again.
       set({ account: answer.ok, readError: null });
     } else {
       // Either the credential is gone, or a read has found one the app
@@ -180,21 +175,27 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
         set({ signingIn: false, userCode: null, error: polled.error });
         return;
       }
-      if (polled.data === "signed") {
+      if (polled.data.kind === "signed") {
         // The approval is proof a credential was stored, so it is recorded
         // before anything else is asked: a read that fails after this must
-        // not leave the person looking at a sign-in button. The read that
-        // follows is what puts a name to it.
+        // not leave the person looking at a sign-in button. The poll
+        // answers with the sign-in core minted, so the credential is named
+        // from the moment it exists and the read that follows only puts a
+        // person's name to it.
         handover += 1;
         set({
           signingIn: false,
           userCode: null,
-          account: { kind: "signed-in", identity: null },
+          account: {
+            kind: "signed-in",
+            identity: null,
+            signIn: polled.data.sign_in,
+          },
         });
         await get().load();
         return;
       }
-      if (polled.data === "slow-down") interval += 5;
+      if (polled.data.kind === "slow-down") interval += 5;
     }
   },
 

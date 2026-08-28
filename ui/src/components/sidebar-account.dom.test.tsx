@@ -19,6 +19,10 @@ import { useNavStore } from "@/stores/nav";
 import { mount } from "@/test/dom";
 import { SidebarAccount } from "./sidebar-account";
 
+/** The name core mints for a sign-in; two answers about one
+ *  credential carry the same one. */
+const SIGN_IN = "sign-in-ada";
+
 vi.mock("@/bindings", () => ({ commands: {} }));
 
 // The provider's account id is an opaque number, not a handle. Every
@@ -53,10 +57,10 @@ const spoken = (host: HTMLElement): string =>
 
 /** The states a read can settle on, each named for the message it fails in. */
 const SETTLED: [string, AccountState][] = [
-  ["signed-in", { kind: "signed-in", identity: ADA }],
+  ["signed-in", { kind: "signed-in", identity: ADA, signIn: SIGN_IN }],
   ["signed-out", { kind: "signed-out" }],
   ["expired", { kind: "expired" }],
-  ["offline", { kind: "offline", identity: ADA }],
+  ["offline", { kind: "offline", identity: ADA, signIn: SIGN_IN }],
 ];
 
 beforeEach(() => {
@@ -93,7 +97,7 @@ describe("what the account row draws", () => {
   });
 
   it("shows the name and its initial when signed in", () => {
-    const host = show({ kind: "signed-in", identity: ADA });
+    const host = show({ kind: "signed-in", identity: ADA, signIn: SIGN_IN });
     expect(seen(host)).toContain(ADA.name);
     expect(seen(host)).toContain("A");
     expect(seen(host)).not.toContain(ACCOUNT_OFFLINE_LABEL);
@@ -112,22 +116,22 @@ describe("what the account row draws", () => {
   // signed in, but it must not put a name or a letter to an account the
   // server has not named.
   it("names nobody when the credential has no identity yet", () => {
-    expect(seen(show({ kind: "signed-in", identity: null }))).toBe(
-      ACCOUNT_SIGNED_IN_LABEL,
-    );
+    expect(
+      seen(show({ kind: "signed-in", identity: null, signIn: SIGN_IN })),
+    ).toBe(ACCOUNT_SIGNED_IN_LABEL);
   });
 
   // The server answers with a String, so a blank one is a name it does not
   // have rather than a field it did not send.
   it("names nobody when the server sent a blank name", () => {
     const blank = { name: "  ", githubLogin: "1234567" };
-    expect(seen(show({ kind: "signed-in", identity: blank }))).toBe(
-      ACCOUNT_SIGNED_IN_LABEL,
-    );
+    expect(
+      seen(show({ kind: "signed-in", identity: blank, signIn: SIGN_IN })),
+    ).toBe(ACCOUNT_SIGNED_IN_LABEL);
   });
 
   it("reads as offline when the credential could not be confirmed", () => {
-    const host = show({ kind: "offline", identity: ADA });
+    const host = show({ kind: "offline", identity: ADA, signIn: SIGN_IN });
     expect(seen(host)).toContain(ADA.name);
     expect(seen(host)).toContain(ACCOUNT_OFFLINE_LABEL);
   });
@@ -185,10 +189,18 @@ describe("how the sentence behind a row reaches a person", () => {
 // mean something the row cannot show, and where the click goes for the rest.
 describe("the sentence behind each row", () => {
   it.each([
-    ["signed-in", { kind: "signed-in", identity: ADA }, ACCOUNT_ROW_TITLE],
+    [
+      "signed-in",
+      { kind: "signed-in", identity: ADA, signIn: SIGN_IN },
+      ACCOUNT_ROW_TITLE,
+    ],
     ["signed-out", { kind: "signed-out" }, ACCOUNT_ROW_TITLE],
     ["expired", { kind: "expired" }, ACCOUNT_EXPIRED_TITLE],
-    ["offline", { kind: "offline", identity: ADA }, ACCOUNT_OFFLINE_TITLE],
+    [
+      "offline",
+      { kind: "offline", identity: ADA, signIn: SIGN_IN },
+      ACCOUNT_OFFLINE_TITLE,
+    ],
   ] as [string, AccountState, string][])(
     "says what the %s row means",
     (_state, account, sentence) => {

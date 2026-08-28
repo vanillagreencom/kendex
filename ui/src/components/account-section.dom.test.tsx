@@ -29,6 +29,10 @@ import { type AccountState, useAccountStore } from "@/stores/account";
 import { mount } from "@/test/dom";
 import { AccountSection } from "./account-section";
 
+/** The name core mints for a sign-in; two answers about one
+ *  credential carry the same one. */
+const SIGN_IN = "sign-in-ada";
+
 vi.mock("@/bindings", () => ({ commands: {} }));
 
 // The provider's account id is an opaque number, not a handle. Every
@@ -94,15 +98,17 @@ const press = async (host: HTMLElement, label: string) => {
 };
 
 const SETTLED: [string, AccountState][] = [
-  ["signed-in", { kind: "signed-in", identity: ADA }],
+  ["signed-in", { kind: "signed-in", identity: ADA, signIn: SIGN_IN }],
   ["signed-out", { kind: "signed-out" }],
   ["expired", { kind: "expired" }],
-  ["offline", { kind: "offline", identity: ADA }],
+  ["offline", { kind: "offline", identity: ADA, signIn: SIGN_IN }],
 ];
 
 describe("the state the section draws", () => {
   it("names the account and offers a sign-out when signed in", () => {
-    const host = show({ account: { kind: "signed-in", identity: ADA } });
+    const host = show({
+      account: { kind: "signed-in", identity: ADA, signIn: SIGN_IN },
+    });
     expect(host.textContent).toContain(ADA.name);
     expect(initial(host)).toBe("A");
     expect(offered(host)).toEqual([ACCOUNT_SIGN_OUT_LABEL]);
@@ -117,7 +123,9 @@ describe("the state the section draws", () => {
   // one part of unbounded length, so it is the part that is cut off.
   it("cuts a long name off rather than widening the row", () => {
     const long = { name: "A".repeat(200), githubLogin: "1234567" };
-    const host = show({ account: { kind: "signed-in", identity: long } });
+    const host = show({
+      account: { kind: "signed-in", identity: long, signIn: SIGN_IN },
+    });
     // jsdom lays nothing out, so the class carrying the rule is what can be
     // checked: the element holding the name is the one that gives.
     const named = [...host.querySelectorAll("span")].find(
@@ -130,7 +138,9 @@ describe("the state the section draws", () => {
   // A credential in the keychain is not a person: the section may say it is
   // signed in, but it must not put a name to an account nobody has named.
   it("names nobody when the credential has no identity yet", () => {
-    const host = show({ account: { kind: "signed-in", identity: null } });
+    const host = show({
+      account: { kind: "signed-in", identity: null, signIn: SIGN_IN },
+    });
     expect(host.textContent).toContain(ACCOUNT_SIGNED_IN_LABEL);
     expect(host.textContent).not.toContain(ADA.name);
     expect(initial(host)).toBe("");
@@ -141,7 +151,9 @@ describe("the state the section draws", () => {
   // stand-in: falling back to it would print an opaque number as a person.
   it("names nobody when the server sent a blank name", () => {
     const blank = { name: "  ", githubLogin: "1234567" };
-    const host = show({ account: { kind: "signed-in", identity: blank } });
+    const host = show({
+      account: { kind: "signed-in", identity: blank, signIn: SIGN_IN },
+    });
     expect(host.textContent).toContain(ACCOUNT_SIGNED_IN_LABEL);
     expect(host.textContent).not.toContain(blank.githubLogin);
     expect(initial(host)).toBe("");
@@ -150,7 +162,9 @@ describe("the state the section draws", () => {
   // The bug this section had: `hasCredential` is true for offline, so an
   // unconfirmed credential drew as a confirmed sign-in.
   it("marks an unconfirmed credential offline, not signed in", () => {
-    const host = show({ account: { kind: "offline", identity: ADA } });
+    const host = show({
+      account: { kind: "offline", identity: ADA, signIn: SIGN_IN },
+    });
     expect(host.textContent).toContain(ADA.name);
     expect(host.textContent).toContain(ACCOUNT_OFFLINE_LABEL);
     expect(host.textContent).toContain(ACCOUNT_OFFLINE_TITLE);
@@ -160,7 +174,9 @@ describe("the state the section draws", () => {
   // The credential is still this machine's to drop, and dropping it is what
   // stops the app asking the server about it.
   it("still offers a sign-out while offline", () => {
-    const host = show({ account: { kind: "offline", identity: ADA } });
+    const host = show({
+      account: { kind: "offline", identity: ADA, signIn: SIGN_IN },
+    });
     expect(offered(host)).toEqual([ACCOUNT_SIGN_OUT_LABEL]);
   });
 
@@ -237,7 +253,7 @@ describe("the retry a failed read gets", () => {
   // state keeps its own row and the failure gets a second one.
   it("sits beside a state that did land", () => {
     const host = show({
-      account: { kind: "offline", identity: ADA },
+      account: { kind: "offline", identity: ADA, signIn: SIGN_IN },
       readError: "keychain locked",
     });
     expect(host.textContent).toContain("keychain locked");
@@ -267,7 +283,9 @@ describe("the retry a failed read gets", () => {
 
 describe("signing in and out", () => {
   it("signs out from the row that names the account", async () => {
-    const host = show({ account: { kind: "signed-in", identity: ADA } });
+    const host = show({
+      account: { kind: "signed-in", identity: ADA, signIn: SIGN_IN },
+    });
     await press(host, ACCOUNT_SIGN_OUT_LABEL);
     expect(act.signOut).toHaveBeenCalledTimes(1);
   });

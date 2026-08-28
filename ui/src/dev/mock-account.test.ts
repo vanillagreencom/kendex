@@ -67,11 +67,37 @@ describe("the account states the dev bridge can answer as", () => {
 
   it("signs in through the device flow and out again", async () => {
     await mockInvoke("account_login_start");
-    expect(await mockInvoke("account_login_poll")).toBe("pending");
-    expect(await mockInvoke("account_login_poll")).toBe("signed");
-    expect((await read()).account).toEqual(MOCK_ACCOUNTS["signed-in"]);
+    expect(await mockInvoke("account_login_poll")).toEqual({ kind: "pending" });
+    const approved = (await mockInvoke("account_login_poll")) as {
+      kind: string;
+      sign_in: string;
+    };
+    expect(approved.kind).toBe("signed");
+    // The approval names the credential it stored, and the read that
+    // follows has to answer with that same name or the store counts a
+    // second change of hands for one sign-in.
+    const settled = (await read()).account;
+    expect(settled).toEqual({
+      ...MOCK_ACCOUNTS["signed-in"],
+      signIn: approved.sign_in,
+    });
     await mockInvoke("account_logout");
     expect((await read()).account).toEqual(MOCK_ACCOUNTS["signed-out"]);
+  });
+
+  // Signing in again is a different credential, which is what makes the
+  // re-sign-in case reachable in the harness at all.
+  it("mints a new name for every sign-in", async () => {
+    const approve = async () => {
+      await mockInvoke("account_login_start");
+      await mockInvoke("account_login_poll");
+      const signed = (await mockInvoke("account_login_poll")) as {
+        sign_in: string;
+      };
+      return signed.sign_in;
+    };
+    const first = await approve();
+    expect(await approve()).not.toBe(first);
   });
 });
 
@@ -120,8 +146,10 @@ describe("the expiry the dev URL arms", () => {
 
     // The sign-in the dialog offers, and the submit that works after it.
     await mockInvoke("account_login_start");
-    expect(await mockInvoke("account_login_poll")).toBe("pending");
-    expect(await mockInvoke("account_login_poll")).toBe("signed");
+    await mockInvoke("account_login_poll");
+    expect(await mockInvoke("account_login_poll")).toMatchObject({
+      kind: "signed",
+    });
     expect((await answerOf("mine_submit")).answer).toMatchObject({
       status: "pending",
     });

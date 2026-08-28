@@ -11,6 +11,10 @@ import { useMineStore } from "@/stores/mine";
 import { mount, settle } from "@/test/dom";
 import { MineTab } from "./mine-tab";
 
+/** The name core mints for a sign-in; two answers about one
+ *  credential carry the same one. */
+const SIGN_IN = "sign-in-ada";
+
 vi.mock("@/bindings", () => ({
   commands: {
     mineSubmissions: vi.fn(),
@@ -44,7 +48,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   useMineStore.setState({ rows: [], load: async () => {} });
   useAccountStore.setState({
-    account: { kind: "signed-in", identity: ADA },
+    account: { kind: "signed-in", identity: ADA, signIn: SIGN_IN },
     error: null,
     readError: null,
     submissions: null,
@@ -124,6 +128,7 @@ it("leaves the account alone when a tick fails for any other reason", async () =
   expect(useAccountStore.getState().account).toEqual({
     kind: "signed-in",
     identity: ADA,
+    signIn: SIGN_IN,
   });
   expect(useAccountStore.getState().submissions).toEqual([ROW]);
 });
