@@ -1,10 +1,16 @@
-//! The Customize tab's whole-manifest read and write.
+//! The Customize tab's reads and its one write.
 //!
 //! Every other write in the app is a targeted operation that loads,
 //! changes and saves in one breath. This one hands a person the whole
-//! file, waits while they type, and writes all of it back — so it is the
-//! one write that can put an older file over a newer one, and the only
-//! one that carries the base of the file its copy came from to stop that.
+//! manifest and the settings their skills declare, waits while they work,
+//! and writes it all back — so it is the write that can put an older file
+//! over a newer one, and the one that carries the base of each file its
+//! copy came from to stop that.
+//!
+//! Both halves go down as one plan. Saving the manifest re-plans the
+//! scope, and that plan may seed or refresh the settings file itself, so
+//! settings edits are an input to it rather than a write that follows:
+//! a second write would bind to bytes the first one had already replaced.
 
 use kendex_core::apply::{self, Op, PlannedOp, Pre};
 use kendex_core::base::Base;
@@ -13,12 +19,14 @@ use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
 use kendex_core::manifest::{self, Finding, Manifest};
 use kendex_core::model::Scope;
-use serde::Serialize;
+use kendex_core::settings_file::{SettingsDraft as CoreSettingsDraft, SettingsEdit};
+use kendex_core::settings_view::ScopeSettings;
+use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::env;
 use crate::audit::{AuditView, view};
-use crate::whole_file::{WriteRefused, stale_at};
+use crate::whole_file::{WriteRefused, refusal, stale_at};
 
 /// A place's manifest and what the file it came from was at that moment.
 /// One value, because a copy without its base cannot be written back
@@ -71,31 +79,72 @@ fn on_first_creation(mut manifest: Manifest, seed: Manifest) -> Manifest {
     manifest
 }
 
-/// Write an edited manifest and reconcile the scope to it.
-///
-/// `base` is what the file was when this copy was read. A whole manifest
-/// goes back with every save, so a copy read before something else wrote
-/// the file would put that back — and the caller cannot be relied on to
-/// notice. Refusing here needs no caller to remember anything.
+/// The Customize tab's settings half: what every installed skill declares
+/// and where this place's file stands on each key.
 #[tauri::command(async)]
 #[specta::specta]
-pub fn update_manifest(
+pub fn get_scope_settings(scope: Scope) -> Result<ScopeSettings, String> {
+    kendex_core::settings_view::scope_settings(&env()?, &scope).map_err(|e| e.to_string())
+}
+
+/// An edited manifest and what the file it came from was at that moment.
+#[derive(Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ManifestDraft {
+    pub manifest: Manifest,
+    pub base: Option<String>,
+}
+
+/// Edited settings values and what the settings file was when they were
+/// read. Each edit names the skill whose template declares its key, which
+/// is what core checks it against.
+#[derive(Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsDraft {
+    pub edits: Vec<SettingsEdit>,
+    pub base: Option<String>,
+}
+
+/// Save the Customize tab and reconcile the scope to it.
+///
+/// Either draft may be absent: a settings-only save carries no manifest,
+/// and a manifest-only save carries no edits. Both are one transaction —
+/// saving the manifest re-plans the scope, and that plan may seed or
+/// refresh the settings file itself, so a second write would bind to
+/// bytes the first one had already replaced.
+///
+/// Each base is what its file was when this copy was read. A whole
+/// manifest goes back with every save, so a copy read before something
+/// else wrote the file would put that back — and the caller cannot be
+/// relied on to notice. Refusing here needs no caller to remember
+/// anything.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn save_customize(
     scope: Scope,
-    manifest: Manifest,
-    base: Option<String>,
+    manifest: Option<ManifestDraft>,
+    settings: Option<SettingsDraft>,
 ) -> Result<AuditView, WriteRefused> {
-    // The bytes behind this base were read in the editor, so it arrives
-    // as a claim and is only ever compared, never believed.
-    write_manifest(&env()?, scope, manifest, Base::claimed(base))
+    // The bytes behind each base were read in the editor, so they arrive
+    // as claims and are only ever compared, never believed.
+    write_customize(
+        &env()?,
+        scope,
+        manifest.map(|draft| (draft.manifest, Base::claimed(draft.base))),
+        settings.map(|draft| CoreSettingsDraft {
+            edits: draft.edits,
+            base: Base::claimed(draft.base),
+        }),
+    )
 }
 
 /// The write itself, against a given environment — which is what makes it
 /// reachable from a test. The command above only finds the environment.
-fn write_manifest(
+fn write_customize(
     env: &Env,
     scope: Scope,
-    manifest: Manifest,
-    claimed: Base,
+    draft: Option<(Manifest, Base)>,
+    settings: Option<CoreSettingsDraft>,
 ) -> Result<AuditView, WriteRefused> {
     let path = manifest::manifest_path(env, &scope);
     // One read answers both questions: whether the file is still the one
@@ -104,33 +153,60 @@ fn write_manifest(
     // failure to say out loud, not a stale copy: the reload cannot fix a
     // permission or an encoding, and offering it would hide what did.
     let (current, now) = manifest::read_for_mutation(&path).map_err(|e| e.to_string())?;
-    if now != claimed {
-        return Err(WriteRefused::Stale);
+    let mut options = PlanOptions::default();
+    let mut targets = Vec::new();
+    // The manifest half. Without one, the scope is reconciled to the file
+    // as it sits and no manifest write is added.
+    let edited = match draft {
+        None => None,
+        Some((draft, claimed)) => {
+            if now != claimed {
+                return Err(WriteRefused::Stale);
+            }
+            let mut manifest = match current.is_some() {
+                true => draft,
+                false => on_first_creation(
+                    draft,
+                    ops::manifest_for_mutation(env, &scope).map_err(|e| e.to_string())?,
+                ),
+            };
+            // A custom hook's name is its identity everywhere downstream;
+            // saving is when a derived one stops being derived.
+            kendex_core::hook::name_custom_hooks(&mut manifest);
+            check(&manifest)?;
+            targets.push(path.clone());
+            // The plan binds its own manifest write to the file this copy
+            // came from, so a writer landing after the check above is
+            // refused by the apply rather than overwritten.
+            options.manifest_base = Some(claimed.clone());
+            Some((manifest, claimed))
+        }
+    };
+    // The settings half, bound the same way. The base is verified up front
+    // for the same reason the manifest's is: a refusal before anything is
+    // planned costs the person nothing, and the op's own precondition
+    // catches a writer that lands after it.
+    if let Some(settings) = settings {
+        if let Some(root) = settings_root(&scope) {
+            let file = kendex_core::settings_seed::settings_file_path(&root);
+            settings.base.verify(&file).map_err(refusal)?;
+            targets.push(file);
+        }
+        options.settings_draft = Some(settings);
     }
-    let mut manifest = match current {
-        Some(_) => manifest,
-        None => on_first_creation(
-            manifest,
-            ops::manifest_for_mutation(env, &scope).map_err(|e| e.to_string())?,
-        ),
+    let planned = match &edited {
+        Some((manifest, _)) => manifest.clone(),
+        // Nothing here is editing the manifest, so the scope reconciles to
+        // what is on disk — an absent one reads as empty, which is what
+        // every other read-only pass does with it.
+        None => current.clone().unwrap_or_default(),
     };
-    // A custom hook's name is its identity everywhere downstream; saving is
-    // when a derived one stops being derived.
-    kendex_core::hook::name_custom_hooks(&mut manifest);
-    check(&manifest)?;
     let lock = load_lock(&lock_path(env, &scope)).map_err(|e| e.to_string())?;
-    // The plan binds its own manifest write to the file this copy came
-    // from, so a writer landing after the check above is refused by the
-    // apply rather than overwritten.
-    let options = PlanOptions {
-        manifest_base: Some(claimed.clone()),
-        ..PlanOptions::default()
-    };
     let mut report =
-        engine::plan_scope(env, &scope, &manifest, &lock, &options).map_err(|e| e.to_string())?;
-    let targets = [path.clone()];
-    let persisted = engine::persists_manifest(&report.plan.ops);
-    if !persisted {
+        engine::plan_scope(env, &scope, &planned, &lock, &options).map_err(|e| e.to_string())?;
+    if let Some((manifest, claimed)) = edited
+        && !engine::persists_manifest(&report.plan.ops)
+    {
         // Leading the plan: every later op was planned against the manifest
         // this write makes durable, and the base still holds — the file is
         // the one the copy on screen was read from.
@@ -146,9 +222,9 @@ fn write_manifest(
             },
         );
     }
-    // The bound precondition refuses a file that moved between the check
+    // The bound preconditions refuse a file that moved between the checks
     // above and the write itself, and that refusal is the same answer the
-    // check gives — so it reaches the editor as the same choice.
+    // checks give — so it reaches the editor as the same choice.
     apply::execute(env, &report.plan, None).map_err(|error| match stale_at(&error, &targets) {
         true => WriteRefused::Stale,
         false => WriteRefused::Failed {
@@ -156,6 +232,16 @@ fn write_manifest(
         },
     })?;
     Ok(view(env, &scope))
+}
+
+/// The project root a settings file would sit in. Global has none: skills
+/// seed on a project install alone, and core refuses an edit there by the
+/// key it names.
+fn settings_root(scope: &Scope) -> Option<std::path::PathBuf> {
+    match scope.canonical() {
+        Scope::Project { root } => Some(root),
+        Scope::Global => None,
+    }
 }
 
 #[cfg(test)]

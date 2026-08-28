@@ -8,7 +8,7 @@ vi.mock("@/bindings", () => ({
   commands: {
     getManifest: vi.fn(),
     editorInventory: vi.fn(),
-    updateManifest: vi.fn(),
+    saveCustomize: vi.fn(),
   },
 }));
 
@@ -56,15 +56,15 @@ describe("editor store", () => {
     await useEditorStore.getState().load();
     expect(useEditorStore.getState().base).toBe("b1");
 
-    vi.mocked(commands.updateManifest).mockResolvedValue({
+    vi.mocked(commands.saveCustomize).mockResolvedValue({
       status: "ok",
       data: {} as AuditView_Serialize,
     });
     await useEditorStore.getState().save();
-    expect(commands.updateManifest).toHaveBeenCalledWith(
+    expect(commands.saveCustomize).toHaveBeenCalledWith(
       { scope: "global" },
-      emptyDraft(),
-      "b1",
+      { manifest: emptyDraft(), base: "b1" },
+      null,
     );
   });
 
@@ -73,7 +73,7 @@ describe("editor store", () => {
   /// stay an error, never the reload offer.
   it("renders a stale refusal as the reload choice and a failure as an error", async () => {
     useEditorStore.setState({ draft: emptyDraft(), base: "b1" });
-    vi.mocked(commands.updateManifest).mockResolvedValue({
+    vi.mocked(commands.saveCustomize).mockResolvedValue({
       status: "error",
       error: { kind: "stale" },
     });
@@ -81,7 +81,7 @@ describe("editor store", () => {
     expect(useEditorStore.getState().stale).toBe(true);
     expect(useEditorStore.getState().error).toBeNull();
 
-    vi.mocked(commands.updateManifest).mockResolvedValue({
+    vi.mocked(commands.saveCustomize).mockResolvedValue({
       status: "error",
       error: { kind: "failed", message: "disk is full" },
     });

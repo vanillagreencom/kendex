@@ -137,7 +137,7 @@ fn a_save_carrying_the_base_of_the_file_it_read_lands() {
     edited
         .skill_instructions
         .insert("all".into(), "read the plan".into());
-    write_manifest(&env, scope, edited, base).unwrap();
+    write_customize(&env, scope, Some((edited, base)), None).unwrap();
 
     let (saved, _) = manifest::read_for_mutation(&path).unwrap();
     assert_eq!(
@@ -172,7 +172,7 @@ fn a_save_from_a_stale_copy_is_refused_and_the_newer_file_stands() {
         .insert("all".into(), "kept".into());
     std::fs::write(&path, toml::to_string_pretty(&newer).unwrap()).unwrap();
 
-    let Err(refused) = write_manifest(&env, scope, stale, base) else {
+    let Err(refused) = write_customize(&env, scope, Some((stale, base)), None) else {
         panic!("a stale save must be refused");
     };
 
@@ -197,7 +197,7 @@ fn a_copy_predating_the_first_save_is_refused_once_a_file_exists() {
         schema: MANIFEST_SCHEMA,
         ..Manifest::default()
     };
-    let Err(refused) = write_manifest(&env, scope, empty, Base::absent()) else {
+    let Err(refused) = write_customize(&env, scope, Some((empty, Base::absent())), None) else {
         panic!("a no-file claim against an existing file must be refused");
     };
     assert!(matches!(refused, WriteRefused::Stale), "{refused:?}");
@@ -268,4 +268,149 @@ fn rejected_edits_come_back_with_their_fix_string() {
     let error = check(&edited).expect_err("undeclared source must be rejected");
     assert!(error.contains("skills.github"), "{error}");
     assert!(error.contains("fix: declare [sources.gone]"), "{error}");
+}
+
+const TEMPLATE: &str = "[env]\n# Which reviewers run by default.\nREVIEWERS = \"arch,security\"\n";
+
+/// A project whose one installed skill ships settings, so a save has both
+/// halves to carry.
+fn scope_with_settings_skill() -> (tempfile::TempDir, Env, Scope) {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), kendex_core::env::FakeOs::Linux);
+    let project = tmp.path().join("dev/app");
+    std::fs::create_dir_all(project.join(".claude")).unwrap();
+    let skill = tmp.path().join("catalog/skills/review");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: review\ndescription: review changes\n---\nBody.\n",
+    )
+    .unwrap();
+    std::fs::write(skill.join("kendex.settings.toml.example"), TEMPLATE).unwrap();
+    std::fs::write(
+        project.join("kendex.toml"),
+        format!(
+            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\n\n[skills.review]\nsource = \"cat\"\n",
+            tmp.path().join("catalog").display()
+        ),
+    )
+    .unwrap();
+    (tmp, env, Scope::Project { root: project })
+}
+
+fn edit(key: &str, value: &str) -> SettingsEdit {
+    SettingsEdit {
+        skill: "review".to_owned(),
+        key: key.to_owned(),
+        value: kendex_core::settings_file::SettingsEditValue::Set {
+            value: value.to_owned(),
+        },
+    }
+}
+
+/// The reason a settings edit cannot be a second write: saving the
+/// manifest re-plans the scope, and that plan seeds this very file. Both
+/// drafts go into one plan and land together.
+#[test]
+fn a_manifest_and_a_settings_draft_land_in_one_save() {
+    let (tmp, env, scope) = scope_with_settings_skill();
+    let settings = tmp.path().join("dev/app/kendex.settings.toml");
+    let manifest_path = manifest::manifest_path(&env, &scope);
+    // The first save seeds the file; the second edits what it seeded.
+    write_customize(&env, scope.clone(), None, None).unwrap();
+    let held = Base::of(&std::fs::read_to_string(&settings).unwrap());
+
+    let (read, base) = manifest::read_for_mutation(&manifest_path).unwrap();
+    let mut edited = read.unwrap();
+    edited
+        .skill_instructions
+        .insert("all".into(), "read the plan".into());
+    write_customize(
+        &env,
+        scope,
+        Some((edited, base)),
+        Some(kendex_core::settings_file::SettingsDraft {
+            edits: vec![edit("REVIEWERS", "arch")],
+            base: held,
+        }),
+    )
+    .unwrap();
+
+    assert!(
+        std::fs::read_to_string(&settings)
+            .unwrap()
+            .contains("REVIEWERS = \"arch\"")
+    );
+    let (saved, _) = manifest::read_for_mutation(&manifest_path).unwrap();
+    assert_eq!(
+        saved
+            .unwrap()
+            .skill_instructions
+            .get("all")
+            .map(String::as_str),
+        Some("read the plan")
+    );
+}
+
+/// Neither half lands when one is refused. The settings copy is the stale
+/// one here, and the manifest edit beside it must not go in on its own.
+#[test]
+fn a_stale_settings_copy_refuses_and_takes_the_manifest_edit_with_it() {
+    let (tmp, env, scope) = scope_with_settings_skill();
+    let settings = tmp.path().join("dev/app/kendex.settings.toml");
+    let manifest_path = manifest::manifest_path(&env, &scope);
+    write_customize(&env, scope.clone(), None, None).unwrap();
+    let held = Base::of(&std::fs::read_to_string(&settings).unwrap());
+
+    // The writer in between.
+    let newer = std::fs::read_to_string(&settings)
+        .unwrap()
+        .replace("arch,security", "theirs");
+    std::fs::write(&settings, &newer).unwrap();
+
+    let (read, base) = manifest::read_for_mutation(&manifest_path).unwrap();
+    let mut edited = read.unwrap();
+    edited
+        .skill_instructions
+        .insert("all".into(), "older edit".into());
+    let Err(refused) = write_customize(
+        &env,
+        scope,
+        Some((edited, base)),
+        Some(kendex_core::settings_file::SettingsDraft {
+            edits: vec![edit("REVIEWERS", "arch")],
+            base: held,
+        }),
+    ) else {
+        panic!("a stale settings copy must be refused");
+    };
+    assert!(matches!(refused, WriteRefused::Stale), "{refused:?}");
+    assert_eq!(std::fs::read_to_string(&settings).unwrap(), newer);
+    let (kept, _) = manifest::read_for_mutation(&manifest_path).unwrap();
+    assert!(kept.unwrap().skill_instructions.is_empty());
+}
+
+/// A settings-only save carries no manifest draft: the scope reconciles to
+/// the file as it sits, and the value goes in.
+#[test]
+fn a_settings_only_save_carries_no_manifest_draft() {
+    let (tmp, env, scope) = scope_with_settings_skill();
+    let settings = tmp.path().join("dev/app/kendex.settings.toml");
+    write_customize(&env, scope.clone(), None, None).unwrap();
+    let held = Base::of(&std::fs::read_to_string(&settings).unwrap());
+    write_customize(
+        &env,
+        scope,
+        None,
+        Some(kendex_core::settings_file::SettingsDraft {
+            edits: vec![edit("REVIEWERS", "arch")],
+            base: held,
+        }),
+    )
+    .unwrap();
+    assert!(
+        std::fs::read_to_string(&settings)
+            .unwrap()
+            .contains("REVIEWERS = \"arch\"")
+    );
 }

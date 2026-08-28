@@ -136,14 +136,24 @@ export const auditHandlers: Record<string, Handler> = {
   },
   get_manifest: ({ scope }: { scope: Scope }) =>
     store.state.manifests[label(scope)] ?? null,
-  update_manifest: ({
+  // The dev shell installs no skills, so no template declares a key here
+  // — an answer, the same one a project with nothing settings-shipping
+  // gives, rather than a blank the page has to interpret.
+  get_scope_settings: ({ scope }: { scope: Scope }) => ({
+    applies: scope.scope === "project",
+    skills: [],
+    base: null,
+  }),
+  save_customize: ({
     scope,
-    manifest: m,
+    manifest: draft,
   }: {
     scope: Scope;
-    manifest: Manifest_Serialize;
+    manifest: { manifest: Manifest_Serialize } | null;
   }) => {
-    store.state.manifests[label(scope)] = m;
+    if (draft) {
+      store.state.manifests[label(scope)] = draft.manifest;
+    }
     return view(scope);
   },
   editor_inventory: ({ scope }: { scope: Scope }) => {

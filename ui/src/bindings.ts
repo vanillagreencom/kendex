@@ -80,14 +80,32 @@ export const commands = {
 	removeItem: (scope: Scope, kind: ItemKind, name: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("remove_item", { scope, kind, name })),
 	getManifest: (scope: Scope) => typedError<ManifestRead_Serialize, string>(__TAURI_INVOKE("get_manifest", { scope })),
 	/**
-	 *  Write an edited manifest and reconcile the scope to it.
-	 * 
-	 *  `base` is what the file was when this copy was read. A whole manifest
-	 *  goes back with every save, so a copy read before something else wrote
-	 *  the file would put that back — and the caller cannot be relied on to
-	 *  notice. Refusing here needs no caller to remember anything.
+	 *  The Customize tab's settings half: what every installed skill declares
+	 *  and where this place's file stands on each key.
 	 */
-	updateManifest: (scope: Scope, manifest: Manifest_Deserialize, base: string | null) => typedError<AuditView_Serialize, WriteRefused>(__TAURI_INVOKE("update_manifest", { scope, manifest, base })),
+	getScopeSettings: (scope: Scope) => typedError<ScopeSettings, string>(__TAURI_INVOKE("get_scope_settings", { scope })),
+	/**
+	 *  Save the Customize tab and reconcile the scope to it.
+	 * 
+	 *  Either draft may be absent: a settings-only save carries no manifest,
+	 *  and a manifest-only save carries no edits. Both are one transaction —
+	 *  saving the manifest re-plans the scope, and that plan may seed or
+	 *  refresh the settings file itself, so a second write would bind to
+	 *  bytes the first one had already replaced.
+	 * 
+	 *  Each base is what its file was when this copy was read. A whole
+	 *  manifest goes back with every save, so a copy read before something
+	 *  else wrote the file would put that back — and the caller cannot be
+	 *  relied on to notice. Refusing here needs no caller to remember
+	 *  anything.
+	 */
+	saveCustomize: (scope: Scope, manifest: {
+	manifest: Manifest_Deserialize,
+	base: string | null,
+} | null, settings: {
+	edits: SettingsEdit[],
+	base: string | null,
+} | null) => typedError<AuditView_Serialize, WriteRefused>(__TAURI_INVOKE("save_customize", { scope, manifest, settings })),
 	editorInventory: (scope: Scope) => typedError<EditorInventory, string>(__TAURI_INVOKE("editor_inventory", { scope })),
 	/**
 	 *  Per-hook, per-harness delivery for the hooks as currently drafted in the
@@ -817,6 +835,23 @@ export type CreateRequest = {
 	/**  The folder to create — its parent must exist, itself must not. */
 	dir: string,
 };
+
+/**  Where one key stands in the file, as a reader can act on it. */
+export type Current = 
+/**  Nothing in the file assigns it. */
+{ state: "absent" } | 
+/**
+ *  One `[env]` assignment the loaders read. The only state a default
+ *  can be compared against.
+ */
+{ state: "value"; value: string; line: number } | 
+/**
+ *  Something is there, and nothing here can say what the value is:
+ *  assigned twice, assigned where nothing reads it, or written in a
+ *  shape the loaders refuse. The lines are what a person has to look
+ *  at to settle it.
+ */
+{ state: "ambiguous"; problem: string; lines: number[] };
 
 export type CustomHook = CustomHook_Serialize | CustomHook_Deserialize;
 
@@ -1614,6 +1649,21 @@ export type LoginStart = {
 
 export type Manifest = Manifest_Serialize | Manifest_Deserialize;
 
+/**  An edited manifest and what the file it came from was at that moment. */
+export type ManifestDraft = ManifestDraft_Serialize | ManifestDraft_Deserialize;
+
+/**  An edited manifest and what the file it came from was at that moment. */
+export type ManifestDraft_Deserialize = {
+	manifest: Manifest_Deserialize,
+	base: string | null,
+};
+
+/**  An edited manifest and what the file it came from was at that moment. */
+export type ManifestDraft_Serialize = {
+	manifest: Manifest_Serialize,
+	base: string | null,
+};
+
 /**
  *  A place's manifest and what the file it came from was at that moment.
  *  One value, because a copy without its base cannot be written back
@@ -2332,6 +2382,50 @@ export type ScopeErrorKind =
 /**  The manifest parses but fails validation. */
 "manifest-invalid" | "other";
 
+/**  Everything one place's settings view needs, read together. */
+export type ScopeSettings = {
+	/**
+	 *  Whether this place has a settings file at all. Global never does —
+	 *  skills seed on a project install alone — and false with no skills
+	 *  is the whole answer for it, never "not asked yet".
+	 */
+	applies: boolean,
+	/**  One entry per skill this place installs, by name. */
+	skills: SkillSettings[],
+	/**
+	 *  The settings file as it was when these rows were read. An edit
+	 *  written from them carries it back, and a file that moved in
+	 *  between is refused rather than overwritten.
+	 */
+	base: Base,
+};
+
+/**
+ *  Edited settings values and what the settings file was when they were
+ *  read. Each edit names the skill whose template declares its key, which
+ *  is what core checks it against.
+ */
+export type SettingsDraft = {
+	edits: SettingsEdit[],
+	base: string | null,
+};
+
+/**
+ *  One value a person set, bound to the skill whose template declares the
+ *  key — the declaration is what core checks the edit against, so an edit
+ *  naming a skill that does not ship the key is refused rather than
+ *  written under somebody else's name.
+ */
+export type SettingsEdit = {
+	skill: string,
+	key: string,
+	value: SettingsEditValue,
+};
+
+export type SettingsEditValue = { kind: "set"; value: string } | 
+/**  Write the template default of the skill this edit names. */
+{ kind: "reset" };
+
 /**
  *  The settings and the base of the exact file they describe — paired by
  *  one read, or handed back by the write that produced the file. One
@@ -2343,7 +2437,44 @@ export type SettingsRead = {
 	base: Base,
 };
 
+/**  One key a skill declares, and where the consumer's file stands on it. */
+export type SettingsRow = {
+	key: string,
+	/**
+	 *  The template's comment block, `#` markers stripped — what the
+	 *  author wrote to explain the key.
+	 */
+	explainer: string[],
+	default: string,
+	/**
+	 *  Only a [`Current::Value`] is comparable with `default`; the other
+	 *  two say what is in the way instead.
+	 */
+	current: Current,
+};
+
 export type Severity = "low" | "medium" | "high" | "critical";
+
+export type SkillSettings = {
+	skill: string,
+	template: SkillTemplate,
+};
+
+/**  One skill's settings, in whichever of the four states it is in. */
+export type SkillTemplate = 
+/**  This skill declares no settings. */
+{ state: "no-template" } | 
+/**
+ *  Its template is out of reach here — a source that has not arrived,
+ *  a skill switched off, a source that no longer carries it.
+ */
+{ state: "unreadable"; reason: string } | 
+/**
+ *  The template does not hold to the authoring contract. Seeding is
+ *  lenient and may have seeded keys from it regardless, so this says
+ *  nothing about what the settings file contains.
+ */
+{ state: "invalid"; findings: TemplateFinding[] } | { state: "rows"; rows: SettingsRow[] };
 
 export type SkillsShHit = {
 	/**  The skill's directory name inside its repository. */
@@ -2528,6 +2659,14 @@ export type Tag =
 "integration" | 
 /**  Driving other tools and agents, and the workflows that chain them. */
 "automation";
+
+/**  A defect at a place in the template, with what to do about it. */
+export type TemplateFinding = {
+	/**  1-based line; 0 where the whole file is the subject. */
+	line: number,
+	problem: string,
+	fix: string,
+};
 
 /**
  *  What unsubscribing from a marketplace would do: the packages that can be

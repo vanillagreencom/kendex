@@ -80,9 +80,13 @@ export const useEditorStore = create<EditorState>((set, get) => {
   const write = async (draft: Draft) => {
     const { scope, base } = get();
     set({ saving: true });
-    let response: Awaited<ReturnType<typeof commands.updateManifest>>;
+    let response: Awaited<ReturnType<typeof commands.saveCustomize>>;
     try {
-      response = await commands.updateManifest(scope, draft, base);
+      response = await commands.saveCustomize(
+        scope,
+        { manifest: draft, base },
+        null,
+      );
     } finally {
       set({ saving: false });
     }
