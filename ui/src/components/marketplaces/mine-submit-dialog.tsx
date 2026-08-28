@@ -37,6 +37,7 @@ export function MineSubmitDialog({
   // this dialog offers a sign-in for. Without it the offer has no reason
   // on screen and points at a server that is already out of reach.
   const readError = useAccountStore((s) => s.readError);
+  const refused = useAccountStore((s) => s.refused);
   const [preflight, setPreflight] = useState<SubmitPreflight | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +64,11 @@ export function MineSubmitDialog({
     void commands.mineSubmit(preflight.candidate).then((answer) => {
       setBusy(false);
       if (answer.status === "error") {
-        setError(answer.error);
+        setError(answer.error.message);
+        // An expired sign-in takes the offer away with it: the footer
+        // reads the account, so this dialog stops offering a submit
+        // nothing can carry and offers the sign-in that fixes it.
+        refused(answer.error);
         return;
       }
       setSubmitted(answer.data.status);

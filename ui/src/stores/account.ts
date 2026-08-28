@@ -4,7 +4,11 @@
 // Startup makes the one account read; every surface reads `account` from
 // here rather than asking again.
 import { create } from "zustand";
-import { commands, type SubmissionRow } from "@/bindings";
+import {
+  type AccountCallRefused,
+  commands,
+  type SubmissionRow,
+} from "@/bindings";
 import { readAccount } from "./account-read";
 
 /** Who the account belongs to, as the server names them. The linked
@@ -67,6 +71,12 @@ interface AccountStore {
   cancelSignIn: () => void;
   signOut: () => Promise<void>;
   loadSubmissions: () => Promise<void>;
+  /** A call made under the sign-in, read for what its refusal says about
+   *  the account. Expiry is the credential ending, and the call that met
+   *  it is what took the credential away, so it leaves behind what
+   *  signing out leaves. Every other refusal is news about that one
+   *  action and about nothing else, and stays where it was made. */
+  refused: (refusal: AccountCallRefused) => void;
 }
 
 /** Bumped to abandon a poll loop whose dialog was closed. */
@@ -207,9 +217,31 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
     if (!hasCredential(get().account)) return;
     const before = handover;
     const rows = await commands.mineSubmissions();
-    // Rows belong to the account they were asked for. One that changed
-    // hands while they were coming has none of them.
+    // Rows belong to the account they were asked for, and so does a
+    // refusal: one that changed hands while they were coming has neither.
     if (before !== handover) return;
     if (rows.status === "ok") set({ submissions: rows.data });
+    // The poll shows nothing of its own, so a session that died between
+    // ticks would otherwise go on being polled invisibly.
+    else get().refused(rows.error);
+  },
+
+  refused: (refusal) => {
+    if (refusal.kind !== "expired") return;
+    // Expiry is a credential ending, so there has to be one to end. A
+    // refusal landing after the account moved on — a sign-out taken
+    // while the call was out, a second call meeting the same dead
+    // sign-in — is about a credential nobody holds any more.
+    if (!hasCredential(get().account)) return;
+    // Losing the credential this way changes hands as surely as signing
+    // out does, so work already out for the old one is stale.
+    handover += 1;
+    // Meeting expiry is what cleared the credential, so the next read
+    // finds none and says signed out; `load` is where this outlives it.
+    set({
+      account: { kind: "expired" },
+      readError: null,
+      submissions: null,
+    });
   },
 }));

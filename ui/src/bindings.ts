@@ -253,8 +253,8 @@ export const commands = {
 	accountLoginPoll: (deviceCode: string) => typedError<string, string>(__TAURI_INVOKE("account_login_poll", { deviceCode })),
 	accountLogout: () => typedError<null, string>(__TAURI_INVOKE("account_logout")),
 	mineSubmitPreflight: (path: string) => typedError<SubmitPreflight, string>(__TAURI_INVOKE("mine_submit_preflight", { path })),
-	mineSubmit: (repo: string) => typedError<SubmittedView, string>(__TAURI_INVOKE("mine_submit", { repo })),
-	mineSubmissions: () => typedError<SubmissionRow[], string>(__TAURI_INVOKE("mine_submissions")),
+	mineSubmit: (repo: string) => typedError<SubmittedView, AccountCallRefused>(__TAURI_INVOKE("mine_submit", { repo })),
+	mineSubmissions: () => typedError<SubmissionRow[], AccountCallRefused>(__TAURI_INVOKE("mine_submissions")),
 	packageVersions: (scope: Scope, kind: ItemKind, name: string) => typedError<VersionRow[], string>(__TAURI_INVOKE("package_versions", { scope, kind, name })),
 	/**
 	 *  Bring one package current and apply — the Updates page's per-package
@@ -356,6 +356,24 @@ export type AboutView = {
 	found: AboutFound[],
 	findings: CatalogFinding[],
 };
+
+/**
+ *  Why a call made under the stored sign-in did not answer.
+ * 
+ *  Expiry is the account ending, not one action failing: the credential
+ *  is gone, and every surface built on the account has to say so. As a
+ *  message it reaches only the surface that asked, which is how a person
+ *  gets told their sign-in expired by a dialog while the sidebar goes on
+ *  naming them. So it is a shape the caller can act on rather than a
+ *  sentence it would have to recognise by its words.
+ */
+export type AccountCallRefused = 
+/**
+ *  The sign-in is dead and the credential has been cleared. The
+ *  message is the whole sentence, the remedy included, because the
+ *  surface that shows it has nothing else to say.
+ */
+{ kind: "expired"; message: string } | { kind: "failed"; message: string };
 
 /**
  *  What the account surfaces render, every one of them settled: the UI

@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use kendex_core::author::{self, SubmitPreflight};
 use kendex_core::env::Env;
+use kendex_core::error::CoreError;
 use kendex_core::registry::credentials::{Credential, KeyringStore};
 use kendex_core::registry::login::{self, Poll};
 use kendex_core::registry::me::{self, AccountState};
@@ -104,10 +105,46 @@ pub struct SubmittedView {
     pub status: String,
 }
 
+/// Why a call made under the stored sign-in did not answer.
+///
+/// Expiry is the account ending, not one action failing: the credential
+/// is gone, and every surface built on the account has to say so. As a
+/// message it reaches only the surface that asked, which is how a person
+/// gets told their sign-in expired by a dialog while the sidebar goes on
+/// naming them. So it is a shape the caller can act on rather than a
+/// sentence it would have to recognise by its words.
+#[derive(Debug, Serialize, Type)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum AccountCallRefused {
+    /// The sign-in is dead and the credential has been cleared. The
+    /// message is the whole sentence, the remedy included, because the
+    /// surface that shows it has nothing else to say.
+    Expired {
+        message: String,
+    },
+    Failed {
+        message: String,
+    },
+}
+
+/// What a failed authenticated call means to the surfaces the account
+/// feeds. Expiry is the one failure that is news about the account
+/// itself; every other is this action's alone.
+fn refused(error: CoreError) -> AccountCallRefused {
+    match error {
+        expired @ CoreError::SignInExpired { .. } => AccountCallRefused::Expired {
+            message: expired.to_string(),
+        },
+        other => AccountCallRefused::Failed {
+            message: other.to_string(),
+        },
+    }
+}
+
 #[tauri::command(async)]
 #[specta::specta]
-pub fn mine_submit(repo: String) -> Result<SubmittedView, String> {
-    let outcome = submit::submit(&CurlFetch, &KeyringStore, &repo).map_err(|e| e.to_string())?;
+pub fn mine_submit(repo: String) -> Result<SubmittedView, AccountCallRefused> {
+    let outcome = submit::submit(&CurlFetch, &KeyringStore, &repo).map_err(refused)?;
     Ok(SubmittedView {
         repo: outcome.repo,
         status: outcome.status,
@@ -116,6 +153,50 @@ pub fn mine_submit(repo: String) -> Result<SubmittedView, String> {
 
 #[tauri::command(async)]
 #[specta::specta]
-pub fn mine_submissions() -> Result<Vec<SubmissionRow>, String> {
-    submit::submissions(&CurlFetch, &KeyringStore).map_err(|e| e.to_string())
+pub fn mine_submissions() -> Result<Vec<SubmissionRow>, AccountCallRefused> {
+    submit::submissions(&CurlFetch, &KeyringStore).map_err(refused)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The account moves on expiry and on nothing else. A refusal that
+    /// says the server would not take the submission is about the
+    /// submission, and signing the person out over it would be a lie.
+    #[test]
+    fn expiry_is_the_one_refusal_that_is_news_about_the_account() {
+        assert!(matches!(
+            refused(CoreError::SignInExpired {
+                why: "the server does not accept this sign-in".to_owned()
+            }),
+            AccountCallRefused::Expired { .. }
+        ));
+        assert!(matches!(
+            refused(CoreError::Authoring {
+                message: "that repository is already submitted".to_owned()
+            }),
+            AccountCallRefused::Failed { .. }
+        ));
+        assert!(matches!(
+            refused(CoreError::NotSignedIn),
+            AccountCallRefused::Failed { .. }
+        ));
+    }
+
+    /// The expired refusal is all the surface has to show, so it carries
+    /// the remedy and not just the diagnosis.
+    #[test]
+    fn the_expired_refusal_carries_the_remedy_with_the_reason() {
+        let refusal = refused(CoreError::SignInExpired {
+            why: "your sign-in has expired (invalid_grant)".to_owned(),
+        });
+        let AccountCallRefused::Expired { message } = refusal else {
+            panic!("a dead sign-in is an expiry");
+        };
+        assert_eq!(
+            message,
+            "your sign-in has expired (invalid_grant) — run `kendex login` again"
+        );
+    }
 }

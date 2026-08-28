@@ -473,3 +473,81 @@ describe("which states go looking for submissions", () => {
     expect(await asks({ kind: "expired" })).toBe(false);
   });
 });
+
+// A command made under the sign-in is the second way the credential is
+// found to have ended; the read is the first. What the two leave behind
+// has to be the same thing, or the sidebar and Settings > Account answer
+// to two rules about one account.
+describe("a call refused because the sign-in expired", () => {
+  const expired = { kind: "expired" as const, message: "run login again" };
+
+  const met = () => useAccountStore.getState().refused(expired);
+
+  it("goes to expired and drops the rows with it", () => {
+    useAccountStore.setState({
+      account: { kind: "signed-in", identity: ADA },
+      submissions: [],
+    });
+    met();
+    expect(account()).toEqual({ kind: "expired" });
+    expect(useAccountStore.getState().submissions).toBeNull();
+  });
+
+  it("keeps the explanation through the read that follows it", async () => {
+    useAccountStore.setState({ account: { kind: "signed-in", identity: ADA } });
+    met();
+    // Meeting expiry is what cleared the credential, so the next read
+    // finds none. What the command learned has to outlive that read.
+    answers({ state: "signed-out" });
+    await load();
+    expect(account()).toEqual({ kind: "expired" });
+  });
+
+  it("drops rows already out for the credential it ended", async () => {
+    useAccountStore.setState({
+      account: { kind: "signed-in", identity: ADA },
+      submissions: null,
+    });
+    vi.mocked(commands.mineSubmissions).mockImplementation(async () => {
+      met();
+      return { status: "ok", data: [] } as Awaited<
+        ReturnType<typeof commands.mineSubmissions>
+      >;
+    });
+    await useAccountStore.getState().loadSubmissions();
+    expect(useAccountStore.getState().submissions).toBeNull();
+  });
+
+  it("changes nothing once the account has already moved on", () => {
+    // A sign-out taken while the call was out is the person's own
+    // answer; the rejection that lands behind it is about a credential
+    // they already gave up.
+    useAccountStore.setState({ account: { kind: "signed-out" } });
+    met();
+    expect(account()).toEqual({ kind: "signed-out" });
+  });
+
+  it("says nothing about the account when the refusal is anything else", () => {
+    const signedIn = { kind: "signed-in" as const, identity: ADA };
+    useAccountStore.setState({ account: signedIn, submissions: [] });
+    useAccountStore
+      .getState()
+      .refused({ kind: "failed", message: "kendex.ai could not be reached" });
+    expect(account()).toEqual(signedIn);
+    expect(useAccountStore.getState().submissions).toEqual([]);
+  });
+
+  it("is what a submissions poll does with the refusal it gets", async () => {
+    useAccountStore.setState({
+      account: { kind: "signed-in", identity: ADA },
+      submissions: [],
+    });
+    vi.mocked(commands.mineSubmissions).mockResolvedValue({
+      status: "error",
+      error: expired,
+    } as Awaited<ReturnType<typeof commands.mineSubmissions>>);
+    await useAccountStore.getState().loadSubmissions();
+    expect(account()).toEqual({ kind: "expired" });
+    expect(useAccountStore.getState().submissions).toBeNull();
+  });
+});
