@@ -54,8 +54,30 @@ kendex_bom_guard() { # FILE — 0 = no leading BOM; 1 + ::error otherwise
   fi
 }
 
+# A source is skipped only when it is ABSENT. A path that exists as
+# something else — directory, FIFO, socket, device — fails -f exactly like
+# an absent one, and a dangling symlink fails -e as well as -f, so -L is
+# what sees it at all: either shape would silently skip a configured
+# source and let a lower-precedence value decide. Same rule the
+# rg/gg/sr resolver family enforces on its sources.
+kendex_source_usable() { # PATH — 0 = readable regular file or absent; 1 + ::error otherwise
+  if [[ -f "$1" ]]; then
+    [[ -r "$1" ]] && return 0
+    echo "::error::$1: source exists but is unreadable (permission denied); a source is skipped only when it is absent" >&2
+    return 1
+  fi
+  { [[ -e "$1" || -L "$1" ]]; } || return 0
+  if [[ ! -e "$1" ]]; then
+    echo "::error::$1: source is a symlink that does not resolve (dangling target, cycle, or over-long chain); a source is skipped only when it is absent" >&2
+  else
+    echo "::error::$1: source exists but is not a regular file (directory, FIFO, socket or device); a source is skipped only when it is absent" >&2
+  fi
+  return 1
+}
+
 kendex_source_env_file() {
   local file="$1"
+  kendex_source_usable "$file" || return 1
   [[ -f "$file" ]] || return 0
   kendex_bom_guard "$file" || return 1
   # shellcheck source=/dev/null
@@ -81,6 +103,7 @@ kendex_decode_value() { # RAW — decoded value on stdout; 1 = not contract shap
 
 kendex_load_settings_file() {
   local file="$1"
+  kendex_source_usable "$file" || return 1
   [[ -f "$file" ]] || return 0
   kendex_bom_guard "$file" || return 1
 

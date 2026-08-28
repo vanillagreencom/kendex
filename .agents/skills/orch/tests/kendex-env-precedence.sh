@@ -226,6 +226,39 @@ case "$s7_err" in
     FAIL=$((FAIL + 1)); printf '  FAIL  scenario 7: the refusal names the BOM\n        stderr: %s\n' "$s7_err" ;;
 esac
 
+# Scenario 8: a source is skipped only when ABSENT. A present-but-unusable
+# source (directory, dangling symlink, unreadable file) fails the load
+# loud, naming the path — silently treating it as absent would let a
+# lower-precedence value decide, the same fail-open the rg/gg/sr resolver
+# family refuses.
+s8_case() { # NAME STAGE EXPECT_SUBSTRING — STAGE runs inside the project dir
+  local name="$1" stage="$2" want="$3" code=0 err proj="$TMP_ROOT/proj8"
+  rm -rf "$proj"
+  mkdir -p "$proj"
+  ( cd "$proj" && eval "$stage" )
+  set +e
+  err=$(
+    set -euo pipefail
+    source "$LIB"
+    kendex_load_project_env "$proj" 2>&1 >/dev/null
+  )
+  code=$?
+  set -e
+  if [ "$code" -ne 0 ] && case "$err" in *"$want"*) true ;; *) false ;; esac; then
+    PASS=$((PASS + 1)); printf '  ok    scenario 8: %s fails the load and names the path\n' "$name"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  scenario 8: %s fails the load and names the path\n        code=%s stderr: %s\n' "$name" "$code" "$err"
+  fi
+}
+s8_case "a DIRECTORY at .env.local" 'mkdir .env.local' ".env.local: source exists but is not a regular file"
+s8_case "a DANGLING SYMLINK at kendex.settings.toml" 'ln -s missing.toml kendex.settings.toml' "kendex.settings.toml: source is a symlink that does not resolve"
+s8_case "a DIRECTORY at .kendex/settings.toml" 'mkdir -p .kendex/settings.toml' "settings.toml: source exists but is not a regular file"
+if [ "$(id -u)" -eq 0 ]; then
+  printf '  skip  scenario 8: unreadable-source pin needs a non-root reader (chmod 000 cannot deny root)\n'
+else
+  s8_case "an UNREADABLE kendex.settings.toml" 'printf "[env]\nX = \"y\"\n" > kendex.settings.toml && chmod 000 kendex.settings.toml' "kendex.settings.toml: source exists but is unreadable"
+fi
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
