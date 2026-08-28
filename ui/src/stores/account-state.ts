@@ -40,18 +40,26 @@ export const cachedIdentity = (
  *
  *  The question is whether the credential changed hands, not whether its
  *  name has arrived. A credential is stored before anything knows who it
- *  belongs to, and the read that names it is the one landing here, so a
- *  missing name on either side is not evidence of a different account.
+ *  belongs to, so a state with no identity at all is transitional and the
+ *  read landing here is the one that names it. That is the only wildcard.
+ *  Between two identities that have both been read, a null `githubLogin`
+ *  is a settled fact about an account whose GitHub link was removed, and
+ *  it separates them from a linked one the way any other value would.
  *
- *  What a read is told is who the account belongs to, and nothing that
- *  separates one sign-in for that person from the next, so the same
- *  person signing in again reads as the same credential. */
+ *  What this cannot separate: two read identities that agree on
+ *  everything the app is given. A read is told who the account belongs to
+ *  and nothing that tells one sign-in for that person from the next, so
+ *  the same person signing in again, and two unlinked accounts sharing a
+ *  name, both read as the credential already held. Separating those needs
+ *  a stable per-sign-in identifier the app is not handed today. */
 export const sameAccount = (
   held: AccountState,
   read: AccountState,
 ): boolean => {
   if (!hasCredential(held) || !hasCredential(read)) return false;
-  const who = held.identity?.githubLogin ?? null;
-  const now = read.identity?.githubLogin ?? null;
-  return who === null || now === null || who === now;
+  if (held.identity === null || read.identity === null) return true;
+  return (
+    held.identity.githubLogin === read.identity.githubLogin &&
+    held.identity.name === read.identity.name
+  );
 };

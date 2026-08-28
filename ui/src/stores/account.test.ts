@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AccountStatus, commands } from "@/bindings";
-import { hasCredential, type SettledAccount, useAccountStore } from "./account";
+import {
+  type AccountIdentity,
+  hasCredential,
+  type SettledAccount,
+  useAccountStore,
+} from "./account";
 import { type AccountRead, setAccountReader } from "./account-read";
 
 vi.mock("@/bindings", () => ({
@@ -333,6 +338,51 @@ describe("an approved device flow", () => {
 
 // The read repeats on its own now, so it must not be able to write over
 // what the person just did.
+// `github_login` is null for an account whose GitHub link was removed,
+// not only for a credential nothing has read yet. The first is a settled
+// fact about a real account and the second is a state on its way
+// somewhere, and only the second is a wildcard.
+describe("a read finding an account with no GitHub link", () => {
+  const ADA_UNLINKED = { name: "Ada Lovelace", githubLogin: null };
+  const BOB_UNLINKED = { name: "Bob", githubLogin: null };
+  const ROW = {
+    repo: "ada/team-skills",
+    status: "pending",
+    status_reason: null,
+    head_commit: null,
+    indexed_at: null,
+  };
+
+  const heldThenRead = async (held: AccountIdentity, read: AccountIdentity) => {
+    useAccountStore.setState({
+      account: { kind: "signed-in", identity: held },
+      submissions: [ROW],
+    });
+    const before = useAccountStore.getState().handovers();
+    serves({ kind: "signed-in", identity: read });
+    await load();
+    return useAccountStore.getState().handovers() - before;
+  };
+
+  // Two unlinked accounts are still two accounts, and the rows the first
+  // one was holding are not the second one's to show.
+  it("counts one unlinked account replacing another as a change of hands", async () => {
+    expect(await heldThenRead(ADA_UNLINKED, BOB_UNLINKED)).toBe(1);
+    expect(useAccountStore.getState().submissions).toBeNull();
+    expect(account()).toEqual({ kind: "signed-in", identity: BOB_UNLINKED });
+  });
+
+  it("counts an unlinked account replacing a linked one too", async () => {
+    expect(await heldThenRead(ADA, ADA_UNLINKED)).toBe(1);
+    expect(useAccountStore.getState().submissions).toBeNull();
+  });
+
+  it("leaves the same unlinked account where it is", async () => {
+    expect(await heldThenRead(ADA_UNLINKED, ADA_UNLINKED)).toBe(0);
+    expect(useAccountStore.getState().submissions).toEqual([ROW]);
+  });
+});
+
 describe("a read racing a deliberate change", () => {
   it("leaves a denied approval its explanation", async () => {
     vi.mocked(commands.accountLoginStart).mockResolvedValue({
