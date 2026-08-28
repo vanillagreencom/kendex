@@ -14,7 +14,9 @@ Release with:
 - `kendex-<target>[.exe]` — the CLI binary, one per target. These are what
   `kendex update` downloads.
 - The desktop app bundles Tauri produces per platform (deb/rpm/AppImage,
-  dmg, NSIS installer).
+  dmg, NSIS installer), and the `.sig` Tauri writes beside each updater
+  bundle. `kendex update` fetches `<AppImage>.sig` straight from the
+  release, so it is a published asset and not only an input to `latest.json`.
 - `latest.json` — the signed manifest the app's Update button installs
   from, one `{signature, url}` per platform. The publish job writes it from
   the `.sig` files the lanes staged, and names any platform whose signature
@@ -39,9 +41,13 @@ revisit Intel support then.
   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repo secrets): required. Every lane
   bundles an updater-enabled target, so an unset key fails bundling with
   "A public key has been found, but no private key" and the tag produces no
-  release. The public half is `plugins > updater > pubkey` in
-  `crates/app/tauri.conf.json`; a private key that does not match it builds
-  a release the app refuses to install. CLI self-update is unaffected.
+  release. The public half lives in two files that rotate together:
+  `plugins > updater > pubkey` in `crates/app/tauri.conf.json` and
+  `UPDATER_PUBLIC_KEY` in `crates/core/src/update_feed.rs`, held equal by
+  `crates/app/tests/tauri_config.rs`. A private key that does not match
+  builds a release the app refuses to install and that `kendex update`
+  refuses to install the desktop app from; the CLI binary half of
+  `kendex update` is unaffected.
 - **macOS signing + notarization** (the seven `APPLE_*` repo secrets:
   certificate p12 + password, signing identity, team id, and the App
   Store Connect API issuer/key-id/key): all seven set, the two mac lanes

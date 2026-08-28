@@ -1,4 +1,5 @@
-//! Strict parsing and version comparison for the public release feed.
+//! Strict parsing and version comparison for the public release feed, and
+//! the pinned key the desktop app download is verified under.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
