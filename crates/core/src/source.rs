@@ -37,6 +37,30 @@ pub fn repo_leaf(provenance: &str) -> &str {
         .unwrap_or(provenance)
 }
 
+/// Why nothing at `slot` can be read back through this scope's local
+/// source: it sits outside the source's root, or a component below that
+/// root is a symlink, which the sealed reader will not look through. The
+/// path half of [`slot_unreachable`], asked on its own by a caller whose
+/// slot already holds an item and whose name is therefore not in
+/// question — a rename's. The answer is the reader's own refusal, naming
+/// the component it stopped at: a second vocabulary for the same
+/// condition would be a second rule to keep true. Reachability is about
+/// the components below the root, so a person's link at the root itself
+/// is followed, once, by the reader every other read of this source
+/// goes through.
+pub(crate) fn slot_escapes(
+    env: &Env,
+    scope: &Scope,
+    slot: &std::path::Path,
+) -> Result<Option<CoreError>> {
+    let root = local_source_root(env, scope);
+    if !root.is_dir() {
+        return Ok(None);
+    }
+    let sealed = crate::source_read::SealedSource::open(&root)?;
+    Ok(sealed.contained(slot).err())
+}
+
 /// Why the local source cannot hold an item's bytes at `slot`, in words
 /// for the person who typed the name. A fork's capture and adoption's
 /// both land here, and both ask this before planning a byte.
@@ -60,16 +84,16 @@ pub(crate) fn slot_unreachable(
     name: &str,
     slot: &std::path::Path,
 ) -> Result<Option<String>> {
+    if let Some(escape) = slot_escapes(env, scope, slot)? {
+        return Ok(Some(format!(
+            "the local source cannot be written there — {escape}"
+        )));
+    }
     let root = local_source_root(env, scope);
     if !root.is_dir() {
         return Ok(None);
     }
     let sealed = crate::source_read::SealedSource::open(&root)?;
-    if let Err(escape) = sealed.contained(slot) {
-        return Ok(Some(format!(
-            "the local source cannot be written there — {escape}"
-        )));
-    }
     let config = source_config_for(&sealed, LOCAL_SOURCE_NAME)?;
     let Some((plugin, _)) = crate::names::split(name) else {
         return Ok(None);

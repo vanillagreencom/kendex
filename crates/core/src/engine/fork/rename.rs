@@ -54,6 +54,17 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
         local_item(env, scope, kind, old),
         local_item(env, scope, kind, new),
     );
+    // `vacant_name` proved the destination reachable; the slot being left
+    // has to be too. A link anywhere below the local source's root and the
+    // fork's files makes the move dishonest: the rename carries the link
+    // rather than the tree, and every op bound to what stands past it —
+    // the name-stamping write below first of all — then acts on the far
+    // end, outside what this scope manages. Refused here, before a single
+    // op is planned, in the sealed reader's own words: it names the
+    // component it stopped at, which is the thing to go and look at.
+    if let Some(escape) = crate::source::slot_escapes(env, scope, &from)? {
+        return Err(escape);
+    }
     let mut ops = Vec::new();
     if from.exists() {
         let stamped = stamp_name(kind, &from, &to, new)?;

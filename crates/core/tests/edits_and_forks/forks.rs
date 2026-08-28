@@ -224,6 +224,68 @@ fn a_fork_whose_file_cannot_carry_the_name_refuses_the_rename() {
     assert!(text.contains("[skills.gh]"), "{text}");
 }
 
+/// A fork whose slot is reached through a link is not a fork the rename
+/// can move: `fs::rename` carries the link rather than the tree, and every
+/// op the plan binds past it — the name-stamping write first of all —
+/// then acts on the far end, outside the scope. Refused before a single
+/// op is planned, and the tree at the far end is untouched.
+/// Built on the world whose home is itself reached through a link, the
+/// spelling macOS hands every test: the refusal names the component the
+/// sealed reader stopped at, which it probes from the canonicalized root,
+/// so an assertion written in the caller's spelling would pass on Linux
+/// and fail on the macOS lane alone.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fork_reached_through_a_link_refuses_the_rename() {
+    let w = world_via_link();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    commit(&w.upstream, "one");
+    declare(&w, "[skills.gh]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    fs::write(
+        skill_file(&w),
+        "---\nname: gh\ndescription: mine\n---\nMine.\n",
+    )
+    .unwrap();
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+
+    // The fork's slot becomes a link to a tree outside the scope.
+    let outside = w.home.join("outside/gh");
+    fs::create_dir_all(&outside).unwrap();
+    let theirs = "---\nname: gh\ndescription: theirs\n---\nTheirs.\n";
+    fs::write(outside.join("SKILL.md"), theirs).unwrap();
+    let slot = w.home.join("app/.kendex-local/skills/gh");
+    fs::remove_dir_all(&slot).unwrap();
+    std::os::unix::fs::symlink(&outside, &slot).unwrap();
+    let before = manifest_text(&w);
+
+    let refused = fork::rename_fork(&w.env, &w.scope, ItemKind::Skill, "gh", "my-gh").unwrap_err();
+    // The reader probes from the canonicalized local-source root, so that
+    // is the spelling the refusal names. The root is a real directory; the
+    // slot below it is the link, and canonicalizing that would follow it.
+    let named = w
+        .home
+        .join("app/.kendex-local")
+        .canonicalize()
+        .unwrap()
+        .join("skills/gh");
+    assert!(
+        matches!(&refused, CoreError::SourceEscape { path, reason }
+            if path == &named && reason.contains("symlink")),
+        "the refusal must name the link it stopped at: {refused:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(outside.join("SKILL.md")).unwrap(),
+        theirs,
+        "the rename wrote through the link, at the far end of it"
+    );
+    assert!(slot.is_symlink(), "the link itself was moved");
+    assert!(!w.home.join("app/.kendex-local/skills/my-gh").exists());
+    assert_eq!(manifest_text(&w), before);
+}
+
 /// The rename plan binds to the fork's files as they were when it was
 /// made. An edit landing on them after planning refuses the move — run
 /// anyway, the rename would carry the edit to the new name, where a later
