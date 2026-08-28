@@ -333,3 +333,58 @@ fn two_independent_syntax_errors_come_one_run_at_a_time() {
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].0, 6, "{found:?}");
 }
+
+/// A multiline value's own lines are the value. Judged as syntax they name
+/// keys the template does not have, and send an author to fix them — and
+/// the `#` inside one gets attached as the explainer for whatever key
+/// comes next.
+#[test]
+fn nothing_inside_a_multiline_value_is_read_as_template_syntax() {
+    for open in ["\"\"\"", "'''"] {
+        let text = format!(
+            "[env]\n# What it holds.\nBLOB = {open}\nX = \"1\"\n# not an explainer\n{open}\n\n# How deep.\nDEPTH = \"2\"\n"
+        );
+        let found = located(&text);
+        assert_eq!(
+            found,
+            vec![(
+                3,
+                "BLOB's default is not a one-line double-quoted string free of \" and \\"
+                    .to_owned()
+            )],
+            "{open}"
+        );
+        // The key after the value keeps its own comment block, not the one
+        // that sat inside the value.
+        let entries = read(&text).entries;
+        assert_eq!(entries.len(), 1, "{open}");
+        assert_eq!(entries[0].key, "DEPTH");
+        assert_eq!(entries[0].comment, vec!["How deep.".to_owned()]);
+    }
+}
+
+/// A quoted key is one TOML reads and no shell exports, in either
+/// spelling, and two spellings of one key are the duplicate they are.
+#[test]
+fn a_quoted_key_is_located_and_collides_with_its_bare_spelling() {
+    for spelling in ["\"DEPTH\"", "'DEPTH'"] {
+        let text = format!("[env]\n# How deep.\n{spelling} = \"2\"\n");
+        assert_eq!(
+            located(&text),
+            vec![(
+                3,
+                format!("{spelling} is not a name a shell can export, so nothing reads it")
+            )],
+            "{spelling}"
+        );
+        assert!(read(&text).entries.is_empty(), "{spelling}");
+
+        let both = format!("[env]\n# How deep.\nDEPTH = \"2\"\n\n# Again.\n{spelling} = \"3\"\n");
+        assert!(
+            located(&both).iter().any(|(line, problem)| *line == 6
+                && problem == "DEPTH is assigned again; it is already on line 3"),
+            "{:?}",
+            located(&both)
+        );
+    }
+}

@@ -11,9 +11,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::lock::SettingsSeed;
 
 use super::{
-    SeededEnv, assignment_key, comment_hash, content_of, env_section, file_eol, is_table_header,
-    lines_keepends, trim_blank_edges,
+    SeededEnv, assignment_key, comment_hash, env_section, file_eol, table_row, trim_blank_edges,
 };
+use crate::settings_toml::Line;
 
 /// Rewrite `[env]` comment blocks whose upstream template text changed,
 /// gated by the ledger. A block already matching the incoming template is
@@ -26,11 +26,11 @@ pub fn refresh_comments(
     entries: &[SeededEnv],
     seeds: &mut BTreeMap<String, SettingsSeed>,
 ) -> (String, Vec<String>) {
-    let lines = lines_keepends(original);
-    let Some((env_start, env_end)) = env_section(&lines) else {
+    let rows = crate::settings_toml::rows(original);
+    let Some((env_start, env_end)) = env_section(&rows) else {
         return (original.to_owned(), Vec::new());
     };
-    let eol = file_eol(&lines);
+    let eol = file_eol(&rows);
 
     // (start, end, replacement-lines) spans over `lines`, in file order,
     // reassembled by one forward pass below.
@@ -39,12 +39,19 @@ pub fn refresh_comments(
     let mut seen: BTreeSet<String> = BTreeSet::new();
     let mut pending: Vec<usize> = Vec::new();
     for index in env_start + 1..env_end {
-        let content = content_of(lines[index]);
-        if content.trim().is_empty() || content.trim_start().starts_with('#') {
+        let row = &rows[index];
+        // A value's own lines are the value: a `#` inside one is not a
+        // comment to rewrite, and an assignment-shaped line inside one is
+        // not a key. Neither may the block splice across them.
+        if row.kind == Line::InValue {
+            pending.clear();
+            continue;
+        }
+        if matches!(row.kind, Line::Blank | Line::Comment) {
             pending.push(index);
             continue;
         }
-        let key = assignment_key(content);
+        let key = assignment_key(row);
         let block = std::mem::take(&mut pending);
         // A line that is neither comment, blank, nor assignment breaks the
         // block: never splice across it (the drained run is discarded).
@@ -59,10 +66,7 @@ pub fn refresh_comments(
         let Some(seeded) = template_for(&key, entries, seeds.get(&key)) else {
             continue;
         };
-        let contents: Vec<String> = block
-            .iter()
-            .map(|&i| content_of(lines[i]).to_owned())
-            .collect();
+        let contents: Vec<String> = block.iter().map(|&i| rows[i].text.to_owned()).collect();
         let current = trim_blank_edges(&contents);
         let skipped = contents
             .iter()
@@ -100,13 +104,13 @@ pub fn refresh_comments(
     let mut out = String::with_capacity(original.len());
     let mut cursor = 0;
     for (start, end, replacement) in replacements {
-        for line in &lines[cursor..start] {
-            out.push_str(line);
+        for row in &rows[cursor..start] {
+            out.push_str(row.raw);
         }
         if start == end
             && start > 0
-            && !content_of(lines[start - 1]).trim().is_empty()
-            && !is_table_header(content_of(lines[start - 1]))
+            && !rows[start - 1].text.trim().is_empty()
+            && !table_row(&rows[start - 1])
         {
             out.push_str(eol);
         }
@@ -116,8 +120,8 @@ pub fn refresh_comments(
         }
         cursor = end;
     }
-    for line in &lines[cursor..] {
-        out.push_str(line);
+    for row in &rows[cursor..] {
+        out.push_str(row.raw);
     }
     (out, updated)
 }

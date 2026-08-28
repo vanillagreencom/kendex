@@ -88,27 +88,14 @@ pub struct TemplateRead {
     pub findings: Vec<TemplateFinding>,
 }
 
-/// The default a seeded assignment line carries, or `None` where the value
-/// is a shape the shell loaders refuse. One double-quoted string with no
-/// `"` and no `\`, optionally followed by a `#` comment — the loaders'
-/// `^"[^"\\]*"[[:space:]]*(#.*)?$`, spelled in Rust. The one decoder: the
-/// strict scan below and the seeding conflict notes both read values
-/// through it, so they can never disagree about a template's default.
+/// The default one assignment line carries, or `None` where the value is a
+/// shape the shell loaders refuse. Both halves are
+/// [`crate::settings_toml`]'s — where the line's top-level `=` falls, and
+/// which values are readable — so the seeding conflict notes, the strict
+/// scan and the editor's span can never disagree about a default.
 pub fn decoded_value(line: &str) -> Option<String> {
-    let (_, value) = line.split_once('=')?;
-    let (inner, after) = value.trim().strip_prefix('"')?.split_once('"')?;
-    let after = after.trim_start();
-    let closed = after.is_empty() || after.starts_with('#');
-    (closed && !inner.contains('\\')).then(|| inner.to_owned())
-}
-
-/// The key an assignment names, verbatim. Never unquoted: the loaders match
-/// the key text against a shell identifier, so `"WAIT"` is a key they skip
-/// rather than a spelling of `WAIT`.
-fn key_of(line: &str) -> Option<&str> {
-    let (key, _) = line.split_once('=')?;
-    let key = key.trim();
-    (!key.is_empty()).then_some(key)
+    let (_, value) = crate::settings_toml::assignment_of(line)?;
+    crate::settings_toml::decoded(value)
 }
 
 /// Whether a shell can export this key. The loaders skip everything else in
@@ -203,9 +190,10 @@ fn scan(text: &str) -> (TemplateRead, BTreeSet<u32>) {
     // name is enough: a header spelled `[env] # note` is a shape finding of
     // its own, and reporting an absent table over it would name one typo
     // twice.
-    let has_env = text
-        .lines()
-        .any(|line| table_header(line.trim()).0 == "env");
+    let rows = crate::settings_toml::rows(text);
+    let has_env = rows.iter().any(|row| {
+        row.kind == crate::settings_toml::Line::Table && table_header(row.text.trim()).0 == "env"
+    });
     if !has_env {
         read.findings.push(TemplateFinding {
             line: 0,
@@ -216,56 +204,47 @@ fn scan(text: &str) -> (TemplateRead, BTreeSet<u32>) {
     let mut env_header: Option<u32> = None;
     let mut in_env = false;
     let mut comment: Vec<(u32, String)> = Vec::new();
-    let mut seen: BTreeMap<&str, u32> = BTreeMap::new();
-    for (index, raw) in text.lines().enumerate() {
-        let line = line_number(index);
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
+    let mut seen: BTreeMap<String, u32> = BTreeMap::new();
+    for row in &rows {
+        let line = row.line;
+        let trimmed = row.text.trim();
+        use crate::settings_toml::Line;
+        // A value's own lines are the value. Judged as syntax they name
+        // keys that do not exist, and send an author to fix them.
+        if matches!(row.kind, Line::InValue) {
+            continue;
+        }
+        if matches!(row.kind, Line::Blank) {
             comment.clear();
             continue;
         }
-        if trimmed.starts_with('#') {
+        if matches!(row.kind, Line::Comment) {
             comment.push((line, comment_text(trimmed)));
             continue;
         }
-        if trimmed.starts_with('[') {
-            let (name, exact) = table_header(trimmed);
-            in_env = name == "env";
-            if !exact {
-                syntax.insert(line);
-                read.findings.push(TemplateFinding {
-                    line,
-                    problem: "this is not a table header the settings loaders read".to_owned(),
-                    fix: "write the header as a lone [name] with nothing after the bracket"
-                        .to_owned(),
-                });
-            } else if in_env {
-                match env_header {
-                    Some(first) => {
-                        syntax.insert(line);
-                        read.findings.push(TemplateFinding {
-                            line,
-                            problem: format!("a second [env] header; the first is on line {first}"),
-                            fix: "keep one [env] table and move these keys into it".to_owned(),
-                        });
-                    }
-                    None => env_header = Some(line),
-                }
-            }
+        if matches!(row.kind, Line::Table) {
+            in_env = header(trimmed, line, &mut env_header, &mut read, &mut syntax);
             comment.clear();
             continue;
         }
         // A line with no `=` is one the loaders read past in silence, so
         // this scan does too and TOML below is what refuses it.
-        let Some(key) = key_of(trimmed) else {
+        let Some((written, value, _)) = row.assignment() else {
             continue;
         };
+        // A quoted key is one TOML reads and no shell exports. Both facts
+        // are said below; here it is the name that matters, so two
+        // spellings of one key report as the duplicate they are.
+        let Some(spelled) = crate::settings_toml::key_of(written) else {
+            continue;
+        };
+        let key = spelled.name.as_str();
         let taken = std::mem::take(&mut comment);
         // Being assigned twice is one defect; whatever else is wrong with
         // this same assignment is another. Stopping here would tell the
         // author about the duplicate, take their fix, and only then admit
         // the value was never readable either.
-        let duplicate = seen.insert(key, line);
+        let duplicate = seen.insert(key.to_owned(), line);
         if let Some(first) = duplicate {
             syntax.insert(line);
             read.findings.push(TemplateFinding {
@@ -288,10 +267,11 @@ fn scan(text: &str) -> (TemplateRead, BTreeSet<u32>) {
         // and TOML will refuse the same line in its own generic words.
         // Every other check here is a template rule the parser has no
         // opinion about, so a line can carry both kinds at once.
-        if decoded_value(trimmed).is_none() {
+        let decoded = crate::settings_toml::decoded(value);
+        if decoded.is_none() {
             syntax.insert(line);
         }
-        let (value, problems) = decode_entry(key, line, trimmed, &taken);
+        let (value, problems) = decode_entry(written.trim(), spelled.quoted, line, decoded, &taken);
         read.findings.extend(problems);
         // The first assignment of this key is already the row; a later one
         // that happens to decode is still a line to delete.
@@ -310,6 +290,40 @@ fn scan(text: &str) -> (TemplateRead, BTreeSet<u32>) {
     (read, syntax)
 }
 
+/// What a header line settles — whether the keys under it are `[env]`'s —
+/// and whatever is wrong with the header itself.
+fn header(
+    trimmed: &str,
+    line: u32,
+    env_header: &mut Option<u32>,
+    read: &mut TemplateRead,
+    syntax: &mut BTreeSet<u32>,
+) -> bool {
+    let (name, exact) = table_header(trimmed);
+    let in_env = name == "env";
+    if !exact {
+        syntax.insert(line);
+        read.findings.push(TemplateFinding {
+            line,
+            problem: "this is not a table header the settings loaders read".to_owned(),
+            fix: "write the header as a lone [name] with nothing after the bracket".to_owned(),
+        });
+    } else if in_env {
+        match env_header {
+            Some(first) => {
+                syntax.insert(line);
+                read.findings.push(TemplateFinding {
+                    line,
+                    problem: format!("a second [env] header; the first is on line {first}"),
+                    fix: "keep one [env] table and move these keys into it".to_owned(),
+                });
+            }
+            None => *env_header = Some(line),
+        }
+    }
+    in_env
+}
+
 /// Everything wrong with one `[env]` assignment, and the decoded default
 /// where nothing is. Every check runs rather than the first one winning: an
 /// author told about the comment block, and only on the next run about the
@@ -318,33 +332,36 @@ fn scan(text: &str) -> (TemplateRead, BTreeSet<u32>) {
 /// Everything here needs the line and its comment block and nothing else
 /// about the file.
 fn decode_entry(
-    key: &str,
+    shown: &str,
+    quoted: bool,
     line: u32,
-    trimmed: &str,
+    value: Option<String>,
     comment: &[(u32, String)],
 ) -> (Option<String>, Vec<TemplateFinding>) {
     let mut problems = Vec::new();
-    if !is_env_name(key) {
+    // A quoted key is one TOML reads and the loaders do not: they match
+    // the text as written against a shell identifier, so the quotes are as
+    // disqualifying as a hyphen.
+    if quoted || !is_env_name(shown) {
         problems.push(TemplateFinding {
             line,
-            problem: format!("{key} is not a name a shell can export, so nothing reads it"),
-            fix: "spell keys with letters, digits and underscores, starting with a letter or underscore"
+            problem: format!("{shown} is not a name a shell can export, so nothing reads it"),
+            fix: "spell keys bare, with letters, digits and underscores, starting with a letter or underscore"
                 .to_owned(),
         });
     }
     if comment.is_empty() {
         problems.push(TemplateFinding {
             line,
-            problem: format!("{key} has no comment block above it"),
+            problem: format!("{shown} has no comment block above it"),
             fix: "write the # lines that say what the key does; seeding carries them".to_owned(),
         });
     }
-    let value = decoded_value(trimmed);
     if value.is_none() {
         problems.push(TemplateFinding {
             line,
             problem: format!(
-                "{key}'s default is not a one-line double-quoted string free of \" and \\"
+                "{shown}'s default is not a one-line double-quoted string free of \" and \\"
             ),
             fix: "spell every default as a plain \"...\" string on one line".to_owned(),
         });

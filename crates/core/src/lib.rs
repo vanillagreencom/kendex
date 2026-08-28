@@ -39,6 +39,7 @@ pub mod settings;
 pub mod settings_file;
 pub mod settings_seed;
 pub mod settings_template;
+pub mod settings_toml;
 pub mod settings_view;
 pub mod source;
 pub mod source_ops;

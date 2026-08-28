@@ -235,3 +235,64 @@ fn one_line_reads_as_one_line_however_it_is_written() {
     assert_eq!(lines_phrase(&[7]), "line 7");
     assert_eq!(lines_phrase(&[7, 12]), "lines 7, 12");
 }
+
+/// The corruption this reader exists to stop. Read a line at a time,
+/// `MODE` here is an assignment inside `BLOB`, the view shows `shadow` as
+/// its value, and an edit writes over bytes in the middle of somebody
+/// else's string.
+#[test]
+fn a_key_that_only_exists_inside_a_multiline_value_is_absent_and_unwritable() {
+    for open in ["\"\"\"", "'''"] {
+        let file = format!("[env]\n# what it holds\nBLOB = {open}\nMODE = \"shadow\"\n{open}\n");
+        assert_eq!(current(&file, "MODE"), Current::Absent, "{open}");
+        assert!(
+            !sites(&file).iter().any(|site| site.key == "MODE"),
+            "{open}"
+        );
+
+        // And an edit naming it refuses rather than writing into BLOB.
+        let refused = apply_edits(
+            &file,
+            &[set("noise", "MODE", "loud")],
+            &[seeded("noise", "MODE", "MODE = \"quiet\"")],
+            Path::new("/w/kendex.settings.toml"),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                refused,
+                CoreError::SettingsRefused(SettingsRefusal::Value { .. })
+            ),
+            "{open}: {refused:?}"
+        );
+    }
+}
+
+/// TOML reads all three spellings as one key, and the shell loaders read
+/// only the bare one. So a quoted spelling is ambiguous — never absent,
+/// which would let seeding insert the same key a second time and stop the
+/// file loading at all.
+#[test]
+fn either_quoted_spelling_is_ambiguous_and_blocks_a_seed() {
+    for spelling in ["\"MODE\"", "'MODE'"] {
+        let file = format!("[env]\n{spelling} = \"a\"\n");
+        assert!(
+            matches!(
+                current(&file, "MODE"),
+                Current::Ambiguous { ref problem, ref lines }
+                    if lines == &[2] && problem.contains("quoted key")
+            ),
+            "{spelling}: {:?}",
+            current(&file, "MODE")
+        );
+        assert!(
+            crate::settings_seed::assigned_keys(&file).contains(&"MODE".to_owned()),
+            "{spelling} must block a seed of MODE"
+        );
+        assert!(
+            crate::settings_seed::merge(Some(&file), &[seeded("noise", "MODE", "MODE = \"q\"")])
+                .is_none(),
+            "{spelling} must not be seeded over"
+        );
+    }
+}

@@ -23,8 +23,9 @@ use specta::Type;
 
 use crate::base::Base;
 use crate::error::Result;
-use crate::settings_seed::{SeededEnv, assignment_key, is_env_header, is_table_header};
+use crate::settings_seed::{SeededEnv, is_env_header};
 use crate::settings_template::decoded_value;
+use crate::settings_toml::{Line, decoded, key_of, quoted_span};
 
 /// What the private halves of an edit hand back: a refusal in its own
 /// shape, which `?` widens into a [`crate::error::CoreError`] at the one
@@ -64,10 +65,10 @@ pub struct Site {
     /// The key seeding matches on: quotes trimmed, so `"WAIT" = "x"` and
     /// `WAIT = "x"` are one key's two spellings and neither is seeded over.
     pub key: String,
-    /// The key exactly as written. The loaders match this text against a
-    /// shell identifier, so a spelling that differs from `key` is one
-    /// nothing reads.
-    pub written: String,
+    /// How the key was spelled. TOML reads all three spellings as one
+    /// key, so all three block a seed; the loaders match the text as
+    /// written, so only the bare one is a name they read.
+    pub written: Written,
     /// 1-based line.
     pub line: u32,
     /// Whether the `[env]` header is the last one above this line.
@@ -78,6 +79,13 @@ pub struct Site {
     /// Byte range of the value's inside — between the quotes — in the text
     /// this site was read from. Present exactly when `value` is.
     pub inner: Option<Range<usize>>,
+}
+
+/// How a key was spelled where it sits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Written {
+    Bare,
+    Quoted,
 }
 
 /// Where one key stands in the file, as a reader can act on it.
@@ -127,60 +135,37 @@ pub struct SettingsDraft {
     pub base: Base,
 }
 
-/// A 0-based index as the 1-based line a reader is shown. The app reads
-/// these, and its boundary counts in 32 bits.
-fn line_number(index: usize) -> u32 {
-    u32::try_from(index + 1).unwrap_or(u32::MAX)
-}
-
-/// Every assignment in the file, in file order.
+/// Every assignment in the file, in file order. Read through
+/// [`crate::settings_toml`], so nothing inside a multiline value is
+/// mistaken for one — the span an edit writes over comes from the same
+/// walk that decided the line was an assignment at all.
 pub fn sites(text: &str) -> Vec<Site> {
     let mut out = Vec::new();
     let mut in_env = false;
-    let mut offset = 0;
-    for (index, raw) in text.split_inclusive('\n').enumerate() {
-        let content = raw
-            .strip_suffix('\n')
-            .map(|line| line.strip_suffix('\r').unwrap_or(line))
-            .unwrap_or(raw);
-        if is_table_header(content) {
-            in_env = is_env_header(content);
-        } else if let Some(site) = site_at(content, offset, line_number(index), in_env) {
-            out.push(site);
+    for row in crate::settings_toml::rows(text) {
+        if row.kind == Line::Table {
+            in_env = is_env_header(row.text);
+            continue;
         }
-        offset += raw.len();
+        let Some((key, value, at)) = row.assignment() else {
+            continue;
+        };
+        let Some(key) = key_of(key) else {
+            continue;
+        };
+        out.push(Site {
+            written: match key.quoted {
+                true => Written::Quoted,
+                false => Written::Bare,
+            },
+            key: key.name,
+            line: row.line,
+            in_env,
+            inner: quoted_span(value, at),
+            value: decoded(value),
+        });
     }
     out
-}
-
-fn site_at(content: &str, offset: usize, line: u32, in_env: bool) -> Option<Site> {
-    let key = assignment_key(content)?;
-    let written = content.split_once('=')?.0.trim().to_owned();
-    let value = decoded_value(content);
-    let inner = value
-        .is_some()
-        .then(|| quoted_span(content, offset))
-        .flatten();
-    Some(Site {
-        key,
-        written,
-        line,
-        in_env,
-        value,
-        inner,
-    })
-}
-
-/// The byte range between the value's quotes. Read off the same line
-/// [`decoded_value`] already accepted, so the two cannot disagree about
-/// which characters the value is.
-fn quoted_span(content: &str, offset: usize) -> Option<Range<usize>> {
-    let equals = content.find('=')?;
-    let rest = &content[equals + 1..];
-    let open = rest.find('"')?;
-    let close = rest[open + 1..].find('"')?;
-    let start = offset + equals + 1 + open + 1;
-    Some(start..start + close)
 }
 
 /// Where one key stands, given the file's sites.
@@ -211,10 +196,9 @@ fn readable(site: &Site, key: &str) -> std::result::Result<String, String> {
     if !site.in_env {
         return Err("it is assigned outside the [env] table, where no script reads it".to_owned());
     }
-    if site.written != key {
+    if site.written == Written::Quoted {
         return Err(format!(
-            "it is assigned as {}, which is not a name a shell can export",
-            site.written
+            "it is assigned as a quoted key, which is not a name a shell can export — spell it {key}"
         ));
     }
     site.value.clone().ok_or_else(|| {
