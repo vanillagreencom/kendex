@@ -354,6 +354,17 @@ test("a key present only in .env is ignored; .env.local and process env keep the
   });
   assert.equal(fromProcess.status, 0, fromProcess.stderr);
   assert.match(readFileSync(processOut, "utf8"), /FromProcess/);
+
+  // A SET-but-EMPTY process value is a real assignment and still wins:
+  // the emptied mock path disables the mock entirely, so the run stops at
+  // the missing EXA_API_KEY instead of reading the .env.local mock.
+  const emptied = spawnSync(process.execPath, [script, "report", "q"], {
+    encoding: "utf8",
+    env: { ...env, EXA_MOCK_RESPONSE_FILE: "" },
+    cwd: dir,
+  });
+  assert.notEqual(emptied.status, 0);
+  assert.match(emptied.stderr, /EXA_API_KEY is required/);
 });
 
 test("resolves EXA_API_KEY op:// references with op CLI", () => {
