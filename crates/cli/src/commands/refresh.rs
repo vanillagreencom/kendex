@@ -67,6 +67,26 @@ fn refreshed(count: Option<usize>) -> Wrote<'static> {
     }
 }
 
+/// What a run owes the scopes it got through, whether it got through all
+/// of them or stopped at a cancel: their snapshots derived, and the
+/// closing line each one earned. Skipping this on a cancel left writes on
+/// disk the run said nothing about, and a snapshot the next session-start
+/// check would have read stale.
+///
+/// The snapshot warnings come first for the same reason they always did:
+/// a warning under a closing line is a run that ended twice.
+fn finish_scopes(env: &Env, reached: &[kendex_core::model::Scope], closing: Vec<Closing>) {
+    record_snapshots(env, reached);
+    for scope in closing {
+        say_ledger(
+            &scope.scope,
+            refreshed(scope.count),
+            &scope.blocked,
+            &scope.scored,
+        );
+    }
+}
+
 /// The deep work just ran for every scope; the snapshot is what the next
 /// session-start check reads instead of redoing it. A scope whose
 /// snapshot will not derive is a line, never a failure: what was written
@@ -115,10 +135,16 @@ pub fn run(
     let mut refreshed_anything = false;
     let mut failures: Vec<String> = Vec::new();
     let mut closing: Vec<Closing> = Vec::new();
+    // The scopes this run got through, and the cancel that stopped it at
+    // one of them. A cancel ends the run, but it does not unwrite what
+    // the scopes before it already wrote.
+    let mut reached: Vec<kendex_core::model::Scope> = Vec::new();
+    let mut cancelled: Option<Box<dyn std::error::Error>> = None;
     let scopes = resolve_scopes(env, filter)?;
 
     for scope in &scopes {
         let scope = scope.clone();
+        reached.push(scope.clone());
         let manifest_path = kendex_core::manifest::manifest_path(env, &scope);
         if let Ok(kendex_core::manifest::ManifestFile::Current(manifest)) =
             kendex_core::manifest::load(&manifest_path)
@@ -195,23 +221,24 @@ pub fn run(
             // failing to refresh. Collected as a failure it would come out
             // as "failed to refresh 1 item/source(s)" and exit 1, and the
             // exit code a script keys a cancel on is 130.
-            Err(error) if ui::cancelled(error.as_ref()) => return Err(error),
+            //
+            // It stops the scopes after this one, never the finishing of
+            // the ones before it: the confirm asks before it writes, so
+            // this scope wrote nothing and drops off the reached list,
+            // while what earlier scopes wrote is on disk and owed both a
+            // snapshot and a closing line.
+            Err(error) if ui::cancelled(error.as_ref()) => {
+                reached.pop();
+                cancelled = Some(error);
+                break;
+            }
             Err(error) => failures.push(error.to_string()),
         }
     }
 
-    record_snapshots(env, &scopes);
-
-    // Every scope's closing line, now that nothing follows it. A snapshot
-    // warning belongs above these, inside the frame, not under a line that
-    // already said the run was over.
-    for scope in closing {
-        say_ledger(
-            &scope.scope,
-            refreshed(scope.count),
-            &scope.blocked,
-            &scope.scored,
-        );
+    finish_scopes(env, &reached, closing);
+    if let Some(error) = cancelled {
+        return Err(error);
     }
 
     if !refreshed_anything && failures.is_empty() {
