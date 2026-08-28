@@ -49,6 +49,8 @@ pub fn login() -> Result<()> {
                         access_token: pair.access_token,
                         refresh_token: pair.refresh_token,
                         capabilities: pair.capabilities,
+                        // `commit_login` names the sign-in.
+                        sign_in: String::new(),
                     },
                 )?;
                 say("Signed in. The credential is in your system keychain.");

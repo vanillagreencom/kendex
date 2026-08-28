@@ -72,6 +72,8 @@ pub fn account_login_poll(device_code: String) -> Result<String, String> {
                     access_token: pair.access_token,
                     refresh_token: pair.refresh_token,
                     capabilities: pair.capabilities,
+                    // `commit_login` names the sign-in.
+                    sign_in: String::new(),
                 },
             )
             .map_err(|e| e.to_string())?;

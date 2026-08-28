@@ -62,6 +62,7 @@ fn credential(name: &str) -> Credential {
         access_token: format!("kxa_{name}"),
         refresh_token: format!("kxr_{name}"),
         capabilities: vec!["submission:write".to_owned()],
+        sign_in: format!("sign-in-{name}"),
     }
 }
 

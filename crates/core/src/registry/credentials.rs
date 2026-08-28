@@ -32,6 +32,16 @@ pub struct Credential {
     pub access_token: String,
     pub refresh_token: String,
     pub capabilities: Vec<String>,
+    /// Names the sign-in itself. Minted when one is committed and copied
+    /// through every rotation, so the tokens say who is talking now and
+    /// this says which sign-in they belong to — the thing a cache has to
+    /// be keyed to, since a rotation would otherwise strand it. Defaulted
+    /// because this is read back from the keychain: a credential stored
+    /// before the name existed still parses, and its empty name matches
+    /// no cache written since, which costs one refetch. Only one such
+    /// credential can exist, because every sign-in since mints a name.
+    #[serde(default)]
+    pub sign_in: String,
 }
 
 /// The seam tests replace: the real store is the OS keychain.
@@ -150,6 +160,20 @@ impl CredentialStore for KeyringStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The keychain holds credentials written by earlier builds. A field
+    /// they cannot carry must never decide whether they parse: failing
+    /// here signs the machine out, where an unnamed sign-in only costs a
+    /// refetch.
+    #[test]
+    fn a_credential_stored_before_the_sign_in_had_a_name_still_reads() {
+        let stored = r#"{"endpoint":"https://kendex.ai","access_token":"kxa",
+                         "refresh_token":"kxr","capabilities":[]}"#;
+        let credential: Credential =
+            serde_json::from_str(stored).expect("a stored credential still reads");
+        assert_eq!(credential.refresh_token, "kxr");
+        assert!(credential.sign_in.is_empty());
+    }
 
     #[test]
     fn a_sandboxed_build_never_reaches_the_real_sign_in() {

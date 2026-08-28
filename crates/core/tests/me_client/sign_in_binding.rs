@@ -11,9 +11,10 @@ use kendex_core::env::Env;
 use kendex_core::error::{CoreError, Result};
 use kendex_core::registry::credentials::{Credential, CredentialRefreshGuard, CredentialStore};
 use kendex_core::registry::me::{self, AccountState};
+use kendex_core::registry::submit;
 use kendex_core::registry::{Fetch, FetchResponse};
 
-use super::{Canned, MemoryGuard, MemoryStore, away, env_in, fixture_body, ok, write_cache};
+use super::{ADA, Canned, MemoryGuard, MemoryStore, away, env_in, fixture_body, ok, write_cache};
 
 /// A store whose credential disappears after N loads — logout winning a
 /// race against the read.
@@ -114,7 +115,7 @@ struct SettlingStore<'a> {
 
 impl CredentialStore for SettlingStore<'_> {
     fn save(&self, credential: &Credential) -> Result<()> {
-        write_cache(self.env, &self.body, None, Some("kxr_old"));
+        write_cache(self.env, &self.body, None, Some(ADA));
         self.inner.save(credential)
     }
     fn load(&self) -> Result<Option<Credential>> {
@@ -212,6 +213,7 @@ impl CredentialStore for RestlessStore {
             access_token: format!("kxa_{read}"),
             refresh_token: format!("kxr_{read}"),
             capabilities: vec![],
+            sign_in: format!("sign-in-{read}"),
         }))
     }
     fn clear(&self) -> Result<()> {
@@ -228,6 +230,7 @@ fn other_account() -> Credential {
         access_token: "kxa_other".to_owned(),
         refresh_token: "kxr_other".to_owned(),
         capabilities: vec![],
+        sign_in: "sign-in-other".to_owned(),
     }
 }
 
@@ -243,6 +246,7 @@ fn logout_winning_the_race_reads_as_signed_out() {
             access_token: "kxa_old".to_owned(),
             refresh_token: "kxr_old".to_owned(),
             capabilities: vec![],
+            sign_in: ADA.to_owned(),
         },
     };
     let fetch = Canned::new(vec![ok(401, None, r#"{"error":"invalid_token"}"#)]);
@@ -268,6 +272,7 @@ fn a_sign_out_landing_mid_read_is_never_written_back() {
             access_token: "kxa_old".to_owned(),
             refresh_token: "kxr_old".to_owned(),
             capabilities: vec![],
+            sign_in: ADA.to_owned(),
         },
     };
     let fetch = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
@@ -401,12 +406,7 @@ fn a_read_whose_sign_in_changed_before_the_call(
     etag: Option<&str>,
     answer: Result<FetchResponse>,
 ) -> Result<AccountState> {
-    write_cache(
-        env,
-        &fixture_body(&["success", "body"]),
-        etag,
-        Some("kxr_old"),
-    );
+    write_cache(env, &fixture_body(&["success", "body"]), etag, Some(ADA));
     let store = SwitchingStore::after(1);
     let fetch = Canned::new(vec![answer]);
     me::load(env, &fetch, &store)
@@ -453,12 +453,7 @@ fn a_transport_failure_never_serves_a_cache_from_another_sign_in() {
 fn an_adopted_credential_never_serves_a_cache_from_another_sign_in() {
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
-    write_cache(
-        &env,
-        &fixture_body(&["success", "body"]),
-        None,
-        Some("kxr_old"),
-    );
+    write_cache(&env, &fixture_body(&["success", "body"]), None, Some(ADA));
     // Two reads in, `load` holds its own credential and has read the
     // cache under it. The request then 401s, and the locked re-read finds
     // somebody else's credential, which the call adopts and retries under
@@ -488,12 +483,7 @@ fn a_cache_from_another_sign_in_is_never_served() {
     // that failed, a crash between the two writes, whatever left it
     // there. Somebody else is signed in now and the network is away, so
     // this cache is the only identity on hand.
-    write_cache(
-        &env,
-        &fixture_body(&["success", "body"]),
-        None,
-        Some("kxr_old"),
-    );
+    write_cache(&env, &fixture_body(&["success", "body"]), None, Some(ADA));
     let store = MemoryStore::signed_in_as(other_account());
     let down = Canned::new(vec![away()]);
     assert!(
@@ -532,7 +522,7 @@ fn the_cache_names_the_sign_in_without_holding_its_token() {
         "the cache file is not the keychain"
     );
     assert!(
-        written.contains(&kendex_core::hash::hash_bytes(b"kxr_old")),
+        written.contains(&kendex_core::hash::hash_bytes(ADA.as_bytes())),
         "the generation names the sign-in it belongs to"
     );
 }
@@ -605,4 +595,76 @@ fn a_rejection_under_a_newer_token_is_not_the_next_account_s_expiry() {
         matches!(refused, CoreError::RegistryUnavailable { .. }),
         "the sign-in moved under this call, so the read is retryable: got {refused:?}"
     );
+}
+
+/// A refresh the server answers, rotating both tokens and keeping the
+/// sign-in they belong to.
+fn rotation() -> Result<FetchResponse> {
+    ok(
+        200,
+        None,
+        r#"{"access_token":"kxa_new","refresh_token":"kxr_new","capabilities":[]}"#,
+    )
+}
+
+#[test]
+fn a_rotation_by_another_call_leaves_the_identity_cache_readable() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = env_in(dir.path());
+    let store = MemoryStore::signed_in();
+    let first = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
+    me::load(&env, &first, &store).expect("first load");
+
+    // Any authenticated call can rotate, and submissions is one. The
+    // tokens move; the sign-in the cached identity belongs to does not.
+    let rotating = Canned::new(vec![
+        ok(401, None, r#"{"error":"invalid_token"}"#),
+        rotation(),
+        ok(200, None, r#"{"submissions":[]}"#),
+    ]);
+    submit::submissions(&rotating, &store).expect("submissions");
+    assert_eq!(
+        store
+            .load()
+            .expect("load")
+            .expect("credential")
+            .refresh_token,
+        "kxr_new",
+        "the rotation is what makes this the case it is"
+    );
+
+    let down = Canned::new(vec![away()]);
+    match me::load(&env, &down, &store).expect("offline load") {
+        AccountState::Offline { identity } => assert_eq!(identity.name, "Ada Lovelace"),
+        other => panic!("the cached identity outlives a rotation, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_rotation_that_then_fails_leaves_the_identity_cache_readable() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = env_in(dir.path());
+    let store = MemoryStore::signed_in();
+    let first = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
+    me::load(&env, &first, &store).expect("first load");
+
+    // This read rotates and then meets a refused status, so it serves the
+    // cache and writes nothing back. What is on disk is still the first
+    // read's generation, and it has to survive the rotation that just
+    // happened under it.
+    let hurt = Canned::new(vec![
+        ok(401, None, r#"{"error":"invalid_token"}"#),
+        rotation(),
+        ok(503, None, r#"{"error":"down"}"#),
+    ]);
+    assert!(matches!(
+        me::load(&env, &hurt, &store).expect("load"),
+        AccountState::Offline { .. }
+    ));
+
+    let down = Canned::new(vec![away()]);
+    match me::load(&env, &down, &store).expect("offline load") {
+        AccountState::Offline { identity } => assert_eq!(identity.name, "Ada Lovelace"),
+        other => panic!("the next read still has that generation, got {other:?}"),
+    }
 }

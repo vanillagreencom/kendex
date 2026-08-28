@@ -17,6 +17,11 @@ use kendex_core::registry::{Fetch, FetchResponse};
 
 const FIXTURE: &str = include_str!("../fixtures/api-v1-me.json");
 
+/// The sign-in every fixture credential belongs to. A rotation carries it
+/// and only a new sign-in changes it, so a cache keyed to it survives one
+/// and not the other.
+const ADA: &str = "sign-in-ada";
+
 /// A canned transport: each call pops the next scripted answer and
 /// records what rode along with it.
 struct Canned {
@@ -90,6 +95,7 @@ impl MemoryStore {
             access_token: "kxa_old".to_owned(),
             refresh_token: "kxr_old".to_owned(),
             capabilities: vec!["submission:write".to_owned()],
+            sign_in: ADA.to_owned(),
         })))
     }
 
@@ -125,8 +131,8 @@ impl CredentialRefreshGuard for MemoryGuard {}
 /// The key a generation carries beside its endpoint, exactly as `me.rs`
 /// writes it. A cache planted by hand needs the sign-in it belongs to, or
 /// the read refuses it for the wrong reason and the test proves nothing.
-fn sign_in_key(refresh_token: &str) -> serde_json::Value {
-    kendex_core::hash::hash_bytes(refresh_token.as_bytes()).into()
+fn sign_in_key(sign_in: &str) -> serde_json::Value {
+    kendex_core::hash::hash_bytes(sign_in.as_bytes()).into()
 }
 
 /// Plant a generation where a finished read would have left one.
@@ -361,7 +367,7 @@ fn a_cache_from_another_endpoint_is_never_served() {
     // refuse it.
     let generation = serde_json::json!({
         "endpoint": "https://somewhere.else",
-        "credential": sign_in_key("kxr_old"),
+        "credential": sign_in_key(ADA),
         "etag": serde_json::Value::Null,
         "fetched_at": 1,
         "body": r#"{"name":"Stranger","github_login":null}"#,
@@ -433,6 +439,7 @@ fn a_fresh_sign_in_never_inherits_the_previous_identity() {
             access_token: "kxa_next".to_owned(),
             refresh_token: "kxr_next".to_owned(),
             capabilities: vec![],
+            sign_in: String::new(),
         },
     )
     .expect("commit");
@@ -472,7 +479,7 @@ fn an_oversized_identity_cache_reads_as_no_cache() {
         r#"{{"name":"Ada Lovelace","github_login":null,"pad":"{}"}}"#,
         "x".repeat(41_000_000)
     );
-    write_cache(&env, &body, None, Some("kxr_old"));
+    write_cache(&env, &body, None, Some(ADA));
     let down = Canned::new(vec![away()]);
     assert!(
         me::load(&env, &down, &MemoryStore::signed_in()).is_err(),

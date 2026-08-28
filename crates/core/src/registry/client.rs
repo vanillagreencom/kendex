@@ -7,23 +7,17 @@ use crate::registry::credentials::{Credential, CredentialStore};
 use crate::registry::login::TokenPair;
 use crate::registry::{Fetch, FetchResponse, base_url};
 
-/// One answer, the credential it went out under, and the sign-in it
-/// descends from.
+/// One answer and the credential it finally went out under.
 ///
-/// A call reaches its final credential three ways: it answers under what
-/// it opened with, it rotates to a replacement it made itself, or it
-/// adopts one another writer installed while it was in flight. The first
-/// two descend from what the call opened with. The third descends from
-/// the adopted credential, because nothing links it to what the call
-/// began with.
-///
-/// A caller that read state before the call compares that state's sign-in
-/// against `descends_from`: equal means nothing but this call moved the
-/// credential, whatever route it took.
+/// A call reaches that credential three ways: it answers under what it
+/// opened with, it rotates to a replacement it made itself, or it adopts
+/// one another writer installed while it was in flight. A rotation keeps
+/// `sign_in`; the other two carry whatever sign-in they belong to. So a
+/// caller that read state before the call compares that state's sign-in
+/// against this credential's, and the three routes need no telling apart.
 pub struct Authenticated {
     pub response: FetchResponse,
     pub credential: Credential,
-    pub descends_from: Credential,
 }
 
 /// Run one authenticated call, refreshing a rejected access token once.
@@ -38,7 +32,6 @@ pub fn with_access(
     if first.status != 401 {
         return Ok(Authenticated {
             response: first,
-            descends_from: opened_under.clone(),
             credential: opened_under,
         });
     }
@@ -60,10 +53,9 @@ fn rotate_after_rejection(
             let retried = call(&locked.access_token)?;
             if retried.status != 401 {
                 // Somebody else installed this credential mid-call. The
-                // answer is theirs, and it descends from their sign-in.
+                // answer is theirs, and carries their sign-in.
                 return Ok(Authenticated {
                     response: retried,
-                    descends_from: locked.clone(),
                     credential: locked,
                 });
             }
@@ -108,6 +100,8 @@ fn rotate_locked(
         access_token: pair.access_token,
         refresh_token: pair.refresh_token,
         capabilities: pair.capabilities,
+        // Rotation replaces the tokens, never the sign-in they belong to.
+        sign_in: credential.sign_in.clone(),
     };
     // Mixed-version writers do not know this guard. Never replace a family
     // an older client committed during the refresh request.
@@ -122,12 +116,9 @@ fn rotate_locked(
     if second.status == 401 {
         return Err(rejected_access(store, &rotated));
     }
-    // This call made the replacement, so the answer descends from the
-    // credential it rotated away from.
     Ok(Authenticated {
         response: second,
         credential: rotated,
-        descends_from: credential,
     })
 }
 
@@ -136,7 +127,14 @@ fn rotate_locked(
 /// account's cached identity around this.
 pub fn commit_login(store: &dyn CredentialStore, credential: &Credential) -> Result<()> {
     let _guard = store.refresh_guard()?;
-    store.save(credential)
+    // The sign-in is named here and nowhere else. A device flow mints a
+    // refresh token no other sign-in has, so its digest names this one
+    // without inventing a second source of uniqueness, and rotation
+    // carries the name rather than recomputing it.
+    store.save(&Credential {
+        sign_in: crate::hash::hash_bytes(credential.refresh_token.as_bytes()),
+        ..credential.clone()
+    })
 }
 
 /// Revoke and clear the current sign-in under the credential transaction lock.

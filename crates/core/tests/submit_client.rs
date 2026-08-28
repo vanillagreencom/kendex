@@ -71,6 +71,7 @@ impl MemoryStore {
             access_token: "kxa_old".to_owned(),
             refresh_token: "kxr_old".to_owned(),
             capabilities: vec!["submission:write".to_owned()],
+            sign_in: "sign-in-old".to_owned(),
         })))
     }
 }
@@ -605,6 +606,7 @@ fn replacement_login() -> Credential {
         access_token: "kxa_login".to_owned(),
         refresh_token: "kxr_login".to_owned(),
         capabilities: vec!["submission:write".to_owned()],
+        sign_in: "sign-in-login".to_owned(),
     }
 }
 
