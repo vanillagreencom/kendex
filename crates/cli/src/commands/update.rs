@@ -91,36 +91,58 @@ pub fn run(env: &Env, force: bool) -> CliResult {
     };
 
     say(&format!("updating {current} → {latest}"));
+    // The command's own baked version is the state marker for the whole
+    // install, so it is the last thing written. Any failure before it
+    // leaves the old command in place, the next run still reads the feed
+    // as newer, and both halves are tried again instead of stopping at
+    // already-up-to-date. Its bytes are fetched first so a lost download
+    // costs nothing that is already on disk.
     let binary = fetch(asset)?;
-    replace_executable(&current_exe, &binary)?;
-    out(&format!("updated to {latest}"));
-    match channel {
+    let app_replaced = match channel {
         InstallChannel::Direct => update_app(env, latest)?,
         // Nothing here is ours to replace beyond the command itself.
-        InstallChannel::Managed { .. } | InstallChannel::Unknown => {}
+        InstallChannel::Managed { .. } | InstallChannel::Unknown => false,
+    };
+    if let Err(error) = replace_executable(&current_exe, &binary) {
+        return Err(command_failure(latest, app_replaced, &error).into());
     }
+    out(&format!("updated to {latest}"));
     Ok(())
 }
 
-/// Bring the desktop app on this machine to the same release. The URL is
-/// built from the version the feed was validated at, never from feed text.
-/// A machine with no app of ours is the whole install already; a machine
-/// whose app cannot be replaced is told so rather than left half-updated.
-fn update_app(env: &Env, latest: &str) -> CliResult {
+/// What to say when the command itself could not be replaced. An app
+/// already on the new release does leave the machine split, but the
+/// command still reads older than the feed, so running it again repeats
+/// both halves rather than stopping at already-up-to-date.
+fn command_failure(latest: &str, app_replaced: bool, error: &std::io::Error) -> String {
+    match app_replaced {
+        true => format!(
+            "the desktop app is on {latest} and the kendex command is not: {error}; run kendex update again to bring the command across"
+        ),
+        false => format!("the kendex command could not be replaced: {error}"),
+    }
+}
+
+/// Bring the desktop app on this machine to the same release, answering
+/// whether it replaced one. The URL is built from the version the feed was
+/// validated at, never from feed text. A machine with no app of ours is
+/// the whole install already; a machine whose app cannot be replaced stops
+/// the run before the command moves, so neither half has.
+fn update_app(env: &Env, latest: &str) -> Result<bool, Box<dyn std::error::Error>> {
     // Only the Linux AppImage is an install this command made. Every other
     // platform's app arrives and updates by its own route, and the CLI says
     // nothing about one it did not put there.
     let Some(url) = app_image_url(latest, target_triple())? else {
-        return Ok(());
+        return Ok(false);
     };
     let path = env.app_image_file();
     if !Host.exists(&path) {
         out("no kendex desktop app here; the kendex command is the whole install");
-        return Ok(());
+        return Ok(false);
     }
     if !Host.replaceable(&path) {
         return Err(format!(
-            "the kendex command is updated to {latest}; the desktop app at {} is not, because that directory refuses writes",
+            "the desktop app at {} cannot be replaced, because that directory refuses writes; nothing was updated, so kendex update will try both halves again",
             path.display()
         )
         .into());
@@ -129,7 +151,7 @@ fn update_app(env: &Env, latest: &str) -> CliResult {
     let image = fetch(&url)?;
     replace_executable(&path, &image)?;
     out(&format!("updated the desktop app to {latest}"));
-    Ok(())
+    Ok(true)
 }
 
 /// Write `bytes` over an executable that may be running: the replacement
@@ -198,6 +220,22 @@ mod tests {
                 "--output=/tmp/owned",
             ]
         );
+    }
+
+    /// The one skew this order can still leave is an app already across
+    /// and a command that would not move. It is not a dead end — the
+    /// command's version is unchanged, so the next run reads newer and
+    /// repeats both halves — and the message has to say so rather than
+    /// leave a bare io error to be read as total failure.
+    #[test]
+    fn a_command_that_would_not_move_says_whether_the_app_went_without_it() {
+        let error = || std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        let split = command_failure("5.1.0", true, &error());
+        assert!(split.contains("the desktop app is on 5.1.0"), "{split}");
+        assert!(split.contains("run kendex update again"), "{split}");
+
+        let neither = command_failure("5.1.0", false, &error());
+        assert!(!neither.contains("desktop app"), "{neither}");
     }
 
     #[test]

@@ -62,6 +62,14 @@ fn kendex_copy(exe: &Path, home: &Path, args: &[&str], envs: &[(&str, String)]) 
 /// The CLI replaces a desktop app only where the release publishes one it
 /// installed. Elsewhere the app arrives by its own route and is not the
 /// command's to touch or to describe.
+fn stderr(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+fn stdout(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
 fn publishes_an_app_image() -> bool {
     matches!(
         env!("KENDEX_TARGET"),
@@ -352,12 +360,15 @@ fn update_replaces_the_binary_from_a_local_feed() {
     assert!(older.contains("is newer") && !older.contains("is available"));
 }
 
-/// Half an update is the failure worth shouting about: the command is on
-/// the new release and the app beside it is not, so the run has to end
-/// non-zero saying which is which. The refusal lands before any download.
+/// A half-updated machine is the one state this command must never leave,
+/// because the command's own version is what the next run reads: a new
+/// command beside an old app answers already-up-to-date forever. So the
+/// app goes first and a refusal there stops the run with the old command
+/// still on disk — which is what lets the next run try both halves again,
+/// with no --force and nothing said about one.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn update_reports_a_desktop_app_it_cannot_replace() {
+fn a_desktop_app_that_cannot_be_replaced_leaves_the_command_alone() {
     let tmp = sandbox_with_catalog();
     let home = tmp.path();
     let bin = home.join("bin");
@@ -387,34 +398,50 @@ fn update_reports_a_desktop_app_it_cannot_replace() {
         ),
     )
     .unwrap();
+    let update = || {
+        kendex_copy(
+            &me,
+            home,
+            &["update"],
+            &[(
+                "KENDEX_UPDATE_FEED",
+                format!("file://{}/feed.json", home.display()),
+            )],
+        )
+    };
 
-    let output = kendex_copy(
-        &me,
-        home,
-        &["update"],
-        &[(
-            "KENDEX_UPDATE_FEED",
-            format!("file://{}/feed.json", home.display()),
-        )],
-    );
+    let first = update();
+    // The second run is the whole point: with the command still on its old
+    // version it reads the feed as newer and reaches the app again.
+    let second = update();
     fs::set_permissions(&app_dir, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(fs::read_to_string(&me).unwrap(), "#!/bin/sh\necho v9\n");
+    // Read as text: the real binary is not UTF-8, so only a command that
+    // moved reads back as the replacement, and a failure prints that line
+    // rather than a megabyte of ELF.
+    let moved = fs::read_to_string(&me).is_ok_and(|got| got == "#!/bin/sh\necho v9\n");
+    assert!(!moved, "the command moved before the app it depends on");
     assert_eq!(
         fs::read_to_string(app_dir.join("kendex.AppImage")).unwrap(),
         "old app"
     );
-    if publishes_an_app_image() {
-        assert!(!output.status.success(), "{stderr}");
-        assert!(
-            stderr.contains("the kendex command is updated to 9.9.9") && stderr.contains("is not"),
-            "{stderr}"
-        );
-    } else {
+    if !publishes_an_app_image() {
         // No AppImage is published for this target, so there is nothing to
         // replace and nothing to refuse.
-        assert!(output.status.success(), "{stderr}");
+        assert!(first.status.success(), "{}", stderr(&first));
+        return;
+    }
+    for (which, output) in [("first", &first), ("second", &second)] {
+        let said = format!("{}{}", stderr(output), stdout(output));
+        assert!(!output.status.success(), "{which}: {said}");
+        assert!(
+            said.contains("nothing was updated") && said.contains("refuses writes"),
+            "{which}: {said}"
+        );
+        assert!(
+            !said.contains("already up to date"),
+            "{which} dead-ended instead of retrying: {said}"
+        );
     }
 }
 
