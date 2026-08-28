@@ -402,3 +402,29 @@ fn a_transport_failure_never_serves_a_cache_from_another_sign_in() {
         "the offline identity would be the previous account's"
     );
 }
+
+#[test]
+fn an_adopted_credential_never_serves_a_cache_from_another_sign_in() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = env_in(dir.path());
+    write_cache(&env, &fixture_body(&["success", "body"]), None);
+    // Two reads in, `load` holds its own credential and has read the
+    // cache under it. The request then 401s, and the locked re-read finds
+    // somebody else's credential, which the call adopts and retries under
+    // rather than refreshing. The answer is theirs; the cache is not.
+    let store = SwitchingStore::after(2);
+    let fetch = Canned::new(vec![
+        ok(401, None, r#"{"error":"invalid_token"}"#),
+        ok(503, None, r#"{"error":"down"}"#),
+    ]);
+    let refused = me::load(&env, &fetch, &store).expect_err("an adopted sign-in is not this one");
+    assert!(
+        matches!(refused, CoreError::RegistryUnavailable { .. }),
+        "an adopted sign-in is a retryable read: got {refused:?}"
+    );
+    assert_eq!(
+        *fetch.calls.borrow(),
+        2,
+        "the retry under the adopted credential is what this test is about"
+    );
+}

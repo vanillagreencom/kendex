@@ -7,15 +7,23 @@ use crate::registry::credentials::{Credential, CredentialStore};
 use crate::registry::login::TokenPair;
 use crate::registry::{Fetch, FetchResponse, base_url};
 
-/// One answer and the two credentials that bracket the call. A rotation
-/// mid-call replaces what the call opened with, so the answer belongs to
-/// `credential`; state the caller read before the call belongs to
-/// `opened_under`, which a rotation leaves alone and somebody else's
-/// sign-in does not.
+/// One answer, the credential it went out under, and the sign-in it
+/// descends from.
+///
+/// A call reaches its final credential three ways: it answers under what
+/// it opened with, it rotates to a replacement it made itself, or it
+/// adopts one another writer installed while it was in flight. The first
+/// two descend from what the call opened with. The third descends from
+/// the adopted credential, because nothing links it to what the call
+/// began with.
+///
+/// A caller that read state before the call compares that state's sign-in
+/// against `descends_from`: equal means nothing but this call moved the
+/// credential, whatever route it took.
 pub struct Authenticated {
     pub response: FetchResponse,
     pub credential: Credential,
-    pub opened_under: Credential,
+    pub descends_from: Credential,
 }
 
 /// Run one authenticated call, refreshing a rejected access token once.
@@ -27,15 +35,14 @@ pub fn with_access(
 ) -> Result<Authenticated> {
     let opened_under = required(store.load()?)?;
     let first = call(&opened_under.access_token)?;
-    let (response, credential) = match first.status {
-        401 => rotate_after_rejection(fetch, store, &call, opened_under.clone())?,
-        _ => (first, opened_under.clone()),
-    };
-    Ok(Authenticated {
-        response,
-        credential,
-        opened_under,
-    })
+    if first.status != 401 {
+        return Ok(Authenticated {
+            response: first,
+            descends_from: opened_under.clone(),
+            credential: opened_under,
+        });
+    }
+    rotate_after_rejection(fetch, store, &call, opened_under)
 }
 
 fn rotate_after_rejection(
@@ -43,7 +50,7 @@ fn rotate_after_rejection(
     store: &dyn CredentialStore,
     call: &impl Fn(&str) -> Result<FetchResponse>,
     mut rejected: Credential,
-) -> Result<(FetchResponse, Credential)> {
+) -> Result<Authenticated> {
     let mut newer_retries = 0;
     loop {
         let refresh_guard = store.refresh_guard()?;
@@ -52,7 +59,13 @@ fn rotate_after_rejection(
             drop(refresh_guard);
             let retried = call(&locked.access_token)?;
             if retried.status != 401 {
-                return Ok((retried, locked));
+                // Somebody else installed this credential mid-call. The
+                // answer is theirs, and it descends from their sign-in.
+                return Ok(Authenticated {
+                    response: retried,
+                    descends_from: locked.clone(),
+                    credential: locked,
+                });
             }
             if newer_retries == 1 {
                 return Err(rejected_access());
@@ -71,7 +84,7 @@ fn rotate_locked(
     call: &impl Fn(&str) -> Result<FetchResponse>,
     credential: Credential,
     refresh_guard: Box<dyn crate::registry::credentials::CredentialRefreshGuard + '_>,
-) -> Result<(FetchResponse, Credential)> {
+) -> Result<Authenticated> {
     let pair = match refresh(fetch, &credential.refresh_token) {
         Ok(pair) => pair,
         Err(Refused::Definitive(why)) => {
@@ -109,7 +122,13 @@ fn rotate_locked(
     if second.status == 401 {
         return Err(rejected_access());
     }
-    Ok((second, rotated))
+    // This call made the replacement, so the answer descends from the
+    // credential it rotated away from.
+    Ok(Authenticated {
+        response: second,
+        credential: rotated,
+        descends_from: credential,
+    })
 }
 
 /// Commit a completed device login without racing refresh or logout.

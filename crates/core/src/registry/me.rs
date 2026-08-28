@@ -55,10 +55,13 @@ struct WireMe {
 /// credential gone by the time the answer lands is `SignedOut` too, and
 /// nothing is written back over the sign-out. Everything this read
 /// settles belongs to one sign-in: the cache it opens with, the call it
-/// sends, and the answer it caches. A sign-in as somebody else at any
-/// point across that span is refused as retryable rather than served,
-/// because the identity in hand is the previous account's. A refresh
-/// rotation mid-read is the same sign-in throughout and settles as
+/// sends, and the answer it caches. A credential this read did not itself
+/// rotate to is refused as retryable rather than served, because the
+/// identity in hand is the previous account's. That refusal covers a
+/// concurrent rotation of the same account, which the call adopts and
+/// answers under: nothing here can tell that from a different account
+/// signing in, and the retry costs less than the wrong name. A rotation
+/// this read performed is the same sign-in throughout and settles as
 /// usual.
 pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result<AccountState> {
     let Some(credential) = store.load()? else {
@@ -74,7 +77,7 @@ pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result
         .as_ref()
         .and_then(|(generation, _)| generation.etag.clone());
     let url = format!("{}/api/v1/me", base_url());
-    let (fetched, opened_under, answered_for) = match client::with_access(fetch, store, |access| {
+    let (fetched, descends_from, answered_for) = match client::with_access(fetch, store, |access| {
         fetch.get_auth(&url, etag.as_deref(), Some(access))
     }) {
         // Logout won a race with this read: the re-login state without
@@ -89,7 +92,7 @@ pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result
         }
         Ok(authenticated) => (
             Ok(authenticated.response),
-            authenticated.opened_under.refresh_token,
+            authenticated.descends_from.refresh_token,
             authenticated.credential.refresh_token,
         ),
         // Nothing came back, so the cache is the whole answer, and it
@@ -104,12 +107,14 @@ pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result
     };
     // Existence is not identity: a sign-out followed by a sign-in leaves
     // a credential here too, and nothing here belongs to either of them.
-    // Two spans to close. A sign-in landing before the call leaves the
-    // previous account's identity in `cached`, which a 304 hands back and
-    // any failure serves as offline. One landing after it settles this
-    // answer under a stranger. A rotation is neither: it saves its
-    // replacement before the call goes out, so both comparisons hold.
-    if opened_under != issued_under || answered_for != installed.refresh_token {
+    // One rule over two spans. Up to and through the call, the answer has
+    // to descend from the sign-in `cached` was read under; a credential
+    // installed anywhere in there leaves the previous account's identity
+    // in hand, which a 304 gives back whole and any failure serves as
+    // offline. After the call, the answer has to be the sign-in still
+    // installed. `with_access` reports what its own rotation produced, so
+    // a rotation satisfies both.
+    if descends_from != issued_under || answered_for != installed.refresh_token {
         return Err(sign_in_changed("reading your account"));
     }
     let loaded = cache.settle(cached, fetched, parse, |response| {
