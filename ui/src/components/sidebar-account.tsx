@@ -23,9 +23,9 @@ import { useNavStore } from "@/stores/nav";
  *  no name, and nothing where the account has neither. A blank name is no
  *  name, which is why the fallback runs on the empty string as well as on a
  *  missing one. Split by code point so a first character outside the BMP
- *  survives being taken apart, and cased without the runtime's locale: the
- *  circle wants one glyph, and a Turkish locale cases an 'i' into a
- *  dotted capital instead. */
+ *  survives being taken apart, and cased by the plain call rather than the
+ *  locale-aware one, whose no-argument form is host-dependent by
+ *  specification: the circle wants one glyph, the same everywhere. */
 export function accountInitial(
   identity: AccountIdentity | null,
 ): string | null {
@@ -110,6 +110,11 @@ function Label({
   );
 }
 
+/** A row's tooltip where the state's own sentence has to survive a later
+ *  failed read. */
+const explained = (sentence: string, readError: string | null): string =>
+  readError === null ? sentence : `${sentence} ${readError}`;
+
 /** Which row each account state draws.
  *
  *  The state decides on its own: a credential in the keychain is not a
@@ -118,9 +123,13 @@ function Label({
  *
  *  `readError` is why the last read did not land, and it outlives that read:
  *  a failure after an answer that worked leaves the settled state exactly as
- *  it was. Every row therefore says the cause in place of the sentence it
- *  would otherwise carry, or the failure would be visible before the first
- *  answer and invisible after it. */
+ *  it was. Every row therefore carries the cause, or the failure would be
+ *  visible before the first answer and invisible after it. Where the row's
+ *  own sentence is the only explanation of what it draws, the cause joins it
+ *  rather than replacing it: a rejected credential and a read that could not
+ *  be made are different answers, and swapping one for the other would say
+ *  the wrong thing about both. */
+
 function accountRow(
   account: AccountState,
   readError: string | null,
@@ -149,7 +158,7 @@ function accountRow(
       );
     case "expired":
       return (
-        <Row onClick={open} title={readError ?? ACCOUNT_EXPIRED_TITLE}>
+        <Row onClick={open} title={explained(ACCOUNT_EXPIRED_TITLE, readError)}>
           <LogIn className="size-[18px] shrink-0 opacity-70" />
           <Label>{ACCOUNT_SIGN_IN_AGAIN_LABEL}</Label>
         </Row>
@@ -159,7 +168,10 @@ function accountRow(
       return (
         <Row onClick={open} title={readError ?? ACCOUNT_ROW_TITLE}>
           <Avatar identity={account.identity} />
-          <Label mono={Boolean(handle)} title={handle}>
+          {/* The handle's own tooltip stands down while a read has
+              failed: the label covers most of the row, and a nearer title
+              would answer the hover with the handle instead of the cause. */}
+          <Label mono={Boolean(handle)} title={readError ? undefined : handle}>
             {handle || ACCOUNT_SIGNED_IN_LABEL}
           </Label>
         </Row>
@@ -167,9 +179,12 @@ function accountRow(
     }
     case "offline":
       return (
-        <Row onClick={open} title={readError ?? ACCOUNT_OFFLINE_TITLE}>
+        <Row onClick={open} title={explained(ACCOUNT_OFFLINE_TITLE, readError)}>
           <Avatar identity={account.identity} />
-          <Label mono title={account.identity.githubLogin}>
+          <Label
+            mono
+            title={readError ? undefined : account.identity.githubLogin}
+          >
             {account.identity.githubLogin}
           </Label>
           <span className="shrink-0 text-xs">{ACCOUNT_OFFLINE_LABEL}</span>

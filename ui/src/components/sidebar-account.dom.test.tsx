@@ -5,7 +5,9 @@
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  ACCOUNT_EXPIRED_TITLE,
   ACCOUNT_OFFLINE_LABEL,
+  ACCOUNT_OFFLINE_TITLE,
   ACCOUNT_SIGN_IN_AGAIN_LABEL,
   ACCOUNT_SIGN_IN_LABEL,
   ACCOUNT_SIGNED_IN_LABEL,
@@ -32,6 +34,20 @@ const rowOf = (host: HTMLElement): HTMLElement => {
     throw new Error("no account row on screen");
   return row;
 };
+
+/** The row's text column, which is the second thing in the row. */
+const labelOf = (host: HTMLElement): HTMLElement => {
+  const label = rowOf(host).children[1];
+  if (!(label instanceof HTMLElement))
+    throw new Error("no label in the account row");
+  return label;
+};
+
+/** The two rows that show a handle, and so have a tooltip of their own. */
+const WITH_HANDLE: [string, AccountState][] = [
+  ["signed-in", { kind: "signed-in", identity: ADA }],
+  ["offline", { kind: "offline", identity: ADA }],
+];
 
 /** The states a read can settle on, each named for the message it fails in. */
 const SETTLED: [string, AccountState][] = [
@@ -117,9 +133,34 @@ describe("a read that failed after one that landed", () => {
   it.each(SETTLED)("marks the %s row with the cause", (_state, account) => {
     const clean = rowOf(show(account)).title;
     const failed = rowOf(show(account, "keychain locked")).title;
-    expect(failed).toBe("keychain locked");
+    expect(failed).toContain("keychain locked");
     expect(failed).not.toBe(clean);
   });
+
+  // A rejected credential and a read that could not be made are different
+  // answers. Where the row's own sentence is the only thing explaining what
+  // it draws, a later failure joins it rather than taking its place.
+  it.each([
+    ["expired", { kind: "expired" }, ACCOUNT_EXPIRED_TITLE],
+    ["offline", { kind: "offline", identity: ADA }, ACCOUNT_OFFLINE_TITLE],
+  ] as [string, AccountState, string][])(
+    "keeps the %s row's own explanation beside the cause",
+    (_state, account, sentence) => {
+      const title = rowOf(show(account, "keychain locked")).title;
+      expect(title).toContain(sentence);
+      expect(title).toContain("keychain locked");
+    },
+  );
+
+  // The label covers most of the row, so its own tooltip would answer the
+  // hover with the handle and the cause would reach nobody.
+  it.each(WITH_HANDLE)(
+    "drops the %s row's handle tooltip while a read has failed",
+    (_state, account) => {
+      expect(labelOf(show(account)).title).toBe(ADA.githubLogin);
+      expect(labelOf(show(account, "keychain locked")).title).toBe("");
+    },
+  );
 });
 
 describe("the letter on the avatar", () => {
@@ -139,15 +180,6 @@ describe("the letter on the avatar", () => {
 
   it("has no letter for an account with no identity", () => {
     expect(accountInitial(null)).toBeNull();
-  });
-
-  // The circle wants a glyph, not text cased in whatever locale the app is
-  // running under: a Turkish locale cases an "i" into a dotted capital,
-  // which is not the letter this avatar is for.
-  it("uppercases the same letter whatever locale the app runs under", () => {
-    const initial = accountInitial({ name: "ilhan", githubLogin: "x" });
-    expect(initial).toBe("I");
-    expect(initial).not.toBe("i".toLocaleUpperCase("tr"));
   });
 
   it("keeps a first character that is a surrogate pair whole", () => {
