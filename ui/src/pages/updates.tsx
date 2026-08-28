@@ -25,6 +25,7 @@ import {
   UPDATES_UNCHECKED_TITLE,
 } from "@/lib/copy";
 import {
+  lastCheckedLabel,
   UPDATE_NEEDS_CHECK_NOTE,
   UPDATES_UNCONFIRMED_TITLE,
   updatesSubtitle,
@@ -37,6 +38,7 @@ import {
   visibleUpdates,
 } from "@/lib/update-groups";
 import { rowUnsettled } from "@/lib/updates-read-state";
+import { useNowTick } from "@/lib/use-now-tick";
 import { cn } from "@/lib/utils";
 import { useAuditOnMount } from "@/stores/audit";
 import { useUpdatesStore } from "@/stores/updates";
@@ -57,6 +59,7 @@ export function UpdatesPage() {
     visibleUpdates(s.rows).some((row) => rowUnsettled(s, row)),
   );
   const load = useUpdatesStore((s) => s.load);
+  const lastFetched = useUpdatesStore((s) => s.lastFetched);
   // One choice for every table on the page; the `…` menu lives on the
   // main table, or on the muted one when it is the only table drawn.
   const setShowVersion = useUpdatesView((s) => s.setShowVersion);
@@ -76,11 +79,18 @@ export function UpdatesPage() {
   const empty =
     visible.length === 0 && hidden.length === 0 && warnings.length === 0;
 
+  // On the page's own clock, not the render's. Only a read of the standing
+  // re-renders this — mount, a check, a mutation — so a window left open
+  // would go on claiming the age it had when it opened.
+  const now = useNowTick();
+  const lastChecked = lastCheckedLabel(lastFetched, now);
+
   const beforeList = updatesBeforeList({
     loaded,
     error,
     empty,
     checking,
+    lastChecked,
     onCheck: () => void check(),
   });
   if (beforeList) return beforeList;
@@ -91,9 +101,12 @@ export function UpdatesPage() {
         title="Updates"
         wide
         subtitle={
-          visible.length > 0
-            ? updatesSubtitle(packageCount(visible), visible.length)
-            : undefined
+          <>
+            {visible.length > 0 ? (
+              <p>{updatesSubtitle(packageCount(visible), visible.length)}</p>
+            ) : null}
+            <p className="text-xs">{lastChecked}</p>
+          </>
         }
         action={
           <div className="flex gap-2">

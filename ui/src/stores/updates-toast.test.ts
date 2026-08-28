@@ -71,7 +71,7 @@ const ready = (remaining: UpdateRow[]) => {
   });
   vi.mocked(commands.updatesOverview).mockResolvedValue({
     status: "ok",
-    data: { rows: remaining, warnings: [] },
+    data: { rows: remaining, warnings: [], lastFetched: null },
   });
   vi.mocked(commands.scanMachine).mockResolvedValue({
     status: "ok",

@@ -1,13 +1,13 @@
-//! The package page's and Updates page's commands: versions, diffs, files,
-//! provenance, holds, forks, and the update check — thin shells over core,
-//! like every other command here.
+//! The package page's commands: versions, diffs, files, provenance, holds,
+//! and forks — thin shells over core, like every other command here. The
+//! Updates page's standing is its own module, `update_check`.
 
 use kendex_core::apply;
 use kendex_core::engine;
 use kendex_core::env::Env;
+use kendex_core::manifest;
 use kendex_core::model::{HarnessId, ItemKind, Scope};
-use kendex_core::package::{self, detail, diff, updates};
-use kendex_core::{manifest, remote};
+use kendex_core::package::{self, detail, diff};
 use serde::Serialize;
 use specta::Type;
 
@@ -15,18 +15,6 @@ use crate::audit::{AuditView, view};
 
 fn env() -> Result<Env, String> {
     Env::detect().map_err(|e| e.to_string())
-}
-
-fn all_scopes(env: &Env) -> Result<Vec<Scope>, String> {
-    let settings = kendex_core::settings::load(env).map_err(|e| e.to_string())?;
-    let mut scopes = vec![Scope::Global];
-    scopes.extend(
-        settings
-            .projects
-            .into_iter()
-            .map(|root| Scope::Project { root }),
-    );
-    Ok(scopes)
 }
 
 #[tauri::command(async)]
@@ -38,68 +26,6 @@ pub fn package_versions(
 ) -> Result<Vec<package::VersionRow>, String> {
     let env = env()?;
     package::versions(&env, &scope, kind, &name).map_err(|e| e.to_string())
-}
-
-/// Every scope's update standing in one query — the sidebar badge, the
-/// Updates page, and the Library's fork/edited flags all read this. Rows
-/// carry the facts; warnings carry every package the standing could not be
-/// computed for, which is never silently shown as current.
-#[tauri::command(async)]
-#[specta::specta]
-pub fn updates_overview() -> Result<updates::UpdatesReport, String> {
-    let env = env()?;
-    let mut merged = updates::UpdatesReport {
-        rows: Vec::new(),
-        warnings: Vec::new(),
-    };
-    for scope in all_scopes(&env)? {
-        let report = updates::updates(&env, &scope).map_err(|e| e.to_string())?;
-        // The deep work just ran; the session-start check reads this. A
-        // failure is a warning on the page, never silence — the CLI paths
-        // say the same thing.
-        if let Err(error) = kendex_core::drift::snapshot::record_with(&env, &scope, &report) {
-            merged.warnings.push(kendex_core::engine::ItemWarning {
-                kind: kendex_core::model::ItemKind::Skill,
-                name: scope.label(),
-                harness: None,
-                message: format!("drift snapshot not derived: {error}"),
-                remediation: None,
-            });
-        }
-        merged.rows.extend(report.rows);
-        merged.warnings.extend(report.warnings);
-    }
-    Ok(merged)
-}
-
-/// Fetch every source's mirror — pinned ones included, that is the point —
-/// then answer with the fresh standing. Fetch problems degrade to
-/// warnings; a check for updates is never worth an error dialog.
-#[tauri::command(async)]
-#[specta::specta]
-pub fn updates_refresh() -> Result<updates::UpdatesReport, String> {
-    let env = env()?;
-    for scope in all_scopes(&env)? {
-        let path = manifest::manifest_path(&env, &scope);
-        if let Ok(Some(loaded)) = manifest::load_for_mutation(&path) {
-            let _warnings = remote::fetch_all(&env, &loaded);
-        }
-    }
-    updates_overview()
-}
-
-#[tauri::command(async)]
-#[specta::specta]
-pub fn update_set_ignored(
-    scope: Scope,
-    kind: ItemKind,
-    name: String,
-    repo: String,
-    ignored: bool,
-) -> Result<updates::UpdatesReport, String> {
-    let env = env()?;
-    updates::set_ignored(&env, &scope, kind, &name, &repo, ignored).map_err(|e| e.to_string())?;
-    updates_overview()
 }
 
 /// What a single-package apply did to the package it named, beside the

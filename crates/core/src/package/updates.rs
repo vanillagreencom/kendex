@@ -106,6 +106,14 @@ pub struct UpdateRow {
 pub struct UpdatesReport {
     pub rows: Vec<UpdateRow>,
     pub warnings: Vec<ItemWarning>,
+    /// When the mirrors behind this standing were last brought current —
+    /// Unix seconds, `None` when nothing has ever fetched. A clean report
+    /// is only as true as the fetch under it, so the age of that fetch
+    /// travels with it rather than being left for the reader to guess.
+    ///
+    /// `u32` for the same reason [`crate::model::ObservedItem::modified_at`]
+    /// is: specta refuses to export a 64-bit int across the IPC boundary.
+    pub last_fetched: Option<u32>,
 }
 
 /// A package whose update notifications are switched off, by everything
@@ -140,6 +148,7 @@ pub fn updates(env: &Env, scope: &Scope) -> Result<UpdatesReport> {
         return Ok(UpdatesReport {
             rows: Vec::new(),
             warnings: Vec::new(),
+            last_fetched: None,
         });
     };
     let lock = crate::lock::load_file(&crate::lock::lock_path(env, scope))?;
@@ -162,6 +171,11 @@ pub fn updates(env: &Env, scope: &Scope) -> Result<UpdatesReport> {
     let mut report = UpdatesReport {
         rows: Vec::new(),
         warnings: Vec::new(),
+        // A stamp that does not fit the narrower type — past 2106, or a
+        // clock artifact from the far future — reads as never checked
+        // rather than wrapping into a plausible-looking wrong instant.
+        last_fetched: crate::remote::last_fetched(env, &manifest)
+            .and_then(|at| u32::try_from(at).ok()),
     };
     for planned in crate::engine::planned_declarations(env, scope, &manifest) {
         eval.standing(&planned, &mut report);

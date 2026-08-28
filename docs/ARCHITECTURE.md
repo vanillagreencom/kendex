@@ -500,23 +500,23 @@ lives in one capability table read by core and UI.
   nothing. A held item hashes clean against its held tree; the Updates page
   asks the mirror (pinned sources too) what newer content exists, its
   timeline listing only commits that touched the package's files,
-  tag-decorated, never tag-replaced. Rows are per package per scope, folded
-  by package and expanded by place; a row's Update applies that package
-  (`PlanOptions::update_only`), apply and refresh a whole place.
-  Flipping Follow source is one row's state change and a write that settles
-  behind it (`ui/src/stores/updates-follow.ts`): the switch carries its new
-  position from the click, while the hold, the scope apply, and the read of
-  every scope's standing after them take seconds. The flip is pending until
-  that read lands — every landing wears it, so a read begun earlier cannot
-  bounce the switch — and it holds its own scope's rows and no others
-  (`lib/updates-read-state.ts::rowUnsettled`), an apply reaching only what
-  is installed there. A refused write stops the flip painting and says so at
-  once, but the rows already wear it, so the scope goes on holding until the
-  read that puts them back lands — and when every read behind it failed too,
-  the flip puts them back itself before letting the scope go. No row wears a
-  position the engine did not take. An edited
-  place is never updated over: its row says so and offers the install
-  beside it where a newer version the source still carries can land, and a
+  tag-decorated, never tag-replaced. `UpdatesReport::last_fetched` dates
+  the standing — the newest successful fetch among the sources the scope
+  installs from, the newest across scopes in the overview — so "Everything
+  is up to date" is dated too. Rows are per package per scope, folded by
+  package and expanded by place; a row's Update applies that package
+  (`PlanOptions::update_only`), apply and refresh a whole place. Flipping
+  Follow source is one row's state change, its write settling behind it
+  (`ui/src/stores/updates-follow.ts`): the switch takes its position from
+  the click, pending until every scope's standing is read again — every
+  landing wears it, so a read begun earlier cannot bounce it — over its own
+  scope's rows only (`lib/updates-read-state.ts::rowUnsettled`), the apply
+  reaching only what is installed there. A refused write says so at once,
+  but the rows already wear it: the scope holds until a read puts them
+  back, or the flip restores them when every read failed. No row wears a
+  position the engine did not take. An edited place is never updated over:
+  its row says so and offers the install beside it where a newer version
+  the source still carries can land, and a
   link to the package page otherwise; the fork-or-discard choice lives on
   the package page. Commit ids stay behind the table's `…` menu. Muting a
   package's update notifications is a machine-local settings entry. Reuse

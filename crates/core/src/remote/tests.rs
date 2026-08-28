@@ -318,3 +318,82 @@ fn the_cache_lock_releases_while_a_description_copy_exists() {
     drop(copy);
     relock.expect("drop released the lock despite the live description copy");
 }
+
+/// A scope's last check is the newest of its mirrors, never the oldest: a
+/// source that keeps failing must not read as "never checked" over mirrors
+/// that came current minutes ago. Sources with nothing to fetch — a local
+/// path, a disabled declaration — hold no opinion either way.
+#[test]
+fn the_scope_last_fetched_is_the_newest_of_its_mirrors() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let source = |repo: Option<&str>, enabled: bool| SourceDecl {
+        repo: repo.map(str::to_owned),
+        path: None,
+        rev: None,
+        enabled,
+    };
+    let mut manifest = Manifest {
+        schema: crate::manifest::MANIFEST_SCHEMA,
+        ..Manifest::default()
+    };
+    manifest
+        .sources
+        .insert("cat".into(), source(Some("owner/cat"), true));
+    manifest
+        .sources
+        .insert("dog".into(), source(Some("owner/dog"), true));
+    manifest
+        .sources
+        .insert("off".into(), source(Some("owner/off"), false));
+    manifest.sources.insert("here".into(), source(None, true));
+    // Enabled and remote, but nothing installs from it — a subscription
+    // somebody is only browsing.
+    manifest
+        .sources
+        .insert("shop".into(), source(Some("owner/shop"), true));
+    for (name, from) in [("gh", "cat"), ("jj", "dog"), ("here-one", "here")] {
+        manifest
+            .skills
+            .insert(name.into(), crate::manifest::ItemDecl::from_source(from));
+    }
+
+    assert_eq!(
+        last_fetched(&env, &manifest),
+        None,
+        "no mirror has ever fetched: the scope has never been checked"
+    );
+
+    let stamp = |repo: &str, at: u64| {
+        crate::drift::stamps::record_success(&env, &cache_key(&env, repo), None, at).unwrap();
+    };
+    stamp("owner/cat", 1_000);
+    assert_eq!(last_fetched(&env, &manifest), Some(1_000));
+    stamp("owner/dog", 2_000);
+    assert_eq!(last_fetched(&env, &manifest), Some(2_000));
+    // The older mirror failing since does not move the answer backwards,
+    // and its failure is reported on its own.
+    crate::drift::stamps::record_failure(&env, &cache_key(&env, "owner/cat"), "offline", 3_000)
+        .unwrap();
+    assert_eq!(last_fetched(&env, &manifest), Some(2_000));
+
+    // A disabled source and a local one are not fetched, so a stamp under
+    // one of their names cannot answer for the scope.
+    stamp("owner/off", 9_000);
+    assert_eq!(
+        last_fetched(&env, &manifest),
+        Some(2_000),
+        "a source nothing fetches says nothing about when the scope was checked"
+    );
+
+    // The rows come from the sources the scope installs from. Merely
+    // opening a subscription fetches its mirror, and dating the page from
+    // that would call the standing fresh while every source behind it had
+    // gone unreached for days.
+    stamp("owner/shop", 8_000);
+    assert_eq!(
+        last_fetched(&env, &manifest),
+        Some(2_000),
+        "a source no row comes from cannot date the standing"
+    );
+}

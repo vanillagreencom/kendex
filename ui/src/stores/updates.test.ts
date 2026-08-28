@@ -67,8 +67,47 @@ describe("updates store", () => {
       busy: false,
       loaded: true,
       error: null,
+      lastFetched: null,
     });
     vi.clearAllMocks();
+  });
+
+  // The age is the middle link of the round trip: the command reports it,
+  // the store has to carry it, the page draws it. Only `landOk` moves it,
+  // for every landing kind, and a store that quietly dropped it would leave
+  // the page saying "Not checked for updates yet" over a check that ran.
+  const CHECKED_AT = 1_700_000_000;
+
+  it("lands the age a read reports", async () => {
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [row({})], warnings: [], lastFetched: CHECKED_AT },
+    });
+    await useUpdatesStore.getState().load();
+    expect(useUpdatesStore.getState().lastFetched).toBe(CHECKED_AT);
+  });
+
+  // The refresh lands on the side-effect chain rather than the plain-read
+  // path, so it carries the age through different code.
+  it("lands the age a check reports", async () => {
+    vi.mocked(commands.updatesRefresh).mockResolvedValue({
+      status: "ok",
+      data: { rows: [row({})], warnings: [], lastFetched: CHECKED_AT },
+    });
+    await useUpdatesStore.getState().check();
+    expect(useUpdatesStore.getState().lastFetched).toBe(CHECKED_AT);
+  });
+
+  // A check that failed fetched nothing, so the age it had is still when
+  // these rows were last true — dropping it would report a check nobody ran.
+  it("keeps the age it had when a check fails", async () => {
+    useUpdatesStore.setState({ lastFetched: CHECKED_AT });
+    vi.mocked(commands.updatesRefresh).mockResolvedValue({
+      status: "error",
+      error: "no network",
+    });
+    await useUpdatesStore.getState().check();
+    expect(useUpdatesStore.getState().lastFetched).toBe(CHECKED_AT);
   });
 
   it("counts only unmuted updates for the badge — held ones still count", () => {
@@ -113,7 +152,7 @@ describe("updates store", () => {
 
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [] },
+      data: { rows: [], warnings: [], lastFetched: null },
     });
     await useUpdatesStore.getState().load();
     expect(useUpdatesStore.getState().error).toBeNull();
@@ -178,13 +217,13 @@ describe("updates store", () => {
     const fresh = [row({ name: "fresh" })];
     vi.mocked(commands.updatesRefresh).mockResolvedValue({
       status: "ok",
-      data: { rows: fresh, warnings: [] },
+      data: { rows: fresh, warnings: [], lastFetched: null },
     });
     await useUpdatesStore.getState().check();
 
     resolveLoad({
       status: "ok",
-      data: { rows: [row({ name: "stale" })], warnings: [] },
+      data: { rows: [row({ name: "stale" })], warnings: [], lastFetched: null },
     });
     await loading;
 
@@ -203,7 +242,7 @@ describe("updates store", () => {
 
     vi.mocked(commands.updatesRefresh).mockResolvedValue({
       status: "ok",
-      data: { rows: [row({})], warnings: [] },
+      data: { rows: [row({})], warnings: [], lastFetched: null },
     });
     await useUpdatesStore.getState().check();
 
@@ -228,13 +267,13 @@ describe("updates store", () => {
     const muted = [row({ ignored: true })];
     vi.mocked(commands.updateSetIgnored).mockResolvedValue({
       status: "ok",
-      data: { rows: muted, warnings: [] },
+      data: { rows: muted, warnings: [], lastFetched: null },
     });
     await useUpdatesStore.getState().setIgnored(row({}), true);
 
     resolveLoad({
       status: "ok",
-      data: { rows: [row({})], warnings: [] },
+      data: { rows: [row({})], warnings: [], lastFetched: null },
     });
     await loading;
 
@@ -258,12 +297,15 @@ describe("updates store", () => {
 
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [row({ name: "stale" })], warnings: [] },
+      data: { rows: [row({ name: "stale" })], warnings: [], lastFetched: null },
     });
     await useUpdatesStore.getState().load();
 
     const fresh = [row({ name: "fresh" })];
-    resolveCheck({ status: "ok", data: { rows: fresh, warnings: [] } });
+    resolveCheck({
+      status: "ok",
+      data: { rows: fresh, warnings: [], lastFetched: null },
+    });
     await checking;
 
     expect(useUpdatesStore.getState().rows).toEqual(fresh);
@@ -286,12 +328,15 @@ describe("updates store", () => {
 
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [row({})], warnings: [] },
+      data: { rows: [row({})], warnings: [], lastFetched: null },
     });
     await useUpdatesStore.getState().load();
 
     const muted = [row({ ignored: true })];
-    resolveMutation({ status: "ok", data: { rows: muted, warnings: [] } });
+    resolveMutation({
+      status: "ok",
+      data: { rows: muted, warnings: [], lastFetched: null },
+    });
     await muting;
 
     expect(useUpdatesStore.getState().rows).toEqual(muted);
@@ -313,7 +358,7 @@ describe("updates store", () => {
       )
       .mockResolvedValueOnce({
         status: "ok",
-        data: { rows: secondState, warnings: [] },
+        data: { rows: secondState, warnings: [], lastFetched: null },
       });
 
     const first = useUpdatesStore.getState().setIgnored(row({}), true);
@@ -324,7 +369,7 @@ describe("updates store", () => {
 
     resolveFirst({
       status: "ok",
-      data: { rows: [row({ ignored: true })], warnings: [] },
+      data: { rows: [row({ ignored: true })], warnings: [], lastFetched: null },
     });
     await first;
     await second;
@@ -358,7 +403,10 @@ describe("updates store", () => {
     );
 
     const muted = [row({ ignored: true })];
-    resolveMute({ status: "ok", data: { rows: muted, warnings: [] } });
+    resolveMute({
+      status: "ok",
+      data: { rows: muted, warnings: [], lastFetched: null },
+    });
     await muting;
     expect(useUpdatesStore.getState().rows).toEqual(muted);
   });
@@ -388,7 +436,10 @@ describe("updates store", () => {
       UPDATE_NEEDS_CHECK_NOTE,
     );
 
-    resolveLoad({ status: "ok", data: { rows: [], warnings: [] } });
+    resolveLoad({
+      status: "ok",
+      data: { rows: [], warnings: [], lastFetched: null },
+    });
     await loading;
     expect(commands.packageSetRev).not.toHaveBeenCalled();
   });
@@ -407,7 +458,7 @@ describe("updates store", () => {
 
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [row({})], warnings: [] },
+      data: { rows: [row({})], warnings: [], lastFetched: null },
     });
     await useUpdatesStore.getState().load();
 
@@ -433,7 +484,7 @@ describe("updates store", () => {
     });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: kept, warnings: [] },
+      data: { rows: kept, warnings: [], lastFetched: null },
     });
 
     await useUpdatesStore.getState().setIgnored(row({}), true);
@@ -456,7 +507,7 @@ describe("updates store", () => {
     vi.mocked(commands.packageUpdate).mockRejectedValue(new Error("ipc down"));
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [] },
+      data: { rows: [], warnings: [], lastFetched: null },
     });
 
     await useUpdatesStore.getState().updateOne(row({}));
@@ -473,7 +524,7 @@ describe("updates store", () => {
     vi.mocked(commands.packageSetRev).mockRejectedValue(new Error("ipc down"));
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [] },
+      data: { rows: [], warnings: [], lastFetched: null },
     });
 
     await useUpdatesStore.getState().setAutoUpdate(row({}), false);
@@ -507,7 +558,10 @@ describe("updates store", () => {
       UPDATE_NEEDS_CHECK_NOTE,
     );
 
-    resolveCheck({ status: "ok", data: { rows: [], warnings: [] } });
+    resolveCheck({
+      status: "ok",
+      data: { rows: [], warnings: [], lastFetched: null },
+    });
     await checking;
     expect(commands.packageSetRev).not.toHaveBeenCalled();
   });
@@ -543,7 +597,7 @@ describe("updates store", () => {
       .mockRejectedValueOnce(new Error("overview wedged"))
       .mockResolvedValueOnce({
         status: "ok",
-        data: { rows: landed, warnings: [] },
+        data: { rows: landed, warnings: [], lastFetched: null },
       });
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "ok",
@@ -574,7 +628,7 @@ describe("updates store", () => {
     const muted = [row({ ignored: true })];
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: muted, warnings: [] },
+      data: { rows: muted, warnings: [], lastFetched: null },
     });
 
     await useUpdatesStore.getState().setIgnored(row({}), true);
@@ -605,7 +659,7 @@ describe("updates store", () => {
     const muted = [row({ ignored: true })];
     vi.mocked(commands.updateSetIgnored).mockResolvedValue({
       status: "ok",
-      data: { rows: muted, warnings: [] },
+      data: { rows: muted, warnings: [], lastFetched: null },
     });
     useUpdatesStore.setState({ rows: [row({})], loaded: true });
 
@@ -638,7 +692,7 @@ describe("updates store", () => {
     });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [] },
+      data: { rows: [], warnings: [], lastFetched: null },
     });
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "ok",
@@ -678,7 +732,7 @@ describe("updates store", () => {
     });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [] },
+      data: { rows: [], warnings: [], lastFetched: null },
     });
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "ok",

@@ -163,7 +163,7 @@ pub fn cached(env: &Env, repo: &str, rev: Option<&str>) -> Result<Option<Resolut
 /// touching the network. Stamp writes are best-effort by design: a stamp
 /// that cannot be written costs staleness detection, never the fetch —
 /// and an unwritable stamp reads as stale, the conservative state.
-fn stamp_fetch(env: &Env, key: &str, mirror: &std::path::Path, fetched: &Result<()>) {
+pub(crate) fn stamp_fetch(env: &Env, key: &str, mirror: &std::path::Path, fetched: &Result<()>) {
     let now = crate::clock::unix_now();
     let _ = match fetched {
         Ok(()) => crate::drift::stamps::record_success(
@@ -209,6 +209,31 @@ pub fn fetch_all(env: &Env, manifest: &Manifest) -> Vec<String> {
         drop(guard);
     }
     warnings
+}
+
+/// When this scope's mirrors were last brought current: Unix seconds of the
+/// most recent successful fetch among the enabled remote sources it installs
+/// from, `None` when none of them has ever fetched. Read straight off the
+/// per-mirror stamps [`stamp_fetch`] writes, so it counts the background
+/// refresh's fetches as well as an explicit check.
+///
+/// The sources in use and no others — the population the standing's rows
+/// are built from. A subscribed source nobody installs from fetches when it
+/// is merely opened, and dating the page from that would call a standing
+/// fresh whose every source had been unreachable for days.
+///
+/// The most recent among those, not the oldest: one source that stays down
+/// would otherwise pin the answer at never-checked for as long as it is
+/// down, hiding a check that reached every other mirror. A failure keeps
+/// the last success ([`crate::drift::stamps::record_failure`] leaves
+/// `fetched_at` alone), so that source goes on reporting the age it last
+/// had rather than erasing the scope's.
+pub fn last_fetched(env: &Env, manifest: &Manifest) -> Option<u64> {
+    let in_use = sources_in_use(manifest);
+    syncable(manifest, |name| in_use.contains(name))
+        .filter_map(|(_, decl)| decl.repo.as_deref())
+        .filter_map(|repo| crate::drift::stamps::load(env, &cache_key(env, repo)).fetched_at)
+        .max()
 }
 
 /// The sources some declaration actually names — items, and the bundles

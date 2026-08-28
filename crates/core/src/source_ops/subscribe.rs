@@ -301,6 +301,7 @@ fn normalize_tree(
     // Best-effort fetch: a mirror already downloaded answers offline.
     let fetched = crate::remote::store::ensure_mirror(&mirror, &url)
         .and_then(|()| crate::remote::store::fetch(&mirror));
+    crate::remote::stamp_fetch(env, &key, &mirror, &fetched);
     let refs: Vec<crate::source_ref::MirrorRef> = crate::remote::store::ref_names(&mirror)
         .unwrap_or_default()
         .iter()

@@ -70,7 +70,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(commands.updatesOverview).mockResolvedValue({
     status: "ok",
-    data: { rows: [], warnings: [] },
+    data: { rows: [], warnings: [], lastFetched: null },
   });
   vi.mocked(commands.scanMachine).mockResolvedValue({
     status: "ok",
@@ -208,6 +208,7 @@ describe("the table's own menu", () => {
       data: {
         rows: [row("one", null), row("two", null, { ignored: true })],
         warnings: [],
+        lastFetched: null,
       },
     });
     const host = mount(<UpdatesPage />);
@@ -241,7 +242,11 @@ describe("a page with only muted updates", () => {
   it("still carries the `…` menu, on the muted table", async () => {
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [row("two", null, { ignored: true })], warnings: [] },
+      data: {
+        rows: [row("two", null, { ignored: true })],
+        warnings: [],
+        lastFetched: null,
+      },
     });
     const host = mount(<UpdatesPage />);
     await settle();
@@ -376,6 +381,7 @@ describe("a row of a kind the planner never brings current", () => {
           row("gh", null),
         ],
         warnings: [],
+        lastFetched: null,
       },
     });
     mount(<UpdatesPage />);

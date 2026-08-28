@@ -18,6 +18,7 @@ pub mod recovery;
 pub mod repo_effects;
 pub mod sources;
 mod unsubscribe;
+mod update_check;
 mod whole_file;
 mod window;
 
@@ -110,9 +111,6 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             account::mine_submissions,
             packages::package_versions,
             packages::package_update,
-            packages::updates_overview,
-            packages::updates_refresh,
-            packages::update_set_ignored,
             packages::package_set_rev,
             packages::package_diff,
             packages::package_fork,
@@ -123,6 +121,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             packages::package_file,
             packages::package_readme,
             packages::package_meta,
+            update_check::updates_overview,
+            update_check::updates_refresh,
+            update_check::update_set_ignored,
             window::window_set_zoom,
             window::window_zoom_state,
             window::window_minimize,

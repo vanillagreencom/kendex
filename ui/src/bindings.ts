@@ -255,20 +255,6 @@ export const commands = {
 	 */
 	packageUpdate: (scope: Scope, kind: ItemKind, name: string) => typedError<PackageUpdate_Serialize, string>(__TAURI_INVOKE("package_update", { scope, kind, name })),
 	/**
-	 *  Every scope's update standing in one query — the sidebar badge, the
-	 *  Updates page, and the Library's fork/edited flags all read this. Rows
-	 *  carry the facts; warnings carry every package the standing could not be
-	 *  computed for, which is never silently shown as current.
-	 */
-	updatesOverview: () => typedError<UpdatesReport_Serialize, string>(__TAURI_INVOKE("updates_overview")),
-	/**
-	 *  Fetch every source's mirror — pinned ones included, that is the point —
-	 *  then answer with the fresh standing. Fetch problems degrade to
-	 *  warnings; a check for updates is never worth an error dialog.
-	 */
-	updatesRefresh: () => typedError<UpdatesReport_Serialize, string>(__TAURI_INVOKE("updates_refresh")),
-	updateSetIgnored: (scope: Scope, kind: ItemKind, name: string, repo: string, ignored: boolean) => typedError<UpdatesReport_Serialize, string>(__TAURI_INVOKE("update_set_ignored", { scope, kind, name, repo, ignored })),
-	/**
 	 *  Hold a package at a version (or let it follow again) and apply the
 	 *  change, scoped to the package: every other follower in the scope reads
 	 *  the commit its lock records, so moving one hold does not bring the
@@ -302,6 +288,20 @@ export const commands = {
 	truncated: boolean,
 } | null, string>(__TAURI_INVOKE("package_readme", { scope, kind, name })),
 	packageMeta: (scope: Scope, kind: ItemKind, name: string) => typedError<PackageMeta_Serialize, string>(__TAURI_INVOKE("package_meta", { scope, kind, name })),
+	/**
+	 *  Every scope's update standing in one query — the sidebar badge, the
+	 *  Updates page, and the Library's fork/edited flags all read this. Rows
+	 *  carry the facts; warnings carry every package the standing could not be
+	 *  computed for, which is never silently shown as current.
+	 */
+	updatesOverview: () => typedError<UpdatesReport_Serialize, string>(__TAURI_INVOKE("updates_overview")),
+	/**
+	 *  Fetch every source's mirror — pinned ones included, that is the point —
+	 *  then answer with the fresh standing. Fetch problems degrade to
+	 *  warnings; a check for updates is never worth an error dialog.
+	 */
+	updatesRefresh: () => typedError<UpdatesReport_Serialize, string>(__TAURI_INVOKE("updates_refresh")),
+	updateSetIgnored: (scope: Scope, kind: ItemKind, name: string, repo: string, ignored: boolean) => typedError<UpdatesReport_Serialize, string>(__TAURI_INVOKE("update_set_ignored", { scope, kind, name, repo, ignored })),
 	/**
 	 *  Zoom is set on the webview rather than by restyling the page: it holds
 	 *  across reloads, and it scales the app's own titlebar along with
@@ -2376,6 +2376,16 @@ export type UpdatesReport = UpdatesReport_Serialize | UpdatesReport_Deserialize;
 export type UpdatesReport_Deserialize = {
 	rows: UpdateRow[],
 	warnings: ItemWarning_Deserialize[],
+	/**
+	 *  When the mirrors behind this standing were last brought current —
+	 *  Unix seconds, `None` when nothing has ever fetched. A clean report
+	 *  is only as true as the fetch under it, so the age of that fetch
+	 *  travels with it rather than being left for the reader to guess.
+	 * 
+	 *  `u32` for the same reason [`crate::model::ObservedItem::modified_at`]
+	 *  is: specta refuses to export a 64-bit int across the IPC boundary.
+	 */
+	lastFetched: number | null,
 };
 
 /**
@@ -2386,6 +2396,16 @@ export type UpdatesReport_Deserialize = {
 export type UpdatesReport_Serialize = {
 	rows: UpdateRow[],
 	warnings: ItemWarning_Serialize[],
+	/**
+	 *  When the mirrors behind this standing were last brought current —
+	 *  Unix seconds, `None` when nothing has ever fetched. A clean report
+	 *  is only as true as the fetch under it, so the age of that fetch
+	 *  travels with it rather than being left for the reader to guess.
+	 * 
+	 *  `u32` for the same reason [`crate::model::ObservedItem::modified_at`]
+	 *  is: specta refuses to export a 64-bit int across the IPC boundary.
+	 */
+	lastFetched: number | null,
 };
 
 /**  One version a row points at. */

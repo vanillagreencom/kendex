@@ -1,5 +1,4 @@
 import { RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
 import { StatusDot } from "@/components/status-dot";
 import {
   SCANNING_LABEL,
@@ -8,11 +7,10 @@ import {
 } from "@/lib/copy-footer";
 import { problemsFooterLabel } from "@/lib/error-copy";
 import { relativeTime } from "@/lib/relative-time";
+import { useNowTick } from "@/lib/use-now-tick";
 import { useNavStore } from "@/stores/nav";
 import { useProblems } from "@/stores/problems";
 import { useScanStore } from "@/stores/scan";
-
-const AGE_TICK_MS = 30_000;
 
 // A persistent strip across the whole window, not just the content pane —
 // scan freshness and problems apply regardless of which page you're looking
@@ -26,11 +24,7 @@ export function StatusFooter() {
 
   // "Scanned Nm ago" goes stale on its own; nothing else re-renders this
   // component often enough to keep it honest.
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), AGE_TICK_MS);
-    return () => clearInterval(id);
-  }, []);
+  const now = useNowTick();
 
   return (
     <footer className="flex h-7 shrink-0 items-center border-t bg-background px-4 text-xs text-muted-foreground">

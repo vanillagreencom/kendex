@@ -22,12 +22,15 @@ export function updatesBeforeList({
   error,
   empty,
   checking,
+  lastChecked,
   onCheck,
 }: {
   loaded: boolean;
   error: string | null;
   empty: boolean;
   checking: boolean;
+  /** How old the answer behind this page is, already worded. */
+  lastChecked: string;
   onCheck: () => void;
 }): ReactNode | null {
   const retry = (
@@ -67,12 +70,14 @@ export function updatesBeforeList({
   }
   // With nothing to update there is nothing to introduce: a title and a
   // sentence explaining a list that isn't there is furniture around good
-  // news. The sidebar already says which page this is.
+  // news. The sidebar already says which page this is. The age of the
+  // check is the exception — this is the page where a stale answer looks
+  // exactly like a current one, so the good news says how old it is.
   if (empty) {
     return (
       <div className="flex min-h-full items-center justify-center">
         <EmptyState icon={CheckCircle2} title={UPDATES_EMPTY} action={retry}>
-          {UPDATES_EMPTY_BODY}
+          {`${UPDATES_EMPTY_BODY} ${lastChecked}.`}
         </EmptyState>
       </div>
     );

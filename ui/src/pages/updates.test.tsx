@@ -9,6 +9,7 @@ import {
   UPDATES_EMPTY,
 } from "@/lib/copy";
 import {
+  NEVER_CHECKED,
   UPDATE_NEEDS_CHECK_NOTE,
   UPDATES_CHECKING,
   UPDATES_UNCONFIRMED_TITLE,
@@ -26,6 +27,7 @@ const stub = vi.hoisted(() => ({
   rows: [] as unknown[],
   loaded: true,
   error: null as string | null,
+  lastFetched: null as number | null,
 }));
 
 vi.mock("@/stores/updates", async (importOriginal) => {
@@ -39,6 +41,7 @@ vi.mock("@/stores/updates", async (importOriginal) => {
       checking: false,
       loaded: stub.loaded,
       error: stub.error,
+      lastFetched: stub.lastFetched,
       load: async () => {},
     };
     return selector ? selector(state) : state;
@@ -50,7 +53,12 @@ beforeEach(() => {
   stub.rows = [];
   stub.loaded = true;
   stub.error = null;
+  stub.lastFetched = null;
 });
+
+/** Unix seconds `ago` seconds before now — the shape the overview reports,
+ *  read against the same clock the page renders against. */
+const secondsAgo = (ago: number) => Math.floor(Date.now() / 1000) - ago;
 
 // Empty rows and no error read as good news, so before the first read
 // answers — and after one that failed — "Everything is up to date" would
@@ -123,5 +131,44 @@ describe("the Updates page across its read states", () => {
       new RegExp(`<button[^>]*disabled=""[^>]*>${UPDATE_ALL_LABEL}<`),
     );
     expect(html).toContain(`title="${UPDATE_NEEDS_CHECK_NOTE}"`);
+  });
+});
+
+// The check runs offline on load, so what is on screen can be days old
+// with nothing about it saying so. Every state that presents an answer
+// says how old that answer is.
+describe("how fresh the page says its answer is", () => {
+  it("dates the list from the last fetch behind it", () => {
+    stub.rows = [updateRow("gh", null)];
+    stub.lastFetched = secondsAgo(3 * 3600);
+    expect(renderToStaticMarkup(<UpdatesPage />)).toContain(
+      "Last checked 3h ago",
+    );
+  });
+
+  // The state the hint exists for: "Everything is up to date" looks the
+  // same whether it was checked a minute or a month ago.
+  it("dates the up-to-date state, which is the one that hides its age", () => {
+    stub.lastFetched = secondsAgo(5 * 86_400);
+    const html = renderToStaticMarkup(<UpdatesPage />);
+    expect(html).toContain(UPDATES_EMPTY);
+    expect(html).toContain("Last checked 5d ago");
+  });
+
+  it("never dates an answer no check has produced", () => {
+    stub.rows = [updateRow("gh", null)];
+    const html = renderToStaticMarkup(<UpdatesPage />);
+    expect(html).toContain(NEVER_CHECKED);
+    expect(html).not.toMatch(/Last checked/);
+  });
+
+  // A fresh install on first launch: nothing to update and nothing fetched
+  // yet. The one state where an unqualified "Everything is up to date"
+  // would be pure guess, and the two hint sites cross here.
+  it("does not call a scope it has never checked up to date without saying so", () => {
+    const html = renderToStaticMarkup(<UpdatesPage />);
+    expect(html).toContain(UPDATES_EMPTY);
+    expect(html).toContain(NEVER_CHECKED);
+    expect(html).not.toMatch(/Last checked/);
   });
 });

@@ -315,6 +315,9 @@ an outside contributor.
   `kendex-git`).
 - The default catalog offers curated bundles and tagged packages:
   orchestration, code-review, research, and commit-guards.
+- The Updates page says when it last reached your sources — "Last checked 3h
+  ago" under the title, and beside "Everything is up to date" — so a standing
+  the page read offline is no longer indistinguishable from a fresh check.
 
 ### Changed
 

@@ -199,6 +199,66 @@ fn a_pin_reaching_a_dependency_through_its_parent_reports_held() {
     );
 }
 
+/// The Updates page says how old its answer is, so the fetch that produced
+/// it has to reach the report: the stamp a check writes comes back out of
+/// `updates`, and a scope nothing has fetched says so rather than passing
+/// off an unchecked standing as a fresh one.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_report_carries_when_its_mirrors_were_last_fetched() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "One.");
+    commit(&w.upstream, "one");
+    declare(&w, "", "[skills.gh]\nsource = \"cat\"\n");
+
+    assert_eq!(
+        updates::updates(&w.env, &w.scope).unwrap().last_fetched,
+        None,
+        "nothing has fetched yet: the scope has never been checked"
+    );
+
+    sync_and_apply(&w);
+    // The check the Updates page runs, on the same manifest the command
+    // hands it.
+    let before = u32::try_from(kendex_core::clock::unix_now()).unwrap();
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    assert!(remote::fetch_all(&w.env, &loaded).is_empty());
+
+    let at = updates::updates(&w.env, &w.scope)
+        .unwrap()
+        .last_fetched
+        .expect("the fetch a check just ran is what the page dates its answer from");
+    assert!(
+        at >= before,
+        "the report dates from this check, not an older one: {at} < {before}"
+    );
+}
+
+/// The report narrows the stamp to `u32` to cross the IPC boundary. A value
+/// that does not fit — past 2106, or a clock that ran far forward — has to
+/// read as never checked: wrapping it would put a plausible-looking wrong
+/// instant under rows nobody has verified.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_stamp_too_large_to_report_reads_as_never_checked() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "One.");
+    commit(&w.upstream, "one");
+    declare(&w, "", "[skills.gh]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    assert!(updates::updates(&w.env, &w.scope).unwrap().last_fetched > Some(0));
+
+    let key = remote::cache_key(&w.env, REPO);
+    drift::stamps::record_success(&w.env, &key, None, u64::from(u32::MAX) + 1).unwrap();
+    assert_eq!(
+        updates::updates(&w.env, &w.scope).unwrap().last_fetched,
+        None,
+        "a stamp the report cannot carry is refused, never wrapped"
+    );
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_package_gone_from_its_source_is_a_fact_not_a_silent_skip() {

@@ -1,6 +1,23 @@
 // Updates page copy: the table, the edited-copy row, and the toasts that
 // say what a bulk update did — kept apart from the rest so the wording is
 // reviewed in one place.
+import { relativeTime } from "@/lib/relative-time";
+
+export const NEVER_CHECKED = "Not checked for updates yet";
+
+/** How old the standing on this page is. "Everything is up to date" is only
+ *  as true as the fetch under it, and the check runs offline on load, so the
+ *  page says when it last reached a source rather than letting a clean
+ *  answer speak for an age nobody can see. */
+export const lastCheckedLabel = (
+  /** Unix seconds of the last successful fetch, as the overview reports it. */
+  fetchedAt: number | null,
+  nowMs: number,
+): string =>
+  fetchedAt === null
+    ? NEVER_CHECKED
+    : `Last checked ${relativeTime(fetchedAt * 1000, nowMs)}`;
+
 export const FOLLOW_SOURCE_COLUMN = "Follow source";
 export const FOLLOW_SOURCE_HELP =
   "On, this package takes the newest version when you press Update, and moves with everything else here when the place refreshes; off, it stays on this version until you choose one.";

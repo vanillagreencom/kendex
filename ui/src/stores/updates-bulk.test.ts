@@ -70,7 +70,7 @@ describe("updates store: bulk update", () => {
     vi.mocked(commands.packageUpdate).mockRejectedValue(new Error("ipc down"));
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [] },
+      data: { rows: [], warnings: [], lastFetched: null },
     });
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "ok",
@@ -108,7 +108,7 @@ describe("updates store: bulk update", () => {
     });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [] },
+      data: { rows: [], warnings: [], lastFetched: null },
     });
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "ok",
@@ -170,7 +170,7 @@ describe("updates store: bulk update", () => {
     });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [] },
+      data: { rows: [], warnings: [], lastFetched: null },
     });
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "ok",
@@ -235,7 +235,7 @@ describe("updates store: bulk update", () => {
     });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [] },
+      data: { rows: [], warnings: [], lastFetched: null },
     });
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "ok",
@@ -306,7 +306,7 @@ describe("updates store: what a bulk update claims about held-back places", () =
     );
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [] },
+      data: { rows: [], warnings: [], lastFetched: null },
     });
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "ok",
@@ -406,7 +406,7 @@ describe("updates store: a bulk run that took a copy away", () => {
     );
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [] },
+      data: { rows: [], warnings: [], lastFetched: null },
     });
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "ok",
@@ -517,7 +517,7 @@ describe("updates store: a run where one place failed", () => {
     );
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [] },
+      data: { rows: [], warnings: [], lastFetched: null },
     });
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "ok",
@@ -620,7 +620,7 @@ describe("updates store: what a bulk run cannot lose", () => {
     );
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: remaining, warnings: [] },
+      data: { rows: remaining, warnings: [], lastFetched: null },
     });
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "ok",

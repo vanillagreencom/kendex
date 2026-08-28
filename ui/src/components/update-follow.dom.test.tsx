@@ -164,7 +164,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(commands.updatesOverview).mockResolvedValue({
     status: "ok",
-    data: { rows, warnings: [] },
+    data: { rows, warnings: [], lastFetched: null },
   });
 });
 

@@ -29,6 +29,11 @@ interface UpdatesState {
   /** Packages whose standing could not be computed — shown, never treated
    *  as current. */
   warnings: ItemWarning[];
+  /** Unix seconds of the last successful mirror fetch behind these rows,
+   *  null when nothing has ever fetched. The page dates its answer from
+   *  this — the check runs offline on load, so "everything is up to date"
+   *  needs the age of the fetch it rests on beside it. */
+  lastFetched: number | null;
   busy: boolean;
   /** True while a mirror fetch is running — the explicit "check". */
   checking: boolean;
@@ -96,6 +101,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
   return {
     rows: [],
     warnings: [],
+    lastFetched: null,
     busy: false,
     checking: false,
     overviewInFlight: false,
