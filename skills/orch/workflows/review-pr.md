@@ -24,9 +24,7 @@ git -C [WORKTREE_PATH] status --porcelain
 git -C [WORKTREE_PATH] diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD --stat
 ```
 
-A non-empty `status --porcelain` stops the review. Managed with a `dev_agent`: re-delegate to commit or revert the leftovers, then re-enter § 1. Standalone: report the dirty files and ask the user to commit, revert, or run `orch review all` for an ad-hoc uncommitted review.
-
-No committed diff after that check → report "No committed changes to review" and **END**.
+A non-empty `status --porcelain` stops the review. Managed with a `dev_agent`: re-delegate to commit or revert the leftovers, then re-enter § 1. Standalone: report the dirty files and ask the user to commit, revert, or run `orch review all` for an ad-hoc uncommitted review. No committed diff after that check → report "No committed changes to review" and **END**.
 
 **Trivial diffs skip review by rule, not by asking.** A diff that is docs- or comments-only, or under ten changed lines with no logic change, records the skip and goes to § 9 with verdict `pass`:
 
@@ -80,11 +78,7 @@ Read existing reviewer state before any spawn:
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{review_agents: (.review_agents // []), review_agent_ids: (.review_agent_ids // {}), review_agent_runtime_types: (.review_agent_runtime_types // {})}'
 ```
 
-Classify each reviewer in `[AGENTS]` as reusable, missing, closed, or confirmed-stuck: reuse by exact name when its recorded id points to a live session, attempt one resume when only a name is recorded, and add only the rest to `REVIEWERS_TO_LAUNCH`. Carry a reusable reviewer's existing runtime-type entry forward.
-
-On a RE-REVIEW whose panel shrank (§ 4 scopes it), retire the out-of-panel sessions first.
-
-**Do not spawn yet** — resolve § 2.1 first.
+Classify each reviewer in `[AGENTS]` as reusable, missing, closed, or confirmed-stuck: reuse by exact name when its recorded id points to a live session, attempt one resume when only a name is recorded, and add only the rest to `REVIEWERS_TO_LAUNCH`. Carry a reusable reviewer's existing runtime-type entry forward. On a RE-REVIEW whose panel shrank (§ 4 scopes it), retire the out-of-panel sessions first. **Do not spawn yet** — resolve § 2.1 first.
 
 ### 2.1 External Review Availability
 
@@ -96,9 +90,7 @@ External review runs automatically alongside the internal panel when available, 
 .agents/skills/second-opinion/scripts/second-opinion detect
 ```
 
-A failure, `none`, or empty output sets `EXTERNAL_REVIEW_REQUESTED=false`; anything else sets it `true`. The output is an availability signal only — the external review is launched without `--target`.
-
-On `none`, the error JSON's `candidates` carry a reason per target. Tell the user once — `External review skipped — [CANDIDATE_REASONS]. Fix: [FIX]` — then continue. `[FIX]` follows the reasons: **CLI not found** → install that target's CLI or set its `SECOND_OPINION_<NAME>_CMD` in `kendex.settings.toml [env]`; **same model as this session** or a session-identity reason → export `SECOND_OPINION_CURRENT_MODEL` in this session (session-scoped, never committed to project settings) or widen `SECOND_OPINION_MODELS`.
+A failure, `none`, or empty output sets `EXTERNAL_REVIEW_REQUESTED=false`; anything else sets it `true`. The output is an availability signal only — the external review is launched without `--target`. On `none`, the error JSON's `candidates` carry a reason per target. Tell the user once — `External review skipped — [CANDIDATE_REASONS]. Fix: [FIX]` — then continue. `[FIX]` follows the reasons: **CLI not found** → install that target's CLI or set its `SECOND_OPINION_<NAME>_CMD` in `kendex.settings.toml [env]`; **same model as this session** or a session-identity reason → export `SECOND_OPINION_CURRENT_MODEL` in this session (session-scoped, never committed to project settings) or widen `SECOND_OPINION_MODELS`.
 
 ### 2.2 Launch And Delegate
 
@@ -128,9 +120,7 @@ Stamp the freshness boundary immediately before the delegation batch. In wave mo
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] review_delegated_at
 ```
 
-Delegate to every reviewer in the active set in parallel. When `EXTERNAL_REVIEW_REQUESTED=true`, launch the external review in the same batch — a shell command, not an agent session: it consumes no slot and joins only the cycle's first wave.
-
-Mint each reviewer's artifact path immediately before its delegation — one command per reviewer, its output filling `[ARTIFACT_PATH]`:
+Delegate to every reviewer in the active set in parallel. When `EXTERNAL_REVIEW_REQUESTED=true`, launch the external review in the same batch — a shell command, not an agent session: it consumes no slot and joins only the cycle's first wave. Mint each reviewer's artifact path immediately before its delegation — one command per reviewer, its output filling `[ARTIFACT_PATH]`:
 
 ```bash
 .agents/skills/orch/scripts/review-artifact-check --path [WORKTREE_PATH] [AGENT]
@@ -387,9 +377,7 @@ Previous review cycle context (cycle [CYCLES]):
 - Do NOT re-report the fixed or escalated items listed above, unless you check a listed fixed item against the current diff and the defect is still there — then report it again, copying that entry's location and description verbatim and naming its recorded commit sha in your recommendation, or saying it was recorded then dropped in a rebase when the entry carries no sha. A listed fixed item you did not check, and every listed escalated item, stays suppressed. Otherwise report only new issues or regressions the fixes introduced.
 </delegation_format>
 
-Omit `[OWNER/REPO]` when `TRACKER=linear`. On return, append the artifact path to `json_paths`; when the agent reports a `benchmark_commit` other than `none`, confirm it resolves with `git -C [WORKTREE_PATH] log -1 --oneline [SHA]`. A performance QA agent's `qa_metadata.perf_qa` block is posted as an issue comment — Linear via `linear.sh comments create [ISSUE_ID] --body-file`, GitHub via `gh issue comment ${ISSUE_ID#issue-} --body-file` — written to a file first.
-
-A `pass` verdict continues to the next QA agent; `action_required` goes to § 7. After all QA agents complete, remaining `category == "fix"` items not already in `escalated_items` also go to § 7; otherwise → § 8. An item this round's QA artifact reports again is retained even when `fixed_items` lists it — that entry is stale, and dropping the item here would hide a live blocker behind the earlier fix.
+Omit `[OWNER/REPO]` when `TRACKER=linear`. On return, append the artifact path to `json_paths`; when the agent reports a `benchmark_commit` other than `none`, confirm it resolves with `git -C [WORKTREE_PATH] log -1 --oneline [SHA]`. A performance QA agent's `qa_metadata.perf_qa` block is posted as an issue comment — Linear via `linear.sh comments create [ISSUE_ID] --body-file`, GitHub via `gh issue comment ${ISSUE_ID#issue-} --body-file` — written to a file first. A `pass` verdict continues to the next QA agent; `action_required` goes to § 7. After all QA agents complete, remaining `category == "fix"` items not already in `escalated_items` also go to § 7; otherwise → § 8. An item this round's QA artifact reports again is retained even when `fixed_items` lists it — that entry is stale, and dropping the item here would hide a live blocker behind the earlier fix.
 
 ## 7. Handle QA Items
 
@@ -401,13 +389,11 @@ Follow the § 4 pattern — collect, present, then delegate through `workflows/d
 
 This section owns its exit; it borrows nothing from § 4's cap. **Converged** means a re-check surfaced no new finding of any category, twice running — a blocker, a `category == "fix"` suggestion, or a `category == "issue"` suggestion first raised on the last re-check is a new finding, and the loop is not converged. The exit stops repeated patching of a finding already answered; it never discards one. The loop otherwise runs on while each round finds a DISTINCT defect this diff introduced, each of those earning its fix, and stops the moment one root cause reappears at a new site: that round's answer is SKILL.md § Review must converge's structural close, cutting the surface that generates the class, never another patch round.
 
-On the way out, and before § 8, disposition every item still outstanding — every blocker and every suggestion this round's QA artifacts report, `category == "fix"` and `category == "issue"` alike, whether or not `fixed_items` already lists it, excluding only what `escalated_items` carries and what this section declined. One write per item, which drops any superseded `fixed_items` entry and records the item in the same command:
+On the way out, and before § 8, disposition every item still outstanding — every blocker and every suggestion this round's QA artifacts report, `category == "fix"` and `category == "issue"` alike, whether or not `fixed_items` already lists it, excluding only what `escalated_items` carries and what this section declined; an item dev returns as Blocked reaches `escalated_items` through `dev-fix.md` unchanged. One write per item, which drops any superseded `fixed_items` entry and records the item in the same command, its `[ARTIFACT_PATH]` the `json_paths` entry the item came from, `[ARRAY]` either `blockers` or `suggestions` — every bucket the artifact carries — and `[INDEX]` its position there, so the finding's own text reaches jq through the file, never a quoted shell word, and the reason is this exit's own, never the cap's:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile art '[ARTIFACT_PATH]' '$art[0].[ARRAY][[INDEX]] as $item | .fixed_items = ((.fixed_items // []) | map(select(.location != $item.location or .description != $item.description))) | .escalated_items = ((.escalated_items // []) + [{description: $item.description, location: $item.location, reason: "QA loop converged with the item unresolved", outcome: "blocked", source: "qa-review"}])'
 ```
-
-`[ARTIFACT_PATH]` is the `json_paths` entry the item came from, `[ARRAY]` is `blockers` or `suggestions` — every bucket the artifact carries — and `[INDEX]` is its position there: the finding's own text reaches jq through the file, never a quoted shell word. The reason is this exit's own — the loop converged with the item unresolved — never the cap's. An item dev returns as Blocked reaches `escalated_items` through `dev-fix.md` unchanged.
 
 ## 8. Summary And Issue Audit
 

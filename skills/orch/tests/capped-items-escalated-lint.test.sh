@@ -233,9 +233,12 @@ fi
 # raised on the final re-check reaches § 8 in neither bucket and § 8
 # re-derives it as a decline.
 DISPO="$(s7_dispo "$REVIEW_PR_WF")"
+# `every blocker and every suggestion`, not the bare words: the line also
+# glosses the command's [ARRAY] placeholder as `blockers` or `suggestions`,
+# which would satisfy a looser grep on its own.
 if grep -q -F 'category == "fix"' <<<"$DISPO" \
    && grep -q -F 'category == "issue"' <<<"$DISPO" \
-   && grep -q -F 'blocker' <<<"$DISPO" \
+   && grep -q -F 'every blocker and every suggestion' <<<"$DISPO" \
    && grep -q -F 'fixed_items' <<<"$DISPO"; then
   pass "the exit dispositions every category and bucket, listed or not"
 else
@@ -461,7 +464,7 @@ fi
 # The disposition set narrowed to blockers alone.
 if ! plant_pr s7blk 's/every blocker and every suggestion this round.s QA artifacts report/every blocker this round.s QA artifacts report/'; then
   fail "§ 7 blocker-only control planted nothing — its sed program matched no text"
-elif grep -q -F 'suggestion' <<<"$(s7_dispo "$CTRL")"; then
+elif grep -q -F 'every blocker and every suggestion' <<<"$(s7_dispo "$CTRL")"; then
   fail "lint MISSED a § 7 exit that dispositions blockers only"
 else
   pass "lint flags a § 7 exit that dispositions blockers only"
