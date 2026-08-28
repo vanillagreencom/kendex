@@ -54,6 +54,7 @@ Don't:
 - Temporal markers ("added", "new", "existing code", "Phase 1") or revision narration.
 - References to AI conversations, review rounds, or issue archaeology.
 - Claims broader than what the adjacent code or assertion actually enforces.
+- A numeral counting things outside the sentence. State the property and the command that enumerates it. A numeral bound to something adjacent — a list in the same paragraph, a constant a check compares against, one a ratchet owns — stays.
 
 Same rules for docs, READMEs, and skill/agent files: state the rule or behavior, never its provenance or justification. Their reader is an agent — write the shortest unambiguous rule and delete sentences nothing acts on.
 
