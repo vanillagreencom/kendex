@@ -62,7 +62,22 @@ pub fn run(env: &Env, force: bool) -> CliResult {
     // through a link is judged by its target and replaced at the link.
     let current_exe = Host.resolve(&std::env::current_exe()?);
     let channel = for_cli(&current_exe, &Host);
-    if let InstallChannel::Managed { command } = &channel {
+    run_on(env, force, &feed_url(), &current_exe, &channel)
+}
+
+/// The update with everything it reads off this process handed to it: the
+/// feed to ask, the command's own path, and who owns that path. Which arm a
+/// person lands on is the channel, and a package-managed one is the arm no
+/// test can reach by running: `for_cli` judges the real `current_exe`, which
+/// nothing here can place under `/usr` or a brew prefix.
+fn run_on(
+    env: &Env,
+    force: bool,
+    feed_url: &str,
+    current_exe: &Path,
+    channel: &InstallChannel,
+) -> CliResult {
+    if let InstallChannel::Managed { command } = channel {
         out("a package manager owns this install; update it with:");
         out(&format!("  {command}"));
         return Ok(());
@@ -71,7 +86,7 @@ pub fn run(env: &Env, force: bool) -> CliResult {
     // code of zero. What is left here is Direct, which passes, or Unknown,
     // whose refusal core words for both shells.
     channel.allow_replacement()?;
-    let feed_bytes = fetch(&feed_url())?;
+    let feed_bytes = fetch(feed_url)?;
     let feed = ReleaseFeed::parse(&feed_bytes)?;
     let latest = feed.version.as_str();
     let current = env!("CARGO_PKG_VERSION");
@@ -108,7 +123,7 @@ pub fn run(env: &Env, force: bool) -> CliResult {
         // Nothing here is ours to replace beyond the command itself.
         InstallChannel::Managed { .. } | InstallChannel::Unknown => false,
     };
-    if let Err(error) = replace_executable(&current_exe, &binary) {
+    if let Err(error) = replace_executable(current_exe, &binary) {
         return Err(command_failure(latest, app_replaced, &error).into());
     }
     out(&format!("updated to {latest}"));
@@ -253,147 +268,4 @@ fn staged_path(current: &std::path::Path) -> PathBuf {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fetched_urls_are_always_positional_arguments() {
-        assert_eq!(
-            curl_args("--output=/tmp/owned"),
-            [
-                "-fsS",
-                "--location",
-                "--max-redirs",
-                "3",
-                "--proto",
-                "=https,file",
-                "--proto-redir",
-                "=https",
-                "--",
-                "--output=/tmp/owned",
-            ]
-        );
-    }
-
-    /// The one skew this order can still leave is an app already across
-    /// and a command that would not move. It is not a dead end — the
-    /// command's version is unchanged, so the next run reads newer and
-    /// repeats both halves — and the message has to say so rather than
-    /// leave a bare io error to be read as total failure.
-    #[test]
-    fn a_command_that_would_not_move_says_whether_the_app_went_without_it() {
-        let error = || std::io::Error::from(std::io::ErrorKind::PermissionDenied);
-        let split = command_failure("5.1.0", true, &error());
-        assert!(split.contains("the desktop app is on 5.1.0"), "{split}");
-        assert!(split.contains("run kendex update again"), "{split}");
-
-        let neither = command_failure("5.1.0", false, &error());
-        assert!(!neither.contains("desktop app"), "{neither}");
-    }
-
-    /// A throwaway minisign keypair signing `SIGNED_IMAGE`, so the admitted
-    /// arm runs the real check rather than a stub standing in for it.
-    const TEST_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk0QUI0NzI3RTVDMTVCODEKUldTQlc4SGxKMGVybEhxeFovbTJ3U1phMng4aE9VTXByV09pUVRFVFNKbFZ5aWxtUTAvVGgyWEwK";
-    const TEST_SIGNATURE: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHJzaWduIHNlY3JldCBrZXkKUlVTQlc4SGxKMGVybElTMUxrbkMyQ0tBWGlnejY1S0xLekovK0tBYllNdkdJTVU0bitTSjRBSCt1RlpwWnZkRHNKcWFTSHVoeStIQkpyVDlOaVRIMmROWVVSb21mMVBVRmd3PQp0cnVzdGVkIGNvbW1lbnQ6IGtlbmRleCB0ZXN0CnpKSnpYYnBtODZYRW40eHgxSTVkeG5YdktxT0k5ZXdmSkEyMkdtZXpreGgwbUNJZysybkJ2cGowUXZ6N2c3RHA4TEZBVXVBQUVMRExuUzFuaVpsaUF3PT0K";
-    const SIGNED_IMAGE: &[u8] = b"kendex AppImage bytes";
-
-    /// A path with something already installed at it, so every arm can say
-    /// whether the bytes there moved.
-    fn installed_app(dir: &tempfile::TempDir) -> PathBuf {
-        let path = dir.path().join("kendex.AppImage");
-        std::fs::write(&path, b"the app already here").unwrap();
-        path
-    }
-
-    /// The admitted arm: a signature that checks out puts the download in
-    /// place and leaves no staged file behind.
-    #[test]
-    fn an_app_image_whose_signature_checks_out_is_written() {
-        let dir = tempfile::tempdir().unwrap();
-        let installed = installed_app(&dir);
-
-        install_app_image(
-            &installed,
-            SIGNED_IMAGE,
-            TEST_SIGNATURE.as_bytes(),
-            TEST_KEY,
-        )
-        .unwrap();
-
-        assert_eq!(std::fs::read(&installed).unwrap(), SIGNED_IMAGE);
-        assert!(!staged_path(&installed).exists());
-    }
-
-    /// The refused arm, driven by both shapes a bad download takes: bytes
-    /// the signature does not cover, and a body that is no signature at
-    /// all. Either way the installed app is exactly as it was.
-    #[test]
-    fn an_app_image_that_fails_verification_is_never_written() {
-        let dir = tempfile::tempdir().unwrap();
-        let installed = installed_app(&dir);
-
-        let tampered =
-            install_app_image(&installed, b"tampered", TEST_SIGNATURE.as_bytes(), TEST_KEY)
-                .unwrap_err();
-        assert!(
-            tampered.contains("signature verification failed"),
-            "{tampered}"
-        );
-
-        let malformed =
-            install_app_image(&installed, SIGNED_IMAGE, b"not a signature", TEST_KEY).unwrap_err();
-        assert!(malformed.contains("not base64"), "{malformed}");
-
-        assert_eq!(std::fs::read(&installed).unwrap(), b"the app already here");
-        assert!(!staged_path(&installed).exists());
-    }
-
-    /// Two runs sharing one staged path would each rename the other's bytes
-    /// into place, so the name carries the process id. It stays a sibling
-    /// of the target, since a rename cannot cross filesystems.
-    #[test]
-    fn the_staged_file_is_a_sibling_named_for_this_process() {
-        let target = Path::new("/opt/kendex/kendex.AppImage");
-        let staged = staged_path(target);
-        assert_eq!(staged.parent(), target.parent());
-        let suffix = format!(".update.{}", std::process::id());
-        assert!(
-            staged.to_string_lossy().ends_with(&suffix),
-            "{}",
-            staged.display()
-        );
-    }
-
-    /// A run whose rename cannot land takes its own staged file away, or
-    /// the directory collects one per process id that ever tried.
-    #[test]
-    fn a_replacement_that_cannot_land_leaves_no_staged_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("kendex.AppImage");
-        std::fs::create_dir(&target).unwrap();
-
-        assert!(replace_executable(&target, b"bytes").is_err());
-        assert!(!staged_path(&target).exists());
-    }
-
-    /// Both app-half refusals promise the same thing, so the sentence is
-    /// asserted where it is written rather than at each caller.
-    #[test]
-    fn a_refused_app_half_names_the_release_the_reason_and_the_retry() {
-        let said = app_refused("5.1.0", "the directory holding /opt/kendex refuses writes");
-        assert!(said.contains("5.1.0"), "{said}");
-        assert!(said.contains("refuses writes"), "{said}");
-        assert!(said.contains("nothing was updated"), "{said}");
-    }
-
-    #[test]
-    fn missing_asset_message_never_calls_current_or_older_available() {
-        let current =
-            missing_asset_message(VersionRelation::Current, "5.0.1", "5.0.1", "x").unwrap();
-        let older = missing_asset_message(VersionRelation::Older, "5.0.0", "5.0.1", "x").unwrap();
-        let newer = missing_asset_message(VersionRelation::Newer, "5.1.0", "5.0.1", "x").unwrap();
-        assert!(current.contains("unchanged") && !current.contains("is available"));
-        assert!(older.contains("is newer") && !older.contains("is available"));
-        assert!(newer.contains("is available"));
-    }
-}
+mod tests;
