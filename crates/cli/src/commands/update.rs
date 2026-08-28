@@ -6,6 +6,7 @@ use kendex_core::install_channel::{Host, HostProbe, InstallChannel, for_cli};
 use kendex_core::process::Hardened;
 use kendex_core::update_feed::{
     RELEASE_FEED_URL, ReleaseFeed, VersionRelation, app_image_url, release_notes_url,
+    verify_app_image,
 };
 
 use super::{CliResult, out, say};
@@ -152,9 +153,29 @@ fn update_app(env: &Env, latest: &str) -> Result<bool, Box<dyn std::error::Error
     }
     say(&format!("updating the desktop app at {}", path.display()));
     let image = fetch(&url)?;
-    replace_executable(&path, &image)?;
+    // The release job publishes each AppImage beside a minisign signature
+    // over exactly those bytes. One that arrives without a signature, or
+    // with one that does not check out, is refused rather than installed.
+    let signature = fetch(&format!("{url}.sig")).map_err(|why| app_refused(latest, &why))?;
+    install_app_image(&path, &image, &signature).map_err(|why| app_refused(latest, &why))?;
     out(&format!("updated the desktop app to {latest}"));
     Ok(true)
+}
+
+/// Write the app only once its signature checks out, so a download that
+/// fails verification never reaches the installed path.
+fn install_app_image(path: &Path, image: &[u8], signature: &[u8]) -> Result<(), String> {
+    verify_app_image(image, signature).map_err(|error| error.to_string())?;
+    replace_executable(path, image).map_err(|error| error.to_string())
+}
+
+/// What to say when the app half refused before it wrote anything. Same
+/// shape as the unwritable-directory branch: the reason, then what the next
+/// run does with it.
+fn app_refused(latest: &str, why: &str) -> String {
+    format!(
+        "the desktop app was not brought to {latest}: {why}; nothing was updated, so kendex update will try both halves again"
+    )
 }
 
 /// Write `bytes` over an executable that may be running: the replacement
@@ -239,6 +260,23 @@ mod tests {
 
         let neither = command_failure("5.1.0", false, &error());
         assert!(!neither.contains("desktop app"), "{neither}");
+    }
+
+    /// Verification decides whether the download is ever written: an app
+    /// image whose signature does not check out leaves the installed one
+    /// exactly as it was, with no staged file beside it either.
+    #[test]
+    fn an_app_image_that_fails_verification_is_never_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let installed = dir.path().join("kendex.AppImage");
+        std::fs::write(&installed, b"the app already here").unwrap();
+
+        let error =
+            install_app_image(&installed, b"a replacement", b"not a signature").unwrap_err();
+
+        assert!(error.contains("does not verify"), "{error}");
+        assert_eq!(std::fs::read(&installed).unwrap(), b"the app already here");
+        assert!(!staged_path(&installed).exists());
     }
 
     #[test]

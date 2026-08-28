@@ -291,7 +291,7 @@ lives in one capability table read by core and UI.
   mid-read; a failed read shows its error with a retry, kept figures headed
   as the last kendex could check, never a definite count — least of all
   zero. Every read the app starts with runs beside the others.
-- **Discovery is the unsigned feed; delivery is a signed manifest.** Off the
+- **Discovery is the unsigned feed; delivery checks a signature.** Off the
   launch path, one cross-process transaction reads the fixed feed at most once
   per six hours, keeps the last result beside any error, and never follows the
   final link; the preference gates automatic contact, debug builds alone honor

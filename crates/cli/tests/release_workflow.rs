@@ -192,6 +192,30 @@ fn the_manifest_pairs_every_signature_with_the_artifact_it_signs() {
     }
 }
 
+/// `kendex update` fetches the AppImage's signature by appending `.sig` to
+/// the download URL core builds, so that URL has to name the artifact a tag
+/// run actually signs. A rename on either side leaves the app half of the
+/// command fetching a file no release carries.
+#[test]
+fn the_appimage_url_core_builds_is_the_artifact_the_release_signs() {
+    let base = "https://github.com/vanillagreencom/kendex/releases/download/v5.1.0";
+    for (platform, target) in [
+        ("linux-x86_64", "x86_64-unknown-linux-gnu"),
+        ("linux-aarch64", "aarch64-unknown-linux-gnu"),
+    ] {
+        let artifact = SIGNED_ARTIFACTS
+            .iter()
+            .find(|(key, _)| *key == platform)
+            .map(|(_, file)| *file)
+            .unwrap_or_default();
+        assert_eq!(
+            kendex_core::update_feed::app_image_url("5.1.0", target).unwrap_or_default(),
+            Some(format!("{base}/{artifact}")),
+            "{platform}"
+        );
+    }
+}
+
 /// Tauri v2 signs the AppImage itself. The `.AppImage.tar.gz` shape belongs
 /// to the deprecated v1-compatible updater, and looking for it leaves Linux
 /// out of the manifest with the job still green.

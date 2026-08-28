@@ -3,6 +3,8 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
+use base64::Engine;
+use minisign_verify::{PublicKey, Signature};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +14,11 @@ pub const FEED_SCHEMA: u32 = 1;
 pub const MAX_FEED_BYTES: usize = 64 * 1024;
 pub const RELEASE_FEED_URL: &str =
     "https://github.com/vanillagreencom/kendex/releases/latest/download/feed.json";
+/// The minisign public key every kendex release is signed under, in the
+/// base64 shape `crates/app/tauri.conf.json` pins for the app's own
+/// updater. `crates/app/tests/tauri_config.rs` holds the two to one string,
+/// so the CLI and the app cannot end up trusting different keys.
+pub const UPDATER_PUBLIC_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJENUIwQjkxMUFGNTJFOTIKUldTU0x2VWFrUXRidmJFQnhKSi9iU3pwTVVJVlhrY3JHbVoyV1BjVmJSdDYzZ2VjVnZzSjlEMDkK";
 const MAX_VERSION_BYTES: usize = 128;
 const MAX_ASSETS: usize = 32;
 const MAX_TARGET_BYTES: usize = 128;
@@ -138,6 +145,41 @@ pub fn app_image_url(version: &str, target: &str) -> Result<Option<String>> {
     )))
 }
 
+/// Refuse an AppImage that is not the one this release signed. `signature`
+/// is the body of the `<artifact>.AppImage.sig` the release job publishes
+/// beside every AppImage — base64 over a minisign signature file, the same
+/// bytes the app's updater manifest carries inline.
+pub fn verify_app_image(image: &[u8], signature: &[u8]) -> Result<()> {
+    verify_minisign(UPDATER_PUBLIC_KEY, image, signature)
+}
+
+/// The key is a parameter so a test can hold a signature it made itself;
+/// every caller passes the pinned key.
+fn verify_minisign(public_key_base64: &str, data: &[u8], signature: &[u8]) -> Result<()> {
+    let key_text = decode_base64("the pinned public key", public_key_base64.as_bytes())?;
+    let key = PublicKey::decode(&key_text)
+        .map_err(|error| refused(format!("the pinned public key is not minisign: {error}")))?;
+    let signature_text = decode_base64("the signature", signature)?;
+    let signature = Signature::decode(&signature_text)
+        .map_err(|error| refused(format!("the signature is not minisign: {error}")))?;
+    // Legacy signatures are accepted because the app's updater accepts them
+    // under this same key; a narrower rule here would put one artifact
+    // behind two bars again, which is what this shares a key to avoid.
+    key.verify(data, &signature, true)
+        .map_err(|error| refused(error.to_string()))
+}
+
+fn decode_base64(what: &str, value: &[u8]) -> Result<String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(value)
+        .map_err(|error| refused(format!("{what} is not base64: {error}")))?;
+    String::from_utf8(bytes).map_err(|error| refused(format!("{what} is not text: {error}")))
+}
+
+fn refused(why: String) -> CoreError {
+    CoreError::UpdateSignatureRefused { why }
+}
+
 fn parse_version(source: &str, value: &str) -> Result<Version> {
     Version::parse(value).map_err(|error| CoreError::UpdateFeedMalformed {
         why: format!("{source} version '{value}' is not SemVer: {error}"),
@@ -167,6 +209,42 @@ mod tests {
         })
         .unwrap();
         ReleaseFeed::parse(&body)
+    }
+
+    /// A throwaway minisign keypair signing `SIGNED_IMAGE`, generated once
+    /// so the good case is a real signature rather than a stub. Both values
+    /// are base64 over the key and signature files, the shape
+    /// `tauri.conf.json` and a published `.sig` carry.
+    const TEST_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk0QUI0NzI3RTVDMTVCODEKUldTQlc4SGxKMGVybEhxeFovbTJ3U1phMng4aE9VTXByV09pUVRFVFNKbFZ5aWxtUTAvVGgyWEwK";
+    const TEST_SIGNATURE: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHJzaWduIHNlY3JldCBrZXkKUlVTQlc4SGxKMGVybElTMUxrbkMyQ0tBWGlnejY1S0xLekovK0tBYllNdkdJTVU0bitTSjRBSCt1RlpwWnZkRHNKcWFTSHVoeStIQkpyVDlOaVRIMmROWVVSb21mMVBVRmd3PQp0cnVzdGVkIGNvbW1lbnQ6IGtlbmRleCB0ZXN0CnpKSnpYYnBtODZYRW40eHgxSTVkeG5YdktxT0k5ZXdmSkEyMkdtZXpreGgwbUNJZysybkJ2cGowUXZ6N2c3RHA4TEZBVXVBQUVMRExuUzFuaVpsaUF3PT0K";
+    const SIGNED_IMAGE: &[u8] = b"kendex AppImage bytes";
+
+    #[test]
+    fn a_signature_over_these_bytes_verifies_and_one_over_any_other_does_not() {
+        assert!(verify_minisign(TEST_KEY, SIGNED_IMAGE, TEST_SIGNATURE.as_bytes()).is_ok());
+        assert!(
+            verify_minisign(TEST_KEY, b"tampered AppImage", TEST_SIGNATURE.as_bytes()).is_err()
+        );
+    }
+
+    /// Everything that is not a signature file is refused too, the empty
+    /// body a served error page or a missing `.sig` leaves included.
+    #[test]
+    fn a_signature_that_is_absent_or_malformed_is_refused() {
+        for body in [b"".as_slice(), b"not base64 !!", TEST_KEY.as_bytes()] {
+            assert!(verify_minisign(TEST_KEY, SIGNED_IMAGE, body).is_err());
+        }
+    }
+
+    /// A download is held to the pinned key and no other: a signature made
+    /// under a different one is turned away for that, and not for a key
+    /// this build could not read in the first place.
+    #[test]
+    fn the_pinned_key_is_the_one_a_download_is_held_to() {
+        let error = verify_app_image(SIGNED_IMAGE, TEST_SIGNATURE.as_bytes())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("created with a different key"), "{error}");
     }
 
     #[test]

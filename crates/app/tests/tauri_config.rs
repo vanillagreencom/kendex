@@ -22,3 +22,15 @@ fn the_window_opens_hidden_so_the_saved_zoom_lands_first() {
     // window would simply never be shown if that default ever changed.
     assert_eq!(window["label"].as_str(), Some("main"));
 }
+
+/// The app's updater reads its key from this file at build time, so the
+/// copy core holds for `kendex update` can only be kept honest by an
+/// assertion. Two keys means one delivery path trusting what the other
+/// would turn away.
+#[test]
+fn the_app_and_the_cli_pin_one_updater_key() {
+    assert_eq!(
+        config()["plugins"]["updater"]["pubkey"].as_str(),
+        Some(kendex_core::update_feed::UPDATER_PUBLIC_KEY)
+    );
+}

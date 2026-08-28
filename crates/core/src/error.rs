@@ -400,6 +400,11 @@ pub enum CoreError {
     #[error("the release feed is not valid for this build: {why}")]
     UpdateFeedMalformed { why: String },
 
+    /// A download that does not carry the release's own signature is never
+    /// installed, whatever served it.
+    #[error("the download does not verify under the pinned release key: {why}")]
+    UpdateSignatureRefused { why: String },
+
     /// A guard's configuration is wrong or a measurement could not be
     /// taken — the loud exit-2 state, never a silent pass.
     #[error("{check}: {message}")]

@@ -2250,9 +2250,11 @@ dependencies = [
 name = "kendex-core"
 version = "5.0.1"
 dependencies = [
+ "base64 0.22.1",
  "dirs",
  "fd-lock",
  "keyring",
+ "minisign-verify",
  "rustix",
  "semver",
  "serde",

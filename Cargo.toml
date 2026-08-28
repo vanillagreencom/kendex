@@ -33,6 +33,11 @@ fd-lock = "4"
 rustix = { version = "1", features = ["fs"] }
 unicode-normalization = "0.1"
 semver = "1"
+# The app already verifies its own downloads with these, through
+# tauri-plugin-updater; `kendex update` reaches for them directly so the
+# two delivery paths for one AppImage hold the same bar.
+minisign-verify = "0.2"
+base64 = "0.22"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
