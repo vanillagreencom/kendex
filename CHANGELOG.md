@@ -10,9 +10,6 @@ an outside contributor.
 
 ### Added
 
-- CLI output on a terminal is framed and grouped, and apply, add and remove
-  close on what they wrote, skipped and flagged. `KENDEX_UI=plain` keeps the
-  unframed lines on a terminal, and `pretty` frames output that is not one.
 - `preflight` fails an edit, deletion or rename of a migration the merge base
   carries, defaulting to the `V*__*.sql` shape refinery and Flyway refuse to run
   against once its checksum moves. `PREFLIGHT_MIGRATION_GLOBS` sets other paths.
@@ -53,12 +50,6 @@ an outside contributor.
 
 ### Changed
 
-- CLI stdout is byte-identical for every verb. On stderr, `apply` and `add`
-  close on the outcome ledger instead of `applied N change(s)`, and `plan:`
-  now says how many changes it lists.
-- `remove` heads its op list `changes:` and closes on a ledger, `check` ends
-  on a needs-attention line, and `verify` prints its verdict after the
-  unmanaged block. `check --quiet`, `refresh` and `list` are unchanged.
 - The seeded `WORKTREE_SYMLINKS` default now lists only paths git does not
   carry. An entry does nothing when git carries every path under it, so drop
   those from your own value; one with untracked children still links them.
