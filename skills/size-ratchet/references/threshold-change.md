@@ -15,8 +15,8 @@ Each one names a candidate, not a verdict. Read the file before acting.
 1. **One real importer.** A non-barrel source file whose exported names are
    imported by exactly one other file. Separate re-exports from imports before
    counting, or a package index masks every candidate behind itself.
-2. **Mutual imports.** Two files that import each other. A cycle proves the
-   seam was not real; the pair reads as one concept.
+2. **Mutual imports.** Two files that import each other. Read the pair as one
+   file before judging either half.
 3. **`<parent>-<qualifier>` names.** A file named for another file plus a
    suffix (`-shared`, `-helpers`, `-reads`, `-run`, `part2`) with one consumer.
 
@@ -36,6 +36,8 @@ Two shapes defeat the obvious import regex.
 ## Disposition
 
 Open the candidate beside its importer. If its reader needs that file open to
-follow it, it is a fragment: merge it back and raise the merged row per
-[SKILL.md](../SKILL.md) § Responding to a failure, shrinking or deleting the
-emptied rows in the same diff. If it stands alone, it is a module. Leave it.
+follow it, it is a fragment: merge it back. A merged file still over its
+threshold raises its row per [SKILL.md](../SKILL.md) § Responding to a failure;
+one that lands at or under takes no row at all. Shrink or delete the emptied
+files' rows in the same diff either way. If it stands alone, it is a module.
+Leave it.
