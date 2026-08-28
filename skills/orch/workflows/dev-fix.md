@@ -152,19 +152,21 @@ Cancel ends the workflow; a selection goes to § 2.
 
    **Analysis rounds** run Check A without an expected-set flag, and B expects no new commit and a clean worktree. On accept, read the `summary` recommendation and decide the next step: delegate the actual fixes as a fresh round, or close and re-scope with reasoning.
 
-6. **Record the outcome** — one tool call per block, appends run per item:
+6. **Record the outcome** — one tool call per block, one write per item:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] fixed_items '{"description":"[DESC]","location":"[LOC]","commit":"[SHA]","source":"[SOURCE]"}'
+   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --argjson item '{"description":"[DESC]","location":"[LOC]","commit":"[SHA]","source":"[SOURCE]"}' '.fixed_items = (((.fixed_items // []) | map(select(.location != $item.location or .description != $item.description))) + [$item])'
    ```
    ```bash
-   .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] escalated_items '{"description":"[DESC]","location":"[LOC]","reason":"[REASON]","outcome":"[OUTCOME]","source":"[SOURCE]"}'
+   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --argjson item '{"description":"[DESC]","location":"[LOC]","reason":"[REASON]","outcome":"[OUTCOME]","source":"[SOURCE]"}' '.fixed_items = ((.fixed_items // []) | map(select(.location != $item.location or .description != $item.description))) | .escalated_items = ((.escalated_items // []) + [$item])'
    ```
    ```bash
    .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] cycles
    ```
 
    `[OUTCOME]` carries the item's accepted decision: Blocked → `"blocked"`, Skipped → `"skipped"`.
+
+   Each block is an update, not an append. A re-reported item whose recorded fix did not hold takes a second disposition while `fixed_items` still lists it against the SHA of the failed fix, so both writes drop that entry — matched on (location, description), the § 8 key — before recording their own. One write per item, and the item stands in exactly one bucket, once.
 
 ## 3. Return
 

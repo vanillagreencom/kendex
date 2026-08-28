@@ -26,13 +26,13 @@ fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 echo "=== orch escalated_items outcome lint (kendex#970) ==="
 
 # --- a: the state write carries the typed outcome ---------------------------
-# The dev-fix escalated_items append must include the outcome field so the
+# The dev-fix escalated_items write must include the outcome field so the
 # Blocked/Skipped distinction survives the state-write boundary.
-if grep -E 'workflow-state append \[ISSUE_ID\] escalated_items' "$SKILL_DIR/workflows/dev-fix.md" \
+if grep -E 'workflow-state update \[ISSUE_ID\].*escalated_items' "$SKILL_DIR/workflows/dev-fix.md" \
    | grep -q '"outcome":'; then
-  pass "dev-fix escalated_items append carries the \"outcome\" field"
+  pass "dev-fix escalated_items write carries the \"outcome\" field"
 else
-  fail "dev-fix escalated_items append lost the \"outcome\" field"
+  fail "dev-fix escalated_items write lost the \"outcome\" field"
 fi
 
 # --- b: audit-input builders map outcome to distinct origins ----------------
