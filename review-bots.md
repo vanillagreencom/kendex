@@ -49,8 +49,10 @@ noise:
   (`.agents/skills/review-gate/scripts/review-predicate.sh`) — check there
   before asserting supersession behavior within a surface.
 - **Transient windows heal by convergence.** A state change landing
-  between two reads is corrected on the next convergence pass, at most
-  15 minutes later. Do not propose locks for these windows.
+  between two reads is corrected on the next convergence pass. That pass is
+  scheduled and best-effort — it can slip under load — so a window standing
+  open is not proof of a defect, and a gate that stays stale is a delivery
+  question, not a locking one. Do not propose locks for these windows.
 - **A final docs-only push may keep earlier review evidence.** Deliberate
   wherever `REVIEW_GATE_CARRY_FORWARD` names the `docs` class. Policy and
   instruction files are excluded wherever `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`
