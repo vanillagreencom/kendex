@@ -1,12 +1,12 @@
 //! Report routing: which repo an issue about an installed item belongs to.
-//! kendex-owned assets file upstream; everything else files against the
-//! user's own repo — the safe default. Skills never route upstream via the
-//! lock (distribution is not ownership); only their own frontmatter can
-//! opt them in.
+//! The lock is the one judge, and it records where every kind of asset came
+//! from, skills included. An item whose every lock entry was recorded from
+//! the upstream files there; everything else files against the user's own
+//! repo, the safe default. A name whose entries disagree about their origin
+//! is ambiguous, and an ambiguous name stays local.
 
-use crate::env::Env;
-use crate::lock::Lock;
-use crate::model::{ItemKind, Scope};
+use crate::lock::{Lock, LockEntry};
+use crate::model::ItemKind;
 
 pub const DEFAULT_UPSTREAM: &str = crate::manifest::DEFAULT_SOURCE_REPO;
 
@@ -17,6 +17,9 @@ pub struct Route {
     pub repo: Option<String>,
     /// Routing label — only on the canonical upstream, where it exists.
     pub label: Option<String>,
+    /// The kind the report is about: the one the caller named, or the one
+    /// the matching lock entries agree on when the caller named none.
+    pub kind: Option<ItemKind>,
 }
 
 /// The routing label for a kendex-owned asset, by what it is.
@@ -31,135 +34,145 @@ pub fn derive_label(name: &str, kind: Option<ItemKind>) -> &'static str {
     }
 }
 
-pub fn route(
-    env: &Env,
-    scope: &Scope,
-    lock: &Lock,
-    name: &str,
-    kind: Option<ItemKind>,
-    upstream: &str,
-) -> Route {
-    let (fm_source, fm_repo) = installed_frontmatter(env, scope, name);
-    let owned = is_kendex_owned(
-        lock,
-        name,
-        kind,
-        fm_source.as_deref(),
-        fm_repo.as_deref(),
-        upstream,
-    );
+pub fn route(lock: &Lock, name: &str, kind: Option<ItemKind>, upstream: &str) -> Route {
+    let matching: Vec<&LockEntry> = lock
+        .entries
+        .values()
+        .filter(|entry| entry.name == name && kind.is_none_or(|k| k == entry.kind))
+        .collect();
+    // Provenance, not delivery. One entry recorded from anywhere else — a
+    // second marketplace, a path, `local` — means the name does not name a
+    // kendex asset on its own, and the report stays with the user's repo
+    // rather than going to a stranger's.
+    let owned = !matching.is_empty() && matching.iter().all(|e| e.source_repo == upstream);
+    let kind = kind.or_else(|| agreed_kind(&matching));
     Route {
         kendex_owned: owned,
         repo: owned.then(|| upstream.to_owned()),
         label: (owned && upstream == DEFAULT_UPSTREAM).then(|| derive_label(name, kind).to_owned()),
+        kind,
     }
 }
 
-fn is_kendex_owned(
-    lock: &Lock,
-    name: &str,
-    kind: Option<ItemKind>,
-    frontmatter_source: Option<&str>,
-    frontmatter_repo: Option<&str>,
-    upstream: &str,
-) -> bool {
-    if frontmatter_source == Some("kendex") || frontmatter_repo.is_some_and(is_default_repo) {
-        return true;
-    }
-    lock.entries.values().any(|entry| {
-        entry.name == name
-            && kind.is_none_or(|k| k == entry.kind)
-            && entry.kind != ItemKind::Skill
-            && entry.source_repo == upstream
-    })
-}
-
-fn is_default_repo(repo: &str) -> bool {
-    repo == DEFAULT_UPSTREAM
-}
-
-/// `source:`/`repository:` from the installed skill's frontmatter — the one
-/// place a skill can claim kendex ownership.
-fn installed_frontmatter(env: &Env, scope: &Scope, name: &str) -> (Option<String>, Option<String>) {
-    let path = crate::engine::desired::skill_canonical(env, scope, name).join("SKILL.md");
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return (None, None);
-    };
-    let Some(front) = text
-        .strip_prefix("---")
-        .and_then(|rest| rest.find("\n---").map(|end| rest[..end].to_owned()))
-    else {
-        return (None, None);
-    };
-    let field = |key: &str| {
-        front.lines().find_map(|line| {
-            line.strip_prefix(key)
-                .map(|v| v.trim().trim_matches('"').to_owned())
-                .filter(|v| !v.is_empty())
-        })
-    };
-    (field("source:"), field("repository:"))
+/// The one kind the matching entries are, when they are all one kind.
+fn agreed_kind(matching: &[&LockEntry]) -> Option<ItemKind> {
+    let first = matching.first()?.kind;
+    matching.iter().all(|e| e.kind == first).then_some(first)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A skill's frontmatter is the one place it can claim kendex
-    /// ownership itself.
-    #[test]
-    fn the_source_token_claims_ownership() {
-        let lock = Lock::default();
-        let owned = |source: Option<&str>| {
-            is_kendex_owned(&lock, "s", None, source, None, DEFAULT_UPSTREAM)
-        };
-        assert!(owned(Some("kendex")));
-        assert!(!owned(Some("someone-else")));
-        assert!(!owned(None));
+    fn entry(name: &str, kind: ItemKind, source_repo: &str) -> LockEntry {
+        LockEntry {
+            name: name.to_owned(),
+            kind,
+            harness: crate::model::HarnessId::Claude,
+            source: "kendex".to_owned(),
+            source_repo: source_repo.to_owned(),
+            method: crate::manifest::Method::Copy,
+            installed_at: "2026-01-01T00:00:00Z".to_owned(),
+            source_hash: "x".to_owned(),
+            source_commit: None,
+            rendered_hash: None,
+            enabled: true,
+            upstream_skills: None,
+            emitted: None,
+            registration: None,
+            left_pi_reserved_name: false,
+            reasons: std::collections::BTreeSet::from([crate::lock::Reason::Requested]),
+        }
     }
 
-    /// A lock entry recorded from the default repository claims the
-    /// upstream a report routes to.
-    #[test]
-    fn a_default_repo_entry_claims_ownership() {
+    fn lock_of(entries: &[(&str, ItemKind, &str)]) -> Lock {
         let mut lock = Lock::default();
-        lock.entries.insert(
-            "hook:guard:claude".to_owned(),
-            crate::lock::LockEntry {
-                name: "guard".to_owned(),
-                kind: ItemKind::Hook,
-                harness: crate::model::HarnessId::Claude,
-                source: "kendex".to_owned(),
-                source_repo: DEFAULT_UPSTREAM.to_owned(),
-                method: crate::manifest::Method::Copy,
-                installed_at: "2026-01-01T00:00:00Z".to_owned(),
-                source_hash: "x".to_owned(),
-                source_commit: None,
-                rendered_hash: None,
-                enabled: true,
-                upstream_skills: None,
-                emitted: None,
-                registration: None,
-                left_pi_reserved_name: false,
-                reasons: std::collections::BTreeSet::from([crate::lock::Reason::Requested]),
-            },
+        for (name, kind, source_repo) in entries {
+            lock.entries.insert(
+                format!("{}:{name}:{source_repo}", kind.name()),
+                entry(name, *kind, source_repo),
+            );
+        }
+        lock
+    }
+
+    /// The lock records provenance for every kind of asset alike, so a skill
+    /// recorded from the default repo routes upstream like an agent or hook.
+    #[test]
+    fn a_default_repo_entry_routes_upstream() {
+        for (kind, label) in [
+            (ItemKind::Hook, "harness"),
+            (ItemKind::Skill, "skills"),
+            (ItemKind::Agent, "skills"),
+        ] {
+            let lock = lock_of(&[("guard", kind, DEFAULT_UPSTREAM)]);
+            let route = route(&lock, "guard", Some(kind), DEFAULT_UPSTREAM);
+            assert!(route.kendex_owned, "{kind:?} from the default repo");
+            assert_eq!(route.repo.as_deref(), Some(DEFAULT_UPSTREAM));
+            assert_eq!(route.label.as_deref(), Some(label));
+        }
+    }
+
+    /// Nothing in the lock says nothing about ownership, and the safe answer
+    /// is the user's own repo.
+    #[test]
+    fn an_unlocked_name_stays_project_local() {
+        let route = route(&Lock::default(), "mystery", None, DEFAULT_UPSTREAM);
+        assert!(!route.kendex_owned);
+        assert_eq!(route.repo, None);
+        assert_eq!(route.label, None);
+    }
+
+    /// A skill installed from another marketplace keeps filing against the
+    /// consumer's own repo.
+    #[test]
+    fn a_third_party_entry_stays_project_local() {
+        let lock = lock_of(&[("guard", ItemKind::Skill, "someone/else")]);
+        assert!(!route(&lock, "guard", Some(ItemKind::Skill), DEFAULT_UPSTREAM).kendex_owned);
+    }
+
+    /// A named upstream routes there only when the lock recorded the asset
+    /// from it; naming a repo is not by itself proof of ownership.
+    #[test]
+    fn a_named_upstream_must_match_recorded_provenance() {
+        let lock = lock_of(&[("guard", ItemKind::Skill, "someone/else")]);
+        let matched = route(&lock, "guard", Some(ItemKind::Skill), "someone/else");
+        assert!(matched.kendex_owned);
+        assert_eq!(matched.repo.as_deref(), Some("someone/else"));
+        // Labels exist only on the canonical repo.
+        assert_eq!(matched.label, None);
+        assert!(!route(&Lock::default(), "guard", None, "someone/else").kendex_owned);
+    }
+
+    /// `--asset <name>` names no kind, so entries of every kind match it. A
+    /// name shared with something from elsewhere is ambiguous and stays
+    /// local; naming the kind resolves it.
+    #[test]
+    fn a_name_shared_with_another_origin_is_ambiguous() {
+        let lock = lock_of(&[
+            ("dev", ItemKind::Skill, DEFAULT_UPSTREAM),
+            ("dev", ItemKind::Hook, "someone/else"),
+        ]);
+        assert!(!route(&lock, "dev", None, DEFAULT_UPSTREAM).kendex_owned);
+        assert!(route(&lock, "dev", Some(ItemKind::Skill), DEFAULT_UPSTREAM).kendex_owned);
+    }
+
+    /// A kind-less report takes the kind its entries agree on, so it carries
+    /// the same label a named kind would; disagreement leaves it unresolved.
+    #[test]
+    fn a_kindless_report_takes_the_kind_its_entries_agree_on() {
+        let one_kind = lock_of(&[("dev", ItemKind::Skill, DEFAULT_UPSTREAM)]);
+        let resolved = route(&one_kind, "dev", None, DEFAULT_UPSTREAM);
+        assert_eq!(resolved.kind, Some(ItemKind::Skill));
+        assert_eq!(resolved.label.as_deref(), Some("skills"));
+
+        let mut two_kinds = one_kind;
+        two_kinds.entries.insert(
+            "hook:dev:claude".to_owned(),
+            entry("dev", ItemKind::Hook, DEFAULT_UPSTREAM),
         );
-        assert!(is_kendex_owned(
-            &lock,
-            "guard",
-            Some(ItemKind::Hook),
-            None,
-            None,
-            DEFAULT_UPSTREAM
-        ));
-        // A repo the user pointed reports at explicitly stays exact.
-        assert!(!is_kendex_owned(
-            &lock,
-            "guard",
-            Some(ItemKind::Hook),
-            None,
-            None,
-            "someone/else"
-        ));
+        let unresolved = route(&two_kinds, "dev", None, DEFAULT_UPSTREAM);
+        assert_eq!(unresolved.kind, None);
+        assert_eq!(unresolved.label.as_deref(), Some("cli"));
     }
 }

@@ -88,6 +88,10 @@ an outside contributor.
 - In the app, a row you just settled no longer comes back. A machine-wide
   check that started before the change and landed after it overwrote the
   newer reading, and kept it for the freshness window.
+- `kendex report --skill` files against kendex, like `--agent` and `--hook`
+  already did; a skill installed from anywhere else still files against your
+  own repo.
+
 - `worktree cleanup` and `worktree remove` prove a merge two ways and no other:
   ancestry into the default branch, or the pull request whose head commit is
   the branch tip. Squash merges collect, and every keep now names its reason.

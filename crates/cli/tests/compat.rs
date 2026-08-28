@@ -122,10 +122,11 @@ fn report_dry_run_routes_by_ownership_and_rejects_scope_all() {
     let tmp = sandbox_with_catalog();
     let home = tmp.path();
     let proj = home.join("proj");
-    // A locked agent from the canonical upstream routes to it.
+    // Locked assets from the canonical upstream route to it. The skill is
+    // symlinked, as every installed skill is; delivery is not ownership.
     fs::write(
         proj.join(".kendex-lock.json"),
-        r#"{"version":1,"entries":{"agent:orch:claude":{"name":"orch","kind":"agent","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"copy","installedAt":"2026-01-01T00:00:00Z","sourceHash":"x","enabled":true}}}"#,
+        r#"{"version":1,"entries":{"agent:orch:claude":{"name":"orch","kind":"agent","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"copy","installedAt":"2026-01-01T00:00:00Z","sourceHash":"x","enabled":true},"skill:size-ratchet:claude":{"name":"size-ratchet","kind":"skill","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"symlink","installedAt":"2026-01-01T00:00:00Z","sourceHash":"x","enabled":true}}}"#,
     )
     .unwrap();
 
@@ -150,6 +151,27 @@ fn report_dry_run_routes_by_ownership_and_rejects_scope_all() {
     assert!(text.contains("--repo vanillagreencom/kendex"), "{text}");
     assert!(text.contains("--label skills"), "{text}");
 
+    let skill = kendex_in(
+        home,
+        &proj,
+        &[
+            "report",
+            "--skill",
+            "size-ratchet",
+            "--title",
+            "T",
+            "--body",
+            "B",
+            "--dry-run",
+        ],
+        &[],
+    );
+    assert!(skill.status.success());
+    let text = String::from_utf8_lossy(&skill.stderr);
+    assert!(text.contains("ownership: kendex"), "{text}");
+    assert!(text.contains("--repo vanillagreencom/kendex"), "{text}");
+    assert!(text.contains("--label skills"), "{text}");
+
     let local = kendex_in(
         home,
         &proj,
@@ -168,6 +190,52 @@ fn report_dry_run_routes_by_ownership_and_rejects_scope_all() {
     let text = String::from_utf8_lossy(&local.stderr);
     assert!(text.contains("ownership: project-local"), "{text}");
     assert!(!text.contains("--label"), "{text}");
+
+    // Naming a kind lets the lock resolve it: the label and the body marker
+    // are the ones `--skill` would stamp.
+    let asset = kendex_in(
+        home,
+        &proj,
+        &[
+            "report",
+            "--asset",
+            "size-ratchet",
+            "--title",
+            "T",
+            "--body",
+            "B",
+            "--dry-run",
+        ],
+        &[],
+    );
+    assert!(asset.status.success());
+    let text = String::from_utf8_lossy(&asset.stderr);
+    assert!(text.contains("ownership: kendex"), "{text}");
+    assert!(text.contains("--label skills"), "{text}");
+    assert!(text.contains("kind=skill"), "{text}");
+
+    // A named upstream the lock never recorded is not proof of ownership.
+    let forked = kendex_in(
+        home,
+        &proj,
+        &[
+            "report",
+            "--skill",
+            "size-ratchet",
+            "--upstream",
+            "someone/else",
+            "--title",
+            "T",
+            "--body",
+            "B",
+            "--dry-run",
+        ],
+        &[],
+    );
+    assert!(forked.status.success());
+    let text = String::from_utf8_lossy(&forked.stderr);
+    assert!(text.contains("ownership: project-local"), "{text}");
+    assert!(!text.contains("someone/else"), "{text}");
 
     let rejected = kendex_in(
         home,

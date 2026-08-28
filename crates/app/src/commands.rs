@@ -119,14 +119,8 @@ pub fn report_route(
             kendex_core::lock::Lock::default()
         }
     };
-    let route = kendex_core::report::route(
-        &env,
-        &scope,
-        &lock,
-        &name,
-        kind,
-        kendex_core::report::DEFAULT_UPSTREAM,
-    );
+    let route =
+        kendex_core::report::route(&lock, &name, kind, kendex_core::report::DEFAULT_UPSTREAM);
     let issue_url = route.repo.as_ref().map(|repo| {
         let mut url = format!(
             "https://github.com/{repo}/issues/new?title={}",

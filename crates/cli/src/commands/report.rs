@@ -103,18 +103,20 @@ pub fn run(env: &Env, args: ReportArgs) -> CliResult {
     }
     let route = selector
         .as_ref()
-        .map(|(name, kind)| kendex_core::report::route(env, &scope, &lock, name, *kind, &upstream));
+        .map(|(name, kind)| kendex_core::report::route(&lock, name, *kind, &upstream));
     let kendex_owned = route.as_ref().is_some_and(|r| r.kendex_owned);
 
     let mut gh_args = vec!["issue".to_owned(), "create".to_owned()];
     let mut sent_body = body.clone();
     let mut area = None;
     if kendex_owned {
-        let (name, kind) = selector
+        let name = selector.as_ref().map_or("unknown", |(n, _)| n.as_str());
+        // The kind the route resolved, so `--asset` on a skill stamps the
+        // same marker `--skill` would.
+        let kind_label = route
             .as_ref()
-            .map(|(n, k)| (n.as_str(), *k))
-            .unwrap_or(("unknown", None));
-        let kind_label = kind.map(ItemKind::name).unwrap_or("asset");
+            .and_then(|r| r.kind)
+            .map_or("asset", ItemKind::name);
         sent_body.push_str(&format!(
             "\n\n<!-- kendex-report:v1 asset={name} kind={kind_label} ownership=kendex -->"
         ));

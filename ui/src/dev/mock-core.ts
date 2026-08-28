@@ -151,25 +151,40 @@ export const coreHandlers: Record<string, Handler> = {
     ["acme-web", "api-server", "demo-app"].map(
       (name) => `${root.replace(/\/+$/, "")}/${name}`,
     ),
-  report_route: ({ scope, name }: { scope: Scope; name: string }) => {
+  report_route: ({
+    scope,
+    name,
+    kind,
+  }: {
+    scope: Scope;
+    name: string;
+    kind: ItemKind | null;
+  }) => {
     const upstream = "vanillagreencom/kendex";
-    // Mirrors the engine's rule: skills never route upstream through
-    // provenance alone, everything else from the catalog does.
-    const owned = store.state.items.some(
+    // Mirrors the engine's rule: the recorded origin decides, for every kind
+    // alike, and one entry from anywhere else makes the name ambiguous.
+    const matching = store.state.items.filter(
       (it) =>
         it.name === name &&
         same(it.scope, scope) &&
-        it.kind !== "skill" &&
-        it.origin === upstream,
+        (kind === null || it.kind === kind),
     );
-    const kind = store.state.items.find((it) => it.name === name)?.kind;
+    const owned =
+      matching.length > 0 && matching.every((it) => it.origin === upstream);
+    const agreed = matching.every((it) => it.kind === matching[0]?.kind)
+      ? matching[0]?.kind
+      : undefined;
+    const resolved = kind ?? agreed;
+    // Mirrors derive_label.
     const label = !owned
       ? null
-      : kind === "hook" || kind === "pi-extension"
-        ? "harness"
-        : kind === "agent"
-          ? "skills"
-          : "cli";
+      : name.includes("review-gate")
+        ? "ci-infra"
+        : resolved === "hook" || resolved === "pi-extension"
+          ? "harness"
+          : resolved === "skill" || resolved === "agent"
+            ? "skills"
+            : "cli";
     return {
       kendexOwned: owned,
       repo: owned ? upstream : null,

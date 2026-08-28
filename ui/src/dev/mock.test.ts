@@ -4,6 +4,7 @@ import type {
   HarnessId,
   ItemKind,
   PackageUpdate_Serialize,
+  ReportRouteView,
   ScanResult,
   SourceRow,
 } from "@/bindings";
@@ -122,6 +123,19 @@ describe("mock bridge", () => {
 // The browser mock hand-mirrors crates/core/src/harness/caps.rs. Where it
 // drifts, dev mode shows a tool as unmanageable that the app manages.
 describe("mock capability table", () => {
+  // The dev app must answer the report dialog the way the engine does, or
+  // the preview tells you a kendex skill belongs to your own project.
+  it("routes a catalog skill to kendex, with the label the engine derives", async () => {
+    const route = (await mockInvoke("report_route", {
+      scope: acme,
+      name: "github",
+      kind: "skill" as ItemKind,
+    })) as ReportRouteView;
+    expect(route.kendexOwned).toBe(true);
+    expect(route.repo).toBe("vanillagreencom/kendex");
+    expect(route.label).toBe("skills");
+  });
+
   const caps = (harness: HarnessId, kind: ItemKind) =>
     capabilityTable().find((r) => r.harness === harness && r.kind === kind)
       ?.caps;
