@@ -1,4 +1,5 @@
-// The Mine tab against canned data: rows, import inventory, submit.
+// The Mine tab against canned data: rows, import inventory, the offers.
+// Submissions are their own file — the sign-in gates them.
 import type {
   ImportCandidate,
   ImportSelection,
@@ -6,8 +7,8 @@ import type {
   MineRow,
   SubmitPreflight,
 } from "@/bindings";
-import { callRefusal, type ExpiringCall } from "./mock-account";
 import type { Handler } from "./mock-state";
+import { submissionHandlers } from "./mock-submissions";
 
 function row(overrides: Partial<MineRow>): MineRow {
   return {
@@ -156,24 +157,9 @@ function preflightFor(path: string): SubmitPreflight {
   };
 }
 
-const SUBMISSION = {
-  repo: "jane/team-skills",
-  status: "pending",
-  status_reason: null,
-  head_commit: null,
-  indexed_at: null,
-};
-
-const underSignIn = <T>(call: ExpiringCall, answer: T) => {
-  const refused = callRefusal(call);
-  return refused ? Promise.reject(refused) : answer;
-};
-
 export const mineHandlers: Record<string, Handler> = {
+  ...submissionHandlers,
   mine_submit_preflight: (args: { path: string }) => preflightFor(args.path),
-  mine_submit: (args: { repo: string }) =>
-    underSignIn("mine_submit", { repo: args.repo, status: "pending" }),
-  mine_submissions: () => underSignIn("mine_submissions", [SUBMISSION]),
   mine_authoring_doc: () =>
     "# How a marketplace repo works\n\nA kendex marketplace is a git repository.\n",
   mine_list: () => rows,

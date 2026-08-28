@@ -3,6 +3,7 @@
 //! uses. The app never sees a GitHub password — a code, a browser tab,
 //! done.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use kendex_core::author::{self, SubmitPreflight};
@@ -11,7 +12,9 @@ use kendex_core::error::CoreError;
 use kendex_core::registry::credentials::{Credential, KeyringStore};
 use kendex_core::registry::login::{self, Poll};
 use kendex_core::registry::me::{self, AccountState};
-use kendex_core::registry::submit::{self, SubmissionRow};
+use kendex_core::registry::submit::{
+    self, SubmissionAsk, SubmissionRow, SubmissionState, SubmissionsRead,
+};
 use kendex_core::registry::{CurlFetch, base_url};
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -175,6 +178,21 @@ pub fn mine_submit(repo: String) -> Result<SubmittedView, AccountCallRefused> {
 #[specta::specta]
 pub fn mine_submissions() -> Result<Vec<SubmissionRow>, AccountCallRefused> {
     submit::submissions(&CurlFetch, &KeyringStore).map_err(refused)
+}
+
+/// What each authored marketplace's submission reads as, given the rows a
+/// read left in hand and how that read went. A ruling over what the
+/// caller already holds: it asks the server nothing, so the tab re-asks
+/// whenever its rows, its marketplaces, or the read's outcome change
+/// rather than once per row it draws.
+#[tauri::command]
+#[specta::specta]
+pub fn mine_submission_states(
+    read: SubmissionsRead,
+    rows: Vec<SubmissionRow>,
+    asks: Vec<SubmissionAsk>,
+) -> BTreeMap<String, SubmissionState> {
+    submit::states(read, &rows, &asks)
 }
 
 #[cfg(test)]

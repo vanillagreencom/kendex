@@ -20,6 +20,7 @@ vi.mock("@/bindings", () => ({
     updatesOverview: vi.fn(),
     mineList: vi.fn(),
     mineSubmitPreflight: vi.fn(),
+    mineSubmissionStates: vi.fn(async () => ({})),
     appUpdateCheck: vi.fn(),
     appUpdateChannel: vi.fn(),
     appVersion: vi.fn(),

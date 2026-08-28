@@ -1,6 +1,6 @@
 import { BookOpen, FolderOpen, Hammer, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
-import { commands } from "@/bindings";
+import { commands, type SubmissionState } from "@/bindings";
 import { EmptyState } from "@/components/empty-state";
 import { TextBar } from "@/components/loading";
 import { MarkdownView } from "@/components/markdown-view";
@@ -17,7 +17,6 @@ import { useMineStore } from "@/stores/mine";
 import { MineCreateDialog } from "./mine-create-dialog";
 import { MineImportDialog } from "./mine-import-dialog";
 import { MineRowCard } from "./mine-row";
-import { submissionFor } from "./mine-submission";
 import { MineSubmitDialog } from "./mine-submit-dialog";
 
 /** The marketplaces the user authors. Rows are computed fresh from each
@@ -36,6 +35,9 @@ export function MineTab() {
   const signedIn = useAccountStore((s) => hasCredential(s.account));
   const submissions = useAccountStore((s) => s.submissions);
   const submissionsError = useAccountStore((s) => s.submissionsError);
+  const [states, setStates] = useState<Record<string, SubmissionState> | null>(
+    null,
+  );
 
   useEffect(() => {
     void load();
@@ -54,6 +56,31 @@ export function MineTab() {
     const timer = setInterval(() => void loadSubmissions(), 60_000);
     return () => clearInterval(timer);
   }, [signedIn, loadSubmissions]);
+
+  // What each row's submission reads as is core's ruling, not this
+  // tab's, and it is asked for once per change of what it rules on rather
+  // than once per row drawn. The cleanup drops an answer a newer ask has
+  // already superseded.
+  useEffect(() => {
+    if (rows === null) return;
+    let current = true;
+    void commands
+      .mineSubmissionStates(
+        submissionsError === null ? "landed" : "failed",
+        submissions ?? [],
+        rows.flatMap((entry) =>
+          entry.state === "ready"
+            ? [{ path: entry.row.path, repo: entry.row.git.candidate }]
+            : [],
+        ),
+      )
+      .then((answered) => {
+        if (current) setStates(answered);
+      });
+    return () => {
+      current = false;
+    };
+  }, [rows, submissions, submissionsError]);
 
   const pickExisting = () => {
     void commands.pickFolder().then((picked) => {
@@ -113,11 +140,7 @@ export function MineTab() {
               <MineRowCard
                 key={entry.row.path}
                 row={entry.row}
-                submission={submissionFor(
-                  submissions,
-                  submissionsError !== null,
-                  entry.row.git.candidate,
-                )}
+                submission={states?.[entry.row.path] ?? null}
                 onImport={(path) => setImportTarget(path)}
                 onSubmit={(path) => setSubmitTarget(path)}
               />

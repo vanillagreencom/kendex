@@ -255,6 +255,14 @@ export const commands = {
 	mineSubmitPreflight: (path: string) => typedError<SubmitPreflight, string>(__TAURI_INVOKE("mine_submit_preflight", { path })),
 	mineSubmit: (repo: string) => typedError<SubmittedView, AccountCallRefused>(__TAURI_INVOKE("mine_submit", { repo })),
 	mineSubmissions: () => typedError<SubmissionRow[], AccountCallRefused>(__TAURI_INVOKE("mine_submissions")),
+	/**
+	 *  What each authored marketplace's submission reads as, given the rows a
+	 *  read left in hand and how that read went. A ruling over what the
+	 *  caller already holds: it asks the server nothing, so the tab re-asks
+	 *  whenever its rows, its marketplaces, or the read's outcome change
+	 *  rather than once per row it draws.
+	 */
+	mineSubmissionStates: (read: SubmissionsRead, rows: SubmissionRow[], asks: SubmissionAsk[]) => __TAURI_INVOKE<{ [key in string]: SubmissionState }>("mine_submission_states", { read, rows, asks }),
 	packageVersions: (scope: Scope, kind: ItemKind, name: string) => typedError<VersionRow[], string>(__TAURI_INVOKE("package_versions", { scope, kind, name })),
 	/**
 	 *  Bring one package current and apply — the Updates page's per-package
@@ -2409,6 +2417,16 @@ export type StatusFinding = {
 	fix: string,
 };
 
+/**
+ *  One marketplace to answer about: where it is, and the GitHub
+ *  repository a submission of it would be keyed by. `repo` is absent for
+ *  a marketplace with no GitHub remote.
+ */
+export type SubmissionAsk = {
+	path: string,
+	repo: string | null,
+};
+
 /**  One row of GET /api/v1/submissions — what a Mine row polls. */
 export type SubmissionRow = {
 	repo: string,
@@ -2417,6 +2435,26 @@ export type SubmissionRow = {
 	head_commit: string | null,
 	indexed_at: string | null,
 };
+
+/**
+ *  What is known about one marketplace's submission.
+ * 
+ *  `not-submitted` is a positive answer: nothing of this marketplace is
+ *  listed, and the read saying so landed. `unknown` is the absence of an
+ *  answer: the last read failed, and what is in hand does not name this
+ *  repository. `submitted` carries the row the server listed it under.
+ */
+export type SubmissionState = { kind: "not-submitted" } | { kind: "unknown" } | { kind: "submitted"; row: SubmissionRow };
+
+/**
+ *  How the last read of the caller's submissions went.
+ * 
+ *  `landed` means the rows in hand are the whole of what the server
+ *  lists, so a repository missing from them is not submitted. `failed`
+ *  means they are only what it last said, so a repository missing from
+ *  them is unknown rather than unsubmitted.
+ */
+export type SubmissionsRead = "landed" | "failed";
 
 export type SubmitPreflight = {
 	row: MineRow,
