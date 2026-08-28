@@ -36,14 +36,22 @@ export const cachedIdentity = (
 ): AccountIdentity | null => (hasCredential(account) ? account.identity : null);
 
 /** Whether a read landed on the credential already held, as far as a read
- *  can tell. It is told who the account belongs to and nothing that
+ *  can tell.
+ *
+ *  The question is whether the credential changed hands, not whether its
+ *  name has arrived. A credential is stored before anything knows who it
+ *  belongs to, and the read that names it is the one landing here, so a
+ *  missing name on either side is not evidence of a different account.
+ *
+ *  What a read is told is who the account belongs to, and nothing that
  *  separates one sign-in for that person from the next, so the same
- *  person signing in again reads as the same credential here. */
+ *  person signing in again reads as the same credential. */
 export const sameAccount = (
   held: AccountState,
   read: AccountState,
 ): boolean => {
   if (!hasCredential(held) || !hasCredential(read)) return false;
   const who = held.identity?.githubLogin ?? null;
-  return who !== null && who === (read.identity?.githubLogin ?? null);
+  const now = read.identity?.githubLogin ?? null;
+  return who === null || now === null || who === now;
 };

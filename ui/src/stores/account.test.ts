@@ -291,6 +291,44 @@ describe("an approved device flow", () => {
     expect(hasCredential(account())).toBe(true);
     expect(account()).toEqual({ kind: "signed-in", identity: null });
   });
+
+  // One sign-in is one change of hands. The approval stores the
+  // credential and the read that follows only names it, so counting that
+  // read as a second handover discards work started on the first.
+  it("counts one handover for the approval and the read that names it", async () => {
+    serves({ kind: "signed-in", identity: ADA });
+    const before = useAccountStore.getState().handovers();
+    await signIn();
+    expect(useAccountStore.getState().handovers()).toBe(before + 1);
+  });
+
+  // The Mine tab asks for submissions the moment a credential exists,
+  // which is before the read that names it lands. A second handover in
+  // between discards the answer, and the rows read as unsubmitted until
+  // the next sixty-second tick.
+  it("keeps rows asked for on approval through the read that names it", async () => {
+    const ROW = {
+      repo: "ada/team-skills",
+      status: "pending",
+      status_reason: null,
+      head_commit: null,
+      indexed_at: null,
+    };
+    vi.mocked(commands.mineSubmissions).mockResolvedValue({
+      status: "ok",
+      data: [ROW],
+    } as Awaited<ReturnType<typeof commands.mineSubmissions>>);
+    let polling: Promise<void> | null = null;
+    setAccountReader(async () => {
+      polling = useAccountStore.getState().loadSubmissions();
+      return { ok: { kind: "signed-in", identity: ADA } };
+    });
+
+    await signIn();
+    await polling;
+
+    expect(useAccountStore.getState().submissions).toEqual([ROW]);
+  });
 });
 
 // The read repeats on its own now, so it must not be able to write over
@@ -505,6 +543,24 @@ describe("a call refused because the sign-in expired", () => {
     answers({ state: "signed-out" });
     await load();
     expect(account()).toEqual({ kind: "expired" });
+  });
+
+  // KEN-742 leaves the credential, and its cached identity, where the
+  // removal fails. An outage then answers `offline` for a sign-in the
+  // server has already refused, and offline holds a credential: without
+  // the same rule the signed-out answer gets, the dead sign-in comes
+  // back usable and the Submit it cannot carry is offered again.
+  it("keeps expired through a read that could not reach the server", async () => {
+    useAccountStore.setState({ account: { kind: "signed-in", identity: ADA } });
+    met();
+    expect(account()).toEqual({ kind: "expired" });
+
+    serves({ kind: "offline", identity: ADA });
+    await load();
+
+    expect(account()).toEqual({ kind: "expired" });
+    // What the submit dialog gates its Submit button on.
+    expect(hasCredential(account())).toBe(false);
   });
 
   it("drops rows already out for the credential it ended", async () => {

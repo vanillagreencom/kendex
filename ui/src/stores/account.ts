@@ -132,24 +132,27 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       else set({ readError: answer.error });
       return;
     }
-    // Submissions belong to the credential. A read that finds it gone
-    // leaves what signing out leaves, so nobody's rows outlive them.
-    if (hasCredential(answer.ok)) {
-      // A read that finds someone else's credential has watched the
-      // account change hands, which nothing in the app did: `kendex
-      // login` in a terminal is the way that happens. The rows it was
-      // holding were the last account's.
-      if (sameAccount(get().account, answer.ok))
-        set({ account: answer.ok, readError: null });
-      else set(credentialEnded(answer.ok));
+    const held = get().account;
+    // The server said this sign-in was dead. A read that finds no
+    // credential is that refusal's own doing, and one that could not
+    // reach the server knows less than what the server already said:
+    // neither takes the expiry back. The removal that fails leaves the
+    // credential and its cached identity in place, which is how an
+    // outage answers `offline` for a sign-in already known to be dead.
+    if (
+      held.kind === "expired" &&
+      (answer.ok.kind === "signed-out" || answer.ok.kind === "offline")
+    ) {
+      set(credentialEnded(held));
+    } else if (sameAccount(held, answer.ok)) {
+      // The credential already held, named at last or confirmed again.
+      set({ account: answer.ok, readError: null });
     } else {
-      // A read taken after a call met the expiry finds no credential
-      // where the refusal cleared it, and says signed out. Expired is
-      // the explanation for that, and only signing in or out takes it
-      // off the screen.
-      const held = get().account;
-      const keep = held.kind === "expired" && answer.ok.kind === "signed-out";
-      set(credentialEnded(keep ? held : answer.ok));
+      // Either the credential is gone, or a read has found one the app
+      // did not put there: `kendex login` in a terminal is how that
+      // happens. Both are the account changing hands, and submissions
+      // belong to the credential, so nobody's rows outlive them.
+      set(credentialEnded(answer.ok));
     }
   },
 
