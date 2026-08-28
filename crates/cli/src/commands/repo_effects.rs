@@ -24,7 +24,7 @@
 //! and one carrying a newline forges the shape of the block itself. What is
 //! being consented to has to be what is on the screen.
 
-use std::io::{IsTerminal, Write};
+use std::io::IsTerminal;
 
 use kendex_core::engine::EngineReport;
 use kendex_core::model::Scope;
@@ -77,15 +77,14 @@ pub fn confirm(pending: &[Disclosure], allowed: bool) -> Result<bool, String> {
         return Ok(false);
     }
     let question = match pending.len() {
-        1 => format!("apply {}'s repository changes? [y/N] ", pending[0].name),
-        n => format!("apply the repository changes of {n} packages? [y/N] "),
+        1 => format!("apply {}'s repository changes?", pending[0].name),
+        n => format!("apply the repository changes of {n} packages?"),
     };
-    let _ = write!(std::io::stderr(), "{question}");
-    let mut answer = String::new();
-    std::io::stdin()
-        .read_line(&mut answer)
-        .map_err(|error| error.to_string())?;
-    Ok(matches!(answer.trim(), "y" | "Y" | "yes"))
+    // The shared prompt, not a write of our own: it draws whatever block
+    // is still open before it reads, so the question cannot reach the
+    // reader ahead of the disclosure it is about. Its plain rendering is
+    // the same bytes this site used to write itself, `[y/N] ` included.
+    crate::ui::confirm(&question).map_err(|error| error.to_string())
 }
 
 /// Run one package's installer, here and now, and relay what it said.

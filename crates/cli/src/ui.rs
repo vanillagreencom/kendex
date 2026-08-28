@@ -18,12 +18,16 @@
 //! is somebody reading the bytes, whatever stderr is attached to.
 //! `KENDEX_UI` takes `plain` or `pretty` and overrides the detection.
 //!
-//! **Text from a catalog is escaped here, once.** Every human line can
-//! carry a name, a message or a path somebody else wrote, and a control
-//! character in one of those rewrites the terminal around it. The printer
-//! is the one place that sees all of them, so it escapes what it prints
-//! and no call site has to remember to. [`out`] is the exception: it
-//! carries JSON and other machine content, and must stay byte-exact.
+//! **Text from a catalog is escaped here, once, line by line.** Every
+//! human line can carry a name, a message or a path somebody else wrote,
+//! and a control character in one of those rewrites the terminal around
+//! it. The printer is the one place that sees all of them, so it escapes
+//! what it prints and no call site has to remember to. The escaping is
+//! per line, never over the whole message: a caller that wrote a break
+//! meant one, and escaping the message whole would hand the reader the
+//! two characters `\n` where its paragraph used to be. [`out`] is the
+//! exception: it carries JSON and other machine content, and must stay
+//! byte-exact.
 //!
 //! **A line said right before a wait has to be drawn first.** A block is
 //! held open until something follows it, so a verb that says where it is
@@ -31,15 +35,19 @@
 //! draws what is open before it starts, which is why every wait long
 //! enough to notice is wrapped in one.
 
+mod blocks;
 mod prompt;
 
-pub use prompt::{confirm, spinner};
+pub use blocks::{finish, flush, intro};
+pub use prompt::{ask, confirm, spinner};
 
 use kendex_core::names::shown;
 
 use std::io::{IsTerminal, Write};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, MutexGuard, OnceLock};
+
+use blocks::Tone;
 
 /// How lines reach the reader.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -113,51 +121,17 @@ pub fn mode() -> Mode {
     }
 }
 
-/// Which symbol a block opens with. Plain mode has no use for it: the
-/// text carries its own `warning:`/`note:` prefix and always did.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Tone {
-    Step,
-    Info,
-    Warn,
-    Error,
-    Done,
+/// A message's lines, each escaped on its own. The one place the split
+/// happens, so what [`escaped`] returns and what [`tell`] prints cannot
+/// drift apart: a break the caller wrote survives, and untrusted text
+/// inside a line still cannot act on the terminal.
+fn lines(text: &str) -> impl Iterator<Item = String> + '_ {
+    text.split('\n').map(shown)
 }
 
-/// A block that has been said and not yet drawn. Held open so the lines
-/// indented under its headline are drawn with it rather than as blocks of
-/// their own, and so a closing ledger with nothing after it can become
-/// the frame's last line instead of one more block inside it.
-struct Pending {
-    head: String,
-    /// Everything under the headline, carrying the indent it was written
-    /// with. A run of headlines with nothing under any of them is one
-    /// group rather than one block each: a tick per installation, each
-    /// walled off by its own blank rule, is the wall this module exists
-    /// to stop printing.
-    lines: Vec<String>,
-    /// Whether any of those lines is detail rather than another headline.
-    /// A block something was written under has said what it groups.
-    detailed: bool,
-    /// The next step under each part of a closing ledger.
-    steps: Vec<String>,
-    tone: Tone,
-    ledger: bool,
-}
-
-impl Pending {
-    /// Whether another headline of this tone belongs in this block.
-    fn takes(&self, tone: Tone, ledger: bool) -> bool {
-        !self.ledger && !ledger && !self.detailed && self.tone == tone
-    }
-}
-
-fn pending() -> MutexGuard<'static, Option<Pending>> {
-    static PENDING: OnceLock<Mutex<Option<Pending>>> = OnceLock::new();
-    let cell = PENDING.get_or_init(|| Mutex::new(None));
-    // A panic while a block was open leaves the block, not the process:
-    // the remaining output is worth more than the lock's poison flag.
-    cell.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+/// A message escaped without being flattened.
+pub(crate) fn escaped(text: &str) -> String {
+    lines(text).collect::<Vec<_>>().join("\n")
 }
 
 fn write_line(line: &str) {
@@ -176,61 +150,34 @@ pub fn out(line: &str) {
 /// One line of human output. Two leading spaces make it detail of the
 /// line above; anything else opens a block of its own.
 pub fn say(line: &str) {
-    tell(Tone::Step, &shown(line));
+    tell(Tone::Step, line);
 }
 
 /// A line the plan wrote about itself — a note, a skip, a decision.
 pub fn note(line: &str) {
-    tell(Tone::Info, &shown(line));
+    tell(Tone::Info, line);
 }
 
 /// A line about something that will not work as the reader expects.
 pub fn warn(line: &str) {
-    tell(Tone::Warn, &shown(line));
+    tell(Tone::Warn, line);
 }
 
 /// A line about something that did not happen.
 pub fn fail(line: &str) {
-    tell(Tone::Error, &shown(line));
+    tell(Tone::Error, line);
 }
 
-fn tell(tone: Tone, line: &str) {
-    if mode() == Mode::Plain {
-        return write_line(line);
-    }
-    if line.is_empty() {
-        return flush();
-    }
-    // Both of these take the lock and give it back inside themselves;
-    // nothing here holds it across a call that takes it again.
-    if let Some(detail) = line.strip_prefix("  ")
-        && attach(detail)
-    {
-        return;
-    }
-    open(tone, line, false, &[]);
-}
-
-/// Open the frame. Nothing is framed until this runs, so a verb that
-/// wants the framed rendering asks for it once, at its start.
-pub fn intro(title: &str) {
-    if !capable() {
-        return;
-    }
-    cliclack::set_theme(Kendex);
-    FRAMED.store(true, Ordering::Relaxed);
-    let _ = cliclack::intro(title);
-}
-
-/// The frame, with the blank rule between blocks taken out. A run's
-/// blocks are already told apart by the symbol each one opens with, and a
-/// rule drawn between every one of them doubles the height of a listing
-/// whose whole point is that it fits on a screen.
-struct Kendex;
-
-impl cliclack::Theme for Kendex {
-    fn format_log(&self, text: &str, symbol: &str) -> String {
-        self.format_log_with_spacing(text, symbol, false)
+/// One message, said a line at a time. A caller's break is a break in
+/// both renderings: plain writes the same bytes it always did, and a
+/// blank line in the framed one closes the block above it, which is what
+/// a caller writing `\n` before a heading was asking for.
+fn tell(tone: Tone, text: &str) {
+    for line in lines(text) {
+        match mode() {
+            Mode::Plain => write_line(&line),
+            Mode::Pretty => blocks::said(tone, &line),
+        }
     }
 }
 
@@ -238,8 +185,8 @@ impl cliclack::Theme for Kendex {
 /// that has one. Held open — with nothing after it, this is the line the
 /// frame closes on rather than one more block inside it.
 pub fn ledger(head: &str, steps: &[String]) {
-    let head = shown(head);
-    let steps: Vec<String> = steps.iter().map(|step| shown(step)).collect();
+    let head = escaped(head);
+    let steps: Vec<String> = steps.iter().map(|step| escaped(step)).collect();
     if mode() == Mode::Plain {
         write_line(&head);
         for step in &steps {
@@ -247,122 +194,17 @@ pub fn ledger(head: &str, steps: &[String]) {
         }
         return;
     }
-    open(Tone::Done, &head, true, &steps);
+    blocks::open(Tone::Done, &head, true, &steps);
 }
 
 /// The last line of a run that failed. Plain mode prints what it always
 /// printed; a frame closes on it in the failure style.
 pub fn outro_fail(line: &str) {
-    let line = shown(line);
+    let line = escaped(line);
     if mode() == Mode::Plain {
         return write_line(&line);
     }
-    flush();
-    CLOSED.store(true, Ordering::Relaxed);
-    let _ = cliclack::outro_cancel(line);
-}
-
-/// Draw whatever is still open, and close the frame. A ledger nothing
-/// followed becomes the closing line itself; a run whose ledger was
-/// already drawn — because output followed it — closes on a bare corner,
-/// since the frame it opened has to end somewhere.
-pub fn finish() {
-    if mode() == Mode::Plain {
-        return;
-    }
-    if let Some(block) = pending().take() {
-        draw(&block, true);
-    }
-    if FRAMED.load(Ordering::Relaxed) && !CLOSED.swap(true, Ordering::Relaxed) {
-        // Nothing left to say that has not been said: cliclack draws the
-        // corner and no text, which is the frame ending rather than one
-        // more line of output invented to end it.
-        let _ = cliclack::outro("");
-    }
-}
-
-fn open(tone: Tone, head: &str, ledger: bool, steps: &[String]) {
-    let grouped = match pending().as_mut() {
-        Some(block) if block.takes(tone, ledger) => {
-            block.lines.push(head.to_owned());
-            true
-        }
-        _ => false,
-    };
-    if grouped {
-        return;
-    }
-    flush();
-    *pending() = Some(Pending {
-        head: head.to_owned(),
-        lines: Vec::new(),
-        detailed: false,
-        steps: steps.to_vec(),
-        tone,
-        ledger,
-    });
-}
-
-/// Put a line under the block that is open, and say whether there was
-/// one: an indented line with no headline above it is a headline of its
-/// own, however it was written.
-fn attach(detail: &str) -> bool {
-    match pending().as_mut() {
-        Some(block) => {
-            block.lines.push(format!("  {detail}"));
-            block.detailed = true;
-            true
-        }
-        None => false,
-    }
-}
-
-/// Draw what is open, so that whatever comes next — a prompt, a wait, a
-/// line on the other stream — does not land above it.
-pub fn flush() {
-    if mode() == Mode::Plain {
-        return;
-    }
-    if let Some(block) = pending().take() {
-        draw(&block, false);
-    }
-}
-
-/// One block, drawn. Detail keeps the two spaces it was written with, so
-/// the hierarchy the caller wrote survives the framing. `last` closes the
-/// frame, which only a ledger does: a run that ends on anything else ends
-/// without a closing line rather than inventing one.
-fn draw(block: &Pending, last: bool) {
-    let mut text = block.head.clone();
-    for line in &block.lines {
-        text.push('\n');
-        text.push_str(line);
-    }
-    // A ledger's next steps are detail of its head, wherever it is drawn.
-    // The closing line has no gutter to hang them from — the frame ends on
-    // it — so they are indented past its own symbol instead, which puts
-    // them exactly where the plain rendering puts them: under the head.
-    let under = match block.ledger && last {
-        true => "\n     ",
-        false => "\n  ",
-    };
-    for step in &block.steps {
-        text.push_str(under);
-        text.push_str(step);
-    }
-    let _ = match block.ledger && last {
-        true => {
-            CLOSED.store(true, Ordering::Relaxed);
-            cliclack::outro(&text)
-        }
-        false => match block.tone {
-            Tone::Step => cliclack::log::step(&text),
-            Tone::Info => cliclack::log::info(&text),
-            Tone::Warn => cliclack::log::warning(&text),
-            Tone::Error => cliclack::log::error(&text),
-            Tone::Done => cliclack::log::success(&text),
-        },
-    };
+    blocks::fail_frame(&line);
 }
 
 #[cfg(test)]
@@ -378,6 +220,31 @@ mod tests {
         for ignored in ["auto", "", "Pretty", "1", "true", "plane"] {
             assert_eq!(wanted(ignored), None, "{ignored:?} was read as an answer");
         }
+    }
+
+    /// A break the caller wrote is structure and survives; a control
+    /// character inside a line is content and does not. Both halves in
+    /// one test, because a fix for either one alone regresses the other,
+    /// and this is the split `tell` prints through as well.
+    #[test]
+    fn a_break_survives_the_escaping_and_a_control_character_does_not() {
+        // What `kendex diff` writes before every file heading. Escaped
+        // whole, the blank line became the two characters a reader sees
+        // as a backslash and an n.
+        assert_eq!(escaped("\nSKILL.md  +2 -1"), "\nSKILL.md  +2 -1");
+        assert_eq!(escaped("first\nsecond\nthird"), "first\nsecond\nthird");
+        assert_eq!(escaped("trailing\n"), "trailing\n");
+        assert_eq!(escaped(""), "");
+        assert_eq!(escaped("\n"), "\n");
+
+        assert_eq!(escaped("we\u{1b}[31mird"), "we\\u{1b}[31mird");
+        assert_eq!(
+            escaped("one\nwe\u{1b}[31mird\ntwo"),
+            "one\nwe\\u{1b}[31mird\ntwo"
+        );
+        // A tab is a control character too, and a carriage return is the
+        // one that would redraw the line the reader is looking at.
+        assert_eq!(escaped("a\tb\rc"), "a\\tb\\rc");
     }
 
     /// One redirected stream is enough to make a run plain: a pipe on

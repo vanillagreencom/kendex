@@ -9,9 +9,7 @@
 
 use std::io::Write;
 
-use kendex_core::names::shown;
-
-use super::{Mode, mode};
+use super::{Mode, escaped, mode};
 
 /// Ask. The caller has already established there is somebody to ask: a
 /// run needing an answer with no terminal on stdin refuses before its
@@ -27,7 +25,7 @@ pub fn confirm(question: &str) -> std::io::Result<bool> {
     super::flush();
     // The same escaping every other human line gets: a question naming
     // packages read off a catalog is asked on the same terminal.
-    let asked = format!("{} [y/N]", shown(question));
+    let asked = format!("{} [y/N]", escaped(question));
     let answer = match mode() {
         Mode::Pretty => cliclack::input(asked)
             .default_input("N")
@@ -41,6 +39,23 @@ pub fn confirm(question: &str) -> std::io::Result<bool> {
         }
     };
     Ok(answered(&answer))
+}
+
+/// Ask for a line of typed input, for a question whose answer is not a
+/// yes or a no.
+///
+/// This and [`confirm`] are the only places the CLI reads from a person,
+/// and both draw whatever block is still open before they read. A
+/// question asked over an undrawn block is a question about lines the
+/// reader has not been shown yet, and no call site can reach a read
+/// without coming through one of these.
+pub fn ask(label: &str) -> std::io::Result<String> {
+    super::flush();
+    let _ = write!(std::io::stderr(), "{}", escaped(label));
+    let _ = std::io::stderr().flush();
+    let mut typed = String::new();
+    std::io::stdin().read_line(&mut typed)?;
+    Ok(typed)
 }
 
 /// What counts as a yes. Everything else is a no, the empty line
@@ -66,7 +81,7 @@ pub fn spinner(label: &str) -> Task {
         return Task(None);
     }
     let bar = cliclack::spinner();
-    bar.start(shown(label));
+    bar.start(escaped(label));
     Task(Some(bar))
 }
 

@@ -11,6 +11,8 @@ use kendex_core::registry::{CurlFetch, collections};
 use kendex_core::source_ops::{self, SourceAction};
 
 use super::engine_common::{apply_report, ask_before_writing, print_report, print_safety};
+use super::ledger::{Wrote, say_ledger};
+use super::offers::Blocked;
 use super::{CliResult, say};
 
 pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -> CliResult {
@@ -83,8 +85,8 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
     // answers for itself.
     let mut once: std::collections::BTreeMap<&str, &kendex_core::repo_effects::DeclaredEffects> =
         std::collections::BTreeMap::new();
-    for report in &settled {
-        for effect in &report.repo_effects {
+    for step in &settled {
+        for effect in &step.report.repo_effects {
             once.entry(effect.name.as_str()).or_insert(effect);
         }
     }
@@ -92,7 +94,45 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
         once.into_values().cloned().collect();
     let shown_to_them = super::repo_effects::disclose(env, scope, &pending)?;
     super::repo_effects::walkthrough(scope, &shown_to_them, allow_effects)?;
+
+    // The same close `add <package>` gives, over every step at once: a
+    // collection is one install, and a run that opened a frame has to end
+    // on what it wrote, skipped and flagged like any other. The parts are
+    // the ones each step already counted, never re-derived.
+    let applied: usize = settled.iter().map(|step| step.applied).sum();
+    // `None` where no step had anything to do, the way `add` reads it: a
+    // run that wrote nothing because there was nothing to write is up to
+    // date, and one that wrote nothing because it was refused is not.
+    let count = settled
+        .iter()
+        .any(|step| !step.report.plan.is_empty())
+        .then_some(applied);
+    let mut blocked: Vec<Blocked> = Vec::new();
+    let mut scored: Vec<kendex_core::engine::ItemSafety> = Vec::new();
+    for step in settled {
+        blocked.extend(step.blocked);
+        scored.extend(step.scored);
+    }
+    say_ledger(
+        scope,
+        Wrote {
+            verb: "added",
+            count,
+        },
+        &blocked,
+        &scored,
+    );
     Ok(())
+}
+
+/// What one step wrote, and what it could not. The collection's closing
+/// ledger is the sum of these, so each step hands back the counts it
+/// already took rather than leaving them to be worked out again.
+struct Installed {
+    report: kendex_core::engine::EngineReport,
+    blocked: Vec<Blocked>,
+    scored: Vec<kendex_core::engine::ItemSafety>,
+    applied: usize,
 }
 
 /// Subscribe (or reuse), install every member, and — for a reused
@@ -102,13 +142,16 @@ fn install_step(
     env: &Env,
     scope: &Scope,
     step: kendex_core::source_ops::CollectionStep,
-) -> Result<kendex_core::engine::EngineReport, Box<dyn std::error::Error>> {
+) -> Result<Installed, Box<dyn std::error::Error>> {
     let reused = matches!(step.action, SourceAction::Reuse { .. });
+    // What the subscription itself wrote counts the way `add` counts its
+    // own manifest save: the ledger reports changes, not packages.
+    let mut applied = 0usize;
     let source = match step.action {
         SourceAction::Reuse { name } => name,
         SourceAction::Subscribe { reference } => {
             let subscribed = source_ops::subscribe(env, scope, &reference, None)?;
-            apply_report(env, &subscribed.report)?;
+            applied += apply_report(env, &subscribed.report)?;
             say(&format!(
                 "{}: subscribed to '{}'",
                 scope.label(),
@@ -156,18 +199,25 @@ fn install_step(
             hold: false,
         },
     )?;
-    print_report(env, &report);
-    apply_report(env, &report)?;
+    let blocked = print_report(env, &report);
+    applied += apply_report(env, &report)?;
+    let mut scored = report.safety.clone();
     if reused && let Some(commit) = &step.commit {
         for (kind, name) in &members {
             let pinned = kendex_core::package::set_rev(env, scope, *kind, name, Some(commit))?;
             print_safety(&pinned);
-            apply_report(env, &pinned)?;
+            scored.extend(pinned.safety.iter().cloned());
+            applied += apply_report(env, &pinned)?;
         }
     }
     // The step's own plan goes back to the caller, which discloses over the
     // whole collection at once. Nothing here runs an effect.
-    Ok(report)
+    Ok(Installed {
+        report,
+        blocked,
+        scored,
+        applied,
+    })
 }
 
 /// Fetch one step's repository at its snapshot commit and prove every

@@ -8,7 +8,7 @@
 //! `--all-harnesses` and `--method` say the same things in flags, and a
 //! session with no terminal keeps the scope's own defaults.
 
-use std::io::{IsTerminal, Write};
+use std::io::IsTerminal;
 
 use kendex_core::engine::ops::detected_harnesses;
 use kendex_core::env::Env;
@@ -137,11 +137,5 @@ fn read_method() -> Result<Method, String> {
 }
 
 fn prompt(label: &str) -> Result<String, String> {
-    let _ = write!(std::io::stderr(), "{label}");
-    let _ = std::io::stderr().flush();
-    let mut answer = String::new();
-    std::io::stdin()
-        .read_line(&mut answer)
-        .map_err(|e| e.to_string())?;
-    Ok(answer)
+    crate::ui::ask(label).map_err(|e| e.to_string())
 }
