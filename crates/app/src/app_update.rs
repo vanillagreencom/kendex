@@ -88,6 +88,29 @@ pub fn app_update_channel() -> Result<InstallChannel, String> {
     ))
 }
 
+/// Somewhere to put the path kendex approved, on whatever will perform the
+/// replacement. The plugin keeps what it was handed private, so this side
+/// of the handoff is the only side a test can watch.
+trait ReplacementTarget: Sized {
+    fn replace_at(self, path: &std::path::Path) -> Self;
+}
+
+impl ReplacementTarget for tauri_plugin_updater::UpdaterBuilder {
+    fn replace_at(self, path: &std::path::Path) -> Self {
+        self.executable_path(path)
+    }
+}
+
+/// Hand over the path [`kendex_core::install_channel::for_app`] judged, so
+/// the path that decides and the path that acts are one file. An install
+/// carrying no path leaves the target on its own fallback.
+fn aim_at_install<T: ReplacementTarget>(target: T, install: &AppInstall) -> T {
+    match install.judged_path() {
+        Some(path) => target.replace_at(path),
+        None => target,
+    }
+}
+
 /// Replace this install with the latest release and relaunch into it. The
 /// separately signed updater manifest is the delivery path and verifies
 /// itself; the discovery feed never supplies an install URL. A failure
@@ -99,13 +122,7 @@ pub async fn app_update_install(app: tauri::AppHandle) -> Result<(), String> {
     // so nothing a caller gets wrong can overwrite a package manager's files.
     let install = app_install()?;
     kendex_core::install_channel::for_app(&install, &Host).allow_replacement()?;
-    // The approved path is handed over so the path that decides and the
-    // path that acts are one file.
-    let mut builder = app.updater_builder();
-    if let Some(path) = install.judged_path() {
-        builder = builder.executable_path(path);
-    }
-    let update = builder
+    let update = aim_at_install(app.updater_builder(), &install)
         .build()
         .map_err(|error| error.to_string())?
         .check()
@@ -142,6 +159,44 @@ mod tests {
             selected_feed(Some(fixture), false),
             kendex_core::update_feed::RELEASE_FEED_URL
         );
+    }
+
+    /// Stands in for the updater builder, which keeps what it was handed
+    /// private. What reaches it is what the plugin would have been given.
+    #[derive(Default)]
+    struct Recorder(Option<std::path::PathBuf>);
+
+    impl ReplacementTarget for Recorder {
+        fn replace_at(self, path: &std::path::Path) -> Self {
+            Self(Some(path.to_owned()))
+        }
+    }
+
+    /// The handoff itself. Everything else about this change can be right
+    /// while the approved path never leaves `app_update_install`, and the
+    /// plugin then falls back to rebuilding its own from the launch
+    /// environment, which is the whole defect.
+    #[test]
+    fn the_approved_path_reaches_whatever_will_replace_it() {
+        for install in [
+            AppInstall::AppImage(Some("/home/pat/Apps/kendex.AppImage".into())),
+            AppInstall::MacBundle("/Applications/kendex.app/Contents/MacOS/kendex".into()),
+        ] {
+            assert_eq!(
+                aim_at_install(Recorder::default(), &install).0.as_deref(),
+                install.judged_path(),
+                "{install:?}"
+            );
+        }
+
+        // Nothing to hand over, so the target keeps its own fallback.
+        for install in [AppInstall::WindowsInstaller, AppInstall::AppImage(None)] {
+            assert_eq!(
+                aim_at_install(Recorder::default(), &install).0,
+                None,
+                "{install:?}"
+            );
+        }
     }
 
     /// Only the bundle is writable, so `for_app` can approve nothing else.
