@@ -91,6 +91,14 @@ impl Pre {
         })
     }
 
+    /// [`Pre::check`] for tests outside the apply module — the same
+    /// judgment, so a test cannot pass against a check the apply does not
+    /// make.
+    #[cfg(test)]
+    pub fn check_for_test(&self, path: &Path) -> Result<()> {
+        self.check(path)
+    }
+
     pub(super) fn check(&self, path: &Path) -> Result<()> {
         let ok = match self {
             Pre::Any => true,

@@ -326,12 +326,17 @@ pub(super) fn plan_settings_seed(
     ops.push(PlannedOp {
         description: format!("Update {file} ({})", said.join("; ")),
         op: Op::WriteFile {
-            // An edited copy binds to the file it was read from, the way
-            // the manifest's does: a writer landing after the caller's own
-            // check is refused by the apply rather than overwritten.
+            // Bound to the bytes AND to their being a plain file. This
+            // path refuses a symlinked settings file above, and a check
+            // before a write is a race: swapped for a link afterwards, a
+            // following precondition passes on the target's bytes and the
+            // write lands outside the project. The refusal travels with
+            // the operation instead. An edited copy binds to the file it
+            // was read from, the way the manifest's does, so a writer
+            // landing after the caller's own check is refused too.
             pre: match draft {
-                Some(draft) => Pre::from(&draft.base),
-                None => Pre::observed(&path)?,
+                Some(draft) => draft.base.plain_pre(),
+                None => Pre::plain_observed(&path)?,
             },
             path,
             bytes: text.into_bytes(),
