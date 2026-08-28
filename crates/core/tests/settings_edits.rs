@@ -30,10 +30,33 @@ struct Fixture {
 #[allow(clippy::unwrap_used)]
 fn fixture(template: &str) -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path().to_path_buf();
+    fixture_at(tmp.path().to_path_buf(), template, tmp)
+}
+
+/// [`fixture`], with every path reaching the home through a symlink — the
+/// spelling macOS hands every test anyway, since `/var` fronts its temp
+/// directories as `/private/var`. Reproduced here so a path this suite
+/// spells one way and the engine another fails on every platform rather
+/// than on the macOS lane alone.
+#[allow(clippy::unwrap_used)]
+fn fixture_via_link(template: &str) -> Fixture {
+    let tmp = tempfile::tempdir().unwrap();
+    let real = tmp.path().join("real");
+    fs::create_dir_all(&real).unwrap();
+    let home = tmp.path().join("via");
+    std::os::unix::fs::symlink(&real, &home).unwrap();
+    fixture_at(home, template, tmp)
+}
+
+/// The fixture body both share. Every path here is the one the engine
+/// speaks: it canonicalizes a scope before it plans, so a fixture holding
+/// the caller's spelling would be comparing two names for one file.
+#[allow(clippy::unwrap_used)]
+fn fixture_at(home: std::path::PathBuf, template: &str, tmp: tempfile::TempDir) -> Fixture {
     let env = Env::fake(&home, FakeOs::Linux);
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();
+    let project = project.canonicalize().unwrap();
 
     let source = home.join("catalog");
     let skill = source.join("skills/review");
@@ -529,4 +552,33 @@ fn a_settings_file_swapped_for_a_link_between_plan_and_apply_refuses() {
     let refused = apply::execute(&f.env, &report.plan, None).unwrap_err();
     assert!(stale_at(&refused, &settings_path(&f)), "{refused:?}");
     assert_eq!(fs::read_to_string(&outside).unwrap(), kept);
+}
+
+/// The refusals name a file, and this suite compares that name with its
+/// own. Reached through a link the two spellings differ — which is what
+/// macOS hands every test — so the same refusals are asserted again on a
+/// world built that way. A fixture speaking the caller's spelling passes
+/// here and fails on the macOS lane alone.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_refusal_names_the_file_the_same_way_through_a_link() {
+    let f = fixture_via_link(TEMPLATE);
+    install(&f);
+    let held = base_now(&f);
+    let newer = fs::read_to_string(settings_path(&f))
+        .unwrap()
+        .replace("\"2\"", "\"someone else\"");
+    fs::write(settings_path(&f), &newer).unwrap();
+
+    let refused = save(&f, vec![set("REVIEWERS", "arch")], held).unwrap_err();
+    assert!(stale_at(&refused, &settings_path(&f)), "{refused:?}");
+    assert_eq!(fs::read_to_string(settings_path(&f)).unwrap(), newer);
+
+    // And an edit that lands, so the link is not merely refusing early.
+    save(&f, vec![set("REVIEWERS", "arch")], base_now(&f)).unwrap();
+    assert!(
+        fs::read_to_string(settings_path(&f))
+            .unwrap()
+            .contains("REVIEWERS = \"arch\"")
+    );
 }
