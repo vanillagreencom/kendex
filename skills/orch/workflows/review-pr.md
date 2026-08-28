@@ -58,7 +58,7 @@ A failed check omits the path and carries `- decision index lookup failed for [D
 
 ## 2. Prepare Reviewers
 
-`[AGENTS]` is the caller's `agents` context when provided, otherwise every `reviewer-*` agent this harness exposes. Do not hardcode a count or a list. A diff owning a subprocess, a transport (stream, socket, SSE), or a teardown path always carries `reviewer-error` — add it when the caller's panel omits it; relevance never removes it. With no reviewers available, skip to § 5 with verdict `pass`.
+`[AGENTS]` is the caller's `agents` context when provided, otherwise every `reviewer-*` agent this harness exposes. Do not hardcode a count or a list. Where the harness exposes `reviewer-error`, a diff owning a subprocess, a transport (stream, socket, SSE), or a teardown path always carries it: relevance never drops it from the panel. With no reviewers available, skip to § 5 with verdict `pass`.
 
 Resolve the reviewer mode per [SKILL.md § Agent Lifecycle](../SKILL.md#agent-lifecycle):
 
