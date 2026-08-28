@@ -4,12 +4,14 @@
 // the check failed or the release is hidden, and only the action the
 // running install's channel can carry out.
 import userEvent from "@testing-library/user-event";
+import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppUpdateView, InstallChannel } from "@/bindings";
 import { commands } from "@/bindings";
 import {
   APP_UPDATE_DISMISS_LABEL,
   APP_UPDATE_INSTALL_LABEL,
+  APP_UPDATE_INSTALLING_LABEL,
   APP_UPDATE_NOTES_LABEL,
   APP_UPDATE_TITLE,
   APP_UPDATE_UNKNOWN_NOTE,
@@ -72,13 +74,17 @@ async function show(channel: InstallChannel = { kind: "direct" }) {
   return container;
 }
 
-const press = async (container: HTMLElement, label: string) => {
+const offer = (container: HTMLElement, label: string): HTMLButtonElement => {
   const button = [...container.querySelectorAll("button")].find(
     (node) =>
       node.textContent === label || node.getAttribute("aria-label") === label,
   );
   if (!button) throw new Error(`no "${label}" button on the card`);
-  await userEvent.click(button);
+  return button;
+};
+
+const press = async (container: HTMLElement, label: string) => {
+  await userEvent.click(offer(container, label));
   await settle();
 };
 
@@ -96,6 +102,7 @@ beforeEach(() => {
     status: "ok",
     data: { settings: { schema: 1, appearance: "system" }, base: "abc" },
   });
+  vi.mocked(commands.openUrl).mockResolvedValue({ status: "ok", data: null });
   vi.mocked(commands.updateSettings).mockResolvedValue({
     status: "ok",
     data: { settings: { schema: 1, appearance: "system" }, base: "def" },
@@ -108,7 +115,11 @@ describe("what the card says", () => {
     expect(container.textContent).toContain(APP_UPDATE_TITLE);
     expect(container.textContent).toContain(RELEASED);
     expect(container.textContent).toContain(RUNNING);
-    expect(container.textContent).toContain(APP_UPDATE_NOTES_LABEL);
+    // The release notes are the one offer every channel carries, and the
+    // link is the release's own: an app that cannot replace itself still
+    // has to be able to send the person to what changed.
+    await press(container, APP_UPDATE_NOTES_LABEL);
+    expect(commands.openUrl).toHaveBeenCalledWith(NOTES);
   });
 
   it("stays away while this build is the latest", async () => {
@@ -136,11 +147,34 @@ describe("what the card says", () => {
 });
 
 describe("the action each channel allows", () => {
+  // In flight is the last state this offer has: the real command does not
+  // come back when it works, the app restarts into the new version. So the
+  // replacement is held open here and the card read while it runs.
   it("offers the replacement where kendex owns the files", async () => {
+    let finish = () => {};
+    vi.mocked(commands.appUpdateInstall).mockReturnValue(
+      new Promise((resolve) => {
+        finish = () => resolve({ status: "ok", data: null });
+      }),
+    );
     const container = await show({ kind: "direct" });
     expect(container.textContent).toContain(APP_UPDATE_INSTALL_LABEL);
     await press(container, APP_UPDATE_INSTALL_LABEL);
-    expect(commands.appUpdateInstall).toHaveBeenCalled();
+    expect(commands.appUpdateInstall).toHaveBeenCalledTimes(1);
+
+    // Running: the card says so, nothing has failed, and the offer cannot
+    // be taken a second time — by the button, and by the store behind it,
+    // which is what a keyboard or a second window would reach.
+    expect(container.textContent).toContain(APP_UPDATE_INSTALLING_LABEL);
+    expect(useNoticeStore.getState().error).toBeNull();
+    expect(offer(container, APP_UPDATE_INSTALLING_LABEL).disabled).toBe(true);
+    await act(async () => {
+      await useNoticeStore.getState().install();
+    });
+    expect(commands.appUpdateInstall).toHaveBeenCalledTimes(1);
+
+    finish();
+    await settle();
   });
 
   it("shows a package manager's command and offers no replacement", async () => {
