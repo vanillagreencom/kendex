@@ -357,7 +357,7 @@ fn one_note_groups_every_owner_and_every_distinct_default() {
     assert_eq!(
         notes,
         [
-            "kendex.settings.toml WAIT: packages ship different defaults — \"900\" (alpha, beta), \"600\" (gamma) — only alpha's is seeded, so set the value yourself if that is not the one you want"
+            "kendex.settings.toml WAIT: packages ship different defaults — \"900\" (alpha, beta), \"600\" (gamma) — where this file does not already assign it, alpha's is the one seeded, so set the value yourself if that is not the one you want"
         ]
     );
 }
@@ -400,7 +400,7 @@ fn the_note_names_the_owner_whose_value_merge_actually_seeds() {
     assert_eq!(
         notes,
         [
-            "kendex.settings.toml WAIT: packages ship different defaults — \"900\" (alpha), \"600\" (beta), \"300\" (gamma) — only alpha's is seeded, so set the value yourself if that is not the one you want"
+            "kendex.settings.toml WAIT: packages ship different defaults — \"900\" (alpha), \"600\" (beta), \"300\" (gamma) — where this file does not already assign it, alpha's is the one seeded, so set the value yourself if that is not the one you want"
         ]
     );
     // And alpha is what merge writes, which is what the note claims.
@@ -418,7 +418,7 @@ fn a_default_no_decoder_reads_still_names_its_owner() {
     assert_eq!(
         notes,
         [
-            "kendex.settings.toml WAIT: packages ship different defaults — 900 (alpha), \"600\" (beta) — only alpha's is seeded, so set the value yourself if that is not the one you want"
+            "kendex.settings.toml WAIT: packages ship different defaults — 900 (alpha), \"600\" (beta) — where this file does not already assign it, alpha's is the one seeded, so set the value yourself if that is not the one you want"
         ]
     );
 }

@@ -301,6 +301,12 @@ pub fn merge(original: Option<&str>, entries: &[SeededEnv]) -> Option<(String, V
 /// out of a key it does seed — and with it the owner named as the one
 /// whose value lands.
 ///
+/// The note is raised before the settings file is even read, because the
+/// disagreement is worth saying either way. So it says which default
+/// seeding WOULD write, under the condition seeding writes at all: a key
+/// the file already assigns is left alone, and a note claiming a value
+/// landed would be false exactly there.
+///
 /// Key, owners and defaults are all catalog text a download supplied, so
 /// the finished line goes through [`crate::names::shown`]: a note is read
 /// on a terminal, and nothing in it is a sequence to act on.
@@ -326,7 +332,7 @@ pub fn conflict_notes(entries: &[SeededEnv]) -> Vec<String> {
                 .map(|(value, owners)| format!("{value} ({})", owners.join(", ")))
                 .collect();
             crate::names::shown(&format!(
-                "{SETTINGS_FILE} {key}: packages ship different defaults — {} — only {lands}'s is seeded, so set the value yourself if that is not the one you want",
+                "{SETTINGS_FILE} {key}: packages ship different defaults — {} — where this file does not already assign it, {lands}'s is the one seeded, so set the value yourself if that is not the one you want",
                 shown.join(", ")
             ))
         })

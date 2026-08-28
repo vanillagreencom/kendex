@@ -399,3 +399,44 @@ fn a_key_shipped_with_one_default_everywhere_is_silent() {
     let notes = audit(&f.env, &f.scope).unwrap().notes;
     assert!(!notes.iter().any(|note| note.contains("MODE")), "{notes:?}");
 }
+
+/// The note is raised before the settings file is read, so it also fires on
+/// a key the file already assigns — where seeding writes nothing at all.
+/// The disagreement is still worth saying; claiming a value landed there
+/// would not be.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_note_claims_no_write_for_a_key_the_file_already_assigns() {
+    let f = many_owners(&[
+        ("alpha", "[env]\n# How long to wait.\nWAIT = \"900\"\n"),
+        ("beta", "[env]\n# How long to wait.\nWAIT = \"600\"\n"),
+    ]);
+    let settings = f.project.join("kendex.settings.toml");
+    fs::write(&settings, "[env]\n# Mine.\nWAIT = \"5\"\n").unwrap();
+
+    let report = audit(&f.env, &f.scope).unwrap();
+    let about: Vec<&String> = report
+        .notes
+        .iter()
+        .filter(|note| note.contains("WAIT"))
+        .collect();
+    assert_eq!(about.len(), 1, "{:?}", report.notes);
+    assert!(
+        about[0].contains("where this file does not already assign it"),
+        "{about:?}"
+    );
+    // Nothing is planned for the settings file, so nothing was seeded.
+    assert!(
+        !report
+            .plan
+            .ops
+            .iter()
+            .any(|op| op.description.contains("kendex.settings.toml")),
+        "an assigned key must not be re-seeded"
+    );
+    apply_now(&f);
+    assert_eq!(
+        fs::read_to_string(&settings).unwrap(),
+        "[env]\n# Mine.\nWAIT = \"5\"\n"
+    );
+}
