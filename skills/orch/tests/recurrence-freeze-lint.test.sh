@@ -75,12 +75,12 @@ signals_route() { strip_comments "$1" | grep -E '^\| .+ \| § Recurrence' || tru
 # 141 into a failed check for a contract that is present.
 check_token() {
   # $1 = file, $2 = literal token, $3 = label
-  if grep -qF "$2" <<<"$(strip_comments "$1")"; then pass "$3"; else fail "$3"; fi
+  if grep -qF -- "$2" <<<"$(strip_comments "$1")"; then pass "$3"; else fail "$3"; fi
 }
 
 check_section_token() {
   # $1 = file, $2 = literal token, $3 = label
-  if grep -qF "$2" <<<"$(recurrence_section "$1")"; then pass "$3"; else fail "$3"; fi
+  if grep -qF -- "$2" <<<"$(recurrence_section "$1")"; then pass "$3"; else fail "$3"; fi
 }
 
 # --- the rule -----------------------------------------------------------
@@ -95,12 +95,13 @@ check_section_token "$DISPOSITION" '`Tracked: <ID>`' \
 check_section_token "$DISPOSITION" '`decline`' \
   "Recurrence declines a later finding on a frozen cause"
 
-# The trigger is a cause a prior round PATCHED, and `fixed_items` is the record
-# that says so — every dev-fix round writes its applied items there. A cause
+# The trigger is a cause a prior round PATCHED, and `patched_causes` is the
+# record that says so: its entries carry the normalized cause, which is the
+# question the trigger asks and the one `fixed_items` cannot answer. A cause
 # merely answered, a decline or a filing, has no patch sequence to end and
 # stays with the decision flow, whose heading is the token that names it.
-check_section_token "$DISPOSITION" '`fixed_items`' \
-  "Recurrence triggers on the cause fixed_items records, not any answered one"
+check_section_token "$DISPOSITION" '`patched_causes`' \
+  "Recurrence triggers on the cause patched_causes records, not any answered one"
 check_section_token "$DISPOSITION" 'decision flow' \
   "Recurrence routes a never-patched cause back to the decision flow"
 
@@ -197,10 +198,41 @@ else
 fi
 # The two records the recurrence check reads. A resolved thread is invisible to
 # the next pass, so a cause is recurrence only if a pass wrote it down.
-check_token "$COMMENTS_WF" "append [ISSUE_ID] pr_comment_review.patched_causes" \
+check_token "$COMMENTS_WF" "--slurpfile entry [WORKTREE_PATH]/tmp/patched-cause-[ISSUE_ID].json" \
   "§ 6.1 records a patched cause where it replies and resolves"
-check_token "$COMMENTS_WF" "append [ISSUE_ID] pr_comment_review.frozen_causes" \
+check_token "$COMMENTS_WF" "--slurpfile entry [WORKTREE_PATH]/tmp/frozen-cause-[ISSUE_ID].json" \
   "§ 6 records a frozen cause in workflow state"
+
+# Reviewer text never crosses argv: no cause is appended as an inline literal.
+if grep -qE 'append \[ISSUE_ID\] pr_comment_review\.(patched|frozen)_causes' <<<"$(strip_comments "$COMMENTS_WF")"; then
+  fail "a cause write puts reviewer text back on the command line"
+else
+  pass "neither cause write puts reviewer text on the command line"
+fi
+
+# The documented channel, executed rather than described: a cause carrying an
+# apostrophe and one carrying a double quote must reach the store intact. The
+# write lands after the thread is resolved, so a write that dies on the text
+# leaves a closed thread and nothing remembered.
+WFS="$SKILL_DIR/scripts/workflow-state"
+STATE_DIR="$TMP_ROOT/state"
+if [[ -x "$WFS" ]]; then
+  mkdir -p "$STATE_DIR"
+  "$WFS" --state-dir "$STATE_DIR" init KEN-0 --agent generalist --worktree "$TMP_ROOT" >/dev/null
+  for probe in "don't patch it twice" 'the "same" cause again'; do
+    jq -nc --arg c "$probe" '{cause: $c, commit: "abc123f"}' > "$TMP_ROOT/entry.json"
+    "$WFS" --state-dir "$STATE_DIR" update KEN-0 --slurpfile entry "$TMP_ROOT/entry.json" \
+      '$entry[0] as $e | .pr_comment_review.patched_causes = ((.pr_comment_review.patched_causes // []) + [$e])' >/dev/null
+  done
+  STORED="$("$WFS" --state-dir "$STATE_DIR" get KEN-0 '[.pr_comment_review.patched_causes[].cause] | join("|")')"
+  if [[ "$STORED" == *"don't patch it twice"* && "$STORED" == *'the "same" cause again'* ]]; then
+    pass "a cause carrying an apostrophe and one carrying a double quote survive the write"
+  else
+    fail "the file channel lost a quoted cause: $STORED"
+  fi
+else
+  fail "workflow-state is not executable at $WFS — the channel check cannot run"
+fi
 check_token "$COMMENTS_WF" ".pr_comment_review.patched_causes // []" \
   "§ 5 reads the patched causes before triaging a pass"
 check_token "$COMMENTS_WF" ".pr_comment_review.frozen_causes // []" \
@@ -246,12 +278,12 @@ plant() {
 
 gone() {
   # $1 = extractor, $2 = fixture, $3 = token that must be gone, $4 = label
-  if grep -qF "$3" <<<"$("$1" "$2")"; then fail "lint MISSED $4"; else pass "lint flags $4"; fi
+  if grep -qF -- "$3" <<<"$("$1" "$2")"; then fail "lint MISSED $4"; else pass "lint flags $4"; fi
 }
 
 drop() {
   # $1 = control name, $2 = source file, $3 = token to substitute away
-  plant "$1" "$2" "s/$(sed 's/[\/&]/\\&/g' <<<"$3")/REDACTED/g"
+  plant "$1" "$2" "s/$(sed 's/[][\\.*^$\/&]/\\&/g' <<<"$3")/REDACTED/g"
 }
 
 gone strip_comments "$(plant heading "$DISPOSITION" 's/^## Recurrence$/## Repeat findings/')" \
@@ -262,8 +294,8 @@ gone recurrence_section "$(drop tracked "$DISPOSITION" '`Tracked: <ID>`')" \
   '`Tracked: <ID>`' "a dropped Tracked reply form"
 gone recurrence_section "$(drop declined "$DISPOSITION" '`decline`')" \
   '`decline`' "a frozen cause that files again instead of declining"
-gone recurrence_section "$(drop trigger "$DISPOSITION" '`fixed_items`')" \
-  '`fixed_items`' "a trigger cut loose from the record that proves a patch"
+gone recurrence_section "$(drop trigger "$DISPOSITION" '`patched_causes`')" \
+  '`patched_causes`' "a trigger cut loose from the record that proves a patch"
 
 # Two tokens, so two fixtures: dropping either must redden the carve-out.
 for token in introduces arms; do
@@ -343,10 +375,29 @@ fi
 
 gone section_6_1 "$(drop replylabel "$COMMENTS_WF" '**Reply step.**')" \
   '**Reply step.**' "a reply step that stopped saying who reaches it"
-gone strip_comments "$(drop patched "$COMMENTS_WF" 'patched_causes')" \
-  'patched_causes' "a patched cause nothing records"
-gone strip_comments "$(drop frozen "$COMMENTS_WF" 'frozen_causes')" \
-  'frozen_causes' "a freeze that records no cause"
+gone strip_comments "$(drop patched "$COMMENTS_WF" '/tmp/patched-cause-[ISSUE_ID].json')" \
+  '--slurpfile entry [WORKTREE_PATH]/tmp/patched-cause-[ISSUE_ID].json' "a patched cause nothing records"
+gone strip_comments "$(drop frozen "$COMMENTS_WF" '/tmp/frozen-cause-[ISSUE_ID].json')" \
+  '--slurpfile entry [WORKTREE_PATH]/tmp/frozen-cause-[ISSUE_ID].json' "a freeze that records no cause"
+
+# The inline shape the workflow used to carry, with a real cause substituted:
+# bash cannot even parse it, which is the failure the file channel removes.
+INLINE="$(printf 'wfs append KEN-0 pr_comment_review.patched_causes '"'"'{"cause":"%s"}'"'"'' "don't patch it twice")"
+FILED="$(printf 'wfs update KEN-0 --slurpfile entry %s '"'"'$entry[0] as $e | .x += [$e]'"'"'' "$TMP_ROOT/entry.json")"
+if bash -n <<<"$INLINE" 2>/dev/null; then
+  fail "control inline parsed — the apostrophe no longer breaks the argv shape"
+elif bash -n <<<"$FILED" 2>/dev/null; then
+  pass "lint flags the argv shape an apostrophe breaks, and the file shape it replaces parses"
+else
+  fail "control filed did not parse — the channel comparison is not like for like"
+fi
+
+CTRL="$(plant argv "$COMMENTS_WF" '{ print } END { print "`workflow-state append [ISSUE_ID] pr_comment_review.patched_causes ...`" }' awk)"
+if grep -qE 'append \[ISSUE_ID\] pr_comment_review\.(patched|frozen)_causes' <<<"$(strip_comments "$CTRL")"; then
+  pass "lint flags a cause write moved back onto the command line"
+else
+  fail "lint MISSED a cause write moved back onto the command line"
+fi
 
 for token in patched_causes frozen_causes; do
   gone strip_comments "$(drop "schema-$token" "$STATE_SCHEMA" "$token")" \

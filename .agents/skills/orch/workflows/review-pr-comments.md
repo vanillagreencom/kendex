@@ -176,10 +176,13 @@ Omit empty sections and proceed straight to § 6 — no user prompt.
 
 The `fix set` is every § 5 row marked Fixing plus every `structural-close` row: a structural close IS a fix round, one whose item names the generating surface rather than the site, and cutting surface the Done-when does not require is a close. `freeze` and `declined` rows are `reply-only` — they never join the delegation, the commit, or the push. A `freeze` files its class issue through § 6.2 first and returns to § 6.1's `reply step`; a `declined` row replies there naming the class issue.
 
-A `freeze` records its cause before the reply, which is what makes the next pass decline instead of re-triage:
+A `freeze` records its cause before the reply, which is what makes the next pass decline instead of re-triage. The cause is reviewer-derived text, so it never crosses argv: write `[WORKTREE_PATH]/tmp/frozen-cause-[ISSUE_ID].json` with the harness file-write tool, then bind the path.
 
+```json
+{"cause": "[ONE_LINE]", "issue": "[CLASS_ISSUE_ID]"}
+```
 ```bash
-.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.frozen_causes '{"cause":"[ONE_LINE]","issue":"[CLASS_ISSUE_ID]"}'
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile entry [WORKTREE_PATH]/tmp/frozen-cause-[ISSUE_ID].json '$entry[0] as $e | .pr_comment_review.frozen_causes = ((.pr_comment_review.frozen_causes // []) + [$e])'
 ```
 
 ### 6.1 Delegate Fixes
@@ -281,10 +284,13 @@ resolving the thread does not. A decline is a decline — say so.
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.replied '{"source_id":"[THREAD_ID]","commit":"[COMMIT_SHA]","outcome":"[applied|skipped|blocked|already_fixed]"}'
 ```
 
-An applied item records its root cause here too, in the same shape a freeze uses. The thread is resolved by the line above and § 1 excludes it from the next pass, so this record is the only thing that tells a later pass the cause was patched:
+An applied item records its root cause here too, through the same file channel. The thread is resolved by the line above and § 1 excludes it from the next pass, so this record is the only thing that tells a later pass the cause was patched, and a write that dies on an apostrophe leaves the thread closed with nothing remembered. Write `[WORKTREE_PATH]/tmp/patched-cause-[ISSUE_ID].json`, then bind the path.
 
+```json
+{"cause": "[ONE_LINE]", "commit": "[COMMIT_SHA]"}
+```
 ```bash
-.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.patched_causes '{"cause":"[ONE_LINE]","commit":"[COMMIT_SHA]"}'
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile entry [WORKTREE_PATH]/tmp/patched-cause-[ISSUE_ID].json '$entry[0] as $e | .pr_comment_review.patched_causes = ((.pr_comment_review.patched_causes // []) + [$e])'
 ```
 
 Inline `--body` only for plain strings; a reply containing backticks or fences goes to a file and `--body-file` instead. PR-level comments and human-only threads stay deferred to § 7.
