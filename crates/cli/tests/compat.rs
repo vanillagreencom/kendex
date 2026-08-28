@@ -70,10 +70,15 @@ fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
+/// Whether this target's release carries an app for the command to
+/// replace, asked of the helper the command itself asks. Restating the
+/// mapping here would let the test hold one contract while the code holds
+/// another, and agree again only by luck. The version is any valid SemVer:
+/// it is parsed and then plays no part in the answer.
 fn publishes_an_app_image() -> bool {
     matches!(
-        env!("KENDEX_TARGET"),
-        "x86_64-unknown-linux-gnu" | "aarch64-unknown-linux-gnu"
+        kendex_core::update_feed::app_image_url("9.9.9", env!("KENDEX_TARGET")),
+        Ok(Some(_))
     )
 }
 
