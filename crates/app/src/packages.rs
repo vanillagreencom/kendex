@@ -32,7 +32,10 @@ pub fn package_versions(
 /// scope's view afterwards. The plan holds a rendering back rather than
 /// writing over a copy somebody changed, and the view alone cannot say
 /// which of the two happened — a caller reading only the view says
-/// "Updated" over a package that never moved.
+/// "Updated" over a package that never moved. Every command that applies
+/// one package answers with this, the version switch included: a hold
+/// that moves in the manifest is refused on disk for the same reasons an
+/// update is.
 #[derive(serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageUpdate {
@@ -70,21 +73,35 @@ pub fn package_update(scope: Scope, kind: ItemKind, name: String) -> Result<Pack
     }
     let env = env()?;
     let report = package::update_one(&env, &scope, kind, &name).map_err(|e| e.to_string())?;
-    let held_back = package::held_back(&report, kind, &name)
+    settle_package(&env, &scope, kind, &name, &report)
+}
+
+/// Apply one package-scoped plan and answer with what it did to that
+/// package beside the standing it leaves. Read off the report before the
+/// apply runs, because that is the record naming which renderings the
+/// plan writes and which it refuses.
+fn settle_package(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    report: &engine::EngineReport,
+) -> Result<PackageUpdate, String> {
+    let held_back = package::held_back(report, kind, name)
         .into_iter()
         .cloned()
         .collect();
-    let removed = package::removed(&report, kind, &name)
+    let removed = package::removed(report, kind, name)
         .into_iter()
         .cloned()
         .collect();
-    let moved = package::moving(&report, kind, &name)
+    let moved = package::moving(report, kind, name)
         .into_iter()
         .cloned()
         .collect();
-    apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
+    apply::execute(env, &report.plan, None).map_err(|e| e.to_string())?;
     Ok(PackageUpdate {
-        view: view(&env, &scope),
+        view: view(env, scope),
         held_back,
         removed,
         moved,
@@ -97,6 +114,11 @@ pub fn package_update(scope: Scope, kind: ItemKind, name: String) -> Result<Pack
 /// neighbours current. The exception is a follower the lock cannot place
 /// — never installed, or installations disagreeing — which resolves fresh
 /// here as it would under a whole-scope apply.
+///
+/// The answer is the same `PackageUpdate` the update command gives, and
+/// for the same reason: the manifest takes the new hold either way, while
+/// a rendering somebody edited is held back on disk, so a caller reading
+/// the view alone would report a switch that never reached the files.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn package_set_rev(
@@ -104,7 +126,7 @@ pub fn package_set_rev(
     kind: ItemKind,
     name: String,
     rev: Option<String>,
-) -> Result<AuditView, String> {
+) -> Result<PackageUpdate, String> {
     let env = env()?;
     let report = package::set_rev_with(
         &env,
@@ -115,8 +137,7 @@ pub fn package_set_rev(
         &engine::PlanOptions::for_package(kind, &name),
     )
     .map_err(|e| e.to_string())?;
-    apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
-    Ok(view(&env, &scope))
+    settle_package(&env, &scope, kind, &name, &report)
 }
 
 #[tauri::command(async)]

@@ -47,10 +47,14 @@ describe("outcomeOf", () => {
     });
   });
 
-  // A hold move answers with the view alone, so the command succeeding is
-  // all there is to go on.
-  it("reads a hold move as moved", () => {
-    expect(outcomeOf(null)).toEqual({ removed: [], held: [], moved: true });
+  // A plan that refused nothing wrote the package, whether or not the
+  // report names a rendering it moved.
+  it("reads an apply that refused nothing as moved", () => {
+    expect(outcomeOf(update({}))).toEqual({
+      removed: [],
+      held: [],
+      moved: true,
+    });
   });
 
   it("reads a refusal that kept the copy as held, and nothing moved", () => {

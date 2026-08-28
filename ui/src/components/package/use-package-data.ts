@@ -1,21 +1,27 @@
 import { useCallback, useEffect, useState } from "react";
-import { toast } from "sonner";
 import {
   commands,
   type HarnessId,
   type PackageDiff,
   type PackageFile,
   type PackageMeta_Serialize,
+  type PackageUpdate_Serialize,
   type Scope,
   type VersionRow,
 } from "@/bindings";
 import {
+  FOLLOW_SOURCE_STALLED_TOAST,
   FOLLOW_SOURCE_TOAST,
+  notSwitchedToastLead,
   updatedToastLabel,
   VERSION_ERROR_TITLE,
 } from "@/lib/copy";
 import { sameScope } from "@/lib/scope";
-import { showUpdateOutcome } from "@/lib/update-outcome";
+import {
+  type OutcomeLines,
+  showUpdateOutcome,
+  updateLines,
+} from "@/lib/update-outcome";
 import { versionRowLabel } from "@/lib/versions";
 import { useAuditStore } from "@/stores/audit";
 import { useEditorStore } from "@/stores/editor";
@@ -137,9 +143,18 @@ export function packageVersionActions(
     void useScanStore.getState().refresh();
     void useAuditStore.getState().refresh({ force: true });
   };
+  // Every one of these applies a plan that can refuse a rendering, so
+  // none of them toasts off the click: the command's own report says what
+  // reached the files, and `lines` is only how this surface words it.
+  // This page has no edited-row filter, and a refusal is broader than an
+  // edit anyway — files kendex never put there, a provenance clash — so
+  // the held answer arrives here whatever the page believes about edits.
   const run = (
-    call: Promise<{ status: "ok" } | { status: "error"; error: string }>,
-    toastMessage: string,
+    call: Promise<
+      | { status: "ok"; data: PackageUpdate_Serialize }
+      | { status: "error"; error: string }
+    >,
+    lines: OutcomeLines,
   ) => {
     setBusy(true);
     void call.then((response) => {
@@ -148,45 +163,35 @@ export function packageVersionActions(
         showError(response.error);
         return;
       }
-      toast.success(toastMessage);
+      showUpdateOutcome(displayName, response.data, lines);
       afterChange();
     });
   };
 
-  const switchTo = (row: VersionRow) =>
-    run(
-      commands.packageSetRev(ref.scope, ref.kind, ref.name, row.id),
-      updatedToastLabel(`${displayName} to ${versionRowLabel(row)}`),
-    );
+  const switchTo = (row: VersionRow) => {
+    const version = versionRowLabel(row);
+    return run(commands.packageSetRev(ref.scope, ref.kind, ref.name, row.id), {
+      moved: updatedToastLabel(`${displayName} to ${version}`),
+      stalled: notSwitchedToastLead(displayName, version),
+    });
+  };
 
   // A held package moves its hold to the latest; a follower is brought
   // current by the single-package apply — Update never silently pins a
   // follower, and does not move the scope's other followers along.
-  //
-  // The follower's toast comes from what the apply reports, not from the
-  // click: this page has no edited-row filter of its own, so a hand-edited
-  // copy the plan held back reaches here and must not be called updated.
-  const updateToLatest = (latest: VersionRow) => {
-    if (held) return switchTo(latest);
-    setBusy(true);
-    void commands
-      .packageUpdate(ref.scope, ref.kind, ref.name)
-      .then((response) => {
-        setBusy(false);
-        if (response.status === "error") {
-          showError(response.error);
-          return;
-        }
-        showUpdateOutcome(displayName, response.data);
-        afterChange();
-      });
-  };
+  const updateToLatest = (latest: VersionRow) =>
+    held
+      ? switchTo(latest)
+      : run(
+          commands.packageUpdate(ref.scope, ref.kind, ref.name),
+          updateLines(displayName),
+        );
 
   const follow = () =>
-    run(
-      commands.packageSetRev(ref.scope, ref.kind, ref.name, null),
-      FOLLOW_SOURCE_TOAST,
-    );
+    run(commands.packageSetRev(ref.scope, ref.kind, ref.name, null), {
+      moved: FOLLOW_SOURCE_TOAST,
+      stalled: FOLLOW_SOURCE_STALLED_TOAST,
+    });
 
   return { switchTo, updateToLatest, follow };
 }

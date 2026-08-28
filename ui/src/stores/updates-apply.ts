@@ -13,14 +13,13 @@ import { type BulkOutcome, outcomeOf } from "@/lib/update-outcome";
 
 type Report = (error: string) => void;
 
-/** What one place's Update did: whether the command landed at all, and —
- *  for a following package — what the plan wrote and what it held back.
- *  A hold move reports neither: `packageSetRev` answers with the view
- *  alone. */
-export type ApplyOutcome = {
-  ok: boolean;
-  update: PackageUpdate_Serialize | null;
-};
+/** What one place's Update did: whether the command landed at all, and
+ *  what the plan wrote and what it held back. Both commands report it, so
+ *  a landed apply always carries the record and a failed one never
+ *  needs to invent an empty stand-in for it. */
+export type ApplyOutcome =
+  | { ok: false }
+  | { ok: true; update: PackageUpdate_Serialize };
 
 /** Bring one place current. Held packages move by moving the hold;
  *  following ones come current through the single-package apply. Either
@@ -32,23 +31,18 @@ export const applyRow = async (
   row: UpdateRow,
   report: Report,
 ): Promise<ApplyOutcome> => {
-  if (row.pinned && row.latest) {
-    const response = await commands.packageSetRev(
-      row.scope,
-      row.kind,
-      row.name,
-      row.latest.commit,
-    );
-    if (response.status === "error") {
-      report(response.error);
-      return { ok: false, update: null };
-    }
-    return { ok: true, update: null };
-  }
-  const response = await commands.packageUpdate(row.scope, row.kind, row.name);
+  const response =
+    row.pinned && row.latest
+      ? await commands.packageSetRev(
+          row.scope,
+          row.kind,
+          row.name,
+          row.latest.commit,
+        )
+      : await commands.packageUpdate(row.scope, row.kind, row.name);
   if (response.status === "error") {
     report(response.error);
-    return { ok: false, update: null };
+    return { ok: false };
   }
   return { ok: true, update: response.data };
 };

@@ -136,6 +136,12 @@ export const BACK_TO_FILES_LABEL = "Back to files";
 export const DIFF_TRUNCATED_NOTE =
   "This comparison is long; only the first part is shown.";
 export const VERSION_ERROR_TITLE = "Couldn't switch versions";
+// A switch the plan would not write anywhere: the manifest took the new
+// hold, the copy on disk is the one it always was. Both halves are said,
+// because either on its own is the wrong story — and what follows this
+// names the tool whose copy stopped it.
+export const notSwitchedToastLead = (name: string, version: string): string =>
+  `${name} is set to ${version}, but nothing was written`;
 
 // Updates page.
 export const UPDATES_EMPTY = "Everything is up to date";
@@ -194,6 +200,10 @@ export const FORKED_ATTENTION_DETAIL =
   "Your changes are safe — nothing will overwrite them. Decide whether to keep each as your own copy.";
 
 export const FOLLOW_SOURCE_TOAST = "Now following its source";
+// The manifest follows again and the copy on disk did not move with it —
+// true of the switch, silent about the files, so both are said.
+export const FOLLOW_SOURCE_STALLED_TOAST =
+  "Now following its source, but nothing was written";
 
 // The app's own out-of-date notice, in the sidebar. It names both versions
 // and offers the one action the install channel allows: a replacement where

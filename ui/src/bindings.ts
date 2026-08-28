@@ -273,8 +273,13 @@ export const commands = {
 	 *  neighbours current. The exception is a follower the lock cannot place
 	 *  — never installed, or installations disagreeing — which resolves fresh
 	 *  here as it would under a whole-scope apply.
+	 * 
+	 *  The answer is the same `PackageUpdate` the update command gives, and
+	 *  for the same reason: the manifest takes the new hold either way, while
+	 *  a rendering somebody edited is held back on disk, so a caller reading
+	 *  the view alone would report a switch that never reached the files.
 	 */
-	packageSetRev: (scope: Scope, kind: ItemKind, name: string, rev: string | null) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("package_set_rev", { scope, kind, name, rev })),
+	packageSetRev: (scope: Scope, kind: ItemKind, name: string, rev: string | null) => typedError<PackageUpdate_Serialize, string>(__TAURI_INVOKE("package_set_rev", { scope, kind, name, rev })),
 	packageDiff: (scope: Scope, kind: ItemKind, name: string, from: VersionSel, to: VersionSel, harness: "claude" | "codex" | "opencode" | "cursor" | "pi" | "gemini" | "copilot" | null) => typedError<PackageDiff, string>(__TAURI_INVOKE("package_diff", { scope, kind, name, from, to, harness })),
 	/**  Keep an edited install as a local fork, then render it in place. */
 	packageFork: (scope: Scope, kind: ItemKind, name: string, harness: HarnessId) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("package_fork", { scope, kind, name, harness })),
@@ -1922,7 +1927,10 @@ export type PackageSafety = {
  *  scope's view afterwards. The plan holds a rendering back rather than
  *  writing over a copy somebody changed, and the view alone cannot say
  *  which of the two happened — a caller reading only the view says
- *  "Updated" over a package that never moved.
+ *  "Updated" over a package that never moved. Every command that applies
+ *  one package answers with this, the version switch included: a hold
+ *  that moves in the manifest is refused on disk for the same reasons an
+ *  update is.
  */
 export type PackageUpdate = PackageUpdate_Serialize | PackageUpdate_Deserialize;
 
@@ -1931,7 +1939,10 @@ export type PackageUpdate = PackageUpdate_Serialize | PackageUpdate_Deserialize;
  *  scope's view afterwards. The plan holds a rendering back rather than
  *  writing over a copy somebody changed, and the view alone cannot say
  *  which of the two happened — a caller reading only the view says
- *  "Updated" over a package that never moved.
+ *  "Updated" over a package that never moved. Every command that applies
+ *  one package answers with this, the version switch included: a hold
+ *  that moves in the manifest is refused on disk for the same reasons an
+ *  update is.
  */
 export type PackageUpdate_Deserialize = {
 	view: AuditView_Deserialize,
@@ -1957,7 +1968,10 @@ export type PackageUpdate_Deserialize = {
  *  scope's view afterwards. The plan holds a rendering back rather than
  *  writing over a copy somebody changed, and the view alone cannot say
  *  which of the two happened — a caller reading only the view says
- *  "Updated" over a package that never moved.
+ *  "Updated" over a package that never moved. Every command that applies
+ *  one package answers with this, the version switch included: a hold
+ *  that moves in the manifest is refused on disk for the same reasons an
+ *  update is.
  */
 export type PackageUpdate_Serialize = {
 	view: AuditView_Serialize,

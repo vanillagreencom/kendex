@@ -11,12 +11,12 @@ import type { HarnessId, PackageUpdate_Serialize, UpdateRow } from "@/bindings";
 import { UPDATED_ALL_TOAST, updatedToastLabel } from "@/lib/copy";
 import {
   movedDespiteErrorToastLabel,
+  needsAttentionToastLabel,
   nothingMovedToastLabel,
-  notUpdatedToastLabel,
+  notUpdatedToastLead,
   removedNotReplacedCountToastLabel,
   removedNotReplacedToastLabel,
   updatedCountToastLabel,
-  updatedExceptToastLabel,
   updatedSomeToastLabel,
 } from "@/lib/copy-updates";
 import { harnessName, packageDisplayName } from "@/lib/labels";
@@ -40,16 +40,11 @@ export type UpdateOutcome = {
   moved: boolean;
 };
 
-/** Read what a single-package apply reported. `null` is a hold move:
- *  `packageSetRev` answers with the view alone, so it moved on the
- *  strength of the command succeeding — the reading that path has always
- *  had. */
-export const outcomeOf = (
-  update: PackageUpdate_Serialize | null,
-): UpdateOutcome => {
-  if (!update) {
-    return { removed: [], held: [], moved: true };
-  }
+/** Read what a single-package apply reported. Every command that applies
+ *  one package answers with this record — the update and the version
+ *  switch alike — so there is no shape here meaning "it succeeded, ask no
+ *  further". */
+export const outcomeOf = (update: PackageUpdate_Serialize): UpdateOutcome => {
   const removed = toolsOf(update.removed);
   const held = toolsOf(update.heldBack);
   return {
@@ -61,10 +56,25 @@ export const outcomeOf = (
   };
 };
 
-/** Toast what the apply did to `name`. */
+/** The two lines one surface writes about its own action: what it says
+ *  when the plan wrote the package, and what it says when the plan wrote
+ *  nothing. A version switch and a Follow source flip did something an
+ *  update did not — the manifest moved — so the wording is theirs, while
+ *  which of the two is said stays here. The partial case is the moved
+ *  line with the held tail after it, so no surface spells that one out. */
+export type OutcomeLines = { moved: string; stalled: string };
+
+/** How an Update says it, and the default for every other surface. */
+export const updateLines = (name: string): OutcomeLines => ({
+  moved: updatedToastLabel(name),
+  stalled: notUpdatedToastLead(name),
+});
+
+/** Toast what the apply did to `name`, in `lines`' wording. */
 export const showUpdateOutcome = (
   name: string,
   update: PackageUpdate_Serialize,
+  lines: OutcomeLines = updateLines(name),
 ): void => {
   const outcome = outcomeOf(update);
   // Said first and said as an error: a refusal with nothing of the
@@ -75,14 +85,14 @@ export const showUpdateOutcome = (
     return;
   }
   if (outcome.held.length === 0) {
-    toast.success(updatedToastLabel(name));
+    toast.success(lines.moved);
     return;
   }
   if (outcome.moved) {
-    toast.success(updatedExceptToastLabel(name, outcome.held));
+    toast.success(needsAttentionToastLabel(lines.moved, outcome.held));
     return;
   }
-  toast.info(notUpdatedToastLabel(name, outcome.held));
+  toast.info(needsAttentionToastLabel(lines.stalled, outcome.held));
 };
 
 /** What a run over several places did: the places it wrote, how many it

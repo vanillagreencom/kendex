@@ -98,13 +98,14 @@ describe("updates store: bulk update", () => {
       adoptable: ADOPTABLE,
       exits: [],
     };
+    const clean = { view, heldBack: [], removed: [], moved: [] };
     vi.mocked(commands.packageSetRev).mockResolvedValue({
       status: "ok",
-      data: view,
+      data: clean,
     });
     vi.mocked(commands.packageUpdate).mockResolvedValue({
       status: "ok",
-      data: { view: view, heldBack: [], removed: [], moved: [] },
+      data: clean,
     });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",

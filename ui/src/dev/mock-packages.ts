@@ -25,6 +25,15 @@ const standing = () => ({
   lastFetched: Math.floor(Date.now() / 1000),
 });
 
+// What a single-package apply reports: the standing it leaves, and the
+// renderings it wrote, held, or took away — nothing refused here.
+const packageUpdate = (scope: Scope) => ({
+  view: view(scope),
+  heldBack: [],
+  removed: [],
+  moved: [],
+});
+
 export const packageHandlers: Record<string, Handler> = {
   package_versions: ({ name }: { name: string }) => [
     {
@@ -64,16 +73,12 @@ export const packageHandlers: Record<string, Handler> = {
     if (ignored) store.state.ignored.push({ kind, name });
     return standing();
   },
-  package_set_rev: ({ scope }: { scope: Scope }) => view(scope),
-  // The single-package apply answers with what it wrote and what a
-  // conflict held back, not the view alone — a mock that returns the bare
-  // view leaves the toast reading `heldBack` off undefined.
-  package_update: ({ scope }: { scope: Scope }) => ({
-    view: view(scope),
-    heldBack: [],
-    removed: [],
-    moved: [],
-  }),
+  // A single-package apply answers with what it wrote and what a conflict
+  // held back, not the view alone — a mock that returns the bare view
+  // leaves the toast reading `heldBack` off undefined. The version switch
+  // answers the same way, so both read the one builder.
+  package_set_rev: ({ scope }: { scope: Scope }) => packageUpdate(scope),
+  package_update: ({ scope }: { scope: Scope }) => packageUpdate(scope),
   package_diff: ({ from, to }: { from: VersionSel; to: VersionSel }) => ({
     files: [
       {
