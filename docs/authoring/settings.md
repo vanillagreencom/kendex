@@ -8,7 +8,9 @@ consuming repo's `kendex.settings.toml`.
 Seeding is a skill's alone. An agent, hook, command or MCP server that ships
 one of these files installs normally and seeds nothing — the file is inert,
 and no error says so. It runs on project scope for an enabled skill that at
-least one harness here installs; a global install seeds nothing.
+least one harness here targets, and it runs before any skill tree is written:
+a plan whose every rendering is refused still seeds. A global install seeds
+nothing.
 
 Not every key a skill reads belongs in that file. A key it documents but does
 not seed — an opt-in that ships a working default, an override seam — is
