@@ -131,10 +131,10 @@ const SIGNED_ARTIFACTS: [(&str, &str); 5] = [
 ];
 
 /// Runs the manifest step over a `dist/` holding exactly `present`
-/// artifacts, each beside its signature, and returns the exit code and
-/// whatever `latest.json` it wrote.
+/// artifacts, each beside its signature, and returns the exit code, the
+/// `latest.json` it wrote, and what it said doing so.
 #[allow(clippy::unwrap_used)]
-fn write_manifest(present: &[&str]) -> (i32, String) {
+fn write_manifest(present: &[&str]) -> (i32, String, String) {
     let dir = tempfile::tempdir().unwrap();
     let dist = dir.path().join("dist");
     fs::create_dir_all(&dist).unwrap();
@@ -148,7 +148,7 @@ fn write_manifest(present: &[&str]) -> (i32, String) {
     }
     let workflow = workflow();
     let script = run_script(&step(&workflow, "name: Write the signed update manifest"));
-    let status = std::process::Command::new("bash")
+    let run = std::process::Command::new("bash")
         .arg("-c")
         .arg(&script)
         .current_dir(dir.path())
@@ -156,10 +156,11 @@ fn write_manifest(present: &[&str]) -> (i32, String) {
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .env("GITHUB_REF_NAME", "v5.1.0")
         .env("GITHUB_REPOSITORY", "vanillagreencom/kendex")
-        .status()
+        .output()
         .unwrap();
     let manifest = fs::read_to_string(dist.join("latest.json")).unwrap_or_default();
-    (status.code().unwrap_or(-1), manifest)
+    let said = String::from_utf8_lossy(&run.stdout).into_owned();
+    (run.status.code().unwrap_or(-1), manifest, said)
 }
 
 #[cfg(unix)]
@@ -167,7 +168,7 @@ fn write_manifest(present: &[&str]) -> (i32, String) {
 #[allow(clippy::unwrap_used)]
 fn the_manifest_pairs_every_signature_with_the_artifact_it_signs() {
     let artifacts: Vec<&str> = SIGNED_ARTIFACTS.iter().map(|(_, file)| *file).collect();
-    let (code, manifest) = write_manifest(&artifacts);
+    let (code, manifest, _) = write_manifest(&artifacts);
     assert_eq!(code, 0, "a complete set must succeed");
     let manifest: serde_json::Value = serde_json::from_str(&manifest).unwrap();
     assert_eq!(manifest["version"].as_str(), Some("5.1.0"));
@@ -207,16 +208,24 @@ fn no_step_hunts_for_the_v1_compatible_linux_updater_archive() {
     }
 }
 
+/// One lane that stopped signing is invisible in a manifest that merely
+/// has entries: the platform it left out offers an Update the manifest
+/// cannot answer, and every other lane keeps the release green. Each
+/// platform is therefore required by name.
 #[cfg(unix)]
 #[test]
-#[allow(clippy::unwrap_used)]
-fn a_lane_that_produced_no_signature_is_left_out_never_written_empty() {
-    let (code, manifest) = write_manifest(&["kendex_5.1.0_amd64.AppImage"]);
-    assert_eq!(code, 0);
-    let manifest: serde_json::Value = serde_json::from_str(&manifest).unwrap();
-    let platforms = manifest["platforms"].as_object().unwrap();
-    assert_eq!(platforms.len(), 1);
-    assert!(platforms.contains_key("linux-x86_64"));
+fn a_lane_missing_its_signature_fails_the_job_by_name() {
+    for (absent, artifact) in SIGNED_ARTIFACTS {
+        let rest: Vec<&str> = SIGNED_ARTIFACTS
+            .iter()
+            .filter(|(_, file)| *file != artifact)
+            .map(|(_, file)| *file)
+            .collect();
+        let (code, manifest, said) = write_manifest(&rest);
+        assert_ne!(code, 0, "missing {absent} must fail the job");
+        assert!(manifest.is_empty(), "{absent}: {manifest}");
+        assert!(said.contains(absent), "{absent} unnamed in: {said}");
+    }
 }
 
 /// An unsigned release publishes a manifest the app would read as "nothing
@@ -224,7 +233,7 @@ fn a_lane_that_produced_no_signature_is_left_out_never_written_empty() {
 #[cfg(unix)]
 #[test]
 fn a_release_with_nothing_signed_fails_the_job() {
-    let (code, manifest) = write_manifest(&[]);
+    let (code, manifest, _) = write_manifest(&[]);
     assert_ne!(code, 0);
     assert!(manifest.is_empty(), "{manifest}");
 }

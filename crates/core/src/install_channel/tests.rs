@@ -331,3 +331,133 @@ fn in_place_replacement_is_refused_off_a_direct_install() {
     );
     assert!(InstallChannel::Unknown.allow_replacement().is_err());
 }
+
+/// A running AppImage: the runtime mounts it and both variables point at
+/// that mount, which is where the executable is.
+#[test]
+fn a_mounted_appimage_is_recognised_by_where_it_runs_from() {
+    assert!(in_appimage(
+        Some(OsStr::new("/home/me/kendex.AppImage")),
+        Some(OsStr::new("/tmp/.mount_kendexAbc")),
+        Some(Path::new("/tmp/.mount_kendexAbc/usr/bin/kendex-app"))
+    ));
+    assert!(!in_appimage(
+        None,
+        None,
+        Some(Path::new("/usr/bin/kendex-app"))
+    ));
+}
+
+/// The other half of the inherited-variable problem: the runtime exports
+/// APPIMAGE into the same environment every child gets, so it says no more
+/// about this process than APPDIR does.
+#[test]
+fn a_stray_appimage_does_not_make_this_an_appimage() {
+    let installed = Path::new("/usr/bin/kendex-app");
+    assert!(!in_appimage(
+        Some(OsStr::new("/home/me/other.AppImage")),
+        None,
+        Some(installed)
+    ));
+    assert!(!in_appimage(
+        Some(OsStr::new("/home/me/other.AppImage")),
+        Some(OsStr::new("/tmp/.mount_otherXyz")),
+        Some(installed)
+    ));
+}
+
+/// Neither variable can be measured against a path we do not have, and a
+/// genuine bundle is not worth demoting to half size over it.
+#[test]
+fn a_bundle_that_cannot_read_its_own_path_is_still_a_bundle() {
+    assert!(in_appimage(
+        Some(OsStr::new("/home/me/kendex.AppImage")),
+        None,
+        None
+    ));
+    assert!(in_appimage(
+        None,
+        Some(OsStr::new("/home/me/kendex.AppDir")),
+        None
+    ));
+    assert!(!in_appimage(None, None, None));
+}
+
+/// An exported-but-empty APPDIR is every path's prefix, so it has to be
+/// read as unset rather than as a directory containing everything.
+#[test]
+fn an_empty_appdir_is_not_a_directory_this_lives_in() {
+    for empty in ["", "   "] {
+        assert!(
+            !in_appimage(
+                None,
+                Some(OsStr::new(empty)),
+                Some(Path::new("/usr/bin/kendex-app"))
+            ),
+            "{empty:?}"
+        );
+    }
+}
+
+/// Every AppImage's AppRun exports APPDIR and everything it starts
+/// inherits it, so a deb launched from a terminal that came out of one
+/// carries a stranger's APPDIR. It only speaks for this process when
+/// this process lives inside it.
+#[test]
+fn a_stray_appdir_does_not_make_this_an_appimage() {
+    let extracted = OsStr::new("/home/me/kendex.AppDir");
+    assert!(in_appimage(
+        None,
+        Some(extracted),
+        Some(Path::new("/home/me/kendex.AppDir/usr/bin/kendex-app"))
+    ));
+    assert!(!in_appimage(
+        None,
+        Some(extracted),
+        Some(Path::new("/usr/bin/kendex-app"))
+    ));
+    // A prefix that only matches as a string, not as a path.
+    assert!(!in_appimage(
+        None,
+        Some(extracted),
+        Some(Path::new("/home/me/kendex.AppDirectory/usr/bin/kendex-app"))
+    ));
+}
+
+/// The variable alone never names this process's own install: a deb or a
+/// source build launched from a terminal that came out of an AppImage
+/// inherits a stranger's pair, and offering to replace that image would
+/// overwrite somebody else's app.
+#[test]
+fn an_inherited_appimage_variable_is_not_this_process_install() {
+    let stranger = OsStr::new("/home/pat/other.AppImage");
+    let installed = Path::new("/usr/bin/kendex-app");
+    for appdir in [None, Some(OsStr::new("/tmp/.mount_otherXyz"))] {
+        assert_eq!(
+            AppInstall::from_appimage_env(Some(stranger), appdir, Some(installed)),
+            AppInstall::AppImage(None),
+            "{appdir:?}"
+        );
+    }
+    assert_eq!(
+        for_app(
+            &AppInstall::from_appimage_env(Some(stranger), None, Some(installed)),
+            &Fake::default().replaceable("/home/pat/other.AppImage")
+        ),
+        InstallChannel::Unknown
+    );
+}
+
+/// The image this process really does run from is still its own to replace.
+#[test]
+fn the_image_this_process_runs_from_is_its_own_install() {
+    let ours = OsStr::new("/home/pat/.local/share/kendex/kendex.AppImage");
+    assert_eq!(
+        AppInstall::from_appimage_env(
+            Some(ours),
+            Some(OsStr::new("/tmp/.mount_kendexAbc")),
+            Some(Path::new("/tmp/.mount_kendexAbc/usr/bin/kendex-app"))
+        ),
+        AppInstall::AppImage(Some(PathBuf::from(ours)))
+    );
+}

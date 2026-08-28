@@ -1,5 +1,8 @@
 //! What each launch decision has to come out as.
 
+use std::ffi::OsStr;
+use std::path::Path;
+
 use super::*;
 
 /// A Wayland session with nothing set — the shape every case varies.
@@ -205,98 +208,6 @@ fn only_an_ignored_bundle_pin_is_explained() {
         );
     }
     assert!(!explained(wayland()));
-}
-
-/// A running AppImage: the runtime mounts it and both variables point at
-/// that mount, which is where the executable is.
-#[test]
-fn a_mounted_appimage_is_recognised_by_where_it_runs_from() {
-    assert!(in_appimage(
-        Some(OsStr::new("/home/me/kendex.AppImage")),
-        Some(OsStr::new("/tmp/.mount_kendexAbc")),
-        Some(Path::new("/tmp/.mount_kendexAbc/usr/bin/kendex-app"))
-    ));
-    assert!(!in_appimage(
-        None,
-        None,
-        Some(Path::new("/usr/bin/kendex-app"))
-    ));
-}
-
-/// The other half of the inherited-variable problem: the runtime exports
-/// APPIMAGE into the same environment every child gets, so it says no more
-/// about this process than APPDIR does.
-#[test]
-fn a_stray_appimage_does_not_make_this_an_appimage() {
-    let installed = Path::new("/usr/bin/kendex-app");
-    assert!(!in_appimage(
-        Some(OsStr::new("/home/me/other.AppImage")),
-        None,
-        Some(installed)
-    ));
-    assert!(!in_appimage(
-        Some(OsStr::new("/home/me/other.AppImage")),
-        Some(OsStr::new("/tmp/.mount_otherXyz")),
-        Some(installed)
-    ));
-}
-
-/// Neither variable can be measured against a path we do not have, and a
-/// genuine bundle is not worth demoting to half size over it.
-#[test]
-fn a_bundle_that_cannot_read_its_own_path_is_still_a_bundle() {
-    assert!(in_appimage(
-        Some(OsStr::new("/home/me/kendex.AppImage")),
-        None,
-        None
-    ));
-    assert!(in_appimage(
-        None,
-        Some(OsStr::new("/home/me/kendex.AppDir")),
-        None
-    ));
-    assert!(!in_appimage(None, None, None));
-}
-
-/// An exported-but-empty APPDIR is every path's prefix, so it has to be
-/// read as unset rather than as a directory containing everything.
-#[test]
-fn an_empty_appdir_is_not_a_directory_this_lives_in() {
-    for empty in ["", "   "] {
-        assert!(
-            !in_appimage(
-                None,
-                Some(OsStr::new(empty)),
-                Some(Path::new("/usr/bin/kendex-app"))
-            ),
-            "{empty:?}"
-        );
-    }
-}
-
-/// Every AppImage's AppRun exports APPDIR and everything it starts
-/// inherits it, so a deb launched from a terminal that came out of one
-/// carries a stranger's APPDIR. It only speaks for this process when
-/// this process lives inside it.
-#[test]
-fn a_stray_appdir_does_not_make_this_an_appimage() {
-    let extracted = OsStr::new("/home/me/kendex.AppDir");
-    assert!(in_appimage(
-        None,
-        Some(extracted),
-        Some(Path::new("/home/me/kendex.AppDir/usr/bin/kendex-app"))
-    ));
-    assert!(!in_appimage(
-        None,
-        Some(extracted),
-        Some(Path::new("/usr/bin/kendex-app"))
-    ));
-    // A prefix that only matches as a string, not as a path.
-    assert!(!in_appimage(
-        None,
-        Some(extracted),
-        Some(Path::new("/home/me/kendex.AppDirectory/usr/bin/kendex-app"))
-    ));
 }
 
 /// The whole point of the narrower signal: a deb launched from a terminal

@@ -17,7 +17,8 @@ Release with:
   dmg, NSIS installer).
 - `latest.json` — the signed manifest the app's Update button installs
   from, one `{signature, url}` per platform. The publish job writes it from
-  the `.sig` files the lanes staged and fails the job when none arrived.
+  the `.sig` files the lanes staged, and names any platform whose signature
+  never arrived and fails rather than publishing a release without it.
 - `feed.json` — the update feed `kendex update` reads from
   `releases/latest/download/feed.json`. Publishing the draft makes the
   version "latest". New feeds carry `schema: 1`, a SemVer `version`, and an

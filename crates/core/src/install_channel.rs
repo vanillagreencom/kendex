@@ -3,6 +3,7 @@
 //! passing its own running executable, so nothing is decided at build time —
 //! the AUR package repackages the released AppImage byte for byte.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -65,6 +66,54 @@ pub enum AppInstall {
     MacBundle(PathBuf),
     /// Windows: the installer is the only channel.
     WindowsInstaller,
+}
+
+impl AppInstall {
+    /// The Linux app, judged by where this executable is rather than by a
+    /// variable every child of an AppImage-launched terminal inherits. A
+    /// process that only inherited the pair has no AppImage of its own.
+    pub fn from_appimage_env(
+        appimage: Option<&OsStr>,
+        appdir: Option<&OsStr>,
+        exe: Option<&Path>,
+    ) -> Self {
+        match in_appimage(appimage, appdir, exe) {
+            true => Self::AppImage(appimage.map(PathBuf::from)),
+            false => Self::AppImage(None),
+        }
+    }
+}
+
+/// Whether this process is running from inside an AppImage bundle.
+///
+/// Neither variable answers this on its own. An AppImage's AppRun exports
+/// both `APPIMAGE` and `APPDIR`, and every process it starts inherits both,
+/// so a terminal opened from one hands a stranger's pair to every `.deb`
+/// and source build launched from it. What separates those cases is where
+/// this executable lives: `APPDIR` is the directory a bundle unpacks to —
+/// the mount point of a running AppImage, or the tree a hand-extracted one
+/// sits in — and a process inside it really is inside that bundle.
+///
+/// Only when there is no executable to place does a bare variable get the
+/// last word, so a genuine bundle that cannot read its own path is not
+/// quietly demoted.
+pub fn in_appimage(appimage: Option<&OsStr>, appdir: Option<&OsStr>, exe: Option<&Path>) -> bool {
+    let appdir = said_dir(appdir);
+    let Some(exe) = exe else {
+        return appimage.is_some() || appdir.is_some();
+    };
+    appdir.is_some_and(|dir| exe.starts_with(dir))
+}
+
+/// A directory-valued variable's bytes need not be UTF-8. An
+/// exported-but-empty one matters here: `Path::new("")` has no components,
+/// so every path starts with it.
+fn said_dir(value: Option<&OsStr>) -> Option<&Path> {
+    let dir = value?;
+    if dir.is_empty() || dir.to_str().is_some_and(|dir| dir.trim().is_empty()) {
+        return None;
+    }
+    Some(Path::new(dir))
 }
 
 /// Facts about the machine the resolver cannot compute from its inputs.

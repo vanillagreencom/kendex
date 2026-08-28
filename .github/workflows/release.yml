@@ -173,22 +173,24 @@ jobs:
           cat dist/feed.json
       # The app installs from this manifest, not from feed.json: each entry
       # pairs a download with the minisign signature the running app checks
-      # before it replaces itself. A platform whose lane produced no signed
-      # artifact is left out; a manifest with no platforms at all means
-      # signing did not happen, which fails the job rather than publishing
-      # a release the app cannot update from.
+      # before it replaces itself. Every lane is updater-enabled and every
+      # one is expected to sign, so a platform missing here is a lane that
+      # stopped producing or staging its signature. Publishing without it
+      # leaves that platform offering an Update its own manifest cannot
+      # answer, so a missing platform fails the job by name.
       - name: Write the signed update manifest
         shell: bash
         run: |
           base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
           platforms='{}'
+          missing=""
           add() {
             local key=$1 sig="" candidate
             for candidate in dist/$2; do
               [ -f "$candidate" ] && { sig="$candidate"; break; }
             done
             if [ -z "$sig" ]; then
-              echo "no signed updater artifact for ${key}"
+              missing="${missing} ${key}"
               return 0
             fi
             platforms=$(jq \
@@ -202,8 +204,8 @@ jobs:
           add darwin-x86_64 'kendex-x86_64-apple-darwin.app.tar.gz.sig'
           add darwin-aarch64 'kendex-aarch64-apple-darwin.app.tar.gz.sig'
           add windows-x86_64 'kendex_*_x64-setup.exe.sig'
-          if [ "$(jq 'length' <<< "$platforms")" -eq 0 ]; then
-            echo "::error::No signed updater artifacts reached dist/. Set TAURI_SIGNING_PRIVATE_KEY and re-run the tag."
+          if [ -n "$missing" ]; then
+            echo "::error::No signed updater artifact reached dist/ for:${missing}. Every release lane signs; check that lane and TAURI_SIGNING_PRIVATE_KEY, then re-run the tag."
             exit 1
           fi
           jq -n \

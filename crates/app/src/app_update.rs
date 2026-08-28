@@ -54,8 +54,14 @@ pub fn app_update_check(refresh: bool) -> Result<AppUpdateView, String> {
 fn app_install() -> Result<AppInstall, String> {
     #[cfg(target_os = "linux")]
     {
-        Ok(AppInstall::AppImage(
-            std::env::var_os("APPIMAGE").map(std::path::PathBuf::from),
+        // Both variables are inherited by everything an AppImage-launched
+        // terminal starts, so core places this executable rather than
+        // taking either at its word.
+        let exe = std::env::current_exe().ok();
+        Ok(AppInstall::from_appimage_env(
+            std::env::var_os("APPIMAGE").as_deref(),
+            std::env::var_os("APPDIR").as_deref(),
+            exe.as_deref(),
         ))
     }
     #[cfg(target_os = "macos")]
