@@ -372,5 +372,14 @@ dot REVIEW_GATE_TV "dflt"
 [[ "$RC" -ne 0 ]] && grep -q "assigned more than once" "$TMP/err" && ok "a .env.local hit does not mask a malformed settings file" || bad "dotenv override over malformed file" "rc=$RC out=$OUT"
 rm -f "$TMP/layers/.env.local"
 
+# ...and it must not mask a BROKEN .env.local either: the layer's
+# usability is part of every resolution, same as the generic loader.
+printf '[env]\nREVIEW_GATE_TP = "root"\n' >"$TMP/layers/kendex.settings.toml"
+mkdir -p "$TMP/layers/.env.local"
+OUT=""; RC=0
+OUT="$(cd "$TMP/layers" && { unset REVIEW_GATE_SETTINGS_FILE 2>/dev/null; REVIEW_GATE_TV=envwin rg_setting REVIEW_GATE_TV "dflt" 2>"$TMP/err"; })" || RC=$?
+[[ "$RC" -ne 0 ]] && grep -q "not a regular file" "$TMP/err" && ok "an exported value does not mask a DIRECTORY at .env.local" || bad "env override over broken .env.local" "rc=$RC out=$OUT"
+rmdir "$TMP/layers/.env.local"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

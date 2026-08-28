@@ -252,6 +252,15 @@ run_raw SIZE_RATCHET_THRESHOLD=9 || true
   || bad "env override over malformed file" "rc=$RC out=$OUT"
 printf '[env]\nSIZE_RATCHET_THRESHOLD = "9"\n' > "$R/kendex.settings.toml"
 
+# ...and it must not mask a BROKEN .env.local either: the layer's
+# usability is part of every resolution, same as the generic loader.
+mkdir -p "$R/.env.local"
+run_raw SIZE_RATCHET_THRESHOLD=9 || true
+[ "$RC" -eq 2 ] && case "$OUT" in *"not a regular file"*) true ;; *) false ;; esac \
+  && ok "an exported value does not mask a DIRECTORY at .env.local" \
+  || bad "env override over broken .env.local" "rc=$RC out=$OUT"
+rmdir "$R/.env.local"
+
 echo "=== an EXISTING non-regular settings path never falls back to defaults ==="
 # A directory (FIFO/socket/device are the same shape) fails -f exactly like
 # an absent file, so the configured settings would be skipped with nothing

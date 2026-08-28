@@ -388,6 +388,19 @@ gg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
         gg_env_table "$file" >/dev/null || return 1
       fi
     done
+    # The dotenv layer is probed for usability too: an exported key must
+    # not mask a broken .env.local (directory, dangling symlink, BOM,
+    # unreadable bytes) — every PRESENT source fails loud, the clause the
+    # generic loader honors before re-asserting process values.
+    file="$(gg_settings_source ".env.local")" || return 1
+    gg_settings_usable "$file" || return 1
+    if [ -f "$file" ]; then
+      gg_bom_guard "$file" || return 1
+      if [ ! -r "$file" ]; then
+        echo "::error::$file: unreadable while resolving a setting (permission denied)" >&2
+        return 1
+      fi
+    fi
   fi
   # Indirect expansion, not eval: a non-literal NAME must never become code.
   # ${!name+x} tests set-ness of the variable NAMED by $name (Bash 3.2-safe).
