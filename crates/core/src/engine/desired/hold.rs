@@ -278,8 +278,15 @@ fn held_manifest(
         let Some(repo) = source_repo(manifest, &decl.source) else {
             continue;
         };
+        // Where anything is here only as a member, that is what says where
+        // the set is; the members the person also declared are asked only
+        // when nothing else can answer.
+        let carried_alone = lock
+            .entries
+            .values()
+            .any(|entry| member_of(entry, name, &decl.source) && !also_declared(entry));
         let Some(commit) = held_at(lock, &decl.source, repo, |entry| {
-            member_of(entry, name, &decl.source)
+            member_of(entry, name, &decl.source) && !(carried_alone && also_declared(entry))
         }) else {
             continue;
         };
@@ -337,23 +344,32 @@ fn held_at(
     agreed
 }
 
-/// Whether this installation is here as a member of the named bundle and
-/// nothing else — the entries whose recorded commits say where the bundle
-/// is held. Matched by source as well as name: a membership recorded
-/// against another catalog's set of the same name is not this
-/// declaration's evidence.
-///
-/// An installation the person also declared is not evidence either: its
-/// commit is the one its own declaration reads, and a single-package
-/// update moves that commit off the set's. Counted as the set's, the two
-/// read as members disagreeing, the set can be held at no commit at all,
-/// and its undeclared members come current as the side effect this hold
-/// exists to remove.
+/// Whether this installation is here as a member of the named bundle — the
+/// entries whose recorded commits say where the bundle is held. Matched by
+/// source as well as name: a membership recorded against another catalog's
+/// set of the same name is not this declaration's evidence.
 fn member_of(entry: &LockEntry, bundle: &str, source: &str) -> bool {
-    !entry.reasons.contains(&Reason::Requested)
-        && entry.reasons.iter().any(
+    entry.reasons.iter().any(
         |reason| matches!(reason, Reason::MemberOf { bundle: of } if of.name == bundle && of.source == source),
     )
+}
+
+/// Whether the person declared this installation as well as receiving it
+/// through a set.
+///
+/// Such an installation is the weaker evidence of where its set is held:
+/// its commit is the one its own declaration reads, and a single-package
+/// update moves that commit off the set's. Counted alongside the members
+/// that have only the set to read, the two say the set is in two places,
+/// it can then be held at no commit at all, and its other members come
+/// current as the side effect this hold exists to remove.
+///
+/// It is still evidence where the set has no other kind. A set whose every
+/// member is also declared has nothing else recorded, and held at no
+/// commit it reads its source's tip — where an unrelated update installs
+/// whatever the catalog has since added to the set.
+fn also_declared(entry: &LockEntry) -> bool {
+    entry.reasons.contains(&Reason::Requested)
 }
 
 #[cfg(test)]

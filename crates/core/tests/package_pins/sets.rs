@@ -388,3 +388,64 @@ fn a_conflict_with_a_hand_pinned_set_names_no_invented_commit() {
         "the set's own pin is: {message}"
     );
 }
+
+/// A set every one of whose members is also declared outright. Nothing is
+/// installed here only as a member, so the set's own members are the only
+/// installations that can say where it is held. Left saying nothing it
+/// reads its source's tip, and an unrelated single-package update takes
+/// whatever the catalog has added to the set since — a package nobody
+/// asked for, installed by an update about something else.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_set_whose_members_are_all_declared_stays_where_it_is() {
+    let w = world();
+    write_skill(&w.upstream, "a", "", "a version one.");
+    write_skill(&w.upstream, "b", "", "b version one.");
+    write_skill(&w.upstream, "solo", "", "solo version one.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[bundles.kit]\ndescription = \"a set\"\nskills = [\"a\", \"b\"]\n",
+    )
+    .unwrap();
+    let first = commit(&w.upstream, "one");
+    declare(
+        &w,
+        "[skills.a]\nsource = \"cat\"\n\n[skills.b]\nsource = \"cat\"\n\n[skills.solo]\nsource = \"cat\"\n\n[bundles.kit]\nsource = \"cat\"\n",
+    );
+    sync_and_apply(&w);
+
+    // Upstream grows the set and moves the unrelated package.
+    write_skill(&w.upstream, "c", "", "c version one.");
+    write_skill(&w.upstream, "solo", "", "solo version two.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[bundles.kit]\ndescription = \"a set\"\nskills = [\"a\", \"b\", \"c\"]\n",
+    )
+    .unwrap();
+    let second = commit(&w.upstream, "two");
+    fetch_mirrors(&w);
+
+    let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "solo").unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+
+    assert!(installed_body(&w, "solo").contains("solo version two."));
+    assert_eq!(locked_commit(&w, "solo"), second);
+
+    assert!(
+        !w.home.join("app/.agents/skills/c").exists(),
+        "the set was read where it is installed, not at its source's tip: {:?}",
+        report.plan.ops
+    );
+    assert!(installed_body(&w, "a").contains("a version one."));
+    assert!(installed_body(&w, "b").contains("b version one."));
+    assert_eq!(locked_commit(&w, "a"), first);
+    assert_eq!(locked_commit(&w, "b"), first);
+
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        loaded.bundles["kit"].rev, None,
+        "and the hold that held it still for this pass is not one the person chose"
+    );
+}
