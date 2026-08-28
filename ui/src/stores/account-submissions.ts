@@ -35,20 +35,27 @@ let reads = 0;
  *  Neither does one whose credential changed hands while it was coming,
  *  which is about nobody on screen. `handovers` is read before the call
  *  and again after it, and `refused` decides what a refusal says about
- *  the account itself. */
+ *  the account itself.
+ *
+ *  `write` is taken rather than returned so that it runs in the same
+ *  continuation as the guards. Handing an answer back across an await
+ *  puts a microtask between the check and the write, and a sign-out
+ *  landing in it ends the account after the guards have already let the
+ *  rows through. */
 export const readSubmissions = async (
   handovers: () => number,
   refused: (refusal: AccountCallRefused, since: number) => void,
-): Promise<Partial<Submissions> | null> => {
+  write: (fields: Partial<Submissions>) => void,
+): Promise<void> => {
   reads += 1;
   const mine = reads;
   const before = handovers();
   const answer = await commands.mineSubmissions();
-  if (mine !== reads || before !== handovers()) return null;
+  if (mine !== reads || before !== handovers()) return;
   // The poll shows nothing of its own, so a session that died between
   // ticks would otherwise go on being polled invisibly.
   if (answer.status === "error") refused(answer.error, before);
-  return fromSubmissionsRead(answer);
+  write(fromSubmissionsRead(answer));
 };
 
 /** What a read's answer writes.

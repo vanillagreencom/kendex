@@ -211,8 +211,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
 
   loadSubmissions: async () => {
     if (!hasCredential(get().account)) return;
-    const written = await readSubmissions(get().handovers, get().refused);
-    if (written) set(written);
+    await readSubmissions(get().handovers, get().refused, set);
   },
 
   handovers: () => handover,

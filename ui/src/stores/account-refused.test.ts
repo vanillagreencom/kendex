@@ -436,6 +436,40 @@ describe("a submissions read the server could not answer", () => {
     });
   });
 
+  // The guards and the write have to be one continuation. Handing the
+  // answer back across an await puts a microtask between them, and a
+  // sign-out resolving its own await lands in that gap: the guards let
+  // the rows through, the account ends, and the rows are written over it.
+  // Reachable only by interleaving, never by a click.
+  it("writes no rows over an account that ended after the guards", async () => {
+    useAccountStore.setState({ account: signedIn });
+    type Answer = Awaited<ReturnType<typeof commands.mineSubmissions>>;
+    type Out = Awaited<ReturnType<typeof commands.accountLogout>>;
+    let landRows: (answer: Answer) => void = () => {};
+    let landOut: (answer: Out) => void = () => {};
+    vi.mocked(commands.mineSubmissions).mockReturnValue(
+      new Promise<Answer>((resolve) => {
+        landRows = resolve;
+      }),
+    );
+    vi.mocked(commands.accountLogout).mockReturnValue(
+      new Promise<Out>((resolve) => {
+        landOut = resolve;
+      }),
+    );
+
+    const polling = useAccountStore.getState().loadSubmissions();
+    const out = useAccountStore.getState().signOut();
+    // The read answers first, so its guards run while the account is
+    // still held; the sign-out lands in the microtask straight after.
+    landRows({ status: "ok", data: [ROW] });
+    landOut({ status: "ok", data: null });
+    await Promise.all([polling, out]);
+
+    expect(account()).toEqual({ kind: "signed-out" });
+    expect(useAccountStore.getState().submissions).toBeNull();
+  });
+
   // A failure about a credential nobody holds any more explains rows
   // nobody is looking at, and would sit over the account that replaced it.
   // The read has to still be out when the account moves, so its answer is
