@@ -25,7 +25,7 @@ repo-effects:
     - "preflight"
   notes:
     - "An existing pre-commit or commit-msg hook keeps its content and its exit status: one marked line goes in after the shebang and falls through to what was already there. core.hooksPath is never set."
-    - "The chain runs in order: size-ratchet --staged, preflight --staged, the growth-guards batch (todo-ban, byte-ceiling, suppression-ban, conflict-markers), then the repo-root executable named by GROWTH_GUARDS_PRE_COMMIT_LOCAL. A companion that is not installed is an announced skip, never a silently missing check, and one that is installed but cannot run stops the commit rather than skipping it."
+    - "The chain runs in order: size-ratchet --staged, preflight --staged, the growth-guards batch (todo-ban, byte-ceiling, suppression-ban, conflict-markers), then the repo-root executable named by GROWTH_GUARDS_PRE_COMMIT_LOCAL. A companion that is not installed is an announced skip, never a silently missing check, and one that is installed but cannot run stops the commit rather than skipping it; the stated skips are preflight on a repository's first commit and a repo-local size-ratchet that rejects --staged."
     - "Both hooks block on any nonzero verdict and fail closed on a guard that could not run. Passing git's no-verify flag bypasses one commit, and skips the message gate with it."
     - "The gate needs no kendex binary once armed: git runs this package's committed scripts, so a machine that never installed kendex still gates commits. Arming does not travel, though — git clones no hooks and this package never sets core.hooksPath — so every clone is armed once, by whoever clones it."
 ---
