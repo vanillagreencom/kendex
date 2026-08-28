@@ -237,6 +237,32 @@ fn report_dry_run_routes_by_ownership_and_rejects_scope_all() {
     assert!(text.contains("ownership: project-local"), "{text}");
     assert!(!text.contains("someone/else"), "{text}");
 
+    // A subscription spells the upstream however it likes, and the report
+    // still files at the one place gh accepts: `owner/repo`, never the URL.
+    let spelled = kendex_in(
+        home,
+        &proj,
+        &[
+            "report",
+            "--skill",
+            "size-ratchet",
+            "--upstream",
+            "git@github.com:vanillagreencom/kendex.git",
+            "--title",
+            "T",
+            "--body",
+            "B",
+            "--dry-run",
+        ],
+        &[],
+    );
+    assert!(spelled.status.success());
+    let text = String::from_utf8_lossy(&spelled.stderr);
+    assert!(text.contains("ownership: kendex"), "{text}");
+    assert!(text.contains("target: vanillagreencom/kendex"), "{text}");
+    assert!(text.contains("--repo vanillagreencom/kendex"), "{text}");
+    assert!(!text.contains("git@github.com"), "{text}");
+
     let rejected = kendex_in(
         home,
         &proj,

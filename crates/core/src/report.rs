@@ -8,18 +8,23 @@
 //! A lock entry keeps the manifest's repo declaration verbatim, so the same
 //! repository arrives here spelled as a shorthand, an https URL or an scp
 //! `git@` one. Every comparison runs over `source_ref::repo_identity`, which
-//! folds those to one string, so a spelling never decides ownership.
+//! folds those to one string, so a spelling never decides ownership. The
+//! judge names the destination too, in the shape a caller can file against:
+//! `gh issue create --repo` and a `github.com/<repo>/issues/new` URL both
+//! take `owner/repo`, never the URL a subscription may be spelled with.
 
 use crate::lock::{Lock, LockEntry};
 use crate::model::ItemKind;
-use crate::source_ref::repo_identity;
+use crate::source_ref::{owner_repo, repo_identity};
 
 pub const DEFAULT_UPSTREAM: &str = crate::manifest::DEFAULT_SOURCE_REPO;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Route {
     pub kendex_owned: bool,
-    /// Upstream `owner/repo` to file against — only when kendex-owned.
+    /// Where to file, and the only string a caller should file against:
+    /// `owner/repo` for a GitHub reference however the manifest spelled it,
+    /// another host's reference as it stands. Only when kendex-owned.
     pub repo: Option<String>,
     /// Routing label — only on the canonical upstream, where it exists.
     pub label: Option<String>,
@@ -58,11 +63,18 @@ pub fn route(lock: &Lock, name: &str, kind: Option<ItemKind>, upstream: &str) ->
     let kind = kind.or_else(|| agreed_kind(&matching));
     Route {
         kendex_owned: owned,
-        repo: owned.then(|| upstream.to_owned()),
+        repo: owned.then(|| filing_target(upstream)),
         label: (owned && wanted == repo_identity(DEFAULT_UPSTREAM))
             .then(|| derive_label(name, kind).to_owned()),
         kind,
     }
+}
+
+/// The upstream as something to file against: a GitHub reference folded to
+/// the bare `owner/repo` that `gh --repo` and an issue URL take, anything
+/// else left as the caller spelled it.
+fn filing_target(upstream: &str) -> String {
+    owner_repo(upstream).unwrap_or_else(|| upstream.to_owned())
 }
 
 /// The one kind the matching entries are, when they are all one kind.
@@ -155,20 +167,17 @@ mod tests {
             "vanillagreencom/kendex.git",
         ] {
             let lock = lock_of(&[("guard", ItemKind::Skill, spelling)]);
-            let route = route(&lock, "guard", Some(ItemKind::Skill), DEFAULT_UPSTREAM);
-            assert!(route.kendex_owned, "{spelling}");
-            assert_eq!(route.label.as_deref(), Some("skills"), "{spelling}");
-        }
+            let recorded = route(&lock, "guard", Some(ItemKind::Skill), DEFAULT_UPSTREAM);
+            assert!(recorded.kendex_owned, "{spelling}");
+            assert_eq!(recorded.label.as_deref(), Some("skills"), "{spelling}");
 
-        let lock = lock_of(&[("guard", ItemKind::Skill, DEFAULT_UPSTREAM)]);
-        let named = route(
-            &lock,
-            "guard",
-            Some(ItemKind::Skill),
-            "git@github.com:vanillagreencom/kendex.git",
-        );
-        assert!(named.kendex_owned);
-        assert_eq!(named.label.as_deref(), Some("skills"));
+            // However the caller spells it, what comes back is what `gh
+            // --repo` and an issue URL take.
+            let named = route(&lock, "guard", Some(ItemKind::Skill), spelling);
+            assert!(named.kendex_owned, "{spelling}");
+            assert_eq!(named.repo.as_deref(), Some(DEFAULT_UPSTREAM), "{spelling}");
+            assert_eq!(named.label.as_deref(), Some("skills"), "{spelling}");
+        }
 
         let elsewhere = lock_of(&[(
             "guard",
@@ -176,6 +185,29 @@ mod tests {
             "https://gitlab.com/vanillagreencom/kendex",
         )]);
         assert!(!route(&elsewhere, "guard", Some(ItemKind::Skill), DEFAULT_UPSTREAM).kendex_owned);
+    }
+
+    /// Only a GitHub reference folds to `owner/repo`; another host has no
+    /// shorthand, so the report files against the reference as spelled.
+    #[test]
+    fn another_hosts_upstream_is_the_target_as_spelled() {
+        let lock = lock_of(&[(
+            "guard",
+            ItemKind::Skill,
+            "https://gitlab.com/team/catalog.git",
+        )]);
+        let route = route(
+            &lock,
+            "guard",
+            Some(ItemKind::Skill),
+            "https://gitlab.com/team/catalog",
+        );
+        assert!(route.kendex_owned);
+        assert_eq!(
+            route.repo.as_deref(),
+            Some("https://gitlab.com/team/catalog")
+        );
+        assert_eq!(route.label, None);
     }
 
     /// A named upstream routes there only when the lock recorded the asset

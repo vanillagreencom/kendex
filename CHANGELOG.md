@@ -91,6 +91,9 @@ an outside contributor.
 - `kendex report --skill` files against kendex, like `--agent` and `--hook`
   already did; a skill installed from anywhere else still files against your
   own repo.
+- `kendex report --upstream` takes a GitHub repo spelled any way — shorthand,
+  https URL or `git@` — and files against it when your lock records the asset
+  from that repo.
 - `worktree cleanup` and `worktree remove` prove a merge two ways and no other:
   ancestry into the default branch, or the pull request whose head commit is
   the branch tip. Squash merges collect, and every keep now names its reason.
