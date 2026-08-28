@@ -38,7 +38,7 @@ pub fn print_conflicts(env: &Env, report: &EngineReport) -> Vec<Blocked> {
         // reader moving the files themselves, and a place the output does
         // not name is a place they cannot go to.
         for place in also_at(first, rest) {
-            say(&format!("  also at {place}"));
+            say(&format!("  also at {}", shown(&place)));
         }
         let offer = offer.and_then(|item| item.offer.as_ref());
         if let Some(line) = compared_line(first.compared.as_ref(), offer) {
@@ -87,7 +87,7 @@ pub fn print_drift(env: &Env, report: &EngineReport) -> Vec<Blocked> {
 /// One remedy per item, said under the last of the rows that can carry it.
 fn say_offer(rows: &[&DriftRow], row: &DriftRow, offer: Option<&Offer>) {
     if let (Some(offer), true) = (offer, offer_goes_under(rows, row)) {
-        say(&format!("  to keep those files: {}", offer.line));
+        say(&format!("  to keep those files: {}", shown(&offer.line)));
     }
 }
 

@@ -3,8 +3,6 @@
 //! that has been given one is framed from its first line to its last; and
 //! neither ever puts a frame character in a pipe.
 
-use std::process::Output;
-
 use super::*;
 
 /// The verbs this change routed through the module and gave a frame to.
@@ -34,7 +32,7 @@ const UNFRAMED: [&[&str]; 4] = [
     &["show", "skill", "growth-guards"],
 ];
 
-fn ran(ui: &str, args: &[&str]) -> (Output, std::path::PathBuf) {
+fn ran(ui: &str, args: &[&str]) -> Ran {
     one(ui, args)
 }
 
@@ -45,7 +43,7 @@ fn ran(ui: &str, args: &[&str]) -> (Output, std::path::PathBuf) {
 fn no_verb_puts_a_frame_character_in_a_pipe() {
     for args in FRAMED.into_iter().chain(UNFRAMED) {
         for ui in ["plain", ""] {
-            let (output, _) = ran(ui, args);
+            let Ran { output, .. } = ran(ui, args);
             let printed = said(&output);
             let found: Vec<char> = FRAMING
                 .into_iter()
@@ -71,7 +69,7 @@ fn no_verb_puts_a_frame_character_in_a_pipe() {
 #[test]
 fn a_verb_with_no_frame_stays_plain_on_a_terminal() {
     for args in UNFRAMED {
-        let (output, _) = ran("pretty", args);
+        let Ran { output, .. } = ran("pretty", args);
         let printed = said(&output);
         let found: Vec<char> = FRAMING
             .into_iter()
@@ -89,7 +87,7 @@ fn a_verb_with_no_frame_stays_plain_on_a_terminal() {
 #[test]
 fn a_framed_verb_frames_every_line_it_says() {
     for args in FRAMED {
-        let (output, _) = ran("pretty", args);
+        let Ran { output, .. } = ran("pretty", args);
         let printed = said(&output);
         assert!(
             printed.starts_with('┌'),
@@ -133,7 +131,9 @@ fn a_confirm_with_nobody_to_ask_refuses_before_writing() {
         vec!["apply", "--scope", "project"],
         vec!["add", "--skill", "tidy"],
     ] {
-        let (output, project) = ran("plain", &args);
+        let Ran {
+            output, project, ..
+        } = ran("plain", &args);
         let printed = said(&output);
         assert!(
             printed.contains("refusing to apply without --yes in a non-interactive session"),

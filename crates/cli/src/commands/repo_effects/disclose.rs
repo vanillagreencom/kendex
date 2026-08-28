@@ -9,6 +9,7 @@
 
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
+use kendex_core::names::shown;
 use kendex_core::repo_effects::{DeclaredEffects, Disclosure};
 
 use super::super::say;
@@ -35,7 +36,8 @@ pub fn disclose(
     for withheld in &offers.withheld {
         say(&format!(
             "{}: not disclosed — {}",
-            withheld.name, withheld.reason
+            shown(&withheld.name),
+            shown(&withheld.reason)
         ));
     }
     for disclosure in &offers.shown {
@@ -45,12 +47,12 @@ pub fn disclose(
 }
 
 fn print(disclosure: &Disclosure) {
-    let name = &disclosure.name;
+    let name = shown(&disclosure.name);
     say("");
     say(&format!(
         "{name} changes how this repository works, beyond the files above:"
     ));
-    say(&format!("  {}", disclosure.summary));
+    say(&format!("  {}", shown(&disclosure.summary)));
     if !disclosure.writes.is_empty() {
         say("");
         say("  writes");
@@ -63,7 +65,7 @@ fn print(disclosure: &Disclosure) {
                 true => "  (shared)",
                 false => "",
             };
-            say(&format!("    {}{mark}", written.path));
+            say(&format!("    {}{mark}", shown(&written.path)));
         }
         if disclosure.writes.iter().any(|written| written.shared) {
             say("");
@@ -77,7 +79,7 @@ fn print(disclosure: &Disclosure) {
         for companion in &disclosure.companions {
             say(&format!(
                 "    {} ({})",
-                companion.name,
+                shown(&companion.name),
                 match companion.installed {
                     true => "installed",
                     false => "not installed",
@@ -92,11 +94,11 @@ fn print(disclosure: &Disclosure) {
     }
     for note in &disclosure.notes {
         say("");
-        say(&format!("  {note}"));
+        say(&format!("  {}", shown(note)));
     }
     say("");
     match &disclosure.undo {
-        Some(undo) => say(&format!("  to undo: {undo}")),
+        Some(undo) => say(&format!("  to undo: {}", shown(undo))),
         // Not "remove the package". Removal runs whatever uninstaller
         // the package declared, and this one declared none: its files
         // would go and the effect would stay — shims in .git/hooks

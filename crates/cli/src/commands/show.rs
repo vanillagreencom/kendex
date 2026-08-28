@@ -1,6 +1,7 @@
 use clap::Args;
 
 use kendex_core::env::Env;
+use kendex_core::names::shown;
 use kendex_core::package::detail;
 
 use super::pin::parse_kind;
@@ -34,13 +35,13 @@ pub fn run(env: &Env, args: ShowArgs) -> CliResult {
     let scope = resolve_scopes(env, filter)?.remove(0);
     if args.files {
         for file in detail::package_files(env, &scope, kind, &args.name)? {
-            say(&format!("{}  {} bytes", file.path, file.size));
+            say(&format!("{}  {} bytes", shown(&file.path), file.size));
         }
         return Ok(());
     }
     if let Some(rel) = &args.file {
         let source = detail::package_file(env, &scope, kind, &args.name, rel)?;
-        say(&source.content);
+        say(&shown(&source.content));
         if source.truncated {
             say("… (truncated at 64 KB)");
         }
@@ -48,28 +49,28 @@ pub fn run(env: &Env, args: ShowArgs) -> CliResult {
     }
     if args.readme {
         match detail::package_readme(env, &scope, kind, &args.name)? {
-            Some(readme) => say(&readme.content),
+            Some(readme) => say(&shown(&readme.content)),
             None => say("no readme"),
         }
         return Ok(());
     }
     let meta = detail::package_meta(env, &scope, kind, &args.name)?;
-    say(&format!("source: {}", meta.source));
+    say(&format!("source: {}", shown(&meta.source)));
     if let Some(repo) = &meta.repo {
-        say(&format!("repository: {repo}"));
+        say(&format!("repository: {}", shown(repo)));
     }
     if let Some(current) = &meta.current {
         let label = current
             .label
             .clone()
             .unwrap_or_else(|| current.commit[..7.min(current.commit.len())].to_owned());
-        say(&format!("version: {label}"));
+        say(&format!("version: {}", shown(&label)));
     }
     if let Some(rev) = &meta.rev {
-        say(&format!("held at: {}", &rev[..7.min(rev.len())]));
+        say(&format!("held at: {}", shown(&rev[..7.min(rev.len())])));
     }
     if let Some(installed_at) = &meta.installed_at {
-        say(&format!("installed: {installed_at}"));
+        say(&format!("installed: {}", shown(installed_at)));
     }
     if meta.fork.is_some() {
         say("forked: yes — a local package now");
@@ -81,7 +82,7 @@ pub fn run(env: &Env, args: ShowArgs) -> CliResult {
             ("homepage", &catalog.homepage),
         ] {
             if let Some(value) = value {
-                say(&format!("{label}: {value}"));
+                say(&format!("{}: {}", shown(label), shown(value)));
             }
         }
     }

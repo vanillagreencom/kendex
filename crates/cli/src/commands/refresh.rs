@@ -1,6 +1,7 @@
 use kendex_core::engine::{PlanOptions, plan_apply};
 use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
+use kendex_core::names::shown;
 
 use super::engine_common::{
     apply_report, confirm_and_apply, print_conflicts, print_drift, print_notes, print_safety,
@@ -52,9 +53,9 @@ fn print_set_changes(
         say(&format!(
             "  - {verb} {} {} for {} — {}",
             change.kind.name(),
-            change.name,
+            shown(&change.name),
             change.harness.display_name(),
-            change.reason
+            shown(&change.reason)
         ));
     }
 }
@@ -64,6 +65,38 @@ fn refreshed(count: Option<usize>) -> Wrote<'static> {
         verb: "refreshed",
         count,
     }
+}
+
+/// The deep work just ran for every scope; the snapshot is what the next
+/// session-start check reads instead of redoing it. A scope whose
+/// snapshot will not derive is a line, never a failure: what was written
+/// was written, and the next deep pass rewrites the file.
+fn record_snapshots(env: &Env, scopes: &[kendex_core::model::Scope]) {
+    for scope in scopes {
+        if matches!(
+            kendex_core::manifest::load(&kendex_core::manifest::manifest_path(env, scope)),
+            Ok(kendex_core::manifest::ManifestFile::Current(_))
+        ) && let Err(error) = kendex_core::drift::snapshot::record(env, scope)
+        {
+            warn(&format!(
+                "warning: snapshot not derived ({})",
+                shown(&error.to_string())
+            ));
+        }
+    }
+}
+
+/// One scope's outcome, held until the run has nothing left to say.
+///
+/// The snapshot pass runs after every scope is written and can warn, and
+/// a warning under a closing line is a run that ended twice. Held here,
+/// each scope still closes on its own ledger and every one of them is
+/// genuinely last.
+struct Closing {
+    scope: kendex_core::model::Scope,
+    count: Option<usize>,
+    blocked: Vec<super::offers::Blocked>,
+    scored: Vec<kendex_core::engine::ItemSafety>,
 }
 
 pub fn run_args(env: &Env, args: RefreshArgs) -> CliResult {
@@ -81,6 +114,7 @@ pub fn run(
     ui::intro("kendex refresh");
     let mut refreshed_anything = false;
     let mut failures: Vec<String> = Vec::new();
+    let mut closing: Vec<Closing> = Vec::new();
     let scopes = resolve_scopes(env, filter)?;
 
     for scope in &scopes {
@@ -96,7 +130,7 @@ pub fn run(
                 kendex_core::remote::sync_declared_sources(env, &manifest)
             };
             for note in notes {
-                warn(&format!("warning: {note}"));
+                warn(&format!("warning: {}", shown(&note)));
             }
         }
         let options = PlanOptions {
@@ -132,7 +166,12 @@ pub fn run(
         refreshed_anything = true;
         failures.extend(refresh_failures(&report));
         if report.plan.is_empty() {
-            say_ledger(&scope, refreshed(None), &blocked, &report.safety);
+            closing.push(Closing {
+                scope: scope.clone(),
+                count: None,
+                blocked,
+                scored: report.safety.clone(),
+            });
             continue;
         }
         // One closing line for both paths: a run that first asked about
@@ -146,7 +185,12 @@ pub fn run(
             }
         };
         match applied {
-            Ok(applied) => say_ledger(&scope, refreshed(Some(applied)), &blocked, &report.safety),
+            Ok(applied) => closing.push(Closing {
+                scope: scope.clone(),
+                count: Some(applied),
+                blocked,
+                scored: report.safety.clone(),
+            }),
             // A cancel is the reader stopping the run, not one scope
             // failing to refresh. Collected as a failure it would come out
             // as "failed to refresh 1 item/source(s)" and exit 1, and the
@@ -156,16 +200,18 @@ pub fn run(
         }
     }
 
-    // The deep work just ran for every scope; the snapshot is what the next
-    // session-start check reads instead of redoing it.
-    for scope in &scopes {
-        if matches!(
-            kendex_core::manifest::load(&kendex_core::manifest::manifest_path(env, scope)),
-            Ok(kendex_core::manifest::ManifestFile::Current(_))
-        ) && let Err(error) = kendex_core::drift::snapshot::record(env, scope)
-        {
-            warn(&format!("warning: snapshot not derived ({error})"));
-        }
+    record_snapshots(env, &scopes);
+
+    // Every scope's closing line, now that nothing follows it. A snapshot
+    // warning belongs above these, inside the frame, not under a line that
+    // already said the run was over.
+    for scope in closing {
+        say_ledger(
+            &scope.scope,
+            refreshed(scope.count),
+            &scope.blocked,
+            &scope.scored,
+        );
     }
 
     if !refreshed_anything && failures.is_empty() {
@@ -174,7 +220,7 @@ pub fn run(
     }
     if !failures.is_empty() {
         for failure in &failures {
-            super::fail(&format!("failed: {failure}"));
+            super::fail(&format!("failed: {}", shown(failure)));
         }
         return Err(format!("failed to refresh {} item/source(s)", failures.len()).into());
     }

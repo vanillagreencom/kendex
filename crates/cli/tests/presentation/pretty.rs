@@ -226,3 +226,48 @@ fn a_run_ending_outside_its_ledger_still_closes_the_frame() {
         "the frame was left open: {printed}"
     );
 }
+
+/// The closing line is genuinely last, even when the work after the
+/// writes has something to say. The snapshot pass runs once every scope
+/// is written and can warn; emitted from inside the scope loop, the
+/// ledger was drawn as an ordinary block and the run ended on that
+/// warning and a bare corner instead of on its outcome.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_warning_after_the_writes_lands_above_the_closing_ledger() {
+    for ui in ["plain", "pretty"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let project = home.join("dev/app");
+        blocked_project_at(home, &project);
+        // A file where the snapshot's directory belongs, so deriving it
+        // fails and the pass after the writes has a warning to print.
+        let data = home.join(".local/share/kendex");
+        fs::create_dir_all(&data).unwrap();
+        fs::write(data.join("drift"), "not a directory\n").unwrap();
+
+        let printed = said(&kendex(
+            home,
+            &project,
+            ui,
+            &["refresh", "-y", "--scope", "project"],
+        ));
+        assert!(
+            printed.contains("snapshot not derived"),
+            "the fixture no longer reaches the case ({ui}): {printed}"
+        );
+        let lines: Vec<&str> = printed.lines().filter(|line| !line.is_empty()).collect();
+        let warned = lines
+            .iter()
+            .position(|line| line.contains("snapshot not derived"))
+            .unwrap();
+        let closed = lines
+            .iter()
+            .rposition(|line| line.contains("refreshed"))
+            .unwrap();
+        assert!(
+            warned < closed,
+            "the warning landed under the closing line ({ui}): {printed}"
+        );
+    }
+}

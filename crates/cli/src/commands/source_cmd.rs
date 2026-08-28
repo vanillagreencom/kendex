@@ -1,5 +1,6 @@
 use clap::Subcommand;
 use kendex_core::env::Env;
+use kendex_core::names::shown;
 use kendex_core::{remote, source_ops};
 
 use super::engine_common::apply_report;
@@ -34,7 +35,7 @@ pub fn run(env: &Env, command: SourceCommand, filter: ScopeFilter) -> CliResult 
     if let SourceCommand::Refresh { stale: true } = &command {
         let scopes = resolve_scopes(env, ScopeFilter::All)?;
         for note in kendex_core::drift::refresh::refresh_stale(env, &scopes) {
-            say(&format!("note: {note}"));
+            say(&format!("note: {}", shown(&note)));
         }
         return Ok(());
     }
@@ -89,12 +90,15 @@ pub fn run(env: &Env, command: SourceCommand, filter: ScopeFilter) -> CliResult 
                     continue;
                 };
                 for warning in remote::sync_sources(env, &manifest)? {
-                    say(&format!("warning: {warning}"));
+                    say(&format!("warning: {}", shown(&warning)));
                 }
                 // The fetches above stamped every mirror; the snapshot makes
                 // the fresh verdicts what the next session check reads.
                 if let Err(error) = kendex_core::drift::snapshot::record(env, &scope) {
-                    say(&format!("warning: snapshot not derived ({error})"));
+                    say(&format!(
+                        "warning: snapshot not derived ({})",
+                        shown(&error.to_string())
+                    ));
                 }
                 say(&format!("{}: sources refreshed", scope_label(&scope)));
             }

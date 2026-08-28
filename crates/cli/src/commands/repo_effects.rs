@@ -57,7 +57,7 @@ pub fn walkthrough(scope: &Scope, shown_to_them: &[Disclosure], allowed: bool) -
     for disclosure in shown_to_them {
         say(&format!(
             "{}: installed; its repository changes were not applied",
-            disclosure.name
+            shown(&disclosure.name)
         ));
     }
     Ok(())
@@ -79,7 +79,7 @@ pub fn confirm(pending: &[Disclosure], allowed: bool) -> Result<bool, Box<dyn st
         return Ok(false);
     }
     let question = match pending.len() {
-        1 => format!("apply {}'s repository changes?", pending[0].name),
+        1 => format!("apply {}'s repository changes?", shown(&pending[0].name)),
         n => format!("apply the repository changes of {n} packages?"),
     };
     // The shared prompt, not a write of our own: it draws whatever block
@@ -104,7 +104,7 @@ pub fn apply(scope: &Scope, declared: &DeclaredEffects) -> CliResult {
             Ok(())
         }
         Err(error @ kendex_core::repo_effects::ArmError::NothingToRun { .. }) => {
-            say(&error.to_string());
+            say(&shown(&error.to_string()));
             Ok(())
         }
         Err(error) => {
@@ -118,7 +118,7 @@ pub fn apply(scope: &Scope, declared: &DeclaredEffects) -> CliResult {
 
 fn relay(report: &kendex_core::guard::GuardReport) {
     for line in &report.stderr {
-        say(line);
+        say(&shown(line));
     }
     for line in &report.stdout {
         out(line);

@@ -5,6 +5,7 @@
 use super::say;
 use kendex_core::env::Env;
 use kendex_core::error::Result;
+use kendex_core::names::shown;
 use kendex_core::registry::credentials::{Credential, CredentialStore, KeyringStore};
 use kendex_core::registry::login::{self, Poll};
 use kendex_core::registry::me;
@@ -16,16 +17,17 @@ pub fn login() -> Result<()> {
     if let Ok(Some(_)) = store.load() {
         say(&format!(
             "Already signed in to {} — run `kendex logout` first to switch.",
-            base_url()
+            shown(&base_url())
         ));
         return Ok(());
     }
     let started = login::start(&fetch, "kendex CLI")?;
     say(&format!(
         "First, open:  {}?code={}",
-        started.verification_url, started.user_code
+        shown(&started.verification_url),
+        shown(&started.user_code)
     ));
-    say(&format!("Your code:    {}", started.user_code));
+    say(&format!("Your code:    {}", shown(&started.user_code)));
     say("");
     say(&format!(
         "Waiting for approval… (expires in {} minutes)",

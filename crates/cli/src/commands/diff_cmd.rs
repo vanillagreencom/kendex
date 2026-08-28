@@ -1,6 +1,7 @@
 use clap::Args;
 
 use kendex_core::env::Env;
+use kendex_core::names::shown;
 use kendex_core::package::diff::{FileStatus, LineKind, VersionSel};
 
 use super::pin::parse_kind;
@@ -72,17 +73,19 @@ pub fn run(env: &Env, args: DiffArgs) -> CliResult {
         };
         say(&format!(
             "\n{}{status}  +{} -{}",
-            file.path, file.additions, file.deletions
+            shown(&file.path),
+            file.additions,
+            file.deletions
         ));
         for hunk in &file.hunks {
-            say(&hunk.header);
+            say(&shown(&hunk.header));
             for line in &hunk.lines {
                 let marker = match line.kind {
                     LineKind::Context => ' ',
                     LineKind::Add => '+',
                     LineKind::Remove => '-',
                 };
-                say(&format!("{marker}{}", line.text));
+                say(&format!("{marker}{}", shown(&line.text)));
             }
         }
     }

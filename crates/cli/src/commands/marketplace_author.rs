@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use kendex_core::author::{self, CreateRequest, ImportSelection, License};
 use kendex_core::env::Env;
 use kendex_core::model::ItemKind;
+use kendex_core::names::shown;
 use kendex_core::process::Hardened;
 
 use super::{CliResult, out, resolve_scopes, say};
@@ -48,7 +49,7 @@ pub fn new(
     )?;
     say(&format!(
         "created {} — a git repository with kendex.toml, README.md and the check workflow",
-        dir.display()
+        shown(&dir.display().to_string())
     ));
     summarize(&row);
     Ok(())
@@ -58,7 +59,7 @@ pub fn use_existing(env: &Env, dir: &std::path::Path) -> CliResult {
     let row = author::use_existing(env, dir)?;
     say(&format!(
         "registered {} under Mine — nothing inside it was changed",
-        dir.display()
+        shown(&dir.display().to_string())
     ));
     summarize(&row);
     Ok(())
@@ -69,7 +70,11 @@ pub fn mine(env: &Env, json: bool) -> CliResult {
     for path in author::list(env)? {
         match author::status(&path) {
             Ok(row) => rows.push(row),
-            Err(error) => say(&format!("{}: {error}", path.display())),
+            Err(error) => say(&format!(
+                "{}: {}",
+                shown(&path.display().to_string()),
+                shown(&error.to_string())
+            )),
         }
     }
     if json {
@@ -83,7 +88,10 @@ pub fn mine(env: &Env, json: bool) -> CliResult {
         let packages: u32 = row.counts.values().sum();
         out(&format!(
             "{}  {packages} package(s), {} bundle(s), {} problem(s)  {}",
-            row.name, row.bundles, row.breakage, row.path,
+            shown(&row.name),
+            row.bundles,
+            row.breakage,
+            shown(&row.path),
         ));
     }
     Ok(())
@@ -130,10 +138,10 @@ pub fn import(env: &Env, args: ImportArgs) -> CliResult {
     }
     let outcome = author::apply(env, &scopes, &args.target, &selections)?;
     for written in &outcome.written {
-        say(&format!("imported {written}"));
+        say(&format!("imported {}", shown(written)));
     }
     for present in &outcome.already_present {
-        say(&format!("already present: {present}"));
+        say(&format!("already present: {}", shown(present)));
     }
     // The same check the app shows: findings with files, then the tally.
     super::check_catalog::run(&args.target, false, false)
@@ -250,11 +258,14 @@ fn summarize(row: &author::MineRow) {
     let packages: u32 = row.counts.values().sum();
     say(&format!(
         "{}: {packages} package(s), {} bundle(s); check: {} breakage, {} safety finding(s)",
-        row.name, row.bundles, row.breakage, row.safety_findings
+        shown(&row.name),
+        row.bundles,
+        row.breakage,
+        row.safety_findings
     ));
     match (&row.git.repository, &row.git.candidate) {
         (false, _) => say("git: not a repository yet"),
-        (true, Some(candidate)) => say(&format!("git: remote candidate {candidate}")),
+        (true, Some(candidate)) => say(&format!("git: remote candidate {}", shown(candidate))),
         (true, None) => say("git: no GitHub remote yet"),
     }
 }
@@ -285,9 +296,9 @@ pub fn submit(env: &Env, dir: Option<PathBuf>, dry_run: bool, status: bool) -> C
             Some(false) => " ✗",
             None => " ?",
         };
-        say(&format!("{mark}  {}", check.label));
+        say(&format!("{mark}  {}", shown(&check.label)));
         if let Some(fix) = &check.fix {
-            say(&format!("      {fix}"));
+            say(&format!("      {}", shown(fix)));
         }
     }
     let Some(candidate) = &preflight.candidate else {
@@ -295,8 +306,9 @@ pub fn submit(env: &Env, dir: Option<PathBuf>, dry_run: bool, status: bool) -> C
     };
     if dry_run {
         say(&format!(
-            "would submit {candidate} to {}",
-            kendex_core::registry::base_url()
+            "would submit {} to {}",
+            shown(candidate),
+            shown(&kendex_core::registry::base_url())
         ));
         return Ok(());
     }
@@ -306,7 +318,7 @@ pub fn submit(env: &Env, dir: Option<PathBuf>, dry_run: bool, status: bool) -> C
     let outcome = submit::submit(&fetch, &KeyringStore, candidate)?;
     say(&format!(
         "submitted {} — status: {}{}",
-        outcome.repo,
+        shown(&outcome.repo),
         outcome.status,
         match outcome.status.as_str() {
             "pending" => " (in the review queue; `kendex marketplace submit --status` follows it)",

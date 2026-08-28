@@ -124,7 +124,7 @@ pub fn run(env: &Env, args: UpdatesArgs) -> CliResult {
             "{}  {} {}  {} -> {}{notes}",
             scope_label(&row.scope),
             row.kind.name(),
-            row.name,
+            kendex_core::names::shown(&row.name),
             row.current
                 .as_ref()
                 .map(show_version)
@@ -139,8 +139,8 @@ pub fn run(env: &Env, args: UpdatesArgs) -> CliResult {
         say(&format!(
             "warning: {} {}: {}",
             warning.kind.name(),
-            warning.name,
-            warning.message
+            kendex_core::names::shown(&warning.name),
+            kendex_core::names::shown(&warning.message)
         ));
     }
     if shown == 0 && report.warnings.is_empty() {
@@ -149,7 +149,10 @@ pub fn run(env: &Env, args: UpdatesArgs) -> CliResult {
     // The deep work just ran; write it down so the next session-start check
     // reads verdicts instead of guesses.
     if let Err(error) = kendex_core::drift::snapshot::record(env, &scope) {
-        say(&format!("warning: snapshot not derived ({error})"));
+        say(&format!(
+            "warning: snapshot not derived ({})",
+            kendex_core::names::shown(&error.to_string())
+        ));
     }
     Ok(())
 }
@@ -174,7 +177,7 @@ fn fetch_sources(env: &Env, scope: &kendex_core::model::Scope) {
         kendex_core::manifest::load(&path)
     {
         for warning in kendex_core::remote::fetch_all(env, &manifest) {
-            say(&format!("warning: {warning}"));
+            say(&format!("warning: {}", kendex_core::names::shown(&warning)));
         }
     }
 }
@@ -206,9 +209,13 @@ fn set_ignored(
     kendex_core::package::updates::set_ignored(env, scope, kind, &name, &row.repo, ignored)?;
     match ignored {
         true => say(&format!(
-            "updates for {name} are muted — `kendex updates unignore` brings them back"
+            "updates for {} are muted — `kendex updates unignore` brings them back",
+            kendex_core::names::shown(&name)
         )),
-        false => say(&format!("updates for {name} notify again")),
+        false => say(&format!(
+            "updates for {} notify again",
+            kendex_core::names::shown(&name)
+        )),
     }
     Ok(())
 }

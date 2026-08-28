@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 
+use kendex_core::names::shown;
 use kendex_core::source;
 use kendex_core::source_read::SealedSource;
 
@@ -23,7 +24,7 @@ pub fn run(dir: Option<PathBuf>, json: bool) -> CliResult {
     }
     say(&format!(
         "{}: {} package(s), {} bundle(s), {} finding(s)",
-        report.name,
+        shown(&report.name),
         report.counts.packages,
         report.counts.bundles,
         report.findings.len()
@@ -31,13 +32,17 @@ pub fn run(dir: Option<PathBuf>, json: bool) -> CliResult {
     for row in &report.found {
         say(&format!(
             "  {} {}(s) under {}",
-            row.count, row.kind, row.root
+            row.count,
+            shown(row.kind),
+            shown(&row.root)
         ));
     }
     for finding in &report.findings {
         say(&format!(
             "  problem: {}: {} — fix: {}",
-            finding.location, finding.problem, finding.fix
+            shown(&finding.location),
+            shown(&finding.problem),
+            shown(&finding.fix)
         ));
     }
     Ok(())

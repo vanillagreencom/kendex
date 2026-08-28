@@ -8,6 +8,7 @@ use kendex_core::apply::Op;
 use kendex_core::engine::{EngineReport, ops};
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
+use kendex_core::names::shown;
 
 /// What a removal does with the declaration.
 #[derive(Clone, Copy)]
@@ -53,7 +54,11 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
         // until the refresh the closing line names; the warning carries no
         // type to tell it from the rest, so it prints with them.
         for warning in &report.warnings {
-            warn(&format!("warning: {}: {}", warning.name, warning.message));
+            warn(&format!(
+                "warning: {}: {}",
+                shown(&warning.name),
+                shown(&warning.message)
+            ));
         }
         if !takes_anything(&report) {
             continue;
@@ -69,7 +74,7 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
         // list of writes under the word "removed" says the wrong thing.
         say("changes:");
         for op in &report.plan.ops {
-            say(&format!("  - {}", op.description));
+            say(&format!("  - {}", shown(&op.description)));
         }
         if matches!(mode, Removal::KeepDeclaration) {
             say(&format!(
@@ -121,7 +126,7 @@ fn say_split(report: &EngineReport, mode: Removal) {
             note(&format!(
                 "removing {} {} for {}{reason}",
                 change.kind.name(),
-                change.name,
+                shown(&change.name),
                 change.harness.display_name()
             ));
         }
@@ -130,9 +135,9 @@ fn say_split(report: &EngineReport, mode: Removal) {
         note(&format!(
             "keeping {} {} for {} — {}",
             kept.kind.name(),
-            kept.name,
+            shown(&kept.name),
             kept.harness.display_name(),
-            kept.reason
+            shown(&kept.reason)
         ));
     }
 }

@@ -3,6 +3,7 @@ use std::process::ExitCode;
 use kendex_core::engine::{DriftRow, DriftState, audit};
 use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
+use kendex_core::names::shown;
 
 use super::engine_common::print_unmanaged;
 use super::{fail, resolve_scopes, say, scope_label};
@@ -40,7 +41,11 @@ pub fn run(
         let report = match (audited, lock.entries.is_empty()) {
             (Ok(report), _) => report,
             (Err(error), true) => {
-                fail(&format!("! {} not checked: {error}", scope_label(&scope)));
+                fail(&format!(
+                    "! {} not checked: {}",
+                    scope_label(&scope),
+                    shown(&error.to_string())
+                ));
                 continue;
             }
             (Err(error), false) => return Err(error.into()),
@@ -111,15 +116,16 @@ fn say_row(
                 || n.contains("unreadable"))
     });
     // A locked name came out of a manifest a person wrote and a catalog
-    // kendex did not: escaped here, at the one place it is printed.
+    // kendex did not, and all three rows below print it, so it is escaped
+    // once here rather than in each of them.
     let kind = entry.kind.name();
-    let name = &entry.name;
+    let name = shown(&entry.name);
     let harness = entry.harness.name();
     let bad = match problem {
         Some(row) => {
             fail(&format!(
                 "✗ {kind} {name} [{harness}]: {}",
-                kendex_core::names::shown(&row.detail)
+                shown(&row.detail)
             ));
             true
         }
@@ -144,7 +150,7 @@ fn say_row(
                 .harness
                 .is_none_or(|harness| harness == entry.harness)
     }) {
-        say(&format!("  ! {}", warning.message));
+        say(&format!("  ! {}", shown(&warning.message)));
     }
     bad
 }

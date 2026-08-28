@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use kendex_core::env::Env;
 use kendex_core::install_channel::{Host, HostProbe, InstallChannel, for_cli};
+use kendex_core::names::shown;
 use kendex_core::process::Hardened;
 use kendex_core::update_feed::{
     RELEASE_FEED_URL, ReleaseFeed, VersionRelation, app_image_url, release_notes_url,
@@ -93,7 +94,7 @@ pub fn run(env: &Env, force: bool) -> CliResult {
         return Ok(());
     };
 
-    say(&format!("updating {current} → {latest}"));
+    say(&format!("updating {} → {}", shown(current), shown(latest)));
     // The command's own baked version is the state marker for the whole
     // install, so it is the last thing written. Any failure before it
     // leaves the old command in place, the next run still reads the feed
@@ -150,7 +151,10 @@ fn update_app(env: &Env, latest: &str) -> Result<bool, Box<dyn std::error::Error
         )
         .into());
     }
-    say(&format!("updating the desktop app at {}", path.display()));
+    say(&format!(
+        "updating the desktop app at {}",
+        shown(&path.display().to_string())
+    ));
     let image = fetch(&url)?;
     replace_executable(&path, &image)?;
     out(&format!("updated the desktop app to {latest}"));

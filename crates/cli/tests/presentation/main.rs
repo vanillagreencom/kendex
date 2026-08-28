@@ -196,8 +196,14 @@ pub fn both(args: &[&str]) -> (String, String) {
 }
 
 /// One rendering, from a fixture of its own.
+///
+/// The fixture has to outlive the run so the caller can read what the
+/// verb wrote, so its `TempDir` is handed back with the output rather
+/// than leaked: dropping the returned value is what removes the tree,
+/// and a suite that calls this dozens of times per run would otherwise
+/// fill the machine's temp directory a little more every time.
 #[allow(clippy::unwrap_used)]
-pub fn one(ui: &str, args: &[&str]) -> (Output, PathBuf) {
+pub fn one(ui: &str, args: &[&str]) -> Ran {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().to_owned();
     let catalog = home.join("catalog").display().to_string();
@@ -208,9 +214,19 @@ pub fn one(ui: &str, args: &[&str]) -> (Output, PathBuf) {
     let args: Vec<&str> = filled.iter().map(String::as_str).collect();
     let project = blocked_project(&home);
     let output = kendex(&home, &project, ui, &args);
-    // The fixture has to outlive the run for the caller to read it.
-    std::mem::forget(tmp);
-    (output, project)
+    Ran {
+        output,
+        project,
+        _fixture: tmp,
+    }
+}
+
+/// What one run left behind: what it printed, where it ran, and the
+/// fixture holding both up until the assertion is done with them.
+pub struct Ran {
+    pub output: Output,
+    pub project: PathBuf,
+    _fixture: tempfile::TempDir,
 }
 
 mod plain;

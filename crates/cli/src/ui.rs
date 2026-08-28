@@ -65,13 +65,16 @@ fn capable() -> bool {
     *CAPABLE.get_or_init(|| {
         let asked = std::env::var("KENDEX_UI");
         if let Ok(value) = &asked
-            && wanted(value).is_none()
+            && !named_a_mode(value)
         {
             // Silently falling back would leave a machine framed or plain
-            // for a reason nobody could see in the output.
-            // The one foreign fragment this module interpolates itself,
-            // escaped here like any other: the value came off the
-            // environment, and this line is the only place it is printed.
+            // for a reason nobody could see in the output. `auto` is not
+            // that case: it asks for the detection by name and gets it,
+            // so warning about it would put a line on every run of a
+            // machine that spelled its choice out.
+            //
+            // The value came off the environment, so it is escaped here
+            // like any other foreign fragment.
             write_line(&format!(
                 "warning: KENDEX_UI={} is not plain, pretty or auto — detecting instead",
                 kendex_core::names::shown(value)
@@ -96,14 +99,24 @@ fn both_terminals(stdout: bool, stderr: bool) -> bool {
     stdout && stderr
 }
 
-/// What `KENDEX_UI` asked for, if it asked for anything this run knows.
-/// `auto` and anything unrecognised leave the answer to the detection.
+/// What `KENDEX_UI` asked for, if it asked for a rendering by name.
+/// `auto` and anything unrecognised both leave the answer to the
+/// detection, which is why this cannot tell them apart on its own.
 fn wanted(value: &str) -> Option<bool> {
     match value {
         "plain" => Some(false),
         "pretty" => Some(true),
         _ => None,
     }
+}
+
+/// Whether the value names a mode this run knows. [`wanted`] answers
+/// `None` for `auto` and for a typo alike — both leave it to the
+/// detection — so the difference between asking for the detection and
+/// misspelling a rendering is drawn here, and only the second is worth a
+/// line on every run.
+fn named_a_mode(value: &str) -> bool {
+    value == "auto" || wanted(value).is_some()
 }
 
 /// Set by [`intro`], and the only thing that turns framing on.
@@ -205,6 +218,21 @@ mod tests {
         assert_eq!(wanted("pretty"), Some(true));
         for ignored in ["auto", "", "Pretty", "1", "true", "plane"] {
             assert_eq!(wanted(ignored), None, "{ignored:?} was read as an answer");
+        }
+    }
+
+    /// `auto` asks for the detection by name and gets it, so it is not a
+    /// value to warn about: a machine that spells its choice out would
+    /// otherwise carry a warning line on every single run. A typo leaves
+    /// the answer to the detection too, and that one has to be said out
+    /// loud, since nothing else would show the value was ignored.
+    #[test]
+    fn auto_is_a_mode_and_a_typo_is_not() {
+        for named in ["plain", "pretty", "auto"] {
+            assert!(named_a_mode(named), "{named:?} was read as a typo");
+        }
+        for typo in ["", "Pretty", "AUTO", "1", "true", "plane", "auto "] {
+            assert!(!named_a_mode(typo), "{typo:?} passed as a mode");
         }
     }
 

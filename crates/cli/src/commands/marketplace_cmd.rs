@@ -1,5 +1,6 @@
 use clap::Subcommand;
 use kendex_core::env::Env;
+use kendex_core::names::shown;
 use kendex_core::source_ops;
 
 use super::engine_common::apply_report;
@@ -260,7 +261,7 @@ fn run_subscribe(
     let scope = resolve_scopes(env, filter)?.remove(0);
     let subscribed = source_ops::subscribe(env, &scope, reference, name)?;
     for note in &subscribed.report.notes {
-        say(note);
+        say(&shown(note));
     }
     apply_report(env, &subscribed.report)?;
     // Subscribing fetches so counts can land; a failure costs the
@@ -271,16 +272,19 @@ fn run_subscribe(
         && let Some(repo) = decl.repo.clone()
         && let Err(error) = kendex_core::remote::sync(env, &repo, decl.rev.as_deref())
     {
-        say(&format!("warning: not fetched yet ({error})"));
+        say(&format!(
+            "warning: not fetched yet ({})",
+            shown(&error.to_string())
+        ));
     }
     say(&format!(
         "{}: subscribed to '{}' ({})",
         scope_label(&scope),
-        subscribed.name,
-        subscribed.reference
+        shown(&subscribed.name),
+        shown(&subscribed.reference)
     ));
     if let Some(lead) = subscribed.lead {
-        say(&format!("package: {lead}"));
+        say(&format!("package: {}", shown(&lead)));
     }
     Ok(())
 }

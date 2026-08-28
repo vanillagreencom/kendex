@@ -3,6 +3,7 @@ use std::process::ExitCode;
 
 use clap::Subcommand;
 use kendex_core::guard::{self, GuardReport};
+use kendex_core::names::shown;
 
 use super::{out, say};
 
@@ -35,7 +36,7 @@ pub enum GuardCommand {
 /// Relaying both to stdout handed them a `::warning::` stream to filter.
 fn report(report: &GuardReport) -> ExitCode {
     for line in &report.stderr {
-        say(line);
+        say(&shown(line));
     }
     for line in &report.stdout {
         out(line);

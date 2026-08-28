@@ -7,6 +7,7 @@
 use kendex_core::engine::ops::{self, AddRequest};
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
+use kendex_core::names::shown;
 use kendex_core::registry::{CurlFetch, collections};
 use kendex_core::source_ops::{self, SourceAction};
 
@@ -22,7 +23,7 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
     // name, the repositories it points at, and the members it claims.
     say(&format!(
         "collection '{}': {} package(s) across {} repositor{}",
-        collection.name,
+        shown(&collection.name),
         collection.members.len(),
         steps.len(),
         if steps.len() == 1 { "y" } else { "ies" }
@@ -30,7 +31,7 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
     for step in &steps {
         let action = match &step.action {
             SourceAction::Reuse { name } => {
-                format!("using existing subscription '{name}'")
+                format!("using existing subscription '{}'", shown(name))
             }
             SourceAction::Subscribe { .. } => match &step.commit {
                 Some(commit) => format!("subscribe at {}", &commit[..commit.len().min(7)]),
@@ -44,11 +45,11 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
             .chain(&step.hooks)
             .chain(&step.commands)
             .chain(&step.mcp_servers)
-            .cloned()
+            .map(|name| shown(name))
             .collect();
         say(&format!(
             "  {}  [{action}]  {}",
-            step.repo,
+            shown(&step.repo),
             members.join(", ")
         ));
     }
@@ -170,7 +171,7 @@ fn install_step(
             say(&format!(
                 "{}: subscribed to '{}'",
                 scope_label(scope),
-                subscribed.name
+                shown(&subscribed.name)
             ));
             subscribed.name
         }
@@ -255,7 +256,7 @@ fn prevalidate(env: &Env, step: &kendex_core::source_ops::CollectionStep) -> Cli
             if kendex_core::source::find_item(&sealed, &config, kind, name).is_none() {
                 return Err(format!(
                     "{} does not offer {} '{name}' at the collection's snapshot — nothing was installed",
-                    step.repo,
+                    shown(&step.repo),
                     kind.name()
                 )
                 .into());

@@ -3,6 +3,7 @@ use clap::Args;
 use kendex_core::engine::audit;
 use kendex_core::env::Env;
 use kendex_core::model::HarnessId;
+use kendex_core::names::shown;
 
 use super::engine_common::{apply_report, print_safety};
 use super::pin::parse_kind;
@@ -43,7 +44,7 @@ pub fn run(env: &Env, args: ForkArgs) -> CliResult {
         None => kendex_core::engine::fork::fork(env, &scope, kind, &args.name, harness)?,
     };
     for op in &plan.ops {
-        say(&format!("  - {}", op.description));
+        say(&format!("  - {}", shown(&op.description)));
     }
     kendex_core::apply::execute(env, &plan, None)?;
 
@@ -71,11 +72,11 @@ pub fn run(env: &Env, args: ForkArgs) -> CliResult {
     print_safety(&report);
     apply_report(env, &report)?;
     match args.rename {
-        Some(new) => say(&format!("fork renamed to {new}")),
+        Some(new) => say(&format!("fork renamed to {}", shown(&new))),
         None => say(&format!(
             "{} '{}' is yours now — a local fork, updates paused",
             kind.name(),
-            args.name
+            shown(&args.name)
         )),
     }
     Ok(())

@@ -4,6 +4,7 @@ use kendex_core::engine::{DriftRow, DriftState, EngineReport};
 use kendex_core::env::Env;
 use kendex_core::error::CoreError;
 use kendex_core::model::{HarnessId, ItemKind};
+use kendex_core::names::shown;
 
 use std::io::IsTerminal;
 
@@ -26,7 +27,7 @@ pub fn parse_harnesses(values: &[String]) -> Result<Vec<HarnessId>, String> {
 /// plan still prints these.
 pub fn print_notes(report: &EngineReport) {
     for line in &report.notes {
-        note(&format!("note: {line}"));
+        note(&format!("note: {}", shown(line)));
     }
 }
 
@@ -37,12 +38,12 @@ pub fn print_report(env: &Env, report: &EngineReport) -> Vec<super::offers::Bloc
     print_notes(report);
     for warning in &report.warnings {
         let target = match warning.harness {
-            Some(harness) => format!("{} ({})", warning.name, harness.display_name()),
-            None => warning.name.clone(),
+            Some(harness) => format!("{} ({})", shown(&warning.name), harness.display_name()),
+            None => shown(&warning.name),
         };
-        warn(&format!("warning: {target}: {}", warning.message));
+        warn(&format!("warning: {target}: {}", shown(&warning.message)));
         if let Some(fix) = &warning.remediation {
-            say(&format!("  fix: {fix}"));
+            say(&format!("  fix: {}", shown(fix)));
         }
     }
     print_safety(report);
@@ -61,7 +62,7 @@ pub fn print_report(env: &Env, report: &EngineReport) -> Vec<super::offers::Bloc
     // asked to approve a count was never shown what it covers.
     say(&format!("plan: {} change{}", ops, plural(ops)));
     for op in &report.plan.ops {
-        say(&format!("  - {}", op.description));
+        say(&format!("  - {}", shown(&op.description)));
     }
     blocked
 }
@@ -78,7 +79,6 @@ fn plural(n: usize) -> &'static str {
 /// to be said here: seen in `list` and nowhere else, it reads as checked
 /// and passing rather than as never looked at.
 pub fn print_unmanaged(drift: &[DriftRow]) {
-    use kendex_core::names::shown;
     let rows: Vec<&DriftRow> = drift
         .iter()
         .filter(|row| row.state == DriftState::Unmanaged)
@@ -165,7 +165,6 @@ pub fn print_advisory(
     at: ScoredAt<'_>,
     advisory: &kendex_core::quality::AuditResult,
 ) {
-    use kendex_core::names::shown;
     let at = match at {
         ScoredAt::Harness(harness) => format!(" for {}", harness.display_name()),
         ScoredAt::CatalogPath("") => String::new(),
@@ -201,7 +200,7 @@ fn print_skipped(advisory: &kendex_core::quality::AuditResult) {
     say(&format!(
         "  not fully checked: {} rule(s) had nothing to read — {}",
         advisory.skipped.len(),
-        kendex_core::names::shown(&first.reason)
+        shown(&first.reason)
     ));
 }
 

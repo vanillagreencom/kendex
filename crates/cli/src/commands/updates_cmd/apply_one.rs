@@ -8,6 +8,7 @@
 
 use kendex_core::env::Env;
 use kendex_core::model::ItemKind;
+use kendex_core::names::shown;
 
 use super::super::engine_common::{confirm_and_execute, print_report};
 use super::super::pin::parse_kind;
@@ -59,10 +60,18 @@ pub(super) fn apply_one(
     // The deep work just ran; write it down so the next session-start check
     // reads verdicts instead of guesses.
     if let Err(error) = kendex_core::drift::snapshot::record(env, scope) {
-        say(&format!("warning: snapshot not derived ({error})"));
+        say(&format!(
+            "warning: snapshot not derived ({})",
+            shown(&error.to_string())
+        ));
     }
     say(&outcome_line(
-        kind, &name, &held, &removed, &moving, changed,
+        kind,
+        &shown(&name),
+        &held,
+        &removed,
+        &moving,
+        changed,
     ));
     Ok(())
 }

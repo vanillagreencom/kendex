@@ -1,5 +1,6 @@
 use kendex_core::env::Env;
 use kendex_core::model::{HarnessId, Scope};
+use kendex_core::names::shown;
 use kendex_core::{scan, settings};
 
 use super::{CliResult, resolve_scopes, say};
@@ -50,11 +51,11 @@ pub fn run(env: &Env, filter: ScopeFilter, harness: Option<String>) -> CliResult
                 .map(|(cell, w)| format!("{cell:w$}"))
                 .collect::<Vec<_>>()
                 .join("  ");
-            say(line.trim_end());
+            say(&shown(line.trim_end()));
         }
     }
     for warning in &result.warnings {
-        say(&format!("warning: {warning}"));
+        say(&format!("warning: {}", shown(warning)));
     }
     Ok(())
 }
