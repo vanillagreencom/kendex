@@ -388,8 +388,8 @@ Restore configured symlinks, copies, and mkdirs in a worktree — the repair
 after a manual rebase or merge that clobbered them, or after a
 partially-completed remove. repair-links is the git-hook-driven variant that
 never destroys untracked data and exits 0 quietly for the main checkout or an
-unregistered path. Run fix-links FROM THE MAIN CHECKOUT: the worktree's own
-copy of this script is reached through the possibly-broken link.
+unregistered path. Run fix-links FROM THE MAIN CHECKOUT: a worktree copy of
+this script may itself be among the missing files.
 
 Recovery routing — route by shape, not by whether 'test -L' passes:
   - An untracked-only WORKTREE_SYMLINKS entry must be a symlink. Missing, or
@@ -455,7 +455,7 @@ info/exclude entries:
   tracked content, setup follows the entry with '!<path>/' (a trailing-slash
   pattern matches a real directory but NOT a symlink pointing at one).
   Runtime-only paths keep the plain entry. The shape is re-evaluated on every
-  create/fix-links against both indexes, main authoritative.
+  create/fix-links against both indexes, either one enough.
 
 Git-hook auto-repair:
   create and fix-links install shared post-checkout, post-merge, and
@@ -1816,7 +1816,7 @@ collect_unrestored_links() {
     fi
     # An entry with tracked content underneath is a real directory BY DESIGN
     # (VST-37); its untracked children are what must be links. The layout is
-    # decided from the INDEX alone — both, main authoritative, matching how the
+    # decided from the INDEX alone — both, either one enough, matching how the
     # repair path decides it — never from what the destination happens to be
     # right now. Reading the destination first would let a legacy parent
     # symlink still shadowing the tracked subtree answer as a plain-symlink
