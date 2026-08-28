@@ -210,6 +210,25 @@ else
   bad "the at-cap steps are out of order" "file=$file_step exception=$exc_step reply=$reply_step"
 fi
 
+# At the cap the exception narrows the item SET. Opening the whole pass lets
+# an ordinary Fixing item ride along on an exempt item's round and push,
+# which is the round the cap exists to stop. Three places carry the set.
+SEC61="$(cap_site "$COMMENTS_WF")"
+carriers=0
+grep -q -F 'at the cap, the exempt items only' <<<"$SEC61" && carriers=$((carriers + 1))
+grep -q -F 'covering exactly the delegated set' <<<"$SEC61" && carriers=$((carriers + 1))
+grep -q -F 'at the cap, only the exempt ones' <<<"$SEC61" && carriers=$((carriers + 1))
+if [[ "$carriers" -eq 3 ]]; then
+  ok "the grouping, the round record and the delegation template all narrow at the cap"
+else
+  bad "only $carriers of the 3 item-set carriers narrow at the cap"
+fi
+if grep -q -F 'narrows the item set, never opens the pass' <<<"$rule"; then
+  ok "the exception is stated as a rule about items, not about the pass"
+else
+  bad "the exception still reads as opening the pass"
+fi
+
 # One exception, one definition. finding-disposition is what a reviewer reads
 # first; a broader claim there selects findings review-pr-comments will not
 # push a fix for.
@@ -241,23 +260,19 @@ else
   ok "§ 6.3 leaves the cap to § 6.1"
 fi
 
-# One decision, reached by the nested loop and by its caller. § 6.3 looping
-# to § 1 on its own is a restart the caller's Restart check never sees, and
-# § 6.1's exception keeps pushing through it past the cap.
-if grep -q -F 'cap decision' <<<"$loop"; then
-  ok "§ 6.3's restart passes the cap decision before re-entering § 1"
+# Not every caller has a Restart check: this workflow runs standalone, and
+# submit-pr § 3 and merge-pr § 5 call it from return sites without one. A late
+# thread routed to a caller that has none is never analyzed, replied to or
+# resolved, which wedges the gate. The cap governs actions, not routing.
+if grep -q -F 'cap decision' <<<"$loop" || grep -q -F 'return to the caller' <<<"$loop"; then
+  bad "§ 6.3 routes a late thread to a caller instead of dispositioning it"
 else
-  bad "§ 6.3 loops to § 1 without passing the cap decision"
+  ok "§ 6.3 loops on at the cap, so a late thread is never dropped"
 fi
-if grep -q -F 'cap decision' <<<"$rule"; then
-  ok "§ 6.1 states the cap decision the restarts reach"
+if grep -q -F 'the disposition is unconditional and the fix is what stops' <<<"$rule"; then
+  ok "§ 6.1 states the cap as which actions are allowed, not where to jump"
 else
-  bad "§ 6.1 does not name the decision both restart paths apply"
-fi
-if grep -q -F 'cap decision' <<<"$(restart_check "$SUBMIT_WF")"; then
-  ok "submit-pr's Restart check applies that same decision"
-else
-  bad "submit-pr's Restart check names a decision of its own"
+  bad "§ 6.1 does not state that the cap stops the fix, never the reply"
 fi
 if grep -q -F 'pr-threads' <<<"$loop"; then
   ok "§ 6.3 fetches late threads on every path out of the round"
@@ -493,24 +508,25 @@ else
   fi
 fi
 
-# § 6.3 looping straight back to § 1, the restart the caller never sees.
-CTRL="$TMP_ROOT/comments-loop.md"
-if ! plant "$CTRL" "$COMMENTS_WF" 's/then apply § 6[.]1.s cap decision before re-entering: below the cap, loop to § 1 unchanged; at or past it, return to the caller rather than re-entering, and its Restart check decides what happens next/loop to § 1/'; then
-  bad "nested-loop control planted nothing — its sed program matched no text"
-elif grep -q -F 'cap decision' <<<"$(loop_site "$CTRL")"; then
-  bad "the check MISSED § 6.3 looping without the cap decision"
+# § 6.3 sending a capped late thread back to a caller that may have no check.
+CTRL="$TMP_ROOT/comments-route.md"
+if ! plant "$CTRL" "$COMMENTS_WF" 's/and loop to § 1, at the cap as below it/, then at or past the cap return to the caller rather than re-entering/'; then
+  bad "late-thread routing control planted nothing — its sed program matched no text"
+elif grep -q -F 'return to the caller' <<<"$(loop_site "$CTRL")"; then
+  ok "the check flags § 6.3 routing a capped late thread away"
 else
-  ok "the check flags § 6.3 looping without the cap decision"
+  bad "the check MISSED § 6.3 routing a capped late thread away"
 fi
 
-# The caller naming a decision of its own instead of the shared one.
-CTRL="$TMP_ROOT/submit-owndecision.md"
-if ! plant "$CTRL" "$SUBMIT_WF" 's/It applies the same cap decision review-pr-comments § 6[.]1 states, the one that workflow.s own § 6[.]3 loop passes before re-entering, so the nested loop and this caller reach one decision rather than two[.] //'; then
-  bad "shared-decision control planted nothing — its sed program matched no text"
-elif grep -q -F 'cap decision' <<<"$(restart_check "$CTRL")"; then
-  bad "the check MISSED a Restart check that stops naming the shared decision"
+# The delegation template back to every Fixing item, so an ordinary one rides
+# along on the exempt item's round.
+CTRL="$TMP_ROOT/comments-set.md"
+if ! plant "$CTRL" "$COMMENTS_WF" 's/ — at the cap, only the exempt ones:\]/:]/'; then
+  bad "item-set control planted nothing — its sed program matched no text"
+elif grep -q -F 'at the cap, only the exempt ones' <<<"$(cap_site "$CTRL")"; then
+  bad "the check MISSED a template that delegates every Fixing item at the cap"
 else
-  ok "the check flags a Restart check that stops naming the shared decision"
+  ok "the check flags a template that delegates every Fixing item at the cap"
 fi
 
 CTRL="$TMP_ROOT/disposition.md"
