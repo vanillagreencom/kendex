@@ -266,7 +266,7 @@ Use the output as `MAIN_REPO_ROOT`.
 4. **Clean up branches and worktrees**, scoped to this PR by default — never enumerate unrelated branches or sibling worktrees.
 
    ```bash
-   gh pr view [PR_NUMBER] --json headRefName --jq .headRefName
+   env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --jq .headRefName
    ```
 
    **Worktree disposal is by rule.** When the PR's worktree exists, its tree is clean (`git -C [WT_PATH] status --porcelain` empty), and its checked-out branch is `[PR_BRANCH]`, remove it in the removal step below — no question. A dirty tree or a foreign-lease refusal from `worktree remove` keeps the worktree and its checked-out branch; a worktree on a branch other than the merged one is kept as-is (the merged branch then falls to the standalone delete below). Report any kept worktree with its cause in the § 6 `Worktree` row.
@@ -282,15 +282,17 @@ Use the output as `MAIN_REPO_ROOT`.
    A `branch refs/heads/[PR_BRANCH]` line means a worktree still has it checked out: do not delete, and note it in § 6. No such line, and the branch exists locally and is not current → apply the predicate before deleting, never worktree ownership alone:
 
    ```bash
-   gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
+   env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
    ```
    ```bash
    git -C [MAIN_REPO_ROOT] rev-parse "refs/heads/[PR_BRANCH]"
    ```
 
+   Run every `gh` command in this step from `[MAIN_REPO_ROOT]` with both variables cleared, as the script and `reconcile-work-items` do: an inherited `GH_REPO` or `GITHUB_REPOSITORY` points the proof at another repository, whose PR of the same number can authorize this `branch -D`.
+
    Equal → `git -C [MAIN_REPO_ROOT] branch -D "[PR_BRANCH]"`. Different → the branch carries commits the merge did not take: keep it and report it `kept` in the § 6 `Branch` row. Never `git branch -d` here — it proves merge against the branch's configured upstream, which `worktree push` sets, so it passes for any pushed branch however far it is from `[BASE_BRANCH]`.
 
-   For `merge-pr all` or an explicit user request, also sweep the project. Check each local branch with `gh pr list --head [BRANCH] --base [BASE_BRANCH] --state all --json number,state,headRefOid,isCrossRepository`, and auto-delete only a branch with no worktree whose tip equals the `headRefOid` of one of its **merged**, non-cross-repository PRs — the predicate `worktree cleanup` applies. Neither state nor a merge into another base is the test: a closed PR merged nothing, a PR merged into a release or other side branch left its commit out of `[BASE_BRANCH]` with this ref possibly the last ordinary one holding it, and a merged PR whose head differs from the tip left the extra commits reachable from this ref alone. Leave every other branch alone, and ask before removing a stale worktree or a branch with no PR. Compare `ls [TREES_DIR]/` against `worktree list --porcelain` for orphan directories, asking before removing any.
+   For `merge-pr all` or an explicit user request, also sweep the project. Check each local branch with `env -u GH_REPO -u GITHUB_REPOSITORY gh pr list --head [BRANCH] --base [BASE_BRANCH] --state all --json number,state,headRefOid,isCrossRepository`, and auto-delete only a branch with no worktree whose tip equals the `headRefOid` of one of its **merged**, non-cross-repository PRs — the predicate `worktree cleanup` applies. Neither state nor a merge into another base is the test: a closed PR merged nothing, a PR merged into a release or other side branch left its commit out of `[BASE_BRANCH]` with this ref possibly the last ordinary one holding it, and a merged PR whose head differs from the tip left the extra commits reachable from this ref alone. Leave every other branch alone, and ask before removing a stale worktree or a branch with no PR. Compare `ls [TREES_DIR]/` against `worktree list --porcelain` for orphan directories, asking before removing any.
 
    Finally, when the rule selected the worktree for removal, remove it — **last** (it destroys the session cwd):
 
