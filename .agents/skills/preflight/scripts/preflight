@@ -1070,18 +1070,21 @@ done <"$TMP/files.list"
 
 # --- lane applied-migration-edited -------------------------------------------
 # A versioned migration a database has already run is frozen. refinery
-# (`abort_divergent` by default), Flyway and sqlx each record a checksum over
-# the file's name and text and refuse to run against a database whose recorded
-# checksum no longer matches, so the edit has no forward fix: the correction
-# would be one more edit to the same frozen file. The default globs name only
-# what those runners freeze; a runner that records a revision id without a
-# checksum, Alembic and Django among them, is opt-in through the setting.
-# Only a path the MERGE BASE carries is the shape, since a migration added at
-# a new version is how a correction ships, and one this branch added has
-# reached no database. `--all` reads every tracked line as added and a
-# repository with no base to read answers nothing, so both leave the lane
-# quiet, as does an empty glob set.
-MIGRATION_GLOBS="${PREFLIGHT_MIGRATION_GLOBS-**/migrations/*.sql}"
+# (`abort_divergent` by default) and Flyway record a checksum over the file's
+# name and text and refuse to run against a database whose recorded checksum
+# no longer matches, so the edit has no forward fix: the correction would be
+# one more edit to the same frozen file. The default glob is their filename
+# shape and nothing else, because a runner that records an applied version
+# without a checksum reopens its database happily after an edit: golang-migrate,
+# Goose, Alembic and Django all do, and naming their files here would hard-fail
+# a legitimate change. Every other layout, sqlx among them, is opt-in through
+# the setting, which is also where a Flyway repository excludes its repeatable
+# migrations. Only a path the MERGE BASE carries is the shape, since a
+# migration added at a new version is how a correction ships, and one this
+# branch added has reached no database. `--all` reads every tracked line as
+# added and a repository with no base to read answers nothing, so both leave
+# the lane quiet, as does an empty glob set.
+MIGRATION_GLOBS="${PREFLIGHT_MIGRATION_GLOBS-**/migrations/V*__*.sql}"
 
 glob_matches() { # PATTERN PATH — a `*` never reaches past its own component
   local pat="$1" path="$2" pc pp
@@ -1099,9 +1102,6 @@ glob_matches() { # PATTERN PATH — a `*` never reaches past its own component
 
 is_migration_path() { # PATH — a configured glob, `**/` the only depth crossing
   local pat rc=1 rest
-  # Flyway reapplies a repeatable migration whenever its checksum moves, so
-  # editing one is that runner's intended operation, not a frozen file.
-  case "${1##*/}" in R__*) return 1 ;; esac
   # The setting holds patterns, so the word split runs with globbing off:
   # expanded against the working directory they would become file lists.
   set -f

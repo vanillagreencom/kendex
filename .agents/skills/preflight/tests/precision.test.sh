@@ -662,7 +662,7 @@ seed migrations
 printf 'CREATE TABLE w (id INTEGER);\n' >"$R/store/migrations/V2__later.sql"
 printf '# Migrations\n\nOne per change.\n' >"$R/store/migrations/README.md"
 printf 'SELECT 2;\n' >"$R/data/report.sql"
-# Flyway reapplies a repeatable migration when its checksum moves.
+# A repeatable migration carries no version and is outside the default shape.
 printf 'CREATE OR REPLACE VIEW v AS SELECT 1, 2;\n' >"$R/store/migrations/R__views.sql"
 # A mode change reports M with the text untouched.
 chmod +x "$R/store/migrations/V1__init.sql"
@@ -680,10 +680,18 @@ run_pf
 fires "the same fixture with the base's own migration edited fails" "store/migrations/V1__init.sql:0: [applied-migration-edited]"
 # The setting is the opt-in for both: the same two files fail when the globs
 # name them, so the quiet run above is a scope decision, not a dead lane.
-export PREFLIGHT_MIGRATION_GLOBS='**/migrations/*_*.py **/migrations/*/*.sql'
+export PREFLIGHT_MIGRATION_GLOBS='**/migrations/*.sql **/migrations/*_*.py'
 run_pf
 fires "a Python migration fails once the globs name it" "store/migrations/0001_initial.py:0: [applied-migration-edited]"
-fires "a nested .sql fails once a glob spans the extra component" "store/migrations/archive/helper.sql:0: [applied-migration-edited]"
+fires "a repeatable migration fails once a glob names it, which is why the default does not" "store/migrations/R__views.sql:0: [applied-migration-edited]"
+case "$OUT" in
+  *"store/migrations/archive/helper.sql"*)
+    bad "the extra component keeps the nested file outside migrations/*.sql" "out=$OUT" ;;
+  *) ok "the extra component keeps the nested file outside migrations/*.sql" ;;
+esac
+export PREFLIGHT_MIGRATION_GLOBS='**/migrations/*/*.sql'
+run_pf
+fires "and a glob spanning that component reaches it" "store/migrations/archive/helper.sql:0: [applied-migration-edited]"
 unset PREFLIGHT_MIGRATION_GLOBS
 run_pf --all
 # The verdict line has to be there: a run that died before reaching it carries

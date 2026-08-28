@@ -10,9 +10,9 @@ an outside contributor.
 
 ### Added
 
-- `preflight` fails an edit, deletion or rename of a versioned SQL migration
-  the merge base carries: the runner refuses a database whose recorded checksum
-  moved. `PREFLIGHT_MIGRATION_GLOBS` sets the paths; empty turns the lane off.
+- `preflight` fails an edit, deletion or rename of a migration the merge base
+  carries, defaulting to the `V*__*.sql` shape refinery and Flyway refuse to run
+  against once its checksum moves. `PREFLIGHT_MIGRATION_GLOBS` sets other paths.
 
 - A package header may carry `summary`, the line the Packages tab shows and
   searches and `kendex index` exports beside `description`; without one the
