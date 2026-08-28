@@ -396,4 +396,16 @@ fn the_scope_last_fetched_is_the_newest_of_its_mirrors() {
         Some(2_000),
         "a source no row comes from cannot date the standing"
     );
+
+    // A stamp ahead of the clock is a clock that ran backwards, which the
+    // drift check already refuses to read as fresh. The newest mirror is
+    // now the future one, so an unfiltered maximum would both date the
+    // page as current and bury the one mirror still answering honestly —
+    // cat's last success at 1_000, kept under its later failure.
+    stamp("owner/dog", crate::clock::unix_now() + 86_400);
+    assert_eq!(
+        last_fetched(&env, &manifest),
+        Some(1_000),
+        "a future stamp neither dates the scope nor hides a valid one"
+    );
 }

@@ -228,11 +228,19 @@ pub fn fetch_all(env: &Env, manifest: &Manifest) -> Vec<String> {
 /// the last success ([`crate::drift::stamps::record_failure`] leaves
 /// `fetched_at` alone), so that source goes on reporting the age it last
 /// had rather than erasing the scope's.
+///
+/// A stamp ahead of the clock is dropped, the reading
+/// [`crate::drift::stamps::FetchStamp::is_stale`] already takes of one: a
+/// clock that ran backwards certifies no freshness, and taking the maximum
+/// would let it both date the page as current and bury the mirrors that
+/// answered honestly.
 pub fn last_fetched(env: &Env, manifest: &Manifest) -> Option<u64> {
+    let now = crate::clock::unix_now();
     let in_use = sources_in_use(manifest);
     syncable(manifest, |name| in_use.contains(name))
         .filter_map(|(_, decl)| decl.repo.as_deref())
         .filter_map(|repo| crate::drift::stamps::load(env, &cache_key(env, repo)).fetched_at)
+        .filter(|at| *at <= now)
         .max()
 }
 
