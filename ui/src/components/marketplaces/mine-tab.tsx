@@ -1,6 +1,10 @@
 import { BookOpen, FolderOpen, Hammer, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
-import { commands, type SubmissionState } from "@/bindings";
+import {
+  commands,
+  type SubmissionState,
+  type SubmissionsRead,
+} from "@/bindings";
 import { EmptyState } from "@/components/empty-state";
 import { TextBar } from "@/components/loading";
 import { MarkdownView } from "@/components/markdown-view";
@@ -35,9 +39,18 @@ export function MineTab() {
   const signedIn = useAccountStore((s) => hasCredential(s.account));
   const submissions = useAccountStore((s) => s.submissions);
   const submissionsError = useAccountStore((s) => s.submissionsError);
-  const [states, setStates] = useState<Record<string, SubmissionState> | null>(
-    null,
-  );
+  const [states, setStates] = useState<{
+    read: SubmissionsRead;
+    answered: Record<string, SubmissionState>;
+  } | null>(null);
+  // What happened to the last read: what core rules on, and the only
+  // outcome its answer is good for.
+  const read: SubmissionsRead =
+    submissionsError !== null
+      ? "failed"
+      : submissions === null
+        ? "unread"
+        : "landed";
 
   useEffect(() => {
     void load();
@@ -50,27 +63,22 @@ export function MineTab() {
     // "in review" forever after the server listed it would be a lie. A
     // failing read keeps that interval: the poll runs only while this tab
     // is open, the tab says a read is failing instead of hiding it, and
-    // backing off would only delay the tick that takes the notice away
-    // for the person watching for it. An expired sign-in ends the poll
-    // outright, so nothing here retries a credential known to be dead.
+    // backing off would only delay the tick that clears the notice for
+    // whoever is watching. An expired sign-in ends the poll outright.
     const timer = setInterval(() => void loadSubmissions(), 60_000);
     return () => clearInterval(timer);
   }, [signedIn, loadSubmissions]);
 
-  // What each row's submission reads as is core's ruling, not this
-  // tab's, and it is asked for once per change of what it rules on rather
-  // than once per row drawn. The cleanup drops an answer a newer ask has
-  // already superseded.
+  // What each row's submission reads as is core's ruling, asked for once
+  // per change of what it rules on rather than once per row drawn. The
+  // cleanup drops an answer a newer ask superseded, and a refusal drops
+  // the one in hand: nothing retries, and unanswered is the honest read.
   useEffect(() => {
     if (rows === null) return;
     let current = true;
     void commands
       .mineSubmissionStates(
-        submissionsError !== null
-          ? "failed"
-          : submissions === null
-            ? "unread"
-            : "landed",
+        read,
         submissions ?? [],
         rows.flatMap((entry) =>
           entry.state === "ready"
@@ -79,12 +87,15 @@ export function MineTab() {
         ),
       )
       .then((answered) => {
-        if (current) setStates(answered);
+        if (current) setStates({ read, answered });
+      })
+      .catch(() => {
+        if (current) setStates(null);
       });
     return () => {
       current = false;
     };
-  }, [rows, submissions, submissionsError]);
+  }, [rows, submissions, read]);
 
   const pickExisting = () => {
     void commands.pickFolder().then((picked) => {
@@ -144,7 +155,11 @@ export function MineTab() {
               <MineRowCard
                 key={entry.row.path}
                 row={entry.row}
-                submission={states?.[entry.row.path] ?? null}
+                submission={
+                  states?.read === read
+                    ? (states.answered[entry.row.path] ?? null)
+                    : null
+                }
                 onImport={(path) => setImportTarget(path)}
                 onSubmit={(path) => setSubmitTarget(path)}
               />

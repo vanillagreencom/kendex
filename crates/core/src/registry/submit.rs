@@ -48,8 +48,7 @@ pub enum SubmissionState {
 /// `landed` means the rows in hand are the whole of what the server
 /// lists, so a repository missing from them is not submitted. `failed`
 /// means they are only what it last said, and `unread` that no read has
-/// been made at all: before the first one, and after a credential ends
-/// and takes its rows with it. Under neither is absence an answer.
+/// been made. Under neither is absence an answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum SubmissionsRead {
@@ -204,9 +203,8 @@ mod tests {
         }
     }
 
-    /// The whole point of the read outcomes: absence means not submitted
-    /// only where a read landed to say so. Under a read that failed or
-    /// one never made it offers a first submit over work in review.
+    /// Absence means not submitted only where a read landed to say so,
+    /// or it offers a first submit over work already in review.
     #[test]
     fn absence_is_an_answer_only_where_a_read_landed() {
         let asking = || ask("/mine", Some("ada/team-skills"));
