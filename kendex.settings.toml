@@ -73,7 +73,7 @@ CI_FIX_MAX_CYCLES = "6"
 # set is the number of re-entries allowed.
 REVIEW_MAX_CYCLES = "4"
 
-# Max external review rounds on an open PR. Past it a finding gets a
+# Max external review rounds on an open PR. At or past it a finding gets a
 # disposition and no fix push, except a defect the diff introduces or arms.
 REVIEW_MAX_EXTERNAL_ROUNDS = "4"
 
