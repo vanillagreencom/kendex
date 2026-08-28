@@ -68,7 +68,7 @@ fn rotate_after_rejection(
                 });
             }
             if newer_retries == 1 {
-                return Err(rejected_access());
+                return Err(rejected_access(store, &locked));
             }
             newer_retries += 1;
             rejected = locked;
@@ -120,7 +120,7 @@ fn rotate_locked(
 
     let second = call(&rotated.access_token)?;
     if second.status == 401 {
-        return Err(rejected_access());
+        return Err(rejected_access(store, &rotated));
     }
     // This call made the replacement, so the answer descends from the
     // credential it rotated away from.
@@ -168,10 +168,31 @@ fn required(credential: Option<Credential>) -> Result<Credential> {
     credential.ok_or(CoreError::NotSignedIn)
 }
 
-fn rejected_access() -> CoreError {
-    CoreError::SignInExpired {
-        why: "the server does not accept this sign-in".to_owned(),
+/// The server rejected the access token this call is authenticated as.
+/// That is an expiry only while the sign-in it belongs to is the one
+/// installed: a sign-in landing while the request was in flight makes the
+/// rejection somebody else's, and calling it an expiry pins one account's
+/// answer on another. Only whether the expiry is produced is decided here;
+/// what the expiry means for the stored credential is unchanged.
+fn rejected_access(store: &dyn CredentialStore, authenticated_as: &Credential) -> CoreError {
+    match still_installed(store, authenticated_as) {
+        Ok(true) => CoreError::SignInExpired {
+            why: "the server does not accept this sign-in".to_owned(),
+        },
+        Ok(false) => sign_in_changed("authenticating"),
+        Err(error) => error,
     }
+}
+
+/// Whether the installed sign-in is still this credential's, read under
+/// the credential transaction so the answer is not itself racing a
+/// rotation. A machine signed out in the meantime is not this
+/// credential's either.
+fn still_installed(store: &dyn CredentialStore, credential: &Credential) -> Result<bool> {
+    let _guard = store.refresh_guard()?;
+    Ok(store
+        .load()?
+        .is_some_and(|installed| installed.refresh_token == credential.refresh_token))
 }
 
 pub(super) fn sign_in_changed(action: &str) -> CoreError {
