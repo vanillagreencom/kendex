@@ -166,11 +166,14 @@ manifest_carves() { # IN-TREE PATH -> carve lines for one manifest, "*" on a fai
   # The diff is between commits, so the manifests are read from the
   # selected head tree, never from whatever the checkout happens to hold.
   # One that exists there but cannot be read proves nothing and carves.
-  local manifest_content
-  git_repo cat-file -e "$head:$1" 2>/dev/null || return 0
-  # git show hands back a symlink's target text, not the manifest it
-  # points at — unclassifiable, so it carves.
-  case "$(git_repo ls-tree "$head" -- "$1" 2>/dev/null)" in 120000*) echo "*"; return 0 ;; esac
+  local manifest_content manifest_entry
+  # ls-tree answers existence from the tree object alone, so absence and a
+  # failed lookup stay distinct: no entry means no manifest, while a listing
+  # that fails, a symlink entry (git show hands back its target text), or a
+  # blob that will not read are all unclassifiable and carve.
+  manifest_entry="$(git_repo ls-tree "$head" -- "$1" 2>/dev/null)" || { echo "*"; return 0; }
+  [ -n "$manifest_entry" ] || return 0
+  case "$manifest_entry" in 120000*) echo "*"; return 0 ;; esac
   manifest_content="$(git_repo show "$head:$1" 2>/dev/null)" || { echo "*"; return 0; }
   # The line parser reads the spellings kendex writes and the common hand
   # edits; completeness is not load-bearing. Every line that could take

@@ -23,7 +23,7 @@ output?** The classifier reads a diff's changed-file set and prints
 `.codex/`, `.opencode/`, `.cursor/`, `.pi/`, or is the root
 `opencode.json` — `opencode.jsonc` where a project carries that spelling.
 Anything else prints `false`, and so does every diff the classifier cannot
-read. A path the checkout's own manifests (`kendex.toml`, and
+read. A path the selected head tree's manifests (`kendex.toml`, and
 `kendex-local.toml` where a source catalog keeps its installs) declare in
 place —
 `.agents/skills/<name>` under `[skills.<name>] source = "in-place"` — and

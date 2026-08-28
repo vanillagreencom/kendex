@@ -228,4 +228,15 @@ symbase="$(git -C "$sym" rev-parse HEAD)"
 commit_paths "$sym" "edit" .agents/skills/mine/SKILL.md
 assert_verdict "a symlinked manifest carves" false --repo "$sym" --event push --base "$symbase" --head HEAD
 
+# An entry the tree lists but whose blob will not read is unclassifiable:
+# the loose object is deleted and the read failure carves.
+gone="$(new_repo missing-blob)"
+printf 'schema = 6\n[skills.mine]\nsource = "in-place"\n' >"$gone/kendex.toml"
+commit_paths "$gone" "baseline" README.md
+gonebase="$(git -C "$gone" rev-parse HEAD)"
+commit_paths "$gone" "edit" .agents/skills/mine/SKILL.md
+blob="$(git -C "$gone" rev-parse "HEAD:kendex.toml")"
+rm -f -- "$gone/.git/objects/${blob%??????????????????????????????????????}/${blob#??}"
+assert_verdict "a listed manifest whose blob will not read carves" false --repo "$gone" --event push --base "$gonebase" --head HEAD
+
 report in-place
