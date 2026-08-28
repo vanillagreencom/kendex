@@ -169,25 +169,44 @@ pub fn run(env: &Env, mut args: AddArgs) -> CliResult {
         }
         other => other?,
     };
-    let blocked = print_report(env, &report);
-    let applied = confirm_and_apply(env, &report, args.yes)?;
-    // Disclosed after the write, because the script an effect runs is the
-    // one this install just put on disk.
-    let shown_to_them = super::repo_effects::disclose(env, &scope, &report.repo_effects)?;
-    super::repo_effects::walkthrough(&scope, &shown_to_them, args.allow_repo_effects)?;
-    // "done" answered whether the process ended, never what it did. The
-    // verb is the one that was typed, because the count is of changes and
-    // not of packages: a run whose only change is the declaration added
-    // something, and did not install anything.
-    let count = (!report.plan.is_empty()).then_some(applied);
-    say_ledger(
-        &scope,
-        Wrote {
-            verb: "added",
-            count,
+    write_and_close(env, &scope, &report, args.yes, args.allow_repo_effects)
+}
+
+/// The write, the repository-effects account, and the close.
+///
+/// Disclosed after the write, because the script an effect runs is the one
+/// this install just put on disk. That leaves a prompt between the write
+/// and the closing line, so the close is handed over rather than written
+/// under it: what the run wrote is reported whatever the reader answers.
+fn write_and_close(
+    env: &Env,
+    scope: &Scope,
+    report: &kendex_core::engine::EngineReport,
+    yes: bool,
+    allow_effects: bool,
+) -> CliResult {
+    let blocked = print_report(env, report);
+    let applied = confirm_and_apply(env, report, yes)?;
+    super::repo_effects::disclose_and_finish(
+        env,
+        scope,
+        &report.repo_effects,
+        allow_effects,
+        || {
+            // "done" answered whether the process ended, never what it
+            // did. The verb is the one that was typed, because the count
+            // is of changes and not of packages: a run whose only change
+            // is the declaration added something, and installed nothing.
+            let count = (!report.plan.is_empty()).then_some(applied);
+            say_ledger(
+                scope,
+                Wrote {
+                    verb: "added",
+                    count,
+                },
+                &blocked,
+                &report.safety,
+            );
         },
-        &blocked,
-        &report.safety,
-    );
-    Ok(())
+    )
 }

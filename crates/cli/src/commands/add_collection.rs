@@ -71,11 +71,24 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
     for step in &steps {
         prevalidate(env, step)?;
     }
+    // Prevalidation refuses a broken collection before the first
+    // mutation, so a failure here is a repository that moved under the
+    // run. The steps before it are installed either way, and the error is
+    // held until the close has reported them.
     let mut settled = Vec::new();
+    let mut failed: Option<Box<dyn std::error::Error>> = None;
     for step in steps {
-        settled.push(install_step(env, scope, step)?);
+        match install_step(env, scope, step) {
+            Ok(done) => settled.push(done),
+            Err(error) => {
+                failed = Some(error);
+                break;
+            }
+        }
     }
-    say("collection installed — every member is in the lock at its resolved commit");
+    if failed.is_none() {
+        say("collection installed — every member is in the lock at its resolved commit");
+    }
 
     // One screen for the collection, and one question.
     //
@@ -93,9 +106,6 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
     }
     let pending: Vec<kendex_core::repo_effects::DeclaredEffects> =
         once.into_values().cloned().collect();
-    let shown_to_them = super::repo_effects::disclose(env, scope, &pending)?;
-    super::repo_effects::walkthrough(scope, &shown_to_them, allow_effects)?;
-
     // The same close `add <package>` gives, over every step at once: a
     // collection is one install, and a run that opened a frame has to end
     // on what it wrote, skipped and flagged like any other. The parts are
@@ -118,16 +128,28 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
         blocked.extend(step.blocked);
         scored.extend(step.scored);
     }
-    say_ledger(
-        scope,
-        Wrote {
-            verb: "added",
-            count,
-        },
-        &blocked,
-        &scored,
-    );
-    Ok(())
+    let close = || {
+        say_ledger(
+            scope,
+            Wrote {
+                verb: "added",
+                count,
+            },
+            &blocked,
+            &scored,
+        );
+    };
+    if let Some(error) = failed {
+        // A step failed with earlier steps already installed. What they
+        // wrote is reported before the error goes up, and the repository
+        // account is not asked for on a run that is already failing.
+        close();
+        return Err(error);
+    }
+    // Every member is installed by now, so the account and its separate
+    // yes come last — and the close is handed over, so what the run wrote
+    // is reported whatever the reader answers.
+    super::repo_effects::disclose_and_finish(env, scope, &pending, allow_effects, close)
 }
 
 /// Whether the run has a count to report, and what it is.

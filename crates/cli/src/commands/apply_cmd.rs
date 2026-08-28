@@ -101,31 +101,41 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
         // the scores it read are the others.
         let applied = confirm_and_apply(env, &report, args.yes)?;
         // A declaration written by hand installs here, and it gets the
-        // same account and the same separate yes an `add` gives it.
-        let shown_to_them = super::repo_effects::disclose(env, &scope, &report.repo_effects)?;
-        super::repo_effects::walkthrough(&scope, &shown_to_them, args.allow_repo_effects)?;
-        // `None` where the plan had nothing to do: a scope that wrote
-        // nothing because it had nothing to write is up to date, and one
-        // that wrote nothing because every write was refused is not.
-        // The deep work just ran; record it for the session-start check.
-        // Said before the ledger closes the scope: a warning under the
-        // run's own closing line reads as a line from the next one.
-        if let Err(error) = kendex_core::drift::snapshot::record(env, &scope) {
-            warn(&format!(
-                "warning: snapshot not derived ({})",
-                shown(&error.to_string())
-            ));
-        }
-        let count = (!report.plan.is_empty()).then_some(applied);
-        say_ledger(
+        // same account and the same separate yes an `add` gives it —
+        // asked after the write, so the scope is finalized whatever the
+        // answer and before any error from it leaves this loop.
+        super::repo_effects::disclose_and_finish(
+            env,
             &scope,
-            Wrote {
-                verb: "applied",
-                count,
+            &report.repo_effects,
+            args.allow_repo_effects,
+            || {
+                // The deep work just ran; record it for the session-start
+                // check. Said before the ledger closes the scope: a
+                // warning under the run's own closing line reads as a line
+                // from the next one.
+                if let Err(error) = kendex_core::drift::snapshot::record(env, &scope) {
+                    warn(&format!(
+                        "warning: snapshot not derived ({})",
+                        shown(&error.to_string())
+                    ));
+                }
+                // `None` where the plan had nothing to do: a scope that
+                // wrote nothing because it had nothing to write is up to
+                // date, and one that wrote nothing because every write was
+                // refused is not.
+                let count = (!report.plan.is_empty()).then_some(applied);
+                say_ledger(
+                    &scope,
+                    Wrote {
+                        verb: "applied",
+                        count,
+                    },
+                    &blocked,
+                    &report.safety,
+                );
             },
-            &blocked,
-            &report.safety,
-        );
+        )?;
     }
     Ok(())
 }

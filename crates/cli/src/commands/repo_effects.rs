@@ -29,6 +29,7 @@ use std::io::IsTerminal;
 use kendex_core::names::shown;
 
 use kendex_core::engine::EngineReport;
+use kendex_core::env::Env;
 use kendex_core::model::Scope;
 use kendex_core::repo_effects::{DeclaredEffects, Disclosure};
 
@@ -47,6 +48,32 @@ pub use disclose::disclose;
 /// Only that. A second `add` of an installed package adds nothing to what
 /// the scope carries, so it brings no effect to offer — naming `add` here
 /// sent people to a command that would do nothing and say nothing.
+/// The repository-effects account and its separate yes, run so that what
+/// the caller owes for what it already wrote happens whatever the answer.
+///
+/// The prompt comes after the write by design: the script an effect runs
+/// is the one the install just put on disk. That puts a fallible call
+/// between a write and the run's closing line, and a `?` there returned
+/// to `main` with disk changed, no snapshot recorded and no ledger said —
+/// so the next session-start check read a stale snapshot for a scope that
+/// had just been written.
+///
+/// `finalize` runs on every path: a yes, a decline, a failure, and a
+/// cancel. Only then does the error propagate, carrying the code the
+/// prompt produced, so a cancel still ends the run and still exits 130.
+pub fn disclose_and_finish(
+    env: &Env,
+    scope: &Scope,
+    effects: &[DeclaredEffects],
+    allowed: bool,
+    finalize: impl FnOnce(),
+) -> CliResult {
+    let walked = disclose(env, scope, effects)
+        .and_then(|shown_to_them| walkthrough(scope, &shown_to_them, allowed));
+    finalize();
+    walked
+}
+
 pub fn walkthrough(scope: &Scope, shown_to_them: &[Disclosure], allowed: bool) -> CliResult {
     if confirm(shown_to_them, allowed)? {
         for disclosure in shown_to_them {
