@@ -6,6 +6,7 @@ import type {
   PackageUpdate_Serialize,
   ReportRouteView,
   ScanResult,
+  Scope,
   SourceRow,
 } from "@/bindings";
 import { showUpdateOutcome } from "@/lib/update-outcome";
@@ -120,22 +121,55 @@ describe("mock bridge", () => {
   });
 });
 
-// The browser mock hand-mirrors crates/core/src/harness/caps.rs. Where it
-// drifts, dev mode shows a tool as unmanageable that the app manages.
-describe("mock capability table", () => {
-  // The dev app must answer the report dialog the way the engine does, or
-  // the preview tells you a kendex skill belongs to your own project.
-  it("routes a catalog skill to kendex, with the label the engine derives", async () => {
-    const route = (await mockInvoke("report_route", {
-      scope: acme,
-      name: "github",
-      kind: "skill" as ItemKind,
+// The dev app must answer the report dialog the way the engine does, or the
+// preview tells you a kendex skill belongs to your own project. The engine
+// judges the lock, and the mock's stand-in for it is the provenance table:
+// an observed item's origin is the git origin of wherever its file sits,
+// which for a skill installed by link is the consuming repository.
+describe("mock report routing", () => {
+  beforeEach(resetMock);
+
+  const globalScope = { scope: "global" } as const;
+  const routeOf = async (scope: Scope, name: string, kind: ItemKind | null) =>
+    (await mockInvoke("report_route", {
+      scope,
+      name,
+      kind,
     })) as ReportRouteView;
+
+  it("routes a skill recorded from the kendex marketplace to kendex", async () => {
+    const route = await routeOf(acme, "github", "skill");
     expect(route.kendexOwned).toBe(true);
     expect(route.repo).toBe("vanillagreencom/kendex");
     expect(route.label).toBe("skills");
   });
 
+  it("keeps a name nothing recorded local, whatever the scan says", async () => {
+    // Observed with the upstream as its origin and in no provenance row: a
+    // mock reading items would file this against kendex.
+    const scan = (await mockInvoke("scan_machine")) as ScanResult;
+    expect(
+      scan.items.some(
+        (it) =>
+          it.name === "pi-hooks" && it.origin === "vanillagreencom/kendex",
+      ),
+    ).toBe(true);
+    const route = await routeOf(globalScope, "pi-hooks", "pi-extension");
+    expect(route.kendexOwned).toBe(false);
+    expect(route.repo).toBe(null);
+    expect(route.label).toBe(null);
+  });
+
+  it("keeps a fork of a kendex skill local", async () => {
+    const route = await routeOf(globalScope, "release-notes", "skill");
+    expect(route.kendexOwned).toBe(false);
+    expect(route.repo).toBe(null);
+  });
+});
+
+// The browser mock hand-mirrors crates/core/src/harness/caps.rs. Where it
+// drifts, dev mode shows a tool as unmanageable that the app manages.
+describe("mock capability table", () => {
   const caps = (harness: HarnessId, kind: ItemKind) =>
     capabilityTable().find((r) => r.harness === harness && r.kind === kind)
       ?.caps;

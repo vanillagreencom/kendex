@@ -4,9 +4,15 @@
 //! the upstream files there; everything else files against the user's own
 //! repo, the safe default. A name whose entries disagree about their origin
 //! is ambiguous, and an ambiguous name stays local.
+//!
+//! A lock entry keeps the manifest's repo declaration verbatim, so the same
+//! repository arrives here spelled as a shorthand, an https URL or an scp
+//! `git@` one. Every comparison runs over `source_ref::repo_identity`, which
+//! folds those to one string, so a spelling never decides ownership.
 
 use crate::lock::{Lock, LockEntry};
 use crate::model::ItemKind;
+use crate::source_ref::repo_identity;
 
 pub const DEFAULT_UPSTREAM: &str = crate::manifest::DEFAULT_SOURCE_REPO;
 
@@ -44,12 +50,17 @@ pub fn route(lock: &Lock, name: &str, kind: Option<ItemKind>, upstream: &str) ->
     // second marketplace, a path, `local` — means the name does not name a
     // kendex asset on its own, and the report stays with the user's repo
     // rather than going to a stranger's.
-    let owned = !matching.is_empty() && matching.iter().all(|e| e.source_repo == upstream);
+    let wanted = repo_identity(upstream);
+    let owned = !matching.is_empty()
+        && matching
+            .iter()
+            .all(|e| repo_identity(&e.source_repo) == wanted);
     let kind = kind.or_else(|| agreed_kind(&matching));
     Route {
         kendex_owned: owned,
         repo: owned.then(|| upstream.to_owned()),
-        label: (owned && upstream == DEFAULT_UPSTREAM).then(|| derive_label(name, kind).to_owned()),
+        label: (owned && wanted == repo_identity(DEFAULT_UPSTREAM))
+            .then(|| derive_label(name, kind).to_owned()),
         kind,
     }
 }
@@ -129,6 +140,42 @@ mod tests {
     fn a_third_party_entry_stays_project_local() {
         let lock = lock_of(&[("guard", ItemKind::Skill, "someone/else")]);
         assert!(!route(&lock, "guard", Some(ItemKind::Skill), DEFAULT_UPSTREAM).kendex_owned);
+    }
+
+    /// A subscription spells its repo however it likes and the lock keeps
+    /// that spelling, so ownership compares folded identities: the scp-style
+    /// and `.git`-suffixed entries are the same repository as the shorthand,
+    /// and a `--upstream` spelled either way matches too. Another host with
+    /// the same path is another repository.
+    #[test]
+    fn a_differently_spelled_upstream_is_the_same_repository() {
+        for spelling in [
+            "git@github.com:vanillagreencom/kendex.git",
+            "https://github.com/VanillaGreenCom/kendex",
+            "vanillagreencom/kendex.git",
+        ] {
+            let lock = lock_of(&[("guard", ItemKind::Skill, spelling)]);
+            let route = route(&lock, "guard", Some(ItemKind::Skill), DEFAULT_UPSTREAM);
+            assert!(route.kendex_owned, "{spelling}");
+            assert_eq!(route.label.as_deref(), Some("skills"), "{spelling}");
+        }
+
+        let lock = lock_of(&[("guard", ItemKind::Skill, DEFAULT_UPSTREAM)]);
+        let named = route(
+            &lock,
+            "guard",
+            Some(ItemKind::Skill),
+            "git@github.com:vanillagreencom/kendex.git",
+        );
+        assert!(named.kendex_owned);
+        assert_eq!(named.label.as_deref(), Some("skills"));
+
+        let elsewhere = lock_of(&[(
+            "guard",
+            ItemKind::Skill,
+            "https://gitlab.com/vanillagreencom/kendex",
+        )]);
+        assert!(!route(&elsewhere, "guard", Some(ItemKind::Skill), DEFAULT_UPSTREAM).kendex_owned);
     }
 
     /// A named upstream routes there only when the lock recorded the asset
