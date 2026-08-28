@@ -387,6 +387,55 @@ describe("a submissions read the server could not answer", () => {
     expect(useAccountStore.getState().submissions).toEqual([]);
   });
 
+  // The tab's timer and a submit that just landed both ask, so two reads
+  // are routinely out at once. Whichever was asked for last is the later
+  // word on the same credential, and it is the one that has to stand
+  // however the responses come back.
+  describe("two reads out at once", () => {
+    type Answer = Awaited<ReturnType<typeof commands.mineSubmissions>>;
+
+    /** Hands back the two reads' resolvers in the order they were asked
+     *  for, both still out. */
+    const bothOut = () => {
+      const land: ((answer: Answer) => void)[] = [];
+      vi.mocked(commands.mineSubmissions).mockImplementation(
+        () => new Promise<Answer>((resolve) => land.push(resolve)),
+      );
+      useAccountStore.setState({ account: signedIn });
+      const first = useAccountStore.getState().loadSubmissions();
+      const second = useAccountStore.getState().loadSubmissions();
+      return { land, first, second };
+    };
+
+    const landed = { status: "ok", data: [ROW] } as Answer;
+    const failed = {
+      status: "error",
+      error: { kind: "failed", message: WHY },
+    } as Answer;
+
+    it("keeps the newer success when the older read fails last", async () => {
+      const { land, first, second } = bothOut();
+      land[1](landed);
+      await second;
+      land[0](failed);
+      await first;
+
+      expect(useAccountStore.getState().submissions).toEqual([ROW]);
+      expect(useAccountStore.getState().submissionsError).toBeNull();
+    });
+
+    it("keeps the newer failure when the older read lands last", async () => {
+      const { land, first, second } = bothOut();
+      land[1](failed);
+      await second;
+      land[0](landed);
+      await first;
+
+      expect(useAccountStore.getState().submissionsError).toBe(WHY);
+      expect(useAccountStore.getState().submissions).toBeNull();
+    });
+  });
+
   // A failure about a credential nobody holds any more explains rows
   // nobody is looking at, and would sit over the account that replaced it.
   // The read has to still be out when the account moves, so its answer is

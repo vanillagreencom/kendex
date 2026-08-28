@@ -15,8 +15,8 @@ import {
   sameCredential,
 } from "./account-state";
 import {
-  fromSubmissionsRead,
   noSubmissions,
+  readSubmissions,
   type Submissions,
 } from "./account-submissions";
 
@@ -211,16 +211,8 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
 
   loadSubmissions: async () => {
     if (!hasCredential(get().account)) return;
-    const before = handover;
-    const rows = await commands.mineSubmissions();
-    // Rows and refusals belong to the account they were asked for: ones
-    // that changed hands in flight belong to nobody on screen, and
-    // `refused` turns an obsolete expiry away on the same count.
-    if (before !== handover) return;
-    // The poll shows nothing of its own, so a session that died between
-    // ticks would otherwise go on being polled invisibly.
-    if (rows.status === "error") get().refused(rows.error, before);
-    set(fromSubmissionsRead(rows));
+    const written = await readSubmissions(get().handovers, get().refused);
+    if (written) set(written);
   },
 
   handovers: () => handover,
