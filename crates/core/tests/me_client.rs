@@ -1,6 +1,8 @@
 //! The identity client: GET /api/v1/me against the contract fixture,
-//! the five account states, the offline cache ladder, and the cache's
-//! endpoint key. The fixture is a byte copy of kendex-web's
+//! every account state, all of them settled and all of them `load`'s
+//! answers, the offline cache ladder, and the cache's endpoint key. The
+//! UI holds its own "not read yet" and never gets it here. The fixture is
+//! a byte copy of kendex-web's
 //! `contracts/api/v1/me.json` — drift between the repos is a `cmp` away.
 
 use std::cell::RefCell;
@@ -275,6 +277,30 @@ fn a_dead_refresh_grant_reads_as_expired() {
 }
 
 #[test]
+fn an_expired_credential_drops_the_cached_identity() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = env_in(dir.path());
+    let store = MemoryStore::signed_in();
+    let first = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
+    me::load(&env, &first, &store).expect("first load");
+    let cache = env.registry_cache_dir().join("me.cache.json");
+    assert!(cache.exists());
+
+    let dead = Canned::new(vec![
+        ok(401, None, r#"{"error":"invalid_token"}"#),
+        ok(400, None, r#"{"error":"invalid_grant"}"#),
+    ]);
+    assert_eq!(
+        me::load(&env, &dead, &store).expect("load"),
+        AccountState::Expired
+    );
+    assert!(
+        !cache.exists(),
+        "the next sign-in must not inherit this account's identity"
+    );
+}
+
+#[test]
 fn a_rotation_the_server_still_rejects_reads_as_expired() {
     let dir = tempfile::tempdir().expect("tempdir");
     let fetch = Canned::new(vec![
@@ -366,7 +392,7 @@ fn a_cache_from_another_endpoint_is_never_served() {
 }
 
 #[test]
-fn forget_removes_the_cached_identity_and_is_idempotent() {
+fn sign_out_revokes_and_forgets_the_cached_identity() {
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
     let store = MemoryStore::signed_in();
@@ -375,13 +401,86 @@ fn forget_removes_the_cached_identity_and_is_idempotent() {
     let cache = env.registry_cache_dir().join("me.cache.json");
     assert!(cache.exists(), "a successful read caches the identity");
 
-    me::forget(&env).expect("forget");
+    let revoke = Canned::new(vec![ok(200, None, "{}")]);
+    assert!(me::sign_out(&env, &revoke, &store).expect("sign out"));
+    assert!(store.load().expect("load").is_none());
     assert!(!cache.exists());
-    me::forget(&env).expect("forgetting nothing is fine");
 
-    let down = Canned::new(vec![away()]);
+    let quiet = Canned::new(vec![]);
     assert!(
-        me::load(&env, &down, &store).is_err(),
-        "after forget the network is the only source"
+        !me::sign_out(&env, &quiet, &store).expect("already out"),
+        "signing out twice is fine and asks the network nothing"
     );
+}
+
+#[test]
+fn a_failed_revocation_keeps_credential_and_cache_for_retry() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = env_in(dir.path());
+    let store = MemoryStore::signed_in();
+    let first = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
+    me::load(&env, &first, &store).expect("first load");
+    let cache = env.registry_cache_dir().join("me.cache.json");
+
+    let refused = Canned::new(vec![ok(503, None, r#"{"error":"down"}"#)]);
+    assert!(me::sign_out(&env, &refused, &store).is_err());
+    assert!(store.load().expect("load").is_some());
+    assert!(cache.exists(), "still signed in, so still remembered");
+}
+
+#[test]
+fn a_fresh_sign_in_never_inherits_the_previous_identity() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = env_in(dir.path());
+    let store = MemoryStore::signed_in();
+    let first = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
+    me::load(&env, &first, &store).expect("first load");
+    let cache = env.registry_cache_dir().join("me.cache.json");
+    assert!(cache.exists());
+
+    me::commit_sign_in(
+        &env,
+        &store,
+        &Credential {
+            endpoint: "https://kendex.ai".to_owned(),
+            access_token: "kxa_next".to_owned(),
+            refresh_token: "kxr_next".to_owned(),
+            capabilities: vec![],
+        },
+    )
+    .expect("commit");
+    assert!(!cache.exists(), "the old account's identity is gone");
+    assert_eq!(
+        store
+            .load()
+            .expect("load")
+            .expect("credential")
+            .access_token,
+        "kxa_next"
+    );
+}
+
+#[test]
+fn a_304_with_nothing_cached_is_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let unchanged = Canned::new(vec![ok(304, None, "")]);
+    assert!(
+        matches!(
+            me::load(&env_in(dir.path()), &unchanged, &MemoryStore::signed_in()),
+            Err(CoreError::RegistryMalformed { .. })
+        ),
+        "an identity cannot be fabricated from 'unchanged'"
+    );
+}
+
+#[test]
+fn an_oversized_identity_cache_reads_as_no_cache() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = env_in(dir.path());
+    let registry_dir = env.registry_cache_dir();
+    std::fs::create_dir_all(&registry_dir).expect("mkdir");
+    // Past the cap the file is not even read, whatever it claims to hold.
+    std::fs::write(registry_dir.join("me.cache.json"), "x".repeat(41_000_000)).expect("write");
+    let down = Canned::new(vec![away()]);
+    assert!(me::load(&env, &down, &MemoryStore::signed_in()).is_err());
 }

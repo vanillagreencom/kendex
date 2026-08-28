@@ -1,19 +1,17 @@
 //! Who is signed in: GET /api/v1/me through the rotation-safe bearer
-//! client. The last good answer is cached like the directory index —
-//! one atomically-written generation, revalidated by ETag — but with no
-//! TTL, because "signed in", "offline" and "expired" can only be told
-//! apart by asking the server. The account page can still say who you
-//! are on a train with no wifi; it just says "offline" next to it.
+//! client. The last good answer is cached through [`super::generation`]
+//! with no TTL, because "signed in", "offline" and "expired" can only be
+//! told apart by asking the server; when the network is away the cached
+//! identity is served as the offline state instead of nothing.
 
 use serde::{Deserialize, Serialize};
 
-use crate::clock;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::fs::{atomic_write, read_if_exists};
 use crate::registry::client::{self, server_message};
-use crate::registry::credentials::CredentialStore;
-use crate::registry::{Fetch, MAX_RESPONSE_BYTES, base_url};
+use crate::registry::credentials::{Credential, CredentialStore};
+use crate::registry::generation::GenerationFile;
+use crate::registry::{Fetch, base_url};
 
 const CACHE_FILE: &str = "me.cache.json";
 
@@ -50,86 +48,72 @@ struct WireMe {
     github_login: Option<String>,
 }
 
-/// One fetch, whole, keyed to the endpoint it came from so switching
-/// `KENDEX_API` can never serve another server's identity.
-#[derive(Serialize, Deserialize)]
-struct Generation {
-    endpoint: String,
-    etag: Option<String>,
-    fetched_at: u64,
-    body: String,
-}
-
 /// Ask who is signed in. No credential is `SignedOut` without a network
-/// call; a dead credential is `Expired`; an unreachable or misbehaving
-/// server serves the cached identity as `Offline`, and errors only with
-/// nothing cached to serve.
+/// call; a dead credential is `Expired` and its cached identity is
+/// dropped; an unreachable or misbehaving server serves the cached
+/// identity as `Offline`, and errors only with nothing cached to serve.
 pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result<AccountState> {
     if store.load()?.is_none() {
         return Ok(AccountState::SignedOut);
     }
-    let cached = read_cached(env);
+    let cache = cache(env);
+    let cached = cache.read(parse);
     let etag = cached
         .as_ref()
         .and_then(|(generation, _)| generation.etag.clone());
     let url = format!("{}/api/v1/me", base_url());
-    let response = match client::with_access(fetch, store, |access| {
+    let fetched = match client::with_access(fetch, store, |access| {
         fetch.get_auth(&url, etag.as_deref(), Some(access))
     }) {
-        Ok(response) => response,
         // Logout won a race with this read: the re-login state without
         // refreshing, exactly as if the credential had been gone up front.
         Err(CoreError::NotSignedIn) => return Ok(AccountState::SignedOut),
-        Err(CoreError::SignInExpired { .. }) => return Ok(AccountState::Expired),
-        Err(error) => return offline_or(cached, error),
-    };
-    let now = clock::unix_now();
-    match response.status {
-        200 => match parse(&response.body) {
-            Ok(identity) => {
-                write_generation(
-                    env,
-                    &Generation {
-                        endpoint: base_url(),
-                        etag: response.etag,
-                        fetched_at: now,
-                        body: String::from_utf8_lossy(&response.body).into_owned(),
-                    },
-                )?;
-                Ok(AccountState::SignedIn { identity })
-            }
-            Err(error) => offline_or(cached, error),
-        },
-        304 => {
-            let (generation, identity) = cached.ok_or_else(|| CoreError::RegistryMalformed {
-                why: "the server said 'unchanged' but nothing is cached".into(),
-            })?;
-            write_generation(
-                env,
-                &Generation {
-                    fetched_at: now,
-                    ..generation
-                },
-            )?;
-            Ok(AccountState::SignedIn { identity })
+        // The credential is dead and the client cleared it; a cached
+        // identity kept here could resurface as another account's
+        // "offline" after the next sign-in.
+        Err(CoreError::SignInExpired { .. }) => {
+            cache.forget()?;
+            return Ok(AccountState::Expired);
         }
-        _ => offline_or(
-            cached,
-            CoreError::RegistryUnavailable {
-                why: server_message(&response),
-            },
-        ),
-    }
+        fetched => fetched,
+    };
+    let loaded = cache.settle(cached, fetched, parse, |response| {
+        CoreError::RegistryUnavailable {
+            why: server_message(response),
+        }
+    })?;
+    Ok(match loaded.stale {
+        false => AccountState::SignedIn {
+            identity: loaded.value,
+        },
+        true => AccountState::Offline {
+            identity: loaded.value,
+        },
+    })
 }
 
-/// Forget the cached identity — the other half of logout.
-pub fn forget(env: &Env) -> Result<()> {
-    let path = env.registry_cache_dir().join(CACHE_FILE);
-    match std::fs::remove_file(&path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(CoreError::io(&path, error)),
-    }
+/// Commit a fresh sign-in and drop the previous account's cached
+/// identity, so the new credential never pairs with the old name.
+pub fn commit_sign_in(
+    env: &Env,
+    store: &dyn CredentialStore,
+    credential: &Credential,
+) -> Result<()> {
+    cache(env).forget()?;
+    client::commit_login(store, credential)
+}
+
+/// Revoke, clear, and forget the cached identity — the one sign-out
+/// every surface calls. When revocation fails the credential is kept for
+/// retry, and so is the cache. Returns false when already signed out.
+pub fn sign_out(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result<bool> {
+    let was_signed_in = client::logout(fetch, store)?;
+    cache(env).forget()?;
+    Ok(was_signed_in)
+}
+
+fn cache(env: &Env) -> GenerationFile<'_> {
+    GenerationFile::new(env, CACHE_FILE)
 }
 
 fn parse(body: &[u8]) -> Result<Identity> {
@@ -141,36 +125,4 @@ fn parse(body: &[u8]) -> Result<Identity> {
         name: wire.name,
         github_login: wire.github_login,
     })
-}
-
-fn offline_or(cached: Option<(Generation, Identity)>, error: CoreError) -> Result<AccountState> {
-    match cached {
-        Some((_, identity)) => Ok(AccountState::Offline { identity }),
-        None => Err(error),
-    }
-}
-
-fn read_cached(env: &Env) -> Option<(Generation, Identity)> {
-    let path = env.registry_cache_dir().join(CACHE_FILE);
-    // Local, but not trusted to be well-formed: the same size cap and the
-    // same strict parse the network response passed.
-    let size = std::fs::metadata(&path).ok()?.len();
-    if size > MAX_RESPONSE_BYTES as u64 * 2 {
-        return None;
-    }
-    let generation: Generation = serde_json::from_str(&read_if_exists(&path).ok()??).ok()?;
-    if generation.endpoint != base_url() {
-        return None;
-    }
-    let identity = parse(generation.body.as_bytes()).ok()?;
-    Some((generation, identity))
-}
-
-fn write_generation(env: &Env, generation: &Generation) -> Result<()> {
-    let dir = env.registry_cache_dir();
-    std::fs::create_dir_all(&dir).map_err(|error| CoreError::io(&dir, error))?;
-    let json = serde_json::to_string(generation).map_err(|error| CoreError::RegistryMalformed {
-        why: error.to_string(),
-    })?;
-    atomic_write(&dir.join(CACHE_FILE), &json)
 }

@@ -7,7 +7,6 @@ use std::path::PathBuf;
 
 use kendex_core::author::{self, SubmitPreflight};
 use kendex_core::env::Env;
-use kendex_core::registry::client;
 use kendex_core::registry::credentials::{Credential, KeyringStore};
 use kendex_core::registry::login::{self, Poll};
 use kendex_core::registry::me::{self, AccountState};
@@ -64,7 +63,9 @@ pub fn account_login_poll(device_code: String) -> Result<String, String> {
         Poll::Pending => Ok("pending".to_owned()),
         Poll::SlowDown => Ok("slow-down".to_owned()),
         Poll::Signed(pair) => {
-            client::commit_login(
+            let env = Env::detect().map_err(|e| e.to_string())?;
+            me::commit_sign_in(
+                &env,
                 &KeyringStore,
                 &Credential {
                     endpoint: base_url(),
@@ -82,9 +83,10 @@ pub fn account_login_poll(device_code: String) -> Result<String, String> {
 #[tauri::command(async)]
 #[specta::specta]
 pub fn account_logout() -> Result<(), String> {
-    client::logout(&CurlFetch, &KeyringStore).map_err(|e| e.to_string())?;
     let env = Env::detect().map_err(|e| e.to_string())?;
-    me::forget(&env).map_err(|e| e.to_string())
+    me::sign_out(&env, &CurlFetch, &KeyringStore)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]

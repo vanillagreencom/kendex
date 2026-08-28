@@ -3,8 +3,8 @@
 //! and the credential lives in the OS keychain or nowhere.
 
 use super::say;
+use kendex_core::env::Env;
 use kendex_core::error::Result;
-use kendex_core::registry::client;
 use kendex_core::registry::credentials::{Credential, CredentialStore, KeyringStore};
 use kendex_core::registry::login::{self, Poll};
 use kendex_core::registry::me;
@@ -39,7 +39,8 @@ pub fn login() -> Result<()> {
             Poll::Pending => {}
             Poll::SlowDown => interval += 5,
             Poll::Signed(pair) => {
-                client::commit_login(
+                me::commit_sign_in(
+                    &Env::detect()?,
                     &store,
                     &Credential {
                         endpoint: base_url(),
@@ -56,9 +57,7 @@ pub fn login() -> Result<()> {
 }
 
 pub fn logout() -> Result<()> {
-    let was_signed_in = client::logout(&CurlFetch, &KeyringStore)?;
-    me::forget(&kendex_core::env::Env::detect()?)?;
-    if !was_signed_in {
+    if !me::sign_out(&Env::detect()?, &CurlFetch, &KeyringStore)? {
         say("Not signed in.");
         return Ok(());
     }

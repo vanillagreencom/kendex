@@ -663,18 +663,18 @@ lives in one capability table read by core and UI.
   (Codex renders a command as a skill tree). A digest standing in for
   unprintable content is always `DIGEST_CHARS` wide.
 - **The community directory is read like any remote: strictly, capped,
-  honest about staleness.** `registry/` (core) consumes what
-  `source/index.rs` producers feed kendex.ai: `index.rs` re-parses the
-  schema-1 payload under the site's own caps, refusing structural problems
-  whole and dropping only unusable rows; `cache.rs` holds one body and one
-  meta line on disk (`Env::registry_cache_dir`) behind an ETag and a
-  one-hour TTL; a failed refresh serves the last fetch labeled stale with
-  its real fetch time. All reads go through the `Fetch` trait (curl via
-  `Hardened`, plain http only under `KENDEX_API`); tests inject transports.
-  Bearer calls route through `registry/client.rs`: one named cross-process
-  lock serializes login, logout, and refresh rotation, saving rotations
-  before retry.
-  `skillssh.rs` pins its public wire schema and kill switch
+  honest about staleness.** `index.rs` re-parses the schema-1 payload
+  `source/index.rs` feeds kendex.ai under the site's own caps, refusing
+  structural problems whole, dropping only unusable rows. `generation.rs`
+  is the one cache mechanism: an endpoint-keyed generation written
+  atomically under `Env::registry_cache_dir`, a failed refresh serving the
+  last fetch labeled stale. `cache.rs` adds the directory's one-hour TTL;
+  the identity (`me.rs`) has none and is forgotten on sign-in and
+  sign-out. All reads go through the `Fetch` trait (curl via `Hardened`,
+  plain http only under `KENDEX_API`); tests inject transports. Bearer
+  calls route through `registry/client.rs`: one named cross-process lock
+  serializes login, logout, and refresh rotation, saving rotations before
+  retry. `skillssh.rs` pins its public wire schema and kill switch
   (`KENDEX_SKILLSSH=off`); a hit is a lead, never an identity, and installs
   through the same subscribe path. Collections and deep links arrive with W3/W4.
 - **Intent in the manifest, closure in the plan, edges in the lock.** The

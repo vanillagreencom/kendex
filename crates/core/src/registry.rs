@@ -6,6 +6,7 @@ pub mod cache;
 pub mod client;
 pub mod collections;
 pub mod credentials;
+mod generation;
 pub mod index;
 pub mod login;
 pub mod me;
