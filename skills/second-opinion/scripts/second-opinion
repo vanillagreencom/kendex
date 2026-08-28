@@ -263,7 +263,14 @@ PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
 # kendex_load_project_env snapshots and re-asserts it.
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
-kendex_load_project_env "$PROJECT_ROOT"
+# errexit would abort on a refused load anyway, but this marker is the
+# OBSERVABLE contract: it names the terminator, so a later tolerance
+# regression (`|| true`, a set +e window) cannot pass the pin on the
+# loader's own stderr plus an unrelated exit 1.
+kendex_load_project_env "$PROJECT_ROOT" || {
+  echo "second-opinion: refusing to run on a rejected settings load" >&2
+  exit 1
+}
 
 # Portability: macOS lacks timeout, try gtimeout fallback
 if ! command -v timeout >/dev/null 2>&1; then

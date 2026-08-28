@@ -46,6 +46,12 @@ for defect in header bom; do
     || fail "($defect) expected exit 1, got $rc: $(cat "$TMP_ROOT/err")"
   grep -q "$msg" "$TMP_ROOT/err" && ok "($defect) the failure names the settings defect" \
     || fail "($defect) stderr does not name the defect: $(cat "$TMP_ROOT/err")"
+  # The marker proves SECOND-OPINION terminated on the refusal: without it,
+  # the loader's own stderr plus detect's unrelated exit 1 satisfies every
+  # other assertion even when the run tolerates the rejected load.
+  grep -q "second-opinion: refusing to run on a rejected settings load" "$TMP_ROOT/err" \
+    && ok "($defect) the run's own refusal marker is stated" \
+    || fail "($defect) the refusal marker is missing: $(cat "$TMP_ROOT/err")"
   if grep -q "model undeclared" "$TMP_ROOT/err"; then
     fail "($defect) a refused file must not read as an undeclared session"
   else
