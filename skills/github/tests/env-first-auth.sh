@@ -279,6 +279,43 @@ else
 fi
 rm -f "$TMP_ROOT/repo/kendex.settings.toml"
 
+# A token assigned BEFORE the bad line must not be selected off the partial
+# read: the loader stops before .env.local, so the stale committed token
+# would beat the personal override that outranks it. On a FAILED load no
+# project-file token is picked up at all — keyring/env auth decides.
+printf '[env]\nGH_TOKEN = "ghp_PartialCommitted111"\nDUP = "a"\nDUP = "b"\n' > "$TMP_ROOT/repo/kendex.settings.toml"
+printf 'GH_TOKEN=ghp_LocalOverride222\n' > "$TMP_ROOT/repo/.env.local"
+rc=0
+output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" bash -c '
+  source "'"$REPO_ROOT"'/skills/github/scripts/lib/gh-auth.sh"
+  kendex_github_load_token "$PWD"
+') 2>"$TMP_ROOT/partial-token.err" ) || rc=$?
+assert_eq "$rc" "1" "a FAILED load selects no project token (a partial read would invert precedence)"
+assert_eq "$output" "" "no token from the partial read escapes kendex_github_load_token"
+if grep -q "assigned more than once" "$TMP_ROOT/partial-token.err"; then
+  PASS=$((PASS + 1))
+  printf '  ok    the partial-read bail keeps the loader diagnostic on stderr\n'
+else
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  the partial-read bail keeps the loader diagnostic on stderr\n        stderr: %s\n' "$(cat "$TMP_ROOT/partial-token.err")"
+fi
+
+# Same bail through github-api.sh's load_bot_token continuation sites:
+# unconfigured (empty, rc 0) with the diagnostic surfaced, never the
+# partial token and never an abort blaming auth.
+rc=0
+output=$(load_token 2>"$TMP_ROOT/partial-bot.err") || rc=$?
+assert_eq "$rc" "0" "load_bot_token treats the refused load as unconfigured, not an auth abort"
+assert_eq "$output" "" "load_bot_token picks no token off the partial read"
+if grep -q "assigned more than once" "$TMP_ROOT/partial-bot.err"; then
+  PASS=$((PASS + 1))
+  printf '  ok    load_bot_token keeps the loader diagnostic on stderr\n'
+else
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  load_bot_token keeps the loader diagnostic on stderr\n        stderr: %s\n' "$(cat "$TMP_ROOT/partial-bot.err")"
+fi
+rm -f "$TMP_ROOT/repo/kendex.settings.toml" "$TMP_ROOT/repo/.env.local"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

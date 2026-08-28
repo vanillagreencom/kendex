@@ -239,7 +239,15 @@ kendex_github_load_project_env_preserving_caller() {
   lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   # shellcheck source=kendex-env.sh
   source "$lib_dir/kendex-env.sh"
-  kendex_load_project_env "$project_root"
+  local load_status=0
+  kendex_load_project_env "$project_root" || load_status=$?
+  if [[ "$load_status" -ne 0 ]]; then
+    # A FAILED load supplies no token: the loader stops before .env.local,
+    # so a value exported ahead of the bad line would beat the personal
+    # override that outranks it. Its ::error stays on stderr; caller-held
+    # values come back below.
+    unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN
+  fi
 
   if [[ -n "$caller_gh_token_set" ]]; then
     export GH_TOKEN="$caller_gh_token"
@@ -250,6 +258,7 @@ kendex_github_load_project_env_preserving_caller() {
   if [[ -n "$caller_gh_bot_token_set" ]]; then
     export GH_BOT_TOKEN="$caller_gh_bot_token"
   fi
+  return "$load_status"
 }
 
 kendex_github_load_token() {
@@ -268,9 +277,11 @@ kendex_github_load_token() {
       # || true keeps token absence best-effort, but stderr stays open: the
       # loader can refuse a malformed settings file, and discarding its
       # ::error leaves a bare no-token failure blaming auth for a settings
-      # defect.
+      # defect. A FAILED load emits NO token (exit the subshell empty): a
+      # value exported ahead of the bad line would beat the .env.local
+      # override the ladder promises wins.
       source "$lib_dir/kendex-env.sh" >/dev/null || true
-      kendex_load_project_env "$project_root" >/dev/null || true
+      kendex_load_project_env "$project_root" >/dev/null || exit 0
       kendex_github_select_auth_token "$mode" || true
     )
   fi

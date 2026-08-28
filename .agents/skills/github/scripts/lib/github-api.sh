@@ -314,21 +314,19 @@ load_bot_token() {
 
     if ! token=$(select_github_auth_token); then
         # Load public settings, then .env.local, only when the process env
-        # did not already carry a resolved GitHub token.
-        local lib_dir
-        lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        # shellcheck source=kendex-env.sh
-        source "$lib_dir/kendex-env.sh"
-        kendex_load_project_env "$PROJECT_ROOT"
-        token=$(select_github_auth_token || true)
+        # did not already carry a resolved GitHub token. A FAILED load
+        # supplies no project token (the bail in the preserving-caller
+        # loader): selection is skipped and the token stays unconfigured,
+        # with the loader's ::error on stderr.
+        if kendex_github_load_project_env_preserving_caller "$PROJECT_ROOT"; then
+            token=$(select_github_auth_token || true)
+        fi
     elif [[ "$token" == op://* ]]; then
-        # An unresolved inherited token can still be overridden by project env.
-        local lib_dir
-        lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        # shellcheck source=kendex-env.sh
-        source "$lib_dir/kendex-env.sh"
-        kendex_load_project_env "$PROJECT_ROOT"
-        token=$(select_github_auth_token || true)
+        # An unresolved inherited token can still be overridden by project
+        # env; a FAILED load keeps the inherited reference as-is.
+        if kendex_github_load_project_env_preserving_caller "$PROJECT_ROOT"; then
+            token=$(select_github_auth_token || true)
+        fi
     fi
 
     # Empty token - not configured
