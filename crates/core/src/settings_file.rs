@@ -15,6 +15,7 @@
 //! current value to show and no span to write over, and saying so beats
 //! guessing which line was meant.
 
+use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
@@ -57,6 +58,25 @@ pub enum SettingsRefusal {
 
     #[error("{path} is not a regular file, and settings are never written through one")]
     NotRegularFile { path: PathBuf },
+
+    #[error(
+        "{key} is set twice in one save — {} — so nothing was written; save one of them",
+        by.iter().zip(wanted).map(|(skill, value)| format!("{skill} wants \"{value}\""))
+            .collect::<Vec<_>>().join(" and ")
+    )]
+    Contested {
+        key: String,
+        /// The skills whose rows carried an edit, in the order they came.
+        by: Vec<String>,
+        /// What each of them asked for, resolved — a reset is that
+        /// skill's own default, and two skills may ship different ones.
+        wanted: Vec<String>,
+    },
+
+    #[error(
+        "{path} declares env as an array of tables on line {line}, so there is nowhere a setting can go — make it a plain [env] table"
+    )]
+    EnvIsAnArray { path: PathBuf, line: u32 },
 }
 
 /// One assignment of one key in the file.
@@ -251,16 +271,50 @@ pub fn apply_edits(
 ) -> Result<(String, Vec<String>)> {
     let mut out = text.to_owned();
     let mut changed = Vec::new();
-    for edit in edits {
-        let value = resolve(edit, templates)?;
-        let inner = span_for(&out, &edit.key, path)?;
+    for (key, value) in wanted(edits, templates)? {
+        let inner = span_for(&out, &key, path)?;
         if out[inner.clone()] == value {
             continue;
         }
         out.replace_range(inner, &value);
-        changed.push(edit.key.clone());
+        changed.push(key);
     }
     Ok((out, changed))
+}
+
+/// What this save asks of each key, once, in the order the edits came.
+///
+/// Two skills may declare one key — the shared-key note exists because
+/// they do — so the view shows it under each of them and a save can carry
+/// a row from both. Applied in turn the later would silently win and the
+/// other choice would be gone with nothing said, which is worse than a
+/// refusal. Two rows that agree are not a disagreement and pass as one;
+/// two that differ stop the save before a byte moves.
+fn wanted(edits: &[SettingsEdit], templates: &[SeededEnv]) -> Result<Vec<(String, String)>> {
+    let mut asked: Vec<(String, String)> = Vec::new();
+    let mut by: BTreeMap<&str, Vec<&SettingsEdit>> = BTreeMap::new();
+    for edit in edits {
+        let value = resolve(edit, templates)?;
+        by.entry(&edit.key).or_default().push(edit);
+        match asked.iter().find(|(key, _)| *key == edit.key) {
+            None => asked.push((edit.key.clone(), value)),
+            Some((_, first)) if *first == value => {}
+            Some(_) => {
+                let contesting = by.remove(edit.key.as_str()).unwrap_or_default();
+                let mut wanted = Vec::new();
+                for edit in &contesting {
+                    wanted.push(resolve(edit, templates)?);
+                }
+                return Err(SettingsRefusal::Contested {
+                    key: edit.key.clone(),
+                    by: contesting.iter().map(|edit| edit.skill.clone()).collect(),
+                    wanted,
+                }
+                .into());
+            }
+        }
+    }
+    Ok(asked)
 }
 
 /// The value this edit writes: the one it carries, or the template

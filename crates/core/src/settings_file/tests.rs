@@ -351,3 +351,49 @@ fn a_control_character_never_reaches_the_file() {
         "{refused:?}"
     );
 }
+
+/// Two skills can declare one key — the shared-key conflict note exists
+/// because they do — so the view shows that key under each of them and a
+/// save can carry an edit from both rows. Applied in sequence the later
+/// one silently wins and the person's other choice is gone with nothing
+/// said. Two edits that agree are not a disagreement; two that differ are
+/// refused, because losing what somebody typed is worse than refusing it.
+#[test]
+fn two_edits_on_one_key_agree_or_the_save_refuses() {
+    let templates = [
+        seeded("noise", "MODE", "MODE = \"quiet\""),
+        seeded("other", "MODE", "MODE = \"loud\""),
+    ];
+    let agreeing = [set("noise", "MODE", "same"), set("other", "MODE", "same")];
+    let (out, changed) = apply_edits(FILE, &agreeing, &templates, Path::new("/w/f.toml")).unwrap();
+    assert_eq!(changed, vec!["MODE".to_owned()], "one key, applied once");
+    assert!(out.contains("MODE = \"same\" # a trailing note"), "{out}");
+
+    let differing = [set("noise", "MODE", "mine"), set("other", "MODE", "theirs")];
+    let refused = apply_edits(FILE, &differing, &templates, Path::new("/w/f.toml")).unwrap_err();
+    let CoreError::SettingsRefused(SettingsRefusal::Contested { key, wanted, .. }) = &refused
+    else {
+        panic!("{refused:?}");
+    };
+    assert_eq!(key, "MODE");
+    assert_eq!(wanted, &["mine".to_owned(), "theirs".to_owned()]);
+    // And nothing is written: the file is not half-saved.
+    assert!(refused.to_string().contains("noise"), "{refused}");
+    assert!(refused.to_string().contains("other"), "{refused}");
+
+    // A reset resolves against each skill's own default, so two resets on
+    // one key disagree exactly when the skills ship different defaults.
+    let resets = [
+        SettingsEdit {
+            skill: "noise".to_owned(),
+            key: "MODE".to_owned(),
+            value: SettingsEditValue::Reset,
+        },
+        SettingsEdit {
+            skill: "other".to_owned(),
+            key: "MODE".to_owned(),
+            value: SettingsEditValue::Reset,
+        },
+    ];
+    assert!(apply_edits(FILE, &resets, &templates, Path::new("/w/f.toml")).is_err());
+}
