@@ -419,9 +419,9 @@ pub enum CoreError {
     #[error("not signed in — run `kendex login` first")]
     NotSignedIn,
 
-    /// The stored sign-in is dead for good: the server refused its refresh
-    /// grant or keeps rejecting freshly rotated access tokens.
-    #[error("{why} — run `kendex login` again")]
+    /// The server refuses this sign-in; the local copy is gone unless `why`
+    /// says it could not be removed, and `why` carries the fitting remedy.
+    #[error("{why}")]
     SignInExpired { why: String },
 }
 

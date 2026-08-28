@@ -84,9 +84,10 @@ pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result
         // Logout won a race with this read: the re-login state without
         // refreshing, exactly as if the credential had been gone up front.
         Err(CoreError::NotSignedIn) => return Ok(AccountState::SignedOut),
-        // The credential is dead and the client cleared it; the identity
-        // it named has no reason to outlive it on disk, and the next
-        // sign-in would find it keyed to this one and discard it unread.
+        // Producing this removed the rejected credential, or said in `why`
+        // that the store would not give it up. Either way the identity it
+        // named has no reason to outlive it on disk, and the next sign-in
+        // would find it keyed to this one and discard it unread.
         Err(CoreError::SignInExpired { .. }) => {
             cache.forget()?;
             return Ok(AccountState::Expired);

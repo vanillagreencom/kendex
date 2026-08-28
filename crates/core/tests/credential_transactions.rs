@@ -1,4 +1,5 @@
-//! Mixed-version logout safety and bounded concurrent-token retries.
+//! Mixed-version logout safety, bounded concurrent-token retries, and the
+//! sign-in a rejection clears — never one another writer installed.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, mpsc};
@@ -12,6 +13,13 @@ use kendex_core::registry::{Fetch, FetchResponse};
 struct Store {
     credential: Mutex<Option<Credential>>,
     transaction: Mutex<()>,
+    /// Which take of the refresh guard starts refusing, counting from one —
+    /// a lock another process holds past the deadline.
+    guard_refused_from: Option<usize>,
+    guard_takes: AtomicUsize,
+    /// A keychain that will not give the credential up: the delete fails
+    /// and the credential stays installed.
+    delete_refused: bool,
 }
 
 impl Store {
@@ -19,6 +27,23 @@ impl Store {
         Self {
             credential: Mutex::new(Some(credential("old"))),
             transaction: Mutex::new(()),
+            guard_refused_from: None,
+            guard_takes: AtomicUsize::new(0),
+            delete_refused: false,
+        }
+    }
+
+    fn guard_refused_from(take: usize) -> Self {
+        Self {
+            guard_refused_from: Some(take),
+            ..Self::signed_in()
+        }
+    }
+
+    fn delete_refused() -> Self {
+        Self {
+            delete_refused: true,
+            ..Self::signed_in()
         }
     }
 }
@@ -45,11 +70,25 @@ impl CredentialStore for Store {
     }
 
     fn clear(&self) -> Result<()> {
+        if self.delete_refused {
+            return Err(CoreError::RegistryUnavailable {
+                why: "the credential store refused the removal".to_owned(),
+            });
+        }
         *self.credential.lock().map_err(|_| lock_error())? = None;
         Ok(())
     }
 
     fn refresh_guard(&self) -> Result<Box<dyn CredentialRefreshGuard + '_>> {
+        let take = self.guard_takes.fetch_add(1, Ordering::SeqCst) + 1;
+        if self.guard_refused_from.is_some_and(|first| take >= first) {
+            // Named, never opened: nothing here resolves the path, and a
+            // real spelling would be a second copy of the one the store
+            // derives.
+            return Err(CoreError::CredentialRefreshBusy {
+                lock: std::path::PathBuf::from("held-by-another-process"),
+            });
+        }
         Ok(Box::new(Guard {
             _guard: self.transaction.lock().map_err(|_| lock_error())?,
         }))
@@ -171,10 +210,32 @@ fn an_older_logout_during_revoke_stays_signed_out() {
     assert!(store.load().unwrap().is_none());
 }
 
+/// What another writer does to the store while the rejected call is in
+/// flight, in the window neither producer holds the refresh guard across.
+enum Race {
+    None,
+    /// A login installing this family.
+    Install(&'static str),
+    /// A logout, leaving nothing installed.
+    LogOut,
+}
+
+impl Race {
+    fn run(&self, store: &Store) -> Result<()> {
+        match self {
+            Race::None => Ok(()),
+            Race::Install(name) => store.save(&credential(name)),
+            Race::LogOut => store.clear(),
+        }
+    }
+}
+
 struct RejectingNewerTokens {
     store: Arc<Store>,
     bearers: Mutex<Vec<String>>,
     refresh_calls: AtomicUsize,
+    /// What lands as the last token is rejected.
+    race_on_last: Race,
 }
 
 impl Fetch for RejectingNewerTokens {
@@ -208,7 +269,7 @@ impl Fetch for RejectingNewerTokens {
         match bearer {
             "kxa_old" => self.store.save(&credential("newer-one"))?,
             "kxa_newer-one" => self.store.save(&credential("newer-two"))?,
-            "kxa_newer-two" => {}
+            "kxa_newer-two" => self.race_on_last.run(&self.store)?,
             other => {
                 return Err(CoreError::RegistryUnavailable {
                     why: format!("unexpected bearer {other}"),
@@ -227,6 +288,7 @@ fn two_rejected_concurrent_tokens_end_the_bounded_retry() {
         store: Arc::clone(&store),
         bearers: Mutex::new(Vec::new()),
         refresh_calls: AtomicUsize::new(0),
+        race_on_last: Race::None,
     };
 
     let refused = submit(&fetch, store.as_ref(), "jane/skills")
@@ -242,5 +304,209 @@ fn two_rejected_concurrent_tokens_end_the_bounded_retry() {
         ["kxa_old", "kxa_newer-one", "kxa_newer-two"]
     );
     assert_eq!(fetch.refresh_calls.load(Ordering::SeqCst), 0);
-    assert_eq!(store.load().unwrap().unwrap().access_token, "kxa_newer-two");
+    assert!(
+        store.load().unwrap().is_none(),
+        "the sign-in the server refused is not left installed"
+    );
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_login_landing_during_the_bounded_retry_is_never_cleared() {
+    let store = Arc::new(Store::signed_in());
+    let fetch = RejectingNewerTokens {
+        store: Arc::clone(&store),
+        bearers: Mutex::new(Vec::new()),
+        refresh_calls: AtomicUsize::new(0),
+        race_on_last: Race::Install("newest"),
+    };
+
+    let refused = submit(&fetch, store.as_ref(), "jane/skills")
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        refused.contains("the sign-in changed while authenticating"),
+        "{refused}"
+    );
+    assert_eq!(store.load().unwrap().unwrap().access_token, "kxa_newest");
+}
+
+/// Rotates once and rejects the fresh token too, optionally letting another
+/// writer reach the store while that rejection is in flight.
+struct RejectingRotation {
+    store: Arc<Store>,
+    /// What lands while the rejection of the rotated token is in flight.
+    race_on_rotated: Race,
+}
+
+impl Fetch for RejectingRotation {
+    fn get_auth(
+        &self,
+        _url: &str,
+        _etag: Option<&str>,
+        _bearer: Option<&str>,
+    ) -> Result<FetchResponse> {
+        Err(CoreError::RegistryUnavailable {
+            why: "unexpected GET".to_owned(),
+        })
+    }
+
+    fn post_json_auth(
+        &self,
+        _url: &str,
+        body: &str,
+        bearer: Option<&str>,
+    ) -> Result<FetchResponse> {
+        let Some(bearer) = bearer else {
+            assert!(body.contains("kxr_old"), "{body}");
+            return response(
+                200,
+                r#"{"access_token":"kxa_rotated","refresh_token":"kxr_rotated","capabilities":["submission:write"]}"#,
+            );
+        };
+        match bearer {
+            "kxa_old" => {}
+            "kxa_rotated" => self.race_on_rotated.run(&self.store)?,
+            other => {
+                return Err(CoreError::RegistryUnavailable {
+                    why: format!("unexpected bearer {other}"),
+                });
+            }
+        }
+        response(401, r#"{"error":"invalid_token"}"#)
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_rotation_the_server_still_rejects_clears_the_sign_in() {
+    let store = Arc::new(Store::signed_in());
+    let fetch = RejectingRotation {
+        store: Arc::clone(&store),
+        race_on_rotated: Race::None,
+    };
+
+    let refused = submit(&fetch, store.as_ref(), "jane/skills")
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        refused.contains("server does not accept this sign-in"),
+        "{refused}"
+    );
+    assert!(
+        refused.contains("— run `kendex login` again"),
+        "with the credential gone, signing in again is what works: {refused}"
+    );
+    assert!(
+        store.load().unwrap().is_none(),
+        "the freshly rotated family the server refused is not left installed"
+    );
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_login_landing_after_rotation_is_never_cleared() {
+    let store = Arc::new(Store::signed_in());
+    let fetch = RejectingRotation {
+        store: Arc::clone(&store),
+        race_on_rotated: Race::Install("newest"),
+    };
+
+    let refused = submit(&fetch, store.as_ref(), "jane/skills")
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        refused.contains("the sign-in changed while authenticating"),
+        "{refused}"
+    );
+    assert_eq!(store.load().unwrap().unwrap().access_token, "kxa_newest");
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_logout_landing_after_rotation_still_answers_expired() {
+    let store = Arc::new(Store::signed_in());
+    let fetch = RejectingRotation {
+        store: Arc::clone(&store),
+        race_on_rotated: Race::LogOut,
+    };
+
+    let refused = submit(&fetch, store.as_ref(), "jane/skills")
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        refused.contains("server does not accept this sign-in"),
+        "{refused}"
+    );
+    assert!(
+        !refused.contains("could not be removed"),
+        "nothing was left to remove: {refused}"
+    );
+    assert!(store.load().unwrap().is_none());
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_store_that_will_not_open_still_answers_expired() {
+    // Rotation takes the guard once; the take that removes the rejected
+    // family is the second, and that is the one another process holds.
+    let store = Arc::new(Store::guard_refused_from(2));
+    let fetch = RejectingRotation {
+        store: Arc::clone(&store),
+        race_on_rotated: Race::None,
+    };
+
+    let refused = submit(&fetch, store.as_ref(), "jane/skills")
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        refused.contains("server does not accept this sign-in"),
+        "a store failure must not stand in for the server's refusal: {refused}"
+    );
+    assert!(
+        refused.contains("the local copy could not be removed: credential refresh is busy"),
+        "the user learns the sign-in is dead and still installed: {refused}"
+    );
+    assert_eq!(store.load().unwrap().unwrap().access_token, "kxa_rotated");
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_store_that_will_not_delete_still_answers_expired() {
+    let store = Arc::new(Store::delete_refused());
+    let fetch = RejectingRotation {
+        store: Arc::clone(&store),
+        race_on_rotated: Race::None,
+    };
+
+    let refused = submit(&fetch, store.as_ref(), "jane/skills")
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        refused.contains("server does not accept this sign-in"),
+        "a delete failure must not stand in for the server's refusal: {refused}"
+    );
+    assert!(
+        refused.contains("the local copy could not be removed"),
+        "the user learns the credential is still installed: {refused}"
+    );
+    assert!(
+        refused.contains("the credential store refused the removal"),
+        "the user learns what refused it: {refused}"
+    );
+    assert!(
+        !refused.contains("— run `kendex login` again"),
+        "signing in again refuses while the credential is still installed: {refused}"
+    );
+    assert_eq!(
+        store.load().unwrap().unwrap().access_token,
+        "kxa_rotated",
+        "the delete failed, so the family the server refused is still installed"
+    );
 }

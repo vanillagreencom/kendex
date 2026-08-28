@@ -312,6 +312,8 @@ fn an_expired_credential_drops_the_cached_identity() {
 #[test]
 fn a_rotation_the_server_still_rejects_reads_as_expired() {
     let dir = tempfile::tempdir().expect("tempdir");
+    let env = env_in(dir.path());
+    let store = MemoryStore::signed_in();
     let fetch = Canned::new(vec![
         ok(401, None, r#"{"error":"invalid_token"}"#),
         ok(
@@ -321,8 +323,20 @@ fn a_rotation_the_server_still_rejects_reads_as_expired() {
         ),
         ok(401, None, r#"{"error":"invalid_token"}"#),
     ]);
-    let state = me::load(&env_in(dir.path()), &fetch, &MemoryStore::signed_in()).expect("load");
+    let state = me::load(&env, &fetch, &store).expect("load");
     assert_eq!(state, AccountState::Expired);
+    assert!(
+        store.load().expect("load").is_none(),
+        "a rotation the server refuses is not kept for endless retries"
+    );
+
+    let quiet = Canned::new(vec![]);
+    assert_eq!(
+        me::load(&env, &quiet, &store).expect("second load"),
+        AccountState::SignedOut,
+        "the rejected sign-in is gone, so the next read asks nothing"
+    );
+    assert_eq!(*quiet.calls.borrow(), 0);
 }
 #[test]
 fn revalidation_sends_the_etag_and_304_keeps_the_identity() {
