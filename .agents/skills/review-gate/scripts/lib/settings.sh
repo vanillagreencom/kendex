@@ -210,6 +210,30 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       return 1
       ;;
   esac
+  # Every applicable TOML source is validated BEFORE any source answers:
+  # kendex-env validates before its parent-env skip, and a malformed
+  # committed file must fail identically whatever the session exports or
+  # .env.local says — an override must never let a broken file pass
+  # silently. The list is the same one extraction walks below: an explicit
+  # REVIEW_GATE_SETTINGS_FILE consults only itself (set-but-EMPTY is unset:
+  # "" names no file), REVIEW_GATE_MODE reads the COMMITTED file alone (CI's
+  # checkout has no machine-local .kendex/), and /dev/null selects no
+  # sources at all, so nothing is checked for it.
+  if [ "${REVIEW_GATE_SETTINGS_FILE:-}" != "/dev/null" ]; then
+    if [ -n "${REVIEW_GATE_SETTINGS_FILE:-}" ]; then
+      set -- "$REVIEW_GATE_SETTINGS_FILE"
+    elif [ "$name" = "REVIEW_GATE_MODE" ]; then
+      set -- "kendex.settings.toml"
+    else
+      set -- ".kendex/settings.toml" "kendex.settings.toml"
+    fi
+    for file in "$@"; do
+      rg_settings_usable "$file" || return 1
+      if [ -f "$file" ]; then
+        rg_env_table "$file" >/dev/null || return 1
+      fi
+    done
+  fi
   # Indirect expansion, not eval: a non-literal NAME must never become code.
   # ${!name+x} tests set-ness of the variable NAMED by $name (Bash 3.2-safe).
   if [ -n "${!name+x}" ]; then
@@ -240,21 +264,8 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       ;;
   esac
   # Nested project settings override the root file (the standard loader
-  # order); an explicit REVIEW_GATE_SETTINGS_FILE consults only itself.
-  # Set-but-EMPTY is unset: "" names no file, and consulting only it would
-  # resolve every key to its built-in default with nothing said — /dev/null
-  # (answered above) is the one force-defaults handle.
-  if [ -n "${REVIEW_GATE_SETTINGS_FILE:-}" ]; then
-    set -- "$REVIEW_GATE_SETTINGS_FILE"
-  elif [ "$name" = "REVIEW_GATE_MODE" ]; then
-    # The mode must resolve identically on both sides of the gate, and CI's
-    # checkout carries neither .env.local nor the machine-local .kendex/ —
-    # so this key's default TOML source is the COMMITTED file alone (the
-    # same reason it skips the dotenv layer above).
-    set -- "kendex.settings.toml"
-  else
-    set -- ".kendex/settings.toml" "kendex.settings.toml"
-  fi
+  # order); the positional list was built — and every present file already
+  # validated whole — before any source answered, above.
   for file in "$@"; do
   rg_settings_usable "$file" || return 1
   if [ -f "$file" ]; then

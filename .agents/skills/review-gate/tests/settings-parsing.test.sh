@@ -358,5 +358,19 @@ dot REVIEW_GATE_TM "dflt"
 [[ "$RC" -ne 0 ]] && grep -q "byte-order mark" "$TMP/err" && ok "a BOM-prefixed .env.local is a config error, not a skipped layer" || bad "BOM .env.local" "rc=$RC out=$OUT"
 rm -f "$TMP/layers/.env.local"
 
+echo "=== a malformed lower file fails even under a higher-precedence override ==="
+# kendex-env validates before its parent-env skip; an exported value or an
+# .env.local hit must never let a broken committed file pass silently.
+printf '[env]\nDUP = "a"\nDUP = "b"\n' >"$TMP/settings.toml"
+OUT=""; RC=0
+OUT="$(REVIEW_GATE_TV=envwin REVIEW_GATE_SETTINGS_FILE="$TMP/settings.toml" rg_setting REVIEW_GATE_TV "dflt" 2>"$TMP/err")" || RC=$?
+[[ "$RC" -ne 0 ]] && grep -q "assigned more than once" "$TMP/err" && ok "an exported value does not mask a malformed settings file" || bad "env override over malformed file" "rc=$RC out=$OUT"
+
+printf '[env]\nDUP = "a"\nDUP = "b"\n' >"$TMP/layers/kendex.settings.toml"
+printf 'REVIEW_GATE_TV="local"\n' >"$TMP/layers/.env.local"
+dot REVIEW_GATE_TV "dflt"
+[[ "$RC" -ne 0 ]] && grep -q "assigned more than once" "$TMP/err" && ok "a .env.local hit does not mask a malformed settings file" || bad "dotenv override over malformed file" "rc=$RC out=$OUT"
+rm -f "$TMP/layers/.env.local"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

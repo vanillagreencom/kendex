@@ -338,6 +338,28 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       return 1
       ;;
   esac
+  # Every applicable TOML source is validated BEFORE any source answers:
+  # kendex-env validates before its parent-env skip, and a malformed
+  # committed file must fail identically whatever the session exports or
+  # .env.local says — an override must never let a broken file pass
+  # silently. The list is the same one extraction walks below: an explicit
+  # SIZE_RATCHET_SETTINGS_FILE consults only itself (set-but-EMPTY is
+  # unset: "" names no file), and /dev/null selects no sources at all, so
+  # nothing is checked for it.
+  if [ "${SIZE_RATCHET_SETTINGS_FILE:-}" != "/dev/null" ]; then
+    if [ -n "${SIZE_RATCHET_SETTINGS_FILE:-}" ]; then
+      set -- "$SIZE_RATCHET_SETTINGS_FILE"
+    else
+      set -- ".kendex/settings.toml" "kendex.settings.toml"
+    fi
+    for file in "$@"; do
+      file="$(sr_settings_source "$file")" || return 1
+      sr_settings_usable "$file" || return 1
+      if [ -f "$file" ]; then
+        sr_env_table "$file" >/dev/null || return 1
+      fi
+    done
+  fi
   # Indirect expansion, not eval: a non-literal NAME must never become code.
   # ${!name+x} tests set-ness of the variable NAMED by $name (Bash 3.2-safe).
   if [ -n "${!name+x}" ]; then
@@ -375,15 +397,8 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     fi
   fi
   # Nested project settings override the root file (the standard loader
-  # order); an explicit SIZE_RATCHET_SETTINGS_FILE consults only itself.
-  # Set-but-EMPTY is unset: "" names no file, and consulting only it would
-  # resolve every key to its built-in default with nothing said — /dev/null
-  # (answered above) is the one force-defaults handle.
-  if [ -n "${SIZE_RATCHET_SETTINGS_FILE:-}" ]; then
-    set -- "$SIZE_RATCHET_SETTINGS_FILE"
-  else
-    set -- ".kendex/settings.toml" "kendex.settings.toml"
-  fi
+  # order); the positional list was built — and every present file already
+  # validated whole — before any source answered, above.
   for file in "$@"; do
   file="$(sr_settings_source "$file")" || return 1
   sr_settings_usable "$file" || return 1

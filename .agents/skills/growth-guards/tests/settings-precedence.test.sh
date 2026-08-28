@@ -132,5 +132,12 @@ resolve GROWTH_GUARDS_TT "dflt"
 [ "$RC" -ne 0 ] && grep -q "byte-order mark" "$TMP/err" && ok "a BOM-prefixed .env.local is a config error, not a skipped layer" || bad "BOM .env.local" "rc=$RC out=$OUT"
 rm -f "$R/.env.local"
 
+echo "=== a malformed lower file fails even under a higher-precedence override ==="
+# kendex-env validates before its parent-env skip; an exported value must
+# never let a broken committed file pass silently.
+printf '[env]\nDUP = "a"\nDUP = "b"\n' >"$R/kendex.settings.toml"
+resolve GROWTH_GUARDS_TT "dflt" "GROWTH_GUARDS_TT=explicit"
+[ "$RC" -ne 0 ] && grep -q "assigned more than once" "$TMP/err" && ok "an exported value does not mask a malformed settings file" || bad "env override over malformed file" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

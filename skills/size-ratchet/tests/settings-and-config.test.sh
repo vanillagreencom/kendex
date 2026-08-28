@@ -243,6 +243,15 @@ run_raw || true
   || bad "BOM .env.local is exit 2" "rc=$RC out=$OUT"
 rm -f "$R/.env.local"
 
+# kendex-env validates before its parent-env skip; an exported value must
+# never let a broken committed file pass silently.
+printf '[env]\nDUP = "a"\nDUP = "b"\n' > "$R/kendex.settings.toml"
+run_raw SIZE_RATCHET_THRESHOLD=9 || true
+[ "$RC" -eq 2 ] && case "$OUT" in *"assigned more than once"*) true ;; *) false ;; esac \
+  && ok "an exported value does not mask a malformed settings file" \
+  || bad "env override over malformed file" "rc=$RC out=$OUT"
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "9"\n' > "$R/kendex.settings.toml"
+
 echo "=== an EXISTING non-regular settings path never falls back to defaults ==="
 # A directory (FIFO/socket/device are the same shape) fails -f exactly like
 # an absent file, so the configured settings would be skipped with nothing
