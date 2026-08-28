@@ -185,11 +185,9 @@ the block.
 Verbatim equality is not available here, so the drift check lives where the
 engine does: `tests/review-bots-template.test.sh` strips that block from
 both sides and compares this repo's own root `review-bots.md` against the
-template byte-for-byte. It also asserts that every engine path the guidance
-sends a bot to resolves, so a rename cannot ship a dead pointer to every
-consumer that copied the template. Changing the engine's semantics means
-changing the template in the same commit, and the suite reds until the
-repo's own copy carries it.
+template byte-for-byte. Changing the engine's semantics means changing the
+template in the same commit, and the suite reds until the repo's own copy
+carries it.
 
 The suite discriminates by whether the enclosing repo carries this skill's
 catalog source. Here it does, so a missing root `review-bots.md` is a

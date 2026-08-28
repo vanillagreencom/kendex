@@ -249,7 +249,8 @@ multi-PR *background* reducer.
 - `.agents/skills/review-gate/scripts/validate.sh` exits 0 from the repo
   root.
 - The consumer's vendored-copy drift check passes.
-- By hand — no script reads it, and `validate.sh` does not: the repo's
+- By hand — the drift check is an ENGINE test and a consumer runs no engine
+  tests, and `validate.sh` does not read this file: the repo's
   `review-bots.md` differs from
   `.agents/skills/review-gate/templates/review-bots.md` only inside the
   marked block.

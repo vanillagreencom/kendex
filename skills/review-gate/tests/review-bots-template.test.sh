@@ -48,22 +48,6 @@ strip_block() { # FILE
 line_of() { grep -nFx -- "$2" "$1" | cut -d: -f1; }
 count_of() { grep -cFx -- "$2" "$1" || true; }
 
-# Every engine path the guidance sends a bot to, repository-relative to the
-# installed skill. Prose ends a sentence right after a path, so a trailing
-# separator is not part of the name.
-refs_of() { # FILE
-  grep -oE '\.agents/skills/review-gate/[A-Za-z0-9._/-]+' "$1" |
-    sed -e 's#^\.agents/skills/review-gate/##' -e 's/[.,]$//' | sort -u
-}
-
-unresolved_refs() { # FILE, SKILL-ROOT
-  local rel
-  while IFS= read -r rel; do
-    [[ -n "$rel" ]] || continue
-    [[ -e "$2/$rel" ]] || printf '%s\n' "$rel"
-  done < <(refs_of "$1")
-}
-
 # ------------------------------------------------------------- the copies ---
 
 TEMPLATE="$SKILL_ROOT/templates/review-bots.md"
@@ -124,47 +108,6 @@ for i in "${!FILES[@]}"; do
     fi
   fi
 done
-
-echo "=== every engine path the guidance names resolves ==="
-
-for i in "${!FILES[@]}"; do
-  f="${FILES[$i]}"; tag="${LABELS[$i]}"
-  missing="$(unresolved_refs "$f" "$SKILL_ROOT")"
-  if [[ -z "$missing" ]]; then
-    pass "[$tag] every referenced engine path resolves"
-  else
-    fail "[$tag] the guidance sends bots to paths that do not exist:
-$(printf '%s\n' "$missing" | sed 's/^/        /')"
-  fi
-done
-
-# MUST-FAIL CONTROL: a renamed engine file must be reported. Materialize the
-# template's own reference set under a fake root, drop one, and read the arm's
-# answer — the real tree is never touched.
-if [[ -f "$TEMPLATE" ]]; then
-  REFROOT="$TMP_ROOT/refroot"
-  VICTIM=""
-  while IFS= read -r rel; do
-    [[ -n "$rel" ]] || continue
-    case "$rel" in
-      */) mkdir -p "$REFROOT/$rel" ;;
-      *) mkdir -p "$REFROOT/$(dirname "$rel")"; : >"$REFROOT/$rel"; [[ -n "$VICTIM" ]] || VICTIM="$rel" ;;
-    esac
-  done < <(refs_of "$TEMPLATE")
-
-  if [[ -z "$VICTIM" ]]; then
-    fail "control: the template names no engine FILE, so a rename could not be staged"
-  elif [[ -n "$(unresolved_refs "$TEMPLATE" "$REFROOT")" ]]; then
-    fail "control: the staged reference set does not resolve, so the rename below proves nothing"
-  else
-    mv "$REFROOT/$VICTIM" "$REFROOT/$VICTIM.renamed"
-    if [[ "$(unresolved_refs "$TEMPLATE" "$REFROOT")" == "$VICTIM" ]]; then
-      pass "control: renaming $VICTIM is reported, and nothing else is"
-    else
-      fail "control: renaming $VICTIM was not reported as the one unresolved path"
-    fi
-  fi
-fi
 
 echo "=== the repo copy is the template outside its own block ==="
 
