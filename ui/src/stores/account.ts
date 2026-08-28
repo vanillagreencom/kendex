@@ -12,8 +12,8 @@ import {
 import { readAccount } from "./account-read";
 import {
   type AccountState,
+  asksForRows,
   asOffline,
-  differentCredential,
   hasCredential,
   keepsExpiry,
   sameCredential,
@@ -143,10 +143,9 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       set(credentialEnded(answer.ok));
       // Clearing is only the floor. The tab asks for rows when it becomes
       // signed in, which never stopped being true across a swap, so
-      // nothing would ask again for a minute and the new sign-in would
-      // sit in front of an empty tab. Only a known replacement asks; a
-      // credential merely gone has nothing to ask for.
-      if (differentCredential(held, answer.ok)) await get().loadSubmissions();
+      // nothing else would ask again for a minute and the new sign-in
+      // would sit in front of an empty tab.
+      if (asksForRows(held, answer.ok)) await get().loadSubmissions();
     }
   },
 

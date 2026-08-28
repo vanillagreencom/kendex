@@ -427,7 +427,8 @@ describe("what a read compares to decide the credential changed hands", () => {
   // account's rows under the second.
   it("counts a change of hands between two unnamed credentials", async () => {
     expect(await heldThenRead(signedIn(ADA, ""), signedIn(BOB, ""))).toBe(1);
-    expect(useAccountStore.getState().submissions).toBeNull();
+    // Cleared on the doubt, and asked for again on the same doubt.
+    expect(useAccountStore.getState().submissions).toEqual([]);
   });
 
   it("counts one even where nothing else about them differs", async () => {
@@ -463,6 +464,28 @@ describe("what a read compares to decide the credential changed hands", () => {
   // The store's one read at startup settles an account it never held, and
   // that is not a credential being replaced. Submissions stay the Mine
   // tab's to ask for, as the store's "no surface reads on mount" says.
+  // A credential that predates the field can never be proven the same as
+  // the next one, so every read clears its rows. If the refetch waits for
+  // a proven difference the tab is emptied and stays empty, for exactly
+  // the people whose credential cannot answer, until they sign in again.
+  it("asks again for an unnamed credential it cannot prove unchanged", async () => {
+    const THEIRS = { ...ROW, repo: "ada/other-skills" };
+    vi.mocked(commands.mineSubmissions).mockResolvedValue({
+      status: "ok",
+      data: [THEIRS],
+    } as Awaited<ReturnType<typeof commands.mineSubmissions>>);
+    useAccountStore.setState({
+      account: signedIn(ADA, ""),
+      submissions: [ROW],
+    });
+
+    serves(signedIn(ADA, ""));
+    await load();
+
+    expect(useAccountStore.getState().submissions).toEqual([THEIRS]);
+    expect(commands.mineSubmissions).toHaveBeenCalledTimes(1);
+  });
+
   it("asks for nothing on the first read of the session", async () => {
     serves(signedIn(ADA));
     await load();

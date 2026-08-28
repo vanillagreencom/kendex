@@ -56,42 +56,64 @@ export const asOffline = (account: AccountState): SettledAccount | null =>
 const signInOf = (account: AccountState): string | null =>
   "signIn" in account && account.signIn !== "" ? account.signIn : null;
 
-/* The two questions below both follow one rule: only a KNOWN difference is
- * a difference, and only a KNOWN match is a match. Neither is the negation
- * of the other, and their unknown branches deliberately disagree, because
- * each takes the answer that is safe for its own question.
+/** What a read says about the credential it found, set against the one
+ *  already held.
  *
- * `sameCredential` asks whether this is the credential already held, and
- * answering yes wrongly keeps another account's rows and lets an obsolete
- * refusal end the wrong sign-in. Unknown must not claim sameness.
+ *  Three answers, not two. `unknown` is not a shade of `different`: it is
+ *  the absence of an answer, and every caller has to decide for itself
+ *  what to do without one. A caller that treats it as either of the other
+ *  two will be wrong for one of the two questions below. */
+export type CredentialMatch = "same" | "different" | "unknown";
+
+export const credentialMatch = (
+  held: AccountState,
+  read: AccountState,
+): CredentialMatch => {
+  const before = signInOf(held);
+  const now = signInOf(read);
+  if (before === null || now === null) return "unknown";
+  return before === now ? "same" : "different";
+};
+
+/* What the callers make of `unknown`, which is the part worth reading
+ * together. Each takes the answer that is safe for its own question, and
+ * they are not the same answer:
  *
- * `differentCredential` asks whether to overturn an expiry the server
- * already ruled on, and answering yes wrongly hands back a submit under a
- * credential known to be dead. Unknown must not overturn it.
+ * Is this the credential already held? Unknown must not claim sameness,
+ * so the account is treated as having changed hands. Claiming it wrongly
+ * would keep another account's rows and let an obsolete refusal end the
+ * sign-in that replaced it.
  *
- * The cost of unknown falls on a credential stored before core named
- * sign-ins, at most one machine-wide: every read counts as a change of
- * hands, which refetches its rows, until the next sign-in names it. */
+ * May this overturn an expiry the server already ruled on? Unknown must
+ * not overturn it, so the verdict stands. Overturning it wrongly would
+ * hand back a submit under a credential known to be dead.
+ *
+ * Should the rows be asked for again? Unknown must ask. Rows are cleared
+ * whenever sameness cannot be proven, and not asking leaves the tab
+ * showing nothing at all, which is the one answer that is never right.
+ *
+ * The cost falls on a credential stored before core named sign-ins, at
+ * most one machine-wide: it can never be proven the same, so every read
+ * counts as a change of hands and refetches its rows. That is one extra
+ * call per read until the next sign-in names it. */
 
 /** Whether two answers are known to be about the same sign-in. */
 export const sameCredential = (
   held: AccountState,
   read: AccountState,
-): boolean => {
-  if (!hasCredential(held) || !hasCredential(read)) return false;
-  const before = signInOf(held);
-  return before !== null && before === signInOf(read);
-};
+): boolean =>
+  hasCredential(held) &&
+  hasCredential(read) &&
+  credentialMatch(held, read) === "same";
 
-/** Whether two answers are known to be about different sign-ins. */
-export const differentCredential = (
-  held: AccountState,
-  read: AccountState,
-): boolean => {
-  const before = signInOf(held);
-  const now = signInOf(read);
-  return before !== null && now !== null && before !== now;
-};
+/** Whether a read that changed hands should ask for the new account's
+ *  rows. Anything not proven the same asks, `unknown` included: the rows
+ *  were cleared on that same doubt, and leaving them cleared without
+ *  asking shows nothing at all. A credential this store never held is
+ *  not that case, so the first read of a session asks for nothing, and
+ *  one that is simply gone has nothing to ask for. */
+export const asksForRows = (held: AccountState, read: AccountState): boolean =>
+  hasCredential(held) && credentialMatch(held, read) !== "same";
 
 /** Whether a settled read leaves a standing expiry where it is.
  *
@@ -104,4 +126,4 @@ export const differentCredential = (
 export const keepsExpiry = (held: AccountState, read: AccountState): boolean =>
   held.kind === "expired" &&
   (read.kind === "signed-out" ||
-    (read.kind === "offline" && !differentCredential(held, read)));
+    (read.kind === "offline" && credentialMatch(held, read) !== "different"));
