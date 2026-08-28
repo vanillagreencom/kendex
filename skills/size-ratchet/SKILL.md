@@ -41,6 +41,13 @@ Every diagnostic names the file, its count, the baseline row it violated,
 the deciding threshold (class pattern or default), and the remedy: *split
 at a concept seam*.
 
+**Check composition before the seam.** A file over its cap whose bulk is
+inline tests needs those tests moved to the language's separate-test
+convention, not its concepts split; that move has no seam in it. In Rust
+the measure is every line inside `#[cfg(test)]`, under any module name,
+and past roughly 300 of them extraction is the whole remedy. Find a seam
+only in what remains.
+
 **The ratchet serves cohesion, never defeats it.** The goal is files an
 agent can load and reason about whole: one concept per file, whole
 concept in the file. A *concept seam* is a boundary where the extracted
