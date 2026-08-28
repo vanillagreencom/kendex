@@ -40,6 +40,14 @@ pub struct Lock {
     /// lock costs the record, not the pin.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub sources: BTreeMap<String, SourceRev>,
+    /// The commit each installed set was read at, by the name the manifest
+    /// installs it under. The same cache as `sources` and never intent: a
+    /// set has no installation of its own, so without this the only
+    /// account of where it sits is whatever its members happen to record —
+    /// and a member the person declared moves off that commit on its own.
+    /// A lock written before this was recorded simply has none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub bundles: BTreeMap<String, BundleRev>,
     /// Per `kendex.settings.toml` key: which skill seeded it and the hash
     /// of the comment block seeding last wrote — the proof a later refresh
     /// needs before it may rewrite the comment to a newer template.
@@ -75,6 +83,22 @@ pub struct SourceRev {
     /// The selector that produced it, when the manifest names one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rev: Option<String>,
+    pub commit: String,
+}
+
+/// One installed set's resolution at the last write.
+///
+/// Where it was read from is part of the record, because a rebind leaves
+/// it naming a set this scope no longer reads: matched by name alone, one
+/// catalog's set would say where another catalog's is held.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BundleRev {
+    /// The declared source it was read from.
+    pub source: String,
+    /// `owner/repo`, a canonical path, or `local` — the repository that
+    /// source pointed at when it was read.
+    pub source_repo: String,
     pub commit: String,
 }
 

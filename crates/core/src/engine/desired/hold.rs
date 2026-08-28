@@ -60,10 +60,19 @@ enum Owner {
 /// Every reference is followed by the source it records, never by name
 /// alone: the edge names which parent, and which bundle, this dependency
 /// belongs to.
+///
+/// `carriers` says whether the sets that carry this installation own it.
+/// They do not where it has a declaration of its own to read: held still,
+/// such a set keeps its other members where they are, and the target moves
+/// on its own declaration. A parent walked to from here is another matter
+/// and always names its sets — it carries their revision onto what it
+/// requires, so a set that owns a parent has to read fresh whatever the
+/// target's own declaration says.
 fn owners_of(
     lock: &Lock,
     entry: &LockEntry,
     seen: &mut BTreeSet<(ItemKind, String, String)>,
+    carriers: bool,
 ) -> BTreeSet<Owner> {
     if !seen.insert((entry.kind, entry.name.clone(), entry.source.clone())) {
         return BTreeSet::new();
@@ -78,12 +87,13 @@ fn owners_of(
                     source: entry.source.clone(),
                 });
             }
-            Reason::MemberOf { bundle } => {
+            Reason::MemberOf { bundle } if carriers => {
                 owners.insert(Owner::Bundle {
                     name: bundle.name.clone(),
                     source: bundle.source.clone(),
                 });
             }
+            Reason::MemberOf { .. } => {}
             Reason::RequiredBy { by } => {
                 // A copy of the guard per parent, not one shared between
                 // them. One item is one entry per tool and those entries
@@ -95,7 +105,7 @@ fn owners_of(
                 for parent in lock.entries.values().filter(|parent| {
                     parent.kind == by.kind && parent.name == by.name && parent.source == by.source
                 }) {
-                    owners.extend(owners_of(lock, parent, &mut seen.clone()));
+                    owners.extend(owners_of(lock, parent, &mut seen.clone(), true));
                 }
             }
         }
@@ -162,14 +172,16 @@ pub(crate) fn planning_manifest<'a>(
 
 /// The manifest a single-package update plans from: the target reads
 /// fresh, and so does whatever carries its revision — the parent of a
-/// dependency always, and the sets that hold it only where the target has
-/// no declaration of its own to read. Every other unpinned remote
-/// declaration and bundle is pinned at the commit its lock entries agree
-/// on. A declaration the lock cannot place — nothing installed,
-/// installations disagreeing on their commit, or any one of them recorded
-/// against a source this declaration no longer reads from — is left to
-/// resolve fresh: a wrong pin would move it somewhere nobody asked for,
-/// and fresh is what a whole-scope apply gives it anyway.
+/// dependency always, and the sets that carry the target itself only
+/// where it has no declaration of its own to read. Every other unpinned
+/// declaration is pinned at the commit its lock entries agree on, and
+/// every unpinned set at the commit the record says it came out as.
+///
+/// A declaration the lock cannot place — nothing installed, installations
+/// disagreeing on their commit, or any one of them recorded against a
+/// source this declaration no longer reads from — is left to resolve
+/// fresh: a wrong pin would move it somewhere nobody asked for, and fresh
+/// is what a whole-scope apply gives it anyway.
 fn held_manifest(
     manifest: &Manifest,
     lock: &Lock,
@@ -196,44 +208,19 @@ fn held_manifest(
     // in under. An entry a rebind left behind is an installation of a
     // package this declaration no longer is, and its edges lead to
     // declarations this update has no business unpinning.
-    let installations: Vec<&LockEntry> = lock
-        .entries
-        .values()
-        .filter(|entry| {
-            entry.kind == target.0
-                && entry.name == target.1
-                && reads_from
-                    .as_ref()
-                    .is_none_or(|source| &entry.source == source)
-        })
-        .collect();
-    for entry in &installations {
-        exempt.extend(owners_of(lock, entry, &mut BTreeSet::new()));
-    }
-    // A target with a declaration of its own reads that declaration, so the
-    // sets that carry the target itself are held still along with everything
-    // else — `bundles::carried_rev` lets the declaration decide what the
-    // member installs, and a set left free takes its other members current
-    // as a side effect of an update nobody asked it for. A target with no
-    // declaration has only the set's revision to read, which has to resolve
-    // fresh for it to move at all.
-    //
-    // Only the sets that carry it: one reached through a dependency parent
-    // owns that parent's revision, not this target's. Pinning it pins the
-    // parent, which then carries its commit onto the target while the
-    // target's own declaration reads fresh — and the update the person
-    // asked for reports a conflict instead of happening.
-    if reads_from.is_some() {
-        for entry in &installations {
-            for reason in &entry.reasons {
-                if let Reason::MemberOf { bundle } = reason {
-                    exempt.remove(&Owner::Bundle {
-                        name: bundle.name.clone(),
-                        source: bundle.source.clone(),
-                    });
-                }
-            }
-        }
+    for entry in lock.entries.values().filter(|entry| {
+        entry.kind == target.0
+            && entry.name == target.1
+            && reads_from
+                .as_ref()
+                .is_none_or(|source| &entry.source == source)
+    }) {
+        exempt.extend(owners_of(
+            lock,
+            entry,
+            &mut BTreeSet::new(),
+            reads_from.is_none(),
+        ));
     }
     let mut held = manifest.clone();
     let mut pins = HeldPins {
@@ -278,16 +265,7 @@ fn held_manifest(
         let Some(repo) = source_repo(manifest, &decl.source) else {
             continue;
         };
-        // Where anything is here only as a member, that is what says where
-        // the set is; the members the person also declared are asked only
-        // when nothing else can answer.
-        let carried_alone = lock
-            .entries
-            .values()
-            .any(|entry| member_of(entry, name, &decl.source) && !also_declared(entry));
-        let Some(commit) = held_at(lock, &decl.source, repo, |entry| {
-            member_of(entry, name, &decl.source) && !(carried_alone && also_declared(entry))
-        }) else {
+        let Some(commit) = held_commit(lock, name, &decl.source, repo) else {
             continue;
         };
         decl.rev = Some(commit);
@@ -344,32 +322,27 @@ fn held_at(
     agreed
 }
 
-/// Whether this installation is here as a member of the named bundle — the
-/// entries whose recorded commits say where the bundle is held. Matched by
-/// source as well as name: a membership recorded against another catalog's
-/// set of the same name is not this declaration's evidence.
-fn member_of(entry: &LockEntry, bundle: &str, source: &str) -> bool {
-    entry.reasons.iter().any(
-        |reason| matches!(reason, Reason::MemberOf { bundle: of } if of.name == bundle && of.source == source),
-    )
-}
-
-/// Whether the person declared this installation as well as receiving it
-/// through a set.
+/// Where a set is held: the commit the record says it came out as.
 ///
-/// Such an installation is the weaker evidence of where its set is held:
-/// its commit is the one its own declaration reads, and a single-package
-/// update moves that commit off the set's. Counted alongside the members
-/// that have only the set to read, the two say the set is in two places,
-/// it can then be held at no commit at all, and its other members come
-/// current as the side effect this hold exists to remove.
+/// A set has no installation of its own, so this is the only account of
+/// where it sits that survives its members moving. Read back only where
+/// the declaration still reads from what the record names — a rebind
+/// leaves it describing a set this scope no longer installs.
 ///
-/// It is still evidence where the set has no other kind. A set whose every
-/// member is also declared has nothing else recorded, and held at no
-/// commit it reads its source's tip — where an unrelated update installs
-/// whatever the catalog has since added to the set.
-fn also_declared(entry: &LockEntry) -> bool {
-    entry.reasons.contains(&Reason::Requested)
+/// A lock written before that commit was recorded has none, and the
+/// members are all there is to go on: they were installed together and
+/// nothing has moved one of them off the set on its own yet, so where they
+/// agree is where the set is. The next write records it.
+fn held_commit(lock: &Lock, bundle: &str, source: &str, repo: &str) -> Option<String> {
+    if let Some(recorded) = lock.bundles.get(bundle) {
+        return (recorded.source == source && recorded.source_repo == repo)
+            .then(|| recorded.commit.clone());
+    }
+    held_at(lock, source, repo, |entry| {
+        entry.reasons.iter().any(
+            |reason| matches!(reason, Reason::MemberOf { bundle: of } if of.name == bundle && of.source == source),
+        )
+    })
 }
 
 #[cfg(test)]

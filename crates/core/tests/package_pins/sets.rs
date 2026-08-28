@@ -9,6 +9,7 @@ use std::fs;
 
 use kendex_core::apply;
 use kendex_core::engine::DriftState;
+use kendex_core::lock::{load as load_lock, lock_path, save as save_lock};
 use kendex_core::manifest;
 use kendex_core::model::ItemKind;
 use kendex_core::package;
@@ -447,5 +448,231 @@ fn a_set_whose_members_are_all_declared_stays_where_it_is() {
     assert_eq!(
         loaded.bundles["kit"].rev, None,
         "and the hold that held it still for this pass is not one the person chose"
+    );
+}
+
+/// The same set, with the update aimed at one of its own members rather
+/// than at an unrelated declaration. The target reads fresh and the set
+/// has to be held — and the only installations that can say where it is
+/// held are its declared members, the target's among them, whose commit is
+/// the one about to move.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn updating_a_member_of_an_all_declared_set_leaves_the_set_where_it_is() {
+    let w = world();
+    write_skill(&w.upstream, "a", "", "a version one.");
+    write_skill(&w.upstream, "b", "", "b version one.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[bundles.kit]\ndescription = \"a set\"\nskills = [\"a\", \"b\"]\n",
+    )
+    .unwrap();
+    let first = commit(&w.upstream, "one");
+    declare(
+        &w,
+        "[skills.a]\nsource = \"cat\"\n\n[skills.b]\nsource = \"cat\"\n\n[bundles.kit]\nsource = \"cat\"\n",
+    );
+    sync_and_apply(&w);
+
+    write_skill(&w.upstream, "a", "", "a version two.");
+    write_skill(&w.upstream, "b", "", "b version two.");
+    write_skill(&w.upstream, "c", "", "c version one.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[bundles.kit]\ndescription = \"a set\"\nskills = [\"a\", \"b\", \"c\"]\n",
+    )
+    .unwrap();
+    let second = commit(&w.upstream, "two");
+    fetch_mirrors(&w);
+
+    let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "a").unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+
+    assert!(
+        installed_body(&w, "a").contains("a version two."),
+        "the package the person named has to actually move"
+    );
+    assert_eq!(locked_commit(&w, "a"), second);
+    assert!(
+        !w.home.join("app/.agents/skills/c").exists(),
+        "the set was read where it is installed, not at its source's tip: {:?}",
+        report.plan.ops
+    );
+    assert!(installed_body(&w, "b").contains("b version one."));
+    assert_eq!(locked_commit(&w, "b"), first);
+
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.bundles["kit"].rev, None);
+}
+
+/// The scope a member moving alone leaves behind: the set's members sit at
+/// two commits, so nothing they record agrees and no reading of them can
+/// place the set. What the record says the set came out as still can, and
+/// the next update of anything else holds it there rather than opening it
+/// at its source's tip.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_set_whose_members_split_across_commits_still_holds() {
+    let w = world();
+    write_skill(&w.upstream, "a", "", "a version one.");
+    write_skill(&w.upstream, "b", "", "b version one.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[bundles.kit]\ndescription = \"a set\"\nskills = [\"a\", \"b\"]\n",
+    )
+    .unwrap();
+    let first = commit(&w.upstream, "one");
+    declare(
+        &w,
+        "[skills.a]\nsource = \"cat\"\n\n[skills.b]\nsource = \"cat\"\n\n[bundles.kit]\nsource = \"cat\"\n",
+    );
+    sync_and_apply(&w);
+
+    write_skill(&w.upstream, "a", "", "a version two.");
+    let second = commit(&w.upstream, "two");
+    fetch_mirrors(&w);
+    let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "a").unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+    assert_eq!(
+        locked_commit(&w, "a"),
+        second,
+        "the split this test is about"
+    );
+    assert_eq!(locked_commit(&w, "b"), first);
+
+    // Upstream grows the set while the members are apart.
+    write_skill(&w.upstream, "c", "", "c version one.");
+    write_skill(&w.upstream, "b", "", "b version three.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[bundles.kit]\ndescription = \"a set\"\nskills = [\"a\", \"b\", \"c\"]\n",
+    )
+    .unwrap();
+    let third = commit(&w.upstream, "three");
+    fetch_mirrors(&w);
+
+    let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "b").unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+
+    assert!(
+        !w.home.join("app/.agents/skills/c").exists(),
+        "the set is held where the record says it came out, not at its tip: {:?}",
+        report.plan.ops
+    );
+    assert_eq!(locked_commit(&w, "b"), third, "the target still moves");
+    assert_eq!(
+        locked_commit(&w, "a"),
+        second,
+        "and the member that moved before stays where it moved to"
+    );
+}
+
+/// One set carrying both a declared package and something that requires
+/// it. The set owns the package two ways at once — it carries it, and it
+/// owns the parent whose revision reaches it — and the second is the one
+/// that decides: a set that owns a parent has to read fresh, or the parent
+/// carries its commit onto a target whose own declaration reads fresh and
+/// the update ends in a conflict without updating anything.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn updating_a_package_its_set_also_owns_through_a_parent_still_moves_it() {
+    let w = world();
+    write_skill(&w.upstream, "a", "", "a version one.");
+    write_skill(
+        &w.upstream,
+        "parent",
+        "dependencies:\n  required: [a]\n",
+        "parent version one.",
+    );
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[bundles.kit]\ndescription = \"a set\"\nskills = [\"a\", \"parent\"]\n",
+    )
+    .unwrap();
+    commit(&w.upstream, "one");
+    declare(
+        &w,
+        "[skills.a]\nsource = \"cat\"\n\n[bundles.kit]\nsource = \"cat\"\n",
+    );
+    sync_and_apply(&w);
+
+    write_skill(&w.upstream, "a", "", "a version two.");
+    let second = commit(&w.upstream, "two");
+    fetch_mirrors(&w);
+
+    let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "a").unwrap();
+    assert!(
+        !reports_a_rev_conflict(&report, "a"),
+        "the set owns what requires the package as well as carrying it: {:?}",
+        report.warnings
+    );
+    apply::execute(&w.env, &report.plan, None).unwrap();
+
+    assert!(
+        installed_body(&w, "a").contains("a version two."),
+        "the package the person named has to actually move"
+    );
+    assert_eq!(locked_commit(&w, "a"), second);
+}
+
+/// A lock written before a set's commit was recorded has none. The members
+/// were installed together and none of them has moved off the set on its
+/// own yet, so where they agree is where the set is — and that reading
+/// stands in until the next write records it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_lock_that_records_no_set_commit_reads_the_members_instead() {
+    let w = world();
+    write_skill(&w.upstream, "a", "", "a version one.");
+    write_skill(&w.upstream, "b", "", "b version one.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[bundles.kit]\ndescription = \"a set\"\nskills = [\"a\", \"b\"]\n",
+    )
+    .unwrap();
+    let first = commit(&w.upstream, "one");
+    declare(
+        &w,
+        "[skills.a]\nsource = \"cat\"\n\n[bundles.kit]\nsource = \"cat\"\n",
+    );
+    sync_and_apply(&w);
+
+    // The record an older kendex would have left: everything else the same,
+    // the set's commit simply absent.
+    let path = lock_path(&w.env, &w.scope);
+    let mut lock = load_lock(&path).unwrap();
+    assert!(
+        !lock.bundles.is_empty(),
+        "this pass records it, which is what the test removes"
+    );
+    lock.bundles.clear();
+    save_lock(&path, &lock).unwrap();
+
+    write_skill(&w.upstream, "a", "", "a version two.");
+    write_skill(&w.upstream, "c", "", "c version one.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[bundles.kit]\ndescription = \"a set\"\nskills = [\"a\", \"b\", \"c\"]\n",
+    )
+    .unwrap();
+    let second = commit(&w.upstream, "two");
+    fetch_mirrors(&w);
+
+    let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "a").unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+
+    assert!(installed_body(&w, "a").contains("a version two."));
+    assert_eq!(locked_commit(&w, "a"), second);
+    assert!(
+        !w.home.join("app/.agents/skills/c").exists(),
+        "the members placed the set: {:?}",
+        report.plan.ops
+    );
+    assert_eq!(locked_commit(&w, "b"), first);
+    assert!(
+        !load_lock(&path).unwrap().bundles.is_empty(),
+        "and the write that followed recorded it"
     );
 }

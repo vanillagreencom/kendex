@@ -9,7 +9,7 @@ use crate::apply::{Op, PlannedOp, Pre};
 use crate::base::Base;
 use crate::env::Env;
 use crate::error::Result;
-use crate::lock::{Lock, SourceRev, lock_path};
+use crate::lock::{BundleRev, Lock, SourceRev, lock_path};
 use crate::manifest::Manifest;
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::SourceState;
@@ -111,6 +111,44 @@ pub(super) fn plan_config_edits(
     Ok(())
 }
 
+/// Which commit each installed set was read at, for the lock to record.
+/// Carried forward and dropped on the same terms as [`source_revisions`],
+/// and read from the same resolutions: a set is read at its declaration's
+/// revision, so what it came out as is what that resolution resolved to.
+pub(super) fn bundle_revisions(
+    manifest: &Manifest,
+    lock: &Lock,
+    state: &DesiredState,
+) -> BTreeMap<String, BundleRev> {
+    let mut revisions: BTreeMap<String, BundleRev> = lock
+        .bundles
+        .iter()
+        .filter(|(name, _)| manifest.bundles.contains_key(*name))
+        .map(|(name, revision)| (name.clone(), revision.clone()))
+        .collect();
+    for (name, decl) in &manifest.bundles {
+        let resolution = match &decl.rev {
+            Some(rev) => state.pinned.get(&(decl.source.clone(), rev.clone())),
+            None => state.sources.get(&decl.source),
+        };
+        let Some(SourceState::Ready(ready)) = resolution else {
+            continue;
+        };
+        let Some(commit) = ready.commit.clone() else {
+            continue;
+        };
+        revisions.insert(
+            name.clone(),
+            BundleRev {
+                source: decl.source.clone(),
+                source_repo: ready.provenance.clone(),
+                commit,
+            },
+        );
+    }
+    revisions
+}
+
 /// Which commit each source resolved to, for the lock to record. What
 /// earlier passes resolved is carried forward — a source that is offline
 /// today should not lose the commit it was reading yesterday — and a source
@@ -159,6 +197,7 @@ pub(super) fn plan_lock_write(
 ) -> Result<()> {
     if new_lock.entries == lock.entries
         && (new_lock.sources == lock.sources || new_lock.entries.is_empty())
+        && (new_lock.bundles == lock.bundles || new_lock.entries.is_empty())
         && new_lock.settings_seeds == lock.settings_seeds
         && (lock.version == crate::lock::LOCK_VERSION || lock.entries.is_empty())
     {

@@ -76,7 +76,8 @@ pub fn installed_paths(
 use desired::desired_state;
 pub use scope_writes::persists_manifest;
 use scope_writes::{
-    plan_config_edits, plan_lock_write, plan_manifest_write, plan_settings_seed, source_revisions,
+    bundle_revisions, plan_config_edits, plan_lock_write, plan_manifest_write, plan_settings_seed,
+    source_revisions,
 };
 pub use set_change::{KeptInstall, SetChange, SetDirection};
 use set_change::{kept_members, set_changes};
@@ -288,13 +289,14 @@ fn desired_pass<'a>(
 }
 
 /// The record this pass will write, before any of it is filled in: the
-/// per-source resolutions it just made, and the seeding evidence carried
-/// forward — only seeding and refresh may move that.
+/// per-source and per-set resolutions it just made, and the seeding
+/// evidence carried forward — only seeding and refresh may move that.
 fn fresh_lock(manifest: &Manifest, lock: &Lock, state: &desired::DesiredState) -> Lock {
     Lock {
         version: crate::lock::LOCK_VERSION,
         entries: BTreeMap::new(),
         sources: source_revisions(manifest, lock, state),
+        bundles: bundle_revisions(manifest, lock, state),
         settings_seeds: lock.settings_seeds.clone(),
     }
 }
