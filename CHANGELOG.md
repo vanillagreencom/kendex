@@ -50,10 +50,6 @@ an outside contributor.
 
 ### Changed
 
-- Each skill ships the keys it seeds in its own `kendex.settings.toml.example`;
-  opt-in keys stay in the skill's docs. The repo-root aggregate example is gone;
-  authoring a package's settings: `docs/authoring/settings.md`.
-
 - The seeded `WORKTREE_SYMLINKS` default now lists only paths git does not
   carry. An entry does nothing when git carries every path under it, so drop
   those from your own value; one with untracked children still links them.
