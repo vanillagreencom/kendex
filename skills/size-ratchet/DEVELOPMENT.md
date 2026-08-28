@@ -10,6 +10,7 @@ live in README.md.
 - `scripts/lib/settings.sh` — layered settings resolution
 - `SKILL.md` — agent-facing skill definition
 - `README.md` — consumer documentation
+- `references/` — procedures SKILL.md links out to
 - `tests/` — run any file directly; each is self-contained
 
 `bash tests/*.sh` is the lane `tools/validate-changed` derives for a change

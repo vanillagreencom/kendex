@@ -65,3 +65,9 @@ is absent from HEAD's baseline, or lower there, fails whatever the commit
 declares. Rows already at HEAD are grandfathered. Generated
 and vendored content is never raised either: it is excluded (the
 exclusion list, `pattern<TAB>reason`) and leaves the counted set.
+
+**A threshold change requires a fragment sweep.** In either direction it
+strands the splits made under the previous number: a repo that loosens already
+holds those fragments, a repo that tightens is about to create them. A seam
+that fits only the old number is not evidence of a seam.
+[references/threshold-change.md](references/threshold-change.md).

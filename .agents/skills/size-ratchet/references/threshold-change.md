@@ -1,0 +1,41 @@
+# Threshold change sweep
+
+Run this before a changed `SIZE_RATCHET_THRESHOLD` or `SIZE_RATCHET_CLASSES`
+entry lands, in either direction. Run it at `--seed` too when the repo already
+had a prose size rule: seeding records no row for an under-threshold fragment,
+so the repo inherits that rule's fragments and nothing else points at them.
+
+Scope the sweep to the tracked files the changed threshold decides
+(`git ls-files`, minus the exclusion list).
+
+## Predicates
+
+Each one names a candidate, not a verdict. Read the file before acting.
+
+1. **One real importer.** A non-barrel source file whose exported names are
+   imported by exactly one other file. Separate re-exports from imports before
+   counting, or a package index masks every candidate behind itself.
+2. **Mutual imports.** Two files that import each other. A cycle proves the
+   seam was not real; the pair reads as one concept.
+3. **`<parent>-<qualifier>` names.** A file named for another file plus a
+   suffix (`-shared`, `-helpers`, `-reads`, `-run`, `part2`) with one consumer.
+
+Predicate 1 alone is too noisy to act on. A large tree yields hundreds of
+single-importer files that are real modules. Predicates 2 and 3 are what
+separate a line move from a seam.
+
+## Parsing caveats
+
+Two shapes defeat the obvious import regex.
+
+- **A multi-line import whose closing brace sits at column 0** escapes a
+  line-anchored pattern. Match the whole statement.
+- **A path inside a comment** (`{@link import("./x.ts")}`) reads as a real
+  edge. Strip comments before the cycle pass.
+
+## Disposition
+
+Open the candidate beside its importer. If its reader needs that file open to
+follow it, it is a fragment: merge it back and raise the merged row per
+[SKILL.md](../SKILL.md) § Responding to a failure, shrinking or deleting the
+emptied rows in the same diff. If it stands alone, it is a module. Leave it.
