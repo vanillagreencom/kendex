@@ -4,13 +4,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuditView, DriftRow, RowExits, Scope } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
+import { AUDIT_ATTENTION_TITLE } from "@/lib/copy";
 import {
+  KEEP_FILES_CONFIRM_BODY,
   KEEP_FILES_CONFIRM_LABEL,
   KEEP_FILES_LABEL,
   MOVE_FILES_YOURSELF,
   REPLACE_FILES_CONFIRM_LABEL,
   REPLACE_FILES_LABEL,
 } from "@/lib/copy-in-the-way";
+import { PROBLEMS_EMPTY } from "@/lib/error-copy";
 import { useAuditStore } from "@/stores/audit";
 import { mount, settle } from "@/test/dom";
 import { ProblemsPage } from "./problems";
@@ -26,6 +29,7 @@ vi.mock("@/bindings", () => ({
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 const ACME: Scope = { scope: "project", root: "/work/acme" };
+const PERSONAL: Scope = { scope: "global" };
 
 const inTheWay = (
   name: string,
@@ -65,13 +69,21 @@ const view = (over: Partial<AuditView>): AuditView => ({
   ...over,
 });
 
-const stage = (views: AuditView[]) =>
+/** One ordinary blocked item, staged at whichever place is named. */
+const oneBlocked = (scope: Scope, name: string): AuditView =>
+  view({
+    scope,
+    drift: [{ ...inTheWay(name, "claude"), scope }],
+    exits: [exit(`skill:${name}:claude`)],
+  });
+
+const stage = (views: AuditView[], checkError: string | null = null) =>
   act(() => {
     useAuditStore.setState({
       views,
       auditedAt: Date.now(),
       scopeCheckedAt: {},
-      checkError: null,
+      checkError,
       busy: false,
     });
   });
@@ -96,16 +108,23 @@ const press = async (el: Element | undefined) => {
   });
 };
 
+const cards = (host: HTMLElement) => [
+  ...host.querySelectorAll("[data-slot='card']"),
+];
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(commands.scanMachine).mockResolvedValue({
     status: "ok",
-    data: {
-      items: [],
-      harnesses: [],
-      warnings: [],
-      missingProjects: [],
-    },
+    data: { items: [], harnesses: [], warnings: [], missingProjects: [] },
+  } as never);
+  vi.mocked(commands.adoptItem).mockResolvedValue({
+    status: "ok",
+    data: view({}),
+  } as never);
+  vi.mocked(commands.replaceUnmanagedItem).mockResolvedValue({
+    status: "ok",
+    data: view({}),
   } as never);
   useAuditStore.setState({
     views: [],
@@ -151,17 +170,37 @@ describe("a declared item whose place already holds files", () => {
     expect(button(host, REPLACE_FILES_LABEL)).toBeUndefined();
   });
 
-  it("takes the item over through replaceUnmanagedItem", async () => {
-    vi.mocked(commands.replaceUnmanagedItem).mockResolvedValue({
-      status: "ok",
-      data: view({}),
-    } as never);
+  // One installation core refuses takes the offer off the whole item: both
+  // exits act on all of it, and half an item settled leaves the rest
+  // blocked with the item no longer its tool's.
+  it("offers neither exit when one installation refuses it", async () => {
     stage([
       view({
-        drift: [inTheWay("release-notes", "claude")],
-        exits: [exit("skill:release-notes:claude")],
+        drift: [
+          inTheWay("release-notes", "claude"),
+          inTheWay("release-notes", "codex"),
+        ],
+        exits: [
+          exit("skill:release-notes:claude"),
+          exit("skill:release-notes:codex", {
+            keep: false,
+            enter: false,
+            replace: false,
+            tools: ["codex"],
+          }),
+        ],
       }),
     ]);
+    const host = mount(<ProblemsPage />);
+    await settle();
+
+    expect(host.textContent).toContain("release-notes");
+    expect(button(host, KEEP_FILES_LABEL)).toBeUndefined();
+    expect(button(host, REPLACE_FILES_LABEL)).toBeUndefined();
+  });
+
+  it("takes the item over through replaceUnmanagedItem", async () => {
+    stage([oneBlocked(ACME, "release-notes")]);
     const host = mount(<ProblemsPage />);
     await settle();
 
@@ -177,24 +216,39 @@ describe("a declared item whose place already holds files", () => {
     );
   });
 
-  it("keeps through every tool core says the move acts on", async () => {
-    vi.mocked(commands.adoptItem).mockResolvedValue({
-      status: "ok",
-      data: view({}),
-    } as never);
+  // A tree read through a harness-native link has a second position of the
+  // reader's own files. Core names it on the row; the confirm has to say
+  // it, or the take-over moves a directory the dialog never showed.
+  it("names every position core says the take-over empties", async () => {
     stage([
       view({
         drift: [
-          inTheWay("browser", "claude", { cause: "shared-link" }),
-          inTheWay("browser", "codex", { cause: "shared-link" }),
+          inTheWay("deploy", "claude", {
+            detail: "/work/acme/.agents/skills/deploy",
+            alsoInTheWay: ["/work/acme/.claude/skills/deploy"],
+          }),
         ],
+        exits: [exit("skill:deploy:claude")],
+      }),
+    ]);
+    const host = mount(<ProblemsPage />);
+    await settle();
+
+    await press(button(host, REPLACE_FILES_LABEL));
+    const said = dialog().textContent ?? "";
+    expect(said).toContain("/work/acme/.agents/skills/deploy");
+    expect(said).toContain("/work/acme/.claude/skills/deploy");
+  });
+
+  // A tool reading the folder through a shortcut somebody made has no row
+  // of its own. Core names it, so the offer names it: keeping repoints
+  // every link at that folder.
+  it("names a tool core reports that has no row of its own", async () => {
+    stage([
+      view({
+        drift: [inTheWay("browser", "claude", { cause: "shared-link" })],
         exits: [
           exit("skill:browser:claude", {
-            replace: false,
-            tools: ["claude", "codex"],
-          }),
-          exit("skill:browser:codex", {
-            enter: false,
             replace: false,
             tools: ["claude", "codex"],
           }),
@@ -205,14 +259,74 @@ describe("a declared item whose place already holds files", () => {
     await settle();
 
     await press(button(host, KEEP_FILES_LABEL));
-    await press(button(dialog(), KEEP_FILES_CONFIRM_LABEL));
+    expect(dialog().textContent).toContain("Claude Code and Codex");
 
-    // Codex has no exit of its own here and still reads the folder, so the
-    // keep names it: core answers which tools the move acts on, and an
-    // offer naming only the rows with buttons would repoint it in silence.
+    await press(button(dialog(), KEEP_FILES_CONFIRM_LABEL));
     expect(commands.adoptItem).toHaveBeenCalledWith(ACME, "skill", "browser", [
       "claude",
       "codex",
     ]);
+  });
+
+  // The shared words answer for the shared installations alone: a group can
+  // mix causes, and a summary over all of them is not a folder any tool
+  // reads from.
+  it("keeps the shared folder out of a plain keep's words", async () => {
+    stage([
+      view({
+        drift: [inTheWay("deploy", "claude")],
+        exits: [exit("skill:deploy:claude")],
+      }),
+    ]);
+    const host = mount(<ProblemsPage />);
+    await settle();
+
+    await press(button(host, KEEP_FILES_LABEL));
+    expect(dialog().textContent).toContain(KEEP_FILES_CONFIRM_BODY);
+    expect(dialog().textContent).not.toContain("read this skill from");
+  });
+});
+
+describe("several places at once", () => {
+  // Every card's buttons carry that card's own place into commands that
+  // move files. Global and a project blocked together is ordinary.
+  it("takes over at the place whose card was pressed", async () => {
+    stage([oneBlocked(PERSONAL, "release-notes"), oneBlocked(ACME, "deploy")]);
+    const host = mount(<ProblemsPage />);
+    await settle();
+
+    const second = cards(host)[1] as HTMLElement;
+    await press(button(second, REPLACE_FILES_LABEL));
+    await press(button(dialog(), REPLACE_FILES_CONFIRM_LABEL));
+
+    expect(commands.replaceUnmanagedItem).toHaveBeenCalledWith(
+      ACME,
+      "skill",
+      "deploy",
+    );
+  });
+});
+
+// Every button behind these rows moves the reader's own files, and a kept
+// view still reads clean after a check that never answered.
+describe("a check that failed", () => {
+  it("draws no exits and says the reading is old", async () => {
+    stage([oneBlocked(ACME, "release-notes")], "audit refused");
+    const host = mount(<ProblemsPage />);
+    await settle();
+
+    expect(host.textContent).toContain(AUDIT_ATTENTION_TITLE);
+    expect(host.textContent).not.toContain(PROBLEMS_EMPTY);
+    expect(host.querySelectorAll("button")).toHaveLength(1);
+  });
+
+  // The control: the same views draw both exits once a check answers.
+  it("draws them again once a check answers", async () => {
+    stage([oneBlocked(ACME, "release-notes")]);
+    const host = mount(<ProblemsPage />);
+    await settle();
+
+    expect(host.textContent).not.toContain(AUDIT_ATTENTION_TITLE);
+    expect(button(host, REPLACE_FILES_LABEL)).toBeDefined();
   });
 });

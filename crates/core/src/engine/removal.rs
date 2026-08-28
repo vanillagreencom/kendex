@@ -230,6 +230,7 @@ pub(super) fn orphans(
             },
             cause: None,
             compared: None,
+            also_in_the_way: Vec::new(),
         });
         if !removable {
             if unneeded {
@@ -262,6 +263,7 @@ pub(super) fn orphans(
                 detail,
                 cause,
                 compared: None,
+                also_in_the_way: Vec::new(),
             });
             new_lock.entries.insert(key.clone(), entry.clone());
             continue;
@@ -281,6 +283,7 @@ pub(super) fn orphans(
                 detail: "no longer wanted, but its files were edited on disk — remove it by name to confirm".into(),
                 cause: Some(super::DriftCause::LocalEdit),
                 compared: None,
+                also_in_the_way: Vec::new(),
             });
             new_lock.entries.insert(key.clone(), entry.clone());
             continue;

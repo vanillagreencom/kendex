@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { create } from "zustand";
 import type { AuditView, Scope, ScopeErrorKind } from "@/bindings";
-import { type BlockedPlace, blockedPlaces } from "@/lib/blocked";
+import { type BlockedPlace, blockedPlaces } from "@/lib/audit-counts";
 import { useAuditStore } from "./audit";
 import { useScanStore } from "./scan";
 
@@ -60,10 +60,16 @@ export function useProblems(): Problem[] {
 /** Every place holding a declared item whose files were already on disk,
  *  recomputed from the audit like the problems above. Its own list: a
  *  blocked item is a decision waiting on the reader, not a place kendex
- *  failed to read, and the two are answered in different words. */
-export function useBlockedPlaces(): BlockedPlace[] {
+ *  failed to read, and the two are answered in different words.
+ *
+ *  Null where the last check failed, which is not the same as none: the
+ *  buttons behind these rows write to the filesystem. */
+export function useBlockedPlaces(): BlockedPlace[] | null {
   const views = useAuditStore((s) => s.views);
-  return useMemo(() => blockedPlaces(views), [views]);
+  // The shared `error` is written by item actions too, so a failed keep or
+  // take-over must not read as a machine that could not be checked.
+  const checkError = useAuditStore((s) => s.checkError);
+  return useMemo(() => blockedPlaces(views, checkError), [views, checkError]);
 }
 
 export interface ErrorAction {

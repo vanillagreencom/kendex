@@ -70,6 +70,11 @@ pub fn print_drift(env: &Env, report: &EngineReport) -> Vec<Blocked> {
             row.state,
             conflict_detail(row)
         ));
+        // More detail is a superset of less: the collapsed listing names
+        // every position, so this one cannot name fewer.
+        for place in &row.also_in_the_way {
+            say(&format!("  also at {}", shown(place)));
+        }
         if let Some(line) = compared_line(row.compared.as_ref(), offer) {
             say(&format!("  {line}"));
         }
@@ -150,16 +155,25 @@ fn tools<'a>(group: &[&'a DriftRow]) -> Vec<&'a str> {
     named
 }
 
-/// The positions the head line did not name. Deduped on the place itself,
-/// never on its rendering: what makes two rows one place is the path.
+/// The positions the head line did not name — every row's own, and the
+/// ones a row carries beside it where a tree is read through a
+/// harness-native link. Deduped on the place itself, never on its
+/// rendering: what makes two rows one place is the path.
 fn also_at(first: &DriftRow, rest: &[&DriftRow]) -> Vec<String> {
     let mut places: Vec<&str> = Vec::new();
-    for row in rest {
-        if row.detail != first.detail && !places.contains(&row.detail.as_str()) {
-            places.push(&row.detail);
+    for row in std::iter::once(first).chain(rest.iter().copied()) {
+        for place in positions(row) {
+            if *place != first.detail && !places.contains(&place.as_str()) {
+                places.push(place);
+            }
         }
     }
     places.into_iter().map(shown).collect()
+}
+
+/// Every position one row is about, its own first.
+fn positions(row: &DriftRow) -> impl Iterator<Item = &String> {
+    std::iter::once(&row.detail).chain(row.also_in_the_way.iter())
 }
 
 /// What the files in the way are, measured against the install they block.
@@ -257,6 +271,7 @@ mod tests {
             detail: detail.to_owned(),
             cause: Some(DriftCause::UnmanagedContent),
             compared: None,
+            also_in_the_way: Vec::new(),
         }
     }
 
@@ -274,6 +289,20 @@ mod tests {
             places,
             vec!["/a/one\\ntwo".to_owned(), "/a/one\\ntwo".to_owned()],
             "two real places rendered alike were printed as one"
+        );
+    }
+
+    /// A tree read through a harness-native link is blocked at two
+    /// positions and has one row. A listing naming only the row's own
+    /// leaves the reader a place they cannot go to, and the take-over
+    /// under it empties both.
+    #[test]
+    fn a_position_carried_beside_a_row_is_named_too() {
+        let mut first = row(HarnessId::Claude, "/a/.agents/skills/deploy");
+        first.also_in_the_way = vec!["/a/.claude/skills/deploy".to_owned()];
+        assert_eq!(
+            also_at(&first, &[]),
+            vec!["/a/.claude/skills/deploy".to_owned()]
         );
     }
 

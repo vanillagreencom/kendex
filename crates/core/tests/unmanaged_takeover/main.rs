@@ -374,3 +374,93 @@ fn an_edit_under_one_tool_holds_when_another_tool_is_declared_over_it() {
     );
     assert!(!trashed(&w.env.trash_dir()));
 }
+
+/// A repo arriving with its own directory at both positions the link shape
+/// uses. The refusal reads the canonical tree and stops there, so the
+/// harness-native directory is never planned — and the take-over empties
+/// both. The row names both, or the offer built on it moves a directory it
+/// never mentioned.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_refusal_names_every_position_a_take_over_empties() {
+    let w = linking_world();
+    let canonical = w.home.join("app/.agents/skills/deploy");
+    let link = w.home.join("app/.claude/skills/deploy");
+    for (at, whose) in [(&canonical, "the shared tree"), (&link, "Claude's own")] {
+        fs::create_dir_all(at).unwrap();
+        fs::write(
+            at.join("SKILL.md"),
+            format!("{whose}, from the tool that came before"),
+        )
+        .unwrap();
+    }
+
+    let audited = audit(&w.env, &w.scope).unwrap();
+    let row = deploy_row(&audited.drift);
+    assert_eq!(row.detail, canonical.display().to_string(), "{row:?}");
+    assert_eq!(
+        row.also_in_the_way,
+        vec![link.display().to_string()],
+        "{row:?}"
+    );
+
+    let report = plan_apply(&w.env, &w.scope, &take_over()).unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+    // What the row promised is what ran: both directories recoverable, and
+    // the declaration installed over each position.
+    let saved = trash_text(&w.env.trash_dir());
+    assert!(saved.contains("the shared tree"), "{saved}");
+    assert!(saved.contains("Claude's own"), "{saved}");
+    assert!(
+        fs::read_to_string(canonical.join("SKILL.md"))
+            .unwrap()
+            .contains("Upstream.")
+    );
+    assert!(link.is_symlink());
+}
+
+/// A link somebody made is never a take-over's target, so it is never
+/// named as in the way either — an offer promising to move it would
+/// promise what the plan refuses.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_link_at_the_harness_position_is_not_named_as_in_the_way() {
+    let w = linking_world();
+    let canonical = w.home.join("app/.agents/skills/deploy");
+    fs::create_dir_all(&canonical).unwrap();
+    fs::write(canonical.join("SKILL.md"), "the tool that came before").unwrap();
+    let elsewhere = w.home.join("somewhere/deploy");
+    fs::create_dir_all(&elsewhere).unwrap();
+    fs::write(elsewhere.join("SKILL.md"), "someone else's copy").unwrap();
+    let link = w.home.join("app/.claude/skills/deploy");
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
+
+    let audited = audit(&w.env, &w.scope).unwrap();
+    let row = deploy_row(&audited.drift);
+    assert_eq!(row.cause, Some(DriftCause::UnmanagedContent), "{row:?}");
+    assert!(row.also_in_the_way.is_empty(), "{row:?}");
+}
+
+/// Every file under the trash, joined — so a test can name which of two
+/// positions was set aside rather than only that something was.
+#[allow(clippy::unwrap_used)]
+fn trash_text(trash: &Path) -> String {
+    fn walk(dir: &Path, text: &mut String) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, text);
+            } else if let Ok(read) = fs::read_to_string(&path) {
+                text.push_str(&read);
+                text.push('\n');
+            }
+        }
+    }
+    let mut text = String::new();
+    walk(trash, &mut text);
+    text
+}

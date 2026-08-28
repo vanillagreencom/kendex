@@ -36,6 +36,7 @@ pub(super) fn hold_rev_conflict(
         detail: "wanted at two different revisions — nothing was changed".into(),
         cause: None,
         compared: None,
+        also_in_the_way: Vec::new(),
     });
     if let Some(entry) = lock.entries.get(&item.key) {
         sink.new_lock
@@ -82,6 +83,7 @@ pub(super) fn hold_legacy_copy(
         detail,
         cause,
         compared: None,
+        also_in_the_way: Vec::new(),
     });
     if let Some(entry) = lock.entries.get(&item.key) {
         sink.new_lock
@@ -181,6 +183,7 @@ fn hold_shared_edit(
         detail: "its files were edited on disk after another tool installed them — keep the edits as a fork, or apply with edits discarded".into(),
         cause: Some(DriftCause::LocalEdit),
         compared: None,
+        also_in_the_way: Vec::new(),
     });
     true
 }
@@ -291,6 +294,7 @@ pub(super) fn hold_local_edit(
         detail: detail.into(),
         cause: Some(cause),
         compared: None,
+        also_in_the_way: Vec::new(),
     });
     sink.new_lock
         .entries

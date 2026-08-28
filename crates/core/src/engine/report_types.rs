@@ -118,6 +118,14 @@ pub struct DriftRow {
     /// where the row is not about content in the way at all.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compared: Option<Comparison>,
+    /// Every other position holding the person's own files that a
+    /// take-over of this row moves to the trash. `detail` is one path, the
+    /// row's identity, and the plan refuses at the first position it
+    /// reads; a tree read through a harness-native link has a second
+    /// position of its own, so an offer built on `detail` alone would move
+    /// directories it never named.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub also_in_the_way: Vec<String>,
 }
 
 impl DriftRow {

@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 /** The four things the app ever has to say about state, and the one look
  *  each of them wears. Sharing the table is the point: a warning that
  *  borrows the error colour teaches people to distrust the colour. */
-const TONES = {
+export const STATUS_TONES = {
   critical: {
     icon: OctagonAlert,
     text: "text-critical",
@@ -28,7 +28,7 @@ const TONES = {
   },
 } as const;
 
-export type StatusTone = keyof typeof TONES;
+export type StatusTone = keyof typeof STATUS_TONES;
 
 /** Holds the tone icon in a box as tall as one line of the text beside it,
  *  so the icon reads as centred on that line however the words wrap. */
@@ -53,7 +53,7 @@ export function StatusNote({
   action?: ReactNode;
   className?: string;
 }) {
-  const { icon: Icon, text, surface } = TONES[tone];
+  const { icon: Icon, text, surface } = STATUS_TONES[tone];
   return (
     <div
       className={cn("flex gap-3 rounded-lg border p-3", surface, className)}
@@ -84,7 +84,7 @@ export function StatusLine({
   children: ReactNode;
   className?: string;
 }) {
-  const { icon: Icon, text } = TONES[tone];
+  const { icon: Icon, text } = STATUS_TONES[tone];
   return (
     <p
       className={cn("flex items-start gap-1.5 text-xs", text, className)}

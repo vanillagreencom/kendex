@@ -150,6 +150,7 @@ pub(super) fn plan_refusals(
                     detail: format!("{} — {why}", refusal.reason),
                     cause,
                     compared: None,
+                    also_in_the_way: Vec::new(),
                 });
                 // The files stay, so the record of them stays. Dropping it
                 // would leave kendex's own rendering on disk with nothing
@@ -179,6 +180,7 @@ pub(super) fn plan_refusals(
             },
             cause: None,
             compared: None,
+            also_in_the_way: Vec::new(),
         });
         ops.append(&mut removals);
     }

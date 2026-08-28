@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { AuditView, DriftRow, HarnessId } from "@/bindings";
+import type { AuditView, DriftRow, HarnessId, RowExits } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
-import { unmanagedCount, unmanagedIn } from "./audit-counts";
+import {
+  blockedCount,
+  blockedIn,
+  blockedPlaces,
+  unmanagedCount,
+  unmanagedIn,
+} from "./audit-counts";
 
 function drift(
   name: string,
@@ -115,5 +121,140 @@ describe("a place with no view yet", () => {
 
   it("is unknown once the whole check has failed", () => {
     expect(unmanagedCount(undefined, "audit refused")).toBeNull();
+  });
+});
+
+const inTheWay = (
+  name: string,
+  harness: HarnessId,
+  over: Partial<DriftRow> = {},
+): DriftRow => ({
+  ...drift(name, harness, "conflict"),
+  cause: "unmanaged-content",
+  detail: `/work/acme/.${harness}/skills/${name}`,
+  ...over,
+});
+
+const exit = (key: string, over: Partial<RowExits> = {}): RowExits => ({
+  key,
+  blocking: true,
+  files: true,
+  keep: true,
+  enter: true,
+  replace: true,
+  tools: ["claude"],
+  ...over,
+});
+
+const blocked = (rows: DriftRow[], exits: RowExits[]): AuditView => ({
+  ...view(rows),
+  exits,
+});
+
+describe("blockedIn", () => {
+  it("folds one item's tools into one row", () => {
+    const rows = blockedIn(
+      blocked(
+        [
+          inTheWay("release-notes", "claude"),
+          inTheWay("release-notes", "codex"),
+        ],
+        [
+          exit("skill:release-notes:claude"),
+          exit("skill:release-notes:codex", { tools: ["codex"] }),
+        ],
+      ),
+      null,
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows?.[0].installations).toHaveLength(2);
+  });
+
+  // A conflict of another kind beside files in the way takes the exits off
+  // the row it sits with; alone it is a change, not a decision about files.
+  it("keeps a blocking row with no files of its own beside the item's", () => {
+    const rows = blockedIn(
+      blocked(
+        [
+          inTheWay("release-notes", "claude"),
+          inTheWay("release-notes", "codex", {
+            cause: undefined,
+            detail: "revision clash",
+          }),
+        ],
+        [
+          exit("skill:release-notes:claude"),
+          exit("skill:release-notes:codex", {
+            files: false,
+            keep: false,
+            enter: false,
+            replace: false,
+          }),
+        ],
+      ),
+      null,
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows?.[0].installations).toHaveLength(2);
+  });
+
+  it("leaves out an item whose only conflict is about no files", () => {
+    expect(
+      blockedIn(
+        blocked(
+          [inTheWay("github", "claude", { cause: undefined, detail: "clash" })],
+          [exit("skill:github:claude", { files: false })],
+        ),
+        null,
+      ),
+    ).toEqual([]);
+  });
+
+  // Core reports an exit for the blocked rows only. A drift row it said
+  // nothing about is not one this list may draw a button for.
+  it("leaves out a row core reported no exit for", () => {
+    expect(
+      blockedIn(blocked([inTheWay("release-notes", "claude")], []), null),
+    ).toEqual([]);
+  });
+});
+
+// The same two channels `unmanagedIn` takes, for the same reason: both
+// exits offered behind these rows move the reader's own files.
+describe("blockedPlaces over an unconfirmed reading", () => {
+  const one = () =>
+    blocked(
+      [inTheWay("release-notes", "claude")],
+      [exit("skill:release-notes:claude")],
+    );
+
+  it("lists nothing for a place whose own view carries an error", () => {
+    const unreadable = {
+      ...one(),
+      error: { kind: "lock-corrupt" as const, message: "bad" },
+    };
+    expect(blockedPlaces([unreadable], null)).toEqual([]);
+  });
+
+  it("answers null when the whole check failed, never an empty list", () => {
+    expect(blockedPlaces([one()], "audit refused")).toBeNull();
+    expect(blockedCount(blockedPlaces([one()], "audit refused"))).toBe(0);
+  });
+
+  // The control: the same views are a real list once the check answers.
+  it("lists the place once the check answers", () => {
+    const places = blockedPlaces([one()], null);
+    expect(places).toHaveLength(1);
+    expect(blockedCount(places)).toBe(1);
+  });
+
+  it("says whether the same apply carries other work", () => {
+    expect(blockedPlaces([one()], null)?.[0].alsoApplies).toBe(false);
+    expect(
+      blockedPlaces([{ ...one(), plan: ["Install hook guard"] }], null)?.[0]
+        .alsoApplies,
+    ).toBe(true);
   });
 });

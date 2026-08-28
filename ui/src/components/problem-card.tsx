@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { commands } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { PlaceCard } from "@/components/place-card";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PROBLEM_HEADLINES, PROBLEM_STEPS } from "@/lib/error-copy";
 import { scopeName, scopePath } from "@/lib/labels";
 import { rescanEverything } from "@/lib/rescan";
@@ -21,57 +21,47 @@ export function ProblemCard({ problem }: { problem: Problem }) {
   const path = problem.scope ? scopePath(problem.scope) : null;
 
   return (
-    <Card className="border-critical/30 bg-critical/5">
-      <CardHeader>
-        <CardTitle className="text-base text-critical">
-          {PROBLEM_HEADLINES[problem.kind]}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div>
-          <p className="break-all text-sm font-medium">{name}</p>
-          {path ? (
-            <p className="truncate font-mono text-xs text-muted-foreground">
-              {path}
-            </p>
-          ) : null}
-        </div>
-        <p className="break-words rounded-md bg-muted/50 p-2 font-mono text-xs text-muted-foreground">
-          {problem.message}
-        </p>
-        <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
-          {PROBLEM_STEPS[problem.kind].map((step) => (
-            <li key={step}>{step}</li>
-          ))}
-        </ul>
-        <div className="flex flex-wrap gap-2">
+    <PlaceCard
+      tone="critical"
+      headline={PROBLEM_HEADLINES[problem.kind]}
+      name={name}
+      path={path}
+    >
+      <p className="break-words rounded-md bg-muted/50 p-2 font-mono text-xs text-muted-foreground">
+        {problem.message}
+      </p>
+      <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+        {PROBLEM_STEPS[problem.kind].map((step) => (
+          <li key={step}>{step}</li>
+        ))}
+      </ul>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => void rescanEverything()}
+        >
+          Rescan
+        </Button>
+        {projectRoot ? (
           <Button
             size="sm"
             variant="outline"
-            onClick={() => void rescanEverything()}
+            onClick={() => void commands.revealPath(projectRoot)}
           >
-            Rescan
+            Show in file browser
           </Button>
-          {projectRoot ? (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => void commands.revealPath(projectRoot)}
-            >
-              Show in file browser
-            </Button>
-          ) : null}
-          {projectRoot ? (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setConfirmRemove(true)}
-            >
-              Stop tracking this project…
-            </Button>
-          ) : null}
-        </div>
-      </CardContent>
+        ) : null}
+        {projectRoot ? (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setConfirmRemove(true)}
+          >
+            Stop tracking this project…
+          </Button>
+        ) : null}
+      </div>
       {projectRoot ? (
         <ConfirmDialog
           open={confirmRemove}
@@ -86,6 +76,6 @@ export function ProblemCard({ problem }: { problem: Problem }) {
           }}
         />
       ) : null}
-    </Card>
+    </PlaceCard>
   );
 }

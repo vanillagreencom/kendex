@@ -84,6 +84,7 @@ pub(super) fn unmanaged_rows(
             detail: item.path.display().to_string(),
             cause: None,
             compared: None,
+            also_in_the_way: Vec::new(),
         });
     }
     Ok(())

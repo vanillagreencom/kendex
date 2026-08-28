@@ -139,6 +139,7 @@ mod tests {
             detail: "you changed this copy".to_owned(),
             cause: None,
             compared: None,
+            also_in_the_way: Vec::new(),
         }
     }
 

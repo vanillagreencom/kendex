@@ -76,7 +76,14 @@ pub(super) fn plan_tree(
                 && !owned.contains(canonical)
                 && !written.canonicals.contains(canonical));
         if unowned && !replace_unmanaged {
-            return Ok(in_the_way(canonical, files));
+            // The refusal ends the pass here, so the harness-native
+            // position is never planned — and a take-over empties both.
+            // The row carries the second one, or an offer built on it
+            // names one directory and moves two.
+            return Ok(also_in_the_way(
+                in_the_way(canonical, files),
+                unowned_link(link.as_deref(), owned),
+            ));
         }
         result = match (disk.is_some() || collapsed.is_some(), unowned) {
             (_, true) => Planned::Drift(DriftState::Missing, TAKEN_OVER.into()),
@@ -125,6 +132,39 @@ pub(super) fn plan_tree(
         (Planned::Drift(_, staged), Planned::Drift(..)) if staged == TAKEN_OVER => result,
         _ => linked,
     })
+}
+
+/// The harness-native position when it holds the person's own files too.
+/// A link is never a take-over's target and a position kendex recorded
+/// writing is its own to replace, so neither is named here.
+fn unowned_link(link: Option<&Path>, owned: &BTreeSet<PathBuf>) -> Option<String> {
+    let link = link?;
+    (!link.is_symlink() && link.exists() && !owned.contains(link))
+        .then(|| link.display().to_string())
+}
+
+/// Carry another in-the-way position on a refusal that already names one.
+fn also_in_the_way(planned: Planned, more: Option<String>) -> Planned {
+    match (planned, more) {
+        (
+            Planned::Unmanaged {
+                cause,
+                detail,
+                compared,
+                mut also,
+            },
+            Some(path),
+        ) => {
+            also.push(path);
+            Planned::Unmanaged {
+                cause,
+                detail,
+                compared,
+                also,
+            }
+        }
+        (planned, _) => planned,
+    }
 }
 
 /// Files kendex did not write, where a tree goes. Adoption puts a folder

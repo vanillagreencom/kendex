@@ -106,7 +106,7 @@ lives in one capability table read by core and UI.
      settles. One refused at every link is not held: its rows stand,
      nothing replaced. The app offers adopt for unmanaged items, and both
      exits on the Problems page for a declared item's conflict.
-   The row states which files are in the way, which exits apply, and — where that
+   The row names every position in the way, which exits apply, and — where a
    position can be read in full — how it compares with the install it blocks.
    The CLI names the verb and flag under it. A foreign link pointing at a real
    skill folder several tools read offers keeping only. Exception: a link the user

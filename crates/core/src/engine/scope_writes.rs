@@ -209,6 +209,7 @@ pub(super) fn plan_settings_seed(
             detail: format!("{} is not a regular file", path.display()),
             cause: None,
             compared: None,
+            also_in_the_way: Vec::new(),
         });
         return Ok(());
     }

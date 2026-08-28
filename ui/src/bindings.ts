@@ -955,6 +955,15 @@ export type DriftRow_Deserialize = {
 	 *  where the row is not about content in the way at all.
 	 */
 	compared?: Comparison | null,
+	/**
+	 *  Every other position holding the person's own files that a
+	 *  take-over of this row moves to the trash. `detail` is one path, the
+	 *  row's identity, and the plan refuses at the first position it
+	 *  reads; a tree read through a harness-native link has a second
+	 *  position of its own, so an offer built on `detail` alone would move
+	 *  directories it never named.
+	 */
+	alsoInTheWay?: string[],
 };
 
 export type DriftRow_Serialize = {
@@ -971,6 +980,15 @@ export type DriftRow_Serialize = {
 	 *  where the row is not about content in the way at all.
 	 */
 	compared?: Comparison | null,
+	/**
+	 *  Every other position holding the person's own files that a
+	 *  take-over of this row moves to the trash. `detail` is one path, the
+	 *  row's identity, and the plan refuses at the first position it
+	 *  reads; a tree read through a harness-native link has a second
+	 *  position of its own, so an offer built on `detail` alone would move
+	 *  directories it never named.
+	 */
+	alsoInTheWay?: string[],
 };
 
 export type DriftState = 

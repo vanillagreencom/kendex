@@ -37,6 +37,15 @@ export function mergedDetail(details: (string | null)[]): string | null {
   return unique.length === 0 ? null : unique.join(" · ");
 }
 
+// Every position one row is about. `detail` is the row's identity and the
+// plan refuses at the first position it reads, so a tree read through a
+// harness-native link names its second position separately — and an offer
+// summarizing only `detail` would move a directory it never showed.
+export const positionsOf = (row: DriftRow): string[] => [
+  row.detail,
+  ...(row.alsoInTheWay ?? []),
+];
+
 // A path under the user's home directory, shortened the way a person
 // would say it out loud rather than type it.
 export function abbreviateHome(path: string): string {

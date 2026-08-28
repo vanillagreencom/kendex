@@ -56,6 +56,7 @@ pub(super) fn plan_item(
         detail,
         cause: None,
         compared: None,
+        also_in_the_way: Vec::new(),
     };
     let existing = lock.entries.get(&item.key);
 
@@ -104,20 +105,26 @@ pub(super) fn plan_item(
     let dirty = !matches!(planned, Planned::Clean);
     // The two refusals differ only in whether the cause is known.
     let refused = match planned {
-        Planned::Unmanaged(cause, detail, compared) => Some((Some(cause), detail, compared)),
-        Planned::Conflict(detail) => Some((None, detail, None)),
+        Planned::Unmanaged {
+            cause,
+            detail,
+            compared,
+            also,
+        } => Some((Some(cause), detail, compared, also)),
+        Planned::Conflict(detail) => Some((None, detail, None, Vec::new())),
         Planned::Drift(state, detail) => {
             drift.push(row(state, detail));
             None
         }
         Planned::Clean => None,
     };
-    if let Some((cause, detail, compared)) = refused {
+    if let Some((cause, detail, compared, also)) = refused {
         ops.truncate(staged);
         written.undo_item();
         let mut conflict = row(DriftState::Conflict, detail);
         conflict.cause = cause;
         conflict.compared = compared;
+        conflict.also_in_the_way = also;
         drift.push(conflict);
         if let Some(entry) = existing {
             new_lock.entries.insert(item.key.clone(), entry.clone());
@@ -179,7 +186,14 @@ pub(super) enum Planned {
     /// like any other, carrying the cause that says which ways out this
     /// position has and how those files compare with the install they
     /// block.
-    Unmanaged(DriftCause, String, Option<Comparison>),
+    Unmanaged {
+        cause: DriftCause,
+        /// Where the files in the way are — this row's identity.
+        detail: String,
+        compared: Option<Comparison>,
+        /// The other positions a take-over of this refusal also empties.
+        also: Vec<String>,
+    },
 }
 
 /// The refusal: where the files in the way are, and nothing else. The
@@ -200,7 +214,12 @@ pub(super) enum Planned {
 /// name carrying an escape sequence must reach a terminal as its own
 /// characters and never as the sequence.
 pub(super) fn unmanaged(cause: DriftCause, path: &std::path::Path) -> Planned {
-    Planned::Unmanaged(cause, path.display().to_string(), None)
+    Planned::Unmanaged {
+        cause,
+        detail: path.display().to_string(),
+        compared: None,
+        also: Vec::new(),
+    }
 }
 
 /// The same refusal, carrying what the plan measured the files in the way
@@ -213,7 +232,12 @@ pub(super) fn unmanaged_compared(
     path: &std::path::Path,
     compared: Option<Comparison>,
 ) -> Planned {
-    Planned::Unmanaged(cause, path.display().to_string(), compared)
+    Planned::Unmanaged {
+        cause,
+        detail: path.display().to_string(),
+        compared,
+        also: Vec::new(),
+    }
 }
 
 /// A registration is in sync when its backing file matches and re-applying
@@ -278,7 +302,7 @@ fn plan_registration(
         }
         None => Planned::Clean,
     };
-    if matches!(planned, Planned::Conflict(_) | Planned::Unmanaged(..)) {
+    if matches!(planned, Planned::Conflict(_) | Planned::Unmanaged { .. }) {
         return Ok(planned);
     }
     for (path, edit) in pending {

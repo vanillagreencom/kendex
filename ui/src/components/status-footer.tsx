@@ -1,6 +1,6 @@
 import { RefreshCw } from "lucide-react";
 import { StatusDot } from "@/components/status-dot";
-import { blockedCount } from "@/lib/blocked";
+import { blockedCount } from "@/lib/audit-counts";
 import {
   SCANNING_LABEL,
   scanFailedStatusLabel,

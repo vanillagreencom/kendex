@@ -75,6 +75,9 @@ an outside contributor.
 
 ### Fixed
 
+- A blocked declaration now names every position its take-over empties. A
+  tree read through a tool's own link sits at two, and `apply --plan` named
+  one while `--replace-unmanaged` moved both.
 - `worktree cleanup` and `worktree remove` prove a merge two ways and no other:
   ancestry into the default branch, or the pull request whose head commit is
   the branch tip. Squash merges collect, and every keep now names its reason.

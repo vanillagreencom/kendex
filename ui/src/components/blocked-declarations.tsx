@@ -1,20 +1,24 @@
 import { useState } from "react";
 import type { DriftRow, HarnessId } from "@/bindings";
-import {
-  BlockedDeclarationConfirm,
-  type Pending,
-} from "@/components/blocked-declaration-confirm";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { KindHarnessChips } from "@/components/kind-harness-chips";
 import { Button } from "@/components/ui/button";
 import {
+  ALSO_APPLIES,
+  ask,
   IN_THE_WAY_BODY,
   KEEP_FILES_CONSEQUENCE,
   KEEP_FILES_LABEL,
   MOVE_FILES_YOURSELF,
+  type Pending,
   REPLACE_FILES_CONSEQUENCE,
   REPLACE_FILES_LABEL,
 } from "@/lib/copy-in-the-way";
-import { type MergedDriftRow, summarizePaths } from "@/lib/drift-merge";
+import {
+  type MergedDriftRow,
+  positionsOf,
+  summarizePaths,
+} from "@/lib/drift-merge";
 import type { Exits } from "@/lib/exits";
 
 /**
@@ -57,25 +61,18 @@ export function BlockedDeclarations({
 
   if (rows.length === 0) return null;
 
+  // Every position the row is about, which is more than one where a tree is
+  // read through a harness-native link: core names the second, and a
+  // summary over the first alone would show one directory and move two.
   const where = (group: MergedDriftRow) =>
-    summarizePaths(group.installations.map((row) => row.detail));
-  // Every tool the row acts on, which is not the same as every tool with a
+    summarizePaths(group.installations.flatMap(positionsOf));
+  // Every tool the move acts on, which is not the same as every tool with a
   // row on screen: a folder somebody shared by hand is read by whoever
-  // links at it, and one left out of the chips is one whose shortcut is
-  // repointed without warning.
+  // links at it, and one left out is one whose shortcut is repointed
+  // without warning. Core answers this per row; the page unions the answers
+  // and never filters them, since the keep clears every link either way.
   const named = (group: MergedDriftRow) => [
     ...new Set(group.installations.flatMap((row) => exits.tools(row))),
-  ];
-  // Only the tools keeping can be entered through. Keeping works at a
-  // tool's own place, so one reading the item through a shortcut somebody
-  // made has nothing there to take — its share is kept by the tool that
-  // does hold the folder, and naming it would fail on the spot.
-  const toolsOf = (group: MergedDriftRow) => [
-    ...new Set(
-      group.installations
-        .filter((row) => exits.enter(row))
-        .flatMap((row) => exits.tools(row)),
-    ),
   ];
 
   // One row is one item however many tools it targets, and its tools are
@@ -84,10 +81,12 @@ export function BlockedDeclarations({
   const confirm = () => {
     if (!pending) return;
     const { group, exit } = pending;
-    if (exit === "keep") void onKeep(group.kind, group.name, toolsOf(group));
+    if (exit === "keep") void onKeep(group.kind, group.name, named(group));
     else void onReplace(group.kind, group.name);
     setPending(null);
   };
+
+  const asked = pending && ask(pending, where(pending.group), exits);
 
   return (
     <div className="overflow-hidden rounded-lg border">
@@ -176,14 +175,19 @@ export function BlockedDeclarations({
           );
         })}
       </div>
-      <BlockedDeclarationConfirm
-        pending={pending}
-        where={where}
-        named={named}
-        alsoApplies={alsoApplies}
+      <ConfirmDialog
+        open={asked != null}
+        onOpenChange={(open) => {
+          if (!open) setPending(null);
+        }}
+        title={asked?.title ?? ""}
+        description={
+          asked ? `${asked.body}${alsoApplies ? ALSO_APPLIES : ""}` : undefined
+        }
+        confirmLabel={asked?.label ?? ""}
+        destructive={asked?.destructive}
         busy={busy}
         onConfirm={confirm}
-        onDismiss={() => setPending(null)}
       />
     </div>
   );
