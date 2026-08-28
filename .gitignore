@@ -9,8 +9,8 @@ docs/handoff/
 docs/reviews/
 
 # The harness trees are TRACKED. What sits there is either a real directory
-# a `source = "in-place"` declaration names, or a render of a package that
-# exists in no marketplace; both have to survive a clone, and `kendex
+# a `source = "in-place"` declaration names, or a render of a package this
+# checkout is the source of; both have to survive a clone, and `kendex
 # refresh` regenerates the renders. The links into .agents/skills are
 # relative, so they resolve in any checkout. The one row this posture still
 # needs is the install ledger at the bottom, which `kendex refresh` writes

@@ -3,7 +3,7 @@
 # size-ratchet-baseline.tsv.
 # Format: pattern<TAB>reason (shell glob against the full repo-relative path; * crosses /).
 
-.agents/*	kendex's own render of skills/, agents/ and hooks/ — the SOURCE is governed, so governing the mirror doubles every finding and freezes the render
+.agents/*	kendex's render of skills/, agents/ and hooks/, whose SOURCE is governed, so governing the mirror doubles every finding and freezes the render; the in-place skill trees here have no source elsewhere, and this dialect cannot carve them back in (KEN-708)
 .claude/skills/*	rendered skill links into .agents/skills
 .claude/agents/*	kendex-rendered agent copies, source in agents/
 .claude/hooks/*	kendex-rendered hook copies, source in hooks/
