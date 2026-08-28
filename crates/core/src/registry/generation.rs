@@ -55,12 +55,13 @@ impl<'e> GenerationFile<'e> {
         }
     }
 
-    /// Key this file to one sign-in, named by a secret only that sign-in
-    /// has. A generation carrying another key is discarded on read just
-    /// as another endpoint's is, so a cache outliving the sign-in that
-    /// filled it can never be served under the next one. The secret is
-    /// hashed here and the file holds the digest: this is a cache, not
-    /// the keychain. A caller with no credential — the community
+    /// Key this file to one sign-in, named by whatever the caller uses to
+    /// tell one sign-in from the next. A generation carrying another key
+    /// is discarded on read just as another endpoint's is, so a cache
+    /// outliving the sign-in that filled it can never be served under the
+    /// next one. The name is hashed here rather than stored, so a caller
+    /// that hands over a secret still leaves none on disk: this is a
+    /// cache, not the keychain. A caller with no sign-in — the community
     /// directory — leaves the key unset and reads only unkeyed
     /// generations.
     pub fn bound_to(self, sign_in: &str) -> GenerationFile<'e> {

@@ -1,8 +1,9 @@
 //! Who is signed in: GET /api/v1/me through the rotation-safe bearer
 //! client. The last good answer is cached through [`super::generation`]
 //! with no TTL, because "signed in", "offline" and "expired" can only be
-//! told apart by asking the server; when the network is away the cached
-//! identity is served as the offline state instead of nothing.
+//! told apart by asking the server; when the network is away this
+//! sign-in's cached identity is served as the offline state instead of
+//! nothing.
 
 use serde::{Deserialize, Serialize};
 
@@ -55,14 +56,12 @@ struct WireMe {
 /// credential gone by the time the answer lands is `SignedOut` too, and
 /// nothing is written back over the sign-out. Everything this read
 /// settles belongs to one sign-in: the cache it opens with, the call it
-/// sends, and the answer it caches. A credential this read did not itself
-/// rotate to is refused as retryable rather than served, because the
-/// identity in hand is the previous account's. That refusal covers a
-/// concurrent rotation of the same account, which the call adopts and
-/// answers under: nothing here can tell that from a different account
-/// signing in, and the retry costs less than the wrong name. A rotation
-/// this read performed keeps the sign-in it rotated, so it settles as
-/// usual and its cache stays readable afterwards.
+/// sends, and the answer it caches. That sign-in is named on the
+/// credential, so what is compared is the name and not the tokens, which
+/// move. A rotation keeps the name whichever call performed it, so it
+/// settles as usual and leaves a cache the next read can still use. Only
+/// a different sign-in is refused as retryable, because then the identity
+/// in hand is the previous account's.
 pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result<AccountState> {
     let Some(credential) = store.load()? else {
         return Ok(AccountState::SignedOut);
@@ -85,9 +84,9 @@ pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result
         // Logout won a race with this read: the re-login state without
         // refreshing, exactly as if the credential had been gone up front.
         Err(CoreError::NotSignedIn) => return Ok(AccountState::SignedOut),
-        // The credential is dead and the client cleared it; a cached
-        // identity kept here could resurface as another account's
-        // "offline" after the next sign-in.
+        // The credential is dead and the client cleared it; the identity
+        // it named has no reason to outlive it on disk, and the next
+        // sign-in would find it keyed to this one and discard it unread.
         Err(CoreError::SignInExpired { .. }) => {
             cache.forget()?;
             return Ok(AccountState::Expired);
@@ -161,6 +160,8 @@ pub fn sign_out(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Re
     Ok(was_signed_in)
 }
 
+/// The identity cache file, named but not yet keyed to a sign-in.
+/// `forget` needs no key; the one caller that reads takes one first.
 fn cache(env: &Env) -> GenerationFile<'_> {
     GenerationFile::new(env, CACHE_FILE)
 }
