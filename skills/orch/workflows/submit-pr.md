@@ -215,7 +215,7 @@ For `off` also record the legacy field the gate-4 check reads, then skip the wai
 
    **Triage pass**: `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 4 step 1` with managed context. It applies the external cap to its own fix pushes; what bounds this step is the Restart check.
 
-   **Restart check.** Every path that would restart the wait passes through here first — both restart arms above, `Keep waiting` on `timeout`, and § 6.1 gate 3's re-confirmation. Nothing restarts step 1 without it:
+   **Restart check.** Every path that would restart the wait passes through here first — both restart arms above, `Keep waiting` on `timeout`, and § 6.1 gate 3's re-confirmation. It applies the same cap decision review-pr-comments § 6.1 states, the one that workflow's own § 6.3 loop passes before re-entering, so the nested loop and this caller reach one decision rather than two. Nothing restarts step 1 without it:
 
    ```bash
    .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{iterations: (.pr_comment_review.iterations // 0)}'

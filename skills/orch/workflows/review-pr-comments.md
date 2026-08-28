@@ -175,7 +175,7 @@ Read the round budget first. The cap governs what may be pushed, so it decides b
 .agents/skills/orch/scripts/orch-env REVIEW_MAX_EXTERNAL_ROUNDS 4
 ```
 
-`iterations` at or past `REVIEW_MAX_EXTERNAL_ROUNDS` ends the ordinary fix rounds on this PR: every item marked Fixing takes a disposition instead of a fix, with the one exception below. The at-cap pass runs three steps, in order. **File first** — run § 6.2 for every item clearing its bar, invoked with its return recorded as `→ § 6.1` rather than § 6.2's usual `→ § 6.3`, since the nested audit returns where it is told and a cap path that does not say so files the issue and exits before anything else here runs. **Then the exception** below, which is the only delegation and the only push this pass makes. **Then reply**, through the reply table below: `Tracked: [ISSUE_ID]` for a filed item, `Fixed in [SHA]` for one the exception fixed, `Declined: [REASON]` for the rest, which needs no issue. Resolve each thread as you reply, then → § 6.3 with § 6.2 already done.
+`iterations` at or past `REVIEW_MAX_EXTERNAL_ROUNDS` ends the ordinary fix rounds on this PR: every item marked Fixing takes a disposition instead of a fix, with the one exception below. The at-cap pass runs three steps, in order. **File first** — run § 6.2 for every item clearing its bar, invoked with its return recorded as `→ § 6.1` rather than § 6.2's usual `→ § 6.3`, since the nested audit returns where it is told and a cap path that does not say so files the issue and exits before anything else here runs. **Then the exception** below, which is the only delegation and the only push this pass makes. **Then reply**, through the reply table below: `Tracked: [ISSUE_ID]` for a filed item, `Fixed in [SHA]` for one the exception fixed, `Declined: [REASON]` for the rest, which needs no issue. Resolve each thread as you reply, then → § 6.3 with § 6.2 already done. This is **the cap decision**, and every restart reaches it: § 6.3's loop back to § 1 applies it before re-entering, and submit-pr § 4's Restart check applies it before restarting the wait. No path re-enters a triage pass or the wait without passing it.
 
 **The one exception.** A defect this diff itself introduces or arms is fixed whatever the round count — a cap that forces a disposition onto a defect the change created ships the defect. Delegate exactly those items through the rest of this section, push that fix, and reply `Fixed in [SHA]`. Every other item still takes its disposition.
 
@@ -286,7 +286,7 @@ This is the only writer of `pr_comment_review.iterations` in any workflow: one t
 .agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved
 ```
 
-A thread is new when its `threads[].id` is not in `known`. No new threads → § 7. Otherwise update the baseline and loop to § 1 — past the cap that next pass dispositions instead of pushing, which is § 6.1's decision, not a reason to skip the threads:
+A thread is new when its `threads[].id` is not in `known`. No new threads → § 7. Otherwise update the baseline, then apply § 6.1's cap decision before re-entering: below the cap, loop to § 1 unchanged; at or past it, return to the caller rather than re-entering, and its Restart check decides what happens next. The exception's fix pushes a new head, so a late thread on that head is the case that would otherwise keep this loop pushing past the cap:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_review_baseline '{"last_threads":[UNRESOLVED_THREAD_IDS]}'

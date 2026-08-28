@@ -115,6 +115,10 @@ slice() {
 }
 
 cap_site() { slice "$1" '### 6.1 Delegate Fixes' '^### 6[.]2'; }
+# submit-pr's single restart decision point. Every path that would restart
+# § 4 step 1's wait passes through it, so the cap is applied once, in a place
+# no route can go around.
+restart_check() { awk '/^   \*\*Restart check\.\*\*/ { on = 1; print; next } on && (/^   \*\*/ || /^#/) { on = 0 } on' "$1"; }
 loop_site() { slice "$1" '### 6.3 Re-Triage Or Exit' '^## 7[.]'; }
 # The cap rule itself: § 6.1 from its budget read down to the delegation setup.
 # § 6.1's reply table names every disposition form, so a check over the whole
@@ -236,6 +240,25 @@ if grep -q -F "$SETTING" <<<"$loop"; then
 else
   ok "§ 6.3 leaves the cap to § 6.1"
 fi
+
+# One decision, reached by the nested loop and by its caller. § 6.3 looping
+# to § 1 on its own is a restart the caller's Restart check never sees, and
+# § 6.1's exception keeps pushing through it past the cap.
+if grep -q -F 'cap decision' <<<"$loop"; then
+  ok "§ 6.3's restart passes the cap decision before re-entering § 1"
+else
+  bad "§ 6.3 loops to § 1 without passing the cap decision"
+fi
+if grep -q -F 'cap decision' <<<"$rule"; then
+  ok "§ 6.1 states the cap decision the restarts reach"
+else
+  bad "§ 6.1 does not name the decision both restart paths apply"
+fi
+if grep -q -F 'cap decision' <<<"$(restart_check "$SUBMIT_WF")"; then
+  ok "submit-pr's Restart check applies that same decision"
+else
+  bad "submit-pr's Restart check names a decision of its own"
+fi
 if grep -q -F 'pr-threads' <<<"$loop"; then
   ok "§ 6.3 fetches late threads on every path out of the round"
 else
@@ -252,11 +275,6 @@ if [[ "$total" -eq 1 ]] && [[ "$count" -eq 1 ]] && [[ "$writers" == *review-pr-c
 else
   bad "pr_comment_review.iterations has $total writer(s) across $count file(s)" "$writers"
 fi
-
-# submit-pr's single restart decision point. Every path that would restart
-# § 4 step 1's wait passes through it, so the cap is applied once, in a place
-# no route can go around.
-restart_check() { awk '/^   \*\*Restart check\.\*\*/ { on = 1; print; next } on && (/^   \*\*/ || /^#/) { on = 0 } on' "$1"; }
 
 CHECK="$(restart_check "$SUBMIT_WF")"
 if [[ -z "$CHECK" ]]; then
@@ -473,6 +491,26 @@ else
   else
     ok "the check flags a restart arm bypassing the Restart check"
   fi
+fi
+
+# § 6.3 looping straight back to § 1, the restart the caller never sees.
+CTRL="$TMP_ROOT/comments-loop.md"
+if ! plant "$CTRL" "$COMMENTS_WF" 's/then apply § 6[.]1.s cap decision before re-entering: below the cap, loop to § 1 unchanged; at or past it, return to the caller rather than re-entering, and its Restart check decides what happens next/loop to § 1/'; then
+  bad "nested-loop control planted nothing — its sed program matched no text"
+elif grep -q -F 'cap decision' <<<"$(loop_site "$CTRL")"; then
+  bad "the check MISSED § 6.3 looping without the cap decision"
+else
+  ok "the check flags § 6.3 looping without the cap decision"
+fi
+
+# The caller naming a decision of its own instead of the shared one.
+CTRL="$TMP_ROOT/submit-owndecision.md"
+if ! plant "$CTRL" "$SUBMIT_WF" 's/It applies the same cap decision review-pr-comments § 6[.]1 states, the one that workflow.s own § 6[.]3 loop passes before re-entering, so the nested loop and this caller reach one decision rather than two[.] //'; then
+  bad "shared-decision control planted nothing — its sed program matched no text"
+elif grep -q -F 'cap decision' <<<"$(restart_check "$CTRL")"; then
+  bad "the check MISSED a Restart check that stops naming the shared decision"
+else
+  ok "the check flags a Restart check that stops naming the shared decision"
 fi
 
 CTRL="$TMP_ROOT/disposition.md"
