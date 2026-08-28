@@ -58,7 +58,7 @@ Return by sending the workflow's `<output_format>` block — filled verbatim, no
 
 ## Re-Review Rounds
 
-Items the delegation lists as resolved are not re-reported, unless you check a Fixed item against the current diff and the defect is still there — report that one again, naming the commit sha it is listed against so the claim is checkable. A Fixed item you did not check, and every Escalated item, stays suppressed. Scope the pass to the fix diff and its blast radius, not a fresh full read; sweep every fixed defect's class before passing.
+Items the delegation lists as resolved are not re-reported, unless you check a Fixed item against the current diff and the defect is still there — report that one again, copying the listed entry's location and description verbatim and naming its recorded commit sha in your recommendation, which is what makes the claim checkable and lets the orchestrator supersede the stale entry. A Fixed item you did not check, and every Escalated item, stays suppressed. Scope the pass to the fix diff and its blast radius, not a fresh full read; sweep every fixed defect's class before passing.
 
 ## Mutation-Stability Pairing
 

@@ -152,21 +152,39 @@ Cancel ends the workflow; a selection goes to § 2.
 
    **Analysis rounds** run Check A without an expected-set flag, and B expects no new commit and a clean worktree. On accept, read the `summary` recommendation and decide the next step: delegate the actual fixes as a fresh round, or close and re-scope with reasoning.
 
-6. **Record the outcome** — one tool call per block, one write per item:
+6. **Record the outcome** — one write per item, and the item's own text never enters a shell word:
+
+   Write the item's entry to `tmp/state-item-[ISSUE_ID].json` with the harness file tool, one item at a time. Fixed:
+
+   ```json
+   {"description":"[DESC]","location":"[LOC]","commit":"[SHA]","source":"[SOURCE]"}
+   ```
+
+   Escalated, `[OUTCOME]` carrying the item's accepted decision — Blocked → `"blocked"`, Skipped → `"skipped"`:
+
+   ```json
+   {"description":"[DESC]","location":"[LOC]","reason":"[REASON]","outcome":"[OUTCOME]","source":"[SOURCE]"}
+   ```
+
+   Then bind that file into the write for the bucket the item lands in. Fixed:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --argjson item '{"description":"[DESC]","location":"[LOC]","commit":"[SHA]","source":"[SOURCE]"}' '.fixed_items = (((.fixed_items // []) | map(select(.location != $item.location or .description != $item.description))) + [$item])'
+   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile item tmp/state-item-[ISSUE_ID].json '$item[0] as $e | .fixed_items = ((.fixed_items // []) | map(select(.location != $e.location or .description != $e.description))) | .escalated_items = ((.escalated_items // []) | map(select(.location != $e.location or .description != $e.description))) | .fixed_items += [$e]'
    ```
+
+   Escalated:
+
    ```bash
-   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --argjson item '{"description":"[DESC]","location":"[LOC]","reason":"[REASON]","outcome":"[OUTCOME]","source":"[SOURCE]"}' '.fixed_items = ((.fixed_items // []) | map(select(.location != $item.location or .description != $item.description))) | .escalated_items = ((.escalated_items // []) + [$item])'
+   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile item tmp/state-item-[ISSUE_ID].json '$item[0] as $e | .fixed_items = ((.fixed_items // []) | map(select(.location != $e.location or .description != $e.description))) | .escalated_items = ((.escalated_items // []) | map(select(.location != $e.location or .description != $e.description))) | .escalated_items += [$e]'
    ```
+
    ```bash
    .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] cycles
    ```
 
-   `[OUTCOME]` carries the item's accepted decision: Blocked → `"blocked"`, Skipped → `"skipped"`.
+   A re-reported item whose recorded fix did not hold takes a second disposition while a bucket still lists it against the SHA of the failed fix, and an item escalated in one cycle can be fixed in a later one, so each write clears the item from BOTH buckets before appending its own entry. The match is the RECORDED entry's (location, description), the § 8 key: a re-reporting reviewer copies those two fields verbatim off the delegation's Fixed line, and the sha it names rides in the finding's recommendation, which no key reads. One write per item, and the item stands in exactly one bucket, once.
 
-   Each block is an update, not an append. A re-reported item whose recorded fix did not hold takes a second disposition while `fixed_items` still lists it against the SHA of the failed fix, so both writes drop that entry — matched on (location, description), the § 8 key — before recording their own. One write per item, and the item stands in exactly one bucket, once.
+   The entry goes through a file, never `--arg` or `--argjson`. A double quote in the description invalidates a pasted JSON argument and an apostrophe ends the shell word, and a write that fails leaves the stale entry standing with nothing recorded.
 
 ## 3. Return
 

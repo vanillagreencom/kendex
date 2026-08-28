@@ -111,6 +111,78 @@ err="$("$WS" --state-dir "$sda" update KEN-2 --slurpfile art "$TMP_ROOT/bad.json
   && ok "--slurpfile refuses a file that is not one JSON value" \
   || bad "--slurpfile refuses a file that is not one JSON value" "rc=$rc err=$err"
 
+# --- dev-fix § 2 step 6, the entry bound from its own file ------------------
+# Both outcome writes clear the item from BOTH buckets before appending their
+# own entry, so an item fixed then re-raised then blocked, or escalated then
+# fixed, lands in one bucket once. The entry reaches jq through a file: the
+# text below carries an apostrophe and a double quote, which an --argjson
+# argument would not survive.
+STEP6_DROP='$item[0] as $e | .fixed_items = ((.fixed_items // []) | map(select(.location != $e.location or .description != $e.description))) | .escalated_items = ((.escalated_items // []) | map(select(.location != $e.location or .description != $e.description)))'
+STEP6_FIXED="$STEP6_DROP | .fixed_items += [\$e]"
+STEP6_ESCALATED="$STEP6_DROP | .escalated_items += [\$e]"
+
+sd6="$TMP_ROOT/state-step6"
+ENTRY="$TMP_ROOT/state-item-KEN-5.json"
+"$WS" --state-dir "$sd6" init KEN-5 --worktree "$REPO_ROOT" --branch ken-5 >/dev/null
+
+# Round one fixes it.
+jq -n --arg l "$LOC" --arg d "$DESC" '{description: $d, location: $l, commit: "abc123f", source: "pr-review"}' > "$ENTRY"
+"$WS" --state-dir "$sd6" update KEN-5 --slurpfile item "$ENTRY" "$STEP6_FIXED" >/dev/null && rc=0 || rc=$?
+[[ "$rc" -eq 0 ]] && ok "the fixed write succeeds with the entry bound from a file" \
+  || bad "the fixed write succeeds with the entry bound from a file" "rc=$rc"
+
+step6_desc="$("$WS" --state-dir "$sd6" get KEN-5 '.fixed_items[0].description')"
+[[ "$step6_desc" == "$DESC" ]] && ok "a description holding a quote and an apostrophe round-trips" \
+  || bad "a description holding a quote and an apostrophe round-trips" "got=$step6_desc"
+
+# Round two re-raises the same defect and blocks it: the fixed entry goes.
+jq -n --arg l "$LOC" --arg d "$DESC" '{description: $d, location: $l, reason: "could not fix", outcome: "blocked", source: "pr-review"}' > "$ENTRY"
+"$WS" --state-dir "$sd6" update KEN-5 --slurpfile item "$ENTRY" "$STEP6_ESCALATED" >/dev/null
+f_len="$("$WS" --state-dir "$sd6" get KEN-5 '.fixed_items | length')"
+e_len="$("$WS" --state-dir "$sd6" get KEN-5 '.escalated_items | length')"
+[[ "$f_len" == "0" ]] && [[ "$e_len" == "1" ]] \
+  && ok "escalating a fixed item leaves it in one bucket" \
+  || bad "escalating a fixed item leaves it in one bucket" "fixed=$f_len escalated=$e_len"
+
+# Round three fixes the escalated item: the escalated entry goes. This is the
+# direction review.md § 4 and a standalone fix round reach, neither of which
+# excludes escalated items from the round.
+jq -n --arg l "$LOC" --arg d "$DESC" '{description: $d, location: $l, commit: "def456a", source: "review"}' > "$ENTRY"
+"$WS" --state-dir "$sd6" update KEN-5 --slurpfile item "$ENTRY" "$STEP6_FIXED" >/dev/null
+f_len="$("$WS" --state-dir "$sd6" get KEN-5 '.fixed_items | length')"
+e_len="$("$WS" --state-dir "$sd6" get KEN-5 '.escalated_items | length')"
+f_sha="$("$WS" --state-dir "$sd6" get KEN-5 '.fixed_items[0].commit')"
+[[ "$f_len" == "1" ]] && [[ "$e_len" == "0" ]] && [[ "$f_sha" == "def456a" ]] \
+  && ok "fixing an escalated item leaves it in one bucket, against the live sha" \
+  || bad "fixing an escalated item leaves it in one bucket, against the live sha" "fixed=$f_len escalated=$e_len sha=$f_sha"
+
+# An unrelated entry in either bucket is untouched by any of it.
+jq -n --arg l "$OTHER_LOC" '{description: "unrelated", location: $l, reason: "skipped", outcome: "skipped", source: "pr-review"}' > "$TMP_ROOT/other.json"
+"$WS" --state-dir "$sd6" update KEN-5 --slurpfile item "$TMP_ROOT/other.json" "$STEP6_ESCALATED" >/dev/null
+jq -n --arg l "$LOC" --arg d "$DESC" '{description: $d, location: $l, commit: "0badc0d", source: "review"}' > "$ENTRY"
+"$WS" --state-dir "$sd6" update KEN-5 --slurpfile item "$ENTRY" "$STEP6_FIXED" >/dev/null
+other_len="$("$WS" --state-dir "$sd6" get KEN-5 '.escalated_items | length')"
+other_loc="$("$WS" --state-dir "$sd6" get KEN-5 '.escalated_items[0].location')"
+[[ "$other_len" == "1" ]] && [[ "$other_loc" == "$OTHER_LOC" ]] \
+  && ok "an unrelated entry survives a write for a different item" \
+  || bad "an unrelated entry survives a write for a different item" "len=$other_len loc=$other_loc"
+
+# The key is the recorded pair. A description the reviewer re-authored instead
+# of copying leaves the stale entry standing, which is what the re-review
+# prompts head off by telling it to copy location and description verbatim.
+jq -n --arg l "$LOC" --arg d "$DESC (fix recorded in abc123f did not hold)" '{description: $d, location: $l, reason: "could not fix", outcome: "blocked", source: "pr-review"}' > "$ENTRY"
+"$WS" --state-dir "$sd6" update KEN-5 --slurpfile item "$ENTRY" "$STEP6_ESCALATED" >/dev/null
+stale="$("$WS" --state-dir "$sd6" get KEN-5 '.fixed_items | length')"
+[[ "$stale" == "1" ]] \
+  && ok "a re-authored description misses the key and strands the stale entry" \
+  || bad "a re-authored description misses the key and strands the stale entry" "fixed=$stale"
+
+# --argjson on the same entry: the shape the file replaces.
+argjson_entry='{"description":"'"$DESC"'","location":"'"$LOC"'","commit":"abc123f","source":"pr-review"}'
+"$WS" --state-dir "$sd6" update KEN-5 --argjson item "$argjson_entry" "$STEP6_FIXED" >/dev/null 2>&1 && rc=0 || rc=$?
+[[ "$rc" -ne 0 ]] && ok "the same entry pasted as --argjson is refused as invalid JSON" \
+  || bad "the same entry pasted as --argjson is refused as invalid JSON" "rc=$rc"
+
 # --- --argjson binds parsed JSON, and refuses what is not JSON -------------
 "$WS" --state-dir "$sd" update KEN-1 --argjson labels '["needs-review","skills"]' '.qa_labels = $labels' >/dev/null
 labels="$("$WS" --state-dir "$sd" get KEN-1 '.qa_labels | join(",")')"

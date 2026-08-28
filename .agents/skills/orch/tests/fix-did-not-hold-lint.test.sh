@@ -14,13 +14,20 @@
 # reviewer actually checked against the current diff; an Escalated item is
 # accepted as blocked and stays suppressed.
 #
+# The re-report has to land on the supersede's key, which is exact equality of
+# the RECORDED entry's location and description. So each prompt tells the
+# reviewer to copy those two fields verbatim and to put the sha in the
+# recommendation, where no key reads it. The sha is named in prose: a
+# `[COMMIT_SHA]` token outside a per-item loop binds to nothing, and the
+# fill-or-omit rule for delegation blocks would drop the sentence holding it.
+#
 # What this pins are IDENTIFIERS and their relationships, never sentences:
 # review-bots.md bans sentence-pinning lints on markdown, and an editorial
 # rephrase must not fail a suite while the contract holds. The tokens here are
 # the ones that cannot be reworded without changing behaviour — the `unless`/
-# `except` conditional that makes the suppression narrow, the `[COMMIT_SHA]`
-# placeholder that makes a re-report checkable, `Escalated`/`suppressed`, and
-# the `fixed_items`/`escalated_items` bucket names in the writes.
+# `except` conditional that makes the suppression narrow, `commit sha` and
+# `verbatim` for the re-report's two obligations, `Escalated`/`suppressed`,
+# and the bucket names and bindings in the writes.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -100,13 +107,31 @@ else
   fail "the re-review delegation suppresses fixed items unconditionally"
 fi
 
-# --- 2: the exception names the SHA the item is recorded against ------------
-# One occurrence is the Fixed list's own line; the exception adds a second, so
-# the reviewer's re-report cites a SHA the orchestrator can check.
-if [[ "$(count "$RR" '[COMMIT_SHA]')" -ge 2 ]]; then
-  pass "the re-review exception names the recorded [COMMIT_SHA]"
+# --- 2: the re-report is checkable and lands on the supersede's key ---------
+# The sha makes the claim checkable. Copying location and description verbatim
+# is what makes the drop match: it keys on exact equality with the recorded
+# entry, and a reviewer that re-authors either field strands it.
+names_recorded_sha()  { has "$1" 'commit sha'; }
+copies_key_verbatim() { has "$1" 'verbatim' && has "$1" 'location' && has "$1" 'description'; }
+
+if names_recorded_sha "$RR"; then
+  pass "the re-review exception names the recorded commit sha"
 else
-  fail "the re-review exception does not name the recorded [COMMIT_SHA]"
+  fail "the re-review exception does not name the recorded commit sha"
+fi
+
+if copies_key_verbatim "$RR"; then
+  pass "the re-review exception copies location and description verbatim"
+else
+  fail "the re-review exception lets the reviewer re-author the key fields"
+fi
+
+# A per-item token outside the loop that binds it is unfillable. The Fixed
+# line owns the block's one legitimate occurrence.
+if [[ "$(count "$RR" '[COMMIT_SHA]')" -eq 1 ]]; then
+  pass "the re-review exception carries no unbound [COMMIT_SHA]"
+else
+  fail "the re-review exception carries a [COMMIT_SHA] nothing binds"
 fi
 
 # --- 3: the escalated half stays suppressed ---------------------------------
@@ -124,12 +149,17 @@ else
 fi
 
 # --- 4: the QA delegation carries the same exception ------------------------
-# Same [COMMIT_SHA] count rule as check 2: the list line owns the first.
 QA="$(qa_block "$REVIEW_PR_WF")"
-if has "$QA" 'Do NOT re-report' && has "$QA" "$COND" && [[ "$(count "$QA" '[COMMIT_SHA]')" -ge 2 ]]; then
-  pass "the QA delegation states the exception and names the recorded SHA"
+if has "$QA" 'Do NOT re-report' && has "$QA" "$COND" && names_recorded_sha "$QA" && copies_key_verbatim "$QA"; then
+  pass "the QA delegation states the exception, the sha, and the verbatim copy"
 else
   fail "the QA delegation suppresses fixed items unconditionally"
+fi
+
+if [[ "$(count "$QA" '[COMMIT_SHA]')" -eq 1 ]]; then
+  pass "the QA exception carries no unbound [COMMIT_SHA]"
+else
+  fail "the QA exception carries a [COMMIT_SHA] nothing binds"
 fi
 
 if keeps_escalated_suppressed "$QA"; then
@@ -142,8 +172,8 @@ fi
 # A compliant reviewer obeys its skill whatever a delegation invites, so the
 # skill's rule is the one that decides.
 RRR="$(rr_rounds "$REVIEWER_SKILL")"
-if has "$RRR" 'not re-reported' && has "$RRR" "$COND" && has "$RRR" 'sha'; then
-  pass "reviewer § Re-Review Rounds states the exception and names the sha"
+if has "$RRR" 'not re-reported' && has "$RRR" "$COND" && names_recorded_sha "$RRR" && copies_key_verbatim "$RRR"; then
+  pass "reviewer § Re-Review Rounds states the exception, the sha, and the verbatim copy"
 else
   fail "reviewer § Re-Review Rounds suppresses resolved items unconditionally"
 fi
@@ -155,32 +185,48 @@ else
 fi
 
 # --- 6: dev-fix records each item into exactly one bucket, once -------------
-# The re-report path this change opens brings an item back for a second
-# disposition, so both writes may land on one `fixed_items` already lists
-# against a SHA that no longer fixes it. An append leaves that stale entry
-# standing beside the new record: § 8 then prints the item twice, or under
-# FIXED and ESCALATED at once, against a dead SHA.
-devfix_writes() { strip_comments "$1" | grep -E 'workflow-state (append|update) \[ISSUE_ID\]'; }
-fixed_write()   { grep -F '"commit"'  <<<"$(devfix_writes "$1")"; }
-escal_write()   { grep -F '"outcome"' <<<"$(devfix_writes "$1")"; }
+# An item comes back for a second disposition two ways: a re-reported fix that
+# did not hold, and an escalated item a later round fixes. Either way a bucket
+# still lists it against a dead sha, so each write clears the item from BOTH
+# buckets before appending its own. Clearing only the opposite bucket leaves
+# the item printed under FIXED and ESCALATED at once.
+# `|| true`, every one of them: a control that removes the write leaves grep
+# with no match, and an unguarded failure inside a command substitution ends
+# the run under `set -e` before the control can be judged.
+devfix_writes() { strip_comments "$1" | grep -E 'workflow-state (append|update) \[ISSUE_ID\]' || true; }
+fixed_write()   { grep -F '.fixed_items += '     <<<"$(devfix_writes "$1")" || true; }
+escal_write()   { grep -F '.escalated_items += ' <<<"$(devfix_writes "$1")" || true; }
 
-# The drop is keyed on both fields, the same key § 8 dedupes on.
+# Both buckets cleared, keyed on both fields — the same key § 8 dedupes on.
 drops_stale() {
-  has "$1" 'fixed_items' && has "$1" '\.location' && has "$1" '\.description' && has "$1" 'map\(select\('
+  has "$1" 'fixed_items = ' && has "$1" 'escalated_items = ' \
+    && has "$1" '\.location' && has "$1" '\.description' && has "$1" 'map\(select\('
 }
+
+# The entry crosses into jq through a file. Pasted into argv it breaks on the
+# text findings actually carry: a double quote makes the JSON argument
+# invalid, an apostrophe ends the shell word, and the failed write leaves the
+# stale entry standing with nothing recorded.
+binds_from_file() { has "$1" '--slurpfile item' && ! has "$1" '--arg'; }
 
 FW="$(fixed_write "$DEV_FIX_WF")"
 if [[ -n "$FW" ]] && has "$FW" 'workflow-state update' && drops_stale "$FW"; then
-  pass "the fixed_items write supersedes a stale entry in the same command"
+  pass "the fixed_items write clears the item from both buckets"
 else
-  fail "the fixed_items write appends beside a stale entry"
+  fail "the fixed_items write leaves a stale entry in one of the buckets"
 fi
 
 EW="$(escal_write "$DEV_FIX_WF")"
-if [[ -n "$EW" ]] && has "$EW" 'workflow-state update' && has "$EW" 'escalated_items' && drops_stale "$EW"; then
-  pass "the escalated_items write drops the superseded fixed_items entry"
+if [[ -n "$EW" ]] && has "$EW" 'workflow-state update' && drops_stale "$EW"; then
+  pass "the escalated_items write clears the item from both buckets"
 else
-  fail "the escalated_items write leaves the item in both buckets"
+  fail "the escalated_items write leaves a stale entry in one of the buckets"
+fi
+
+if [[ -n "$FW" ]] && [[ -n "$EW" ]] && binds_from_file "$FW" && binds_from_file "$EW"; then
+  pass "both writes bind the entry from a file and paste no finding text"
+else
+  fail "a write pastes the finding's own text into a shell word"
 fi
 
 if devfix_writes "$DEV_FIX_WF" | grep -qE 'append \[ISSUE_ID\] (fixed|escalated)_items'; then
@@ -211,27 +257,46 @@ plant() {
 }
 
 # The pre-KEN-632 shape: the exception cut back to a blanket rule.
-RR_BLANKET='s/re-report, unless you check a Fixed entry against the current diff and the defect is still there: report that one again, naming the \[COMMIT_SHA\] it is listed against, so the stale entry can be superseded[.] A Fixed entry you did not check, and every Escalated entry, stays suppressed[.]/re-report:/'
+RR_BLANKET='s/re-report, unless you check a Fixed entry against the current diff and the defect is still there: report that one again, copying that entry.s location and description verbatim and naming its recorded commit sha in your recommendation, so the stale entry can be superseded[.] A Fixed entry you did not check, and every Escalated entry, stays suppressed[.]/re-report:/'
 if ! plant "$REVIEW_PR_WF" rr-blanket.md "$RR_BLANKET"; then
   fail "re-review control planted nothing — its sed program matched no text"
 else
   C="$(rereview_block "$CTRL")"
   if has "$C" "$COND"; then
     fail "lint MISSED a re-review delegation reverted to blanket suppression"
-  elif [[ "$(count "$C" '[COMMIT_SHA]')" -ge 2 ]]; then
-    fail "lint MISSED the loss of the recorded-SHA citation"
+  elif names_recorded_sha "$C" || copies_key_verbatim "$C"; then
+    fail "lint MISSED the loss of the sha citation or the verbatim copy"
   else
     pass "lint flags a re-review delegation reverted to blanket suppression"
   fi
 fi
 
 # The exception kept, but with nothing to check the re-report against.
-if ! plant "$REVIEW_PR_WF" rr-nosha.md 's/, naming the \[COMMIT_SHA\] it is listed against, so the stale entry can be superseded//'; then
+if ! plant "$REVIEW_PR_WF" rr-nosha.md 's/ and naming its recorded commit sha in your recommendation//'; then
   fail "sha control planted nothing — its sed program matched no text"
-elif [[ "$(count "$(rereview_block "$CTRL")" '[COMMIT_SHA]')" -ge 2 ]]; then
-  fail "lint MISSED an exception that cites no recorded SHA"
+elif names_recorded_sha "$(rereview_block "$CTRL")"; then
+  fail "lint MISSED an exception that cites no recorded sha"
 else
-  pass "lint flags an exception that cites no recorded SHA"
+  pass "lint flags an exception that cites no recorded sha"
+fi
+
+# The exception kept, but the reviewer left free to re-author the two fields
+# the drop keys on. The write then records beside the stale entry.
+if ! plant "$REVIEW_PR_WF" rr-reauthored.md "s/copying that entry's location and description verbatim and naming/describing what you found and naming/"; then
+  fail "verbatim control planted nothing — its sed program matched no text"
+elif copies_key_verbatim "$(rereview_block "$CTRL")"; then
+  fail "lint MISSED an exception that lets the key fields be re-authored"
+else
+  pass "lint flags an exception that lets the key fields be re-authored"
+fi
+
+# The sha carried as a per-item token in a sentence no loop fills.
+if ! plant "$REVIEW_PR_WF" rr-placeholder.md 's/naming its recorded commit sha in your recommendation/naming the [COMMIT_SHA] it is listed against/'; then
+  fail "placeholder control planted nothing — its sed program matched no text"
+elif [[ "$(count "$(rereview_block "$CTRL")" '[COMMIT_SHA]')" -eq 1 ]]; then
+  fail "lint MISSED an unbound [COMMIT_SHA] in the exception"
+else
+  pass "lint flags an unbound [COMMIT_SHA] in the exception"
 fi
 
 # The exception widened over Escalated entries too.
@@ -243,18 +308,18 @@ else
   pass "lint flags an exception widened past the Fixed list"
 fi
 
-if ! plant "$REVIEW_PR_WF" qa-blanket.md 's/items, unless you check a fixed item against the current diff and the defect is still there — then report it again, naming the \[COMMIT_SHA\] it is listed against[.] A fixed item you did not check, and every escalated item, stays suppressed[.] Otherwise report/items. Report/'; then
+if ! plant "$REVIEW_PR_WF" qa-blanket.md 's/items, unless you check a fixed item against the current diff and the defect is still there — then report it again, copying that entry.s location and description verbatim and naming its recorded commit sha in your recommendation[.] A fixed item you did not check, and every escalated item, stays suppressed[.] Otherwise report/items. Report/'; then
   fail "QA control planted nothing — its sed program matched no text"
 else
   C="$(qa_block "$CTRL")"
-  if has "$C" "$COND" || [[ "$(count "$C" '[COMMIT_SHA]')" -ge 2 ]]; then
+  if has "$C" "$COND" || names_recorded_sha "$C" || copies_key_verbatim "$C"; then
     fail "lint MISSED a QA delegation reverted to blanket suppression"
   else
     pass "lint flags a QA delegation reverted to blanket suppression"
   fi
 fi
 
-if ! plant "$REVIEWER_SKILL" reviewer-blanket.md 's/re-reported, unless you check a Fixed item against the current diff and the defect is still there — report that one again, naming the commit sha it is listed against so the claim is checkable[.] A Fixed item you did not check, and every Escalated item, stays suppressed[.]/re-reported./'; then
+if ! plant "$REVIEWER_SKILL" reviewer-blanket.md 's/re-reported, unless you check a Fixed item against the current diff and the defect is still there — report that one again, copying the listed entry.s location and description verbatim and naming its recorded commit sha in your recommendation, which is what makes the claim checkable and lets the orchestrator supersede the stale entry[.] A Fixed item you did not check, and every Escalated item, stays suppressed[.]/re-reported./'; then
   fail "reviewer control planted nothing — its sed program matched no text"
 else
   C="$(rr_rounds "$CTRL")"
@@ -280,23 +345,21 @@ else
   pass "lint flags a re-review rule commented out from above its heading"
 fi
 
-# The pre-KEN-632 escalate: recorded beside its stale fixed_items entry.
-if ! plant "$DEV_FIX_WF" df-append.md "s|workflow-state update \[ISSUE_ID\] --argjson item '\(.*\"outcome\".*\)' '.*'|workflow-state append [ISSUE_ID] escalated_items '\1'|"; then
+# The append shape: the entry recorded beside whatever already stands.
+if ! plant "$DEV_FIX_WF" df-append.md "s|workflow-state update \[ISSUE_ID\] --slurpfile item \(.*\) '.*escalated_items += .*'|workflow-state append [ISSUE_ID] escalated_items \\1|"; then
   fail "escalate control planted nothing — its sed program matched no text"
 else
   C="$(escal_write "$CTRL")"
   if [[ -n "$C" ]] && drops_stale "$C"; then
-    fail "lint MISSED an escalate that records without dropping the stale entry"
+    fail "lint MISSED an escalate that records without clearing the buckets"
   elif ! devfix_writes "$CTRL" | grep -qE 'append \[ISSUE_ID\] escalated_items'; then
     fail "escalate control planted no append — control is vacuous"
   else
-    pass "lint flags an escalate that records without dropping the stale entry"
+    pass "lint flags an escalate that records without clearing the buckets"
   fi
 fi
 
-# The same for the fixed_items record: a second entry against a live SHA while
-# the dead-SHA entry § 8 reads first still stands.
-if ! plant "$DEV_FIX_WF" df-fixed-append.md "s|workflow-state update \[ISSUE_ID\] --argjson item '\(.*\"commit\".*\)' '.*'|workflow-state append [ISSUE_ID] fixed_items '\1'|"; then
+if ! plant "$DEV_FIX_WF" df-fixed-append.md "s|workflow-state update \[ISSUE_ID\] --slurpfile item \(.*\) '.*fixed_items += .*'|workflow-state append [ISSUE_ID] fixed_items \\1|"; then
   fail "fixed control planted nothing — its sed program matched no text"
 else
   C="$(fixed_write "$CTRL")"
@@ -307,9 +370,19 @@ else
   fi
 fi
 
+# The one-directional shape: the fixed write clears its own bucket and leaves
+# a matching escalated entry standing. § 8 then prints the item under both.
+if ! plant "$DEV_FIX_WF" df-oneway.md 's/ | .escalated_items = ((.escalated_items \/\/ \[\]) | map(select(.location != $e.location or .description != $e.description))) | .fixed_items += \[$e\]/ | .fixed_items += [$e]/'; then
+  fail "one-way control planted nothing — its sed program matched no text"
+elif drops_stale "$(fixed_write "$CTRL")"; then
+  fail "lint MISSED a fixed write that never clears escalated_items"
+else
+  pass "lint flags a fixed write that never clears escalated_items"
+fi
+
 # The drop present but keyed on one field: two findings at the same location
 # collide, or the same finding re-worded survives as a duplicate.
-if ! plant "$DEV_FIX_WF" df-halfkey.md 's/select(\.location != $item\.location or \.description != $item\.description)/select(.location != $item.location)/g'; then
+if ! plant "$DEV_FIX_WF" df-halfkey.md 's/select(\.location != $e\.location or \.description != $e\.description)/select(.location != $e.location)/g'; then
   fail "half-key control planted nothing — its sed program matched no text"
 elif drops_stale "$(escal_write "$CTRL")"; then
   fail "lint MISSED a drop keyed on one field"
@@ -317,8 +390,17 @@ else
   pass "lint flags a drop keyed on one field"
 fi
 
+# The entry pasted into argv instead of bound from its file.
+if ! plant "$DEV_FIX_WF" df-pasted.md "s|--slurpfile item tmp/state-item-\[ISSUE_ID\].json|--arg desc '[DESC]' --arg loc '[LOC]'|g"; then
+  fail "pasted-entry control planted nothing — its sed program matched no text"
+elif binds_from_file "$(escal_write "$CTRL")"; then
+  fail "lint MISSED an entry pasted into a shell word"
+else
+  pass "lint flags an entry pasted into a shell word"
+fi
+
 SCRATCH_SCHEMA="$TMP_ROOT/schema.md"
-sed 's/ An item is never in both buckets: a write that escalates one `fixed_items` already lists supersedes that entry and drops it in the same command//' "$STATE_SCHEMA" > "$SCRATCH_SCHEMA"
+sed 's/ An item is never in both buckets: every dev-fix outcome write clears the item from both, matched on (location, description), before appending its own entry//' "$STATE_SCHEMA" > "$SCRATCH_SCHEMA"
 if cmp -s "$SCRATCH_SCHEMA" "$STATE_SCHEMA"; then
   fail "schema control planted nothing — its sed program matched no text"
 elif grep -qE 'never in both buckets' "$SCRATCH_SCHEMA"; then
