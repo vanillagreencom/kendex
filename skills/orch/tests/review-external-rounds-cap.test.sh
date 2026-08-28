@@ -214,18 +214,27 @@ fi
 # `items` is defined for the rest of the section. Restating it downstream is
 # the shape that let an ordinary Fixing item ride along on an exempt round:
 # three carriers to keep in step, and the template the last to know.
-if grep -q -F 'eligible for a fix' <<<"$rule"; then
-  ok "the cap states which items may still be fixed"
+if grep -q -F 'The **fix set** is what the rest of this section groups, records and delegates' <<<"$rule"; then
+  ok "the fix set is named once, where the cap narrows it"
 else
-  bad "the cap does not state an eligibility rule"
+  bad "the cap does not name the set the rest of the section carries"
 fi
-# Everything after the rule works on `items` unconditionally. A qualifier
-# down here means the rule was stated too late for the template to inherit.
+# Every carrier refers to that set. A carrier that re-derives it — by
+# repeating the Fixing predicate or by asking whether this is the cap — is a
+# copy of the rule to keep in step, and the template was always the last to
+# know. Three carriers today; a fourth inherits the rule for free.
 downstream() { cap_site "$1" | awk '/^Ensure the worktree exists/ { on = 1 } on'; }
-if grep -q -i -F 'at the cap' <<<"$(downstream "$COMMENTS_WF")"; then
-  bad "§ 6.1 re-decides eligibility after the rule" "$(grep -n -i -F 'at the cap' <<<"$(downstream "$COMMENTS_WF")")"
+DOWN="$(downstream "$COMMENTS_WF")"
+if grep -q -i -F 'at the cap' <<<"$DOWN" || grep -q -F 'marked "Fixing"' <<<"$DOWN"; then
+  bad "a carrier re-derives the fix set instead of referring to it" "$(grep -n -iE 'at the cap|marked "Fixing"' <<<"$DOWN")"
 else
-  ok "nothing downstream of the rule reclassifies items at the cap"
+  ok "no carrier re-derives the fix set"
+fi
+carriers="$(grep -c -F 'fix set' <<<"$DOWN")"
+if [[ "$carriers" -ge 3 ]]; then
+  ok "the grouping, the round record and the template each name the fix set ($carriers)"
+else
+  bad "only $carriers carrier(s) refer to the fix set by name"
 fi
 
 # One exception, one definition. finding-disposition is what a reviewer reads
@@ -374,7 +383,7 @@ else
 fi
 
 CTRL="$TMP_ROOT/comments-exception.md"
-if ! plant "$CTRL" "$COMMENTS_WF" 's/ — a defect this diff itself introduces or arms —//'; then
+if ! plant "$CTRL" "$COMMENTS_WF" 's/ — a defect this diff itself introduces or arms//'; then
   bad "exception control planted nothing — its sed program matched no text"
 elif grep -q -F "$EXCEPTION" <<<"$(cap_rule "$CTRL")"; then
   bad "the check MISSED a cap rule that dropped the introduced-defect exception"
@@ -517,14 +526,15 @@ else
   bad "the check MISSED § 6.3 routing a capped late thread away"
 fi
 
-# Eligibility re-decided at the delegation template instead of inherited.
+# The template re-deriving the set from the Fixing predicate, which is what
+# left it one edit behind the cap rule.
 CTRL="$TMP_ROOT/comments-set.md"
-if ! plant "$CTRL" "$COMMENTS_WF" 's/\[For each item marked "Fixing":\]/[For each item marked "Fixing" — at the cap, only the exempt ones:]/'; then
-  bad "downstream-branch control planted nothing — its sed program matched no text"
-elif grep -q -i -F 'at the cap' <<<"$(downstream "$CTRL")"; then
-  ok "the check flags eligibility re-decided at the delegation template"
+if ! plant "$CTRL" "$COMMENTS_WF" 's/\[For each item in the fix set:\]/[For each item marked "Fixing":]/'; then
+  bad "carrier control planted nothing — its sed program matched no text"
+elif grep -q -F 'marked "Fixing"' <<<"$(downstream "$CTRL")"; then
+  ok "the check flags a carrier re-deriving the fix set"
 else
-  bad "the check MISSED eligibility re-decided at the delegation template"
+  bad "the check MISSED a carrier re-deriving the fix set"
 fi
 
 CTRL="$TMP_ROOT/disposition.md"
