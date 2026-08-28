@@ -66,7 +66,11 @@ export function MineTab() {
     let current = true;
     void commands
       .mineSubmissionStates(
-        submissionsError === null ? "landed" : "failed",
+        submissionsError !== null
+          ? "failed"
+          : submissions === null
+            ? "unread"
+            : "landed",
         submissions ?? [],
         rows.flatMap((entry) =>
           entry.state === "ready"

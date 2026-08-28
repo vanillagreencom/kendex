@@ -2451,10 +2451,11 @@ export type SubmissionState = { kind: "not-submitted" } | { kind: "unknown" } | 
  * 
  *  `landed` means the rows in hand are the whole of what the server
  *  lists, so a repository missing from them is not submitted. `failed`
- *  means they are only what it last said, so a repository missing from
- *  them is unknown rather than unsubmitted.
+ *  means they are only what it last said, and `unread` that no read has
+ *  been made at all: before the first one, and after a credential ends
+ *  and takes its rows with it. Under neither is absence an answer.
  */
-export type SubmissionsRead = "landed" | "failed";
+export type SubmissionsRead = "landed" | "failed" | "unread";
 
 export type SubmitPreflight = {
 	row: MineRow,

@@ -47,13 +47,15 @@ pub enum SubmissionState {
 ///
 /// `landed` means the rows in hand are the whole of what the server
 /// lists, so a repository missing from them is not submitted. `failed`
-/// means they are only what it last said, so a repository missing from
-/// them is unknown rather than unsubmitted.
+/// means they are only what it last said, and `unread` that no read has
+/// been made at all: before the first one, and after a credential ends
+/// and takes its rows with it. Under neither is absence an answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum SubmissionsRead {
     Landed,
     Failed,
+    Unread,
 }
 
 /// One marketplace to answer about: where it is, and the GitHub
@@ -69,10 +71,9 @@ pub struct SubmissionAsk {
 ///
 /// A submission is keyed by the GitHub repository, so a marketplace with
 /// no remote has nothing the server could have listed and is not
-/// submitted whatever the read did. One the rows name is submitted, under
-/// the row the server gave, and that stands under a failed read too: it
-/// is what the server last said. Absence is an answer only while reads
-/// are landing.
+/// submitted whatever the read did. One the rows name is submitted under
+/// the row the server gave, and stays so under a read that did not land:
+/// it is what the server last said. Absence answers only where one did.
 pub fn states(
     read: SubmissionsRead,
     rows: &[SubmissionRow],
@@ -91,7 +92,7 @@ fn state_for(read: SubmissionsRead, rows: &[SubmissionRow], repo: Option<&str>) 
         Some(row) => SubmissionState::Submitted { row: row.clone() },
         None => match read {
             SubmissionsRead::Landed => SubmissionState::NotSubmitted,
-            SubmissionsRead::Failed => SubmissionState::Unknown,
+            SubmissionsRead::Failed | SubmissionsRead::Unread => SubmissionState::Unknown,
         },
     }
 }
@@ -162,6 +163,12 @@ mod tests {
         }
     }
 
+    const READS: [SubmissionsRead; 3] = [
+        SubmissionsRead::Landed,
+        SubmissionsRead::Failed,
+        SubmissionsRead::Unread,
+    ];
+
     fn asked(read: SubmissionsRead, rows: &[SubmissionRow], ask: SubmissionAsk) -> SubmissionState {
         let path = ask.path.clone();
         states(read, rows, &[ask])
@@ -174,7 +181,7 @@ mod tests {
     /// makes it less certain — the offer stays a first submit.
     #[test]
     fn a_marketplace_with_no_remote_is_not_submitted_however_the_read_went() {
-        for read in [SubmissionsRead::Landed, SubmissionsRead::Failed] {
+        for read in READS {
             assert_eq!(
                 asked(read, &[row("ada/team-skills")], ask("/mine", None)),
                 SubmissionState::NotSubmitted
@@ -187,7 +194,7 @@ mod tests {
     #[test]
     fn a_row_in_hand_answers_for_itself_under_a_failed_read() {
         let rows = [row("ada/team-skills")];
-        for read in [SubmissionsRead::Landed, SubmissionsRead::Failed] {
+        for read in READS {
             assert_eq!(
                 asked(read, &rows, ask("/mine", Some("ada/team-skills"))),
                 SubmissionState::Submitted {
@@ -197,20 +204,19 @@ mod tests {
         }
     }
 
-    /// The whole point of the two read outcomes: absence means not
-    /// submitted only while reads are landing. Reporting it as unsubmitted
-    /// under a failed read offers a first submit over work in review.
+    /// The whole point of the read outcomes: absence means not submitted
+    /// only where a read landed to say so. Under a read that failed or
+    /// one never made it offers a first submit over work in review.
     #[test]
-    fn absence_stops_being_an_answer_once_a_read_fails() {
+    fn absence_is_an_answer_only_where_a_read_landed() {
         let asking = || ask("/mine", Some("ada/team-skills"));
         assert_eq!(
             asked(SubmissionsRead::Landed, &[], asking()),
             SubmissionState::NotSubmitted
         );
-        assert_eq!(
-            asked(SubmissionsRead::Failed, &[], asking()),
-            SubmissionState::Unknown
-        );
+        for read in [SubmissionsRead::Failed, SubmissionsRead::Unread] {
+            assert_eq!(asked(read, &[], asking()), SubmissionState::Unknown);
+        }
     }
 
     /// Every marketplace asked about gets an answer, under the path it

@@ -230,6 +230,31 @@ describe("a submissions read the app could not make", () => {
     ]);
   });
 
+  // No rows and no failure is not a read that landed: it is the moment
+  // before the first read, and it is where a credential's end leaves the
+  // tab. Calling it landed puts the first-submit offer back on work that
+  // may be in review.
+  it("tells core no read has been made until one does", async () => {
+    useMineStore.setState({ rows: [MINE] });
+    vi.mocked(commands.mineSubmissions).mockResolvedValue(answered([ROW]));
+
+    await showing();
+
+    const first = vi.mocked(commands.mineSubmissionStates).mock.calls[0];
+    expect(first?.slice(0, 2)).toEqual(["unread", []]);
+  });
+
+  it("offers no first submit for a row core has not answered for", async () => {
+    useMineStore.setState({ rows: [MINE] });
+    vi.mocked(commands.mineSubmissions).mockResolvedValue(answered([ROW]));
+
+    const text = await showing({});
+
+    expect(text).toContain("Submit…");
+    expect(text).not.toContain("Submit to community…");
+    expect(text).not.toContain("Submission status unknown");
+  });
+
   it("draws an unknown state as unknown, claiming neither offer", async () => {
     useMineStore.setState({ rows: [MINE] });
     vi.mocked(commands.mineSubmissions).mockResolvedValue(

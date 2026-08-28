@@ -20,8 +20,8 @@ const SUBMISSION = {
   indexed_at: null,
 };
 
-/** The browser stand-in for core's ruling. Core owns it and is tested on
- *  it; this exists only because the mock bridge has no Rust behind it. */
+/** The browser stand-in for `kendex_core::registry::submit::states`,
+ *  which owns this ruling: the mock bridge has no Rust behind it. */
 const states = (
   read: SubmissionsRead,
   rows: SubmissionRow[],
@@ -35,7 +35,7 @@ const states = (
       if (listed) return [ask.path, { kind: "submitted", row: listed }];
       return [
         ask.path,
-        ask.repo && read === "failed"
+        ask.repo && read !== "landed"
           ? { kind: "unknown" }
           : { kind: "not-submitted" },
       ];

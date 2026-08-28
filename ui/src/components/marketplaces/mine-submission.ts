@@ -3,9 +3,9 @@
 // is generated from it and `mineSubmissionStates` answers with it.
 import type { SubmissionState } from "@/bindings";
 
-/** The answer a row has not been given yet, which is the screen before
- *  the first read lands. It shows what a marketplace nobody has submitted
- *  shows, and neither reads as a claim about the server. */
+/** The answer a row has not been given yet: core has been asked and has
+ *  not come back. It says nothing on the row, the way not-submitted does,
+ *  and claims nothing in the offer, the way unknown does. */
 type Unanswered = SubmissionState | null;
 
 /** What a submission state reads as on the row, or null where the row has
@@ -33,6 +33,6 @@ export const submissionLine = (state: Unanswered): string | null => {
  *  two is honest: one says the marketplace was never submitted, the other
  *  that it was. */
 export const submitLabel = (state: Unanswered): string => {
-  if (state?.kind === "submitted") return "Re-submit…";
-  return state?.kind === "unknown" ? "Submit…" : "Submit to community…";
+  if (state === null || state.kind === "unknown") return "Submit…";
+  return state.kind === "submitted" ? "Re-submit…" : "Submit to community…";
 };
