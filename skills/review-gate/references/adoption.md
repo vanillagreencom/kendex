@@ -50,19 +50,23 @@ a fix for on every repo that ships none.
 
 1. Copy `.agents/skills/review-gate/templates/review-bots.md` to the
    repository root as `review-bots.md`, VERBATIM. It carries no per-repo
-   values.
-2. Name it wherever the repo's bots read instructions — one line in
+   values, and its marked block arrives holding a placeholder.
+2. **Name** it wherever the repo's bots read instructions — one line in
    `.github/copilot-instructions.md`, in the repo's
-   `.github/instructions/*.instructions.md`, or in `AGENTS.md`. That line
-   is the whole wiring, and it is the consumer's one-time edit.
+   `.github/instructions/*.instructions.md`, or in `AGENTS.md`. A pointer
+   line scoped to review bots is what belongs in `AGENTS.md`; this file's
+   CONTENT is never inlined there, and agent sessions never load it as
+   working instructions. kendex's own line is the allowed form: `Review bots
+   follow review-bots.md`. That line is the whole wiring, and it is the
+   consumer's one-time edit.
 3. Put this repo's own accepted residuals inside the marked block
    (`<!-- BEGIN repo-specific accepted residuals -->`). Everything outside
    the block is the template.
-4. Re-copy the template's half whenever the engine changes. A re-copy
-   preserves the block and nothing else.
-
-The file is reviewer context, never agent-session working instructions —
-keep it out of `AGENTS.md` itself.
+4. **Repo-owned after the copy** — like the writer workflow, it is not an
+   ongoing sync target and `kendex refresh` never writes it. When the engine
+   changes, bring the text OUTSIDE the block back into step with the
+   template by hand. Do NOT copy the template over the file once the block
+   holds entries: that replaces them with the template's placeholder.
 
 ## Recommended CI shape — the fast/full split
 
@@ -245,7 +249,8 @@ multi-PR *background* reducer.
 - `.agents/skills/review-gate/scripts/validate.sh` exits 0 from the repo
   root.
 - The consumer's vendored-copy drift check passes.
-- The repo's `review-bots.md` differs from
+- By hand — no script reads it, and `validate.sh` does not: the repo's
+  `review-bots.md` differs from
   `.agents/skills/review-gate/templates/review-bots.md` only inside the
   marked block.
 - The first PURE re-vendor PR after adoption carries a trusted non-author

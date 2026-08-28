@@ -11,8 +11,14 @@
 #
 # The two files are one artifact outside ONE marked block, which is the
 # consumer's own half: the strip drops that block from both sides and compares
-# the rest byte-for-byte. A consumer checkout has no root copy and gets the
-# template's own structural assertions only.
+# the rest byte-for-byte.
+#
+# WHICH REPO IS RUNNING THIS decides whether a missing root copy is a failure.
+# The repo carrying this skill's catalog source ships the template, and its
+# root copy is the only thing holding the template to current engine
+# semantics — missing there is a FAIL, under either spelling of the skill root.
+# A consumer gets the same drift comparison once adoption has placed its root
+# copy, and the structural assertions alone before that.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -42,6 +48,22 @@ strip_block() { # FILE
 line_of() { grep -nFx -- "$2" "$1" | cut -d: -f1; }
 count_of() { grep -cFx -- "$2" "$1" || true; }
 
+# Every engine path the guidance sends a bot to, repository-relative to the
+# installed skill. Prose ends a sentence right after a path, so a trailing
+# separator is not part of the name.
+refs_of() { # FILE
+  grep -oE '\.agents/skills/review-gate/[A-Za-z0-9._/-]+' "$1" |
+    sed -e 's#^\.agents/skills/review-gate/##' -e 's/[.,]$//' | sort -u
+}
+
+unresolved_refs() { # FILE, SKILL-ROOT
+  local rel
+  while IFS= read -r rel; do
+    [[ -n "$rel" ]] || continue
+    [[ -e "$2/$rel" ]] || printf '%s\n' "$rel"
+  done < <(refs_of "$1")
+}
+
 # ------------------------------------------------------------- the copies ---
 
 TEMPLATE="$SKILL_ROOT/templates/review-bots.md"
@@ -49,15 +71,24 @@ TEMPLATE="$SKILL_ROOT/templates/review-bots.md"
 # Walk up to the enclosing repo: this skill sits at skills/review-gate/ in the
 # catalog and at .agents/skills/review-gate/ in a consumer, so a fixed ../../
 # resolves to two different places.
-ADOPTED=""
+REPO_ROOT=""
 _dir="$SKILL_ROOT"
 while [[ "$_dir" != "/" ]]; do
   if [[ -e "$_dir/.git" || -d "$_dir/.github" ]]; then
-    ADOPTED="$_dir/review-bots.md"
+    REPO_ROOT="$_dir"
     break
   fi
   _dir="$(dirname "$_dir")"
 done
+
+ADOPTED=""
+[[ -n "$REPO_ROOT" ]] && ADOPTED="$REPO_ROOT/review-bots.md"
+
+# The enclosing repo carries this skill's catalog source, so it is the repo
+# that SHIPS the template — true whether this copy is the catalog tree or the
+# render beside it, and false in any consumer.
+OWNS_ENGINE=0
+[[ -n "$REPO_ROOT" && -f "$REPO_ROOT/skills/review-gate/templates/review-bots.md" ]] && OWNS_ENGINE=1
 
 echo "=== structure ==="
 
@@ -70,8 +101,10 @@ else
 fi
 if [[ -n "$ADOPTED" && -f "$ADOPTED" ]]; then
   FILES+=("$ADOPTED"); LABELS+=("repo copy")
+elif [[ "$OWNS_ENGINE" -eq 1 ]]; then
+  fail "no review-bots.md at ${ADOPTED:-<no enclosing repo root>} — the repo shipping this template must carry the copy that holds it to the engine"
 else
-  printf '  note  %s\n' "no root review-bots.md at ${ADOPTED:-<no enclosing repo root>} — asserting the template only"
+  printf '  note  %s\n' "no root review-bots.md at ${ADOPTED:-<no enclosing repo root>} — a checkout before adoption; asserting the template only"
 fi
 
 for i in "${!FILES[@]}"; do
@@ -92,22 +125,64 @@ for i in "${!FILES[@]}"; do
   fi
 done
 
+echo "=== every engine path the guidance names resolves ==="
+
+for i in "${!FILES[@]}"; do
+  f="${FILES[$i]}"; tag="${LABELS[$i]}"
+  missing="$(unresolved_refs "$f" "$SKILL_ROOT")"
+  if [[ -z "$missing" ]]; then
+    pass "[$tag] every referenced engine path resolves"
+  else
+    fail "[$tag] the guidance sends bots to paths that do not exist:
+$(printf '%s\n' "$missing" | sed 's/^/        /')"
+  fi
+done
+
+# MUST-FAIL CONTROL: a renamed engine file must be reported. Materialize the
+# template's own reference set under a fake root, drop one, and read the arm's
+# answer — the real tree is never touched.
+if [[ -f "$TEMPLATE" ]]; then
+  REFROOT="$TMP_ROOT/refroot"
+  VICTIM=""
+  while IFS= read -r rel; do
+    [[ -n "$rel" ]] || continue
+    case "$rel" in
+      */) mkdir -p "$REFROOT/$rel" ;;
+      *) mkdir -p "$REFROOT/$(dirname "$rel")"; : >"$REFROOT/$rel"; [[ -n "$VICTIM" ]] || VICTIM="$rel" ;;
+    esac
+  done < <(refs_of "$TEMPLATE")
+
+  if [[ -z "$VICTIM" ]]; then
+    fail "control: the template names no engine FILE, so a rename could not be staged"
+  elif [[ -n "$(unresolved_refs "$TEMPLATE" "$REFROOT")" ]]; then
+    fail "control: the staged reference set does not resolve, so the rename below proves nothing"
+  else
+    mv "$REFROOT/$VICTIM" "$REFROOT/$VICTIM.renamed"
+    if [[ "$(unresolved_refs "$TEMPLATE" "$REFROOT")" == "$VICTIM" ]]; then
+      pass "control: renaming $VICTIM is reported, and nothing else is"
+    else
+      fail "control: renaming $VICTIM was not reported as the one unresolved path"
+    fi
+  fi
+fi
+
 echo "=== the repo copy is the template outside its own block ==="
 
 if [[ -n "$ADOPTED" && -f "$ADOPTED" && -f "$TEMPLATE" ]]; then
   if diff -u <(strip_block "$TEMPLATE") <(strip_block "$ADOPTED") >"$TMP_ROOT/drift.diff"; then
     pass "the repo copy carries the shipped template verbatim"
   else
-    fail "the repo copy has drifted from templates/review-bots.md — re-copy it, or move the change into the template
+    fail "the repo copy has drifted from templates/review-bots.md — bring them back into step by hand, taking the template as the source for everything outside the marked block
 $(sed 's/^/        /' "$TMP_ROOT/drift.diff" | head -20)"
   fi
 
-  # MUST-FAIL CONTROLS. The comparison is only worth its verdict if it
-  # rejects the drift it exists for and admits the edit it exists to allow.
+  # MUST-FAIL CONTROLS on the comparison itself. Both read the repo copy as
+  # their baseline, so a copy that has already drifted reports that once,
+  # above, instead of twice more here under the wrong cause.
   MUTATED="$TMP_ROOT/mutated.md"
 
   sed "s/^## Review economics$/## Review economics, reworded/" "$ADOPTED" >"$MUTATED"
-  if diff -q <(strip_block "$TEMPLATE") <(strip_block "$MUTATED") >/dev/null; then
+  if diff -q <(strip_block "$ADOPTED") <(strip_block "$MUTATED") >/dev/null; then
     fail "control: an edit OUTSIDE the block passed the comparison"
   else
     pass "control: an edit outside the block is reported as drift"
@@ -118,7 +193,7 @@ $(sed 's/^/        /' "$TMP_ROOT/drift.diff" | head -20)"
     $0 == e { skip = 0 }
     !skip
   ' "$ADOPTED" >"$MUTATED"
-  if diff -q <(strip_block "$TEMPLATE") <(strip_block "$MUTATED") >/dev/null; then
+  if diff -q <(strip_block "$ADOPTED") <(strip_block "$MUTATED") >/dev/null; then
     pass "control: an edit inside the block is the repo's own and passes"
   else
     fail "control: an edit INSIDE the block was reported as drift"

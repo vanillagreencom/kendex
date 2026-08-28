@@ -88,15 +88,20 @@ git add .agents/skills/review-gate
 cp .agents/skills/review-gate/templates/review-gate-writer.yml \
    .github/workflows/review-gate-writer.yml
 
-# 3. copy the reviewer guidance the bots read, VERBATIM — this repo's own
-#    accepted residuals go inside its marked block, nothing else moves
+# 3. copy the reviewer guidance the bots read — a FIRST adoption only. The
+#    file is repo-owned after this, and a later copy would overwrite the
+#    marked block this repo's own residuals go in.
 cp .agents/skills/review-gate/templates/review-bots.md review-bots.md
 
-# 4. seed the repo's settings from the shipped example, then edit the
+# 4. name that file wherever this repo's bots read instructions — the copy
+#    alone points no bot at it: references/adoption.md § Reviewer guidance
+$EDITOR .github/copilot-instructions.md
+
+# 5. seed the repo's settings from the shipped example, then edit the
 #    handful of values this repo actually decides (table below)
 $EDITOR kendex.settings.toml
 
-# 5. prove the install answers for itself
+# 6. prove the install answers for itself
 .agents/skills/review-gate/scripts/validate.sh
 ```
 

@@ -177,12 +177,24 @@ proposes a fix for on every repo that ships none.
 Consumers copy it to their repository root and name it wherever their bots
 read instructions. It carries no per-repo values, and one marked block —
 `<!-- BEGIN repo-specific accepted residuals -->` — is the consumer's own
-half, preserved across a re-copy.
+half. The copy is repo-owned, as the writer workflow is: nothing merges a
+later template into it, so a consumer brings the text outside its block back
+into step by hand, and copying the template over the file would overwrite
+the block.
 
 Verbatim equality is not available here, so the drift check lives where the
 engine does: `tests/review-bots-template.test.sh` strips that block from
 both sides and compares this repo's own root `review-bots.md` against the
-template byte-for-byte. Changing the engine's semantics means changing the
-template in the same commit, and the suite reds until the repo's own copy
-carries it. A consumer checkout has no root copy, and the suite asserts only
-the template's structure there.
+template byte-for-byte. It also asserts that every engine path the guidance
+sends a bot to resolves, so a rename cannot ship a dead pointer to every
+consumer that copied the template. Changing the engine's semantics means
+changing the template in the same commit, and the suite reds until the
+repo's own copy carries it.
+
+The suite discriminates by whether the enclosing repo carries this skill's
+catalog source. Here it does, so a missing root `review-bots.md` is a
+failure — under either spelling of the skill root, since the render beside
+the catalog sits in the same repo. A consumer that has run adoption's
+reviewer-guidance step carries its own root copy and gets the same drift
+comparison against it; a checkout with no root copy at all is a consumer
+before adoption, and gets the structural assertions alone.

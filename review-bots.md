@@ -1,13 +1,18 @@
 # Reviewer guidance for GitHub review bots
 
 Instructions for automated PR reviewers (Copilot code review, Codex, and
-any successor). This file is reviewer context only — agent sessions must
-not load it as working instructions, which is why it is not in `AGENTS.md`.
+any successor). This file is reviewer context only — agent sessions must not
+load it as working instructions, which is why its content is never inlined
+into `AGENTS.md`. A one-line pointer there, scoped to review bots, is how the
+bots that read `AGENTS.md` find this file.
 
-Everything outside the marked block at the end is the shipped `review-gate`
-template (`.agents/skills/review-gate/templates/review-bots.md`), copied
-verbatim: re-copy it when the engine changes, and keep this repo's own
-entries inside the block.
+Everything outside the marked block at the end came from the shipped
+`review-gate` template
+(`.agents/skills/review-gate/templates/review-bots.md`); this repo's own
+entries go inside the block. Repo-owned after the copy: when the engine
+changes, bring the text outside the block back into step with the template
+BY HAND. Copying the template over this file replaces the block with the
+template's placeholder.
 
 ## Review economics
 
@@ -47,9 +52,10 @@ noise:
   between two reads is corrected on the next convergence pass, at most
   15 minutes later. Do not propose locks for these windows.
 - **A final docs-only push may keep earlier review evidence.** Deliberate
-  wherever `REVIEW_GATE_CARRY_FORWARD` names the `docs` class; policy and
-  instruction files are excluded and always get a fresh review. Do not
-  flag it as a gate hole.
+  wherever `REVIEW_GATE_CARRY_FORWARD` names the `docs` class. Policy and
+  instruction files are excluded wherever `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`
+  names them, and then always get a fresh review. Do not flag the carry
+  itself as a gate hole.
 - **A gate success just before a push is not a fail-open.** The next
   convergence supersedes it, and the merge queue re-checks at admission.
 - **Threads arriving after merge-queue admission are procedural, not a

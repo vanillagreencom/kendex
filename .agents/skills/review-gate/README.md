@@ -55,10 +55,13 @@ those run in the kendex repo, on every change to the engine.
 `.agents/skills/review-gate/templates/review-bots.md` to your repository
 root, verbatim, and name that file wherever your bots read instructions
 (`.github/copilot-instructions.md`, `.github/instructions/`, `AGENTS.md`).
-It tells them the review economics of a repo pushed at agent speed and the
-gate's own settled trade-offs, so they stop proposing a fix for each one.
-Your repo's own settled trade-offs go inside its marked block; the rest is
-the template, re-copied when the engine changes.
+Naming it is a pointer line, not the content: the file is for your bots,
+never for agent sessions. It tells them the review economics of a repo
+pushed at agent speed and the gate's own settled trade-offs, so they stop
+proposing a fix for each one. Your repo's own settled trade-offs go inside
+its marked block, and the file is yours after the copy — when the engine
+changes, bring the text outside the block back into step with the template
+by hand. Copying the template over it again would replace your block.
 
 Wiring, rulesets, merge-queue settings, and what an adoption PR deletes:
 [references/adoption.md](references/adoption.md).
