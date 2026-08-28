@@ -1,24 +1,18 @@
-import { useEffect } from "react";
 import { Section, SettingRow } from "@/components/section";
 import { Button } from "@/components/ui/button";
-import { useAccountStore } from "@/stores/account";
+import { hasCredential, useAccountStore } from "@/stores/account";
 
 /** Settings → Account: the one place sign-in state lives. Signing in is
  * the device flow — a code, a browser tab, done; signing out kills every
  * credential from that sign-in on the very next request. */
 export function AccountSection() {
-  const signedIn = useAccountStore((s) => s.signedIn);
+  const signedIn = useAccountStore((s) => hasCredential(s.account));
   const signingIn = useAccountStore((s) => s.signingIn);
   const userCode = useAccountStore((s) => s.userCode);
   const error = useAccountStore((s) => s.error);
-  const load = useAccountStore((s) => s.load);
   const signIn = useAccountStore((s) => s.signIn);
   const cancelSignIn = useAccountStore((s) => s.cancelSignIn);
   const signOut = useAccountStore((s) => s.signOut);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   return (
     <Section title="Account">

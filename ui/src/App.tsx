@@ -22,6 +22,7 @@ import { ProjectsPage } from "@/pages/projects";
 import { SettingsPage } from "@/pages/settings";
 import { UnmanagedPage } from "@/pages/unmanaged";
 import { UpdatesPage } from "@/pages/updates";
+import { useAccountStore } from "@/stores/account";
 import { useAuditStore } from "@/stores/audit";
 import { useNavStore } from "@/stores/nav";
 import { useNoticeStore } from "@/stores/notice";
@@ -99,20 +100,24 @@ function useMouseNavigation() {
   }, [back, forward]);
 }
 
-function useScanTriggers() {
+/** The reads the app starts with. Every one of them is owned here so a
+ *  page that shows what they found subscribes instead of asking again. */
+export function useStartupLoads() {
   const refresh = useScanStore((s) => s.refresh);
   const auditRefresh = useAuditStore((s) => s.refresh);
   const updatesLoad = useUpdatesStore((s) => s.load);
   const load = useSettingsStore((s) => s.load);
   const noticeLoad = useNoticeStore((s) => s.load);
+  const accountLoad = useAccountStore((s) => s.load);
   useEffect(() => {
-    // Five independent reads, started together: the audit is the slow one
+    // Independent reads, started together: the audit is the slow one
     // (it scores every installed file), and chaining it behind the scan
     // meant the Library sat empty waiting on work it does not need.
     void load();
     void refresh();
     void auditRefresh();
     void updatesLoad();
+    void accountLoad();
     // The app's own release check, read once a session: the backend keeps
     // the answer and contacts the feed at most six-hourly, so a re-read on
     // every focus would tell the card nothing it does not already say.
@@ -132,12 +137,12 @@ function useScanTriggers() {
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [refresh, auditRefresh, updatesLoad, load, noticeLoad]);
+  }, [refresh, auditRefresh, updatesLoad, load, noticeLoad, accountLoad]);
 }
 
 export default function App() {
   useAppearance();
-  useScanTriggers();
+  useStartupLoads();
   useMouseNavigation();
   useZoomShortcuts();
   const page = useNavStore((s) => s.page);

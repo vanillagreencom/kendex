@@ -11,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useAccountStore } from "@/stores/account";
+import { hasCredential, useAccountStore } from "@/stores/account";
 
 /** The preflight checklist and the submit itself. The server has the last
  * word — push authority and visibility are its verdicts, and its refusal
@@ -27,13 +27,12 @@ export function MineSubmitDialog({
   onOpenChange: (open: boolean) => void;
   onSubmitted: () => void;
 }) {
-  const signedIn = useAccountStore((s) => s.signedIn);
+  const signedIn = useAccountStore((s) => hasCredential(s.account));
   const signingIn = useAccountStore((s) => s.signingIn);
   const userCode = useAccountStore((s) => s.userCode);
   const signIn = useAccountStore((s) => s.signIn);
   const cancelSignIn = useAccountStore((s) => s.cancelSignIn);
   const accountError = useAccountStore((s) => s.error);
-  const loadAccount = useAccountStore((s) => s.load);
   const [preflight, setPreflight] = useState<SubmitPreflight | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,12 +46,11 @@ export function MineSubmitDialog({
       cancelSignIn();
       return;
     }
-    void loadAccount();
     void commands.mineSubmitPreflight(path).then((answer) => {
       if (answer.status === "ok") setPreflight(answer.data);
       else setError(answer.error);
     });
-  }, [open, path, loadAccount, cancelSignIn]);
+  }, [open, path, cancelSignIn]);
 
   const submit = () => {
     if (!preflight?.candidate) return;

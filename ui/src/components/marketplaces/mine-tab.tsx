@@ -11,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useAccountStore } from "@/stores/account";
+import { hasCredential, useAccountStore } from "@/stores/account";
 import { useMineStore } from "@/stores/mine";
 import { MineCreateDialog } from "./mine-create-dialog";
 import { MineImportDialog } from "./mine-import-dialog";
@@ -30,15 +30,13 @@ export function MineTab() {
   const [doc, setDoc] = useState<string | null>(null);
   const [docOpen, setDocOpen] = useState(false);
   const [submitTarget, setSubmitTarget] = useState<string | null>(null);
-  const loadAccount = useAccountStore((s) => s.load);
   const loadSubmissions = useAccountStore((s) => s.loadSubmissions);
-  const signedIn = useAccountStore((s) => s.signedIn);
+  const signedIn = useAccountStore((s) => hasCredential(s.account));
   const submissions = useAccountStore((s) => s.submissions);
 
   useEffect(() => {
     void load();
-    void loadAccount();
-  }, [load, loadAccount]);
+  }, [load]);
 
   useEffect(() => {
     if (!signedIn) return;
