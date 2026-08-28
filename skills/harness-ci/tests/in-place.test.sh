@@ -218,4 +218,14 @@ mltbase="$(git -C "$mlt" rev-parse HEAD)"
 commit_paths "$mlt" "edit" .agents/skills/mine/SKILL.md
 assert_verdict "a multiline inline table degrades to the carve" false --repo "$mlt" --event push --base "$mltbase" --head HEAD
 
+# A symlinked manifest reads back as link text, not manifest content: it is
+# unclassifiable and carves.
+sym="$(new_repo symlinked)"
+printf 'schema = 6\n[skills.mine]\nsource = "in-place"\n' >"$sym/real.toml"
+ln -s real.toml "$sym/kendex.toml"
+commit_paths "$sym" "baseline" README.md
+symbase="$(git -C "$sym" rev-parse HEAD)"
+commit_paths "$sym" "edit" .agents/skills/mine/SKILL.md
+assert_verdict "a symlinked manifest carves" false --repo "$sym" --event push --base "$symbase" --head HEAD
+
 report in-place

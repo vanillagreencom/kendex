@@ -168,6 +168,9 @@ manifest_carves() { # IN-TREE PATH -> carve lines for one manifest, "*" on a fai
   # One that exists there but cannot be read proves nothing and carves.
   local manifest_content
   git_repo cat-file -e "$head:$1" 2>/dev/null || return 0
+  # git show hands back a symlink's target text, not the manifest it
+  # points at — unclassifiable, so it carves.
+  case "$(git_repo ls-tree "$head" -- "$1" 2>/dev/null)" in 120000*) echo "*"; return 0 ;; esac
   manifest_content="$(git_repo show "$head:$1" 2>/dev/null)" || { echo "*"; return 0; }
   # The line parser reads the spellings kendex writes and the common hand
   # edits; completeness is not load-bearing. Every line that could take
