@@ -144,16 +144,17 @@ pub(crate) fn member_decl(bundle: &ItemDecl) -> ItemDecl {
 ///
 /// A set carries one revision to everything in it, and that is the answer
 /// wherever the member has nothing else to read. A member the manifest
-/// declares does: a single-package update pins the declarations it holds
-/// still, so reading the set's pin onto a declared member wants one
-/// package at two revisions this pass invented, and a plan that refuses
-/// both writes nothing for a package nobody pinned. The declaration is
-/// what the person acted on, so it decides.
+/// declares reads its own declaration instead, and what the set brings to
+/// that reading is the revision the person wrote on the set — never the
+/// pin a single-package update invented to hold the set still. Weighed
+/// against the pin, one package is wanted at two revisions nobody chose,
+/// and a plan that refuses both writes nothing for a package nobody
+/// pinned.
 ///
-/// Only a revision this pass invented gives way. Where the person wrote
-/// one — on the set, on the member, or on both — the two stand as written
-/// and whatever they disagree about is theirs to reconcile, reported the
-/// way a whole-scope pass reports it.
+/// What the declaration brings is the revision the person wrote on it, and
+/// [`super::expansion::Planned`] keeps that where the pass pinned the
+/// declaration too. Where the two differ the disagreement is real, and it
+/// is stated in the revisions they wrote.
 fn carried_rev(
     manifest: &Manifest,
     held: Option<&HeldPins>,
@@ -162,19 +163,13 @@ fn carried_rev(
     kind: ItemKind,
     member: &str,
 ) -> Option<String> {
-    let Some(decl) = manifest.declared(kind).get(member) else {
+    if !manifest.declared(kind).contains_key(member) {
         return bundle_rev;
-    };
-    let set_pin_invented = held.is_some_and(|pins| pins.invented_bundle(bundle));
-    let member_pin_invented = held.is_some_and(|pins| pins.invented_item(kind, member));
-    let set_holds_a_chosen_rev = bundle_rev.is_some() && !set_pin_invented;
-    let member_holds_a_chosen_rev = decl.rev.is_some() && !member_pin_invented;
-    if set_holds_a_chosen_rev || member_holds_a_chosen_rev {
-        // A revision the person wrote is in play, so both sides stand as
-        // they wrote them — the set's without the pin this pass put on it.
-        return if set_pin_invented { None } else { bundle_rev };
     }
-    decl.rev.clone()
+    match held.is_some_and(|pins| pins.invented_bundle(bundle)) {
+        true => None,
+        false => bundle_rev,
+    }
 }
 
 /// The members of one set this plan can actually install, each with the

@@ -196,24 +196,44 @@ fn held_manifest(
     // in under. An entry a rebind left behind is an installation of a
     // package this declaration no longer is, and its edges lead to
     // declarations this update has no business unpinning.
-    for entry in lock.entries.values().filter(|entry| {
-        entry.kind == target.0
-            && entry.name == target.1
-            && reads_from
-                .as_ref()
-                .is_none_or(|source| &entry.source == source)
-    }) {
+    let installations: Vec<&LockEntry> = lock
+        .entries
+        .values()
+        .filter(|entry| {
+            entry.kind == target.0
+                && entry.name == target.1
+                && reads_from
+                    .as_ref()
+                    .is_none_or(|source| &entry.source == source)
+        })
+        .collect();
+    for entry in &installations {
         exempt.extend(owners_of(lock, entry, &mut BTreeSet::new()));
     }
     // A target with a declaration of its own reads that declaration, so the
-    // sets that also carry it are held still along with everything else —
-    // `bundles::carried_rev` lets the declaration decide what the member
-    // installs. A set left free instead takes its other
-    // members current as a side effect of an update nobody asked it for. A
-    // target with no declaration has only the set's revision to read, which
-    // has to resolve fresh for it to move at all.
+    // sets that carry the target itself are held still along with everything
+    // else — `bundles::carried_rev` lets the declaration decide what the
+    // member installs, and a set left free takes its other members current
+    // as a side effect of an update nobody asked it for. A target with no
+    // declaration has only the set's revision to read, which has to resolve
+    // fresh for it to move at all.
+    //
+    // Only the sets that carry it: one reached through a dependency parent
+    // owns that parent's revision, not this target's. Pinning it pins the
+    // parent, which then carries its commit onto the target while the
+    // target's own declaration reads fresh — and the update the person
+    // asked for reports a conflict instead of happening.
     if reads_from.is_some() {
-        exempt.retain(|owner| !matches!(owner, Owner::Bundle { .. }));
+        for entry in &installations {
+            for reason in &entry.reasons {
+                if let Reason::MemberOf { bundle } = reason {
+                    exempt.remove(&Owner::Bundle {
+                        name: bundle.name.clone(),
+                        source: bundle.source.clone(),
+                    });
+                }
+            }
+        }
     }
     let mut held = manifest.clone();
     let mut pins = HeldPins {
@@ -317,12 +337,21 @@ fn held_at(
     agreed
 }
 
-/// Whether this installation is here as a member of the named bundle — the
-/// entries whose recorded commits say where the bundle is held. Matched by
-/// source as well as name: a membership recorded against another catalog's
-/// set of the same name is not this declaration's evidence.
+/// Whether this installation is here as a member of the named bundle and
+/// nothing else — the entries whose recorded commits say where the bundle
+/// is held. Matched by source as well as name: a membership recorded
+/// against another catalog's set of the same name is not this
+/// declaration's evidence.
+///
+/// An installation the person also declared is not evidence either: its
+/// commit is the one its own declaration reads, and a single-package
+/// update moves that commit off the set's. Counted as the set's, the two
+/// read as members disagreeing, the set can be held at no commit at all,
+/// and its undeclared members come current as the side effect this hold
+/// exists to remove.
 fn member_of(entry: &LockEntry, bundle: &str, source: &str) -> bool {
-    entry.reasons.iter().any(
+    !entry.reasons.contains(&Reason::Requested)
+        && entry.reasons.iter().any(
         |reason| matches!(reason, Reason::MemberOf { bundle: of } if of.name == bundle && of.source == source),
     )
 }

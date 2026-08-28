@@ -58,6 +58,12 @@ pub const NO_PER_PACKAGE_UPDATE: &str = "has no per-package update — Pi extens
 pub(super) struct Planned {
     pub(super) decl: ItemDecl,
     pub(super) harnesses: Vec<HarnessId>,
+    /// The revision the person chose for this item, where `decl` reads a
+    /// pin this pass invented to hold the scope still. What a set carries
+    /// is weighed against this and never against the pin: two revisions
+    /// nobody wrote read as agreement, and a warning that names one names
+    /// a commit kendex made up.
+    chosen_rev: Option<String>,
 }
 
 #[derive(Default)]
@@ -115,7 +121,14 @@ impl Expansion {
     /// A declaration the user wrote: it installs as written, and it is here
     /// even when no tool can hold it — the plan says so rather than going
     /// quiet about a declaration that produced nothing.
-    fn declared(&mut self, kind: ItemKind, name: &str, decl: &ItemDecl, harnesses: Vec<HarnessId>) {
+    fn declared(
+        &mut self,
+        kind: ItemKind,
+        name: &str,
+        decl: &ItemDecl,
+        harnesses: Vec<HarnessId>,
+        chosen_rev: Option<String>,
+    ) {
         for harness in &harnesses {
             self.reasons
                 .entry((kind, name.to_owned(), *harness))
@@ -127,6 +140,7 @@ impl Expansion {
             Planned {
                 decl: decl.clone(),
                 harnesses,
+                chosen_rev,
             },
         );
     }
@@ -141,6 +155,12 @@ impl Expansion {
         harness: HarnessId,
         reason: Reason,
     ) -> bool {
+        // A set weighs its revision against the one the person chose for
+        // the item; every other derivation weighs it against the revision
+        // the item actually reads. What a dependency reads is its parent's
+        // own commit, invented pin included — KEN-765 is where that edge
+        // learns the difference.
+        let carried_by_a_set = matches!(reason, Reason::MemberOf { .. });
         let fresh = self
             .reasons
             .entry((kind, name.to_owned(), harness))
@@ -152,16 +172,21 @@ impl Expansion {
             .or_insert_with(|| Planned {
                 decl: decl.clone(),
                 harnesses: Vec::new(),
+                chosen_rev: decl.rev.clone(),
             });
+        let wanted_at = match carried_by_a_set {
+            true => &planned.chosen_rev,
+            false => &planned.decl.rev,
+        };
         // Two derivations pinning one item at different revisions cannot
         // both be honored — one filesystem identity exists. The kept one is
         // whichever got here first (deterministic: parents walk in map
         // order); the refused one is recorded so the plan can say so.
-        if planned.decl.source == decl.source && planned.decl.rev != decl.rev {
+        if planned.decl.source == decl.source && *wanted_at != decl.rev {
             self.rev_disagreements.push((
                 kind,
                 name.to_owned(),
-                planned.decl.rev.clone(),
+                wanted_at.clone(),
                 decl.rev.clone(),
             ));
         }
@@ -297,7 +322,11 @@ pub(super) fn expand(
     for kind in PLANNED_KINDS {
         for (name, decl) in manifest.declared(kind) {
             let harnesses = target_harnesses(decl, manifest, kind, scope);
-            expansion.declared(kind, name, decl, harnesses);
+            let chosen_rev = match held {
+                Some(pins) if pins.invented_item(kind, name) => None,
+                _ => decl.rev.clone(),
+            };
+            expansion.declared(kind, name, decl, harnesses, chosen_rev);
             // A removal is recorded so that nothing derives the item back on
             // its own. Declaring it by name is the plainest statement that it
             // is wanted, so it installs and the record sits there doing

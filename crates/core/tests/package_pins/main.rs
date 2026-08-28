@@ -389,6 +389,35 @@ fn two_parents_pinning_different_revs_of_one_dependency_change_nothing() {
     assert!(installed_body(&w, "helper").contains("Helper one."));
 }
 
+#[allow(clippy::unwrap_used)]
+fn fetch_mirrors(w: &World) {
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
+}
+
+#[allow(clippy::unwrap_used)]
+fn locked_commit(w: &World, name: &str) -> String {
+    let lock = load_lock(&lock_path(&w.env, &w.scope)).unwrap();
+    lock.entries[&entry_key(ItemKind::Skill, name, HarnessId::Claude)]
+        .source_commit
+        .clone()
+        .unwrap()
+}
+
+/// The manifest text as it sits on disk, and the revision a package is
+/// declared with there. A synthetic hold that reaches the file is a hold
+/// nobody chose: that package stops updating, forever and silently.
+#[allow(clippy::unwrap_used)]
+fn declared_rev(w: &World, name: &str) -> Option<String> {
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    loaded.declared(ItemKind::Skill)[name].rev.clone()
+}
+
+mod sets;
 mod single_update;
 mod validate;
 
