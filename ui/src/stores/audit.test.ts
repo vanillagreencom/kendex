@@ -536,6 +536,42 @@ describe("an audit that lands after a command it cannot answer for", () => {
     expect(useAuditStore.getState().views).toEqual([settled]);
   });
 
+  // Dropping the read is only half of it. The command installed its own
+  // scope and nothing re-read the rest, so a stamp left standing would hold
+  // the freshness window open over the very bytes the force was about — an
+  // editor save, say, with every score still quoting the state before it.
+  it("pays for the read it dropped instead of reusing the stamp", async () => {
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "ok",
+      data: [stale],
+    });
+    await useAuditStore.getState().refresh();
+    expect(useAuditStore.getState().auditedAt).not.toBeNull();
+
+    const audit = park<{ status: "ok"; data: AuditView[] }>();
+    vi.mocked(commands.auditAll).mockReturnValue(
+      audit.parked as ReturnType<typeof commands.auditAll>,
+    );
+    vi.mocked(commands.removeItem).mockResolvedValue({
+      status: "ok",
+      data: settled,
+    });
+    const forced = useAuditStore.getState().refresh({ force: true });
+    await useAuditStore.getState().removeItem(globalScope, "hook", "lint");
+    audit.land({ status: "ok", data: [stale] });
+    await forced;
+
+    const dropped = vi.mocked(commands.auditAll).mock.calls.length;
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "ok",
+      data: [settled],
+    });
+    // An ordinary visit, not another force: the window must not answer it.
+    await useAuditStore.getState().refresh();
+
+    expect(vi.mocked(commands.auditAll).mock.calls.length).toBe(dropped + 1);
+  });
+
   // The control: an audit nothing overtook is the answer, as it was.
   it("installs an audit that no command overtook", async () => {
     vi.mocked(commands.auditAll).mockResolvedValue({

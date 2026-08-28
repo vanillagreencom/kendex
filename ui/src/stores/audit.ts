@@ -19,7 +19,11 @@ interface AuditState extends ItemActions {
   /** The startup audit has already toasted its failure — suppresses repeat
    * toasts on every silent retry until one succeeds. */
   backgroundFailureAnnounced: boolean;
-  /** Unix ms of the last audit that came back clean; null until one has. */
+  /** Unix ms of the last audit that came back clean and still answers for
+   *  the whole machine; null until one has, and again once a reading was
+   *  dropped for having been overtaken — the next visit then pays for a
+   *  read rather than reusing one that cannot speak. Each scope's own
+   *  stamp survives that, and is what a row on screen is dated by. */
   auditedAt: number | null;
   /** When each scope's reading on screen was taken, keyed by scope. A scope
    *  the audit could not read keeps its old entry: what is on screen for it
@@ -62,9 +66,13 @@ export const useAuditStore = create<AuditState>((set, get) => {
       // Answered for a moment before something the reader did, so it
       // answers for nothing now — the failure arm included, since a read
       // that did not finish is not news about the state it left behind.
-      // `auditedAt` stays where it was, so the next visit pays for a read
-      // that can speak.
-      if (generation !== asked) return;
+      // The stamp goes with it: a command installs its own scope and
+      // nothing re-reads the rest, so a stamp left standing would hold the
+      // freshness window open over a machine this read cannot speak for.
+      if (generation !== asked) {
+        set({ auditedAt: null });
+        return;
+      }
       if (response.status === "ok") {
         const now = Date.now();
         set({
