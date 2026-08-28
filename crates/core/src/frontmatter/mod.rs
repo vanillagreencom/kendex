@@ -211,6 +211,12 @@ pub fn name_value_span(text: &str) -> Result<std::ops::Range<usize>, NameProblem
 pub struct Parsed {
     pub map: Map,
     pub warnings: Vec<String>,
+    /// Top-level lines that opened no entry, verbatim. A warning says the
+    /// same thing in prose; this says it in a form a reader can act on,
+    /// because "the key is absent" and "the key lost its colon" are the
+    /// same missing key to [`Map::get`] and different answers to anything
+    /// deciding what a package declares.
+    pub ignored: Vec<String>,
 }
 
 /// Parse frontmatter entry by entry: strict YAML wherever the value has
@@ -230,6 +236,7 @@ pub fn parse_tolerant(yaml: &str) -> Result<Parsed, String> {
             parsed
                 .warnings
                 .push(format!("frontmatter line without a key ignored: `{first}`"));
+            parsed.ignored.push(first.to_owned());
             continue;
         };
         let key = key.trim().to_owned();
@@ -332,67 +339,3 @@ pub use strict::parse;
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod name_span_tests {
-    use super::{NameProblem, name_value_span};
-
-    fn span_of(text: &str) -> Result<&str, NameProblem> {
-        name_value_span(text).map(|span| &text[span])
-    }
-
-    #[test]
-    fn finds_the_inline_value_and_only_it() {
-        assert_eq!(span_of("---\nname: gh\n---\nBody.\n"), Ok("gh"));
-        assert_eq!(span_of("---\nname : gh\n---\n"), Ok("gh"));
-        assert_eq!(span_of("---\nname:   gh  \n---\n"), Ok("gh"));
-        assert_eq!(span_of("---\r\nname: gh\r\n---\r\n"), Ok("gh"));
-        assert_eq!(span_of("---\nname: gh #edited\n...\n"), Ok("gh #edited"));
-        assert_eq!(span_of("---\nname: \"gh\"\n---\n"), Ok("\"gh\""));
-        assert_eq!(span_of("---\nname: 'gh'\n---\n"), Ok("'gh'"));
-        // A comment after a quoted value belongs to the line, not the
-        // value; an escaped quote does not close the scalar.
-        assert_eq!(span_of("---\nname: \"gh\" # package\n---\n"), Ok("\"gh\""));
-        assert_eq!(span_of("---\nname: 'it''s' # x\n---\n"), Ok("'it''s'"));
-        assert_eq!(
-            span_of("---\nname: \"a\\\"b\" # c\n---\n"),
-            Ok("\"a\\\"b\"")
-        );
-        // A comment-only or blank line after the entry is not a
-        // continuation of its value, indented or not.
-        assert_eq!(span_of("---\nname: gh\n  # note\n---\n"), Ok("gh"));
-        assert_eq!(span_of("---\nname: gh\n\ndesc: d\n---\n"), Ok("gh"));
-        // Not a top-level entry, and not the `name` key.
-        assert_eq!(
-            span_of("---\nmeta:\n  name: inner\nname: outer\n---\n"),
-            Ok("outer")
-        );
-        assert_eq!(
-            span_of("---\nnames: many\n---\n"),
-            Err(NameProblem::Missing { insert_at: 4 })
-        );
-    }
-
-    #[test]
-    fn refuses_what_is_not_one_scalar() {
-        assert_eq!(span_of("Body.\n"), Err(NameProblem::NoFrontmatter));
-        assert_eq!(
-            span_of("---\nname: a\nname: b\n---\n"),
-            Err(NameProblem::Twice)
-        );
-        for text in [
-            "---\nname: [copy]\n---\n",
-            "---\nname: |\n  gh\n---\n",
-            "---\nname: >\n  gh\n---\n",
-            "---\nname: &anchor gh\n---\n",
-            "---\nname: gh\n  continued\n---\n",
-            "---\nname: gh\n  # note\n  continued\n---\n",
-            "---\nname:\n---\n",
-            "---\nname: \"gh\n---\n",
-            "---\nname: \"gh\" trailing\n---\n",
-            "---\nname: \"gh\"#glued\n---\n",
-        ] {
-            assert_eq!(span_of(text), Err(NameProblem::NotAScalar), "{text:?}");
-        }
-    }
-}

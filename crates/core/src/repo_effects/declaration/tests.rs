@@ -47,6 +47,10 @@ fn an_unreadable_declaration_is_not_an_absent_one() {
         // Frontmatter that opens and never closes is frontmatter kendex
         // could not read, whatever it says.
         "---\nname: x\nrepo-effects:\n  summary: s\n  uninstaller: scripts/off\nbody\n",
+        // The key lost its colon, so the whole block was ignored as a line
+        // carrying no key. Nothing else in the frontmatter fails, and the
+        // package still has the uninstaller it declared.
+        "---\nname: x\nrepo-effects\n  summary: s\n  uninstaller: scripts/off\n---\nbody\n",
     ];
     for text in unreadable {
         assert_eq!(

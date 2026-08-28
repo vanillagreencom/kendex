@@ -80,7 +80,16 @@ pub fn declaration(skill_md: &str) -> Declaration {
         return Declaration::Unreadable;
     };
     let Some(value) = parsed.map.get(KEY) else {
-        return Declaration::Absent;
+        // A top-level line carrying no colon opens no entry at all: it is
+        // dropped whole, warned about, and the block indented under it goes
+        // with it. So `repo-effects:` typed without its colon reaches here
+        // looking exactly like a package that declares nothing, while the
+        // uninstaller it named is still on disk under armed hooks. Ask what
+        // the parser said it skipped rather than reading the text again.
+        return match parsed.ignored.iter().any(|line| names_key(line)) {
+            true => Declaration::Unreadable,
+            false => Declaration::Absent,
+        };
     };
     let Value::Map(map) = value else {
         return Declaration::Unreadable;
@@ -105,6 +114,16 @@ pub fn declared(skill_md: &str) -> Option<RepoEffects> {
         Declaration::Effects(effects) => Some(effects),
         Declaration::Absent | Declaration::Unreadable => None,
     }
+}
+
+/// Whether a line the parser skipped is this declaration's key, mistyped.
+///
+/// The first word, because that is as much as the line has: it opened no
+/// entry, so there is no value to weigh — anything starting `repo-effects`
+/// and going on without a colon is the key written wrong, never a package
+/// with nothing to declare.
+fn names_key(line: &str) -> bool {
+    line.split_whitespace().next() == Some(KEY)
 }
 
 /// The block's fields, or `None` where any one of them will not read.

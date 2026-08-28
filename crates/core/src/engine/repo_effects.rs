@@ -258,15 +258,20 @@ fn installed_tree(
     before: &crate::lock::Lock,
     name: &str,
 ) -> Result<Option<Installed>> {
-    let canonical = crate::harness::canonical_name(name);
     let mut candidates = vec![skill_canonical(env, scope, name)];
     for entry in before
         .entries
         .values()
         .filter(|entry| entry.kind == ItemKind::Skill && entry.name == name)
     {
+        // The name a harness's own directory holds is that harness's, not
+        // the shared tree's: `rendered_name` joins a namespaced name with
+        // the separator this tool will load, which is a hyphen wherever
+        // names must be lower-kebab. Probing every directory under the
+        // canonical spelling found nothing for exactly those installs.
+        let rendered = crate::harness::rendered_name(entry.harness, name);
         for dir in read_dirs(env, scope, entry.harness, ItemKind::Skill) {
-            candidates.push(dir.join(&canonical));
+            candidates.push(dir.join(&rendered));
         }
     }
     for root in candidates {
@@ -285,82 +290,4 @@ fn installed_tree(
 }
 
 #[cfg(all(test, unix))]
-mod tests {
-    use std::fs;
-    use std::os::unix::fs::PermissionsExt;
-
-    use super::*;
-    use crate::env::FakeOs;
-
-    /// A switched-off installation keeps its declaration under the
-    /// `.disabled` name, and it is the same declaration: the removal that
-    /// finds it is the one that runs the uninstaller before the scripts go.
-    #[test]
-    #[allow(clippy::unwrap_used)]
-    fn a_switched_off_installation_still_declares_what_it_armed() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = tmp.path().to_path_buf();
-        let env = Env::fake(&home, FakeOs::Linux);
-        let root = home.join("dev/app");
-        let scope = Scope::Project { root: root.clone() };
-        let lock = crate::lock::Lock::default();
-
-        let tree = root.join(".agents/skills/armer");
-        fs::create_dir_all(&tree).unwrap();
-        fs::write(
-            tree.join("SKILL.md.disabled"),
-            "---\nname: armer\n---\nBody.\n",
-        )
-        .unwrap();
-
-        let found = installed_tree(&env, &scope, &lock, "armer").unwrap();
-        let found = found.expect("the disabled declaration was read as an absent one");
-        assert_eq!(found.root, tree);
-        assert_eq!(found.declaration, tree.join("SKILL.md.disabled"));
-        assert!(found.text.contains("name: armer"), "{}", found.text);
-    }
-
-    /// A candidate with no `SKILL.md` is a candidate to move past; a
-    /// candidate whose `SKILL.md` will not read is the end of the search.
-    ///
-    /// Swallowing the read spelled the second case as the first, and the
-    /// caller reads that as "this package declares nothing" — which is how
-    /// a removal takes a package's scripts away with its hook shims still
-    /// delegating to them. The lock is empty, so the canonical tree is the
-    /// only candidate and the answer is about the read, nothing else.
-    #[test]
-    #[allow(clippy::unwrap_used)]
-    fn an_unreadable_declaration_is_an_error_not_an_absent_one() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = tmp.path().to_path_buf();
-        let env = Env::fake(&home, FakeOs::Linux);
-        let root = home.join("dev/app");
-        let scope = Scope::Project { root: root.clone() };
-        let lock = crate::lock::Lock::default();
-
-        assert!(
-            installed_tree(&env, &scope, &lock, "armer")
-                .unwrap()
-                .is_none(),
-            "a tree that is not there declares nothing"
-        );
-
-        let tree = root.join(".agents/skills/armer");
-        fs::create_dir_all(&tree).unwrap();
-        let declaration = tree.join("SKILL.md");
-        fs::write(&declaration, "---\nname: armer\n---\nBody.\n").unwrap();
-        let readable = installed_tree(&env, &scope, &lock, "armer").unwrap();
-        assert_eq!(readable.map(|found| found.root), Some(tree));
-
-        fs::set_permissions(&declaration, fs::Permissions::from_mode(0o000)).unwrap();
-        // Root reads a mode-000 file, so there is no unreadable file to make.
-        if fs::read_to_string(&declaration).is_ok() {
-            return;
-        }
-        let err = installed_tree(&env, &scope, &lock, "armer").unwrap_err();
-        assert!(
-            err.to_string().contains("SKILL.md"),
-            "the error did not name the file it could not read: {err}"
-        );
-    }
-}
+mod tests;
