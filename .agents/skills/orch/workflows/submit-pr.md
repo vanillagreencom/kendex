@@ -147,13 +147,13 @@ The nested workflow already counted its own pass: `pr_comment_review.iterations`
 
 Do not wait for a bot re-review round — late comments are caught by the § 4 gate, the § 6.1 gate-3 check, or queue-wait's late-findings guard (merge-pr § 5, verdict `dequeued`).
 
-Issues created during triage need implementing before merge, bounded at two re-submit cycles:
+The **re-submit set** is the issues this session filed for work the cap did not deny. A filing that stood in for a fix the cap refused — one made at or past `REVIEW_MAX_EXTERNAL_ROUNDS`, or deferred rather than fixed — is recorded in `pr_comment_review.issues_created` and reported in the PR body, and never enters the set: implementing it here is the fix the cap refused, one step later. The re-submit set needs implementing before merge, bounded at two re-submit cycles:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.submit_cycles // 0'
 ```
 
-At 2 or more → § 3.2 with the note "max re-submit cycles reached, created issues may need manual implementation". Otherwise increment `submit_cycles`, implement via `⤵ workflows/dev-start.md § 1-4`, review via `⤵ workflows/review-pr.md § 1-9` (both managed, same `worktree` and `issue_id`), then re-enter § 2 to push and update the PR body with the new `Closes` lines.
+At 2 or more → § 3.2 with the note "max re-submit cycles reached, the re-submit set may need manual implementation". Otherwise increment `submit_cycles`, implement via `⤵ workflows/dev-start.md § 1-4`, review via `⤵ workflows/review-pr.md § 1-9` (both managed, same `worktree` and `issue_id`), then re-enter § 2 to push and update the PR body with the new `Closes` lines.
 
 ### 3.2 Golden Baselines
 

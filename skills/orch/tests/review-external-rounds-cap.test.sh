@@ -323,6 +323,24 @@ else
   bad "a path restarts the wait outside the Restart check" "total=$total_restarts inside=$inside_restarts"
 fi
 
+# The cap denies a fix; the filing bar still files what clears it. If submit-pr
+# then implements every issue triage created, the denied fix lands anyway one
+# step later, through the issue path. The re-submit set is defined to exclude
+# those filings, so § 3 has nothing to filter.
+resubmit="$(grep -F 'The **re-submit set**' "$SUBMIT_WF")"
+if [[ -z "$resubmit" ]]; then
+  bad "submit-pr does not name the re-submit set"
+elif grep -q -F "$SETTING" <<<"$resubmit" && grep -q -F 'never enters the set' <<<"$resubmit"; then
+  ok "the re-submit set excludes a filing that stood in for a capped fix"
+else
+  bad "the re-submit set takes every issue triage created" "$resubmit"
+fi
+if grep -q -F 'Issues created during triage need implementing' "$SUBMIT_WF"; then
+  bad "submit-pr still implements every issue created during triage"
+else
+  ok "no step re-derives the re-submit set from what triage filed"
+fi
+
 bound="$(submit_bound "$SUBMIT_WF")"
 if [[ -z "$bound" ]]; then
   bad "submit-pr no longer states a bound on pr_comment_review.iterations"
@@ -535,6 +553,16 @@ elif grep -q -F 'marked "Fixing"' <<<"$(downstream "$CTRL")"; then
   ok "the check flags a carrier re-deriving the fix set"
 else
   bad "the check MISSED a carrier re-deriving the fix set"
+fi
+
+# The re-submit set back to every issue triage created.
+CTRL="$TMP_ROOT/submit-resubmit.md"
+if ! plant "$CTRL" "$SUBMIT_WF" 's/The \*\*re-submit set\*\* is the issues this session filed for work the cap did not deny\..*bounded at two re-submit cycles:/Issues created during triage need implementing before merge, bounded at two re-submit cycles:/'; then
+  bad "re-submit control planted nothing — its sed program matched no text"
+elif grep -q -F 'Issues created during triage need implementing' "$CTRL"; then
+  ok "the check flags a re-submit set that takes every filed issue"
+else
+  bad "the check MISSED a re-submit set that takes every filed issue"
 fi
 
 CTRL="$TMP_ROOT/disposition.md"
