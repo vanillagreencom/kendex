@@ -23,7 +23,7 @@ use specta::Type;
 
 use crate::base::Base;
 use crate::error::Result;
-use crate::settings_seed::{SeededEnv, is_env_header};
+use crate::settings_seed::{SeededEnv, loaders_read_env};
 use crate::settings_template::decoded_value;
 use crate::settings_toml::{Line, decoded, key_of, quoted_span};
 
@@ -144,7 +144,10 @@ pub fn sites(text: &str) -> Vec<Site> {
     let mut in_env = false;
     for row in crate::settings_toml::rows(text) {
         if row.kind == Line::Table {
-            in_env = is_env_header(row.text);
+            // MEMBERSHIP: this view answers "would a script read this
+            // key", so it tracks what the loaders read and not what TOML
+            // says. A key under a header they refuse is not a setting.
+            in_env = loaders_read_env(row.text);
             continue;
         }
         let Some((key, value, at)) = row.assignment() else {

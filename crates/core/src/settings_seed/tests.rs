@@ -477,3 +477,53 @@ fn a_seed_lands_after_the_env_table_and_never_inside_a_value() {
         "the seed belongs to [env], not [other]:\n{text}"
     );
 }
+
+/// Where a table ENDS is TOML's answer, not the loaders'. A header the
+/// loaders refuse is still that table to TOML, so a seed belongs inside
+/// it: missing it appends a second `[env]`, and a file with a typo in one
+/// header becomes a file with two of the same table, which nothing reads
+/// at all.
+#[test]
+fn a_header_the_loaders_refuse_is_still_the_table_a_seed_lands_in() {
+    let seeded = [SeededEnv {
+        entry: EnvEntry {
+            key: "DEPTH".to_owned(),
+            lines: vec!["# How deep.".to_owned(), "DEPTH = \"2\"".to_owned()],
+        },
+        owner: "review".to_owned(),
+    }];
+    let file = "[env] # the table\nMODE = \"a\"\n\n[other]\nKEEP = \"b\"\n";
+    let (text, _) = merge(Some(file), &seeded).expect("DEPTH is missing");
+
+    // Counted through the reader rather than by string, because what
+    // matters is how many rows OPEN the table, not how the header reads.
+    assert_eq!(
+        crate::settings_toml::rows(&text)
+            .iter()
+            .filter(|row| opens_env(row))
+            .count(),
+        1,
+        "a second [env] would stop the file loading at all:\n{text}"
+    );
+    let depth = text.find("DEPTH").expect("seeded");
+    let other = text.find("[other]").expect("kept");
+    assert!(depth < other, "the seed belongs to [env]:\n{text}");
+}
+
+/// And the other half of the pair stays the loaders': a key under a header
+/// they refuse is a key nothing reads, which is what the view reports.
+#[test]
+fn membership_tracks_the_loaders_where_the_boundary_tracks_toml() {
+    assert!(loaders_read_env("[env]"));
+    for refused in ["[env] # the table", "[other]", "[envx]", "[ env ]"] {
+        assert!(!loaders_read_env(refused), "{refused}");
+    }
+    let sites = crate::settings_file::sites("[env] # the table\nMODE = \"a\"\n");
+    assert!(
+        matches!(
+            crate::settings_file::current_of(&sites, "MODE"),
+            crate::settings_file::Current::Ambiguous { .. }
+        ),
+        "a key no loader reads is not a value to compare with a default"
+    );
+}

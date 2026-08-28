@@ -66,8 +66,8 @@
 mod key;
 mod walk;
 pub use key::{Key, key_of};
-pub use walk::quoted_span;
 use walk::{Carry, advance, top_level_equals};
+pub use walk::{Header, header_of, quoted_span};
 
 /// What a line is.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -320,3 +320,33 @@ fn a_scalar_leaves_nothing_open() {
 fn an_unbalanced_bracket_does_not_swallow_the_file() {
     assert_eq!(keys("]\n[env]\nMODE = \"real\"\n"), vec!["MODE".to_owned()]);
 }
+
+/// One header parse for everyone, carrying both facts: the name TOML
+/// reads, and whether the shell loaders read a header of that shape. Three
+/// modules each kept their own version of this and the copies disagreed —
+/// which table a seed splices into is not the same question as which
+/// table's keys a script reads.
+#[test]
+fn a_header_carries_the_name_and_whether_the_loaders_read_it() {
+    assert_eq!(
+        header_of("[env]"),
+        Some(Header {
+            name: "env",
+            lone: true
+        })
+    );
+    assert_eq!(
+        header_of("  [env] # the table"),
+        Some(Header {
+            name: "env",
+            lone: false
+        }),
+        "a typo in the header does not stop it being the env table"
+    );
+    assert_eq!(header_of("[a.b-c_d]").map(|h| h.name), Some("a.b-c_d"));
+    // Not headers: no closing bracket, an empty name, an array of tables,
+    // and whitespace inside the brackets, which the loaders never match.
+    for refused in ["[env", "[]", "[[items]]", "[ env ]", "MODE = \"a\"", ""] {
+        assert_eq!(header_of(refused), None, "{refused}");
+    }
+}

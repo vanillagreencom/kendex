@@ -109,18 +109,11 @@ fn is_env_name(key: &str) -> bool {
 }
 
 /// A `[`-leading line's table name and whether it is a header the loaders
-/// accept — a lone `[name]`, nothing after the bracket. The name is read
-/// even from a line they refuse, so `[other] # note` classifies what
-/// follows it as another table's rather than cascading onto every key.
+/// accept. Read through [`crate::settings_toml::header_of`], which is the
+/// one place a header is parsed: a check with its own copy is a check that
+/// can come to disagree with what seeding splices against.
 fn table_header(line: &str) -> (&str, bool) {
-    let Some((name, after)) = line.strip_prefix('[').and_then(|rest| rest.split_once(']')) else {
-        return ("", false);
-    };
-    let named = !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'));
-    (name, named && after.trim().is_empty())
+    crate::settings_toml::header_of(line).map_or(("", false), |header| (header.name, header.lone))
 }
 
 /// Strip a comment line down to its text.

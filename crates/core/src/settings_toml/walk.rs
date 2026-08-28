@@ -199,3 +199,35 @@ pub fn quoted_span(value: &str, at: usize) -> Option<Range<usize>> {
     (closed && value[..open].trim().is_empty() && !inner.contains('\\'))
         .then(|| at + open + 1..at + open + 1 + close)
 }
+
+/// A table header line, read once for everyone who asks about one.
+///
+/// Two questions live here and they have different answers, which is why
+/// the two facts travel together: TOML says `[env] # note` opens the `env`
+/// table, and the shell loaders — which match a lone `[name]` — refuse a
+/// whole file that holds one. A caller taking the wrong fact either writes
+/// into the wrong table or reports a key nothing reads as one that works.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Header<'a> {
+    /// The name between the brackets, as TOML reads it.
+    pub name: &'a str,
+    /// Whether the loaders read a header of this shape.
+    pub lone: bool,
+}
+
+/// The header this line opens, or `None` where it opens none. The name is
+/// read even from a shape the loaders refuse, so a table whose header has
+/// a typo is still that table and a seed still lands inside it rather than
+/// creating a second one beside it.
+pub fn header_of(text: &str) -> Option<Header<'_>> {
+    let trimmed = text.trim();
+    let (name, after) = trimmed.strip_prefix('[')?.split_once(']')?;
+    let named = !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'));
+    named.then_some(Header {
+        name,
+        lone: after.trim().is_empty(),
+    })
+}

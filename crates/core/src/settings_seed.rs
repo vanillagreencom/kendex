@@ -101,8 +101,22 @@ fn trim_blank_edges(lines: &[String]) -> &[String] {
     &lines[lo..hi]
 }
 
-pub(crate) fn is_env_header(line: &str) -> bool {
-    line.trim() == "[env]"
+/// MEMBERSHIP — whether the shell loaders read the assignments under this
+/// header. They match a lone `[env]`, and the grammar corpus records that
+/// they refuse a whole file holding any other shape
+/// (`header-with-comment`), so a key under one is a key nothing reads.
+/// Never the answer to where a table's text ends.
+pub(crate) fn loaders_read_env(line: &str) -> bool {
+    crate::settings_toml::header_of(line).is_some_and(|header| header.name == "env" && header.lone)
+}
+
+/// BOUNDARY — whether this row opens the `env` table, as TOML reads it.
+/// What a splice is measured against, so it must not inherit the loaders'
+/// blind spots: missing `[env] # note` here would send a seed past it and
+/// append a second `[env]`, turning a file with a typo in its header into
+/// one with two of the same table, which no reader survives.
+pub(crate) fn opens_env(row: &Row) -> bool {
+    table_row(row) && crate::settings_toml::header_of(row.text).is_some_and(|h| h.name == "env")
 }
 
 /// The key one row assigns, by the name every spelling of it shares. That
@@ -133,7 +147,7 @@ pub fn extract_env_entries(template: &str) -> Vec<EnvEntry> {
             continue;
         }
         if table_row(&row) {
-            if is_env_header(row.text) {
+            if opens_env(&row) {
                 in_env = true;
                 pending.clear();
                 continue;
@@ -187,9 +201,7 @@ fn file_eol(rows: &[Row]) -> &'static str {
 /// of the file). `None` = no `[env]` header. Seeding and refresh both
 /// splice inside this span, so they cannot disagree about where it ends.
 fn env_section(rows: &[Row]) -> Option<(usize, usize)> {
-    let start = rows
-        .iter()
-        .position(|row| table_row(row) && is_env_header(row.text))?;
+    let start = rows.iter().position(opens_env)?;
     let end = rows
         .iter()
         .enumerate()
