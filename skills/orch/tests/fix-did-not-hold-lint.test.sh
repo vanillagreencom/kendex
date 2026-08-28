@@ -156,6 +156,15 @@ site_keeps_escalated()  {
 }
 site_binds_its_tokens() { ! has "$(rule_line "$1")" '\[COMMIT_SHA\]'; }
 
+# The Fixed expansion is where the reviewer reads the two fields the key is
+# built from. A list that prints only the description asks it to copy a field
+# it was never shown, and a fix that moved the finding then supersedes nothing.
+fixed_list() { grep -E -- '^- Fixed.*fixed_item' <<<"$1" || true; }
+site_prints_the_key() {
+  local l; l="$(fixed_list "$1")"
+  has "$l" '\[LOCATION\]' && has "$l" '\[DESCRIPTION\]'
+}
+
 for site in rereview qa reviewer; do
   R="$(region_of "$site")"
   L="$(site_label "$site")"
@@ -204,6 +213,17 @@ for site in rereview qa reviewer; do
     pass "$L states the rule with no unbound [COMMIT_SHA]"
   else
     fail "$L carries a [COMMIT_SHA] nothing binds"
+  fi
+
+  # The reviewer package states the rule and has no list to expand; the two
+  # delegations carry the list the rule sends it to.
+  if [[ "$site" == "reviewer" ]]; then
+    continue
+  fi
+  if site_prints_the_key "$R"; then
+    pass "$L prints the location and description of every Fixed entry"
+  else
+    fail "$L asks for a verbatim copy of fields it never prints"
   fi
 done
 
@@ -361,6 +381,13 @@ for site in rereview qa reviewer; do
   CTRL_FILE="$TMP_ROOT/$site-placeholder.md"
   append_to_rule "$src" "$head" "$tail" "[COMMIT_SHA]" > "$CTRL_FILE"
   judge "$site" "placeholder" site_binds_its_tokens "an unbound [COMMIT_SHA] in the rule"
+
+  [[ "$site" == "reviewer" ]] && continue
+
+  # The Fixed list printing everything but the location the key is built from.
+  CTRL_FILE="$TMP_ROOT/$site-nolocation.md"
+  sub_region "$src" "$head" "$tail" '\[LOCATION\] \| ' "" > "$CTRL_FILE"
+  judge "$site" "no-location" site_prints_the_key "a Fixed list that never prints the location"
 done
 
 # The sha match is word-bounded, so a rule that merely says "shared" or "shape"

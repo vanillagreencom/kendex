@@ -149,7 +149,7 @@ Decisions:
 [If none: "- No linked decisions found."]
 <if re-review cycle>
 Re-review cycle [N]. Already resolved — do NOT re-report, unless you check a Fixed entry against the current diff and the defect is still there: report that one again, copying that entry's location and description verbatim and naming its recorded commit sha in your recommendation, so the stale entry can be superseded. A Fixed entry you did not check, and every Escalated entry, stays suppressed.
-- Fixed: [For each fixed_item: "[DESCRIPTION] — fixed in [COMMIT_SHA]"]
+- Fixed: [For each fixed_item: "[LOCATION] | [DESCRIPTION] — fixed in [COMMIT_SHA]"]
 - Escalated: [For each escalated_item: "[DESCRIPTION] — [REASON]"]
 </if>
 <if this reviewer session was recreated fresh>
@@ -382,7 +382,7 @@ Dev summary:
 [completion summary from the dev return, or a description of the branch changes]
 
 Previous review cycle context (cycle [CYCLES]):
-- Fixed since last review: [For each fixed_item with source "qa-review": "[DESCRIPTION] — fixed in [COMMIT_SHA]"]
+- Fixed since last review: [For each fixed_item with source "qa-review": "[LOCATION] | [DESCRIPTION] — fixed in [COMMIT_SHA]"]
 - Escalated (accepted): [For each escalated_item with source "qa-review": "[DESCRIPTION] — [REASON]"]
 - Do NOT re-report fixed or escalated items, unless you check a fixed item against the current diff and the defect is still there — then report it again, copying that entry's location and description verbatim and naming its recorded commit sha in your recommendation. A fixed item you did not check, and every escalated item, stays suppressed. Otherwise report only new issues or regressions the fixes introduced.
 </delegation_format>
