@@ -220,6 +220,41 @@ describe("a replacement that did not happen", () => {
     );
     expect(container.textContent).toContain(APP_UPDATE_INSTALL_LABEL);
   });
+
+  // Hiding the card mid-replacement would take away the only thing that
+  // reports the failure, and the mute is keyed to this version, so the
+  // release would never offer itself again: the person would be left on
+  // the old build believing they had updated.
+  it("cannot be hidden while the replacement is running", async () => {
+    let fail = () => {};
+    vi.mocked(commands.appUpdateInstall).mockReturnValue(
+      new Promise((resolve) => {
+        fail = () =>
+          resolve({
+            status: "error",
+            error: "the release could not be verified",
+          });
+      }),
+    );
+    const container = await show({ kind: "direct" });
+    await press(container, APP_UPDATE_INSTALL_LABEL);
+
+    expect(offer(container, APP_UPDATE_DISMISS_LABEL).disabled).toBe(true);
+    // And the store refuses it too, so nothing reaching past the button —
+    // another surface, a keyboard, a second window — can mute the version
+    // the replacement is still working on.
+    await act(async () => {
+      await useNoticeStore.getState().dismiss();
+    });
+    expect(commands.updateSettings).not.toHaveBeenCalled();
+
+    fail();
+    await settle();
+    expect(container.textContent).toContain(APP_UPDATE_TITLE);
+    expect(container.textContent).toContain(
+      "the release could not be verified",
+    );
+  });
 });
 
 describe("hiding this version", () => {

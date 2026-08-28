@@ -47,6 +47,9 @@ export function SidebarNotice() {
           className="-mr-1 shrink-0"
           aria-label={APP_UPDATE_DISMISS_LABEL}
           title={APP_UPDATE_DISMISS_LABEL}
+          // The card is what would report a failed replacement, so it
+          // cannot be taken away while one is running.
+          disabled={installing}
           onClick={() => void dismiss()}
         >
           <X className="size-3.5" />

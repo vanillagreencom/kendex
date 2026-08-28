@@ -110,7 +110,11 @@ export const useNoticeStore = create<NoticeState>((set, get) => ({
 
   dismiss: async () => {
     const notice = get().notice;
-    if (notice === null) return;
+    // Never while a replacement is running. Hiding the card takes away the
+    // only thing that would report a failure, and the mute is keyed to
+    // this version, so a replacement that then fails leaves the person on
+    // the old build with nothing to say so and no second offer.
+    if (notice === null || get().installing) return;
     const refused = await mute(notice.latest);
     if (refused === null) set({ notice: null, error: null });
     else set({ error: refused });
