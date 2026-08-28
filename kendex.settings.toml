@@ -256,6 +256,10 @@ SIZE_RATCHET_CLASSES = "*/README.md=120;*/tests/*=800;*/test/*=800;*/__tests__/*
 # untracked child to link. A single tracked FILE is the opposite hazard — it
 # becomes a link git cannot write through, so .claude/settings.json is absent
 # here and each worktree carries git's own copy.
+#
+# .opencode is absent for a different reason: kendex-local.toml's [install]
+# harnesses names claude, codex and pi, not opencode, so nothing renders
+# there. The tree holds no files, and an entry would link an empty directory.
 WORKTREE_BASE_DIR = "~/dev/.worktrees/kendex"
 WORKTREE_COPIES = ".kendex-lock.json"
 WORKTREE_DEFAULT_BRANCH = "main"
