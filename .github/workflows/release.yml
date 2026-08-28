@@ -129,8 +129,7 @@ jobs:
           find "${out}/bundle" -type f \
             \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \
                -o -name '*.dmg' -o -name '*-setup.exe' -o -name '*.msi' \
-               -o -name '*.AppImage.tar.gz' -o -name '*.AppImage.tar.gz.sig' \
-               -o -name '*-setup.exe.sig' \) \
+               -o -name '*.AppImage.sig' -o -name '*-setup.exe.sig' \) \
             -exec cp {} dist/ \;
           # Tauri names the macOS updater archive after the app alone, so
           # the two Apple lanes would overwrite each other in the merged
@@ -198,8 +197,8 @@ jobs:
               --arg url "${base}/$(basename "${sig%.sig}")" \
               '.[$key] = {signature: $signature, url: $url}' <<< "$platforms")
           }
-          add linux-x86_64 'kendex_*_amd64.AppImage.tar.gz.sig'
-          add linux-aarch64 'kendex_*_aarch64.AppImage.tar.gz.sig'
+          add linux-x86_64 'kendex_*_amd64.AppImage.sig'
+          add linux-aarch64 'kendex_*_aarch64.AppImage.sig'
           add darwin-x86_64 'kendex-x86_64-apple-darwin.app.tar.gz.sig'
           add darwin-aarch64 'kendex-aarch64-apple-darwin.app.tar.gz.sig'
           add windows-x86_64 'kendex_*_x64-setup.exe.sig'

@@ -123,8 +123,8 @@ fn signing_env_is_exported_only_for_a_complete_secret_set() {
 
 /// Every signed artifact a full tag run leaves in `dist/`, one per lane.
 const SIGNED_ARTIFACTS: [(&str, &str); 5] = [
-    ("linux-x86_64", "kendex_5.1.0_amd64.AppImage.tar.gz"),
-    ("linux-aarch64", "kendex_5.1.0_aarch64.AppImage.tar.gz"),
+    ("linux-x86_64", "kendex_5.1.0_amd64.AppImage"),
+    ("linux-aarch64", "kendex_5.1.0_aarch64.AppImage"),
     ("darwin-x86_64", "kendex-x86_64-apple-darwin.app.tar.gz"),
     ("darwin-aarch64", "kendex-aarch64-apple-darwin.app.tar.gz"),
     ("windows-x86_64", "kendex_5.1.0_x64-setup.exe"),
@@ -191,11 +191,27 @@ fn the_manifest_pairs_every_signature_with_the_artifact_it_signs() {
     }
 }
 
+/// Tauri v2 signs the AppImage itself. The `.AppImage.tar.gz` shape belongs
+/// to the deprecated v1-compatible updater, and looking for it leaves Linux
+/// out of the manifest with the job still green.
+#[test]
+fn no_step_hunts_for_the_v1_compatible_linux_updater_archive() {
+    let workflow = workflow();
+    for name in [
+        "name: Stage release assets",
+        "name: Write the signed update manifest",
+    ] {
+        for line in step(&workflow, name) {
+            assert!(!line.contains("AppImage.tar.gz"), "{name}: {}", line.trim());
+        }
+    }
+}
+
 #[cfg(unix)]
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_lane_that_produced_no_signature_is_left_out_never_written_empty() {
-    let (code, manifest) = write_manifest(&["kendex_5.1.0_amd64.AppImage.tar.gz"]);
+    let (code, manifest) = write_manifest(&["kendex_5.1.0_amd64.AppImage"]);
     assert_eq!(code, 0);
     let manifest: serde_json::Value = serde_json::from_str(&manifest).unwrap();
     let platforms = manifest["platforms"].as_object().unwrap();
