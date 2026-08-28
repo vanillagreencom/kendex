@@ -52,7 +52,7 @@ Route by shape, not by whether `test -L .agents` passes. Ask both indexes what s
 
 `fix-links` reads its sources from the main checkout wherever it is invoked, and only the main checkout's copy of the script is guaranteed intact — a worktree copy reached *through* the entry being repaired may be among the missing files. Run `.agents/skills/worktree/scripts/worktree fix-links <ID|PATH>` from the main checkout; name the target, since a bare invocation there resolves to the main checkout and is refused. Until the entry is fixed, do not trust that tree for local verification. It reports success only when every configured entry ended healthy; a non-zero exit names the paths it did not restore, so read them rather than re-running the same command. Routing table and link mechanics: `fix-links --help`.
 
-Consumers wanting this locally get a pointer, never a copy: `<main checkout>/.agents/skills/worktree/SKILL.md` § Recovering a broken `.agents` entry, a path that resolves whatever shape a worktree is in. A verbatim copy in a tracked `AGENTS.md` / `CLAUDE.md` is out of `kendex refresh`'s reach and goes stale silently.
+Consumers wanting this locally get a pointer, never a copy. One line resolves the main checkout from any worktree, at any depth, and prints this file: `cat "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"/.agents/skills/worktree/SKILL.md`. A verbatim copy in a tracked `AGENTS.md` / `CLAUDE.md` is out of `kendex refresh`'s reach and goes stale silently.
 
 ## Session guard (ownership leases)
 
