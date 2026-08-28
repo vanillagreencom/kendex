@@ -11,7 +11,7 @@ use super::*;
 #[allow(clippy::unwrap_used)]
 fn the_blocked_refresh_prints_the_lines_scripts_parse() {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
+    let home = &rooted(&tmp);
     let project = blocked_project(home);
     let printed = said(&kendex(
         home,
@@ -63,7 +63,7 @@ fn the_blocked_refresh_prints_the_lines_scripts_parse() {
 #[allow(clippy::unwrap_used)]
 fn the_blocked_refresh_reads_under_twenty_lines() {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
+    let home = &rooted(&tmp);
     let project = blocked_project(home);
     let printed = said(&kendex(
         home,
@@ -81,7 +81,7 @@ fn the_blocked_refresh_reads_under_twenty_lines() {
 #[allow(clippy::unwrap_used)]
 fn nothing_is_said_twice() {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
+    let home = &rooted(&tmp);
     let project = blocked_project(home);
     let printed = said(&kendex(
         home,
@@ -110,7 +110,7 @@ fn nothing_is_said_twice() {
 #[allow(clippy::unwrap_used)]
 fn no_framing_reaches_a_pipe() {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
+    let home = &rooted(&tmp);
     let project = blocked_project(home);
     for args in [
         vec!["refresh", "-y", "--scope", "project"],
@@ -137,7 +137,7 @@ fn no_framing_reaches_a_pipe() {
 #[allow(clippy::unwrap_used)]
 fn a_run_with_no_terminal_is_plain_without_being_told() {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
+    let home = &rooted(&tmp);
     let project = blocked_project(home);
     let printed = said(&kendex(
         home,
@@ -164,7 +164,7 @@ fn a_run_with_no_terminal_is_plain_without_being_told() {
 #[allow(clippy::unwrap_used)]
 fn show_file_prints_the_files_own_lines() {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
+    let home = &rooted(&tmp);
     let project = home.join("dev/app");
     blocked_project_at(home, &project);
     fs::write(
@@ -208,7 +208,7 @@ fn show_file_prints_the_files_own_lines() {
 #[allow(clippy::unwrap_used)]
 fn a_failure_after_the_write_still_records_and_reports_it() {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
+    let home = &rooted(&tmp);
     let project = home.join("dev/app");
     let catalog = home.join("catalog");
     let armed = catalog.join("skills/armed");

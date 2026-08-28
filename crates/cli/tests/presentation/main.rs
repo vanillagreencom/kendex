@@ -29,6 +29,20 @@ pub fn escaped_the_frame(printed: &str) -> Vec<String> {
     loose
 }
 
+/// The fixture root as the binary will see it. A macOS temporary
+/// directory resolves under `/private`, so a fixture that keeps the path
+/// it was handed builds project and catalog paths the run never prints:
+/// what it prints is the resolved form, which merely ends with the one
+/// the fixture holds. Redaction keyed to the unresolved path then leaves
+/// `/private` standing in front of the placeholder, and a fixture that
+/// compares its own paths against printed ones never matches.
+#[allow(clippy::unwrap_used)]
+pub fn rooted(tmp: &tempfile::TempDir) -> PathBuf {
+    tmp.path()
+        .canonicalize()
+        .unwrap_or_else(|_| tmp.path().to_owned())
+}
+
 #[allow(clippy::expect_used)]
 fn kendex(home: &Path, cwd: &Path, ui: &str, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_kendex"))
@@ -165,7 +179,7 @@ fn blocked_project_at(home: &Path, project: &Path) {
 #[allow(clippy::unwrap_used)]
 pub fn nothing_declared(args: &[&str]) -> Output {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
+    let home = &rooted(&tmp);
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();
     fs::write(project.join("kendex.toml"), "schema = 6\n").unwrap();
@@ -179,7 +193,7 @@ pub fn nothing_declared(args: &[&str]) -> Output {
 #[allow(clippy::unwrap_used)]
 pub fn both(args: &[&str]) -> (String, String) {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
+    let home = &rooted(&tmp);
     let catalog = home.join("catalog").display().to_string();
     let filled: Vec<String> = args
         .iter()
@@ -205,7 +219,7 @@ pub fn both(args: &[&str]) -> (String, String) {
 #[allow(clippy::unwrap_used)]
 pub fn one(ui: &str, args: &[&str]) -> Ran {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path().to_owned();
+    let home = rooted(&tmp);
     let catalog = home.join("catalog").display().to_string();
     let filled: Vec<String> = args
         .iter()
