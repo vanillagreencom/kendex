@@ -96,27 +96,26 @@ Once per re-vendor train, on ONE consumer PR, collect upstream-remedy findings
 from BOTH surfaces: the review bodies, AND EVERY vendored-path thread a
 location-bound reviewer left.
 
-`kendex report --title [TITLE] --body-file [PATH]` files the report. The
-command is non-interactive: `--title` is required, and exactly one of `--body`
-or `--body-file` must be given — with neither (or both) it exits without
-filing. `--dry-run` prints the route it would take. Where the route lands,
-verified against `crates/core/src/report.rs`:
+`kendex report --skill [NAME] --title [TITLE] --body-file [PATH]` files the
+report. The command is non-interactive: `--title` is required, and exactly one
+of `--body` or `--body-file` must be given — with neither (or both) it exits
+without filing. `--dry-run` prints the decision and the `gh` command it would
+run.
 
-- **`--agent`, `--hook`, and a `--asset` naming either** route on the lock
-  entry's `source_repo`. That is the working path upstream.
-- **`--skill` and a `--asset` naming a skill route to the LOCAL repo.** Skill
-  ownership is read from the installed `SKILL.md` frontmatter alone, and it
-  accepts exactly two values: `source: kendex`, or a `repository:` equal to
-  the built-in `vanillagreencom/kendex` — never what `--upstream` names, which
-  only the lock branch compares against. Neither can match: the reader takes
-  `source:` and `repository:` only at column zero, where a kendex skill nests
-  both under `metadata:`, and renders `repository:` as a URL rather than the
-  slug. Open the upstream issue by hand, or report it under the agent or hook
-  that carries the skill.
-- **With no selector** the CLI warns once that ownership could not be
-  determined and files against the LOCAL repo.
+The lock is the one judge, and it records provenance for every kind — skills,
+agents, hooks and Pi extensions alike. A name routes upstream when the lock
+holds at least one entry for it, narrowed to the kind the selector names, and
+EVERY matching entry's `source_repo` is the upstream. One entry recorded from
+somewhere else makes the name ambiguous and keeps the report local, which is
+also what an unlocked name gets. How the manifest spelled the repo does not
+decide it: a shorthand, an https URL and a `git@` reference fold to one
+identity. `--skill`, `--agent`, `--hook` and `--asset` are the selectors; with
+none of them the CLI warns once that ownership could not be determined and
+files against the LOCAL repo.
 
-Confirm with `--dry-run` before relying on any of it.
+A repo that vendored only a scripts subtree, with no lock entry over it, has
+no name to select — open the upstream issue by hand. Confirm with `--dry-run`
+before relying on any of it.
 
 Do not fix it locally, and do not file the same finding from each consumer.
 

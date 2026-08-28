@@ -37,9 +37,9 @@ an outside contributor.
 - The foot of the app's sidebar names the kendex.ai account you are signed
   in to, says Offline when the server could not be reached, and offers Sign
   in or Sign in again as the credential needs. Clicking opens Settings.
-- The review-gate skill ships a reviewer instruction for the harness trees a
-  repo commits as `kendex refresh` output: a finding over the render goes to
-  the catalog repo, never to a merge-blocking thread the repo cannot act on.
+- The review-gate skill ships a reviewer instruction for a repo that commits
+  its `kendex refresh` output: a finding over the render goes to the catalog
+  repo via `kendex report`, never to a thread the repo cannot act on.
 
 ### Changed
 

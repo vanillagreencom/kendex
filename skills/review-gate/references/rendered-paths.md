@@ -51,12 +51,13 @@ candidate list to check against that PR.
 # including .vscode, .devcontainer, .husky and the rest.
 git ls-files | grep -oE '^\.[a-z]+/' | sort -u
 
-# Items whose content this repo owns. Subtract the UNION of both lists: the
-# manifest is the declaration, the lock is what the last apply recorded, and
-# an item kendex refused to install keeps its old lock entry verbatim through
-# every later refresh — where they disagree, the manifest settles it.
-awk -F'[].[]' '/^\[/ { t = $2; n = $3 } /^[[:space:]]*source[[:space:]]*=[[:space:]]*.in-place./ { print t "/" n }' kendex.toml
-jq -r '.entries | to_entries[] | select(.value.source == "in-place") | .value.name' .kendex-lock.json | sort -u
+# Skills whose content this repo owns, as bare names from both sides so the
+# two lists subtract. Take the UNION: the manifest is the declaration, the
+# lock is what the last apply recorded, and an item kendex refused to install
+# keeps its old lock entry verbatim through every later refresh — where they
+# disagree, the manifest settles it.
+awk -F'[].[]' '/^\[skills\./ { n = $3 } /^[[:space:]]*source[[:space:]]*=[[:space:]]*.in-place./ { if (n != "") print n; n = "" }' kendex.toml
+jq -r '.entries[] | select(.source == "in-place" and .kind == "skill") | .name' .kendex-lock.json | sort -u
 
 # Recorded render destinations, as absolute paths to strip the repo root
 # from. The lock carries this field for skills and commands only, so it names
@@ -64,6 +65,21 @@ jq -r '.entries | to_entries[] | select(.value.source == "in-place") | .value.na
 # exact paths and never completes the list.
 jq -r '.entries[] | select(.emitted != null) | .emitted.paths[]' .kendex-lock.json | sort -u
 ```
+
+That awk reads top-level `[skills.<name>]` tables in `kendex.toml` and
+nothing else. It does not see a `[skills]` table holding inline entries,
+dotted or quoted keys, an indented declaration, or `kendex-local.toml`, which
+a source catalog keeps its own install state in. A repo wanting a mechanical
+answer over those has a worked precedent in the harness-ci skill's
+`harness-only` script, § `manifest_carves`: it reads both manifests from the
+head tree and fails closed, carving every skill path when a manifest exists
+and will not parse. Do not build a second one here.
+
+What backstops the gap is the section's own authority: an in-place skill's
+content tree at `.agents/skills/<name>` is bytes kendex reads and never
+writes, so a refresh PR never touches it. The per-harness link or copy into
+`.claude/skills/<name>` and its siblings IS written, and does appear in the PR
+that creates it.
 
 Four shapes the glob must not take:
 
@@ -128,25 +144,26 @@ on ONE consumer PR, collect the findings over the render and file them where
 the render is written. Do not fix it locally, and do not file the same finding
 from each consumer.
 
-`kendex report --title [TITLE] --body-file [PATH]` files it, with one selector
-and exactly one of `--body` or `--body-file`. `--dry-run` prints the route it
-would take. What the route resolves to today, verified against
-`crates/core/src/report.rs`:
+```bash
+kendex report --skill [NAME] --title [TITLE] --body-file [PATH] --dry-run
+```
 
-- **`--agent`, `--hook`, and a `--asset` naming either** route on the lock
-  entry's `source_repo`. That is the working path.
-- **`--skill` and a `--asset` naming a skill route to this repo, not
-  upstream.** Skill ownership is read from the installed `SKILL.md`
-  frontmatter alone, and it accepts exactly two values: `source: kendex`, or a
-  `repository:` equal to the built-in `vanillagreencom/kendex` — never what
-  `--upstream` names, which only the lock branch compares against. Neither can
-  match: the reader takes `source:` and `repository:` only at column zero,
-  where a kendex skill nests both under `metadata:`, and renders `repository:`
-  as a URL rather than the slug. Open the issue in the catalog repo by hand,
-  or report it under the agent or hook that carries the skill.
-- **With no selector** the CLI warns once and files against this repo.
+`--skill`, `--agent`, `--hook`, and `--asset` are the selectors; pass one, and
+exactly one of `--body` or `--body-file`. `--dry-run` prints the decision and
+the `gh` command it would run.
 
-Confirm with `--dry-run` before relying on any of it.
+The lock is the one judge, and it records provenance for every kind — skills,
+agents, hooks and Pi extensions alike. A name routes to the catalog repo when
+the lock holds at least one entry for it, narrowed to the kind the selector
+names, and EVERY matching entry's `source_repo` is that repo. One entry
+recorded from somewhere else makes the name ambiguous and keeps the report
+here, which is also what an unlocked name gets. How the manifest spelled the
+repo does not decide it: a shorthand, an https URL and a `git@` reference fold
+to one identity.
+
+With no selector at all the CLI warns once that ownership could not be
+determined and files against this repo. Confirm with `--dry-run` before
+relying on any of it.
 
 ## Verifying on a real refresh PR
 

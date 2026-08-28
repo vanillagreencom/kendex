@@ -40,8 +40,8 @@ that.**
   kind): comment inline as normal, correctness and security defects included.
   On a refresh PR that is the most valuable finding there is.
 - **The fix lands in these rendered bytes**: do not raise it on this PR, on
-  any surface. It is filed against the catalog repo by the session that runs
-  the refresh, and the fix arrives here as a later render.
+  any surface. The session that runs the refresh files it against the catalog
+  repo with `kendex report`, and the fix arrives here as a later render.
 - **The fix lands in the catalog repo's own docs, config, or conventions**
   (its README, its settings tables, its test layout): same route.
 
