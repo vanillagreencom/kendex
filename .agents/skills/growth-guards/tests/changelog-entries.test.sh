@@ -302,9 +302,20 @@ run_ce
 [ "$RC" -eq 1 ] && case "$OUT" in *"214 characters"*) true ;; *) false ;; esac \
   && ok "seven hashes open no heading and continue the entry" \
   || bad "seven hashes open no heading and continue the entry" "rc=$RC out=$OUT"
-# The other direction: a real ATX heading still ends it, at every depth the
-# syntax allows and with no text after the hashes.
-for atx in '# One' '###### Six' '#' '######'; do
+# Four leading spaces is an indented code block, not a heading, so it
+# continues the entry like any other line.
+{
+  printf -- '- %s\n' "$(rep a 198)"
+  printf '    # deep.\n'
+} >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"208 characters"*) true ;; *) false ;; esac \
+  && ok "four leading spaces open no heading and continue the entry" \
+  || bad "four leading spaces open no heading and continue the entry" "rc=$RC out=$OUT"
+# The other direction: a real ATX heading still ends it, at every depth and
+# every indentation the syntax allows, and with no text after the hashes.
+for atx in '# One' '###### Six' '#' '######' ' # Indented one' '  ## Indented two' '   ### Indented three' '   #'; do
   {
     printf -- '- %s\n' "$(rep a 198)"
     printf '%s\n' "$atx"

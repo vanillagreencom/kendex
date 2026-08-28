@@ -48,9 +48,10 @@ usage: changelog-entries
 
 A changelog entry longer than the cap fails. An entry opens on a list
 marker (-, *, +) at column 0 followed by a space or tab, and runs to the
-next such marker, an ATX heading (one to six hashes then whitespace or end
-of line), or a blank line followed by a line that is neither indented nor a
-marker — so an indented second paragraph is part of the entry. Its text is those lines with CR stripped and whitespace runs
+next such marker, an ATX heading (up to three leading spaces, one to six
+hashes, then a space, a tab, or end of line), or a blank line followed by a
+line that is neither indented nor a marker — so an indented second paragraph
+is part of the entry. Its text is those lines with CR stripped and whitespace runs
 collapsed to one space, counted in characters.
 
 Tracked content is read from the index. A configured path git tracks as a
@@ -160,18 +161,22 @@ BEGIN {
   UTF8 = UTF8 "|\364[\200-\217][\200-\277][\200-\277])*$"
 }
 function chars(s,   n, c) { n = length(s); c = gsub(CONT, "", s); return n - c }
-# ATX syntax, not "opens with a hash": one to six hashes then whitespace or
-# end of line. A continuation naming an issue number opens with a hash and no
-# space, and ending the entry there would drop the rest of it out of the
-# measurement — the looseness the marker rule already refuses. Spelled as a
-# loop because a {1,6} interval is not portable across the awks this family
-# runs under.
-function is_heading(l,   n, c) {
-  if (substr(l, 1, 1) != "#") return 0
+# ATX syntax, whole: up to three leading spaces, then one to six hashes, then
+# a space, a tab, or end of line. Nothing else decides whether a line is a
+# heading, so all three parts are here — a predicate that reads "opens with a
+# hash" folds a continuation naming an issue number into nothing, and one that
+# demands column zero folds an indented heading into the entry above it. Four
+# leading spaces is an indented code block and stays a continuation. Spelled
+# as loops because a {1,6} interval is not portable across the awks this
+# family runs under.
+function is_heading(l,   i, n, c) {
+  i = 0
+  while (i < 3 && substr(l, i + 1, 1) == " ") i++
+  if (substr(l, i + 1, 1) != "#") return 0
   n = 0
-  while (substr(l, n + 1, 1) == "#") n++
+  while (substr(l, i + n + 1, 1) == "#") n++
   if (n > 6) return 0
-  c = substr(l, n + 1, 1)
+  c = substr(l, i + n + 1, 1)
   return (c == "" || c == " " || c == "\t")
 }
 function flush(   t, len, label) {
