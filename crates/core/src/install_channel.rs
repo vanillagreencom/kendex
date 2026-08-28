@@ -69,24 +69,13 @@ pub enum AppInstall {
 }
 
 impl AppInstall {
-    /// The path to hand whatever performs the replacement.
+    /// The path to hand whatever performs the replacement, so that the path
+    /// [`for_app`] judged and the path acted on are one file. `None` where
+    /// no path decides the install.
     ///
-    /// Each platform derives the unit [`for_app`] judged from this, so this
-    /// is not that unit. On macOS it has to stay the executable, because
-    /// the consumer climbs from it to the surrounding bundle; hand the
-    /// bundle over and it climbs one level too far, to the directory the
-    /// bundle sits in.
-    ///
-    /// Left to itself the updater plugin rebuilds this path from the launch
-    /// environment, and the two platforms go wrong differently. Linux takes
-    /// `APPIMAGE` exactly as exported and rewrites that name, so where the
-    /// name is a link it becomes a regular file and the image [`for_app`]
-    /// approved is never touched. macOS canonicalizes the running
-    /// executable and refuses outright when any ancestor of the launch path
-    /// is a link, so what is handed here decides only where that refusal
-    /// does not fire.
-    ///
-    /// Windows carries no path because no path decides it.
+    /// On macOS this has to stay the executable: the consumer climbs from
+    /// it to the surrounding bundle, and handed the bundle it climbs one
+    /// level further, to the directory the bundle sits in.
     pub fn judged_path(&self) -> Option<&Path> {
         match self {
             Self::AppImage(image) => image.as_deref(),

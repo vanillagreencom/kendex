@@ -99,12 +99,8 @@ pub async fn app_update_install(app: tauri::AppHandle) -> Result<(), String> {
     // so nothing a caller gets wrong can overwrite a package manager's files.
     let install = app_install()?;
     kendex_core::install_channel::for_app(&install, &Host).allow_replacement()?;
-    // Left to itself the plugin rebuilds the install path from the launch
-    // environment. On Linux it rewrites the exported APPIMAGE name itself,
-    // so a link there leaves the image approved above untouched; on macOS
-    // it refuses a link anywhere in the launch path before replacing
-    // anything. Where the plugin gets that far, handing it the approved
-    // path puts both halves on one file.
+    // The approved path is handed over so the path that decides and the
+    // path that acts are one file.
     let mut builder = app.updater_builder();
     if let Some(path) = install.judged_path() {
         builder = builder.executable_path(path);

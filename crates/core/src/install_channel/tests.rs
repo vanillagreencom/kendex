@@ -509,13 +509,14 @@ fn a_mac_bundle_is_the_one_behind_the_name_it_was_launched_under() {
     assert_eq!(for_app(&install, &probe), InstallChannel::Direct);
 }
 
-/// What `judged_path` hands over, per platform. The resolving is pinned by
-/// the two link tests above; what is new here is the accessor, and on macOS
-/// that the value stays the executable rather than the bundle around it.
-/// `for_app` reaches the directory it approves by the same `bundle_root`
-/// asserted here, so the two meet at one unit. That the updater plugin then
-/// derives that same unit is a dependency of this design, not something
-/// this test establishes: the app crate pins it against the plugin itself.
+/// What `judged_path` hands over. The resolving behind these values is
+/// pinned above by the two link tests,
+/// `an_appimage_reached_through_a_link_belongs_to_whatever_it_points_at`
+/// and `a_mac_bundle_is_the_one_behind_the_name_it_was_launched_under`.
+/// New here is the accessor, and on macOS that it stays the executable:
+/// `for_app` reaches the bundle from it by the same `bundle_root` asserted
+/// here. Whether the updater plugin derives that same bundle is the app
+/// crate's test, not this one's.
 #[test]
 fn judged_path_hands_over_the_file_for_app_approved() {
     let image = "/home/pat/Apps/kendex-5.0.1.AppImage";
@@ -530,9 +531,6 @@ fn judged_path_hands_over_the_file_for_app_approved() {
         Some(Path::new(bundle))
     );
 
-    // Neither carries a path, and neither may start: an updater handed
-    // nothing keeps its own fallback, which is the whole of the Windows
-    // channel and is all a Linux launch outside an AppImage can offer.
     assert_eq!(AppInstall::WindowsInstaller.judged_path(), None);
     assert_eq!(AppInstall::AppImage(None).judged_path(), None);
 }
