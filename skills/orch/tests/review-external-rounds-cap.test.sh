@@ -130,6 +130,14 @@ submit_bound() { strip_comments "$1" | grep -Ei 'iteration' | grep -v -F 'workfl
 # the shape this issue removes. Every grep reads a herestring, never a pipe:
 # `grep -q` exits at the first match and SIGPIPE under `pipefail` would
 # promote a 141 into a false failure.
+# Line number of the first line holding a fixed substring, or 0. index(), so
+# bracketed placeholders need no escaping.
+first_line() { awk -v s="$1" 'index($0, s) && !n { n = NR } END { print n + 0 }'; }
+# Character offset of the first occurrence in the WHOLE blob, or 0. A markdown
+# paragraph is one line, so a line-number comparison cannot order two phrases
+# inside it — this reads the slice as a single record.
+first_at() { awk -v s="$1" 'BEGIN { RS = "\0" } { print index($0, s) }'; }
+
 LITERAL_BOUND_RE='(iterations?[^A-Za-z0-9_]*(>=|<=|==|>|<)[[:space:]]*[0-9]|max[-[:space:]]+[0-9])'
 
 site="$(cap_site "$COMMENTS_WF")"
@@ -152,8 +160,6 @@ fi
 # The cap governs what may be PUSHED, so it has to decide before the round is
 # delegated. Read after the delegation, re-entering at the cap pushes one more
 # fix round and the findings that arrive after it get no disposition at all.
-# Line number of the first line holding a fixed substring, or 0.
-first_line() { awk -v s="$1" 'index($0, s) && !n { n = NR } END { print n + 0 }'; }
 cap_at="$(first_line "$SETTING" <<<"$site")"
 del_at="$(first_line '<delegation_format>' <<<"$site")"
 if [[ "$cap_at" -gt 0 ]] && [[ "$del_at" -gt 0 ]] && [[ "$cap_at" -lt "$del_at" ]]; then
@@ -166,6 +172,32 @@ fi
 # Its tokens are the three reply forms: drop the exception and `Fixed in`
 # leaves the section, so the cap reads as disposition-only.
 rule="$(cap_rule "$COMMENTS_WF")"
+# A Tracked: reply naming an issue that does not exist yet turns the merge
+# gate red. The cap rule files through § 6.2 before it replies, so the id is
+# real by the time a reply names it.
+file_at="$(first_at '§ 6.2' <<<"$rule")"
+track_at="$(first_at 'Tracked:' <<<"$rule")"
+if [[ "$file_at" -gt 0 ]] && [[ "$track_at" -gt 0 ]] && [[ "$file_at" -lt "$track_at" ]]; then
+  ok "the cap rule files through § 6.2 before it replies Tracked (file=$file_at reply=$track_at)"
+else
+  bad "the cap rule replies Tracked before the issue is filed" "file=$file_at reply=$track_at"
+fi
+
+# One exception, one definition. finding-disposition is what a reviewer reads
+# first; a broader claim there selects findings review-pr-comments will not
+# push a fix for.
+EXCEPTION='introduces or arms'
+if grep -q -F "$EXCEPTION" <<<"$rule" && grep -q -F "$EXCEPTION" "$DISPOSITION"; then
+  ok "both sites name the exception by the same test"
+else
+  bad "the cap rule and finding-disposition name different exception sets"
+fi
+if grep -q -F "Step 1's \`fix\` verdict outranks the cap" "$DISPOSITION"; then
+  bad "finding-disposition still grants every Step 1 fix verdict the exception"
+else
+  ok "finding-disposition scopes the exception to the introduced-or-armed branch"
+fi
+
 if grep -q -F 'Fixed in' <<<"$rule" \
    && grep -q -F 'Declined:' <<<"$rule" \
    && grep -q -F 'Tracked:' <<<"$rule"; then
@@ -316,6 +348,31 @@ elif [[ "$ctrl_total" -eq 2 ]]; then
   ok "the check flags a second writer of the iteration counter"
 else
   bad "the check MISSED a second writer of the iteration counter" "total=$ctrl_total"
+fi
+
+# The reply-before-filing order this round removed.
+CTRL="$TMP_ROOT/comments-order.md"
+if ! plant "$CTRL" "$COMMENTS_WF" 's/and filing runs first[.] Run § 6[.]2 now for every item clearing its bar, so each issue exists before any reply names it[.] Then return here and answer/and answer/'; then
+  bad "ordering control planted nothing — its sed program matched no text"
+else
+  ctrl_rule="$(cap_rule "$CTRL")"
+  cf="$(first_at '§ 6.2' <<<"$ctrl_rule")"
+  ct="$(first_at 'Tracked:' <<<"$ctrl_rule")"
+  if [[ "$ct" -gt 0 ]] && { [[ "$cf" -eq 0 ]] || [[ "$cf" -gt "$ct" ]]; }; then
+    ok "the check flags a cap rule that replies before it files"
+  else
+    bad "the check MISSED a cap rule that replies before it files" "file=$cf reply=$ct"
+  fi
+fi
+
+# The exception widened back to every Step 1 fix verdict.
+CTRL="$TMP_ROOT/disposition-wide.md"
+if ! plant "$CTRL" "$DISPOSITION" "s/Only Step 1's introduced-or-armed branch outranks the cap/Step 1's \`fix\` verdict outranks the cap/"; then
+  bad "exception-width control planted nothing — its sed program matched no text"
+elif grep -q -F "Step 1's \`fix\` verdict outranks the cap" "$CTRL"; then
+  ok "the check flags an exception widened to every Step 1 fix verdict"
+else
+  bad "the check MISSED an exception widened to every Step 1 fix verdict"
 fi
 
 CTRL="$TMP_ROOT/disposition.md"

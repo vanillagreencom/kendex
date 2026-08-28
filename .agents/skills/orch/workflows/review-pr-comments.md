@@ -175,7 +175,7 @@ Read the round budget first. The cap governs what may be pushed, so it decides b
 .agents/skills/orch/scripts/orch-env REVIEW_MAX_EXTERNAL_ROUNDS 4
 ```
 
-`iterations` at or past `REVIEW_MAX_EXTERNAL_ROUNDS` ends the fix rounds on this PR. Nothing is delegated and nothing is pushed: every item marked Fixing takes a disposition here instead — `Declined: [REASON]`, or `Tracked: [ISSUE_ID]` for one that clears § 6.2's filing bar, the issue created there first — replied and resolved through the reply table below, then → § 6.2.
+`iterations` at or past `REVIEW_MAX_EXTERNAL_ROUNDS` ends the fix rounds on this PR. Nothing is delegated and nothing is pushed: every item marked Fixing takes a disposition instead, and filing runs first. Run § 6.2 now for every item clearing its bar, so each issue exists before any reply names it. Then return here and answer every thread through the reply table below — `Tracked: [ISSUE_ID]` for a filed item, `Declined: [REASON]` for the rest, which needs no issue — resolving each thread as you reply, and continue to § 6.3 with § 6.2 already done.
 
 **The one exception.** A defect this diff itself introduces or arms is fixed whatever the round count — a cap that forces a disposition onto a defect the change created ships the defect. Delegate exactly those items through the rest of this section, push that fix, and reply `Fixed in [SHA]`. Every other item still takes its disposition.
 
