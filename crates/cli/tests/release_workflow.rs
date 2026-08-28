@@ -1,10 +1,17 @@
-//! release.yml runs only on tags, so its build and staging steps are never
-//! exercised by a pull request. Both build commands must emit into the
-//! per-target output dir and the staging step must read from that same
-//! dir, keyed by the one matrix expression rather than a literal triple.
+//! release.yml runs only on tags, so its build, staging and manifest steps
+//! are never exercised by a pull request. Both build commands must emit
+//! into the per-target output dir and the staging step must read from that
+//! same dir, keyed by the one matrix expression rather than a literal
+//! triple. Staging and the manifest are one contract in two halves, and a
+//! rename on either side drops a platform from `latest.json` with the job
+//! still green, so the two run joined here: the names tauri emits go into
+//! the real staging script and what it produces goes into the real
+//! manifest script.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
+use std::sync::OnceLock;
 
 const TARGET_EXPR: &str = "${{ matrix.target }}";
 
@@ -49,6 +56,9 @@ fn run_script(step_lines: &[&str]) -> String {
         .map(|l| l.len() - l.trim_start().len())
         .unwrap_or_else(|| panic!("step has no run: | body"));
     lines
+        // A key written after the block, like a trailing `shell: bash`,
+        // dedents out of it and is not part of the script.
+        .take_while(|l| l.trim().is_empty() || l.len() - l.trim_start().len() >= indent)
         .map(|l| l.get(indent..).unwrap_or(""))
         .collect::<Vec<_>>()
         .join("\n")
@@ -121,30 +131,212 @@ fn signing_env_is_exported_only_for_a_complete_secret_set() {
     }
 }
 
-/// Every signed artifact a full tag run leaves in `dist/`, one per lane.
-const SIGNED_ARTIFACTS: [(&str, &str); 5] = [
-    ("linux-x86_64", "kendex_5.1.0_amd64.AppImage"),
-    ("linux-aarch64", "kendex_5.1.0_aarch64.AppImage"),
-    ("darwin-x86_64", "kendex-x86_64-apple-darwin.app.tar.gz"),
-    ("darwin-aarch64", "kendex-aarch64-apple-darwin.app.tar.gz"),
-    ("windows-x86_64", "kendex_5.1.0_x64-setup.exe"),
+/// One release lane: the platform key the manifest step names it by, the
+/// matrix triple, the `runner.os` its image reports, and the bundle tauri
+/// leaves under `target/<triple>/release/bundle` there.
+struct Lane {
+    platform: &'static str,
+    target: &'static str,
+    runner_os: &'static str,
+    bundle: &'static [&'static str],
+}
+
+/// What a full tag run hands the staging step: the names tauri 2 emits for
+/// `productName: kendex` at version 5.1.0 with `createUpdaterArtifacts`
+/// on. Tauri signs every updater-enabled package — AppImage, deb, rpm,
+/// NSIS and MSI — as well as the macOS `.app.tar.gz` it tars from the
+/// `.app`, so a lane offers the staging step several signatures and only
+/// one of them belongs in the manifest. Both Apple lanes name their
+/// archive identically, which is what the staging step's rename is for.
+const LANES: [Lane; 5] = [
+    Lane {
+        platform: "linux-x86_64",
+        target: "x86_64-unknown-linux-gnu",
+        runner_os: "Linux",
+        bundle: &[
+            "appimage/kendex.AppDir/usr/bin/kendex",
+            "appimage/kendex_5.1.0_amd64.AppImage",
+            "appimage/kendex_5.1.0_amd64.AppImage.sig",
+            "deb/kendex_5.1.0_amd64.deb",
+            "deb/kendex_5.1.0_amd64.deb.sig",
+            "rpm/kendex-5.1.0-1.x86_64.rpm",
+            "rpm/kendex-5.1.0-1.x86_64.rpm.sig",
+        ],
+    },
+    Lane {
+        platform: "linux-aarch64",
+        target: "aarch64-unknown-linux-gnu",
+        runner_os: "Linux",
+        bundle: &[
+            "appimage/kendex.AppDir/usr/bin/kendex",
+            "appimage/kendex_5.1.0_aarch64.AppImage",
+            "appimage/kendex_5.1.0_aarch64.AppImage.sig",
+            "deb/kendex_5.1.0_arm64.deb",
+            "deb/kendex_5.1.0_arm64.deb.sig",
+            "rpm/kendex-5.1.0-1.aarch64.rpm",
+            "rpm/kendex-5.1.0-1.aarch64.rpm.sig",
+        ],
+    },
+    Lane {
+        platform: "darwin-x86_64",
+        target: "x86_64-apple-darwin",
+        runner_os: "macOS",
+        bundle: &[
+            "dmg/kendex_5.1.0_x64.dmg",
+            "macos/kendex.app/Contents/MacOS/kendex",
+            "macos/kendex.app.tar.gz",
+            "macos/kendex.app.tar.gz.sig",
+        ],
+    },
+    Lane {
+        platform: "darwin-aarch64",
+        target: "aarch64-apple-darwin",
+        runner_os: "macOS",
+        bundle: &[
+            "dmg/kendex_5.1.0_aarch64.dmg",
+            "macos/kendex.app/Contents/MacOS/kendex",
+            "macos/kendex.app.tar.gz",
+            "macos/kendex.app.tar.gz.sig",
+        ],
+    },
+    Lane {
+        platform: "windows-x86_64",
+        target: "x86_64-pc-windows-msvc",
+        runner_os: "Windows",
+        bundle: &[
+            "msi/kendex_5.1.0_x64_en-US.msi",
+            "msi/kendex_5.1.0_x64_en-US.msi.sig",
+            "nsis/kendex_5.1.0_x64-setup.exe",
+            "nsis/kendex_5.1.0_x64-setup.exe.sig",
+        ],
+    },
 ];
 
-/// Runs the manifest step over a `dist/` holding exactly `present`
-/// artifacts, each beside its signature, and returns the exit code, the
-/// `latest.json` it wrote, and what it said doing so.
+/// The GitHub expressions the staging step is written in, filled for one
+/// lane the way a runner fills them.
+fn expand(script: &str, lane: &Lane) -> String {
+    let filled = script
+        .replace(TARGET_EXPR, lane.target)
+        .replace("${{ runner.os }}", lane.runner_os);
+    assert!(
+        !filled.contains("${{"),
+        "the staging step reads an expression this test leaves unfilled:\n{filled}"
+    );
+    filled
+}
+
+/// Every file of a flat directory, mapped to its contents.
 #[allow(clippy::unwrap_used)]
-fn write_manifest(present: &[&str]) -> (i32, String, String) {
+fn contents_of(dir: &Path) -> BTreeMap<String, String> {
+    fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| {
+            let path = entry.unwrap().path();
+            (
+                path.file_name().unwrap().to_string_lossy().into_owned(),
+                fs::read_to_string(&path).unwrap(),
+            )
+        })
+        .collect()
+}
+
+/// Runs the staging step over one lane's build output and returns the
+/// `dist/` it produced. Every file carries its own lane and bundle path as
+/// its contents, so a name two lanes both stage stays legible afterwards
+/// rather than becoming a silent overwrite.
+#[allow(clippy::unwrap_used)]
+fn stage_assets(lane: &Lane) -> BTreeMap<String, String> {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("target").join(lane.target).join("release");
+    let binary = if lane.runner_os == "Windows" {
+        "kendex.exe"
+    } else {
+        "kendex"
+    };
+    fs::create_dir_all(&out).unwrap();
+    fs::write(out.join(binary), format!("{} {binary}", lane.target)).unwrap();
+    for entry in lane.bundle {
+        let path = out.join("bundle").join(entry);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, format!("{} {entry}", lane.target)).unwrap();
+    }
+    let workflow = workflow();
+    let script = expand(
+        &run_script(&step(&workflow, "name: Stage release assets")),
+        lane,
+    );
+    let run = std::process::Command::new("bash")
+        // A `shell: bash` step gets these flags on a runner, so a cp or a
+        // find that fails stops the lane here the way it would there.
+        .args(["-eo", "pipefail", "-c", &script])
+        .current_dir(dir.path())
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .output()
+        .unwrap();
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "{} failed to stage: {}",
+        lane.target,
+        String::from_utf8_lossy(&run.stderr)
+    );
+    contents_of(&dir.path().join("dist"))
+}
+
+/// A whole tag run: every lane staged, merged into the one `dist/` the
+/// publish job downloads them all into, and the signed artifact each lane
+/// contributed to it.
+struct Release {
+    dist: BTreeMap<String, String>,
+    signed: Vec<(&'static str, String)>,
+}
+
+fn release() -> &'static Release {
+    static RELEASE: OnceLock<Release> = OnceLock::new();
+    RELEASE.get_or_init(|| {
+        let mut dist: BTreeMap<String, String> = BTreeMap::new();
+        let mut signed = Vec::new();
+        for lane in &LANES {
+            let staged = stage_assets(lane);
+            let mut updaters: Vec<String> = staged
+                .keys()
+                .filter(|name| staged.contains_key(&format!("{name}.sig")))
+                .cloned()
+                .collect();
+            assert_eq!(
+                updaters.len(),
+                1,
+                "{} staged {updaters:?}; a lane leaves the manifest step exactly one signed artifact",
+                lane.platform
+            );
+            signed.push((lane.platform, updaters.remove(0)));
+            for (name, body) in staged {
+                if let Some(earlier) = dist.insert(name.clone(), body) {
+                    panic!("two lanes both stage {name}: {} and {earlier}", lane.target);
+                }
+            }
+        }
+        Release { dist, signed }
+    })
+}
+
+/// Every signed artifact a full tag run leaves in `dist/`, one per lane:
+/// whatever the staging step put there beside a signature of its own name.
+fn signed_artifacts() -> &'static [(&'static str, String)] {
+    &release().signed
+}
+
+/// Runs the manifest step over a `dist/` holding exactly `files`, and
+/// returns the exit code, the `latest.json` it wrote, and what it said
+/// doing so.
+#[allow(clippy::unwrap_used)]
+fn run_manifest(files: &BTreeMap<String, String>) -> (i32, String, String) {
     let dir = tempfile::tempdir().unwrap();
     let dist = dir.path().join("dist");
     fs::create_dir_all(&dist).unwrap();
-    for artifact in present {
-        fs::write(dist.join(artifact), "bytes").unwrap();
-        fs::write(
-            dist.join(format!("{artifact}.sig")),
-            format!("sig-of-{artifact}"),
-        )
-        .unwrap();
+    for (name, body) in files {
+        fs::write(dist.join(name), body).unwrap();
     }
     let workflow = workflow();
     let script = run_script(&step(&workflow, "name: Write the signed update manifest"));
@@ -163,16 +355,30 @@ fn write_manifest(present: &[&str]) -> (i32, String, String) {
     (run.status.code().unwrap_or(-1), manifest, said)
 }
 
+/// Runs the manifest step over a `dist/` holding exactly `present`
+/// artifacts, each beside its signature.
+fn write_manifest(present: &[&str]) -> (i32, String, String) {
+    let mut files = BTreeMap::new();
+    for artifact in present {
+        files.insert((*artifact).to_owned(), "bytes".to_owned());
+        files.insert(format!("{artifact}.sig"), format!("sig-of-{artifact}"));
+    }
+    run_manifest(&files)
+}
+
 #[cfg(unix)]
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_manifest_pairs_every_signature_with_the_artifact_it_signs() {
-    let artifacts: Vec<&str> = SIGNED_ARTIFACTS.iter().map(|(_, file)| *file).collect();
+    let artifacts: Vec<&str> = signed_artifacts()
+        .iter()
+        .map(|(_, file)| file.as_str())
+        .collect();
     let (code, manifest, _) = write_manifest(&artifacts);
     assert_eq!(code, 0, "a complete set must succeed");
     let manifest: serde_json::Value = serde_json::from_str(&manifest).unwrap();
     assert_eq!(manifest["version"].as_str(), Some("5.1.0"));
-    for (platform, artifact) in SIGNED_ARTIFACTS {
+    for (platform, artifact) in signed_artifacts() {
         let entry = &manifest["platforms"][platform];
         assert_eq!(
             entry["signature"].as_str(),
@@ -197,6 +403,7 @@ fn the_manifest_pairs_every_signature_with_the_artifact_it_signs() {
 /// the `.sig` beside it that its `kendex_*_amd64.AppImage.sig` glob matches.
 /// A rename on either side is first seen by a user whose update fails after
 /// the release shipped, because release.yml runs on tags only.
+#[cfg(unix)]
 #[test]
 fn the_urls_core_builds_are_the_artifact_the_release_signs_and_its_signature() {
     let base = "https://github.com/vanillagreencom/kendex/releases/download/v5.1.0";
@@ -204,10 +411,10 @@ fn the_urls_core_builds_are_the_artifact_the_release_signs_and_its_signature() {
         ("linux-x86_64", "x86_64-unknown-linux-gnu"),
         ("linux-aarch64", "aarch64-unknown-linux-gnu"),
     ] {
-        let artifact = SIGNED_ARTIFACTS
+        let artifact = signed_artifacts()
             .iter()
             .find(|(key, _)| *key == platform)
-            .map(|(_, file)| *file)
+            .map(|(_, file)| file.as_str())
             .unwrap_or_default();
         assert_eq!(
             kendex_core::update_feed::app_image_url("5.1.0", target).unwrap_or_default(),
@@ -245,11 +452,11 @@ fn no_step_hunts_for_the_v1_compatible_linux_updater_archive() {
 #[cfg(unix)]
 #[test]
 fn a_lane_missing_its_signature_fails_the_job_by_name() {
-    for (absent, artifact) in SIGNED_ARTIFACTS {
-        let rest: Vec<&str> = SIGNED_ARTIFACTS
+    for (absent, artifact) in signed_artifacts() {
+        let rest: Vec<&str> = signed_artifacts()
             .iter()
-            .filter(|(_, file)| *file != artifact)
-            .map(|(_, file)| *file)
+            .filter(|(_, file)| file != artifact)
+            .map(|(_, file)| file.as_str())
             .collect();
         let (code, manifest, said) = write_manifest(&rest);
         assert_ne!(code, 0, "missing {absent} must fail the job");
@@ -266,6 +473,60 @@ fn a_release_with_nothing_signed_fails_the_job() {
     let (code, manifest, _) = write_manifest(&[]);
     assert_ne!(code, 0);
     assert!(manifest.is_empty(), "{manifest}");
+}
+
+/// The staging step's globs and the manifest step's `add` patterns are two
+/// halves of one naming contract that only a tag run ever puts together.
+/// Here the halves meet: tauri's own bundle names go through the real
+/// staging script, and what it leaves in `dist/` goes to the real manifest
+/// script, so a rename in tauri's output, in the staging globs, or in the
+/// `add` patterns fails this test rather than a release.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn every_lane_the_staging_step_stages_reaches_the_manifest() {
+    let release = release();
+    let (code, manifest, said) = run_manifest(&release.dist);
+    assert_eq!(code, 0, "a full tag run must write a manifest: {said}");
+    let manifest: serde_json::Value = serde_json::from_str(&manifest).unwrap();
+    for (platform, artifact) in &release.signed {
+        let entry = &manifest["platforms"][platform];
+        assert_eq!(
+            entry["url"].as_str(),
+            Some(
+                format!(
+                    "https://github.com/vanillagreencom/kendex/releases/download/v5.1.0/{artifact}"
+                )
+                .as_str()
+            ),
+            "{platform}"
+        );
+        // Both Apple lanes bundle the same file name, so a signature that
+        // came from the other lane is the rename having stopped working.
+        let lane = LANES
+            .iter()
+            .find(|lane| lane.platform == *platform)
+            .unwrap();
+        assert!(
+            entry["signature"]
+                .as_str()
+                .unwrap_or_default()
+                .starts_with(lane.target),
+            "{platform} carries another lane's signature: {entry}"
+        );
+    }
+}
+
+/// A lane added to the matrix with no fixture here publishes a platform
+/// nothing above covers, and every assertion still passes.
+#[test]
+fn the_lane_fixture_covers_every_lane_the_matrix_builds() {
+    let workflow = workflow();
+    let mut declared = lane_triples(&workflow);
+    declared.sort_unstable();
+    let mut covered: Vec<&str> = LANES.iter().map(|lane| lane.target).collect();
+    covered.sort_unstable();
+    assert_eq!(covered, declared);
 }
 
 fn lane_triples(workflow: &str) -> Vec<&str> {
