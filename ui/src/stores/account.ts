@@ -148,7 +148,12 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
     // Submissions belong to the credential. A read that finds it gone
     // leaves what signing out leaves, so nobody's rows outlive them.
     if (hasCredential(answer.ok)) set({ account: answer.ok, readError: null });
-    else set({ account: answer.ok, readError: null, submissions: null });
+    else {
+      // Losing the credential by observation changes hands as surely as
+      // signing out does, so work already out for the old one is stale.
+      handover += 1;
+      set({ account: answer.ok, readError: null, submissions: null });
+    }
   },
 
   signIn: async () => {

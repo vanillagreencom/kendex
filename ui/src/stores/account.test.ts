@@ -288,19 +288,30 @@ describe("a read racing a deliberate change", () => {
   });
 
   it("drops rows that arrive after the account changed hands", async () => {
-    useAccountStore.setState({
-      account: { kind: "signed-in", identity: ADA },
-      submissions: [],
-    });
+    const arrivingAfter = async (change: () => Promise<void>) => {
+      useAccountStore.setState({
+        account: { kind: "signed-in", identity: ADA },
+        submissions: [],
+      });
+      vi.mocked(commands.mineSubmissions).mockImplementation(async () => {
+        await change();
+        return { status: "ok", data: [] } as Awaited<
+          ReturnType<typeof commands.mineSubmissions>
+        >;
+      });
+      await useAccountStore.getState().loadSubmissions();
+      return useAccountStore.getState().submissions;
+    };
+    // Hands change two ways: signing out, and a read that finds the
+    // credential gone. Rows already out belong to neither account.
     logsOut();
-    vi.mocked(commands.mineSubmissions).mockImplementation(async () => {
-      await useAccountStore.getState().signOut();
-      return { status: "ok", data: [] } as Awaited<
-        ReturnType<typeof commands.mineSubmissions>
-      >;
-    });
-    await useAccountStore.getState().loadSubmissions();
-    expect(useAccountStore.getState().submissions).toBeNull();
+    const out = () => useAccountStore.getState().signOut();
+    expect(await arrivingAfter(out)).toBeNull();
+    const observed = async () => {
+      stored(false);
+      await load();
+    };
+    expect(await arrivingAfter(observed)).toBeNull();
   });
 
   // Signing out drops the rows; a read that finds the credential gone has
