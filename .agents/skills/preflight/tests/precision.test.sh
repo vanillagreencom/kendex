@@ -44,6 +44,7 @@ seed() { # NAME — fixture in $R: committed baseline, origin/main, feature bran
   printf '#!/usr/bin/env bash\necho old\nTMP="$(mktemp -d)"\n' >"$R/scripts/old.sh"
   printf '#!/usr/bin/env bash\nset -euo pipefail\n# See docs/gone.md for background.\necho old\n' >"$R/scripts/pointer.sh"
   printf 'CREATE TABLE t (id INTEGER);\n' >"$R/store/migrations/V1__init.sql"
+  printf 'CREATE OR REPLACE VIEW v AS SELECT 1;\n' >"$R/store/migrations/R__views.sql"
   printf '# Migrations\n' >"$R/store/migrations/README.md"
   printf 'SELECT 1;\n' >"$R/data/report.sql"
   git -C "$R" add -A
@@ -658,9 +659,13 @@ seed migrations
 printf 'CREATE TABLE w (id INTEGER);\n' >"$R/store/migrations/V2__later.sql"
 printf '# Migrations\n\nOne per change.\n' >"$R/store/migrations/README.md"
 printf 'SELECT 2;\n' >"$R/data/report.sql"
+# Flyway reapplies a repeatable migration when its checksum moves.
+printf 'CREATE OR REPLACE VIEW v AS SELECT 1, 2;\n' >"$R/store/migrations/R__views.sql"
+# A mode change reports M with the text untouched.
+chmod +x "$R/store/migrations/V1__init.sql"
 git -C "$R" add -A
 run_pf
-clean "a migration added at a new version, an edited note beside it, and an edited .sql outside a migrations directory"
+clean "a new version, an edited note beside it, an edited .sql outside a migrations directory, an edited repeatable migration, and a mode-only change"
 printf 'CREATE TABLE t (id INTEGER); -- clearer\n' >"$R/store/migrations/V1__init.sql"
 git -C "$R" add -A
 run_pf
@@ -677,6 +682,22 @@ esac then
 else
   bad "--all reads every line as added, so the lane cannot decide and stays quiet" "out=$OUT"
 fi
+
+echo "=== a migration this branch added is not one a database has run ==="
+seed migrationsbranch
+printf 'CREATE TABLE w (id INTEGER);\n' >"$R/store/migrations/V2__later.sql"
+git -C "$R" add -A
+git -C "$R" commit -qm "add V2"
+printf 'CREATE TABLE w (id INTEGER, n TEXT);\n' >"$R/store/migrations/V2__later.sql"
+git -C "$R" add -A
+run_pf --staged
+clean "correcting a migration this branch added, in the staged scope that diffs against HEAD"
+run_pf
+clean "and the base scope reads the same file as added"
+printf 'CREATE TABLE t (id INTEGER); -- clearer\n' >"$R/store/migrations/V1__init.sql"
+git -C "$R" add -A
+run_pf --staged
+fires "the base's own migration, staged, still fails" "store/migrations/V1__init.sql:0: [applied-migration-edited]"
 
 printf '\n%s passed, %s failed, %s skipped\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ]
