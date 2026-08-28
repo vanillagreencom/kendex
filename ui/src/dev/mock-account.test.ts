@@ -9,11 +9,12 @@ import {
 import { mockInvoke } from "./mock";
 import {
   accountFromUrl,
-  callsExpiredFromUrl,
+  EXPIRING_CALLS,
+  expiringCallFromUrl,
   isSignedIn,
   MOCK_ACCOUNT_NAMES,
   MOCK_ACCOUNTS,
-  setCallsExpired,
+  setExpiringCall,
   setMockAccount,
   UNREADABLE,
 } from "./mock-account";
@@ -74,57 +75,97 @@ describe("the account states the dev bridge can answer as", () => {
   });
 });
 
-// A refusal the harness sends as a bare string leaves every consumer
-// reading `answer.error.message` with undefined and its surface blank,
-// and the name-matching test above cannot see it.
-describe("how the calls made under the sign-in refuse", () => {
-  const refusalOf = (command: string) =>
-    mockInvoke(command, { repo: "jane/team-skills" }).then(
-      () => null,
-      (refusal: unknown) => refusal,
+// A payload of the right shape proves nothing about whether the flow it
+// belongs to can be walked, and a bare string leaves every consumer
+// reading `answer.error.message` with undefined. What the harness owes is
+// the sequence: reach the submit, meet the expiry there, take the sign-in
+// it offers, and submit again.
+describe("the expiry the dev URL arms", () => {
+  const REPO = "jane/team-skills";
+
+  const answerOf = (
+    command: string,
+  ): Promise<{ answer?: unknown; refusal?: unknown }> =>
+    mockInvoke(command, { repo: REPO }).then(
+      (answer: unknown) => ({ answer }),
+      (refusal: unknown) => ({ refusal }),
     );
 
-  const CALLS = ["mine_submit", "mine_submissions"];
+  const refusalOf = async (command: string) =>
+    (await answerOf(command)).refusal;
 
   beforeEach(() => {
     setMockAccount({ ok: MOCK_ACCOUNTS["signed-in"] });
-    setCallsExpired(false);
+    setExpiringCall(null);
   });
 
-  afterEach(() => setCallsExpired(false));
+  afterEach(() => setExpiringCall(null));
 
-  it("names the sentence and the kind a consumer reads", async () => {
-    setCallsExpired(true);
-    for (const command of CALLS) {
-      const refusal = await refusalOf(command);
-      expect(refusal, command).toMatchObject({ kind: "expired" });
-      expect((refusal as AccountCallRefused).message, command).toContain(
-        "kendex login",
-      );
-    }
+  it("carries a person from a working submit through expiry and back", async () => {
+    setExpiringCall("mine_submit");
+
+    // The tab polls its submissions on mount. That is not the call the
+    // expiry is on, so it answers and leaves the submit reachable.
+    expect((await answerOf("mine_submissions")).answer).toHaveLength(1);
+    expect(isSignedIn()).toBe(true);
+
+    const refusal = await refusalOf("mine_submit");
+    expect(refusal).toMatchObject({ kind: "expired" });
+    expect((refusal as AccountCallRefused).message).toContain("kendex login");
+
+    // The account does not revive underneath it: the credential went with
+    // the sign-in, so the read that follows says signed out.
+    expect(isSignedIn()).toBe(false);
+    expect(await commandState()).toBe("signed-out");
+
+    // The sign-in the dialog offers, and the submit that works after it.
+    await mockInvoke("account_login_start");
+    expect(await mockInvoke("account_login_poll")).toBe("pending");
+    expect(await mockInvoke("account_login_poll")).toBe("signed");
+    expect((await answerOf("mine_submit")).answer).toMatchObject({
+      status: "pending",
+    });
   });
 
-  it("is about the call, not the account, with no credential to use", async () => {
+  // The poll meeting a dead sign-in is the tab's other new path, and it
+  // has to be reachable without a person pressing anything.
+  it("puts it on the poll instead when the poll is the call named", async () => {
+    setExpiringCall("mine_submissions");
+    expect(await refusalOf("mine_submissions")).toMatchObject({
+      kind: "expired",
+    });
+    expect(isSignedIn()).toBe(false);
+  });
+
+  it("spends the expiry on one call rather than every call after it", async () => {
+    setExpiringCall("mine_submit");
+    expect(await refusalOf("mine_submit")).toMatchObject({ kind: "expired" });
+    // Signed in again, the same call goes through: a scenario that never
+    // clears cannot show a recovery.
+    setMockAccount({ ok: MOCK_ACCOUNTS["signed-in"] });
+    expect((await answerOf("mine_submit")).answer).toMatchObject({
+      status: "pending",
+    });
+  });
+
+  it("refuses about the call, not the account, with no credential to use", async () => {
     setMockAccount({ ok: MOCK_ACCOUNTS["signed-out"] });
-    for (const command of CALLS) {
+    for (const command of EXPIRING_CALLS) {
       expect(await refusalOf(command), command).toMatchObject({
         kind: "failed",
       });
     }
   });
 
-  // Submit is gated on the read saying signed in, so the expired refusal
-  // is reachable only while the read still says a credential is held.
-  it("meets the expiry under a read that still says signed in", async () => {
-    setCallsExpired(true);
-    expect(isSignedIn()).toBe(true);
-    expect(await refusalOf("mine_submit")).toMatchObject({ kind: "expired" });
-  });
-
-  it("is off unless the dev URL asks for it", () => {
-    expect(callsExpiredFromUrl("?tab=mine&calls=expired")).toBe(true);
-    expect(callsExpiredFromUrl("?tab=mine")).toBe(false);
-    expect(callsExpiredFromUrl("?calls=failed")).toBe(false);
+  it("arms only a call it has, and says so otherwise", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(expiringCallFromUrl("?tab=mine&expire=mine_submit")).toBe(
+      "mine_submit",
+    );
+    expect(expiringCallFromUrl("?tab=mine")).toBeNull();
+    expect(expiringCallFromUrl("?expire=mine_forget")).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 });
 

@@ -6,7 +6,7 @@ import type {
   MineRow,
   SubmitPreflight,
 } from "@/bindings";
-import { callRefusal } from "./mock-account";
+import { callRefusal, type ExpiringCall } from "./mock-account";
 import type { Handler } from "./mock-state";
 
 function row(overrides: Partial<MineRow>): MineRow {
@@ -163,16 +163,16 @@ const SUBMISSION = {
   indexed_at: null,
 };
 
-const underSignIn = <T>(answer: T) => {
-  const refused = callRefusal();
+const underSignIn = <T>(call: ExpiringCall, answer: T) => {
+  const refused = callRefusal(call);
   return refused ? Promise.reject(refused) : answer;
 };
 
 export const mineHandlers: Record<string, Handler> = {
   mine_submit_preflight: (args: { path: string }) => preflightFor(args.path),
   mine_submit: (args: { repo: string }) =>
-    underSignIn({ repo: args.repo, status: "pending" }),
-  mine_submissions: () => underSignIn([SUBMISSION]),
+    underSignIn("mine_submit", { repo: args.repo, status: "pending" }),
+  mine_submissions: () => underSignIn("mine_submissions", [SUBMISSION]),
   mine_authoring_doc: () =>
     "# How a marketplace repo works\n\nA kendex marketplace is a git repository.\n",
   mine_list: () => rows,

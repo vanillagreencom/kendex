@@ -77,30 +77,57 @@ export function isSignedIn(): boolean {
 const EXPIRED =
   "your sign-in has expired (invalid_grant) — run `kendex login` again";
 
-/** Whether the calls made under the sign-in meet an expiry. The read and
- *  the calls answer separately because the server can refuse a credential
- *  this machine still holds, which is the only way the expired refusal is
- *  reachable: the Submit that meets it is gated on the read saying signed
- *  in, so `?account=expired` takes the button away instead of the
- *  refusal. */
-export const callsExpiredFromUrl = (search: string): boolean =>
-  new URLSearchParams(search).get("calls") === "expired";
+/** The calls that go out under the stored sign-in, by the name the bridge
+ *  dispatches on. */
+export const EXPIRING_CALLS = ["mine_submit", "mine_submissions"] as const;
 
-let callsExpired =
+export type ExpiringCall = (typeof EXPIRING_CALLS)[number];
+
+/** Which call `?expire=` puts the expiry on, or null for none.
+ *
+ *  It names one call rather than arming them all because the Mine tab
+ *  polls its submissions on mount: an expiry both calls answer to would
+ *  end the account before anyone could press Submit, and the submit
+ *  meeting one is the flow this exists to show. The read and the calls
+ *  answer separately for the same reason. The server can refuse a
+ *  credential this machine still holds, and `?account=expired` takes the
+ *  Submit away instead of letting it meet the refusal. */
+export function expiringCallFromUrl(search: string): ExpiringCall | null {
+  const asked = new URLSearchParams(search).get("expire");
+  if (asked === null) return null;
+  const named = EXPIRING_CALLS.find((call) => call === asked);
+  if (named) return named;
+  console.warn(
+    `mock cannot expire '${asked}' — nothing armed. Pick one of ${EXPIRING_CALLS.join(", ")}`,
+  );
+  return null;
+}
+
+let expiring: ExpiringCall | null =
   typeof window === "undefined"
-    ? false
-    : callsExpiredFromUrl(window.location.search);
+    ? null
+    : expiringCallFromUrl(window.location.search);
 
-/** What the calls refuse with, for tests and for the dev URL. */
-export function setCallsExpired(expired: boolean): void {
-  callsExpired = expired;
+/** Arms the expiry on one call, for tests and for the dev URL. */
+export function setExpiringCall(call: ExpiringCall | null): void {
+  expiring = call;
 }
 
 /** Why a call made under the sign-in refuses, or null when it goes
  *  through. Tagged as the command answers, so a consumer reading
- *  `.message` gets the sentence rather than undefined. */
-export function callRefusal(): AccountCallRefused | null {
-  if (callsExpired) return { kind: "expired", message: EXPIRED };
+ *  `.message` gets the sentence rather than undefined.
+ *
+ *  Meeting the expiry is what ends the sign-in, so the credential goes
+ *  with it and the read that follows says signed out, as it does in the
+ *  app. The scenario is spent in the same moment: signing in again comes
+ *  back to a working call rather than expiring for the rest of the
+ *  session. */
+export function callRefusal(call: ExpiringCall): AccountCallRefused | null {
+  if (expiring === call) {
+    expiring = null;
+    served = { ok: SIGNED_OUT };
+    return { kind: "expired", message: EXPIRED };
+  }
   if (!isSignedIn()) return { kind: "failed", message: "sign in first" };
   return null;
 }
