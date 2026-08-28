@@ -118,6 +118,10 @@ pub enum CoreError {
     #[error("settings are busy: another kendex process holds {lock}")]
     SettingsBusy { lock: PathBuf },
 
+    /// A settings edit that did not go in; the shapes are the module's.
+    #[error(transparent)]
+    SettingsRefused(#[from] crate::settings_file::SettingsRefusal),
+
     #[error("credential refresh is busy: another kendex process holds {lock}")]
     CredentialRefreshBusy { lock: PathBuf },
 

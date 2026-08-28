@@ -150,6 +150,13 @@ pub struct DesiredState {
     /// with the skill that ships it. Seeding writes the first declaration
     /// of a key; a refresh listens to the key's recorded owner.
     pub settings_env: Vec<crate::settings_seed::SeededEnv>,
+    /// Where each planned skill's settings template stands: read, absent,
+    /// or out of reach. `settings_env` is this same text run through the
+    /// lenient reader seeding needs; the settings view reads the text
+    /// itself, strictly, and needs to tell a skill that ships nothing
+    /// apart from one nothing could be read for. Project scope only — a
+    /// global install seeds nothing.
+    pub settings_templates: BTreeMap<String, crate::settings_view::TemplateSource>,
     /// What each source an item names resolved to. One resolution per
     /// source per pass: resolving a remote reads its checkout to confirm
     /// nothing has altered it, which is worth doing once and wasteful to
@@ -242,6 +249,13 @@ fn compute(
     for kind in super::expansion::PLANNED_KINDS {
         for (name, planned) in expansion.of(kind) {
             let decl = &planned.decl;
+            // Before anything can fail: a skill starts out of reach and
+            // the pass overwrites that the moment it can say better, so
+            // every way of not getting there lands on one answer rather
+            // than on silence.
+            if kind == ItemKind::Skill {
+                crate::settings_view::out_of_reach(scope, name, &mut state.settings_templates);
+            }
             let Some((root, provenance, source_commit)) =
                 resolve_source(env, scope, name, decl, manifest, &mut state)?
             else {

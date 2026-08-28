@@ -5,8 +5,8 @@
 //! rest, which is what seeding needs and what leaves an author's mistake to
 //! surface in somebody else's shell. This is the other reader over the same
 //! bytes, locating every defect and printing nothing. `kendex marketplace
-//! check` reads its findings; no production caller reads
-//! [`TemplateEntry`] yet.
+//! check` reads its findings; the app's settings view
+//! ([`crate::settings_view`]) reads both.
 //!
 //! The grammar is the shell loaders', not this reader's opinion. What a
 //! template's `[env]` table says is copied into a consumer's
@@ -33,16 +33,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::settings_seed::SETTINGS_TEMPLATE;
 
 /// A defect at a place in the template, with what to do about it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub struct TemplateFinding {
     /// 1-based line; 0 where the whole file is the subject.
-    pub line: usize,
+    pub line: u32,
     pub problem: String,
     pub fix: String,
 }
 
-/// One well-formed `[env]` row, decoded. Shaped for the app settings view
-/// planned in KEN-705; the catalog check reads findings only.
+/// One well-formed `[env]` row, decoded — what the app's settings view
+/// shows beside a key. The catalog check reads findings only.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TemplateEntry {
     pub key: String,
@@ -52,9 +53,9 @@ pub struct TemplateEntry {
     /// decode: a value carrying `"` or `\` is a finding, not a row.
     pub value: String,
     /// 1-based first and last line of the comment block.
-    pub comment_span: (usize, usize),
+    pub comment_span: (u32, u32),
     /// 1-based line the assignment sits on.
-    pub line: usize,
+    pub line: u32,
 }
 
 /// What one template amounts to: every row that decoded, and every defect.
@@ -152,21 +153,29 @@ pub fn read(text: &str) -> TemplateRead {
 /// The 1-based line a byte offset falls on. Counted from terminators, not
 /// from `lines()`: an offset at the very start of a line has a prefix
 /// ending in `\n`, which `lines()` does not count as a line of its own.
-fn line_at(text: &str, offset: usize) -> usize {
-    text.as_bytes()[..offset.min(text.len())]
-        .iter()
-        .filter(|byte| **byte == b'\n')
-        .count()
-        + 1
+fn line_at(text: &str, offset: usize) -> u32 {
+    line_number(
+        text.as_bytes()[..offset.min(text.len())]
+            .iter()
+            .filter(|byte| **byte == b'\n')
+            .count(),
+    )
+}
+
+/// A 0-based index as the 1-based line a finding names. Line numbers cross
+/// into the app, where the boundary counts in 32 bits; a file long enough
+/// to saturate one is past anything a person reads a finding about.
+fn line_number(index: usize) -> u32 {
+    u32::try_from(index + 1).unwrap_or(u32::MAX)
 }
 
 /// The line scan: everything an author can be told precisely, plus the
 /// lines whose SYNTAX it already judged. TOML will complain about those
 /// same lines in its own words, and the scan's words are better; every
 /// other finding is about something the parser has no opinion on.
-fn scan(text: &str) -> (TemplateRead, BTreeSet<usize>) {
+fn scan(text: &str) -> (TemplateRead, BTreeSet<u32>) {
     let mut read = TemplateRead::default();
-    let mut syntax: BTreeSet<usize> = BTreeSet::new();
+    let mut syntax: BTreeSet<u32> = BTreeSet::new();
     // Whether the table is there at all is settled before any key is
     // judged. With no `[env]` the file seeds nothing whatever it holds, so
     // that is said once, in place of saying it again under every key. The
@@ -183,12 +192,12 @@ fn scan(text: &str) -> (TemplateRead, BTreeSet<usize>) {
             fix: "open the table with a lone [env] header and put the keys under it".to_owned(),
         });
     }
-    let mut env_header: Option<usize> = None;
+    let mut env_header: Option<u32> = None;
     let mut in_env = false;
-    let mut comment: Vec<(usize, String)> = Vec::new();
-    let mut seen: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut comment: Vec<(u32, String)> = Vec::new();
+    let mut seen: BTreeMap<&str, u32> = BTreeMap::new();
     for (index, raw) in text.lines().enumerate() {
-        let line = index + 1;
+        let line = line_number(index);
         let trimmed = raw.trim();
         if trimmed.is_empty() {
             comment.clear();
@@ -289,9 +298,9 @@ fn scan(text: &str) -> (TemplateRead, BTreeSet<usize>) {
 /// about the file.
 fn decode_entry(
     key: &str,
-    line: usize,
+    line: u32,
     trimmed: &str,
-    comment: &[(usize, String)],
+    comment: &[(u32, String)],
 ) -> (Option<String>, Vec<TemplateFinding>) {
     let mut problems = Vec::new();
     if !is_env_name(key) {

@@ -5,7 +5,7 @@ crates/core/src/engine/detach.rs	603
 crates/core/src/engine/pi_hooks_move/migrated.rs	540
 crates/core/src/engine/pi_hooks_move/mod.rs	503
 crates/core/src/engine/pi_hooks_move/preflight.rs	765
-crates/core/src/error.rs	437
+crates/core/src/error.rs	441
 crates/core/src/remote/store.rs	405
 docs/ARCHITECTURE.md	801
 hooks/block-repo-copy.sh	511

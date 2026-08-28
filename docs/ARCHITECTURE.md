@@ -458,11 +458,11 @@ lives in one capability table read by core and UI.
   comment block last written. A revision rewrites a key's comment only
   while its on-disk text hashes to that record and the template belongs to
   the recorded owner. A v1 record imports with no owner; a template earns
-  it only where the on-disk comment is provably what v1 seeded, word for
-  word. Where several skills ship one key, the first declaration is seeded,
+  it only where the comment is provably what v1 seeded, word for word.
+  Where several skills ship one key, the first declaration is seeded,
   refresh follows the recorded owner, a bare key is never adopted, and a
-  plan note names every owner and default where they differ. Value lines
-  never change; comment-block and inserted-seed bytes are all that do.
+  plan note names every owner and default where they differ. Seeding never
+  touches a value; an edit rides that same write, moving its span alone.
 - **Schemas are versioned and migrations are applies.** Manifest and lock
   carry a format version; older files load, and the upgrade rides the
   normal journaled, previewed plan as a surgical edit (the version line

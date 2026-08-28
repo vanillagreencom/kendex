@@ -100,16 +100,16 @@ fn trim_blank_edges(lines: &[String]) -> &[String] {
     &lines[lo..hi]
 }
 
-fn is_table_header(line: &str) -> bool {
+pub(crate) fn is_table_header(line: &str) -> bool {
     let trimmed = line.trim();
     trimmed.starts_with('[') && trimmed.ends_with(']')
 }
 
-fn is_env_header(line: &str) -> bool {
+pub(crate) fn is_env_header(line: &str) -> bool {
     line.trim() == "[env]"
 }
 
-fn assignment_key(line: &str) -> Option<String> {
+pub(crate) fn assignment_key(line: &str) -> Option<String> {
     let trimmed = line.trim();
     if trimmed.starts_with('#') || trimmed.is_empty() || is_table_header(trimmed) {
         return None;

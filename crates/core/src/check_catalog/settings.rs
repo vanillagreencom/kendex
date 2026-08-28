@@ -47,7 +47,7 @@ pub(super) fn findings(
             file: at.clone(),
             // Line 0 is the strict reader saying the whole file is the
             // subject — a template with no `[env]` table at all.
-            line: u32::try_from(finding.line).ok().filter(|line| *line > 0),
+            line: Some(finding.line).filter(|line| *line > 0),
             kind: kind.name(),
             name: name.to_owned(),
             pass: SETTINGS_PASS.to_owned(),

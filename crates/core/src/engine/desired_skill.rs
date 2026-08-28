@@ -108,13 +108,27 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
     let method = ctx.decl.method.unwrap_or(ctx.manifest.install.method);
     let groups = surface_groups(ctx, method);
     if groups.is_empty() {
+        crate::settings_view::seeds_nothing(
+            ctx.scope,
+            ctx.name,
+            "no tool here holds a skill, so nothing it declares is seeded",
+            &mut state.settings_templates,
+        );
         return Ok(());
     }
     // A skill's `[env]` defaults ride with an installation: a skill no
     // harness here installs seeds nothing, so nothing reaches the settings
     // file that no installation here asked for.
-    if enabled && matches!(ctx.scope, Scope::Project { .. }) {
-        seed_settings_env(ctx, state)?;
+    if matches!(ctx.scope, Scope::Project { .. }) {
+        match enabled {
+            true => seed_settings_env(ctx, state)?,
+            false => crate::settings_view::seeds_nothing(
+                ctx.scope,
+                ctx.name,
+                "this skill is switched off here, so nothing it declares is seeded",
+                &mut state.settings_templates,
+            ),
+        }
     }
     cross_read_note(ctx, method, state);
     if ctx.harnesses.contains(&HarnessId::Copilot) {
@@ -203,19 +217,25 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
     Ok(())
 }
 
-/// The `[env]` defaults this skill ships for the project's settings file.
+/// The `[env]` defaults this skill ships for the project's settings file,
+/// and the template's own text for the settings view to read strictly.
 fn seed_settings_env(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()> {
     let current = ctx
         .sealed
         .read_if_exists(&ctx.item_path.join(crate::settings_seed::SETTINGS_TEMPLATE))?;
-    if let Some(text) = current {
-        for entry in crate::settings_seed::extract_env_entries(&text) {
-            state.settings_env.push(crate::settings_seed::SeededEnv {
-                entry,
-                owner: ctx.name.to_owned(),
-            });
+    let source = match current {
+        Some(text) => {
+            for entry in crate::settings_seed::extract_env_entries(&text) {
+                state.settings_env.push(crate::settings_seed::SeededEnv {
+                    entry,
+                    owner: ctx.name.to_owned(),
+                });
+            }
+            crate::settings_view::TemplateSource::Text(text)
         }
-    }
+        None => crate::settings_view::TemplateSource::Absent,
+    };
+    state.settings_templates.insert(ctx.name.to_owned(), source);
     Ok(())
 }
 

@@ -221,20 +221,40 @@ pub(super) fn plan_lock_write(
 /// template improved are refreshed while provably unedited — gated by the
 /// lock's per-key ledger, which this plan carries forward on `new_lock`.
 ///
+/// A person's own edits are the third thing that reaches this file, and
+/// they compose here rather than following as a second write: a manifest
+/// save re-plans the scope and may seed or refresh this same file, and a
+/// second write would bind to bytes the first one replaced. Seeds,
+/// refreshes and edits become one `WriteFile` with one precondition, and
+/// the ledger they all move rides out on the one lock this pass writes.
+///
 /// The notes go out before any of it: a shared key several packages give
 /// different defaults is worth saying whether or not this pass has a write
 /// to plan for it.
 pub(super) fn plan_settings_seed(
     scope: &Scope,
     state: &DesiredState,
+    options: &crate::engine::PlanOptions,
     new_lock: &mut crate::lock::Lock,
     ops: &mut Vec<PlannedOp>,
     drift: &mut Vec<DriftRow>,
 ) -> Result<Vec<String>> {
+    let draft = options.settings_draft.as_ref();
+    let edits = draft.map_or(&[][..], |draft| draft.edits.as_slice());
     let Scope::Project { root } = scope else {
+        // Nothing global ships settings, so an edit here names a key no
+        // template at this place declares — which is what it is refused
+        // for, in the same words a project would refuse it.
+        if let Some(edit) = edits.first() {
+            return Err(crate::settings_file::SettingsRefusal::Undeclared {
+                skill: edit.skill.clone(),
+                key: edit.key.clone(),
+            }
+            .into());
+        }
         return Ok(Vec::new());
     };
-    if state.settings_env.is_empty() {
+    if state.settings_env.is_empty() && edits.is_empty() {
         return Ok(Vec::new());
     }
     let notes = crate::settings_seed::conflict_notes(&state.settings_env);
@@ -244,6 +264,11 @@ pub(super) fn plan_settings_seed(
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| crate::settings_seed::SETTINGS_FILE.to_owned());
     if path.is_symlink() || (path.exists() && !path.is_file()) {
+        // Seeding reports this and carries on with the rest of the scope.
+        // An edit cannot: the person asked for exactly this file.
+        if !edits.is_empty() {
+            return Err(crate::settings_file::SettingsRefusal::NotRegularFile { path }.into());
+        }
         drift.push(DriftRow {
             kind: ItemKind::Skill,
             name: file,
@@ -258,10 +283,10 @@ pub(super) fn plan_settings_seed(
         return Ok(notes);
     }
     let current = crate::fs::read_if_exists(&path)?;
-    let (text, added, updated) = match current.as_deref() {
+    let (seeded, added, updated) = match current.as_deref() {
         None => match crate::settings_seed::merge(None, &state.settings_env) {
             Some((text, added)) => (text, added, Vec::new()),
-            None => return Ok(notes),
+            None => (String::new(), Vec::new(), Vec::new()),
         },
         Some(original) => {
             let (refreshed, updated) = crate::settings_seed::refresh_comments(
@@ -271,12 +296,23 @@ pub(super) fn plan_settings_seed(
             );
             match crate::settings_seed::merge(Some(&refreshed), &state.settings_env) {
                 Some((text, added)) => (text, added, updated),
-                None if !updated.is_empty() => (refreshed, Vec::new(), updated),
-                None => return Ok(notes),
+                None => (refreshed, Vec::new(), updated),
             }
         }
     };
+    // Edits land on the seeded text, never on the file as it was: a key
+    // this pass just inserted is one the same pass can then set, and the
+    // two are one write.
+    let (text, edited) =
+        crate::settings_file::apply_edits(&seeded, edits, &state.settings_env, &path)?;
     crate::settings_seed::record_seeds(&mut new_lock.settings_seeds, &state.settings_env, &added);
+    // Nothing to write when the finished text is what the file already
+    // holds — and, where there was no file, when there is nothing to make.
+    match &current {
+        Some(original) if *original == text => return Ok(notes),
+        None if text.is_empty() => return Ok(notes),
+        _ => {}
+    }
     let mut said = Vec::new();
     if !added.is_empty() {
         said.push(format!("seed {}", added.join(", ")));
@@ -284,10 +320,19 @@ pub(super) fn plan_settings_seed(
     if !updated.is_empty() {
         said.push(format!("refresh the comments on {}", updated.join(", ")));
     }
+    if !edited.is_empty() {
+        said.push(format!("set {}", edited.join(", ")));
+    }
     ops.push(PlannedOp {
         description: format!("Update {file} ({})", said.join("; ")),
         op: Op::WriteFile {
-            pre: crate::apply::Pre::observed(&path)?,
+            // An edited copy binds to the file it was read from, the way
+            // the manifest's does: a writer landing after the caller's own
+            // check is refused by the apply rather than overwritten.
+            pre: match draft {
+                Some(draft) => Pre::from(&draft.base),
+                None => Pre::observed(&path)?,
+            },
             path,
             bytes: text.into_bytes(),
         },

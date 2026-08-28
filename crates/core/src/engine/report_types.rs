@@ -262,6 +262,13 @@ pub struct PlanOptions {
     /// scope still under the old product name retargets its writes to the
     /// renamed file, and the path the caller knew no longer names them.
     pub manifest_base: Option<crate::base::Base>,
+    /// Settings values a person edited, and the base of the settings-file
+    /// copy they were read from. A manifest save re-plans the scope and
+    /// may seed or refresh kendex.settings.toml itself, so these are an
+    /// input to that plan rather than a second write after it: one
+    /// `WriteFile` carries the seeds, the comment refreshes and these
+    /// edits together, under one precondition and one lock snapshot.
+    pub settings_draft: Option<crate::settings_file::SettingsDraft>,
 }
 
 impl PlanOptions {

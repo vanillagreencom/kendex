@@ -214,7 +214,7 @@ fn a_readable_value_decodes_to_what_the_loaders_export() {
         let line = row
             .body
             .lines()
-            .nth(entry.line - 1)
+            .nth(entry.line as usize - 1)
             .unwrap_or_else(|| panic!("{}: line {} is off the end", row.name, entry.line));
         assert_eq!(decoded_value(line).as_ref(), Some(exported), "{}", row.name);
     }

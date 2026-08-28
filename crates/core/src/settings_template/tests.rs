@@ -4,7 +4,7 @@ const GOOD: &str = "[env]\n\n# What the reviewers do.\n# Comma separated.\nREVIE
 
 /// Every finding's problem text, so a fixture asserts what was said and
 /// where without repeating the whole struct.
-fn located(text: &str) -> Vec<(usize, String)> {
+fn located(text: &str) -> Vec<(u32, String)> {
     read(text)
         .findings
         .into_iter()
