@@ -57,12 +57,12 @@ pub(super) fn dropped(on_disk: &Stated, after: &Stated, harness: HarnessId) -> O
     let ungated: Vec<String> = on_disk
         .hooks
         .iter()
-        .filter(|command| !after.hooks.contains(command))
-        .cloned()
+        .filter(|gate| !after.hooks.contains(gate))
+        .map(Gate::shown)
         .collect();
     if !ungated.is_empty() {
         return Some(format!(
-            "the {} hook{} its {} file runs on tool use: {}",
+            "the {} gate{} its {} file sets on tool use: {}",
             ungated.len(),
             if ungated.len() == 1 { "" } else { "s" },
             harness.display_name(),
@@ -94,10 +94,10 @@ pub(super) struct Stated {
     /// Pi's delegation list: which child agents this one may invoke. An
     /// allowlist like `tools`, in a key only Pi writes.
     subagents: Option<Vec<String>>,
-    /// Every command the file's own hook block would run. Claude gates
-    /// tool use on these from inside the agent file, so one stated here
-    /// and not in the fork's rendering is a gate the fork drops.
-    hooks: Vec<String>,
+    /// Every gate the file's own hook block sets. Claude gates tool use on
+    /// these from inside the agent file, so one stated here and not in the
+    /// fork's rendering is a gate the fork drops.
+    hooks: Vec<Gate>,
     color: Option<String>,
     effort: Option<String>,
     model: Option<String>,
@@ -135,7 +135,7 @@ pub(super) fn stated(harness: HarnessId, text: &str) -> std::result::Result<Stat
             .then(|| parsed.map.string_list("allowed-subagents"))
             .flatten(),
         hooks: match parsed.map.get("hooks") {
-            Some(block) => commands(block),
+            Some(block) => gates(block),
             None => Vec::new(),
         },
         color: scalar("color"),
@@ -147,9 +147,54 @@ pub(super) fn stated(harness: HarnessId, text: &str) -> std::result::Result<Stat
     })
 }
 
-/// Every `command:` a hook block would run, at whatever depth the block
-/// nests them. Read by key rather than by shape: what matters is which
-/// commands the file would run, not how the harness spells the tree.
+/// One gate a hook block sets: the scope it applies to and the command it
+/// runs there. All three parts identify it. A matcher widened from `Bash`
+/// to `*`, or an event moved from `PostToolUse` to `PreToolUse`, is a
+/// different gate under the same command, and reading only the command
+/// calls the two the same and lets the stricter one be discarded.
+#[derive(PartialEq)]
+struct Gate {
+    event: String,
+    matcher: String,
+    command: String,
+}
+
+impl Gate {
+    /// How the refusal names it.
+    fn shown(&self) -> String {
+        format!(
+            "{} on {} running {}",
+            self.event, self.matcher, self.command
+        )
+    }
+}
+
+/// The gates a hook block sets, read as the block's own shape: an event,
+/// the matchers under it, and the commands under each.
+fn gates(value: &crate::frontmatter::Value) -> Vec<Gate> {
+    use crate::frontmatter::Value;
+    let Value::Map(events) = value else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (event, by_matcher) in events.entries() {
+        let Value::Map(matchers) = by_matcher else {
+            continue;
+        };
+        for (matcher, entries) in matchers.entries() {
+            out.extend(commands(entries).into_iter().map(|command| Gate {
+                event: event.to_owned(),
+                matcher: matcher.to_owned(),
+                command,
+            }));
+        }
+    }
+    out
+}
+
+/// Every `command:` under one matcher, at whatever depth the entries nest
+/// them. Read by key rather than by shape: what matters is which commands
+/// would run, not how the harness spells the list.
 fn commands(value: &crate::frontmatter::Value) -> Vec<String> {
     use crate::frontmatter::Value;
     match value {

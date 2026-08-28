@@ -558,3 +558,103 @@ fn a_hand_written_hook_refuses_the_fork() {
     );
     assert!(!captured(&w, "rev").exists(), "nothing was written");
 }
+
+/// A role selector describes a population, not one agent. An agent that
+/// happens to be named for a role does not own the selector spelling it,
+/// and renaming that agent must not rewrite it: doing so takes the gate
+/// off every other agent holding the role, from an operation that never
+/// mentioned them.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn renaming_an_agent_named_for_a_role_leaves_the_roles_hook_alone() {
+    let w = world();
+    let agents = w.upstream.join("agents");
+    fs::create_dir_all(&agents).unwrap();
+    fs::write(
+        agents.join("engineer.md"),
+        "---\nname: engineer\ndescription: agent engineer\n---\nUpstream body.\n",
+    )
+    .unwrap();
+    fs::write(
+        agents.join("rev.md"),
+        "---\nname: rev\ndescription: agent rev\nrole: engineer\n---\nOther body.\n",
+    )
+    .unwrap();
+    commit(&w.upstream, "one");
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        format!(
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[agents.engineer]\nsource = \"cat\"\n\n[agents.rev]\nsource = \"cat\"\n\n[[custom-hooks]]\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./guard.sh\"\nagents = \"engineer\"\n"
+        ),
+    )
+    .unwrap();
+    sync_and_apply(&w);
+    let guarded = |name: &str| {
+        fs::read_to_string(rendered(&w, HarnessId::Claude, name))
+            .unwrap()
+            .contains("./guard.sh")
+    };
+    assert!(guarded("rev"), "the role's hook reaches an engineer");
+
+    edit_body(&rendered(&w, HarnessId::Claude, "engineer"));
+    let plan = fork::fork(
+        &w.env,
+        &w.scope,
+        ItemKind::Agent,
+        "engineer",
+        HarnessId::Claude,
+    )
+    .unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+    let plan = fork::rename_fork(&w.env, &w.scope, ItemKind::Agent, "engineer", "my-eng").unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+
+    assert!(
+        guarded("rev"),
+        "renaming one agent took the gate off every other engineer: {}",
+        manifest_text(&w)
+    );
+    assert!(
+        manifest_text(&w).contains("agents = \"engineer\""),
+        "the role selector is untouched: {}",
+        manifest_text(&w)
+    );
+}
+
+/// A hook is its scope as well as its command. Tightening the scope by
+/// hand — the same command moved to an earlier event, or onto a broader
+/// matcher — leaves the command alone, so a reading that compares commands
+/// sees no difference and lets the fork restore the looser gate.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_hand_tightened_hook_scope_refuses_the_fork() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "[[custom-hooks]]\nevent = \"PostToolUse\"\nmatcher = \"Bash\"\ncommand = \"./guard.sh\"\nagents = \"rev\"\n",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    assert!(text.contains("PostToolUse:"), "{text}");
+    // The same command, moved to gate the call before it runs instead of
+    // reporting on it afterwards.
+    fs::write(&file, text.replace("PostToolUse:", "PreToolUse:")).unwrap();
+
+    let refused =
+        fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap_err();
+    assert!(
+        matches!(refused, CoreError::ForkWidensAccess { .. }),
+        "{refused:?}"
+    );
+    let said = refused.to_string();
+    assert!(
+        said.contains("PreToolUse") && said.contains("Bash") && said.contains("./guard.sh"),
+        "the refusal names the gate whole, not just its command: {said}"
+    );
+    assert!(!captured(&w, "rev").exists(), "nothing was written");
+}

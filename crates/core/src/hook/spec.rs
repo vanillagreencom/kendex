@@ -77,7 +77,8 @@ impl HookSpec {
 
     /// Whether this hook asks to run for every agent, or only for some.
     pub fn every_agent(&self) -> bool {
-        matches!(&self.agents, HookAgents::One(sel) if sel == "all")
+        matches!(&self.agents, HookAgents::One(selector)
+            if crate::render::agent::selects(selector) == crate::render::agent::Selects::Everyone)
     }
 
     /// Advisory prose for harnesses without native hook support (codex

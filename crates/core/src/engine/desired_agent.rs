@@ -5,8 +5,8 @@ use crate::manifest::{CustomHook, FrontmatterOverrides, HookAgents, Manifest, Me
 use crate::mapping::EffectiveSkills;
 use crate::model::{HarnessId, ItemKind};
 use crate::render::agent::{
-    EffectiveAgent, RenderedAgent, Role, SourceAgent, file_name, generate, hooks_for_agent,
-    merge_overrides, merged_instructions, parse_source_agent,
+    EffectiveAgent, RenderedAgent, Selects, SourceAgent, file_name, generate, hooks_for_agent,
+    merge_overrides, merged_instructions, parse_source_agent, selects,
 };
 use crate::render::permission::PermissionIntent;
 use crate::render::validate::validate_agent;
@@ -334,7 +334,7 @@ fn declared_skills<'a>(manifest: &'a Manifest, name: &str) -> Option<&'a Vec<Str
 /// this agent at all — they count as reaching it, since a reading that has
 /// to guess guesses toward saying so.
 fn targets(agents: &HookAgents, name: &str) -> bool {
-    let reaches = |sel: &String| sel == "all" || sel == name || Role::parse(sel).is_some();
+    let reaches = |sel: &String| !matches!(selects(sel), Selects::Named) || sel == name;
     match agents {
         HookAgents::One(sel) => reaches(sel),
         HookAgents::Many(list) => list.iter().any(reaches),

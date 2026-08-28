@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 
 use crate::manifest::{FrontmatterOverrides, HookAgents, Manifest};
 use crate::model::ItemKind;
+use crate::render::agent::Selects;
 use crate::source::SourceConfig;
 use crate::source_read::SealedSource;
 
@@ -174,21 +175,28 @@ fn carry<T: Clone>(table: &mut BTreeMap<String, T>, from: &str, to: &str, gone: 
 /// Point one hook's agent selector at the new name. A selector naming the
 /// agent reaches the copy only by saying so, and after a rename it points
 /// at a name nothing answers to, which is how an agent-scoped `PreToolUse`
-/// restriction disappears. `all` and role selectors match by what the
-/// agent is rather than by its name, so they already reach the copy and
-/// are left alone.
+/// restriction disappears.
+///
+/// Only a selector whose kind is an agent name moves. `all` and a role
+/// name describe a population rather than one agent: they already reach
+/// the copy, and rewriting one because a single agent happens to be named
+/// for it would take the restriction off every other agent the population
+/// holds — an operation that never mentioned them.
 fn reselect(agents: &mut HookAgents, from: &str, to: &str, gone: bool) {
+    let mine = |selector: &String| {
+        selector == from && crate::render::agent::selects(selector) == Selects::Named
+    };
     let mut names = match agents {
         HookAgents::One(selector) => vec![selector.clone()],
         HookAgents::Many(list) => list.clone(),
     };
-    if !names.iter().any(|selector| selector == from) {
+    if !names.iter().any(mine) {
         return;
     }
     match gone {
         true => names
             .iter_mut()
-            .filter(|selector| *selector == from)
+            .filter(|selector| mine(selector))
             .for_each(|selector| *selector = to.to_owned()),
         false => {
             if !names.iter().any(|selector| selector == to) {
@@ -224,9 +232,15 @@ pub(crate) fn configured_as(manifest: &Manifest, name: &str) -> Option<&'static 
     if manifest.agent_additional_instructions.contains_key(name) {
         return Some("agent-additional-instructions");
     }
+    // Only a selector whose kind is an agent name configures one agent.
+    // A role selector spelling the same word describes a population the
+    // new name would join by role, not configuration it would inherit.
+    let mine = |selector: &String| {
+        selector == name && crate::render::agent::selects(selector) == Selects::Named
+    };
     let named = |agents: &HookAgents| match agents {
-        HookAgents::One(selector) => selector == name,
-        HookAgents::Many(list) => list.iter().any(|selector| selector == name),
+        HookAgents::One(selector) => mine(selector),
+        HookAgents::Many(list) => list.iter().any(mine),
     };
     manifest
         .custom_hooks

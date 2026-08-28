@@ -99,6 +99,55 @@ pub fn merge_overrides(
     merged
 }
 
+/// The selector naming every agent there is.
+pub const EVERY_AGENT: &str = "all";
+
+/// What one custom-hook agent selector names. A hook reaches an agent by
+/// any of these, but only the last belongs to one agent: the other two
+/// describe a population, so they must not travel when one agent's name
+/// travels.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Selects {
+    Everyone,
+    Role(Role),
+    Named,
+}
+
+/// The one place a selector's kind is decided. A role name is a role
+/// before it is anything else, so an agent named for a role never owns a
+/// selector spelling that role — reading it the other way would let one
+/// agent's rename take a restriction off every agent sharing the role.
+pub fn selects(selector: &str) -> Selects {
+    if selector == EVERY_AGENT {
+        return Selects::Everyone;
+    }
+    match Role::parse(selector) {
+        Some(role) => Selects::Role(role),
+        None => Selects::Named,
+    }
+}
+
+/// Whether this hook's selector reaches this agent. `all` names every
+/// agent and is only honoured as the whole selector, never as one entry
+/// in a list.
+///
+/// Reaching is decided generously and ownership strictly, and the two
+/// answers differ on purpose. A selector spelling a role reaches every
+/// agent holding that role AND an agent that goes by that name, because a
+/// gate that might apply should apply. Only [`selects`] decides which
+/// selector one agent owns, and there a role never counts: a gate over a
+/// population must not travel when one member is renamed.
+fn reaches(agents: &HookAgents, agent: &SourceAgent) -> bool {
+    let picks = |selector: &String| match selects(selector) {
+        Selects::Role(role) => agent.role == Some(role) || selector == &agent.name,
+        Selects::Everyone | Selects::Named => selector == &agent.name,
+    };
+    match agents {
+        HookAgents::One(selector) => selects(selector) == Selects::Everyone || picks(selector),
+        HookAgents::Many(list) => list.iter().any(picks),
+    }
+}
+
 /// The custom hooks one agent file carries on one harness: the ones whose
 /// selector matches this agent, minus every hook `delivery()` sends through
 /// a real registration instead — writing those here too would keep a second,
@@ -111,23 +160,12 @@ pub fn hooks_for_agent<'a>(
     agent: &SourceAgent,
 ) -> Vec<&'a CustomHook> {
     use crate::hook::{Delivery, HookSpec, delivery};
-    let role = agent.role.map(Role::name);
     let names = crate::hook::custom_hook_names(manifest);
     manifest
         .custom_hooks
         .iter()
         .zip(names)
-        .filter(|(hook, _)| {
-            hook.enabled
-                && match &hook.agents {
-                    HookAgents::One(sel) => {
-                        sel == "all" || Some(sel.as_str()) == role || sel == &agent.name
-                    }
-                    HookAgents::Many(list) => list
-                        .iter()
-                        .any(|sel| sel == &agent.name || Some(sel.as_str()) == role),
-                }
-        })
+        .filter(|(hook, _)| hook.enabled && reaches(&hook.agents, agent))
         .filter(|(hook, name)| {
             let spec = HookSpec::custom(hook, name.clone());
             spec.applies_to(harness)
