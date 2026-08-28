@@ -112,6 +112,13 @@ printf '%s' "$OUT" | grep -F "never reads" | grep -qF ".kendex/settings.toml" &&
   ok "the nested-file finding names .kendex/settings.toml" ||
   bad "the nested-file finding names .kendex/settings.toml" "$OUT"
 
+# REVIEW_GATE_MODE resolves from env and the committed root only, so a
+# nested assignment is read by nothing and must be its own finding — while
+# the same assignment in the root file stays clean.
+repo_fails "a nested REVIEW_GATE_MODE assignment is a never-reads finding" "never reads from this file" \
+  'mkdir -p .kendex && printf "[env]\nREVIEW_GATE_MODE = \"off\"\n" > .kendex/settings.toml'
+setting_clean "a root REVIEW_GATE_MODE assignment stays clean" REVIEW_GATE_MODE "off"
+
 # ...and the explicit caller handle is exempt, since it names a path that was
 # never required to live in the repository.
 sandbox

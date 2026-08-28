@@ -287,6 +287,17 @@ EOF_ASSIGNED
   else
     ok "every REVIEW_GATE_* assignment sits inside the [env] table"
   fi
+  # The engine reads REVIEW_GATE_MODE from env and the COMMITTED root file
+  # only, so a nested assignment of it is read by nothing: the mode set
+  # here validates while the gate keeps enforcing. Same never-reads class
+  # as a misspelled key, pointed at the file the engine does read.
+  if [ "$sf" = ".kendex/settings.toml" ]; then
+    if printf '%s\n' "$assigned" | grep -qx "REVIEW_GATE_MODE"; then
+      bad "$sf assigns REVIEW_GATE_MODE, which the engine never reads from this file — that key resolves from env and the committed kendex.settings.toml only; move the assignment to kendex.settings.toml"
+    else
+      ok "REVIEW_GATE_MODE is not assigned in the machine-local file the engine skips for it"
+    fi
+  fi
   # Headers decide which assignments load, so a header shape the loader
   # cannot parse corrupts every classification after it: `[env] # comment`
   # hides the whole table, and a quoted or doubled header after [env] leaves
