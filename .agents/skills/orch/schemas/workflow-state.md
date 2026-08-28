@@ -35,6 +35,7 @@ Persistent state file for orch workflows. Survives context compaction.
   "pre_delegate_sha": "abc123f",
   "skip_qa": false,
   "cycles": 0,
+  "rereview_cycles": 0,
   "submit_cycles": 0,
   "review_delegated_at": 1769600000,
   "dev_delegated_at": 1769600000,
@@ -101,7 +102,8 @@ Persistent state file for orch workflows. Survives context compaction.
 | `reviewer_slots_observed` | number | Effective wave size proven by the runtime when a persistent (unlimited-budget) launch hit the thread limit. While set, `review-pr.md` § 2 enters wave mode at this size even though `REVIEWER_SLOT_BUDGET` is `0` |
 | `pre_delegate_sha` | string | HEAD before delegation — scopes re-review diffs |
 | `skip_qa` | boolean | Skip QA for re-cycle (cleared after routing) |
-| `cycles` | number | Review/fix cycle count |
+| `cycles` | number | General fix-round tally — `dev-fix.md` increments it on every fix round (review-pr § 4 and § 7, plus pre-loop review/submit rounds). It fills review-pr § 1.2's previous-cycle block and the session summaries; it decides no cap |
+| `rereview_cycles` | number | Scoped re-review cycles entered. `workflow-state set … rereview_panel` raises it in the same locked write it gates, so only a re-review re-entry spends the budget `REVIEW_MAX_CYCLES` bounds — a QA or pre-loop fix round does not |
 | `submit_cycles` | number | Submit-PR iteration count (created-issue re-submit loops) |
 | `review_delegated_at` | number | Epoch seconds of last review delegation — the freshness boundary `review-pr.md` § 3 passes to `review-artifact-check` |
 | `dev_delegated_at` | number | Epoch seconds of last dev/QA delegation (implement, fix, or analysis) — the watchdog deadline for stall escalation. It does not gate artifact acceptance; the round id does |
@@ -109,7 +111,7 @@ Persistent state file for orch workflows. Survives context compaction.
 | `dev_round_id` | string | Unique per-delegation round token, minted by `workflow-state new-round-id [ISSUE] dev_round_id` immediately before each dev/QA delegation (implement, fix, or analysis) and embedded in it. It is the completion artifact's identity ([`dev-return.md`](dev-return.md)) and, on a fix round, the delegated-item record's ([`dev-round.md`](dev-round.md)) |
 | `review_skipped` | string | Set to `tiny-docs` when a trivial diff skipped review by rule |
 | `rereview_skipped` | string | Why a fix round routed to submit WITHOUT re-review. Present only when the skip happened |
-| `rereview_panel` | object | `{agents: string[], reason}` for a fix round re-reviewed by a scoped panel instead of the full set |
+| `rereview_panel` | object | `{agents: string[], reason}` for a fix round re-reviewed by a scoped panel instead of the full set. Setting it is the re-review re-entry: the write raises `rereview_cycles` and refuses once that count is past `REVIEW_MAX_CYCLES` |
 | `auto_decisions` | string[] | Audit trail of decisions taken without a user prompt under `ORCH_DECISION_MODE=auto-recommended`: one `auto-selected: [option] — [reason]` line per auto-executed ask-user step. Absent under the default `ask` mode |
 | `json_paths` | string[] | Accumulated review JSON file paths |
 | `fixed_items` | object[] | Blockers successfully fixed. A `commit` of the form `dropped:<sha>` marks a fix whose commit vanished in a rebase (its patch was already upstream) — publishers omit it or cite the upstream equivalent, never print it as a live SHA |
@@ -132,6 +134,7 @@ To target a state directory from a worktree, pass the global `--state-dir <path>
 ```bash
 .agents/skills/orch/scripts/workflow-state init PROJ-123 --agent backend --worktree /tmp/wt
 .agents/skills/orch/scripts/workflow-state get PROJ-123 .cycles
+.agents/skills/orch/scripts/workflow-state get PROJ-123 .rereview_cycles
 .agents/skills/orch/scripts/workflow-state increment PROJ-123 cycles
 .agents/skills/orch/scripts/workflow-state append PROJ-123 json_paths "review.json"
 .agents/skills/orch/scripts/workflow-state set PROJ-123 pr_review.mode review

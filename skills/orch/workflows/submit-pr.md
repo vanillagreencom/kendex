@@ -214,7 +214,7 @@ For `off` also record the legacy field the gate-4 check reads, then skip the wai
    .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_approval.reviewer_down true
    ```
 
-   **Triage pass**, bounded by `pr_comment_review.iterations` (max 5; at the cap present the remaining feedback and ask `Triage again` | `Force merge` | `Stop here`): `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 4 step 1` with managed context.
+   **Triage pass**, bounded by `pr_comment_review.iterations` against `orch-env REVIEW_MAX_EXTERNAL_ROUNDS 4` — the same cap review-pr-comments § 6.3 applies, read the same way — at which point present the remaining feedback and ask `Triage again` | `Force merge` | `Stop here`: `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 4 step 1` with managed context.
 
    **On `timeout`**: `Keep waiting` restarts step 1; `Force merge` records the override and continues to step 2 with the § 6.1 gates still applying; `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
 
@@ -284,7 +284,7 @@ Empty `json_paths` means no internal review is recorded: report the unmet gate a
 .agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved
 ```
 
-`unresolved_count > 0` runs ONE triage pass (`⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 6.1 gate 3`, managed, bounded by the max-5 iteration cap). If that pass pushed commits, re-confirm the § 4 gate with a short wait (skip when `GATE_MODE` is `off`), then re-run § 5:
+`unresolved_count > 0` runs ONE triage pass (`⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 6.1 gate 3`, managed, bounded by the same `REVIEW_MAX_EXTERNAL_ROUNDS` cap on `pr_comment_review.iterations`). If that pass pushed commits, re-confirm the § 4 gate with a short wait (skip when `GATE_MODE` is `off`), then re-run § 5:
 
 ```bash
 .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]

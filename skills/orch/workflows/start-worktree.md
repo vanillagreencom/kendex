@@ -104,7 +104,7 @@ Sub-issues (tree):
 | PR | #N |
 | Commits | N (sha1, sha2, ...) |
 | Files | N |
-| Review cycles | [CYCLES] |
+| Fix rounds | [CYCLES] |
 | Fixes applied | [FIXED_COUNT] |
 | Escalated | [ESCALATED_COUNT] |
 | Audit issues created | [AUDIT_ISSUES] |

@@ -266,8 +266,13 @@ After pushing, do **not** wait for bots to re-review. Check once for comments th
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{iterations: .pr_comment_review.iterations, known: (.pr_review_baseline.last_threads // [])}'
 ```
+```bash
+.agents/skills/orch/scripts/orch-env REVIEW_MAX_EXTERNAL_ROUNDS 4
+```
 
-`iterations >= 5` → § 7.
+`iterations` at or past `REVIEW_MAX_EXTERNAL_ROUNDS` → § 7, and the external round budget is spent: every later finding on this PR gets a disposition and no fix push. Reply `Declined: [REASON]` or `Tracked: [ISSUE_ID]` per [references/finding-disposition.md](../references/finding-disposition.md), never a further round of fixes.
+
+**The one exception.** A defect this diff itself introduces or arms is fixed, whatever the round count — a cap that forces a disposition onto a defect the change created ships the defect. Fix it, reply `Fixed in [SHA]`, and push; the cap still bars a fix push for anything else.
 
 ```bash
 .agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved

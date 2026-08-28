@@ -272,17 +272,17 @@ Omit empty categories. Decline any item that cannot affect real usage with a one
 
 ### At The Cap
 
-The cap decides before any delegation. Read the fix rounds already run:
+The cap decides before any delegation. Read the re-review cycles already entered:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{cycles: (.cycles // 0)}'
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{rereview_cycles: (.rereview_cycles // 0)}'
 ```
 
 ```bash
 .agents/skills/orch/scripts/orch-env REVIEW_MAX_CYCLES 4
 ```
 
-`cycles` counts completed fix rounds — `dev-fix.md` increments it. Below the cap → Fix Delegation. At or past it the fix loop ends here, with no further fix round, so the items this pass reported are the latest word on the diff.
+`rereview_cycles` counts the re-review cycles this loop has entered — the Bounded Re-Review write below raises it, and nothing else does. Below the cap → Fix Delegation. At or past it the fix loop ends here, with no further fix round, so the items this pass reported are the latest word on the diff. Read `rereview_cycles`, never `cycles`: `cycles` is the general fix-round tally `dev-fix.md` keeps, and QA and pre-loop fix rounds bump it without spending this budget.
 
 **Capped items are escalated, never dropped.** Record every blocker and `category == "fix"` suggestion this pass found still outstanding, including one already listed in `fixed_items` whose fix did not hold. Exclude only what is already in `escalated_items` and what § 4 declined; a decline is terminal. Match on the RECORDED entry's (location, description), the § 8 key — a re-reporting reviewer copies both fields verbatim off the Fixed line, so the pair matches. An item `fixed_items` already lists has a superseded entry there: its fix did not hold, so the same write drops it. One write per item, before routing to § 5 — the drop and the record land in one command, so the item is never in both buckets and never in neither:
 
@@ -330,7 +330,7 @@ The scoped panel is the union of the reviewers whose domains the round's diff to
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] rereview_skipped '[REASON]'
 ```
 
-**The loop ends** when two consecutive cycles surface no new blocker, or when the At The Cap check above ends it (`workflow-state set … rereview_panel` refuses once `cycles` is past the cap). The cap bounds NEW cycles, never verification: a fix diff no reviewer has seen gets one focused verification pass — the `rereview_panel` rule above, scoped to exactly that diff — before § 5, cap or no cap. That pass's items re-enter § 4, where the cap check escalates them instead of delegating again. In wave mode the panel replaces `[AGENTS]` for the cycle and wave mechanics apply unchanged.
+**The loop ends** when two consecutive cycles surface no new blocker, or when the At The Cap check above ends it (the `rereview_panel` write raises `rereview_cycles` and refuses once that count is past the cap). The cap bounds NEW cycles, never verification: a fix diff no reviewer has seen gets one focused verification pass — the `rereview_panel` rule above, scoped to exactly that diff — before § 5, cap or no cap. That pass's items re-enter § 4, where the cap check escalates them instead of delegating again. In wave mode the panel replaces `[AGENTS]` for the cycle and wave mechanics apply unchanged.
 
 ## 5. Verdict Pass
 
@@ -395,7 +395,7 @@ A `pass` verdict continues to the next QA agent; `action_required` goes to § 7.
 
 **Skip if** every QA verdict is `pass` and no fix suggestions remain → § 8.
 
-Follow the § 4 pattern — collect, present, run the At The Cap check, then delegate through `workflows/dev-fix.md`, by rule and with no selection prompt — with these overrides: items come from the QA JSONs excluding anything already in `escalated_items`, and excluding a `fixed_items` entry only when this round's QA artifact does not report it again; the table header is `QA Agent` and the title `QA Review Items — [ISSUE_ID]`; `source` is `qa-review` and `qa_agent` carries the agent name. A re-found item is retained on purpose: its `fixed_items` entry is stale, and the cap's one write supersedes that entry and escalates the item with `source` `qa-review`. The cap check runs here in the same place it does in § 4, ahead of the delegation: at or past the cap the QA items are escalated with `source` `qa-review` and the round goes to § 8, with no further fix round. After the fix round, apply the § 4 bounded re-review rule with § 6 as the target instead of § 2 — a focused QA re-check — unless the round's diff reaches beyond QA's own surface, which returns to § 2.
+Follow the § 4 pattern — collect, present, run the At The Cap check, then delegate through `workflows/dev-fix.md`, by rule and with no selection prompt — with these overrides: items come from the QA JSONs excluding anything already in `escalated_items`, and excluding a `fixed_items` entry only when this round's QA artifact does not report it again; the table header is `QA Agent` and the title `QA Review Items — [ISSUE_ID]`; `source` is `qa-review` and `qa_agent` carries the agent name. A re-found item is retained on purpose: its `fixed_items` entry is stale, and the cap's one write supersedes that entry and escalates the item with `source` `qa-review`. The cap check runs here in the same place it does in § 4, ahead of the delegation, and on the same `rereview_cycles` key: at or past the cap the QA items are escalated with `source` `qa-review` and the round goes to § 8, with no further fix round. After the fix round, apply the § 4 bounded re-review rule with § 6 as the target instead of § 2 — a focused QA re-check — unless the round's diff reaches beyond QA's own surface, which returns to § 2.
 
 ## 8. Summary And Issue Audit
 

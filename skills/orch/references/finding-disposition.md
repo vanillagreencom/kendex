@@ -18,6 +18,8 @@ One pass, in order; the first verdict stands.
 
 Size tripwire, checked before every round's dispositions: the PR's diffstat against the commit its first review was posted on (`gh api repos/<owner>/<repo>/pulls/<n>/reviews --jq '.[0].commit_id'`; a force-push does not move it). Past 2x, the round is one cut back to the Done-when and every thread on the cut code closes with the deleting sha, whatever the findings say one by one.
 
+Round cap: `REVIEW_MAX_EXTERNAL_ROUNDS` (default 4) bounds the external review rounds on an open PR, counted in `pr_comment_review.iterations`. Past it every finding gets a disposition — `Declined: <reason>` or `Tracked: <ID>` — and no fix push. One exception: a defect this diff itself introduces or arms is fixed whatever the round count — a cap that forces a disposition onto a defect the change created ships the defect. Step 1's `fix` verdict outranks the cap; nothing else does.
+
 Uncertain about category, prefer `fix` (if related); uncertain about relevance, prefer `issue`; if neither fits, omit. A finding that lives in a PR review thread ends as exactly one reply — `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: <ID>` (the merge gate rejects a tracking claim naming no issue); local and pre-PR reviews record the same verdicts in the review artifact instead. Under thread enforcement, a thread's disposition is its newest non-bot reply that opens with `Fixed in <sha>` or `Declined:` or carries a track-word (track/tracked/tracking/tracks); when that reply is a track-word with no issue id it trips the gate, prose included — write "committed" for git-tracked files. Other replies and resolving the thread do not move the disposition.
 
 | Signal | Category |

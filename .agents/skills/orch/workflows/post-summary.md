@@ -51,7 +51,7 @@ Write the summary to a file first with the harness file-write tool at `[WORKTREE
 ### Skipped
 - [SOURCE]: [ITEM] — [REASON]
 
-**Cycles**: [N] | [STATUS_SUMMARY]
+**Fix rounds**: [N] | [STATUS_SUMMARY]
 ```
 
 Omit empty sections. Created Issues comes from `audit_issues_created` plus `pr_comment_review.issues_created`, with project names. Deduplicate Recommendations Processed by description across cycles.
