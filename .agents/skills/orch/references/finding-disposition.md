@@ -45,7 +45,7 @@ An `issue` signal is necessary but not sufficient. Every candidate carries its s
 
 Never for a race between two invocations on one machine, a crash between two writes, an input no shipped producer emits, or a hole in a mechanism that itself came from a review round: those are declined, not filed. The one exception is a security or data-loss defect a shipped path reaches, which follows the rows above.
 
-A recurring finding class never files as "improve X": the structural-close row closes its generator in this PR.
+A recurring finding class the diff introduces or arms never files as "improve X": the structural-close row closes its generator in this PR.
 
 The audit pipeline applies project-management's creation bar (its SKILL.md § Disposition) as the final authority; these classes describe what clears it.
 
