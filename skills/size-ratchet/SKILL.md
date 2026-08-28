@@ -52,9 +52,9 @@ only one caller uses, or "part 2 of X" into a second file to duck the
 count is worse than the long file: prefer the raise.
 
 **Three Rust shapes are that move, whatever the seam is called.**
-1. `#[path = "<sibling>.rs"]` on a private `mod` whose only consumer is
-   the file declaring it. The `#[path = "tests.rs"]` form is the
-   test-module idiom and is not this.
+1. `#[path = "<sibling>.rs"]` on a private `mod` that exists to hold the
+   parent's lines. `#[path]` chosen for any other reason, a test module,
+   a `cfg`-selected alternative, names a real seam.
 2. A hub declaring `mod child;` then `use child::*`, with every spoke
    opening `use super::*`. The split is invisible by construction, so no
    seam is load-bearing and every spoke reaches whatever its siblings
