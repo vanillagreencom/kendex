@@ -145,7 +145,7 @@ fn stamp_name(kind: ItemKind, from: &Path, to: &Path, new: &str) -> Result<Vec<P
         // directory wearing the name carries nothing this can stamp, and
         // a rendering reading it is refused for that on its own.
         let pre = Pre::plain_observed(&old)?;
-        if matches!(pre, Pre::Absent) {
+        if pre.binds_nothing() {
             continue;
         }
         let bytes = std::fs::read(&old).map_err(|e| CoreError::io(&old, e))?;

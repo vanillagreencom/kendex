@@ -99,6 +99,20 @@ impl Pre {
         })
     }
 
+    /// Whether this precondition binds to there being nothing, rather
+    /// than to content.
+    ///
+    /// Asked, never matched. "Nothing is here" is spelled two ways —
+    /// [`Pre::Absent`], and the [`Pre::PlainAbsent`] that also refuses a
+    /// link arriving — and a caller matching one variant silently stops
+    /// seeing the other the day a second spelling appears. That is
+    /// exactly what happened when `PlainAbsent` was added: a caller
+    /// reading `Absent` alone stopped skipping the file that was not
+    /// there and read it instead.
+    pub fn binds_nothing(&self) -> bool {
+        matches!(self, Pre::Absent | Pre::PlainAbsent)
+    }
+
     /// [`Pre::check`] for tests outside the apply module — the same
     /// judgment, so a test cannot pass against a check the apply does not
     /// make.
