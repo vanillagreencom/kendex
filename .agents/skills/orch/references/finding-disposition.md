@@ -32,7 +32,7 @@ Uncertain about category, prefer `fix` (if related); uncertain about relevance, 
 | Error-handling gaps | `issue` |
 | Security vulnerability | `fix` if quick, else `issue` — never skipped |
 | Data validation gaps | `fix` if quick, else `issue` |
-| The same claim, enumeration, or duplicated copy arriving in two rounds running | `fix` as a structural close — derive, bind, or delete the generator |
+| A finding class arriving in two rounds running (a drifting claim, a re-derived enumeration, a second copy) | `fix` as a structural close — derive, bind, or delete the generator |
 
 ## Filing bar
 
