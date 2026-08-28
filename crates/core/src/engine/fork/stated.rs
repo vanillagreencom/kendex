@@ -50,6 +50,25 @@ pub(super) fn dropped(on_disk: &Stated, after: &Stated, harness: HarnessId) -> O
         }
         _ => {}
     }
+    // A hook the person put in the file gates tool use from inside it, and
+    // no override table holds one — a hook is a `[[custom-hooks]]` entry
+    // with a selector, not a field. One the fork would not run again is a
+    // restriction it cannot carry.
+    let ungated: Vec<String> = on_disk
+        .hooks
+        .iter()
+        .filter(|command| !after.hooks.contains(command))
+        .cloned()
+        .collect();
+    if !ungated.is_empty() {
+        return Some(format!(
+            "the {} hook{} its {} file runs on tool use: {}",
+            ungated.len(),
+            if ungated.len() == 1 { "" } else { "s" },
+            harness.display_name(),
+            ungated.join(", ")
+        ));
+    }
     (!given_back.is_empty()).then(|| {
         format!(
             "the {} tool{} its {} file keeps from it: {}",
@@ -72,6 +91,13 @@ pub(super) struct Stated {
     rendering: bool,
     allow: Option<Vec<String>>,
     deny: Vec<String>,
+    /// Pi's delegation list: which child agents this one may invoke. An
+    /// allowlist like `tools`, in a key only Pi writes.
+    subagents: Option<Vec<String>>,
+    /// Every command the file's own hook block would run. Claude gates
+    /// tool use on these from inside the agent file, so one stated here
+    /// and not in the fork's rendering is a gate the fork drops.
+    hooks: Vec<String>,
     color: Option<String>,
     effort: Option<String>,
     model: Option<String>,
@@ -105,6 +131,13 @@ pub(super) fn stated(harness: HarnessId, text: &str) -> std::result::Result<Stat
         deny: deny_key
             .and_then(|key| parsed.map.string_list(key))
             .unwrap_or_default(),
+        subagents: (harness == HarnessId::Pi)
+            .then(|| parsed.map.string_list("allowed-subagents"))
+            .flatten(),
+        hooks: match parsed.map.get("hooks") {
+            Some(block) => commands(block),
+            None => Vec::new(),
+        },
         color: scalar("color"),
         effort: scalar("effort"),
         model: scalar("model"),
@@ -112,6 +145,24 @@ pub(super) fn stated(harness: HarnessId, text: &str) -> std::result::Result<Stat
         memory: scalar("memory"),
         background: scalar("background").and_then(|value| value.parse().ok()),
     })
+}
+
+/// Every `command:` a hook block would run, at whatever depth the block
+/// nests them. Read by key rather than by shape: what matters is which
+/// commands the file would run, not how the harness spells the tree.
+fn commands(value: &crate::frontmatter::Value) -> Vec<String> {
+    use crate::frontmatter::Value;
+    match value {
+        Value::Map(map) => map
+            .entries()
+            .flat_map(|(key, value)| match (key, value.as_str()) {
+                ("command", Some(command)) => vec![command.trim().to_owned()],
+                _ => commands(value),
+            })
+            .collect(),
+        Value::List(items) => items.iter().flat_map(commands).collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// Whether this file is still the harness's own rendering. A rendering
@@ -170,6 +221,15 @@ pub(super) fn carried_edits(on_disk: &Stated, after: &Stated) -> FrontmatterOver
         background: on_disk
             .background
             .filter(|_| on_disk.background != after.background),
+        // Narrowing the delegation list is the same edit as narrowing the
+        // tool list, and unlike a scalar its clearing is representable:
+        // an empty allowlist is what the renderer reads as no delegation
+        // at all, so a deleted key rides as one.
+        allowed_subagents: match (&on_disk.subagents, &after.subagents) {
+            (None, Some(_)) => Some(Vec::new()),
+            (Some(stated), rendered) => (Some(stated) != rendered.as_ref()).then(|| stated.clone()),
+            (None, None) => None,
+        },
         ..FrontmatterOverrides::default()
     }
 }

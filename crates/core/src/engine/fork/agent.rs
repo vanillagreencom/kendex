@@ -54,53 +54,30 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
         harness,
         ..
     } = *of;
-    let commit = super::installed_commit(env, scope, ItemKind::Agent, name, harness, decl)?;
-    let resolved =
-        match crate::source::resolve_at(env, scope, &decl.source, manifest, commit.as_deref())? {
-            crate::source::SourceState::Ready(ready) => ready,
-            _ => {
-                return Err(CoreError::SourcePending {
-                    name: decl.source.clone(),
-                });
-            }
-        };
-    let sealed = crate::source_read::SealedSource::open(&resolved.root)?;
-    let config = crate::source::source_config_for(&sealed, &resolved.provenance)?;
-    let Some(path) = crate::source::find_item(&sealed, &config, ItemKind::Agent, name) else {
-        return Err(CoreError::ItemNotInSource {
-            name: name.to_owned(),
-            source_name: decl.source.clone(),
-        });
-    };
-    let published = sealed.read(&path)?;
-    let carry = agent_carry(manifest, &sealed, &config, name, &published);
-    let publisher = parse_source_agent(&String::from_utf8_lossy(&published))
-        .map_err(|problem| unreadable(name, &decl.source, problem))?;
-
-    // The overrides the fork will hold, not the ones the manifest holds
-    // now: the catalog's defaults are on their way into it with the carry,
-    // and a fork beside the original writes them under the new name. Asking
-    // the manifest here would read them as already lost and refuse a fork
-    // that carries them perfectly well.
-    let overrides = merge_overrides(
-        config
-            .frontmatter
-            .get(harness.name())
-            .and_then(|by_agent| by_agent.get(name)),
-        manifest
-            .agent_frontmatter
-            .get(harness.name())
-            .and_then(|by_agent| by_agent.get(name)),
-    );
-    // What the project and the catalog put around this agent's own prose.
-    // The fork carries every piece of it, so both renderings below take
-    // the same set and what differs between them is only what is asked.
+    let Published {
+        bytes: published,
+        agent: publisher,
+        carry,
+        overrides,
+    } = published(of)?;
+    // What the project and the catalog put around this agent's own prose,
+    // as the file on disk was written with it.
+    let assigned = carry.as_ref().map(AgentCarry::skills).unwrap_or_default();
     let around = Around {
-        skills: carry.as_ref().map(AgentCarry::skills).unwrap_or_default(),
+        skills: assigned.clone(),
         overrides,
         launch: merged_instructions(&manifest.agent_launch_instructions, name),
         additional: merged_instructions(&manifest.agent_additional_instructions, name),
         hooks: hooks_for_agent(env, scope, harness, manifest, &publisher),
+    };
+    // The same, as the fork itself will write it. Only the skill list
+    // differs: the assignment travels into the manifest, but the next
+    // apply filters it to what the LOCAL source offers, and a catalog
+    // skill is not in there. Everything else around the prose is keyed by
+    // the agent's name and travels whole.
+    let forked = Around {
+        skills: local_skills(env, scope, &assigned)?,
+        ..around.clone()
     };
 
     let edited_text = std::fs::read_to_string(edited).map_err(|e| CoreError::io(edited, e))?;
@@ -109,6 +86,7 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
         &edited_text,
         name,
         wrapper(scope, &publisher, harness, &around).as_ref(),
+        wrapper(scope, &publisher, harness, &forked).as_ref(),
     )?;
     let captured = parse_source_agent(&String::from_utf8_lossy(&bytes))
         .map_err(|problem| unreadable(name, &decl.source, problem))?;
@@ -132,7 +110,7 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
         name: installed_as.to_owned(),
         ..captured
     };
-    let Some(rendering) = render(scope, &named, harness, &around) else {
+    let Some(rendering) = render(scope, &named, harness, &forked) else {
         return Ok(CapturedAgent { bytes, carry });
     };
     let after = stated(harness, &rendering)
@@ -159,6 +137,68 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
     })
 }
 
+/// The agent as its catalog published it, at the commit this installation
+/// came from: its bytes, its parsed form, and everything that catalog
+/// contributed to its rendering from outside the file itself.
+struct Published {
+    bytes: Vec<u8>,
+    agent: SourceAgent,
+    carry: Option<AgentCarry>,
+    /// The overrides the fork will hold, not the ones the manifest holds
+    /// now: the catalog's defaults are on their way into it with the
+    /// carry, and a fork beside the original writes them under the new
+    /// name. Reading the manifest alone would call them already lost and
+    /// refuse a fork that carries them perfectly well.
+    overrides: FrontmatterOverrides,
+}
+
+fn published(of: &ForkOf) -> Result<Published> {
+    let ForkOf {
+        env,
+        scope,
+        manifest,
+        decl,
+        name,
+        harness,
+        ..
+    } = *of;
+    let commit = super::installed_commit(env, scope, ItemKind::Agent, name, harness, decl)?;
+    let resolved =
+        match crate::source::resolve_at(env, scope, &decl.source, manifest, commit.as_deref())? {
+            crate::source::SourceState::Ready(ready) => ready,
+            _ => {
+                return Err(CoreError::SourcePending {
+                    name: decl.source.clone(),
+                });
+            }
+        };
+    let sealed = crate::source_read::SealedSource::open(&resolved.root)?;
+    let config = crate::source::source_config_for(&sealed, &resolved.provenance)?;
+    let Some(path) = crate::source::find_item(&sealed, &config, ItemKind::Agent, name) else {
+        return Err(CoreError::ItemNotInSource {
+            name: name.to_owned(),
+            source_name: decl.source.clone(),
+        });
+    };
+    let bytes = sealed.read(&path)?;
+    Ok(Published {
+        agent: parse_source_agent(&String::from_utf8_lossy(&bytes))
+            .map_err(|problem| unreadable(name, &decl.source, problem))?,
+        carry: agent_carry(manifest, &sealed, &config, name, &bytes),
+        overrides: merge_overrides(
+            config
+                .frontmatter
+                .get(harness.name())
+                .and_then(|by_agent| by_agent.get(name)),
+            manifest
+                .agent_frontmatter
+                .get(harness.name())
+                .and_then(|by_agent| by_agent.get(name)),
+        ),
+        bytes,
+    })
+}
+
 fn unreadable(name: &str, source_name: &str, problem: String) -> CoreError {
     CoreError::ItemNotInSource {
         name: name.to_owned(),
@@ -171,7 +211,8 @@ fn source_form(
     published: &[u8],
     edited: &str,
     name: &str,
-    wrapper: Option<&(String, String)>,
+    was: Option<&(String, String)>,
+    will_be: Option<&(String, String)>,
 ) -> Result<Vec<u8>> {
     let refused = |problem: String| CoreError::ForkNameUnusable {
         name: crate::names::shown(name),
@@ -183,7 +224,7 @@ fn source_form(
     let body = crate::frontmatter::split(edited)
         .map(|(_, body)| body)
         .unwrap_or(edited);
-    Ok(format!("---\n{frontmatter}---\n\n{}", prose(body, wrapper)).into_bytes())
+    Ok(format!("---\n{frontmatter}---\n\n{}", prose(body, was, will_be)).into_bytes())
 }
 
 /// The person's own prose: the edited body with the generated wrapper
@@ -194,24 +235,64 @@ fn source_form(
 /// The banner comes off separately as well, because a person who deleted
 /// that one line leaves a body the wrapper no longer matches, and that is
 /// no reason to keep the rest of it.
-fn prose(body: &str, wrapper: Option<&(String, String)>) -> String {
+fn prose(body: &str, was: Option<&(String, String)>, will_be: Option<&(String, String)>) -> String {
     let mut kept = body;
-    if let Some((before, after)) = wrapper {
+    let mut orphaned = String::new();
+    if let Some((before, after)) = was {
         kept = kept.strip_prefix(before.as_str()).unwrap_or(kept);
         kept = kept.strip_suffix(after.as_str()).unwrap_or(kept);
+        // A stripper that takes more than the regenerator puts back
+        // deletes the person's content. Where the fork writes a shorter
+        // wrapper than the file was given, the difference is theirs to
+        // keep, so it comes back as prose.
+        if let Some((_, coming)) = will_be {
+            orphaned = dropped_section(after, coming);
+        }
     }
     let mut out = String::new();
     for line in kept.lines().filter(|line| line.trim() != GENERATED_BANNER) {
         out.push_str(line);
         out.push('\n');
     }
+    out.push_str(&orphaned);
     // Only the blank separators go. A first line indented into a code
     // block is the person's own content, and trimming it would render
     // their block as ordinary prose.
     format!("{}\n", out.trim_start_matches('\n').trim_end())
 }
 
+/// The part of the wrapper a file was given that the fork will not write
+/// again. The two differ only where a section stops being generated, so
+/// the difference is what is left after taking off the head and the tail
+/// they share — found that way rather than by naming sections here, which
+/// is a list that goes stale the moment a renderer grows one.
+fn dropped_section(was: &str, will_be: &str) -> String {
+    // By line, not by character: two sections under the same heading level
+    // share their opening `## `, and a character-wise reading hands that
+    // back as common ground and returns a heading with its marker eaten.
+    let was: Vec<&str> = was.lines().collect();
+    let coming: Vec<&str> = will_be.lines().collect();
+    let head = was
+        .iter()
+        .zip(coming.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let tail = was
+        .iter()
+        .rev()
+        .zip(coming.iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count()
+        .min(was.len().saturating_sub(head));
+    let dropped = was[head..was.len() - tail].join("\n");
+    match dropped.trim().is_empty() {
+        true => String::new(),
+        false => format!("\n{}\n", dropped.trim_matches('\n')),
+    }
+}
+
 /// What the project and the catalog put around one agent's prose.
+#[derive(Clone)]
 struct Around<'a> {
     skills: Vec<String>,
     overrides: FrontmatterOverrides,
@@ -239,6 +320,26 @@ fn wrapper(
     let (_, body) = crate::frontmatter::split(&text).ok()?;
     let (before, after) = body.split_once(STAND_IN)?;
     Some((before.to_owned(), after.to_owned()))
+}
+
+/// The skills a forked agent will actually render with: its assignment,
+/// filtered to what the local source offers. The next apply runs that
+/// same filter, so a catalog skill drops out of the rendering and the
+/// capture must not take its instructions away on the strength of a
+/// section that is not coming back (KEN-777).
+fn local_skills(env: &crate::env::Env, scope: &Scope, assigned: &[String]) -> Result<Vec<String>> {
+    let root = crate::source::local_source_root(env, scope);
+    if !root.is_dir() {
+        return Ok(Vec::new());
+    }
+    let sealed = crate::source_read::SealedSource::open(&root)?;
+    let config = crate::source::source_config_for(&sealed, crate::manifest::LOCAL_SOURCE_NAME)?;
+    let offered = crate::source::list_items(&sealed, &config, ItemKind::Skill);
+    Ok(assigned
+        .iter()
+        .filter(|skill| offered.contains(skill))
+        .cloned()
+        .collect())
 }
 
 /// One rendering of this agent for this harness, or `None` where the
