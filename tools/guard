@@ -2,9 +2,10 @@
 # kendex guardrails — the repo-specific rules, run as the last lane of the
 # growth-guards pre-commit chain (GROWTH_GUARDS_PRE_COMMIT_LOCAL). Every rule
 # a shipped package already judges is that package's: size-ratchet caps lines,
-# byte-ceiling caps bytes, todo-ban catches work markers, suppression-ban
-# catches blanket allows, conflict-markers catches merge markers. What is here
-# is what none of them ships.
+# byte-ceiling caps bytes, changelog-entries caps changelog entries, todo-ban
+# catches work markers, suppression-ban catches blanket allows,
+# conflict-markers catches merge markers. What is here is what none of them
+# ships.
 # Checks the working tree, not the staged index — accepted trade-off:
 # agents commit whole files; partial staging is out of scope.
 set -uo pipefail
@@ -55,32 +56,6 @@ while IFS= read -r f; do
   [ -n "$hits" ] && say "$f carries history or rationale — state the rule, delete the story:
 $(printf '%s\n' "$hits" | head -5 | sed 's/^/  /')"
 done <<<"$prose_files"
-
-# CHANGELOG entries are for consumers: one outcome each, one to three
-# source lines, a Breaking migration inline. Longer is an essay. A
-# changelog.d fragment is one such entry, so the same rule judges it.
-# An entry is every line from its list marker to the next marker, heading,
-# or blank-then-unindented paragraph, whatever the indentation.
-long_entries() { # FILE — "  line N: M lines" per entry past three
-  awk '
-    function flush() { if (n > 3) printf "  line %d: %d lines\n", start, n; n = 0; blank = 0 }
-    { sub(/\r$/, "") }
-    /^[-*+] / { flush(); n = 1; start = NR; next }
-    /^#/ { flush(); next }
-    /^[ \t]*$/ { if (n) blank++; next }
-    /^[ \t]/ || !blank { if (n) { n += blank + 1; blank = 0 }; next }
-    { flush() }
-    END { flush() }' "$1" 2>/dev/null
-}
-while IFS= read -r f; do
-  [ -f "$f" ] || continue
-  if long=$(long_entries "$f"); then
-    [ -n "$long" ] && say "$f entries run past three lines — state the outcome, keep the story out:
-$long"
-  else
-    say "$f is unreadable — the entry-length check could not run"
-  fi
-done < <({ echo CHANGELOG.md; printf '%s\n' "$files" | grep -E '^changelog\.d/' | grep -vx 'changelog.d/README.md'; })
 
 # The fragment format has one judge, and it is the tool that has to read the
 # fragments: tools/changelog-collate --check names every path and body it

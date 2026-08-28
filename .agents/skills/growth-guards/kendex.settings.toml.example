@@ -2,9 +2,18 @@
 
 # GROWTH GUARDS — repo growth checks (growth-guards skill).
 # Project-scope `kendex add` / `kendex refresh` merge these defaults into
-# <project>/kendex.settings.toml (never overwriting existing keys). Every
-# other GROWTH_GUARDS_* key ships a working default; the full list is in the
-# skill's SKILL.md.
+# <project>/kendex.settings.toml (never overwriting existing keys). The keys
+# below are the ones a project is expected to answer for itself; every other
+# GROWTH_GUARDS_* key ships a default that needs no attention, and the full
+# list is in the skill's SKILL.md.
+
+# Where the changelog-entries check looks: a space-separated list of shell
+# globs against the full repo-relative path (`*` crosses `/`). Paths matching
+# no tracked file are a clean pass, so a project with no changelog needs no
+# change here; a project keeping one entry per file names that tree instead
+# (e.g. "CHANGELOG.md changelog.d/*/*.md"). The cap itself is
+# GROWTH_GUARDS_CHANGELOG_CAP, 200 characters per entry.
+GROWTH_GUARDS_CHANGELOG_PATHS = "CHANGELOG.md"
 
 # Repo-local check the pre-commit shim runs LAST: a repo-root-relative
 # executable following the family exit contract (0 clean, 1 violations,

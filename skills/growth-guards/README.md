@@ -1,12 +1,13 @@
 # growth-guards
 
-Five checks that stop quiet repo decay, one family beside `size-ratchet`:
+Six checks that stop quiet repo decay, one family beside `size-ratchet`:
 work markers, oversized additions, blanket lint suppression, conflict
-markers, and non-conventional commit messages. One idiom, one exit contract
-— `0` clean, `1` violations, `2` usage/config/collection error. Scans read
-INDEX content and skip binaries. Requirements: `git`, `awk`, the usual
-POSIX userland; Bash 3.2 compatible (macOS bash). `SKILL.md` is the
-agent-facing reference; `DEVELOPMENT.md` covers internals.
+markers, over-long changelog entries, and non-conventional commit messages.
+One idiom, one exit contract — `0` clean, `1` violations, `2`
+usage/config/collection error. Scans read INDEX content and skip binaries.
+Requirements: `git`, `awk`, the usual POSIX userland; Bash 3.2 compatible
+(macOS bash). `SKILL.md` is the agent-facing reference; `DEVELOPMENT.md`
+covers internals.
 
 ## Invocation
 
@@ -17,9 +18,10 @@ scripts/CHECK [ARGS]                # each check is a standalone executable
 ```
 
 The batch runs `GROWTH_GUARDS_CHECKS` (default
-`todo-ban byte-ceiling suppression-ban conflict-markers`) and fails closed:
-exit 2 if any check could not complete, else 1 on violations. `commit-msg`
-reads a message, so it never runs in the batch. Installed scripts live under
+`todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries`)
+and fails closed: exit 2 if any check could not complete, else 1 on
+violations. `commit-msg` reads a message, so it never runs in the batch.
+Installed scripts live under
 `.agents/skills/growth-guards/scripts/`; wire CI at whichever grain fits
 (`byte-ceiling --base origin/main` gates a PR's additions); the git hooks
 below cover local commits.

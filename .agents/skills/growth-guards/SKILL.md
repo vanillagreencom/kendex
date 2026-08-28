@@ -1,7 +1,7 @@
 ---
 name: growth-guards
 description: "Load to add, tune, or debug a repo growth guard, its git hooks, or GROWTH_GUARDS_* settings."
-summary: "Five repo growth guards beside size-ratchet (todo-ban, byte-ceiling, suppression-ban, conflict-markers, commit-msg) and the git hook shims that run them."
+summary: "Six repo growth guards beside size-ratchet (todo-ban, byte-ceiling, suppression-ban, conflict-markers, changelog-entries, commit-msg) and the git hook shims that run them."
 license: MIT
 user-invocable: true
 metadata:
@@ -25,7 +25,7 @@ repo-effects:
     - "preflight"
   notes:
     - "An existing pre-commit or commit-msg hook keeps its content and its exit status: one marked line goes in after the shebang and falls through to what was already there. core.hooksPath is never set."
-    - "The chain runs in order: size-ratchet --staged, preflight --staged, the growth-guards batch (todo-ban, byte-ceiling, suppression-ban, conflict-markers), then the repo-root executable named by GROWTH_GUARDS_PRE_COMMIT_LOCAL. A companion that is not installed is an announced skip, never a silently missing check, and one that is installed but cannot run stops the commit rather than skipping it; the stated skips are preflight on a repository's first commit and a repo-local size-ratchet that rejects --staged."
+    - "The chain runs in order: size-ratchet --staged, preflight --staged, the growth-guards batch (todo-ban, byte-ceiling, suppression-ban, conflict-markers, changelog-entries), then the repo-root executable named by GROWTH_GUARDS_PRE_COMMIT_LOCAL. A companion that is not installed is an announced skip, never a silently missing check, and one that is installed but cannot run stops the commit rather than skipping it; the stated skips are preflight on a repository's first commit and a repo-local size-ratchet that rejects --staged."
     - "Both hooks block on any nonzero verdict and fail closed on a guard that could not run. Passing git's no-verify flag bypasses one commit, and skips the message gate with it."
     - "The gate needs no kendex binary once armed: git runs this package's committed scripts, so a machine that never installed kendex still gates commits. Arming does not travel, though — git clones no hooks and this package never sets core.hooksPath — so every clone is armed once, by whoever clones it."
 ---
@@ -34,7 +34,7 @@ repo-effects:
 
 > **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
 
-Five checks beside `size-ratchet`, sharing its idiom and exit contract.
+Six checks beside `size-ratchet`, sharing its idiom and exit contract.
 
 ```bash
 .agents/skills/growth-guards/scripts/growth-guards              # batch: every enabled repo check
@@ -53,6 +53,7 @@ Each check is also invocable as `scripts/CHECK`.
 | **byte-ceiling** | A tracked file over the ceiling (default 200 KB) fails. `--staged` (default) gates every file the commit adds, modifies or changes the type of; `--base REF` only the files added since merge-base; `--all` sweeps every tracked file. Lockfiles are exempt built-in. |
 | **suppression-ban** | Blanket lint suppressions fail flat: module-wide rust `allow` inner attributes, file-level ruff/flake8 noqa, the bare `eslint-disable` block form, bare or `all` nolint, biome's `biome-ignore-all` / unscoped `biome-ignore-start` / rule-less `biome-ignore lint` and group forms. Bare rust `allow(dead_code)`/`allow(unused*)` attributes are counted per file against a tighten-only baseline; `--update` lowers/removes rows, never adds or raises one. A per-line suppression naming its lint with a stated reason stays legal. |
 | **conflict-markers** | An unresolved merge-conflict marker in a tracked, non-excluded file fails: the open/base/close trio (seven `<`, seven vertical bars, seven `>`) at column 0, each followed by a space or end of line. No baseline. Indented or quoted occurrences and the bare seven-equals separator do not fire. |
+| **changelog-entries** | A changelog entry over the character cap (default 200) fails. An entry is every line from its list marker (`-`, `*`, `+`) at column 0 to the next marker, heading, or blank line; its text is those lines with CR stripped and whitespace runs collapsed to one space, counted in characters. Configured paths matching no tracked file are a clean pass. |
 | **commit-msg** | Header must be `type(scope)!: subject` (scope and `!` optional). Uppercase issue keys (`fix(ABC-123)`) and `#`-number scopes pass; git-generated messages (Merge/Revert/Reapply, fixup!/squash!/amend!) pass unchanged. Takes the message file or stdin. |
 
 Exit codes everywhere: `0` clean, `1` violations, `2` usage/config/collection
@@ -102,13 +103,15 @@ Layering and reasoning: [README](README.md).
 
 | Key | Default | Meaning |
 |---|---|---|
-| `GROWTH_GUARDS_CHECKS` | `todo-ban byte-ceiling suppression-ban conflict-markers` | Batch check list (`commit-msg` never batches). |
+| `GROWTH_GUARDS_CHECKS` | `todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries` | Batch check list (`commit-msg` never batches). |
 | `GROWTH_GUARDS_TODO_EXCLUDES` | `tools/todo-ban-excludes` | todo-ban exclusion list. |
 | `GROWTH_GUARDS_BYTE_CEILING_KB` | `200` | Byte ceiling in KB. |
 | `GROWTH_GUARDS_BYTE_EXCLUDES` | `tools/byte-ceiling-excludes` | byte-ceiling exclusion list (declared asset trees). |
 | `GROWTH_GUARDS_SUPPRESSION_EXCLUDES` | `tools/suppression-ban-excludes` | suppression-ban exclusion list. |
 | `GROWTH_GUARDS_SUPPRESSION_BASELINE` | `tools/suppression-baseline.tsv` | Bare-allow ratchet baseline. |
 | `GROWTH_GUARDS_CONFLICT_EXCLUDES` | `tools/conflict-markers-excludes` | conflict-markers exclusion list. |
+| `GROWTH_GUARDS_CHANGELOG_CAP` | `200` | Characters per changelog entry. |
+| `GROWTH_GUARDS_CHANGELOG_PATHS` | `CHANGELOG.md` | Space-separated globs naming the changelog files, matched against the full repo-relative path (`*` crosses `/`). |
 | `GROWTH_GUARDS_COMMIT_TYPES` | `build chore ci docs feat fix perf refactor revert style test` | Accepted commit types. |
 | `GROWTH_GUARDS_PRE_COMMIT_LOCAL` | *(empty)* | Repo-root-relative executable the pre-commit shim runs last. |
 

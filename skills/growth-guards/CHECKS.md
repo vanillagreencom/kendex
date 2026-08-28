@@ -57,6 +57,29 @@ space or end of line. Indented or quoted occurrences never fire; neither
 does bare `=======` — a valid Markdown setext underline (a real conflict
 always carries the open and close markers).
 
+## changelog-entries
+
+A changelog entry longer than `GROWTH_GUARDS_CHANGELOG_CAP` characters
+(default 200) fails, naming the file, the entry's line, its length and its
+first line. One number is the whole rule — no line counting and no
+continuation grammar — so an entry that states its outcome passes however it
+is wrapped.
+
+An entry is every line from its list marker (`-`, `*`, `+`) at column 0 to
+the next marker, heading, or blank line; an indented bullet is part of the
+entry it sits under, not an entry of its own. Its text is those lines with CR
+stripped and whitespace runs collapsed to one space. The count is in
+characters: a UTF-8 sequence counts once, so an em dash costs one.
+
+`GROWTH_GUARDS_CHANGELOG_PATHS` (default `CHANGELOG.md`) is a
+space-separated list of shell globs matched against the full repo-relative
+path, `*` crossing `/` as in the excludes lists. Paths matching no tracked
+file are a clean pass — a repository with no changelog has nothing to judge —
+and a repository keeping one entry per file names that tree instead
+(`changelog.d/*/*.md`, whose two segments keep a `changelog.d/README.md` out).
+An empty list is a config error; the way to switch the check off is to drop
+it from `GROWTH_GUARDS_CHECKS`.
+
 ## commit-msg
 
 Conventional-commit gate over one message, shaped for the git `commit-msg`

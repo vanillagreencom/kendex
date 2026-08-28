@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
 # Pins what tools/guard still judges once the shipped packages judge the
 # rest: the size-ratchet baseline may only tighten unless RATCHET_RAISE=1
-# says otherwise, a CHANGELOG entry runs at most three lines wherever it is
-# written, the fragment format the collator refuses is refused at commit too,
-# and the [Unreleased] list gains lines only under CHANGELOG_COLLATE=1 — a
-# verdict that must not turn on the caller's collation.
-# It also pins the absence — a line cap, a work marker, a blanket allow and an
-# oversized file all pass here, because size-ratchet, todo-ban,
-# suppression-ban and byte-ceiling are the judges of those. The failing
-# direction runs first so a green pass is evidence, not a check that cannot
-# fail.
+# says otherwise, the fragment format the collator refuses is refused at
+# commit too, and the [Unreleased] list gains lines only under
+# CHANGELOG_COLLATE=1 — a verdict that must not turn on the caller's
+# collation.
+# It also pins the absence — a line cap, a work marker, a blanket allow, an
+# oversized file and an over-long changelog entry all pass here, because
+# size-ratchet, todo-ban, suppression-ban, byte-ceiling and changelog-entries
+# are the judges of those. The failing direction runs first so a green pass is
+# evidence, not a check that cannot fail.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUARD="$(cd "$TEST_DIR/.." && pwd)/guard"
 REPO="$(cd "$TEST_DIR/../.." && pwd)"
 RATCHET="$REPO/.agents/skills/size-ratchet/scripts/size-ratchet"
+CHANGELOG_ENTRIES="$REPO/.agents/skills/growth-guards/scripts/changelog-entries"
 # The repo's own classes line, read where it lives: the seam pinned below is
 # between two judges reading one policy, so the test may not restate it.
 CLASSES="$(sed -n 's/^SIZE_RATCHET_CLASSES = "\(.*\)"$/\1/p' "$REPO/kendex.settings.toml")"
@@ -103,56 +104,33 @@ mkfile ui/uncapped.ts 300
 printf '// %s: unfinished\n' "TO""DO" >"$R/crates/marker.rs" # split, or todo-ban fails this file
 printf '#![allow(dead_code)]\n' >"$R/crates/blanket.rs"
 head -c 300000 /dev/zero | tr '\0' 'x' >"$R/crates/huge.bin"
+mkdir -p "$R/changelog.d/fixed"
+LONG="$(head -c 260 /dev/zero | tr '\0' 'e')"
+printf -- '- %s\n' "$LONG" >"$R/changelog.d/fixed/ken-long.md"
 git -C "$R" add -A
 run_guard RATCHET_RAISE=
 [ "$RC" -eq 0 ] \
-  && ok "an over-cap file, a work marker, a blanket allow and a 300 KB file all pass — the packages judge those" \
-  || bad "an over-cap file, a work marker, a blanket allow and a 300 KB file all pass — the packages judge those" "rc=$RC out=$OUT"
-rm -f "$R/crates/uncapped.rs" "$R/ui/uncapped.ts" "$R/crates/marker.rs" "$R/crates/blanket.rs" "$R/crates/huge.bin"
+  && ok "an over-cap file, a work marker, a blanket allow, a 300 KB file and an over-long changelog entry all pass — the packages judge those" \
+  || bad "an over-cap file, a work marker, a blanket allow, a 300 KB file and an over-long changelog entry all pass — the packages judge those" "rc=$RC out=$OUT"
+# The control for the entry: the package lane that owns it does refuse the
+# same fragment, so guard's silence is a delegation and not a gap.
+CE_RC=0
+(cd "$R" && GROWTH_GUARDS_CHANGELOG_PATHS='changelog.d/*/*.md' "$CHANGELOG_ENTRIES") >/dev/null 2>&1 || CE_RC=$?
+[ "$CE_RC" -eq 1 ] && ok "control: changelog-entries refuses the fragment guard passed" \
+  || bad "control: changelog-entries refuses the fragment guard passed" "rc=$CE_RC"
+rm -f "$R/crates/uncapped.rs" "$R/ui/uncapped.ts" "$R/crates/marker.rs" "$R/crates/blanket.rs" "$R/crates/huge.bin" "$R/changelog.d/fixed/ken-long.md"
 git -C "$R" add -A
 
-echo "=== a CHANGELOG entry past three lines fails; three passes ==="
-printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- A three-line entry\n  second line\n  third line.\n- A four-line entry\n  second line\n  third line\n  fourth line.\n' >"$R/CHANGELOG.md"
-git -C "$R" add -A
-run_guard RATCHET_RAISE=
-[ "$RC" -ne 0 ] && case "$OUT" in *"CHANGELOG.md entries run past three lines"*"line 10: 4 lines"*) true ;; *) false ;; esac \
-  && ok "a four-line entry fails, naming its line and count" \
-  || bad "a four-line entry fails, naming its line and count" "rc=$RC out=$OUT"
-case "$OUT" in *"line 7:"*) bad "the three-line entry is not named" "$OUT" ;; *) ok "the three-line entry is not named" ;; esac
-printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- Four-space continuation\n    second\n    third\n    fourth.\n* Tab continuation\n\tsecond\n\tthird\n\tfourth.\n- Two paragraphs\r\n\r\n  second paragraph\r\n  third line.\r\n+ Lazy continuation\nsecond\nthird\nfourth.\n\nA paragraph after the list is not an entry.\n' >"$R/CHANGELOG.md"
-git -C "$R" add -A
-run_guard RATCHET_RAISE=
-[ "$RC" -ne 0 ] && case "$OUT" in *"line 7: 4 lines"*"line 11: 4 lines"*"line 15: 4 lines"*"line 19: 4 lines"*) true ;; *) false ;; esac \
-  && ok "deep-indented, tab-indented, CRLF two-paragraph, and lazy entries under any marker are counted whole" \
-  || bad "deep-indented, tab-indented, CRLF two-paragraph, and lazy entries under any marker are counted whole" "rc=$RC out=$OUT"
-case "$OUT" in *"line 19: 6 lines"*|*"line 24"*) bad "a paragraph after the list is not counted into the last entry" "$OUT" ;; *) ok "a paragraph after the list is not counted into the last entry" ;; esac
-printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- A three-line entry\n  second line\n  third line.\n- One line.\n' >"$R/CHANGELOG.md"
-git -C "$R" add -A
-run_guard RATCHET_RAISE=
-[ "$RC" -eq 0 ] && ok "entries of one and three lines pass" \
-  || bad "entries of one and three lines pass" "rc=$RC out=$OUT"
-if [ "$(id -u)" -ne 0 ]; then
-  chmod 000 "$R/CHANGELOG.md"
-  run_guard RATCHET_RAISE=
-  chmod 644 "$R/CHANGELOG.md"
-  [ "$RC" -ne 0 ] && case "$OUT" in *"CHANGELOG.md is unreadable"*) true ;; *) false ;; esac \
-    && ok "an unreadable CHANGELOG fails closed, naming the check that could not run" \
-    || bad "an unreadable CHANGELOG fails closed, naming the check that could not run" "rc=$RC out=$OUT"
-fi
-
-echo "=== a changelog fragment is judged as the entry it becomes ==="
+echo "=== the fragment format is the collator's verdict, carried by guard ==="
+# Entry length belongs to the growth-guards changelog-entries lane, which runs
+# before this one; the format is changelog-collate --check. One tool answers
+# what a fragment is, another how long it may run.
 mkdir -p "$R/changelog.d/fixed"
-printf -- '- A four-line fragment\n  second line\n  third line\n  fourth line.\n' >"$R/changelog.d/fixed/ken-1.md"
+printf -- '- A fragment.\n' >"$R/changelog.d/fixed/ken-1.md"
 git -C "$R" add -A
 run_guard RATCHET_RAISE=
-[ "$RC" -ne 0 ] && case "$OUT" in *"changelog.d/fixed/ken-1.md entries run past three lines"*"line 1: 4 lines"*) true ;; *) false ;; esac \
-  && ok "an over-long fragment fails, naming the fragment and its count" \
-  || bad "an over-long fragment fails, naming the fragment and its count" "rc=$RC out=$OUT"
-printf -- '- A three-line fragment\n  second line\n  third line.\n' >"$R/changelog.d/fixed/ken-1.md"
-git -C "$R" add -A
-run_guard RATCHET_RAISE=
-[ "$RC" -eq 0 ] && ok "a three-line fragment passes" \
-  || bad "a three-line fragment passes" "rc=$RC out=$OUT"
+[ "$RC" -eq 0 ] && ok "a well-formed fragment passes" \
+  || bad "a well-formed fragment passes" "rc=$RC out=$OUT"
 # Keep a Changelog's six sections, written out rather than read from the
 # accepted set: a list derived from the subject cannot catch that set being
 # narrowed, which is the way this rule fails silently.
@@ -170,12 +148,9 @@ for s in $SECTION_DIRS; do
   rmdir "$R/changelog.d/$s" 2>/dev/null || true
 done
 mkdir -p "$R/changelog.d/fixed"
-printf -- '- A three-line fragment\n  second line\n  third line.\n' >"$R/changelog.d/fixed/ken-1.md"
+printf -- '- A fragment.\n' >"$R/changelog.d/fixed/ken-1.md"
 git -C "$R" add -A
 
-echo "=== the fragment format is the collator's verdict, carried by guard ==="
-# Guard owns the entry-length rule, which judges CHANGELOG.md too; the format
-# is changelog-collate --check, so one tool answers what a fragment is.
 printf -- '- Stray.\n' >"$R/changelog.d/loose.md"
 git -C "$R" add -A
 run_guard RATCHET_RAISE=
@@ -204,8 +179,11 @@ run_guard RATCHET_RAISE=
   || bad "the README is not judged as a fragment" "rc=$RC out=$OUT"
 
 echo "=== the [Unreleased] list is the collator's to write ==="
+# The rule compares the work tree against HEAD, so HEAD has to carry the file.
+printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- A wrapped entry\n  second line\n  third line.\n- One line.\n' >"$R/CHANGELOG.md"
+git -C "$R" add -A
 git -C "$R" commit -q -m "chore: land the changelog"
-printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- A three-line entry\n  second line\n  third line.\n- One line.\n- A hand-written line.\n' >"$R/CHANGELOG.md"
+printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- A wrapped entry\n  second line\n  third line.\n- One line.\n- A hand-written line.\n' >"$R/CHANGELOG.md"
 git -C "$R" add -A
 run_guard RATCHET_RAISE=
 [ "$RC" -ne 0 ] && case "$OUT" in *"gained lines under [Unreleased]"*"- A hand-written line."*) true ;; *) false ;; esac \
@@ -214,7 +192,7 @@ run_guard RATCHET_RAISE=
 run_guard RATCHET_RAISE= CHANGELOG_COLLATE=1
 [ "$RC" -eq 0 ] && ok "CHANGELOG_COLLATE=1 declares the collator's write" \
   || bad "CHANGELOG_COLLATE=1 declares the collator's write" "rc=$RC out=$OUT"
-printf '# Changelog\n\n## [Unreleased]\n\n## [1.0.0] - 2026-01-01\n\n### Fixed\n\n- A three-line entry\n  second line\n  third line.\n- One line.\n' >"$R/CHANGELOG.md"
+printf '# Changelog\n\n## [Unreleased]\n\n## [1.0.0] - 2026-01-01\n\n### Fixed\n\n- A wrapped entry\n  second line\n  third line.\n- One line.\n' >"$R/CHANGELOG.md"
 git -C "$R" add -A
 run_guard RATCHET_RAISE=
 [ "$RC" -eq 0 ] && ok "rotating [Unreleased] into a released version adds no line" \

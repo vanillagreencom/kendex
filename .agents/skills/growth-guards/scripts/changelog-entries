@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# changelog-entries — a changelog entry over the character cap fails
+# (default 200). One number is the whole rule: no line counting and no
+# continuation grammar, so an entry that states its outcome passes however
+# it is wrapped.
+#
+# An entry is every line from its list marker (-, *, +) at column 0 to the
+# next marker, heading, or blank line. Its text is those lines with CR
+# stripped and whitespace runs collapsed to one space, counted in
+# characters — UTF-8 sequences count once, so an em dash costs what it
+# reads as. Content comes from the index, like the other scans.
+#
+# Configured paths matching no tracked file are a clean pass: a repository
+# with no changelog has nothing to judge.
+#
+# Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
+set -euo pipefail
+# Pathname expansion off: the configured paths are globs, and splitting them
+# into words would otherwise expand each against the work tree — matching
+# whatever happens to be checked out instead of the tracked paths the scan
+# judges, and matching nothing at all in a sparse or bare checkout.
+set -f
+
+GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
+GG_BOOT="${GG_BOOT%x}"
+# The one newline `pwd` added; anything before it is the path.
+SCRIPT_DIR="${GG_BOOT%$'\n'}"
+GG_CHECK="changelog-entries"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/settings.sh
+source "$SCRIPT_DIR/lib/settings.sh"
+
+usage() {
+  cat <<'EOF'
+usage: changelog-entries
+
+A changelog entry longer than the cap fails. An entry is every line from
+its list marker (-, *, +) at column 0 to the next marker, heading, or
+blank line; its text is those lines with CR stripped and whitespace runs
+collapsed to one space, counted in characters. Tracked content is read
+from the index. Paths matching no tracked file are a clean pass.
+
+Configuration (env > .env.local > .kendex/settings.toml >
+kendex.settings.toml [env] > default):
+  GROWTH_GUARDS_CHANGELOG_CAP     characters per entry  (default 200)
+  GROWTH_GUARDS_CHANGELOG_PATHS   space-separated shell globs against the
+                                  full repo-relative path, '*' crossing
+                                  '/' as in the excludes lists
+                                  (default CHANGELOG.md)
+
+Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
+EOF
+}
+
+if [ $# -gt 0 ]; then
+  case "$1" in
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *) gg_config_error "unknown argument '$1' (see --help)" ;;
+  esac
+fi
+
+gg_repo_root_cd
+
+CAP="$(gg_setting GROWTH_GUARDS_CHANGELOG_CAP 200)" || exit 2
+gg_positive_int "$CAP" "GROWTH_GUARDS_CHANGELOG_CAP"
+
+PATHS_RAW="$(gg_setting GROWTH_GUARDS_CHANGELOG_PATHS "CHANGELOG.md")" || exit 2
+
+# Each pattern goes through the family's path discipline: absolute, escaping
+# and '-'-leading values are configuration errors, never a glob that quietly
+# matches nothing. An empty list is one too — a check that measures nowhere
+# while reporting OK is the silent pass this family refuses; dropping the
+# check from GROWTH_GUARDS_CHECKS is how it is turned off.
+PATTERNS=""
+for raw in $PATHS_RAW; do
+  norm="$(gg_config_path "$raw" changelog)" || exit 2
+  PATTERNS="${PATTERNS:+$PATTERNS }$norm"
+done
+[ -n "$PATTERNS" ] || gg_config_error "GROWTH_GUARDS_CHANGELOG_PATHS names no path — name at least one, or drop this check from GROWTH_GUARDS_CHECKS"
+
+matches_configured() { # PATH — 0 when some configured glob matches the full path
+  local path="$1" pat
+  for pat in $PATTERNS; do
+    # $pat must expand unquoted to act as a glob.
+    # shellcheck disable=SC2254
+    case "$path" in
+      $pat) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# Violation rows as "V<TAB>line<TAB>characters<TAB>first line", then one
+# "N<TAB>count" tally so the clean verdict reports what it measured rather
+# than asserting it. LC_ALL=C is what makes the character count exact: it
+# puts awk on bytes, and the continuation bytes subtracted below are what
+# turn bytes back into characters. Under a UTF-8 locale the class would
+# match nothing and every multibyte entry would count short.
+ENTRY_AWK='
+BEGIN { CONT = "[\200-\277]" }
+function chars(s,   n, c) { n = length(s); c = gsub(CONT, "", s); return n - c }
+function flush(   t, len) {
+  if (!open) return
+  open = 0
+  total++
+  t = text
+  gsub(/[ \t]+/, " ", t)
+  sub(/^ /, "", t)
+  sub(/ $/, "", t)
+  len = chars(t)
+  if (len > cap) printf "V\t%d\t%d\t%s\n", start, len, first
+}
+{ line = $0; sub(/\r$/, "", line) }
+line ~ /^[-*+][ \t]/ { flush(); open = 1; start = NR; first = line; text = line; next }
+line ~ /^#/          { flush(); next }
+line ~ /^[ \t]*$/    { flush(); next }
+open                 { text = text " " line }
+END { flush(); printf "N\t%d\n", total }
+'
+
+gg_tmpdir
+# ls-files -s emits one record per STAGE for an unmerged path, so the walk
+# below would read rival blobs as separate files.
+gg_require_merged_index
+git ls-files -sz >"$GG_TMP/files.z" || gg_collection_error "git ls-files failed"
+
+checked=0
+entries=0
+violations=0
+while IFS= read -r -d '' rec; do
+  # Record shape: "<mode> <sha> <stage>\t<path>".
+  f="${rec#*"$GG_TAB"}"
+  matches_configured "$f" || continue
+  mode="${rec%% *}"
+  case "$mode" in
+    120000 | 160000) continue ;; # symlink / submodule gitlink — not changelog text
+  esac
+  rest="${rec#* }"
+  sha="${rest%% *}"
+  git cat-file blob "$sha" >"$GG_TMP/blob" 2>"$GG_TMP/blob.err" \
+    || { [ ! -s "$GG_TMP/blob.err" ] || cat -- "$GG_TMP/blob.err" >&2
+      gg_collection_error "cannot read blob $sha for '$f' — refusing to skip an unread changelog"; }
+  checked=$((checked + 1))
+  status=0
+  LC_ALL=C awk -v cap="$CAP" "$ENTRY_AWK" <"$GG_TMP/blob" >"$GG_TMP/report" || status=$?
+  [ "$status" -eq 0 ] || gg_collection_error "could not measure the entries in '$f' (awk exit $status)"
+  while IFS="$GG_TAB" read -r kind a b c; do
+    case "$kind" in
+      N) entries=$((entries + a)) ;;
+      V)
+        echo "changelog-entries FAIL long entry: $f:$a — $b characters (cap $CAP)"
+        echo "  entry: $c"
+        echo "  remedies: state the outcome and stop; a Breaking migration note stays inline, and the reasoning belongs in the commit"
+        violations=$((violations + 1))
+        ;;
+      *) gg_collection_error "unrecognized measurement record '$kind' while reading '$f'" ;;
+    esac
+  done <"$GG_TMP/report"
+done <"$GG_TMP/files.z"
+
+if [ "$violations" -gt 0 ]; then
+  echo "changelog-entries: $violations entry(ies) over the cap — cap $CAP characters, $entries entry(ies) in $checked file(s)"
+  exit 1
+fi
+if [ "$checked" -eq 0 ]; then
+  echo "changelog-entries: OK — no tracked file matches GROWTH_GUARDS_CHANGELOG_PATHS ($PATTERNS)"
+  exit 0
+fi
+echo "changelog-entries: OK — $entries entry(ies) in $checked file(s) within the cap ($CAP characters)"

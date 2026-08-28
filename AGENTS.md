@@ -8,7 +8,7 @@ Repo-specific rules:
 
 - `crates/core` is pure domain logic — no Tauri, no IPC, no UI concerns.
 - `ui/` renders state and invokes commands; domain logic and types live in Rust, and TS bindings are generated, never hand-written.
-- The CHANGELOG is for consumers (Keep a Changelog): document app, CLI, and package changes; keep engine-internal and maintainer-only details out. An entry is 1–3 lines — the outcome, a **Breaking:** migration inline, `— thanks @name` for outside contributors — never an essay.
+- The CHANGELOG is for consumers (Keep a Changelog): document app, CLI, and package changes; keep engine-internal and maintainer-only details out. An entry runs at most 200 characters — the outcome, a **Breaking:** migration inline, `— thanks @name` for outside contributors — never an essay.
 - An entry is a file, never a `CHANGELOG.md` line: write `changelog.d/<section>/<name>.md` holding the list item it becomes, per `changelog.d/README.md`. `tools/changelog-collate` folds them in at release.
 
 `tools/guard` enforces the rest — read the script; it is the list. It is the last lane of the package's commit chain, named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL`; `tools/setup` arms that chain in a fresh clone.
