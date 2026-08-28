@@ -204,8 +204,9 @@ run_setting $'[env]\nREVIEW_GATE_TB = "a\\b"' REVIEW_GATE_TB "dflt"
 echo "=== default-path layering and the REVIEW_GATE_MODE exception ==="
 # With no REVIEW_GATE_SETTINGS_FILE the default sources apply: .env.local >
 # .kendex/settings.toml > kendex.settings.toml > default — except
-# REVIEW_GATE_MODE, which skips the dotenv layer so the local waiter and the
-# CI gate (which has no .env.local) resolve the switch identically.
+# REVIEW_GATE_MODE, which reads only env and the COMMITTED kendex.settings.toml
+# so the local waiter and the CI gate (whose checkout has neither .env.local
+# nor .kendex/) resolve the switch identically.
 mkdir -p "$TMP/layers/.kendex"
 printf '[env]\nREVIEW_GATE_TP = "root"\nREVIEW_GATE_MODE = "off"\n' >"$TMP/layers/kendex.settings.toml"
 layer() { # NAME DEFAULT — resolve from inside the layered fixture
@@ -230,9 +231,16 @@ layer REVIEW_GATE_TP "dflt"
 layer REVIEW_GATE_MODE "enforce"
 [[ "$RC" -eq 0 && "$OUT" == "off" ]] && ok "REVIEW_GATE_MODE ignores .env.local and reads the settings file" || bad "REVIEW_GATE_MODE ignores .env.local and reads the settings file" "rc=$RC out=$OUT"
 
+# The machine-local .kendex/settings.toml is not a source for this key
+# either: CI's checkout does not carry it, so a local uncommitted "off"
+# would recreate the waiter/gate split the exception exists to prevent.
+printf '[env]\nREVIEW_GATE_MODE = "off"\n' >"$TMP/layers/.kendex/settings.toml"
+printf '[env]\nREVIEW_GATE_TP = "root"\n' >"$TMP/layers/kendex.settings.toml"
+layer REVIEW_GATE_MODE "enforce"
+[[ "$RC" -eq 0 && "$OUT" == "enforce" ]] && ok "REVIEW_GATE_MODE ignores the machine-local .kendex/settings.toml" || bad "REVIEW_GATE_MODE ignores the machine-local .kendex/settings.toml" "rc=$RC out=$OUT"
+
 # And with the settings assignment gone, the exception resolves the built-in
 # default while the dotenv value still sits there unread.
-printf '[env]\nREVIEW_GATE_TP = "root"\n' >"$TMP/layers/kendex.settings.toml"
 rm -f "$TMP/layers/.kendex/settings.toml"
 layer REVIEW_GATE_MODE "enforce"
 [[ "$RC" -eq 0 && "$OUT" == "enforce" ]] && ok "REVIEW_GATE_MODE falls to the default over a dotenv-only value" || bad "REVIEW_GATE_MODE falls to the default over a dotenv-only value" "rc=$RC out=$OUT"
@@ -327,6 +335,16 @@ printf '[env]\nREVIEW_GATE_TQ = "eqfile"\n' > "$TMP/policy=on.toml"
 OUT=""; RC=0
 OUT="$(cd "$TMP" && { unset REVIEW_GATE_TQ 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="policy=on.toml" rg_setting REVIEW_GATE_TQ "dflt" 2>"$TMP/err"; })" || RC=$?
 [[ "$RC" -eq 0 && "$OUT" == "eqfile" ]] && ok "an =-containing relative settings path reads its value (no silent-defaults fallback)" || bad "=-containing settings path" "rc=$RC out=$OUT"
+
+echo "=== the WHOLE [env] table is validated, not only the requested key ==="
+# kendex-env.sh refuses these same files, so a per-key-only extractor would
+# split the family contract: the resolver would answer while the loader
+# rejects the identical file.
+run_setting $'[env]\nUNRELATED = bare\nREVIEW_GATE_TW = "v"' REVIEW_GATE_TW "dflt"
+[[ "$RC" -ne 0 ]] && grep -q "unsupported syntax for UNRELATED" "$TMP/err" && ok "an unrelated non-contract assignment fails the read" || bad "unrelated malformed assignment" "rc=$RC out=$OUT"
+
+run_setting $'[env]\nUNRELATED = "a"\nUNRELATED = "b"\nREVIEW_GATE_TW = "v"' REVIEW_GATE_TW "dflt"
+[[ "$RC" -ne 0 ]] && grep -q "UNRELATED is assigned more than once" "$TMP/err" && ok "an unrelated duplicated key fails the read" || bad "unrelated duplicated key" "rc=$RC out=$OUT"
 
 echo "=== a leading UTF-8 BOM fails loud, never parses as content ==="
 # The BOM is neither whitespace nor `[` nor a key character: a BOM'd [env]

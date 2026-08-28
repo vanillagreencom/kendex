@@ -4,9 +4,9 @@
 # Project-scope `kendex add` / `kendex refresh` merge these defaults into
 # <project>/kendex.settings.toml (never overwriting existing keys). Keys
 # resolve env > .env.local > .kendex/settings.toml > this file > built-in
-# default (REVIEW_GATE_MODE never reads .env.local); list values pack into
-# one string with ';' separators. Full reference: review-gate SKILL.md,
-# references/settings.md, and references/adoption.md.
+# default (REVIEW_GATE_MODE reads only env and this committed file); list
+# values pack into one string with ';' separators. Full reference:
+# review-gate SKILL.md, references/settings.md, and references/adoption.md.
 
 # Commit-status context the gate posts — the required check name in branch
 # protection. Keep it stable: changing it strands the old required context

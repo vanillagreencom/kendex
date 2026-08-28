@@ -211,6 +211,21 @@ printf '[env]\nSIZE_RATCHET_THRESHOLD = "9"\n' > "$R/kendex.settings.toml"
 run_raw SIZE_RATCHET_SETTINGS_FILE= || true
 case "$OUT" in *"threshold 9"*) ok "a SET-but-EMPTY settings-file override reads the default sources" ;; *) bad "set-but-empty override reads default sources" "rc=$RC out=$OUT" ;; esac
 
+# The WHOLE [env] table is validated, not only the requested key —
+# kendex-env.sh refuses these same files, so a per-key-only extractor
+# would split the family contract.
+printf '[env]\nUNRELATED = bare\nSIZE_RATCHET_THRESHOLD = "9"\n' > "$R/kendex.settings.toml"
+run_raw || true
+[ "$RC" -eq 2 ] && case "$OUT" in *"unsupported syntax for UNRELATED"*) true ;; *) false ;; esac \
+  && ok "an unrelated non-contract assignment is exit 2" \
+  || bad "unrelated malformed assignment is exit 2" "rc=$RC out=$OUT"
+
+printf '[env]\nUNRELATED = "a"\nUNRELATED = "b"\nSIZE_RATCHET_THRESHOLD = "9"\n' > "$R/kendex.settings.toml"
+run_raw || true
+[ "$RC" -eq 2 ] && case "$OUT" in *"UNRELATED is assigned more than once"*) true ;; *) false ;; esac \
+  && ok "an unrelated duplicated key is exit 2" \
+  || bad "unrelated duplicated key is exit 2" "rc=$RC out=$OUT"
+
 # The BOM is neither whitespace nor `[` nor a key character: a BOM'd [env]
 # header would hide the whole table behind the silent built-in 400, and a
 # BOM'd first dotenv assignment would silently skip the layer.

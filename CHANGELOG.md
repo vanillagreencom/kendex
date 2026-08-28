@@ -62,13 +62,13 @@ an outside contributor.
   `.kendex/settings.toml` > `kendex.settings.toml` > default, `[env]` table
   only; a lingering `.env` is silently ignored (use `.env.local`).
 
-- Precedence exceptions: deep-research reads env and `.env.local` only, and a
-  project-file `LINEAR_API_KEY` beats an inherited one — wrong-workspace
-  protection; `LINEAR_API_KEY_OVERRIDE` is the explicit override.
+- Precedence exceptions: deep-research reads env and `.env.local` only;
+  `REVIEW_GATE_MODE` reads env and the committed `kendex.settings.toml` only;
+  a project `LINEAR_API_KEY` beats an inherited one (`LINEAR_API_KEY_OVERRIDE` wins).
 
 - **Breaking:** settings values are single-line double-quoted strings with no
   `"` or `\`; any other shape, a duplicate key, or an unparseable table header
-  fails the load. `REVIEW_GATE_MODE` alone never reads `.env.local`.
+  fails the load.
 
 - **Breaking:** kendex no longer reads the pre-2.0 mutable clone in the
   source cache. Nothing has written that layout since 2.0, so a scope whose

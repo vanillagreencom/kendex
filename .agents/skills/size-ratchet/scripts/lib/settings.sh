@@ -290,7 +290,34 @@ sr_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
       in_env = (header == "[env]")
       next
     }
-    in_env { print }
+    # The COMPLETE table is validated, not only the requested key: the
+    # kendex-env.sh loader refuses a duplicate or non-contract assignment
+    # anywhere in [env], and this family must refuse the same files. Its
+    # silent skips are mirrored exactly too: lines with no = and keys that
+    # are not plain identifiers pass through unread, never as errors.
+    in_env {
+      l = $0
+      sub(/\r$/, "", l)
+      if (l ~ /^[[:space:]]*$/ || l ~ /^[[:space:]]*#/) { print; next }
+      if (l !~ /=/) { print; next }
+      key = l
+      sub(/^[[:space:]]*/, "", key)
+      sub(/[[:space:]]*=.*$/, "", key)
+      if (key !~ /^[A-Za-z_][A-Za-z0-9_]*$/) { print; next }
+      if (key in seen) {
+        printf "::error::%s: %s is assigned more than once in [env] (each key must be unique in the table)\n", src, key > "/dev/stderr"
+        exit 3
+      }
+      seen[key] = 1
+      value = l
+      sub(/^[^=]*=[[:space:]]*/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      if (value !~ /^"[^"\\]*"[[:space:]]*(#.*)?$/) {
+        printf "::error::%s: unsupported syntax for %s (expected a single-line basic string, no double quote and no backslash: %s = \"value\")\n", src, key, key > "/dev/stderr"
+        exit 3
+      }
+      print
+    }
   ' < "$1" || status=$?
   [ "$status" -ne 3 ] || return 1
   if [ "$status" -ne 0 ]; then

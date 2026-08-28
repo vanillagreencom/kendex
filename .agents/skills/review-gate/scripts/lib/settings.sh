@@ -99,7 +99,34 @@ rg_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
       in_env = (header == "[env]")
       next
     }
-    in_env { print }
+    # The COMPLETE table is validated, not only the requested key: the
+    # kendex-env.sh loader refuses a duplicate or non-contract assignment
+    # anywhere in [env], and this family must refuse the same files. Its
+    # silent skips are mirrored exactly too: lines with no = and keys that
+    # are not plain identifiers pass through unread, never as errors.
+    in_env {
+      l = $0
+      sub(/\r$/, "", l)
+      if (l ~ /^[[:space:]]*$/ || l ~ /^[[:space:]]*#/) { print; next }
+      if (l !~ /=/) { print; next }
+      key = l
+      sub(/^[[:space:]]*/, "", key)
+      sub(/[[:space:]]*=.*$/, "", key)
+      if (key !~ /^[A-Za-z_][A-Za-z0-9_]*$/) { print; next }
+      if (key in seen) {
+        printf "::error::%s: %s is assigned more than once in [env] (each key must be unique in the table)\n", src, key > "/dev/stderr"
+        exit 3
+      }
+      seen[key] = 1
+      value = l
+      sub(/^[^=]*=[[:space:]]*/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      if (value !~ /^"[^"\\]*"[[:space:]]*(#.*)?$/) {
+        printf "::error::%s: unsupported syntax for %s (expected a single-line basic string, no double quote and no backslash: %s = \"value\")\n", src, key, key > "/dev/stderr"
+        exit 3
+      }
+      print
+    }
   ' < "$1" || status=$?
   [ "$status" -ne 3 ] || return 1
   if [ "$status" -ne 0 ]; then
@@ -219,6 +246,12 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   # (answered above) is the one force-defaults handle.
   if [ -n "${REVIEW_GATE_SETTINGS_FILE:-}" ]; then
     set -- "$REVIEW_GATE_SETTINGS_FILE"
+  elif [ "$name" = "REVIEW_GATE_MODE" ]; then
+    # The mode must resolve identically on both sides of the gate, and CI's
+    # checkout carries neither .env.local nor the machine-local .kendex/ —
+    # so this key's default TOML source is the COMMITTED file alone (the
+    # same reason it skips the dotenv layer above).
+    set -- "kendex.settings.toml"
   else
     set -- ".kendex/settings.toml" "kendex.settings.toml"
   fi

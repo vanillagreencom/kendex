@@ -107,6 +107,17 @@ OUT="$(cd "$R" && { unset GROWTH_GUARDS_TT 2>/dev/null; env GROWTH_GUARDS_SETTIN
   ' "$SKILL_DIR/scripts/lib/settings.sh" GROWTH_GUARDS_TT "dflt" 2>"$TMP/err"; })" || RC=$?
 [ "$RC" -eq 0 ] && [ "$OUT" = "fromrepo" ] && ok "a SET-but-EMPTY GROWTH_GUARDS_SETTINGS_FILE reads the default sources" || bad "set-but-empty override reads default sources" "rc=$RC out=$OUT"
 
+echo "=== the WHOLE [env] table is validated, not only the requested key ==="
+# kendex-env.sh refuses these same files, so a per-key-only extractor would
+# split the family contract.
+printf '[env]\nUNRELATED = bare\nGROWTH_GUARDS_TT = "v"\n' >"$R/kendex.settings.toml"
+resolve GROWTH_GUARDS_TT "dflt"
+[ "$RC" -ne 0 ] && grep -q "unsupported syntax for UNRELATED" "$TMP/err" && ok "an unrelated non-contract assignment fails the read" || bad "unrelated malformed assignment" "rc=$RC out=$OUT"
+
+printf '[env]\nUNRELATED = "a"\nUNRELATED = "b"\nGROWTH_GUARDS_TT = "v"\n' >"$R/kendex.settings.toml"
+resolve GROWTH_GUARDS_TT "dflt"
+[ "$RC" -ne 0 ] && grep -q "UNRELATED is assigned more than once" "$TMP/err" && ok "an unrelated duplicated key fails the read" || bad "unrelated duplicated key" "rc=$RC out=$OUT"
+
 echo "=== a leading UTF-8 BOM fails loud, never parses as content ==="
 # The BOM is neither whitespace nor `[` nor a key character: a BOM'd [env]
 # header would hide the whole table behind silent defaults, and a BOM'd
