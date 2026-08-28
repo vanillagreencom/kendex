@@ -4,6 +4,11 @@ For consumers that vendor an upstream tree byte-for-byte and merge re-vendor
 PRs. Suppressing duplicate upstream findings is a reviewer-instruction
 problem; configuration answers break the gate.
 
+A committed `kendex refresh` tree is the other case: no pin covers it, the
+next refresh overwrites it, and the rule there is flat with no carve-out —
+[rendered-paths.md](rendered-paths.md), which reuses three sections of this
+one.
+
 ## What suppression must not break
 
 **Evidence.** The gate's evidence term needs a trusted non-author review object

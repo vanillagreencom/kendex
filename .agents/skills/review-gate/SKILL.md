@@ -279,4 +279,8 @@ ENGINE's proofs and run in the kendex repo, not in a consumer's CI:
 
 For re-vendor PRs, suppress duplicate findings with the remedy-locus reviewer
 instruction, never a reviewer path exclusion:
-[references/vendored-paths.md](references/vendored-paths.md).
+[references/vendored-paths.md](references/vendored-paths.md). A committed
+`kendex refresh` tree is the same problem with no pin over it and a blast
+radius of every consuming repo; it routes every finding over the render
+upstream, with no carve-out:
+[references/rendered-paths.md](references/rendered-paths.md).
