@@ -20,6 +20,9 @@ vi.mock("@/bindings", () => ({
     updatesOverview: vi.fn(),
     mineList: vi.fn(),
     mineSubmitPreflight: vi.fn(),
+    appUpdateCheck: vi.fn(),
+    appUpdateChannel: vi.fn(),
+    appVersion: vi.fn(),
   },
   ZOOM: { min: 50, max: 200, step: 10, default: 100 },
 }));
@@ -68,9 +71,20 @@ describe("who reads the account", () => {
     vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
-      data: { rows: [], warnings: [] },
+      data: { rows: [], warnings: [], lastFetched: null },
     });
     vi.mocked(commands.mineList).mockResolvedValue({ status: "ok", data: [] });
+    vi.mocked(commands.appUpdateCheck).mockResolvedValue({
+      status: "error",
+      error: "no feed in a test",
+    } as Awaited<ReturnType<typeof commands.appUpdateCheck>>);
+    vi.mocked(commands.appUpdateChannel).mockResolvedValue({
+      status: "error",
+      error: "no channel in a test",
+    } as Awaited<ReturnType<typeof commands.appUpdateChannel>>);
+    vi.mocked(commands.appVersion).mockResolvedValue(
+      "0.0.0-test" as Awaited<ReturnType<typeof commands.appVersion>>,
+    );
     vi.mocked(commands.mineSubmitPreflight).mockResolvedValue({
       status: "ok",
       data: { candidate: null, ready: false, checks: [] },
