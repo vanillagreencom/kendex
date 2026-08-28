@@ -49,13 +49,20 @@ export type ReadAccount = () => Promise<AccountRead>;
  * credential that could not be confirmed and one the server has rejected
  * all need a backend that has reached the server. */
 const fromBridge: ReadAccount = async () => {
-  const status = await commands.accountStatus();
-  if (status.status === "error") return { error: status.error };
-  return {
-    ok: status.data.signedIn
-      ? { kind: "signed-in", identity: null }
-      : { kind: "signed-out" },
-  };
+  try {
+    const status = await commands.accountStatus();
+    if (status.status === "error") return { error: status.error };
+    return {
+      ok: status.data.signedIn
+        ? { kind: "signed-in", identity: null }
+        : { kind: "signed-out" },
+    };
+  } catch (error: unknown) {
+    // A bridge that throws and a reply that says no are the same answer
+    // here: the account could not be read. Letting the throw out would
+    // leave the read with nothing recorded and nothing to retry from.
+    return { error: String(error) };
+  }
 };
 
 let readAccount: ReadAccount = fromBridge;
@@ -73,7 +80,14 @@ interface AccountStore {
   userCode: string | null;
   verificationUrl: string | null;
   signingIn: boolean;
+  /** Why the device flow or a sign-out failed. The read never writes it:
+   *  a person who came back from denying an approval must still be able
+   *  to read why nothing happened. */
   error: string | null;
+  /** Why the last account read failed, or null when it landed. */
+  readError: string | null;
+  /** A read is out. The retry button is dead only while this is up. */
+  reading: boolean;
   submissions: SubmissionRow[] | null;
 
   /** The account read. Startup makes it, a return to the window repeats
@@ -87,7 +101,9 @@ interface AccountStore {
   loadSubmissions: () => Promise<void>;
 }
 
-/** Bumped to abandon a poll loop whose dialog was closed. */
+/** Bumped by every deliberate change of account: a sign-in starting, a
+ *  sign-out, a closed dialog. It abandons the poll loop behind it and
+ *  drops any read that began before it. */
 let generation = 0;
 
 const wait = (seconds: number) =>
@@ -99,10 +115,19 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
   verificationUrl: null,
   signingIn: false,
   error: null,
+  readError: null,
+  reading: false,
   submissions: null,
 
   load: async () => {
+    const at = generation;
+    set({ reading: true });
     const answer = await readAccount();
+    set({ reading: false });
+    // Signing in, signing out and cancelling all say what the account is
+    // now. A read that began before one of them is older news, and would
+    // put back the state the person just left.
+    if (generation !== at) return;
     if ("error" in answer) {
       // A read that failed knows nothing new, so it never takes anything
       // away. With an identity already in hand the failure is exactly
@@ -110,11 +135,14 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       // never read stays unread with the failure to show for it.
       const identity = cachedIdentity(get().account);
       if (identity)
-        set({ account: { kind: "offline", identity }, error: answer.error });
-      else set({ error: answer.error });
+        set({
+          account: { kind: "offline", identity },
+          readError: answer.error,
+        });
+      else set({ readError: answer.error });
       return;
     }
-    set({ account: answer.ok, error: null });
+    set({ account: answer.ok, readError: null });
   },
 
   signIn: async () => {
@@ -164,12 +192,18 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
   },
 
   signOut: async () => {
+    generation += 1;
     const out = await commands.accountLogout();
     if (out.status === "error") {
       set({ error: out.error });
       return;
     }
-    set({ account: { kind: "signed-out" }, submissions: null, error: null });
+    set({
+      account: { kind: "signed-out" },
+      submissions: null,
+      error: null,
+      readError: null,
+    });
   },
 
   loadSubmissions: async () => {

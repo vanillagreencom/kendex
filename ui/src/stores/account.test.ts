@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings";
 import {
+  type AccountRead,
   hasCredential,
   type SettledAccount,
   setAccountReader,
@@ -44,6 +45,8 @@ const fresh = () =>
   useAccountStore.setState({
     account: { kind: "loading" },
     error: null,
+    readError: null,
+    reading: false,
     submissions: null,
     signingIn: false,
     userCode: null,
@@ -99,7 +102,7 @@ describe("a read that could not be made", () => {
     unreadable();
     await load();
     expect(account()).toEqual({ kind: "offline", identity: ADA });
-    expect(useAccountStore.getState().error).toBe("keychain locked");
+    expect(useAccountStore.getState().readError).toBe("keychain locked");
   });
 
   it("leaves a credential with no name signed in", async () => {
@@ -109,14 +112,14 @@ describe("a read that could not be made", () => {
     unreadable();
     await load();
     expect(account()).toEqual({ kind: "signed-in", identity: null });
-    expect(useAccountStore.getState().error).toBe("keychain locked");
+    expect(useAccountStore.getState().readError).toBe("keychain locked");
   });
 
   it("claims no state at all when nothing was ever read", async () => {
     unreadable();
     await load();
     expect(account()).toEqual({ kind: "loading" });
-    expect(useAccountStore.getState().error).toBe("keychain locked");
+    expect(useAccountStore.getState().readError).toBe("keychain locked");
   });
 
   it("settles on the next read that lands", async () => {
@@ -125,7 +128,20 @@ describe("a read that could not be made", () => {
     stored(false);
     await load();
     expect(account()).toEqual({ kind: "signed-out" });
-    expect(useAccountStore.getState().error).toBeNull();
+    expect(useAccountStore.getState().readError).toBeNull();
+  });
+
+  // typedError rethrows an Error the transport raised, so a bridge that
+  // throws never reaches the Result path at all.
+  it("records a bridge that threw the same as one that said no", async () => {
+    vi.mocked(commands.accountStatus).mockRejectedValue(
+      new Error("ipc channel closed"),
+    );
+    await load();
+    expect(useAccountStore.getState().readError).toContain(
+      "ipc channel closed",
+    );
+    expect(useAccountStore.getState().reading).toBe(false);
   });
 });
 
@@ -174,6 +190,69 @@ describe("an approved device flow", () => {
     await signIn();
     expect(hasCredential(account())).toBe(true);
     expect(account()).toEqual({ kind: "signed-in", identity: null });
+  });
+});
+
+// The read repeats on its own now, so it must not be able to write over
+// what the person just did.
+describe("a read racing a deliberate change", () => {
+  it("leaves a denied approval its explanation", async () => {
+    vi.mocked(commands.accountLoginStart).mockResolvedValue({
+      status: "ok",
+      data: {
+        deviceCode: "kxd_test",
+        userCode: "ABCD-2345",
+        verificationUrl: "https://kendex.ai/device",
+        intervalSeconds: 1,
+      },
+    } as Awaited<ReturnType<typeof commands.accountLoginStart>>);
+    vi.mocked(commands.accountLoginPoll).mockResolvedValue({
+      status: "error",
+      error: "the approval was denied",
+    } as Awaited<ReturnType<typeof commands.accountLoginPoll>>);
+    vi.mocked(commands.openUrl).mockResolvedValue({
+      status: "ok",
+      data: null,
+    } as Awaited<ReturnType<typeof commands.openUrl>>);
+
+    vi.useFakeTimers();
+    const signing = useAccountStore.getState().signIn();
+    await vi.advanceTimersByTimeAsync(1100);
+    await signing;
+    vi.useRealTimers();
+    expect(useAccountStore.getState().error).toBe("the approval was denied");
+
+    // Coming back to the window is the flow's own last step, and the read
+    // it triggers must not wipe the only explanation on screen.
+    stored(false);
+    await load();
+    expect(account()).toEqual({ kind: "signed-out" });
+    expect(useAccountStore.getState().error).toBe("the approval was denied");
+  });
+
+  it("drops a read that began before a sign-out", async () => {
+    useAccountStore.setState({ account: { kind: "signed-in", identity: ADA } });
+    const gate: { land?: (answer: AccountRead) => void } = {};
+    setAccountReader(
+      () =>
+        new Promise<AccountRead>((resolve) => {
+          gate.land = resolve;
+        }),
+    );
+    const reading = load();
+    expect(useAccountStore.getState().reading).toBe(true);
+    vi.mocked(commands.accountLogout).mockResolvedValue({
+      status: "ok",
+      data: null,
+    } as Awaited<ReturnType<typeof commands.accountLogout>>);
+    await useAccountStore.getState().signOut();
+    expect(account()).toEqual({ kind: "signed-out" });
+
+    gate.land?.({ ok: { kind: "signed-in", identity: ADA } });
+    await reading;
+    expect(account()).toEqual({ kind: "signed-out" });
+    // The dropped read still has to put the button back.
+    expect(useAccountStore.getState().reading).toBe(false);
   });
 });
 
