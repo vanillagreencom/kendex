@@ -85,7 +85,13 @@ export function Sidebar() {
           <RefreshCw className={cn("size-4", scanning && "animate-spin")} />
         </Button>
       </div>
-      <nav className="flex flex-1 flex-col gap-0.5 px-2">
+      {/* The nav gives way rather than pushing its siblings out of a
+          clipped column: `min-h-0` lets the flex child shrink below the
+          height its rows want, and the scrollbar appears only once it has.
+          Without it, a short window — 900x600 at 200% zoom, both of which
+          this app allows — puts the foot of the sidebar past the clip with
+          nothing able to scroll to it. */}
+      <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2">
         {NAV.map(({ page: target, label, icon: Icon }) => (
           <button
             key={target}

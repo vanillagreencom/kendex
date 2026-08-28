@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UPDATES_ATTENTION_TITLE } from "@/lib/copy";
+import { SIDEBAR_ROW } from "@/lib/layout";
 import { Sidebar } from "./sidebar";
 import { updateRow } from "./updates-test-rows";
 
@@ -54,5 +55,24 @@ describe("the Updates badge after a failed check", () => {
     expect(html).not.toContain(">?<");
     expect(html).toContain("text-warning");
     expect(html).toContain(esc(UPDATES_ATTENTION_TITLE));
+  });
+});
+
+// A 900x600 window at 200% zoom, both of which this app allows, leaves the
+// sidebar shorter than its nav rows need. The nav has to give way there:
+// without room to shrink it pushes the notice slot and the account row past
+// the clip, where nothing can scroll to them.
+describe("a sidebar column too short for its nav", () => {
+  it("lets the nav shrink and scroll rather than growing the column", () => {
+    const nav = renderToStaticMarkup(<Sidebar />).match(/<nav class="([^"]*)"/);
+    if (!nav) throw new Error("no nav in the sidebar");
+    expect(nav[1]).toContain("min-h-0");
+    expect(nav[1]).toContain("overflow-y-auto");
+  });
+
+  // A squashed row is not a smaller sidebar, it is a broken one: the rows
+  // keep their height and the nav scrolls past them instead.
+  it("keeps every row at its own height", () => {
+    expect(SIDEBAR_ROW).toContain("shrink-0");
   });
 });

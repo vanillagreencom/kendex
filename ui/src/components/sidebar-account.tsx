@@ -205,5 +205,5 @@ export function SidebarAccount() {
 
   const row = accountRow(account, readError, () => goTo("settings"));
   if (row === null) return null;
-  return <div className="px-2 pb-2">{row}</div>;
+  return <div className="shrink-0 px-2 pb-2">{row}</div>;
 }
