@@ -1,6 +1,6 @@
 import { CircleAlert, LogIn } from "lucide-react";
 import type { ReactNode } from "react";
-import { AccountAvatar, displayName } from "@/components/account-avatar";
+import { AccountAvatar, accountLabel } from "@/components/account-avatar";
 import {
   Tooltip,
   TooltipContent,
@@ -13,12 +13,15 @@ import {
   ACCOUNT_ROW_TITLE,
   ACCOUNT_SIGN_IN_AGAIN_LABEL,
   ACCOUNT_SIGN_IN_LABEL,
-  ACCOUNT_SIGNED_IN_LABEL,
   ACCOUNT_UNREADABLE_LABEL,
 } from "@/lib/copy-account";
 import { SIDEBAR_ROW } from "@/lib/layout";
 import { cn } from "@/lib/utils";
-import { type AccountState, useAccountStore } from "@/stores/account";
+import {
+  type AccountIdentity,
+  type AccountState,
+  useAccountStore,
+} from "@/stores/account";
 import { useNavStore } from "@/stores/nav";
 
 /** One account row, and the one sentence behind it.
@@ -74,6 +77,30 @@ function Label({
   );
 }
 
+/** The row for a state that knows whose account it is. Both such states
+ *  draw the same line — a circle, the name, and what the state adds to it —
+ *  so what separates them is the sentence behind the row and the marker one
+ *  of them carries. */
+function IdentityRow({
+  identity,
+  tip,
+  marker,
+  open,
+}: {
+  identity: AccountIdentity | null;
+  tip: string;
+  marker?: string;
+  open: () => void;
+}) {
+  return (
+    <Row onClick={open} tip={tip}>
+      <AccountAvatar identity={identity} className="size-[18px] text-[10px]" />
+      <Label>{accountLabel(identity)}</Label>
+      {marker ? <span className="shrink-0 text-xs">{marker}</span> : null}
+    </Row>
+  );
+}
+
 /** Which row each account state draws.
  *
  *  The state decides on its own: a credential in the keychain is not a
@@ -121,28 +148,20 @@ function accountRow(
       );
     case "signed-in":
       return (
-        <Row onClick={open} tip={ACCOUNT_ROW_TITLE}>
-          <AccountAvatar
-            identity={account.identity}
-            className="size-[18px] text-[10px]"
-          />
-          <Label>
-            {displayName(account.identity) || ACCOUNT_SIGNED_IN_LABEL}
-          </Label>
-        </Row>
+        <IdentityRow
+          identity={account.identity}
+          tip={ACCOUNT_ROW_TITLE}
+          open={open}
+        />
       );
     case "offline":
       return (
-        <Row onClick={open} tip={ACCOUNT_OFFLINE_TITLE}>
-          <AccountAvatar
-            identity={account.identity}
-            className="size-[18px] text-[10px]"
-          />
-          <Label>
-            {displayName(account.identity) || ACCOUNT_SIGNED_IN_LABEL}
-          </Label>
-          <span className="shrink-0 text-xs">{ACCOUNT_OFFLINE_LABEL}</span>
-        </Row>
+        <IdentityRow
+          identity={account.identity}
+          tip={ACCOUNT_OFFLINE_TITLE}
+          marker={ACCOUNT_OFFLINE_LABEL}
+          open={open}
+        />
       );
   }
 

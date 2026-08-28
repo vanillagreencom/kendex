@@ -106,6 +106,25 @@ describe("the state the section draws", () => {
     expect(host.textContent).toContain(ADA.name);
     expect(initial(host)).toBe("A");
     expect(offered(host)).toEqual([ACCOUNT_SIGN_OUT_LABEL]);
+    // A confirmed sign-in and an unconfirmed credential are the pair the
+    // old `hasCredential` read collapsed, and the name, the letter and the
+    // button are the same on both. The sentence and the marker are not.
+    expect(host.textContent).toContain(ACCOUNT_SIGNED_IN_NOTE);
+    expect(host.textContent).not.toContain(ACCOUNT_OFFLINE_LABEL);
+  });
+
+  // Nothing in the row's lane may be pushed out by a name: the name is the
+  // one part of unbounded length, so it is the part that is cut off.
+  it("cuts a long name off rather than widening the row", () => {
+    const long = { name: "A".repeat(200), githubLogin: "1234567" };
+    const host = show({ account: { kind: "signed-in", identity: long } });
+    // jsdom lays nothing out, so the class carrying the rule is what can be
+    // checked: the element holding the name is the one that gives.
+    const named = [...host.querySelectorAll("span")].find(
+      (el) => el.textContent === long.name,
+    );
+    expect(named?.className).toContain("truncate");
+    expect(named?.className).toContain("min-w-0");
   });
 
   // A credential in the keychain is not a person: the section may say it is
@@ -181,6 +200,14 @@ describe("before any read has landed", () => {
     expect(host.textContent).toContain(ACCOUNT_UNCHECKED_NOTE);
     await press(host, ACCOUNT_CHECK_LABEL);
     expect(act.load).toHaveBeenCalledTimes(1);
+  });
+
+  // The order the unread arm checks in: a retry still out is a read on its
+  // way, not the failure it was sent to repeat.
+  it("says a read is on its way while the retry it started is out", () => {
+    const host = show({ reading: true, readError: "keychain locked" });
+    expect(host.textContent).toContain(ACCOUNT_CHECKING_NOTE);
+    expect(host.textContent).not.toContain(ACCOUNT_UNREADABLE_NOTE);
   });
 
   it("reports the failure rather than drawing a signed-out account", () => {

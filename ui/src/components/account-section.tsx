@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { AccountAvatar, displayName } from "@/components/account-avatar";
+import { AccountAvatar, accountLabel } from "@/components/account-avatar";
 import { Section, SettingRow } from "@/components/section";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,7 +13,6 @@ import {
   ACCOUNT_SIGN_IN_AGAIN_LABEL,
   ACCOUNT_SIGN_IN_GITHUB_LABEL,
   ACCOUNT_SIGN_OUT_LABEL,
-  ACCOUNT_SIGNED_IN_LABEL,
   ACCOUNT_SIGNED_IN_NOTE,
   ACCOUNT_SIGNED_OUT_NOTE,
   ACCOUNT_SIGNING_IN_NOTE,
@@ -40,7 +39,11 @@ interface Acts {
 }
 
 /** Whose account it is: the letter and the name, or "Signed in" where the
- *  server holds a credential it has not yet put a name to. */
+ *  server holds a credential it has not yet put a name to.
+ *
+ *  The name is the one part that can be any length, so it is the one part
+ *  that gives: a long name is cut off rather than pushing the control out
+ *  of the row's lane. Everything either side of it keeps its size. */
 function Whose({
   identity,
   marker,
@@ -49,11 +52,11 @@ function Whose({
   marker?: string;
 }) {
   return (
-    <span className="flex items-center gap-2">
+    <span className="flex min-w-0 items-center gap-2">
       <AccountAvatar identity={identity} className="size-6 text-[11px]" />
-      {displayName(identity) || ACCOUNT_SIGNED_IN_LABEL}
+      <span className="min-w-0 truncate">{accountLabel(identity)}</span>
       {marker ? (
-        <span className="text-xs font-normal text-muted-foreground">
+        <span className="shrink-0 text-xs font-normal text-muted-foreground">
           {marker}
         </span>
       ) : null}
@@ -156,9 +159,9 @@ function accountRow(
  * kills every credential from that sign-in on the very next request.
  *
  * The sidebar row says which state the last read settled on and opens this
- * page. The reason a read did not land, and the retry for it, live here
- * alone: two surfaces explaining one failure would drift, and only this one
- * has the room to say it in words.
+ * page. Of those two the row states the state and this page carries the
+ * reason and the retry: a one-line row has no room for a cause, and one
+ * sentence written on both surfaces would drift.
  */
 export function AccountSection() {
   const account = useAccountStore((s) => s.account);

@@ -2,7 +2,8 @@
 // that it is one character a reader would recognise as the first one, and
 // that an account the server has not named gets none.
 import { describe, expect, it } from "vitest";
-import { accountInitial, displayName } from "./account-avatar";
+import { ACCOUNT_SIGNED_IN_LABEL } from "@/lib/copy-account";
+import { accountInitial, accountLabel } from "./account-avatar";
 
 // The provider's account id is an opaque number, not a handle. Every
 // fixture spells it that way so a test cannot pass by showing one.
@@ -52,11 +53,15 @@ describe("the letter on the avatar", () => {
 // may fall back to it: it is nobody's name.
 describe("what the app calls the account", () => {
   it("is the name the server answered with", () => {
-    expect(displayName(ADA)).toBe(ADA.name);
+    expect(accountLabel(ADA)).toBe(ADA.name);
   });
 
-  it("is nothing when the server named nobody", () => {
-    expect(displayName({ name: "  ", githubLogin: "1234567" })).toBe("");
-    expect(displayName(null)).toBe("");
+  // A name the server sent as blank is no name at all, so the label says
+  // the credential is signed in rather than printing whitespace or an id.
+  it("says only that it is signed in when the server named nobody", () => {
+    expect(accountLabel({ name: "  ", githubLogin: "1234567" })).toBe(
+      ACCOUNT_SIGNED_IN_LABEL,
+    );
+    expect(accountLabel(null)).toBe(ACCOUNT_SIGNED_IN_LABEL);
   });
 });

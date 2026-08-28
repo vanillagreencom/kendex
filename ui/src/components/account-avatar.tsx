@@ -3,14 +3,21 @@
 // Two surfaces draw an account — the sidebar's foot and Settings → Account —
 // and one account must not read as two people, so the name and the letter
 // are decided here rather than at each drawing.
+import { ACCOUNT_SIGNED_IN_LABEL } from "@/lib/copy-account";
 import { cn } from "@/lib/utils";
 import type { AccountIdentity } from "@/stores/account";
 
 /** The name the server answered with, or nothing where it has answered with
  *  none. `githubLogin` is not a second choice for it — the field is the
  *  provider's opaque account id, not a handle, and it is never shown. */
-export const displayName = (identity: AccountIdentity | null): string =>
+const displayName = (identity: AccountIdentity | null): string =>
   identity?.name.trim() ?? "";
+
+/** What a row calls the account: the name, or that it is signed in where
+ *  the server has answered with none. Every surface asks here, so a
+ *  credential with no name behind it reads the same wherever it is drawn. */
+export const accountLabel = (identity: AccountIdentity | null): string =>
+  displayName(identity) || ACCOUNT_SIGNED_IN_LABEL;
 
 /** What a reader would call the first character: a base letter with the
  *  marks that belong to it, an emoji with every part of its sequence, and a

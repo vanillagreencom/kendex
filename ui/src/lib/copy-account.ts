@@ -21,9 +21,9 @@ export const ACCOUNT_UNREADABLE_LABEL = "Couldn't check your account";
 export const ACCOUNT_ROW_TITLE = "Open account settings";
 
 // Settings → Account. One row says which of the five things the last read
-// found, and the notice under it says why a read did not land — the only
-// retry on the page sits there, so a failure is explained in one place
-// however the state it interrupted reads.
+// found, and the notice under it says why a read did not land — the page's
+// retry sits there, beside the reason, rather than on the row the failure
+// interrupted.
 export const ACCOUNT_SIGNED_IN_NOTE =
   "Signed in to kendex.ai. Submitting marketplaces uses this account; the credential lives in your system keychain.";
 export const ACCOUNT_SIGNED_OUT_NOTE =

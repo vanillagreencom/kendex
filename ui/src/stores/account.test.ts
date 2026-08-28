@@ -160,6 +160,22 @@ describe("a read that could not be made", () => {
       "ipc channel closed",
     );
   });
+
+  // The seam every reader passes through is what holds them to the answer
+  // their type promises. A reader that throws instead would otherwise leave
+  // the read with nothing recorded, nothing to retry from, and a rejection
+  // nobody catches: every caller of load says `void load()`.
+  it("records any reader that threw rather than answered", async () => {
+    setAccountReader(async () => {
+      throw new Error("the harness reader threw");
+    });
+    await load();
+    expect(account()).toEqual({ kind: "loading" });
+    expect(useAccountStore.getState().readError).toContain(
+      "the harness reader threw",
+    );
+    expect(useAccountStore.getState().reading).toBe(false);
+  });
 });
 
 // A surface offering the retry has to tell a read still on its way from one

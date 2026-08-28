@@ -31,16 +31,9 @@ const settled = (wire: AccountStatus["state"]): SettledAccount => {
  * answer with a name, with the last name it knew when the server is away,
  * and with the rejection when the credential is dead. */
 const fromBridge: ReadAccount = async () => {
-  try {
-    const status = await commands.accountStatus();
-    if (status.status === "error") return { error: status.error };
-    return { ok: settled(status.data.state) };
-  } catch (error: unknown) {
-    // A bridge that throws and a reply that says no are the same answer
-    // here: the account could not be read. Letting the throw out would
-    // leave the read with nothing recorded and nothing to retry from.
-    return { error: String(error) };
-  }
+  const status = await commands.accountStatus();
+  if (status.status === "error") return { error: status.error };
+  return { ok: settled(status.data.state) };
 };
 
 let reader: ReadAccount = fromBridge;
@@ -54,5 +47,18 @@ export function setAccountReader(read: ReadAccount | null): void {
 
 /** One read of the account, through whoever is answering. Called through
  * rather than exported directly, so a harness installed after the store was
- * imported is still the one asked. */
-export const readAccount: ReadAccount = () => reader();
+ * imported is still the one asked.
+ *
+ * The throw is caught here rather than in each reader: a bridge that throws
+ * and a reply that says no are the same answer, the account could not be
+ * read, and this is the one place every reader passes through. Letting a
+ * throw out would leave the read with nothing recorded, nothing to retry
+ * from, and an unhandled rejection wherever the store is loaded as
+ * `void load()`. */
+export const readAccount: ReadAccount = async () => {
+  try {
+    return await reader();
+  } catch (error: unknown) {
+    return { error: String(error) };
+  }
+};
