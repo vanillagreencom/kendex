@@ -7,6 +7,7 @@ use kendex_core::error::Result;
 use kendex_core::registry::client;
 use kendex_core::registry::credentials::{Credential, CredentialStore, KeyringStore};
 use kendex_core::registry::login::{self, Poll};
+use kendex_core::registry::me;
 use kendex_core::registry::{CurlFetch, base_url};
 
 pub fn login() -> Result<()> {
@@ -19,7 +20,7 @@ pub fn login() -> Result<()> {
         ));
         return Ok(());
     }
-    let started = login::start(&fetch)?;
+    let started = login::start(&fetch, "kendex CLI")?;
     say(&format!(
         "First, open:  {}?code={}",
         started.verification_url, started.user_code
@@ -55,7 +56,9 @@ pub fn login() -> Result<()> {
 }
 
 pub fn logout() -> Result<()> {
-    if !client::logout(&CurlFetch, &KeyringStore)? {
+    let was_signed_in = client::logout(&CurlFetch, &KeyringStore)?;
+    me::forget(&kendex_core::env::Env::detect()?)?;
+    if !was_signed_in {
         say("Not signed in.");
         return Ok(());
     }

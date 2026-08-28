@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { commands } from "@/bindings";
+import { type AccountStatus, commands } from "@/bindings";
 import {
   type AccountRead,
   hasCredential,
@@ -21,11 +21,11 @@ vi.mock("@/bindings", () => ({
 
 const ADA = { name: "Ada Lovelace", githubLogin: "ada" };
 
-/** What the real command answers: a credential is stored, or is not. */
-const stored = (signedIn: boolean) =>
+/** What the real command answers: the state the backend settled on. */
+const answers = (state: AccountStatus["state"]) =>
   vi.mocked(commands.accountStatus).mockResolvedValue({
     status: "ok",
-    data: { signedIn, endpoint: "https://kendex.ai" },
+    data: { state, endpoint: "https://kendex.ai" },
   } as Awaited<ReturnType<typeof commands.accountStatus>>);
 
 const unreadable = (why = "keychain locked") =>
@@ -64,15 +64,38 @@ describe("the account state a read settles on", () => {
   });
 
   it("is signed out when no credential is stored", async () => {
-    stored(false);
+    answers({ state: "signed-out" });
     await load();
     expect(account()).toEqual({ kind: "signed-out" });
   });
 
-  it("is signed in without a name until the backend has one", async () => {
-    stored(true);
+  it("carries every state the command settles on", async () => {
+    answers({ state: "signed-in", identity: ADA });
     await load();
-    expect(account()).toEqual({ kind: "signed-in", identity: null });
+    expect(account()).toEqual({ kind: "signed-in", identity: ADA });
+
+    answers({ state: "offline", identity: ADA });
+    await load();
+    expect(account()).toEqual({ kind: "offline", identity: ADA });
+
+    answers({ state: "expired" });
+    await load();
+    expect(account()).toEqual({ kind: "expired" });
+  });
+
+  it("keeps the expired explanation on the read that follows it", async () => {
+    answers({ state: "expired" });
+    await load();
+    // Answering expired is what clears the credential, so the next read
+    // finds none. The explanation has to outlive that read.
+    answers({ state: "signed-out" });
+    await load();
+    expect(account()).toEqual({ kind: "expired" });
+
+    // Signing in is what takes it off the screen.
+    answers({ state: "signed-in", identity: ADA });
+    await load();
+    expect(account()).toEqual({ kind: "signed-in", identity: ADA });
   });
 
   it("carries the identity the backend names", async () => {
@@ -124,7 +147,7 @@ describe("a read that could not be made", () => {
   it("settles on the next read that lands", async () => {
     unreadable();
     await load();
-    stored(false);
+    answers({ state: "signed-out" });
     await load();
     expect(account()).toEqual({ kind: "signed-out" });
     expect(useAccountStore.getState().readError).toBeNull();
@@ -222,7 +245,7 @@ describe("a read racing a deliberate change", () => {
 
     // Coming back to the window is the flow's own last step, and the read
     // it triggers must not wipe the only explanation on screen.
-    stored(false);
+    answers({ state: "signed-out" });
     await load();
     expect(account()).toEqual({ kind: "signed-out" });
     expect(useAccountStore.getState().error).toBe("the approval was denied");
@@ -308,7 +331,7 @@ describe("a read racing a deliberate change", () => {
     const out = () => useAccountStore.getState().signOut();
     expect(await arrivingAfter(out)).toBeNull();
     const observed = async () => {
-      stored(false);
+      answers({ state: "signed-out" });
       await load();
     };
     expect(await arrivingAfter(observed)).toBeNull();
@@ -321,7 +344,7 @@ describe("a read racing a deliberate change", () => {
       account: { kind: "signed-in", identity: ADA },
       submissions: [],
     });
-    stored(false);
+    answers({ state: "signed-out" });
     await load();
     expect(useAccountStore.getState().submissions).toBeNull();
   });

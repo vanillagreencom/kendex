@@ -7,6 +7,7 @@
 // that could not be confirmed, one that was rejected, a read that fails —
 // reach the store through its dev reader, which the backend takes over
 // once it can reach the server. `?account=` on the dev URL picks one.
+import type { AccountStatus } from "@/bindings";
 import {
   type AccountRead,
   hasCredential,
@@ -74,20 +75,37 @@ export function isSignedIn(): boolean {
   return "ok" in served && hasCredential(served.ok);
 }
 
-/** Points the store's account read here, in place of the command that
- *  cannot answer with a name. */
+/** Points the store's account read here, so `?account=` picks a state
+ *  without a server to ask. */
 export function installAccountReader(): void {
   setAccountReader(async () => served);
 }
 
+/** `served` in the shape the real command answers. A signed-in credential
+ *  always has a name here, as it does from the server; the nameless one
+ *  belongs to the moment just after approval, which is the store's own and
+ *  is never served from here. */
+const wire = (account: SettledAccount): AccountStatus["state"] => {
+  switch (account.kind) {
+    case "signed-out":
+      return { state: "signed-out" };
+    case "expired":
+      return { state: "expired" };
+    case "offline":
+      return { state: "offline", identity: account.identity };
+    case "signed-in":
+      return { state: "signed-in", identity: account.identity ?? IDENTITY };
+  }
+};
+
 export const accountHandlers: Record<string, Handler> = {
-  // The command the store no longer calls, kept because the command
-  // exists and mock-mine asks the same question. It answers from `served`,
-  // so it can never disagree with the reader.
+  // The harness points the store at the reader above, so this answers
+  // mock-mine's question. It reports from `served` too, so the two can
+  // never disagree.
   account_status: () =>
     "error" in served
       ? Promise.reject(served.error)
-      : { signedIn: isSignedIn(), endpoint: "https://kendex.ai" },
+      : { state: wire(served.ok), endpoint: "https://kendex.ai" },
   account_login_start: () => {
     polls = 0;
     return {

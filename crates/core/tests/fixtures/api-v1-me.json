@@ -1,0 +1,43 @@
+{
+  "authentication": {
+    "browser_session": true,
+    "device_bearer": {
+      "rule": "A live device token can read its own identity.",
+      "required_capabilities": []
+    }
+  },
+  "success": {
+    "status": 200,
+    "body": {
+      "name": "Ada Lovelace",
+      "github_login": "1234567"
+    }
+  },
+  "unlinked_github": {
+    "status": 200,
+    "body": {
+      "name": "Ada Lovelace",
+      "github_login": null
+    }
+  },
+  "errors": {
+    "unauthenticated": {
+      "status": 401,
+      "body": {
+        "error": "sign in first"
+      }
+    },
+    "database_unavailable": {
+      "status": 503,
+      "body": {
+        "error": "no database configured"
+      }
+    },
+    "missing_user": {
+      "status": 500,
+      "body": {
+        "error": "account identity is incomplete"
+      }
+    }
+  }
+}

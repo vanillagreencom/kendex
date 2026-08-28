@@ -8,6 +8,7 @@ pub mod collections;
 pub mod credentials;
 pub mod index;
 pub mod login;
+pub mod me;
 pub mod skillssh;
 pub mod submit;
 pub mod view;

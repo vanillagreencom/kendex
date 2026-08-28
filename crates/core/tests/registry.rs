@@ -13,6 +13,7 @@ struct Canned {
     answers: RefCell<Vec<kendex_core::error::Result<FetchResponse>>>,
     calls: RefCell<u32>,
     saw_etag: RefCell<Option<String>>,
+    saw_body: RefCell<Option<String>>,
 }
 
 impl Canned {
@@ -21,6 +22,7 @@ impl Canned {
             answers: RefCell::new(answers),
             calls: RefCell::new(0),
             saw_etag: RefCell::new(None),
+            saw_body: RefCell::new(None),
         }
     }
 }
@@ -29,9 +31,10 @@ impl Fetch for Canned {
     fn post_json_auth(
         &self,
         url: &str,
-        _body: &str,
+        body: &str,
         _bearer: Option<&str>,
     ) -> kendex_core::error::Result<FetchResponse> {
+        *self.saw_body.borrow_mut() = Some(body.to_owned());
         self.get(url, None)
     }
 
@@ -312,9 +315,14 @@ fn login_start_and_poll_speak_the_device_protocol() {
         None,
         r#"{"device_code":"kxd_x","user_code":"AAAA-BBBB","verification_url":"https://kendex.ai/device","interval":5,"expires_in":900}"#,
     )]);
-    let started = kendex_core::registry::login::start(&canned).expect("start");
+    let started = kendex_core::registry::login::start(&canned, "kendex CLI").expect("start");
     assert_eq!(started.user_code, "AAAA-BBBB");
     assert_eq!(started.interval_seconds, 5);
+    let asked = canned.saw_body.borrow().clone().expect("a body was sent");
+    assert!(
+        asked.contains(r#""client":"kendex CLI""#),
+        "the approval page needs to know which surface is asking: {asked}"
+    );
 
     use kendex_core::registry::login::{Poll, poll_once};
     let pending = Canned::new(vec![ok(400, None, r#"{"error":"authorization_pending"}"#)]);

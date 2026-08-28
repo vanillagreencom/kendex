@@ -68,8 +68,8 @@ fn rotate_locked(
                 Some(_) => store.clear()?,
                 None => {}
             }
-            return Err(CoreError::Authoring {
-                message: format!("your sign-in has expired ({why}) — run `kendex login` again"),
+            return Err(CoreError::SignInExpired {
+                why: format!("your sign-in has expired ({why})"),
             });
         }
         Err(Refused::Transient(error)) => return Err(error),
@@ -127,14 +127,12 @@ pub fn logout(fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result<bool> {
 }
 
 fn required(credential: Option<Credential>) -> Result<Credential> {
-    credential.ok_or_else(|| CoreError::Authoring {
-        message: "not signed in — run `kendex login` first".to_owned(),
-    })
+    credential.ok_or(CoreError::NotSignedIn)
 }
 
 fn rejected_access() -> CoreError {
-    CoreError::Authoring {
-        message: "the server does not accept this sign-in — run `kendex login` again".to_owned(),
+    CoreError::SignInExpired {
+        why: "the server does not accept this sign-in".to_owned(),
     }
 }
 

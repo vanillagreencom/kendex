@@ -42,7 +42,7 @@ describe("who reads the account", () => {
     useAccountStore.setState({ account: { kind: "loading" }, error: null });
     vi.mocked(commands.accountStatus).mockResolvedValue({
       status: "ok",
-      data: { signedIn: false, endpoint: "https://kendex.ai" },
+      data: { state: { state: "signed-out" }, endpoint: "https://kendex.ai" },
     } as Awaited<ReturnType<typeof commands.accountStatus>>);
     vi.mocked(commands.getSettings).mockResolvedValue({
       status: "ok",

@@ -45,8 +45,14 @@ struct WireError {
     error: String,
 }
 
-pub fn start(fetch: &dyn Fetch) -> Result<DeviceStart> {
-    let body = serde_json::json!({ "capabilities": DEFAULT_CAPABILITIES }).to_string();
+/// `client_label` names the asking surface ("kendex app", "kendex CLI") so
+/// the approval page can say which one is asking.
+pub fn start(fetch: &dyn Fetch, client_label: &str) -> Result<DeviceStart> {
+    let body = serde_json::json!({
+        "capabilities": DEFAULT_CAPABILITIES,
+        "client": client_label,
+    })
+    .to_string();
     let response = fetch.post_json(&format!("{}/api/v1/device/code", base_url()), &body)?;
     if response.status != 200 {
         return Err(CoreError::RegistryUnavailable {

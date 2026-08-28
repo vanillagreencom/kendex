@@ -1,9 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { type SettledAccount, useAccountStore } from "@/stores/account";
+import type { AccountStatus } from "@/bindings";
+import {
+  hasCredential,
+  type SettledAccount,
+  useAccountStore,
+} from "@/stores/account";
 // Importing the bridge is what points the store's read at the harness.
 import { mockInvoke } from "./mock";
 import {
   accountFromUrl,
+  isSignedIn,
   MOCK_ACCOUNT_NAMES,
   MOCK_ACCOUNTS,
   setMockAccount,
@@ -16,8 +22,9 @@ const read = async () => {
   return useAccountStore.getState();
 };
 
-const stored = async () =>
-  ((await mockInvoke("account_status")) as { signedIn: boolean }).signedIn;
+/** The state the command reports, as its own tag names it. */
+const commandState = async () =>
+  ((await mockInvoke("account_status")) as AccountStatus).state.state;
 
 // Every state the store can settle on has to be reachable in the dev
 // harness, or the pages that draw them are only ever seen in one.
@@ -45,15 +52,14 @@ describe("the account states the dev bridge can answer as", () => {
     await expect(mockInvoke("account_status")).rejects.toBeTruthy();
   });
 
-  it("holds a credential while signed in or offline, and not otherwise", async () => {
-    setMockAccount({ ok: MOCK_ACCOUNTS["signed-in"] });
-    expect(await stored()).toBe(true);
-    setMockAccount({ ok: MOCK_ACCOUNTS.offline });
-    expect(await stored()).toBe(true);
-    setMockAccount({ ok: MOCK_ACCOUNTS.expired });
-    expect(await stored()).toBe(false);
-    setMockAccount({ ok: MOCK_ACCOUNTS["signed-out"] });
-    expect(await stored()).toBe(false);
+  // One answer in one place: the command and the reader are the same
+  // state, so the harness cannot say two things at once.
+  it("answers the command with the state the reader serves", async () => {
+    for (const [name, state] of Object.entries(MOCK_ACCOUNTS)) {
+      setMockAccount({ ok: state as SettledAccount });
+      expect(await commandState(), name).toBe(state.kind);
+      expect(isSignedIn(), name).toBe(hasCredential(state as SettledAccount));
+    }
   });
 
   it("signs in through the device flow and out again", async () => {

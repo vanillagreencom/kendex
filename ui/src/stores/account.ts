@@ -4,12 +4,13 @@
 // Startup makes the one account read; every surface reads `account` from
 // here rather than asking again.
 import { create } from "zustand";
-import { commands, type SubmissionRow } from "@/bindings";
+import { type AccountStatus, commands, type SubmissionRow } from "@/bindings";
 
-/** Who the account belongs to, as the server names them. */
+/** Who the account belongs to, as the server names them. The linked
+ * GitHub account is null once it has been unlinked. */
 export interface AccountIdentity {
-  name: string | null;
-  githubLogin: string;
+  name: string;
+  githubLogin: string | null;
 }
 
 /** What is known about the account right now.
@@ -44,19 +45,29 @@ export type AccountRead = { ok: SettledAccount } | { error: string };
 
 export type ReadAccount = () => Promise<AccountRead>;
 
-/** The command reports whether a credential is stored and nothing more,
- * which settles signed in without a name, or signed out. A name, a
- * credential that could not be confirmed and one the server has rejected
- * all need a backend that has reached the server. */
+/** The wire answers every settled state this store keeps; the unread one
+ * is the UI's own, so the mapping is a rename. */
+const settled = (wire: AccountStatus["state"]): SettledAccount => {
+  switch (wire.state) {
+    case "signed-out":
+      return { kind: "signed-out" };
+    case "signed-in":
+      return { kind: "signed-in", identity: wire.identity };
+    case "offline":
+      return { kind: "offline", identity: wire.identity };
+    case "expired":
+      return { kind: "expired" };
+  }
+};
+
+/** The command asks the server who the credential belongs to, so it can
+ * answer with a name, with the last name it knew when the server is away,
+ * and with the rejection when the credential is dead. */
 const fromBridge: ReadAccount = async () => {
   try {
     const status = await commands.accountStatus();
     if (status.status === "error") return { error: status.error };
-    return {
-      ok: status.data.signedIn
-        ? { kind: "signed-in", identity: null }
-        : { kind: "signed-out" },
-    };
+    return { ok: settled(status.data.state) };
   } catch (error: unknown) {
     // A bridge that throws and a reply that says no are the same answer
     // here: the account could not be read. Letting the throw out would
@@ -152,7 +163,16 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       // Losing the credential by observation changes hands as surely as
       // signing out does, so work already out for the old one is stale.
       handover += 1;
-      set({ account: answer.ok, readError: null, submissions: null });
+      // The server says expired once: answering it clears the credential,
+      // so the next read says signed out. The explanation outlives that
+      // read — only signing in or out takes it off the screen.
+      const held = get().account;
+      const keep = held.kind === "expired" && answer.ok.kind === "signed-out";
+      set({
+        account: keep ? held : answer.ok,
+        readError: null,
+        submissions: null,
+      });
     }
   },
 

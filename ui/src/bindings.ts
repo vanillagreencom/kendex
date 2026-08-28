@@ -352,8 +352,18 @@ export type AboutView = {
 	findings: CatalogFinding[],
 };
 
+/**
+ *  What the account surfaces render, every one of them settled: the UI
+ *  holds its own "not read yet" until the first answer comes back.
+ */
+export type AccountState = { state: "signed-out" } | { state: "signed-in"; identity: Identity } | 
+/**  The server could not be asked; the identity is the last good fetch. */
+{ state: "offline"; identity: Identity } | 
+/**  The credential is dead server-side — signing in again is the fix. */
+{ state: "expired" };
+
 export type AccountStatus = {
-	signedIn: boolean,
+	state: AccountState,
 	endpoint: string,
 };
 
@@ -1239,6 +1249,13 @@ export type HookEvent = {
 export type Hunk = {
 	header: string,
 	lines: Line[],
+};
+
+/**  Who the credential belongs to, as the identity endpoint answers it. */
+export type Identity = {
+	name: string,
+	/**  The linked GitHub provider's immutable account id; `None` after unlink. */
+	githubLogin: string | null,
 };
 
 /**

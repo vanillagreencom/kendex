@@ -64,12 +64,6 @@ pub fn submissions(fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result<Vec
     Err(server_said(&response))
 }
 
-/// Whether a usable credential exists at all — the "signed in?" question
-/// surfaces ask before offering submit.
-pub fn signed_in(store: &dyn CredentialStore) -> Result<bool> {
-    Ok(store.load()?.is_some())
-}
-
 fn server_said(response: &FetchResponse) -> CoreError {
     CoreError::Authoring {
         message: server_message(response),

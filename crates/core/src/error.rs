@@ -409,6 +409,15 @@ pub enum CoreError {
     /// including what to do instead.
     #[error("{message}")]
     Authoring { message: String },
+
+    /// No credential is stored on this machine — signing in is the fix.
+    #[error("not signed in — run `kendex login` first")]
+    NotSignedIn,
+
+    /// The stored sign-in is dead for good: the server refused its refresh
+    /// grant or keeps rejecting freshly rotated access tokens.
+    #[error("{why} — run `kendex login` again")]
+    SignInExpired { why: String },
 }
 
 impl CoreError {
