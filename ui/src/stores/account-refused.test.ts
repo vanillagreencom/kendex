@@ -28,6 +28,12 @@ vi.mock("@/bindings", () => ({
 beforeEach(() => {
   fresh();
   vi.clearAllMocks();
+  // A read that finds the credential replaced asks for the new account's
+  // rows, so the harness has an answer for it.
+  vi.mocked(commands.mineSubmissions).mockResolvedValue({
+    status: "ok",
+    data: [],
+  } as Awaited<ReturnType<typeof commands.mineSubmissions>>);
 });
 
 // A command made under the sign-in is the second way the credential is
@@ -264,8 +270,9 @@ describe("a call refused because the sign-in expired", () => {
         signIn: "sign-in-next",
       });
       // The rows went with the account that owned them, at the read that
-      // saw the change of hands, not at the refusal that landed after.
-      expect(useAccountStore.getState().submissions).toBeNull();
+      // saw the change of hands, not at the refusal that landed after,
+      // and that read asked for the new account's in their place.
+      expect(useAccountStore.getState().submissions).toEqual([]);
     });
   });
 

@@ -36,6 +36,12 @@ vi.mock("@/bindings", () => ({
 beforeEach(() => {
   fresh();
   vi.clearAllMocks();
+  // A read that finds the credential replaced asks for the new account's
+  // rows, so the harness has an answer for it.
+  vi.mocked(commands.mineSubmissions).mockResolvedValue({
+    status: "ok",
+    data: [],
+  } as Awaited<ReturnType<typeof commands.mineSubmissions>>);
 });
 
 afterEach(() => setAccountReader(null));
@@ -402,14 +408,16 @@ describe("what a read compares to decide the credential changed hands", () => {
     expect(
       await heldThenRead(signedIn(ADA), signedIn(ADA, OTHER_SIGN_IN)),
     ).toBe(1);
-    expect(useAccountStore.getState().submissions).toBeNull();
+    // The last credential's rows are gone and the new one's are asked
+    // for, which is what the harness answers with here.
+    expect(useAccountStore.getState().submissions).toEqual([]);
   });
 
   it("counts a different person signing in", async () => {
     expect(
       await heldThenRead(signedIn(ADA), signedIn(BOB, OTHER_SIGN_IN)),
     ).toBe(1);
-    expect(useAccountStore.getState().submissions).toBeNull();
+    expect(useAccountStore.getState().submissions).toEqual([]);
   });
 
   // Core defaults `sign_in` so a credential stored before the field
@@ -428,6 +436,51 @@ describe("what a read compares to decide the credential changed hands", () => {
 
   it("counts one when a named credential replaces an unnamed one", async () => {
     expect(await heldThenRead(signedIn(ADA, ""), signedIn(ADA))).toBe(1);
+  });
+
+  // The Mine tab's poll is keyed to being signed in, which never stops
+  // being true across a swap, so nothing asks again for up to a minute.
+  // Clearing the last account's rows is the floor; the new account's
+  // rows are what belongs on screen.
+  it("asks for the new sign-in's rows rather than leaving the tab empty", async () => {
+    const THEIRS = { ...ROW, repo: "bob/team-skills" };
+    vi.mocked(commands.mineSubmissions).mockResolvedValue({
+      status: "ok",
+      data: [THEIRS],
+    } as Awaited<ReturnType<typeof commands.mineSubmissions>>);
+    useAccountStore.setState({
+      account: signedIn(ADA),
+      submissions: [ROW],
+    });
+
+    serves(signedIn(BOB, OTHER_SIGN_IN));
+    await load();
+
+    expect(useAccountStore.getState().submissions).toEqual([THEIRS]);
+    expect(commands.mineSubmissions).toHaveBeenCalledTimes(1);
+  });
+
+  // The store's one read at startup settles an account it never held, and
+  // that is not a credential being replaced. Submissions stay the Mine
+  // tab's to ask for, as the store's "no surface reads on mount" says.
+  it("asks for nothing on the first read of the session", async () => {
+    serves(signedIn(ADA));
+    await load();
+
+    expect(commands.mineSubmissions).not.toHaveBeenCalled();
+  });
+
+  it("asks for nothing when the same sign-in is read again", async () => {
+    useAccountStore.setState({
+      account: signedIn(ADA),
+      submissions: [ROW],
+    });
+
+    serves(signedIn(ADA));
+    await load();
+
+    expect(useAccountStore.getState().submissions).toEqual([ROW]);
+    expect(commands.mineSubmissions).not.toHaveBeenCalled();
   });
 
   it("counts nothing when the same sign-in is read again", async () => {
