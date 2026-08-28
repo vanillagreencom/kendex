@@ -1,10 +1,15 @@
 # Settings a package declares
 
-A package that reads configuration ships a `kendex.settings.toml.example` at
-its root. On a project install kendex merges every key in that file's `[env]`
-table, together with the comment block directly above it, into the consuming
-repo's `kendex.settings.toml`. A key already present there is left alone,
-value and all, so a reinstall never overwrites what someone edited.
+A package ships a `kendex.settings.toml.example` at its root for the keys it
+wants seeded. On a project install kendex merges every key in that file's
+`[env]` table, together with the comment block directly above it, into the
+consuming repo's `kendex.settings.toml`. A key already present there is left
+alone, value and all, so a reinstall never overwrites what someone edited.
+
+Not every key a package reads belongs in that file. A key it documents but
+does not seed — an opt-in that ships a working default, an override seam —
+lives in the package's own README, which the marketplace page renders. What
+follows governs the keys a template carries.
 
 Start from
 [`templates/kendex.settings.toml.example`](templates/kendex.settings.toml.example).
@@ -15,8 +20,13 @@ One `[env]` table. A comment block sits immediately above its key with no
 blank line between them — a blank line there means the key seeds without its
 explanation, and that comment is what the consumer reads beside the key in
 their own settings file. Every value is a single-line double-quoted string
-containing no `"` and no `\`. Assignments outside `[env]` are ignored; a
-duplicate assignment inside it fails the load.
+containing no `"` and no `\`. Assignments outside `[env]` are ignored.
+
+The two files treat a repeated key differently. In the consumer's
+`kendex.settings.toml`, a duplicate assignment inside `[env]` fails the load.
+In your template it does not: seeding takes the first declaration of a key
+and drops every later one without a word, so a key written twice ships
+whichever copy comes first. Write each key once.
 
 ## Naming
 
