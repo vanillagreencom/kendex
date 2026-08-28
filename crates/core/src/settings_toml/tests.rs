@@ -247,3 +247,76 @@ fn a_bracket_line_that_opens_a_string_still_carries_it() {
         );
     }
 }
+
+/// Arrays carry across lines and nest, so depth is counted rather than
+/// flagged. A nested bracket is not a table header, and the lines of an
+/// array are the value — which is what keeps a seed from being spliced
+/// into the middle of one.
+#[test]
+fn an_array_carries_across_lines_and_nests() {
+    let text = "[env]\nLIST = [\n  [\n    [env]\n  ],\n]\nMODE = \"real\"\n";
+    let kinds = kinds(text);
+    assert_eq!(kinds[0], Line::Table);
+    assert!(
+        kinds[2..6].iter().all(|kind| *kind == Line::InValue),
+        "{kinds:?}"
+    );
+    assert!(matches!(kinds[6], Line::Assignment { key: "MODE ", .. }));
+    assert_eq!(keys(text), vec!["LIST".to_owned(), "MODE".to_owned()]);
+}
+
+/// A header's own brackets balance, so the line after one is structure
+/// again — for a plain table and for an array of tables alike.
+#[test]
+fn a_table_header_leaves_nothing_open() {
+    for header in ["[env]", "[a.b]", "[[items]]", "[env] # note"] {
+        let text = format!("{header}\nMODE = \"real\"\n");
+        assert_eq!(kinds(&text)[0], Line::Table, "{header}");
+        assert_eq!(keys(&text), vec!["MODE".to_owned()], "{header}");
+    }
+}
+
+/// An inline table holds no newline in TOML 1.0, so it carries nothing;
+/// its `=` and `[` reach no decision, because the assignment's `=` is the
+/// first one outside a string and only a line-leading `[` is a table.
+#[test]
+fn an_inline_table_carries_nothing_across_a_line() {
+    let text = "[env]\nA = { b = [1], c = \"x\" }\nMODE = \"real\"\n";
+    assert_eq!(keys(text), vec!["A".to_owned(), "MODE".to_owned()]);
+    assert_eq!(
+        kinds(text)[2],
+        Line::Assignment {
+            key: "MODE ",
+            value: " \"real\"",
+            value_at: 6,
+        }
+    );
+}
+
+/// Every scalar is one token with nothing structural in it, so a line
+/// holding one leaves nothing open and the next line reads as itself.
+#[test]
+fn a_scalar_leaves_nothing_open() {
+    for scalar in [
+        "1",
+        "-0.5",
+        "true",
+        "1979-05-27T07:32:00Z",
+        "07:32:00",
+        "0xdead_beef",
+    ] {
+        let text = format!("[env]\nA = {scalar}\nMODE = \"real\"\n");
+        assert_eq!(
+            keys(&text),
+            vec!["A".to_owned(), "MODE".to_owned()],
+            "{scalar}"
+        );
+    }
+}
+
+/// A stray `]` cannot take the depth below zero: an unbalanced file is not
+/// TOML, and underflowing would read everything after it as one value.
+#[test]
+fn an_unbalanced_bracket_does_not_swallow_the_file() {
+    assert_eq!(keys("]\n[env]\nMODE = \"real\"\n"), vec!["MODE".to_owned()]);
+}

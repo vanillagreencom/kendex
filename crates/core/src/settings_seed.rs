@@ -101,11 +101,6 @@ fn trim_blank_edges(lines: &[String]) -> &[String] {
     &lines[lo..hi]
 }
 
-pub(crate) fn is_table_header(line: &str) -> bool {
-    let trimmed = line.trim();
-    trimmed.starts_with('[') && trimmed.ends_with(']')
-}
-
 pub(crate) fn is_env_header(line: &str) -> bool {
     line.trim() == "[env]"
 }
@@ -119,9 +114,12 @@ pub(crate) fn assignment_key(row: &Row) -> Option<String> {
     crate::settings_toml::key_of(key).map(|key| key.name)
 }
 
-/// Whether this row is a table header the section walk ends on.
+/// Whether this row is a table header the section walk ends on. The
+/// reader's own answer: a line only reads as a table where nothing is
+/// open above it, so a bracket nested in an array is not one, and a
+/// header carrying a trailing comment still is.
 pub(crate) fn table_row(row: &Row) -> bool {
-    row.kind == Line::Table && is_table_header(row.text)
+    row.kind == Line::Table
 }
 
 pub fn extract_env_entries(template: &str) -> Vec<EnvEntry> {

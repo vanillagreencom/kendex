@@ -222,6 +222,15 @@ pub fn check_value(value: &str) -> std::result::Result<(), String> {
     if value.contains('\\') {
         return Err("there are no escapes here, so a value cannot contain a backslash".to_owned());
     }
+    // A control character is not TOML between quotes, and is not something
+    // a shell that exported it would survive either. A tab is the one the
+    // grammar allows.
+    if let Some(control) = value.chars().find(|c| c.is_control() && *c != '\t') {
+        return Err(format!(
+            "a value cannot hold a control character, and this one holds {}",
+            control.escape_debug()
+        ));
+    }
     Ok(())
 }
 

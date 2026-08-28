@@ -27,25 +27,47 @@
 //! shell loaders will read stay with the three callers, because they
 //! differ on purpose — the check is strict where seeding is lenient.
 //!
-//! String state is what it tracks, in all four spellings, because a string
-//! is the only thing that can put a byte offset inside a value — and it is
-//! tracked through every line, whatever that line is. A line is asked what
-//! it leaves open separately from what it is, because the two are
-//! independent: `  ["""` is a table line and a line the next one
-//! continues, and reading the second answer off the first is how the
-//! interior of a string comes back as an assignment with a writable span.
+//! ## What the grammar can carry across a line
 //!
-//! Array nesting is not tracked. What that costs is bounded and is about
-//! membership only: a `[` inside a multi-line array can be taken for a
-//! table header, so a key after it may read as sitting outside `[env]`,
-//! which refuses the edit. It is not what keeps a span out of a value —
-//! that is the string state above, and an earlier version of this note
-//! argued the reverse and was wrong.
-
-use std::ops::Range;
+//! Enumerated from TOML's value grammar rather than added one at a time as
+//! each face of the same defect surfaced. A value is exactly one of:
+//! string, integer, float, boolean, one of the five date-time forms,
+//! array, inline table. Taking them in turn:
+//!
+//! - **Multi-line basic** and **multi-line literal** strings carry
+//!   arbitrary text over line ends. Tracked.
+//! - **Arrays** carry over line ends and nest. Tracked by depth, because a
+//!   flag cannot say how deep and a nested `[` is not a table header.
+//! - **Single-line strings**, basic and literal, end with their line by
+//!   definition. The walk steps over them inside a line and never past it.
+//! - **Inline tables** may not hold a newline in TOML 1.0, so they carry
+//!   nothing across one. What they hold on their own line — `=` and `[` —
+//!   reaches no decision: only a line whose first non-blank character is
+//!   `[` reads as a table, and the assignment's `=` is the first one no
+//!   string encloses.
+//! - **Every scalar** is a single token holding none of `[`, `]`, `"`,
+//!   `'`, `#` or `=`, so none can be mistaken for structure or conceal it.
+//!
+//! That is the whole of the value grammar, so the set that can carry
+//! across a line is closed at three, and all three are tracked. Every
+//! claim in this list has a control in `tests.rs`; the last three times
+//! this file was wrong, it was wrong in a comment first.
+//!
+//! What a line leaves open is read off it once, apart from the decision
+//! about what the line is, because the two are independent — a line can
+//! open a table and a string at the same time. Answering the second inside
+//! the arms that answer the first is how the interior of a value came back
+//! as an assignment with a writable span.
+//!
+//! Not closed: a hard link is a file here as everywhere, and an
+//! unterminated container leaves the rest of the file reading as one
+//! value — which is what an unparseable file is.
 
 mod key;
+mod walk;
 pub use key::{Key, key_of};
+pub use walk::quoted_span;
+use walk::{Carry, advance, top_level_equals};
 
 /// What a line is.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,49 +125,22 @@ impl Row<'_> {
     }
 }
 
-/// Which multiline string is open across a line boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Open {
-    Basic,
-    Literal,
-}
-
-impl Open {
-    fn quote(self) -> u8 {
-        match self {
-            Open::Basic => b'"',
-            Open::Literal => b'\'',
-        }
-    }
-
-    /// Whether a backslash escapes the next byte in this kind of string.
-    fn escapes(self) -> bool {
-        self == Open::Basic
-    }
-}
-
 /// Every line of the text, classified, in file order. One row per physical
 /// line, so a caller that splices by index can index this instead.
 pub fn rows(text: &str) -> Vec<Row<'_>> {
     let mut out = Vec::new();
     let mut at = 0;
-    let mut open: Option<Open> = None;
+    let mut carry = Carry::default();
     for (index, raw) in text.split_inclusive('\n').enumerate() {
         let content = content_of(raw);
-        let kind = match open {
-            // The line that closes a multiline is still part of the
-            // assignment that opened it, so what follows the terminator on
-            // it is that value's tail and never a new structure line.
-            Some(kind) => {
-                open = closes_at(content, kind).map_or(Some(kind), |_| None);
-                Line::InValue
-            }
-            None => {
-                let (kind, still) = classify(content);
-                open = still;
-                kind
-            }
+        // What the line is, and what it leaves open, are answered apart:
+        // a line inside a value is never classified at all, and every
+        // line advances the carry whatever it turned out to be.
+        let kind = match carry.inside() {
+            true => Line::InValue,
+            false => kind_of(content),
         };
+        carry = advance(content, carry);
         out.push(Row {
             line: line_number(index),
             raw,
@@ -171,22 +166,7 @@ pub fn line_number(index: usize) -> u32 {
     u32::try_from(index + 1).unwrap_or(u32::MAX)
 }
 
-/// Classify one line that starts outside every string, and say which
-/// multiline it leaves open.
-///
-/// The two answers are computed apart on purpose. What a line leaves open
-/// is a property of the whole line and is read off it once, whatever the
-/// line turns out to be; deciding it inside the branches is how a branch
-/// comes to forget. `  ["""` is a table line by its first character AND a
-/// line the next one continues, and an arm that answered only the first
-/// let every line after it read as structure — including an assignment
-/// sitting inside the string, whose value span an editor would then write
-/// into. No arm can drop the state because no arm is asked for it.
-fn classify(content: &str) -> (Line<'_>, Option<Open>) {
-    (kind_of(content), scan(content, 0).1)
-}
-
-/// What the line is, given that it starts outside every string.
+/// What the line is, given that nothing is open above it.
 fn kind_of(content: &str) -> Line<'_> {
     let trimmed = content.trim_start();
     if trimmed.is_empty() {
@@ -218,7 +198,7 @@ fn kind_of(content: &str) -> Line<'_> {
 /// A line read on its own has no memory of a multiline opened above it, so
 /// this is only for lines a [`rows`] walk already called an assignment.
 pub fn assignment_of(content: &str) -> Option<(&str, &str)> {
-    match classify(content_of(content)).0 {
+    match kind_of(content_of(content)) {
         Line::Assignment { key, value, .. } => Some((key, value)),
         _ => None,
     }
@@ -229,130 +209,6 @@ pub fn assignment_of(content: &str) -> Option<(&str, &str)> {
 /// the value a view shows can never be different characters.
 pub fn decoded(value: &str) -> Option<String> {
     quoted_span(value, 0).map(|inner| value[inner].to_owned())
-}
-
-/// The byte offset of the first `=` no string encloses. `None` where the
-/// line holds no such `=` — including a string opened where a key belongs,
-/// which is not an assignment this reader will hand out a span for.
-fn top_level_equals(content: &str) -> Option<usize> {
-    let bytes = content.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'=' => return Some(index),
-            // A comment before any `=`: there is no assignment here.
-            b'#' => return None,
-            // A quoted key, stepped over whole.
-            b'"' | b'\'' => index = string_at(content, index)?,
-            _ => index += 1,
-        }
-    }
-    None
-}
-
-/// Walk from `from` to the end of the line, returning where it stopped and
-/// which multiline it left open.
-fn scan(content: &str, from: usize) -> (usize, Option<Open>) {
-    let bytes = content.as_bytes();
-    let mut index = from;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'#' => return (bytes.len(), None),
-            b'"' | b'\'' => match string_at(content, index) {
-                Some(end) => index = end,
-                None => return (bytes.len(), opened_at(content, index)),
-            },
-            _ => index += 1,
-        }
-    }
-    (bytes.len(), None)
-}
-
-/// The byte just past the string starting at `index`, or `None` where it
-/// does not close on this line — a multiline that carries, or a single-line
-/// string somebody left unterminated. An unterminated single-line string
-/// is not TOML at all; it ends with its line here rather than swallowing
-/// the rest of the file, which is what the grep-shaped shell loaders do
-/// with it too.
-fn string_at(content: &str, index: usize) -> Option<usize> {
-    let bytes = content.as_bytes();
-    let quote = bytes[index];
-    let kind = match quote {
-        b'"' => Open::Basic,
-        _ => Open::Literal,
-    };
-    if bytes[index..].starts_with(&[quote, quote, quote]) {
-        return closes_at(&content[index + 3..], kind).map(|end| index + 3 + end);
-    }
-    let mut cursor = index + 1;
-    while cursor < bytes.len() {
-        if kind.escapes() && bytes[cursor] == b'\\' {
-            cursor += 2;
-            continue;
-        }
-        if bytes[cursor] == quote {
-            return Some(cursor + 1);
-        }
-        cursor += 1;
-    }
-    None
-}
-
-/// Which multiline the quote run at `index` opens, if it opens one.
-fn opened_at(content: &str, index: usize) -> Option<Open> {
-    let bytes = content.as_bytes();
-    let quote = bytes[index];
-    let kind = match quote {
-        b'"' => Open::Basic,
-        _ => Open::Literal,
-    };
-    bytes[index..]
-        .starts_with(&[quote, quote, quote])
-        .then_some(kind)
-}
-
-/// Where a multiline string of this kind closes within `content`, as the
-/// byte just past its delimiter. A run of three to five quotes ends the
-/// string — the last three are the delimiter and the extras are content —
-/// so the whole run is stepped over.
-fn closes_at(content: &str, kind: Open) -> Option<usize> {
-    let bytes = content.as_bytes();
-    let quote = kind.quote();
-    let mut index = 0;
-    while index < bytes.len() {
-        if kind.escapes() && bytes[index] == b'\\' {
-            index += 2;
-            continue;
-        }
-        if bytes[index] != quote {
-            index += 1;
-            continue;
-        }
-        let run = bytes[index..].iter().take_while(|b| **b == quote).count();
-        if run >= 3 {
-            return Some(index + run);
-        }
-        index += run;
-    }
-    None
-}
-
-/// The byte range between the quotes of a value the shell loaders read —
-/// one double-quoted string on one line, free of `"` and `\`, optionally
-/// followed by a `#` comment. `at` is where `value` sits in the source.
-/// `None` for every other shape, so a span is only ever produced for a
-/// value this reader has already proven is a plain single-line string.
-pub fn quoted_span(value: &str, at: usize) -> Option<Range<usize>> {
-    let open = value.find('"')?;
-    let rest = &value[open + 1..];
-    let close = rest.find('"')?;
-    let after = rest[close + 1..].trim_start();
-    let closed = after.is_empty() || after.starts_with('#');
-    let inner = &rest[..close];
-    // Everything before the opening quote must be whitespace: a value that
-    // starts with anything else is not a string the loaders read.
-    (closed && value[..open].trim().is_empty() && !inner.contains('\\'))
-        .then(|| at + open + 1..at + open + 1 + close)
 }
 
 #[cfg(test)]

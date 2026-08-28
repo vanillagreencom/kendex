@@ -325,3 +325,29 @@ fn a_key_inside_a_string_an_array_element_opened_is_not_writable() {
         );
     }
 }
+
+/// A control character between the quotes is not TOML and is not
+/// something the shell loader survives either, so the grammar refuses it
+/// where it refuses the rest.
+#[test]
+fn a_control_character_never_reaches_the_file() {
+    assert!(check_value("plain words").is_ok());
+    assert!(check_value("a\ttab is fine").is_ok());
+    for bad in ["a\0b", "a\u{1}b", "a\u{7f}b", "a\u{1b}[0m"] {
+        assert!(check_value(bad).is_err(), "{bad:?}");
+    }
+    let refused = apply_edits(
+        FILE,
+        &[set("noise", "MODE", "a\0b")],
+        &[seeded("noise", "MODE", "MODE = \"quiet\"")],
+        Path::new("/w/f.toml"),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            CoreError::SettingsRefused(SettingsRefusal::Value { .. })
+        ),
+        "{refused:?}"
+    );
+}

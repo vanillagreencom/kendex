@@ -442,3 +442,38 @@ fn catalog_text_reaches_a_note_escaped() {
     assert!(!notes[0].contains('\u{1b}'), "{notes:?}");
     assert!(notes[0].contains("\\u{1b}[31m"), "{notes:?}");
 }
+
+/// A container the reader does not track ends the `[env]` section where
+/// no table starts, and the seed lands inside somebody's value. Both
+/// shapes: a nested `[` taken for a header, and a header the boundary
+/// test failed to recognise.
+#[test]
+fn a_seed_lands_after_the_env_table_and_never_inside_a_value() {
+    let seeded = [SeededEnv {
+        entry: EnvEntry {
+            key: "DEPTH".to_owned(),
+            lines: vec!["# How deep.".to_owned(), "DEPTH = \"2\"".to_owned()],
+        },
+        owner: "review".to_owned(),
+    }];
+
+    // A nested array bracket is not a table header.
+    let nested = "[env]\nLIST = [\n  []\n]\n";
+    let (text, added) = merge(Some(nested), &seeded).expect("DEPTH is missing");
+    assert_eq!(added, vec!["DEPTH".to_owned()]);
+    assert!(
+        text.starts_with("[env]\nLIST = [\n  []\n]\n"),
+        "the array must come through whole:\n{text}"
+    );
+    assert!(text.contains("DEPTH = \"2\""), "{text}");
+
+    // And a header the boundary test used to miss ends the section.
+    let commented = "[env]\nMODE = \"a\"\n\n[other] # note\nKEEP = \"b\"\n";
+    let (text, _) = merge(Some(commented), &seeded).expect("DEPTH is missing");
+    let depth = text.find("DEPTH").expect("seeded");
+    let other = text.find("[other]").expect("kept");
+    assert!(
+        depth < other,
+        "the seed belongs to [env], not [other]:\n{text}"
+    );
+}
