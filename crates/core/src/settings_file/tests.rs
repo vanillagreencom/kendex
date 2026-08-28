@@ -274,7 +274,7 @@ fn a_key_that_only_exists_inside_a_multiline_value_is_absent_and_unwritable() {
 /// file loading at all.
 #[test]
 fn either_quoted_spelling_is_ambiguous_and_blocks_a_seed() {
-    for spelling in ["\"MODE\"", "'MODE'"] {
+    for spelling in ["\"MODE\"", "'MODE'", "\"MO\\u0044E\""] {
         let file = format!("[env]\n{spelling} = \"a\"\n");
         assert!(
             matches!(

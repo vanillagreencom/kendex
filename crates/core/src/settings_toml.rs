@@ -36,6 +36,9 @@
 
 use std::ops::Range;
 
+mod key;
+pub use key::{Key, key_of};
+
 /// What a line is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Line<'a> {
@@ -319,39 +322,6 @@ fn closes_at(content: &str, kind: Open) -> Option<usize> {
         index += run;
     }
     None
-}
-
-/// A key's two facts: the name two spellings of it share, and whether it
-/// was written bare.
-///
-/// TOML reads `MODE`, `"MODE"` and `'MODE'` as one key, so all three block
-/// a seed of `MODE` — inserting beside one of them would put the same key
-/// in the file twice and stop it loading at all. The shell loaders match
-/// the text as written, so only the bare spelling is one they read, and
-/// the two facts have to travel together or a caller picks the wrong one.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Key {
-    pub name: String,
-    pub quoted: bool,
-}
-
-/// The key an assignment's left-hand side names.
-pub fn key_of(key: &str) -> Option<Key> {
-    let trimmed = key.trim();
-    let quoted = trimmed.strip_prefix('"').and_then(|r| r.strip_suffix('"'));
-    let literal = trimmed
-        .strip_prefix('\'')
-        .and_then(|r| r.strip_suffix('\''));
-    match quoted.or(literal) {
-        Some(inner) => Some(Key {
-            name: inner.to_owned(),
-            quoted: true,
-        }),
-        None => (!trimmed.is_empty()).then(|| Key {
-            name: trimmed.to_owned(),
-            quoted: false,
-        }),
-    }
 }
 
 /// The byte range between the quotes of a value the shell loaders read —

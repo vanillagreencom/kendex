@@ -181,3 +181,46 @@ fn a_row_carries_the_bytes_it_was_read_from() {
     );
     assert_eq!(rows[2].line, 3);
 }
+
+/// TOML reads `"MODE"` and `MODE` as one key. Undecoded, the
+/// collision is missed and seeding adds a second `MODE` — the duplicate
+/// the quoted spellings were closed for.
+#[test]
+fn a_basic_key_decodes_its_escapes_and_a_literal_key_does_not() {
+    for spelling in ["\"MO\\u0044E\"", "\"MO\\U00000044E\"", "\"MODE\""] {
+        assert_eq!(
+            key_of(spelling),
+            Some(Key {
+                name: "MODE".to_owned(),
+                quoted: true
+            }),
+            "{spelling}"
+        );
+        assert_eq!(
+            keys(&format!("{spelling} = \"a\"\n")),
+            vec!["MODE".to_owned()]
+        );
+    }
+    // A literal key processes no escapes, so this is a different key —
+    // decoding it would make two distinct keys collide.
+    assert_eq!(
+        key_of("'MO\\u0044E'"),
+        Some(Key {
+            name: "MO\\u0044E".to_owned(),
+            quoted: true
+        })
+    );
+    // The rest of the basic escapes, and one TOML does not define.
+    assert_eq!(
+        key_of("\"a\\tb\\nc\\\\d\\\"e\"").map(|k| k.name),
+        Some("a\tb\nc\\d\"e".to_owned())
+    );
+    assert_eq!(
+        key_of("\"a\\qb\"").map(|k| k.name),
+        Some("a\\qb".to_owned())
+    );
+    assert_eq!(
+        key_of("\"a\\u00\"").map(|k| k.name),
+        Some("a\\u00".to_owned())
+    );
+}
