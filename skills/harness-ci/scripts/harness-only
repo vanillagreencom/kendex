@@ -162,10 +162,13 @@ printf '%s\n' "$changed" | sed -e 's/^/harness-only: changed: /' >&2
 # manifest yields no carve-outs; one that exists but cannot be read or
 # classified carves every skill path — false, the safe answer.
 in_place_skills=""
-manifest_carves() { # FILE -> carve lines for one manifest, "*" on a failed parse
-  [ -f "$1" ] || return 0
-  # A manifest that exists but cannot be read proves nothing about the
-  # tree, so a failed parse carves everything too.
+manifest_carves() { # IN-TREE PATH -> carve lines for one manifest, "*" on a failed read or parse
+  # The diff is between commits, so the manifests are read from the
+  # selected head tree, never from whatever the checkout happens to hold.
+  # One that exists there but cannot be read proves nothing and carves.
+  local manifest_content
+  git_repo cat-file -e "$head:$1" 2>/dev/null || return 0
+  manifest_content="$(git_repo show "$head:$1" 2>/dev/null)" || { echo "*"; return 0; }
   # The line parser reads the spellings kendex writes and the common hand
   # edits; completeness is not load-bearing. Every line that could take
   # part in spelling the value — a bare in-place mention, a \u/\U escape
@@ -175,7 +178,7 @@ manifest_carves() { # FILE -> carve lines for one manifest, "*" on a failed pars
   # direction — lanes run. No legal TOML spelling of the value can answer
   # harness_only=true wrongly; the exotic ones cost lanes that run.
   sq="'"
-  awk -v q="$sq" '
+  printf '%s\n' "$manifest_content" | awk -v q="$sq" '
     BEGIN {
       d = "\""
       v = "(" d "in-place" d "|" d d d "in-place" d d d "|" q "in-place" q "|" q q q "in-place" q q q ")"
@@ -230,14 +233,14 @@ manifest_carves() { # FILE -> carve lines for one manifest, "*" on a failed pars
       }
     }
     END { if (coarse > accounted) print "*" }
-  ' <"$1" 2>/dev/null || echo "*"
+  ' 2>/dev/null || echo "*"
 }
 # A source-catalog project keeps its install state in kendex-local.toml
 # (kendex.toml stays the catalog definition), and adoption declares in
 # place through whichever manifest is active — so both are read, unioned.
 in_place_skills="$(
-  manifest_carves "$repo/kendex.toml"
-  manifest_carves "$repo/kendex-local.toml"
+  manifest_carves kendex.toml
+  manifest_carves kendex-local.toml
 )"
 NL=$(printf "\nx")
 NL="${NL%x}"
