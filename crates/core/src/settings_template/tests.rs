@@ -212,3 +212,37 @@ fn a_header_shaped_wrong_is_not_also_reported_as_an_absent_table() {
         )]
     );
 }
+
+#[test]
+fn an_independent_toml_error_is_reported_beside_the_scan_finding() {
+    // The value on line 3 is a shape the loaders refuse; line 5 is a
+    // separate syntax error the scan reads past. Fixing one and coming
+    // back for the other is a round trip nobody needs.
+    let found = located("[env]\n# Why.\nWAIT = 900\n# Why.\nDEPTH \"2\"\n");
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert_eq!(found[0].0, 3, "{found:?}");
+    assert_eq!(found[1].0, 5, "{found:?}");
+    assert!(
+        found[1].1.starts_with("this is not valid TOML:"),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn one_defect_the_parser_also_sees_is_reported_once() {
+    // Every shape where the scan and the parser land on the same line: the
+    // scan names the key, the parser would only say "duplicate key".
+    for text in [
+        "[env]\n# Why.\nWAIT = \"900\"\n# Again.\nWAIT = \"600\"\n",
+        "[env]\n# Why.\nA = \"1\"\n\n[env]\n# Why.\nB = \"2\"\n",
+        "[env]\n# A path.\nWAIT = \"base\".tsv\n",
+        "[env][env]\n# Why.\nWAIT = \"900\"\n",
+    ] {
+        let found = located(text);
+        assert_eq!(found.len(), 1, "{text:?} -> {found:?}");
+        assert!(
+            !found[0].1.starts_with("this is not valid TOML:"),
+            "{text:?} -> {found:?}"
+        );
+    }
+}

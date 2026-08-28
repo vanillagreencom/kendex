@@ -22,9 +22,11 @@
 //!
 //! The scan is line-based because comments are content here: a key's
 //! comment block is what seeding writes beside it, and a TOML parser drops
-//! comments on the floor. TOML parsing is the catch-all underneath — run
-//! only when the line scan is clean, so a precise finding always beats
-//! "does not parse".
+//! comments on the floor. TOML parsing is the catch-all underneath, and
+//! both are reported: where the two land on one line they are one defect
+//! said twice, and the scan's telling — which names the key — is the one
+//! kept; anywhere else they are two defects, and reporting one would send
+//! the author back for the other.
 
 use std::collections::BTreeMap;
 
@@ -120,15 +122,29 @@ fn comment_text(line: &str) -> String {
 /// Read one template strictly. Findings, then rows for whatever decoded.
 pub fn read(text: &str) -> TemplateRead {
     let mut read = scan(text);
-    if read.findings.is_empty()
-        && let Err(error) = text.parse::<toml::Table>()
-    {
-        read.findings.push(TemplateFinding {
-            line: error.span().map_or(0, |span| line_at(text, span.start)),
-            problem: format!("this is not valid TOML: {}", error.message()),
-            fix: format!("fix the syntax so {SETTINGS_TEMPLATE} parses"),
-        });
+    let Err(error) = text.parse::<toml::Table>() else {
+        return read;
+    };
+    // The scan and the parser often describe one defect from two sides: a
+    // duplicate key is a TOML error too, and the scan's version names the
+    // key and its line where the parser's is generic. Same line, one
+    // defect, and the precise telling is the one to keep.
+    //
+    // A different line is a second defect, and reporting only the first
+    // sends the author back for another round over something that was
+    // wrong the whole time. An error with no span at all is about the file
+    // rather than any line, so nothing it could coincide with.
+    let line = error.span().map(|span| line_at(text, span.start));
+    if line.is_some_and(|line| read.findings.iter().any(|found| found.line == line)) {
+        return read;
     }
+    read.findings.push(TemplateFinding {
+        line: line.unwrap_or(0),
+        problem: format!("this is not valid TOML: {}", error.message()),
+        fix: format!("fix the syntax so {SETTINGS_TEMPLATE} parses"),
+    });
+    // Findings read in file order, wherever the parser's landed.
+    read.findings.sort_by_key(|finding| finding.line);
     read
 }
 
