@@ -290,3 +290,16 @@ WORKTREE_SYMLINKS = ".env.local .cache ui/node_modules"
 # through git, and naming it here would shadow tracked content.
 WORKTREE_RELATIVE_SYMLINKS = ""
 
+# Seconds a 1Password token resolution may take.
+KENDEX_GITHUB_OP_TIMEOUT = "10"
+
+# Seconds the `gh` auth preflight may take.
+KENDEX_GITHUB_AUTH_TIMEOUT = "10"
+
+# Seconds a single `pr-view` read may take.
+KENDEX_GITHUB_PR_VIEW_TIMEOUT = "30"
+
+# Path to the worktree CLI `open-terminal` drives. Empty resolves the
+# installed worktree skill's `scripts/worktree`; a value that is not
+# executable stops the launch with that path named.
+WORKTREE_CLI = ""
