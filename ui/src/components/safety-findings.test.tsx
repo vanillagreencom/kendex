@@ -6,7 +6,8 @@ import { FindingLine } from "./safety-findings";
 const finding = (severity: Finding["severity"]): Finding => ({
   rule: "dangerous-commands",
   severity,
-  location: "SKILL.md:3",
+  location: "SKILL.md",
+  line: 3,
   message: "runs a shell command that deletes files without asking",
   remediation: "scope the command to a specific path, or drop it",
 });

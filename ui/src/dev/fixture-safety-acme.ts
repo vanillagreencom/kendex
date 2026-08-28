@@ -9,7 +9,8 @@ const SCRAPER_FINDINGS: Finding[] = [
   {
     rule: "credential-theft",
     severity: "critical",
-    location: "SKILL.md:12",
+    location: "SKILL.md",
+    line: 12,
     message: "reads a credential file and sends it to a remote host",
     remediation:
       "remove the line that uploads the file, or install this skill only if you trust its source",
@@ -17,7 +18,8 @@ const SCRAPER_FINDINGS: Finding[] = [
   {
     rule: "dangerous-commands",
     severity: "high",
-    location: "SKILL.md:20",
+    location: "SKILL.md",
+    line: 20,
     message: "runs a shell command that deletes files without asking",
     remediation: "scope the command to a specific path, or drop it",
   },
@@ -54,6 +56,7 @@ const VISUAL_QA_FINDINGS: Finding[] = [
       rule: "dangerous-commands",
       severity: "high",
       location,
+      line: null,
       message: "runs a shell command built from unescaped input",
       remediation: "validate or escape the input before it reaches the shell",
     }),
@@ -62,6 +65,7 @@ const VISUAL_QA_FINDINGS: Finding[] = [
     rule: "rce",
     severity: "critical",
     location: `${VISUAL_QA_PATH}/evals/grade.py:12`,
+    line: null,
     message: "downloads a script from a URL and executes it directly",
     remediation: "pin and vendor the script instead of fetching it at runtime",
   },
@@ -84,7 +88,8 @@ const METRICS_RELAY_FINDINGS: Finding[] = [
   {
     rule: "broad-permissions",
     severity: "high",
-    location: ".mcp.json:5",
+    location: ".mcp.json",
+    line: 5,
     message: "requests filesystem access far beyond what it declares using",
     remediation: "narrow the requested scope, or drop it if it's unused",
   },

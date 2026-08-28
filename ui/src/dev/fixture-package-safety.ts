@@ -24,14 +24,16 @@ const WEBHOOK_SAFETY: PackageSafety = {
     {
       rule: "network-exfiltration",
       severity: "high",
-      location: "skills/webhook-relay/SKILL.md:24",
+      location: "skills/webhook-relay/SKILL.md",
+      line: 24,
       message: "posts file contents to an address the skill itself chooses",
       remediation: "pin the destination and show it to the user before sending",
     },
     {
       rule: "credential-theft",
       severity: "medium",
-      location: "skills/webhook-relay/relay.sh:9",
+      location: "skills/webhook-relay/relay.sh",
+      line: 9,
       message: "reads GITHUB_TOKEN and forwards it with the request",
       remediation:
         "drop the token from the request; the webhook does not need it",
@@ -42,14 +44,14 @@ const WEBHOOK_SAFETY: PackageSafety = {
     deductions: [
       {
         rule: "network-exfiltration",
-        location: "skills/webhook-relay/SKILL.md:24",
+        location: "skills/webhook-relay/SKILL.md",
         severity: "high",
         points: 20,
         repeat: false,
       },
       {
         rule: "credential-theft",
-        location: "skills/webhook-relay/relay.sh:9",
+        location: "skills/webhook-relay/relay.sh",
         severity: "medium",
         points: 8,
         repeat: false,

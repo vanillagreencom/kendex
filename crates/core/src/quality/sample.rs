@@ -16,7 +16,8 @@ pub(crate) fn populated() -> AuditResult {
         findings: vec![Finding {
             rule: "rce".to_owned(),
             severity: Severity::Critical,
-            location: "SKILL.md:12".to_owned(),
+            location: "SKILL.md".to_owned(),
+            line: Some(12),
             message: "this line pipes a download straight into a shell".to_owned(),
             remediation: "download it to a file and run it as its own step".to_owned(),
         }],

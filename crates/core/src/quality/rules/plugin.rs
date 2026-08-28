@@ -47,6 +47,7 @@ impl AuditRule for PluginSourceTrust {
                 rule: self.id().to_owned(),
                 severity: Severity::Low,
                 location: location.clone(),
+                line: None,
                 message: "this plugin carries no manifest, so nothing on disk says what it is or who wrote it".to_owned(),
                 remediation: "ask the author for a plugin.json, or remove the plugin".to_owned(),
             });
@@ -56,6 +57,7 @@ impl AuditRule for PluginSourceTrust {
                 rule: self.id().to_owned(),
                 severity: Severity::Medium,
                 location,
+                line: None,
                 message: "this plugin's files are not from a tracked repository, so there is no history to review and no upstream to compare against".to_owned(),
                 remediation: "install it from its published repository instead of a loose copy".to_owned(),
             });
@@ -98,6 +100,7 @@ impl AuditRule for PluginLifecycleScripts {
                         false => Severity::Low,
                     },
                     location: format!("{}/package.json", prepared.input.location),
+                    line: None,
                     message: match reaches {
                         true => format!(
                             "this plugin's `{name}` script fetches and runs something while it installs, before anyone has read it"

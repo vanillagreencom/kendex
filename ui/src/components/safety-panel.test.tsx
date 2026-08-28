@@ -18,6 +18,7 @@ const finding = (severity: Severity, location: string): Finding => ({
   rule: "dangerous-commands",
   severity,
   location,
+  line: null,
   message: "runs a shell command that deletes files without asking",
   remediation: "scope the command to a specific path, or drop it",
 });

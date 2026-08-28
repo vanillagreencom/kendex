@@ -79,10 +79,12 @@ impl SafetyBypass {
         what: &str,
         base: Severity,
     ) -> Finding {
+        let (file, at_line) = at(doc, line);
         Finding {
             rule: self.id().to_owned(),
             severity: line.weigh(base),
-            location: at(doc, line),
+            location: file,
+            line: at_line,
             message: format!("`{needle}` {what}"),
             remediation:
                 "leave the check in place and let the user answer for themselves; if this is documenting the flag, describe what it costs"
@@ -152,11 +154,13 @@ impl AuditRule for DangerousCommands {
             _ => Severity::Medium,
         };
         scan_docs(prepared, AUTHORED, |doc, line, findings| {
+            let (file, at_line) = at(doc, line);
             let mut hit = |needle: &str, what: &str| {
                 findings.push(Finding {
                     rule: self.id().to_owned(),
                     severity: line.weigh(base),
-                    location: at(doc, line),
+                    location: file.clone(),
+                    line: at_line,
                     message: format!("`{needle}` {what}"),
                     remediation:
                         "narrow the command to the exact path it needs, and let the user see it before it runs"

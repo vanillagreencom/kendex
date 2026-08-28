@@ -16,6 +16,7 @@ function finding(rule: string, severity: Severity): Finding {
     rule,
     severity,
     location: `${rule}.md:1`,
+    line: null,
     message: `${rule} fired`,
     remediation: "",
   };

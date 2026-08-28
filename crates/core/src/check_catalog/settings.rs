@@ -33,7 +33,13 @@ pub(super) fn findings(
     let Some(text) = sealed.read_if_exists(&path.join(template))? else {
         return Ok(Vec::new());
     };
-    let at = format!("{file}/{template}");
+    // A one-skill catalog IS the catalog root, so the item's own path is
+    // empty and joining with a separator would spell an absolute
+    // `/kendex.settings.toml.example`. Path::join knows the difference.
+    let at = Path::new(file)
+        .join(template)
+        .to_string_lossy()
+        .into_owned();
     Ok(crate::settings_template::read(&text)
         .findings
         .into_iter()

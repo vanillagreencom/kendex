@@ -125,26 +125,22 @@ pub struct CheckedItem {
 impl CheckedItem {
     /// Every finding as a report row: `structural` first, then safety. The
     /// one adapter from the advisory payload to the report shape — a safety
-    /// finding's `remediation` becomes `fix`, and its `location`, which the
-    /// safety rules write as `PATH:LINE` for display, comes apart here into
-    /// the path and the line the report keeps separately.
+    /// finding's `remediation` becomes `fix`, and its location and line
+    /// carry across as the two values they already are.
     pub fn rows(&self) -> impl Iterator<Item = CheckFinding> + '_ {
         self.structural
             .iter()
             .cloned()
-            .chain(self.advisory.findings.iter().map(|finding| {
-                let (file, line) = located(&finding.location);
-                CheckFinding {
-                    file,
-                    line,
-                    kind: self.kind.name(),
-                    name: self.name.clone(),
-                    pass: SAFETY_PASS.to_owned(),
-                    severity: finding.severity.name(),
-                    rule: Some(finding.rule.clone()),
-                    message: finding.message.clone(),
-                    fix: finding.remediation.clone(),
-                }
+            .chain(self.advisory.findings.iter().map(|finding| CheckFinding {
+                file: finding.location.clone(),
+                line: finding.line,
+                kind: self.kind.name(),
+                name: self.name.clone(),
+                pass: SAFETY_PASS.to_owned(),
+                severity: finding.severity.name(),
+                rule: Some(finding.rule.clone()),
+                message: finding.message.clone(),
+                fix: finding.remediation.clone(),
             }))
     }
 }
@@ -309,19 +305,6 @@ pub fn check_item(
         structural,
         advisory,
     })
-}
-
-/// A safety rule's `location` split into path and line. Only a trailing
-/// `:` and digits comes off, so `PATH (command)` and its kin are left whole
-/// rather than cut at a colon that means something else.
-fn located(location: &str) -> (String, Option<u32>) {
-    match location
-        .rsplit_once(':')
-        .and_then(|(path, line)| Some((path, line.parse::<u32>().ok()?)))
-    {
-        Some((path, line)) => (path.to_owned(), Some(line)),
-        None => (location.to_owned(), None),
-    }
 }
 
 /// A skill's whole tree; anything else is one file. Read through the same

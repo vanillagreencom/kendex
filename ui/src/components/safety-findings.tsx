@@ -1,4 +1,5 @@
 import type { Finding } from "@/bindings";
+import type { Place } from "@/components/file-link";
 import { FoundAt } from "@/components/found-at";
 import { InlineMarkdown } from "@/components/inline-markdown";
 import { StatusDot } from "@/components/status-dot";
@@ -21,10 +22,10 @@ import { SEVERITY_DOT_TONE, SEVERITY_LABELS, sentence } from "@/lib/labels";
  */
 export function FindingLine({
   finding,
-  locations = [finding.location],
+  places = [{ file: finding.location, line: finding.line }],
 }: {
   finding: Finding;
-  locations?: string[];
+  places?: Place[];
 }) {
   return (
     <div className="flex items-start gap-2.5">
@@ -44,7 +45,7 @@ export function FindingLine({
             from it: an indent would read as a sub-list of the sentence
             rather than the rest of the same thought. */}
         <div className="flex flex-wrap items-center gap-1.5">
-          <FoundAt locations={locations} />
+          <FoundAt places={places} />
         </div>
       </div>
     </div>

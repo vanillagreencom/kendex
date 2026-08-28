@@ -57,6 +57,7 @@ impl AuditRule for McpCommandInjection {
                 rule: self.id().to_owned(),
                 severity: Severity::High,
                 location: prepared.input.location.clone(),
+                line: None,
                 message: format!(
                     "this server's command line runs another command to build itself (`{}`), so whatever that prints becomes part of what launches",
                     redact(part)
@@ -89,6 +90,7 @@ impl AuditRule for BroadPermissions {
                 rule: self.id().to_owned(),
                 severity: Severity::High,
                 location: location.clone(),
+                line: None,
                 message: format!(
                     "this server listens on `{}`, which accepts connections from anything that can reach this machine",
                     redact(&host)
@@ -101,6 +103,7 @@ impl AuditRule for BroadPermissions {
                 rule: self.id().to_owned(),
                 severity: Severity::High,
                 location,
+                line: None,
                 message: format!(
                     "this filesystem server is given `{}` to read and write",
                     redact(&root)
@@ -173,6 +176,7 @@ impl AuditRule for SupplyChain {
             rule: self.id().to_owned(),
             severity: Severity::Medium,
             location: prepared.input.location.clone(),
+            line: None,
             message: format!(
                 "this server installs `{}` from npm on every launch, and that name belongs to whoever registered it first",
                 redact(&package)

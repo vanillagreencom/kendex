@@ -21,11 +21,12 @@ impl PlaintextSecrets {
     /// The matched token never appears here — only the issuer's prefix and
     /// a digest, which is enough to tell two leaks apart and useless to
     /// anyone who reads it.
-    fn finding(&self, location: String, token: &str, held_in: &str) -> Finding {
+    fn finding(&self, location: String, line: Option<u32>, token: &str, held_in: &str) -> Finding {
         Finding {
             rule: "plaintext-secrets".to_owned(),
             severity: Severity::Critical,
             location,
+            line,
             message: format!(
                 "{held_in} holds what looks like a real credential ({})",
                 fingerprint_secret(token)
@@ -50,6 +51,7 @@ impl AuditRule for PlaintextSecrets {
                 if let Some(token) = find_secret(value) {
                     findings.push(self.finding(
                         format!("{location} (env {key})"),
+                        None,
                         token,
                         "this server's environment",
                     ));
@@ -59,6 +61,7 @@ impl AuditRule for PlaintextSecrets {
                 if let Some(token) = find_secret(value) {
                     findings.push(self.finding(
                         format!("{location} (header {key})"),
+                        None,
                         token,
                         "this server's request headers",
                     ));
@@ -68,6 +71,7 @@ impl AuditRule for PlaintextSecrets {
                 if let Some(token) = find_secret(arg) {
                     findings.push(self.finding(
                         location.clone(),
+                        None,
                         token,
                         "this server's command line",
                     ));
@@ -81,7 +85,8 @@ impl AuditRule for PlaintextSecrets {
         // included; this is the one rule that reads stored values.
         scan_every_doc(prepared, &kinds, |doc, line, findings| {
             if let Some(token) = find_secret(&line.text) {
-                findings.push(self.finding(at(doc, line), token, "this line"));
+                let (file, at_line) = at(doc, line);
+                findings.push(self.finding(file, at_line, token, "this line"));
             }
         })
     }

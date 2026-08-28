@@ -239,7 +239,9 @@ fn every_deduction_names_a_rule_at_a_location() {
     let result = document(ItemKind::Skill, "chmod 777 /srv\n");
     let deduction = &result.safety.deductions[0];
     assert_eq!(deduction.rule, "dangerous-commands");
-    assert_eq!(deduction.location, "sample.md:1");
+    // The file, not a place: a deduction is the score's arithmetic, and
+    // the line rides with the finding that carries the detail.
+    assert_eq!(deduction.location, "sample.md");
     assert_eq!(deduction.points, 8);
 }
 

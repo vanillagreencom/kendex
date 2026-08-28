@@ -53,7 +53,8 @@ const row: AvailablePackage = {
 const FINDING: Finding = {
   rule: "dangerous-commands",
   severity: "high",
-  location: "SKILL.md:3",
+  location: "SKILL.md",
+  line: 3,
   message: "runs a shell command that deletes files without asking",
   remediation: "scope the command to a specific path, or drop it",
 };

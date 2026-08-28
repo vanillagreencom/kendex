@@ -179,9 +179,12 @@ pub fn print_advisory(
     for finding in &advisory.findings {
         // A finding whose rule reads a config entry rather than a file has
         // no place to name; the claim still prints, without empty parens.
-        let at = match finding.location.is_empty() {
-            true => String::new(),
-            false => format!(" ({})", shown(&finding.location)),
+        // `PATH:LINE` is composed here and nowhere earlier: this is the end
+        // of the line, where nothing has to read it back.
+        let at = match (finding.location.is_empty(), finding.line) {
+            (true, _) => String::new(),
+            (false, None) => format!(" ({})", shown(&finding.location)),
+            (false, Some(line)) => format!(" ({}:{line})", shown(&finding.location)),
         };
         say(&format!(
             "  [{}] {}{at}",

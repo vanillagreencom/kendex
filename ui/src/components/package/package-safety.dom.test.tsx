@@ -33,7 +33,8 @@ const gh: ItemSafety = {
     {
       rule: "dangerous-commands",
       severity: "high",
-      location: "SKILL.md:20",
+      location: "SKILL.md",
+      line: 20,
       message: "runs a shell command that deletes files without asking",
       remediation: "scope the command to a specific path, or drop it",
     },

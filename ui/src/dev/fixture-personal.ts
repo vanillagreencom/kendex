@@ -21,6 +21,7 @@ export const HOOK_FINDING: Finding = {
   rule: "dangerous-commands",
   severity: "high",
   location: `${HOOK_SETTINGS_PATH}:17`,
+  line: null,
   message: "`mkfs` formats a filesystem",
   remediation:
     "narrow the command to the exact path it needs, and let the user see it before it runs",
@@ -81,6 +82,7 @@ export const CODEX_FINDINGS: Finding[] = [
     rule: "plugin-source-trust",
     severity: "medium",
     location: `${CODEX_PLUGINS_PATH}/registry.json`,
+    line: null,
     message:
       "installed from a repository kendex never recorded, so there's no way to tell what changed since",
     remediation: "reinstall it through kendex so the source is tracked",
@@ -89,6 +91,7 @@ export const CODEX_FINDINGS: Finding[] = [
     rule: "no-manifest",
     severity: "low",
     location: `${CODEX_PLUGINS_PATH}/registry.json`,
+    line: null,
     message:
       "this plugin carries no manifest, so nothing on disk says what it is or who wrote it",
     remediation:

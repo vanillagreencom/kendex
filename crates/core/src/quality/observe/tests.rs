@@ -296,10 +296,11 @@ fn a_hook_command_that_carries_the_danger_still_scores() {
     assert_eq!(dangerous[0].severity, crate::quality::Severity::High);
     assert_eq!(
         dangerous[0].location,
-        format!("{} (command):1", path.display()),
+        format!("{} (command)", path.display()),
         "{:?}",
         found.findings
     );
+    assert_eq!(dangerous[0].line, Some(1), "{:?}", found.findings);
 }
 
 /// A credential in the hook's own entry — an `env` value, a header value —
@@ -452,8 +453,9 @@ fn every_executable_variant_of_a_copilot_entry_scores() {
     assert_eq!(dangerous[0].severity, crate::quality::Severity::High);
     assert_eq!(
         dangerous[0].location,
-        format!("{} (command):2", path.display()),
+        format!("{} (command)", path.display()),
         "{:?}",
         found.findings
     );
+    assert_eq!(dangerous[0].line, Some(2), "{:?}", found.findings);
 }

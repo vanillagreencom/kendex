@@ -20,10 +20,11 @@ vi.mock("@/bindings", () => ({ commands: { auditAll: vi.fn() } }));
 const GLOBAL: Scope = { scope: "global" };
 const ACME: Scope = { scope: "project", root: "/work/acme" };
 
-const finding = (severity: Severity, location = "SKILL.md:20"): Finding => ({
+const finding = (severity: Severity, location = "SKILL.md"): Finding => ({
   rule: "dangerous-commands",
   severity,
   location,
+  line: 20,
   message: "runs a shell command that deletes files without asking",
   remediation: "scope the command to a specific path, or drop it",
 });

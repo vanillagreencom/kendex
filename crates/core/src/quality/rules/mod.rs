@@ -75,8 +75,11 @@ pub(super) const AUTHORED: &[ItemKind] = &[
     ItemKind::PiExtension,
 ];
 
-pub(super) fn at(doc: &Doc, line: &Line) -> String {
-    format!("{}:{}", doc.location, line.number)
+/// Where a line rule fired, as the two values a finding keeps apart: the
+/// document's own location, and the line within it. Composing them into
+/// one string is a job for whoever prints them.
+pub(super) fn at(doc: &Doc, line: &Line) -> (String, Option<u32>) {
+    (doc.location.clone(), u32::try_from(line.number).ok())
 }
 
 /// Run a line check over every *text* document this input carries — what
@@ -163,6 +166,7 @@ impl AuditRule for ObfuscatedContent {
                         rule: self.id().to_owned(),
                         severity: Severity::Low,
                         location: report.location.clone(),
+                        line: None,
                         // What was found, not where: the identity is the
                         // rule and the sentence, so a sentence that says
                         // only how many were found is the same sentence in
@@ -239,6 +243,7 @@ impl AuditRule for UndecodableContent {
                     rule: self.id().to_owned(),
                     severity: Severity::Medium,
                     location: report.location.clone(),
+                    line: None,
                     // Which unreadable content, not which file. The count
                     // alone is the same sentence in every file that has
                     // that many, and one sentence is one decision — the

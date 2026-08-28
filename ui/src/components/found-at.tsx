@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FileLink } from "@/components/file-link";
+import { FileLink, type Place } from "@/components/file-link";
 import { morePlacesLabel } from "@/lib/copy";
 
 /**
@@ -12,14 +12,14 @@ import { morePlacesLabel } from "@/lib/copy";
  * shows all of them are telling a person two different things about one
  * decision.
  */
-export function FoundAt({ locations }: { locations: string[] }) {
+export function FoundAt({ places }: { places: Place[] }) {
   const [expanded, setExpanded] = useState(false);
-  const shown = expanded ? locations : locations.slice(0, 1);
-  const hidden = locations.length - shown.length;
+  const shown = expanded ? places : places.slice(0, 1);
+  const hidden = places.length - shown.length;
   return (
     <>
-      {shown.map((location) => (
-        <FileLink key={location} location={location} />
+      {shown.map((place) => (
+        <FileLink key={`${place.file}:${place.line}`} place={place} />
       ))}
       {hidden > 0 ? (
         <button

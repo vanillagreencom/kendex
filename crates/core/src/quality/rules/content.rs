@@ -53,10 +53,12 @@ impl AuditRule for PromptInjection {
                 if !line.has(phrase) {
                     continue;
                 }
+                let (file, at_line) = at(doc, line);
                 findings.push(Finding {
                     rule: self.id().to_owned(),
                     severity: line.weigh(Severity::Critical),
-                    location: at(doc, line),
+                    location: file,
+                    line: at_line,
                     message: format!(
                         "this line tells the model to set aside the instructions it was given (\"{phrase}\")"
                     ),
@@ -78,10 +80,12 @@ impl AuditRule for Rce {
                 return;
             };
             let what = what.said();
+            let (file, at_line) = at(doc, line);
             findings.push(Finding {
                 rule: self.id().to_owned(),
                 severity: line.weigh(Severity::Critical),
-                location: at(doc, line),
+                location: file,
+                line: at_line,
                 message: format!(
                     "this line {what}, so whatever the far end serves is what runs"
                 ),
@@ -166,10 +170,12 @@ impl AuditRule for CredentialTheft {
                     ),
                 ),
             };
+            let (file, at_line) = at(doc, line);
             findings.push(Finding {
                 rule: self.id().to_owned(),
                 severity: line.weigh(base),
-                location: at(doc, line),
+                location: file,
+                line: at_line,
                 message,
                 remediation:
                     "read credentials from the environment the user already set up, and never move them off the machine"

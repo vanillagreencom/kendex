@@ -17,18 +17,26 @@ import {
   PATH_COPIED_TOAST,
 } from "@/lib/copy";
 import { abbreviateHome } from "@/lib/drift-merge";
-import { editorOpenPath, fileOfLocation } from "@/lib/editor-path";
+import { editorOpenPath } from "@/lib/editor-path";
 import { useProblemsStore } from "@/stores/problems";
+
+/** Where a finding fired: a file, and the line within it when it has one. */
+export type Place = { file: string; line: number | null };
 
 /**
  * A file a finding points at, as something you can act on rather than a
  * path to read and retype. It reads as code — that is what it is — and
  * opens where the file can actually be looked at.
+ *
+ * `file:line` is composed here and nowhere before it. Carrying the two as
+ * one string would mean every reader splitting it back, and no split is
+ * right for a file whose own name ends in a colon and digits.
  */
-export function FileLink({ location }: { location: string }) {
+export function FileLink({ place }: { place: Place }) {
   const showError = useProblemsStore((s) => s.showError);
   const [open, setOpen] = useState(false);
-  const file = fileOfLocation(location);
+  const file = place.file;
+  const location = place.line === null ? file : `${file}:${place.line}`;
 
   const reveal = () => {
     void commands.revealPath(file).then((response) => {

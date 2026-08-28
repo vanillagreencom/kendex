@@ -1083,8 +1083,16 @@ export type FileStatus = "added" | "removed" | "modified" |
 export type Finding = {
 	rule: string,
 	severity: Severity,
-	/**  The file and line, or the config key that holds the entry. */
+	/**
+	 *  The file this fired in, or the config key that holds the entry.
+	 *  Never a line: composing one in would make this a display string, and
+	 *  a display string is something every reader has to parse back — which
+	 *  no reader can do correctly for a file whose own name ends in a colon
+	 *  and digits.
+	 */
 	location: string,
+	/**  The 1-based line within `location`, for a rule that reads lines. */
+	line: number | null,
 	message: string,
 	remediation: string,
 };
