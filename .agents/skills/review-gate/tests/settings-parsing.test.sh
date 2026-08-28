@@ -379,6 +379,14 @@ mkdir -p "$TMP/layers/.env.local"
 OUT=""; RC=0
 OUT="$(cd "$TMP/layers" && { unset REVIEW_GATE_SETTINGS_FILE 2>/dev/null; REVIEW_GATE_TV=envwin rg_setting REVIEW_GATE_TV "dflt" 2>"$TMP/err"; })" || RC=$?
 [[ "$RC" -ne 0 ]] && grep -q "not a regular file" "$TMP/err" && ok "an exported value does not mask a DIRECTORY at .env.local" || bad "env override over broken .env.local" "rc=$RC out=$OUT"
+
+# ...but REVIEW_GATE_MODE probes only ITS sources: a broken machine-local
+# .env.local must not fail the switch that CI, on a clean checkout, would
+# resolve normally — that split is what the exception exists to prevent.
+printf '[env]\nREVIEW_GATE_MODE = "off"\n' >"$TMP/layers/kendex.settings.toml"
+OUT=""; RC=0
+OUT="$(cd "$TMP/layers" && { unset REVIEW_GATE_MODE REVIEW_GATE_SETTINGS_FILE 2>/dev/null; rg_setting REVIEW_GATE_MODE "enforce" 2>"$TMP/err"; })" || RC=$?
+[[ "$RC" -eq 0 && "$OUT" == "off" ]] && ok "REVIEW_GATE_MODE resolves past a broken .env.local it never reads" || bad "MODE over broken .env.local" "rc=$RC out=$OUT"
 rmdir "$TMP/layers/.env.local"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

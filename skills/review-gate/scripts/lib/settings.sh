@@ -236,17 +236,24 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     # The dotenv layer is probed for usability too: an exported key must
     # not mask a broken .env.local (directory, dangling symlink, BOM,
     # unreadable bytes) — every PRESENT source fails loud, the clause the
-    # generic loader honors before re-asserting process values. The probe
-    # runs for every key, REVIEW_GATE_MODE included: that key never reads
-    # the layer's VALUES, but the families stay identical on usability.
-    rg_settings_usable ".env.local" || return 1
-    if [ -f ".env.local" ]; then
-      rg_bom_guard ".env.local" || return 1
-      if [ ! -r ".env.local" ]; then
-        echo "::error::.env.local: unreadable while resolving a setting (permission denied)" >&2
-        return 1
-      fi
-    fi
+    # generic loader honors before re-asserting process values. A key is
+    # validated against exactly the sources IT reads, so REVIEW_GATE_MODE
+    # skips this probe: it never reads the layer, and CI's clean checkout
+    # would resolve while a broken machine-local file failed here — the
+    # install-dependent waiter/gate split the exception exists to prevent.
+    case "$name" in
+      REVIEW_GATE_MODE) ;;
+      *)
+        rg_settings_usable ".env.local" || return 1
+        if [ -f ".env.local" ]; then
+          rg_bom_guard ".env.local" || return 1
+          if [ ! -r ".env.local" ]; then
+            echo "::error::.env.local: unreadable while resolving a setting (permission denied)" >&2
+            return 1
+          fi
+        fi
+        ;;
+    esac
   fi
   # Indirect expansion, not eval: a non-literal NAME must never become code.
   # ${!name+x} tests set-ness of the variable NAMED by $name (Bash 3.2-safe).
