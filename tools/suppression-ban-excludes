@@ -2,7 +2,7 @@
 # is never excluded: every lint suppression there states its reason.
 # Format: pattern<TAB>reason (gitignore-style against the repo-relative path; ** crosses /).
 
-.agents/**	kendex's own render of skills/, agents/ and hooks/ — the SOURCE is governed by the rows below, so governing the mirror doubles every finding
+.agents/**	kendex's render of skills/, agents/ and hooks/, whose SOURCE is governed by the rows below; the in-place skill trees here have no source elsewhere, and this dialect cannot carve them back in (KEN-708)
 .claude/skills/**	rendered skill links into .agents/skills
 .claude/agents/**	kendex-rendered agent copies, source in agents/
 .claude/hooks/**	kendex-rendered hook copies, source in hooks/

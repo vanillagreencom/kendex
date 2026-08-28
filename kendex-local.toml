@@ -161,7 +161,7 @@ harnesses = [
 enabled = true
 
 [skills.app-deploy]
-source = "local"
+source = "in-place"
 harnesses = [
     "claude",
     "codex",
@@ -242,7 +242,7 @@ harnesses = [
 enabled = true
 
 [skills.kendex-issues]
-source = "local"
+source = "in-place"
 harnesses = [
     "claude",
     "codex",

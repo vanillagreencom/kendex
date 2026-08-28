@@ -121,10 +121,10 @@ for a fail-open defect in a consumer gate or an owner ask.
 
 ### This skill's home
 
-Source: `.kendex-local/skills/kendex-issues/SKILL.md` in the kendex checkout
-(tracked; installed project-scoped only). `git rev-parse --show-toplevel` prints
-that checkout's root from anywhere inside it. Edit the source, then run `kendex
-apply` from the root.
+Source: `.agents/skills/kendex-issues/SKILL.md` in the kendex checkout — the
+real directory, declared `source = "in-place"` and installed project-scoped
+only. `git rev-parse --show-toplevel` prints that checkout's root from anywhere
+inside it. Edit it there; the per-harness links already point at it.
 A `~/.agents/skills/kendex-issues` link is a collision — delete it.
 
 ## Guardrails
