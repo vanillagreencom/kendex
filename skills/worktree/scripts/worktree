@@ -261,13 +261,15 @@ Failure semantics:
   (fix-links restores configured symlinks); the branch is never deleted on
   that path. remove checks for a native 'git worktree lock' up front and
   exits non-zero with a diagnostic naming the lock reason and the
-  'git worktree unlock' command. Branch deletion uses safe 'git branch -d'.
-  When that refuses, remove falls back to the proof cleanup uses: gh must
-  report a pull request merged into the default branch whose head commit IS
-  this branch's tip, which is what a squash merge leaves behind. Only that
-  forces the delete. Every other answer keeps the branch, and the exit is
-  non-zero with a diagnostic naming the remaining branch, the answer the
-  lookup gave, and the manual 'git branch -D' recovery command.
+  'git worktree unlock' command. The branch goes only on the proof cleanup
+  uses: ancestry into the default branch, or, when a squash erased that, a
+  pull request gh reports merged into the default branch whose head commit IS
+  this branch's tip. 'git branch -d' is not that proof and is not consulted —
+  it deletes a branch merged into its configured UPSTREAM, which 'push' sets,
+  so it passes for any pushed branch however far it is from the default
+  branch. Every other answer keeps the branch, and the exit is non-zero with a
+  diagnostic naming the remaining branch, the answer the proof gave, and the
+  manual 'git branch -D' recovery command.
 
 Session leases:
   remove releases its own lease before removing. A foreign lease is left
@@ -4435,41 +4437,46 @@ case "${1:-}" in
       [[ -d "$WT_PATH" ]] && rm -rf "$WT_PATH"
     fi
     git -C "$PROJECT_ROOT" worktree prune
-    # Only delete the local branch if merged, by either proof: ancestry, which
-    # `branch -d` checks itself, or a merged pull request carrying this tip when
-    # a squash erased the ancestry. If the worktree was removed but neither
-    # proof holds, report exactly what remains instead of letting set -e exit
-    # silently after partial cleanup.
+    # Only delete the local branch if merged, proven exactly the way `cleanup`
+    # proves it: ancestry into the default branch, or a merged pull request
+    # carrying this tip when a squash erased that ancestry. `git branch -d` is
+    # NOT that proof and no longer decides anything here — it deletes a branch
+    # merged into its configured UPSTREAM, and `push` sets one, so every pushed
+    # branch satisfied it however far it was from the default branch (#697).
+    # If the worktree was removed but neither proof holds, report exactly what
+    # remains instead of letting set -e exit silently after partial cleanup.
     BRANCH_DELETE_FAILED=false
     if [[ -n "$BRANCH" ]] && git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
-      DELETE_OUTPUT=""
-      if ! DELETE_OUTPUT=$(git -C "$PROJECT_ROOT" branch -d "$BRANCH" 2>&1); then
-        # `branch -d` proves merge by ancestry, which a squash merge erases, so
-        # a just-merged PR's branch survives every removal and merge-pr § 5
-        # reports a failure on the happy path (#697). Fall back to the same
-        # predicate cleanup uses — a merged PR whose head commit IS this tip —
-        # and nothing weaker: any other answer keeps the branch and reports.
-        REMOVE_MERGE_DETAIL=""
-        REMOVE_MERGE_RC=0
+      REMOVE_MERGE_TARGET="origin/$DEFAULT_BRANCH"
+      if ! git -C "$PROJECT_ROOT" rev-parse --verify "$REMOVE_MERGE_TARGET" >/dev/null 2>&1; then
+        REMOVE_MERGE_TARGET="$DEFAULT_BRANCH"
+      fi
+      REMOVE_MERGE_DETAIL=""
+      REMOVE_MERGE_PROOF=""
+      REMOVE_MERGE_RC=0
+      if git -C "$PROJECT_ROOT" merge-base --is-ancestor "$BRANCH" "$REMOVE_MERGE_TARGET" 2>/dev/null; then
+        REMOVE_MERGE_PROOF="merged into $REMOVE_MERGE_TARGET"
+      else
         REMOVE_MERGE_DETAIL="$(merged_pr_for_branch "$BRANCH")" || REMOVE_MERGE_RC=$?
-        if [[ "$REMOVE_MERGE_RC" == "0" ]] && git -C "$PROJECT_ROOT" branch -D "$BRANCH" >/dev/null 2>&1; then
-          echo "Deleted branch '$BRANCH' — squash-merged in pull request #$REMOVE_MERGE_DETAIL." >&2
-        else
-          BRANCH_DELETE_FAILED=true
-          echo "Error: Removed worktree but could not delete local branch '$BRANCH'." >&2
-          echo "  Remaining branch: $BRANCH" >&2
-          echo "  Worktree path removed/pruned: $WT_PATH" >&2
-          echo "  Safe delete refused by: git branch -d $BRANCH" >&2
-          if [[ -n "$DELETE_OUTPUT" ]]; then
-            printf '%s\n' "$DELETE_OUTPUT" | sed 's/^/  git: /' >&2
-          fi
-          case "$REMOVE_MERGE_RC" in
-            0) echo "  Merged in pull request #$REMOVE_MERGE_DETAIL, but the forced delete failed." >&2 ;;
-            1) echo "  Not merged by pull request either: ${REMOVE_MERGE_DETAIL:-no detail}" >&2 ;;
-            *) echo "  Merged-pull-request lookup could not answer: ${REMOVE_MERGE_DETAIL:-no detail}" >&2 ;;
-          esac
-          echo "  After verifying it is safe, delete manually with: git -C \"$PROJECT_ROOT\" branch -D \"$BRANCH\"" >&2
-        fi
+        REMOVE_MERGE_PROOF="squash-merged in pull request #$REMOVE_MERGE_DETAIL"
+      fi
+      DELETE_OUTPUT=""
+      if [[ "$REMOVE_MERGE_RC" == "0" ]] && DELETE_OUTPUT="$(git -C "$PROJECT_ROOT" branch -D "$BRANCH" 2>&1)"; then
+        echo "Deleted branch '$BRANCH' — $REMOVE_MERGE_PROOF." >&2
+      else
+        BRANCH_DELETE_FAILED=true
+        echo "Error: Removed worktree but could not delete local branch '$BRANCH'." >&2
+        echo "  Remaining branch: $BRANCH" >&2
+        echo "  Worktree path removed/pruned: $WT_PATH" >&2
+        case "$REMOVE_MERGE_RC" in
+          0)
+            echo "  $REMOVE_MERGE_PROOF, but the delete itself failed." >&2
+            [[ -n "$DELETE_OUTPUT" ]] && printf '%s\n' "$DELETE_OUTPUT" | sed 's/^/  git: /' >&2
+            ;;
+          1) echo "  Not merged into $REMOVE_MERGE_TARGET, and $REMOVE_MERGE_DETAIL" >&2 ;;
+          *) echo "  Merged-pull-request lookup could not answer: ${REMOVE_MERGE_DETAIL:-no detail}" >&2 ;;
+        esac
+        echo "  After verifying it is safe, delete manually with: git -C \"$PROJECT_ROOT\" branch -D \"$BRANCH\"" >&2
       fi
     fi
     echo "Removed: $WT_PATH"

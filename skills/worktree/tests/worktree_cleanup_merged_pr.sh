@@ -21,8 +21,11 @@
 #     its follow-up commits and uncommitted files intact. One branch name serves
 #     every worktree an issue ever had, so matching on the name alone handed an
 #     old merged record to new work and force-deleted it;
-#   * `remove` deletes a squash-merged branch (`git branch -d` refuses it) and
-#     still keeps an unmerged or moved-on one.
+#   * a pull request merged into some other base is not a merge into the
+#     default branch, so it collects nothing;
+#   * `remove` deletes a squash-merged branch and still keeps an unmerged one,
+#     a moved-on one, and one merged only into its own tracking upstream —
+#     `git branch -d` accepted that last case and no longer decides anything.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -65,11 +68,15 @@ assert_path_absent() {
   [[ ! -e "$1" ]] && pass "$2" || fail "$2 (still exists: $1)"
 }
 
-# `gh pr list --state merged --head <branch>` answers from GH_MERGED_PRS, a
-# newline-separated "<branch> <head-oid> <number>" table, printed back in the
-# `--jq '.[] | "\(.headRefOid) \(.number)"'` shape the script asks for. The oid
-# column is what makes the name-only match testable: a row can name a branch
-# and carry the head of an OLDER commit.
+# `gh pr list --state merged --head <branch> --base <default>` answers from
+# GH_MERGED_PRS, a newline-separated "<branch> <base> <head-oid> <number>"
+# table, printed back in the `--jq '.[] | "\(.headRefOid) \(.number)"'` shape
+# the script asks for.
+#
+# The stub honours all three filters, because two of them guard a forced
+# delete: the oid column makes a name-only match visible, and a row is answered
+# only when the query asked for merged pull requests on the base it names.
+# Dropping either filter from the implementation has to fail a scenario here.
 #
 # GH_FAIL=1 makes the query fail the way a network or auth error does.
 # GH_STDERR_NOISE=1 prints gh's routine chatter on stderr beside a good answer.
@@ -91,14 +98,24 @@ if [[ "${GH_NOISE:-0}" == "1" ]]; then
   echo "A new release of gh is available: 2.40.0 -> 2.63.2"
 fi
 branch=""
+base=""
+state=""
 prev=""
 for arg in "$@"; do
-  [[ "$prev" == "--head" ]] && branch="$arg"
+  case "$prev" in
+    --head) branch="$arg" ;;
+    --base) base="$arg" ;;
+    --state) state="$arg" ;;
+  esac
   prev="$arg"
 done
-while read -r want oid number; do
+# An unfiltered query is not the query under test: answer nothing rather than
+# letting a scenario pass on a filter the implementation stopped sending.
+[[ "$state" == "merged" ]] || exit 0
+while read -r want want_base oid number; do
   [[ -n "$want" ]] || continue
   [[ "$want" == "$branch" ]] || continue
+  [[ -z "$base" || "$want_base" == "$base" ]] || continue
   printf '%s %s\n' "$oid" "$number"
 done <<<"${GH_MERGED_PRS:-}"
 exit 0
@@ -168,7 +185,7 @@ else
   pass "precondition: the squashed branch is not an ancestor of origin/main"
 fi
 
-GH_MERGED_PRS="issue-merged $(branch_tip "$ROOT" issue-merged) 4242"
+GH_MERGED_PRS="issue-merged main $(branch_tip "$ROOT" issue-merged) 4242"
 export GH_MERGED_PRS
 squash_code=0
 squash_out=$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" cleanup 2>"$ROOT/squash.err") || squash_code=$?
@@ -310,7 +327,7 @@ add_branch_tree "$NOISE_ROOT" "issue-noise"
 add_branch_tree "$NOISE_ROOT" "issue-noise-open"
 squash_onto_main "$NOISE_ROOT" "issue-noise"
 
-GH_MERGED_PRS="issue-noise $(branch_tip "$NOISE_ROOT" issue-noise) 31"
+GH_MERGED_PRS="issue-noise main $(branch_tip "$NOISE_ROOT" issue-noise) 31"
 export GH_MERGED_PRS
 noise_code=0
 noise_out=$(cd "$NOISE_ROOT/main" && GH_STDERR_NOISE=1 \
@@ -349,7 +366,7 @@ printf 'uncommitted\n' >"$MOVED_TREE/scratch.txt"
 
 # The stub still reports the merged PR under this branch NAME, carrying the head
 # it actually merged. Only the commit compare can tell the two apart.
-export GH_MERGED_PRS="issue-moved $MERGED_OID 100"
+export GH_MERGED_PRS="issue-moved main $MERGED_OID 100"
 moved_code=0
 moved_out=$(cd "$MOVED_ROOT/main" && "$WORKTREE_SCRIPT" cleanup 2>"$MOVED_ROOT/moved.err") || moved_code=$?
 moved_err="$(cat "$MOVED_ROOT/moved.err")"
@@ -395,7 +412,7 @@ make_repo "$RM_ROOT"
 add_branch_tree "$RM_ROOT" "issue-rm"
 squash_onto_main "$RM_ROOT" "issue-rm"
 
-GH_MERGED_PRS="issue-rm $(branch_tip "$RM_ROOT" issue-rm) 77"
+GH_MERGED_PRS="issue-rm main $(branch_tip "$RM_ROOT" issue-rm) 77"
 export GH_MERGED_PRS
 rm_code=0
 rm_out=$(cd "$RM_ROOT/main" && "$WORKTREE_SCRIPT" remove "$RM_ROOT/trees/issue-rm" 2>"$RM_ROOT/rm.err") || rm_code=$?
@@ -420,14 +437,70 @@ keep_err="$(cat "$RM_ROOT/keep.err")"
 
 assert_eq "$keep_code" "1" "remove still exits nonzero when the branch is not merged"
 assert_contains "$keep_err" "Remaining branch: issue-keep" "remove names the branch it kept"
-assert_contains "$keep_err" "Not merged by pull request either" \
-  "remove says the pull-request proof failed too"
+assert_contains "$keep_err" "Not merged into origin/main, and no pull request merged into main" \
+  "remove says which proof failed and how"
 if git -C "$RM_ROOT/main" show-ref --verify --quiet refs/heads/issue-keep; then
   pass "remove leaves the unmerged branch alone"
 else
   fail "remove leaves the unmerged branch alone"
 fi
 : "${keep_out:=}"
+
+echo "=== remove keeps a branch merged only into its own upstream ==="
+
+# `git branch -d` deletes a branch merged into its configured UPSTREAM, and
+# `worktree push` sets one, so every pushed branch satisfied it however far it
+# was from the default branch. It decided nothing here now: the branch goes on
+# ancestry into the default branch or on the merged-PR proof, and on nothing
+# else.
+add_branch_tree "$RM_ROOT" "issue-pushed"
+git -C "$RM_ROOT/trees/issue-pushed" push -q -u origin issue-pushed
+if git -C "$RM_ROOT/main" merge-base --is-ancestor issue-pushed origin/main; then
+  fail "precondition: the pushed branch must NOT be merged into the default branch"
+else
+  pass "precondition: the pushed branch is not merged into the default branch"
+fi
+if git -C "$RM_ROOT/main" branch --format='%(refname:short) %(upstream:short)' \
+     | grep -qx "issue-pushed origin/issue-pushed"; then
+  pass "precondition: the pushed branch tracks an upstream branch -d would accept"
+else
+  fail "precondition: the pushed branch tracks an upstream branch -d would accept"
+fi
+
+pushed_code=0
+pushed_out=$(cd "$RM_ROOT/main" && "$WORKTREE_SCRIPT" remove "$RM_ROOT/trees/issue-pushed" 2>"$RM_ROOT/pushed.err") || pushed_code=$?
+pushed_err="$(cat "$RM_ROOT/pushed.err")"
+
+assert_eq "$pushed_code" "1" "remove exits nonzero on a branch merged only into its upstream"
+assert_contains "$pushed_err" "Remaining branch: issue-pushed" "remove names the branch it kept"
+if git -C "$RM_ROOT/main" show-ref --verify --quiet refs/heads/issue-pushed; then
+  pass "the branch merged only into its upstream survives remove"
+else
+  fail "the branch merged only into its upstream survives remove"
+fi
+: "${pushed_out:=}"
+
+echo "=== a pull request merged into another base does not count ==="
+
+# --base is a guard on a forced delete: work merged into a feature branch has
+# not reached the default branch, and its worktree is not collectable.
+BASE_ROOT="$TMP_ROOT/otherbase"
+make_repo "$BASE_ROOT"
+add_branch_tree "$BASE_ROOT" "issue-sidebase"
+GH_MERGED_PRS="issue-sidebase feature-x $(branch_tip "$BASE_ROOT" issue-sidebase) 55"
+export GH_MERGED_PRS
+sidebase_code=0
+sidebase_out=$(cd "$BASE_ROOT/main" && "$WORKTREE_SCRIPT" cleanup 2>"$BASE_ROOT/sidebase.err") || sidebase_code=$?
+sidebase_err="$(cat "$BASE_ROOT/sidebase.err")"
+
+assert_eq "$sidebase_code" "0" "cleanup exits 0 with a side-base merge present"
+assert_path_exists "$BASE_ROOT/trees/issue-sidebase" "a pull request merged elsewhere never collects the worktree"
+assert_contains "$sidebase_err" "is not merged" "cleanup names the side-base branch as unmerged"
+if grep -qF "Cleaned:" <<<"$sidebase_out"; then
+  fail "a pull request merged into another base collects nothing"
+else
+  pass "a pull request merged into another base collects nothing"
+fi
 
 echo "=== remove tells an unanswered lookup apart from a proven-unmerged branch ==="
 
@@ -443,7 +516,7 @@ down_err="$(cat "$RM_ROOT/down.err")"
 assert_eq "$down_code" "1" "remove exits nonzero when the lookup could not answer"
 assert_contains "$down_err" "Merged-pull-request lookup could not answer" \
   "remove says the lookup could not answer rather than calling the branch unmerged"
-if grep -qF "Not merged by pull request either" <<<"$down_err"; then
+if grep -qF "Not merged into origin/main" <<<"$down_err"; then
   fail "an unanswered lookup is not reported as a proven-unmerged branch"
 else
   pass "an unanswered lookup is not reported as a proven-unmerged branch"
