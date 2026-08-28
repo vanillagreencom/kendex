@@ -88,10 +88,7 @@ pub fn mine(env: &Env, json: bool) -> CliResult {
         let packages: u32 = row.counts.values().sum();
         out(&format!(
             "{}  {packages} package(s), {} bundle(s), {} problem(s)  {}",
-            shown(&row.name),
-            row.bundles,
-            row.breakage,
-            shown(&row.path),
+            row.name, row.bundles, row.breakage, row.path,
         ));
     }
     Ok(())
