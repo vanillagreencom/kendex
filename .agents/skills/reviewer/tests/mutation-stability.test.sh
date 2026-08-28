@@ -81,5 +81,19 @@ rc=0; out=$("$MS" --worktree "$REPO" --sha "$SHA3" --test 'bash check.sh' \
 if [ "$rc" = 0 ]; then ok "a shared mtime-keyed build cache stays stable"; else bad "a shared mtime-keyed build cache stays stable" "rc=$rc out=$out"; fi
 case "$out" in *"stability: 3/3 at 2 threads") ok "the clean copy rebuilds instead of reusing the mutant";; *) bad "the clean copy rebuilds instead of reusing the mutant" "$out";; esac
 
+# A filesystem or cache that keeps whole seconds rounds an extraction and the
+# build before it to the same second, and a cache rebuilds on a strictly newer
+# source, not an equal one. Each copy is stamped a full second past the last.
+kept=$("$MS" --worktree "$REPO" --sha "$SHA3" --test 'bash check.sh' \
+      --mutate 'sed -i "s/+/-/" lib.sh' --stability 1 --threads 2 --keep 2>&1 >/dev/null || true)
+root=$(printf '%s\n' "$kept" | sed -n 's/^kept: //p')
+if [ -d "$root/clean" ]; then
+  gap=$(( $(stat -c %Y "$root/clean/lib.sh") - $(stat -c %Y "$root/mutant/lib.sh") ))
+  rm -rf "$root"
+  if [ "$gap" -ge 1 ]; then ok "each copy is stamped a whole second past the one before"; else bad "each copy is stamped a whole second past the one before" "gap=${gap}s"; fi
+else
+  bad "each copy is stamped a whole second past the one before" "--keep printed no temp dir: $kept"
+fi
+
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ] || exit 1
