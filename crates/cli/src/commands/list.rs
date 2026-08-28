@@ -21,7 +21,7 @@ pub fn run(env: &Env, filter: ScopeFilter, harness: Option<String>) -> CliResult
         .map(|i| {
             [
                 i.kind.name().to_owned(),
-                i.name.clone(),
+                shown(&i.name),
                 i.harness.name().to_owned(),
                 match &i.scope {
                     Scope::Global => "global".to_owned(),
@@ -51,7 +51,7 @@ pub fn run(env: &Env, filter: ScopeFilter, harness: Option<String>) -> CliResult
                 .map(|(cell, w)| format!("{cell:w$}"))
                 .collect::<Vec<_>>()
                 .join("  ");
-            say(&shown(line.trim_end()));
+            say(line.trim_end());
         }
     }
     for warning in &result.warnings {

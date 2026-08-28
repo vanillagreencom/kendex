@@ -155,3 +155,44 @@ fn a_run_with_no_terminal_is_plain_without_being_told() {
         .collect();
     assert!(found.is_empty(), "an undetected terminal framed: {printed}");
 }
+
+/// A payload prints as itself. `show --file` exists to put a package's
+/// file in front of the reader, so escaping it the way a value in a
+/// sentence is escaped hands them one line of literal `\n` instead of the
+/// file — which is the whole feature.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn show_file_prints_the_files_own_lines() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let project = home.join("dev/app");
+    blocked_project_at(home, &project);
+    fs::write(
+        home.join("catalog/skills/tidy/SKILL.md"),
+        "---\nname: tidy\ndescription: does tidy\n---\nfirst line\nsecond line\nthird line\n",
+    )
+    .unwrap();
+    kendex(
+        home,
+        &project,
+        "plain",
+        &["refresh", "-y", "--scope", "project"],
+    );
+
+    let printed = said(&kendex(
+        home,
+        &project,
+        "plain",
+        &["show", "skill", "tidy", "--file", "SKILL.md"],
+    ));
+    for line in ["first line", "second line", "third line"] {
+        assert!(
+            printed.lines().any(|out| out == line),
+            "{line:?} did not reach the reader as its own line: {printed:?}"
+        );
+    }
+    assert!(
+        !printed.contains("\\n"),
+        "the file was collapsed onto one line: {printed:?}"
+    );
+}

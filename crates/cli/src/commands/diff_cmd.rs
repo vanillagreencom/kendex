@@ -78,14 +78,14 @@ pub fn run(env: &Env, args: DiffArgs) -> CliResult {
             file.deletions
         ));
         for hunk in &file.hunks {
-            say(&shown(&hunk.header));
+            say(&hunk.header);
             for line in &hunk.lines {
                 let marker = match line.kind {
                     LineKind::Context => ' ',
                     LineKind::Add => '+',
                     LineKind::Remove => '-',
                 };
-                say(&format!("{marker}{}", shown(&line.text)));
+                say(&format!("{marker}{}", line.text));
             }
         }
     }

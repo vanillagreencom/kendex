@@ -41,7 +41,9 @@ pub fn run(env: &Env, args: ShowArgs) -> CliResult {
     }
     if let Some(rel) = &args.file {
         let source = detail::package_file(env, &scope, kind, &args.name, rel)?;
-        say(&shown(&source.content));
+        // The payload the verb exists to print, not a value in a
+        // sentence: escaping it would collapse the file onto one line.
+        say(&source.content);
         if source.truncated {
             say("… (truncated at 64 KB)");
         }
@@ -49,7 +51,7 @@ pub fn run(env: &Env, args: ShowArgs) -> CliResult {
     }
     if args.readme {
         match detail::package_readme(env, &scope, kind, &args.name)? {
-            Some(readme) => say(&shown(&readme.content)),
+            Some(readme) => say(&readme.content),
             None => say("no readme"),
         }
         return Ok(());

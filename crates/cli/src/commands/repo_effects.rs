@@ -104,7 +104,7 @@ pub fn apply(scope: &Scope, declared: &DeclaredEffects) -> CliResult {
             Ok(())
         }
         Err(error @ kendex_core::repo_effects::ArmError::NothingToRun { .. }) => {
-            say(&shown(&error.to_string()));
+            say(&error.to_string());
             Ok(())
         }
         Err(error) => {
@@ -118,7 +118,7 @@ pub fn apply(scope: &Scope, declared: &DeclaredEffects) -> CliResult {
 
 fn relay(report: &kendex_core::guard::GuardReport) {
     for line in &report.stderr {
-        say(&shown(line));
+        say(line);
     }
     for line in &report.stdout {
         out(line);

@@ -261,7 +261,7 @@ fn run_subscribe(
     let scope = resolve_scopes(env, filter)?.remove(0);
     let subscribed = source_ops::subscribe(env, &scope, reference, name)?;
     for note in &subscribed.report.notes {
-        say(&shown(note));
+        say(note);
     }
     apply_report(env, &subscribed.report)?;
     // Subscribing fetches so counts can land; a failure costs the
