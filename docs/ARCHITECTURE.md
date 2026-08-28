@@ -643,12 +643,12 @@ lives in one capability table read by core and UI.
   sibling, or different bytes there is a refusal (invariants 4 and 6). The
   local source lists a `plugin/item` name beside a plain `plugin`.
 - **The machine seam reads through the same core installing does.**
-  `check_catalog.rs` (core) owns three authoring passes — structural (would
-  each loader hold this), settings (a package's template, read strictly) and
-  safety (an install's rules) — behind `kendex check --catalog [--json]`, the
-  indexer's per-package scores and authoring preflight; the CLI prints lines
-  or a versioned envelope (`schema`, typed findings, counts, `ok`). Breakage
-  fails the check, settings findings under `--strict`, safety findings never.
+  `check_catalog.rs` owns three authoring passes — structural (would a loader
+  hold this), settings (a template, read to the shell loaders' grammar, one
+  corpus pinning both) and safety (install rules) — behind `kendex check
+  --catalog [--json]`, indexer scores and preflight; the CLI prints lines or
+  a versioned envelope (`schema`, findings, counts, `ok`). Breakage fails the
+  check, settings findings under `--strict`; safety never.
   `source/index.rs` emits the per-marketplace summary the community
   directory reads (`kendex index [<dir>] --json`, schema 2, plain directory,
   no network): metadata from the catalog's `[marketplace]` table

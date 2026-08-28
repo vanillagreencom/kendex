@@ -268,9 +268,9 @@ fn catalog_shipping(home: &Path, template: &str) -> std::path::PathBuf {
     catalog
 }
 
-/// Nothing validates a settings template at authoring time, so an author's
-/// mistake surfaces in a consumer's shell. `marketplace check` runs strict,
-/// which is where a malformed template has to stop.
+/// A template nobody checked reached a consumer's shell before it reached
+/// anything else. `marketplace check` runs strict, which is where a
+/// malformed one now stops.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_malformed_settings_template_fails_marketplace_check() {

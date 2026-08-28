@@ -4,17 +4,18 @@
 //! Three passes over every item. The structural pass asks whether each
 //! harness's loader could hold this item at all — a name it will not
 //! accept, a SKILL.md that disagrees with its own directory. The settings
-//! pass reads a package's settings template strictly. The safety pass runs
-//! the same rules an install runs, so a catalog finds out in its own CI
-//! rather than in somebody else's plan preview.
+//! pass reads a settings template against the grammar the shell loaders
+//! read a consumer's settings file with. The safety pass runs the same
+//! rules an install runs, so a catalog finds out in its own CI rather than
+//! in somebody else's plan preview.
 //!
-//! Both passes only report what an author can act on. Anything rendering
+//! Every pass only reports what an author can act on. Anything rendering
 //! resolves on its own is not a problem this can help with, and naming it
 //! would send people to fix something that is not broken.
 //!
 //! This lives in core because the CLI's `check --catalog`, the indexer's
-//! per-package scores, and authoring preflight all ask the same two
-//! questions of the same bytes — one implementation, one answer.
+//! per-package scores, and authoring preflight all ask the same questions
+//! of the same bytes — one implementation, one answer.
 
 use std::path::{Path, PathBuf};
 
@@ -30,21 +31,21 @@ use crate::source_read::SealedSource;
 /// The versioned envelope `check --catalog --json` and `marketplace mine
 /// --json` wrap their reports in. Schema 2 counts safety findings as
 /// `safety_findings`, carries no per-finding token, and `ok` answers what
-/// fails the run — breakage, plus structural advisories under `--strict` —
-/// never a safety finding.
+/// fails the run — breakage, plus advisories under `--strict` — never a
+/// safety finding.
 pub const CHECK_SCHEMA: u32 = 2;
 
-/// The `pass` a safety finding carries; structural findings carry the
-/// harness whose loader complained.
+/// The `pass` a safety finding carries; a structural finding carries the
+/// harness whose loader complained, and a settings finding
+/// [`SETTINGS_PASS`].
 pub const SAFETY_PASS: &str = "safety";
 
 /// The `pass`/`kind` of a finding about the catalog itself rather than any
 /// one item — a broken control file, a skipped colliding directory.
 pub const CATALOG_PASS: &str = "catalog";
 
-/// The `pass` a settings-template finding carries — neither a loader's
-/// complaint nor a safety rule, but the strict read of a package's
-/// `kendex.settings.toml.example`.
+/// The `pass` a settings-template finding carries — neither a harness
+/// loader's complaint nor a safety rule.
 pub const SETTINGS_PASS: &str = "settings";
 
 /// Every kind a catalog can offer, in report order.
@@ -60,9 +61,8 @@ const CHECKED_KINDS: [ItemKind; 5] = [
 /// needs to place it. Field order is the JSON field order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CheckFinding {
-    /// The file within the catalog — for safety findings, the rule's own
-    /// location, which may name a file inside a skill tree; for settings
-    /// findings, that file with the line appended.
+    /// Where the finding is: a path within the catalog, carrying `:line`
+    /// for a settings finding and whatever place a safety rule reported.
     pub file: String,
     pub kind: &'static str,
     pub name: String,
@@ -92,32 +92,31 @@ impl CheckFinding {
     }
 }
 
-/// One item with both passes run over it.
+/// One item, every pass run over it.
 ///
 /// `advisory` sits under its own key rather than flattened because nothing
 /// serializes this struct: it derives neither `Serialize` nor `Type`.
 /// Whatever first gives it a serialized form flattens it there, so its
 /// fields read at the top-level paths `ItemSafety` and `PackageSafety`
-/// already serve, and leaves `structural` under its own key — the two
-/// passes answer different questions and a reader has to be able to tell
-/// them apart.
+/// already serve, and leaves `structural` under its own key — it and the
+/// safety payload answer different questions a reader has to tell apart.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedItem {
     pub kind: ItemKind,
     pub name: String,
     /// The item's own path within the catalog.
     pub file: String,
-    /// Would each harness's loader accept this, and does its settings template read strictly?
+    /// Would each harness's loader accept this item, and does its settings
+    /// template read as the shell loaders read it?
     pub structural: Vec<CheckFinding>,
     /// The safety pass, the same payload every other score surface embeds.
     pub advisory: quality::AuditResult,
 }
 
 impl CheckedItem {
-    /// Every finding as a schema-2 row: structural first, then safety, in
-    /// report order. This is the one adapter from the advisory payload to
-    /// the report shape — a safety finding's `remediation` becomes `fix`,
-    /// its `location` the row's `file`.
+    /// Every finding as a schema-2 row: `structural` first, then safety.
+    /// The one adapter from the advisory payload to the report shape — a
+    /// safety finding's `remediation` becomes `fix`, `location` its `file`.
     pub fn rows(&self) -> impl Iterator<Item = CheckFinding> + '_ {
         self.structural
             .iter()
@@ -181,9 +180,9 @@ impl CatalogCheck {
         tally
     }
 
-    /// How many problems fail the run: breakage always, structural
-    /// advisories only under `strict`. Safety findings fail nothing — the
-    /// score is advisory end to end, in a catalog's own CI included.
+    /// How many problems fail the run: breakage always, advisories only
+    /// under `strict`. Safety findings fail nothing — the score is
+    /// advisory end to end, in a catalog's own CI included.
     pub fn failing(&self, strict: bool) -> usize {
         let tally = self.tally();
         tally.breakage
@@ -295,10 +294,10 @@ pub fn check_item(
     })
 }
 
-/// The strict read of the package's settings template, where it ships one.
-/// Advisory, so `check --catalog` reports it and `marketplace check` —
-/// strict — fails on it: nothing else validates a template before a
-/// consumer's shell reads what seeding made of it.
+/// The package's settings template, read the way the shell loaders read
+/// what seeding makes of it. Advisory, so `check --catalog` reports it and
+/// `marketplace check` — strict — fails on it: nothing else looks at a
+/// template before somebody's shell does.
 fn settings_findings(
     sealed: &SealedSource,
     kind: ItemKind,
