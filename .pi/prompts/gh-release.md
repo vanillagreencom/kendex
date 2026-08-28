@@ -3,7 +3,8 @@ description: Cut a kendex release — version bump, tag, draft review — per do
 argument-hint: "[patch|minor|major]"
 ---
 Cut a kendex release. Optional bump: `$ARGUMENTS` (default: patch; minor when
-CHANGELOG's Unreleased section has an Added entry; major only when asked).
+`changelog.d/added/` holds a fragment or CHANGELOG's Unreleased section has an
+Added entry; major only when asked).
 
 `docs/RELEASING.md` is the procedure; this prompt only sequences it.
 
@@ -21,12 +22,15 @@ CHANGELOG's Unreleased section has an Added entry; major only when asked).
 1. `git fetch origin && git status --short` — must be clean and at
    `origin/main`. `gh release list --limit 1` — the last tag.
 2. `git log --oneline <last-tag>..HEAD` — confirm there is something to
-   ship; finalize `CHANGELOG.md`: rename `## [Unreleased]` to
-   `## [X.Y.Z] - YYYY-MM-DD` and open a fresh empty `## [Unreleased]`.
-3. Bump the three version sites; `cargo build -q`; `tools/guard`.
+   ship; finalize `CHANGELOG.md`: run `tools/changelog-collate` to fold the
+   `changelog.d` fragments into `## [Unreleased]`, rename that heading to
+   `## [X.Y.Z] - YYYY-MM-DD`, and open a fresh empty `## [Unreleased]`.
+3. Bump the three version sites; `cargo build -q`; `tools/guard`. Both the
+   guard run and the commit go under `CHANGELOG_COLLATE=1`, which releases
+   the rule that refuses `Unreleased` lines no fragment produced.
 4. Commit `chore(release): vX.Y.Z` with exactly `Cargo.toml Cargo.lock
-   crates/app/tauri.conf.json CHANGELOG.md`; push through the normal PR
-   flow if branch protection requires it, else push `main`.
+   crates/app/tauri.conf.json CHANGELOG.md changelog.d`; push through the
+   normal PR flow if branch protection requires it, else push `main`.
 5. Tag the MERGED commit, never the local branch: after the bump is on
    `origin/main`, run `git fetch origin`, confirm `git log -1 origin/main`
    is the bump commit, then `git tag vX.Y.Z origin/main && git push

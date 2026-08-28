@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Pins what tools/guard still judges once the shipped packages judge the
 # rest: the size-ratchet baseline may only tighten unless RATCHET_RAISE=1
-# says otherwise, and a CHANGELOG entry runs at most three lines. It also
-# pins the absence — a line cap, a work marker, a blanket allow and an
+# says otherwise, a CHANGELOG entry runs at most three lines wherever it is
+# written, a changelog.d fragment is named and shaped so the collator finds
+# it, and the [Unreleased] list gains lines only under CHANGELOG_COLLATE=1.
+# It also pins the absence — a line cap, a work marker, a blanket allow and an
 # oversized file all pass here, because size-ratchet, todo-ban,
 # suppression-ban and byte-ceiling are the judges of those. The failing
 # direction runs first so a green pass is evidence, not a check that cannot
@@ -132,6 +134,81 @@ if [ "$(id -u)" -ne 0 ]; then
   [ "$RC" -ne 0 ] && case "$OUT" in *"CHANGELOG.md is unreadable"*) true ;; *) false ;; esac \
     && ok "an unreadable CHANGELOG fails closed, naming the check that could not run" \
     || bad "an unreadable CHANGELOG fails closed, naming the check that could not run" "rc=$RC out=$OUT"
+fi
+
+echo "=== a changelog fragment is judged as the entry it becomes ==="
+mkdir -p "$R/changelog.d/fixed"
+printf -- '- A four-line fragment\n  second line\n  third line\n  fourth line.\n' >"$R/changelog.d/fixed/ken-1.md"
+git -C "$R" add -A
+run_guard RATCHET_RAISE=
+[ "$RC" -ne 0 ] && case "$OUT" in *"changelog.d/fixed/ken-1.md entries run past three lines"*"line 1: 4 lines"*) true ;; *) false ;; esac \
+  && ok "an over-long fragment fails, naming the fragment and its count" \
+  || bad "an over-long fragment fails, naming the fragment and its count" "rc=$RC out=$OUT"
+printf -- '- A three-line fragment\n  second line\n  third line.\n' >"$R/changelog.d/fixed/ken-1.md"
+git -C "$R" add -A
+run_guard RATCHET_RAISE=
+[ "$RC" -eq 0 ] && ok "a three-line fragment passes" \
+  || bad "a three-line fragment passes" "rc=$RC out=$OUT"
+
+echo "=== a fragment is filed where the collator looks for it ==="
+printf -- '- Stray.\n' >"$R/changelog.d/loose.md"
+mkdir -p "$R/changelog.d/bogus"
+printf -- '- Wrong section.\n' >"$R/changelog.d/bogus/ken-2.md"
+git -C "$R" add -A
+run_guard RATCHET_RAISE=
+[ "$RC" -ne 0 ] && case "$OUT" in *"changelog.d/loose.md is not a changelog fragment"*) true ;; *) false ;; esac \
+  && ok "a fragment outside a section directory fails, naming it" \
+  || bad "a fragment outside a section directory fails, naming it" "rc=$RC out=$OUT"
+case "$OUT" in *"changelog.d/bogus/ken-2.md is not a changelog fragment"*) ok "an unknown section directory fails, naming it" ;;
+  *) bad "an unknown section directory fails, naming it" "$OUT" ;; esac
+rm -f "$R/changelog.d/loose.md"
+rm -rf "${R:?}/changelog.d/bogus"
+printf 'Not a list item.\n' >"$R/changelog.d/fixed/ken-3.md"
+git -C "$R" add -A
+run_guard RATCHET_RAISE=
+[ "$RC" -ne 0 ] && case "$OUT" in *"changelog.d/fixed/ken-3.md is not the list item it becomes"*) true ;; *) false ;; esac \
+  && ok "a fragment that opens with prose fails, naming it" \
+  || bad "a fragment that opens with prose fails, naming it" "rc=$RC out=$OUT"
+rm -f "$R/changelog.d/fixed/ken-3.md"
+if [ "$(id -u)" -ne 0 ]; then
+  chmod 000 "$R/changelog.d/fixed/ken-1.md"
+  run_guard RATCHET_RAISE=
+  chmod 644 "$R/changelog.d/fixed/ken-1.md"
+  [ "$RC" -ne 0 ] && case "$OUT" in *"changelog.d/fixed/ken-1.md is unreadable — the fragment shape check could not run"*) true ;; *) false ;; esac \
+    && ok "an unreadable fragment fails closed, naming the check that could not run" \
+    || bad "an unreadable fragment fails closed, naming the check that could not run" "rc=$RC out=$OUT"
+  case "$OUT" in *"changelog.d/fixed/ken-1.md is unreadable — the entry-length check could not run"*) ok "the entry-length check reports it too" ;;
+    *) bad "the entry-length check reports it too" "$OUT" ;; esac
+fi
+printf '# changelog.d\n\nNot a list item either.\n' >"$R/changelog.d/README.md"
+git -C "$R" add -A
+run_guard RATCHET_RAISE=
+[ "$RC" -eq 0 ] && ok "the README is not judged as a fragment" \
+  || bad "the README is not judged as a fragment" "rc=$RC out=$OUT"
+
+echo "=== the [Unreleased] list is the collator's to write ==="
+git -C "$R" commit -q -m "chore: land the changelog"
+printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- A three-line entry\n  second line\n  third line.\n- One line.\n- A hand-written line.\n' >"$R/CHANGELOG.md"
+git -C "$R" add -A
+run_guard RATCHET_RAISE=
+[ "$RC" -ne 0 ] && case "$OUT" in *"gained lines under [Unreleased]"*"- A hand-written line."*) true ;; *) false ;; esac \
+  && ok "a hand-written [Unreleased] line fails, quoting the line" \
+  || bad "a hand-written [Unreleased] line fails, quoting the line" "rc=$RC out=$OUT"
+run_guard RATCHET_RAISE= CHANGELOG_COLLATE=1
+[ "$RC" -eq 0 ] && ok "CHANGELOG_COLLATE=1 declares the collator's write" \
+  || bad "CHANGELOG_COLLATE=1 declares the collator's write" "rc=$RC out=$OUT"
+printf '# Changelog\n\n## [Unreleased]\n\n## [1.0.0] - 2026-01-01\n\n### Fixed\n\n- A three-line entry\n  second line\n  third line.\n- One line.\n' >"$R/CHANGELOG.md"
+git -C "$R" add -A
+run_guard RATCHET_RAISE=
+[ "$RC" -eq 0 ] && ok "rotating [Unreleased] into a released version adds no line" \
+  || bad "rotating [Unreleased] into a released version adds no line" "rc=$RC out=$OUT"
+if [ "$(id -u)" -ne 0 ]; then
+  chmod 000 "$R/CHANGELOG.md"
+  run_guard RATCHET_RAISE=
+  chmod 644 "$R/CHANGELOG.md"
+  [ "$RC" -ne 0 ] && case "$OUT" in *"could not be compared against HEAD"*) true ;; *) false ;; esac \
+    && ok "an unreadable CHANGELOG fails the [Unreleased] rule closed too" \
+    || bad "an unreadable CHANGELOG fails the [Unreleased] rule closed too" "rc=$RC out=$OUT"
 fi
 
 echo "=== a test row RATCHET_RAISE declares is still refused by the ratchet ==="

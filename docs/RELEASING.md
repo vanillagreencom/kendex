@@ -58,6 +58,21 @@ deb/rpm anywhere; the AppImage step needs FUSE2 for linuxdeploy and may
 fail on non-Debian hosts — the release runner covers it. Bundling signs
 updater artifacts, so set `TAURI_SIGNING_PRIVATE_KEY` or pass `--no-sign`.
 
+## Changelog
+
+Entries are written one file at a time, under
+`changelog.d/<section>/<name>.md` (`changelog.d/README.md` has the format).
+Nothing edits `CHANGELOG.md` by hand: `tools/guard` refuses a line under
+`## [Unreleased]` that HEAD does not already carry.
+
+Before tagging, run `tools/changelog-collate`. It folds every fragment into
+`## [Unreleased]` under its section heading, in Keep a Changelog order and
+filename order within a section, then deletes the fragments; no fragments is
+a no-op, and it replaces `CHANGELOG.md` whole or not at all (exit 2). Rename
+`## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, open a fresh empty one, and
+run the guard and the release commit under `CHANGELOG_COLLATE=1` — the flag
+releases the `[Unreleased]` rule for the collator's write.
+
 ## Version bumps
 
 The workspace version in `Cargo.toml` and `crates/app/tauri.conf.json`

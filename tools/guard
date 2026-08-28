@@ -57,11 +57,12 @@ $(printf '%s\n' "$hits" | head -5 | sed 's/^/  /')"
 done <<<"$prose_files"
 
 # CHANGELOG entries are for consumers: one outcome each, one to three
-# source lines, a Breaking migration inline. Longer is an essay.
-if [ -f CHANGELOG.md ]; then
-  # An entry is every line from its list marker to the next marker, heading,
-  # or blank-then-unindented paragraph, whatever the indentation.
-  if long_entries=$(awk '
+# source lines, a Breaking migration inline. Longer is an essay. A
+# changelog.d fragment is one such entry, so the same rule judges it.
+# An entry is every line from its list marker to the next marker, heading,
+# or blank-then-unindented paragraph, whatever the indentation.
+long_entries() { # FILE — "  line N: M lines" per entry past three
+  awk '
     function flush() { if (n > 3) printf "  line %d: %d lines\n", start, n; n = 0; blank = 0 }
     { sub(/\r$/, "") }
     /^[-*+] / { flush(); n = 1; start = NR; next }
@@ -69,11 +70,51 @@ if [ -f CHANGELOG.md ]; then
     /^[ \t]*$/ { if (n) blank++; next }
     /^[ \t]/ || !blank { if (n) { n += blank + 1; blank = 0 }; next }
     { flush() }
-    END { flush() }' CHANGELOG.md 2>/dev/null); then
-    [ -n "$long_entries" ] && say "CHANGELOG.md entries run past three lines — state the outcome, keep the story out:
-$long_entries"
+    END { flush() }' "$1" 2>/dev/null
+}
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  if long=$(long_entries "$f"); then
+    [ -n "$long" ] && say "$f entries run past three lines — state the outcome, keep the story out:
+$long"
   else
-    say "CHANGELOG.md is unreadable — the entry-length check could not run"
+    say "$f is unreadable — the entry-length check could not run"
+  fi
+done < <({ echo CHANGELOG.md; printf '%s\n' "$files" | grep -E '^changelog\.d/[^/]+/[^/]+\.md$'; })
+
+# An entry is a file: changelog.d/<section>/<name>.md holding the Markdown
+# list item it becomes. The collator looks nowhere else, so a fragment filed
+# anywhere else is an entry that ships nothing.
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  [ -f "$f" ] || continue
+  [ "$f" = changelog.d/README.md ] && continue
+  if [[ ! "$f" =~ ^changelog\.d/(added|changed|deprecated|removed|fixed|security)/[^/]+\.md$ ]]; then
+    say "$f is not a changelog fragment — name it changelog.d/<section>/<name>.md, section one of: added changed deprecated removed fixed security"
+    continue
+  fi
+  first=$(sed -n '/[^[:space:]]/{p;q;}' "$f" 2>/dev/null) || {
+    say "$f is unreadable — the fragment shape check could not run"
+    continue
+  }
+  case "$first" in
+    [-*+]\ *) : ;;
+    *) say "$f is not the list item it becomes — a fragment opens with '- ', continuation lines indented" ;;
+  esac
+done < <(printf '%s\n' "$files" | grep -E '^changelog\.d/')
+
+# Two branches that both write CHANGELOG.md's [Unreleased] list insert at the
+# same line, and the merge queue ejects the trailing one. Entries go to
+# changelog.d instead. CHANGELOG_COLLATE=1 is the release commit saying the
+# new lines are the collator's, the way RATCHET_RAISE=1 declares a baseline.
+if [ "${CHANGELOG_COLLATE:-}" != "1" ] && [ -f CHANGELOG.md ] && git cat-file -e HEAD:CHANGELOG.md 2>/dev/null; then
+  unreleased() { awk '/^## / { seen = ($0 ~ /^## \[Unreleased\]/); next } seen && NF'; }
+  if head_ur=$(git show HEAD:CHANGELOG.md | unreleased) && work_ur=$(unreleased <CHANGELOG.md); then
+    added=$(comm -13 <(printf '%s\n' "$head_ur" | LC_ALL=C sort -u) <(printf '%s\n' "$work_ur" | LC_ALL=C sort -u))
+    [ -n "$added" ] && say "CHANGELOG.md gained lines under [Unreleased] — write changelog.d/<section>/<name>.md instead; tools/changelog-collate folds it in at release:
+$(printf '%s\n' "$added" | head -5 | sed 's/^/  /')"
+  else
+    say "CHANGELOG.md could not be compared against HEAD — the [Unreleased] rule could not run"
   fi
 fi
 

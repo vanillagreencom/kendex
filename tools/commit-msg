@@ -64,12 +64,13 @@ gg_git_generated_header "$subject" ||
   [ "${#subject}" -le 72 ] ||
   say "subject is ${#subject} characters (max 72) — move the detail into the body"
 
-# Code changes ship with a changelog entry; [no-changelog] is the escape
-# hatch for pure refactors.
+# Code changes ship with a changelog entry: a changelog.d fragment, or
+# CHANGELOG.md itself on the release commit that collates them.
+# [no-changelog] is the escape hatch for pure refactors.
 if echo "$staged" | grep -qE '^(crates|ui)/' &&
-  ! echo "$staged" | grep -qx 'CHANGELOG.md' &&
+  ! echo "$staged" | grep -qE '^(CHANGELOG\.md$|changelog\.d/[^/]+/[^/]+\.md$)' &&
   ! printf '%s' "$subject" | grep -qF '[no-changelog]'; then
-  say "crates/ or ui/ changed without a CHANGELOG.md entry — add one or put [no-changelog] in the subject"
+  say "crates/ or ui/ changed without a changelog entry — add changelog.d/<section>/<name>.md or put [no-changelog] in the subject"
 fi
 
 exit $fail

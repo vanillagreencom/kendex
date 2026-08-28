@@ -9,9 +9,12 @@ summary: "Releases a kendex version: bumps versions, finalizes the changelog, ta
 1. Bump the workspace `version` in `Cargo.toml` and the version in
    `crates/app/tauri.conf.json` — both must equal the tag minus the `v`,
    or the update feed no-ops or loops.
-2. In `CHANGELOG.md`, move the `Unreleased` entries under a new
+2. Run `tools/changelog-collate` to fold the `changelog.d` fragments into
+   `CHANGELOG.md`'s `Unreleased`, then move those entries under a new
    `## [<version>] - <date>` heading; confirm every breaking change
-   carries its **Breaking** call-out and migration note.
+   carries its **Breaking** call-out and migration note. Run `tools/guard`
+   and the commit under `CHANGELOG_COLLATE=1`, which releases the rule that
+   refuses `Unreleased` lines no fragment produced.
 3. Commit, tag `v<version>`, push the tag. CI builds each target and
    publishes a draft GitHub Release with CLI binaries, app bundles, and
    `feed.json` (details: `docs/RELEASING.md`).
