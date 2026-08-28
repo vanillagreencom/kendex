@@ -96,20 +96,27 @@ Once per re-vendor train, on ONE consumer PR, collect upstream-remedy findings
 from BOTH surfaces: the review bodies, AND EVERY vendored-path thread a
 location-bound reviewer left.
 
-`kendex report --skill review-gate --title [TITLE] --body-file [PATH]` routes
-the report upstream. The command is non-interactive: `--title` is required,
-and exactly one of `--body` or `--body-file` must be given — with neither (or
-both) it exits without filing. Two further preconditions, each silent when
-unmet:
+`kendex report --title [TITLE] --body-file [PATH]` files the report. The
+command is non-interactive: `--title` is required, and exactly one of `--body`
+or `--body-file` must be given — with neither (or both) it exits without
+filing. `--dry-run` prints the route it would take. Where the route lands,
+verified against `crates/core/src/report.rs`:
 
-- **The selector is required.** With no `--skill`/`--agent`/`--hook`/`--asset`,
-  the CLI warns once that ownership could not be determined and files against
-  the LOCAL repo.
-- **For a skill, only the installed `SKILL.md` frontmatter decides.** Routing
-  needs the vendored `SKILL.md` present at the install path and carrying
-  `source: kendex` (or the upstream `repository` slug). A repo that vendored
-  only the scripts subtree files locally. Check before relying on it, or open
-  the upstream issue by hand.
+- **`--agent`, `--hook`, and a `--asset` naming either** route on the lock
+  entry's `source_repo`. That is the working path upstream.
+- **`--skill` and a `--asset` naming a skill route to the LOCAL repo.** Skill
+  ownership is read from the installed `SKILL.md` frontmatter alone, and it
+  accepts exactly two values: `source: kendex`, or a `repository:` equal to
+  the built-in `vanillagreencom/kendex` — never what `--upstream` names, which
+  only the lock branch compares against. Neither can match: the reader takes
+  `source:` and `repository:` only at column zero, where a kendex skill nests
+  both under `metadata:`, and renders `repository:` as a URL rather than the
+  slug. Open the upstream issue by hand, or report it under the agent or hook
+  that carries the skill.
+- **With no selector** the CLI warns once that ownership could not be
+  determined and files against the LOCAL repo.
+
+Confirm with `--dry-run` before relying on any of it.
 
 Do not fix it locally, and do not file the same finding from each consumer.
 

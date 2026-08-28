@@ -39,7 +39,7 @@ an outside contributor.
   in or Sign in again as the credential needs. Clicking opens Settings.
 - The review-gate skill ships a reviewer instruction for the harness trees a
   repo commits as `kendex refresh` output: a finding over the render goes to
-  `kendex report`, never to a merge-blocking thread the repo cannot act on.
+  the catalog repo, never to a merge-blocking thread the repo cannot act on.
 
 ### Changed
 
