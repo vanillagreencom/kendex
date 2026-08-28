@@ -215,7 +215,11 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
 
   loadSubmissions: async () => {
     if (!hasCredential(get().account)) return;
+    const before = handover;
     const rows = await commands.mineSubmissions();
+    // Rows belong to the account they were asked for. One that changed
+    // hands while they were coming has none of them.
+    if (before !== handover) return;
     if (rows.status === "ok") set({ submissions: rows.data });
   },
 }));

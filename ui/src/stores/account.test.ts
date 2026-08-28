@@ -287,6 +287,22 @@ describe("a read racing a deliberate change", () => {
     expect(account()).toEqual({ kind: "signed-out" });
   });
 
+  it("drops rows that arrive after the account changed hands", async () => {
+    useAccountStore.setState({
+      account: { kind: "signed-in", identity: ADA },
+      submissions: [],
+    });
+    logsOut();
+    vi.mocked(commands.mineSubmissions).mockImplementation(async () => {
+      await useAccountStore.getState().signOut();
+      return { status: "ok", data: [] } as Awaited<
+        ReturnType<typeof commands.mineSubmissions>
+      >;
+    });
+    await useAccountStore.getState().loadSubmissions();
+    expect(useAccountStore.getState().submissions).toBeNull();
+  });
+
   // Signing out drops the rows; a read that finds the credential gone has
   // to leave the same thing behind, or someone else's stay on screen.
   it("drops the submissions when a read finds the credential gone", async () => {
