@@ -5,8 +5,8 @@ use kendex_core::env::Env;
 use kendex_core::install_channel::{Host, HostProbe, InstallChannel, for_cli};
 use kendex_core::process::Hardened;
 use kendex_core::update_feed::{
-    RELEASE_FEED_URL, ReleaseFeed, VersionRelation, app_image_url, release_notes_url,
-    verify_app_image,
+    RELEASE_FEED_URL, ReleaseFeed, UPDATER_PUBLIC_KEY, VersionRelation, app_image_signature_url,
+    app_image_url, release_notes_url, verify_signature,
 };
 
 use super::{CliResult, out, say};
@@ -136,7 +136,11 @@ fn update_app(env: &Env, latest: &str) -> Result<bool, Box<dyn std::error::Error
     // Only the Linux AppImage is an install this command made. Every other
     // platform's app arrives and updates by its own route, and the CLI says
     // nothing about one it did not put there.
-    let Some(url) = app_image_url(latest, target_triple())? else {
+    let target = target_triple();
+    let (Some(url), Some(signature_url)) = (
+        app_image_url(latest, target)?,
+        app_image_signature_url(latest, target)?,
+    ) else {
         return Ok(false);
     };
     let path = env.app_image_file();
@@ -145,9 +149,9 @@ fn update_app(env: &Env, latest: &str) -> Result<bool, Box<dyn std::error::Error
         return Ok(false);
     }
     if !Host.replaceable(&path) {
-        return Err(format!(
-            "the desktop app at {} cannot be replaced, because that directory refuses writes; nothing was updated, so kendex update will try both halves again",
-            path.display()
+        return Err(app_refused(
+            latest,
+            &format!("the directory holding {} refuses writes", path.display()),
         )
         .into());
     }
@@ -156,22 +160,27 @@ fn update_app(env: &Env, latest: &str) -> Result<bool, Box<dyn std::error::Error
     // The release job publishes each AppImage beside a minisign signature
     // over exactly those bytes. One that arrives without a signature, or
     // with one that does not check out, is refused rather than installed.
-    let signature = fetch(&format!("{url}.sig")).map_err(|why| app_refused(latest, &why))?;
-    install_app_image(&path, &image, &signature).map_err(|why| app_refused(latest, &why))?;
+    let signature = fetch(&signature_url).map_err(|why| app_refused(latest, &why))?;
+    install_app_image(&path, &image, &signature, UPDATER_PUBLIC_KEY)
+        .map_err(|why| app_refused(latest, &why))?;
     out(&format!("updated the desktop app to {latest}"));
     Ok(true)
 }
 
-/// Write the app only once its signature checks out, so a download that
-/// fails verification never reaches the installed path.
-fn install_app_image(path: &Path, image: &[u8], signature: &[u8]) -> Result<(), String> {
-    verify_app_image(image, signature).map_err(|error| error.to_string())?;
+/// Write the app only once `signature` checks out under `public_key`, so a
+/// download that fails verification never reaches the installed path.
+fn install_app_image(
+    path: &Path,
+    image: &[u8],
+    signature: &[u8],
+    public_key: &str,
+) -> Result<(), String> {
+    verify_signature(public_key, image, signature).map_err(|error| error.to_string())?;
     replace_executable(path, image).map_err(|error| error.to_string())
 }
 
-/// What to say when the app half refused before it wrote anything. Same
-/// shape as the unwritable-directory branch: the reason, then what the next
-/// run does with it.
+/// The one sentence both app-half refusals say: the reason, then what the
+/// next run does with it.
 fn app_refused(latest: &str, why: &str) -> String {
     format!(
         "the desktop app was not brought to {latest}: {why}; nothing was updated, so kendex update will try both halves again"
@@ -183,13 +192,26 @@ fn app_refused(latest: &str, why: &str) -> String {
 /// OS allows on a running file.
 fn replace_executable(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let staged = staged_path(path);
-    std::fs::write(&staged, bytes)?;
+    match stage(&staged, bytes).and_then(|()| std::fs::rename(&staged, path)) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            // Nobody else writes a file named for this process, so a run
+            // that failed takes its own away instead of leaving one behind
+            // per process id.
+            let _ = std::fs::remove_file(&staged);
+            Err(error)
+        }
+    }
+}
+
+fn stage(staged: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    std::fs::write(staged, bytes)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))?;
+        std::fs::set_permissions(staged, std::fs::Permissions::from_mode(0o755))?;
     }
-    std::fs::rename(&staged, path)
+    Ok(())
 }
 
 fn missing_asset_message(
@@ -214,12 +236,15 @@ fn missing_asset_message(
     })
 }
 
+/// The process id keeps two concurrent runs off one staged file. Without
+/// it they share a name, and what the rename installs is whatever the other
+/// run last wrote there rather than the bytes this one verified.
 fn staged_path(current: &std::path::Path) -> PathBuf {
     let mut name = current
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "kendex".to_owned());
-    name.push_str(".update");
+    name.push_str(&format!(".update.{}", std::process::id()));
     current.with_file_name(name)
 }
 
@@ -262,21 +287,99 @@ mod tests {
         assert!(!neither.contains("desktop app"), "{neither}");
     }
 
-    /// Verification decides whether the download is ever written: an app
-    /// image whose signature does not check out leaves the installed one
-    /// exactly as it was, with no staged file beside it either.
+    /// A throwaway minisign keypair signing `SIGNED_IMAGE`, so the admitted
+    /// arm runs the real check rather than a stub standing in for it.
+    const TEST_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk0QUI0NzI3RTVDMTVCODEKUldTQlc4SGxKMGVybEhxeFovbTJ3U1phMng4aE9VTXByV09pUVRFVFNKbFZ5aWxtUTAvVGgyWEwK";
+    const TEST_SIGNATURE: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHJzaWduIHNlY3JldCBrZXkKUlVTQlc4SGxKMGVybElTMUxrbkMyQ0tBWGlnejY1S0xLekovK0tBYllNdkdJTVU0bitTSjRBSCt1RlpwWnZkRHNKcWFTSHVoeStIQkpyVDlOaVRIMmROWVVSb21mMVBVRmd3PQp0cnVzdGVkIGNvbW1lbnQ6IGtlbmRleCB0ZXN0CnpKSnpYYnBtODZYRW40eHgxSTVkeG5YdktxT0k5ZXdmSkEyMkdtZXpreGgwbUNJZysybkJ2cGowUXZ6N2c3RHA4TEZBVXVBQUVMRExuUzFuaVpsaUF3PT0K";
+    const SIGNED_IMAGE: &[u8] = b"kendex AppImage bytes";
+
+    /// A path with something already installed at it, so every arm can say
+    /// whether the bytes there moved.
+    fn installed_app(dir: &tempfile::TempDir) -> PathBuf {
+        let path = dir.path().join("kendex.AppImage");
+        std::fs::write(&path, b"the app already here").unwrap();
+        path
+    }
+
+    /// The admitted arm: a signature that checks out puts the download in
+    /// place and leaves no staged file behind.
+    #[test]
+    fn an_app_image_whose_signature_checks_out_is_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let installed = installed_app(&dir);
+
+        install_app_image(
+            &installed,
+            SIGNED_IMAGE,
+            TEST_SIGNATURE.as_bytes(),
+            TEST_KEY,
+        )
+        .unwrap();
+
+        assert_eq!(std::fs::read(&installed).unwrap(), SIGNED_IMAGE);
+        assert!(!staged_path(&installed).exists());
+    }
+
+    /// The refused arm, driven by both shapes a bad download takes: bytes
+    /// the signature does not cover, and a body that is no signature at
+    /// all. Either way the installed app is exactly as it was.
     #[test]
     fn an_app_image_that_fails_verification_is_never_written() {
         let dir = tempfile::tempdir().unwrap();
-        let installed = dir.path().join("kendex.AppImage");
-        std::fs::write(&installed, b"the app already here").unwrap();
+        let installed = installed_app(&dir);
 
-        let error =
-            install_app_image(&installed, b"a replacement", b"not a signature").unwrap_err();
+        let tampered =
+            install_app_image(&installed, b"tampered", TEST_SIGNATURE.as_bytes(), TEST_KEY)
+                .unwrap_err();
+        assert!(
+            tampered.contains("signature verification failed"),
+            "{tampered}"
+        );
 
-        assert!(error.contains("does not verify"), "{error}");
+        let malformed =
+            install_app_image(&installed, SIGNED_IMAGE, b"not a signature", TEST_KEY).unwrap_err();
+        assert!(malformed.contains("not base64"), "{malformed}");
+
         assert_eq!(std::fs::read(&installed).unwrap(), b"the app already here");
         assert!(!staged_path(&installed).exists());
+    }
+
+    /// Two runs sharing one staged path would each rename the other's bytes
+    /// into place, so the name carries the process id. It stays a sibling
+    /// of the target, since a rename cannot cross filesystems.
+    #[test]
+    fn the_staged_file_is_a_sibling_named_for_this_process() {
+        let target = Path::new("/opt/kendex/kendex.AppImage");
+        let staged = staged_path(target);
+        assert_eq!(staged.parent(), target.parent());
+        let suffix = format!(".update.{}", std::process::id());
+        assert!(
+            staged.to_string_lossy().ends_with(&suffix),
+            "{}",
+            staged.display()
+        );
+    }
+
+    /// A run whose rename cannot land takes its own staged file away, or
+    /// the directory collects one per process id that ever tried.
+    #[test]
+    fn a_replacement_that_cannot_land_leaves_no_staged_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("kendex.AppImage");
+        std::fs::create_dir(&target).unwrap();
+
+        assert!(replace_executable(&target, b"bytes").is_err());
+        assert!(!staged_path(&target).exists());
+    }
+
+    /// Both app-half refusals promise the same thing, so the sentence is
+    /// asserted where it is written rather than at each caller.
+    #[test]
+    fn a_refused_app_half_names_the_release_the_reason_and_the_retry() {
+        let said = app_refused("5.1.0", "the directory holding /opt/kendex refuses writes");
+        assert!(said.contains("5.1.0"), "{said}");
+        assert!(said.contains("refuses writes"), "{said}");
+        assert!(said.contains("nothing was updated"), "{said}");
     }
 
     #[test]

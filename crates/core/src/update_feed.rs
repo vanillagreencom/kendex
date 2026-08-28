@@ -145,26 +145,30 @@ pub fn app_image_url(version: &str, target: &str) -> Result<Option<String>> {
     )))
 }
 
-/// Refuse an AppImage that is not the one this release signed. `signature`
-/// is the body of the `<artifact>.AppImage.sig` the release job publishes
-/// beside every AppImage — base64 over a minisign signature file, the same
-/// bytes the app's updater manifest carries inline.
-pub fn verify_app_image(image: &[u8], signature: &[u8]) -> Result<()> {
-    verify_minisign(UPDATER_PUBLIC_KEY, image, signature)
+/// The minisign signature published beside that AppImage. The release job
+/// stages every `<artifact>.sig` tauri produces into the same release, so
+/// the name is the artifact's own with the suffix appended.
+pub fn app_image_signature_url(version: &str, target: &str) -> Result<Option<String>> {
+    Ok(app_image_url(version, target)?.map(|url| format!("{url}.sig")))
 }
 
-/// The key is a parameter so a test can hold a signature it made itself;
-/// every caller passes the pinned key.
-fn verify_minisign(public_key_base64: &str, data: &[u8], signature: &[u8]) -> Result<()> {
-    let key_text = decode_base64("the pinned public key", public_key_base64.as_bytes())?;
+/// Refuse a download that `signature` does not cover under
+/// `public_key_base64`. Both are base64 over a minisign file, the shape
+/// `tauri.conf.json` pins its key in and the release job publishes each
+/// `<artifact>.sig` in. Callers installing a release pass
+/// `UPDATER_PUBLIC_KEY`; the key is an argument so a test can hold a
+/// signature it made itself.
+pub fn verify_signature(public_key_base64: &str, data: &[u8], signature: &[u8]) -> Result<()> {
+    let key_text = decode_base64("the public key", public_key_base64.as_bytes())?;
     let key = PublicKey::decode(&key_text)
-        .map_err(|error| refused(format!("the pinned public key is not minisign: {error}")))?;
+        .map_err(|error| refused(format!("the public key is not minisign: {error}")))?;
     let signature_text = decode_base64("the signature", signature)?;
     let signature = Signature::decode(&signature_text)
         .map_err(|error| refused(format!("the signature is not minisign: {error}")))?;
     // Legacy signatures are accepted because the app's updater accepts them
-    // under this same key; a narrower rule here would put one artifact
-    // behind two bars again, which is what this shares a key to avoid.
+    // under this same key: tauri-plugin-updater 2.10.1 src/updater.rs:1461
+    // passes true here. A narrower rule would put one artifact behind two
+    // bars again, which is what sharing the key avoids.
     key.verify(data, &signature, true)
         .map_err(|error| refused(error.to_string()))
 }
@@ -221,9 +225,9 @@ mod tests {
 
     #[test]
     fn a_signature_over_these_bytes_verifies_and_one_over_any_other_does_not() {
-        assert!(verify_minisign(TEST_KEY, SIGNED_IMAGE, TEST_SIGNATURE.as_bytes()).is_ok());
+        assert!(verify_signature(TEST_KEY, SIGNED_IMAGE, TEST_SIGNATURE.as_bytes()).is_ok());
         assert!(
-            verify_minisign(TEST_KEY, b"tampered AppImage", TEST_SIGNATURE.as_bytes()).is_err()
+            verify_signature(TEST_KEY, b"tampered AppImage", TEST_SIGNATURE.as_bytes()).is_err()
         );
     }
 
@@ -232,7 +236,7 @@ mod tests {
     #[test]
     fn a_signature_that_is_absent_or_malformed_is_refused() {
         for body in [b"".as_slice(), b"not base64 !!", TEST_KEY.as_bytes()] {
-            assert!(verify_minisign(TEST_KEY, SIGNED_IMAGE, body).is_err());
+            assert!(verify_signature(TEST_KEY, SIGNED_IMAGE, body).is_err());
         }
     }
 
@@ -241,7 +245,7 @@ mod tests {
     /// this build could not read in the first place.
     #[test]
     fn the_pinned_key_is_the_one_a_download_is_held_to() {
-        let error = verify_app_image(SIGNED_IMAGE, TEST_SIGNATURE.as_bytes())
+        let error = verify_signature(UPDATER_PUBLIC_KEY, SIGNED_IMAGE, TEST_SIGNATURE.as_bytes())
             .unwrap_err()
             .to_string();
         assert!(error.contains("created with a different key"), "{error}");
@@ -292,6 +296,21 @@ mod tests {
                 .relation_to("5.0.1")
                 .unwrap(),
             VersionRelation::Older
+        );
+    }
+
+    #[test]
+    fn the_signature_url_is_the_app_image_url_with_the_published_suffix() {
+        assert_eq!(
+            app_image_signature_url("5.1.0", "x86_64-unknown-linux-gnu").unwrap(),
+            Some(
+                "https://github.com/vanillagreencom/kendex/releases/download/v5.1.0/kendex_5.1.0_amd64.AppImage.sig"
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            app_image_signature_url("5.1.0", "aarch64-apple-darwin").unwrap(),
+            None
         );
     }
 
