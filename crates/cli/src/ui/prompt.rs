@@ -9,6 +9,8 @@
 
 use std::io::Write;
 
+use kendex_core::names::shown;
+
 use super::{Mode, mode};
 
 /// Ask. The caller has already established there is somebody to ask: a
@@ -23,7 +25,9 @@ pub fn confirm(question: &str) -> std::io::Result<bool> {
     // question asked over an undrawn block is asked about the block
     // before it, and the answer decides a write.
     super::flush();
-    let asked = format!("{question} [y/N]");
+    // The same escaping every other human line gets: a question naming
+    // packages read off a catalog is asked on the same terminal.
+    let asked = format!("{} [y/N]", shown(question));
     let answer = match mode() {
         Mode::Pretty => cliclack::input(asked)
             .default_input("N")
@@ -62,7 +66,7 @@ pub fn spinner(label: &str) -> Task {
         return Task(None);
     }
     let bar = cliclack::spinner();
-    bar.start(label);
+    bar.start(shown(label));
     Task(Some(bar))
 }
 

@@ -56,7 +56,7 @@ fn planned_block() -> Vec<&'static str> {
         "  [finding]",
         "conflict: skill growth-guards for Claude Code, Codex: <project>/.claude/skills/growth-guards already holds files kendex did not write",
         "  also at <project>/.agents/skills/growth-guards",
-        "  differs from the catalog in 2 files: SKILL.md, references/rules.md (it carries a source: vstack stamp)",
+        "  differs from the catalog in 2 files: SKILL.md, references/rules.md",
         "  to keep those files: kendex adopt skill growth-guards --harness claude --harness codex",
         "  to install what kendex.toml asks for instead: kendex apply --replace-unmanaged",
     ]
@@ -160,27 +160,30 @@ fn remove() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_name_carrying_a_control_character_is_inert_in_both_renderings() {
-    for ui in ["plain", "pretty"] {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = tmp.path();
-        // The item name cannot carry one — names refuse them — so the
-        // directory the project sits in is where one reaches a line.
-        let project = home.join("we\u{1b}[31mird");
-        blocked_project_at(home, &project);
-        let printed = said(&kendex(
-            home,
-            &project,
-            ui,
-            &["refresh", "-y", "--scope", "project"],
-        ));
-        assert!(
-            printed.contains("we\\u{1b}[31mird"),
-            "the place was not printed as what it is ({ui}): {printed}"
-        );
-        assert!(
-            !printed.contains('\u{1b}'),
-            "a control character reached the terminal ({ui}): {printed:?}"
-        );
+    // Every printer, not one of them: the escaping is the `ui` module's
+    // and no call site repeats it, so a verb reaching a different one of
+    // its functions has to come out the same way.
+    for args in [
+        &["refresh", "-y", "--scope", "project"][..],
+        &["apply", "--plan", "--scope", "project"][..],
+    ] {
+        for ui in ["plain", "pretty"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let home = tmp.path();
+            // The item name cannot carry one — names refuse them — so the
+            // directory the project sits in is where one reaches a line.
+            let project = home.join("we\u{1b}[31mird");
+            blocked_project_at(home, &project);
+            let printed = said(&kendex(home, &project, ui, args));
+            assert!(
+                printed.contains("we\\u{1b}[31mird"),
+                "the place was not printed as what it is ({args:?}, {ui}): {printed}"
+            );
+            assert!(
+                !printed.contains('\u{1b}'),
+                "a control character reached the terminal ({args:?}, {ui}): {printed:?}"
+            );
+        }
     }
 }
 

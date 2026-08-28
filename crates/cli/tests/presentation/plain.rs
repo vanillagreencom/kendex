@@ -43,7 +43,7 @@ fn the_blocked_refresh_prints_the_lines_scripts_parse() {
             "  [finding]",
             "conflict: skill growth-guards for Claude Code, Codex: <project>/.claude/skills/growth-guards already holds files kendex did not write",
             "  also at <project>/.agents/skills/growth-guards",
-            "  differs from the catalog in 2 files: SKILL.md, references/rules.md (it carries a source: vstack stamp)",
+            "  differs from the catalog in 2 files: SKILL.md, references/rules.md",
             "  to keep those files: kendex adopt skill growth-guards --harness claude --harness codex",
             "  to install what kendex.toml asks for instead: kendex apply --replace-unmanaged",
             "<project>: this changes what is installed",

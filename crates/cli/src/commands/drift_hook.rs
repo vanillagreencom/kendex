@@ -3,7 +3,7 @@ use kendex_core::env::Env;
 use kendex_core::model::Scope;
 
 use super::engine_common::{confirm_and_execute, print_safety};
-use super::{CliResult, resolve_scopes, say, scope_label};
+use super::{CliResult, resolve_scopes, say};
 use crate::scope::ScopeFilter;
 
 pub fn run(env: &Env, filter: ScopeFilter, yes: bool) -> CliResult {
@@ -22,10 +22,10 @@ pub fn install(env: &Env, scope: &Scope, yes: bool) -> CliResult {
     if plan.is_empty() {
         say(&format!(
             "{}: drift hook already declared and current",
-            scope_label(scope)
+            scope.label()
         ));
     } else {
-        say(&format!("{}: declaring the drift hook", scope_label(scope)));
+        say(&format!("{}: declaring the drift hook", scope.label()));
         for op in &plan.ops {
             say(&format!("  - {}", op.description));
         }
@@ -54,6 +54,6 @@ pub fn install(env: &Env, scope: &Scope, yes: bool) -> CliResult {
         print_safety(&report);
         confirm_and_execute(env, &report, yes)?;
     }
-    say(&format!("{}: drift hook installed", scope_label(scope)));
+    say(&format!("{}: drift hook installed", scope.label()));
     Ok(())
 }

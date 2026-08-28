@@ -7,7 +7,7 @@ use super::engine_common::{
     refresh_failures,
 };
 use super::ledger::{Wrote, say_ledger};
-use super::{CliResult, resolve_scopes, say, scope_label, warn};
+use super::{CliResult, resolve_scopes, say, warn};
 use crate::scope::ScopeFilter;
 use crate::ui;
 
@@ -42,7 +42,7 @@ fn print_set_changes(
 ) {
     say(&format!(
         "{}: this changes what is installed",
-        scope_label(scope)
+        scope.label()
     ));
     for change in &report.set_changes {
         let verb = match change.direction {
@@ -52,9 +52,9 @@ fn print_set_changes(
         say(&format!(
             "  - {verb} {} {} for {} — {}",
             change.kind.name(),
-            kendex_core::names::shown(&change.name),
+            change.name,
             change.harness.display_name(),
-            kendex_core::names::shown(&change.reason)
+            change.reason
         ));
     }
 }
@@ -92,7 +92,7 @@ pub fn run(
             // An unreachable catalog is reported, not fatal: what came from
             // every other catalog still refreshes.
             let notes = {
-                let _reading = ui::spinner(&format!("reading sources for {}", scope_label(&scope)));
+                let _reading = ui::spinner(&format!("reading sources for {}", scope.label()));
                 kendex_core::remote::sync_declared_sources(env, &manifest)
             };
             for note in notes {
@@ -105,7 +105,7 @@ pub fn run(
             ..PlanOptions::default()
         };
         let planned = {
-            let _planning = ui::spinner(&format!("planning {}", scope_label(&scope)));
+            let _planning = ui::spinner(&format!("planning {}", scope.label()));
             plan_apply(env, &scope, &options)
         };
         let report = match planned {
@@ -138,16 +138,21 @@ pub fn run(
         // One closing line for both paths: a run that first asked about
         // what it installs still ends on the same ledger, since the
         // outcomes it has to report are the same either way.
-        let applied: Result<usize, String> = match report.set_changes.is_empty() {
-            true => apply_report(env, &report).map_err(|error| error.to_string()),
+        let applied = match report.set_changes.is_empty() {
+            true => apply_report(env, &report),
             false => {
                 print_set_changes(&scope, &report);
-                confirm_and_apply(env, &report, yes).map_err(|error| error.to_string())
+                confirm_and_apply(env, &report, yes)
             }
         };
         match applied {
             Ok(applied) => say_ledger(&scope, refreshed(Some(applied)), &blocked, &report.safety),
-            Err(error) => failures.push(error),
+            // A cancel is the reader stopping the run, not one scope
+            // failing to refresh. Collected as a failure it would come out
+            // as "failed to refresh 1 item/source(s)" and exit 1, and the
+            // exit code a script keys a cancel on is 130.
+            Err(error) if crate::interrupted(error.as_ref()) => return Err(error),
+            Err(error) => failures.push(error.to_string()),
         }
     }
 

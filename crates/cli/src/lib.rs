@@ -215,13 +215,40 @@ pub fn main() -> ExitCode {
             // The last line of the run, and the one that closes the frame
             // a terminal opened: whatever was still being said is drawn
             // above it rather than swallowed by the exit.
-            ui::outro_fail(&format!("Error: {e}"));
-            match machine_check {
-                true => ExitCode::from(2),
-                false => ExitCode::FAILURE,
+            match (machine_check, interrupted(e.as_ref())) {
+                // The check's exit code is its whole contract, and a run
+                // that ended before it could answer is "could not check"
+                // however it ended.
+                (true, _) => {
+                    ui::outro_fail(&format!("Error: {e}"));
+                    ExitCode::from(2)
+                }
+                // 130 is what a shell reports for a run its user killed,
+                // and scripts key on it. A plain prompt lets SIGINT do
+                // that itself; the framed one traps Ctrl-C in raw mode and
+                // hands back an interrupted read instead, so the code has
+                // to be restored here or the framing would have quietly
+                // turned every cancel into an ordinary failure.
+                (false, true) => {
+                    ui::outro_fail("cancelled");
+                    ExitCode::from(130)
+                }
+                (false, false) => {
+                    ui::outro_fail(&format!("Error: {e}"));
+                    ExitCode::FAILURE
+                }
             }
         }
     }
+}
+
+/// Whether this run ended because its user cancelled it. The framed
+/// prompt reads keys in raw mode, where Ctrl-C arrives as a byte rather
+/// than as a signal, and cliclack reports it as an interrupted read.
+pub(crate) fn interrupted(error: &(dyn std::error::Error + 'static)) -> bool {
+    error
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|error| error.kind() == std::io::ErrorKind::Interrupted)
 }
 
 /// The bare form: `kendex <source> [flags]` maps to `add`.
@@ -325,4 +352,36 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         Command::Update { force } => commands::update::run(&env, force)?,
     }
     Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::interrupted;
+
+    /// A cancel is the one failure that is not one. The plain prompt lets
+    /// SIGINT kill the process and the shell reports 130; the framed
+    /// prompt reads keys in raw mode and hands back an interrupted read
+    /// instead, so nothing but that read may be turned back into a 130 —
+    /// an ordinary error still has to exit 1.
+    #[test]
+    fn only_an_interrupted_read_is_a_cancel() {
+        let cancelled: Box<dyn std::error::Error> =
+            Box::new(std::io::Error::from(std::io::ErrorKind::Interrupted));
+        assert!(interrupted(cancelled.as_ref()));
+
+        for other in [
+            std::io::ErrorKind::NotFound,
+            std::io::ErrorKind::PermissionDenied,
+            std::io::ErrorKind::UnexpectedEof,
+        ] {
+            let error: Box<dyn std::error::Error> = Box::new(std::io::Error::from(other));
+            assert!(!interrupted(error.as_ref()), "{other:?} read as a cancel");
+        }
+
+        let message: Box<dyn std::error::Error> = "apply cancelled".into();
+        assert!(
+            !interrupted(message.as_ref()),
+            "a message saying cancelled read as one"
+        );
+    }
 }

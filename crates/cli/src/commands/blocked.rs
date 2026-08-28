@@ -30,7 +30,7 @@ pub fn print_conflicts(env: &Env, report: &EngineReport) -> Vec<Blocked> {
         say(&format!(
             "conflict: {} {} for {}: {}",
             first.kind.name(),
-            shown(&first.name),
+            first.name,
             tools(&group).join(", "),
             conflict_detail(first)
         ));
@@ -65,7 +65,7 @@ pub fn print_drift(env: &Env, report: &EngineReport) -> Vec<Blocked> {
         say(&format!(
             "{} {} [{}]: {:?} — {}",
             row.kind.name(),
-            shown(&row.name),
+            row.name,
             row.harness.name(),
             row.state,
             conflict_detail(row)
@@ -73,7 +73,7 @@ pub fn print_drift(env: &Env, report: &EngineReport) -> Vec<Blocked> {
         // More detail is a superset of less: the collapsed listing names
         // every position, so this one cannot name fewer.
         for place in &row.also_in_the_way {
-            say(&format!("  also at {}", shown(place)));
+            say(&format!("  also at {place}"));
         }
         if let Some(line) = compared_line(row.compared.as_ref(), offer) {
             say(&format!("  {line}"));
@@ -197,7 +197,7 @@ fn compared_line(compared: Option<&Comparison>, offer: Option<&Offer>) -> Option
         .differing
         .iter()
         .take(NAMED_FILES)
-        .map(|file| shown(file))
+        .cloned()
         .collect();
     let total = compared.differing_total;
     let more = match total.saturating_sub(u32::try_from(named.len()).unwrap_or(u32::MAX)) {
@@ -240,7 +240,7 @@ fn say_scope_exit(rows: &[&DriftRow], blocked: &[Blocked]) {
 /// there carries the path alone — the cause is what says the rest, and only
 /// a surface knows how to word it — so the sentence is written here.
 fn conflict_detail(row: &DriftRow) -> String {
-    let detail = shown(&row.detail);
+    let detail = &row.detail;
     match row.cause {
         Some(DriftCause::UnmanagedContent | DriftCause::UnmanagedWrongShape) => {
             format!("{detail} already holds files kendex did not write")
@@ -251,7 +251,7 @@ fn conflict_detail(row: &DriftRow) -> String {
         Some(DriftCause::SharedLink) => {
             format!("{detail} is a folder kendex did not write, read through a shortcut")
         }
-        _ => detail,
+        _ => detail.clone(),
     }
 }
 

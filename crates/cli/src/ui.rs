@@ -18,6 +18,13 @@
 //! is somebody reading the bytes, whatever stderr is attached to.
 //! `KENDEX_UI` takes `plain` or `pretty` and overrides the detection.
 //!
+//! **Text from a catalog is escaped here, once.** Every human line can
+//! carry a name, a message or a path somebody else wrote, and a control
+//! character in one of those rewrites the terminal around it. The printer
+//! is the one place that sees all of them, so it escapes what it prints
+//! and no call site has to remember to. [`out`] is the exception: it
+//! carries JSON and other machine content, and must stay byte-exact.
+//!
 //! **A line said right before a wait has to be drawn first.** A block is
 //! held open until something follows it, so a verb that says where it is
 //! going and then blocks would say it after coming back. [`spinner`]
@@ -27,6 +34,8 @@
 mod prompt;
 
 pub use prompt::{confirm, spinner};
+
+use kendex_core::names::shown;
 
 use std::io::{IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -54,7 +63,8 @@ fn capable() -> bool {
             // Silently falling back would leave a machine framed or plain
             // for a reason nobody could see in the output.
             write_line(&format!(
-                "warning: KENDEX_UI={value} is not plain, pretty or auto — detecting instead"
+                "warning: KENDEX_UI={} is not plain, pretty or auto — detecting instead",
+                shown(value)
             ));
         }
         asked
@@ -88,6 +98,13 @@ fn wanted(value: &str) -> Option<bool> {
 
 /// Set by [`intro`], and the only thing that turns framing on.
 static FRAMED: AtomicBool = AtomicBool::new(false);
+
+/// Set once a closing line has been drawn — by a ledger the run ended on,
+/// by one drawn as an ordinary block because output followed it, or by a
+/// failure. A frame opened and never closed leaves the reader a gutter bar
+/// hanging off the bottom of the run, so [`finish`] closes what this says
+/// is still open.
+static CLOSED: AtomicBool = AtomicBool::new(false);
 
 pub fn mode() -> Mode {
     match capable() && FRAMED.load(Ordering::Relaxed) {
@@ -159,22 +176,22 @@ pub fn out(line: &str) {
 /// One line of human output. Two leading spaces make it detail of the
 /// line above; anything else opens a block of its own.
 pub fn say(line: &str) {
-    tell(Tone::Step, line);
+    tell(Tone::Step, &shown(line));
 }
 
 /// A line the plan wrote about itself — a note, a skip, a decision.
 pub fn note(line: &str) {
-    tell(Tone::Info, line);
+    tell(Tone::Info, &shown(line));
 }
 
 /// A line about something that will not work as the reader expects.
 pub fn warn(line: &str) {
-    tell(Tone::Warn, line);
+    tell(Tone::Warn, &shown(line));
 }
 
 /// A line about something that did not happen.
 pub fn fail(line: &str) {
-    tell(Tone::Error, line);
+    tell(Tone::Error, &shown(line));
 }
 
 fn tell(tone: Tone, line: &str) {
@@ -221,34 +238,46 @@ impl cliclack::Theme for Kendex {
 /// that has one. Held open — with nothing after it, this is the line the
 /// frame closes on rather than one more block inside it.
 pub fn ledger(head: &str, steps: &[String]) {
+    let head = shown(head);
+    let steps: Vec<String> = steps.iter().map(|step| shown(step)).collect();
     if mode() == Mode::Plain {
-        write_line(head);
-        for step in steps {
+        write_line(&head);
+        for step in &steps {
             write_line(&format!("  {step}"));
         }
         return;
     }
-    open(Tone::Done, head, true, steps);
+    open(Tone::Done, &head, true, &steps);
 }
 
 /// The last line of a run that failed. Plain mode prints what it always
 /// printed; a frame closes on it in the failure style.
 pub fn outro_fail(line: &str) {
+    let line = shown(line);
     if mode() == Mode::Plain {
-        return write_line(line);
+        return write_line(&line);
     }
     flush();
+    CLOSED.store(true, Ordering::Relaxed);
     let _ = cliclack::outro_cancel(line);
 }
 
-/// Draw whatever is still open. A ledger nothing followed is the frame's
-/// closing line; anything else is a block, and the frame simply ends.
+/// Draw whatever is still open, and close the frame. A ledger nothing
+/// followed becomes the closing line itself; a run whose ledger was
+/// already drawn — because output followed it — closes on a bare corner,
+/// since the frame it opened has to end somewhere.
 pub fn finish() {
     if mode() == Mode::Plain {
         return;
     }
     if let Some(block) = pending().take() {
         draw(&block, true);
+    }
+    if FRAMED.load(Ordering::Relaxed) && !CLOSED.swap(true, Ordering::Relaxed) {
+        // Nothing left to say that has not been said: cliclack draws the
+        // corner and no text, which is the frame ending rather than one
+        // more line of output invented to end it.
+        let _ = cliclack::outro("");
     }
 }
 
@@ -322,7 +351,10 @@ fn draw(block: &Pending, last: bool) {
         text.push_str(step);
     }
     let _ = match block.ledger && last {
-        true => cliclack::outro(&text),
+        true => {
+            CLOSED.store(true, Ordering::Relaxed);
+            cliclack::outro(&text)
+        }
         false => match block.tone {
             Tone::Step => cliclack::log::step(&text),
             Tone::Info => cliclack::log::info(&text),

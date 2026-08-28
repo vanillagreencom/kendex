@@ -49,14 +49,6 @@ pub use crate::ui::{fail, note, out, say, warn};
 
 pub type CliResult = Result<(), Box<dyn std::error::Error>>;
 
-/// A scope as a line names it. The label is a path somebody chose, so it
-/// reaches a terminal as its own characters rather than as an escape it
-/// would act on. Escaped here and nowhere else: `shown` is not
-/// idempotent, so a caller escaping it again would double the backslashes.
-pub fn scope_label(scope: &Scope) -> String {
-    kendex_core::names::shown(&scope.label())
-}
-
 /// The scopes a filter selects on this machine: the current project (walked
 /// up from CWD, v1 rules) and/or global.
 pub fn resolve_scopes(env: &Env, filter: ScopeFilter) -> Result<Vec<Scope>, String> {

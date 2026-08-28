@@ -208,3 +208,21 @@ fn one_line_verdicts_are_drawn_as_one_group() {
         "each verdict opened a block of its own: {ticks:?}\n{pretty}"
     );
 }
+
+/// A run that ends on anything but its ledger still closes its frame.
+/// `FRAMED` records that a frame was opened and nothing recorded that one
+/// was closed, so a ledger drawn as an ordinary block — because output
+/// followed it — left the reader a gutter bar hanging off the bottom of
+/// the run with no closing line under it.
+#[test]
+fn a_run_ending_outside_its_ledger_still_closes_the_frame() {
+    let printed = said(&nothing_declared(&["refresh", "--scope", "project"]));
+    assert!(
+        printed.contains("nothing installed"),
+        "the fixture no longer reaches the case: {printed}"
+    );
+    assert!(
+        printed.contains("\n\u{2514}"),
+        "the frame was left open: {printed}"
+    );
+}

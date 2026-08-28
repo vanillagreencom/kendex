@@ -34,6 +34,41 @@ pub struct AddArgs {
     pub allow_repo_effects: bool,
 }
 
+/// Where this install goes and how it is delivered. Flags settle both
+/// where they were given; otherwise a terminal is asked and a session
+/// without one keeps the scope's own defaults. What the request would
+/// declare decides which tools can take it, so the picker and
+/// `--all-harnesses` offer only those.
+fn settle_targets(
+    env: &Env,
+    scope: &Scope,
+    request: &mut AddRequest,
+    args: &AddArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let kinds = ops::requested_kinds(request);
+    request.harnesses = match (args.all_harnesses, args.harness.is_empty()) {
+        (true, _) => Some(harness_picker::installable_at(scope, &kinds)),
+        (false, false) => Some(parse_harnesses(&args.harness)?),
+        (false, true) => None,
+    };
+    request.method = match (args.copy, args.method.as_deref()) {
+        (true, _) | (_, Some("copy")) => Some(Method::Copy),
+        (_, Some("symlink")) => Some(Method::Symlink),
+        _ => None,
+    };
+    let chosen = harness_picker::ask(
+        env,
+        scope,
+        &kinds,
+        request.harnesses.is_some(),
+        request.method,
+        args.yes,
+    )?;
+    request.harnesses = request.harnesses.take().or(chosen.harnesses);
+    request.method = chosen.method;
+    Ok(())
+}
+
 fn split(values: &[String]) -> Vec<String> {
     values
         .iter()
@@ -44,7 +79,7 @@ fn split(values: &[String]) -> Vec<String> {
         .collect()
 }
 
-pub fn run(env: &Env, args: AddArgs) -> CliResult {
+pub fn run(env: &Env, mut args: AddArgs) -> CliResult {
     ui::intro("kendex add");
     let filter = if args.global {
         ScopeFilter::Global
@@ -98,7 +133,7 @@ pub fn run(env: &Env, args: AddArgs) -> CliResult {
     }
 
     let mut request = AddRequest {
-        source: args.source,
+        source: args.source.take(),
         agents,
         skills,
         hooks,
@@ -113,31 +148,7 @@ pub fn run(env: &Env, args: AddArgs) -> CliResult {
         bundles,
         hold: args.hold,
     };
-    // Flags settle the targets where they were given; otherwise a terminal
-    // is asked and a session without one keeps the scope's own defaults.
-    // What the request would declare decides which tools can take it, so
-    // the picker and `--all-harnesses` offer only those.
-    let kinds = ops::requested_kinds(&request);
-    request.harnesses = match (args.all_harnesses, args.harness.is_empty()) {
-        (true, _) => Some(harness_picker::installable_at(&scope, &kinds)),
-        (false, false) => Some(parse_harnesses(&args.harness)?),
-        (false, true) => None,
-    };
-    request.method = match (args.copy, args.method.as_deref()) {
-        (true, _) | (_, Some("copy")) => Some(Method::Copy),
-        (_, Some("symlink")) => Some(Method::Symlink),
-        _ => None,
-    };
-    let chosen = harness_picker::ask(
-        env,
-        &scope,
-        &kinds,
-        request.harnesses.is_some(),
-        request.method,
-        args.yes,
-    )?;
-    request.harnesses = request.harnesses.or(chosen.harnesses);
-    request.method = chosen.method;
+    settle_targets(env, &scope, &mut request, &args)?;
     let planned = {
         let _planning = ui::spinner("planning the install");
         ops::add(env, &scope, &request)

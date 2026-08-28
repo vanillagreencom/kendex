@@ -1,13 +1,13 @@
 use std::io::IsTerminal;
 
-use kendex_core::apply::Op;
-use kendex_core::engine::{EngineReport, ops};
-use kendex_core::env::Env;
-use kendex_core::model::Scope;
 use super::ledger::{Wrote, say_ledger};
 use super::{CliResult, note, resolve_scopes, say, warn};
 use crate::scope::ScopeFilter;
 use crate::ui;
+use kendex_core::apply::Op;
+use kendex_core::engine::{EngineReport, ops};
+use kendex_core::env::Env;
+use kendex_core::model::Scope;
 
 /// What a removal does with the declaration.
 #[derive(Clone, Copy)]

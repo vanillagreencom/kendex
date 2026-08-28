@@ -7,7 +7,6 @@
 use kendex_core::engine::ops::{self, AddRequest};
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
-use kendex_core::names::shown;
 use kendex_core::registry::{CurlFetch, collections};
 use kendex_core::source_ops::{self, SourceAction};
 
@@ -21,7 +20,7 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
     // name, the repositories it points at, and the members it claims.
     say(&format!(
         "collection '{}': {} package(s) across {} repositor{}",
-        shown(&collection.name),
+        collection.name,
         collection.members.len(),
         steps.len(),
         if steps.len() == 1 { "y" } else { "ies" }
@@ -29,7 +28,7 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
     for step in &steps {
         let action = match &step.action {
             SourceAction::Reuse { name } => {
-                format!("using existing subscription '{}'", shown(name))
+                format!("using existing subscription '{name}'")
             }
             SourceAction::Subscribe { .. } => match &step.commit {
                 Some(commit) => format!("subscribe at {}", &commit[..commit.len().min(7)]),
@@ -43,11 +42,11 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
             .chain(&step.hooks)
             .chain(&step.commands)
             .chain(&step.mcp_servers)
-            .map(|name| shown(name))
+            .cloned()
             .collect();
         say(&format!(
             "  {}  [{action}]  {}",
-            shown(&step.repo),
+            step.repo,
             members.join(", ")
         ));
     }
@@ -112,8 +111,8 @@ fn install_step(
             apply_report(env, &subscribed.report)?;
             say(&format!(
                 "{}: subscribed to '{}'",
-                scope_label(scope),
-                shown(&subscribed.name)
+                scope.label(),
+                subscribed.name
             ));
             subscribed.name
         }

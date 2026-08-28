@@ -26,7 +26,7 @@ pub fn parse_harnesses(values: &[String]) -> Result<Vec<HarnessId>, String> {
 /// plan still prints these.
 pub fn print_notes(report: &EngineReport) {
     for line in &report.notes {
-        note(&format!("note: {}", kendex_core::names::shown(line)));
+        note(&format!("note: {line}"));
     }
 }
 
@@ -34,18 +34,15 @@ pub fn print_notes(report: &EngineReport) {
 /// refused — one derivation, so a closing count and the conflict lines it
 /// sends the reader to are one reading of one set of rows.
 pub fn print_report(env: &Env, report: &EngineReport) -> Vec<super::offers::Blocked> {
-    use kendex_core::names::shown;
     print_notes(report);
     for warning in &report.warnings {
-        // Names and remediation text come off a catalog kendex did not
-        // write; a harness display name is kendex's own string.
         let target = match warning.harness {
-            Some(harness) => format!("{} ({})", shown(&warning.name), harness.display_name()),
-            None => shown(&warning.name),
+            Some(harness) => format!("{} ({})", warning.name, harness.display_name()),
+            None => warning.name.clone(),
         };
-        warn(&format!("warning: {target}: {}", shown(&warning.message)));
+        warn(&format!("warning: {target}: {}", warning.message));
         if let Some(fix) = &warning.remediation {
-            say(&format!("  fix: {}", shown(fix)));
+            say(&format!("  fix: {fix}"));
         }
     }
     print_safety(report);
@@ -63,10 +60,8 @@ pub fn print_report(env: &Env, report: &EngineReport) -> Vec<super::offers::Bloc
     // The op list is what the confirm below is an answer to: a reader
     // asked to approve a count was never shown what it covers.
     say(&format!("plan: {} change{}", ops, plural(ops)));
-    // An op's sentence is kendex's own words around a name it read off a
-    // catalog, and core hands it over raw: escaped here, once.
     for op in &report.plan.ops {
-        say(&format!("  - {}", shown(&op.description)));
+        say(&format!("  - {}", op.description));
     }
     blocked
 }
@@ -83,7 +78,6 @@ fn plural(n: usize) -> &'static str {
 /// to be said here: seen in `list` and nowhere else, it reads as checked
 /// and passing rather than as never looked at.
 pub fn print_unmanaged(drift: &[DriftRow]) {
-    use kendex_core::names::shown;
     let rows: Vec<&DriftRow> = drift
         .iter()
         .filter(|row| row.state == DriftState::Unmanaged)
@@ -99,14 +93,12 @@ pub fn print_unmanaged(drift: &[DriftRow]) {
         if rows.len() == 1 { "" } else { "s" }
     ));
     for row in rows.iter().take(UNMANAGED_SHOWN) {
-        // Names and paths read off a tree kendex did not write: printed as
-        // what they are, never as the escape sequences they might hold.
         say(&format!(
             "  - {} {} [{}] {}",
             row.kind.name(),
-            shown(&row.name),
+            row.name,
             row.harness.display_name(),
-            shown(&row.detail)
+            row.detail
         ));
     }
     if rows.len() > UNMANAGED_SHOWN {
@@ -134,10 +126,9 @@ pub fn print_safety(report: &EngineReport) {
 
 /// Where a scored package sits, as its score line says so: an
 /// installation belongs to a tool, a catalog item to a path inside its
-/// catalog. Naming the two shapes is what keeps the caller from
-/// hand-building a subject string — the printer escapes what it prints,
-/// and a caller passing text it escaped itself would double-escape it,
-/// `shown` not being idempotent.
+/// catalog. Naming the two shapes keeps the caller from hand-building a
+/// subject string, so the printer can word the line the same way for
+/// both.
 pub enum ScoredAt<'a> {
     /// The tool whose copy of the item was scored.
     Harness(HarnessId),
@@ -161,26 +152,23 @@ pub enum ScoredAt<'a> {
 /// to carry it for a reader who has no colour, and this printer emits
 /// none.
 ///
-/// Every part that came off a file kendex did not write is escaped here
-/// rather than by the caller — the name, the catalog path, the finding
-/// messages and their locations. A harness's display name is kendex's own
-/// string and is printed as it is.
+/// Nothing here escapes anything: every line leaves through `ui`, which
+/// escapes what it prints once, for every caller.
 pub fn print_advisory(
     kind: ItemKind,
     name: &str,
     at: ScoredAt<'_>,
     advisory: &kendex_core::quality::AuditResult,
 ) {
-    use kendex_core::names::shown;
     let at = match at {
         ScoredAt::Harness(harness) => format!(" for {}", harness.display_name()),
         ScoredAt::CatalogPath("") => String::new(),
-        ScoredAt::CatalogPath(path) => format!(" at {}", shown(path)),
+        ScoredAt::CatalogPath(path) => format!(" at {path}"),
     };
     say(&format!(
         "safety: {} {}{at} scores {}/100",
         kind.name(),
-        shown(name),
+        name,
         advisory.safety.score
     ));
     for finding in &advisory.findings {
@@ -188,12 +176,12 @@ pub fn print_advisory(
         // no place to name; the claim still prints, without empty parens.
         let at = match finding.location.is_empty() {
             true => String::new(),
-            false => format!(" ({})", shown(&finding.location)),
+            false => format!(" ({})", finding.location),
         };
         say(&format!(
             "  [{}] {}{at}",
             finding.severity.name(),
-            shown(&finding.message)
+            finding.message
         ));
     }
     print_skipped(advisory);
@@ -207,7 +195,7 @@ fn print_skipped(advisory: &kendex_core::quality::AuditResult) {
     say(&format!(
         "  not fully checked: {} rule(s) had nothing to read — {}",
         advisory.skipped.len(),
-        kendex_core::names::shown(&first.reason)
+        first.reason
     ));
 }
 

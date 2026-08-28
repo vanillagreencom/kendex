@@ -5,7 +5,7 @@ use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
 
 use super::engine_common::print_unmanaged;
-use super::{fail, resolve_scopes, say, scope_label};
+use super::{fail, resolve_scopes, say};
 use crate::scope::ScopeFilter;
 use crate::ui;
 
@@ -34,13 +34,13 @@ pub fn run(
         // is worth a line, not a failure, and the exit code answers about
         // drift alone. A scope that does have installs fails loudly.
         let audited = {
-            let _reading = ui::spinner(&format!("checking {}", scope_label(&scope)));
+            let _reading = ui::spinner(&format!("checking {}", scope.label()));
             audit(env, &scope)
         };
         let report = match (audited, lock.entries.is_empty()) {
             (Ok(report), _) => report,
             (Err(error), true) => {
-                fail(&format!("! {} not checked: {error}", scope_label(&scope)));
+                fail(&format!("! {} not checked: {error}", scope.label()));
                 continue;
             }
             (Err(error), false) => return Err(error.into()),
@@ -113,14 +113,11 @@ fn say_row(
     // A locked name came out of a manifest a person wrote and a catalog
     // kendex did not: escaped here, at the one place it is printed.
     let kind = entry.kind.name();
-    let name = kendex_core::names::shown(&entry.name);
+    let name = &entry.name;
     let harness = entry.harness.name();
     let bad = match problem {
         Some(row) => {
-            fail(&format!(
-                "✗ {kind} {name} [{harness}]: {}",
-                kendex_core::names::shown(&row.detail)
-            ));
+            fail(&format!("✗ {kind} {name} [{harness}]: {}", row.detail));
             true
         }
         None if unreachable_source => {
@@ -144,10 +141,7 @@ fn say_row(
                 .harness
                 .is_none_or(|harness| harness == entry.harness)
     }) {
-        say(&format!(
-            "  ! {}",
-            kendex_core::names::shown(&warning.message)
-        ));
+        say(&format!("  ! {}", warning.message));
     }
     bad
 }

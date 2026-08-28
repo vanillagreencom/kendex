@@ -18,7 +18,6 @@ use kendex_core::engine::ItemSafety;
 use kendex_core::model::{ItemKind, Scope};
 
 use super::offers::{Blocked, scope_flag};
-use super::scope_label;
 use crate::ui;
 
 /// Items the safety block above carries a finding against. Counted from
@@ -103,10 +102,7 @@ fn ledger(
         // own advisory block, and this run's is the one printed above.
         steps.push("flagged — the safety lines above".to_owned());
     }
-    (
-        format!("{}: {}", scope_label(scope), parts.join(" · ")),
-        steps,
-    )
+    (format!("{}: {}", scope.label(), parts.join(" · ")), steps)
 }
 
 /// The next step for the skipped part. A command is named only where it

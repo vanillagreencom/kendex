@@ -159,6 +159,19 @@ fn blocked_project_at(home: &Path, project: &Path) {
     }
 }
 
+/// A project that declares nothing. The run still has an outcome to
+/// report and no ledger to report it in, which is the shape that used to
+/// leave the frame open.
+#[allow(clippy::unwrap_used)]
+pub fn nothing_declared(args: &[&str]) -> Output {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let project = home.join("dev/app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    fs::write(project.join("kendex.toml"), "schema = 6\n").unwrap();
+    kendex(home, &project, "pretty", args)
+}
+
 /// Both renderings of the same run, from the same fixture at the same
 /// paths: the second run starts from a home rebuilt byte for byte, so a
 /// line from one can be looked for verbatim in the other. `{catalog}`
