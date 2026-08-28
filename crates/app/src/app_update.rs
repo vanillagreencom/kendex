@@ -59,6 +59,7 @@ fn app_install() -> Result<AppInstall, String> {
         // taking either at its word.
         let exe = std::env::current_exe().ok();
         Ok(AppInstall::from_appimage_env(
+            &Host,
             std::env::var_os("APPIMAGE").as_deref(),
             std::env::var_os("APPDIR").as_deref(),
             exe.as_deref(),
@@ -67,7 +68,7 @@ fn app_install() -> Result<AppInstall, String> {
     #[cfg(target_os = "macos")]
     {
         std::env::current_exe()
-            .map(AppInstall::MacBundle)
+            .map(|exe| AppInstall::mac_bundle(&Host, &exe))
             .map_err(|error| format!("the running app's own path is unreadable: {error}"))
     }
     #[cfg(target_os = "windows")]

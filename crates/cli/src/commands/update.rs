@@ -55,7 +55,10 @@ fn curl_args(url: &str) -> [&str; 10] {
 }
 
 pub fn run(env: &Env, force: bool) -> CliResult {
-    let current_exe = std::env::current_exe()?;
+    // One resolve for the whole run: the path that decides which channel
+    // this is has to be the path that gets written, or a command reached
+    // through a link is judged by its target and replaced at the link.
+    let current_exe = Host.resolve(&std::env::current_exe()?);
     let channel = for_cli(&current_exe, &Host);
     if let InstallChannel::Managed { command } = &channel {
         out("a package manager owns this install; update it with:");

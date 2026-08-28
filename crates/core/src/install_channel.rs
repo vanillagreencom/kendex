@@ -69,16 +69,25 @@ pub enum AppInstall {
 }
 
 impl AppInstall {
+    /// The macOS app, resolved: a Homebrew cask links `/Applications` at
+    /// its Caskroom, and a process is handed the path it was launched
+    /// under rather than the bundle behind it.
+    pub fn mac_bundle(probe: &dyn HostProbe, exe: &Path) -> Self {
+        Self::MacBundle(probe.resolve(exe))
+    }
+
     /// The Linux app, judged by where this executable is rather than by a
     /// variable every child of an AppImage-launched terminal inherits. A
-    /// process that only inherited the pair has no AppImage of its own.
+    /// process that only inherited the pair has no AppImage of its own,
+    /// and the image it does have is resolved to the file it names.
     pub fn from_appimage_env(
+        probe: &dyn HostProbe,
         appimage: Option<&OsStr>,
         appdir: Option<&OsStr>,
         exe: Option<&Path>,
     ) -> Self {
         match in_appimage(appimage, appdir, exe) {
-            true => Self::AppImage(appimage.map(PathBuf::from)),
+            true => Self::AppImage(appimage.map(|image| probe.resolve(Path::new(image)))),
             false => Self::AppImage(None),
         }
     }
@@ -184,30 +193,33 @@ impl HostProbe for Host {
 }
 
 /// The channel the running desktop app installed through.
+///
+/// The paths inside `install` are already resolved — [`HostProbe::resolve`]
+/// is the shell's to call before it builds one. Resolving here instead
+/// would answer about one path while the caller still holds another.
 pub fn for_app(install: &AppInstall, probe: &dyn HostProbe) -> InstallChannel {
     match install {
         AppInstall::AppImage(None) => InstallChannel::Unknown,
         AppInstall::AppImage(Some(image)) => {
-            let image = probe.resolve(image);
-            if system_owned(&image) {
+            if system_owned(image) {
                 return arch_channel(ArchPackage::Bin, probe);
             }
-            replaceable_or_unknown(&image, probe)
+            replaceable_or_unknown(image, probe)
         }
-        AppInstall::MacBundle(exe) => {
-            let exe = probe.resolve(exe);
-            match bundle_root(&exe) {
-                Some(root) => replaceable_or_unknown(root, probe),
-                None => InstallChannel::Unknown,
-            }
-        }
+        AppInstall::MacBundle(exe) => match bundle_root(exe) {
+            Some(root) => replaceable_or_unknown(root, probe),
+            None => InstallChannel::Unknown,
+        },
         AppInstall::WindowsInstaller => InstallChannel::Direct,
     }
 }
 
 /// The channel the running `kendex` command installed through.
+///
+/// `exe` is already resolved — [`HostProbe::resolve`] is the caller's to
+/// call, once, on the path it will also write to. Resolving here instead
+/// would decide about the file while the caller still held the link.
 pub fn for_cli(exe: &Path, probe: &dyn HostProbe) -> InstallChannel {
-    let exe = &probe.resolve(exe);
     if starts_with_any(exe, &BREW_PREFIXES) {
         return InstallChannel::Managed {
             command: "brew upgrade kendex-cli".to_owned(),
