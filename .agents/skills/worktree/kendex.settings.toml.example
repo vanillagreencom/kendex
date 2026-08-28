@@ -1,0 +1,46 @@
+[env]
+
+# WORKTREE — where worktrees land, what gets linked into them, and the git
+# identity their commits carry (worktree skill).
+# Project-scope `kendex add` / `kendex refresh` merge these defaults into
+# <project>/kendex.settings.toml (never overwriting existing keys). Every
+# key here is inert while empty; full reference: worktree README.md.
+
+# Base branch new worktrees fork from. Empty = detection from `origin/HEAD`,
+# falling back to `main`.
+WORKTREE_DEFAULT_BRANCH = ""
+
+# Where worktrees live; empty = <parent-of-checkout>/.worktrees/<name>.
+# Never point it inside the repo root — watched build outputs exhaust
+# inotify.
+# WORKTREE_BASE_DIR = "~/dev/.worktrees/myproject"
+
+# Space-separated paths symlinked into every worktree: list only what git
+# does not carry. An entry does nothing when git carries every path under
+# it; one with untracked children still links those children. Include
+# `.env.local` only when worktrees should share local secrets.
+WORKTREE_SYMLINKS = ""
+
+# Space-separated link=target pairs; each target resolves from the LINK's
+# own directory (`.claude/CLAUDE.md=../AGENTS.md` reaches the worktree
+# root's AGENTS.md).
+WORKTREE_RELATIVE_SYMLINKS = ""
+
+# Space-separated files copied (not linked) into new worktrees.
+WORKTREE_COPIES = ""
+
+# Space-separated gitignored scratch dirs created in new worktrees.
+WORKTREE_MKDIRS = ""
+
+# Git identity worktree commits carry. BOT_NAME gates the pair: empty = the
+# logged-in user (BOT_EMAIL then ignored); set = name and email written
+# verbatim, empty values included.
+BOT_NAME = ""
+
+# Email written with BOT_NAME. Read only while BOT_NAME is set.
+BOT_EMAIL = ""
+
+# Remote name pushes target; empty = origin. Set BOT_REMOTE_URL alongside it
+# to have `create` add that remote in each new worktree; without a URL the
+# remote must already exist.
+BOT_REMOTE_NAME = ""

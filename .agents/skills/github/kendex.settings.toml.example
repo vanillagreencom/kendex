@@ -1,0 +1,29 @@
+[env]
+
+# GITHUB — the review bot this repo trusts, its issue-id shape, and the
+# timeouts around `gh` (github skill).
+# Project-scope `kendex add` / `kendex refresh` merge these defaults into
+# <project>/kendex.settings.toml (never overwriting existing keys). Tokens
+# are not settings: keep GH_TOKEN and friends in `.env.local`. Full
+# reference: github README.md.
+
+# Bot login the sticky-verdict commands target. Empty = review-bot[bot].
+GH_BOT_USERNAME = ""
+
+# Regex extracting the issue id from a branch name. Empty leaves each
+# caller its own default, which differ: the github scripts match Linear-style
+# ids, orch also matches issue-N. Set it only for a shape neither covers.
+GH_ISSUE_PATTERN = ""
+
+# Build/test command `pr-cross-check --verify` runs. Empty falls back to a
+# project-root `verify.sh`, then to auto-detected build stacks.
+GH_VERIFY_CMD = ""
+
+# Seconds a 1Password token resolution may take.
+KENDEX_GITHUB_OP_TIMEOUT = "10"
+
+# Seconds the `gh` auth preflight may take.
+KENDEX_GITHUB_AUTH_TIMEOUT = "10"
+
+# Seconds a single `pr-view` read may take.
+KENDEX_GITHUB_PR_VIEW_TIMEOUT = "30"

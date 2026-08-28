@@ -18,9 +18,10 @@ SECOND_OPINION_COUNT = "1"
 # project-file value describes no single session and is refused.
 # SECOND_OPINION_CURRENT_MODEL = "claude"
 
-# Roster commands (identities claude / codex).
+# Roster command for the claude identity.
 SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
 
+# Roster command for the codex identity.
 SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 
 # Example extra roster entry: add "pi-deepseek" to SECOND_OPINION_MODELS,

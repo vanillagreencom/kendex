@@ -66,9 +66,10 @@ REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS = "encountered an error and was unable 
 # and changes-requested still fail closed either way.
 REVIEW_GATE_THREADS = "enforce"
 
-# Bounded attempts per predicate evidence read, and the pause between them.
-# A read failing every attempt is still exit 2 (no verdict).
+# Bounded attempts per predicate evidence read. A read failing every attempt
+# is still exit 2 (no verdict).
 REVIEW_GATE_API_ATTEMPTS = "1"
+# Seconds between those attempts.
 REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
 
 # Evidence carry-forward across carry-safe deltas ("docs", "comments",

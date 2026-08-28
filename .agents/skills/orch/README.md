@@ -31,7 +31,7 @@ Invoke through your AI coding harness (`/orch <command>`, `/skill:orch <command>
 
 1. Install the required skills: `github`, `worktree`, `dev`, `reviewer`, `decider`, `project-management`. Add `linear` for Linear workflows. `second-opinion` (pre-PR local review) and `review-gate` (multi-PR watching) are optional — orch checks for them and works without them.
 2. Install `jq`, `bash` 4+, and `flock`.
-3. Put non-secret settings in `kendex.settings.toml` under `[env]` and secrets in `.env.local`. `kendex.settings.toml.example` ships every orch key with its default and a comment explaining it.
+3. Put non-secret settings in `kendex.settings.toml` under `[env]` and secrets in `.env.local`. This skill's `kendex.settings.toml.example` ships the orch defaults, each with the comment explaining it.
 
 ## Configuration
 
@@ -47,6 +47,7 @@ Invoke through your AI coding harness (`/orch <command>`, `/skill:orch <command>
 | `ORCH_OVERSEER_LANES` | Max concurrent lanes `oversee` keeps in flight | `3` |
 | `QA_PERF_PATHS` | Space-separated path globs whose modification adds the `needs-perf-test` QA signal in `workflows/review-pr.md` § 5. Empty means the diff scan never raises it | empty |
 | `RECONCILE_STALE_HOURS` | Hours before an In Progress / In Review item counts as started-stale in `reconcile-work-items` sweeps | `24` |
+| `WORKTREE_CLI` | Path to the worktree CLI `open-terminal` drives; empty resolves the installed worktree skill's `scripts/worktree` | *(resolved)* |
 | Review-gate settings | `REVIEW_GATE_MODE`, `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_QUORUM`, `PR_REVIEW_ON_TIMEOUT`, `PR_REVIEW_NUDGE*`, `PR_REVIEW_WAIT_SECS` — [references/gates.md](references/gates.md) | — |
 | Lane settings | `ORCH_LANE_DIRS`, `ORCH_LANE_ALIASES`, `ORCH_LANE_MAX_PCT`, `ORCH_TMUX_VERIFY_SECS` — `lanes --help`, `open-terminal --help` | — |
 

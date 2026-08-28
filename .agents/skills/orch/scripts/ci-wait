@@ -62,8 +62,6 @@ JSON output (always when --json):
   }
 
 Environment:
-  GIT_HOST_CLI  (optional) path to a git host CLI script for enriched
-                output
   CI_WAIT_NO_CHECKS_GRACE
                 seconds to keep polling before failing when no checks have
                 registered yet (default 180). ci-wait runs after the

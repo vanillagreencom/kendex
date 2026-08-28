@@ -18,3 +18,6 @@ LINEAR_TEAM_PREFIX = "PROJ"
 # Non-empty makes `issues create` refuse a create carrying none of them —
 # such an issue is invisible to agent routing. Empty = guard off.
 LINEAR_AGENT_LABELS = ""
+
+# Default output format for every read command: safe, table, ids, raw.
+LINEAR_FORMAT = "safe"

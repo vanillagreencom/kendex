@@ -6,6 +6,10 @@
 # here are one-line intent + landmines; full key reference: orch README.md /
 # DEVELOPMENT.md.
 
+# Directory orch keeps its per-issue workflow state in; the `--state-dir`
+# flag wins where both are set.
+ORCH_STATE_DIR = "tmp"
+
 # Reviewer merge gate: "approval" needs a GitHub approval; "review" needs a
 # non-author review of the current head plus zero unresolved threads (for
 # bots that comment but never approve); "off" only where no reviewer exists.
