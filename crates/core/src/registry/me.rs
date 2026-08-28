@@ -53,25 +53,28 @@ struct WireMe {
 /// dropped; an unreachable or misbehaving server serves the cached
 /// identity as `Offline`, and errors only with nothing cached to serve. A
 /// credential gone by the time the answer lands is `SignedOut` too, and
-/// nothing is written back over the sign-out. An answer is refused as
-/// retryable, rather than cached, unless the credential it went out under
-/// is the one still installed: a refresh rotation mid-read is that same
-/// credential and settles normally, while a sign-in as somebody else is
-/// not and never gets the previous account's name written under it. With
-/// no answer to bind, the cache stands in only for the credential the
-/// read started with, so a transport failure behind a rotation is
-/// refused too.
+/// nothing is written back over the sign-out. Everything this read
+/// settles belongs to one sign-in: the cache it opens with, the call it
+/// sends, and the answer it caches. A sign-in as somebody else at any
+/// point across that span is refused as retryable rather than served,
+/// because the identity in hand is the previous account's. A refresh
+/// rotation mid-read is the same sign-in throughout and settles as
+/// usual.
 pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result<AccountState> {
-    let Some(issued_under) = store.load()? else {
+    let Some(credential) = store.load()? else {
         return Ok(AccountState::SignedOut);
     };
+    // The token family names the sign-in. The cache read next, the call
+    // sent after it, and the answer settled at the end all have to be
+    // this one.
+    let issued_under = credential.refresh_token;
     let cache = cache(env);
     let cached = cache.read(parse);
     let etag = cached
         .as_ref()
         .and_then(|(generation, _)| generation.etag.clone());
     let url = format!("{}/api/v1/me", base_url());
-    let (fetched, answered_for) = match client::with_access(fetch, store, |access| {
+    let (fetched, opened_under, answered_for) = match client::with_access(fetch, store, |access| {
         fetch.get_auth(&url, etag.as_deref(), Some(access))
     }) {
         // Logout won a race with this read: the re-login state without
@@ -84,10 +87,14 @@ pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result
             cache.forget()?;
             return Ok(AccountState::Expired);
         }
-        Ok(authenticated) => (Ok(authenticated.response), authenticated.credential),
-        // Nothing came back, so the cache is what settles, and the cache
+        Ok(authenticated) => (
+            Ok(authenticated.response),
+            authenticated.opened_under.refresh_token,
+            authenticated.credential.refresh_token,
+        ),
+        // Nothing came back, so the cache is the whole answer, and it
         // belongs to whoever was signed in when the read began.
-        Err(error) => (Err(error), issued_under),
+        Err(error) => (Err(error), issued_under.clone(), issued_under.clone()),
     };
     // A sign-out that landed while this read was in flight already forgot
     // the cache; settling now would write the identity straight back. The
@@ -96,10 +103,13 @@ pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result
         return Ok(AccountState::SignedOut);
     };
     // Existence is not identity: a sign-out followed by a sign-in leaves
-    // a credential here too, and this answer belongs to neither of them.
-    // The token family names the sign-in, and a rotation saves its
-    // replacement before the call goes out, so the two match there.
-    if installed.refresh_token != answered_for.refresh_token {
+    // a credential here too, and nothing here belongs to either of them.
+    // Two spans to close. A sign-in landing before the call leaves the
+    // previous account's identity in `cached`, which a 304 hands back and
+    // any failure serves as offline. One landing after it settles this
+    // answer under a stranger. A rotation is neither: it saves its
+    // replacement before the call goes out, so both comparisons hold.
+    if opened_under != issued_under || answered_for != installed.refresh_token {
         return Err(sign_in_changed("reading your account"));
     }
     let loaded = cache.settle(cached, fetched, parse, |response| {
