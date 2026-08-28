@@ -2,8 +2,9 @@
 # `workflow-state set <id> rereview_panel <json>` — the write review-pr § 4
 # makes when it re-enters § 2 — is itself the re-review cycle: it raises
 # `rereview_cycles` under the same lock it is gated on, and refuses once that
-# count is past REVIEW_MAX_CYCLES (default 4). The write AT the cap is the one
-# verification pass the rule allows.
+# count reaches REVIEW_MAX_CYCLES (default 4). The count is entries already
+# taken, so the setting is the number of entries allowed and the stored count
+# never exceeds it: at a cap of 4 the fifth write is refused at exactly 4.
 #
 # `cycles` decides nothing here (KEN-592). It is the general fix-round tally
 # `dev-fix.md` keeps, bumped by QA fix rounds and by review/submit fix rounds
@@ -167,8 +168,8 @@ grep -q -F 'Review must converge' <<<"$S7" \
 
 # Other set fields are untouched by the cap.
 "$WS" --state-dir "$sd" set KEN-1 rereview_skipped "no files changed" >/dev/null && rc=0 || rc=$?
-[[ "$rc" -eq 0 ]] && ok "set of another field passes with the counter past the cap" \
-  || bad "set of another field passes with the counter past the cap" "rc=$rc"
+[[ "$rc" -eq 0 ]] && ok "set of another field passes with the counter at the cap" \
+  || bad "set of another field passes with the counter at the cap" "rc=$rc"
 
 # The cap follows REVIEW_MAX_CYCLES from the environment.
 "$WS" --state-dir "$sd" init KEN-2 --worktree "$REPO_ROOT" --branch ken-2 >/dev/null
@@ -262,7 +263,7 @@ else
   fi
 fi
 
-# The comparison slipped back to >, which admits one entry past the cap.
+# The comparison slipped back to >, which admits a fifth entry under a cap of four.
 if ! plant off 's/if \\$n >= \$cap then/if \\$n > $cap then/'; then
   bad "off-by-one control planted nothing — its sed program matched no text"
 else

@@ -272,7 +272,7 @@ The cap decides before any delegation. Read the re-review cycles already entered
 .agents/skills/orch/scripts/orch-env REVIEW_MAX_CYCLES 4
 ```
 
-`rereview_cycles` counts the re-review cycles this loop has entered — the Bounded Re-Review write below raises it, and nothing else does. Below the cap → Fix Delegation. At or past it the fix loop ends here, with no further fix round, so the items this pass reported are the latest word on the diff. Read `rereview_cycles`, never `cycles`: `cycles` is the general fix-round tally `dev-fix.md` keeps, and QA and pre-loop fix rounds bump it without spending this budget.
+`rereview_cycles` counts the re-review cycles this loop has entered — the Bounded Re-Review write below raises it, and nothing else does. Below the cap → Fix Delegation. At it the fix loop ends here — the count is entries already taken, so it never goes past the cap — with no further fix round, so the items this pass reported are the latest word on the diff. Read `rereview_cycles`, never `cycles`: `cycles` is the general fix-round tally `dev-fix.md` keeps, and QA and pre-loop fix rounds bump it without spending this budget.
 
 **Capped items are escalated, never dropped.** Record every blocker and `category == "fix"` suggestion this pass found still outstanding, including one already listed in `fixed_items` whose fix did not hold. Exclude only what is already in `escalated_items` and what § 4 declined; a decline is terminal. Match on the RECORDED entry's (location, description), the § 8 key — a re-reporting reviewer copies both fields verbatim off the Fixed line, so the pair matches. An item `fixed_items` already lists has a superseded entry there: its fix did not hold, so the same write drops it. One write per item, before routing to § 5 — the drop and the record land in one command, so the item is never in both buckets and never in neither:
 
@@ -320,7 +320,7 @@ The scoped panel is the union of the reviewers whose domains the round's diff to
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] rereview_skipped '[REASON]'
 ```
 
-**The loop ends** when two consecutive cycles surface no new blocker, or when the At The Cap check above ends it (the `rereview_panel` write raises `rereview_cycles` and refuses once that count is past the cap). The cap bounds NEW cycles, never verification: a fix diff no reviewer has seen gets one focused verification pass — the `rereview_panel` rule above, scoped to exactly that diff — before § 5, cap or no cap. That pass's items re-enter § 4, where the cap check escalates them instead of delegating again. In wave mode the panel replaces `[AGENTS]` for the cycle and wave mechanics apply unchanged.
+**The loop ends** when two consecutive cycles surface no new blocker, or when the At The Cap check above ends it (the `rereview_panel` write raises `rereview_cycles` and refuses once that count reaches the cap). The cap bounds NEW cycles, never verification: a fix diff no reviewer has seen gets one focused verification pass — the `rereview_panel` rule above, scoped to exactly that diff — and this loop's last fix round has budget for it. A pass over a diff no reviewer has seen once the budget is spent takes `verification_panel` instead, which the cap does not gate. That pass's items re-enter § 4, where the cap check escalates them instead of delegating again. In wave mode the panel replaces `[AGENTS]` for the cycle and wave mechanics apply unchanged.
 
 ## 5. Verdict Pass
 

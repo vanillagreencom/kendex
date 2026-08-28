@@ -63,7 +63,8 @@ CI_WAIT_NO_CHECKS_GRACE = "180"
 CI_FIX_MAX_CYCLES = "6"
 
 # Max internal re-review cycles per issue before the verdict pass; the
-# re-review re-entry raises rereview_cycles and refuses once it is past this.
+# re-review re-entry raises rereview_cycles and refuses at this, so the number
+# set is the number of re-entries allowed.
 REVIEW_MAX_CYCLES = "4"
 
 # Max external review rounds on an open PR. Past it a finding gets a
