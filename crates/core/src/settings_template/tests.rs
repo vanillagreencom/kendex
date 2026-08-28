@@ -315,3 +315,21 @@ fn a_template_rule_does_not_silence_the_parser_on_its_line() {
         "{found:?}"
     );
 }
+
+/// The documented limit, kept honest: `toml::de::Error` carries one message
+/// and one span, and the crate offers no way to ask for more, so a file
+/// with two independent syntax errors gives up the second only once the
+/// first is fixed. If that ever stops being true, this is where to notice.
+#[test]
+fn two_independent_syntax_errors_come_one_run_at_a_time() {
+    let both = "[env]\n# Why.\nA = \"1\"\n= \"2\"\n= \"3\"\n";
+    let found = located(both);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].0, 4, "{found:?}");
+
+    // Fixing the first surfaces the second, and nothing else changed.
+    let first_fixed = "[env]\n# Why.\nA = \"1\"\n# Why.\nB = \"2\"\n= \"3\"\n";
+    let found = located(first_fixed);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].0, 6, "{found:?}");
+}

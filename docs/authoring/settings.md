@@ -61,12 +61,15 @@ is copied into the consumer's `kendex.settings.toml`, and
   consumer reads beside the key in their own settings file.
 
 `kendex marketplace check` reads your template against exactly that grammar and
-names every defect it finds, each with the line it sits on; it also names a
-template with no `[env]` table at all, a key with no comment block, an
-assignment outside `[env]`, a key assigned twice, and a file that is not valid
-TOML. A syntax error is reported alongside the rest unless it is the same
-defect said twice, so one run tells you everything. The check runs strict, so
-any of them fails it.
+names each defect with the line it sits on; it also names a template with no
+`[env]` table at all, a key with no comment block, an assignment outside
+`[env]`, a key assigned twice, and a file that is not valid TOML. The check
+runs strict, so any of them fails it.
+
+One run names every defect the check itself finds, including a key that is
+wrong in more than one way. A TOML syntax error is reported alongside them,
+but the parser stops at its first, so a file with two of those takes two
+runs.
 
 Seeding stays lenient, and that is the point of checking: in the consumer's
 `kendex.settings.toml` a duplicate assignment inside `[env]` fails the load,

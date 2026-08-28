@@ -27,6 +27,12 @@
 //! said twice, and the scan's telling — which names the key — is the one
 //! kept; anywhere else they are two defects, and reporting one would send
 //! the author back for the other.
+//!
+//! One limit, and it is the parser's: `toml::de::Error` holds a single
+//! message and a single span, and the crate exposes no way to ask for
+//! more, so a file with two independent syntax errors gives up the second
+//! only once the first is fixed. Everything the scan owns — every key, and
+//! every way one key is wrong — comes out in one read.
 
 use std::collections::{BTreeMap, BTreeSet};
 
