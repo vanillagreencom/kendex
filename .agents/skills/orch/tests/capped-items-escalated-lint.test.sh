@@ -214,16 +214,24 @@ s7_converged() { s7_exit "$1" | grep -F 'Converged** means'; }
 s7_dispo()     { s7_exit "$1" | grep -F 'On the way out'; }
 s7_write()     { s7_exit "$1" | grep -F -- '--slurpfile art'; }
 
-# --- 12: convergence tests every category ------------------------------------
-# A test that names only some categories lets the last re-check smuggle a new
-# finding past the exit — a `category == "issue"` suggestion as surely as a
+# --- 12: convergence is one re-check, over every category --------------------
+# A test that names only some categories lets a re-check smuggle a new finding
+# past the exit — a `category == "issue"` suggestion as surely as a
 # `category == "fix"` one. The exit stops repeated patching of an answered
 # finding; it never discards a genuine one.
+#
+# And the criterion has to be reachable: § 6 routes a clean QA pass to § 8 and
+# never back to § 7, so no path can observe two consecutive clean re-checks. A
+# criterion counting to two is a rule nothing executes, which reads as a
+# guarantee the workflow does not give.
 CONV="$(s7_converged "$REVIEW_PR_WF")"
-if grep -q -F 'category == "fix"' <<<"$CONV" \
-   && grep -q -F 'category == "issue"' <<<"$CONV" \
-   && grep -q -F 'blocker' <<<"$CONV"; then
-  pass "converging needs no new finding of any category"
+if grep -q -F 'twice running' <<<"$CONV" \
+   || grep -q -F 'two consecutive' <<<"$CONV"; then
+  fail "the convergence test counts re-checks § 6 never schedules"
+elif grep -q -F 'category == "fix"' <<<"$CONV" \
+     && grep -q -F 'category == "issue"' <<<"$CONV" \
+     && grep -q -F 'blocker' <<<"$CONV"; then
+  pass "converging is one re-check with no new finding of any category"
 else
   fail "the convergence test ignores a category of finding"
 fi
@@ -441,6 +449,16 @@ elif [[ -n "$(s7_exit "$CTRL")" ]]; then
   fail "lint MISSED a § 7 exit that records nothing before § 8"
 else
   pass "lint flags a § 7 exit that records nothing before § 8"
+fi
+
+# The criterion counting to two: § 6's clean branch goes to § 8, so the second
+# pass is never scheduled and the rule cannot fire.
+if ! plant_pr s7twice 's/means a re-check surfaced no new finding of any category/means a re-check surfaced no new finding of any category, twice running/'; then
+  fail "§ 7 twice-running control planted nothing — its sed program matched no text"
+elif grep -q -F 'twice running' <<<"$(s7_converged "$CTRL")"; then
+  pass "lint flags a convergence test that counts to two"
+else
+  fail "lint MISSED a convergence test that counts to two"
 fi
 
 # Convergence narrowed back to blockers and fix suggestions.
