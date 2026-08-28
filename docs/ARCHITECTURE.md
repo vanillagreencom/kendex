@@ -290,7 +290,7 @@ lives in one capability table read by core and UI.
   when the page would otherwise be blank, its read done. Skeletons draw
   mid-read; a failed read shows its error with a retry, kept figures headed
   as the last kendex could check, never a definite count — least of all
-  zero. Startup reads — settings, scan, audit, updates — run side by side.
+  zero. Startup reads settings, scan, audit, updates and account together.
 - **Discovery is the unsigned feed; delivery is a signed manifest.** Off the
   launch path, one cross-process transaction reads the fixed feed at most once
   per six hours, keeps the last result beside any error, and never follows the

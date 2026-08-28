@@ -2,7 +2,7 @@
 // VITE_MOCK=1: the WebKit app window cannot be driven by browser
 // automation, so UI validation runs the real pages in Chromium against
 // this bridge instead.
-import { accountHandlers } from "./mock-account";
+import { accountHandlers, installAccountReader } from "./mock-account";
 import { auditHandlers } from "./mock-audit";
 import { communityHandlers } from "./mock-community";
 import { coreHandlers } from "./mock-core";
@@ -24,6 +24,10 @@ export const handlers: Record<string, Handler> = {
 };
 
 export { resetState as resetMock };
+
+// The command behind the store's account read cannot answer with a name,
+// so the harness answers in its place.
+installAccountReader();
 
 const pause = () => new Promise((resolve) => setTimeout(resolve, 120));
 

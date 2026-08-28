@@ -4,7 +4,7 @@
 // Startup makes the one account read; every surface reads `account` from
 // here rather than asking again.
 import { create } from "zustand";
-import { type AccountStatus, commands, type SubmissionRow } from "@/bindings";
+import { commands, type SubmissionRow } from "@/bindings";
 
 /** Who the account belongs to, as the server names them. */
 export interface AccountIdentity {
@@ -28,25 +28,44 @@ export type AccountState =
 /** Every state but the one that means "not read yet". */
 export type SettledAccount = Exclude<AccountState, { kind: "loading" }>;
 
+/** The states that hold a credential, and so may know a name. */
+type WithIdentity = Extract<AccountState, { kind: "signed-in" | "offline" }>;
+
 /** Signed in far enough to submit: an unconfirmed credential still is. */
-export const hasCredential = (account: AccountState): boolean =>
+export const hasCredential = (account: AccountState): account is WithIdentity =>
   account.kind === "signed-in" || account.kind === "offline";
 
 const cachedIdentity = (account: AccountState): AccountIdentity | null =>
-  account.kind === "signed-in" || account.kind === "offline"
-    ? account.identity
-    : null;
+  hasCredential(account) ? account.identity : null;
 
-/** The bridge's answer. The command's own type is the credential check;
- * `account` is what a backend that has reached the server adds, and the
- * dev bridge answers with it so every state can be seen. */
-type AccountAnswer = AccountStatus & { account?: SettledAccount };
+/** What a read of the account answers: the state it settled on, or why it
+ * could not be read. */
+export type AccountRead = { ok: SettledAccount } | { error: string };
 
-const settle = (answer: AccountAnswer): SettledAccount =>
-  answer.account ??
-  (answer.signedIn
-    ? { kind: "signed-in", identity: null }
-    : { kind: "signed-out" });
+export type ReadAccount = () => Promise<AccountRead>;
+
+/** The command reports whether a credential is stored and nothing more,
+ * which settles signed in without a name, or signed out. A name, a
+ * credential that could not be confirmed and one the server has rejected
+ * all need a backend that has reached the server. */
+const fromBridge: ReadAccount = async () => {
+  const status = await commands.accountStatus();
+  if (status.status === "error") return { error: status.error };
+  return {
+    ok: status.data.signedIn
+      ? { kind: "signed-in", identity: null }
+      : { kind: "signed-out" },
+  };
+};
+
+let readAccount: ReadAccount = fromBridge;
+
+/** Dev only, called by the mock bridge: the harness answers as the states
+ * the backend will report once it can reach the server. Null puts the
+ * command back. */
+export function setAccountReader(read: ReadAccount | null): void {
+  readAccount = read ?? fromBridge;
+}
 
 interface AccountStore {
   account: AccountState;
@@ -57,7 +76,9 @@ interface AccountStore {
   error: string | null;
   submissions: SubmissionRow[] | null;
 
-  /** The one account read. Startup calls it; surfaces subscribe. */
+  /** The account read. Startup makes it, a return to the window repeats
+   *  it, and a failure surface retries with it. No surface reads on
+   *  mount. */
   load: () => Promise<void>;
   /** Starts the device flow and polls until signed, denied or closed. */
   signIn: () => Promise<void>;
@@ -81,18 +102,19 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
   submissions: null,
 
   load: async () => {
-    const status = await commands.accountStatus();
-    if (status.status === "error") {
-      // A read that failed knows nothing new. With an identity already in
-      // hand that is exactly offline; without one there is no state to
-      // claim, so the failure is all there is to report.
+    const answer = await readAccount();
+    if ("error" in answer) {
+      // A read that failed knows nothing new, so it never takes anything
+      // away. With an identity already in hand the failure is exactly
+      // offline; a credential without a name stays signed in, and a state
+      // never read stays unread with the failure to show for it.
       const identity = cachedIdentity(get().account);
       if (identity)
-        set({ account: { kind: "offline", identity }, error: status.error });
-      else set({ error: status.error });
+        set({ account: { kind: "offline", identity }, error: answer.error });
+      else set({ error: answer.error });
       return;
     }
-    set({ account: settle(status.data as AccountAnswer), error: null });
+    set({ account: answer.ok, error: null });
   },
 
   signIn: async () => {
@@ -120,9 +142,15 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
         return;
       }
       if (polled.data === "signed") {
-        set({ signingIn: false, userCode: null });
-        // The approval says a credential exists; the read says who it
-        // belongs to.
+        // The approval is proof a credential was stored, so it is recorded
+        // before anything else is asked: a read that fails after this must
+        // not leave the person looking at a sign-in button. The read that
+        // follows is what puts a name to it.
+        set({
+          signingIn: false,
+          userCode: null,
+          account: { kind: "signed-in", identity: null },
+        });
         await get().load();
         return;
       }

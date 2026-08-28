@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
+import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useStartupLoads } from "@/App";
 import { commands } from "@/bindings";
 import { AccountSection } from "@/components/account-section";
+import { MineSubmitDialog } from "@/components/marketplaces/mine-submit-dialog";
 import { MineTab } from "@/components/marketplaces/mine-tab";
 import { mount, settle } from "@/test/dom";
 import { useAccountStore } from "./account";
@@ -17,6 +19,7 @@ vi.mock("@/bindings", () => ({
     auditAll: vi.fn(),
     updatesOverview: vi.fn(),
     mineList: vi.fn(),
+    mineSubmitPreflight: vi.fn(),
   },
   ZOOM: { min: 50, max: 200, step: 10, default: 100 },
 }));
@@ -68,28 +71,54 @@ describe("who reads the account", () => {
       data: { rows: [], warnings: [] },
     });
     vi.mocked(commands.mineList).mockResolvedValue({ status: "ok", data: [] });
+    vi.mocked(commands.mineSubmitPreflight).mockResolvedValue({
+      status: "ok",
+      data: { candidate: null, ready: false, checks: [] },
+    } as unknown as Awaited<ReturnType<typeof commands.mineSubmitPreflight>>);
   });
+
+  const surfaces = (
+    <>
+      <AccountSection />
+      <MineTab />
+      <MineSubmitDialog
+        path="/work/acme"
+        open
+        onOpenChange={() => {}}
+        onSubmitted={() => {}}
+      />
+    </>
+  );
 
   it("reads it once no matter how many surfaces are on screen", async () => {
     mount(
       <>
         <Startup />
-        <AccountSection />
-        <MineTab />
+        {surfaces}
       </>,
     );
     await settle();
     expect(commands.accountStatus).toHaveBeenCalledTimes(1);
   });
 
-  it("does not read it for a surface mounted on its own", async () => {
-    mount(
-      <>
-        <AccountSection />
-        <MineTab />
-      </>,
-    );
+  it("does not read it for surfaces mounted on their own", async () => {
+    mount(surfaces);
     await settle();
     expect(commands.accountStatus).not.toHaveBeenCalled();
+  });
+
+  // A terminal can sign in or out while the window is away, and a read
+  // that failed at launch would otherwise stand for the whole session.
+  it("reads it again when the window comes back", async () => {
+    vi.useFakeTimers();
+    mount(<Startup />);
+    await settle();
+    expect(commands.accountStatus).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(6000);
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(commands.accountStatus).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
   });
 });

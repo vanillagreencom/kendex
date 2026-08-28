@@ -6,6 +6,7 @@ import { hasCredential, useAccountStore } from "@/stores/account";
  * the device flow — a code, a browser tab, done; signing out kills every
  * credential from that sign-in on the very next request. */
 export function AccountSection() {
+  const unread = useAccountStore((s) => s.account.kind === "loading");
   const signedIn = useAccountStore((s) => hasCredential(s.account));
   const signingIn = useAccountStore((s) => s.signingIn);
   const userCode = useAccountStore((s) => s.userCode);
@@ -13,18 +14,32 @@ export function AccountSection() {
   const signIn = useAccountStore((s) => s.signIn);
   const cancelSignIn = useAccountStore((s) => s.cancelSignIn);
   const signOut = useAccountStore((s) => s.signOut);
+  const load = useAccountStore((s) => s.load);
 
   return (
     <Section title="Account">
       <SettingRow
         label="kendex.ai"
         description={
-          signedIn
-            ? "Signed in. Submitting marketplaces uses this account; the credential lives in your system keychain."
-            : "Sign in with GitHub to submit marketplaces to the community directory. Nothing else needs it."
+          unread
+            ? "Checking whether you are signed in."
+            : signedIn
+              ? "Signed in. Submitting marketplaces uses this account; the credential lives in your system keychain."
+              : "Sign in with GitHub to submit marketplaces to the community directory. Nothing else needs it."
         }
       >
-        {signedIn ? (
+        {/* A read that never landed knows neither answer, so the row asks
+            for the read again instead of offering a sign-in that may
+            already have happened. */}
+        {unread ? (
+          <Button
+            variant="outline"
+            disabled={!error}
+            onClick={() => void load()}
+          >
+            {error ? "Try again" : "Checking…"}
+          </Button>
+        ) : signedIn ? (
           <Button variant="outline" onClick={() => void signOut()}>
             Sign out
           </Button>

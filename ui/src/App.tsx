@@ -131,9 +131,12 @@ export function useStartupLoads() {
       // the badge should notice without a visit to the page. The audit is
       // forced along with it: an editor saving a skill while the app was
       // out of focus is exactly the change every score on screen is now
-      // wrong about, and the freshness window would hold the old one.
+      // wrong about, and the freshness window would hold the old one. A
+      // terminal can sign in or out while the window is away too, and a
+      // read that failed at launch gets its next try here.
       void updatesLoad();
       void auditRefresh({ force: true });
+      void accountLoad();
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);

@@ -1,10 +1,16 @@
 // Account state for the mock bridge: the device flow "approves" on the
 // second poll, and submissions exist only while signed in.
 //
-// The real command reports only whether a credential is stored, so the
-// states that need a server — a name, an unconfirmed credential, a
-// rejected one — are what `?account=` picks on the dev URL.
-import type { SettledAccount } from "@/stores/account";
+// `account_status` reports what the real command reports, whether a
+// credential is stored. The states that need a server behind them — a
+// name, a credential that could not be confirmed, one that was rejected —
+// come from the store's dev reader, which the backend takes over once it
+// can reach the server. `?account=` on the dev URL picks the one to show.
+import {
+  hasCredential,
+  type SettledAccount,
+  setAccountReader,
+} from "@/stores/account";
 import type { Handler } from "./mock-state";
 
 const IDENTITY = { name: "Ada Lovelace", githubLogin: "ada" };
@@ -12,22 +18,38 @@ const IDENTITY = { name: "Ada Lovelace", githubLogin: "ada" };
 const SIGNED_OUT: SettledAccount = { kind: "signed-out" };
 const SIGNED_IN: SettledAccount = { kind: "signed-in", identity: IDENTITY };
 
-/** The states `?account=` picks from. Signed out is what it falls back to. */
-export const MOCK_ACCOUNTS: Record<string, SettledAccount> = {
+/** Every state the store can settle on, and the name `?account=` calls it.
+ *  Typed by the state's own tag, so a sixth state has to be added here. */
+export const MOCK_ACCOUNTS: Record<SettledAccount["kind"], SettledAccount> = {
   "signed-out": SIGNED_OUT,
   "signed-in": SIGNED_IN,
   offline: { kind: "offline", identity: IDENTITY },
   expired: { kind: "expired" },
 };
 
-function fromUrl(): SettledAccount {
-  if (typeof window === "undefined") return SIGNED_OUT;
-  const asked = new URLSearchParams(window.location.search).get("account");
-  return (asked ? MOCK_ACCOUNTS[asked] : undefined) ?? SIGNED_OUT;
+const named = (asked: string): SettledAccount | null =>
+  Object.hasOwn(MOCK_ACCOUNTS, asked)
+    ? MOCK_ACCOUNTS[asked as SettledAccount["kind"]]
+    : null;
+
+/** The state `?account=` asks for. Anything else says so and signs out. */
+export function accountFromUrl(search: string): SettledAccount {
+  const asked = new URLSearchParams(search).get("account");
+  if (asked === null) return SIGNED_OUT;
+  const picked = named(asked);
+  if (picked) return picked;
+  console.warn(
+    `mock has no account state '${asked}' — signed out instead. Pick one of ${Object.keys(MOCK_ACCOUNTS).join(", ")}`,
+  );
+  return SIGNED_OUT;
 }
 
-let account = fromUrl();
 let polls = 0;
+
+let account =
+  typeof window === "undefined"
+    ? SIGNED_OUT
+    : accountFromUrl(window.location.search);
 
 /** The state the bridge answers with, for tests and for the dev URL. */
 export function setMockAccount(state: SettledAccount): void {
@@ -35,14 +57,19 @@ export function setMockAccount(state: SettledAccount): void {
 }
 
 export function isSignedIn(): boolean {
-  return account.kind === "signed-in" || account.kind === "offline";
+  return hasCredential(account);
+}
+
+/** Points the store's account read here, in place of the command that
+ *  cannot answer with a name. */
+export function installAccountReader(): void {
+  setAccountReader(async () => ({ ok: account }));
 }
 
 export const accountHandlers: Record<string, Handler> = {
   account_status: () => ({
     signedIn: isSignedIn(),
     endpoint: "https://kendex.ai",
-    account,
   }),
   account_login_start: () => {
     polls = 0;
