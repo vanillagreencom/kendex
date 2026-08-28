@@ -107,7 +107,7 @@ fn trim_blank_edges(lines: &[String]) -> &[String] {
 /// (`header-with-comment`), so a key under one is a key nothing reads.
 /// Never the answer to where a table's text ends.
 pub(crate) fn loaders_read_env(line: &str) -> bool {
-    crate::settings_toml::header_of(line).is_some_and(|header| header.name == "env" && header.lone)
+    crate::settings_toml::header_of(line).is_some_and(|header| header.opens("env") && header.lone)
 }
 
 /// BOUNDARY — whether this row opens the `env` table, as TOML reads it.
@@ -116,7 +116,7 @@ pub(crate) fn loaders_read_env(line: &str) -> bool {
 /// append a second `[env]`, turning a file with a typo in its header into
 /// one with two of the same table, which no reader survives.
 pub(crate) fn opens_env(row: &Row) -> bool {
-    table_row(row) && crate::settings_toml::header_of(row.text).is_some_and(|h| h.name == "env")
+    table_row(row) && crate::settings_toml::header_of(row.text).is_some_and(|h| h.opens("env"))
 }
 
 /// The key one row assigns, by the name every spelling of it shares. That

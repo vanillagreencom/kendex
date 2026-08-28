@@ -203,31 +203,114 @@ pub fn quoted_span(value: &str, at: usize) -> Option<Range<usize>> {
 /// A table header line, read once for everyone who asks about one.
 ///
 /// Two questions live here and they have different answers, which is why
-/// the two facts travel together: TOML says `[env] # note` opens the `env`
-/// table, and the shell loaders — which match a lone `[name]` — refuse a
-/// whole file that holds one. A caller taking the wrong fact either writes
-/// into the wrong table or reports a key nothing reads as one that works.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Header<'a> {
-    /// The name between the brackets, as TOML reads it.
-    pub name: &'a str,
-    /// Whether the loaders read a header of this shape.
+/// the two facts travel together: TOML says `[env] # note`, `["env"]` and
+/// `[ env ]` all open the `env` table, and the shell loaders — which grep
+/// for the exact text `[env]` — read none of them but the first spelling.
+/// A caller taking the wrong fact either writes into the wrong table or
+/// reports a key nothing reads as one that works.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Header {
+    /// The dotted key this header names, one entry per part, each
+    /// decoded. `[a.b]` is two parts and `["a.b"]` is one, which TOML
+    /// holds apart and so does this.
+    pub path: Vec<String>,
+    /// Whether the shell loaders read a header of this shape.
     pub lone: bool,
+    /// An array-of-tables header, `[[name]]`. Not the table of that name:
+    /// its assignments belong to an element, so a seed meant for `[env]`
+    /// does not go under `[[env]]`.
+    pub array: bool,
 }
 
-/// The header this line opens, or `None` where it opens none. The name is
-/// read even from a shape the loaders refuse, so a table whose header has
-/// a typo is still that table and a seed still lands inside it rather than
-/// creating a second one beside it.
-pub fn header_of(text: &str) -> Option<Header<'_>> {
+impl Header {
+    /// Whether this header opens the top-level table with this name.
+    pub fn opens(&self, name: &str) -> bool {
+        !self.array && self.path.len() == 1 && self.path[0] == name
+    }
+}
+
+/// The header this line opens, or `None` where it opens none.
+///
+/// Every spelling TOML gives a header, because the set is small and
+/// closed and enumerating it is cheaper than meeting the next one as a
+/// defect: brackets around a dotted key, each part written bare, in a
+/// basic string or in a literal string, with whitespace allowed around
+/// the parts and the dots, and the whole doubled for an array of tables.
+/// A header holds a key and nothing else — no values, no `=` — so once
+/// the key grammar is right there is nothing left to miss.
+///
+/// The name is read even from a shape the loaders refuse, so a table
+/// whose header has a typo is still that table and a seed lands inside it
+/// rather than creating a second one beside it.
+pub fn header_of(text: &str) -> Option<Header> {
     let trimmed = text.trim();
-    let (name, after) = trimmed.strip_prefix('[')?.split_once(']')?;
-    let named = !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'));
-    named.then_some(Header {
-        name,
-        lone: after.trim().is_empty(),
+    let rest = trimmed.strip_prefix('[')?;
+    let (array, rest) = match rest.strip_prefix('[') {
+        Some(rest) => (true, rest),
+        None => (false, rest),
+    };
+    let (inside, after) = close_at(rest, array)?;
+    let path = dotted_key(inside)?;
+    let bare = !array && path.len() == 1 && inside == path[0];
+    Some(Header {
+        path,
+        lone: bare && after.trim().is_empty(),
+        array,
     })
+}
+
+/// Split a header's inside from what follows its closing bracket. The
+/// close is found outside any string, so a `]` inside a quoted key part
+/// does not end the header early.
+fn close_at(rest: &str, array: bool) -> Option<(&str, &str)> {
+    let bytes = rest.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'"' | b'\'' => index = string_at(rest, index)?,
+            b']' => {
+                let after = rest.get(index + 1..)?;
+                return match array {
+                    true => after.strip_prefix(']').map(|after| (&rest[..index], after)),
+                    false => Some((&rest[..index], after)),
+                };
+            }
+            _ => index += 1,
+        }
+    }
+    None
+}
+
+/// A header's dotted key: its parts in order, each decoded. `None` where
+/// any part is not a key TOML would accept.
+fn dotted_key(inside: &str) -> Option<Vec<String>> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let bytes = inside.as_bytes();
+    let mut index = 0;
+    while index <= bytes.len() {
+        if index == bytes.len() || bytes[index] == b'.' {
+            parts.push(header_part(&inside[start..index])?);
+            start = index + 1;
+            index += 1;
+            continue;
+        }
+        index = match bytes[index] {
+            b'"' | b'\'' => string_at(inside, index)?,
+            _ => index + 1,
+        };
+    }
+    (!parts.is_empty()).then_some(parts)
+}
+
+/// One part of a dotted key. A quoted part decodes through the same
+/// reader every other key goes through; a bare one is held to TOML's bare
+/// key: letters, digits, underscore and hyphen, and nothing else.
+fn header_part(part: &str) -> Option<String> {
+    let key = super::key_of(part)?;
+    let bare_ok = key
+        .name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'));
+    (key.quoted || (bare_ok && !key.name.is_empty())).then_some(key.name)
 }

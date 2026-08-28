@@ -321,32 +321,67 @@ fn an_unbalanced_bracket_does_not_swallow_the_file() {
     assert_eq!(keys("]\n[env]\nMODE = \"real\"\n"), vec!["MODE".to_owned()]);
 }
 
-/// One header parse for everyone, carrying both facts: the name TOML
-/// reads, and whether the shell loaders read a header of that shape. Three
-/// modules each kept their own version of this and the copies disagreed —
-/// which table a seed splices into is not the same question as which
-/// table's keys a script reads.
+/// One header parse for everyone, carrying the facts each caller needs:
+/// the dotted key TOML reads, whether the shell loaders read a header of
+/// that shape, and whether it declares an array of tables rather than the
+/// table itself. Three modules each kept their own version of this and
+/// the copies disagreed — which table a seed splices into is not the same
+/// question as which table's keys a script reads.
 #[test]
-fn a_header_carries_the_name_and_whether_the_loaders_read_it() {
+fn a_header_carries_its_key_and_whether_the_loaders_read_it() {
+    let env = header_of("[env]").expect("a header");
+    assert!(env.opens("env") && env.lone && !env.array);
+
+    // Every spelling TOML gives the same table. None but the first is one
+    // the loaders read, and all of them are still that table — which is
+    // what a seed is spliced against.
+    for spelling in [
+        "[env] # note",
+        "[ env ]",
+        "[\"env\"]",
+        "['env']",
+        "[\"e\\u006ev\"]",
+    ] {
+        let header = header_of(spelling).unwrap_or_else(|| panic!("{spelling}"));
+        assert!(header.opens("env"), "{spelling}");
+        assert!(!header.lone, "{spelling}");
+    }
+
+    // An array of tables is not the table of that name.
+    let items = header_of("[[env]]").expect("a header");
+    assert!(items.array && !items.opens("env"));
+    assert_eq!(items.path, vec!["env".to_owned()]);
+
+    // Dotted keys keep their parts, and quoting decides where a dot
+    // separates rather than belongs.
     assert_eq!(
-        header_of("[env]"),
-        Some(Header {
-            name: "env",
-            lone: true
-        })
+        header_of("[a.b-c_d]").map(|h| h.path),
+        Some(vec!["a".to_owned(), "b-c_d".to_owned()])
     );
     assert_eq!(
-        header_of("  [env] # the table"),
-        Some(Header {
-            name: "env",
-            lone: false
-        }),
-        "a typo in the header does not stop it being the env table"
+        header_of("[ a . b ]").map(|h| h.path),
+        Some(vec!["a".to_owned(), "b".to_owned()])
     );
-    assert_eq!(header_of("[a.b-c_d]").map(|h| h.name), Some("a.b-c_d"));
-    // Not headers: no closing bracket, an empty name, an array of tables,
-    // and whitespace inside the brackets, which the loaders never match.
-    for refused in ["[env", "[]", "[[items]]", "[ env ]", "MODE = \"a\"", ""] {
+    assert_eq!(
+        header_of("[\"a.b\"]").map(|h| h.path),
+        Some(vec!["a.b".to_owned()])
+    );
+    assert_eq!(
+        header_of("[\"has]bracket\"]").map(|h| h.path),
+        Some(vec!["has]bracket".to_owned()])
+    );
+    assert!(!header_of("[a.env]").expect("a header").opens("env"));
+
+    // Not headers at all.
+    for refused in [
+        "[env",
+        "[]",
+        "[[env]",
+        "[not a table]",
+        "[a..b]",
+        "MODE = \"a\"",
+        "",
+    ] {
         assert_eq!(header_of(refused), None, "{refused}");
     }
 }

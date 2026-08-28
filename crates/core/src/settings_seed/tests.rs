@@ -527,3 +527,36 @@ fn membership_tracks_the_loaders_where_the_boundary_tracks_toml() {
         "a key no loader reads is not a value to compare with a default"
     );
 }
+
+/// Every spelling TOML gives the env table is the table a seed lands in.
+/// Missing one appends a second `[env]`, which is the duplicate-table
+/// corruption this has now been fixed for three spellings running.
+#[test]
+fn any_spelling_of_the_env_header_is_the_table_a_seed_lands_in() {
+    let seeded = [SeededEnv {
+        entry: EnvEntry {
+            key: "DEPTH".to_owned(),
+            lines: vec!["# How deep.".to_owned(), "DEPTH = \"2\"".to_owned()],
+        },
+        owner: "review".to_owned(),
+    }];
+    for header in ["[env]", "[env] # note", "[ env ]", "[\"env\"]", "['env']"] {
+        let file = format!("{header}\nMODE = \"a\"\n\n[other]\nKEEP = \"b\"\n");
+        let (text, _) = merge(Some(&file), &seeded).expect("DEPTH is missing");
+        assert_eq!(
+            crate::settings_toml::rows(&text)
+                .iter()
+                .filter(|row| opens_env(row))
+                .count(),
+            1,
+            "{header}: a second env table would stop the file loading:\n{text}"
+        );
+        let depth = text.find("DEPTH").expect("seeded");
+        let other = text.find("[other]").expect("kept");
+        assert!(depth < other, "{header}: the seed belongs to env:\n{text}");
+    }
+    // An array of tables is NOT that table, so the seed does not go in it.
+    let file = "[[env]]\nMODE = \"a\"\n";
+    let (text, _) = merge(Some(file), &seeded).expect("DEPTH is missing");
+    assert!(text.contains("[env]"), "a real env table is made:\n{text}");
+}

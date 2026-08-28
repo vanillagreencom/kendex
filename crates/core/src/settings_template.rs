@@ -108,12 +108,14 @@ fn is_env_name(key: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// A `[`-leading line's table name and whether it is a header the loaders
-/// accept. Read through [`crate::settings_toml::header_of`], which is the
-/// one place a header is parsed: a check with its own copy is a check that
-/// can come to disagree with what seeding splices against.
-fn table_header(line: &str) -> (&str, bool) {
-    crate::settings_toml::header_of(line).map_or(("", false), |header| (header.name, header.lone))
+/// Whether a `[`-leading line opens `[env]`, and whether it is a header
+/// the loaders read. Both read through
+/// [`crate::settings_toml::header_of`], which is the one place a header is
+/// parsed: a check with its own copy is a check that can come to disagree
+/// with what seeding splices against.
+fn table_header(line: &str) -> (bool, bool) {
+    crate::settings_toml::header_of(line)
+        .map_or((false, false), |header| (header.opens("env"), header.lone))
 }
 
 /// Strip a comment line down to its text.
@@ -185,7 +187,7 @@ fn scan(text: &str) -> (TemplateRead, BTreeSet<u32>) {
     // twice.
     let rows = crate::settings_toml::rows(text);
     let has_env = rows.iter().any(|row| {
-        row.kind == crate::settings_toml::Line::Table && table_header(row.text.trim()).0 == "env"
+        row.kind == crate::settings_toml::Line::Table && table_header(row.text.trim()).0
     });
     if !has_env {
         read.findings.push(TemplateFinding {
@@ -292,8 +294,7 @@ fn header(
     read: &mut TemplateRead,
     syntax: &mut BTreeSet<u32>,
 ) -> bool {
-    let (name, exact) = table_header(trimmed);
-    let in_env = name == "env";
+    let (in_env, exact) = table_header(trimmed);
     if !exact {
         syntax.insert(line);
         read.findings.push(TemplateFinding {
