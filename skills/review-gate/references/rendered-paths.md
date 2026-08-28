@@ -153,13 +153,18 @@ exactly one of `--body` or `--body-file`. `--dry-run` prints the decision and
 the `gh` command it would run.
 
 The lock is the one judge, and it records provenance for every kind — skills,
-agents, hooks and Pi extensions alike. A name routes to the catalog repo when
-the lock holds at least one entry for it, narrowed to the kind the selector
-names, and EVERY matching entry's `source_repo` is that repo. One entry
-recorded from somewhere else makes the name ambiguous and keeps the report
-here, which is also what an unlocked name gets. How the manifest spelled the
-repo does not decide it: a shorthand, an https URL and a `git@` reference fold
-to one identity.
+agents, hooks and Pi extensions alike. A name routes upstream when the lock
+holds at least one entry for it, narrowed to the kind the selector names, and
+EVERY matching entry's `source_repo` is kendex's own repo, the one candidate
+the comparison holds. One entry recorded from somewhere else makes the name
+ambiguous and keeps the report here, which is also what an unlocked name gets.
+How the manifest spelled the repo does not decide it: a shorthand, an https URL
+and a `git@` reference fold to one identity.
+
+**Kendex is the only destination the route reaches.** An item rendered from a
+third-party catalog carries that catalog in its lock entries, never the
+candidate, and its report files against this repo — open the issue in that
+catalog by hand.
 
 With no selector at all the CLI warns once that ownership could not be
 determined and files against this repo. Confirm with `--dry-run` before

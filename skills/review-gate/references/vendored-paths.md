@@ -105,13 +105,15 @@ run.
 The lock is the one judge, and it records provenance for every kind — skills,
 agents, hooks and Pi extensions alike. A name routes upstream when the lock
 holds at least one entry for it, narrowed to the kind the selector names, and
-EVERY matching entry's `source_repo` is the upstream. One entry recorded from
-somewhere else makes the name ambiguous and keeps the report local, which is
-also what an unlocked name gets. How the manifest spelled the repo does not
-decide it: a shorthand, an https URL and a `git@` reference fold to one
-identity. `--skill`, `--agent`, `--hook` and `--asset` are the selectors; with
-none of them the CLI warns once that ownership could not be determined and
-files against the LOCAL repo.
+EVERY matching entry's `source_repo` is kendex's own repo, the one candidate
+the comparison holds — an item vendored from anywhere else files against the
+LOCAL repo, and its issue is opened by hand. One entry recorded from somewhere
+else makes the name ambiguous and keeps the report local, which is also what an
+unlocked name gets. How the manifest spelled the repo does not decide it: a
+shorthand, an https URL and a `git@` reference fold to one identity. `--skill`,
+`--agent`, `--hook` and `--asset` are the selectors; with none of them the CLI
+warns once that ownership could not be determined and files against the LOCAL
+repo.
 
 A repo that vendored only a scripts subtree, with no lock entry over it, has
 no name to select — open the upstream issue by hand. Confirm with `--dry-run`
