@@ -595,6 +595,33 @@ describe("an audit that lands after a command it cannot answer for", () => {
     expect(useAuditStore.getState().auditedAt).toBeNull();
   });
 
+  // The third ordering: a reading that lands while a command is still
+  // running. The command has been writing throughout, and the mark at the
+  // end of its attempt would come too late to undo an install.
+  it("drops a reading that landed while an attempt was still running", async () => {
+    const audit = park<{ status: "ok"; data: AuditView[] }>();
+    const command = park<{ status: "error"; error: string }>();
+    vi.mocked(commands.auditAll).mockReturnValue(
+      audit.parked as ReturnType<typeof commands.auditAll>,
+    );
+    vi.mocked(commands.removeItem).mockReturnValue(
+      command.parked as ReturnType<typeof commands.removeItem>,
+    );
+
+    const running = useAuditStore.getState().refresh();
+    const acting = useAuditStore
+      .getState()
+      .removeItem(globalScope, "hook", "lint");
+    audit.land({ status: "ok", data: [stale] });
+    await running;
+
+    expect(useAuditStore.getState().views).toEqual([emptyView]);
+    expect(useAuditStore.getState().auditedAt).toBeNull();
+
+    command.land({ status: "error", error: "disk is full" });
+    await acting;
+  });
+
   // The control: an audit nothing overtook is the answer, as it was.
   it("installs an audit that no command overtook", async () => {
     vi.mocked(commands.auditAll).mockResolvedValue({

@@ -76,17 +76,18 @@ export function auditRunner(
     error?: string | null;
   }) => void,
   get: () => { views: AuditView[] },
-  /** Called once a command has been attempted, however it ended. An audit
-   *  already in flight read the machine before the attempt, and a command
-   *  that failed is not one that wrote nothing — each of these runs a plan
-   *  before a step that can still fail — so either way that reading can no
-   *  longer answer for what is on disk. Unconditional on purpose: an
-   *  attempt that turned out to write nothing costs one re-read, which is
-   *  the direction with nothing to lose. */
+  /** Called at both ends of a command attempt, however it ends. An attempt
+   *  is a span, not a moment: each of these runs a plan before a step that
+   *  can still fail, so a command writes throughout its own run and one
+   *  that failed is not one that wrote nothing. Marking only the end left a
+   *  reading that landed mid-attempt looking current. Unconditional on
+   *  purpose: an attempt that turned out to write nothing costs one
+   *  re-read, which is the direction with nothing to lose. */
   attempted: () => void,
 ): Run {
   const run: Run = async (action, opts) => {
     set({ busy: true });
+    attempted();
     let response: Awaited<ReturnType<typeof action>>;
     try {
       response = await action();

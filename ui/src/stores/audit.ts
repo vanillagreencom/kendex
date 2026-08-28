@@ -36,14 +36,20 @@ interface AuditState extends ItemActions {
 const AUDIT_FRESH_FOR_MS = 60_000;
 
 export const useAuditStore = create<AuditState>((set, get) => {
-  // One rule, in the one place that can hold it: an audit that began before
-  // a command was attempted cannot answer for the machine after it. Reading
-  // every scope takes seconds, and any command tried in that window may
-  // have written, so a response stamped before the attempt is out of date
-  // whatever it says and whatever the command answered. Left unguarded, a
-  // row the person had just settled came back — dated fresh, and so kept
-  // for the whole freshness window, with a retry failing against work core
-  // had already done.
+  // The rule, in the one place that can hold it: a reading is kept only
+  // when no command attempt started or ended while it ran. Reading every
+  // scope takes seconds, a command writes throughout its own run, and it
+  // may have written whatever it went on to answer — so the attempt is
+  // marked at both ends and the counter decides. Left unguarded, a row the
+  // person had just settled came back, dated fresh and so kept for the
+  // whole freshness window, with a retry failing against work core had
+  // already done.
+  //
+  // One ordering this does not reach: an attempt that began before the
+  // reading and had not returned when it landed moves the counter at
+  // neither end. Answering that needs a second thing to read — whether an
+  // attempt was in flight as the reading began — which is a different
+  // shape, not a third mark on this counter.
   let generation = 0;
   const run = auditRunner(set, get, () => {
     generation += 1;
