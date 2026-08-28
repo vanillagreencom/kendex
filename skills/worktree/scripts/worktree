@@ -261,13 +261,13 @@ Failure semantics:
   (fix-links restores configured symlinks); the branch is never deleted on
   that path. remove checks for a native 'git worktree lock' up front and
   exits non-zero with a diagnostic naming the lock reason and the
-  'git worktree unlock' command. Branch deletion uses safe 'git branch -d',
-  falling back to 'git branch -D' only when gh reports a merged pull request
-  for the branch — the proof a squash merge leaves behind, and the same one
-  cleanup uses. A branch with no merged pull request, or a lookup that cannot
-  answer, keeps the branch: the exit is non-zero with a diagnostic naming the
-  remaining branch, why each proof failed, and the manual 'git branch -D'
-  recovery command.
+  'git worktree unlock' command. Branch deletion uses safe 'git branch -d'.
+  When that refuses, remove falls back to the proof cleanup uses: gh must
+  report a pull request merged into the default branch whose head commit IS
+  this branch's tip, which is what a squash merge leaves behind. Only that
+  forces the delete. Every other answer keeps the branch, and the exit is
+  non-zero with a diagnostic naming the remaining branch, the answer the
+  lookup gave, and the manual 'git branch -D' recovery command.
 
 Session leases:
   remove releases its own lease before removing. A foreign lease is left
@@ -296,17 +296,20 @@ a quiet cleanup means nothing was held back.
 cleanup fetches origin, considers non-main registered worktrees, and proves
 each branch merged two ways: ancestry into origin/<default> (or the local
 default branch when the remote ref is unavailable), or, when ancestry fails,
-a merged pull request for the branch reported by gh. The second proof is what
-a squash merge needs — it rewrites the work into a new commit, so a merged
-branch is an ancestor of nothing. With merge proven, cleanup asks Git to
-remove the intact worktree and deletes the local branch.
+a pull request gh reports merged into <default> whose head commit IS this
+branch's tip. The second proof is what a squash merge needs — it rewrites the
+work into a new commit, so a merged branch is an ancestor of nothing. With
+merge proven, cleanup asks Git to remove the intact worktree and deletes the
+local branch.
 
-A branch with neither proof is kept and named as unmerged. A merged-pull-
-request lookup that cannot answer — gh missing, the query failing — is
-likewise kept and named: an unanswered lookup is never a merge. If Git cannot
-remove a worktree, cleanup exits nonzero and preserves its path, configured
-symlinks, and branch for manual recovery. If branch deletion fails after
-worktree removal, cleanup also exits nonzero and names the remaining branch.
+The proof is that commit, never the branch name. One name is reused by every
+worktree an issue ever had, so a branch carrying commits past the pull request
+that merged it is unmerged work: cleanup keeps it and says so. Anything short
+of a proof keeps the worktree and names its reason, a lookup that cannot
+answer included. If Git cannot remove a worktree, cleanup exits nonzero and
+preserves its path, configured symlinks, and branch for manual recovery. If
+branch deletion fails after worktree removal, cleanup also exits nonzero and
+names the remaining branch.
 
 Options:
   --stale             Also collect worktrees whose guard lease is past the TTL
@@ -2871,32 +2874,66 @@ open_pr_for_branch() {
 # merged branch as pending forever (#697). The forge's merged PR is the proof
 # that survives the rewrite.
 #
-# Exit 0: merged, PR number on stdout. Exit 1: provably not merged. Exit 2: the
-# lookup could not answer, one-line reason on stdout. 2 is deliberately NOT 1 —
-# an unanswered lookup must never authorize a removal, and every caller reports
-# it the way it reports any other worktree it kept.
+# The proof is COMMIT identity, never the branch name. `issue_branch_name`
+# derives one name per issue, so every worktree ever made for an issue reuses
+# it: a name-only match hands the merged record of last month's PR to today's
+# fresh work and force-deletes it. The tip this repository has right now must
+# be the exact commit some merged PR carried, and `--base` keeps the answer to
+# PRs that landed on the default branch.
+#
+# Exit 0: merged, PR number on stdout. Exit 1: no merged PR for the branch at
+# all. Exit 3: a merged PR exists but the tip is not its head — the branch has
+# moved on and its extra commits are unmerged work. Exit 2: the lookup could
+# not answer. 1, 2 and 3 all print a one-line reason on stdout and are
+# deliberately distinct from each other; only exit 0 may authorize a delete.
 merged_pr_for_branch() {
-  local branch="$1" output=""
+  local branch="$1" tip="" rows="" err_file="" detail="" oid="" number="" seen="" rc=0
   [[ -n "$branch" ]] || { printf 'no branch to look up\n'; return 2; }
   if ! command -v gh >/dev/null 2>&1; then
     printf 'gh is not installed\n'
     return 2
   fi
-  if ! output="$( (cd "$PROJECT_ROOT" && gh pr list --state merged --head "$branch" \
-                     --limit 1 --json number --jq '.[0].number // empty') 2>&1 )"; then
-    printf '%s\n' "${output:-gh pr list failed}" | tr '\n' ' '
-    printf '\n'
+  tip="$(git -C "$PROJECT_ROOT" rev-parse --verify --quiet "refs/heads/$branch" || true)"
+  if [[ -z "$tip" ]]; then
+    printf 'branch has no local tip to compare a merged pull request against\n'
     return 2
   fi
-  [[ -n "$output" ]] || return 1
-  # gh may print a warning on stdout beside the number; anything that is not a
-  # bare PR number is an answer this cannot read, which is exit 2, not a merge.
-  if ! [[ "$output" =~ ^[0-9]+$ ]]; then
-    printf '%s\n' "gh returned an unreadable answer: $output" | tr '\n' ' '
-    printf '\n'
+  if ! err_file="$(mktemp "${TMPDIR:-/tmp}/worktree-merged-pr.XXXXXX")"; then
+    printf 'could not create a scratch file for the gh diagnostic\n'
     return 2
   fi
-  printf '%s\n' "$output"
+  # stdout and stderr are captured SEPARATELY. Folding them together let gh's
+  # routine chatter — an update notice, an auth warning — land beside the
+  # answer and fail the parse, turning the proof off for every branch at once.
+  # Every merged PR sharing the name is scanned, not just the newest row.
+  rows="$( (cd "$PROJECT_ROOT" && gh pr list --state merged --head "$branch" \
+              --base "$DEFAULT_BRANCH" --limit 100 --json number,headRefOid \
+              --jq '.[] | "\(.headRefOid) \(.number)"') 2>"$err_file" )" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    detail="$(tr '\n' ' ' <"$err_file")"
+    rm -f "$err_file"
+    printf '%s\n' "${detail:-gh pr list failed (exit $rc)}"
+    return 2
+  fi
+  rm -f "$err_file"
+  if [[ -z "$rows" ]]; then
+    printf 'no merged pull request on %s for this branch name\n' "$DEFAULT_BRANCH"
+    return 1
+  fi
+  while read -r oid number; do
+    [[ -n "$oid" ]] || continue
+    seen="$seen #$number"
+    [[ "$oid" == "$tip" ]] || continue
+    if ! [[ "$number" =~ ^[0-9]+$ ]]; then
+      printf 'gh returned an unreadable pull-request number: %s\n' "$number"
+      return 2
+    fi
+    printf '%s\n' "$number"
+    return 0
+  done <<<"$rows"
+  printf 'tip %s is the head of no merged pull request (merged under this name:%s)\n' \
+    "$tip" "$seen"
+  return 3
 }
 
 resolve_pr_branch() {
@@ -4402,8 +4439,8 @@ case "${1:-}" in
         # `branch -d` proves merge by ancestry, which a squash merge erases, so
         # a just-merged PR's branch survives every removal and merge-pr § 5
         # reports a failure on the happy path (#697). Fall back to the same
-        # predicate cleanup uses — the forge's merged PR — and nothing weaker:
-        # an unanswered lookup keeps the branch and reports, exactly as before.
+        # predicate cleanup uses — a merged PR whose head commit IS this tip —
+        # and nothing weaker: any other answer keeps the branch and reports.
         REMOVE_MERGE_DETAIL=""
         REMOVE_MERGE_RC=0
         REMOVE_MERGE_DETAIL="$(merged_pr_for_branch "$BRANCH")" || REMOVE_MERGE_RC=$?
@@ -4420,7 +4457,8 @@ case "${1:-}" in
           fi
           case "$REMOVE_MERGE_RC" in
             0) echo "  Merged in pull request #$REMOVE_MERGE_DETAIL, but the forced delete failed." >&2 ;;
-            1) echo "  No merged pull request for '$BRANCH' either, so the branch is not merged." >&2 ;;
+            1) echo "  No merged pull request for '$BRANCH' either: ${REMOVE_MERGE_DETAIL:-no detail}" >&2 ;;
+            3) echo "  The branch carries work past its merged pull request: ${REMOVE_MERGE_DETAIL:-no detail}" >&2 ;;
             *) echo "  Merged-pull-request lookup could not answer: ${REMOVE_MERGE_DETAIL:-no detail}" >&2 ;;
           esac
           echo "  After verifying it is safe, delete manually with: git -C \"$PROJECT_ROOT\" branch -D \"$BRANCH\"" >&2
@@ -4529,6 +4567,11 @@ case "${1:-}" in
           0) ;;
           1)
             echo "Skipped (branch '$BRANCH' is not merged — not an ancestor of $CLEANUP_MERGE_TARGET and no merged pull request): $wt" >&2
+            continue
+            ;;
+          3)
+            echo "Skipped (branch '$BRANCH' carries work past its merged pull request: $CLEANUP_MERGE_DETAIL): $wt" >&2
+            echo "  Those commits are reachable from this branch alone; merge or drop them, then re-run cleanup." >&2
             continue
             ;;
           *)

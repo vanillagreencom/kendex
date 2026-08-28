@@ -11,8 +11,13 @@
 #   * a branch with no merged PR is KEPT and named as unmerged;
 #   * a lookup that cannot answer — gh failing, gh missing — keeps the worktree
 #     and names that too, because an unanswered lookup is not a merge;
+#   * gh's stderr chatter never becomes part of the answer;
+#   * a branch whose tip is NOT the head the pull request merged is kept, with
+#     its follow-up commits and uncommitted files intact. One branch name serves
+#     every worktree an issue ever had, so matching on the name alone handed an
+#     old merged record to new work and force-deleted it;
 #   * `remove` deletes a squash-merged branch (`git branch -d` refuses it) and
-#     still keeps an unmerged one.
+#     still keeps an unmerged or moved-on one.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,8 +61,13 @@ assert_path_absent() {
 }
 
 # `gh pr list --state merged --head <branch>` answers from GH_MERGED_PRS, a
-# newline-separated "<branch> <number>" table. GH_FAIL=1 makes the query fail
-# the way a network or auth error does.
+# newline-separated "<branch> <head-oid> <number>" table, printed back in the
+# `--jq '.[] | "\(.headRefOid) \(.number)"'` shape the script asks for. The oid
+# column is what makes the name-only match testable: a row can name a branch
+# and carry the head of an OLDER commit.
+#
+# GH_FAIL=1 makes the query fail the way a network or auth error does.
+# GH_STDERR_NOISE=1 prints gh's routine chatter on stderr beside a good answer.
 make_gh_stub() {
   local bin="$1"
   mkdir -p "$bin"
@@ -68,22 +78,27 @@ if [[ "${GH_FAIL:-0}" == "1" ]]; then
   echo "gh: could not reach api.github.com" >&2
   exit 1
 fi
+if [[ "${GH_STDERR_NOISE:-0}" == "1" ]]; then
+  echo "A new release of gh is available: 2.40.0 -> 2.63.2" >&2
+fi
 branch=""
 prev=""
 for arg in "$@"; do
   [[ "$prev" == "--head" ]] && branch="$arg"
   prev="$arg"
 done
-while read -r want number; do
+while read -r want oid number; do
   [[ -n "$want" ]] || continue
-  if [[ "$want" == "$branch" ]]; then
-    printf '%s\n' "$number"
-    exit 0
-  fi
+  [[ "$want" == "$branch" ]] || continue
+  printf '%s %s\n' "$oid" "$number"
 done <<<"${GH_MERGED_PRS:-}"
 exit 0
 STUB
   chmod +x "$bin/gh"
+}
+
+branch_tip() {
+  git -C "$1/main" rev-parse --verify "refs/heads/$2"
 }
 
 make_repo() {
@@ -144,7 +159,8 @@ else
   pass "precondition: the squashed branch is not an ancestor of origin/main"
 fi
 
-export GH_MERGED_PRS="issue-merged 4242"
+GH_MERGED_PRS="issue-merged $(branch_tip "$ROOT" issue-merged) 4242"
+export GH_MERGED_PRS
 squash_code=0
 squash_out=$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" cleanup 2>"$ROOT/squash.err") || squash_code=$?
 squash_err="$(cat "$ROOT/squash.err")"
@@ -215,6 +231,95 @@ else
   pass "a missing gh collects nothing"
 fi
 
+echo "=== gh chatter on stderr does not disable the proof ==="
+
+# gh writes its update notice and auth warnings to stderr. Folded into the
+# answer they are read as pull-request rows: a branch with NO merged pull
+# request then looks like one whose rows simply did not match, and the skip
+# blames the wrong cause. The streams stay separate so the empty answer is
+# still empty.
+NOISE_ROOT="$TMP_ROOT/noise"
+make_repo "$NOISE_ROOT"
+add_branch_tree "$NOISE_ROOT" "issue-noise"
+add_branch_tree "$NOISE_ROOT" "issue-noise-open"
+squash_onto_main "$NOISE_ROOT" "issue-noise"
+
+GH_MERGED_PRS="issue-noise $(branch_tip "$NOISE_ROOT" issue-noise) 31"
+export GH_MERGED_PRS
+noise_code=0
+noise_out=$(cd "$NOISE_ROOT/main" && GH_STDERR_NOISE=1 \
+  "$WORKTREE_SCRIPT" cleanup 2>"$NOISE_ROOT/noise.err") || noise_code=$?
+noise_err="$(cat "$NOISE_ROOT/noise.err")"
+
+assert_eq "$noise_code" "0" "cleanup exits 0 with gh chatter on stderr"
+assert_contains "$noise_out" "Cleaned: $NOISE_ROOT/trees/issue-noise" \
+  "the proof still reads its answer past gh's stderr chatter"
+assert_contains "$noise_err" "Skipped (branch 'issue-noise-open' is not merged" \
+  "gh chatter is not counted as a pull-request row for a branch that has none"
+if grep -qF "could not be determined" <<<"$noise_err"; then
+  fail "gh chatter is not mistaken for an unreadable answer"
+else
+  pass "gh chatter is not mistaken for an unreadable answer"
+fi
+
+echo "=== a branch past its merged pull request is kept ==="
+
+# The data-loss case the name-only match allowed. One branch name serves every
+# worktree an issue ever had, so a merged record from an earlier PR would match
+# a branch whose tip is newer work: cleanup force-removed the tree and ran
+# branch -D, leaving the follow-up commit reachable from no ref.
+MOVED_ROOT="$TMP_ROOT/moved"
+make_repo "$MOVED_ROOT"
+add_branch_tree "$MOVED_ROOT" "issue-moved"
+MERGED_OID="$(branch_tip "$MOVED_ROOT" issue-moved)"
+squash_onto_main "$MOVED_ROOT" "issue-moved"
+
+MOVED_TREE="$MOVED_ROOT/trees/issue-moved"
+printf 'follow-up\n' >"$MOVED_TREE/followup.txt"
+git -C "$MOVED_TREE" add followup.txt
+git -C "$MOVED_TREE" commit -q -m "issue-moved: follow-up work"
+FOLLOWUP_OID="$(branch_tip "$MOVED_ROOT" issue-moved)"
+printf 'uncommitted\n' >"$MOVED_TREE/scratch.txt"
+
+# The stub still reports the merged PR under this branch NAME, carrying the head
+# it actually merged. Only the commit compare can tell the two apart.
+export GH_MERGED_PRS="issue-moved $MERGED_OID 100"
+moved_code=0
+moved_out=$(cd "$MOVED_ROOT/main" && "$WORKTREE_SCRIPT" cleanup 2>"$MOVED_ROOT/moved.err") || moved_code=$?
+moved_err="$(cat "$MOVED_ROOT/moved.err")"
+
+assert_eq "$moved_code" "0" "cleanup exits 0 with a moved-on branch present"
+assert_path_exists "$MOVED_TREE" "the worktree with work past the merge survives"
+assert_path_exists "$MOVED_TREE/scratch.txt" "the uncommitted file survives"
+assert_contains "$moved_err" "carries work past its merged pull request" \
+  "cleanup names the moved-on branch as the reason it kept the worktree"
+if grep -qF "Cleaned:" <<<"$moved_out"; then
+  fail "cleanup collects nothing when the tip is not the merged head"
+else
+  pass "cleanup collects nothing when the tip is not the merged head"
+fi
+if [[ "$(branch_tip "$MOVED_ROOT" issue-moved)" == "$FOLLOWUP_OID" ]]; then
+  pass "the follow-up commit is still reachable from the branch"
+else
+  fail "the follow-up commit is still reachable from the branch"
+fi
+
+echo "=== remove keeps a branch past its merged pull request ==="
+
+movedrm_code=0
+movedrm_out=$(cd "$MOVED_ROOT/main" && "$WORKTREE_SCRIPT" remove "$MOVED_TREE" 2>"$MOVED_ROOT/movedrm.err") || movedrm_code=$?
+movedrm_err="$(cat "$MOVED_ROOT/movedrm.err")"
+
+assert_eq "$movedrm_code" "1" "remove exits nonzero rather than force-deleting a moved-on branch"
+assert_contains "$movedrm_err" "carries work past its merged pull request" \
+  "remove names the moved-on branch as the reason it kept it"
+if [[ "$(branch_tip "$MOVED_ROOT" issue-moved)" == "$FOLLOWUP_OID" ]]; then
+  pass "remove leaves the follow-up commit reachable"
+else
+  fail "remove leaves the follow-up commit reachable"
+fi
+: "${movedrm_out:=}"
+
 echo "=== remove deletes a squash-merged branch ==="
 
 RM_ROOT="$TMP_ROOT/remove"
@@ -222,7 +327,8 @@ make_repo "$RM_ROOT"
 add_branch_tree "$RM_ROOT" "issue-rm"
 squash_onto_main "$RM_ROOT" "issue-rm"
 
-export GH_MERGED_PRS="issue-rm 77"
+GH_MERGED_PRS="issue-rm $(branch_tip "$RM_ROOT" issue-rm) 77"
+export GH_MERGED_PRS
 rm_code=0
 rm_out=$(cd "$RM_ROOT/main" && "$WORKTREE_SCRIPT" remove "$RM_ROOT/trees/issue-rm" 2>"$RM_ROOT/rm.err") || rm_code=$?
 rm_err="$(cat "$RM_ROOT/rm.err")"

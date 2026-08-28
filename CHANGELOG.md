@@ -66,9 +66,9 @@ an outside contributor.
 
 ### Fixed
 
-- `worktree cleanup` and `worktree remove` prove a branch merged by its merged
-  pull request when ancestry cannot — a squash merge leaves none, so every
-  squash-merged worktree was kept. A kept worktree now always names its reason.
+- `worktree cleanup` and `worktree remove` take the pull request whose head
+  commit is the branch tip as proof of merge, so squash-merged worktrees are
+  collected. A branch past that commit stays, and every keep names its reason.
 
 - A refresh cuts opencode.json's `kendex-hook-` `instructions` rows down to
   what it renders now, so a row kendex wrote leaves with its render. Every
