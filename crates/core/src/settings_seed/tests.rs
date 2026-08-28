@@ -338,7 +338,8 @@ fn comment_hash_matches_v1s_algorithm() {
     });
 }
 
-/// One key from each named owner, spelled the way a template ships it.
+/// Every `[env]` entry each named owner's template ships, in the order the
+/// owners are given — the order seeding resolves a shared key in.
 fn shipped(owners: &[(&str, &str)]) -> Vec<SeededEnv> {
     owners
         .iter()
@@ -383,4 +384,61 @@ fn a_key_only_one_package_ships_says_nothing() {
         ("beta", "[env]\n# Width.\nWIDTH = \"3\"\n"),
     ]));
     assert!(notes.is_empty(), "{notes:?}");
+}
+
+#[test]
+fn the_note_names_the_owner_whose_value_merge_actually_seeds() {
+    // alpha's default carries a trailing comment, which the loaders read
+    // and a stricter decoder once threw away — dropping alpha from the note
+    // and naming beta as the package whose value lands.
+    let entries = shipped(&[
+        ("alpha", "[env]\n# Wait.\nWAIT = \"900\" # seconds\n"),
+        ("beta", "[env]\n# Wait.\nWAIT = \"600\"\n"),
+        ("gamma", "[env]\n# Wait.\nWAIT = \"300\"\n"),
+    ]);
+    let notes = conflict_notes(&entries);
+    assert_eq!(
+        notes,
+        [
+            "kendex.settings.toml WAIT: packages ship different defaults — \"900\" (alpha), \"600\" (beta), \"300\" (gamma) — only alpha's is seeded, so set the value yourself if that is not the one you want"
+        ]
+    );
+    // And alpha is what merge writes, which is what the note claims.
+    let (merged, added) = merge(None, &entries).unwrap();
+    assert_eq!(added, ["WAIT"]);
+    assert!(merged.contains("WAIT = \"900\" # seconds"), "{merged}");
+}
+
+#[test]
+fn a_default_no_decoder_reads_still_names_its_owner() {
+    let notes = conflict_notes(&shipped(&[
+        ("alpha", "[env]\n# Wait.\nWAIT = 900\n"),
+        ("beta", "[env]\n# Wait.\nWAIT = \"600\"\n"),
+    ]));
+    assert_eq!(
+        notes,
+        [
+            "kendex.settings.toml WAIT: packages ship different defaults — 900 (alpha), \"600\" (beta) — only alpha's is seeded, so set the value yourself if that is not the one you want"
+        ]
+    );
+}
+
+#[test]
+fn a_trailing_comment_is_not_a_different_default() {
+    let notes = conflict_notes(&shipped(&[
+        ("alpha", "[env]\n# Wait.\nWAIT = \"900\"\n"),
+        ("beta", "[env]\n# Wait.\nWAIT = \"900\" # seconds\n"),
+    ]));
+    assert!(notes.is_empty(), "{notes:?}");
+}
+
+#[test]
+fn catalog_text_reaches_a_note_escaped() {
+    let notes = conflict_notes(&shipped(&[
+        ("alpha", "[env]\n# Wait.\nWAIT = \"90\u{1b}[31m0\"\n"),
+        ("be\u{1b}[31mta", "[env]\n# Wait.\nWAIT = \"600\"\n"),
+    ]));
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(!notes[0].contains('\u{1b}'), "{notes:?}");
+    assert!(notes[0].contains("\\u{1b}[31m"), "{notes:?}");
 }

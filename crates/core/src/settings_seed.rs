@@ -54,6 +54,23 @@ impl SeededEnv {
         trim_blank_edges(comment)
     }
 
+    /// The default this entry ships, spelled the way a note shows it: the
+    /// decoded value in quotes, or the assignment's right-hand side
+    /// verbatim where the strict reader cannot decode it. Every entry
+    /// `merge` seeds has one, so a note can never drop an owner and then
+    /// name the wrong package as the one whose value lands.
+    fn default_shown(&self) -> String {
+        let line = self.entry.lines.last().map_or("", String::as_str);
+        match crate::settings_template::decoded_value(line) {
+            Some(value) => format!("\"{value}\""),
+            None => line
+                .split_once('=')
+                .map_or(line, |(_, value)| value)
+                .trim()
+                .to_owned(),
+        }
+    }
+
     /// The ledger record seeding this entry writes.
     pub fn seed_record(&self) -> SettingsSeed {
         SettingsSeed {
@@ -279,38 +296,39 @@ pub fn merge(original: Option<&str>, entries: &[SeededEnv]) -> Option<(String, V
 /// anywhere else — and packages agreeing on a shared key, which is the
 /// ordinary case, say nothing at all.
 ///
-/// Entry order is declaration order, so the leading owner of the leading
-/// default is the one `merge` takes.
+/// Every entry counts, whatever shape its value is in. `merge` reads the
+/// same lenient list, so an entry this dropped would be one the note left
+/// out of a key it does seed — and with it the owner named as the one
+/// whose value lands.
+///
+/// Key, owners and defaults are all catalog text a download supplied, so
+/// the finished line goes through [`crate::names::shown`]: a note is read
+/// on a terminal, and nothing in it is a sequence to act on.
 pub fn conflict_notes(entries: &[SeededEnv]) -> Vec<String> {
     // Distinct defaults per key, each with its owners, both in declaration
     // order; the key order is the file's, so the notes read stably.
     let mut by_key: BTreeMap<&str, Vec<(String, Vec<&str>)>> = BTreeMap::new();
     for seeded in entries {
-        let Some((line, _)) = seeded.entry.lines.split_last() else {
-            continue;
-        };
-        let Some(value) = crate::settings_template::decoded_value(line) else {
-            continue;
-        };
+        let default = seeded.default_shown();
         let defaults = by_key.entry(&seeded.entry.key).or_default();
-        match defaults.iter_mut().find(|(seen, _)| seen == &value) {
+        match defaults.iter_mut().find(|(seen, _)| seen == &default) {
             Some((_, owners)) => owners.push(&seeded.owner),
-            None => defaults.push((value, vec![&seeded.owner])),
+            None => defaults.push((default, vec![&seeded.owner])),
         }
     }
     by_key
         .into_iter()
         .filter(|(_, defaults)| defaults.len() > 1)
         .map(|(key, defaults)| {
-            let seeded = defaults[0].1[0];
+            let lands = defaults[0].1[0];
             let shown: Vec<String> = defaults
                 .iter()
-                .map(|(value, owners)| format!("\"{value}\" ({})", owners.join(", ")))
+                .map(|(value, owners)| format!("{value} ({})", owners.join(", ")))
                 .collect();
-            format!(
-                "{SETTINGS_FILE} {key}: packages ship different defaults — {} — only {seeded}'s is seeded, so set the value yourself if that is not the one you want",
+            crate::names::shown(&format!(
+                "{SETTINGS_FILE} {key}: packages ship different defaults — {} — only {lands}'s is seeded, so set the value yourself if that is not the one you want",
                 shown.join(", ")
-            )
+            ))
         })
         .collect()
 }
