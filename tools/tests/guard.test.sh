@@ -153,6 +153,25 @@ git -C "$R" add -A
 run_guard RATCHET_RAISE=
 [ "$RC" -eq 0 ] && ok "a three-line fragment passes" \
   || bad "a three-line fragment passes" "rc=$RC out=$OUT"
+# Keep a Changelog's six sections, written out rather than read from the
+# accepted set: a list derived from the subject cannot catch that set being
+# narrowed, which is the way this rule fails silently.
+SECTION_DIRS="added changed deprecated removed fixed security"
+for s in $SECTION_DIRS; do
+  mkdir -p "$R/changelog.d/$s"
+  printf -- '- An entry filed under %s.\n' "$s" >"$R/changelog.d/$s/ken-2.md"
+done
+git -C "$R" add -A
+run_guard RATCHET_RAISE=
+[ "$RC" -eq 0 ] && ok "a fragment under each of the six sections passes" \
+  || bad "a fragment under each of the six sections passes" "rc=$RC out=$OUT"
+for s in $SECTION_DIRS; do
+  rm -f "$R/changelog.d/$s/ken-2.md"
+  rmdir "$R/changelog.d/$s" 2>/dev/null || true
+done
+mkdir -p "$R/changelog.d/fixed"
+printf -- '- A three-line fragment\n  second line\n  third line.\n' >"$R/changelog.d/fixed/ken-1.md"
+git -C "$R" add -A
 
 echo "=== the fragment format is the collator's verdict, carried by guard ==="
 # Guard owns the entry-length rule, which judges CHANGELOG.md too; the format
@@ -208,6 +227,22 @@ if [ "$(id -u)" -ne 0 ]; then
     && ok "an unreadable CHANGELOG fails the [Unreleased] rule closed too" \
     || bad "an unreadable CHANGELOG fails the [Unreleased] rule closed too" "rc=$RC out=$OUT"
 fi
+# Blank lines are not content. Padding alone cannot refuse — a blank-only
+# result strips to the empty string before the test that quotes it — so what
+# keeping blanks out of the compared sets holds is the diagnostic: the lines
+# it quotes are the lines an author has to act on.
+printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- One line.\n\n- Another line.\n\n## [1.0.0] - 2026-01-01\n' >"$R/CHANGELOG.md"
+git -C "$R" add -A
+git -C "$R" commit -q -m "chore: rotate the changelog"
+printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- One line.\n\n\n\n- Another line.\n\n- A real new line.\n\n## [1.0.0] - 2026-01-01\n' >"$R/CHANGELOG.md"
+git -C "$R" add -A
+run_guard RATCHET_RAISE=
+[ "$RC" -ne 0 ] && case "$OUT" in *"gained lines under [Unreleased]"*"- A real new line."*) true ;; *) false ;; esac \
+  && ok "an entry added beside blank padding is refused, quoting the entry" \
+  || bad "an entry added beside blank padding is refused, quoting the entry" "rc=$RC out=$OUT"
+[ "$(printf '%s\n' "$OUT" | grep -c '^  $')" -eq 0 ] \
+  && ok "the padding itself is not quoted back as a gained line" \
+  || bad "the padding itself is not quoted back as a gained line" "$OUT"
 
 echo "=== the [Unreleased] verdict does not turn on the caller's collation ==="
 # comm and its inputs must agree on one order. These lines sort one way by

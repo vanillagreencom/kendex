@@ -67,6 +67,34 @@ run_collate() { # [ARG...] — sets OUT and RC
 
 untouched() { cmp -s "$R/CHANGELOG.md" "$TMP/before"; }
 
+filemode() { # FILE — its permission bits, GNU stat or BSD stat
+  stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
+}
+
+no_leftover() { # no replacement file survives at the repo root
+  local f
+  for f in "$R"/CHANGELOG.md.*; do
+    [ -e "$f" ] && return 1
+  done
+  return 0
+}
+
+# A stub ahead of PATH is how a failure is reached in the window where the
+# replacement file already exists: nothing else in the collator runs mv or cp.
+STUB="$TMP/stub"
+mkdir -p "$STUB"
+stub_failing() { # COMMAND
+  printf '#!/bin/sh\necho "%s: refused by the test stub" >&2\nexit 1\n' "$1" >"$STUB/$1"
+  chmod +x "$STUB/$1"
+}
+unstub() { rm -f "$STUB"/*; }
+
+run_collate_stubbed() { # sets OUT and RC, with STUB ahead of PATH
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && PATH="$STUB:$PATH" "$COLLATE" 2>&1)" || RC=$?
+}
+
 echo "=== a fragment the format refuses stops the run before any write ==="
 reset
 fragment fixed ken-1.md '- A placeable fragment.
@@ -220,8 +248,8 @@ run_collate
   || bad "a CHANGELOG with no [Unreleased] exits 2" "rc=$RC out=$OUT"
 untouched && ok "CHANGELOG.md is untouched by that refusal" \
   || bad "CHANGELOG.md is untouched by that refusal" "it changed"
-case "$(ls "$R")" in *CHANGELOG.md.*) bad "no replacement file is left behind" "$(ls "$R")" ;;
-  *) ok "no replacement file is left behind" ;; esac
+no_leftover && ok "no replacement file is left behind" \
+  || bad "no replacement file is left behind" "$(ls "$R")"
 
 reset
 fragment fixed ken-1.md '- A fragment.
@@ -234,6 +262,50 @@ run_collate
   || bad "a heading that is no Keep a Changelog section exits 2, naming it" "rc=$RC out=$OUT"
 untouched && ok "CHANGELOG.md is untouched by that refusal too" \
   || bad "CHANGELOG.md is untouched by that refusal too" "it changed"
+
+reset
+fragment fixed ken-1.md '- A fragment.
+'
+rm -f "$R/CHANGELOG.md"
+run_collate
+[ "$RC" -eq 2 ] && case "$OUT" in *"CHANGELOG.md is missing"*) true ;; *) false ;; esac \
+  && ok "a missing CHANGELOG names the file, not an unreadable one" \
+  || bad "a missing CHANGELOG names the file, not an unreadable one" "rc=$RC out=$OUT"
+[ -f "$R/changelog.d/fixed/ken-1.md" ] && ok "the fragment survives a missing CHANGELOG" \
+  || bad "the fragment survives a missing CHANGELOG" "it is gone"
+
+echo "=== a failure past the replacement file leaves nothing half-written ==="
+reset
+fragment fixed ken-1.md '- A fragment.
+'
+stub_failing mv
+run_collate_stubbed
+unstub
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not replace CHANGELOG.md"*) true ;; *) false ;; esac \
+  && ok "a failing rename exits 2, naming the step" \
+  || bad "a failing rename exits 2, naming the step" "rc=$RC out=$OUT"
+untouched && ok "CHANGELOG.md is byte-identical after the failing rename" \
+  || bad "CHANGELOG.md is byte-identical after the failing rename" "$(diff "$TMP/before" "$R/CHANGELOG.md" || true)"
+no_leftover && ok "the replacement file is cleaned up after the failing rename" \
+  || bad "the replacement file is cleaned up after the failing rename" "$(ls "$R")"
+[ -f "$R/changelog.d/fixed/ken-1.md" ] && ok "the fragment survives the failing rename" \
+  || bad "the fragment survives the failing rename" "it is gone"
+
+reset
+fragment fixed ken-1.md '- A fragment.
+'
+stub_failing cp
+run_collate_stubbed
+unstub
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not take CHANGELOG.md's mode"*) true ;; *) false ;; esac \
+  && ok "a failing mode copy exits 2, naming the step" \
+  || bad "a failing mode copy exits 2, naming the step" "rc=$RC out=$OUT"
+untouched && ok "CHANGELOG.md is byte-identical after the failing mode copy" \
+  || bad "CHANGELOG.md is byte-identical after the failing mode copy" "it changed"
+no_leftover && ok "the replacement file is cleaned up after the failing mode copy" \
+  || bad "the replacement file is cleaned up after the failing mode copy" "$(ls "$R")"
+[ -f "$R/changelog.d/fixed/ken-1.md" ] && ok "the fragment survives the failing mode copy" \
+  || bad "the fragment survives the failing mode copy" "it is gone"
 
 echo "=== a fragment that cannot be deleted is named, and none is left unvisited ==="
 if [ "$(id -u)" -ne 0 ]; then
@@ -254,6 +326,9 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 echo "=== fragments fold into their sections and are deleted ==="
+# Keep a Changelog's six sections and their headings are spelled out here
+# rather than read from the collator's own map: a list derived from the
+# subject cannot catch that map being narrowed or a heading being mistyped.
 reset
 fragment fixed ken-2.md '- Second by filename.
 '
@@ -262,11 +337,18 @@ fragment fixed ken-1.md '- First by filename
 '
 fragment added ken-3.md '- An added fragment.
 '
-fragment security ken-4.md '- A security fragment.' # no trailing newline
+fragment changed ken-4.md '- A changed fragment.
+'
+fragment deprecated ken-5.md '- A deprecated fragment.
+'
+fragment removed ken-6.md '- A removed fragment.
+'
+fragment security ken-7.md '- A security fragment.' # no trailing newline
 printf '# changelog.d\n' >"$R/changelog.d/README.md"
 git -C "$R" add -A
+chmod 640 "$R/CHANGELOG.md"
 run_collate
-[ "$RC" -eq 0 ] && case "$OUT" in *"folded 4 entries"*) true ;; *) false ;; esac \
+[ "$RC" -eq 0 ] && case "$OUT" in *"folded 7 entries"*) true ;; *) false ;; esac \
   && ok "the run reports the count it folded" \
   || bad "the run reports the count it folded" "rc=$RC out=$OUT"
 cat >"$TMP/expected" <<'EOF'
@@ -280,6 +362,18 @@ Preamble.
 
 - An entry the file already carries.
 - An added fragment.
+
+### Changed
+
+- A changed fragment.
+
+### Deprecated
+
+- A deprecated fragment.
+
+### Removed
+
+- A removed fragment.
 
 ### Fixed
 
@@ -300,16 +394,23 @@ Preamble.
 - A released entry.
 EOF
 if diff -u "$TMP/expected" "$R/CHANGELOG.md" >"$TMP/diff" 2>&1; then
-  ok "the collated changelog is exactly the expected file"
+  ok "every section folds under its own heading, in Keep a Changelog order"
 else
-  bad "the collated changelog is exactly the expected file" "$(cat "$TMP/diff")"
+  bad "every section folds under its own heading, in Keep a Changelog order" "$(cat "$TMP/diff")"
 fi
-[ -d "$R/changelog.d/fixed" ] && bad "the emptied section directories are removed" "changelog.d/fixed remains" \
-  || ok "the emptied section directories are removed"
+[ "$(filemode "$R/CHANGELOG.md")" = 640 ] && ok "the collated file keeps the mode it replaced" \
+  || bad "the collated file keeps the mode it replaced" "mode is $(filemode "$R/CHANGELOG.md"), not 640"
+chmod 644 "$R/CHANGELOG.md"
+leftover=""
+for s in added changed deprecated removed fixed security; do
+  if [ -d "$R/changelog.d/$s" ]; then leftover="$leftover $s"; fi
+done
+[ -z "$leftover" ] && ok "the emptied section directories are removed" \
+  || bad "the emptied section directories are removed" "still on disk:$leftover"
 [ -f "$R/changelog.d/README.md" ] && ok "the README survives the collation" \
   || bad "the README survives the collation" "it is gone"
 
-echo "=== a section the file spells twice merges into the first ==="
+echo "=== two headings for one section collapse into one, in section order ==="
 reset
 cat >"$R/CHANGELOG.md" <<'EOF'
 # Changelog

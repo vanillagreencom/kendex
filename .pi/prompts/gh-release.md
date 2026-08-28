@@ -24,10 +24,10 @@ Added entry; major only when asked).
 2. `git log --oneline <last-tag>..HEAD` — confirm there is something to
    ship; finalize `CHANGELOG.md`: run `tools/changelog-collate` to fold the
    `changelog.d` fragments into `## [Unreleased]`, rename that heading to
-   `## [X.Y.Z] - YYYY-MM-DD`, and open a fresh empty `## [Unreleased]`.
-3. Bump the three version sites; `cargo build -q`; `tools/guard`. Both the
-   guard run and the commit go under `CHANGELOG_COLLATE=1`, which releases
-   the rule that refuses `Unreleased` lines no fragment produced.
+   `## [X.Y.Z] - YYYY-MM-DD`, and open a fresh empty `## [Unreleased]`. A
+   nonzero exit from the collator halts the release: read its message, fix
+   the fragment or `CHANGELOG.md`, run it again.
+3. Bump the three version sites; `cargo build -q`; `tools/guard`.
 4. Commit `chore(release): vX.Y.Z` with exactly `Cargo.toml Cargo.lock
    crates/app/tauri.conf.json CHANGELOG.md changelog.d`; push through the
    normal PR flow if branch protection requires it, else push `main`.
