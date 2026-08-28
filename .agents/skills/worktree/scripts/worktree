@@ -2931,9 +2931,10 @@ merged_pr_for_branch() {
     printf 'no pull request merged into %s carries this branch name\n' "$DEFAULT_BRANCH"
     return 1
   fi
-  # EVERY row must be a commit id and a number before any of them is believed.
-  # A row that is neither is contamination on the answer stream, and reading
-  # past it would mean deciding a delete from a response nobody could parse.
+  # Each row is validated as it is read: a row that is not a commit id and a
+  # number returns 2, so contamination anywhere ahead of a match stops the
+  # scan. A validated row whose oid equals the tip is the proof, and the scan
+  # stops there.
   while read -r oid number; do
     [[ -n "$oid$number" ]] || continue
     if ! [[ "$oid" =~ ^[0-9a-f]{7,64}$ ]] || ! [[ "$number" =~ ^[0-9]+$ ]]; then
