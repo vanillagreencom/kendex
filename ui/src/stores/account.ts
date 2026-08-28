@@ -72,10 +72,11 @@ interface AccountStore {
   signOut: () => Promise<void>;
   loadSubmissions: () => Promise<void>;
   /** A call made under the sign-in, read for what its refusal says about
-   *  the account. Expiry is the credential ending, and the call that met
-   *  it is what took the credential away, so it leaves behind what
-   *  signing out leaves. Every other refusal is news about that one
-   *  action and about nothing else, and stays where it was made. */
+   *  the account. Expiry is the credential ending: the sign-in is dead
+   *  server-side and nothing on this machine can revive it, so it leaves
+   *  behind what signing out leaves. Every other refusal is news about
+   *  that one action and about nothing else, and stays where it was
+   *  made. */
   refused: (refusal: AccountCallRefused) => void;
 }
 
@@ -90,6 +91,18 @@ let handover = 0;
 /** Reads in the order they were asked for. Only the newest may land: two
  *  can be out at once, and the slower one is not the truer one. */
 let reads = 0;
+
+/** What the end of a credential leaves behind, wherever it ends: the rows
+ *  were its, and a read that failed under it explains an account nobody
+ *  holds any more. The `handover` bump is the change of hands itself, so
+ *  a read still out for the old credential is abandoned. Callers keep
+ *  their own guards; only the write is shared. */
+const credentialEnded = (
+  account: AccountState,
+): Pick<AccountStore, "account" | "submissions" | "readError"> => {
+  handover += 1;
+  return { account, submissions: null, readError: null };
+};
 
 const wait = (seconds: number) =>
   new Promise((resolve) => setTimeout(resolve, seconds * 1000));
@@ -135,19 +148,13 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
     // leaves what signing out leaves, so nobody's rows outlive them.
     if (hasCredential(answer.ok)) set({ account: answer.ok, readError: null });
     else {
-      // Losing the credential by observation changes hands as surely as
-      // signing out does, so work already out for the old one is stale.
-      handover += 1;
-      // The server says expired once: answering it clears the credential,
-      // so the next read says signed out. The explanation outlives that
-      // read — only signing in or out takes it off the screen.
+      // A read taken after a call met the expiry finds no credential
+      // where the refusal cleared it, and says signed out. Expired is
+      // the explanation for that, and only signing in or out takes it
+      // off the screen.
       const held = get().account;
       const keep = held.kind === "expired" && answer.ok.kind === "signed-out";
-      set({
-        account: keep ? held : answer.ok,
-        readError: null,
-        submissions: null,
-      });
+      set(credentialEnded(keep ? held : answer.ok));
     }
   },
 
@@ -204,13 +211,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       set({ error: out.error });
       return;
     }
-    handover += 1;
-    set({
-      account: { kind: "signed-out" },
-      submissions: null,
-      error: null,
-      readError: null,
-    });
+    set({ ...credentialEnded({ kind: "signed-out" }), error: null });
   },
 
   loadSubmissions: async () => {
@@ -233,15 +234,9 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
     // while the call was out, a second call meeting the same dead
     // sign-in — is about a credential nobody holds any more.
     if (!hasCredential(get().account)) return;
-    // Losing the credential this way changes hands as surely as signing
-    // out does, so work already out for the old one is stale.
-    handover += 1;
-    // Meeting expiry is what cleared the credential, so the next read
-    // finds none and says signed out; `load` is where this outlives it.
-    set({
-      account: { kind: "expired" },
-      readError: null,
-      submissions: null,
-    });
+    // The next read says signed out where the refusal cleared the
+    // credential, and meets the same dead sign-in and says expired where
+    // it could not. `load` keeps this state through either answer.
+    set(credentialEnded({ kind: "expired" }));
   },
 }));

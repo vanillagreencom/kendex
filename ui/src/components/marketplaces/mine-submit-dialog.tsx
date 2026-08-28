@@ -151,7 +151,17 @@ export function MineSubmitDialog({
               {busy ? "Submitting…" : "Submit"}
             </Button>
           ) : (
-            <Button onClick={() => void signIn()} disabled={signingIn}>
+            <Button
+              onClick={() => {
+                // The refusal that offered this sign-in has been acted
+                // on, and the alert now belongs to the sign-in. Left
+                // standing it would outlive its own remedy and cover
+                // whatever the device flow has to say for itself.
+                setError(null);
+                void signIn();
+              }}
+              disabled={signingIn}
+            >
               {signingIn ? "Waiting for approval…" : "Sign in with GitHub"}
             </Button>
           )}

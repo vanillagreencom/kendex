@@ -496,8 +496,8 @@ describe("a call refused because the sign-in expired", () => {
   it("keeps the explanation through the read that follows it", async () => {
     useAccountStore.setState({ account: { kind: "signed-in", identity: ADA } });
     met();
-    // Meeting expiry is what cleared the credential, so the next read
-    // finds none. What the command learned has to outlive that read.
+    // The refusal cleared the credential, so this read finds none and
+    // says signed out. What the command learned has to outlive it.
     answers({ state: "signed-out" });
     await load();
     expect(account()).toEqual({ kind: "expired" });

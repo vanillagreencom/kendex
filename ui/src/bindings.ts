@@ -360,20 +360,22 @@ export type AboutView = {
 /**
  *  Why a call made under the stored sign-in did not answer.
  * 
- *  Expiry is the account ending, not one action failing: the credential
- *  is gone, and every surface built on the account has to say so. As a
+ *  Expiry is the account ending, not one action failing: the sign-in is
+ *  dead, and every surface built on the account has to say so. As a
  *  message it reaches only the surface that asked, which is how a person
  *  gets told their sign-in expired by a dialog while the sidebar goes on
  *  naming them. So it is a shape the caller can act on rather than a
  *  sentence it would have to recognise by its words.
+ * 
+ *  `Expired`'s message is the whole sentence, the remedy included,
+ *  because the surface that shows it has nothing else to say. What
+ *  became of the local copy is the producer's to state in that sentence,
+ *  which says so when the copy could not be removed. It is named here
+ *  rather than documented on the variant because specta hoists a
+ *  variant's doc above the whole union, where it would read as
+ *  describing `Failed` too.
  */
-export type AccountCallRefused = 
-/**
- *  The sign-in is dead and the credential has been cleared. The
- *  message is the whole sentence, the remedy included, because the
- *  surface that shows it has nothing else to say.
- */
-{ kind: "expired"; message: string } | { kind: "failed"; message: string };
+export type AccountCallRefused = { kind: "expired"; message: string } | { kind: "failed"; message: string };
 
 /**
  *  What the account surfaces render, every one of them settled: the UI

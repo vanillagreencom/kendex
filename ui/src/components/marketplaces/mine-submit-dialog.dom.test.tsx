@@ -14,6 +14,7 @@ vi.mock("@/bindings", () => ({
   commands: {
     mineSubmit: vi.fn(),
     mineSubmitPreflight: vi.fn(),
+    accountLoginStart: vi.fn(),
     openUrl: vi.fn(),
   },
 }));
@@ -142,11 +143,12 @@ describe("the submit dialog when the account could not be read", () => {
   });
 });
 
-// The submit is the one place a person meets an expired sign-in on this
-// tab, and the credential is already gone by the time the refusal lands.
-// Read as a message it would leave the dialog offering a submit that
-// cannot go out, and the sidebar naming an account nobody is signed in
-// to any more.
+// Two things on this tab meet an expired sign-in. This is the one a
+// person meets directly, with the refusal's own sentence to show for it;
+// the submissions poll meets it with nothing of its own. Read as a
+// message it would leave the dialog offering a submit that cannot go
+// out, and the sidebar naming an account nobody is signed in to any
+// more.
 describe("a submit that meets an expired sign-in", () => {
   beforeEach(() => {
     readyToSubmit();
@@ -181,6 +183,53 @@ describe("a submit that meets an expired sign-in", () => {
     await submit();
     const alert = document.body.querySelector('[role="alert"]');
     expect(alert?.textContent).toBe(EXPIRED);
+  });
+});
+
+// The refusal offers a sign-in, and the sign-in can fail in its own
+// right. Two sentences then want the one alert, and the expiry is the
+// wrong one: it has been acted on, its remedy is the button just
+// pressed, and what stopped the person now is the device flow.
+describe("the sign-in the expired dialog offers", () => {
+  const UNSTARTABLE = "kendex.ai could not start the sign-in";
+
+  const submitThenSignIn = async () => {
+    readyToSubmit();
+    vi.mocked(commands.mineSubmit).mockResolvedValue({
+      status: "error",
+      error: { kind: "expired", message: EXPIRED },
+    } as never);
+    showDialog();
+    await settle();
+    await userEvent.click(button("Submit") as HTMLButtonElement);
+    await settle();
+    await userEvent.click(button("Sign in with GitHub") as HTMLButtonElement);
+    await settle();
+  };
+
+  it("shows the device flow's failure instead of the expiry it replaced", async () => {
+    vi.mocked(commands.accountLoginStart).mockResolvedValue({
+      status: "error",
+      error: UNSTARTABLE,
+    } as never);
+    await submitThenSignIn();
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(
+      UNSTARTABLE,
+    );
+  });
+
+  it("takes the expiry off the screen while the sign-in is out", async () => {
+    // Nothing has failed yet, so there is nothing to say. Left standing,
+    // the expiry would tell someone waiting on an approval to go and run
+    // the command that approval is replacing.
+    vi.mocked(commands.accountLoginStart).mockReturnValue(
+      new Promise(() => {}) as never,
+    );
+    await submitThenSignIn();
+
+    expect(document.body.querySelector('[role="alert"]')).toBeNull();
+    expect(button("Waiting for approval…")).toBeDefined();
   });
 });
 

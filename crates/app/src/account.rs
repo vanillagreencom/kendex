@@ -107,29 +107,35 @@ pub struct SubmittedView {
 
 /// Why a call made under the stored sign-in did not answer.
 ///
-/// Expiry is the account ending, not one action failing: the credential
-/// is gone, and every surface built on the account has to say so. As a
+/// Expiry is the account ending, not one action failing: the sign-in is
+/// dead, and every surface built on the account has to say so. As a
 /// message it reaches only the surface that asked, which is how a person
 /// gets told their sign-in expired by a dialog while the sidebar goes on
 /// naming them. So it is a shape the caller can act on rather than a
 /// sentence it would have to recognise by its words.
+///
+/// `Expired`'s message is the whole sentence, the remedy included,
+/// because the surface that shows it has nothing else to say. What
+/// became of the local copy is the producer's to state in that sentence,
+/// which says so when the copy could not be removed. It is named here
+/// rather than documented on the variant because specta hoists a
+/// variant's doc above the whole union, where it would read as
+/// describing `Failed` too.
 #[derive(Debug, Serialize, Type)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum AccountCallRefused {
-    /// The sign-in is dead and the credential has been cleared. The
-    /// message is the whole sentence, the remedy included, because the
-    /// surface that shows it has nothing else to say.
-    Expired {
-        message: String,
-    },
-    Failed {
-        message: String,
-    },
+    Expired { message: String },
+    Failed { message: String },
 }
 
 /// What a failed authenticated call means to the surfaces the account
 /// feeds. Expiry is the one failure that is news about the account
 /// itself; every other is this action's alone.
+///
+/// `NotSignedIn` is among the others deliberately. It says this machine
+/// holds no credential, which is the question the account read already
+/// answers; moving the account from a call that met it would put a
+/// second judge on what `me::load` owns.
 fn refused(error: CoreError) -> AccountCallRefused {
     match error {
         expired @ CoreError::SignInExpired { .. } => AccountCallRefused::Expired {

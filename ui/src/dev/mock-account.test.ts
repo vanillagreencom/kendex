@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AccountStatus } from "@/bindings";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AccountCallRefused, AccountStatus } from "@/bindings";
 import {
   hasCredential,
   type SettledAccount,
@@ -9,9 +9,11 @@ import {
 import { mockInvoke } from "./mock";
 import {
   accountFromUrl,
+  callsExpiredFromUrl,
   isSignedIn,
   MOCK_ACCOUNT_NAMES,
   MOCK_ACCOUNTS,
+  setCallsExpired,
   setMockAccount,
   UNREADABLE,
 } from "./mock-account";
@@ -69,6 +71,60 @@ describe("the account states the dev bridge can answer as", () => {
     expect((await read()).account).toEqual(MOCK_ACCOUNTS["signed-in"]);
     await mockInvoke("account_logout");
     expect((await read()).account).toEqual(MOCK_ACCOUNTS["signed-out"]);
+  });
+});
+
+// A refusal the harness sends as a bare string leaves every consumer
+// reading `answer.error.message` with undefined and its surface blank,
+// and the name-matching test above cannot see it.
+describe("how the calls made under the sign-in refuse", () => {
+  const refusalOf = (command: string) =>
+    mockInvoke(command, { repo: "jane/team-skills" }).then(
+      () => null,
+      (refusal: unknown) => refusal,
+    );
+
+  const CALLS = ["mine_submit", "mine_submissions"];
+
+  beforeEach(() => {
+    setMockAccount({ ok: MOCK_ACCOUNTS["signed-in"] });
+    setCallsExpired(false);
+  });
+
+  afterEach(() => setCallsExpired(false));
+
+  it("names the sentence and the kind a consumer reads", async () => {
+    setCallsExpired(true);
+    for (const command of CALLS) {
+      const refusal = await refusalOf(command);
+      expect(refusal, command).toMatchObject({ kind: "expired" });
+      expect((refusal as AccountCallRefused).message, command).toContain(
+        "kendex login",
+      );
+    }
+  });
+
+  it("is about the call, not the account, with no credential to use", async () => {
+    setMockAccount({ ok: MOCK_ACCOUNTS["signed-out"] });
+    for (const command of CALLS) {
+      expect(await refusalOf(command), command).toMatchObject({
+        kind: "failed",
+      });
+    }
+  });
+
+  // Submit is gated on the read saying signed in, so the expired refusal
+  // is reachable only while the read still says a credential is held.
+  it("meets the expiry under a read that still says signed in", async () => {
+    setCallsExpired(true);
+    expect(isSignedIn()).toBe(true);
+    expect(await refusalOf("mine_submit")).toMatchObject({ kind: "expired" });
+  });
+
+  it("is off unless the dev URL asks for it", () => {
+    expect(callsExpiredFromUrl("?tab=mine&calls=expired")).toBe(true);
+    expect(callsExpiredFromUrl("?tab=mine")).toBe(false);
+    expect(callsExpiredFromUrl("?calls=failed")).toBe(false);
   });
 });
 

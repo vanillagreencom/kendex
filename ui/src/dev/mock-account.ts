@@ -7,7 +7,7 @@
 // that could not be confirmed, one that was rejected, a read that fails —
 // reach the store through its dev reader, which the backend takes over
 // once it can reach the server. `?account=` on the dev URL picks one.
-import type { AccountStatus } from "@/bindings";
+import type { AccountCallRefused, AccountStatus } from "@/bindings";
 import { hasCredential, type SettledAccount } from "@/stores/account";
 import { type AccountRead, setAccountReader } from "@/stores/account-read";
 import type { Handler } from "./mock-state";
@@ -71,6 +71,38 @@ export function setMockAccount(read: AccountRead): void {
 
 export function isSignedIn(): boolean {
   return "ok" in served && hasCredential(served.ok);
+}
+
+/** The whole sentence a real expiry carries, remedy included. */
+const EXPIRED =
+  "your sign-in has expired (invalid_grant) — run `kendex login` again";
+
+/** Whether the calls made under the sign-in meet an expiry. The read and
+ *  the calls answer separately because the server can refuse a credential
+ *  this machine still holds, which is the only way the expired refusal is
+ *  reachable: the Submit that meets it is gated on the read saying signed
+ *  in, so `?account=expired` takes the button away instead of the
+ *  refusal. */
+export const callsExpiredFromUrl = (search: string): boolean =>
+  new URLSearchParams(search).get("calls") === "expired";
+
+let callsExpired =
+  typeof window === "undefined"
+    ? false
+    : callsExpiredFromUrl(window.location.search);
+
+/** What the calls refuse with, for tests and for the dev URL. */
+export function setCallsExpired(expired: boolean): void {
+  callsExpired = expired;
+}
+
+/** Why a call made under the sign-in refuses, or null when it goes
+ *  through. Tagged as the command answers, so a consumer reading
+ *  `.message` gets the sentence rather than undefined. */
+export function callRefusal(): AccountCallRefused | null {
+  if (callsExpired) return { kind: "expired", message: EXPIRED };
+  if (!isSignedIn()) return { kind: "failed", message: "sign in first" };
+  return null;
 }
 
 /** Points the store's account read here, so `?account=` picks a state

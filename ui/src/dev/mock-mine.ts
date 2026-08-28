@@ -6,7 +6,7 @@ import type {
   MineRow,
   SubmitPreflight,
 } from "@/bindings";
-import { isSignedIn } from "./mock-account";
+import { callRefusal } from "./mock-account";
 import type { Handler } from "./mock-state";
 
 function row(overrides: Partial<MineRow>): MineRow {
@@ -155,24 +155,24 @@ function preflightFor(path: string): SubmitPreflight {
   };
 }
 
+const SUBMISSION = {
+  repo: "jane/team-skills",
+  status: "pending",
+  status_reason: null,
+  head_commit: null,
+  indexed_at: null,
+};
+
+const underSignIn = <T>(answer: T) => {
+  const refused = callRefusal();
+  return refused ? Promise.reject(refused) : answer;
+};
+
 export const mineHandlers: Record<string, Handler> = {
   mine_submit_preflight: (args: { path: string }) => preflightFor(args.path),
-  mine_submit: (args: { repo: string }) => {
-    if (!isSignedIn()) return Promise.reject("sign in first");
-    return { repo: args.repo, status: "pending" };
-  },
-  mine_submissions: () =>
-    isSignedIn()
-      ? [
-          {
-            repo: "jane/team-skills",
-            status: "pending",
-            status_reason: null,
-            head_commit: null,
-            indexed_at: null,
-          },
-        ]
-      : Promise.reject("sign in first"),
+  mine_submit: (args: { repo: string }) =>
+    underSignIn({ repo: args.repo, status: "pending" }),
+  mine_submissions: () => underSignIn([SUBMISSION]),
   mine_authoring_doc: () =>
     "# How a marketplace repo works\n\nA kendex marketplace is a git repository.\n",
   mine_list: () => rows,

@@ -92,6 +92,11 @@ it("stops polling once a tick has found the sign-in expired", async () => {
   await settle();
   expect(useAccountStore.getState().account).toEqual({ kind: "expired" });
 
+  // The interval itself, not the store guard behind it: without the
+  // cleanup, or with the effect no longer keyed to holding a credential,
+  // a timer is still armed here and the advance below finds it.
+  expect(vi.getTimerCount()).toBe(0);
+
   await act(async () => {
     vi.advanceTimersByTime(POLL_MS * 3);
   });
