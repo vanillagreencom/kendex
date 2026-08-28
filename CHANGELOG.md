@@ -29,9 +29,9 @@ an outside contributor.
 - The app says when a release is out and offers the one action that fits how
   it was installed: Update now on a direct install, the package manager's own
   command on a managed one, and release notes when neither applies.
-- `kendex update` brings the desktop app along on a direct install, refusing a
-  download the release signature does not match; on a package-manager install
-  it prints that manager's update command instead of replacing what it does not own.
+- `kendex update` brings the desktop app along on a direct install, and on a
+  package-manager install prints that manager's update command instead of
+  replacing files it does not own.
 - Problems now lists a declared package whose place already holds files
   kendex did not write, with the ways out core reports for it: keep those
   files, or install what kendex.toml asks for and send them to the trash.
