@@ -81,9 +81,9 @@ consults only itself, /dev/null means defaults only), else "enforce"; a
 malformed or duplicate assignment fails loud (exit 2). The engine skips
 dotenv and the machine-local .kendex/settings.toml for this key (the
 PR_REVIEW_* keys keep the full ladder). Without the review-gate skill:
-set-even-empty process env, then the two settings files via the generic
-loader (REVIEW_GATE_SETTINGS_FILE is not consulted; a refused load exits
-1). Exactly "off" prints "off"; any other
+set-even-empty process env, then the committed kendex.settings.toml via
+the generic loader (REVIEW_GATE_SETTINGS_FILE is not consulted; a refused
+load exits 1). Exactly "off" prints "off"; any other
 value leaves the reviewer keys authoritative. Then PR_REVIEW_GATE
 (approval|review|off) when set; otherwise the legacy PR_APPROVAL_GATE maps
 on -> approval and off -> off; both unset defaults to approval. An
@@ -259,15 +259,18 @@ if $RESOLVE_MODE; then
     fi
   elif [[ -n "${REVIEW_GATE_MODE+x}" ]]; then
     # Review-gate not installed: no engine exists to split from. Mirror its
-    # source set anyway — set-even-empty env, else the repo's settings
-    # files, never dotenv.
+    # source set anyway — set-even-empty env, else the COMMITTED settings
+    # file, never dotenv.
     engine_gate_mode="$REVIEW_GATE_MODE"
   else
     engine_gate_mode="$(
       # shellcheck source=lib/kendex-env.sh
       source "$SCRIPT_DIR/lib/kendex-env.sh"
+      # ROOT-ONLY, matching the engine resolver exactly: this safety key
+      # reads process env and the committed kendex.settings.toml alone, so
+      # the resolved mode cannot flip merely because review-gate is or is
+      # not installed.
       kendex_load_settings_file "$PROJECT_ROOT/kendex.settings.toml" || exit 1
-      kendex_load_settings_file "$PROJECT_ROOT/.kendex/settings.toml" || exit 1
       printf '%s' "${REVIEW_GATE_MODE:-enforce}"
     )"
   fi
