@@ -1,13 +1,16 @@
-import { commands, type ItemWarning, type UpdateRow } from "@/bindings";
+import {
+  commands,
+  type ItemWarning,
+  type UpdateRow,
+  type UpdatesReport_Serialize,
+} from "@/bindings";
 import { settled } from "@/lib/settled";
 import { landings } from "./landings";
 import { type PendingFollow, withPending } from "./updates-follow";
 
-type Overview = {
-  rows: UpdateRow[];
-  warnings: ItemWarning[];
-  lastFetched: number | null;
-};
+// The command's own answer, as generated. A hand-written twin of it goes
+// out of step the moment the Rust report gains a field.
+type Overview = UpdatesReport_Serialize;
 type OverviewResult =
   | { status: "ok"; data: Overview }
   | { status: "error"; error: string };

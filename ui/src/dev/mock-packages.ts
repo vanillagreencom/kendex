@@ -17,6 +17,14 @@ const SKILL_BODY = [
 
 const README = "# gh\n\nGitHub flows for coding agents.\n";
 
+// The mock fetches nothing, so the standing it answers with is as current
+// as the session reading it.
+const standing = () => ({
+  rows: updateRows(),
+  warnings: [],
+  lastFetched: Math.floor(Date.now() / 1000),
+});
+
 export const packageHandlers: Record<string, Handler> = {
   package_versions: ({ name }: { name: string }) => [
     {
@@ -36,8 +44,11 @@ export const packageHandlers: Record<string, Handler> = {
       newerThanInstalled: false,
     },
   ],
-  updates_overview: () => ({ rows: updateRows(), warnings: [] }),
-  updates_refresh: () => ({ rows: updateRows(), warnings: [] }),
+  // Every update standing carries the age of the fetch under it; a mock
+  // that returns the bare rows leaves the page reading that age off
+  // undefined.
+  updates_overview: () => standing(),
+  updates_refresh: () => standing(),
   update_set_ignored: ({
     kind,
     name,
@@ -51,7 +62,7 @@ export const packageHandlers: Record<string, Handler> = {
       (entry) => !(entry.kind === kind && entry.name === name),
     );
     if (ignored) store.state.ignored.push({ kind, name });
-    return { rows: updateRows(), warnings: [] };
+    return standing();
   },
   package_set_rev: ({ scope }: { scope: Scope }) => view(scope),
   // The single-package apply answers with what it wrote and what a
