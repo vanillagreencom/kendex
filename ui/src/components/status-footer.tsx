@@ -1,5 +1,6 @@
 import { RefreshCw } from "lucide-react";
 import { StatusDot } from "@/components/status-dot";
+import { blockedCount } from "@/lib/blocked";
 import {
   SCANNING_LABEL,
   scanFailedStatusLabel,
@@ -9,7 +10,7 @@ import { problemsFooterLabel } from "@/lib/error-copy";
 import { relativeTime } from "@/lib/relative-time";
 import { useNowTick } from "@/lib/use-now-tick";
 import { useNavStore } from "@/stores/nav";
-import { useProblems } from "@/stores/problems";
+import { useBlockedPlaces, useProblems } from "@/stores/problems";
 import { useScanStore } from "@/stores/scan";
 
 // A persistent strip across the whole window, not just the content pane —
@@ -20,6 +21,11 @@ export function StatusFooter() {
   const lastScanAt = useScanStore((s) => s.lastScanAt);
   const scanError = useScanStore((s) => s.error);
   const problems = useProblems();
+  // A declared item nothing can install until the reader decides counts
+  // here too: the Problems page is where both are answered, and the count
+  // is the only thing on screen that says so from anywhere in the app.
+  const blocked = useBlockedPlaces();
+  const waiting = problems.length + blockedCount(blocked);
   const goTo = useNavStore((s) => s.goTo);
 
   // "Scanned Nm ago" goes stale on its own; nothing else re-renders this
@@ -29,14 +35,14 @@ export function StatusFooter() {
   return (
     <footer className="flex h-7 shrink-0 items-center border-t bg-background px-4 text-xs text-muted-foreground">
       <span className="flex items-center gap-3">
-        {problems.length > 0 ? (
+        {waiting > 0 ? (
           <button
             type="button"
             className="flex items-center gap-1.5 text-critical hover:text-critical/80"
             onClick={() => goTo("problems")}
           >
             <StatusDot tone="critical" />
-            {problemsFooterLabel(problems.length)}
+            {problemsFooterLabel(waiting)}
           </button>
         ) : null}
         <span className="flex items-center gap-1.5">

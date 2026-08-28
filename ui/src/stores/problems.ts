@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { create } from "zustand";
 import type { AuditView, Scope, ScopeErrorKind } from "@/bindings";
+import { type BlockedPlace, blockedPlaces } from "@/lib/blocked";
 import { useAuditStore } from "./audit";
 import { useScanStore } from "./scan";
 
@@ -54,6 +55,15 @@ export function useProblems(): Problem[] {
   const views = useAuditStore((s) => s.views);
   const scanError = useScanStore((s) => s.error);
   return useMemo(() => deriveProblems(views, scanError), [views, scanError]);
+}
+
+/** Every place holding a declared item whose files were already on disk,
+ *  recomputed from the audit like the problems above. Its own list: a
+ *  blocked item is a decision waiting on the reader, not a place kendex
+ *  failed to read, and the two are answered in different words. */
+export function useBlockedPlaces(): BlockedPlace[] {
+  const views = useAuditStore((s) => s.views);
+  return useMemo(() => blockedPlaces(views), [views]);
 }
 
 export interface ErrorAction {

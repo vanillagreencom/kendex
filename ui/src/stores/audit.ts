@@ -1,20 +1,12 @@
 import { useEffect } from "react";
 import { toast } from "sonner";
 import { create } from "zustand";
-import {
-  type AuditView,
-  commands,
-  type HarnessId,
-  type ItemKind,
-  type Scope,
-} from "@/bindings";
-import { adoptedToastLabel } from "@/lib/copy";
+import { type AuditView, commands } from "@/bindings";
 import { settled } from "@/lib/settled";
-import { keepUnreadable, replaceView, stampClean } from "./audit-fold";
-import { type ErrorAction, useProblemsStore } from "./problems";
-import { useScanStore } from "./scan";
+import { keepUnreadable, stampClean } from "./audit-fold";
+import { auditRunner, type ItemActions, itemActions } from "./audit-items";
 
-interface AuditState {
+interface AuditState extends ItemActions {
   views: AuditView[];
   auditing: boolean;
   error: string | null;
@@ -34,92 +26,6 @@ interface AuditState {
    *  is that old, whatever the machine-wide audit did a moment ago. */
   scopeCheckedAt: Record<string, number>;
   refresh: (opts?: { force?: boolean }) => Promise<void>;
-  /** Every action here answers whether it worked. Most callers only need
-   *  the state update that comes with it; the ones running several in a
-   *  row need to stop at the first failure.
-   *
-   *  Hand the files already at an item's place to kendex as they are, for
-   *  every tool the item is blocked for — one call, so no tool's copy is
-   *  captured over another's. */
-  adopt: (
-    scope: Scope,
-    kind: ItemKind,
-    name: string,
-    harnesses: HarnessId[],
-    /** Say nothing on success. A run over a whole page is one action to
-     *  the person doing it, and a toast per item buries the page it was
-     *  about. */
-    quiet?: boolean,
-  ) => Promise<boolean>;
-  toggle: (
-    scope: Scope,
-    kind: ItemKind,
-    name: string,
-    enabled: boolean,
-  ) => Promise<boolean>;
-  removeItem: (scope: Scope, kind: ItemKind, name: string) => Promise<boolean>;
-}
-
-/** What every item-level command hands back: the scope's fresh view. */
-type AuditAction = () => Promise<
-  { status: "ok"; data: AuditView } | { status: "error"; error: string }
->;
-
-interface RunOpts {
-  title: string;
-  successMessage?: string;
-  steps?: string[];
-}
-
-// A row that vanishes with no word said is indistinguishable from a button
-// that did nothing — every outcome here speaks up, success or failure, on
-// top of the state update the page renders from. Failure is a modal, not a
-// toast: these are all user-initiated, so the user is looking right at the
-// button that just broke.
-//
-// The answer says whether it worked, so a caller running several of these
-// for one row can stop at the first that did not instead of carrying on
-// against a page that is now wrong.
-function auditRunner(
-  set: (partial: {
-    busy?: boolean;
-    views?: AuditView[];
-    error?: string | null;
-  }) => void,
-  get: () => { views: AuditView[] },
-) {
-  const run = async (action: AuditAction, opts: RunOpts): Promise<boolean> => {
-    set({ busy: true });
-    let response: Awaited<ReturnType<typeof action>>;
-    try {
-      response = await action();
-    } finally {
-      set({ busy: false });
-    }
-    if (response.status === "ok") {
-      const views = get().views;
-      set({
-        views: keepUnreadable(views, replaceView(views, response.data)),
-        error: null,
-      });
-      if (opts.successMessage) toast.success(opts.successMessage);
-      await useScanStore.getState().refresh();
-      return true;
-    }
-    set({ error: response.error });
-    const retry: ErrorAction = {
-      label: "Retry",
-      onClick: () => void run(action, opts),
-    };
-    useProblemsStore.getState().showError({
-      title: opts.title,
-      message: response.error,
-      steps: opts.steps,
-      actions: [retry],
-    });
-    return false;
-  };
-  return run;
 }
 
 /** How long an audit answers for before a visit pays for a fresh one. */
@@ -209,22 +115,7 @@ export const useAuditStore = create<AuditState>((set, get) => {
       return start();
     },
 
-    adopt: (scope, kind, name, harnesses, quiet) =>
-      run(() => commands.adoptItem(scope, kind, name, harnesses), {
-        title: `Couldn't start managing ${name}`,
-        successMessage: quiet ? undefined : adoptedToastLabel(name),
-        steps: ["Try again"],
-      }),
-    toggle: (scope, kind, name, enabled) =>
-      run(() => commands.toggleItem(scope, kind, name, enabled), {
-        title: `Couldn't ${enabled ? "turn on" : "turn off"} ${name}`,
-        steps: ["Try again"],
-      }),
-    removeItem: (scope, kind, name) =>
-      run(() => commands.removeItem(scope, kind, name), {
-        title: `Couldn't remove ${name}`,
-        steps: ["Try again"],
-      }),
+    ...itemActions(run),
   };
 });
 

@@ -20,10 +20,10 @@ Four verbs over one model: **scan → declare → diff → apply**.
   reverse arrow: record an observed item into the manifest. It lives behind
   a place's card on Projects — the app's one mention of unmanaged content —
   and behind `kendex adopt`. Taking over files already sitting where a
-  declared item goes is `kendex apply --replace-unmanaged`, scope-wide; the
-  app has no exit for that conflict until KEN-621 attaches one, and
-  `replace_unmanaged_item` (per item, revalidated against a fresh read,
-  running the scope's whole plan) is the command it will wire.
+  declared item goes is `kendex apply --replace-unmanaged` scope-wide, or
+  `replace_unmanaged_item` per item (revalidated against a fresh read,
+  running the scope's whole plan), which Problems wires beside adopt on
+  every row core reports an exit for.
 
 Every page and every CLI verb is a projection of these four; none owns
 logic.
@@ -104,8 +104,8 @@ lives in one capability table read by core and UI.
      held back (the files in its way stay) and named in the notes with the
      place holding it; the sweep fails, naming those, only when nothing
      settles. One refused at every link is not held: its rows stand,
-     nothing replaced. The app offers adopt for unmanaged items, and a
-     declared item's conflict has no app exit until KEN-621 attaches one.
+     nothing replaced. The app offers adopt for unmanaged items, and both
+     exits on the Problems page for a declared item's conflict.
    The row states which files are in the way, which exits apply, and — where that
    position can be read in full — how it compares with the install it blocks.
    The CLI names the verb and flag under it. A foreign link pointing at a real

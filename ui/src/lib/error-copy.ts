@@ -37,7 +37,7 @@ export const PROBLEM_STEPS: Record<ProblemKind, string[]> = {
 };
 
 export const PROBLEMS_SUBTITLE =
-  "Projects kendex couldn't fully check, and what to do about them";
+  "What kendex can't finish on its own, and what to do about it";
 export const PROBLEMS_EMPTY = "No problems right now.";
 
 export const problemsFooterLabel = (count: number): string =>

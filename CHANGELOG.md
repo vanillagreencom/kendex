@@ -28,6 +28,9 @@ an outside contributor.
 - `kendex update` brings the desktop app along on a direct install, and on a
   package-manager install prints that manager's update command instead of
   replacing files it does not own.
+- Problems now lists a declared package whose place already holds files
+  kendex did not write, with the ways out core reports for it: keep those
+  files, or install what kendex.toml asks for and send them to the trash.
 - `REVIEW_GATE_CARRY_FORWARD` gains a `vendored` class: a `kendex refresh`
   push under the render trees a repo lists in `REVIEW_GATE_VENDORED_PATHS`
   carries the prior review, whatever the files' extensions.
