@@ -231,6 +231,35 @@ else
   bad "pr_comment_review.iterations has $total writer(s) across $count file(s)" "$writers"
 fi
 
+# submit-pr's single restart decision point. Every path that would restart
+# § 4 step 1's wait passes through it, so the cap is applied once, in a place
+# no route can go around.
+restart_check() { awk '/^   \*\*Restart check\.\*\*/ { on = 1; print; next } on && (/^   \*\*/ || /^#/) { on = 0 } on' "$1"; }
+
+CHECK="$(restart_check "$SUBMIT_WF")"
+if [[ -z "$CHECK" ]]; then
+  bad "submit-pr has no Restart check — the cap has no single decision point"
+elif grep -q -F "$SETTING" <<<"$CHECK" \
+     && grep -q -F 'changes_requested' <<<"$CHECK" \
+     && grep -q -F 'Triage again' <<<"$CHECK" \
+     && grep -q -F 'Force merge' <<<"$CHECK" \
+     && grep -q -F 'Stop here' <<<"$CHECK"; then
+  ok "the Restart check reads the cap and presents the prompt at it"
+else
+  bad "the Restart check lost the cap or one of its three options" "$CHECK"
+fi
+
+# A standing changes-requested verdict outlives a disposition, so a restart
+# arm that bypasses the check returns the same verdict and triages past the
+# cap. The phrase belongs to the check alone.
+total_restarts="$(grep -c -F 'restart step 1' "$SUBMIT_WF" || true)"
+inside_restarts="$(grep -c -F 'restart step 1' <<<"$CHECK" || true)"
+if [[ "$inside_restarts" -ge 1 ]] && [[ "$total_restarts" -eq "$inside_restarts" ]]; then
+  ok "every restart of the wait is the Restart check's own ($total_restarts total)"
+else
+  bad "a path restarts the wait outside the Restart check" "total=$total_restarts inside=$inside_restarts"
+fi
+
 bound="$(submit_bound "$SUBMIT_WF")"
 if [[ -z "$bound" ]]; then
   bad "submit-pr no longer states a bound on pr_comment_review.iterations"
@@ -316,7 +345,7 @@ else
 fi
 
 CTRL="$TMP_ROOT/submit-literal.md"
-if ! plant "$CTRL" "$SUBMIT_WF" "s/against \`orch-env $SETTING 4\`/(max 5/"; then
+if ! plant "$CTRL" "$SUBMIT_WF" "s/below \`$SETTING\` → restart step 1/< 5 → restart step 1/"; then
   bad "submit control planted nothing — its sed program matched no text"
 elif grep -qE "$LITERAL_BOUND_RE" <<<"$(submit_bound "$CTRL")"; then
   ok "the check flags submit-pr reverting to a literal bound"
@@ -373,6 +402,30 @@ elif grep -q -F "Step 1's \`fix\` verdict outranks the cap" "$CTRL"; then
   ok "the check flags an exception widened to every Step 1 fix verdict"
 else
   bad "the check MISSED an exception widened to every Step 1 fix verdict"
+fi
+
+# The check removed: the arms route to a decision point that is not there.
+CTRL="$TMP_ROOT/submit-nocheck.md"
+if ! plant "$CTRL" "$SUBMIT_WF" '/^   \*\*Restart check\.\*\*/,/^   \*\*On /{/^   \*\*On /!d}'; then
+  bad "restart-check control planted nothing — its sed program matched no text"
+elif [[ -z "$(restart_check "$CTRL")" ]]; then
+  ok "the check flags submit-pr losing its Restart check"
+else
+  bad "the check MISSED submit-pr losing its Restart check"
+fi
+
+# A restart arm going straight back to the wait, around the cap.
+CTRL="$TMP_ROOT/submit-bypass.md"
+if ! plant "$CTRL" "$SUBMIT_WF" 's/Run the triage pass, then the Restart check/Run the triage pass, then restart step 1/'; then
+  bad "restart-bypass control planted nothing — its sed program matched no text"
+else
+  ctrl_total="$(grep -c -F 'restart step 1' "$CTRL" || true)"
+  ctrl_inside="$(grep -c -F 'restart step 1' <<<"$(restart_check "$CTRL")" || true)"
+  if [[ "$ctrl_total" -eq "$ctrl_inside" ]]; then
+    bad "the check MISSED a restart arm bypassing the Restart check" "total=$ctrl_total inside=$ctrl_inside"
+  else
+    ok "the check flags a restart arm bypassing the Restart check"
+  fi
 fi
 
 CTRL="$TMP_ROOT/disposition.md"
