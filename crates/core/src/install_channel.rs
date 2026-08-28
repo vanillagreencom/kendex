@@ -69,6 +69,24 @@ pub enum AppInstall {
 }
 
 impl AppInstall {
+    /// The resolved path this install is judged by, for whatever will do
+    /// the replacing.
+    ///
+    /// An updater handed nothing builds its own path from the launch
+    /// environment — the `APPIMAGE` variable as exported, the current
+    /// executable as exec'd — and where either is a link it renames a file
+    /// [`for_app`] never saw. Handed this, it acts on the file that was
+    /// approved: the image itself on Linux, and on macOS the executable
+    /// whose bundle is the one [`for_app`] probed. Windows carries no path
+    /// because no path decides it.
+    pub fn judged_path(&self) -> Option<&Path> {
+        match self {
+            Self::AppImage(image) => image.as_deref(),
+            Self::MacBundle(exe) => Some(exe),
+            Self::WindowsInstaller => None,
+        }
+    }
+
     /// The macOS app, resolved: a Homebrew cask links `/Applications` at
     /// its Caskroom, and a process is handed the path it was launched
     /// under rather than the bundle behind it.

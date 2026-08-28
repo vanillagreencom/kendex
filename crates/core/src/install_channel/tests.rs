@@ -508,3 +508,40 @@ fn a_mac_bundle_is_the_one_behind_the_name_it_was_launched_under() {
     assert_eq!(install, AppInstall::MacBundle(PathBuf::from(caskroom)));
     assert_eq!(for_app(&install, &probe), InstallChannel::Direct);
 }
+
+/// Approving one file and replacing another is the whole failure this
+/// guards. The updater is handed [`AppInstall::judged_path`], and on each
+/// platform the path it derives from that is the path `for_app` probed:
+/// the image itself on Linux, the bundle behind the executable on macOS.
+/// Both installs here are reached through a link the resolver follows, and
+/// only the file behind it is writable — approval and replacement have to
+/// meet there or not at all.
+#[test]
+fn what_the_updater_replaces_is_what_the_link_resolves_to() {
+    let link = "/home/pat/.local/share/kendex/kendex.AppImage";
+    let image = "/home/pat/Apps/kendex-5.0.1.AppImage";
+    let probe = Fake::default().links(link, image).replaceable(image);
+    let install = AppInstall::from_appimage_env(
+        &probe,
+        Some(OsStr::new(link)),
+        Some(OsStr::new("/tmp/.mount_kendexAbc")),
+        Some(Path::new("/tmp/.mount_kendexAbc/usr/bin/kendex-app")),
+    );
+    assert_eq!(for_app(&install, &probe), InstallChannel::Direct);
+    // Linux takes the handed path as the file to replace, unchanged.
+    assert_eq!(install.judged_path(), Some(Path::new(image)));
+
+    let linked = "/Applications/kendex.app/Contents/MacOS/kendex";
+    let caskroom = "/Users/pat/Library/Caskroom/kendex/5.0.1/kendex.app/Contents/MacOS/kendex";
+    let bundle = "/Users/pat/Library/Caskroom/kendex/5.0.1/kendex.app";
+    let probe = Fake::default().links(linked, caskroom).replaceable(bundle);
+    let install = AppInstall::mac_bundle(&probe, Path::new(linked));
+    assert_eq!(for_app(&install, &probe), InstallChannel::Direct);
+    // macOS takes the bundle around the handed executable, the same way
+    // `for_app` did to reach the directory it just approved.
+    assert_eq!(install.judged_path(), Some(Path::new(caskroom)));
+    assert_eq!(
+        install.judged_path().and_then(bundle_root),
+        Some(Path::new(bundle))
+    );
+}

@@ -97,9 +97,18 @@ pub fn app_update_channel() -> Result<InstallChannel, String> {
 pub async fn app_update_install(app: tauri::AppHandle) -> Result<(), String> {
     // The notice offers this on no other channel; the command asks anyway,
     // so nothing a caller gets wrong can overwrite a package manager's files.
-    kendex_core::install_channel::for_app(&app_install()?, &Host).allow_replacement()?;
-    let update = app
-        .updater()
+    let install = app_install()?;
+    kendex_core::install_channel::for_app(&install, &Host).allow_replacement()?;
+    // Left to itself the plugin rebuilds the install path from the launch
+    // environment, unresolved, and replaces whatever that name reaches.
+    // One value answers both halves, so the file approved above is the file
+    // renamed below.
+    let mut builder = app.updater_builder();
+    if let Some(path) = install.judged_path() {
+        builder = builder.executable_path(path);
+    }
+    let update = builder
+        .build()
         .map_err(|error| error.to_string())?
         .check()
         .await
