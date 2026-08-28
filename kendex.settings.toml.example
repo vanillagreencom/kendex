@@ -14,9 +14,10 @@ WORKTREE_DEFAULT_BRANCH = "main"
 # Never point it inside the repo root — watched build outputs exhaust inotify.
 # WORKTREE_BASE_DIR = "~/dev/.worktrees/myproject"
 
-# Paths symlinked into every worktree. Include `.env.local` only when
+# Paths symlinked into every worktree: list only what git does not carry,
+# since naming a committed tree links nothing. Include `.env.local` only when
 # worktrees should share local secrets.
-WORKTREE_SYMLINKS = ".env.local opencode.json .agents .codex .opencode .pi .claude/settings.json .claude/agents .claude/hooks .claude/skills"
+WORKTREE_SYMLINKS = ".env.local .cache node_modules"
 
 # link=target pairs; each target resolves from the LINK's own directory
 # (`.claude/CLAUDE.md=../AGENTS.md` reaches the worktree root's AGENTS.md).

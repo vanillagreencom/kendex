@@ -48,12 +48,12 @@ Run from the main checkout of a git repo with an `origin` remote. New-work claim
 ```toml
 [env]
 WORKTREE_BASE_DIR = "~/dev/.worktrees/myproject"
-WORKTREE_SYMLINKS = ".env.local .claude/agents .claude/hooks .claude/skills"
+WORKTREE_SYMLINKS = ".env.local .cache node_modules"
 WORKTREE_RELATIVE_SYMLINKS = ".claude/CLAUDE.md=../AGENTS.md"
 WORKTREE_MKDIRS = "tmp"
 ```
 
-Point `WORKTREE_SYMLINKS` at untracked paths. A directory entry containing tracked files stays a real directory with only its untracked children linked (an untracked `.gitignore` is copied, since git will not read one through a symlink); a tracked file entry is marked assume-unchanged before replacement. Full rules: `scripts/worktree --help` and `scripts/worktree fix-links --help`.
+Point `WORKTREE_SYMLINKS` at paths git does not carry; naming a tree the repo commits links nothing. A directory entry containing tracked files stays a real directory with only its untracked children linked (an untracked `.gitignore` is copied, since git will not read one through a symlink); a tracked file entry is marked assume-unchanged before replacement. Full rules: `scripts/worktree --help` and `scripts/worktree fix-links --help`.
 
 ### App-created worktrees
 

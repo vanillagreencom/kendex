@@ -28,6 +28,10 @@ an outside contributor.
 
 ### Changed
 
+- The seeded `WORKTREE_SYMLINKS` default now lists only paths git does not
+  carry. Naming a committed tree links nothing, so drop such entries from
+  your own value.
+
 - **Breaking:** the worktree skill no longer installs JS dependencies. Run
   installs in the main checkout and link its `node_modules` via
   `WORKTREE_SYMLINKS`; an unlinked JS worktree warns, naming the main checkout.

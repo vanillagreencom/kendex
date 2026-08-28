@@ -249,17 +249,13 @@ ORCH_STATE_DIR = "tmp"
 SIZE_RATCHET_CLASSES = "*/README.md=120;*/tests/*=800;*/test/*=800;*/__tests__/*=800;*/tests.rs=800;*test_util.rs=800;*.test.*=800;ui/*.ts=250;ui/*.tsx=250"
 
 # ── Worktrees ────────────────────────────────────────────────────────────
-# What a fresh issue worktree gets from this checkout. Symlink untracked
-# paths only: an entry over tracked files makes git refuse writes in that
-# worktree while `git status` still reports clean.
-#
-# .codex and .opencode are named whole: nothing under them is tracked.
-# .claude and .pi are named child by child: they hold tracked files
-# (.claude/CLAUDE.md, .pi/prompts) beside kendex-rendered, gitignored ones.
-# A DIRECTORY entry over tracked content is safe — worktree setup keeps it a
-# real directory and links only the untracked children. A single tracked FILE
-# is not: it becomes a link git cannot write through, so .claude/settings.json
-# is absent here and each worktree carries git's own copy.
+# What a fresh issue worktree gets from this checkout: only paths git does
+# not carry. The harness trees (.agents, .claude, .codex, .pi) are committed,
+# so a worktree gets them from the branch and naming one here links nothing:
+# setup keeps an entry holding tracked content a real directory and finds no
+# untracked child to link. A single tracked FILE is the opposite hazard — it
+# becomes a link git cannot write through, so .claude/settings.json is absent
+# here and each worktree carries git's own copy.
 WORKTREE_BASE_DIR = "~/dev/.worktrees/kendex"
 WORKTREE_COPIES = ".kendex-lock.json"
 WORKTREE_DEFAULT_BRANCH = "main"
@@ -273,7 +269,7 @@ WORKTREE_MKDIRS = "tmp"
 # the changed manifests — never in a linked worktree, whose install would
 # write through the link. .gitignore's bare `node_modules` pattern covers
 # the symlink.
-WORKTREE_SYMLINKS = ".env.local .agents .cache .codex .opencode .pi/agents .pi/kendex .claude/agents .claude/hooks .claude/skills ui/node_modules"
+WORKTREE_SYMLINKS = ".env.local .cache ui/node_modules"
 
 # Nothing needs one: .claude/CLAUDE.md is a tracked symlink, so it arrives
 # through git, and naming it here would shadow tracked content.
