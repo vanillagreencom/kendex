@@ -123,3 +123,55 @@ fn decoded_value_reads_only_plain_one_line_strings() {
     assert_eq!(decoded_value("A = 1"), None);
     assert_eq!(decoded_value("A"), None);
 }
+
+#[test]
+fn a_trailing_comment_rides_with_the_value() {
+    let read = read("[env]\n# How long to wait.\nWAIT = \"900\" # seconds\n");
+    assert!(read.findings.is_empty(), "{:?}", read.findings);
+    assert_eq!(read.entries[0].value, "900");
+}
+
+#[test]
+fn a_header_the_loaders_refuse_is_located_and_does_not_cascade() {
+    // `[other] # note` is where the lenient reader kept reading [env]
+    // entries out of another table.
+    let read = read("[env]\n# Why.\nA = \"1\"\n\n[other] # theirs\n");
+    assert_eq!(
+        located("[env]\n# Why.\nA = \"1\"\n\n[other] # theirs\n"),
+        [(
+            5,
+            "this is not a table header the settings loaders read".to_owned()
+        )]
+    );
+    // The entry before it still decodes: one bad header, one finding.
+    assert_eq!(read.entries.len(), 1);
+}
+
+#[test]
+fn a_key_no_shell_can_export_is_located() {
+    for key in ["FOO-BAR", "FOO.BAR", "1WAIT", "\"WAIT\""] {
+        assert_eq!(
+            located(&format!("[env]\n# Why.\n{key} = \"1\"\n")),
+            [(
+                3,
+                format!("{key} is not a name a shell can export, so nothing reads it")
+            )],
+            "{key}"
+        );
+    }
+}
+
+#[test]
+fn a_toml_error_in_column_one_reports_its_own_line() {
+    // An assignment with no key is one the line scan reads past, so TOML is
+    // what refuses it, and its span opens at that line's very first byte —
+    // the offset a prefix-line count reports one line early, because a
+    // prefix ending in a terminator has no trailing line to count.
+    let found = located("[env]\n# Why.\nA = \"1\"\n= \"2\"\n");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].0, 4, "{found:?}");
+    assert!(
+        found[0].1.starts_with("this is not valid TOML:"),
+        "{found:?}"
+    );
+}

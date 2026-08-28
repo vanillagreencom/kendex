@@ -1,0 +1,40 @@
+# The settings grammar, one sample per row, read by BOTH sides:
+# `settings_template::read` over the sample as a template, and the real
+# shell loaders (skills/*/scripts/lib/kendex-env.sh and settings.sh) over
+# the sample as a consumer's kendex.settings.toml. A row's verdict is what
+# the loaders do; the reader must report a finding for every row the
+# loaders will not read as written, and none for a row they read cleanly.
+# Add a row here and both sides are held to it.
+#
+# name<TAB>verdict<TAB>key<TAB>expect<TAB>body ('\n' spells a newline)
+#   loads    the loaders load the file and export KEY as EXPECT ("quoted";
+#            a tab-separated field is never left empty)
+#   refused  the loaders fail the whole file loud
+#   unread   the loaders load the file and never export KEY
+plain	loads	WAIT	"900"	[env]\n# How long to wait.\nWAIT = "900"
+empty-value	loads	WAIT	""	[env]\n# How long to wait.\nWAIT = ""
+trailing-comment	loads	WAIT	"900"	[env]\n# How long to wait.\nWAIT = "900" # seconds
+trailing-comment-tight	loads	WAIT	"900"	[env]\n# How long to wait.\nWAIT = "900"#seconds
+indented-key	loads	WAIT	"900"	[env]\n# How long to wait.\n  WAIT = "900"
+value-holds-equals	loads	WAIT	"a=b"	[env]\n# A pair.\nWAIT = "a=b"
+value-holds-hash	loads	WAIT	"a#b"	[env]\n# A hash.\nWAIT = "a#b"
+underscore-lead	loads	_WAIT	"900"	[env]\n# How long to wait.\n_WAIT = "900"
+header-after-env	loads	WAIT	"900"	[env]\n# How long to wait.\nWAIT = "900"\n\n[other]
+bare-number	refused	WAIT	-	[env]\n# How long to wait.\nWAIT = 900
+bare-word	refused	WAIT	-	[env]\n# A switch.\nWAIT = true
+single-quoted	refused	WAIT	-	[env]\n# How long to wait.\nWAIT = '900'
+multi-line-string	refused	WAIT	-	[env]\n# How long to wait.\nWAIT = """900"""
+value-holds-quote	refused	WAIT	-	[env]\n# A quote.\nWAIT = "say \\"hi\\""
+value-holds-backslash	refused	WAIT	-	[env]\n# A path.\nWAIT = "C:\\\\tools"
+array-value	refused	WAIT	-	[env]\n# A list.\nWAIT = ["a"]
+junk-after-close	refused	WAIT	-	[env]\n# A path.\nWAIT = "base".tsv
+duplicate-in-env	refused	WAIT	-	[env]\n# How long to wait.\nWAIT = "900"\n# Again.\nWAIT = "600"
+header-with-comment	refused	WAIT	-	[env] # the table\n# How long to wait.\nWAIT = "900"
+other-header-with-comment	refused	WAIT	-	[env]\n# How long to wait.\nWAIT = "900"\n\n[other] # theirs
+quoted-header	refused	WAIT	-	["env"]\n# How long to wait.\nWAIT = "900"
+array-of-tables-header	refused	WAIT	-	[[env]]\n# How long to wait.\nWAIT = "900"
+doubled-header	refused	WAIT	-	[env][env]\n# How long to wait.\nWAIT = "900"
+hyphen-key	unread	FOO-BAR	-	[env]\n# A name no shell exports.\nFOO-BAR = "900"
+dot-key	unread	FOO.BAR	-	[env]\n# A name no shell exports.\nFOO.BAR = "900"
+quoted-key	unread	WAIT	-	[env]\n# How long to wait.\n"WAIT" = "900"
+digit-lead-key	unread	1WAIT	-	[env]\n# A name no shell exports.\n1WAIT = "900"

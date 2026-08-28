@@ -11,11 +11,13 @@
 # name it in your SKILL.md as "set `MY_SKILL_TOKEN` in `.env.local`" — that
 # body is what a marketplace page shows for a skill.
 #
-# Grammar: one `[env]` table; a comment block immediately above every key,
-# with no blank line and no other assignment between them; every value a
-# single-line double-quoted string containing no `"` and no `\`. Seeding takes
-# whatever it recognizes and says nothing about the rest, so run
-# `kendex marketplace check` on your catalog: it reads this file strictly.
+# Grammar: one `[env]` table, its header a lone `[env]` on its own line; a
+# comment block immediately above every key, with no blank line and no other
+# assignment between them; every key a shell identifier; every value a
+# single-line double-quoted string containing no `"` and no `\`, an optional
+# trailing `#` comment aside. Seeding takes whatever it recognizes and says
+# nothing about the rest, so run `kendex marketplace check` on your catalog:
+# it reads this file the way a consumer's shell will read what seeding wrote.
 
 [env]
 

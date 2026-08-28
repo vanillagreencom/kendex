@@ -3,10 +3,22 @@
 //! [`crate::settings_seed::extract_env_entries`] is the lenient reader
 //! seeding runs: it takes whatever it recognizes and says nothing about the
 //! rest, which is what seeding needs and what leaves an author's mistake to
-//! surface in somebody else's shell. This is the other reader — same bytes,
-//! every defect located, nothing printed. `kendex marketplace check` turns
-//! its findings into rows, and the app's settings view reads its decoded
-//! entries.
+//! surface in somebody else's shell. This is the other reader over the same
+//! bytes, locating every defect and printing nothing. `kendex marketplace
+//! check` reads its findings; no production caller reads
+//! [`TemplateEntry`] yet.
+//!
+//! The grammar is the shell loaders', not this reader's opinion. What a
+//! template's `[env]` table says is copied into a consumer's
+//! `kendex.settings.toml`, where `skills/*/scripts/lib/kendex-env.sh` and
+//! `skills/*/scripts/lib/settings.sh` read it: a lone `[name]` header, a
+//! key spelled as a shell identifier, a value that is one double-quoted
+//! string free of `"` and `\` with an optional trailing `#` comment. A
+//! line those loaders refuse or silently skip is a finding here, as are
+//! the two rules only a template has — a comment block over every key, and
+//! nothing assigned outside `[env]`. The corpus in
+//! `crates/core/tests/fixtures/settings-grammar.tsv` runs reader and
+//! loaders against the same samples, so the two cannot drift apart unseen.
 //!
 //! The scan is line-based because comments are content here: a key's
 //! comment block is what seeding writes beside it, and a TOML parser drops
@@ -27,7 +39,8 @@ pub struct TemplateFinding {
     pub fix: String,
 }
 
-/// One well-formed `[env]` row, decoded.
+/// One well-formed `[env]` row, decoded. Shaped for the app settings view
+/// planned in KEN-705; the catalog check reads findings only.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TemplateEntry {
     pub key: String,
@@ -51,31 +64,52 @@ pub struct TemplateRead {
     pub findings: Vec<TemplateFinding>,
 }
 
-/// The default a seeded assignment line carries, or `None` where the line
-/// is not a single-line double-quoted string. The one decoder — the strict
-/// scan below and the seeding conflict notes both read values through it,
-/// so they can never disagree about what a template's default is.
+/// The default a seeded assignment line carries, or `None` where the value
+/// is a shape the shell loaders refuse. One double-quoted string with no
+/// `"` and no `\`, optionally followed by a `#` comment — the loaders'
+/// `^"[^"\\]*"[[:space:]]*(#.*)?$`, spelled in Rust. The one decoder: the
+/// strict scan below and the seeding conflict notes both read values
+/// through it, so they can never disagree about a template's default.
 pub fn decoded_value(line: &str) -> Option<String> {
     let (_, value) = line.split_once('=')?;
-    let value = value.trim();
-    let inner = value.strip_prefix('"')?.strip_suffix('"')?;
-    // `""` strips to nothing, but `"` strips to `"` — a lone quote is not a
-    // string, and the interior must carry neither delimiter nor escape.
-    match value.len() >= 2 && !inner.contains(['"', '\\']) {
-        true => Some(inner.to_owned()),
-        false => None,
-    }
+    let (inner, after) = value.trim().strip_prefix('"')?.split_once('"')?;
+    let after = after.trim_start();
+    let closed = after.is_empty() || after.starts_with('#');
+    (closed && !inner.contains('\\')).then(|| inner.to_owned())
 }
 
-/// A key's spelling, bare or quoted.
-fn key_of(line: &str) -> Option<String> {
+/// The key an assignment names, verbatim. Never unquoted: the loaders match
+/// the key text against a shell identifier, so `"WAIT"` is a key they skip
+/// rather than a spelling of `WAIT`.
+fn key_of(line: &str) -> Option<&str> {
     let (key, _) = line.split_once('=')?;
-    let key = key.trim().trim_matches('"').trim();
-    (!key.is_empty()).then(|| key.to_owned())
+    let key = key.trim();
+    (!key.is_empty()).then_some(key)
 }
 
-fn is_table_header(line: &str) -> bool {
-    line.starts_with('[') && line.ends_with(']')
+/// Whether a shell can export this key. The loaders skip everything else in
+/// silence, so a key outside this shape seeds and is then never read.
+fn is_env_name(key: &str) -> bool {
+    let mut chars = key.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// A `[`-leading line's table name and whether it is a header the loaders
+/// accept — a lone `[name]`, nothing after the bracket. The name is read
+/// even from a line they refuse, so `[other] # note` classifies what
+/// follows it as another table's rather than cascading onto every key.
+fn table_header(line: &str) -> (&str, bool) {
+    let Some((name, after)) = line.strip_prefix('[').and_then(|rest| rest.split_once(']')) else {
+        return ("", false);
+    };
+    let named = !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'));
+    (name, named && after.trim().is_empty())
 }
 
 /// Strip a comment line down to its text.
@@ -98,9 +132,15 @@ pub fn read(text: &str) -> TemplateRead {
     read
 }
 
-/// The 1-based line a byte offset falls on.
+/// The 1-based line a byte offset falls on. Counted from terminators, not
+/// from `lines()`: an offset at the very start of a line has a prefix
+/// ending in `\n`, which `lines()` does not count as a line of its own.
 fn line_at(text: &str, offset: usize) -> usize {
-    text[..offset.min(text.len())].lines().count().max(1)
+    text.as_bytes()[..offset.min(text.len())]
+        .iter()
+        .filter(|byte| **byte == b'\n')
+        .count()
+        + 1
 }
 
 /// The line scan: everything an author can be told precisely.
@@ -109,7 +149,7 @@ fn scan(text: &str) -> TemplateRead {
     let mut env_header: Option<usize> = None;
     let mut in_env = false;
     let mut comment: Vec<(usize, String)> = Vec::new();
-    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+    let mut seen: BTreeMap<&str, usize> = BTreeMap::new();
     for (index, raw) in text.lines().enumerate() {
         let line = index + 1;
         let trimmed = raw.trim();
@@ -121,9 +161,17 @@ fn scan(text: &str) -> TemplateRead {
             comment.push((line, comment_text(trimmed)));
             continue;
         }
-        if is_table_header(trimmed) {
-            in_env = trimmed == "[env]";
-            if in_env {
+        if trimmed.starts_with('[') {
+            let (name, exact) = table_header(trimmed);
+            in_env = name == "env";
+            if !exact {
+                read.findings.push(TemplateFinding {
+                    line,
+                    problem: "this is not a table header the settings loaders read".to_owned(),
+                    fix: "write the header as a lone [name] with nothing after the bracket"
+                        .to_owned(),
+                });
+            } else if in_env {
                 match env_header {
                     Some(first) => read.findings.push(TemplateFinding {
                         line,
@@ -136,13 +184,13 @@ fn scan(text: &str) -> TemplateRead {
             comment.clear();
             continue;
         }
-        // Anything else with no `=` is a continuation of a value the strict
-        // reader has already refused; the refusal is the finding.
+        // A line with no `=` is one the loaders read past in silence, so
+        // this scan does too and TOML below is what refuses it.
         let Some(key) = key_of(trimmed) else {
             continue;
         };
         let taken = std::mem::take(&mut comment);
-        if let Some(first) = seen.insert(key.clone(), line) {
+        if let Some(first) = seen.insert(key, line) {
             read.findings.push(TemplateFinding {
                 line,
                 problem: format!("{key} is assigned again; it is already on line {first}"),
@@ -155,6 +203,15 @@ fn scan(text: &str) -> TemplateRead {
                 line,
                 problem: format!("{key} is assigned outside [env]"),
                 fix: "move it under the [env] header; nothing else is seeded".to_owned(),
+            });
+            continue;
+        }
+        if !is_env_name(key) {
+            read.findings.push(TemplateFinding {
+                line,
+                problem: format!("{key} is not a name a shell can export, so nothing reads it"),
+                fix: "spell keys with letters, digits and underscores, starting with a letter or underscore"
+                    .to_owned(),
             });
             continue;
         }
@@ -178,7 +235,7 @@ fn scan(text: &str) -> TemplateRead {
             continue;
         };
         read.entries.push(TemplateEntry {
-            key,
+            key: key.to_owned(),
             comment_span: (taken[0].0, taken[taken.len() - 1].0),
             comment: taken.into_iter().map(|(_, text)| text).collect(),
             value,

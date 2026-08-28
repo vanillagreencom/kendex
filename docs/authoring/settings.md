@@ -45,16 +45,25 @@ a consumer's own wording survives every refresh.
 
 ## The grammar
 
-Write one `[env]` table. Give each key a comment block immediately above it: a
-blank line between them, or another assignment, ends the block. That comment is
-what the consumer reads beside the key in their own settings file. Every value
-is a single-line double-quoted string containing no `"` and no `\`.
+The shell loaders decide this, not the template: what your `[env]` table says
+is copied into the consumer's `kendex.settings.toml`, and
+`skills/*/scripts/lib/kendex-env.sh` and `settings.sh` are what read it there.
 
-`kendex marketplace check` reads the template strictly and names each defect
-with the line it sits on: a file that is not valid TOML, an assignment outside
-`[env]`, a second `[env]` header, a key with no comment block above it, a value
-in any other shape, and a key assigned twice. The check runs strict, so any of
-them fails it.
+- One `[env]` table. A table header is a lone `[name]` on its own line —
+  `[env] # the table` is refused, and so is anything else with a bracket in it.
+- A key is a shell identifier: letters, digits and underscores, starting with a
+  letter or underscore. Anything else, `FOO-BAR` and `"WAIT"` included, is
+  seeded and then read by nothing.
+- A value is one double-quoted string on one line, containing no `"` and no
+  `\`, optionally followed by a `#` comment.
+- Each key gets a comment block immediately above it. A blank line between
+  them, or another assignment, ends the block. That comment is what the
+  consumer reads beside the key in their own settings file.
+
+`kendex marketplace check` reads your template against exactly that grammar and
+names each defect with the line it sits on; it also names a key with no comment
+block, an assignment outside `[env]`, a key assigned twice, and a file that is
+not valid TOML. The check runs strict, so any of them fails it.
 
 Seeding stays lenient, and that is the point of checking: in the consumer's
 `kendex.settings.toml` a duplicate assignment inside `[env]` fails the load,
