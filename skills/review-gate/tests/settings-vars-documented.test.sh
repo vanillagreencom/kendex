@@ -8,6 +8,7 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
+EXAMPLE="$SKILL_DIR/kendex.settings.toml.example"
 
 fail=0
 
@@ -30,39 +31,31 @@ for v in $vars; do
   # as settings assignments (REVIEW_GATE_SETTINGS_FILE overrides the file
   # path in tests; REVIEW_GATE_STATUS_SNAPSHOT_FILE hands one head's
   # LIST-endpoint status snapshot in from a converge-style caller). The absence is the contract: an
-  # assignment in either example would advertise a per-invocation seam as a
+  # assignment in the example would advertise a per-invocation seam as a
   # repo setting, so it must FAIL here.
   case "$v" in
     # Legacy alias TARGET (v2, plan Change 2 / finding F6): still read by
-    # the predicate so old installs keep working, but the examples model
-    # the v2 posture and assign ONLY REVIEW_GATE_OVERRIDE_CONTEXT — two
+    # the predicate so old installs keep working, but the example models
+    # the v2 posture and assigns ONLY REVIEW_GATE_OVERRIDE_CONTEXT — two
     # live keys for one knob invites drift. Documented in
-    # references/settings.md; deliberately NOT assigned in either example.
+    # references/settings.md; deliberately NOT assigned in the example.
     REVIEW_GATE_OUTAGE_CONTEXT)
       if ! grep -q "$v" "$SKILL_DIR/references/settings.md"; then
         echo "FAIL: $v (legacy alias target) must stay documented in references/settings.md"
         fail=1
       fi
-      for example in "$SKILL_DIR/kendex.settings.toml.example" \
-                     "$SKILL_DIR/../../kendex.settings.toml.example"; do
-        [ -f "$example" ] || continue
-        if forbidden_assignment_matches "$v" "$example"; then
-          echo "FAIL: $v is the legacy alias target; the example must assign REVIEW_GATE_OVERRIDE_CONTEXT instead ($example)"
-          fail=1
-        fi
-      done
+      if forbidden_assignment_matches "$v" "$EXAMPLE"; then
+        echo "FAIL: $v is the legacy alias target; the example must assign REVIEW_GATE_OVERRIDE_CONTEXT instead ($EXAMPLE)"
+        fail=1
+      fi
       continue ;;
     REVIEW_GATE_SETTINGS_FILE|REVIEW_GATE_STATUS_SNAPSHOT_FILE)
-      for example in "$SKILL_DIR/kendex.settings.toml.example" \
-                     "$SKILL_DIR/../../kendex.settings.toml.example"; do
-        [ -f "$example" ] || continue
-        # Whitespace/quote-tolerant: any TOML spelling of an assignment for
-        # this name must fail, not just the canonical `KEY = ` shape.
-        if forbidden_assignment_matches "$v" "$example"; then
-          echo "FAIL: $v is an env-only per-invocation seam but is assigned in $example"
-          fail=1
-        fi
-      done
+      # Whitespace/quote-tolerant: any TOML spelling of an assignment for
+      # this name must fail, not just the canonical `KEY = ` shape.
+      if forbidden_assignment_matches "$v" "$EXAMPLE"; then
+        echo "FAIL: $v is an env-only per-invocation seam but is assigned in $EXAMPLE"
+        fail=1
+      fi
       continue ;;
     # A GitHub REPOSITORY VARIABLE, read by a workflow expression before any
     # checkout exists — so the settings file cannot supply it and an
@@ -73,17 +66,13 @@ for v in $vars; do
         echo "FAIL: $v (repository variable) must stay documented in references/adoption.md"
         fail=1
       fi
-      for example in "$SKILL_DIR/kendex.settings.toml.example" \
-                     "$SKILL_DIR/../../kendex.settings.toml.example"; do
-        [ -f "$example" ] || continue
-        if forbidden_assignment_matches "$v" "$example"; then
-          echo "FAIL: $v is a repository variable, not a settings key, but is assigned in $example"
-          fail=1
-        fi
-      done
+      if forbidden_assignment_matches "$v" "$EXAMPLE"; then
+        echo "FAIL: $v is a repository variable, not a settings key, but is assigned in $EXAMPLE"
+        fail=1
+      fi
       continue ;;
   esac
-  if ! grep -q "^$v = " "$SKILL_DIR/kendex.settings.toml.example"; then
+  if ! grep -q "^$v = " "$EXAMPLE"; then
     echo "FAIL: $v missing from the skill's kendex.settings.toml.example"
     fail=1
   fi
@@ -91,7 +80,7 @@ done
 
 # Reverse direction: every key the example documents must be real — either
 # read by the scripts or an explicitly wiring-level key named in SKILL.md.
-for key in $(sed -n 's/^\(REVIEW_GATE_[A-Z_]*\) = .*/\1/p' "$SKILL_DIR/kendex.settings.toml.example"); do
+for key in $(sed -n 's/^\(REVIEW_GATE_[A-Z_]*\) = .*/\1/p' "$EXAMPLE"); do
   if ! printf '%s\n' "$vars" | grep -qx "$key" && ! grep -q "$key" "$SKILL_DIR/SKILL.md" "$SKILL_DIR/references/settings.md"; then
     echo "FAIL: $key is documented in the example but neither read by scripts nor described in SKILL.md/references/settings.md"
     fail=1
