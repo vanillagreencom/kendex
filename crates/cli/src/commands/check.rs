@@ -95,10 +95,11 @@ fn fold_commit_hooks(env: &Env, checked: &mut CheckReport, scopes: &[kendex_core
                     (
                         Class::Drift,
                         format!(
-                            "{} armed the commit hooks and is installed in no project of this repository, so every commit fails — delete {} or strip the lines marked `{}` from the hooks (a hook the marker says it created can go whole)",
+                            "{} armed the commit hooks and is installed in no project of this repository, so every commit fails until {} are dealt with — strip the lines marked `{}` from each hook, and delete a whole file only where it carries `{}` or is the helper kendex wrote beside the hooks",
                             kendex_core::guard::SKILL,
                             files.join(", "),
-                            kendex_core::guard::MARKER
+                            kendex_core::guard::MARKER,
+                            kendex_core::guard::CREATED_MARKER
                         ),
                     )
                 }
