@@ -23,6 +23,10 @@ const MAX_CACHE_BYTES: u64 = MAX_RESPONSE_BYTES as u64 * 2;
 #[derive(Serialize, Deserialize)]
 pub(super) struct Generation {
     pub endpoint: String,
+    /// Which sign-in this generation belongs to, as [`GenerationFile::bound_to`]
+    /// names it. Absent on a generation no credential produced.
+    #[serde(default)]
+    pub credential: Option<String>,
     pub etag: Option<String>,
     pub fetched_at: u64,
     pub body: String,
@@ -39,11 +43,31 @@ pub(super) struct Loaded<T> {
 pub(super) struct GenerationFile<'e> {
     env: &'e Env,
     file: &'static str,
+    credential: Option<String>,
 }
 
 impl<'e> GenerationFile<'e> {
     pub fn new(env: &'e Env, file: &'static str) -> GenerationFile<'e> {
-        GenerationFile { env, file }
+        GenerationFile {
+            env,
+            file,
+            credential: None,
+        }
+    }
+
+    /// Key this file to one sign-in, named by a secret only that sign-in
+    /// has. A generation carrying another key is discarded on read just
+    /// as another endpoint's is, so a cache outliving the sign-in that
+    /// filled it can never be served under the next one. The secret is
+    /// hashed here and the file holds the digest: this is a cache, not
+    /// the keychain. A caller with no credential — the community
+    /// directory — leaves the key unset and reads only unkeyed
+    /// generations.
+    pub fn bound_to(self, sign_in: &str) -> GenerationFile<'e> {
+        GenerationFile {
+            credential: Some(crate::hash::hash_bytes(sign_in.as_bytes())),
+            ..self
+        }
     }
 
     fn path(&self) -> std::path::PathBuf {
@@ -55,7 +79,9 @@ impl<'e> GenerationFile<'e> {
     /// endpoint's, or a body the caller's strict parse refuses. The
     /// cache lives on this machine, but "on this machine" is not
     /// "trusted to be well-formed": the same cap and the same parse the
-    /// network response passed.
+    /// network response passed. Another sign-in's is refused the same
+    /// way, so nothing here has to reason about how the file outlived
+    /// the credential that wrote it.
     pub fn read<T>(&self, parse: impl Fn(&[u8]) -> Result<T>) -> Option<(Generation, T)> {
         let file = open_read_no_follow(&self.path()).ok()?;
         let metadata = file.metadata().ok()?;
@@ -65,7 +91,7 @@ impl<'e> GenerationFile<'e> {
         let mut text = String::new();
         file.take(MAX_CACHE_BYTES).read_to_string(&mut text).ok()?;
         let generation: Generation = serde_json::from_str(&text).ok()?;
-        if generation.endpoint != base_url() {
+        if generation.endpoint != base_url() || generation.credential != self.credential {
             return None;
         }
         let value = parse(generation.body.as_bytes()).ok()?;
@@ -104,6 +130,7 @@ impl<'e> GenerationFile<'e> {
                 Ok(value) => {
                     self.write(&Generation {
                         endpoint: base_url(),
+                        credential: self.credential.clone(),
                         etag: response.etag,
                         fetched_at: now,
                         body: String::from_utf8_lossy(&response.body).into_owned(),
@@ -122,6 +149,7 @@ impl<'e> GenerationFile<'e> {
                 })?;
                 self.write(&Generation {
                     fetched_at: now,
+                    credential: self.credential.clone(),
                     ..generation
                 })?;
                 Ok(Loaded {

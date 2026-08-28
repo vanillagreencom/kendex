@@ -71,7 +71,9 @@ pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result
     // sent after it, and the answer settled at the end all have to be
     // this one.
     let issued_under = credential.refresh_token;
-    let cache = cache(env);
+    // Keyed to this sign-in, so a generation the previous one left behind
+    // is not a cache at all here.
+    let cache = cache(env).bound_to(&issued_under);
     let cached = cache.read(parse);
     let etag = cached
         .as_ref()
@@ -117,11 +119,16 @@ pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result
     if descends_from != issued_under || answered_for != installed.refresh_token {
         return Err(sign_in_changed("reading your account"));
     }
-    let loaded = cache.settle(cached, fetched, parse, |response| {
-        CoreError::RegistryUnavailable {
-            why: server_message(response),
-        }
-    })?;
+    // The answer belongs to the credential it went out under, which this
+    // read's own rotation may have replaced; key what gets written to
+    // that one so the next read still finds it.
+    let loaded = cache
+        .bound_to(&answered_for)
+        .settle(cached, fetched, parse, |response| {
+            CoreError::RegistryUnavailable {
+                why: server_message(response),
+            }
+        })?;
     Ok(match loaded.stale {
         false => AccountState::SignedIn {
             identity: loaded.value,
@@ -133,11 +140,16 @@ pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result
 }
 
 /// Commit a fresh sign-in and drop the previous account's cached
-/// identity, so the new credential never pairs with the old name. The
-/// cache is forgotten twice: once before the save, so a crash between the
-/// two leaves no inherited identity, and once after, because a read
-/// settling in that window was still holding the credential the old
-/// identity belongs to and had every right to cache it.
+/// identity, so the new credential never pairs with the old name.
+///
+/// The cache is forgotten twice. The first runs before anything is
+/// installed and fails the call, because failing there leaves nothing
+/// half-done. The second clears what a read settled between the two
+/// writes, holding a credential that was still genuinely installed, and
+/// cannot fail the call: the sign-in is committed by then, and saying it
+/// failed would leave the caller telling the user the opposite of what
+/// the machine holds. A generation surviving that forget is keyed to the
+/// previous sign-in and is discarded on read.
 pub fn commit_sign_in(
     env: &Env,
     store: &dyn CredentialStore,
@@ -146,7 +158,8 @@ pub fn commit_sign_in(
     let cache = cache(env);
     cache.forget()?;
     client::commit_login(store, credential)?;
-    cache.forget()
+    let _ = cache.forget();
+    Ok(())
 }
 
 /// Revoke, clear, and forget the cached identity — the one sign-out

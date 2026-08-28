@@ -96,6 +96,10 @@ impl MemoryStore {
     fn signed_out() -> MemoryStore {
         MemoryStore(RefCell::new(None))
     }
+
+    fn signed_in_as(credential: Credential) -> MemoryStore {
+        MemoryStore(RefCell::new(Some(credential)))
+    }
 }
 
 impl CredentialStore for MemoryStore {
@@ -117,6 +121,31 @@ impl CredentialStore for MemoryStore {
 
 struct MemoryGuard;
 impl CredentialRefreshGuard for MemoryGuard {}
+
+/// The key a generation carries beside its endpoint, exactly as `me.rs`
+/// writes it. A cache planted by hand needs the sign-in it belongs to, or
+/// the read refuses it for the wrong reason and the test proves nothing.
+fn sign_in_key(refresh_token: &str) -> serde_json::Value {
+    kendex_core::hash::hash_bytes(refresh_token.as_bytes()).into()
+}
+
+/// Plant a generation where a finished read would have left one.
+fn write_cache(env: &Env, body: &str, etag: Option<&str>, sign_in: Option<&str>) {
+    let dir = env.registry_cache_dir();
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let generation = serde_json::json!({
+        "endpoint": "https://kendex.ai",
+        "credential": sign_in.map(sign_in_key),
+        "etag": etag,
+        "fetched_at": 1,
+        "body": body,
+    });
+    std::fs::write(
+        dir.join("me.cache.json"),
+        serde_json::to_string(&generation).expect("generation"),
+    )
+    .expect("write");
+}
 
 fn env_in(dir: &Path) -> Env {
     Env::fake(dir, FakeOs::Linux)
@@ -328,9 +357,18 @@ fn a_cache_from_another_endpoint_is_never_served() {
     let env = env_in(dir.path());
     let registry_dir = env.registry_cache_dir();
     std::fs::create_dir_all(&registry_dir).expect("mkdir");
+    // This sign-in's own key, so the endpoint is the only thing left to
+    // refuse it.
+    let generation = serde_json::json!({
+        "endpoint": "https://somewhere.else",
+        "credential": sign_in_key("kxr_old"),
+        "etag": serde_json::Value::Null,
+        "fetched_at": 1,
+        "body": r#"{"name":"Stranger","github_login":null}"#,
+    });
     std::fs::write(
         registry_dir.join("me.cache.json"),
-        r#"{"endpoint":"https://somewhere.else","etag":null,"fetched_at":1,"body":"{\"name\":\"Stranger\",\"github_login\":null}"}"#,
+        serde_json::to_string(&generation).expect("generation"),
     )
     .expect("write");
     let down = Canned::new(vec![away()]);
@@ -426,26 +464,15 @@ fn a_304_with_nothing_cached_is_refused() {
 fn an_oversized_identity_cache_reads_as_no_cache() {
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
-    let registry_dir = env.registry_cache_dir();
-    std::fs::create_dir_all(&registry_dir).expect("mkdir");
-    // This endpoint's own generation, holding an identity that parses:
-    // the size is the only thing left to refuse it, so the cap is what
-    // this test measures. A padded body keeps that honest.
+    // This endpoint's and this sign-in's own generation, holding an
+    // identity that parses: the size is the only thing left to refuse it,
+    // so the cap is what this test measures. A padded body keeps that
+    // honest.
     let body = format!(
         r#"{{"name":"Ada Lovelace","github_login":null,"pad":"{}"}}"#,
         "x".repeat(41_000_000)
     );
-    let generation = serde_json::json!({
-        "endpoint": "https://kendex.ai",
-        "etag": serde_json::Value::Null,
-        "fetched_at": 1,
-        "body": body,
-    });
-    std::fs::write(
-        registry_dir.join("me.cache.json"),
-        serde_json::to_string(&generation).expect("generation"),
-    )
-    .expect("write");
+    write_cache(&env, &body, None, Some("kxr_old"));
     let down = Canned::new(vec![away()]);
     assert!(
         me::load(&env, &down, &MemoryStore::signed_in()).is_err(),

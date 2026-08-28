@@ -13,7 +13,7 @@ use kendex_core::registry::credentials::{Credential, CredentialRefreshGuard, Cre
 use kendex_core::registry::me::{self, AccountState};
 use kendex_core::registry::{Fetch, FetchResponse};
 
-use super::{Canned, MemoryGuard, MemoryStore, away, env_in, fixture_body, ok};
+use super::{Canned, MemoryGuard, MemoryStore, away, env_in, fixture_body, ok, write_cache};
 
 /// A store whose credential disappears after N loads — logout winning a
 /// race against the read.
@@ -114,7 +114,7 @@ struct SettlingStore<'a> {
 
 impl CredentialStore for SettlingStore<'_> {
     fn save(&self, credential: &Credential) -> Result<()> {
-        write_cache(self.env, &self.body, None);
+        write_cache(self.env, &self.body, None, Some("kxr_old"));
         self.inner.save(credential)
     }
     fn load(&self) -> Result<Option<Credential>> {
@@ -126,22 +126,6 @@ impl CredentialStore for SettlingStore<'_> {
     fn refresh_guard(&self) -> Result<Box<dyn CredentialRefreshGuard + '_>> {
         self.inner.refresh_guard()
     }
-}
-
-fn write_cache(env: &Env, body: &str, etag: Option<&str>) {
-    let dir = env.registry_cache_dir();
-    std::fs::create_dir_all(&dir).expect("mkdir");
-    let generation = serde_json::json!({
-        "endpoint": "https://kendex.ai",
-        "etag": etag,
-        "fetched_at": 1,
-        "body": body,
-    });
-    std::fs::write(
-        dir.join("me.cache.json"),
-        serde_json::to_string(&generation).expect("generation"),
-    )
-    .expect("write");
 }
 
 /// A store that hands out one credential for the first `loads` reads and
@@ -181,6 +165,31 @@ impl CredentialStore for SwitchingStore {
     }
     fn refresh_guard(&self) -> Result<Box<dyn CredentialRefreshGuard + '_>> {
         Ok(Box::new(MemoryGuard))
+    }
+}
+
+/// A store that jams the cache path shut as the sign-in saves: a
+/// directory where the file goes, which `remove_file` refuses. The first
+/// forget has already run by then, so this hits only the second.
+struct JammingStore<'a> {
+    inner: MemoryStore,
+    env: &'a Env,
+}
+
+impl CredentialStore for JammingStore<'_> {
+    fn save(&self, credential: &Credential) -> Result<()> {
+        let jam = self.env.registry_cache_dir().join("me.cache.json");
+        std::fs::create_dir_all(&jam).expect("jam the cache path");
+        self.inner.save(credential)
+    }
+    fn load(&self) -> Result<Option<Credential>> {
+        self.inner.load()
+    }
+    fn clear(&self) -> Result<()> {
+        self.inner.clear()
+    }
+    fn refresh_guard(&self) -> Result<Box<dyn CredentialRefreshGuard + '_>> {
+        self.inner.refresh_guard()
     }
 }
 
@@ -328,10 +337,13 @@ fn a_rotation_mid_read_still_settles_the_answer() {
         "kxr_new",
         "the rotation is what makes this the case it is"
     );
-    assert!(
-        env.registry_cache_dir().join("me.cache.json").exists(),
-        "a rotated read caches its identity like any other"
-    );
+    // Keyed to the credential the answer went out under, not the one the
+    // read opened with, or the next read would find nothing.
+    let down = Canned::new(vec![away()]);
+    match me::load(&env, &down, &store).expect("offline load") {
+        AccountState::Offline { identity } => assert_eq!(identity.name, "Ada Lovelace"),
+        other => panic!("the rotated read's cache is still this sign-in's, got {other:?}"),
+    }
 }
 
 #[test]
@@ -360,7 +372,12 @@ fn a_read_whose_sign_in_changed_before_the_call(
     etag: Option<&str>,
     answer: Result<FetchResponse>,
 ) -> Result<AccountState> {
-    write_cache(env, &fixture_body(&["success", "body"]), etag);
+    write_cache(
+        env,
+        &fixture_body(&["success", "body"]),
+        etag,
+        Some("kxr_old"),
+    );
     let store = SwitchingStore::after(1);
     let fetch = Canned::new(vec![answer]);
     me::load(env, &fetch, &store)
@@ -407,7 +424,12 @@ fn a_transport_failure_never_serves_a_cache_from_another_sign_in() {
 fn an_adopted_credential_never_serves_a_cache_from_another_sign_in() {
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
-    write_cache(&env, &fixture_body(&["success", "body"]), None);
+    write_cache(
+        &env,
+        &fixture_body(&["success", "body"]),
+        None,
+        Some("kxr_old"),
+    );
     // Two reads in, `load` holds its own credential and has read the
     // cache under it. The request then 401s, and the locked re-read finds
     // somebody else's credential, which the call adopts and retries under
@@ -426,5 +448,83 @@ fn an_adopted_credential_never_serves_a_cache_from_another_sign_in() {
         *fetch.calls.borrow(),
         2,
         "the retry under the adopted credential is what this test is about"
+    );
+}
+
+#[test]
+fn a_cache_from_another_sign_in_is_never_served() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = env_in(dir.path());
+    // The previous account's generation outlived its sign-out — a forget
+    // that failed, a crash between the two writes, whatever left it
+    // there. Somebody else is signed in now and the network is away, so
+    // this cache is the only identity on hand.
+    write_cache(
+        &env,
+        &fixture_body(&["success", "body"]),
+        None,
+        Some("kxr_old"),
+    );
+    let store = MemoryStore::signed_in_as(other_account());
+    let down = Canned::new(vec![away()]);
+    assert!(
+        me::load(&env, &down, &store).is_err(),
+        "the previous account's name is not this account's offline identity"
+    );
+}
+
+#[test]
+fn a_generation_carrying_no_sign_in_is_never_served() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = env_in(dir.path());
+    // A generation that names no sign-in cannot be shown to belong to
+    // this one, so it is another sign-in's as far as the read is
+    // concerned.
+    write_cache(&env, &fixture_body(&["success", "body"]), None, None);
+    let down = Canned::new(vec![away()]);
+    assert!(
+        me::load(&env, &down, &MemoryStore::signed_in()).is_err(),
+        "an unkeyed generation is not this sign-in's identity"
+    );
+}
+
+#[test]
+fn the_cache_names_the_sign_in_without_holding_its_token() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = env_in(dir.path());
+    let store = MemoryStore::signed_in();
+    let fetch = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
+    me::load(&env, &fetch, &store).expect("load");
+
+    let written = std::fs::read_to_string(env.registry_cache_dir().join("me.cache.json"))
+        .expect("the read cached its answer");
+    assert!(
+        !written.contains("kxr_old"),
+        "the cache file is not the keychain"
+    );
+    assert!(
+        written.contains(&kendex_core::hash::hash_bytes(b"kxr_old")),
+        "the generation names the sign-in it belongs to"
+    );
+}
+
+#[test]
+fn a_sign_in_that_cannot_clear_the_cache_still_reports_success() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = env_in(dir.path());
+    let store = JammingStore {
+        inner: MemoryStore::signed_in(),
+        env: &env,
+    };
+    me::commit_sign_in(&env, &store, &other_account())
+        .expect("the credential is installed, so the sign-in did not fail");
+    assert_eq!(
+        store
+            .load()
+            .expect("load")
+            .expect("credential")
+            .refresh_token,
+        "kxr_other",
+        "the sign-in this call reported is the one the machine holds"
     );
 }
