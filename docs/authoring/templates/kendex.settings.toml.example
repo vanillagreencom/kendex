@@ -13,9 +13,9 @@
 #
 # Grammar: one `[env]` table; a comment block immediately above every key,
 # with no blank line and no other assignment between them; every value a
-# single-line double-quoted string containing no `"` and no `\`. Nothing
-# validates this file — a value in any other shape seeds cleanly and then
-# fails the load in every consumer that installs you.
+# single-line double-quoted string containing no `"` and no `\`. Seeding takes
+# whatever it recognizes and says nothing about the rest, so run
+# `kendex marketplace check` on your catalog: it reads this file strictly.
 
 [env]
 

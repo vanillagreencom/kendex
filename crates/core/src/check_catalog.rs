@@ -1,12 +1,12 @@
 //! Authoring validation over a catalog directory: what a maintainer can
 //! know about their own content before anyone installs it.
 //!
-//! Two passes over every item. The structural pass asks whether each
+//! Three passes over every item. The structural pass asks whether each
 //! harness's loader could hold this item at all — a name it will not
-//! accept, a SKILL.md that disagrees with its own directory. The safety
-//! pass runs the same rules an install runs, against the same content, so
-//! a catalog finds out in its own CI rather than in somebody else's plan
-//! preview.
+//! accept, a SKILL.md that disagrees with its own directory. The settings
+//! pass reads a package's settings template strictly. The safety pass runs
+//! the same rules an install runs, so a catalog finds out in its own CI
+//! rather than in somebody else's plan preview.
 //!
 //! Both passes only report what an author can act on. Anything rendering
 //! resolves on its own is not a problem this can help with, and naming it
@@ -42,6 +42,11 @@ pub const SAFETY_PASS: &str = "safety";
 /// one item — a broken control file, a skipped colliding directory.
 pub const CATALOG_PASS: &str = "catalog";
 
+/// The `pass` a settings-template finding carries — neither a loader's
+/// complaint nor a safety rule, but the strict read of a package's
+/// `kendex.settings.toml.example`.
+pub const SETTINGS_PASS: &str = "settings";
+
 /// Every kind a catalog can offer, in report order.
 const CHECKED_KINDS: [ItemKind; 5] = [
     ItemKind::Agent,
@@ -56,16 +61,17 @@ const CHECKED_KINDS: [ItemKind; 5] = [
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CheckFinding {
     /// The file within the catalog — for safety findings, the rule's own
-    /// location, which may name a file inside a skill tree.
+    /// location, which may name a file inside a skill tree; for settings
+    /// findings, that file with the line appended.
     pub file: String,
     pub kind: &'static str,
     pub name: String,
-    /// The harness whose loader complains, or [`SAFETY_PASS`].
+    /// The harness whose loader complains, [`SETTINGS_PASS`], or [`SAFETY_PASS`].
     pub pass: String,
-    /// `error`/`warning` for structural findings; the safety severity
-    /// (`low`..`critical`) for safety findings.
+    /// `error`/`warning` for structural and settings findings; the safety
+    /// severity (`low`..`critical`) for safety findings.
     pub severity: &'static str,
-    /// The safety rule that fired; `None` for structural findings.
+    /// The safety rule that fired; `None` otherwise.
     pub rule: Option<String>,
     pub message: String,
     pub fix: String,
@@ -101,7 +107,7 @@ pub struct CheckedItem {
     pub name: String,
     /// The item's own path within the catalog.
     pub file: String,
-    /// The structural pass: would each harness's loader accept this?
+    /// Would each harness's loader accept this, and does its settings template read strictly?
     pub structural: Vec<CheckFinding>,
     /// The safety pass, the same payload every other score surface embeds.
     pub advisory: quality::AuditResult,
@@ -269,7 +275,8 @@ pub fn check_item(
         .unwrap_or(path)
         .display()
         .to_string();
-    let structural = structural(kind, name, &file, &content);
+    let mut structural = structural(kind, name, &file, &content);
+    structural.extend(settings_findings(sealed, kind, name, &file, path)?);
     // The safety half of the authoring check: the same rules an install
     // runs, over the same content.
     let advisory = quality::audit(AuditInput {
@@ -286,6 +293,41 @@ pub fn check_item(
         structural,
         advisory,
     })
+}
+
+/// The strict read of the package's settings template, where it ships one.
+/// Advisory, so `check --catalog` reports it and `marketplace check` —
+/// strict — fails on it: nothing else validates a template before a
+/// consumer's shell reads what seeding made of it.
+fn settings_findings(
+    sealed: &SealedSource,
+    kind: ItemKind,
+    name: &str,
+    file: &str,
+    path: &Path,
+) -> Result<Vec<CheckFinding>> {
+    let name_of = crate::settings_seed::SETTINGS_TEMPLATE;
+    if kind != ItemKind::Skill || !sealed.is_dir(path) {
+        return Ok(Vec::new());
+    }
+    let Some(text) = sealed.read_if_exists(&path.join(name_of))? else {
+        return Ok(Vec::new());
+    };
+    let at = format!("{file}/{name_of}");
+    Ok(crate::settings_template::read(&text)
+        .findings
+        .into_iter()
+        .map(|finding| CheckFinding {
+            file: format!("{at}:{}", finding.line),
+            kind: kind.name(),
+            name: name.to_owned(),
+            pass: SETTINGS_PASS.to_owned(),
+            severity: "warning",
+            rule: None,
+            message: finding.problem,
+            fix: finding.fix,
+        })
+        .collect())
 }
 
 /// A skill's whole tree; anything else is one file. Read through the same

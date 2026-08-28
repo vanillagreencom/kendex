@@ -1,0 +1,125 @@
+use super::*;
+
+const GOOD: &str = "[env]\n\n# What the reviewers do.\n# Comma separated.\nREVIEWERS = \"arch,security\"\n\n# How deep.\nDEPTH = \"2\"\n";
+
+/// Every finding's problem text, so a fixture asserts what was said and
+/// where without repeating the whole struct.
+fn located(text: &str) -> Vec<(usize, String)> {
+    read(text)
+        .findings
+        .into_iter()
+        .map(|finding| (finding.line, finding.problem))
+        .collect()
+}
+
+#[test]
+fn a_clean_template_decodes_to_rows() {
+    let read = read(GOOD);
+    assert!(read.findings.is_empty(), "{:?}", read.findings);
+    assert_eq!(read.entries.len(), 2);
+    let first = &read.entries[0];
+    assert_eq!(first.key, "REVIEWERS");
+    assert_eq!(first.value, "arch,security");
+    assert_eq!(
+        first.comment,
+        ["What the reviewers do.", "Comma separated."]
+    );
+    assert_eq!(first.comment_span, (3, 4));
+    assert_eq!(first.line, 5);
+    assert_eq!(read.entries[1].key, "DEPTH");
+    assert_eq!(read.entries[1].comment_span, (7, 7));
+}
+
+#[test]
+fn a_file_that_does_not_parse_is_one_finding() {
+    let found = located("[env]\n# Why.\nDEPTH \"2\"\n");
+    assert_eq!(found.len(), 1);
+    assert!(
+        found[0].1.starts_with("this is not valid TOML:"),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn an_assignment_outside_env_is_located() {
+    let found = located("# Why.\nDEPTH = \"2\"\n\n[env]\n# Why.\nOTHER = \"1\"\n");
+    assert_eq!(found, [(2, "DEPTH is assigned outside [env]".to_owned())]);
+}
+
+#[test]
+fn a_second_env_header_is_located() {
+    let found = located("[env]\n# Why.\nA = \"1\"\n\n[env]\n# Why.\nB = \"2\"\n");
+    assert_eq!(
+        found,
+        [(
+            5,
+            "a second [env] header; the first is on line 1".to_owned()
+        )]
+    );
+}
+
+#[test]
+fn a_key_with_no_comment_block_is_located() {
+    let found = located("[env]\n# Why.\nA = \"1\"\n\nB = \"2\"\n");
+    assert_eq!(found, [(5, "B has no comment block above it".to_owned())]);
+}
+
+#[test]
+fn a_blank_line_cuts_a_comment_off_its_key() {
+    let found = located("[env]\n# Why.\n\nA = \"1\"\n");
+    assert_eq!(found, [(4, "A has no comment block above it".to_owned())]);
+}
+
+#[test]
+fn a_value_that_is_not_a_plain_quoted_string_is_located() {
+    let refused = [
+        "[env]\n# Why.\nA = 2\n",
+        "[env]\n# Why.\nA = true\n",
+        "[env]\n# Why.\nA = \"\"\"long\"\"\"\n",
+        "[env]\n# Why.\nA = \"say \\\"hi\\\"\"\n",
+        "[env]\n# Why.\nA = \"C:\\\\tools\"\n",
+        "[env]\n# Why.\nA = ['x']\n",
+    ];
+    for text in refused {
+        assert_eq!(
+            located(text),
+            [(
+                3,
+                "A's default is not a one-line double-quoted string free of \" and \\".to_owned()
+            )],
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn a_duplicate_key_is_located() {
+    // Across tables: valid TOML, and exactly what seeding's file-wide
+    // presence check trips over.
+    let found = located("[other]\n# Why.\nA = \"1\"\n\n[env]\n# Why.\nA = \"2\"\n");
+    assert_eq!(
+        found,
+        [
+            (3, "A is assigned outside [env]".to_owned()),
+            (7, "A is assigned again; it is already on line 3".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn a_commented_out_key_is_comment_and_not_an_assignment() {
+    let read = read("[env]\n# An example.\n# A = \"1\"\n\n# Why.\nB = \"2\"\n");
+    assert!(read.findings.is_empty(), "{:?}", read.findings);
+    assert_eq!(read.entries.len(), 1);
+    assert_eq!(read.entries[0].key, "B");
+}
+
+#[test]
+fn decoded_value_reads_only_plain_one_line_strings() {
+    assert_eq!(decoded_value("A = \"x\""), Some("x".to_owned()));
+    assert_eq!(decoded_value("A = \"\""), Some(String::new()));
+    assert_eq!(decoded_value("A = \"1\""), Some("1".to_owned()));
+    assert_eq!(decoded_value("A = \""), None);
+    assert_eq!(decoded_value("A = 1"), None);
+    assert_eq!(decoded_value("A"), None);
+}

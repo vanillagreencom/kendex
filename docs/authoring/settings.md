@@ -41,19 +41,20 @@ a consumer's own wording survives every refresh.
 ## The grammar
 
 Write one `[env]` table. Give each key a comment block immediately above it: a
-blank line between them, or another assignment, ends the block and the key
-seeds with no explanation at all. That comment is what the consumer reads
-beside the key in their own settings file.
+blank line between them, or another assignment, ends the block. That comment is
+what the consumer reads beside the key in their own settings file. Every value
+is a single-line double-quoted string containing no `"` and no `\`.
 
-Every value is a single-line double-quoted string containing no `"` and no
-`\`. Nothing checks your template — neither an install nor
-`kendex marketplace check` parses it — so a value in any other shape seeds
-cleanly and then fails the load in every consumer that installs you.
+`kendex marketplace check` reads the template strictly and names each defect
+with the line it sits on: a file that is not valid TOML, an assignment outside
+`[env]`, a second `[env]` header, a key with no comment block above it, a value
+in any other shape, and a key assigned twice. The check runs strict, so any of
+them fails it.
 
-A repeated key is treated differently on each side. In the consumer's
-`kendex.settings.toml`, a duplicate assignment inside `[env]` fails the load.
-In your template it does not: seeding takes the first declaration of a key and
-drops every later one without a word. Write each key once.
+Seeding stays lenient, and that is the point of checking: in the consumer's
+`kendex.settings.toml` a duplicate assignment inside `[env]` fails the load,
+while a template with one seeds its first declaration and drops the rest
+without a word. Write each key once.
 
 ## Naming
 

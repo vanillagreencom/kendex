@@ -252,3 +252,77 @@ fn what_init_scaffolds_passes_the_check() {
         "a clean item carries no finding lines: {said}"
     );
 }
+
+/// A catalog holding one skill that ships the given settings template.
+#[allow(clippy::unwrap_used)]
+fn catalog_shipping(home: &Path, template: &str) -> std::path::PathBuf {
+    let catalog = home.join("catalog");
+    let skill = catalog.join("skills/review");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: review\ndescription: review changes\n---\nBody.\n",
+    )
+    .unwrap();
+    std::fs::write(skill.join("kendex.settings.toml.example"), template).unwrap();
+    catalog
+}
+
+/// Nothing validates a settings template at authoring time, so an author's
+/// mistake surfaces in a consumer's shell. `marketplace check` runs strict,
+/// which is where a malformed template has to stop.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_malformed_settings_template_fails_marketplace_check() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let catalog = catalog_shipping(
+        home,
+        "[env]\n# How long to wait.\nWAIT = \"900\"\n\nDEPTH = \"2\"\n\n[env]\n# Again.\nMODE = 3\n",
+    );
+    let output = kendex(
+        home,
+        home,
+        &["marketplace", "check", catalog.to_str().unwrap()],
+    );
+
+    assert!(
+        !output.status.success(),
+        "a malformed settings template must not pass"
+    );
+    let said = String::from_utf8_lossy(&output.stderr).into_owned();
+    // Each defect, at the line it sits on.
+    assert!(
+        said.contains(
+            "[warning] settings: skills/review/kendex.settings.toml.example:5: DEPTH has no comment block above it"
+        ),
+        "{said}"
+    );
+    assert!(
+        said.contains(
+            "settings: skills/review/kendex.settings.toml.example:7: a second [env] header; the first is on line 1"
+        ),
+        "{said}"
+    );
+    assert!(said.contains("    fix: keep one [env] table"), "{said}");
+}
+
+/// The must-fail control's other half: a template with nothing wrong with
+/// it is not reported, so the pass is reading the file rather than firing
+/// on its presence.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_well_formed_settings_template_passes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let catalog = catalog_shipping(home, "[env]\n\n# How long to wait.\nWAIT = \"900\"\n");
+    let output = kendex(
+        home,
+        home,
+        &["marketplace", "check", catalog.to_str().unwrap()],
+    );
+
+    let said = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "{said}");
+    assert!(!said.contains("settings:"), "{said}");
+}

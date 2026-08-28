@@ -37,6 +37,7 @@ pub mod report;
 pub mod scan;
 pub mod settings;
 pub mod settings_seed;
+pub mod settings_template;
 pub mod source;
 pub mod source_ops;
 pub mod source_read;
