@@ -3,17 +3,19 @@
 # same file under an agent, hook, command or MCP server installs without
 # seeding anything. On a project install kendex merges each key below — with
 # the comment block directly above it — into the consuming repo's
-# `kendex.settings.toml`, and never overwrites a key that is already there.
-# Users edit their values in that file, not here.
+# `kendex.settings.toml`. A key already assigned there is left as it is, and
+# no install rewrites a value; users edit theirs in that file, not here.
 #
 # Commit-safe values only. A value that must stay out of git (a token, a
 # credential, a personal identifier) never appears here as an assignment:
-# document it in your skill's README as "set `MY_SKILL_TOKEN` in
-# `.env.local`", which the marketplace page renders.
+# name it in your SKILL.md as "set `MY_SKILL_TOKEN` in `.env.local`" — that
+# body is what a marketplace page shows for a skill.
 #
 # Grammar: one `[env]` table; a comment block immediately above every key,
-# with no blank line between them; every value a single-line double-quoted
-# string containing no `"` and no `\`.
+# with no blank line and no other assignment between them; every value a
+# single-line double-quoted string containing no `"` and no `\`. Nothing
+# validates this file — a value in any other shape seeds cleanly and then
+# fails the load in every consumer that installs you.
 
 [env]
 

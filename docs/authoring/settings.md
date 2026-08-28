@@ -1,48 +1,68 @@
 # Settings a skill declares
 
 A skill ships a `kendex.settings.toml.example` at its root for the keys it
-wants seeded. On a project install kendex merges every key in that file's
-`[env]` table, together with the comment block directly above it, into the
-consuming repo's `kendex.settings.toml`. A key already present there is left
-alone, value and all, so a reinstall never overwrites what someone edited.
+wants seeded. On a project install kendex reads that file's `[env]` table and
+merges each key, together with the comment block directly above it, into the
+consuming repo's `kendex.settings.toml`.
 
 Seeding is a skill's alone. An agent, hook, command or MCP server that ships
 one of these files installs normally and seeds nothing — the file is inert,
-and no error says so. Those kinds document their settings in their own README,
-which the marketplace page renders, and leave it to the reader to set them.
+and no error says so. It runs on project scope for an enabled skill that at
+least one harness here installs; a global install seeds nothing.
 
-Not every key a skill reads belongs in that file either. A key it documents
-but does not seed — an opt-in that ships a working default, an override seam —
-lives in the skill's own README the same way. What follows governs the keys a
-template carries.
+Not every key a skill reads belongs in that file. A key it documents but does
+not seed — an opt-in that ships a working default, an override seam — is
+explained in the skill's `SKILL.md`, which is the body a marketplace page
+shows for a skill. A `README.md` beside it ships with the skill and appears in
+the page's file list, but it is not what the page renders. For the other kinds
+the rendered body is the package's one file: the agent's or command's markdown
+after its frontmatter, and a hook script or MCP config whole, comments
+included.
 
 Start from
 [`templates/kendex.settings.toml.example`](templates/kendex.settings.toml.example).
 
+## What an install writes, and what it leaves
+
+A key already assigned in the consumer's file is never seeded over, and no
+install rewrites a value. The presence check is deliberately wider than what
+the readers look at: an assignment of that key anywhere in the file, inside
+`[env]` or not, counts as present and suppresses the insert.
+
+Comment blocks are the one thing a later install may rewrite. The lock records,
+per key, the skill that seeded it and a hash of the comment block seeding last
+wrote. A revised template rewrites that block only while the on-disk text still
+hashes to the record and the template belongs to the recorded owner. Anything
+else — an edited comment, another skill's template — is preserved untouched, so
+a consumer's own wording survives every refresh.
+
 ## The grammar
 
-One `[env]` table. A comment block sits immediately above its key with no
-blank line between them — a blank line there means the key seeds without its
-explanation, and that comment is what the consumer reads beside the key in
-their own settings file. Every value is a single-line double-quoted string
-containing no `"` and no `\`. Assignments outside `[env]` are ignored.
+Write one `[env]` table. Give each key a comment block immediately above it: a
+blank line between them, or another assignment, ends the block and the key
+seeds with no explanation at all. That comment is what the consumer reads
+beside the key in their own settings file.
 
-The two files treat a repeated key differently. In the consumer's
+Every value is a single-line double-quoted string containing no `"` and no
+`\`. Nothing checks your template — neither an install nor
+`kendex marketplace check` parses it — so a value in any other shape seeds
+cleanly and then fails the load in every consumer that installs you.
+
+A repeated key is treated differently on each side. In the consumer's
 `kendex.settings.toml`, a duplicate assignment inside `[env]` fails the load.
-In your template it does not: seeding takes the first declaration of a key
-and drops every later one without a word, so a key written twice ships
-whichever copy comes first. Write each key once.
+In your template it does not: seeding takes the first declaration of a key and
+drops every later one without a word. Write each key once.
 
 ## Naming
 
 Prefix keys with the skill name in upper-snake — `REVIEW_GATE_MODE` for a
-skill named `review-gate`. This is a convention, not something the check
-enforces: a skill that deliberately ships a companion package's key is
-legitimate.
+skill named `review-gate`. This is a convention and nothing enforces it: a
+skill that deliberately ships a companion package's key is legitimate.
 
 ## Where a value comes from
 
-Scripts read the `[env]` table with one precedence, highest first:
+Scripts read the `[env]` table, ignoring assignments outside it, with one
+precedence, highest first:
 
 1. the process environment
 2. `.env.local`
@@ -58,5 +78,5 @@ environment value — as long as its own comment says so.
 
 Ship only values that are safe to commit. A key whose value must stay out of
 git — a token, a credential, a personal identifier — never appears as an
-assignment in the template. Document it in the skill's README as "set `X`
-in `.env.local`" instead; the marketplace page renders that README.
+assignment in the template. Name it in your `SKILL.md` instead, as "set `X` in
+`.env.local`", where the marketplace page shows it.
