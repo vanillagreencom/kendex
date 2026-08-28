@@ -1,0 +1,58 @@
+// How the account is read, and who answers when it is.
+//
+// The store keeps what the last read settled on; this is the read itself —
+// the command, the rename from its wire shape, and the seam the dev harness
+// takes over so `?account=` can serve a state no server is behind.
+import { type AccountStatus, commands } from "@/bindings";
+import type { SettledAccount } from "./account";
+
+/** What a read of the account answers: the state it settled on, or why it
+ * could not be read. */
+export type AccountRead = { ok: SettledAccount } | { error: string };
+
+export type ReadAccount = () => Promise<AccountRead>;
+
+/** The wire answers every settled state this store keeps; the unread one
+ * is the UI's own, so the mapping is a rename. */
+const settled = (wire: AccountStatus["state"]): SettledAccount => {
+  switch (wire.state) {
+    case "signed-out":
+      return { kind: "signed-out" };
+    case "signed-in":
+      return { kind: "signed-in", identity: wire.identity };
+    case "offline":
+      return { kind: "offline", identity: wire.identity };
+    case "expired":
+      return { kind: "expired" };
+  }
+};
+
+/** The command asks the server who the credential belongs to, so it can
+ * answer with a name, with the last name it knew when the server is away,
+ * and with the rejection when the credential is dead. */
+const fromBridge: ReadAccount = async () => {
+  try {
+    const status = await commands.accountStatus();
+    if (status.status === "error") return { error: status.error };
+    return { ok: settled(status.data.state) };
+  } catch (error: unknown) {
+    // A bridge that throws and a reply that says no are the same answer
+    // here: the account could not be read. Letting the throw out would
+    // leave the read with nothing recorded and nothing to retry from.
+    return { error: String(error) };
+  }
+};
+
+let reader: ReadAccount = fromBridge;
+
+/** Dev only, called by the mock bridge: the harness answers as the states
+ * the backend will report once it can reach the server. Null puts the
+ * command back. */
+export function setAccountReader(read: ReadAccount | null): void {
+  reader = read ?? fromBridge;
+}
+
+/** One read of the account, through whoever is answering. Called through
+ * rather than exported directly, so a harness installed after the store was
+ * imported is still the one asked. */
+export const readAccount: ReadAccount = () => reader();

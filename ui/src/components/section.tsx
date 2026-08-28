@@ -78,6 +78,7 @@ export function SettingRow({
   label,
   description,
   htmlFor,
+  role,
   children,
   className,
 }: {
@@ -85,12 +86,16 @@ export function SettingRow({
   description?: ReactNode;
   /** Set when the control is a real form field, so the label focuses it. */
   htmlFor?: string;
+  /** Set where the row is an announcement rather than a setting — a read
+   *  that failed, say — so a screen reader is told when it appears. */
+  role?: string;
   children?: ReactNode;
   className?: string;
 }) {
   const Label = htmlFor ? "label" : "span";
   return (
     <div
+      role={role}
       className={cn(
         "flex items-start justify-between gap-8 py-3.5 first:pt-0",
         className,

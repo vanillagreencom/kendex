@@ -215,20 +215,3 @@ export const APP_UPDATE_UNKNOWN_NOTE =
 // it. Said wherever a change is one field and the retry is to press again.
 export const SETTINGS_MOVED_MESSAGE =
   "Your settings changed in another window. Try again.";
-
-// The account row at the foot of the sidebar. Each line says what the last
-// read settled on: a credential the server has not confirmed reads as
-// offline, and a read that never landed says that rather than picking a
-// state for it.
-export const ACCOUNT_SIGN_IN_LABEL = "Sign in";
-export const ACCOUNT_SIGN_IN_AGAIN_LABEL = "Sign in again";
-export const ACCOUNT_EXPIRED_TITLE =
-  "kendex.ai no longer accepts this sign-in.";
-// A credential is stored but the server has not put a name to it yet, so
-// the row shows no handle and claims nothing about who it belongs to.
-export const ACCOUNT_SIGNED_IN_LABEL = "Signed in";
-export const ACCOUNT_OFFLINE_LABEL = "Offline";
-export const ACCOUNT_OFFLINE_TITLE =
-  "Signed in as this account when kendex.ai was last reached.";
-export const ACCOUNT_UNREADABLE_LABEL = "Couldn't check your account";
-export const ACCOUNT_ROW_TITLE = "Open account settings";

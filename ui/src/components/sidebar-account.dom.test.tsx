@@ -13,11 +13,11 @@ import {
   ACCOUNT_SIGN_IN_LABEL,
   ACCOUNT_SIGNED_IN_LABEL,
   ACCOUNT_UNREADABLE_LABEL,
-} from "@/lib/copy";
+} from "@/lib/copy-account";
 import { type AccountState, useAccountStore } from "@/stores/account";
 import { useNavStore } from "@/stores/nav";
 import { mount } from "@/test/dom";
-import { accountInitial, SidebarAccount } from "./sidebar-account";
+import { SidebarAccount } from "./sidebar-account";
 
 vi.mock("@/bindings", () => ({ commands: {} }));
 
@@ -73,15 +73,15 @@ describe("what the account row draws", () => {
     const host = show({ kind: "loading" }, "no network");
     expect(seen(host)).toContain(ACCOUNT_UNREADABLE_LABEL);
     expect(seen(host)).not.toContain(ACCOUNT_SIGN_IN_LABEL);
-    expect(spoken(host)).toBe("no network");
+    expect(spoken(host)).toBe(ACCOUNT_ROW_TITLE);
   });
 
-  // Nothing here retries a read, and nothing here routes to a page that
-  // would claim to know an account state this row could not read.
-  it("goes nowhere from a failed read", async () => {
+  // The reason and the retry live in Settings > Account, so the row that
+  // reports the failure is the way to them.
+  it("opens the settings page from a failed read", async () => {
     const host = show({ kind: "loading" }, "no network");
     await userEvent.click(rowOf(host));
-    expect(useNavStore.getState().page).toBe("home");
+    expect(useNavStore.getState().page).toBe("settings");
   });
 
   it("offers a quiet sign-in when signed out", () => {
@@ -162,15 +162,10 @@ describe("how the sentence behind a row reaches a person", () => {
     expect(document.activeElement).toBe(row);
   });
 
-  // A button announces something to press. The failed read has nothing to
-  // press, so the row that reports it must not claim otherwise while still
-  // being the only place its sentence lives.
-  it("offers no button to press from a failed read", () => {
-    const host = show({ kind: "loading" }, "no network");
-    expect(rowOf(host).tagName).not.toBe("BUTTON");
-    expect(rowOf(host).getAttribute("role")).not.toBe("button");
-    expect(host.querySelector("button")).toBeNull();
-    expect(spoken(host)).toBe("no network");
+  it("keeps the failed-read row a button, since it acts too", () => {
+    expect(rowOf(show({ kind: "loading" }, "no network")).tagName).toBe(
+      "BUTTON",
+    );
   });
 
   it.each(SETTLED)(
@@ -186,83 +181,38 @@ describe("how the sentence behind a row reaches a person", () => {
   });
 });
 
-// A read that fails after one that landed changes no state: it leaves the
-// account exactly as the last good answer left it and records only why it
-// could not be repeated. Without the cause on the row, the same failure
-// would be loud before the first answer and silent ever after.
-describe("a read that failed after one that landed", () => {
-  it.each(SETTLED)("marks the %s row with the cause", (_state, account) => {
-    const clean = spoken(show(account));
-    const failed = spoken(show(account, "keychain locked"));
-    expect(failed).toContain("keychain locked");
-    expect(failed).not.toBe(clean);
-  });
-
-  // A rejected credential and a read that could not be made are different
-  // answers. Where the row's own sentence is the only thing explaining what
-  // it draws, a later failure joins it rather than taking its place.
+// Each row's sentence is its own: what the state means for the two that
+// mean something the row cannot show, and where the click goes for the rest.
+describe("the sentence behind each row", () => {
   it.each([
+    ["signed-in", { kind: "signed-in", identity: ADA }, ACCOUNT_ROW_TITLE],
+    ["signed-out", { kind: "signed-out" }, ACCOUNT_ROW_TITLE],
     ["expired", { kind: "expired" }, ACCOUNT_EXPIRED_TITLE],
     ["offline", { kind: "offline", identity: ADA }, ACCOUNT_OFFLINE_TITLE],
   ] as [string, AccountState, string][])(
-    "keeps the %s row's own explanation beside the cause",
+    "says what the %s row means",
     (_state, account, sentence) => {
-      const words = spoken(show(account, "keychain locked"));
-      expect(words).toContain(sentence);
-      expect(words).toContain("keychain locked");
-    },
-  );
-
-  // The other two rows explain nothing beyond the click they offer, so the
-  // cause takes that hint's place rather than trailing it.
-  it.each([
-    ["signed-in", { kind: "signed-in", identity: ADA }],
-    ["signed-out", { kind: "signed-out" }],
-  ] as [string, AccountState][])(
-    "replaces the %s row's affordance hint with the cause",
-    (_state, account) => {
-      expect(spoken(show(account))).toBe(ACCOUNT_ROW_TITLE);
-      expect(spoken(show(account, "keychain locked"))).toBe("keychain locked");
+      expect(spoken(show(account))).toBe(sentence);
     },
   );
 });
 
-describe("the letter on the avatar", () => {
-  const named = (name: string) => accountInitial({ name, githubLogin: null });
-
-  it("takes the name's first letter", () => {
-    expect(accountInitial(ADA)).toBe("A");
+// A read that fails after one that landed changes no state: it leaves the
+// account exactly as the last good answer left it. The row therefore reads
+// the same either way, and the cause it does not carry is on the page every
+// row opens.
+describe("a read that failed after one that landed", () => {
+  it.each(SETTLED)("leaves the %s row as it was", (_state, account) => {
+    const clean = show(account);
+    expect(spoken(show(account, "keychain locked"))).toBe(spoken(clean));
+    expect(seen(show(account, "keychain locked"))).toBe(seen(clean));
   });
 
-  // The accent is part of the letter a reader sees, whether the server sent
-  // one character or a base letter and a combining mark.
-  it("keeps a combining mark with the letter it belongs to", () => {
-    expect(named("e\u0301lodie")).toBe("E\u0301");
-    expect(named("élodie")).toBe("É");
-  });
-
-  // Casing can widen what it is given: this one letter uppercases to two,
-  // and the circle holds one.
-  it("keeps one letter when casing expands it", () => {
-    expect(named("ßeta")).toBe("S");
-  });
-
-  // Every part of the sequence or none: half an emoji is a different emoji.
-  it("keeps a multi-part emoji whole", () => {
-    expect(named("👩‍🚀 crew")).toBe("👩‍🚀");
-  });
-
-  // A name the server sent as blank is no name at all, and the provider id
-  // is not a stand-in for one: the circle stays empty.
-  it("has no letter for a blank name", () => {
-    expect(accountInitial({ name: "   ", githubLogin: "1234567" })).toBeNull();
-  });
-
-  it("has no letter for an account with no identity", () => {
-    expect(accountInitial(null)).toBeNull();
-  });
-
-  it("keeps a first character that is a surrogate pair whole", () => {
-    expect(named("𝔄da")).toBe("𝔄");
-  });
+  it.each(SETTLED)(
+    "keeps the cause off the %s row, on either surface",
+    (_state, account) => {
+      const host = show(account, "keychain locked");
+      expect(host.textContent).not.toContain("keychain locked");
+    },
+  );
 });

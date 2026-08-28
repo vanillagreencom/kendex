@@ -37,6 +37,9 @@ an outside contributor.
 - The foot of the app's sidebar names the kendex.ai account you are signed
   in to, says Offline when the server could not be reached, and offers Sign
   in or Sign in again as the credential needs. Clicking opens Settings.
+- Settings > Account names the kendex.ai account and offers Sign out; it reads
+  Offline when the server could not be reached, and asks for a fresh sign-in
+  when the credential was rejected. A failed check says why, with Try again.
 - The review-gate skill ships a reviewer instruction for a repo that commits
   its `kendex refresh` output: a finding over the render goes upstream rather
   than into a thread the repo cannot act on.

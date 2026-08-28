@@ -4,7 +4,8 @@
 // Startup makes the one account read; every surface reads `account` from
 // here rather than asking again.
 import { create } from "zustand";
-import { type AccountStatus, commands, type SubmissionRow } from "@/bindings";
+import { commands, type SubmissionRow } from "@/bindings";
+import { readAccount } from "./account-read";
 
 /** Who the account belongs to, as the server names them. The linked
  * GitHub account is null once it has been unlinked. */
@@ -39,52 +40,6 @@ export const hasCredential = (account: AccountState): account is WithIdentity =>
 const cachedIdentity = (account: AccountState): AccountIdentity | null =>
   hasCredential(account) ? account.identity : null;
 
-/** What a read of the account answers: the state it settled on, or why it
- * could not be read. */
-export type AccountRead = { ok: SettledAccount } | { error: string };
-
-export type ReadAccount = () => Promise<AccountRead>;
-
-/** The wire answers every settled state this store keeps; the unread one
- * is the UI's own, so the mapping is a rename. */
-const settled = (wire: AccountStatus["state"]): SettledAccount => {
-  switch (wire.state) {
-    case "signed-out":
-      return { kind: "signed-out" };
-    case "signed-in":
-      return { kind: "signed-in", identity: wire.identity };
-    case "offline":
-      return { kind: "offline", identity: wire.identity };
-    case "expired":
-      return { kind: "expired" };
-  }
-};
-
-/** The command asks the server who the credential belongs to, so it can
- * answer with a name, with the last name it knew when the server is away,
- * and with the rejection when the credential is dead. */
-const fromBridge: ReadAccount = async () => {
-  try {
-    const status = await commands.accountStatus();
-    if (status.status === "error") return { error: status.error };
-    return { ok: settled(status.data.state) };
-  } catch (error: unknown) {
-    // A bridge that throws and a reply that says no are the same answer
-    // here: the account could not be read. Letting the throw out would
-    // leave the read with nothing recorded and nothing to retry from.
-    return { error: String(error) };
-  }
-};
-
-let readAccount: ReadAccount = fromBridge;
-
-/** Dev only, called by the mock bridge: the harness answers as the states
- * the backend will report once it can reach the server. Null puts the
- * command back. */
-export function setAccountReader(read: ReadAccount | null): void {
-  readAccount = read ?? fromBridge;
-}
-
 interface AccountStore {
   account: AccountState;
   /** The in-flight device flow, when one is showing. */
@@ -97,6 +52,10 @@ interface AccountStore {
   error: string | null;
   /** Why the last account read failed, or null when it landed. */
   readError: string | null;
+  /** True while a read is out. A surface that offers the retry needs to
+   *  tell a read still on its way from one that was never made: the first
+   *  has nothing to ask for again, and the second has never asked. */
+  reading: boolean;
   submissions: SubmissionRow[] | null;
 
   /** The account read. Startup makes it, a return to the window repeats
@@ -132,16 +91,22 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
   signingIn: false,
   error: null,
   readError: null,
+  reading: false,
   submissions: null,
 
   load: async () => {
     reads += 1;
     const mine = reads;
     const before = handover;
+    set({ reading: true });
     const answer = await readAccount();
-    // An older read and a read overtaken by a sign-in or sign-out are the
-    // same thing: news about an account that has already moved on.
-    if (mine !== reads || before !== handover) return;
+    // A read a newer one overtook says nothing and clears nothing: the
+    // newer read is still out, and the flag is its to lower.
+    if (mine !== reads) return;
+    set({ reading: false });
+    // A read overtaken by a sign-in or sign-out is news about an account
+    // that has already moved on.
+    if (before !== handover) return;
     if ("error" in answer) {
       // A read that failed knows nothing new, so it never takes anything
       // away. With an identity already in hand the failure is exactly

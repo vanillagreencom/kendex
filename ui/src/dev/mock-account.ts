@@ -8,12 +8,8 @@
 // reach the store through its dev reader, which the backend takes over
 // once it can reach the server. `?account=` on the dev URL picks one.
 import type { AccountStatus } from "@/bindings";
-import {
-  type AccountRead,
-  hasCredential,
-  type SettledAccount,
-  setAccountReader,
-} from "@/stores/account";
+import { hasCredential, type SettledAccount } from "@/stores/account";
+import { type AccountRead, setAccountReader } from "@/stores/account-read";
 import type { Handler } from "./mock-state";
 
 // The provider's account id is an opaque number the server hands back, not

@@ -1,12 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AccountStatus, commands } from "@/bindings";
-import {
-  type AccountRead,
-  hasCredential,
-  type SettledAccount,
-  setAccountReader,
-  useAccountStore,
-} from "./account";
+import { hasCredential, type SettledAccount, useAccountStore } from "./account";
+import { type AccountRead, setAccountReader } from "./account-read";
 
 vi.mock("@/bindings", () => ({
   commands: {
@@ -49,6 +44,7 @@ const fresh = () =>
     submissions: null,
     signingIn: false,
     userCode: null,
+    reading: false,
   });
 
 beforeEach(() => {
@@ -163,6 +159,73 @@ describe("a read that could not be made", () => {
     expect(useAccountStore.getState().readError).toContain(
       "ipc channel closed",
     );
+  });
+});
+
+// A surface offering the retry has to tell a read still on its way from one
+// that was never made, and only the store knows which it is.
+describe("whether a read is out", () => {
+  /** A reader whose answer is released by hand. */
+  const staged = () => {
+    const gates: ((answer: AccountRead) => void)[] = [];
+    setAccountReader(() => new Promise<AccountRead>((r) => gates.push(r)));
+    return gates;
+  };
+
+  const reading = () => useAccountStore.getState().reading;
+
+  // Read off the store's own initial state, not the one a test set up: a
+  // store that opens claiming a read is out grays the retry out before
+  // startup has asked for anything.
+  it("is false until a read begins", () => {
+    expect(useAccountStore.getInitialState().reading).toBe(false);
+  });
+
+  it("is true while the read is out and false once it lands", async () => {
+    const gates = staged();
+    const out = load();
+    expect(reading()).toBe(true);
+    gates[0]?.({ ok: { kind: "signed-out" } });
+    await out;
+    expect(reading()).toBe(false);
+  });
+
+  it("is false once a read that could not be made comes back", async () => {
+    unreadable();
+    await load();
+    expect(reading()).toBe(false);
+    expect(useAccountStore.getState().readError).toBe("keychain locked");
+  });
+
+  // The flag belongs to the newest read. An older one landing first must
+  // not say the account is settled while the read that speaks is still out.
+  it("stays true while a newer read is still out", async () => {
+    const gates = staged();
+    const startup = load();
+    const focus = load();
+    gates[0]?.({ ok: { kind: "signed-out" } });
+    await startup;
+    expect(reading()).toBe(true);
+    gates[1]?.({ ok: { kind: "signed-out" } });
+    await focus;
+    expect(reading()).toBe(false);
+  });
+
+  // A read the account outran is dropped, but it was still the last read
+  // out: leaving the flag up would disable a retry with nothing to wait for.
+  it("is false when the read it dropped was the last one out", async () => {
+    useAccountStore.setState({ account: { kind: "signed-in", identity: ADA } });
+    const gates = staged();
+    const out = load();
+    vi.mocked(commands.accountLogout).mockResolvedValue({
+      status: "ok",
+      data: null,
+    } as Awaited<ReturnType<typeof commands.accountLogout>>);
+    await useAccountStore.getState().signOut();
+    gates[0]?.({ ok: { kind: "signed-in", identity: ADA } });
+    await out;
+    expect(reading()).toBe(false);
+    expect(account()).toEqual({ kind: "signed-out" });
   });
 });
 
