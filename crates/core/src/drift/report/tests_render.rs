@@ -4,6 +4,7 @@
 use super::tests::{
     env_in, manifest_with_remote, package, project_scope, snapshot_with, write_manifest,
 };
+use super::text::{FOREIGN_CHARS, shown};
 use super::*;
 use crate::drift::snapshot::PackageSnapshot;
 
@@ -125,4 +126,80 @@ fn v1_manifest_reads_as_could_not_check() {
     let report = check(&env, std::slice::from_ref(&scope));
     assert_eq!(report.status, CheckStatus::Unknown);
     assert!(render_plain(&report).contains("v1 manifest"));
+}
+
+/// A folded line kendex composed itself is spelled whole.
+///
+/// The `commit hooks` leftover line exists to name the hook files a person
+/// must edit by hand. It ran past the foreign-text cut on macOS, where the
+/// temp root resolves through `/private/var`, and named the first file and
+/// half the second — advice about files it then declined to name. Length
+/// is not what makes a line foreign, so a longer path must not bring the
+/// cut back.
+#[test]
+fn a_line_kendex_composed_is_named_in_full() {
+    let deep = format!("/private/var/folders/{}/proj/.git/hooks", "d".repeat(200));
+    let text = format!(
+        "growth-guards armed the commit hooks, so every commit fails until {deep}/pre-commit, {deep}/commit-msg are dealt with"
+    );
+    let mut report = check_report();
+    fold(&mut report, "commit hooks", Class::Drift, Text::Own(text));
+
+    let rendered = render_plain(&report);
+    assert!(
+        rendered.contains(&format!("{deep}/commit-msg")),
+        "the second file lost its name:\n{rendered}"
+    );
+    assert_eq!(report.status, CheckStatus::Drift);
+}
+
+/// What kendex composed still cannot carry a control character or a
+/// credential: a path is read off a disk, and a newline in one would forge
+/// a second report line.
+#[test]
+fn a_composed_line_is_scrubbed_even_though_it_is_not_cut() {
+    let mut report = check_report();
+    fold(
+        &mut report,
+        "commit hooks",
+        Class::Drift,
+        Text::Own(
+            "hooks at /repo/\x1b[2J\nevil with sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345 inside"
+                .to_owned(),
+        ),
+    );
+
+    let line = &report.sections[0].lines[0].text;
+    assert!(!line.contains('\x1b') && !line.contains('\n'), "{line}");
+    assert!(
+        !line.contains("sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345"),
+        "{line}"
+    );
+}
+
+/// Foreign text keeps its cut. Nothing outside bounds how much an error
+/// may say, so the report does.
+#[test]
+fn foreign_text_folded_in_is_still_bounded() {
+    let mut report = check_report();
+    fold(
+        &mut report,
+        "commit hooks",
+        Class::Unknown,
+        Text::Foreign("e".repeat(4000)),
+    );
+
+    let line = &report.sections[0].lines[0].text;
+    assert_eq!(line.chars().count(), FOREIGN_CHARS, "{}", line.len());
+    assert_eq!(report.status, CheckStatus::Unknown);
+}
+
+/// A clean report to fold a verdict into — what `check` returns for a
+/// scope with nothing to say.
+fn check_report() -> CheckReport {
+    CheckReport {
+        status: CheckStatus::Clean,
+        sections: Vec::new(),
+        snapshot_age_secs: None,
+    }
 }

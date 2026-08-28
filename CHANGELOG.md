@@ -75,6 +75,10 @@ an outside contributor.
 
 ### Fixed
 
+- `kendex check` names every stranded commit-hook file, not the first and half
+  of the next. A deep checkout path — macOS temp directories, most nested
+  clones — ran the line past a length limit meant for text from outside kendex.
+
 - A blocked declaration now names every position its take-over empties. A
   tree read through a tool's own link sits at two, and `apply --plan` named
   one while `--replace-unmanaged` moved both.

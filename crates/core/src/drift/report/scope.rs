@@ -1,6 +1,7 @@
 //! One scope's contribution to the report: the sub-checks over manifest,
 //! lock, snapshot, and stamps, each emitting classified lines.
 
+use super::text::shown;
 use super::*;
 
 pub(super) fn check_scope(

@@ -705,7 +705,11 @@ fn a_search_domain_it_cannot_read_is_could_not_check_not_a_leftover() {
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
-    let root = repo(home);
+    // Resolved, like the hooks path the two leftover cases below build:
+    // the report names the directory as the walk resolved it, and on a
+    // system where the temp root is reached through a symlink the
+    // unresolved spelling is a different string.
+    let root = repo(home).canonicalize().unwrap();
     std::fs::write(root.join("kendex.toml"), "schema = 6\n").unwrap();
     install_package_undeclared(&root, &["growth-guards"]);
     arm_by_hand(&root);

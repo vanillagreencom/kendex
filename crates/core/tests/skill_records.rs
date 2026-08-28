@@ -32,7 +32,11 @@ fn put(path: &Path, text: &str) {
 #[allow(clippy::unwrap_used)]
 fn fixture() -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path().to_path_buf();
+    // Resolved: the lock records the paths an install wrote, and the
+    // engine resolves the scope root before writing any of them. On macOS
+    // the temp directory is reached through `/var -> private/var`, so an
+    // unresolved fixture path never equals what the record holds.
+    let home = tmp.path().canonicalize().unwrap();
     let project = home.join("dev/app");
     let source = home.join("catalog");
     put(

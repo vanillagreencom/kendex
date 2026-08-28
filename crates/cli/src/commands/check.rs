@@ -55,7 +55,7 @@ pub fn run(
 /// Only project scopes have a work tree to ask about. A verdict that could
 /// not be taken is `could not check`, never a silent pass.
 fn fold_commit_hooks(env: &Env, checked: &mut CheckReport, scopes: &[kendex_core::model::Scope]) {
-    use kendex_core::drift::report::Class;
+    use kendex_core::drift::report::{Class, Text};
     use kendex_core::model::Scope;
     for scope in scopes {
         let Scope::Project { root } = scope.canonical() else {
@@ -72,7 +72,12 @@ fn fold_commit_hooks(env: &Env, checked: &mut CheckReport, scopes: &[kendex_core
             Ok(Some(repo)) => repo,
             Ok(None) => continue,
             Err(error) => {
-                report::fold(checked, "commit hooks", Class::Unknown, error.to_string());
+                report::fold(
+                    checked,
+                    "commit hooks",
+                    Class::Unknown,
+                    Text::Foreign(error.to_string()),
+                );
                 continue;
             }
         };
@@ -83,7 +88,11 @@ fn fold_commit_hooks(env: &Env, checked: &mut CheckReport, scopes: &[kendex_core
         // the package is in no record, and what it left armed is the one
         // state here that stops every commit. Named by file, because the
         // remedy is by hand — the uninstaller that would strip these went
-        // with the package.
+        // with the package, so a name half spelled is advice nobody can
+        // take. That is why the sentence is `Text::Own`: kendex composed
+        // it, over at most the two hook lanes and their helper, and the
+        // report bounds it by dropping the line whole rather than cutting
+        // a path in half.
         let (class, text) = match installed_here(env, scope) {
             false => match kendex_core::guard::stranded(&repo) {
                 Ok(files) if files.is_empty() => continue,
@@ -94,27 +103,27 @@ fn fold_commit_hooks(env: &Env, checked: &mut CheckReport, scopes: &[kendex_core
                         .collect();
                     (
                         Class::Drift,
-                        format!(
+                        Text::Own(format!(
                             "{} armed the commit hooks and is installed in no project of this repository, so every commit fails until {} are dealt with — strip the lines marked `{}` from each hook, and delete a whole file only where it carries `{}` or is the helper kendex wrote beside the hooks",
                             kendex_core::guard::SKILL,
                             files.join(", "),
                             kendex_core::guard::MARKER,
                             kendex_core::guard::CREATED_MARKER
-                        ),
+                        )),
                     )
                 }
-                Err(error) => (Class::Unknown, error.to_string()),
+                Err(error) => (Class::Unknown, Text::Foreign(error.to_string())),
             },
             true => match kendex_core::guard::armed(&repo) {
                 Ok(true) => continue,
                 Ok(false) => (
                     Class::Drift,
-                    format!(
+                    Text::Own(format!(
                         "commit hooks are not armed in {} — `kendex guard install` arms them, and `kendex guard check` says more",
                         root.display()
-                    ),
+                    )),
                 ),
-                Err(error) => (Class::Unknown, error.to_string()),
+                Err(error) => (Class::Unknown, Text::Foreign(error.to_string())),
             },
         };
         report::fold(checked, "commit hooks", class, text);

@@ -25,7 +25,12 @@ struct Fixture {
 #[allow(clippy::unwrap_used)]
 fn fixture() -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path().to_path_buf();
+    // Resolved, because every engine entry point resolves the scope root
+    // it is handed and then reports the paths it read. On macOS the temp
+    // directory is reached through `/var -> private/var`, so an unresolved
+    // fixture path is a second spelling of the same place and every
+    // path equality here compares the two.
+    let home = tmp.path().canonicalize().unwrap();
     let env = Env::fake(&home, FakeOs::Linux);
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();

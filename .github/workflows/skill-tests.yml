@@ -5,11 +5,12 @@ name: Skill Tests
 # gating here is what lets consuming repos drop tracked vendoring: quality is
 # proven at the source, not re-proven per consumer.
 #
-# THE FAST/FULL SPLIT: the heavy suite shards and the cargo jobs skip on PR
-# pushes — a PR bills zero heavy runner-minutes through every round of bot
-# review, while the pending "Review gate" status is what actually blocks
+# THE FAST/FULL SPLIT: the heavy suite shards and the Linux cargo job skip
+# on PR pushes — a PR bills few heavy runner-minutes through every round of
+# bot review, while the pending "Review gate" status is what actually blocks
 # merge. The full battery runs once per merged result: in the merge queue
 # before the merge, and again on the push to main as the post-merge record.
+# The macOS cargo lane is the exception, and says why where it stands.
 # The review gate never conditions
 # CI (it answers review-only; see the review-gate skill) — there is no gate
 # job here and nothing reads the predicate.
@@ -383,11 +384,16 @@ jobs:
 
   # The app ships on macOS; nothing before the release tag compiled the
   # workspace there, so a mac-only break (keyring backend, path handling)
-  # surfaced at release time. One queue-time lane closes that. Not a
-  # required context yet — a red run is visible without wedging the queue.
+  # surfaced at release time. This lane closes that, and unlike the heavy
+  # jobs above it runs on pull requests: the fast/full split bills PR
+  # minutes as its reason, and this repository is public, so GitHub-standard
+  # runners cost nothing. Four mac-only failures stood on main for three
+  # merge groups while this lane ran only after a PR looked green (KEN-723).
+  # Informational by decision, not omission: it is no ruleset's required
+  # context, so a red run is visible and wedges neither the PR nor the
+  # queue. Whether it should become one is open, and the owner's to answer.
   cargo-tests-macos:
     name: macOS cargo (workspace tests)
-    if: github.event_name == 'merge_group' || github.event_name == 'push'
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
