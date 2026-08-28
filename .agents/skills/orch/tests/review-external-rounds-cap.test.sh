@@ -210,23 +210,22 @@ else
   bad "the at-cap steps are out of order" "file=$file_step exception=$exc_step reply=$reply_step"
 fi
 
-# At the cap the exception narrows the item SET. Opening the whole pass lets
-# an ordinary Fixing item ride along on an exempt item's round and push,
-# which is the round the cap exists to stop. Three places carry the set.
-SEC61="$(cap_site "$COMMENTS_WF")"
-carriers=0
-grep -q -F 'at the cap, the exempt items only' <<<"$SEC61" && carriers=$((carriers + 1))
-grep -q -F 'covering exactly the delegated set' <<<"$SEC61" && carriers=$((carriers + 1))
-grep -q -F 'at the cap, only the exempt ones' <<<"$SEC61" && carriers=$((carriers + 1))
-if [[ "$carriers" -eq 3 ]]; then
-  ok "the grouping, the round record and the delegation template all narrow at the cap"
+# The cap is a rule about which items may still be fixed, stated once where
+# `items` is defined for the rest of the section. Restating it downstream is
+# the shape that let an ordinary Fixing item ride along on an exempt round:
+# three carriers to keep in step, and the template the last to know.
+if grep -q -F 'eligible for a fix' <<<"$rule"; then
+  ok "the cap states which items may still be fixed"
 else
-  bad "only $carriers of the 3 item-set carriers narrow at the cap"
+  bad "the cap does not state an eligibility rule"
 fi
-if grep -q -F 'narrows the item set, never opens the pass' <<<"$rule"; then
-  ok "the exception is stated as a rule about items, not about the pass"
+# Everything after the rule works on `items` unconditionally. A qualifier
+# down here means the rule was stated too late for the template to inherit.
+downstream() { cap_site "$1" | awk '/^Ensure the worktree exists/ { on = 1 } on'; }
+if grep -q -i -F 'at the cap' <<<"$(downstream "$COMMENTS_WF")"; then
+  bad "§ 6.1 re-decides eligibility after the rule" "$(grep -n -i -F 'at the cap' <<<"$(downstream "$COMMENTS_WF")")"
 else
-  bad "the exception still reads as opening the pass"
+  ok "nothing downstream of the rule reclassifies items at the cap"
 fi
 
 # One exception, one definition. finding-disposition is what a reviewer reads
@@ -375,7 +374,7 @@ else
 fi
 
 CTRL="$TMP_ROOT/comments-exception.md"
-if ! plant "$CTRL" "$COMMENTS_WF" '/^\*\*The one exception\.\*\*/d'; then
+if ! plant "$CTRL" "$COMMENTS_WF" 's/ — a defect this diff itself introduces or arms —//'; then
   bad "exception control planted nothing — its sed program matched no text"
 elif grep -q -F "$EXCEPTION" <<<"$(cap_rule "$CTRL")"; then
   bad "the check MISSED a cap rule that dropped the introduced-defect exception"
@@ -447,7 +446,7 @@ fi
 # The exception's delegation moved after the replies, so a Fixed in reply
 # would name a sha that does not exist yet.
 CTRL="$TMP_ROOT/comments-order3.md"
-if ! plant "$CTRL" "$COMMENTS_WF" 's/\*\*Then the exception\*\* below, which is the only delegation and the only push this pass makes\. //'; then
+if ! plant "$CTRL" "$COMMENTS_WF" 's/\*\*Then the exception\*\*, the only delegation and the only push this pass makes\. //'; then
   bad "step-order control planted nothing — its sed program matched no text"
 else
   ctrl_rule="$(cap_rule "$CTRL")"
@@ -461,7 +460,7 @@ fi
 
 # The reply-before-filing order this round removed.
 CTRL="$TMP_ROOT/comments-order.md"
-if ! plant "$CTRL" "$COMMENTS_WF" 's/takes a disposition instead of a fix/takes a `Tracked: [ISSUE_ID]` or a `Declined: [REASON]` instead of a fix/'; then
+if ! plant "$CTRL" "$COMMENTS_WF" 's/ends the ordinary fix rounds on this PR\./ends the ordinary fix rounds on this PR, each item taking a `Tracked: [ISSUE_ID]` or a `Declined: [REASON]`./'; then
   bad "ordering control planted nothing — its sed program matched no text"
 else
   ctrl_rule="$(cap_rule "$CTRL")"
@@ -518,15 +517,14 @@ else
   bad "the check MISSED § 6.3 routing a capped late thread away"
 fi
 
-# The delegation template back to every Fixing item, so an ordinary one rides
-# along on the exempt item's round.
+# Eligibility re-decided at the delegation template instead of inherited.
 CTRL="$TMP_ROOT/comments-set.md"
-if ! plant "$CTRL" "$COMMENTS_WF" 's/ — at the cap, only the exempt ones:\]/:]/'; then
-  bad "item-set control planted nothing — its sed program matched no text"
-elif grep -q -F 'at the cap, only the exempt ones' <<<"$(cap_site "$CTRL")"; then
-  bad "the check MISSED a template that delegates every Fixing item at the cap"
+if ! plant "$CTRL" "$COMMENTS_WF" 's/\[For each item marked "Fixing":\]/[For each item marked "Fixing" — at the cap, only the exempt ones:]/'; then
+  bad "downstream-branch control planted nothing — its sed program matched no text"
+elif grep -q -i -F 'at the cap' <<<"$(downstream "$CTRL")"; then
+  ok "the check flags eligibility re-decided at the delegation template"
 else
-  ok "the check flags a template that delegates every Fixing item at the cap"
+  bad "the check MISSED eligibility re-decided at the delegation template"
 fi
 
 CTRL="$TMP_ROOT/disposition.md"

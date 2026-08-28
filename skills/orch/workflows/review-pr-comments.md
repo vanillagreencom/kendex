@@ -175,11 +175,9 @@ Read the round budget first. The cap governs what may be pushed, so it decides b
 .agents/skills/orch/scripts/orch-env REVIEW_MAX_EXTERNAL_ROUNDS 4
 ```
 
-`iterations` at or past `REVIEW_MAX_EXTERNAL_ROUNDS` ends the ordinary fix rounds on this PR: every item marked Fixing takes a disposition instead of a fix, with the one exception below. The at-cap pass runs three steps, in order. **File first** — run § 6.2 for every item clearing its bar, invoked with its return recorded as `→ § 6.1` rather than § 6.2's usual `→ § 6.3`, since the nested audit returns where it is told and a cap path that does not say so files the issue and exits before anything else here runs. **Then the exception** below, which is the only delegation and the only push this pass makes. **Then reply**, through the reply table below: `Tracked: [ISSUE_ID]` for a filed item, `Fixed in [SHA]` for one the exception fixed, `Declined: [REASON]` for the rest, which needs no issue. Resolve each thread as you reply, then → § 6.3 with § 6.2 already done. **At the cap the disposition is unconditional and the fix is what stops.** Every thread is still analyzed and still gets its reply posted and resolved, on this pass and on every later one; what the cap forbids is the fix and the push that follows it.
+`iterations` at or past `REVIEW_MAX_EXTERNAL_ROUNDS` ends the ordinary fix rounds on this PR. Two rules decide the pass. **At the cap the disposition is unconditional and the fix is what stops**: every thread is analyzed and gets its reply posted and resolved, on this pass and every later one, and what the cap forbids is the fix and the push that follows it. **At the cap the items eligible for a fix are exactly the cap-exempt ones — a defect this diff itself introduces or arms — and `items` for the rest of this section is that set**, since a cap that forces a disposition onto a defect the change created ships the defect. Everything below carries only exempt items by construction: nothing to filter, no second place to keep in step. The pass then runs three steps, in order. **File first** — run § 6.2 for every item clearing its bar, invoked with its return recorded as `→ § 6.1` rather than § 6.2's usual `→ § 6.3`, since the nested audit returns where it is told and a cap path that does not say so files the issue and exits before anything else here runs. **Then the exception**, the only delegation and the only push this pass makes. **Then reply**, through the reply table below: `Tracked: [ISSUE_ID]` for a filed item, `Fixed in [SHA]` for one the exception fixed, `Declined: [REASON]` for the rest, which needs no issue. Resolve each thread as you reply, then → § 6.3 with § 6.2 already done.
 
-**The one exception.** A defect this diff itself introduces or arms is fixed whatever the round count — a cap that forces a disposition onto a defect the change created ships the defect. Delegate exactly those items through the rest of this section, push that fix, and reply `Fixed in [SHA]`. Every other item still takes its disposition. **The exception narrows the item set, never opens the pass**: at the cap the exempt items are the whole set the rest of this section carries — the grouping, the persisted round record, and the delegation template alike — so an ordinary Fixing item cannot ride along on an exempt item's round.
-
-Ensure the worktree exists (`worktree exists`/`worktree path`, creating with `--pr [PR_NUMBER]` when missing), group the items by `agent` — at the cap, the exempt items only — then stamp the round per group as separate tool calls immediately before delegating, arming the watchdog per [SKILL.md § Round Closure](../SKILL.md#round-closure):
+Ensure the worktree exists (`worktree exists`/`worktree path`, creating with `--pr [PR_NUMBER]` when missing), group the items by `agent`, then stamp the round per group as separate tool calls immediately before delegating, arming the watchdog per [SKILL.md § Round Closure](../SKILL.md#round-closure):
 
 ```bash
 .agents/skills/orch/scripts/worktree-claim --worktree [WORKTREE_PATH] --issue [ISSUE_ID]
@@ -193,7 +191,7 @@ Ensure the worktree exists (`worktree exists`/`worktree path`, creating with `--
 
 `worktree-claim` exit 75 aborts the delegation — another session holds this worktree, and its stderr names the holder; exit 1 is an unverifiable guard, which stops the workflow and is reported. Its printed token is the delegation's `Worktree Lease:` line.
 
-Persist this group's item set: write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool — a JSON array of `{"n": [N], "text": "[ITEM_TEXT]"}` covering exactly the delegated set, `[ITEM_TEXT]` being that item's formatted block from the delegation verbatim — then:
+Persist this group's item set: write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool — a JSON array of `{"n": [N], "text": "[ITEM_TEXT]"}`, `[ITEM_TEXT]` being that item's formatted block from the delegation verbatim — then:
 
 ```bash
 .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json
@@ -213,7 +211,7 @@ Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
 
 Review items:
-[For each item marked "Fixing" — at the cap, only the exempt ones:]
+[For each item marked "Fixing":]
 ---
 #[N] | [AGENT] | [LOCATION]
 Title: "[TITLE]"
