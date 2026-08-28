@@ -33,6 +33,10 @@ export function MineSubmitDialog({
   const signIn = useAccountStore((s) => s.signIn);
   const cancelSignIn = useAccountStore((s) => s.cancelSignIn);
   const accountError = useAccountStore((s) => s.error);
+  // A read that failed is why the account is unknown, and unknown is what
+  // this dialog offers a sign-in for. Without it the offer has no reason
+  // on screen and points at a server that is already out of reach.
+  const readError = useAccountStore((s) => s.readError);
   const [preflight, setPreflight] = useState<SubmitPreflight | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -122,9 +126,9 @@ export function MineSubmitDialog({
             it there and this dialog finishes on its own.
           </p>
         ) : null}
-        {(error ?? accountError) ? (
+        {(error ?? accountError ?? readError) ? (
           <p className="text-sm text-critical" role="alert">
-            {error ?? accountError}
+            {error ?? accountError ?? readError}
           </p>
         ) : null}
         <DialogFooter>
