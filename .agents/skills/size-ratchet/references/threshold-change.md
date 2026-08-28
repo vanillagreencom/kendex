@@ -5,8 +5,8 @@ entry lands, in either direction. Run it at `--seed` too when the repo already
 had a prose size rule: seeding records no row for an under-threshold fragment,
 so the repo inherits that rule's fragments and nothing else points at them.
 
-Scope the sweep to the tracked files the changed threshold decides
-(`git ls-files`, minus the exclusion list).
+Sweep the tracked files whose deciding threshold differs between the old
+configuration and the new (`git ls-files`, minus the exclusion list).
 
 ## Predicates
 
@@ -36,8 +36,6 @@ Two shapes defeat the obvious import regex.
 ## Disposition
 
 Open the candidate beside its importer. If its reader needs that file open to
-follow it, it is a fragment: merge it back. A merged file still over its
-threshold raises its row per [SKILL.md](../SKILL.md) § Responding to a failure;
-one that lands at or under takes no row at all. Shrink or delete the emptied
-files' rows in the same diff either way. If it stands alone, it is a module.
-Leave it.
+follow it, it is a fragment: merge it back and take every baseline-row
+consequence from [SKILL.md](../SKILL.md) § Responding to a failure. If it
+stands alone, it is a module. Leave it.
