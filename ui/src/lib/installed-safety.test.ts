@@ -7,16 +7,16 @@ import type {
   Severity,
 } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
-import { installedSafety } from "./installed-safety";
+import { findingKey, installedSafety } from "./installed-safety";
 
 const GLOBAL = { scope: "global" } as const;
 
-function finding(rule: string, severity: Severity): Finding {
+function finding(rule: string, severity: Severity, line = 1): Finding {
   return {
     rule,
     severity,
-    location: `${rule}.md:1`,
-    line: null,
+    location: `${rule}.md`,
+    line,
     message: `${rule} fired`,
     remediation: "",
   };
@@ -123,5 +123,31 @@ describe("installedSafety", () => {
     const result = installedSafety([view([])], "skill", "github", [GLOBAL]);
 
     expect(result).toBeNull();
+  });
+});
+
+describe("a finding's identity", () => {
+  // One rule fires at many lines of one file. While the line lived inside
+  // `location` the fold could tell them apart for free; taking it out
+  // without putting it in the key showed one problem where there are two.
+  it("keeps two findings that differ only by line", () => {
+    const first = finding("dangerous-commands", "high", 848);
+    const second = finding("dangerous-commands", "high", 950);
+    expect(findingKey(first)).not.toBe(findingKey(second));
+
+    const rows = view([row("claude", 60, [first, second])]);
+    const reading = installedSafety([rows], "skill", "github", [GLOBAL]);
+    expect(reading?.findings).toHaveLength(2);
+    expect(reading?.findings.map((f) => f.line)).toEqual([848, 950]);
+  });
+
+  it("still folds a finding that is the same in every respect", () => {
+    const twice = [
+      finding("dangerous-commands", "high", 848),
+      finding("dangerous-commands", "high", 848),
+    ];
+    const rows = view([row("claude", 60, twice)]);
+    const reading = installedSafety([rows], "skill", "github", [GLOBAL]);
+    expect(reading?.findings).toHaveLength(1);
   });
 });

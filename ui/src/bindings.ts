@@ -1091,7 +1091,13 @@ export type Finding = {
 	 *  and digits.
 	 */
 	location: string,
-	/**  The 1-based line within `location`, for a rule that reads lines. */
+	/**
+	 *  The 1-based line within `location`, for a rule that reads lines.
+	 *  Part of a finding's identity, not decoration: one rule fires at many
+	 *  lines of one file, and anything that orders, keys or folds findings
+	 *  has to read this as well as `location` or it shows one problem where
+	 *  there are several.
+	 */
 	line: number | null,
 	message: string,
 	remediation: string,

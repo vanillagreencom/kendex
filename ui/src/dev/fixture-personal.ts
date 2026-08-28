@@ -20,8 +20,8 @@ export const HOOK_SETTINGS_PATH = "/home/method/.claude/settings.json";
 export const HOOK_FINDING: Finding = {
   rule: "dangerous-commands",
   severity: "high",
-  location: `${HOOK_SETTINGS_PATH}:17`,
-  line: null,
+  location: HOOK_SETTINGS_PATH,
+  line: 17,
   message: "`mkfs` formats a filesystem",
   remediation:
     "narrow the command to the exact path it needs, and let the user see it before it runs",

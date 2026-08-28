@@ -44,19 +44,21 @@ const scraperSafety = (): ItemSafety => ({
 // four call sites in the skill's own files, plus one distinct finding, to
 // match how this actually shows up at real scale.
 const VISUAL_QA_PATH = `${ACME}/.claude/skills/visual-qa`;
-const VISUAL_QA_RULE_LOCATIONS = [
-  `${VISUAL_QA_PATH}/evals/grade.py:848`,
-  `${VISUAL_QA_PATH}/evals/grade.py:950`,
-  `${VISUAL_QA_PATH}/process.py:89`,
-  `${VISUAL_QA_PATH}/process.py:111`,
+// Two of these are the same file at different lines, which is the pair a
+// key built from the location alone folds into one.
+const VISUAL_QA_RULE_PLACES: [string, number][] = [
+  [`${VISUAL_QA_PATH}/evals/grade.py`, 848],
+  [`${VISUAL_QA_PATH}/evals/grade.py`, 950],
+  [`${VISUAL_QA_PATH}/process.py`, 89],
+  [`${VISUAL_QA_PATH}/process.py`, 111],
 ];
 const VISUAL_QA_FINDINGS: Finding[] = [
-  ...VISUAL_QA_RULE_LOCATIONS.map(
-    (location): Finding => ({
+  ...VISUAL_QA_RULE_PLACES.map(
+    ([location, line]): Finding => ({
       rule: "dangerous-commands",
       severity: "high",
       location,
-      line: null,
+      line,
       message: "runs a shell command built from unescaped input",
       remediation: "validate or escape the input before it reaches the shell",
     }),
@@ -64,8 +66,8 @@ const VISUAL_QA_FINDINGS: Finding[] = [
   {
     rule: "rce",
     severity: "critical",
-    location: `${VISUAL_QA_PATH}/evals/grade.py:12`,
-    line: null,
+    location: `${VISUAL_QA_PATH}/evals/grade.py`,
+    line: 12,
     message: "downloads a script from a URL and executes it directly",
     remediation: "pin and vendor the script instead of fetching it at runtime",
   },

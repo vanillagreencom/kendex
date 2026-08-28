@@ -373,10 +373,16 @@ pub fn audit(input: AuditInput) -> AuditResult {
             }),
         }
     }
+    // Worst first, then by place. The line is part of the place and so
+    // part of the order: while it lived inside `location` it sorted as
+    // text, which put line 10 before line 2, and taking it out of the key
+    // entirely would leave two findings from one rule in one file with
+    // nothing to tell them apart.
     findings.sort_by(|a, b| {
         b.severity
             .cmp(&a.severity)
             .then_with(|| a.location.cmp(&b.location))
+            .then_with(|| a.line.cmp(&b.line))
             .then_with(|| a.rule.cmp(&b.rule))
     });
     let safety = score::safety(&findings);

@@ -66,9 +66,11 @@ pub struct CheckFinding {
     /// catalog's path it is something a viewer opens, which is what the
     /// Mine row's Open does with it. A line goes in `line`, never here. Two
     /// values are not paths and cannot be: an item listed that cannot be
-    /// read names what was listed, and the safety pass writes `PATH
-    /// (command)` / `PATH (entry)` for the parts of a hook or MCP entry
-    /// that are no file at all.
+    /// read names what was listed, and the safety pass writes a
+    /// sub-location — `PATH (command)`, `PATH (entry)`, `PATH (env KEY)`,
+    /// `PATH (header KEY)` — for the parts of a hook or MCP entry that are
+    /// no file at all. Those are the only shapes, nothing parses them back,
+    /// and there is no path in them to find.
     pub file: String,
     /// The 1-based line within `file`, where the finding has one.
     #[serde(skip_serializing_if = "Option::is_none")]

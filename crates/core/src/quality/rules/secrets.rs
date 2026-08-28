@@ -21,6 +21,12 @@ impl PlaintextSecrets {
     /// The matched token never appears here — only the issuer's prefix and
     /// a digest, which is enough to tell two leaks apart and useless to
     /// anyone who reads it.
+    ///
+    /// `location` names a part of an entry rather than a file where the
+    /// caller gives one: `PATH (env KEY)` and `PATH (header KEY)` are
+    /// places a config holds a value, not files anything opens, and they
+    /// carry no line. The same shape the hook and MCP readers already
+    /// write, and nothing parses any of them back into a path.
     fn finding(&self, location: String, line: Option<u32>, token: &str, held_in: &str) -> Finding {
         Finding {
             rule: "plaintext-secrets".to_owned(),
