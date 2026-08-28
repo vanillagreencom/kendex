@@ -307,3 +307,110 @@ describe("a call refused because the sign-in expired", () => {
     expect(useAccountStore.getState().submissions).toBeNull();
   });
 });
+
+// The other refusal. It says nothing about the credential, so the account
+// stays where it is — but it does say the rows on screen are no longer
+// confirmed, and dropping that left the tab reporting work already in
+// review as never submitted.
+describe("a submissions read the server could not answer", () => {
+  const ROW = {
+    repo: "ada/team-skills",
+    status: "pending",
+    status_reason: null,
+    head_commit: null,
+    indexed_at: null,
+  };
+  const WHY = "kendex.ai could not be reached";
+
+  const signedIn = {
+    kind: "signed-in" as const,
+    identity: ADA,
+    signIn: SIGN_IN,
+  };
+
+  const fails = () =>
+    vi.mocked(commands.mineSubmissions).mockResolvedValue({
+      status: "error",
+      error: { kind: "failed", message: WHY },
+    } as Awaited<ReturnType<typeof commands.mineSubmissions>>);
+
+  it("records why, and leaves the rows it could not refresh", async () => {
+    useAccountStore.setState({ account: signedIn, submissions: [ROW] });
+    fails();
+
+    await useAccountStore.getState().loadSubmissions();
+
+    expect(useAccountStore.getState().submissionsError).toBe(WHY);
+    expect(useAccountStore.getState().submissions).toEqual([ROW]);
+    expect(account()).toEqual(signedIn);
+  });
+
+  // Expiry is the credential ending, and the rows go with it. A failure
+  // about a read of them would sit on the Mine tab over an account the
+  // sidebar and Settings already say is expired.
+  it("leaves nothing behind when the same read meets a dead sign-in", async () => {
+    useAccountStore.setState({
+      account: signedIn,
+      submissions: [ROW],
+      submissionsError: WHY,
+    });
+    vi.mocked(commands.mineSubmissions).mockResolvedValue({
+      status: "error",
+      error: { kind: "expired", message: "run login again" },
+    } as Awaited<ReturnType<typeof commands.mineSubmissions>>);
+
+    await useAccountStore.getState().loadSubmissions();
+
+    expect(account()).toEqual({ kind: "expired", signIn: SIGN_IN });
+    expect(useAccountStore.getState().submissions).toBeNull();
+    expect(useAccountStore.getState().submissionsError).toBeNull();
+  });
+
+  it("goes with the credential when the person signs out", async () => {
+    useAccountStore.setState({ account: signedIn, submissionsError: WHY });
+    vi.mocked(commands.accountLogout).mockResolvedValue({
+      status: "ok",
+      data: null,
+    } as Awaited<ReturnType<typeof commands.accountLogout>>);
+
+    await useAccountStore.getState().signOut();
+
+    expect(useAccountStore.getState().submissionsError).toBeNull();
+  });
+
+  it("takes the failure back when a later read lands", async () => {
+    useAccountStore.setState({ account: signedIn, submissionsError: WHY });
+
+    await useAccountStore.getState().loadSubmissions();
+
+    expect(useAccountStore.getState().submissionsError).toBeNull();
+    expect(useAccountStore.getState().submissions).toEqual([]);
+  });
+
+  // A failure about a credential nobody holds any more explains rows
+  // nobody is looking at, and would sit over the account that replaced it.
+  // The read has to still be out when the account moves, so its answer is
+  // held back until the sign-out has landed.
+  it("says nothing about an account that changed hands under it", async () => {
+    useAccountStore.setState({ account: signedIn });
+    vi.mocked(commands.accountLogout).mockResolvedValue({
+      status: "ok",
+      data: null,
+    } as Awaited<ReturnType<typeof commands.accountLogout>>);
+    type Answer = Awaited<ReturnType<typeof commands.mineSubmissions>>;
+    let land: (answer: Answer) => void = () => {};
+    vi.mocked(commands.mineSubmissions).mockReturnValue(
+      new Promise<Answer>((resolve) => {
+        land = resolve;
+      }),
+    );
+
+    const polling = useAccountStore.getState().loadSubmissions();
+    await useAccountStore.getState().signOut();
+    land({ status: "error", error: { kind: "failed", message: WHY } });
+    await polling;
+
+    expect(useAccountStore.getState().submissionsError).toBeNull();
+    expect(account()).toEqual({ kind: "signed-out" });
+  });
+});

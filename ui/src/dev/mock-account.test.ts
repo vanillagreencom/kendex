@@ -9,6 +9,7 @@ import {
 import { mockInvoke } from "./mock";
 import {
   accountFromUrl,
+  callRefusal,
   EXPIRING_CALLS,
   expiringCallFromUrl,
   isSignedIn,
@@ -16,7 +17,9 @@ import {
   MOCK_ACCOUNTS,
   setExpiringCall,
   setMockAccount,
+  setUnreachable,
   UNREADABLE,
+  unreachableFromUrl,
 } from "./mock-account";
 
 /** What the store settles on when it reads through the harness. */
@@ -236,5 +239,41 @@ describe("what ?account= picks", () => {
       UNREADABLE,
     ]);
     warn.mockRestore();
+  });
+});
+
+// The Mine tab tells a submissions read it could not make from a server
+// that answered with nothing, and no `?account=` state produces the
+// first: the credential is fine, the server is not.
+describe("the outage the dev URL arms", () => {
+  it("reads the flag off the URL, present or absent", () => {
+    expect(unreachableFromUrl("?unreachable")).toBe(true);
+    expect(unreachableFromUrl("?unreachable=1")).toBe(true);
+    expect(unreachableFromUrl("?account=signed-in")).toBe(false);
+  });
+
+  it("refuses every call under the sign-in, and keeps refusing", () => {
+    setMockAccount({ ok: MOCK_ACCOUNTS["signed-in"] });
+    setUnreachable(true);
+    try {
+      for (const call of EXPIRING_CALLS) {
+        expect(callRefusal(call)).toEqual({
+          kind: "failed",
+          message: expect.stringContaining("kendex.ai could not be reached"),
+        });
+      }
+      // The account is the one thing an outage must not touch: signing
+      // the person out over it is the failure this whole state exists to
+      // keep the app from confusing with an expiry.
+      expect(isSignedIn()).toBe(true);
+    } finally {
+      setUnreachable(false);
+    }
+  });
+
+  it("lets the calls through once it is off", () => {
+    setMockAccount({ ok: MOCK_ACCOUNTS["signed-in"] });
+    setUnreachable(false);
+    expect(callRefusal("mine_submissions")).toBeNull();
   });
 });

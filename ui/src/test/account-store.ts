@@ -42,6 +42,7 @@ export const fresh = () =>
     error: null,
     readError: null,
     submissions: null,
+    submissionsError: null,
     signingIn: false,
     userCode: null,
     reading: false,

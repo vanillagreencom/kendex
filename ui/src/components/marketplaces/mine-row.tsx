@@ -4,7 +4,6 @@ import {
   commands,
   type MineRow as MineRowData,
   type StatusFinding,
-  type SubmissionRow,
 } from "@/bindings";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,6 +17,11 @@ import {
 import { worstSeverityLabel } from "@/lib/copy-safety";
 import { SEVERITY_LABELS } from "@/lib/labels";
 import { useMineStore } from "@/stores/mine";
+import {
+  type SubmissionState,
+  submissionLine,
+  submitLabel,
+} from "./mine-submission";
 
 /** A finding's severity in words beside its message, never by
  * implication: the app's own word for a safety severity, the check's own
@@ -63,24 +67,6 @@ function gitLine(row: MineRowData): string {
   return parts.join(" · ");
 }
 
-/** What a submission status reads as on the row. */
-function submissionLine(submission: SubmissionRow): string {
-  switch (submission.status) {
-    case "pending":
-      return "Submitted · in review";
-    case "listed":
-      return "Listed in the community directory";
-    case "needs-changes":
-      return submission.status_reason
-        ? `Needs changes — ${submission.status_reason}`
-        : "Needs changes";
-    case "delisted":
-      return "Delisted";
-    default:
-      return `Submitted · ${submission.status}`;
-  }
-}
-
 /** One authored marketplace: what kendex found in the folder, what the
  * check says, what git says — and the actions that grow it. */
 export function MineRowCard({
@@ -90,7 +76,7 @@ export function MineRowCard({
   onSubmit,
 }: {
   row: MineRowData;
-  submission: SubmissionRow | null;
+  submission: SubmissionState;
   onImport: (path: string) => void;
   onSubmit: (path: string) => void;
 }) {
@@ -99,6 +85,7 @@ export function MineRowCard({
   const acceptManifest = useMineStore((s) => s.acceptManifest);
   const [showFindings, setShowFindings] = useState(false);
   const problems = row.breakage;
+  const status = submissionLine(submission);
 
   return (
     <div className="rounded-lg border border-border p-4">
@@ -122,15 +109,16 @@ export function MineRowCard({
           <p className="mt-1 text-sm text-muted-foreground">
             {countsLine(row)} · {gitLine(row)}
           </p>
-          {submission ? (
+          {status ? (
             <p
               className={
-                submission.status === "needs-changes"
+                submission.kind === "submitted" &&
+                submission.row.status === "needs-changes"
                   ? "mt-1 text-sm text-warning"
                   : "mt-1 text-sm text-muted-foreground"
               }
             >
-              {submissionLine(submission)}
+              {status}
             </p>
           ) : null}
         </div>
@@ -143,7 +131,7 @@ export function MineRowCard({
             Import packages…
           </Button>
           <Button size="sm" onClick={() => onSubmit(row.path)}>
-            {submission ? "Re-submit…" : "Submit to community…"}
+            {submitLabel(submission)}
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger

@@ -44,7 +44,7 @@ const row = (findings: StatusFinding[]): MineRow => ({
 const card = (findings: StatusFinding[]) => (
   <MineRowCard
     row={row(findings)}
-    submission={null}
+    submission={{ kind: "none" }}
     onImport={() => {}}
     onSubmit={() => {}}
   />

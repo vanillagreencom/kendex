@@ -4,11 +4,7 @@
 // Startup makes the one account read; every surface reads `account` from
 // here rather than asking again.
 import { create } from "zustand";
-import {
-  type AccountCallRefused,
-  commands,
-  type SubmissionRow,
-} from "@/bindings";
+import { type AccountCallRefused, commands } from "@/bindings";
 import { readAccount } from "./account-read";
 import {
   type AccountState,
@@ -18,6 +14,11 @@ import {
   keepsExpiry,
   sameCredential,
 } from "./account-state";
+import {
+  fromSubmissionsRead,
+  noSubmissions,
+  type Submissions,
+} from "./account-submissions";
 
 // The one door every surface already comes to for these.
 export {
@@ -27,7 +28,7 @@ export {
   type SettledAccount,
 } from "./account-state";
 
-interface AccountStore {
+interface AccountStore extends Submissions {
   account: AccountState;
   /** The in-flight device flow, when one is showing. */
   userCode: string | null;
@@ -43,7 +44,6 @@ interface AccountStore {
    *  tell a read still on its way from one that was never made: the first
    *  has nothing to ask for again, and the second has never asked. */
   reading: boolean;
-  submissions: SubmissionRow[] | null;
 
   /** The account read. Startup makes it, a return to the window repeats
    *  it, and a failure surface retries with it. No surface reads on
@@ -86,11 +86,9 @@ let reads = 0;
  *  holds any more. The `handover` bump is the change of hands itself, so
  *  a read still out for the old credential is abandoned. Callers keep
  *  their own guards; only the write is shared. */
-const credentialEnded = (
-  account: AccountState,
-): Pick<AccountStore, "account" | "submissions" | "readError"> => {
+const credentialEnded = (account: AccountState) => {
   handover += 1;
-  return { account, submissions: null, readError: null };
+  return { account, readError: null, ...noSubmissions };
 };
 
 const wait = (seconds: number) =>
@@ -104,7 +102,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
   error: null,
   readError: null,
   reading: false,
-  submissions: null,
+  ...noSubmissions,
 
   load: async () => {
     reads += 1;
@@ -215,16 +213,14 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
     if (!hasCredential(get().account)) return;
     const before = handover;
     const rows = await commands.mineSubmissions();
+    // Rows and refusals belong to the account they were asked for: ones
+    // that changed hands in flight belong to nobody on screen, and
+    // `refused` turns an obsolete expiry away on the same count.
+    if (before !== handover) return;
     // The poll shows nothing of its own, so a session that died between
     // ticks would otherwise go on being polled invisibly.
-    if (rows.status === "error") {
-      get().refused(rows.error, before);
-      return;
-    }
-    // Rows belong to the account they were asked for: ones that changed
-    // hands while they were coming belong to nobody on screen.
-    if (before !== handover) return;
-    set({ submissions: rows.data });
+    if (rows.status === "error") get().refused(rows.error, before);
+    set(fromSubmissionsRead(rows));
   },
 
   handovers: () => handover,

@@ -118,6 +118,26 @@ export function expiringCallFromUrl(search: string): ExpiringCall | null {
   return null;
 }
 
+/** What an outage answers with: the sentence kendex.ai's client writes
+ *  when it could not reach the server at all. */
+const UNREACHABLE = "kendex.ai could not be reached — check your connection";
+
+/** Whether `?unreachable` is on the dev URL, which makes every call under
+ *  the sign-in fail the way an outage does. It is the state the Mine tab
+ *  labels its rows unknown for, and no `?account=` state produces it: the
+ *  credential is fine, the server is not. */
+export function unreachableFromUrl(search: string): boolean {
+  return new URLSearchParams(search).has("unreachable");
+}
+
+let unreachable =
+  typeof window !== "undefined" && unreachableFromUrl(window.location.search);
+
+/** Arms the outage, for tests and for the dev URL. */
+export function setUnreachable(on: boolean): void {
+  unreachable = on;
+}
+
 let expiring: ExpiringCall | null =
   typeof window === "undefined"
     ? null
@@ -138,6 +158,9 @@ export function setExpiringCall(call: ExpiringCall | null): void {
  *  back to a working call rather than expiring for the rest of the
  *  session. */
 export function callRefusal(call: ExpiringCall): AccountCallRefused | null {
+  // An outage is not the credential's doing, so it outlives no scenario
+  // and ends no sign-in: every call keeps failing until it is turned off.
+  if (unreachable) return { kind: "failed", message: UNREACHABLE };
   if (expiring === call) {
     expiring = null;
     served = { ok: SIGNED_OUT };

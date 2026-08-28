@@ -4,6 +4,7 @@ import { commands } from "@/bindings";
 import { EmptyState } from "@/components/empty-state";
 import { TextBar } from "@/components/loading";
 import { MarkdownView } from "@/components/markdown-view";
+import { StatusNote } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -16,6 +17,7 @@ import { useMineStore } from "@/stores/mine";
 import { MineCreateDialog } from "./mine-create-dialog";
 import { MineImportDialog } from "./mine-import-dialog";
 import { MineRowCard } from "./mine-row";
+import { submissionFor } from "./mine-submission";
 import { MineSubmitDialog } from "./mine-submit-dialog";
 
 /** The marketplaces the user authors. Rows are computed fresh from each
@@ -33,6 +35,7 @@ export function MineTab() {
   const loadSubmissions = useAccountStore((s) => s.loadSubmissions);
   const signedIn = useAccountStore((s) => hasCredential(s.account));
   const submissions = useAccountStore((s) => s.submissions);
+  const submissionsError = useAccountStore((s) => s.submissionsError);
 
   useEffect(() => {
     void load();
@@ -42,7 +45,12 @@ export function MineTab() {
     if (!signedIn) return;
     void loadSubmissions();
     // The submissions API names a 60-second poll interval; a row saying
-    // "in review" forever after the server listed it would be a lie.
+    // "in review" forever after the server listed it would be a lie. A
+    // failing read keeps that interval: the poll runs only while this tab
+    // is open, the tab says a read is failing instead of hiding it, and
+    // backing off would only delay the tick that takes the notice away
+    // for the person watching for it. An expired sign-in ends the poll
+    // outright, so nothing here retries a credential known to be dead.
     const timer = setInterval(() => void loadSubmissions(), 60_000);
     return () => clearInterval(timer);
   }, [signedIn, loadSubmissions]);
@@ -95,16 +103,21 @@ export function MineTab() {
       ) : (
         <>
           <div className="flex justify-end">{actions}</div>
+          {submissionsError ? (
+            <StatusNote tone="warning" title="Could not check your submissions">
+              {submissionsError}
+            </StatusNote>
+          ) : null}
           {rows.map((entry) =>
             entry.state === "ready" ? (
               <MineRowCard
                 key={entry.row.path}
                 row={entry.row}
-                submission={
-                  submissions?.find(
-                    (candidate) => candidate.repo === entry.row.git.candidate,
-                  ) ?? null
-                }
+                submission={submissionFor(
+                  submissions,
+                  submissionsError !== null,
+                  entry.row.git.candidate,
+                )}
                 onImport={(path) => setImportTarget(path)}
                 onSubmit={(path) => setSubmitTarget(path)}
               />
