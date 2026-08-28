@@ -46,10 +46,16 @@ run_ce_env() { # KEY=VALUE... — run in $R under those settings; sets OUT and R
 stage() { git -C "$R" add -A; }
 
 # N copies of a character, so a fixture states the length it means instead of
-# carrying a literal nobody can count.
+# carrying a literal nobody can count. The loop counts copies rather than
+# measuring the string: ${#out} is characters or bytes depending on the
+# caller's locale, which would make every multibyte fixture below a different
+# size under LC_ALL=C than under a UTF-8 locale.
 rep() { # CHAR N
-  local c="$1" n="$2" out=""
-  while [ "${#out}" -lt "$n" ]; do out="$out$c"; done
+  local c="$1" n="$2" i=0 out=""
+  while [ "$i" -lt "$n" ]; do
+    out="$out$c"
+    i=$((i + 1))
+  done
   printf '%s' "$out"
 }
 
@@ -145,8 +151,14 @@ run_ce
 
 echo "=== characters, not bytes: a multibyte entry counts once per character ==="
 new_repo multibyte
-# 198 em dashes is 594 bytes and 200 characters with the marker.
+# The marker and 198 em dashes: 200 characters, 596 bytes. The byte figure is
+# asserted, not assumed — a fixture built from a locale-dependent measurement
+# would shrink to 66 dashes under LC_ALL=C and pass the case below for having
+# nothing to measure.
 printf -- '- %s\n' "$(rep '—' 198)" >"$R/CHANGELOG.md"
+[ "$(wc -c <"$R/CHANGELOG.md")" -eq 597 ] \
+  && ok "fixture: the entry really is 596 bytes (597 with its newline)" \
+  || bad "fixture: the entry really is 596 bytes" "bytes=$(wc -c <"$R/CHANGELOG.md")"
 stage
 run_ce
 [ "$RC" -eq 0 ] && ok "200 characters of em dashes pass, though they are 596 bytes" \
@@ -155,6 +167,31 @@ run_ce_env GROWTH_GUARDS_CHANGELOG_CAP=199
 [ "$RC" -eq 1 ] && case "$OUT" in *"200 characters (cap 199)"*) true ;; *) false ;; esac \
   && ok "control: the same entry is 200 characters, not 596 — it fails a cap of 199" \
   || bad "control: the same entry is measured at 200 characters" "rc=$RC out=$OUT"
+
+# Counting non-continuation bytes is the character count only while every
+# continuation byte follows a lead byte that claims it. Stray ones carry no
+# count at all, and git calls such a blob text as long as it holds no NUL.
+new_repo invalid_utf8
+printf -- '- ' >"$R/CHANGELOG.md"
+LC_ALL=C awk 'BEGIN { for (i = 0; i < 500; i++) printf "%c", 128 }' >>"$R/CHANGELOG.md"
+printf '\n' >>"$R/CHANGELOG.md"
+stage
+[ -n "$(git -C "$R" grep --cached -I -l . -- CHANGELOG.md)" ] \
+  && ok "fixture: git calls the blob text, so the binary skip does not reach it" \
+  || bad "fixture: git calls the blob text" "git grep skipped it"
+run_ce
+[ "$RC" -eq 2 ] && case "$OUT" in *"CHANGELOG.md' line 1 is not valid UTF-8"*) true ;; *) false ;; esac \
+  && ok "a line that is not valid UTF-8 is a collection error naming the line" \
+  || bad "a line that is not valid UTF-8 is a collection error" "rc=$RC out=$OUT"
+case "$OUT" in *"changelog-entries: OK"*) bad "no OK verdict may accompany unmeasurable text" "$OUT" ;; *) ok "no OK verdict accompanies unmeasurable text" ;; esac
+# The control beside it: the same length in VALID multibyte is measured, so
+# the refusal is the encoding and not the byte range.
+printf -- '- %s\n' "$(rep '—' 500)" >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"502 characters"*) true ;; *) false ;; esac \
+  && ok "control: 500 valid em dashes are measured, at 502 characters" \
+  || bad "control: 500 valid em dashes are measured" "rc=$RC out=$OUT"
 
 echo "=== entry boundaries: marker, heading, blank-then-unindented ==="
 new_repo boundaries
@@ -241,6 +278,43 @@ run_ce
   && ok "control: with no boundary the two halves are one 299-character entry" \
   || bad "control: with no boundary the two halves are one entry" "rc=$RC out=$OUT"
 
+echo "=== an unindented continuation line joins with one space ==="
+new_repo lazy
+# No blank and no indentation between them, so the whole entry is 100 + 1 + 100.
+# Drop the joining space and it is 200, inside the cap: the boundary is here
+# on purpose.
+{
+  printf -- '- %s\n' "$(rep a 98)"
+  printf '%s\n' "$(rep b 100)"
+} >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"201 characters"*) true ;; *) false ;; esac \
+  && ok "a lazy continuation joins with one space, and the pair fails at 201" \
+  || bad "a lazy continuation joins with one space" "rc=$RC out=$OUT"
+{
+  printf -- '- %s\n' "$(rep a 98)"
+  printf '%s\n' "$(rep b 99)"
+} >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 0 ] && ok "its twin, one character shorter, passes at exactly 200" \
+  || bad "its twin passes at exactly 200" "rc=$RC out=$OUT"
+
+echo "=== trailing whitespace spends no cap ==="
+new_repo trailing
+printf -- '- %s   \n' "$(rep a 198)" >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 0 ] && ok "an entry of 200 characters plus trailing spaces passes" \
+  || bad "an entry of 200 characters plus trailing spaces passes" "rc=$RC out=$OUT"
+printf -- '- %s   \n' "$(rep a 199)" >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"201 characters"*) true ;; *) false ;; esac \
+  && ok "control: one more real character in the same shape fails at 201" \
+  || bad "control: one more real character in the same shape fails" "rc=$RC out=$OUT"
+
 echo "=== a marker needs its space: rules and glued text are not entries ==="
 new_repo markers
 {
@@ -274,12 +348,13 @@ stage
 run_ce
 [ "$RC" -eq 0 ] && ok "the committed kendex.settings.toml [env] table sets the cap" \
   || bad "the committed kendex.settings.toml [env] table sets the cap" "rc=$RC out=$OUT"
+caps_rejected=1
 for badcap in 0 -1 abc 12.5 ""; do
   run_ce_env "GROWTH_GUARDS_CHANGELOG_CAP=$badcap"
   [ "$RC" -eq 2 ] && case "$OUT" in *"must be a positive integer"*) true ;; *) false ;; esac \
-    || bad "a cap of '$badcap' is a config error" "rc=$RC out=$OUT"
+    || { caps_rejected=0; bad "a cap of '$badcap' is a config error" "rc=$RC out=$OUT"; }
 done
-ok "a cap that is not a positive integer is a config error"
+[ "$caps_rejected" -eq 1 ] && ok "every cap that is not a positive integer is a config error"
 
 echo "=== the paths are configurable globs matched against tracked paths ==="
 new_repo paths
@@ -325,6 +400,27 @@ run_ce --all
   && ok "an unknown argument is a config error" \
   || bad "an unknown argument is a config error" "rc=$RC out=$OUT"
 
+echo "=== a configured glob reaches index paths, never the work tree ==="
+new_repo glob_scope
+mkdir -p "$R/changelog.d/fixed"
+printf -- '- A short fragment.\n' >"$R/changelog.d/fixed/ok.md"
+printf -- '- %s\n' "$(rep x 250)" >"$R/changelog.d/fixed/long.md"
+stage
+# The over-cap fragment leaves the WORK TREE while the index keeps it. A glob
+# expanded by the shell would reach ok.md alone and call the commit clean.
+rm -f "$R/changelog.d/fixed/long.md"
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=changelog.d/*/*.md'
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/long.md:1"*) true ;; *) false ;; esac \
+  && ok "a staged fragment absent from the work tree is still measured" \
+  || bad "a staged fragment absent from the work tree is still measured" "rc=$RC out=$OUT"
+# The other direction: an untracked file the same glob would match changes
+# no verdict.
+printf -- '- %s\n' "$(rep y 300)" >"$R/changelog.d/fixed/decoy.md"
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=changelog.d/*/*.md'
+[ "$RC" -eq 1 ] && case "$OUT" in *decoy.md*) false ;; *"changelog.d/fixed/long.md:1"*) true ;; *) false ;; esac \
+  && ok "an untracked decoy under the same glob is never measured" \
+  || bad "an untracked decoy under the same glob is never measured" "rc=$RC out=$OUT"
+
 echo "=== the index is what is judged ==="
 new_repo index
 printf -- '- A short entry.\n' >"$R/CHANGELOG.md"
@@ -365,9 +461,10 @@ run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=real.md'
 
 new_repo binary
 # Every byte value, so a NUL falls inside the sample git classifies on. awk
-# writes them: the shell's printf %c stops at the first NUL.
+# writes them, under LC_ALL=C so a value is a byte and not a character: the
+# shell's printf %c stops at the first NUL.
 printf -- '- ' >"$R/CHANGELOG.md"
-awk 'BEGIN { for (i = 0; i < 256; i++) printf "%c", i }' >>"$R/CHANGELOG.md"
+LC_ALL=C awk 'BEGIN { for (i = 0; i < 256; i++) printf "%c", i }' >>"$R/CHANGELOG.md"
 stage
 [ -z "$(git -C "$R" grep --cached -I -l . -- CHANGELOG.md)" ] \
   && ok "fixture: git itself calls the blob binary, so its --cached scans skip it" \
@@ -377,14 +474,13 @@ run_ce
   && ok "a binary blob is named as unmeasured, not measured as text" \
   || bad "a binary blob is named as unmeasured" "rc=$RC out=$OUT"
 case "$OUT" in *"characters (cap"*) bad "no length may be reported for a binary blob" "$OUT" ;; *) ok "no length is reported for a binary blob" ;; esac
-# The control: the same bytes with the NUL removed are text to git and to
-# this check alike, so the skip above is the classification and not a file
-# the check declines to read.
-printf -- '- ' >"$R/CHANGELOG.md"
-awk 'BEGIN { for (i = 1; i < 256; i++) printf "%c", i }' >>"$R/CHANGELOG.md"
+# The control: high bytes carrying no NUL are text to git and to this check
+# alike, so the skip above is the NUL classification and not a file the check
+# declines to read for having bytes over 127 in it.
+printf -- '- %s\n' "$(rep '—' 250)" >"$R/CHANGELOG.md"
 stage
 run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"not measured"*) false ;; *"characters (cap 200)"*) true ;; *) false ;; esac \
+[ "$RC" -eq 1 ] && case "$OUT" in *"not measured"*) false ;; *"252 characters (cap 200)"*) true ;; *) false ;; esac \
   && ok "control: NUL-free high bytes are text and are measured" \
   || bad "control: NUL-free high bytes are measured" "rc=$RC out=$OUT"
 

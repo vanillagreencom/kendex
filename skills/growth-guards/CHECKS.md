@@ -80,6 +80,11 @@ and counted apart from the clean total: a path git tracks as a symlink or a
 submodule gitlink, and a blob git would call binary, which the sibling checks'
 `--cached` scans skip the same way.
 
+Text that is not valid UTF-8 is a collection error naming the line, not a
+skip. git calls such a blob text whenever it holds no NUL, and there is no
+character count to take over it — a run of stray continuation bytes would
+otherwise measure as almost nothing.
+
 `GROWTH_GUARDS_CHANGELOG_PATHS` (default `CHANGELOG.md`) is a
 space-separated list of shell globs matched against the full repo-relative
 path, `*` crossing `/` as in the excludes lists. Paths matching no tracked

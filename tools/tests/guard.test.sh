@@ -17,6 +17,10 @@ GUARD="$(cd "$TEST_DIR/.." && pwd)/guard"
 REPO="$(cd "$TEST_DIR/../.." && pwd)"
 RATCHET="$REPO/.agents/skills/size-ratchet/scripts/size-ratchet"
 CHANGELOG_ENTRIES="$REPO/.agents/skills/growth-guards/scripts/changelog-entries"
+# Enforcement in this repo rests on this key, and a glob matching no tracked
+# file is a documented clean pass — so a hardcoded copy here would stay green
+# after the key stopped reaching the fragment tree.
+CHANGELOG_PATHS="$(sed -n 's/^GROWTH_GUARDS_CHANGELOG_PATHS = "\(.*\)"$/\1/p' "$REPO/kendex.settings.toml")"
 # The repo's own classes line, read where it lives: the seam pinned below is
 # between two judges reading one policy, so the test may not restate it.
 CLASSES="$(sed -n 's/^SIZE_RATCHET_CLASSES = "\(.*\)"$/\1/p' "$REPO/kendex.settings.toml")"
@@ -113,11 +117,14 @@ run_guard RATCHET_RAISE=
   && ok "an over-cap file, a work marker, a blanket allow, a 300 KB file and an over-long changelog entry all pass — the packages judge those" \
   || bad "an over-cap file, a work marker, a blanket allow, a 300 KB file and an over-long changelog entry all pass — the packages judge those" "rc=$RC out=$OUT"
 # The control for the entry: the package lane that owns it does refuse the
-# same fragment, so guard's silence is a delegation and not a gap.
+# same fragment under THIS repository's configured paths, so guard's silence
+# is a delegation and not a gap, and the key is proven to reach the tree
+# entries are written in.
 CE_RC=0
-(cd "$R" && GROWTH_GUARDS_CHANGELOG_PATHS='changelog.d/*/*.md' "$CHANGELOG_ENTRIES") >/dev/null 2>&1 || CE_RC=$?
-[ "$CE_RC" -eq 1 ] && ok "control: changelog-entries refuses the fragment guard passed" \
-  || bad "control: changelog-entries refuses the fragment guard passed" "rc=$CE_RC"
+(cd "$R" && env "GROWTH_GUARDS_CHANGELOG_PATHS=$CHANGELOG_PATHS" "$CHANGELOG_ENTRIES") >/dev/null 2>&1 || CE_RC=$?
+[ "$CE_RC" -eq 1 ] \
+  && ok "control: under the repo's own configured paths, changelog-entries refuses the fragment guard passed" \
+  || bad "control: under the repo's own configured paths, changelog-entries refuses the fragment guard passed" "rc=$CE_RC paths=$CHANGELOG_PATHS"
 rm -f "$R/crates/uncapped.rs" "$R/ui/uncapped.ts" "$R/crates/marker.rs" "$R/crates/blanket.rs" "$R/crates/huge.bin" "$R/changelog.d/fixed/ken-long.md"
 git -C "$R" add -A
 

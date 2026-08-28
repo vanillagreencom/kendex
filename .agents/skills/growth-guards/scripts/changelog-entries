@@ -17,8 +17,12 @@
 # call binary is skipped the way their --cached scans skip one. A configured
 # path that is not readable changelog text — a symlink, a submodule gitlink,
 # binary content — is named as unmeasured rather than folded into the clean
-# count. Configured paths matching no tracked file are a clean pass: a
-# repository with no changelog has nothing to judge.
+# count. Text that is not valid UTF-8 has no character count to take, so it
+# is a collection error naming the line, never a measurement: git calls such
+# a blob text whenever it carries no NUL, and counting it would read a run of
+# stray bytes as almost no characters at all. Configured paths matching no
+# tracked file are a clean pass: a repository with no changelog has nothing
+# to judge.
 #
 # Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 set -euo pipefail
@@ -50,8 +54,9 @@ the entry. Its text is those lines with CR stripped and whitespace runs
 collapsed to one space, counted in characters.
 
 Tracked content is read from the index. A configured path git tracks as a
-symlink or submodule, or whose content is binary, is named as unmeasured.
-Paths matching no tracked file are a clean pass.
+symlink or submodule, or whose content is binary, is named as unmeasured;
+text that is not valid UTF-8 has no character count and is a collection
+error. Paths matching no tracked file are a clean pass.
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -133,7 +138,23 @@ blob_is_binary() { # FILE LABEL — 0 when a NUL falls in the leading bytes
 # through a diagnostic. Tab survives, and so do high bytes: they are the
 # UTF-8 an entry is legitimately written in.
 ENTRY_AWK='
-BEGIN { CONT = "[\200-\277]"; CTRL = "[\001-\010\013-\037\177]" }
+BEGIN {
+  CONT = "[\200-\277]"
+  CTRL = "[\001-\010\013-\037\177]"
+  # Strict UTF-8, spelled out as the byte grammar RFC 3629 defines: the count
+  # below is "bytes that are not continuation bytes", which is the character
+  # count only while every continuation byte follows a lead byte that claims
+  # it. A line of stray continuation bytes would otherwise measure as nothing.
+  UTF8 = "^([\001-\177]"
+  UTF8 = UTF8 "|[\302-\337][\200-\277]"
+  UTF8 = UTF8 "|\340[\240-\277][\200-\277]"
+  UTF8 = UTF8 "|[\341-\354][\200-\277][\200-\277]"
+  UTF8 = UTF8 "|\355[\200-\237][\200-\277]"
+  UTF8 = UTF8 "|[\356-\357][\200-\277][\200-\277]"
+  UTF8 = UTF8 "|\360[\220-\277][\200-\277][\200-\277]"
+  UTF8 = UTF8 "|[\361-\363][\200-\277][\200-\277][\200-\277]"
+  UTF8 = UTF8 "|\364[\200-\217][\200-\277][\200-\277])*$"
+}
 function chars(s,   n, c) { n = length(s); c = gsub(CONT, "", s); return n - c }
 function flush(   t, len, label) {
   blank = 0
@@ -152,12 +173,13 @@ function flush(   t, len, label) {
   }
 }
 { line = $0; sub(/\r$/, "", line) }
+line !~ UTF8                      { printf "X\t%d\n", NR; bad = 1; exit }
 line ~ /^[ \t]*$/                 { if (open) blank = 1; next }
 line ~ /^[-*+][ \t]/              { flush(); open = 1; start = NR; first = line; text = line; next }
 line ~ /^#/                       { flush(); next }
 open && blank && line !~ /^[ \t]/ { flush(); next }
 open                              { text = text " " line; blank = 0 }
-END { flush(); printf "N\t%d\n", total }
+END { if (!bad) { flush(); printf "N\t%d\n", total } }
 '
 
 gg_tmpdir
@@ -207,6 +229,7 @@ while IFS= read -r -d '' rec; do
   while IFS="$GG_TAB" read -r kind a b c; do
     case "$kind" in
       N) entries=$((entries + a)) ;;
+      X) gg_collection_error "'$f' line $a is not valid UTF-8 — an entry with no character count cannot be measured against the cap" ;;
       V)
         echo "changelog-entries FAIL long entry: $f:$a — $b characters (cap $CAP)"
         echo "  entry: $c"
