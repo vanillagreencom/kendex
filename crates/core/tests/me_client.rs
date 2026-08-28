@@ -204,6 +204,48 @@ impl Fetch for RacingFetch<'_> {
     }
 }
 
+/// A store that lets an identity read settle inside the window
+/// `commit_sign_in` opens between forgetting the cache and saving the new
+/// credential. The old credential really is still installed there, so
+/// that settle is legitimate and nothing but a second forget clears it.
+struct SettlingStore<'a> {
+    inner: MemoryStore,
+    env: &'a Env,
+    body: String,
+}
+
+impl CredentialStore for SettlingStore<'_> {
+    fn save(&self, credential: &Credential) -> Result<()> {
+        write_cache(self.env, &self.body);
+        self.inner.save(credential)
+    }
+    fn load(&self) -> Result<Option<Credential>> {
+        self.inner.load()
+    }
+    fn clear(&self) -> Result<()> {
+        self.inner.clear()
+    }
+    fn refresh_guard(&self) -> Result<Box<dyn CredentialRefreshGuard + '_>> {
+        self.inner.refresh_guard()
+    }
+}
+
+fn write_cache(env: &Env, body: &str) {
+    let dir = env.registry_cache_dir();
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let generation = serde_json::json!({
+        "endpoint": "https://kendex.ai",
+        "etag": serde_json::Value::Null,
+        "fetched_at": 1,
+        "body": body,
+    });
+    std::fs::write(
+        dir.join("me.cache.json"),
+        serde_json::to_string(&generation).expect("generation"),
+    )
+    .expect("write");
+}
+
 fn other_account() -> Credential {
     Credential {
         endpoint: "https://kendex.ai".to_owned(),
@@ -634,7 +676,7 @@ fn a_read_settling_under_a_replacement_credential_is_discarded() {
 }
 
 #[test]
-fn a_read_settling_after_a_plain_sign_out_stays_signed_out() {
+fn a_real_sign_out_mid_read_leaves_no_cached_identity() {
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
     let store = MemoryStore::signed_in();
@@ -687,5 +729,21 @@ fn a_rotation_mid_read_still_settles_the_answer() {
     assert!(
         env.registry_cache_dir().join("me.cache.json").exists(),
         "a rotated read caches its identity like any other"
+    );
+}
+
+#[test]
+fn a_sign_in_clears_an_identity_that_settled_while_it_committed() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = env_in(dir.path());
+    let store = SettlingStore {
+        inner: MemoryStore::signed_in(),
+        env: &env,
+        body: fixture_body(&["success", "body"]),
+    };
+    me::commit_sign_in(&env, &store, &other_account()).expect("commit");
+    assert!(
+        !env.registry_cache_dir().join("me.cache.json").exists(),
+        "an identity cached before the new credential landed is still the old account's"
     );
 }

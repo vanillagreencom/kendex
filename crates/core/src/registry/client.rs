@@ -7,17 +7,29 @@ use crate::registry::credentials::{Credential, CredentialStore};
 use crate::registry::login::TokenPair;
 use crate::registry::{Fetch, FetchResponse, base_url};
 
+/// One answer and the credential it finally went out under. A rotation
+/// mid-call replaces what the caller started with, so the answer belongs
+/// to the replacement; a caller binding the answer to a sign-in must
+/// bind it to this one.
+pub struct Authenticated {
+    pub response: FetchResponse,
+    pub credential: Credential,
+}
+
 /// Run one authenticated call, refreshing a rejected access token once.
 /// Refresh rotation is locked across processes and saved before retry.
 pub fn with_access(
     fetch: &dyn Fetch,
     store: &dyn CredentialStore,
     call: impl Fn(&str) -> Result<FetchResponse>,
-) -> Result<FetchResponse> {
+) -> Result<Authenticated> {
     let credential = required(store.load()?)?;
     let first = call(&credential.access_token)?;
     if first.status != 401 {
-        return Ok(first);
+        return Ok(Authenticated {
+            response: first,
+            credential,
+        });
     }
     rotate_after_rejection(fetch, store, &call, credential)
 }
@@ -27,7 +39,7 @@ fn rotate_after_rejection(
     store: &dyn CredentialStore,
     call: &impl Fn(&str) -> Result<FetchResponse>,
     mut rejected: Credential,
-) -> Result<FetchResponse> {
+) -> Result<Authenticated> {
     let mut newer_retries = 0;
     loop {
         let refresh_guard = store.refresh_guard()?;
@@ -36,7 +48,10 @@ fn rotate_after_rejection(
             drop(refresh_guard);
             let retried = call(&locked.access_token)?;
             if retried.status != 401 {
-                return Ok(retried);
+                return Ok(Authenticated {
+                    response: retried,
+                    credential: locked,
+                });
             }
             if newer_retries == 1 {
                 return Err(rejected_access());
@@ -55,7 +70,7 @@ fn rotate_locked(
     call: &impl Fn(&str) -> Result<FetchResponse>,
     credential: Credential,
     refresh_guard: Box<dyn crate::registry::credentials::CredentialRefreshGuard + '_>,
-) -> Result<FetchResponse> {
+) -> Result<Authenticated> {
     let pair = match refresh(fetch, &credential.refresh_token) {
         Ok(pair) => pair,
         Err(Refused::Definitive(why)) => {
@@ -93,7 +108,10 @@ fn rotate_locked(
     if second.status == 401 {
         return Err(rejected_access());
     }
-    Ok(second)
+    Ok(Authenticated {
+        response: second,
+        credential: rotated,
+    })
 }
 
 /// Commit a completed device login without racing refresh or logout.
