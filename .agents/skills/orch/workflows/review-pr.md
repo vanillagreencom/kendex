@@ -148,9 +148,9 @@ Decisions:
 [For each decision whose path failed verification: "- decision index lookup failed for [DECISION_ID]"]
 [If none: "- No linked decisions found."]
 <if re-review cycle>
-Re-review cycle [N]. Already resolved — do NOT re-report, unless you check a Fixed entry against the current diff and the defect is still there: report that one again, copying that entry's location and description verbatim and naming its recorded commit sha in your recommendation, so the stale entry can be superseded. A Fixed entry you did not check, and every Escalated entry, stays suppressed.
-- Fixed: [For each fixed_item: "[LOCATION] | [DESCRIPTION] — fixed in [COMMIT_SHA]"]
-- Escalated: [For each escalated_item: "[DESCRIPTION] — [REASON]"]
+Re-review cycle [N]. Already resolved — do NOT re-report the entries listed below, unless you check a Fixed entry against the current diff and the defect is still there: report that one again, copying that entry's location and description verbatim and naming its recorded commit sha in your recommendation, or saying it was recorded then dropped in a rebase when the entry carries no sha, so the stale entry can be superseded. A Fixed entry you did not check, and every Escalated entry, stays suppressed.
+- Fixed: [For each fixed_item: "[LOCATION] | [DESCRIPTION] — fixed in [COMMIT_SHA]"; an entry whose commit is a `dropped:<sha>` marker prints "recorded, then dropped in a rebase" in place of the sha]
+- Escalated: [For each escalated_item: "[LOCATION] | [DESCRIPTION] — [REASON]"]
 </if>
 <if this reviewer session was recreated fresh>
 Fresh session — you have no memory of earlier cycles. Read your prior report [PRIOR_REPORT_PATH] and re-read the current diff before reviewing.
@@ -382,9 +382,9 @@ Dev summary:
 [completion summary from the dev return, or a description of the branch changes]
 
 Previous review cycle context (cycle [CYCLES]):
-- Fixed since last review: [For each fixed_item with source "qa-review": "[LOCATION] | [DESCRIPTION] — fixed in [COMMIT_SHA]"]
-- Escalated (accepted): [For each escalated_item with source "qa-review": "[DESCRIPTION] — [REASON]"]
-- Do NOT re-report fixed or escalated items, unless you check a fixed item against the current diff and the defect is still there — then report it again, copying that entry's location and description verbatim and naming its recorded commit sha in your recommendation. A fixed item you did not check, and every escalated item, stays suppressed. Otherwise report only new issues or regressions the fixes introduced.
+- Fixed since last review: [For each fixed_item with source "qa-review": "[LOCATION] | [DESCRIPTION] — fixed in [COMMIT_SHA]"; an entry whose commit is a `dropped:<sha>` marker prints "recorded, then dropped in a rebase" in place of the sha]
+- Escalated (accepted): [For each escalated_item with source "qa-review": "[LOCATION] | [DESCRIPTION] — [REASON]"]
+- Do NOT re-report the fixed or escalated items listed above, unless you check a listed fixed item against the current diff and the defect is still there — then report it again, copying that entry's location and description verbatim and naming its recorded commit sha in your recommendation, or saying it was recorded then dropped in a rebase when the entry carries no sha. A listed fixed item you did not check, and every listed escalated item, stays suppressed. Otherwise report only new issues or regressions the fixes introduced.
 </delegation_format>
 
 Omit `[OWNER/REPO]` when `TRACKER=linear`. On return, append the artifact path to `json_paths`; when the agent reports a `benchmark_commit` other than `none`, confirm it resolves with `git -C [WORKTREE_PATH] log -1 --oneline [SHA]`. A performance QA agent's `qa_metadata.perf_qa` block is posted as an issue comment — Linear via `linear.sh comments create [ISSUE_ID] --body-file`, GitHub via `gh issue comment ${ISSUE_ID#issue-} --body-file` — written to a file first.

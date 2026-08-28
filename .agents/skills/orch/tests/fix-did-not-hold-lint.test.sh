@@ -159,11 +159,33 @@ site_binds_its_tokens() { ! has "$(rule_line "$1")" '\[COMMIT_SHA\]'; }
 # The Fixed expansion is where the reviewer reads the two fields the key is
 # built from. A list that prints only the description asks it to copy a field
 # it was never shown, and a fix that moved the finding then supersedes nothing.
-fixed_list() { grep -E -- '^- Fixed.*fixed_item' <<<"$1" || true; }
+fixed_list()     { grep -E -- '^- Fixed.*fixed_item'         <<<"$1" || true; }
+escalated_list() { grep -E -- '^- Escalated.*escalated_item' <<<"$1" || true; }
 site_prints_the_key() {
   local l; l="$(fixed_list "$1")"
   has "$l" '\[LOCATION\]' && has "$l" '\[DESCRIPTION\]'
 }
+
+# § 4 excludes an escalated item from a fix round on the same pair, so the
+# reviewer that must recognise one needs both fields, not the description
+# alone.
+site_prints_the_escalated_key() {
+  local l; l="$(escalated_list "$1")"
+  has "$l" '\[LOCATION\]' && has "$l" '\[DESCRIPTION\]'
+}
+
+# A fix commit that vanishes in a rebase leaves `dropped:<sha>` in the entry,
+# which the schema forbids publishing as a live sha. The expansion that prints
+# the sha carries the marker case beside it, or the reviewer is told to cite a
+# commit that does not resolve.
+site_guards_the_dropped_sha() {
+  local l; l="$(fixed_list "$1")"
+  has "$l" '\[COMMIT_SHA\]' && has "$l" 'dropped'
+}
+
+# The suppression names the items the delegation actually listed. A rule wider
+# than its list tells an agent about items it was never shown.
+site_scopes_to_its_list() { has "$(rule_line "$1")" 'list'; }
 
 for site in rereview qa reviewer; do
   R="$(region_of "$site")"
@@ -215,6 +237,12 @@ for site in rereview qa reviewer; do
     fail "$L carries a [COMMIT_SHA] nothing binds"
   fi
 
+  if site_scopes_to_its_list "$R"; then
+    pass "$L suppresses only what it lists"
+  else
+    fail "$L names a wider set than the list beside it"
+  fi
+
   # The reviewer package states the rule and has no list to expand; the two
   # delegations carry the list the rule sends it to.
   if [[ "$site" == "reviewer" ]]; then
@@ -224,6 +252,18 @@ for site in rereview qa reviewer; do
     pass "$L prints the location and description of every Fixed entry"
   else
     fail "$L asks for a verbatim copy of fields it never prints"
+  fi
+
+  if site_prints_the_escalated_key "$R"; then
+    pass "$L prints the location of every Escalated entry"
+  else
+    fail "$L hides the field its escalated exclusion keys on"
+  fi
+
+  if site_guards_the_dropped_sha "$R"; then
+    pass "$L never renders a dropped marker as a live sha"
+  else
+    fail "$L prints the recorded commit with no guard for a dropped marker"
   fi
 done
 
@@ -312,13 +352,16 @@ drop_region() {
   ' "$1"
 }
 
-# $1 = file, $2 = head, $3 = tail, $4 = ERE to replace, $5 = replacement.
-# Substitutes inside the region only, so one control moves one check.
+# $1 = file, $2 = head, $3 = tail, $4 = ERE to replace, $5 = replacement,
+# $6 = optional ERE narrowing it to matching lines. Write a literal bracket or
+# pipe as a bracket expression — awk warns on a backslash escape in a dynamic
+# regex and the warning reaches the suite's output. Substitutes inside the
+# region only, so one control moves one check.
 sub_region() {
-  awk -v head="$2" -v tail="$3" -v from="$4" -v to="$5" '
+  awk -v head="$2" -v tail="$3" -v from="$4" -v to="$5" -v only="${6:-}" '
     !on && $0 ~ head { on = 1; printed = 0 }
     on && printed && $0 ~ tail { on = 0 }
-    on { printed = 1; gsub(from, to) }
+    on { printed = 1; if (only == "" || $0 ~ only) gsub(from, to) }
     { print }
   ' "$1"
 }
@@ -382,12 +425,27 @@ for site in rereview qa reviewer; do
   append_to_rule "$src" "$head" "$tail" "[COMMIT_SHA]" > "$CTRL_FILE"
   judge "$site" "placeholder" site_binds_its_tokens "an unbound [COMMIT_SHA] in the rule"
 
+  # A rule that names more than the list beside it.
+  CTRL_FILE="$TMP_ROOT/$site-unscoped.md"
+  sub_region "$src" "$head" "$tail" "list" "record" > "$CTRL_FILE"
+  judge "$site" "unscoped" site_scopes_to_its_list "a rule wider than the list beside it"
+
   [[ "$site" == "reviewer" ]] && continue
 
   # The Fixed list printing everything but the location the key is built from.
   CTRL_FILE="$TMP_ROOT/$site-nolocation.md"
-  sub_region "$src" "$head" "$tail" '\[LOCATION\] \| ' "" > "$CTRL_FILE"
+  sub_region "$src" "$head" "$tail" '[[]LOCATION[]] [|] ' "" '^- Fixed' > "$CTRL_FILE"
   judge "$site" "no-location" site_prints_the_key "a Fixed list that never prints the location"
+
+  # The same omission on the escalated side, where § 4 keys its exclusion.
+  CTRL_FILE="$TMP_ROOT/$site-noescalatedlocation.md"
+  sub_region "$src" "$head" "$tail" '[[]LOCATION[]] [|] ' "" '^- Escalated' > "$CTRL_FILE"
+  judge "$site" "no-escalated-location" site_prints_the_escalated_key "an Escalated list that never prints the location"
+
+  # The marker case removed: every entry then renders as a live sha.
+  CTRL_FILE="$TMP_ROOT/$site-livesha.md"
+  sub_region "$src" "$head" "$tail" "dropped" "stale" '^- Fixed' > "$CTRL_FILE"
+  judge "$site" "live-sha" site_guards_the_dropped_sha "a Fixed list that renders a dropped marker as a live sha"
 done
 
 # The sha match is word-bounded, so a rule that merely says "shared" or "shape"
