@@ -28,7 +28,7 @@
 //! kept; anywhere else they are two defects, and reporting one would send
 //! the author back for the other.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::settings_seed::SETTINGS_TEMPLATE;
 
@@ -121,21 +121,22 @@ fn comment_text(line: &str) -> String {
 
 /// Read one template strictly. Findings, then rows for whatever decoded.
 pub fn read(text: &str) -> TemplateRead {
-    let mut read = scan(text);
+    let (mut read, syntax) = scan(text);
     let Err(error) = text.parse::<toml::Table>() else {
         return read;
     };
     // The scan and the parser often describe one defect from two sides: a
     // duplicate key is a TOML error too, and the scan's version names the
-    // key and its line where the parser's is generic. Same line, one
-    // defect, and the precise telling is the one to keep.
+    // key where the parser's is generic. The precise telling is the one to
+    // keep — but only where the scan's finding is about this line's SYNTAX.
     //
-    // A different line is a second defect, and reporting only the first
-    // sends the author back for another round over something that was
-    // wrong the whole time. An error with no span at all is about the file
-    // rather than any line, so nothing it could coincide with.
+    // A line carries more than one finding now, and most of them are not
+    // syntax at all: a key with no comment block above it is a template
+    // rule, and a line can be badly commented AND badly spelled at once.
+    // Keying on the line alone would take the second defect away, which is
+    // the round it was meant to save.
     let line = error.span().map(|span| line_at(text, span.start));
-    if line.is_some_and(|line| read.findings.iter().any(|found| found.line == line)) {
+    if line.is_some_and(|line| syntax.contains(&line)) {
         return read;
     }
     read.findings.push(TemplateFinding {
@@ -159,9 +160,13 @@ fn line_at(text: &str, offset: usize) -> usize {
         + 1
 }
 
-/// The line scan: everything an author can be told precisely.
-fn scan(text: &str) -> TemplateRead {
+/// The line scan: everything an author can be told precisely, plus the
+/// lines whose SYNTAX it already judged. TOML will complain about those
+/// same lines in its own words, and the scan's words are better; every
+/// other finding is about something the parser has no opinion on.
+fn scan(text: &str) -> (TemplateRead, BTreeSet<usize>) {
     let mut read = TemplateRead::default();
+    let mut syntax: BTreeSet<usize> = BTreeSet::new();
     // Whether the table is there at all is settled before any key is
     // judged. With no `[env]` the file seeds nothing whatever it holds, so
     // that is said once, in place of saying it again under every key. The
@@ -197,6 +202,7 @@ fn scan(text: &str) -> TemplateRead {
             let (name, exact) = table_header(trimmed);
             in_env = name == "env";
             if !exact {
+                syntax.insert(line);
                 read.findings.push(TemplateFinding {
                     line,
                     problem: "this is not a table header the settings loaders read".to_owned(),
@@ -205,11 +211,14 @@ fn scan(text: &str) -> TemplateRead {
                 });
             } else if in_env {
                 match env_header {
-                    Some(first) => read.findings.push(TemplateFinding {
-                        line,
-                        problem: format!("a second [env] header; the first is on line {first}"),
-                        fix: "keep one [env] table and move these keys into it".to_owned(),
-                    }),
+                    Some(first) => {
+                        syntax.insert(line);
+                        read.findings.push(TemplateFinding {
+                            line,
+                            problem: format!("a second [env] header; the first is on line {first}"),
+                            fix: "keep one [env] table and move these keys into it".to_owned(),
+                        });
+                    }
                     None => env_header = Some(line),
                 }
             }
@@ -228,6 +237,7 @@ fn scan(text: &str) -> TemplateRead {
         // the value was never readable either.
         let duplicate = seen.insert(key, line);
         if let Some(first) = duplicate {
+            syntax.insert(line);
             read.findings.push(TemplateFinding {
                 line,
                 problem: format!("{key} is assigned again; it is already on line {first}"),
@@ -244,34 +254,48 @@ fn scan(text: &str) -> TemplateRead {
             }
             continue;
         }
-        match decode_entry(key, line, trimmed, &taken) {
-            Err(finding) => read.findings.push(finding),
-            // The first assignment of this key is already the row; a later
-            // one that happens to decode is still a line to delete.
-            Ok(_) if duplicate.is_some() => {}
-            Ok(value) => read.entries.push(TemplateEntry {
+        // A value the strict reader cannot decode is this line's syntax,
+        // and TOML will refuse the same line in its own generic words.
+        // Every other check here is a template rule the parser has no
+        // opinion about, so a line can carry both kinds at once.
+        if decoded_value(trimmed).is_none() {
+            syntax.insert(line);
+        }
+        let (value, problems) = decode_entry(key, line, trimmed, &taken);
+        read.findings.extend(problems);
+        // The first assignment of this key is already the row; a later one
+        // that happens to decode is still a line to delete.
+        if let Some(value) = value
+            && duplicate.is_none()
+        {
+            read.entries.push(TemplateEntry {
                 key: key.to_owned(),
                 comment_span: (taken[0].0, taken[taken.len() - 1].0),
                 comment: taken.into_iter().map(|(_, text)| text).collect(),
                 value,
                 line,
-            }),
+            });
         }
     }
-    read
+    (read, syntax)
 }
 
-/// One `[env]` assignment judged on its own: the decoded default, or what
-/// is wrong with it. Everything here needs the line and its comment block
-/// and nothing else about the file.
+/// Everything wrong with one `[env]` assignment, and the decoded default
+/// where nothing is. Every check runs rather than the first one winning: an
+/// author told about the comment block, and only on the next run about the
+/// value, has made a round trip for a defect that was always there.
+///
+/// Everything here needs the line and its comment block and nothing else
+/// about the file.
 fn decode_entry(
     key: &str,
     line: usize,
     trimmed: &str,
     comment: &[(usize, String)],
-) -> Result<String, TemplateFinding> {
+) -> (Option<String>, Vec<TemplateFinding>) {
+    let mut problems = Vec::new();
     if !is_env_name(key) {
-        return Err(TemplateFinding {
+        problems.push(TemplateFinding {
             line,
             problem: format!("{key} is not a name a shell can export, so nothing reads it"),
             fix: "spell keys with letters, digits and underscores, starting with a letter or underscore"
@@ -279,19 +303,26 @@ fn decode_entry(
         });
     }
     if comment.is_empty() {
-        return Err(TemplateFinding {
+        problems.push(TemplateFinding {
             line,
             problem: format!("{key} has no comment block above it"),
             fix: "write the # lines that say what the key does; seeding carries them".to_owned(),
         });
     }
-    decoded_value(trimmed).ok_or_else(|| TemplateFinding {
-        line,
-        problem: format!(
-            "{key}'s default is not a one-line double-quoted string free of \" and \\"
-        ),
-        fix: "spell every default as a plain \"...\" string on one line".to_owned(),
-    })
+    let value = decoded_value(trimmed);
+    if value.is_none() {
+        problems.push(TemplateFinding {
+            line,
+            problem: format!(
+                "{key}'s default is not a one-line double-quoted string free of \" and \\"
+            ),
+            fix: "spell every default as a plain \"...\" string on one line".to_owned(),
+        });
+    }
+    match problems.is_empty() {
+        true => (value, problems),
+        false => (None, problems),
+    }
 }
 
 #[cfg(test)]

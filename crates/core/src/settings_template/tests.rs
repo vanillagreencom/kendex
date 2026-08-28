@@ -276,3 +276,42 @@ fn a_duplicate_that_is_otherwise_fine_is_one_finding_and_no_row() {
     assert_eq!(read.entries.len(), 1);
     assert_eq!(read.entries[0].value, "900");
 }
+
+#[test]
+fn one_assignment_wrong_two_ways_is_two_findings() {
+    // No comment block AND a value the loaders refuse. Being told about
+    // one, fixing it, and only then hearing about the other is the round
+    // trip every both-defects rule here exists to prevent.
+    let found = located("[env]\n# Why.\nA = \"1\"\nB = 2\n");
+    assert_eq!(
+        found,
+        [
+            (4, "B has no comment block above it".to_owned()),
+            (
+                4,
+                "B's default is not a one-line double-quoted string free of \" and \\".to_owned()
+            ),
+        ]
+    );
+}
+
+#[test]
+fn a_template_rule_does_not_silence_the_parser_on_its_line() {
+    // `B B` is a name no shell exports — a template rule — and it is also
+    // not a key TOML accepts. The value decodes fine, so nothing the scan
+    // says is about this line's syntax, and the parser's word is the only
+    // account of that half. Keying its finding on the line alone dropped it.
+    let found = located("[env]\n# Why.\nA = \"1\"\n# Why.\nB B = \"2\"\n");
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert_eq!(
+        found[0],
+        (
+            5,
+            "B B is not a name a shell can export, so nothing reads it".to_owned()
+        )
+    );
+    assert!(
+        found[1].1.starts_with("this is not valid TOML:"),
+        "{found:?}"
+    );
+}
