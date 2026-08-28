@@ -141,9 +141,17 @@ COND='unless|except'
 # Word-bounded, so `shared` and `shape` do not stand in for a sha citation.
 SHA='(^|[^[:alnum:]])sha([^[:alnum:]]|$)'
 
-rule_line() { grep -E -- "$SUPPRESS" <<<"$1" || true; }
+# ONE line is evaluated, and a region carrying a second suppression line fails
+# outright. Collecting every match and searching the concatenation is how the
+# region-scoped shape survives a rename: a blanket line beside a conditional
+# one would satisfy every element while the blanket line does the damage. awk
+# rather than `grep | head`, since head closing the pipe early would raise the
+# extractor's SIGPIPE into a failure under pipefail.
+rule_line()       { awk -v re="$SUPPRESS" '$0 ~ re { print; exit }' <<<"$1"; }
+rule_line_count() { awk -v re="$SUPPRESS" '$0 ~ re { n++ } END { print n + 0 }' <<<"$1"; }
 
 site_states_rule()      { [[ -n "$(rule_line "$1")" ]]; }
+site_states_one_rule()  { [[ "$(rule_line_count "$1")" -eq 1 ]]; }
 site_is_conditional()   { has "$(rule_line "$1")" "$COND"; }
 site_names_sha()        { has "$(rule_line "$1")" "$SHA"; }
 site_copies_key()       {
@@ -196,6 +204,14 @@ for site in rereview qa reviewer; do
   else
     fail "$L states no suppression rule at all"
     continue
+  fi
+
+  # A second suppression line is the regression whatever it says: the reader
+  # obeys both, and the blanket one undoes the narrowing of the other.
+  if site_states_one_rule "$R"; then
+    pass "$L states its suppression rule exactly once"
+  else
+    fail "$L states $(rule_line_count "$R") suppression rules, not one"
   fi
 
   # Blanket suppression is the defect. The conditional is what narrows it.
@@ -366,6 +382,16 @@ sub_region() {
   ' "$1"
 }
 
+# $1 = file, $2 = head, $3 = tail, $4 = a line inserted into the region, right
+# after its opening marker.
+add_line_to_region() {
+  awk -v head="$2" -v tail="$3" -v add="$4" '
+    !on && $0 ~ head { on = 1; printed = 0; print; printed = 1; print add; next }
+    on && printed && $0 ~ tail { on = 0 }
+    { print }
+  ' "$1"
+}
+
 # $1 = file, $2 = head, $3 = tail, $4 = text appended to the rule line.
 append_to_rule() {
   awk -v head="$2" -v tail="$3" -v rule="$SUPPRESS" -v add="$4" '
@@ -424,6 +450,13 @@ for site in rereview qa reviewer; do
   CTRL_FILE="$TMP_ROOT/$site-placeholder.md"
   append_to_rule "$src" "$head" "$tail" "[COMMIT_SHA]" > "$CTRL_FILE"
   judge "$site" "placeholder" site_binds_its_tokens "an unbound [COMMIT_SHA] in the rule"
+
+  # The elements split across two lines: a blanket rule beside the narrowed
+  # one. Every element is still present in the region, and the reader still
+  # obeys a line that suppresses everything.
+  CTRL_FILE="$TMP_ROOT/$site-split.md"
+  add_line_to_region "$src" "$head" "$tail" "Do NOT re-report anything listed as resolved." > "$CTRL_FILE"
+  judge "$site" "split-rule" site_states_one_rule "a blanket rule beside the narrowed one"
 
   # A rule that names more than the list beside it.
   CTRL_FILE="$TMP_ROOT/$site-unscoped.md"
