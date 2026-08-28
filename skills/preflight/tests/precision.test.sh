@@ -46,6 +46,9 @@ seed() { # NAME — fixture in $R: committed baseline, origin/main, feature bran
   printf 'CREATE TABLE t (id INTEGER);\n' >"$R/store/migrations/V1__init.sql"
   printf 'CREATE OR REPLACE VIEW v AS SELECT 1;\n' >"$R/store/migrations/R__views.sql"
   printf '# Migrations\n' >"$R/store/migrations/README.md"
+  mkdir -p "$R/store/migrations/archive"
+  printf 'SELECT 1;\n' >"$R/store/migrations/archive/helper.sql"
+  printf '# revision id, no checksum\n' >"$R/store/migrations/0001_initial.py"
   printf 'SELECT 1;\n' >"$R/data/report.sql"
   git -C "$R" add -A
   git -C "$R" commit -qm init
@@ -663,13 +666,25 @@ printf 'SELECT 2;\n' >"$R/data/report.sql"
 printf 'CREATE OR REPLACE VIEW v AS SELECT 1, 2;\n' >"$R/store/migrations/R__views.sql"
 # A mode change reports M with the text untouched.
 chmod +x "$R/store/migrations/V1__init.sql"
+# A `*` never reaches past its own component, so a nested file is outside the
+# default glob, and a runner that records a revision id without a checksum is
+# outside the default set.
+printf 'SELECT 2;\n' >"$R/store/migrations/archive/helper.sql"
+printf '# revision id, still no checksum\n' >"$R/store/migrations/0001_initial.py"
 git -C "$R" add -A
 run_pf
-clean "a new version, an edited note beside it, an edited .sql outside a migrations directory, an edited repeatable migration, and a mode-only change"
+clean "a new version, an edited note beside it, an edited .sql outside a migrations directory, an edited repeatable migration, a mode-only change, a nested .sql, and a Python migration"
 printf 'CREATE TABLE t (id INTEGER); -- clearer\n' >"$R/store/migrations/V1__init.sql"
 git -C "$R" add -A
 run_pf
 fires "the same fixture with the base's own migration edited fails" "store/migrations/V1__init.sql:0: [applied-migration-edited]"
+# The setting is the opt-in for both: the same two files fail when the globs
+# name them, so the quiet run above is a scope decision, not a dead lane.
+export PREFLIGHT_MIGRATION_GLOBS='**/migrations/*_*.py **/migrations/*/*.sql'
+run_pf
+fires "a Python migration fails once the globs name it" "store/migrations/0001_initial.py:0: [applied-migration-edited]"
+fires "a nested .sql fails once a glob spans the extra component" "store/migrations/archive/helper.sql:0: [applied-migration-edited]"
+unset PREFLIGHT_MIGRATION_GLOBS
 run_pf --all
 # The verdict line has to be there: a run that died before reaching it carries
 # no finding either, and that is not the lane standing down.

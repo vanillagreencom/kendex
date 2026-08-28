@@ -1069,19 +1069,36 @@ while IFS= read -r f; do
 done <"$TMP/files.list"
 
 # --- lane applied-migration-edited -------------------------------------------
-# A migration a database has already run is frozen. refinery, Flyway,
-# Liquibase, Alembic and sqlx each record a checksum over the file's name and
-# text and refuse to open a database whose recorded checksum no longer
-# matches, so the edit has no forward fix: the correction would be one more
-# edit to the same frozen file. Only a path the MERGE BASE carries is the
-# shape, since a migration added at a new version is how a correction ships,
-# and one this branch added has reached no database. `--all` reads every
-# tracked line as added and a repository with no base to read answers
-# nothing, so both leave the lane quiet, as does an empty glob set.
-MIGRATION_GLOBS="${PREFLIGHT_MIGRATION_GLOBS-**/migrations/*.sql **/migrations/*_*.py}"
+# A versioned migration a database has already run is frozen. refinery
+# (`abort_divergent` by default), Flyway and sqlx each record a checksum over
+# the file's name and text and refuse to run against a database whose recorded
+# checksum no longer matches, so the edit has no forward fix: the correction
+# would be one more edit to the same frozen file. The default globs name only
+# what those runners freeze; a runner that records a revision id without a
+# checksum, Alembic and Django among them, is opt-in through the setting.
+# Only a path the MERGE BASE carries is the shape, since a migration added at
+# a new version is how a correction ships, and one this branch added has
+# reached no database. `--all` reads every tracked line as added and a
+# repository with no base to read answers nothing, so both leave the lane
+# quiet, as does an empty glob set.
+MIGRATION_GLOBS="${PREFLIGHT_MIGRATION_GLOBS-**/migrations/*.sql}"
 
-is_migration_path() { # PATH — matches a configured glob, `**/` at any depth
-  local pat rc=1
+glob_matches() { # PATTERN PATH — a `*` never reaches past its own component
+  local pat="$1" path="$2" pc pp
+  while :; do
+    if [ -z "$pat" ]; then
+      if [ -z "$path" ]; then return 0; fi
+      return 1
+    fi
+    [ -n "$path" ] || return 1
+    case "$pat" in */*) pc="${pat%%/*}"; pat="${pat#*/}" ;; *) pc="$pat"; pat="" ;; esac
+    case "$path" in */*) pp="${path%%/*}"; path="${path#*/}" ;; *) pp="$path"; path="" ;; esac
+    case "$pp" in $pc) ;; *) return 1 ;; esac
+  done
+}
+
+is_migration_path() { # PATH — a configured glob, `**/` the only depth crossing
+  local pat rc=1 rest
   # Flyway reapplies a repeatable migration whenever its checksum moves, so
   # editing one is that runner's intended operation, not a frozen file.
   case "${1##*/}" in R__*) return 1 ;; esac
@@ -1092,9 +1109,16 @@ is_migration_path() { # PATH — matches a configured glob, `**/` at any depth
     case "$pat" in
       '**/'*)
         pat="${pat#'**/'}"
-        case "$1" in $pat | */$pat) rc=0 ;; esac
+        rest="$1"
+        while :; do
+          if glob_matches "$pat" "$rest"; then
+            rc=0
+            break
+          fi
+          case "$rest" in */*) rest="${rest#*/}" ;; *) break ;; esac
+        done
         ;;
-      *) case "$1" in $pat) rc=0 ;; esac ;;
+      *) glob_matches "$pat" "$1" && rc=0 ;;
     esac
     [ "$rc" = 1 ] || break
   done
