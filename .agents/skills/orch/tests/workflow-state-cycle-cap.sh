@@ -44,11 +44,6 @@ err="$("$WS" --state-dir "$sd" set KEN-1 rereview_panel "$PANEL" 2>&1 >/dev/null
   || bad "rereview_cycles=5 refuses rereview_panel, naming the count and the cap" "rc=$rc err=$err"
 [[ "$err" == *"review-pr § 5"* ]] && ok "the refusal names the step that follows" \
   || bad "the refusal names the step that follows" "$err"
-# § 7 applies the same rule with § 6 as its re-review target, so a refusal
-# that names only § 5 misroutes a QA round to the verdict pass — the routing
-# half of KEN-592.
-[[ "$err" == *"review-pr § 8"* ]] && ok "the refusal names § 7's route as well as § 4's" \
-  || bad "the refusal names § 7's route as well as § 4's" "$err"
 # The refusal is the instruction the orchestrator reads at the moment the cap
 # fires, so it must carry the WHOLE § 4 contract. Asserting it on the message
 # the refusal actually prints proves the branch is reachable, which grepping
@@ -102,6 +97,56 @@ budget="$("$WS" --state-dir "$sd_qa" get KEN-9 .rereview_cycles)"
 [[ "$rc" -eq 0 ]] && [[ "$budget" == "1" ]] \
   && ok "seven fix rounds spend no loop budget — the re-entry still passes" \
   || bad "seven fix rounds spend no loop budget — the re-entry still passes" "rc=$rc rereview_cycles=$budget"
+
+# --- KEN-592: the issue's scenario, end to end ----------------------------
+# Four § 4 cycles reach the cap, a QA fix round follows, and its § 7 → § 6
+# re-check must run. The re-check panel goes to its own key: a QA re-check is
+# not a re-review cycle, so the cap neither refuses it nor counts it.
+sd_scn="$TMP_ROOT/state-scenario"
+"$WS" --state-dir "$sd_scn" init KEN-8 --worktree "$REPO_ROOT" --branch ken-8 >/dev/null
+for _ in 1 2 3 4; do
+  "$WS" --state-dir "$sd_scn" set KEN-8 rereview_panel "$PANEL" >/dev/null
+  "$WS" --state-dir "$sd_scn" increment KEN-8 cycles >/dev/null
+done
+spent="$("$WS" --state-dir "$sd_scn" get KEN-8 .rereview_cycles)"
+[[ "$spent" == "4" ]] && ok "four § 4 re-entries spend exactly the whole budget" \
+  || bad "four § 4 re-entries spend exactly the whole budget" "got=$spent"
+# The QA fix round bumps the tally, then its § 7 → § 6 re-check runs.
+"$WS" --state-dir "$sd_scn" increment KEN-8 cycles >/dev/null
+"$WS" --state-dir "$sd_scn" set KEN-8 qa_recheck_panel "$PANEL" >/dev/null 2>&1 && rc=0 || rc=$?
+qa_agents="$("$WS" --state-dir "$sd_scn" get KEN-8 '.qa_recheck_panel.agents[0]')"
+[[ "$rc" -eq 0 ]] && [[ "$qa_agents" == "rev-a" ]] \
+  && ok "the QA re-check is permitted with the § 4 budget fully spent" \
+  || bad "the QA re-check is permitted with the § 4 budget fully spent" "rc=$rc agents=$qa_agents"
+still="$("$WS" --state-dir "$sd_scn" get KEN-8 .rereview_cycles)"
+[[ "$still" == "4" ]] && ok "the QA re-check leaves rereview_cycles where the § 4 loop left it" \
+  || bad "the QA re-check leaves rereview_cycles where the § 4 loop left it" "got=$still"
+# Repeating it never accrues budget either: the key is outside the cap entirely.
+"$WS" --state-dir "$sd_scn" set KEN-8 qa_recheck_panel "$PANEL" >/dev/null 2>&1 && rc=0 || rc=$?
+again="$("$WS" --state-dir "$sd_scn" get KEN-8 .rereview_cycles)"
+[[ "$rc" -eq 0 ]] && [[ "$again" == "4" ]] \
+  && ok "a second QA re-check is permitted and still spends nothing" \
+  || bad "a second QA re-check is permitted and still spends nothing" "rc=$rc got=$again"
+
+# --- KEN-592: § 7 states which counter governs it -------------------------
+# The doc side of the same separation. § 7 must name its own key and must not
+# read or raise the § 4 budget.
+# The pins are IDENTIFIERS and a heading reference — the key § 7 writes, the
+# counter it must not touch, the check it must not route through — never a
+# sentence: § 7 states the separation without naming the counter, so a token
+# scan over the whole section is the assertion.
+REVIEW_PR_WF="$REPO_ROOT/skills/orch/workflows/review-pr.md"
+section_7() { awk '$0 == "## 7. Handle QA Items" { on = 1; next } on && /^## 8[.]/ { on = 0 } on' "$1"; }
+S7="$(section_7 "$REVIEW_PR_WF")"
+grep -q -F 'qa_recheck_panel' <<<"$S7" \
+  && ok "§ 7 sets its QA panel on its own key" \
+  || bad "§ 7 does not name qa_recheck_panel"
+grep -q -F 'rereview_cycles' <<<"$S7" \
+  && bad "§ 7 still names the § 4 budget" "$(grep -n -F 'rereview_cycles' <<<"$S7")" \
+  || ok "§ 7 neither reads nor raises rereview_cycles"
+grep -q -F 'At The Cap' <<<"$S7" \
+  && bad "§ 7 still routes through § 4's At The Cap check" \
+  || ok "§ 7 routes through no cap check"
 
 # Other set fields are untouched by the cap.
 "$WS" --state-dir "$sd" set KEN-1 rereview_skipped "no files changed" >/dev/null && rc=0 || rc=$?
@@ -200,21 +245,53 @@ else
   fi
 fi
 
-# The § 5-only routing that misrouted a § 7 QA recheck to the verdict pass.
-if ! plant route 's/, review-pr § 8 (summary) from § 7,/,/'; then
-  bad "routing control planted nothing — its sed program matched no text"
+# A guard that also gates the QA re-check key: the issue's scenario would
+# fail again, refused under a cap that is not its own.
+if ! plant qakey 's/"$field" == "rereview_panel"/"$field" == *_panel/'; then
+  bad "qa-key control planted nothing — its sed program matched no text"
 else
-  sdo="$TMP_ROOT/state-ctrl-route"
-  "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdo" init KEN-7 --worktree "$REPO_ROOT" --branch ken-7 >/dev/null
-  "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdo" update KEN-7 '.rereview_cycles = 5' >/dev/null
-  rerr="$("$CTRL_SCRIPTS/workflow-state" --state-dir "$sdo" set KEN-7 rereview_panel "$PANEL" 2>&1 >/dev/null)" || true
-  if [[ "$rerr" != *"review-pr § 5"* ]]; then
-    bad "the control refusal stopped naming § 4's route" "$rerr"
-  elif [[ "$rerr" == *"review-pr § 8"* ]]; then
-    bad "the assertion MISSED a refusal that names only § 4's route" "$rerr"
+  sdq="$TMP_ROOT/state-ctrl-qakey"
+  "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdq" init KEN-7 --worktree "$REPO_ROOT" --branch ken-7 >/dev/null
+  "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdq" update KEN-7 '.rereview_cycles = 5' >/dev/null
+  if "$CTRL_SCRIPTS/workflow-state" --state-dir "$sdq" set KEN-7 qa_recheck_panel "$PANEL" >/dev/null 2>&1; then
+    bad "the assertion MISSED a guard that gates the QA re-check key" "the control permitted the write"
   else
-    ok "the assertion flags a refusal that names only § 4's route"
+    ok "the assertion flags a guard that gates the QA re-check key too"
   fi
+fi
+
+# § 7 reverted to the shared key: the assertion must catch the counter
+# coming back into the section that must not spend it.
+CTRL_WF="$TMP_ROOT/review-pr-shared.md"
+sed 's/the § 4 budget `REVIEW_MAX_CYCLES` bounds is neither read nor raised in this section/`rereview_cycles` is read here/' "$REVIEW_PR_WF" > "$CTRL_WF"
+if cmp -s "$CTRL_WF" "$REVIEW_PR_WF"; then
+  bad "§ 7 counter control planted nothing — its sed program matched no text"
+elif grep -q -F 'rereview_cycles' <<<"$(section_7 "$CTRL_WF")"; then
+  ok "the assertion flags rereview_cycles back inside § 7"
+else
+  bad "the assertion MISSED rereview_cycles back inside § 7"
+fi
+
+# § 7 routed back through the cap check.
+CTRL_WF="$TMP_ROOT/review-pr-capcheck.md"
+sed 's/\*\*No cap check runs here\*\*/**Run § 4 At The Cap here**/' "$REVIEW_PR_WF" > "$CTRL_WF"
+if cmp -s "$CTRL_WF" "$REVIEW_PR_WF"; then
+  bad "§ 7 cap-check control planted nothing — its sed program matched no text"
+elif grep -q -F 'At The Cap' <<<"$(section_7 "$CTRL_WF")"; then
+  ok "the assertion flags § 7 routing through the cap check again"
+else
+  bad "the assertion MISSED § 7 routing through the cap check again"
+fi
+
+# § 7 with no key of its own: the QA panel would land on the gated field.
+CTRL_WF="$TMP_ROOT/review-pr-nokey.md"
+sed 's/qa_recheck_panel/rereview_panel/g' "$REVIEW_PR_WF" > "$CTRL_WF"
+if cmp -s "$CTRL_WF" "$REVIEW_PR_WF"; then
+  bad "§ 7 key control planted nothing — its sed program matched no text"
+elif grep -q -F 'qa_recheck_panel' <<<"$(section_7 "$CTRL_WF")"; then
+  bad "the assertion MISSED § 7 writing the gated panel key"
+else
+  ok "the assertion flags § 7 writing the gated panel key"
 fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

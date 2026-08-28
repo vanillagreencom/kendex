@@ -261,7 +261,7 @@ else
   fail "lint MISSED a placeholder pasted into a quoted shell word"
 fi
 
-if ! plant_pr source 's/`qa-review` when § 7 applies this rule/the § 7 value when it applies this rule/'; then
+if ! plant_pr source 's/`qa-review` for a QA-sourced item/the § 7 value for such an item/'; then
   fail "source control planted nothing — its sed program matched no text"
 elif sec_has "$CTRL" 'qa-review'; then
   fail "lint MISSED a cap rule that stops naming qa-review"
