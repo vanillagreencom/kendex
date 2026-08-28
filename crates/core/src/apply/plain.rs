@@ -123,15 +123,34 @@ impl Plain {
     /// journal's pre-image exists to undo.
     pub(super) fn write(self, path: &Path, bytes: &[u8]) -> Result<()> {
         let io = |e| CoreError::io(path, e);
-        ensure_parent(path)?;
         let mut file = match self {
             Plain::Held { file, .. } => file,
-            Plain::Create => create_new(path).map_err(|error| classify(path, error))?,
+            Plain::Create => create_exclusively(path)?,
         };
         file.set_len(0).map_err(io)?;
         file.rewind().map_err(io)?;
         file.write_all(bytes).map_err(io)?;
         file.flush().map_err(io)
+    }
+}
+
+/// Create the file, and the directory it needs, in the order that keeps
+/// `PlanStale` honest.
+///
+/// The exclusive create comes first, so a name somebody else won is
+/// refused before anything is made — `PlanStale` is the rollback's proof
+/// that the failing op ran nothing, and a directory left behind would make
+/// it a lie. Only a missing parent sends us back to make one, and after
+/// that the op HAS mutated, so a second failure is reported as itself
+/// however it looks.
+fn create_exclusively(path: &Path) -> Result<fs::File> {
+    match create_new(path) {
+        Ok(file) => Ok(file),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            ensure_parent(path)?;
+            create_new(path).map_err(|error| CoreError::io(path, error))
+        }
+        Err(error) => Err(classify(path, error)),
     }
 }
 
@@ -164,8 +183,14 @@ fn classify(path: &Path, error: std::io::Error) -> CoreError {
 }
 
 /// Whether this open failure says the thing at the path is not the thing
-/// the plan looked at: gone, arrived, become a link, become a directory,
-/// or a parent that stopped being one.
+/// the plan looked at.
+///
+/// Every way a swap shows up, rather than the ones that came to mind: the
+/// file gone or arrived, a link, a directory, a parent that stopped being
+/// one, and the kinds `open(2)` refuses outright — a socket answers `ENXIO`
+/// on Linux and `EOPNOTSUPP` on the BSDs, a device whose driver is absent
+/// answers `ENODEV`. A permission or a full disk is not on the list and
+/// never should be: those are the file, said honestly.
 fn moved_under_the_plan(error: &std::io::Error) -> bool {
     use std::io::ErrorKind;
     matches!(error.kind(), ErrorKind::NotFound | ErrorKind::AlreadyExists) || moved_by_errno(error)
@@ -177,7 +202,14 @@ fn moved_under_the_plan(error: &std::io::Error) -> bool {
 #[cfg(unix)]
 fn moved_by_errno(error: &std::io::Error) -> bool {
     use rustix::io::Errno;
-    let moved = [Errno::LOOP, Errno::ISDIR, Errno::NOTDIR];
+    let moved = [
+        Errno::LOOP,
+        Errno::ISDIR,
+        Errno::NOTDIR,
+        Errno::NXIO,
+        Errno::NODEV,
+        Errno::OPNOTSUPP,
+    ];
     error
         .raw_os_error()
         .is_some_and(|code| moved.iter().any(|errno| errno.raw_os_error() == code))

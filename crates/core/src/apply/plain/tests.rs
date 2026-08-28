@@ -331,3 +331,100 @@ fn a_refused_write_leaves_no_directory_behind() {
         .unwrap();
     assert_eq!(fs::read_to_string(&nested).unwrap(), "[env]\n");
 }
+
+/// `PlanStale` is the rollback's proof that the failing op ran nothing,
+/// so the absent half proves the name is free BEFORE it builds anything.
+/// The exclusive create runs first; only a missing parent sends it back to
+/// make one, and a failure after that is reported as a failure rather than
+/// as a stale plan, because by then the op HAS mutated and a rollback that
+/// skipped its paths would leave the directories behind.
+///
+/// Every refusal that can be constructed is one where nothing was made,
+/// and each is checked for exactly that. The one that mutates and then
+/// fails needs a writer to win the name inside the call, which no test can
+/// schedule — it is closed by the ordering, not by a control.
+#[test]
+fn the_absent_half_refuses_before_it_makes_anything() {
+    let (tmp, _, elsewhere) = fixture();
+    let absent = Base::absent().plain_pre();
+
+    // Somebody already holds the name.
+    let taken = tmp.path().join("taken/kendex.settings.toml");
+    fs::create_dir_all(taken.parent().unwrap()).unwrap();
+    fs::write(&taken, "someone else\n").unwrap();
+    let refused = open(&taken, &absent)
+        .unwrap()
+        .expect("a plain precondition")
+        .write(&taken, b"[env]\n")
+        .unwrap_err();
+    assert!(
+        matches!(refused, CoreError::PlanStale { .. }),
+        "{refused:?}"
+    );
+    assert_eq!(fs::read_to_string(&taken).unwrap(), "someone else\n");
+
+    // A dangling link holds it — exclusive creation refuses one too.
+    let linked = tmp.path().join("linked/kendex.settings.toml");
+    fs::create_dir_all(linked.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(elsewhere.join("nowhere"), &linked).unwrap();
+    let refused = open(&linked, &absent)
+        .unwrap()
+        .expect("a plain precondition")
+        .write(&linked, b"[env]\n")
+        .unwrap_err();
+    assert!(
+        matches!(refused, CoreError::PlanStale { .. }),
+        "{refused:?}"
+    );
+
+    // A parent that is a file, so no chain could be built here at all.
+    let under_a_file = taken.join("beneath");
+    let refused = open(&under_a_file, &absent)
+        .unwrap()
+        .expect("a plain precondition")
+        .write(&under_a_file, b"[env]\n")
+        .unwrap_err();
+    assert!(
+        matches!(refused, CoreError::PlanStale { .. }),
+        "{refused:?}"
+    );
+
+    // Nothing above was built by a refusal.
+    assert!(!tmp.path().join("not-built").exists());
+    // And the write that is not refused does build its chain.
+    let fresh = tmp.path().join("not-built/deeper/kendex.settings.toml");
+    open(&fresh, &absent)
+        .unwrap()
+        .expect("a plain precondition")
+        .write(&fresh, b"[env]\n")
+        .unwrap();
+    assert_eq!(fs::read_to_string(&fresh).unwrap(), "[env]\n");
+}
+
+/// The errnos a swap can produce, each meaning the thing at the path is
+/// not the thing the plan looked at. A socket is the one that reaches a
+/// live shape: `open(2)` refuses it, and reporting that as an ordinary
+/// failure makes the rollback restore paths nothing touched.
+#[test]
+fn every_way_a_swap_shows_up_reads_as_a_stale_plan() {
+    let (tmp, path, _) = fixture();
+    fs::write(&path, "[env]\n").unwrap();
+    let pre = Base::of("[env]\n").plain_pre();
+
+    let socket = tmp.path().join("a-socket");
+    std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    assert!(
+        matches!(open(&socket, &pre), Err(CoreError::PlanStale { .. })),
+        "a socket where the file was is the world moving, not a failure"
+    );
+
+    let dir = tmp.path().join("a-dir");
+    fs::create_dir(&dir).unwrap();
+    assert!(matches!(open(&dir, &pre), Err(CoreError::PlanStale { .. })));
+
+    let under_a_file = path.join("beneath");
+    assert!(matches!(
+        open(&under_a_file, &pre),
+        Err(CoreError::PlanStale { .. })
+    ));
+}
