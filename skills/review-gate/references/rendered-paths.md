@@ -12,9 +12,9 @@ break**, **The trap: reviewer path exclusion**, and **Reviewer classes**.
 
 | | Byte-pinned vendored tree | Harness render |
 |---|---|---|
-| What reverts a local edit | Nothing automatic; the pin turns red | The next `kendex refresh`, wholesale and silently |
-| A pin or checksum manifest | Exists, and is the point | Does not exist |
-| A local fix | Wrong, and visible | Reads as closed while the bytes go back |
+| What a local edit meets | Nothing automatic; the pin turns red | The next `kendex refresh` holds the item as a conflict and plans no write |
+| A pin or checksum manifest | Exists, and is the point | Does not exist — the refresh's own conflict row is the red |
+| A local fix | Wrong, and visible | Wedges that item's refresh until someone forks it or discards the edit |
 | The upstream remedy | Re-vendor | An issue in the catalog repo, then re-render |
 | Blast radius of one thread | This repo | Every consuming repo on its next refresh |
 
@@ -106,7 +106,7 @@ Four shapes the glob must not take:
   output, and — outside every dot-directory, so the candidate list cannot see
   it — the root `opencode.json` or `opencode.jsonc`. This is the shape that
   most needs keeping out. The template asserts that nothing under the glob is
-  edited here and that a refresh overwrites it wholesale; over a merged path
+  edited here and that an edit wedges the next refresh; over a merged path
   both are false, and the flat no-carve-out rule would then forbid raising a
   correctness or security defect over content this repo owns and can fix.
 

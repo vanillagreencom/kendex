@@ -22,12 +22,14 @@ This tree is `kendex refresh` OUTPUT, rendered from the catalogs `kendex.toml`
 names. The same reviewers see this content in the catalog repo before it
 arrives here.
 
-Nothing under this glob is edited in this repo. The next refresh overwrites
-these files wholesale, so a local fix reads as closed while the bytes go back.
-No pin covers them and nothing turns red on drift. Both statements are about
-the files this glob names and nothing else — a settings or config file kendex
-merges its own entries into is repo-owned, and the rules below never apply to
-one.
+Nothing under this glob is edited in this repo, and an edit here does not
+land. The next refresh reads the disk, finds bytes no apply wrote, and holds
+that item as a conflict — "edited on disk since install — keep it as a fork,
+or apply with edits discarded" — planning no write until someone takes one of
+those exits. A local fix does not reach the repos that share this render; it
+wedges this one's next refresh. That is what this glob names and nothing else:
+a settings or config file kendex merges its own entries into is repo-owned,
+and the rules below never apply to one.
 
 **Route every finding by where its fix would land, and pick the surface from
 that.**
