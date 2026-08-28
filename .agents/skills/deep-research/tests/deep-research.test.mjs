@@ -365,6 +365,15 @@ test("a key present only in .env is ignored; .env.local and process env keep the
   });
   assert.notEqual(emptied.status, 0);
   assert.match(emptied.stderr, /EXA_API_KEY is required/);
+
+  // Within the file itself, dotenv last-wins: a repeated key's LATER line
+  // replaces the earlier one — the first assignment must not block its own
+  // reassignment the way a pre-existing process value does.
+  const repeatedOut = join(dir, "repeated.md");
+  writeFileSync(join(dir, ".env.local"), `EXA_MOCK_RESPONSE_FILE=${dotenvMock}\nEXA_MOCK_RESPONSE_FILE=${localMock}\n`);
+  const repeated = spawnSync(process.execPath, [script, "report", "q", "--output", repeatedOut], { encoding: "utf8", env, cwd: dir });
+  assert.equal(repeated.status, 0, repeated.stderr);
+  assert.match(readFileSync(repeatedOut, "utf8"), /FromEnvLocal/);
 });
 
 test("resolves EXA_API_KEY op:// references with op CLI", () => {

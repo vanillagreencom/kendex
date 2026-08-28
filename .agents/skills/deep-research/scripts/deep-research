@@ -72,11 +72,15 @@ function helpPayload() {
 async function loadEnvFile(path) {
   if (!existsSync(path)) return;
   const text = await readFile(path, "utf8");
+  // PRESENCE at ENTRY, not truthiness and not mid-parse state: a
+  // pre-existing process value (exported-but-empty included) beats the
+  // file per key, while the file's own lines keep dotenv last-wins among
+  // themselves — checking process.env inside the loop let a key's first
+  // line block its own later reassignment.
+  const fromProcess = new Set(Object.keys(process.env));
   for (const line of text.split(/\r?\n/)) {
     const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
-    // PRESENCE, not truthiness: an exported-but-empty value is a real
-    // assignment and beats the file, matching every other resolver.
-    if (!match || process.env[match[1]] !== undefined) continue;
+    if (!match || fromProcess.has(match[1])) continue;
     let value = match[2];
     if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
     process.env[match[1]] = value;
