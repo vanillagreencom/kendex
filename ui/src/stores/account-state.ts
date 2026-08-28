@@ -15,16 +15,16 @@ export interface AccountIdentity {
  * credential we know the owner of but could not confirm; `expired` is one
  * the server no longer accepts.
  *
- * The states that hold a credential carry `signIn`, the name core minted
- * for that sign-in. It arrives with the credential and comes back on
- * every read of it, so two answers can be compared for whether they are
- * about the same sign-in. */
+ * The states about a credential carry `signIn`, the name core minted for
+ * that sign-in. It arrives with the credential and comes back on every
+ * read of it, so two answers can be compared for whether they are about
+ * the same one. */
 export type AccountState =
   | { kind: "loading" }
   | { kind: "signed-out" }
   | { kind: "signed-in"; identity: AccountIdentity | null; signIn: string }
   | { kind: "offline"; identity: AccountIdentity; signIn: string }
-  | { kind: "expired" };
+  | { kind: "expired"; signIn: string };
 
 /** Every state but the one that means "not read yet". */
 export type SettledAccount = Exclude<AccountState, { kind: "loading" }>;
@@ -45,18 +45,63 @@ export const asOffline = (account: AccountState): SettledAccount | null =>
     ? { kind: "offline", identity: account.identity, signIn: account.signIn }
     : null;
 
-/** Whether two answers are about the same sign-in.
+/** Which sign-in a state is about, or null when that is not known.
  *
- * Core mints `signIn` when a sign-in is committed, carries it through
- * every token rotation, and replaces it only when another sign-in
- * replaces the credential. So this asks the question the caller actually
- * has, which is whether the credential changed hands, rather than
- * inferring it from the identity: a rename leaves the same credential,
- * and signing in again as the same person leaves a different one under
- * the same name. Neither is visible in what a read says about who the
- * account belongs to. */
+ *  `Credential::sign_in` is `#[serde(default)]` in core so a credential
+ *  stored before the field existed still parses instead of signing that
+ *  person out, and such a credential reads back with an empty name. Empty
+ *  therefore means not-yet-named, never named-empty. It is the absence of
+ *  an answer, so it is never equal to another absence: two credentials
+ *  that both predate the field are not thereby the same sign-in. */
+const signInOf = (account: AccountState): string | null =>
+  "signIn" in account && account.signIn !== "" ? account.signIn : null;
+
+/* The two questions below both follow one rule: only a KNOWN difference is
+ * a difference, and only a KNOWN match is a match. Neither is the negation
+ * of the other, and their unknown branches deliberately disagree, because
+ * each takes the answer that is safe for its own question.
+ *
+ * `sameCredential` asks whether this is the credential already held, and
+ * answering yes wrongly keeps another account's rows and lets an obsolete
+ * refusal end the wrong sign-in. Unknown must not claim sameness.
+ *
+ * `differentCredential` asks whether to overturn an expiry the server
+ * already ruled on, and answering yes wrongly hands back a submit under a
+ * credential known to be dead. Unknown must not overturn it.
+ *
+ * The cost of unknown falls on a credential stored before core named
+ * sign-ins, at most one machine-wide: every read counts as a change of
+ * hands, which refetches its rows, until the next sign-in names it. */
+
+/** Whether two answers are known to be about the same sign-in. */
 export const sameCredential = (
   held: AccountState,
   read: AccountState,
-): boolean =>
-  hasCredential(held) && hasCredential(read) && held.signIn === read.signIn;
+): boolean => {
+  if (!hasCredential(held) || !hasCredential(read)) return false;
+  const before = signInOf(held);
+  return before !== null && before === signInOf(read);
+};
+
+/** Whether two answers are known to be about different sign-ins. */
+export const differentCredential = (
+  held: AccountState,
+  read: AccountState,
+): boolean => {
+  const before = signInOf(held);
+  const now = signInOf(read);
+  return before !== null && now !== null && before !== now;
+};
+
+/** Whether a settled read leaves a standing expiry where it is.
+ *
+ *  A read that finds no credential is the refusal's own doing, and one
+ *  that could not reach the server knows less than the server already
+ *  said: neither takes the verdict back. The exception is an offline
+ *  answer about a credential known to be a different one, which some
+ *  other process installed; the verdict was about the sign-in it named
+ *  and says nothing about this one. */
+export const keepsExpiry = (held: AccountState, read: AccountState): boolean =>
+  held.kind === "expired" &&
+  (read.kind === "signed-out" ||
+    (read.kind === "offline" && !differentCredential(held, read)));

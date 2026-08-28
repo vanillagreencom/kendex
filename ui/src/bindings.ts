@@ -381,7 +381,7 @@ export type AccountCallRefused = { kind: "expired"; message: string } | { kind: 
  *  What the account surfaces render, every one of them settled: the UI
  *  holds its own "not read yet" until the first answer comes back.
  * 
- *  The states that hold a credential carry `sign_in`, the name of the
+ *  The states about a credential carry `sign_in`, the name of the
  *  sign-in they were read under. It is [`Credential::sign_in`]: minted
  *  once when a sign-in is committed, carried through every rotation, and
  *  replaced only by another sign-in. A caller holding an earlier answer
@@ -394,7 +394,7 @@ export type AccountState = { state: "signed-out" } | { state: "signed-in"; ident
 /**  The server could not be asked; the identity is the last good fetch. */
 { state: "offline"; identity: Identity; sign_in: string } | 
 /**  The credential is dead server-side — signing in again is the fix. */
-{ state: "expired" };
+{ state: "expired"; sign_in: string };
 
 export type AccountStatus = {
 	state: AccountState,

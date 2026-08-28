@@ -7,6 +7,7 @@ import {
   BOB,
   fresh,
   load,
+  OTHER_SIGN_IN,
   SIGN_IN,
   serves,
 } from "@/test/account-store";
@@ -48,7 +49,7 @@ describe("a call refused because the sign-in expired", () => {
       submissions: [],
     });
     met();
-    expect(account()).toEqual({ kind: "expired" });
+    expect(account()).toEqual({ kind: "expired", signIn: SIGN_IN });
     expect(useAccountStore.getState().submissions).toBeNull();
   });
 
@@ -61,7 +62,7 @@ describe("a call refused because the sign-in expired", () => {
     // says signed out. What the command learned has to outlive it.
     answers({ state: "signed-out" });
     await load();
-    expect(account()).toEqual({ kind: "expired" });
+    expect(account()).toEqual({ kind: "expired", signIn: SIGN_IN });
   });
 
   // KEN-742 leaves the credential, and its cached identity, where the
@@ -74,14 +75,61 @@ describe("a call refused because the sign-in expired", () => {
       account: { kind: "signed-in", identity: ADA, signIn: SIGN_IN },
     });
     met();
-    expect(account()).toEqual({ kind: "expired" });
+    expect(account()).toEqual({ kind: "expired", signIn: SIGN_IN });
 
     serves({ kind: "offline", identity: ADA, signIn: SIGN_IN });
     await load();
 
-    expect(account()).toEqual({ kind: "expired" });
+    expect(account()).toEqual({ kind: "expired", signIn: SIGN_IN });
     // What the submit dialog gates its Submit button on.
     expect(hasCredential(account())).toBe(false);
+  });
+
+  // The verdict was about the sign-in it named. A credential another
+  // process installed is not that one, and holding the expiry over it
+  // leaves a live sign-in reading as dead with Submit withheld.
+  it("lets go of it for a credential known to be a different one", async () => {
+    useAccountStore.setState({
+      account: { kind: "signed-in", identity: ADA, signIn: SIGN_IN },
+    });
+    met();
+
+    serves({ kind: "offline", identity: BOB, signIn: OTHER_SIGN_IN });
+    await load();
+
+    expect(account()).toEqual({
+      kind: "offline",
+      identity: BOB,
+      signIn: OTHER_SIGN_IN,
+    });
+    expect(hasCredential(account())).toBe(true);
+  });
+
+  // An unnamed credential is not known to be a different one, and an
+  // answer that cannot see the server does not get to overturn one that
+  // could on a difference nobody established.
+  it("keeps it when the offline answer names no sign-in", async () => {
+    useAccountStore.setState({
+      account: { kind: "signed-in", identity: ADA, signIn: SIGN_IN },
+    });
+    met();
+
+    serves({ kind: "offline", identity: ADA, signIn: "" });
+    await load();
+
+    expect(account()).toEqual({ kind: "expired", signIn: SIGN_IN });
+  });
+
+  it("keeps it when neither side names one", async () => {
+    useAccountStore.setState({
+      account: { kind: "signed-in", identity: ADA, signIn: "" },
+    });
+    met();
+
+    serves({ kind: "offline", identity: ADA, signIn: "" });
+    await load();
+
+    expect(account()).toEqual({ kind: "expired", signIn: "" });
   });
 
   it("drops rows already out for the credential it ended", async () => {
@@ -248,7 +296,7 @@ describe("a call refused because the sign-in expired", () => {
       error: expired,
     } as Awaited<ReturnType<typeof commands.mineSubmissions>>);
     await useAccountStore.getState().loadSubmissions();
-    expect(account()).toEqual({ kind: "expired" });
+    expect(account()).toEqual({ kind: "expired", signIn: SIGN_IN });
     expect(useAccountStore.getState().submissions).toBeNull();
   });
 });

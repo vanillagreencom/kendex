@@ -80,7 +80,10 @@ it("moves the account to expired on a poll tick that meets a dead sign-in", asyn
   await settle();
 
   expect(commands.mineSubmissions).toHaveBeenCalledTimes(2);
-  expect(useAccountStore.getState().account).toEqual({ kind: "expired" });
+  expect(useAccountStore.getState().account).toEqual({
+    kind: "expired",
+    signIn: SIGN_IN,
+  });
   expect(useAccountStore.getState().submissions).toBeNull();
 });
 
@@ -94,7 +97,10 @@ it("stops polling once a tick has found the sign-in expired", async () => {
   } as never);
   mount(<MineTab />);
   await settle();
-  expect(useAccountStore.getState().account).toEqual({ kind: "expired" });
+  expect(useAccountStore.getState().account).toEqual({
+    kind: "expired",
+    signIn: SIGN_IN,
+  });
 
   // The interval itself, not the store guard behind it: without the
   // cleanup, or with the effect no longer keyed to holding a credential,

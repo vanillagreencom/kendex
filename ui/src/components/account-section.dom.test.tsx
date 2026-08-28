@@ -100,7 +100,7 @@ const press = async (host: HTMLElement, label: string) => {
 const SETTLED: [string, AccountState][] = [
   ["signed-in", { kind: "signed-in", identity: ADA, signIn: SIGN_IN }],
   ["signed-out", { kind: "signed-out" }],
-  ["expired", { kind: "expired" }],
+  ["expired", { kind: "expired", signIn: SIGN_IN }],
   ["offline", { kind: "offline", identity: ADA, signIn: SIGN_IN }],
 ];
 
@@ -183,7 +183,7 @@ describe("the state the section draws", () => {
   // The other half of that bug: `hasCredential` is false for expired, so a
   // rejected credential drew as a plain signed-out account.
   it("says a rejected credential was rejected, not signed out", () => {
-    const host = show({ account: { kind: "expired" } });
+    const host = show({ account: { kind: "expired", signIn: SIGN_IN } });
     expect(host.textContent).toContain(ACCOUNT_EXPIRED_TITLE);
     expect(host.textContent).not.toContain(ACCOUNT_SIGNED_OUT_NOTE);
     expect(offered(host)).toEqual([ACCOUNT_SIGN_IN_AGAIN_LABEL]);
@@ -297,7 +297,7 @@ describe("signing in and out", () => {
   });
 
   it("starts it again from a credential the server rejected", async () => {
-    const host = show({ account: { kind: "expired" } });
+    const host = show({ account: { kind: "expired", signIn: SIGN_IN } });
     await press(host, ACCOUNT_SIGN_IN_AGAIN_LABEL);
     expect(act.signIn).toHaveBeenCalledTimes(1);
   });

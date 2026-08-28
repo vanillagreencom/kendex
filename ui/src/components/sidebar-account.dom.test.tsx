@@ -59,7 +59,7 @@ const spoken = (host: HTMLElement): string =>
 const SETTLED: [string, AccountState][] = [
   ["signed-in", { kind: "signed-in", identity: ADA, signIn: SIGN_IN }],
   ["signed-out", { kind: "signed-out" }],
-  ["expired", { kind: "expired" }],
+  ["expired", { kind: "expired", signIn: SIGN_IN }],
   ["offline", { kind: "offline", identity: ADA, signIn: SIGN_IN }],
 ];
 
@@ -93,7 +93,9 @@ describe("what the account row draws", () => {
   });
 
   it("asks for a fresh sign-in when the credential is expired", () => {
-    expect(seen(show({ kind: "expired" }))).toBe(ACCOUNT_SIGN_IN_AGAIN_LABEL);
+    expect(seen(show({ kind: "expired", signIn: SIGN_IN }))).toBe(
+      ACCOUNT_SIGN_IN_AGAIN_LABEL,
+    );
   });
 
   it("shows the name and its initial when signed in", () => {
@@ -195,7 +197,7 @@ describe("the sentence behind each row", () => {
       ACCOUNT_ROW_TITLE,
     ],
     ["signed-out", { kind: "signed-out" }, ACCOUNT_ROW_TITLE],
-    ["expired", { kind: "expired" }, ACCOUNT_EXPIRED_TITLE],
+    ["expired", { kind: "expired", signIn: SIGN_IN }, ACCOUNT_EXPIRED_TITLE],
     [
       "offline",
       { kind: "offline", identity: ADA, signIn: SIGN_IN },

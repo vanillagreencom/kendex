@@ -68,19 +68,19 @@ describe("the account state a read settles on", () => {
       signIn: SIGN_IN,
     });
 
-    answers({ state: "expired" });
+    answers({ state: "expired", sign_in: SIGN_IN });
     await load();
-    expect(account()).toEqual({ kind: "expired" });
+    expect(account()).toEqual({ kind: "expired", signIn: SIGN_IN });
   });
 
   it("keeps the expired explanation on the read that follows it", async () => {
-    answers({ state: "expired" });
+    answers({ state: "expired", sign_in: SIGN_IN });
     await load();
     // Answering expired is what clears the credential, so the next read
     // finds none. The explanation has to outlive that read.
     answers({ state: "signed-out" });
     await load();
-    expect(account()).toEqual({ kind: "expired" });
+    expect(account()).toEqual({ kind: "expired", signIn: SIGN_IN });
 
     // Signing in is what takes it off the screen.
     answers({ state: "signed-in", identity: ADA, sign_in: SIGN_IN });
@@ -113,9 +113,9 @@ describe("the account state a read settles on", () => {
   });
 
   it("is expired when the credential is no longer accepted", async () => {
-    serves({ kind: "expired" });
+    serves({ kind: "expired", signIn: SIGN_IN });
     await load();
-    expect(account()).toEqual({ kind: "expired" });
+    expect(account()).toEqual({ kind: "expired", signIn: SIGN_IN });
   });
 });
 
@@ -412,6 +412,24 @@ describe("what a read compares to decide the credential changed hands", () => {
     expect(useAccountStore.getState().submissions).toBeNull();
   });
 
+  // Core defaults `sign_in` so a credential stored before the field
+  // existed still parses instead of signing that person out, and it reads
+  // back empty. Empty is the absence of an answer: two such credentials
+  // are unrelated, and calling them one sign-in would keep the first
+  // account's rows under the second.
+  it("counts a change of hands between two unnamed credentials", async () => {
+    expect(await heldThenRead(signedIn(ADA, ""), signedIn(BOB, ""))).toBe(1);
+    expect(useAccountStore.getState().submissions).toBeNull();
+  });
+
+  it("counts one even where nothing else about them differs", async () => {
+    expect(await heldThenRead(signedIn(ADA, ""), signedIn(ADA, ""))).toBe(1);
+  });
+
+  it("counts one when a named credential replaces an unnamed one", async () => {
+    expect(await heldThenRead(signedIn(ADA, ""), signedIn(ADA))).toBe(1);
+  });
+
   it("counts nothing when the same sign-in is read again", async () => {
     expect(await heldThenRead(signedIn(ADA), signedIn(ADA))).toBe(0);
     expect(useAccountStore.getState().submissions).toEqual([ROW]);
@@ -603,6 +621,6 @@ describe("which states go looking for submissions", () => {
 
   it("does not ask once it is signed out or expired", async () => {
     expect(await asks({ kind: "signed-out" })).toBe(false);
-    expect(await asks({ kind: "expired" })).toBe(false);
+    expect(await asks({ kind: "expired", signIn: SIGN_IN })).toBe(false);
   });
 });

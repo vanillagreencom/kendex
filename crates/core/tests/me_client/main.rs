@@ -227,6 +227,22 @@ fn a_read_answers_with_the_sign_in_it_was_read_under() {
     }
 }
 
+/// The expiry names the sign-in the server refused, so a caller holding it
+/// can tell that verdict from one about a credential installed since.
+#[test]
+fn an_expiry_answers_with_the_sign_in_the_server_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = MemoryStore::signed_in();
+    let fetch = Canned::new(vec![
+        ok(401, None, ""),
+        ok(400, None, r#"{"error":"invalid_grant"}"#),
+    ]);
+    match me::load(&env_in(dir.path()), &fetch, &store).expect("load") {
+        AccountState::Expired { sign_in } => assert_eq!(sign_in, ADA),
+        other => panic!("expected expired, got {other:?}"),
+    }
+}
+
 /// A read the server could not answer serves the cached identity, and it
 /// belongs to the sign-in that was installed when the read began.
 #[test]
@@ -320,7 +336,7 @@ fn a_dead_refresh_grant_reads_as_expired() {
         ok(400, None, r#"{"error":"invalid_grant"}"#),
     ]);
     let state = me::load(&env_in(dir.path()), &fetch, &store).expect("load");
-    assert_eq!(state, AccountState::Expired);
+    assert!(matches!(state, AccountState::Expired { .. }));
     assert!(
         store.load().expect("load").is_none(),
         "a dead credential is not kept for endless retries"
@@ -341,10 +357,10 @@ fn an_expired_credential_drops_the_cached_identity() {
         ok(401, None, r#"{"error":"invalid_token"}"#),
         ok(400, None, r#"{"error":"invalid_grant"}"#),
     ]);
-    assert_eq!(
+    assert!(matches!(
         me::load(&env, &dead, &store).expect("load"),
-        AccountState::Expired
-    );
+        AccountState::Expired { .. }
+    ));
     assert!(
         !cache.exists(),
         "the next sign-in must not inherit this account's identity"
@@ -366,7 +382,7 @@ fn a_rotation_the_server_still_rejects_reads_as_expired() {
         ok(401, None, r#"{"error":"invalid_token"}"#),
     ]);
     let state = me::load(&env, &fetch, &store).expect("load");
-    assert_eq!(state, AccountState::Expired);
+    assert!(matches!(state, AccountState::Expired { .. }));
     assert!(
         store.load().expect("load").is_none(),
         "a rotation the server refuses is not kept for endless retries"

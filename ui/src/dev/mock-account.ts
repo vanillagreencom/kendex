@@ -40,7 +40,7 @@ export const MOCK_ACCOUNTS: Record<SettledAccount["kind"], SettledAccount> = {
   "signed-out": SIGNED_OUT,
   "signed-in": SIGNED_IN,
   offline: { kind: "offline", identity: IDENTITY, signIn: SIGN_IN },
-  expired: { kind: "expired" },
+  expired: { kind: "expired", signIn: SIGN_IN },
 };
 
 /** A read that cannot be made is the fifth thing the store draws, so the
@@ -162,7 +162,7 @@ const wire = (account: SettledAccount): AccountStatus["state"] => {
     case "signed-out":
       return { state: "signed-out" };
     case "expired":
-      return { state: "expired" };
+      return { state: "expired", sign_in: account.signIn };
     case "offline":
       return {
         state: "offline",

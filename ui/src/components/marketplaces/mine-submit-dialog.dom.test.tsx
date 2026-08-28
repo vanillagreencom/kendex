@@ -173,7 +173,10 @@ describe("a submit that meets an expired sign-in", () => {
 
   it("moves the account to expired and drops the rows with it", async () => {
     await submit();
-    expect(useAccountStore.getState().account).toEqual({ kind: "expired" });
+    expect(useAccountStore.getState().account).toEqual({
+      kind: "expired",
+      signIn: SIGN_IN,
+    });
     expect(useAccountStore.getState().submissions).toBeNull();
   });
 

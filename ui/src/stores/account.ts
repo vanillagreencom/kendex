@@ -14,6 +14,7 @@ import {
   type AccountState,
   asOffline,
   hasCredential,
+  keepsExpiry,
   sameCredential,
 } from "./account-state";
 
@@ -128,16 +129,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       return;
     }
     const held = get().account;
-    // The server said this sign-in was dead. A read that finds no
-    // credential is that refusal's own doing, and one that could not
-    // reach the server knows less than what the server already said:
-    // neither takes the expiry back. The removal that fails leaves the
-    // credential and its cached identity in place, which is how an
-    // outage answers `offline` for a sign-in already known to be dead.
-    if (
-      held.kind === "expired" &&
-      (answer.ok.kind === "signed-out" || answer.ok.kind === "offline")
-    ) {
+    if (keepsExpiry(held, answer.ok)) {
       set(credentialEnded(held));
     } else if (sameCredential(held, answer.ok)) {
       // The same sign-in: named at last, or confirmed again.
@@ -240,10 +232,12 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
     // would end the one that replaced it.
     if (since !== handover) return;
     // Expiry is a credential ending, so there has to be one to end.
-    if (!hasCredential(get().account)) return;
+    const held = get().account;
+    if (!hasCredential(held)) return;
     // The next read says signed out where the refusal cleared the
     // credential, and meets the same dead sign-in and says expired where
-    // it could not. `load` keeps this state through either answer.
-    set(credentialEnded({ kind: "expired" }));
+    // it could not. `load` keeps this state through either answer, and
+    // the name says which sign-in the verdict was about.
+    set(credentialEnded({ kind: "expired", signIn: held.signIn }));
   },
 }));

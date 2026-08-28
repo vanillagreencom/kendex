@@ -28,7 +28,7 @@ pub struct Identity {
 /// What the account surfaces render, every one of them settled: the UI
 /// holds its own "not read yet" until the first answer comes back.
 ///
-/// The states that hold a credential carry `sign_in`, the name of the
+/// The states about a credential carry `sign_in`, the name of the
 /// sign-in they were read under. It is [`Credential::sign_in`]: minted
 /// once when a sign-in is committed, carried through every rotation, and
 /// replaced only by another sign-in. A caller holding an earlier answer
@@ -50,7 +50,9 @@ pub enum AccountState {
         sign_in: String,
     },
     /// The credential is dead server-side — signing in again is the fix.
-    Expired,
+    Expired {
+        sign_in: String,
+    },
 }
 
 /// The wire shape of GET /api/v1/me, exactly as the contract fixture says.
@@ -101,7 +103,9 @@ pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result
         // would find it keyed to this one and discard it unread.
         Err(CoreError::SignInExpired { .. }) => {
             cache.forget()?;
-            return Ok(AccountState::Expired);
+            return Ok(AccountState::Expired {
+                sign_in: issued_under,
+            });
         }
         Ok(authenticated) => (Ok(authenticated.response), authenticated.credential.sign_in),
         // Nothing came back, so the cache is the whole answer, and it
