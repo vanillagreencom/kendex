@@ -181,19 +181,24 @@ pub(super) fn plan_lock_write(
 /// anywhere in the file is never touched), and seeded comment blocks whose
 /// template improved are refreshed while provably unedited — gated by the
 /// lock's per-key ledger, which this plan carries forward on `new_lock`.
+///
+/// The notes go out before any of it: a shared key several packages give
+/// different defaults is worth saying whether or not this pass has a write
+/// to plan for it.
 pub(super) fn plan_settings_seed(
     scope: &Scope,
     state: &DesiredState,
     new_lock: &mut crate::lock::Lock,
     ops: &mut Vec<PlannedOp>,
     drift: &mut Vec<DriftRow>,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     let Scope::Project { root } = scope else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     if state.settings_env.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
+    let notes = crate::settings_seed::conflict_notes(&state.settings_env);
     let path = crate::settings_seed::settings_file_path(root);
     let file = path
         .file_name()
@@ -211,13 +216,13 @@ pub(super) fn plan_settings_seed(
             compared: None,
             also_in_the_way: Vec::new(),
         });
-        return Ok(());
+        return Ok(notes);
     }
     let current = crate::fs::read_if_exists(&path)?;
     let (text, added, updated) = match current.as_deref() {
         None => match crate::settings_seed::merge(None, &state.settings_env) {
             Some((text, added)) => (text, added, Vec::new()),
-            None => return Ok(()),
+            None => return Ok(notes),
         },
         Some(original) => {
             let (refreshed, updated) = crate::settings_seed::refresh_comments(
@@ -228,7 +233,7 @@ pub(super) fn plan_settings_seed(
             match crate::settings_seed::merge(Some(&refreshed), &state.settings_env) {
                 Some((text, added)) => (text, added, updated),
                 None if !updated.is_empty() => (refreshed, Vec::new(), updated),
-                None => return Ok(()),
+                None => return Ok(notes),
             }
         }
     };
@@ -248,5 +253,5 @@ pub(super) fn plan_settings_seed(
             bytes: text.into_bytes(),
         },
     });
-    Ok(())
+    Ok(notes)
 }

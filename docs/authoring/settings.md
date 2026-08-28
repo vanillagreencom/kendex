@@ -31,6 +31,11 @@ install rewrites a value. The presence check is deliberately wider than what
 the readers look at: an assignment of that key anywhere in the file, inside
 `[env]` or not, counts as present and suppresses the insert.
 
+Several packages may ship the same key. Where they agree on the default,
+nothing is said. Where they disagree, every plan and audit carries one note
+naming each owner and each default, and seeding still writes the first
+declaration in package-name order.
+
 Comment blocks are the one thing a later install may rewrite. The lock records,
 per key, the skill that seeded it and a hash of the comment block seeding last
 wrote. A revised template rewrites that block only while the on-disk text still

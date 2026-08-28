@@ -337,3 +337,50 @@ fn comment_hash_matches_v1s_algorithm() {
         format!("{h:016x}")
     });
 }
+
+/// One key from each named owner, spelled the way a template ships it.
+fn shipped(owners: &[(&str, &str)]) -> Vec<SeededEnv> {
+    owners
+        .iter()
+        .flat_map(|(owner, template)| seeded(template, owner))
+        .collect()
+}
+
+#[test]
+fn one_note_groups_every_owner_and_every_distinct_default() {
+    let notes = conflict_notes(&shipped(&[
+        ("alpha", "[env]\n# Wait.\nWAIT = \"900\"\n"),
+        ("beta", "[env]\n# Wait.\nWAIT = \"900\"\n"),
+        ("gamma", "[env]\n# Wait.\nWAIT = \"600\"\n"),
+    ]));
+    assert_eq!(
+        notes,
+        [
+            "kendex.settings.toml WAIT: packages ship different defaults — \"900\" (alpha, beta), \"600\" (gamma) — only alpha's is seeded, so set the value yourself if that is not the one you want"
+        ]
+    );
+}
+
+#[test]
+fn packages_agreeing_on_a_shared_key_say_nothing() {
+    let notes = conflict_notes(&shipped(&[
+        (
+            "alpha",
+            "[env]\n# Mode.\nMODE = \"enforce\"\n# Wait.\nWAIT = \"900\"\n",
+        ),
+        (
+            "beta",
+            "[env]\n# Mode.\nMODE = \"enforce\"\n# Wait.\nWAIT = \"900\"\n",
+        ),
+    ]));
+    assert!(notes.is_empty(), "{notes:?}");
+}
+
+#[test]
+fn a_key_only_one_package_ships_says_nothing() {
+    let notes = conflict_notes(&shipped(&[
+        ("alpha", "[env]\n# Depth.\nDEPTH = \"2\"\n"),
+        ("beta", "[env]\n# Width.\nWIDTH = \"3\"\n"),
+    ]));
+    assert!(notes.is_empty(), "{notes:?}");
+}

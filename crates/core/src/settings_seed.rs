@@ -272,6 +272,49 @@ pub fn merge(original: Option<&str>, entries: &[SeededEnv]) -> Option<(String, V
     Some((out, added))
 }
 
+/// What the plan says about keys several packages ship with different
+/// defaults: one line per key, naming every default and everyone who ships
+/// it. `merge` takes the first declaration and writes nothing about the
+/// others, so a disagreement about what a key should be is invisible
+/// anywhere else — and packages agreeing on a shared key, which is the
+/// ordinary case, say nothing at all.
+///
+/// Entry order is declaration order, so the leading owner of the leading
+/// default is the one `merge` takes.
+pub fn conflict_notes(entries: &[SeededEnv]) -> Vec<String> {
+    // Distinct defaults per key, each with its owners, both in declaration
+    // order; the key order is the file's, so the notes read stably.
+    let mut by_key: BTreeMap<&str, Vec<(String, Vec<&str>)>> = BTreeMap::new();
+    for seeded in entries {
+        let Some((line, _)) = seeded.entry.lines.split_last() else {
+            continue;
+        };
+        let Some(value) = crate::settings_template::decoded_value(line) else {
+            continue;
+        };
+        let defaults = by_key.entry(&seeded.entry.key).or_default();
+        match defaults.iter_mut().find(|(seen, _)| seen == &value) {
+            Some((_, owners)) => owners.push(&seeded.owner),
+            None => defaults.push((value, vec![&seeded.owner])),
+        }
+    }
+    by_key
+        .into_iter()
+        .filter(|(_, defaults)| defaults.len() > 1)
+        .map(|(key, defaults)| {
+            let seeded = defaults[0].1[0];
+            let shown: Vec<String> = defaults
+                .iter()
+                .map(|(value, owners)| format!("\"{value}\" ({})", owners.join(", ")))
+                .collect();
+            format!(
+                "{SETTINGS_FILE} {key}: packages ship different defaults — {} — only {seeded}'s is seeded, so set the value yourself if that is not the one you want",
+                shown.join(", ")
+            )
+        })
+        .collect()
+}
+
 /// The ledger records the added entries were seeded, each under the owner
 /// whose lines were written — the first declaration, as `merge` chose.
 pub fn record_seeds(

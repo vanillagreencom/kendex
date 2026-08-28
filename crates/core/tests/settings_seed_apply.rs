@@ -324,3 +324,78 @@ fn an_adoption_only_ledger_change_is_written_to_the_lock() {
         "the adopted record persisted"
     );
 }
+
+/// A project installing several skills, each shipping the `[env]` lines it
+/// is given. Skill names are the package-name order seeding resolves in.
+#[allow(clippy::unwrap_used)]
+fn many_owners(templates: &[(&str, &str)]) -> Fixture {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().to_path_buf();
+    let env = Env::fake(&home, FakeOs::Linux);
+    let project = home.join("dev/app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    let source = home.join("catalog");
+
+    let mut declared = String::new();
+    for (name, template) in templates {
+        let skill = source.join(format!("skills/{name}"));
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(
+            skill.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: does {name} things\n---\nBody.\n"),
+        )
+        .unwrap();
+        fs::write(skill.join("kendex.settings.toml.example"), template).unwrap();
+        declared.push_str(&format!("\n[skills.{name}]\nsource = \"cat\"\n"));
+    }
+    fs::write(
+        project.join("kendex.toml"),
+        format!(
+            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n{declared}",
+            source.display()
+        ),
+    )
+    .unwrap();
+
+    Fixture {
+        env,
+        scope: Scope::Project {
+            root: project.clone(),
+        },
+        project,
+        _tmp: tmp,
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_key_shipped_with_differing_defaults_gets_one_grouped_note() {
+    let f = many_owners(&[
+        ("alpha", "[env]\n# How long to wait.\nWAIT = \"900\"\n"),
+        ("beta", "[env]\n# How long to wait.\nWAIT = \"900\"\n"),
+        ("gamma", "[env]\n# How long to wait.\nWAIT = \"600\"\n"),
+    ]);
+    let notes = audit(&f.env, &f.scope).unwrap().notes;
+    let about: Vec<&String> = notes.iter().filter(|note| note.contains("WAIT")).collect();
+    assert_eq!(about.len(), 1, "{notes:?}");
+    // Every owner and every distinct default, in one line.
+    assert!(about[0].contains("\"900\" (alpha, beta)"), "{about:?}");
+    assert!(about[0].contains("\"600\" (gamma)"), "{about:?}");
+
+    // The note changes nothing: the first declaration is still what lands.
+    apply_now(&f);
+    let seeded = fs::read_to_string(f.project.join("kendex.settings.toml")).unwrap();
+    assert!(seeded.contains("WAIT = \"900\""), "{seeded}");
+    assert!(!seeded.contains("\"600\""), "{seeded}");
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_key_shipped_with_one_default_everywhere_is_silent() {
+    let f = many_owners(&[
+        ("alpha", "[env]\n# The gate.\nMODE = \"enforce\"\n"),
+        ("beta", "[env]\n# The gate.\nMODE = \"enforce\"\n"),
+    ]);
+    let notes = audit(&f.env, &f.scope).unwrap().notes;
+    assert!(!notes.iter().any(|note| note.contains("MODE")), "{notes:?}");
+}

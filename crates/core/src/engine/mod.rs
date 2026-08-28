@@ -155,7 +155,10 @@ fn plan_scope_once(
         &mut written,
     )?;
 
-    plan_settings_seed(scope, &state, &mut new_lock, &mut ops, &mut drift)?;
+    // Notes about the scope rather than about any one item: what the
+    // settings seed found, what the reserved-name move did, what the git
+    // posture changed.
+    let mut scope_notes = plan_settings_seed(scope, &state, &mut new_lock, &mut ops, &mut drift)?;
 
     // Trash ops all pass one guard: writes for this pass are already
     // planned, so anything still wanted is known, and no path goes to the
@@ -166,7 +169,6 @@ fn plan_scope_once(
     // kendex may take, and the desired state says whether a replacement is
     // coming — a hook nothing declares any more is retired outright, one
     // this pass could not render keeps what it has.
-    let mut moved_notes = Vec::new();
     let moved_out = pi_hooks_move::plan_move(
         env,
         scope,
@@ -178,7 +180,7 @@ fn plan_scope_once(
             ops: &mut ops,
             guard: &mut guard,
             config_edits: &mut config_edits,
-            notes: &mut moved_notes,
+            notes: &mut scope_notes,
         },
     )?;
     stale::stale_emitted(lock, &new_lock, &mut guard, &mut ops)?;
@@ -221,7 +223,7 @@ fn plan_scope_once(
     let kept = kept_members(scope, lock, &new_lock, &options.uninstalled_bundles);
     let repo_effects_leaving = repo_effects::leaving(env, scope, lock, &new_lock)?;
     plan_lock_write(env, scope, disk_lock, new_lock, &mut ops)?;
-    moved_notes.extend(scope_wide(scope, &mut ops)?);
+    scope_notes.extend(scope_wide(scope, &mut ops)?);
 
     let mut report = EngineReport {
         // Ahead of the moves out of `state` below, and read before `drift`
@@ -241,7 +243,7 @@ fn plan_scope_once(
         kept,
         safety,
     };
-    report.notes.extend(moved_notes);
+    report.notes.extend(scope_notes);
     unmanaged_rows(env, scope, &manifest, lock, &state.items, &mut report.drift)?;
     takeover::refuse_unsettled_takeover(options, &report.drift)?;
     Ok(report)
