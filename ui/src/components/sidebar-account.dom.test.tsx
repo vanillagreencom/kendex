@@ -162,6 +162,24 @@ describe("how the sentence behind a row reaches a person", () => {
     expect(document.activeElement).toBe(row);
   });
 
+  // A button announces something to press. The failed read has nothing to
+  // press, so the row that reports it must not claim otherwise while still
+  // being the only place its sentence lives.
+  it("offers no button to press from a failed read", () => {
+    const host = show({ kind: "loading" }, "no network");
+    expect(rowOf(host).tagName).not.toBe("BUTTON");
+    expect(rowOf(host).getAttribute("role")).not.toBe("button");
+    expect(host.querySelector("button")).toBeNull();
+    expect(spoken(host)).toBe("no network");
+  });
+
+  it.each(SETTLED)(
+    "keeps the %s row a button, since it acts",
+    (_s, account) => {
+      expect(rowOf(show(account)).tagName).toBe("BUTTON");
+    },
+  );
+
   it.each(SETTLED)("leaves no native tooltip on the %s row", (_s, account) => {
     const host = show(account, "keychain locked");
     expect(host.querySelectorAll("[title]")).toHaveLength(0);
@@ -210,8 +228,28 @@ describe("a read that failed after one that landed", () => {
 });
 
 describe("the letter on the avatar", () => {
+  const named = (name: string) => accountInitial({ name, githubLogin: null });
+
   it("takes the name's first letter", () => {
     expect(accountInitial(ADA)).toBe("A");
+  });
+
+  // The accent is part of the letter a reader sees, whether the server sent
+  // one character or a base letter and a combining mark.
+  it("keeps a combining mark with the letter it belongs to", () => {
+    expect(named("e\u0301lodie")).toBe("E\u0301");
+    expect(named("élodie")).toBe("É");
+  });
+
+  // Casing can widen what it is given: this one letter uppercases to two,
+  // and the circle holds one.
+  it("keeps one letter when casing expands it", () => {
+    expect(named("ßeta")).toBe("S");
+  });
+
+  // Every part of the sequence or none: half an emoji is a different emoji.
+  it("keeps a multi-part emoji whole", () => {
+    expect(named("👩‍🚀 crew")).toBe("👩‍🚀");
   });
 
   // A name the server sent as blank is no name at all, and the provider id
@@ -225,6 +263,6 @@ describe("the letter on the avatar", () => {
   });
 
   it("keeps a first character that is a surrogate pair whole", () => {
-    expect(accountInitial({ name: "𝔄da", githubLogin: null })).toBe("𝔄");
+    expect(named("𝔄da")).toBe("𝔄");
   });
 });

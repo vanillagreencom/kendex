@@ -31,16 +31,30 @@ import { useNavStore } from "@/stores/nav";
 const displayName = (identity: AccountIdentity | null): string =>
   identity?.name.trim() ?? "";
 
+/** What a reader would call the first character: a base letter with the
+ *  marks that belong to it, an emoji with every part of its sequence, and a
+ *  character outside the BMP whole rather than halved. Grapheme breaking
+ *  does not turn on the locale, so the default one answers the same
+ *  everywhere. */
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+const firstGrapheme = (text: string): string => {
+  for (const { segment } of graphemes.segment(text)) return segment;
+  return "";
+};
+
 /** The letter on the avatar, and nothing where there is no name to take it
- *  from. Split by code point so a first character outside the BMP survives
- *  being taken apart, and cased by the plain call rather than the
- *  locale-aware one, whose no-argument form is host-dependent by
- *  specification: the circle wants one glyph, the same everywhere. */
+ *  from.
+ *
+ *  Cased by the plain call rather than the locale-aware one, whose
+ *  no-argument form is host-dependent by specification. Segmented again
+ *  after casing because a case mapping can widen what it is given: the
+ *  German sharp s uppercases to two letters, and the circle holds one. */
 export function accountInitial(
   identity: AccountIdentity | null,
 ): string | null {
-  const [first] = [...displayName(identity)];
-  return first ? first.toUpperCase() : null;
+  const first = firstGrapheme(displayName(identity));
+  return first ? firstGrapheme(first.toUpperCase()) : null;
 }
 
 /** The circle in the icon lane. It carries a letter once the server has
@@ -64,8 +78,9 @@ function Avatar({ identity }: { identity: AccountIdentity | null }) {
  *  a screen reader. A native title reaches none of the last two, and on the
  *  failed-read row the sentence is the only place the reason lives.
  *
- *  A row with nowhere to go is still a trigger. It presses to nothing, which
- *  is the honest answer while the account cannot be read at all. */
+ *  A row with nowhere to go is still a trigger, and it is not a button:
+ *  a button that presses to nothing is an offer the app cannot keep, so the
+ *  inert row is a focusable line of text instead. */
 function Row({
   onClick,
   tip,
@@ -75,16 +90,26 @@ function Row({
   tip: string;
   children: ReactNode;
 }) {
+  const shape = cn(
+    SIDEBAR_ROW,
+    "w-full text-sm text-muted-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
+    onClick &&
+      "transition-colors hover:bg-sidebar-accent/40 hover:text-foreground",
+  );
   return (
     <Tooltip>
       <TooltipTrigger
         onClick={onClick}
-        className={cn(
-          SIDEBAR_ROW,
-          "w-full text-sm text-muted-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
-          onClick &&
-            "transition-colors hover:bg-sidebar-accent/40 hover:text-foreground",
-        )}
+        className={shape}
+        // The trigger's default element is a button, which is right for the
+        // rows that navigate and wrong for the one that does not. Focus is
+        // what the inert row needs, and a tab stop is not a press.
+        render={
+          onClick ? undefined : (
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: a tooltip trigger is reached by keyboard or its sentence reaches nobody, and ARIA has no interactive role for one that does not act
+            <div tabIndex={0} />
+          )
+        }
       >
         {children}
         <span className="sr-only">{tip}</span>
