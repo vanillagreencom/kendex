@@ -127,21 +127,21 @@ pub fn offer_goes_under(rows: &[&DriftRow], row: &DriftRow) -> bool {
 /// and copied into a terminal that is somebody else's command.
 pub fn adopt_command(env: &Env, item: &[&DriftRow]) -> Option<String> {
     let row = item.first()?;
+    // Core's answers, not a second reading of the cause, and asked for the
+    // item rather than a place at a time: a shape it cannot take stops the
+    // whole item, and so does a set of places whose copies disagree, since
+    // keeping is one move for all of it.
     let mut tools: Vec<HarnessId> = Vec::new();
-    for row in item {
-        // Core's answers, not a second reading of the cause. A shape it
-        // cannot take stops the whole item, since keeping is one move for
-        // all of it; a tool with nothing at its own place is a different
-        // thing and simply is not named, because the tool holding the
-        // folder keeps it for both.
-        let exits = kendex_core::engine::exits::for_row(env, &row.scope, row);
+    for exits in kendex_core::engine::exits::for_item(env, &row.scope, item) {
         if !exits.keep {
             return None;
         }
         // Every tool the move acts on, which is not always the tool the
         // row is about: a folder shared by hand is read by whoever links
         // at it, and each of those links is cleared. Named here, so the
-        // command says what it will touch.
+        // command says what it will touch. A tool with nothing at its own
+        // place is not named, because the tool holding the folder keeps it
+        // for both.
         if exits.enter {
             for harness in exits.tools {
                 if !tools.contains(&harness) {

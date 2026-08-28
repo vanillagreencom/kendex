@@ -50,8 +50,9 @@ pub struct RowExits {
     pub tools: Vec<HarnessId>,
 }
 
-/// What one row is waiting on. Read by the page through the audit and by
-/// the CLI directly, so the two never answer this differently.
+/// What one place is waiting on. `keep` here answers for that place alone;
+/// an item blocked at several is asked through `for_item`, the only one
+/// that can say whether one keep covers all of them.
 pub fn for_row(env: &Env, scope: &Scope, row: &DriftRow) -> RowExits {
     let enter = super::adopt::can_keep_for(env, scope, row.kind, &row.name, row.harness);
     RowExits {
@@ -74,13 +75,47 @@ fn tools_touched(env: &Env, scope: &Scope, row: &DriftRow) -> Vec<HarnessId> {
     shared.unwrap_or_else(|| vec![row.harness])
 }
 
+/// One item's blocked places, answered together. Keeping is a single move
+/// over all of them, and the capture refuses a set that disagrees — two
+/// tools holding copies that differ, a shared folder beside a copy held on
+/// its own. No place can answer that alone, so the item answers it for
+/// every place: a disagreement is a place that cannot be kept, which is
+/// what `keep` already means.
+pub fn for_item(env: &Env, scope: &Scope, rows: &[&DriftRow]) -> Vec<RowExits> {
+    let mut exits: Vec<RowExits> = rows.iter().map(|row| for_row(env, scope, row)).collect();
+    let Some(row) = rows.first() else {
+        return exits;
+    };
+    let mut tools: Vec<HarnessId> = Vec::new();
+    for harness in exits.iter().flat_map(|exit| &exit.tools) {
+        if !tools.contains(harness) {
+            tools.push(*harness);
+        }
+    }
+    if !super::adopt::can_keep_all(env, scope, row.kind, &row.name, &tools) {
+        for exit in &mut exits {
+            exit.keep = false;
+        }
+    }
+    exits
+}
+
 /// Every row a surface has to draw a decision for. A conflict of another
 /// kind — a revision clash, a source rebind — carries no exit of its own,
 /// and is here because it takes the exits off the rows beside it: left
 /// out, the page would offer an action the plan then refuses.
 pub fn for_rows(env: &Env, scope: &Scope, rows: &[DriftRow]) -> Vec<RowExits> {
-    rows.iter()
-        .filter(|row| row.dead_stop())
-        .map(|row| for_row(env, scope, row))
+    let blocked: Vec<&DriftRow> = rows.iter().filter(|row| row.dead_stop()).collect();
+    let mut items: Vec<(String, Vec<&DriftRow>)> = Vec::new();
+    for row in blocked {
+        let key = format!("{}:{}", row.kind.name(), row.name);
+        match items.iter_mut().find(|(at, _)| at == &key) {
+            Some((_, group)) => group.push(row),
+            None => items.push((key, vec![row])),
+        }
+    }
+    items
+        .iter()
+        .flat_map(|(_, group)| for_item(env, scope, group))
         .collect()
 }

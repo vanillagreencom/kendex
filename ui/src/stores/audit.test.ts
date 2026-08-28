@@ -461,3 +461,91 @@ describe("audit store run() actions", () => {
     expect(toast.success).not.toHaveBeenCalled();
   });
 });
+
+// An audit reads every scope over seconds while the page it started from
+// leaves its buttons live. A command that lands in between read its scope
+// later, so the audit's answer is already out of date when it arrives.
+describe("an audit that lands after a command it cannot answer for", () => {
+  const settled: AuditView = { ...emptyView, drift: [], plan: ["settled"] };
+  const stale: AuditView = { ...emptyView, drift: [], plan: ["stale"] };
+
+  beforeEach(() => {
+    useAuditStore.setState({
+      // A view to replace: a command's response lands into the scope it
+      // already holds.
+      views: [emptyView],
+      auditing: false,
+      error: null,
+      checkError: null,
+      busy: false,
+      auditedAt: null,
+      scopeCheckedAt: {},
+      backgroundFailureAnnounced: false,
+    });
+    vi.clearAllMocks();
+  });
+
+  const park = <T>() => {
+    let land: (value: T) => void = () => {};
+    const parked = new Promise<T>((resolve) => {
+      land = resolve;
+    });
+    return { parked, land: (value: T) => land(value) };
+  };
+
+  it("keeps the command's view rather than putting the row back", async () => {
+    const audit = park<{ status: "ok"; data: AuditView[] }>();
+    vi.mocked(commands.auditAll).mockReturnValue(
+      audit.parked as ReturnType<typeof commands.auditAll>,
+    );
+    vi.mocked(commands.removeItem).mockResolvedValue({
+      status: "ok",
+      data: settled,
+    });
+
+    const running = useAuditStore.getState().refresh();
+    await useAuditStore.getState().removeItem(globalScope, "hook", "lint");
+    audit.land({ status: "ok", data: [stale] });
+    await running;
+
+    expect(useAuditStore.getState().views).toEqual([settled]);
+    // Undated, so the next visit pays for a reading that can speak for
+    // what just happened instead of reusing one that cannot.
+    expect(useAuditStore.getState().auditedAt).toBeNull();
+  });
+
+  // A read that did not finish is not news about the state it left behind
+  // either: reported, it would mark a reading unconfirmed that a command
+  // has since confirmed.
+  it("drops a stale failure rather than calling the reading unchecked", async () => {
+    const audit = park<{ status: "error"; error: string }>();
+    vi.mocked(commands.auditAll).mockReturnValue(
+      audit.parked as ReturnType<typeof commands.auditAll>,
+    );
+    vi.mocked(commands.removeItem).mockResolvedValue({
+      status: "ok",
+      data: settled,
+    });
+
+    const running = useAuditStore.getState().refresh();
+    await useAuditStore.getState().removeItem(globalScope, "hook", "lint");
+    audit.land({ status: "error", error: "boom" });
+    await running;
+
+    expect(useAuditStore.getState().checkError).toBeNull();
+    expect(useAuditStore.getState().views).toEqual([settled]);
+  });
+
+  // The control: an audit nothing overtook is the answer, as it was.
+  it("installs an audit that no command overtook", async () => {
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "ok",
+      data: [stale],
+    });
+
+    await useAuditStore.getState().refresh();
+
+    expect(useAuditStore.getState().views).toEqual([stale]);
+    expect(useAuditStore.getState().auditedAt).not.toBeNull();
+  });
+});

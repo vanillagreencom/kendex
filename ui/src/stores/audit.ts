@@ -32,7 +32,17 @@ interface AuditState extends ItemActions {
 const AUDIT_FRESH_FOR_MS = 60_000;
 
 export const useAuditStore = create<AuditState>((set, get) => {
-  const run = auditRunner(set, get);
+  // Bumped whenever something newer than a running audit is installed. An
+  // audit reads every scope on the machine over seconds; a command that
+  // lands while one is in flight read its scope later than the audit did,
+  // so a response stamped before it must not be written over the top. Left
+  // unguarded, a row the person had just settled came back — dated fresh,
+  // and so kept for the whole freshness window, with a retry failing
+  // against work core had already done.
+  let generation = 0;
+  const run = auditRunner(set, get, () => {
+    generation += 1;
+  });
 
   // The audit in flight, and the one forced request waiting behind it.
   // These are the truth about what is running, not the `auditing` flag: the
@@ -42,12 +52,19 @@ export const useAuditStore = create<AuditState>((set, get) => {
   let queued: Promise<void> | null = null;
 
   const audit = async (): Promise<void> => {
+    const asked = generation;
     set({ auditing: true });
     try {
       // `settled` lands a rejected call as the same failed audit as a
       // returned refusal, which keeps Home's attention section off its
       // skeleton, the same as the scan.
       const response = await settled(commands.auditAll());
+      // Answered for a moment before something the reader did, so it
+      // answers for nothing now — the failure arm included, since a read
+      // that did not finish is not news about the state it left behind.
+      // `auditedAt` stays where it was, so the next visit pays for a read
+      // that can speak.
+      if (generation !== asked) return;
       if (response.status === "ok") {
         const now = Date.now();
         set({

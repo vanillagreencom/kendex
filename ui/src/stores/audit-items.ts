@@ -76,6 +76,10 @@ export function auditRunner(
     error?: string | null;
   }) => void,
   get: () => { views: AuditView[] },
+  /** Called once a command's fresher view is installed. An audit already
+   *  in flight read the same scope before this happened, so it can no
+   *  longer answer for it. */
+  settled: () => void,
 ): Run {
   const run: Run = async (action, opts) => {
     set({ busy: true });
@@ -91,6 +95,7 @@ export function auditRunner(
         views: keepUnreadable(views, replaceView(views, response.data)),
         error: null,
       });
+      settled();
       if (opts.successMessage) toast.success(opts.successMessage);
       await useScanStore.getState().refresh();
       return true;

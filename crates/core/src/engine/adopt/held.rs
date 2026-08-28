@@ -1,15 +1,19 @@
-//! Where a tool reads an adoptable item from, and whether it has one there.
+//! Where a tool reads an adoptable item from, whether it has one there,
+//! and whether the tools named together hold one copy or several.
 //!
 //! The question a surface asks before drawing a Keep, and the place the
 //! verb reads, answered here together — an offer naming a tool that has
-//! nothing would error the moment it was followed.
+//! nothing, or a set the capture would have to merge, would error the
+//! moment it was followed.
 
 use std::path::{Path, PathBuf};
 
 use crate::env::Env;
+use crate::error::{CoreError, Result};
 use crate::model::{HarnessId, ItemKind, Scope};
 
-use super::{destination, supports, usable};
+use super::capture::{Seen, look};
+use super::{already_managed, destination, hooks, supports, usable};
 
 // Where a tool reads an item, and which spelling of the toggled pair is
 // the one on disk. The question a surface asks and the place adoption
@@ -112,4 +116,116 @@ pub fn can_keep_for(
 
 fn there(path: &Path) -> bool {
     path.exists() || path.is_symlink()
+}
+
+/// Where an item's files sit, and what the capture would make of them.
+pub(super) struct Held {
+    pub(super) local_item: PathBuf,
+    pub(super) positions: Vec<(HarnessId, PathBuf)>,
+    pub(super) seen: Seen,
+}
+
+/// What the named tools hold where this item goes, read through every
+/// boundary the adoption applies: a position it cannot find, one kendex
+/// already manages, one carrying both spellings of a togglable name, and
+/// copies the tools disagree on all refuse here. `adopt` plans from this
+/// and `exits` asks it, so a Keep is never offered for a set the verb
+/// would then refuse.
+///
+/// `scope` is already canonical: positions come from the caller's scope
+/// while a link's target comes back resolved off disk (invariant 17).
+pub(super) fn read_positions(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    harnesses: &[HarnessId],
+) -> Result<Held> {
+    let local_item = destination(env, scope, kind, name)?;
+    let mut positions: Vec<(HarnessId, PathBuf)> = Vec::new();
+    for &harness in harnesses {
+        let Some(original) = position(env, scope, kind, name, harness) else {
+            return Err(CoreError::ItemNotInSource {
+                name: name.to_owned(),
+                source_name: format!("{} {}", harness.name(), kind.name()),
+            });
+        };
+        // Two tools reading one directory sit at one position, captured once.
+        if !positions.iter().any(|(_, path)| path == &original) {
+            positions.push((harness, original));
+        }
+    }
+    if positions.is_empty() {
+        return Err(CoreError::ItemNotInSource {
+            name: name.to_owned(),
+            source_name: "no tool was named to keep it for".to_owned(),
+        });
+    }
+    // Adoption takes what kendex did not write. A position it did write is
+    // already looked after, and capturing it would move an installation
+    // into the local source and rewrite the declaration around it — a
+    // catalog-tracked item quietly becoming a fork of itself. The page a
+    // keep was clicked on can be a minute old, and something else can have
+    // installed the item in between.
+    //
+    // A lock that cannot be read is not an empty one: read as empty, every
+    // installation on this machine would look like a stranger's files.
+    let owned: std::collections::BTreeSet<PathBuf> =
+        crate::lock::load(&crate::lock::lock_path(env, scope))?
+            .entries
+            .values()
+            .flat_map(|entry| crate::engine::owned::installed(env, scope, entry).files)
+            .collect();
+    // Where a position leads, not only where it sits: a link somebody made
+    // can point at another item's installation, and the capture moves what
+    // it points at.
+    // Anywhere an installation lives, not only its exact root: a link into
+    // a folder inside a managed skill, or at a folder holding managed
+    // installs, moves them just the same.
+    let managed = |path: &Path| {
+        let at = path.canonicalize();
+        let touches = |ours: &PathBuf, at: &Path| ours.starts_with(at) || at.starts_with(ours);
+        owned
+            .iter()
+            .any(|ours| touches(ours, path) || at.as_ref().is_ok_and(|at| touches(ours, at)))
+    };
+    if let Some((_, held)) = positions.iter().find(|(_, path)| managed(path)) {
+        return Err(already_managed(name, held));
+    }
+
+    // The offer withholds this shape, and so does the verb: a reader can
+    // name the item directly, and taking one spelling while the other
+    // stays leaves a file a later switch reads as kendex's own.
+    if let Some((_, at)) = positions.iter().find(|(_, at)| both_spellings(kind, at)) {
+        return Err(CoreError::TogglesDiffer {
+            name: name.to_owned(),
+            detail: crate::names::shown(&at.display().to_string()),
+        });
+    }
+
+    let seen = look(env, scope, kind, name, &positions, &local_item)?;
+    Ok(Held {
+        local_item,
+        positions,
+        seen,
+    })
+}
+
+/// Whether one keep could take every place named here. Keeping is a single
+/// move over all of them and the capture refuses a set that disagrees — two
+/// tools holding copies that differ, a shared folder beside a copy held on
+/// its own — which no place can answer alone. Asked through the same reader
+/// the adoption itself uses, so the offer and the action cannot drift apart.
+pub fn can_keep_all(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    harnesses: &[HarnessId],
+) -> bool {
+    // A hook is a script plus a registry entry, with no capture to refuse.
+    if hooks::supports(kind) {
+        return true;
+    }
+    read_positions(env, &scope.canonical(), kind, name, harnesses).is_ok()
 }

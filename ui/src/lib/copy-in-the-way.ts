@@ -49,18 +49,14 @@ export const keepSharedBody = (target: string, tools: string[]): string =>
   `${tools.join(" and ")} read this skill from ${target}. kendex moves the folder's content into its own keeping — the folder goes to the trash, where you can get it back — and points them at kendex's copy, so they stay in sync. Anything else pointing at the old folder stops working.`;
 export const replaceFilesConfirmTitle = (name: string): string =>
   `Replace ${name}?`;
-// One or two places read as themselves. Past that the summary is "<first>
-// +2 more", which spliced into a sentence reads as a fragment, so the
-// count carries it instead — every path is still on the row above, in full.
-export const replaceFilesConfirmBody = (
-  where: string,
-  count: number,
-): string => {
-  if (count > 2) {
-    return `Files at ${count} places move to the trash, and kendex installs what kendex.toml asks for instead.`;
-  }
-  const [verb, whose] = count > 1 ? ["move", "their"] : ["moves", "its"];
-  return `${where} ${verb} to the trash, and kendex installs what kendex.toml asks for in ${whose} place.`;
+// The places themselves are listed under this, one per line, so the
+// sentence agrees with a list rather than trying to hold it. A summary
+// spliced in here would truncate, and the confirm is the last thing read
+// before the files move.
+export const replaceFilesConfirmBody = (count: number): string => {
+  const [subject, verb, whose] =
+    count > 1 ? ["These", "move", "their"] : ["This", "moves", "its"];
+  return `${subject} ${verb} to the trash, and kendex installs what kendex.toml asks for in ${whose} place.`;
 };
 export const REPLACE_FILES_CONFIRM_LABEL = "Replace them";
 export const replacedToastLabel = (name: string): string => `Installed ${name}`;
@@ -77,18 +73,21 @@ export type Pending = { group: MergedDriftRow; exit: "keep" | "replace" };
  * The shared words answer for the shared installations alone. A group can
  * hold rows of more than one cause, and a summary over all of them is not
  * a folder any tool reads from.
+ *
+ * `places` is every position the move touches, listed by the dialog where
+ * the words do not already name them. Nothing is ever collapsed to a
+ * count: the row behind the dialog shows a summary whose full list lives in
+ * a tooltip, and the overlay puts that out of reach at exactly the moment
+ * it is needed.
  */
-export function ask(
-  { group, exit }: Pending,
-  paths: { text: string; count: number } | null,
-  exits: Exits,
-) {
+export function ask({ group, exit }: Pending, places: string[], exits: Exits) {
   if (exit === "replace") {
     return {
       title: replaceFilesConfirmTitle(group.name),
-      body: replaceFilesConfirmBody(paths?.text ?? "", paths?.count ?? 0),
+      body: replaceFilesConfirmBody(places.length),
       label: REPLACE_FILES_CONFIRM_LABEL,
       destructive: true,
+      places,
     };
   }
   const shared = group.installations.filter(
@@ -104,5 +103,8 @@ export function ask(
         : KEEP_FILES_CONFIRM_BODY,
     label: KEEP_FILES_CONFIRM_LABEL,
     destructive: folders.length > 0,
+    // The shared words name the folder themselves; listing it again under
+    // them would say one thing twice.
+    places: folders.length > 0 ? [] : places,
   };
 }

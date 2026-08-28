@@ -61,11 +61,28 @@ export function BlockedDeclarations({
 
   if (rows.length === 0) return null;
 
-  // Every position the row is about, which is more than one where a tree is
-  // read through a harness-native link: core names the second, and a
-  // summary over the first alone would show one directory and move two.
-  const where = (group: MergedDriftRow) =>
-    summarizePaths(group.installations.flatMap(positionsOf));
+  // Every position this item's files sit at, which is more than one where a
+  // tree is read through a harness-native link: core names the second, and
+  // a summary over the first alone would show one directory and move two.
+  // Only the installations core reported files for — a blocking row of
+  // another kind carries prose written for a reader, never a path.
+  const places = (group: MergedDriftRow) => [
+    ...new Set(
+      group.installations
+        .filter((row) => exits.files(row))
+        .flatMap(positionsOf),
+    ),
+  ];
+  // Why the rest of the item is stuck. Core writes these to be read, and
+  // moving files settles none of them, so they stand where the offer to
+  // move files would otherwise sit.
+  const reasons = (group: MergedDriftRow) => [
+    ...new Set(
+      group.installations
+        .filter((row) => !exits.files(row))
+        .map((row) => row.detail),
+    ),
+  ];
   // Every tool the move acts on, which is not the same as every tool with a
   // row on screen: a folder somebody shared by hand is read by whoever
   // links at it, and one left out is one whose shortcut is repointed
@@ -86,7 +103,7 @@ export function BlockedDeclarations({
     setPending(null);
   };
 
-  const asked = pending && ask(pending, where(pending.group), exits);
+  const asked = pending && ask(pending, places(pending.group), exits);
 
   return (
     <div className="overflow-hidden rounded-lg border">
@@ -95,7 +112,8 @@ export function BlockedDeclarations({
       </p>
       <div className="divide-y divide-border/60">
         {rows.map((group) => {
-          const paths = where(group);
+          const paths = summarizePaths(places(group));
+          const stuck = reasons(group);
           // Every place has to let the item be kept, or the offer would
           // settle the rest and leave that one blocked with the item no
           // longer its tool's. At least one has to be a place keeping acts
@@ -147,8 +165,13 @@ export function BlockedDeclarations({
                     }
                   />
                 ) : (
-                  <span className="text-[13px] text-muted-foreground">
-                    {MOVE_FILES_YOURSELF}
+                  // Moving files cannot settle a file that will not read or
+                  // an edit that would not apply, so where core gave a
+                  // reason the reason stands in place of the offer.
+                  <span className="flex flex-col gap-1 text-[13px] text-muted-foreground">
+                    {stuck.length > 0
+                      ? stuck.map((why) => <span key={why}>{why}</span>)
+                      : MOVE_FILES_YOURSELF}
                   </span>
                 )}
                 {replaceable ? (
@@ -188,7 +211,17 @@ export function BlockedDeclarations({
         destructive={asked?.destructive}
         busy={busy}
         onConfirm={confirm}
-      />
+      >
+        {asked && asked.places.length > 0 ? (
+          <ul className="max-h-40 overflow-y-auto rounded-md bg-muted/50 p-2 font-mono text-xs text-muted-foreground">
+            {asked.places.map((place) => (
+              <li key={place} className="break-all">
+                {place}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </ConfirmDialog>
     </div>
   );
 }

@@ -78,6 +78,12 @@ an outside contributor.
 - A blocked declaration now names every position its take-over empties. A
   tree read through a tool's own link sits at two, and `apply --plan` named
   one while `--replace-unmanaged` moved both.
+- `kendex adopt` is no longer offered for an item whose tools hold copies
+  that differ. The capture refuses those, so the suggestion named a command
+  that always failed; the offer now asks the same reader the verb does.
+- In the app, a row you just settled no longer comes back. A machine-wide
+  check that started before the change and landed after it overwrote the
+  newer reading, and kept it for the freshness window.
 - `worktree cleanup` and `worktree remove` prove a merge two ways and no other:
   ancestry into the default branch, or the pull request whose head commit is
   the branch tip. Squash merges collect, and every keep now names its reason.

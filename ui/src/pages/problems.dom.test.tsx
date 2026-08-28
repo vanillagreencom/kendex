@@ -240,6 +240,75 @@ describe("a declared item whose place already holds files", () => {
     expect(said).toContain("/work/acme/.claude/skills/deploy");
   });
 
+  // Two harnesses under the linking method: each refuses at its own
+  // canonical with its own link beside it. Three positions is the ordinary
+  // count once core reports the full set, and the confirm is the last
+  // thing read before every one of them moves.
+  it("lists every position rather than collapsing them to a number", async () => {
+    const places = [
+      "/work/acme/.agents/skills/deploy",
+      "/work/acme/.claude/skills/deploy",
+      "/work/acme/.codex/skills/deploy",
+    ];
+    stage([
+      view({
+        drift: [
+          inTheWay("deploy", "claude", {
+            detail: places[0],
+            alsoInTheWay: [places[1]],
+          }),
+          inTheWay("deploy", "codex", {
+            detail: places[0],
+            alsoInTheWay: [places[2]],
+          }),
+        ],
+        exits: [exit("skill:deploy:claude"), exit("skill:deploy:codex")],
+      }),
+    ]);
+    const host = mount(<ProblemsPage />);
+    await settle();
+
+    await press(button(host, REPLACE_FILES_LABEL));
+    const said = dialog().textContent ?? "";
+    for (const place of places) expect(said).toContain(place);
+    expect(said).not.toContain("3 places");
+  });
+
+  // A blocking row core reported no files for carries prose written for a
+  // reader, not a path. Joined to a real path it reads as a second file
+  // location, and moving files settles nothing it names.
+  it("states a reason of another kind instead of spelling it as a path", async () => {
+    const why =
+      "/work/acme/.claude/skills/x cannot be compared (permission denied)";
+    stage([
+      view({
+        drift: [
+          inTheWay("deploy", "claude"),
+          inTheWay("deploy", "codex", { cause: undefined, detail: why }),
+        ],
+        exits: [
+          exit("skill:deploy:claude"),
+          exit("skill:deploy:codex", {
+            files: false,
+            keep: false,
+            enter: false,
+            replace: false,
+          }),
+        ],
+      }),
+    ]);
+    const host = mount(<ProblemsPage />);
+    await settle();
+
+    // The row's own path line, the only one carrying every position in
+    // its title.
+    const path = host.querySelector("span[title]");
+    expect(path?.textContent).toBe("/work/acme/.claude/skills/deploy");
+    expect(path?.getAttribute("title")).not.toContain("cannot be compared");
+    expect(host.textContent).toContain(why);
+    expect(host.textContent).not.toContain(MOVE_FILES_YOURSELF);
+  });
+
   // A tool reading the folder through a shortcut somebody made has no row
   // of its own. Core names it, so the offer names it: keeping repoints
   // every link at that folder.
