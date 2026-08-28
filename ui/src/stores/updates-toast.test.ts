@@ -155,6 +155,25 @@ describe("updates store: a package the plan held back", () => {
     );
   });
 
+  // A pinned row moves its hold instead of running the update, and that
+  // write is refused on disk for the same reasons — so the row's toast
+  // reads the hold move's own report rather than the click.
+  it("never claims a pinned package was updated when its copy stayed", async () => {
+    ready([]);
+    vi.mocked(commands.packageSetRev).mockResolvedValue({
+      status: "ok",
+      data: { view, heldBack: [conflict("claude")], removed: [], moved: [] },
+    });
+    await useUpdatesStore
+      .getState()
+      .updateOne(row({ name: "gh", pinned: true }));
+    expect(commands.packageUpdate).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.info).toHaveBeenCalledWith(
+      "gh was not updated — the copy in Claude Code needs attention on the package page",
+    );
+  });
+
   it("names the tool still holding it when the other copies moved", async () => {
     held({ heldBack: [conflict("codex")], moved: [stale("claude")] });
     await useUpdatesStore.getState().updateOne(row({ name: "gh" }));
