@@ -24,6 +24,41 @@ fn kendex_in(home: &Path, cwd: &Path, args: &[&str], envs: &[(&str, String)]) ->
     command.output().expect("kendex binary runs")
 }
 
+/// Runs a copy of the binary that was written moments ago, from `home`.
+///
+/// Exec of a just-written file answers ETXTBSY while any process still
+/// holds a descriptor open for writing it. Nothing here keeps one — but a
+/// sibling test in this binary forks to run its own command, that child
+/// inherits ours for the moment between its fork and its exec, and under
+/// load that moment is long enough to land in. The descriptor goes as soon
+/// as the child execs, so the answer is to ask again rather than to stop
+/// copying.
+fn kendex_copy(exe: &Path, home: &Path, args: &[&str], envs: &[(&str, String)]) -> Output {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let mut command = Command::new(exe);
+        command
+            .args(args)
+            .env_clear()
+            .env("HOME", home)
+            .env("KENDEX_REAL_HOME", "1")
+            .env("PATH", std::env::var("PATH").unwrap_or_default());
+        for (key, value) in envs {
+            command.env(key, value);
+        }
+        match command.output() {
+            Ok(output) => return output,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ExecutableFileBusy
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(error) => panic!("running {}: {error}", exe.display()),
+        }
+    }
+}
+
 /// The CLI replaces a desktop app only where the release publishes one it
 /// installed. Elsewhere the app arrives by its own route and is not the
 /// command's to touch or to describe.
@@ -204,18 +239,15 @@ fn update_replaces_the_binary_from_a_local_feed() {
     )
     .unwrap();
 
-    let output = Command::new(&me)
-        .args(["update"])
-        .env_clear()
-        .env("HOME", home)
-        .env("KENDEX_REAL_HOME", "1")
-        .env("PATH", std::env::var("PATH").unwrap_or_default())
-        .env(
+    let output = kendex_copy(
+        &me,
+        home,
+        &["update"],
+        &[(
             "KENDEX_UPDATE_FEED",
             format!("file://{}/feed.json", home.display()),
-        )
-        .output()
-        .unwrap();
+        )],
+    );
     assert!(
         output.status.success(),
         "{}",
@@ -356,18 +388,15 @@ fn update_reports_a_desktop_app_it_cannot_replace() {
     )
     .unwrap();
 
-    let output = Command::new(&me)
-        .args(["update"])
-        .env_clear()
-        .env("HOME", home)
-        .env("KENDEX_REAL_HOME", "1")
-        .env("PATH", std::env::var("PATH").unwrap_or_default())
-        .env(
+    let output = kendex_copy(
+        &me,
+        home,
+        &["update"],
+        &[(
             "KENDEX_UPDATE_FEED",
             format!("file://{}/feed.json", home.display()),
-        )
-        .output()
-        .unwrap();
+        )],
+    );
     fs::set_permissions(&app_dir, fs::Permissions::from_mode(0o755)).unwrap();
 
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -422,18 +451,15 @@ fn update_refuses_a_copy_it_cannot_account_for() {
     )
     .unwrap();
 
-    let output = Command::new(&me)
-        .args(["update"])
-        .env_clear()
-        .env("HOME", home)
-        .env("KENDEX_REAL_HOME", "1")
-        .env("PATH", std::env::var("PATH").unwrap_or_default())
-        .env(
+    let output = kendex_copy(
+        &me,
+        home,
+        &["update"],
+        &[(
             "KENDEX_UPDATE_FEED",
             format!("file://{}/feed.json", home.display()),
-        )
-        .output()
-        .unwrap();
+        )],
+    );
     fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
 
     let stderr = String::from_utf8_lossy(&output.stderr);
