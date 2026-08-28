@@ -224,16 +224,27 @@ s7_write()     { s7_exit "$1" | grep -F -- '--slurpfile art'; }
 # never back to § 7, so no path can observe two consecutive clean re-checks. A
 # criterion counting to two is a rule nothing executes, which reads as a
 # guarantee the workflow does not give.
+# The predicate covers what § 7 can act on and nothing else. § 7 delegates
+# blockers and `category == "fix"` suggestions, so a predicate that a
+# `category == "issue"` suggestion can falsify sends the loop to a fix round
+# with nothing to delegate. That suggestion is not escalated either: § 8's
+# audit files it, which is where the finding contract puts it.
 CONV="$(s7_converged "$REVIEW_PR_WF")"
 if grep -q -F 'twice running' <<<"$CONV" \
    || grep -q -F 'two consecutive' <<<"$CONV"; then
   fail "the convergence test counts re-checks § 6 never schedules"
+elif grep -q -F 'of any category' <<<"$CONV"; then
+  fail "an issue suggestion can falsify the predicate, with nothing to delegate"
 elif grep -q -F 'category == "fix"' <<<"$CONV" \
-     && grep -q -F 'category == "issue"' <<<"$CONV" \
      && grep -q -F 'blocker' <<<"$CONV"; then
-  pass "the predicate is one pass with no new finding of any category"
+  pass "the predicate is the set § 7 can act on"
 else
-  fail "the predicate ignores a category of finding"
+  fail "the predicate misses a class § 7 delegates"
+fi
+if grep -q -F 'category == "issue"' <<<"$CONV" && grep -q -F '§ 8' <<<"$CONV"; then
+  pass "the predicate routes an issue suggestion to § 8 instead"
+else
+  fail "the predicate does not say where an issue suggestion goes"
 fi
 
 # --- 12b: every path out of QA reaches the predicate -------------------------
@@ -273,13 +284,13 @@ DISPO="$(s7_dispo "$REVIEW_PR_WF")"
 # `every blocker and every suggestion`, not the bare words: the line also
 # glosses the command's [ARRAY] placeholder as `blockers` or `suggestions`,
 # which would satisfy a looser grep on its own.
-if grep -q -F 'category == "fix"' <<<"$DISPO" \
-   && grep -q -F 'category == "issue"' <<<"$DISPO" \
-   && grep -q -F 'every blocker and every suggestion' <<<"$DISPO" \
-   && grep -q -F 'fixed_items' <<<"$DISPO"; then
-  pass "the exit dispositions every category and bucket, listed or not"
+if grep -q -F 'category == "issue"' <<<"$DISPO"; then
+  fail "the exit escalates an issue suggestion instead of leaving it to § 8's audit"
+elif grep -q -F 'every blocker and every `category == "fix"` suggestion' <<<"$DISPO" \
+     && grep -q -F 'fixed_items' <<<"$DISPO"; then
+  pass "the exit dispositions what § 7 acts on, listed or not"
 else
-  fail "the exit's disposition set covers only part of what is outstanding"
+  fail "the exit's disposition set covers only part of what § 7 acts on"
 fi
 
 # --- 14: the recorded reason is § 7's own, never § 4's cap -------------------
@@ -518,36 +529,38 @@ fi
 
 # The criterion counting to two: § 6's clean branch goes to § 8, so the second
 # pass is never scheduled and the rule cannot fire.
-if ! plant_pr s7twice 's/report no new finding of any category/report no new finding of any category, twice running/'; then
+if ! plant_pr s7twice 's/first raised on this pass is a new finding/first raised on either of two consecutive passes is a new finding/'; then
   fail "§ 7 twice-running control planted nothing — its sed program matched no text"
-elif grep -q -F 'twice running' <<<"$(s7_converged "$CTRL")"; then
+elif grep -q -F 'two consecutive' <<<"$(s7_converged "$CTRL")"; then
   pass "lint flags a convergence test that counts to two"
 else
   fail "lint MISSED a convergence test that counts to two"
 fi
 
-# Convergence narrowed back to blockers and fix suggestions.
-if ! plant_pr s7conv 's/, or a .category == "issue". suggestion first raised/ first raised/'; then
+# The predicate widened back to any category: an issue suggestion falsifies it
+# and the loop turns with nothing to delegate.
+if ! plant_pr s7conv 's/report nothing this section can act on/report no new finding of any category/'; then
   fail "§ 7 convergence control planted nothing — its sed program matched no text"
-elif grep -q -F 'category == "issue"' <<<"$(s7_converged "$CTRL")"; then
-  fail "lint MISSED a convergence test that ignores a category"
+elif grep -q -F 'of any category' <<<"$(s7_converged "$CTRL")"; then
+  pass "lint flags a predicate an issue suggestion can falsify"
 else
-  pass "lint flags a convergence test that ignores a category"
+  fail "lint MISSED a predicate an issue suggestion can falsify"
 fi
 
-# The disposition set narrowed to one category on the way out.
-if ! plant_pr s7sugg 's/, .category == "fix". and .category == "issue". alike,/,/'; then
+# The exit escalating an issue suggestion, which takes it out of § 8's audit
+# and records it as blocked instead of filed.
+if ! plant_pr s7sugg 's/every blocker and every `category == "fix"` suggestion/every blocker, every `category == "fix"` suggestion, and every `category == "issue"` suggestion/'; then
   fail "§ 7 category control planted nothing — its sed program matched no text"
 elif grep -q -F 'category == "issue"' <<<"$(s7_dispo "$CTRL")"; then
-  fail "lint MISSED a § 7 exit that dispositions one category"
+  pass "lint flags a § 7 exit that escalates an issue suggestion"
 else
-  pass "lint flags a § 7 exit that dispositions one category"
+  fail "lint MISSED a § 7 exit that escalates an issue suggestion"
 fi
 
 # The disposition set narrowed to blockers alone.
-if ! plant_pr s7blk 's/every blocker and every suggestion this round.s QA artifacts report/every blocker this round.s QA artifacts report/'; then
+if ! plant_pr s7blk 's/every blocker and every `category == "fix"` suggestion this round.s QA artifacts report/every blocker this round.s QA artifacts report/'; then
   fail "§ 7 blocker-only control planted nothing — its sed program matched no text"
-elif grep -q -F 'every blocker and every suggestion' <<<"$(s7_dispo "$CTRL")"; then
+elif grep -q -F 'every blocker and every `category == "fix"` suggestion' <<<"$(s7_dispo "$CTRL")"; then
   fail "lint MISSED a § 7 exit that dispositions blockers only"
 else
   pass "lint flags a § 7 exit that dispositions blockers only"
