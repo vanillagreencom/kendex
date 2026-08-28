@@ -85,6 +85,9 @@ an outside contributor.
 - **Breaking:** `guard uninstall` disarms the repository. Every work tree and
   nested project shares one set of commit hooks, so an uninstall from any of
   them takes the hooks; they no longer stay behind for another project.
+- The worktree skill's broken-`.agents` recovery routes on one index read
+  instead of a fixed repo layout, and asks you to link to it rather than
+  paste it into `AGENTS.md` / `CLAUDE.md`, where no refresh can reach a copy.
 
 ### Fixed
 
