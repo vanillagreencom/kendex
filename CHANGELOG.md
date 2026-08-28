@@ -75,6 +75,10 @@ an outside contributor.
 
 ### Fixed
 
+- `mutation-stability` no longer scores a stable test as unstable when the
+  caller shares a build cache. Both copies came out of `git archive` stamped
+  with the commit's time, so cargo reran the mutant's binary for the clean run.
+
 - `kendex check` names every stranded commit-hook file, not the first and half
   of the next. A deep checkout path — macOS temp directories, most nested
   clones — ran the line past a length limit meant for text from outside kendex.

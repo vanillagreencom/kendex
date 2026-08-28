@@ -59,5 +59,27 @@ if [ "$rc" = 2 ]; then ok "--stability 0 is refused as zero samples"; else bad "
 rc=0; "$MS" --worktree "$REPO" --sha "$SHA" --test 'true' --mutate 2>/dev/null || rc=$?
 if [ "$rc" = 2 ]; then ok "a value-less option exits 2"; else bad "a value-less option exits 2" "rc=$rc"; fi
 
+# A build cache the caller shares across both copies must not hand the clean
+# run the mutant's artifact. git archive stamps every file with the commit
+# time, so a cache keyed on mtimes, cargo's target dir being the usual one,
+# finds nothing newer than what the mutant build left in it. check.sh is that
+# cache: it rebuilds only when the source is newer than what it holds.
+export CACHE="$TMP/build-cache"
+mkdir -p "$CACHE"
+cat > "$REPO/check.sh" <<'T'
+if [ ! -f "$CACHE/built.sh" ] || [ lib.sh -nt "$CACHE/built.sh" ]; then
+  cp lib.sh "$CACHE/built.sh"
+fi
+. "$CACHE/built.sh"
+[ "$(add 2 3)" = 5 ]
+T
+git -C "$REPO" add -A
+git -C "$REPO" -c user.email=t@t -c user.name=t commit -qm cached
+SHA3=$(git -C "$REPO" rev-parse HEAD)
+rc=0; out=$("$MS" --worktree "$REPO" --sha "$SHA3" --test 'bash check.sh' \
+      --mutate 'sed -i "s/+/-/" lib.sh' --stability 3 --threads 2) || rc=$?
+if [ "$rc" = 0 ]; then ok "a shared mtime-keyed build cache stays stable"; else bad "a shared mtime-keyed build cache stays stable" "rc=$rc out=$out"; fi
+case "$out" in *"stability: 3/3 at 2 threads") ok "the clean copy rebuilds instead of reusing the mutant";; *) bad "the clean copy rebuilds instead of reusing the mutant" "$out";; esac
+
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ] || exit 1

@@ -59,9 +59,13 @@ case "$THREADS" in *[!0-9]*|''|0) echo "--threads wants a positive integer" >&2;
 ROOT=$(mktemp -d "${TMPDIR:-/tmp}/mutation-stability.XXXXXX") || exit 2
 [ "$KEEP" = 1 ] || trap 'rm -rf "$ROOT"' EXIT
 
-extract() { # extract SHA into $1
+extract() { # extract SHA into $1, stamped now rather than at the commit
   mkdir -p "$1" || return 1
-  git -C "$WORKTREE" archive "$SHA" | tar -x -C "$1"
+  # -m discards the archive's mtimes. git archive stamps every file with the
+  # commit time, so a build cache the caller shares across the two copies,
+  # usually CARGO_TARGET_DIR, would find nothing newer than the artifacts it
+  # already holds and hand the clean run the mutant's test binary.
+  git -C "$WORKTREE" archive "$SHA" | tar -x -m -C "$1"
 }
 
 run_test() { # run TEST in dir $1 with threads $2
