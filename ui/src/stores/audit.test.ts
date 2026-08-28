@@ -572,6 +572,29 @@ describe("an audit that lands after a command it cannot answer for", () => {
     expect(vi.mocked(commands.auditAll).mock.calls.length).toBe(dropped + 1);
   });
 
+  // A command that failed is not a command that wrote nothing: adopt and
+  // the take-over both run a plan before a step that can still fail, so an
+  // audit older than the attempt is out of date whatever the attempt
+  // answered.
+  it("drops an audit that an attempt ran across, however it ended", async () => {
+    const audit = park<{ status: "ok"; data: AuditView[] }>();
+    vi.mocked(commands.auditAll).mockReturnValue(
+      audit.parked as ReturnType<typeof commands.auditAll>,
+    );
+    vi.mocked(commands.removeItem).mockResolvedValue({
+      status: "error",
+      error: "disk is full",
+    });
+
+    const running = useAuditStore.getState().refresh();
+    await useAuditStore.getState().removeItem(globalScope, "hook", "lint");
+    audit.land({ status: "ok", data: [stale] });
+    await running;
+
+    expect(useAuditStore.getState().views).toEqual([emptyView]);
+    expect(useAuditStore.getState().auditedAt).toBeNull();
+  });
+
   // The control: an audit nothing overtook is the answer, as it was.
   it("installs an audit that no command overtook", async () => {
     vi.mocked(commands.auditAll).mockResolvedValue({

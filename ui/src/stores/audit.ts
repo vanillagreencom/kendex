@@ -36,13 +36,14 @@ interface AuditState extends ItemActions {
 const AUDIT_FRESH_FOR_MS = 60_000;
 
 export const useAuditStore = create<AuditState>((set, get) => {
-  // Bumped whenever something newer than a running audit is installed. An
-  // audit reads every scope on the machine over seconds; a command that
-  // lands while one is in flight read its scope later than the audit did,
-  // so a response stamped before it must not be written over the top. Left
-  // unguarded, a row the person had just settled came back — dated fresh,
-  // and so kept for the whole freshness window, with a retry failing
-  // against work core had already done.
+  // One rule, in the one place that can hold it: an audit that began before
+  // a command was attempted cannot answer for the machine after it. Reading
+  // every scope takes seconds, and any command tried in that window may
+  // have written, so a response stamped before the attempt is out of date
+  // whatever it says and whatever the command answered. Left unguarded, a
+  // row the person had just settled came back — dated fresh, and so kept
+  // for the whole freshness window, with a retry failing against work core
+  // had already done.
   let generation = 0;
   const run = auditRunner(set, get, () => {
     generation += 1;
@@ -64,11 +65,12 @@ export const useAuditStore = create<AuditState>((set, get) => {
       // skeleton, the same as the scan.
       const response = await settled(commands.auditAll());
       // Answered for a moment before something the reader did, so it
-      // answers for nothing now — the failure arm included, since a read
-      // that did not finish is not news about the state it left behind.
-      // The stamp goes with it: a command installs its own scope and
-      // nothing re-reads the rest, so a stamp left standing would hold the
-      // freshness window open over a machine this read cannot speak for.
+      // answers for nothing now — this read's own failure arm included,
+      // since a read that did not finish is not news about the state it
+      // left behind. The stamp goes with it: a command installs its own
+      // scope and nothing re-reads the rest, so a stamp left standing would
+      // hold the freshness window open over a machine this cannot speak
+      // for.
       if (generation !== asked) {
         set({ auditedAt: null });
         return;

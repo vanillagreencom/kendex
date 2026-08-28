@@ -76,10 +76,14 @@ export function auditRunner(
     error?: string | null;
   }) => void,
   get: () => { views: AuditView[] },
-  /** Called once a command's fresher view is installed. An audit already
-   *  in flight read the same scope before this happened, so it can no
-   *  longer answer for it. */
-  settled: () => void,
+  /** Called once a command has been attempted, however it ended. An audit
+   *  already in flight read the machine before the attempt, and a command
+   *  that failed is not one that wrote nothing — each of these runs a plan
+   *  before a step that can still fail — so either way that reading can no
+   *  longer answer for what is on disk. Unconditional on purpose: an
+   *  attempt that turned out to write nothing costs one re-read, which is
+   *  the direction with nothing to lose. */
+  attempted: () => void,
 ): Run {
   const run: Run = async (action, opts) => {
     set({ busy: true });
@@ -88,6 +92,7 @@ export function auditRunner(
       response = await action();
     } finally {
       set({ busy: false });
+      attempted();
     }
     if (response.status === "ok") {
       const views = get().views;
@@ -95,7 +100,6 @@ export function auditRunner(
         views: keepUnreadable(views, replaceView(views, response.data)),
         error: null,
       });
-      settled();
       if (opts.successMessage) toast.success(opts.successMessage);
       await useScanStore.getState().refresh();
       return true;
