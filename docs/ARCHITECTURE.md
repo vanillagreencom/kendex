@@ -380,7 +380,7 @@ lives in one capability table read by core and UI.
   so two hosts serving one `owner/repo` never share a mirror.
 - **Commits walk through the guards whatever tool makes them.** The checks
   are the growth-guards package's shell scripts, committed under
-  `.agents/skills` — size-ratchet, todo-ban, byte-ceiling, suppression-ban, conflict-markers,
+  `.agents/skills` — size-ratchet, todo-ban, byte-ceiling, suppression-ban, conflict-markers, changelog-entries,
   commit-msg, and preflight's staged lanes. git's own `.git/hooks` shims run them: no kendex binary is in the
   path at commit time, and since git clones no hooks, a clone carries the scripts and one `guard install`
   arms them. kendex implements no check — `guard install`/`guard uninstall` run the installer, every CLI verb

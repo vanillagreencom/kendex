@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Pins for scripts/changelog-entries: the cap is a character count and
-# nothing else, entry boundaries are the marker/heading/blank rule, the
-# configured globs decide what is read, content comes from the index, and a
-# scan that could not complete is exit 2. Every green assertion is paired
-# with a control that proves it can fail.
+# nothing else, an entry runs to the next marker, a heading, or a blank line
+# followed by unindented prose, the configured globs decide what is read,
+# content comes from the index, a path that is not readable changelog text is
+# named rather than folded into the clean count, and a scan that could not
+# complete is exit 2. Every green assertion is paired with a control that
+# proves it can fail.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -154,7 +156,7 @@ run_ce_env GROWTH_GUARDS_CHANGELOG_CAP=199
   && ok "control: the same entry is 200 characters, not 596 — it fails a cap of 199" \
   || bad "control: the same entry is measured at 200 characters" "rc=$RC out=$OUT"
 
-echo "=== entry boundaries: marker, heading, blank line ==="
+echo "=== entry boundaries: marker, heading, blank-then-unindented ==="
 new_repo boundaries
 {
   printf -- '- First entry\n'
@@ -173,8 +175,9 @@ run_ce
 [ "$RC" -eq 0 ] && case "$OUT" in *"4 entry(ies) in 1 file(s)"*) true ;; *) false ;; esac \
   && ok "all three markers open an entry; nested bullets, prose and headings do not" \
   || bad "all three markers open an entry; nested bullets, prose and headings do not" "rc=$RC out=$OUT"
-# Controls for each boundary, one at a time: a 150-character head plus a
-# 150-character neighbour passes only while the boundary separates them.
+# A blank line alone does not end an entry: an indented second paragraph is
+# part of it, which is what the fragment tooling accepts as one entry. Left
+# out of the measurement, this shape is the whole cap.
 {
   printf -- '- %s\n' "$(rep a 148)"
   printf '\n'
@@ -182,8 +185,32 @@ run_ce
 } >"$R/CHANGELOG.md"
 stage
 run_ce
-[ "$RC" -eq 0 ] && ok "a blank line ends the entry — the text after it is not measured into it" \
-  || bad "a blank line ends the entry" "rc=$RC out=$OUT"
+[ "$RC" -eq 1 ] && case "$OUT" in *"299 characters"*) true ;; *) false ;; esac \
+  && ok "a blank line does not end the entry — an indented second paragraph is measured into it" \
+  || bad "a blank-separated indented paragraph is measured into the entry" "rc=$RC out=$OUT"
+# The reviewer's shape, and the one tools/changelog-collate --check accepts:
+# a short opening paragraph over a long indented one.
+{
+  printf -- '- A short first paragraph.\n'
+  printf '\n'
+  printf '  %s\n' "$(rep p 400)"
+} >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"427 characters"*) true ;; *) false ;; esac \
+  && ok "a short paragraph over a long indented one fails on the pair's length" \
+  || bad "a short paragraph over a long indented one fails on the pair's length" "rc=$RC out=$OUT"
+# A blank line followed by UNINDENTED prose does end it, so trailing prose is
+# never measured into the last entry.
+{
+  printf -- '- %s\n' "$(rep a 148)"
+  printf '\n'
+  printf '%s\n' "$(rep b 148)"
+} >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 0 ] && ok "a blank line then unindented prose ends the entry" \
+  || bad "a blank line then unindented prose ends the entry" "rc=$RC out=$OUT"
 {
   printf -- '- %s\n' "$(rep a 148)"
   printf '### Heading\n'
@@ -201,8 +228,9 @@ stage
 run_ce
 [ "$RC" -eq 0 ] && ok "the next marker ends the entry" \
   || bad "the next marker ends the entry" "rc=$RC out=$OUT"
-# The control the three share: with nothing between them the two halves are
-# one entry and fail, so each pass above is the boundary and not the length.
+# The control the boundaries share: with nothing between them the two halves
+# are one entry and fail, so each pass above is the boundary and not the
+# length.
 {
   printf -- '- %s\n' "$(rep a 148)"
   printf '  %s\n' "$(rep b 148)"
@@ -318,18 +346,62 @@ run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=untracked-CHANGELOG.md'
   && ok "an untracked file matching the glob is not judged" \
   || bad "an untracked file matching the glob is not judged" "rc=$RC out=$OUT"
 
-echo "=== a symlink at a configured path is not changelog text ==="
+echo "=== a matched path that is not changelog text is named, never counted clean ==="
 new_repo symlink
 printf -- '- %s\n' "$(rep x 250)" >"$R/real.md"
 ln -s real.md "$R/CHANGELOG.md"
 stage
 run_ce
-[ "$RC" -eq 0 ] && case "$OUT" in *"0 entry(ies) in 0 file(s)"*|*"no tracked file matches"*) true ;; *) false ;; esac \
-  && ok "a tracked symlink is skipped rather than measured as its target's name" \
-  || bad "a tracked symlink is skipped" "rc=$RC out=$OUT"
+[ "$RC" -eq 0 ] && case "$OUT" in *"not measured: CHANGELOG.md — tracked as a symlink"*) true ;; *) false ;; esac \
+  && ok "a tracked symlink is named as unmeasured, not read as its target's name" \
+  || bad "a tracked symlink is named as unmeasured" "rc=$RC out=$OUT"
+case "$OUT" in *"1 matched path(s) not measured"*) ok "the verdict counts the skipped path" ;; *) bad "the verdict counts the skipped path" "$OUT" ;; esac
+# The wording a matched-but-skipped path must NOT get: it would send its
+# reader to widen a glob that already matched.
+case "$OUT" in *"no tracked file matches"*) bad "a matched path may not report as nothing matched" "$OUT" ;; *) ok "a matched path does not report as nothing matched" ;; esac
 run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=real.md'
 [ "$RC" -eq 1 ] && ok "control: the file behind the link is judged when it is named" \
   || bad "control: the file behind the link is judged when it is named" "rc=$RC out=$OUT"
+
+new_repo binary
+# Every byte value, so a NUL falls inside the sample git classifies on. awk
+# writes them: the shell's printf %c stops at the first NUL.
+printf -- '- ' >"$R/CHANGELOG.md"
+awk 'BEGIN { for (i = 0; i < 256; i++) printf "%c", i }' >>"$R/CHANGELOG.md"
+stage
+[ -z "$(git -C "$R" grep --cached -I -l . -- CHANGELOG.md)" ] \
+  && ok "fixture: git itself calls the blob binary, so its --cached scans skip it" \
+  || bad "fixture: git itself calls the blob binary" "git grep listed it"
+run_ce
+[ "$RC" -eq 0 ] && case "$OUT" in *"not measured: CHANGELOG.md — binary content"*) true ;; *) false ;; esac \
+  && ok "a binary blob is named as unmeasured, not measured as text" \
+  || bad "a binary blob is named as unmeasured" "rc=$RC out=$OUT"
+case "$OUT" in *"characters (cap"*) bad "no length may be reported for a binary blob" "$OUT" ;; *) ok "no length is reported for a binary blob" ;; esac
+# The control: the same bytes with the NUL removed are text to git and to
+# this check alike, so the skip above is the classification and not a file
+# the check declines to read.
+printf -- '- ' >"$R/CHANGELOG.md"
+awk 'BEGIN { for (i = 1; i < 256; i++) printf "%c", i }' >>"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"not measured"*) false ;; *"characters (cap 200)"*) true ;; *) false ;; esac \
+  && ok "control: NUL-free high bytes are text and are measured" \
+  || bad "control: NUL-free high bytes are measured" "rc=$RC out=$OUT"
+
+echo "=== control bytes never reach the terminal through a diagnostic ==="
+new_repo controls
+printf -- '- An escape \033[31mred\033[0m and a CR \rhere %s\n' "$(rep z 220)" >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 1 ] && ok "control: the entry with control bytes is over the cap" \
+  || bad "control: the entry with control bytes is over the cap" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"?[31mred?[0m"*"CR ?here"*) ok "escape and carriage-return bytes are replaced in the quoted entry" ;;
+  *) bad "escape and carriage-return bytes are replaced in the quoted entry" "$OUT" ;;
+esac
+printf 'x%s' "$OUT" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\037\177]')" \
+  && bad "no C0 control byte may survive into the diagnostic" "$OUT" \
+  || ok "no C0 control byte survives into the diagnostic"
 
 echo "=== fail-closed: an unread blob and an unmerged index are exit 2 ==="
 new_repo unreadable

@@ -9,9 +9,10 @@ One CHANGELOG entry per file. Two branches never write the same
 - **Content**: exactly one Markdown list item — the first non-blank line opens
   with `- ` and says something, every later line indents under it, and the
   whole entry runs at most 200 characters, whitespace runs collapsed, however
-  it is wrapped. Everything `AGENTS.md` says about a CHANGELOG entry holds: it
-  is for consumers, it states an outcome, and a **Breaking:** change carries
-  its migration note inline.
+  it is wrapped and however many indented paragraphs it holds. Everything
+  `AGENTS.md` says about a CHANGELOG entry holds: it is for consumers, it
+  states an outcome, and a **Breaking:** change carries its migration note
+  inline.
 - **Release**: `tools/changelog-collate` folds every fragment git carries into
   `## [Unreleased]` in `CHANGELOG.md` under its section heading, in Keep a
   Changelog order and filename order within a section, then deletes the

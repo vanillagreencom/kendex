@@ -65,11 +65,20 @@ first line. One number is the whole rule — no line counting and no
 continuation grammar — so an entry that states its outcome passes however it
 is wrapped.
 
-An entry is every line from its list marker (`-`, `*`, `+`) at column 0 to
-the next marker, heading, or blank line; an indented bullet is part of the
-entry it sits under, not an entry of its own. Its text is those lines with CR
-stripped and whitespace runs collapsed to one space. The count is in
-characters: a UTF-8 sequence counts once, so an em dash costs one.
+An entry opens on a list marker (`-`, `*`, `+`) at column 0 followed by a
+space or tab, so a horizontal rule or a front-matter fence opens none. It runs
+to the next such marker, a heading, or a blank line followed by a line that is
+neither indented nor a marker. A blank line alone does not end it: an indented
+second paragraph is part of the entry, the shape a Markdown list item and the
+fragment tooling both accept, and an indented bullet belongs to the entry it
+sits under rather than being one. Its text is those lines with CR stripped and
+whitespace runs collapsed to one space. The count is in characters: a UTF-8
+sequence counts once, so an em dash costs one.
+
+A configured path that is not readable changelog text is named as unmeasured
+and counted apart from the clean total: a path git tracks as a symlink or a
+submodule gitlink, and a blob git would call binary, which the sibling checks'
+`--cached` scans skip the same way.
 
 `GROWTH_GUARDS_CHANGELOG_PATHS` (default `CHANGELOG.md`) is a
 space-separated list of shell globs matched against the full repo-relative

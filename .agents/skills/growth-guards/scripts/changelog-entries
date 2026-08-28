@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
 # changelog-entries — a changelog entry over the character cap fails
-# (default 200). One number is the whole rule: no line counting and no
-# continuation grammar, so an entry that states its outcome passes however
-# it is wrapped.
+# (default 200). One number is the whole rule: no line counting, so an entry
+# that states its outcome passes however it is wrapped.
 #
-# An entry is every line from its list marker (-, *, +) at column 0 to the
-# next marker, heading, or blank line. Its text is those lines with CR
+# An entry opens on a list marker (-, *, +) at column 0 followed by a space
+# or tab, and runs to the next such marker, a heading, or a blank line
+# followed by a line that is neither indented nor a marker. A blank line
+# alone does not end it: a second paragraph indented under the marker is
+# part of the entry, which is the shape a Markdown list item and this
+# family's fragment tooling both accept. Entry text is those lines with CR
 # stripped and whitespace runs collapsed to one space, counted in
 # characters — UTF-8 sequences count once, so an em dash costs what it
-# reads as. Content comes from the index, like the other scans.
+# reads as.
 #
-# Configured paths matching no tracked file are a clean pass: a repository
-# with no changelog has nothing to judge.
+# Content comes from the index, like the other scans, and a blob git would
+# call binary is skipped the way their --cached scans skip one. A configured
+# path that is not readable changelog text — a symlink, a submodule gitlink,
+# binary content — is named as unmeasured rather than folded into the clean
+# count. Configured paths matching no tracked file are a clean pass: a
+# repository with no changelog has nothing to judge.
 #
 # Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 set -euo pipefail
@@ -35,11 +42,16 @@ usage() {
   cat <<'EOF'
 usage: changelog-entries
 
-A changelog entry longer than the cap fails. An entry is every line from
-its list marker (-, *, +) at column 0 to the next marker, heading, or
-blank line; its text is those lines with CR stripped and whitespace runs
-collapsed to one space, counted in characters. Tracked content is read
-from the index. Paths matching no tracked file are a clean pass.
+A changelog entry longer than the cap fails. An entry opens on a list
+marker (-, *, +) at column 0 followed by a space or tab, and runs to the
+next such marker, a heading, or a blank line followed by a line that is
+neither indented nor a marker — so an indented second paragraph is part of
+the entry. Its text is those lines with CR stripped and whitespace runs
+collapsed to one space, counted in characters.
+
+Tracked content is read from the index. A configured path git tracks as a
+symlink or submodule, or whose content is binary, is named as unmeasured.
+Paths matching no tracked file are a clean pass.
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -94,16 +106,37 @@ matches_configured() { # PATH — 0 when some configured glob matches the full p
   return 1
 }
 
+# git calls a blob binary when a NUL byte falls in its leading bytes, and the
+# --cached scans the sibling checks run skip such a blob. This walk reads raw
+# bytes rather than going through git grep, so it makes the same judgement
+# itself: measuring binary yields a meaningless length and prints the bytes
+# back out.
+BINARY_SAMPLE=8000
+blob_is_binary() { # FILE LABEL — 0 when a NUL falls in the leading bytes
+  local total stripped
+  total="$(head -c "$BINARY_SAMPLE" -- "$1" | wc -c)" \
+    || gg_collection_error "could not sample '$2' to classify its content"
+  stripped="$(head -c "$BINARY_SAMPLE" -- "$1" | LC_ALL=C tr -d '\000' | wc -c)" \
+    || gg_collection_error "could not sample '$2' to classify its content"
+  [ "$((total))" -ne "$((stripped))" ]
+}
+
 # Violation rows as "V<TAB>line<TAB>characters<TAB>first line", then one
 # "N<TAB>count" tally so the clean verdict reports what it measured rather
 # than asserting it. LC_ALL=C is what makes the character count exact: it
 # puts awk on bytes, and the continuation bytes subtracted below are what
 # turn bytes back into characters. Under a UTF-8 locale the class would
-# match nothing and every multibyte entry would count short.
+# match nothing and every multibyte entry would count short. The same byte
+# view is what lets CTRL name the C0 controls and DEL exactly, which the
+# quoted first line is stripped of — an escape sequence, a carriage return
+# or a backspace in a tracked file must not reach the reader's terminal
+# through a diagnostic. Tab survives, and so do high bytes: they are the
+# UTF-8 an entry is legitimately written in.
 ENTRY_AWK='
-BEGIN { CONT = "[\200-\277]" }
+BEGIN { CONT = "[\200-\277]"; CTRL = "[\001-\010\013-\037\177]" }
 function chars(s,   n, c) { n = length(s); c = gsub(CONT, "", s); return n - c }
-function flush(   t, len) {
+function flush(   t, len, label) {
+  blank = 0
   if (!open) return
   open = 0
   total++
@@ -112,13 +145,18 @@ function flush(   t, len) {
   sub(/^ /, "", t)
   sub(/ $/, "", t)
   len = chars(t)
-  if (len > cap) printf "V\t%d\t%d\t%s\n", start, len, first
+  if (len > cap) {
+    label = first
+    gsub(CTRL, "?", label)
+    printf "V\t%d\t%d\t%s\n", start, len, label
+  }
 }
 { line = $0; sub(/\r$/, "", line) }
-line ~ /^[-*+][ \t]/ { flush(); open = 1; start = NR; first = line; text = line; next }
-line ~ /^#/          { flush(); next }
-line ~ /^[ \t]*$/    { flush(); next }
-open                 { text = text " " line }
+line ~ /^[ \t]*$/                 { if (open) blank = 1; next }
+line ~ /^[-*+][ \t]/              { flush(); open = 1; start = NR; first = line; text = line; next }
+line ~ /^#/                       { flush(); next }
+open && blank && line !~ /^[ \t]/ { flush(); next }
+open                              { text = text " " line; blank = 0 }
 END { flush(); printf "N\t%d\n", total }
 '
 
@@ -131,19 +169,37 @@ git ls-files -sz >"$GG_TMP/files.z" || gg_collection_error "git ls-files failed"
 checked=0
 entries=0
 violations=0
+skipped=0
+
+note_skip() { # PATH REASON — a matched path this scan cannot measure
+  echo "changelog-entries: not measured: $1 — $2"
+  skipped=$((skipped + 1))
+}
+
 while IFS= read -r -d '' rec; do
   # Record shape: "<mode> <sha> <stage>\t<path>".
   f="${rec#*"$GG_TAB"}"
   matches_configured "$f" || continue
   mode="${rec%% *}"
   case "$mode" in
-    120000 | 160000) continue ;; # symlink / submodule gitlink — not changelog text
+    120000)
+      note_skip "$f" "tracked as a symlink, not changelog text"
+      continue
+      ;;
+    160000)
+      note_skip "$f" "tracked as a submodule gitlink, not changelog text"
+      continue
+      ;;
   esac
   rest="${rec#* }"
   sha="${rest%% *}"
   git cat-file blob "$sha" >"$GG_TMP/blob" 2>"$GG_TMP/blob.err" \
     || { [ ! -s "$GG_TMP/blob.err" ] || cat -- "$GG_TMP/blob.err" >&2
       gg_collection_error "cannot read blob $sha for '$f' — refusing to skip an unread changelog"; }
+  if blob_is_binary "$GG_TMP/blob" "$f"; then
+    note_skip "$f" "binary content, not changelog text"
+    continue
+  fi
   checked=$((checked + 1))
   status=0
   LC_ALL=C awk -v cap="$CAP" "$ENTRY_AWK" <"$GG_TMP/blob" >"$GG_TMP/report" || status=$?
@@ -162,12 +218,18 @@ while IFS= read -r -d '' rec; do
   done <"$GG_TMP/report"
 done <"$GG_TMP/files.z"
 
+UNMEASURED=""
+[ "$skipped" -eq 0 ] || UNMEASURED="; $skipped matched path(s) not measured"
+
 if [ "$violations" -gt 0 ]; then
-  echo "changelog-entries: $violations entry(ies) over the cap — cap $CAP characters, $entries entry(ies) in $checked file(s)"
+  echo "changelog-entries: $violations entry(ies) over the cap — cap $CAP characters, $entries entry(ies) in $checked file(s)$UNMEASURED"
   exit 1
 fi
-if [ "$checked" -eq 0 ]; then
+# Only when NOTHING matched: a path that matched and was skipped is reported
+# as skipped above, and telling its reader that no file matched would send
+# them to widen a glob that was already right.
+if [ "$checked" -eq 0 ] && [ "$skipped" -eq 0 ]; then
   echo "changelog-entries: OK — no tracked file matches GROWTH_GUARDS_CHANGELOG_PATHS ($PATTERNS)"
   exit 0
 fi
-echo "changelog-entries: OK — $entries entry(ies) in $checked file(s) within the cap ($CAP characters)"
+echo "changelog-entries: OK — $entries entry(ies) in $checked file(s) within the cap ($CAP characters)$UNMEASURED"
