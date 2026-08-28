@@ -194,3 +194,140 @@ fn only_a_precondition_that_names_a_kind_takes_the_one_handle_path() {
 fn hash_of(path: &Path) -> String {
     crate::hash::hash_tree(path).unwrap()
 }
+
+/// Not a directory, pipe, socket or device — what `plain_tree` asked of a
+/// path before anything opened it, asked here of the handle itself. The
+/// pipe is the one that matters twice: refused, and refused without the
+/// open being able to hold the apply still.
+#[test]
+fn nothing_but_a_regular_file_gets_through() {
+    let (tmp, _, _) = fixture();
+    let pre = Pre::PlainHashIs {
+        hash: "whatever".to_owned(),
+    };
+
+    let dir = tmp.path().join("a-directory");
+    fs::create_dir(&dir).unwrap();
+    assert!(open(&dir, &pre).is_err(), "a directory must not open");
+
+    let pipe = tmp.path().join("a-pipe");
+    assert_eq!(
+        rustix::fs::mknodat(
+            rustix::fs::CWD,
+            &pipe,
+            rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+            0,
+        )
+        .map(|()| ()),
+        Ok(())
+    );
+    assert!(
+        matches!(open(&pipe, &pre), Err(CoreError::PlanStale { .. })),
+        "a pipe must be refused, and the open must not block on it"
+    );
+}
+
+/// The cause a person is given is the one actually met. Re-plan and retry
+/// is the way out of a stale plan and is useless against a permission, so
+/// a read-only file must not be told to re-plan.
+#[test]
+fn a_permission_is_reported_as_itself_and_not_as_a_stale_plan() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_tmp, path, _) = fixture();
+    fs::write(&path, "[env]\n").unwrap();
+    let pre = Base::of("[env]\n").plain_pre();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o444)).unwrap();
+
+    // Running as root defeats the mode, and there is nothing to assert.
+    if fs::OpenOptions::new().write(true).open(&path).is_ok() {
+        return;
+    }
+    let Err(refused) = open(&path, &pre) else {
+        panic!("a file this build cannot write must not open");
+    };
+    assert!(
+        matches!(&refused, CoreError::Io { source, .. }
+            if source.kind() == std::io::ErrorKind::PermissionDenied),
+        "{refused:?}"
+    );
+    // And the shapes that DO mean the world moved keep saying so.
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+    fs::remove_file(&path).unwrap();
+    assert!(matches!(
+        open(&path, &pre),
+        Err(CoreError::PlanStale { .. })
+    ));
+}
+
+/// Bytes that are not UTF-8 refuse, exactly as `read_if_exists` refuses
+/// them. Decoded lossily they would come back as U+FFFD and be written
+/// over the bytes they replaced.
+#[test]
+fn content_that_is_not_utf8_refuses_rather_than_being_replaced() {
+    let (_tmp, path, _) = fixture();
+    let invalid = [b'a', 0xff, b'b'];
+    fs::write(&path, invalid).unwrap();
+    let pre = Pre::PlainHashIs {
+        hash: crate::hash::hash_bytes(&invalid),
+    };
+    let plain = open(&path, &pre).unwrap().expect("a plain precondition");
+    assert_eq!(plain.content(), invalid);
+
+    let refused = plain.text(&path).unwrap_err();
+    assert!(
+        matches!(&refused, CoreError::Io { source, .. }
+            if source.kind() == std::io::ErrorKind::InvalidData),
+        "{refused:?}"
+    );
+    // What the fallback path does with the same bytes, so the two agree.
+    assert!(crate::fs::read_if_exists(&path).is_err());
+}
+
+/// Truncating through the handle keeps the inode, so a file's mode and
+/// the hard links to it survive a write as they did under `fs::write`.
+#[test]
+fn a_write_keeps_the_file_it_was_proved_on() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let (tmp, path, _) = fixture();
+    fs::write(&path, "[env]\n").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+    let linked = tmp.path().join("also.toml");
+    fs::hard_link(&path, &linked).unwrap();
+    let before = fs::metadata(&path).unwrap().ino();
+
+    let pre = Base::of("[env]\n").plain_pre();
+    open(&path, &pre)
+        .unwrap()
+        .expect("a plain precondition")
+        .write(&path, b"[env]\nMODE = \"x\"\n")
+        .unwrap();
+
+    let after = fs::metadata(&path).unwrap();
+    assert_eq!(after.ino(), before, "the write must keep the inode");
+    assert_eq!(after.permissions().mode() & 0o777, 0o640);
+    assert_eq!(
+        fs::read_to_string(&linked).unwrap(),
+        "[env]\nMODE = \"x\"\n",
+        "a hard link to the same inode sees the write"
+    );
+}
+
+/// The parent is made only once the precondition holds, so a refused op
+/// leaves no directory behind — the ordering the two-step path had.
+#[test]
+fn a_refused_write_leaves_no_directory_behind() {
+    let (tmp, _, _) = fixture();
+    let nested = tmp.path().join("not-yet/kendex.settings.toml");
+    let pre = Base::of("[env]\n").plain_pre();
+    assert!(open(&nested, &pre).is_err());
+    assert!(!tmp.path().join("not-yet").exists());
+
+    // And it IS made for a write that happens.
+    open(&nested, &Base::absent().plain_pre())
+        .unwrap()
+        .expect("a plain precondition")
+        .write(&nested, b"[env]\n")
+        .unwrap();
+    assert_eq!(fs::read_to_string(&nested).unwrap(), "[env]\n");
+}

@@ -174,7 +174,10 @@ impl Op {
                 // apply its edits to somebody else's file.
                 let plain = super::plain::open(path, pre)?;
                 let current = match &plain {
-                    Some(plain) => String::from_utf8_lossy(plain.content()).into_owned(),
+                    // Strictly, as `read_if_exists` reads: a lossy decode
+                    // would put U+FFFD where somebody's bytes were and
+                    // write the replacement back over them.
+                    Some(plain) => plain.text(path)?,
                     None => {
                         pre.check(path)?;
                         crate::fs::read_if_exists(path)?.unwrap_or_default()
