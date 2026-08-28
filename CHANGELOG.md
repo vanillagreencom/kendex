@@ -254,7 +254,10 @@ an outside contributor.
   turning them off broke every session start.
 - **Breaking:** safety is advisory: nothing holds an install or update back.
   The app's Review & apply page, `kendex findings`/`dismiss`/`decisions` and
-  `apply --allow-unsafe` are gone; kendex.toml drops recorded decisions.
+  `apply --allow-unsafe` are gone.
+- **Breaking:** kendex.toml's `[safety-overrides]` and `[safety-reviews]`
+  records decide nothing and are no longer read. The first apply on such a
+  file deletes both tables and leaves every other byte of it as you wrote it.
 - **Breaking:** the `trading-design` skill is no longer offered. Run
   `kendex remove trading-design --scope all` wherever it is installed (or
   drop its `[skills.trading-design]` entries and run `kendex apply --scope all`).

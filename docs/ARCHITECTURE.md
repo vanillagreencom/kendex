@@ -21,7 +21,7 @@ Four verbs over one model: **scan → declare → diff → apply**.
   a place's card on Projects — the app's one mention of unmanaged content —
   and behind `kendex adopt`. Taking over files already sitting where a
   declared item goes is `kendex apply --replace-unmanaged`, scope-wide; the
-  app has no exit for that conflict until KEN-625 attaches one, and
+  app has no exit for that conflict until KEN-621 attaches one, and
   `replace_unmanaged_item` (per item, revalidated against a fresh read,
   running the scope's whole plan) is the command it will wire.
 
@@ -105,7 +105,7 @@ lives in one capability table read by core and UI.
      place holding it; the sweep fails, naming those, only when nothing
      settles. One refused at every link is not held: its rows stand,
      nothing replaced. The app offers adopt for unmanaged items, and a
-     declared item's conflict has no app exit until KEN-625 attaches one.
+     declared item's conflict has no app exit until KEN-621 attaches one.
    The row states which files are in the way, which exits apply, and — where that
    position can be read in full — how it compares with the install it blocks.
    The CLI names the verb and flag under it. A foreign link pointing at a real
