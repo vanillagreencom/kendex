@@ -34,7 +34,11 @@ Uncertain about category, prefer `fix` (if related); uncertain about relevance, 
 | Error-handling gaps | `issue` |
 | Security vulnerability | `fix` if quick, else `issue` — never skipped |
 | Data validation gaps | `fix` if quick, else `issue` |
-| A finding class arriving in two rounds running (a drifting claim, a re-derived enumeration, a second copy) | `fix` as a structural close — derive, bind, or delete the generator |
+| A finding sharing a root cause with one a prior round answered, at any site (a drifting claim, a re-derived enumeration, a second copy) | § Recurrence, which allows `structural-close` or `freeze` and no further patch |
+
+## Recurrence
+
+**Checked before every round's dispositions, ahead of any round cap.** A finding sharing a root cause with one a prior round already answered ends the patch sequence for that cause, at whatever site it appears; the cap counts rounds, this counts causes, and a cause recurs three times inside the cap's budget without the cap ever seeing it. Two dispositions remain and neither is another patch: `structural-close`, which makes the class unrepresentable and shrinks or holds the diff, or `freeze`, which lands the narrow symptom fix already made and replies `Tracked: <ID>` against a class issue created first. A close that has to be adopted per surface is not structural, and new sites that keep qualifying for it are recurrence taking the `freeze` branch. Once a cause is frozen its class issue is filed once: every later finding on that cause is `decline`d with its reason, never a second filing.
 
 ## Filing bar
 
@@ -47,7 +51,7 @@ An `issue` signal is necessary but not sufficient. Every candidate carries its s
 
 Never for a race between two invocations on one machine, a crash between two writes, an input no shipped producer emits, or a hole in a mechanism that itself came from a review round: those are declined, not filed. The one exception is a security or data-loss defect a shipped path reaches, which follows the rows above.
 
-A recurring finding class the diff introduces or arms never files as "improve X": the structural-close row closes its generator in this PR.
+A recurring finding class the diff introduces or arms never files as "improve X": § Recurrence closes its generator in this PR, or files the one class issue its `freeze` reply names.
 
 The audit pipeline applies project-management's creation bar (its SKILL.md § Disposition) as the final authority; these classes describe what clears it.
 

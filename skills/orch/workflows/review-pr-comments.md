@@ -119,6 +119,8 @@ Delegate to the architecture reviewer with the domain report paths, asking for c
 
 Read every report, aggregate across agents preserving attribution, and deduplicate by (location, description), keeping the first and noting all sources. `blockers[]` and `category: "fix"` suggestions are fix items; `category: "issue"` suggestions defer to § 6.2; `questions[]` are auto-answered in § 7.
 
+**Recurrence before the cap.** A finding sharing a root cause with one a prior pass already answered is dispositioned by [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence), which allows `structural-close` or `freeze` and no further patch round. Check it here, ahead of § 6.3's `iterations` cap: that cap counts rounds, and one cause recurs several times inside its budget.
+
 Auto-fix every valid item — do not prompt for a selection. Skip an item only when it contradicts an active decision (cite the decision id), is too vague to act on, is out of the PR's scope (→ issue), or cannot affect real usage (decline with one line, per [SKILL.md § The Cycle](../SKILL.md#the-cycle)).
 
 <output_format>
