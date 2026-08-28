@@ -308,10 +308,12 @@ The proof is that commit, never the branch name. One name is reused by every
 worktree an issue ever had, so a branch carrying commits past the pull request
 that merged it is unmerged work: cleanup keeps it and says so. Anything short
 of a proof keeps the worktree and names its reason, a lookup that cannot
-answer included. If Git cannot remove a worktree, cleanup exits nonzero and
-preserves its path, configured symlinks, and branch for manual recovery. If
-branch deletion fails after worktree removal, cleanup also exits nonzero and
-names the remaining branch.
+answer included. If the worktree listing itself fails, cleanup exits nonzero
+having inspected nothing, rather than reporting the empty sweep as a clean
+one. If Git cannot remove a worktree, cleanup exits nonzero and preserves its
+path, configured symlinks, and branch for manual recovery. If branch deletion
+fails after worktree removal, cleanup also exits nonzero and names the
+remaining branch.
 
 Options:
   --stale             Also collect worktrees whose guard lease is past the TTL
@@ -4542,13 +4544,32 @@ case "${1:-}" in
     # with spaces, and the main checkout is excluded by canonical comparison —
     # git may report it under an older lexical (symlinked) spelling that a
     # textual match against $PROJECT_ROOT would miss.
+    #
+    # The listing lands in a file so its exit status is READ. Fed through
+    # process substitution, bash discards that status, so a failed or truncated
+    # list left the candidate set empty and cleanup reported a clean sweep —
+    # the silent keep this whole loop exists to end. A file, not a variable:
+    # bash cannot hold the NUL bytes -z depends on.
+    if ! CLEANUP_LIST_FILE="$(mktemp "${TMPDIR:-/tmp}/worktree-cleanup-list.XXXXXX")"; then
+      echo "Error: could not create a scratch file to enumerate worktrees; nothing was inspected." >&2
+      exit 1
+    fi
+    CLEANUP_LIST_RC=0
+    git -C "$PROJECT_ROOT" worktree list --porcelain -z >"$CLEANUP_LIST_FILE" || CLEANUP_LIST_RC=$?
+    if [[ "$CLEANUP_LIST_RC" -ne 0 ]]; then
+      rm -f "$CLEANUP_LIST_FILE"
+      echo "Error: 'git -C \"$PROJECT_ROOT\" worktree list --porcelain -z' failed (exit $CLEANUP_LIST_RC)." >&2
+      echo "  No worktree was inspected and none was collected; this is not a clean sweep." >&2
+      exit 1
+    fi
     CLEANUP_TREES=()
     while IFS= read -r -d '' CLEANUP_LINE; do
       [[ "$CLEANUP_LINE" == worktree\ * ]] || continue
       CLEANUP_WT="${CLEANUP_LINE#worktree }"
       same_canonical_dir "$CLEANUP_WT" "$PROJECT_ROOT" && continue
       CLEANUP_TREES+=("$CLEANUP_WT")
-    done < <(git -C "$PROJECT_ROOT" worktree list --porcelain -z)
+    done <"$CLEANUP_LIST_FILE"
+    rm -f "$CLEANUP_LIST_FILE"
     for wt in ${CLEANUP_TREES[@]+"${CLEANUP_TREES[@]}"}; do
       # Every arm below either removes the worktree or says on stderr why it is
       # keeping it. Nothing falls through silently: the help promises that a

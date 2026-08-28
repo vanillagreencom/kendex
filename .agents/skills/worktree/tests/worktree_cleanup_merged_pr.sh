@@ -14,7 +14,9 @@
 #   * gh's stderr chatter never becomes part of the answer, and chatter on
 #     stdout is an unreadable answer rather than a row that did not match;
 #   * a worktree cleanup can prove nothing about — detached HEAD, or a branch
-#     whose ref is gone from the main checkout — is named, never passed over;
+#     whose ref is gone from the main checkout — is named, never passed over,
+#     and a listing that fails outright exits nonzero instead of reporting the
+#     empty sweep as a clean one;
 #   * `remove` distinguishes a lookup that could not answer from a branch
 #     proven unmerged, because one is a retry and the other is a decision;
 #   * a branch whose tip is NOT the head the pull request merged is kept, with
@@ -143,6 +145,29 @@ STUB
 
 branch_tip() {
   git -C "$1/main" rev-parse --verify "refs/heads/$2"
+}
+
+# A git that fails `worktree list` and passes everything else through, for
+# driving the enumeration failure. Lives in its own directory so only the
+# scenario that prepends it is affected.
+make_failing_git_stub() {
+  local bin="$1" real_git
+  real_git="$(command -v git)"
+  mkdir -p "$bin"
+  cat >"$bin/git" <<STUB
+#!/usr/bin/env bash
+set -uo pipefail
+prev=""
+for arg in "\$@"; do
+  if [[ "\$prev" == "worktree" && "\$arg" == "list" ]]; then
+    echo "fatal: not a git repository (stubbed failure)" >&2
+    exit 128
+  fi
+  prev="\$arg"
+done
+exec "$real_git" "\$@"
+STUB
+  chmod +x "$bin/git"
 }
 
 make_repo() {
@@ -580,6 +605,36 @@ else
   pass "a redirected lookup collects nothing"
 fi
 unset GH_REDIRECT_OID
+
+echo "=== a failed enumeration is not a clean sweep ==="
+
+# Process substitution discards the command's exit status, so a failing
+# `worktree list` used to leave the candidate set empty and cleanup reported
+# success having inspected nothing.
+ENUM_ROOT="$TMP_ROOT/enum"
+make_repo "$ENUM_ROOT"
+add_branch_tree "$ENUM_ROOT" "issue-enum"
+make_failing_git_stub "$ENUM_ROOT/failgit"
+enum_code=0
+enum_out=$(cd "$ENUM_ROOT/main" && PATH="$ENUM_ROOT/failgit:$PATH" \
+  "$WORKTREE_SCRIPT" cleanup 2>"$ENUM_ROOT/enum.err") || enum_code=$?
+enum_err="$(cat "$ENUM_ROOT/enum.err")"
+
+if [[ "$enum_code" -ne 0 ]]; then
+  pass "cleanup exits nonzero when it could not enumerate worktrees"
+else
+  fail "cleanup exits nonzero when it could not enumerate worktrees (got 0)"
+fi
+assert_contains "$enum_err" "worktree list --porcelain -z' failed" \
+  "cleanup names the enumeration command that failed"
+assert_contains "$enum_err" "this is not a clean sweep" \
+  "cleanup says the run inspected nothing rather than implying success"
+assert_path_exists "$ENUM_ROOT/trees/issue-enum" "a failed enumeration removes nothing"
+if grep -qF "Cleaned:" <<<"$enum_out"; then
+  fail "a failed enumeration collects nothing"
+else
+  pass "a failed enumeration collects nothing"
+fi
 
 echo "=== remove tells an unanswered lookup apart from a proven-unmerged branch ==="
 
