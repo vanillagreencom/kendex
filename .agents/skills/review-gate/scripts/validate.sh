@@ -183,11 +183,11 @@ REVIEW_GATE_STATUS_SNAPSHOT_FILE"
 # looking for a typo that is not there.
 REPO_VARIABLES="REVIEW_GATE_CHECK_RUN_NAME"
 
-if [ "$SETTINGS_FILE" = "/dev/null" ]; then
-  note "REVIEW_GATE_SETTINGS_FILE=/dev/null — settings are forced to built-in defaults; no committed file is being validated"
-elif [ ! -f "$SETTINGS_FILE" ]; then
-  note "$SETTINGS_FILE is absent — every key resolves to its built-in default, which is a valid install carrying no per-repo values"
-else
+# One default-TOML source, checked whole: tracking state, then the keyscan
+# findings, each naming the file it was found in.
+scan_settings_source() { # FILE
+  local sf="$1"
+  local keyscan assigned outside unread badheaders unknown seams repo_vars key
   # PRESENT is not COMMITTED. CI checks out tracked files only, so an
   # untracked settings file validates here with the intended trust values
   # while the gate runs on the built-in defaults — the widest possible split
@@ -195,13 +195,13 @@ else
   # REVIEW_GATE_SETTINGS_FILE is a caller handle pointing anywhere, so it is
   # exempt and says so.
   if [ -n "${REVIEW_GATE_SETTINGS_FILE:-}" ]; then
-    note "$SETTINGS_FILE is present (named by REVIEW_GATE_SETTINGS_FILE, so it is not required to be tracked)"
-  elif [ -L "$SETTINGS_FILE" ]; then
-    bad "$SETTINGS_FILE is a SYMLINK — everything below would read its target's bytes, while CI checks out the link itself and the engine resolves whatever sits there. Commit the real file, or name the shared one with REVIEW_GATE_SETTINGS_FILE, which is the handle for a path outside this repository"
-  elif git ls-files --error-unmatch -- "$SETTINGS_FILE" >/dev/null 2>&1; then
-    ok "$SETTINGS_FILE is present and tracked"
+    note "$sf is present (named by REVIEW_GATE_SETTINGS_FILE, so it is not required to be tracked)"
+  elif [ -L "$sf" ]; then
+    bad "$sf is a SYMLINK — everything below would read its target's bytes, while CI checks out the link itself and the engine resolves whatever sits there. Commit the real file, or name the shared one with REVIEW_GATE_SETTINGS_FILE, which is the handle for a path outside this repository"
+  elif git ls-files --error-unmatch -- "$sf" >/dev/null 2>&1; then
+    ok "$sf is present and tracked"
   else
-    bad "$SETTINGS_FILE is present but UNTRACKED — CI checks out tracked files only, so every value below is validated here and absent there; the gate would run on the built-in defaults. \`git add $SETTINGS_FILE\`"
+    bad "$sf is present but UNTRACKED — CI checks out tracked files only, so every value below is validated here and absent there; the gate would run on the built-in defaults. \`git add $sf\`"
   fi
   # INVERTED, after four spellings arrived one at a time — quoted, dotted,
   # quoted-dotted, and a key nested in an inline table. Enumerate what the
@@ -245,7 +245,7 @@ else
       gsub(/[[:space:]]+$/, "", l)
       print "unread " l
     }
-  ' < "$SETTINGS_FILE")"
+  ' < "$sf")"
   assigned="$(printf '%s\n' "$keyscan" | sed -n 's/^read //p' | sort -u)"
   outside="$(printf '%s\n' "$keyscan" | sed -n 's/^outside //p' | sort -u)"
   unread="$(printf '%s\n' "$keyscan" | sed -n 's/^unread //p')"
@@ -268,22 +268,22 @@ else
 $assigned
 EOF_ASSIGNED
   if [ -n "$unknown" ]; then
-    bad "$SETTINGS_FILE assigns REVIEW_GATE_* key(s) the engine never reads: $unknown — a misspelled key resolves as unset, so the value written there is ignored and the gate runs on the default (key table: references/settings.md)"
+    bad "$sf assigns REVIEW_GATE_* key(s) the engine never reads: $unknown — a misspelled key resolves as unset, so the value written there is ignored and the gate runs on the default (key table: references/settings.md)"
   else
-    ok "every REVIEW_GATE_* key assigned in $SETTINGS_FILE is one the engine reads"
+    ok "every REVIEW_GATE_* key assigned in $sf is one the engine reads"
   fi
   if [ -n "$seams" ]; then
-    bad "$SETTINGS_FILE assigns per-invocation env seam(s): $seams — these are caller handles, never repo settings; delete the assignment(s)"
+    bad "$sf assigns per-invocation env seam(s): $seams — these are caller handles, never repo settings; delete the assignment(s)"
   else
     ok "no per-invocation env seam is assigned as a repo setting"
   fi
   if [ -n "$repo_vars" ]; then
-    bad "$SETTINGS_FILE assigns $repo_vars as a setting — it is a GitHub REPOSITORY VARIABLE (Settings → Secrets and variables → Actions), read by a workflow expression before any checkout exists, so nothing reads it here; set it in the repository's variables instead"
+    bad "$sf assigns $repo_vars as a setting — it is a GitHub REPOSITORY VARIABLE (Settings → Secrets and variables → Actions), read by a workflow expression before any checkout exists, so nothing reads it here; set it in the repository's variables instead"
   else
     ok "no GitHub repository variable is assigned as a repo setting"
   fi
   if [ -n "$outside" ]; then
-    bad "$SETTINGS_FILE assigns REVIEW_GATE_* key(s) outside the [env] table: $outside — the loader reads only [env], so the value written there is ignored and the gate runs on the default; move the assignment(s) under the [env] header"
+    bad "$sf assigns REVIEW_GATE_* key(s) outside the [env] table: $outside — the loader reads only [env], so the value written there is ignored and the gate runs on the default; move the assignment(s) under the [env] header"
   else
     ok "every REVIEW_GATE_* assignment sits inside the [env] table"
   fi
@@ -294,7 +294,7 @@ EOF_ASSIGNED
   # findings about lines below a malformed header describe the corrupted
   # read, so fix the header first.
   if [ -n "$badheaders" ]; then
-    bad "$SETTINGS_FILE has table header(s) the loader cannot parse (a header is a lone [name] on its own line, with no comment and no second bracket):
+    bad "$sf has table header(s) the loader cannot parse (a header is a lone [name] on its own line, with no comment and no second bracket):
 $(printf '%s\n' "$badheaders" | sed 's/^/        /')"
   else
     ok "every table header parses as a lone [name]"
@@ -303,17 +303,32 @@ $(printf '%s\n' "$badheaders" | sed 's/^/        /')"
   # rg_bom_guard): the BOM is neither whitespace nor `[` nor a key
   # character, so the first line would misclassify. Findings below a BOM
   # describe that corrupted read — remove the BOM first.
-  if [ "$(head -c 3 < "$SETTINGS_FILE" 2>/dev/null)" = "$(printf '\357\273\277')" ]; then
-    bad "$SETTINGS_FILE starts with a UTF-8 byte-order mark; remove it (every settings reader refuses the file whole)"
+  if [ "$(head -c 3 < "$sf" 2>/dev/null)" = "$(printf '\357\273\277')" ]; then
+    bad "$sf starts with a UTF-8 byte-order mark; remove it (every settings reader refuses the file whole)"
   else
     ok "no UTF-8 byte-order mark before the first line"
   fi
   if [ -n "$(printf '%s' "$unread" | tr -d '[:space:]')" ]; then
-    bad "$SETTINGS_FILE names REVIEW_GATE_ in a shape the loader does not read. The loader reads ONE shape — a bare KEY at the start of its own line, followed by its own \`=\` — and everything else is unsupported syntax read by nothing, so the gate runs on the built-in default. This is deliberately unforgiving, string values included: every exception this check has carried became a place for the next spelling to hide. Rewrite, or reword a mention, on the line(s) below:
+    bad "$sf names REVIEW_GATE_ in a shape the loader does not read. The loader reads ONE shape — a bare KEY at the start of its own line, followed by its own \`=\` — and everything else is unsupported syntax read by nothing, so the gate runs on the built-in default. This is deliberately unforgiving, string values included: every exception this check has carried became a place for the next spelling to hide. Rewrite, or reword a mention, on the line(s) below:
 $(printf '%s\n' "$unread" | sed 's/^/        /')"
   else
     ok "every REVIEW_GATE_* assignment uses the bare key name the loader reads"
   fi
+}
+
+if [ "$SETTINGS_FILE" = "/dev/null" ]; then
+  note "REVIEW_GATE_SETTINGS_FILE=/dev/null — settings are forced to built-in defaults; no committed file is being validated"
+elif [ ! -f "$SETTINGS_FILE" ]; then
+  note "$SETTINGS_FILE is absent — every key resolves to its built-in default, which is a valid install carrying no per-repo values"
+else
+  scan_settings_source "$SETTINGS_FILE"
+fi
+# The resolver treats .kendex/settings.toml as the AUTHORITATIVE default
+# TOML source when present, so with no explicit override the same checks
+# cover it too: a committed nested file with a typo'd trust key must not
+# validate clean while the engine ignores the typo and the gate widens.
+if [ -z "${REVIEW_GATE_SETTINGS_FILE:-}" ] && [ -f ".kendex/settings.toml" ]; then
+  scan_settings_source ".kendex/settings.toml"
 fi
 
 # The value rules are the ENGINE's, invoked rather than restated: a rule

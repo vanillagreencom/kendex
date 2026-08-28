@@ -122,7 +122,7 @@ skills/preflight/scripts/preflight	1188
 skills/review-gate/scripts/pr-watch.sh	854
 skills/review-gate/scripts/review-predicate-selftest.sh	2514
 skills/review-gate/scripts/review-predicate.sh	1513
-skills/review-gate/scripts/validate.sh	535
+skills/review-gate/scripts/validate.sh	550
 skills/review-gate/templates/review-gate-writer.yml	658
 skills/review-gate/tests/e2e-sandbox.sh	898
 skills/review-gate/tests/pr-watch.test.sh	1158

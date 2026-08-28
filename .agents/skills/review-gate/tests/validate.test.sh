@@ -103,6 +103,15 @@ dir="$DIR"
 (cd "$dir" && git rm -q --cached kendex.settings.toml && git commit -q -m "untrack the settings file")
 expect_fail "an UNTRACKED settings file is a finding, not a pass" "$dir" "present but UNTRACKED"
 
+# The resolver treats a committed .kendex/settings.toml as the authoritative
+# default TOML source, so its typo'd trust key must be a finding — not a
+# clean pass while the engine ignores the typo and the gate widens.
+repo_fails "a typo'd key in a COMMITTED .kendex/settings.toml is a finding" "never reads" \
+  'mkdir -p .kendex && printf "[env]\nREVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGIN = \"x\"\n" > .kendex/settings.toml'
+printf '%s' "$OUT" | grep -F "never reads" | grep -qF ".kendex/settings.toml" &&
+  ok "the nested-file finding names .kendex/settings.toml" ||
+  bad "the nested-file finding names .kendex/settings.toml" "$OUT"
+
 # ...and the explicit caller handle is exempt, since it names a path that was
 # never required to live in the repository.
 sandbox
