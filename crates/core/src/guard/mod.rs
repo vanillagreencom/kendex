@@ -46,10 +46,25 @@ pub const SKILL: &str = "growth-guards";
 /// a foreign hook, no file at all, a `core.hooksPath` pointing elsewhere —
 /// means not armed, which is the safe answer for all of them and needs no
 /// taxonomy to reach.
+///
+/// Where it has to be is the installer's rule, not this module's: see
+/// [`hook_is_ours`].
 pub const MARKER: &str = "# kendex-guards-hook";
 
-/// The helper the installer writes beside the hooks. Nothing else writes a
-/// file of this name under `.git/hooks`, so the path alone identifies it.
+/// The whole line the installer writes into a hook file it CREATED, which
+/// is how removal tells one from a consumer's own shebang-only hook. It
+/// mentions the marker without ending in it, so it is owned by name.
+pub const CREATED_MARKER: &str = "# kendex-guards-hook created this file";
+
+/// The marker inside the helper the installer writes.
+///
+/// The name is not the identity: the installer refuses to overwrite a file
+/// of the helper's name that does not carry this, and the uninstaller
+/// refuses to remove one, so a report that named such a file by its name
+/// alone would tell a reader to delete what the package itself leaves.
+pub const HELPER_MARKER: &str = "kendex growth-guards git hooks";
+
+/// The helper the installer writes beside the hooks.
 const HELPER: &str = "kendex-guards";
 
 /// The installer the package ships, relative to its own directory.
@@ -194,6 +209,39 @@ fn installer(dir: &Path, args: &[&str]) -> Result<GuardReport> {
     Ok(relay(&output))
 }
 
+/// Whether a hook file carries a line this package wrote.
+///
+/// The installer's own `gg_owned_lines_re`, which is the predicate its
+/// removal deletes by and its `--check` reads by: a line the marker CLOSES,
+/// or a line that is exactly the created marker. Matching the marker
+/// anywhere is wider than that on purpose — it would claim a consumer's own
+/// comment that quotes the marker mid-sentence, and both readers here would
+/// then describe a gate nothing installed. Pinned to the script by
+/// `guard_hooks::the_ownership_markers_match_the_installers_own`.
+///
+/// Split on `\n` and not [`str::lines`], which also eats a `\r`: grep does
+/// not, so a CRLF hook whose line ends in `marker\r` is not owned there and
+/// must not be owned here.
+fn hook_is_ours(text: &str) -> bool {
+    text.split('\n')
+        .any(|line| line.ends_with(MARKER) || line == CREATED_MARKER)
+}
+
+/// Whether the file at the helper's path is the helper this package wrote.
+///
+/// The uninstaller's own predicate: a regular file, not a symlink, whose
+/// bytes carry [`HELPER_MARKER`]. It deliberately preserves anything else
+/// of that name, so naming one here would advise a deletion the package
+/// refuses to make. A path that cannot be stat'ed is not ours either — a
+/// helper left beside no lane hook of ours execs on no commit, so the
+/// unsure answer costs a stray file and never a lost one.
+fn helper_is_ours(path: &Path) -> Result<bool> {
+    if !std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file()) {
+        return Ok(false);
+    }
+    Ok(crate::fs::read_if_exists(path)?.is_some_and(|text| text.contains(HELPER_MARKER)))
+}
+
 /// Whether this package armed this repository's commit hooks, read off the
 /// hook files and nothing else.
 ///
@@ -202,10 +250,11 @@ fn installer(dir: &Path, args: &[&str]) -> Result<GuardReport> {
 /// its status ran code its author chose. So this executes nothing, and it
 /// asks the smallest question that is safe to answer from bytes alone.
 ///
-/// The marker and the execute bit. Both lanes have to carry the marker, in
-/// the directory git reads with no redirect in the way, and both have to be
-/// files git will actually run — git skips a hook without `+x` in silence,
-/// so a marker in a file it ignores describes a gate that is not there.
+/// The marker and the execute bit. Both lanes have to carry a line the
+/// installer owns ([`hook_is_ours`]), in the directory git reads with no
+/// redirect in the way, and both have to be files git will actually run —
+/// git skips a hook without `+x` in silence, so an owned line in a file it
+/// ignores describes a gate that is not there.
 /// Executability is git's own rule about hook files rather than anything
 /// this package puts in them, which is why reading it is not the grammar
 /// this module deliberately no longer has.
@@ -233,7 +282,7 @@ pub fn armed(repo: &Repo) -> Result<bool> {
         let Some(text) = crate::fs::read_if_exists(&path)? else {
             return Ok(false);
         };
-        if !text.contains(MARKER) || !is_executable(&path) {
+        if !hook_is_ours(&text) || !is_executable(&path) {
             return Ok(false);
         }
     }
@@ -243,7 +292,7 @@ pub fn armed(repo: &Repo) -> Result<bool> {
 /// The hook files this package left behind in a repository that no longer
 /// carries the package anywhere.
 ///
-/// The same read as [`armed`] — the marker, in the directory git reads —
+/// The same read as [`armed`] — an owned line, in the directory git reads —
 /// with the opposite precondition: no copy of the package anywhere the
 /// shared hooks gate, which is every work tree attached to this common git
 /// dir. A shim that survives its package execs a script that is not there,
@@ -253,9 +302,9 @@ pub fn armed(repo: &Repo) -> Result<bool> {
 /// gone.
 ///
 /// Cheapest question first. The hook files are read before anything is
-/// spawned, because a repository with no marker in them is the ordinary
-/// case and this runs at every session start; only a marker earns the git
-/// process behind `hooks_redirected` and the search behind
+/// spawned, because a repository with no owned line in them is the ordinary
+/// case and this runs at every session start; only an owned line earns the
+/// git process behind `hooks_redirected` and the search behind
 /// `Installed::anywhere`.
 ///
 /// Hooks-directory-wide, not project-wide and not work-tree-wide. Every
@@ -269,11 +318,14 @@ pub fn armed(repo: &Repo) -> Result<bool> {
 /// empty list: the caller reports "could not check" instead of telling a
 /// reader to delete hook files that may be gating a copy nobody could see.
 ///
-/// Each lane that carries the marker, and the helper by its name beside
-/// them, so the report can say which files to clean up. The marker is the
-/// whole test: a lane hook carrying it is what execs the helper, and a
-/// file of the helper's name with no such lane runs on no commit — the
-/// installer leaves a foreign file of that name alone, and so does this.
+/// Each lane carrying a line the installer owns, and the helper beside
+/// them when it carries the installer's helper marker, so the report can
+/// say which files to clean up. Both predicates are the installer's own
+/// ([`hook_is_ours`], [`helper_is_ours`]) rather than an approximation of
+/// them, because the advice here is a deletion: a lane hook the installer
+/// would not strip and a helper it would not remove are somebody else's
+/// files. A helper with no owned lane beside it runs on no commit, so it
+/// is named only where one is.
 /// Empty where `core.hooksPath` is set: git reads no hook here, so nothing
 /// fails, and what a redirected directory means is a grammar this module
 /// does not have. The execute bit is not consulted: a leftover git happens
@@ -283,7 +335,7 @@ pub fn stranded(repo: &Repo) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     for lane in LANES {
         let path = hooks.join(lane);
-        if crate::fs::read_if_exists(&path)?.is_some_and(|text| text.contains(MARKER)) {
+        if crate::fs::read_if_exists(&path)?.is_some_and(|text| hook_is_ours(&text)) {
             files.push(path);
         }
     }
@@ -291,7 +343,7 @@ pub fn stranded(repo: &Repo) -> Result<Vec<PathBuf>> {
         return Ok(Vec::new());
     }
     let helper = hooks.join(HELPER);
-    if helper.is_file() {
+    if helper_is_ours(&helper)? {
         files.push(helper);
     }
     Ok(files)

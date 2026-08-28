@@ -1985,7 +1985,7 @@ export type RepoEffects = {
 	 */
 	installer: string | null,
 	/**
-	 *  The script that undoes the effect. A plan that takes the package
+	 *  The script that undoes the effect. A CLI verb that takes the package
 	 *  out of a scope runs it first, while the file is still there.
 	 */
 	uninstaller: string | null,

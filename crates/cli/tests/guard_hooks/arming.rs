@@ -265,6 +265,88 @@ fn check_names_the_shims_a_removed_package_left_behind() {
         "a lone helper with unmarked hooks was reported as stranded:\n{}",
         said(&out)
     );
+
+    // A hook that MENTIONS the marker mid-line is a consumer's own comment.
+    // The installer's owned-line rule is the marker closing a line, so its
+    // removal would leave this file exactly as it is — and advice to strip
+    // it would eat somebody else's line.
+    for lane in ["pre-commit", "commit-msg"] {
+        std::fs::write(
+            root.join(".git/hooks").join(lane),
+            "#!/bin/sh\n# lines ending in # kendex-guards-hook belong to kendex\nexit 0\n",
+        )
+        .unwrap();
+    }
+    let out = run(home, &root, "kendex", &["check"]);
+    assert!(
+        !said(&out).contains("commit hooks"),
+        "a hook that merely mentions the marker was reported as stranded:\n{}",
+        said(&out)
+    );
+
+    // Owned lanes again — the disabled spelling, which the installer still
+    // owns because the marker closes the line — beside a file of the
+    // helper's name carrying no helper marker. The uninstaller refuses to
+    // remove that file, so the lanes are named and it is not.
+    for lane in ["pre-commit", "commit-msg"] {
+        std::fs::write(
+            root.join(".git/hooks").join(lane),
+            format!("#!/bin/sh\n# \"$kendex_gg_h\" {lane} || exit $?; # kendex-guards-hook\n"),
+        )
+        .unwrap();
+    }
+    let helper = hooks.join("kendex-guards");
+    std::fs::write(&helper, "#!/bin/sh\necho somebody else's\n").unwrap();
+    let out = run(home, &root, "kendex", &["check"]);
+    let text = said(&out);
+    assert!(text.contains("commit hooks"), "{text}");
+    for lane in ["pre-commit", "commit-msg"] {
+        assert!(
+            text.contains(&hooks.join(lane).display().to_string()),
+            "{lane} was not named:\n{text}"
+        );
+    }
+    assert!(
+        !text.contains(&helper.display().to_string()),
+        "a foreign file of the helper's name was named for deletion:\n{text}"
+    );
+}
+
+/// The ownership markers kendex reads are the installer's own.
+///
+/// Three constants in two languages, and this branch already lost one of
+/// them: the helper marker was dropped from the crate on the reasoning that
+/// the helper's fixed name identified it, which is not the predicate the
+/// uninstaller uses — it requires the marker, and preserves a foreign file
+/// of that name. So the values come out of the script rather than beside
+/// it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_ownership_markers_match_the_installers_own() {
+    let installer = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../skills/growth-guards/scripts/install-git-hooks")
+        .canonicalize()
+        .unwrap();
+    let text = std::fs::read_to_string(&installer).unwrap();
+    let declared = |name: &str| -> String {
+        let prefix = format!("{name}=\"");
+        text.lines()
+            .find_map(|line| line.strip_prefix(&prefix))
+            .and_then(|rest| rest.strip_suffix('"'))
+            .unwrap_or_else(|| panic!("the installer declares {name} as one quoted string"))
+            .to_owned()
+    };
+    for (name, ours) in [
+        ("HOOK_SENTINEL", kendex_core::guard::MARKER),
+        ("CREATED_MARKER", kendex_core::guard::CREATED_MARKER),
+        ("HELPER_MARKER", kendex_core::guard::HELPER_MARKER),
+    ] {
+        assert_eq!(
+            declared(name),
+            ours,
+            "the installer's {name} and the one kendex reads by have drifted"
+        );
+    }
 }
 
 /// One repository, two kendex projects, one hooks directory. The project

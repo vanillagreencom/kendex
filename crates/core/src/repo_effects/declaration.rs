@@ -24,7 +24,7 @@ pub struct RepoEffects {
     /// effect. Absent means kendex has nothing to run and the disclosure
     /// ends with what the reader should run themselves.
     pub installer: Option<String>,
-    /// The script that undoes the effect. A plan that takes the package
+    /// The script that undoes the effect. A CLI verb that takes the package
     /// out of a scope runs it first, while the file is still there.
     pub uninstaller: Option<String>,
     /// How to undo the effect by hand, for the disclosure's last line.
