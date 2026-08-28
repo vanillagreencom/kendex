@@ -128,6 +128,23 @@ pub(crate) fn assignment_key(row: &Row) -> Option<String> {
     crate::settings_toml::key_of(key).map(|key| key.name)
 }
 
+/// The line where this file declares `env` as an array of tables, if it
+/// does.
+///
+/// TOML lets one name be a table or an array of tables and never both, so
+/// a file holding `[[env]]` has nowhere a seed can go. Writing `[env]`
+/// beside it declares `env` twice and the file stops loading at all;
+/// writing inside it puts a setting under a header no loader reads. The
+/// shape is refused rather than written around, and the plan says so.
+pub fn env_as_array(text: &str) -> Option<u32> {
+    crate::settings_toml::rows(text)
+        .into_iter()
+        .find_map(|row| {
+            let header = crate::settings_toml::header_of(row.text)?;
+            (row.kind == Line::Table && header.array && header.path == ["env"]).then_some(row.line)
+        })
+}
+
 /// Whether this row is a table header the section walk ends on. The
 /// reader's own answer: a line only reads as a table where nothing is
 /// open above it, so a bracket nested in an array is not one, and a
@@ -230,6 +247,10 @@ fn render_entries(entries: &[&SeededEnv], eol: &str) -> String {
 /// terminator. `None` = nothing to add. Returns the new text plus the keys
 /// that were added.
 pub fn merge(original: Option<&str>, entries: &[SeededEnv]) -> Option<(String, Vec<String>)> {
+    // Nowhere to write: the plan reports the shape, and no byte moves.
+    if original.is_some_and(|text| env_as_array(text).is_some()) {
+        return None;
+    }
     let mut existing: BTreeSet<String> = original
         .map(assigned_keys)
         .unwrap_or_default()

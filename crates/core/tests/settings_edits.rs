@@ -265,6 +265,9 @@ fn a_save_that_seeds_a_missing_key_and_sets_it_is_one_write() {
     .unwrap();
     install(&f);
     let refreshed = fs::read_to_string(settings_path(&f)).unwrap();
+    // The first asserts the refresh acted; the second that it left the
+    // value alone. A survival assertion is satisfied by its own input, so
+    // it is only worth anything beside one that proves the code ran.
     assert!(refreshed.contains("# How deep it goes."), "{refreshed}");
     assert!(refreshed.contains("DEPTH = \"7\""), "{refreshed}");
 }
@@ -581,4 +584,44 @@ fn a_refusal_names_the_file_the_same_way_through_a_link() {
             .unwrap()
             .contains("REVIEWERS = \"arch\"")
     );
+}
+
+/// The end-to-end half of the array-of-tables refusal: an apply says why
+/// and writes nothing, and an edit aimed at that file refuses outright.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_env_declared_as_an_array_of_tables_stops_the_write_and_says_why() {
+    let f = fixture(TEMPLATE);
+    let file = "[[env]]\nMODE = \"a\"\n";
+    fs::write(settings_path(&f), file).unwrap();
+
+    let report = kendex_core::engine::audit(&f.env, &f.scope).unwrap();
+    assert!(
+        report
+            .drift
+            .iter()
+            .any(|row| row.detail.contains("array of tables")),
+        "{:?}",
+        report.drift.iter().map(|r| &r.detail).collect::<Vec<_>>()
+    );
+    assert!(
+        !report
+            .plan
+            .ops
+            .iter()
+            .any(|op| op.description.contains("kendex.settings.toml")),
+        "nothing may be written into a file with nowhere to write"
+    );
+    apply::execute(&f.env, &report.plan, None).unwrap();
+    assert_eq!(fs::read_to_string(settings_path(&f)).unwrap(), file);
+
+    let refused = save(&f, vec![set("REVIEWERS", "arch")], base_now(&f)).unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            CoreError::SettingsRefused(SettingsRefusal::EnvIsAnArray { .. })
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(fs::read_to_string(settings_path(&f)).unwrap(), file);
 }

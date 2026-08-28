@@ -215,6 +215,27 @@ pub(super) fn plan_lock_write(
     Ok(())
 }
 
+/// The row a plan carries for a settings file it cannot write.
+///
+/// Two shapes reach here and they end the same way: a path that is not a
+/// regular file, and a document declaring env as an array of tables.
+/// Neither is a place a setting can go, so seeding says so and leaves the
+/// file alone — while an edit aimed at that same file refuses outright,
+/// because the person asked for exactly it.
+fn cannot_write(scope: &Scope, file: String, detail: String) -> DriftRow {
+    DriftRow {
+        kind: ItemKind::Skill,
+        name: file,
+        harness: HarnessId::Claude,
+        scope: scope.clone(),
+        state: DriftState::Conflict,
+        detail,
+        cause: None,
+        compared: None,
+        also_in_the_way: Vec::new(),
+    }
+}
+
 /// Skills may ship `[env]` defaults; missing keys merge into the project's
 /// kendex.settings.toml write-if-absent (v1 semantics — a key the user set
 /// anywhere in the file is never touched), and seeded comment blocks whose
@@ -269,20 +290,35 @@ pub(super) fn plan_settings_seed(
         if !edits.is_empty() {
             return Err(crate::settings_file::SettingsRefusal::NotRegularFile { path }.into());
         }
-        drift.push(DriftRow {
-            kind: ItemKind::Skill,
-            name: file,
-            harness: HarnessId::Claude,
-            scope: scope.clone(),
-            state: DriftState::Conflict,
-            detail: format!("{} is not a regular file", path.display()),
-            cause: None,
-            compared: None,
-            also_in_the_way: Vec::new(),
-        });
+        drift.push(cannot_write(
+            scope,
+            file,
+            format!("{} is not a regular file", path.display()),
+        ));
         return Ok(notes);
     }
     let current = crate::fs::read_if_exists(&path)?;
+    // A file that declares env as an array of tables has nowhere a
+    // setting can go, and writing around it would leave a document that
+    // does not load. Said the way the non-regular file is said: the plan
+    // reports it, and an edit aimed at it refuses outright.
+    if let Some(line) = current
+        .as_deref()
+        .and_then(crate::settings_seed::env_as_array)
+    {
+        if !edits.is_empty() {
+            return Err(crate::settings_file::SettingsRefusal::EnvIsAnArray { path, line }.into());
+        }
+        drift.push(cannot_write(
+            scope,
+            file,
+            format!(
+                "{} declares env as an array of tables on line {line}, so no setting can be seeded",
+                path.display()
+            ),
+        ));
+        return Ok(notes);
+    }
     let (seeded, added, updated) = match current.as_deref() {
         None => match crate::settings_seed::merge(None, &state.settings_env) {
             Some((text, added)) => (text, added, Vec::new()),

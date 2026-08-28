@@ -555,8 +555,27 @@ fn any_spelling_of_the_env_header_is_the_table_a_seed_lands_in() {
         let other = text.find("[other]").expect("kept");
         assert!(depth < other, "{header}: the seed belongs to env:\n{text}");
     }
-    // An array of tables is NOT that table, so the seed does not go in it.
+}
+
+/// `[[env]]` declares `env` as an array of tables, and TOML lets one name
+/// be a table or an array of tables, never both. So there is nowhere a
+/// seed can go: writing `[env]` beside it declares `env` twice and the
+/// file stops loading, and writing inside it puts a setting where no
+/// loader looks. The file is left exactly as it was.
+#[test]
+fn an_env_declared_as_an_array_of_tables_is_refused_rather_than_seeded() {
+    let seeded = [SeededEnv {
+        entry: EnvEntry {
+            key: "DEPTH".to_owned(),
+            lines: vec!["# How deep.".to_owned(), "DEPTH = \"2\"".to_owned()],
+        },
+        owner: "review".to_owned(),
+    }];
     let file = "[[env]]\nMODE = \"a\"\n";
-    let (text, _) = merge(Some(file), &seeded).expect("DEPTH is missing");
-    assert!(text.contains("[env]"), "a real env table is made:\n{text}");
+    assert_eq!(env_as_array(file), Some(1));
+    assert_eq!(
+        merge(Some(file), &seeded),
+        None,
+        "nothing may be written into a file with nowhere to write"
+    );
 }
