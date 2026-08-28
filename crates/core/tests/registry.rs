@@ -256,21 +256,6 @@ fn skillssh_refuses_names_its_install_url_cannot_carry() {
 }
 
 #[test]
-fn an_oversized_cache_file_reads_as_no_cache() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let env = env_in(dir.path());
-    let registry_dir = env.registry_cache_dir();
-    std::fs::create_dir_all(&registry_dir).expect("mkdir");
-    // Past the cap the file is not even read, whatever it claims to hold.
-    let oversized = "x".repeat(41_000_000);
-    std::fs::write(registry_dir.join("index.cache.json"), oversized).expect("write");
-    let down = Canned::new(vec![Err(CoreError::RegistryUnavailable {
-        why: "no route".into(),
-    })]);
-    assert!(cache::load(&env, &down, false).is_err());
-}
-
-#[test]
 fn etag_and_body_are_one_generation_on_disk() {
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
@@ -321,7 +306,7 @@ fn login_start_and_poll_speak_the_device_protocol() {
     let asked = canned.saw_body.borrow().clone().expect("a body was sent");
     assert!(
         asked.contains(r#""client":"kendex CLI""#),
-        "the approval page needs to know which surface is asking: {asked}"
+        "the request names the asking surface: {asked}"
     );
 
     use kendex_core::registry::login::{Poll, poll_once};

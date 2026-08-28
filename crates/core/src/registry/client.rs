@@ -97,13 +97,16 @@ fn rotate_locked(
 }
 
 /// Commit a completed device login without racing refresh or logout.
+/// Surfaces call `me::commit_sign_in`, which drops the previous
+/// account's cached identity around this.
 pub fn commit_login(store: &dyn CredentialStore, credential: &Credential) -> Result<()> {
     let _guard = store.refresh_guard()?;
     store.save(credential)
 }
 
 /// Revoke and clear the current sign-in under the credential transaction lock.
-/// Returns false when the machine was already signed out.
+/// Returns false when the machine was already signed out. Surfaces call
+/// `me::sign_out`, which forgets the cached identity around this.
 pub fn logout(fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result<bool> {
     let _guard = store.refresh_guard()?;
     let Some(credential) = store.load()? else {

@@ -3,14 +3,22 @@
 //! fetches and no other endpoint's answer is ever served. The directory
 //! index and the signed-in identity both cache through this mechanism;
 //! each caller keeps its own transport, parser, and refusal message.
+//! The file is kendex's own and never a user-managed link, so a final
+//! symlink at the path is replaced on write and refused on read.
+
+use std::io::Read;
 
 use serde::{Deserialize, Serialize};
 
 use crate::clock;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::fs::{atomic_write, read_if_exists};
+use crate::fs::{atomic_write_no_follow, open_read_no_follow};
 use crate::registry::{FetchResponse, MAX_RESPONSE_BYTES, base_url};
+
+/// A cached generation is one response plus its meta, so the cap is the
+/// response cap with room for the wrapper.
+const MAX_CACHE_BYTES: u64 = MAX_RESPONSE_BYTES as u64 * 2;
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct Generation {
@@ -42,18 +50,21 @@ impl<'e> GenerationFile<'e> {
         self.env.registry_cache_dir().join(self.file)
     }
 
-    /// The cached generation, or `None`: absent, over the size cap,
-    /// unreadable, another endpoint's, or a body the caller's strict
-    /// parse refuses. The cache lives on this machine, but "on this
-    /// machine" is not "trusted to be well-formed": the same cap and the
-    /// same parse the network response passed.
+    /// The cached generation, or `None`: absent, a symlink or anything
+    /// but a plain file, over the size cap, unreadable, another
+    /// endpoint's, or a body the caller's strict parse refuses. The
+    /// cache lives on this machine, but "on this machine" is not
+    /// "trusted to be well-formed": the same cap and the same parse the
+    /// network response passed.
     pub fn read<T>(&self, parse: impl Fn(&[u8]) -> Result<T>) -> Option<(Generation, T)> {
-        let path = self.path();
-        let size = std::fs::metadata(&path).ok()?.len();
-        if size > MAX_RESPONSE_BYTES as u64 * 2 {
+        let file = open_read_no_follow(&self.path()).ok()?;
+        let metadata = file.metadata().ok()?;
+        if !metadata.is_file() || metadata.len() > MAX_CACHE_BYTES {
             return None;
         }
-        let generation: Generation = serde_json::from_str(&read_if_exists(&path).ok()??).ok()?;
+        let mut text = String::new();
+        file.take(MAX_CACHE_BYTES).read_to_string(&mut text).ok()?;
+        let generation: Generation = serde_json::from_str(&text).ok()?;
         if generation.endpoint != base_url() {
             return None;
         }
@@ -130,7 +141,7 @@ impl<'e> GenerationFile<'e> {
             serde_json::to_string(generation).map_err(|error| CoreError::RegistryMalformed {
                 why: error.to_string(),
             })?;
-        atomic_write(&dir.join(self.file), &json)
+        atomic_write_no_follow(&dir.join(self.file), &json)
     }
 }
 

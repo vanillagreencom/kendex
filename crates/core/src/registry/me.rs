@@ -51,7 +51,9 @@ struct WireMe {
 /// Ask who is signed in. No credential is `SignedOut` without a network
 /// call; a dead credential is `Expired` and its cached identity is
 /// dropped; an unreachable or misbehaving server serves the cached
-/// identity as `Offline`, and errors only with nothing cached to serve.
+/// identity as `Offline`, and errors only with nothing cached to serve. A
+/// credential gone by the time the answer lands is `SignedOut` too, and
+/// nothing is written back over the sign-out.
 pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result<AccountState> {
     if store.load()?.is_none() {
         return Ok(AccountState::SignedOut);
@@ -77,6 +79,12 @@ pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result
         }
         fetched => fetched,
     };
+    // A sign-out that landed while this read was in flight already forgot
+    // the cache; settling now would write the identity straight back. The
+    // module's rule throughout: a missing credential means logout won.
+    if store.load()?.is_none() {
+        return Ok(AccountState::SignedOut);
+    }
     let loaded = cache.settle(cached, fetched, parse, |response| {
         CoreError::RegistryUnavailable {
             why: server_message(response),

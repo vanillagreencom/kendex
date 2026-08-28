@@ -45,8 +45,8 @@ struct WireError {
     error: String,
 }
 
-/// `client_label` names the asking surface ("kendex app", "kendex CLI") so
-/// the approval page can say which one is asking.
+/// `client_label` names the asking surface ("kendex app", "kendex CLI") in
+/// the request. The server does not read the field yet.
 pub fn start(fetch: &dyn Fetch, client_label: &str) -> Result<DeviceStart> {
     let body = serde_json::json!({
         "capabilities": DEFAULT_CAPABILITIES,

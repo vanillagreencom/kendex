@@ -341,6 +341,32 @@ fn logout_winning_the_race_reads_as_signed_out() {
 }
 
 #[test]
+fn a_sign_out_landing_mid_read_is_never_written_back() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = env_in(dir.path());
+    // The opening check and with_access both still see the credential; by
+    // the time the answer is settled, sign-out has cleared it.
+    let store = VanishingStore {
+        loads_before_gone: RefCell::new(2),
+        credential: Credential {
+            endpoint: "https://kendex.ai".to_owned(),
+            access_token: "kxa_old".to_owned(),
+            refresh_token: "kxr_old".to_owned(),
+            capabilities: vec![],
+        },
+    };
+    let fetch = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
+    assert_eq!(
+        me::load(&env, &fetch, &store).expect("load"),
+        AccountState::SignedOut
+    );
+    assert!(
+        !env.registry_cache_dir().join("me.cache.json").exists(),
+        "a read finishing after sign-out must leave no identity on disk"
+    );
+}
+
+#[test]
 fn revalidation_sends_the_etag_and_304_keeps_the_identity() {
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
@@ -479,8 +505,27 @@ fn an_oversized_identity_cache_reads_as_no_cache() {
     let env = env_in(dir.path());
     let registry_dir = env.registry_cache_dir();
     std::fs::create_dir_all(&registry_dir).expect("mkdir");
-    // Past the cap the file is not even read, whatever it claims to hold.
-    std::fs::write(registry_dir.join("me.cache.json"), "x".repeat(41_000_000)).expect("write");
+    // This endpoint's own generation, holding an identity that parses:
+    // the size is the only thing left to refuse it, so the cap is what
+    // this test measures. A padded body keeps that honest.
+    let body = format!(
+        r#"{{"name":"Ada Lovelace","github_login":null,"pad":"{}"}}"#,
+        "x".repeat(41_000_000)
+    );
+    let generation = serde_json::json!({
+        "endpoint": "https://kendex.ai",
+        "etag": serde_json::Value::Null,
+        "fetched_at": 1,
+        "body": body,
+    });
+    std::fs::write(
+        registry_dir.join("me.cache.json"),
+        serde_json::to_string(&generation).expect("generation"),
+    )
+    .expect("write");
     let down = Canned::new(vec![away()]);
-    assert!(me::load(&env, &down, &MemoryStore::signed_in()).is_err());
+    assert!(
+        me::load(&env, &down, &MemoryStore::signed_in()).is_err(),
+        "a cache past the cap is never read, however well-formed"
+    );
 }

@@ -669,8 +669,8 @@ lives in one capability table read by core and UI.
   is the one cache mechanism: an endpoint-keyed generation written
   atomically under `Env::registry_cache_dir`, a failed refresh serving the
   last fetch labeled stale. `cache.rs` adds the directory's one-hour TTL;
-  the identity (`me.rs`) has none and is forgotten on sign-in and
-  sign-out. All reads go through the `Fetch` trait (curl via `Hardened`,
+  the identity (`me.rs`) has none and is forgotten on sign-in, sign-out,
+  and expiry. All reads go through the `Fetch` trait (curl via `Hardened`,
   plain http only under `KENDEX_API`); tests inject transports. Bearer
   calls route through `registry/client.rs`: one named cross-process lock
   serializes login, logout, and refresh rotation, saving rotations before
