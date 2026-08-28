@@ -246,3 +246,33 @@ fn one_defect_the_parser_also_sees_is_reported_once() {
         );
     }
 }
+
+#[test]
+fn a_duplicate_does_not_hide_the_rest_of_its_own_line() {
+    // Deleting the first WAIT and re-running to be told the second was
+    // never a readable value is a round trip the author should not make.
+    let found = located("[env]\n# Why.\nWAIT = \"900\"\n# Again.\nWAIT = 900\n");
+    assert_eq!(
+        found,
+        [
+            (
+                5,
+                "WAIT is assigned again; it is already on line 3".to_owned()
+            ),
+            (
+                5,
+                "WAIT's default is not a one-line double-quoted string free of \" and \\"
+                    .to_owned()
+            ),
+        ]
+    );
+}
+
+#[test]
+fn a_duplicate_that_is_otherwise_fine_is_one_finding_and_no_row() {
+    let read = read("[env]\n# Why.\nWAIT = \"900\"\n# Again.\nWAIT = \"600\"\n");
+    assert_eq!(read.findings.len(), 1, "{:?}", read.findings);
+    // The first assignment is the row; the second is a line to delete.
+    assert_eq!(read.entries.len(), 1);
+    assert_eq!(read.entries[0].value, "900");
+}

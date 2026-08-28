@@ -222,13 +222,17 @@ fn scan(text: &str) -> TemplateRead {
             continue;
         };
         let taken = std::mem::take(&mut comment);
-        if let Some(first) = seen.insert(key, line) {
+        // Being assigned twice is one defect; whatever else is wrong with
+        // this same assignment is another. Stopping here would tell the
+        // author about the duplicate, take their fix, and only then admit
+        // the value was never readable either.
+        let duplicate = seen.insert(key, line);
+        if let Some(first) = duplicate {
             read.findings.push(TemplateFinding {
                 line,
                 problem: format!("{key} is assigned again; it is already on line {first}"),
                 fix: format!("delete one of the two {key} assignments"),
             });
-            continue;
         }
         if !in_env {
             if has_env {
@@ -241,6 +245,10 @@ fn scan(text: &str) -> TemplateRead {
             continue;
         }
         match decode_entry(key, line, trimmed, &taken) {
+            Err(finding) => read.findings.push(finding),
+            // The first assignment of this key is already the row; a later
+            // one that happens to decode is still a line to delete.
+            Ok(_) if duplicate.is_some() => {}
             Ok(value) => read.entries.push(TemplateEntry {
                 key: key.to_owned(),
                 comment_span: (taken[0].0, taken[taken.len() - 1].0),
@@ -248,7 +256,6 @@ fn scan(text: &str) -> TemplateRead {
                 value,
                 line,
             }),
-            Err(finding) => read.findings.push(finding),
         }
     }
     read
