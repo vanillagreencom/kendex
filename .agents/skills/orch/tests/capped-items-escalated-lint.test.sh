@@ -90,7 +90,7 @@ first_line() { awk -v s="$1" 'index($0, s) && !n { n = NR } END { print n + 0 }'
 # POSIX classes only, never \s: BSD grep -E does not know it, and the assertion
 # would go vacuous on macOS rather than loud.
 SCHEMA_CAP_RE='\|[[:space:]]*`escalated_items`.*cycle cap'
-cap_refusal() { grep -F 'cycles is past the cap' "$1"; }
+cap_refusal() { grep -F 'cycles is at the cap' "$1"; }
 
 # --- 1: the cap decides before any fix round is delegated -------------------
 # With Fix Delegation first, reaching the cap still runs one more fix round and
@@ -252,12 +252,19 @@ fi
 # § 6's all-pass branch returned to § 8 around whatever § 7 required, and § 7
 # carried a **Skip if** doing the same. One predicate, no early returns.
 section_6() { strip_comments "$1" | awk '$0 == "## 6. QA Checks" { on = 1; next } on && /^## 7[.]/ { on = 0 } on'; }
-S6="$(section_6 "$REVIEW_PR_WF")"
-if grep -q -F '§ 8' <<<"$S6"; then
-  fail "§ 6 still routes to § 8 around the predicate" "$(grep -n -F '§ 8' <<<"$S6")"
-else
-  pass "§ 6 reaches the predicate instead of returning to § 8"
-fi
+section_5() { strip_comments "$1" | awk '$0 == "## 5. Verdict Pass" { on = 1; next } on && /^## 6[.]/ { on = 0 } on'; }
+# A route reads `→ § 8`; a bare mention is a cross-reference. § 5 names dev's
+# own § 8 legitimately, so the arrow is what the check reads. Every bypass
+# found so far lived in § 5 or § 6: skip_qa, empty signals, and all-pass.
+BYPASS=0
+for sect in 5 6; do
+  body="$(section_$sect "$REVIEW_PR_WF")"
+  if grep -q -F -- '→ § 8' <<<"$body"; then
+    fail "§ $sect routes to § 8 around the predicate" "$(grep -F -- '→ § 8' <<<"$body")"
+    BYPASS=1
+  fi
+done
+[[ "$BYPASS" -eq 0 ]] && pass "§ 5 and § 6 reach the predicate instead of returning to § 8"
 if grep -q -F '**Skip if**' <<<"$(section_7 "$REVIEW_PR_WF")"; then
   fail "§ 7 carries an early return around its own predicate"
 else
@@ -494,10 +501,29 @@ fi
 # § 6 deciding its own exit again.
 if ! plant_pr s6exit 's/→ § 7 — every verdict, every time/→ § 8 when every verdict is pass, else § 7/'; then
   fail "§ 6 early-return control planted nothing — its sed program matched no text"
-elif grep -q -F '§ 8' <<<"$(section_6 "$CTRL")"; then
+elif grep -q -F -- '→ § 8' <<<"$(section_6 "$CTRL")"; then
   pass "lint flags § 6 returning to § 8 around the predicate"
 else
   fail "lint MISSED § 6 returning to § 8 around the predicate"
+fi
+
+# § 5's skip_qa branch going straight to § 8, the bypass the § 6-only check
+# could not see.
+if ! plant_pr s5skip 's/`\"rationale\":\"user skip\"`, → § 7/`\"rationale\":\"user skip\"`, → § 8/'; then
+  fail "§ 5 skip control planted nothing — its sed program matched no text"
+elif grep -q -F -- '→ § 8' <<<"$(section_5 "$CTRL")"; then
+  pass "lint flags § 5's skip_qa branch returning to § 8"
+else
+  fail "lint MISSED § 5's skip_qa branch returning to § 8"
+fi
+
+# § 5's empty-signals branch doing the same.
+if ! plant_pr s5empty 's/Signals empty → § 7/Signals empty → § 8/'; then
+  fail "§ 5 signals control planted nothing — its sed program matched no text"
+elif grep -q -F -- '→ § 8' <<<"$(section_5 "$CTRL")"; then
+  pass "lint flags § 5's empty-signals branch returning to § 8"
+else
+  fail "lint MISSED § 5's empty-signals branch returning to § 8"
 fi
 
 # § 7 growing its own early return back.

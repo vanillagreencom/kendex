@@ -299,14 +299,14 @@ cmd_set() {
     state_file=$(resolve_state_file "$issue_id")
     ensure_state_exists "$state_file"
 
-    # review-pr § 4 writes `rereview_panel` to re-enter § 2: that write IS the re-review cycle, so it raises `rereview_cycles` under the same lock it is gated on, and refuses once that count is past REVIEW_MAX_CYCLES — the pass AT the cap is the allowed verification pass.
-    # Nothing else spends that budget: `cycles` is the general fix-round tally, and § 7's QA re-check writes `qa_recheck_panel`, a field this branch never matches.
+    # review-pr § 4 writes `rereview_panel` to re-enter § 2: that write IS the re-review cycle, so it raises `rereview_cycles` under the same lock it is gated on, and refuses once that count reaches REVIEW_MAX_CYCLES, so the setting is the number of entries allowed. The count is entries already taken, so the comparison is >=, not >.
+    # Nothing else spends that budget: `cycles` is the general fix-round tally, and § 7's QA re-check and § 2 verification pass write `qa_recheck_panel` and `verification_panel`, fields this branch never matches.
     if [[ "$field" == "rereview_panel" && "$value" == "{"* ]]; then
         local cap report
         cap=$("$(dirname "${BASH_SOURCE[0]}")/orch-env" REVIEW_MAX_CYCLES 4) || { echo "workflow-state: could not resolve REVIEW_MAX_CYCLES; rereview_panel not set" >&2; return 1; }
-        report=$(cmd_update_report "$issue_id" "(.rereview_cycles // 0) as \$n | if \$n > $cap then {state: ., report: {refused: true, entered: \$n}} else {state: (.rereview_panel = $value | .rereview_cycles = \$n + 1), report: {refused: false}} end") || return 1
+        report=$(cmd_update_report "$issue_id" "(.rereview_cycles // 0) as \$n | if \$n >= $cap then {state: ., report: {refused: true, entered: \$n}} else {state: (.rereview_panel = $value | .rereview_cycles = \$n + 1), report: {refused: false}} end") || return 1
         if [[ "$(jq -r '.refused' <<<"$report")" == "true" ]]; then
-            echo "workflow-state: rereview_cycles is past the cap ($(jq -r '.entered' <<<"$report") > REVIEW_MAX_CYCLES=$cap): the fix loop is over — no further re-review cycle and no further fix round; follow review-pr § 4 At The Cap, \"Capped items are escalated, never dropped\" — one update per still-outstanding blocker and category==fix suggestion records it in escalated_items (outcome \"blocked\") and drops its superseded fixed_items entry in the same write — then go to review-pr § 5 (verdict pass) and report them" >&2
+            echo "workflow-state: rereview_cycles is at the cap ($(jq -r '.entered' <<<"$report") >= REVIEW_MAX_CYCLES=$cap, entries already taken): the fix loop is over — no further re-review cycle and no further fix round; follow review-pr § 4 At The Cap, \"Capped items are escalated, never dropped\" — one update per still-outstanding blocker and category==fix suggestion records it in escalated_items (outcome \"blocked\") and drops its superseded fixed_items entry in the same write — then go to review-pr § 5 (verdict pass) and report them" >&2
             return 1
         fi
         return 0

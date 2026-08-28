@@ -351,7 +351,7 @@ git -C [WORKTREE_PATH] diff --quiet -G'unsafe |Ordering::|Atomic(U|I|Bool|Ptr)' 
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] qa_decision '{"signals":[SIGNALS],"rationale":"[ONE_LINE]"}'
 ```
 
-Drop a signal when the triggering code is trivial or test-only; never drop one for schedule pressure. `skip_qa` true → set it false, record `qa_decision` with `"rationale":"user skip"`, → § 8. Signals empty → § 8. Otherwise → § 6.
+Drop a signal when the triggering code is trivial or test-only; never drop one for schedule pressure. `skip_qa` true → set it false, record `qa_decision` with `"rationale":"user skip"`, → § 7. Signals empty → § 7. Otherwise → § 6. Both of those reach § 7 rather than § 8: with no QA findings **Converged** is true and its disposition writes nothing, so the routing is unchanged and the exit stays in one place.
 
 ## 6. QA Checks
 
