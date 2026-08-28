@@ -28,6 +28,12 @@ fn manifest_with(items: &[(&str, Option<&str>)], bundles: &[&str]) -> Manifest {
     manifest
 }
 
+/// [`held_manifest`] for one target, which is what every case below
+/// names. A set of them is covered end to end in `package_pins`.
+fn held_for(manifest: &Manifest, lock: &Lock, kind: ItemKind, name: &str) -> (Manifest, HeldPins) {
+    held_manifest(manifest, lock, &BTreeSet::from([(kind, name.to_owned())]))
+}
+
 fn entry_from(
     name: &str,
     commit: Option<&str>,
@@ -85,7 +91,7 @@ fn siblings_pin_at_their_commit_and_the_target_stays_free() {
         ),
     ]);
 
-    let (held, pins) = held_manifest(&manifest, &lock, &(ItemKind::Skill, "a".to_owned()));
+    let (held, pins) = held_for(&manifest, &lock, ItemKind::Skill, "a");
     let rev = |name: &str| held.declared(ItemKind::Skill)[name].rev.clone();
     assert_eq!(rev("a"), None, "the target resolves fresh");
     assert_eq!(rev("b"), Some("bbb".to_owned()), "the sibling holds");
@@ -114,7 +120,7 @@ fn a_derived_targets_bundle_is_exempt_and_a_stranger_bundle_holds() {
         ("skill:o1:claude", entry("o1", Some("bbb"), &[of("other")])),
     ]);
 
-    let (held, _) = held_manifest(&manifest, &lock, &(ItemKind::Skill, "m1".to_owned()));
+    let (held, _) = held_for(&manifest, &lock, ItemKind::Skill, "m1");
     assert_eq!(
         held.bundles["kit"].rev, None,
         "the bundle carrying the target owns its revision, so it resolves fresh"
@@ -144,7 +150,7 @@ fn a_lock_that_cannot_place_a_package_pins_nothing_for_it() {
         ),
     ]);
 
-    let (held, _) = held_manifest(&manifest, &lock, &(ItemKind::Skill, "a".to_owned()));
+    let (held, _) = held_for(&manifest, &lock, ItemKind::Skill, "a");
     let rev = |name: &str| held.declared(ItemKind::Skill)[name].rev.clone();
     assert_eq!(rev("fresh"), None, "nothing installed, nothing to hold at");
     assert_eq!(rev("mixed"), None, "disagreeing installs invent no pin");
@@ -195,7 +201,7 @@ fn installations_from_somewhere_else_pin_nothing() {
         ),
     ]);
 
-    let (held, _) = held_manifest(&manifest, &lock, &(ItemKind::Skill, "a".to_owned()));
+    let (held, _) = held_for(&manifest, &lock, ItemKind::Skill, "a");
     let rev = |name: &str| held.declared(ItemKind::Skill)[name].rev.clone();
     assert_eq!(
         rev("rebound"),
@@ -250,7 +256,7 @@ fn a_source_with_no_repository_is_never_pinned() {
         ),
     ]);
 
-    let (held, pins) = held_manifest(&manifest, &lock, &(ItemKind::Skill, "a".to_owned()));
+    let (held, pins) = held_for(&manifest, &lock, ItemKind::Skill, "a");
     let rev = |name: &str| held.declared(ItemKind::Skill)[name].rev.clone();
     assert_eq!(
         rev("mine"),
@@ -319,7 +325,7 @@ fn a_package_installed_from_two_places_pins_nothing() {
         ),
     ]);
 
-    let (held, _) = held_manifest(&manifest, &lock, &(ItemKind::Skill, "a".to_owned()));
+    let (held, _) = held_for(&manifest, &lock, ItemKind::Skill, "a");
     let rev = |name: &str| held.declared(ItemKind::Skill)[name].rev.clone();
     assert_eq!(
         rev("mixed"),
@@ -407,7 +413,7 @@ fn an_edge_recorded_against_another_source_exempts_nothing() {
         ),
     ]);
 
-    let (held, _) = held_manifest(&manifest, &lock, &(ItemKind::Skill, "dep".to_owned()));
+    let (held, _) = held_for(&manifest, &lock, ItemKind::Skill, "dep");
     assert_eq!(
         held.declared(ItemKind::Skill)["parent"].rev,
         Some("ppp".to_owned()),
@@ -474,7 +480,7 @@ fn a_left_behind_installation_of_the_target_exempts_nothing() {
         ),
     ]);
 
-    let (held, _) = held_manifest(&manifest, &lock, &(ItemKind::Skill, "dep".to_owned()));
+    let (held, _) = held_for(&manifest, &lock, ItemKind::Skill, "dep");
     assert_eq!(
         held.declared(ItemKind::Skill)["parent"].rev,
         Some("ppp".to_owned()),

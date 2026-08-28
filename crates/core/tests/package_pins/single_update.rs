@@ -85,10 +85,7 @@ fn moving_a_hold_leaves_the_scopes_followers_at_their_commits() {
         ItemKind::Skill,
         "a",
         Some(&second),
-        &PlanOptions {
-            update_only: Some((ItemKind::Skill, "a".to_owned())),
-            ..Default::default()
-        },
+        &PlanOptions::for_packages([(ItemKind::Skill, "a".to_owned())]),
     )
     .unwrap();
     apply::execute(&w.env, &report.plan, None).unwrap();

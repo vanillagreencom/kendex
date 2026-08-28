@@ -1,9 +1,12 @@
-//! Holding the rest of a scope still while one package comes current.
+//! Holding the rest of a scope still while the packages someone named
+//! come current.
 //!
-//! A single-package update is still a whole-scope reconcile — one plan, one
-//! transaction, one lock write — but every follower other than the target
+//! A targeted update is still a whole-scope reconcile — one plan, one
+//! transaction, one lock write — but every follower other than the targets
 //! reads the commit its lock entries record instead of the source's fresh
-//! resolution, so nothing else moves version as a side effect. The pin is
+//! resolution, so nothing else moves version as a side effect. One target
+//! or five is the same pass: a place's whole "Update all" reconciles once,
+//! with each row's exemptions worked out on that row's own terms. The pin is
 //! applied to the declarations before the closure is derived, never after:
 //! what a set carries and what a skill requires are read out of the
 //! catalog, so a held package's members and dependencies have to be the
@@ -162,20 +165,27 @@ pub(crate) fn planning_manifest<'a>(
     options: &super::super::PlanOptions,
 ) -> (std::borrow::Cow<'a, Manifest>, Option<HeldPins>) {
     match &options.update_only {
-        Some(target) => {
-            let (held, pins) = held_manifest(manifest, lock, target);
+        Some(targets) => {
+            let (held, pins) = held_manifest(manifest, lock, targets);
             (std::borrow::Cow::Owned(held), Some(pins))
         }
         None => (std::borrow::Cow::Borrowed(manifest), None),
     }
 }
 
-/// The manifest a single-package update plans from: the target reads
-/// fresh, and so does whatever carries its revision — the parent of a
-/// dependency always, and the sets that carry the target itself only
-/// where it has no declaration of its own to read. Every other unpinned
+/// The manifest a single-package update plans from: the targets read
+/// fresh, and so does whatever carries their revisions — the parent of a
+/// dependency always, and the sets that carry a target itself only where
+/// it has no declaration of its own to read. Every other unpinned
 /// declaration is pinned at the commit its lock entries agree on, and
 /// every unpinned set at the commit the record says it came out as.
+///
+/// Several targets are one union of exemptions, never several passes:
+/// each is walked on its own terms — its own source, its own answer to
+/// whether the sets that carry it own it — and what the walks agree to
+/// leave unpinned is left unpinned. Every reading downstream of this is
+/// stated per declaration against the pins, so the union changes which
+/// declarations are pinned and nothing about how one is read.
 ///
 /// A declaration the lock cannot place — nothing installed, installations
 /// disagreeing on their commit, or any one of them recorded against a
@@ -185,42 +195,11 @@ pub(crate) fn planning_manifest<'a>(
 fn held_manifest(
     manifest: &Manifest,
     lock: &Lock,
-    target: &(ItemKind, String),
+    targets: &BTreeSet<(ItemKind, String)>,
 ) -> (Manifest, HeldPins) {
     let mut exempt: BTreeSet<Owner> = BTreeSet::new();
-    // The source the named package reads from now, where it is declared at
-    // all. A derived target has no declaration to read one off, and its
-    // identity lives only in the lock.
-    let reads_from = manifest
-        .declared(target.0)
-        .get(&target.1)
-        .map(|decl| decl.source.clone());
-    // The declaration the caller named — never pinned, whatever the lock
-    // still records elsewhere.
-    if let Some(source) = &reads_from {
-        exempt.insert(Owner::Item {
-            kind: target.0,
-            name: target.1.clone(),
-            source: source.clone(),
-        });
-    }
-    // Its installations under that source, and the declarations they came
-    // in under. An entry a rebind left behind is an installation of a
-    // package this declaration no longer is, and its edges lead to
-    // declarations this update has no business unpinning.
-    for entry in lock.entries.values().filter(|entry| {
-        entry.kind == target.0
-            && entry.name == target.1
-            && reads_from
-                .as_ref()
-                .is_none_or(|source| &entry.source == source)
-    }) {
-        exempt.extend(owners_of(
-            lock,
-            entry,
-            &mut BTreeSet::new(),
-            reads_from.is_none(),
-        ));
+    for target in targets {
+        exempt.extend(exempted_by(manifest, lock, target));
     }
     let mut held = manifest.clone();
     let mut pins = HeldPins {
@@ -272,6 +251,54 @@ fn held_manifest(
         pins.bundles.push(name.clone());
     }
     (held, pins)
+}
+
+/// The declarations one target leaves unpinned: its own, and the ones
+/// that carry its revision.
+///
+/// Asked per target, because the answer is the target's own. Whether the
+/// sets that carry it own it turns on whether this package has a
+/// declaration to read instead, and two targets in one pass can answer
+/// that differently — a declared one keeps its sets held while a derived
+/// one beside it cannot move at all unless they read fresh. Asked once
+/// for the pass, one target's answer would decide for the other.
+fn exempted_by(manifest: &Manifest, lock: &Lock, target: &(ItemKind, String)) -> BTreeSet<Owner> {
+    let mut exempt: BTreeSet<Owner> = BTreeSet::new();
+    // The source the named package reads from now, where it is declared at
+    // all. A derived target has no declaration to read one off, and its
+    // identity lives only in the lock.
+    let reads_from = manifest
+        .declared(target.0)
+        .get(&target.1)
+        .map(|decl| decl.source.clone());
+    // The declaration the caller named — never pinned, whatever the lock
+    // still records elsewhere.
+    if let Some(source) = &reads_from {
+        exempt.insert(Owner::Item {
+            kind: target.0,
+            name: target.1.clone(),
+            source: source.clone(),
+        });
+    }
+    // Its installations under that source, and the declarations they came
+    // in under. An entry a rebind left behind is an installation of a
+    // package this declaration no longer is, and its edges lead to
+    // declarations this update has no business unpinning.
+    for entry in lock.entries.values().filter(|entry| {
+        entry.kind == target.0
+            && entry.name == target.1
+            && reads_from
+                .as_ref()
+                .is_none_or(|source| &entry.source == source)
+    }) {
+        exempt.extend(owners_of(
+            lock,
+            entry,
+            &mut BTreeSet::new(),
+            reads_from.is_none(),
+        ));
+    }
+    exempt
 }
 
 /// The repository a declared source reads from, or `None` when it has

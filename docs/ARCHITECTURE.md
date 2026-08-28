@@ -504,8 +504,8 @@ lives in one capability table read by core and UI.
   the standing — the newest successful fetch among the sources the scope
   installs from, the newest across scopes in the overview — so "Everything
   is up to date" is dated too. Rows are per package per scope, folded by
-  package and expanded by place; a row's Update applies that package
-  (`PlanOptions::update_only`), apply and refresh a whole place. Flipping
+  package and expanded by place; `PlanOptions::update_only` names what a row's
+  Update or a place's Update all moves; apply and refresh a whole place. Flipping
   Follow source is one row's state change, its write settling behind it
   (`ui/src/stores/updates-follow.ts`): the switch takes its position from
   the click, pending until every scope's standing is read again — every

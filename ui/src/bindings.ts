@@ -262,10 +262,23 @@ export const commands = {
 	 *  followers stay at the commits their lock records, except one the lock
 	 *  cannot place, which resolves fresh the way a whole-scope apply gives it
 	 *  anyway. `kendex refresh` and the whole-scope apply are the plans that
-	 *  bring a whole place current; `Update all` reaches the same end by
-	 *  running this command once per row.
+	 *  bring a whole place current; `Update all` names every row a place has
+	 *  in one call to [`package_update_many`].
 	 */
 	packageUpdate: (scope: Scope, kind: ItemKind, name: string) => typedError<PackageUpdate_Serialize, string>(__TAURI_INVOKE("package_update", { scope, kind, name })),
+	/**
+	 *  Bring several of a place's packages current in one pass — what
+	 *  `Update all` asks each scope for, having grouped its rows by the place
+	 *  they live in. The scope reconciles, journals and applies once; every
+	 *  follower the caller did not name stays at the commit its lock records,
+	 *  exactly as it does under the single-package update.
+	 * 
+	 *  A target carrying a `hold` is a held place whose Update moves the hold,
+	 *  the batched shape of [`package_set_rev`]; one without follows its
+	 *  source. Both land in the same plan, so a place with some of each is
+	 *  still one apply.
+	 */
+	packageUpdateMany: (scope: Scope, targets: UpdateTarget[]) => typedError<PackagesUpdate_Serialize, string>(__TAURI_INVOKE("package_update_many", { scope, targets })),
 	/**
 	 *  Hold a package at a version (or let it follow again) and apply the
 	 *  change, scoped to the package: every other follower in the scope reads
@@ -1894,6 +1907,42 @@ export type PackageMeta_Serialize = {
 	catalog: CatalogGroupMeta | null,
 };
 
+/**
+ *  What a batched apply did to one of the packages it named. The same
+ *  three dispositions [`PackageUpdate`] carries, said per package because
+ *  a batch settles several at once, with the kind and name the caller
+ *  matches them back to its rows by.
+ */
+export type PackageOutcome = PackageOutcome_Serialize | PackageOutcome_Deserialize;
+
+/**
+ *  What a batched apply did to one of the packages it named. The same
+ *  three dispositions [`PackageUpdate`] carries, said per package because
+ *  a batch settles several at once, with the kind and name the caller
+ *  matches them back to its rows by.
+ */
+export type PackageOutcome_Deserialize = {
+	kind: ItemKind,
+	name: string,
+	heldBack: DriftRow_Deserialize[],
+	removed: DriftRow_Deserialize[],
+	moved: DriftRow_Deserialize[],
+};
+
+/**
+ *  What a batched apply did to one of the packages it named. The same
+ *  three dispositions [`PackageUpdate`] carries, said per package because
+ *  a batch settles several at once, with the kind and name the caller
+ *  matches them back to its rows by.
+ */
+export type PackageOutcome_Serialize = {
+	kind: ItemKind,
+	name: string,
+	heldBack: DriftRow_Serialize[],
+	removed: DriftRow_Serialize[],
+	moved: DriftRow_Serialize[],
+};
+
 /**  What the available-package page shows before anything installs. */
 export type PackagePreview = {
 	kind: ItemKind,
@@ -1942,9 +1991,10 @@ export type PackageSafety = {
  *  writing over a copy somebody changed, and the view alone cannot say
  *  which of the two happened — a caller reading only the view says
  *  "Updated" over a package that never moved. Every command that applies
- *  one package answers with this, the version switch included: a hold
- *  that moves in the manifest is refused on disk for the same reasons an
- *  update is.
+ *  a single package answers with this, the version switch included: a
+ *  hold that moves in the manifest is refused on disk for the same
+ *  reasons an update is. A batch says the same three things per package
+ *  it named, in [`PackageOutcome`].
  */
 export type PackageUpdate = PackageUpdate_Serialize | PackageUpdate_Deserialize;
 
@@ -1954,9 +2004,10 @@ export type PackageUpdate = PackageUpdate_Serialize | PackageUpdate_Deserialize;
  *  writing over a copy somebody changed, and the view alone cannot say
  *  which of the two happened — a caller reading only the view says
  *  "Updated" over a package that never moved. Every command that applies
- *  one package answers with this, the version switch included: a hold
- *  that moves in the manifest is refused on disk for the same reasons an
- *  update is.
+ *  a single package answers with this, the version switch included: a
+ *  hold that moves in the manifest is refused on disk for the same
+ *  reasons an update is. A batch says the same three things per package
+ *  it named, in [`PackageOutcome`].
  */
 export type PackageUpdate_Deserialize = {
 	view: AuditView_Deserialize,
@@ -1983,9 +2034,10 @@ export type PackageUpdate_Deserialize = {
  *  writing over a copy somebody changed, and the view alone cannot say
  *  which of the two happened — a caller reading only the view says
  *  "Updated" over a package that never moved. Every command that applies
- *  one package answers with this, the version switch included: a hold
- *  that moves in the manifest is refused on disk for the same reasons an
- *  update is.
+ *  a single package answers with this, the version switch included: a
+ *  hold that moves in the manifest is refused on disk for the same
+ *  reasons an update is. A batch says the same three things per package
+ *  it named, in [`PackageOutcome`].
  */
 export type PackageUpdate_Serialize = {
 	view: AuditView_Serialize,
@@ -2013,6 +2065,38 @@ export type PackageUpdate_Serialize = {
 export type PackageView = {
 	preview: PackagePreview,
 	safety: PackageSafety,
+};
+
+/**
+ *  What a batched apply did: the scope's standing afterwards once, and
+ *  what became of each package the caller named. One view, because the
+ *  packages came current in one pass and there is only one standing to
+ *  read.
+ */
+export type PackagesUpdate = PackagesUpdate_Serialize | PackagesUpdate_Deserialize;
+
+/**
+ *  What a batched apply did: the scope's standing afterwards once, and
+ *  what became of each package the caller named. One view, because the
+ *  packages came current in one pass and there is only one standing to
+ *  read.
+ */
+export type PackagesUpdate_Deserialize = {
+	view: AuditView_Deserialize,
+	/**  One entry per target, in the order they were given. */
+	packages: PackageOutcome_Deserialize[],
+};
+
+/**
+ *  What a batched apply did: the scope's standing afterwards once, and
+ *  what became of each package the caller named. One view, because the
+ *  packages came current in one pass and there is only one standing to
+ *  read.
+ */
+export type PackagesUpdate_Serialize = {
+	view: AuditView_Serialize,
+	/**  One entry per target, in the order they were given. */
+	packages: PackageOutcome_Serialize[],
 };
 
 /**
@@ -2454,6 +2538,21 @@ export type UpdateRow = {
 	mixed: boolean,
 	/**  The source's tracked tip no longer carries this package at all. */
 	removedUpstream: boolean,
+};
+
+/**
+ *  One package a batched update names, and where its hold goes.
+ * 
+ *  `hold` is the commit a held place's Update moves its hold to. A
+ *  following place carries `None`, which leaves its declaration exactly as
+ *  it is — never confused with the `None` [`super::set_rev`] takes to mean "stop
+ *  holding this", because that instruction is not one an Update ever
+ *  gives.
+ */
+export type UpdateTarget = {
+	kind: ItemKind,
+	name: string,
+	hold: string | null,
 };
 
 /**

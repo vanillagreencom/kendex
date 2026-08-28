@@ -16,6 +16,7 @@ vi.mock("@/bindings", async (importOriginal) => ({
     updateSetIgnored: vi.fn(),
     packageSetRev: vi.fn(),
     packageUpdate: vi.fn(),
+    packageUpdateMany: vi.fn(),
     applyDiscardEdits: vi.fn(),
     packageFork: vi.fn(),
     scanMachine: vi.fn(),
@@ -55,6 +56,44 @@ function row(overrides: Partial<UpdateRow>): UpdateRow {
 }
 
 describe("updates store: bulk update", () => {
+  /** Every place answers that it wrote each package it was given, and the
+   *  reads that follow the run find nothing left over. */
+  const cleanly = (scope: UpdateRow["scope"]) => {
+    vi.mocked(commands.packageUpdateMany).mockImplementation(
+      async (_scope, targets) => ({
+        status: "ok",
+        data: {
+          view: {
+            scope,
+            drift: [],
+            plan: [],
+            notes: [],
+            warnings: [],
+            safety: [],
+            adoptable: ADOPTABLE,
+            exits: [],
+          },
+          packages: targets.map((target) => ({
+            kind: target.kind,
+            name: target.name,
+            heldBack: [],
+            removed: [],
+            moved: [],
+          })),
+        },
+      }),
+    );
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [], lastFetched: null },
+    });
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "ok",
+      data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
+    });
+    vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
+  };
+
   beforeEach(() => {
     useUpdatesStore.setState({ rows: [], busy: false, loaded: true });
     vi.clearAllMocks();
@@ -67,7 +106,9 @@ describe("updates store: bulk update", () => {
     useProblemsStore.setState({
       dialog: { open: false, title: "", steps: [], actions: [] },
     });
-    vi.mocked(commands.packageUpdate).mockRejectedValue(new Error("ipc down"));
+    vi.mocked(commands.packageUpdateMany).mockRejectedValue(
+      new Error("ipc down"),
+    );
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
       data: { rows: [], warnings: [], lastFetched: null },
@@ -98,15 +139,21 @@ describe("updates store: bulk update", () => {
       adoptable: ADOPTABLE,
       exits: [],
     };
-    const clean = { view, heldBack: [], removed: [], moved: [] };
-    vi.mocked(commands.packageSetRev).mockResolvedValue({
-      status: "ok",
-      data: clean,
-    });
-    vi.mocked(commands.packageUpdate).mockResolvedValue({
-      status: "ok",
-      data: clean,
-    });
+    vi.mocked(commands.packageUpdateMany).mockImplementation(
+      async (_scope, targets) => ({
+        status: "ok",
+        data: {
+          view,
+          packages: targets.map((target) => ({
+            kind: target.kind,
+            name: target.name,
+            heldBack: [],
+            removed: [],
+            moved: [],
+          })),
+        },
+      }),
+    );
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
       data: { rows: [], warnings: [], lastFetched: null },
@@ -130,54 +177,104 @@ describe("updates store: bulk update", () => {
       }),
     ]);
 
-    expect(commands.packageSetRev).toHaveBeenCalledTimes(1);
-    expect(commands.packageSetRev).toHaveBeenCalledWith(
-      acme,
-      "skill",
-      "gh",
-      "b".repeat(40),
-    );
-    // Every following place gets its own package-scoped apply — moving
-    // gh's hold in acme leaves review's follower there untouched.
-    expect(vi.mocked(commands.packageUpdate).mock.calls).toEqual([
-      [acme, "skill", "review"],
-      [{ scope: "global" }, "skill", "gh"],
+    // One call per place, never one per row: acme's held gh and its
+    // following review travel in the same plan, with the hold carried on
+    // gh's target alone.
+    expect(vi.mocked(commands.packageUpdateMany).mock.calls).toEqual([
+      [
+        acme,
+        [
+          { kind: "skill", name: "gh", hold: "b".repeat(40) },
+          { kind: "skill", name: "review", hold: null },
+        ],
+      ],
+      [{ scope: "global" }, [{ kind: "skill", name: "gh", hold: null }]],
     ]);
+    expect(commands.packageSetRev).not.toHaveBeenCalled();
+    expect(commands.packageUpdate).not.toHaveBeenCalled();
     expect(toast.success).toHaveBeenCalledWith(
       "Updated 2 packages — 1 place needs attention on its own row",
+    );
+  });
+
+  // The cost this batching exists to recover: a place with five rows once
+  // paid five whole-scope plans, five journalled applies and five audit
+  // views for one click.
+  it("costs a place one apply however many rows it has", async () => {
+    const acme = { scope: "project", root: "/home/x/acme" } as const;
+    cleanly(acme);
+
+    await useUpdatesStore
+      .getState()
+      .updateRows(
+        ["gh", "review", "deploy", "lint", "release"].map((name) =>
+          row({ name, scope: acme }),
+        ),
+      );
+
+    expect(commands.packageUpdateMany).toHaveBeenCalledTimes(1);
+    expect(
+      vi.mocked(commands.packageUpdateMany).mock.calls[0]?.[1],
+    ).toHaveLength(5);
+    expect(toast.success).toHaveBeenCalledWith("Everything is up to date");
+  });
+
+  // The batch answers for every package it was given. One missing means
+  // the run cannot say what became of that package, and a count that
+  // quietly dropped it would claim less than the run actually did.
+  it("says so rather than miscounting when a package goes unanswered", async () => {
+    const acme = { scope: "project", root: "/home/x/acme" } as const;
+    useProblemsStore.setState({
+      dialog: { open: false, title: "", steps: [], actions: [] },
+    });
+    cleanly(acme);
+    vi.mocked(commands.packageUpdateMany).mockImplementation(
+      async (_scope, targets) => ({
+        status: "ok",
+        data: {
+          view: {
+            scope: acme,
+            drift: [],
+            plan: [],
+            notes: [],
+            warnings: [],
+            safety: [],
+            adoptable: ADOPTABLE,
+            exits: [],
+          },
+          packages: targets
+            .filter((target) => target.name !== "review")
+            .map((target) => ({
+              kind: target.kind,
+              name: target.name,
+              heldBack: [],
+              removed: [],
+              moved: [],
+            })),
+        },
+      }),
+    );
+
+    await useUpdatesStore
+      .getState()
+      .updateRows([
+        row({ name: "gh", scope: acme }),
+        row({ name: "review", scope: acme }),
+      ]);
+
+    expect(useProblemsStore.getState().dialog.message).toBe(
+      "review was applied with its place, but the answer for it did not come back — check the package's own row",
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.info).toHaveBeenCalledWith(
+      "1 package came current in this run — what did not is in the error above",
     );
   });
 
   it("one package's bulk update leaves scopes only other packages live in alone", async () => {
     const acme = { scope: "project", root: "/home/x/acme" } as const;
     const shop = { scope: "project", root: "/home/x/shop" } as const;
-    vi.mocked(commands.packageUpdate).mockResolvedValue({
-      status: "ok",
-      data: {
-        view: {
-          scope: acme,
-          drift: [],
-          plan: [],
-          notes: [],
-          warnings: [],
-          safety: [],
-          adoptable: ADOPTABLE,
-          exits: [],
-        },
-        heldBack: [],
-        removed: [],
-        moved: [],
-      },
-    });
-    vi.mocked(commands.updatesOverview).mockResolvedValue({
-      status: "ok",
-      data: { rows: [], warnings: [], lastFetched: null },
-    });
-    vi.mocked(commands.scanMachine).mockResolvedValue({
-      status: "ok",
-      data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
-    });
-    vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
+    cleanly(acme);
     useUpdatesStore.setState({
       rows: [
         row({ name: "gh", scope: acme }),
@@ -190,8 +287,8 @@ describe("updates store: bulk update", () => {
       .getState()
       .updateRows([row({ name: "gh", scope: acme })]);
 
-    expect(vi.mocked(commands.packageUpdate).mock.calls).toEqual([
-      [acme, "skill", "gh"],
+    expect(vi.mocked(commands.packageUpdateMany).mock.calls).toEqual([
+      [acme, [{ kind: "skill", name: "gh", hold: null }]],
     ]);
     expect(commands.packageSetRev).not.toHaveBeenCalled();
   });
@@ -206,8 +303,7 @@ describe("updates store: bulk update", () => {
       }),
     ]);
 
-    expect(commands.packageUpdate).not.toHaveBeenCalled();
-    expect(commands.packageSetRev).not.toHaveBeenCalled();
+    expect(commands.packageUpdateMany).not.toHaveBeenCalled();
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.info).toHaveBeenCalledWith(
       "Nothing to update — 1 place needs attention on its own row",
@@ -216,33 +312,7 @@ describe("updates store: bulk update", () => {
 
   it("never moves a hold that belongs to a bundle or parent", async () => {
     const acme = { scope: "project", root: "/home/x/acme" } as const;
-    vi.mocked(commands.packageUpdate).mockResolvedValue({
-      status: "ok",
-      data: {
-        view: {
-          scope: acme,
-          drift: [],
-          plan: [],
-          notes: [],
-          warnings: [],
-          safety: [],
-          adoptable: ADOPTABLE,
-          exits: [],
-        },
-        heldBack: [],
-        removed: [],
-        moved: [],
-      },
-    });
-    vi.mocked(commands.updatesOverview).mockResolvedValue({
-      status: "ok",
-      data: { rows: [], warnings: [], lastFetched: null },
-    });
-    vi.mocked(commands.scanMachine).mockResolvedValue({
-      status: "ok",
-      data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
-    });
-    vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
+    cleanly(acme);
 
     await useUpdatesStore
       .getState()
@@ -251,9 +321,10 @@ describe("updates store: bulk update", () => {
         row({ name: "review", scope: acme, derived: true }),
       ]);
 
-    expect(commands.packageSetRev).not.toHaveBeenCalled();
-    expect(vi.mocked(commands.packageUpdate).mock.calls).toEqual([
-      [acme, "skill", "review"],
+    // The held derived row never reaches a target at all, so no hold of an
+    // owner's rides in on the place's batch.
+    expect(vi.mocked(commands.packageUpdateMany).mock.calls).toEqual([
+      [acme, [{ kind: "skill", name: "review", hold: null }]],
     ]);
     expect(toast.success).toHaveBeenCalledWith(
       "Updated 1 package — 1 place needs attention on its own row",
@@ -294,14 +365,18 @@ describe("updates store: what a bulk update claims about held-back places", () =
   const answering = (
     per: Record<string, { heldBack: string[]; moved: string[] }>,
   ) => {
-    vi.mocked(commands.packageUpdate).mockImplementation(
-      async (_scope, _kind, name) => ({
+    vi.mocked(commands.packageUpdateMany).mockImplementation(
+      async (_scope, targets) => ({
         status: "ok",
         data: {
           view: emptyView,
-          heldBack: (per[name]?.heldBack ?? []).map(conflict),
-          removed: [],
-          moved: (per[name]?.moved ?? []).map(stale),
+          packages: targets.map((target) => ({
+            kind: target.kind,
+            name: target.name,
+            heldBack: (per[target.name]?.heldBack ?? []).map(conflict),
+            removed: [],
+            moved: (per[target.name]?.moved ?? []).map(stale),
+          })),
         },
       }),
     );
@@ -326,7 +401,7 @@ describe("updates store: what a bulk update claims about held-back places", () =
 
     await useUpdatesStore.getState().updateRows([row({ name: "gh" })]);
 
-    expect(commands.packageUpdate).toHaveBeenCalled();
+    expect(commands.packageUpdateMany).toHaveBeenCalled();
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.info).toHaveBeenCalledWith(
       "Nothing was updated — 1 place needs attention on its own row",
@@ -394,14 +469,18 @@ describe("updates store: a bulk run that took a copy away", () => {
       { heldBack?: string[]; removed?: string[]; moved?: string[] }
     >,
   ) => {
-    vi.mocked(commands.packageUpdate).mockImplementation(
-      async (_scope, _kind, name) => ({
+    vi.mocked(commands.packageUpdateMany).mockImplementation(
+      async (_scope, targets) => ({
         status: "ok",
         data: {
           view: emptyView,
-          heldBack: (per[name]?.heldBack ?? []).map(conflict),
-          removed: (per[name]?.removed ?? []).map(conflict),
-          moved: (per[name]?.moved ?? []).map(stale),
+          packages: targets.map((target) => ({
+            kind: target.kind,
+            name: target.name,
+            heldBack: (per[target.name]?.heldBack ?? []).map(conflict),
+            removed: (per[target.name]?.removed ?? []).map(conflict),
+            moved: (per[target.name]?.moved ?? []).map(stale),
+          })),
         },
       }),
     );
@@ -470,6 +549,7 @@ describe("updates store: a bulk run that took a copy away", () => {
 });
 
 describe("updates store: a run where one place failed", () => {
+  const acme = { scope: "project", root: "/home/x/acme" } as const;
   const emptyView = {
     scope: { scope: "global" } as const,
     drift: [],
@@ -496,22 +576,32 @@ describe("updates store: a run where one place failed", () => {
     cause: "upstream-changed" as const,
   });
 
+  // A place is one apply, so what is said per package here is said about
+  // the place that package is the only row of.
   const answering = (
     per: Record<string, { removed?: string[]; moved?: string[] } | "fails">,
   ) => {
-    vi.mocked(commands.packageUpdate).mockImplementation(
-      async (_scope, _kind, name) => {
-        const said = per[name];
-        if (said === "fails") {
+    vi.mocked(commands.packageUpdateMany).mockImplementation(
+      async (_scope, targets) => {
+        if (targets.some((target) => per[target.name] === "fails")) {
           return { status: "error", error: "ipc down" };
         }
         return {
           status: "ok",
           data: {
             view: emptyView,
-            heldBack: [],
-            removed: (said?.removed ?? []).map(conflict),
-            moved: (said?.moved ?? []).map(stale),
+            packages: targets.map((target) => {
+              const said = per[target.name];
+              return {
+                kind: target.kind,
+                name: target.name,
+                heldBack: [],
+                removed: (said === "fails" ? [] : (said?.removed ?? [])).map(
+                  conflict,
+                ),
+                moved: (said === "fails" ? [] : (said?.moved ?? [])).map(stale),
+              };
+            }),
           },
         };
       },
@@ -532,14 +622,14 @@ describe("updates store: a run where one place failed", () => {
     vi.clearAllMocks();
   });
 
-  // The error is one row's; the trashed copy is another's, and it is not
+  // The error is one place's; the trashed copy is another's, and it is not
   // the error's to swallow.
   it("still says a copy went to the trash when a later place failed", async () => {
     answering({ gh: { removed: ["gh"] }, review: "fails" });
 
     await useUpdatesStore
       .getState()
-      .updateRows([row({ name: "gh" }), row({ name: "review" })]);
+      .updateRows([row({ name: "gh" }), row({ name: "review", scope: acme })]);
 
     expect(toast.error).toHaveBeenCalledWith(
       "1 package could not be installed — its copy went to the trash and nothing replaced it",
@@ -552,12 +642,25 @@ describe("updates store: a run where one place failed", () => {
 
     await useUpdatesStore
       .getState()
-      .updateRows([row({ name: "gh" }), row({ name: "review" })]);
+      .updateRows([row({ name: "gh" }), row({ name: "review", scope: acme })]);
 
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.info).toHaveBeenCalledWith(
       "1 package came current in this run — what did not is in the error above",
     );
+  });
+
+  // A place is one plan and one apply: a place that fails takes every row
+  // it carried with it, and the run claims nothing for any of them.
+  it("claims nothing for a package sharing a place with a failed one", async () => {
+    answering({ gh: { moved: ["gh"] }, review: "fails" });
+
+    await useUpdatesStore
+      .getState()
+      .updateRows([row({ name: "gh" }), row({ name: "review" })]);
+
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.info).not.toHaveBeenCalled();
   });
 
   it("adds nothing of its own when the only place failed", async () => {
@@ -602,19 +705,31 @@ describe("updates store: what a bulk run cannot lose", () => {
     per: Record<string, { removed?: string[]; moved?: string[] } | "rejects">,
     remaining: UpdateRow[] = [],
   ) => {
-    vi.mocked(commands.packageUpdate).mockImplementation(
-      async (_scope, _kind, name) => {
-        const said = per[name];
+    vi.mocked(commands.packageUpdateMany).mockImplementation(
+      async (_scope, targets) => {
         // A transport rejection, not an answer: the promise throws and the
         // loop never returns.
-        if (said === "rejects") throw new Error("ipc down");
+        if (targets.some((target) => per[target.name] === "rejects")) {
+          throw new Error("ipc down");
+        }
         return {
           status: "ok",
           data: {
             view: emptyView,
-            heldBack: [],
-            removed: (said?.removed ?? []).map(conflict),
-            moved: (said?.moved ?? []).map(stale),
+            packages: targets.map((target) => {
+              const said = per[target.name];
+              return {
+                kind: target.kind,
+                name: target.name,
+                heldBack: [],
+                removed: (said === "rejects" ? [] : (said?.removed ?? [])).map(
+                  conflict,
+                ),
+                moved: (said === "rejects" ? [] : (said?.moved ?? [])).map(
+                  stale,
+                ),
+              };
+            }),
           },
         };
       },
@@ -642,7 +757,10 @@ describe("updates store: what a bulk run cannot lose", () => {
 
     await useUpdatesStore
       .getState()
-      .updateRows([row({ name: "gh" }), row({ name: "review" })]);
+      .updateRows([
+        row({ name: "gh" }),
+        row({ name: "review", scope: { scope: "project", root: "/home/x/a" } }),
+      ]);
 
     expect(toast.error).toHaveBeenCalledWith(
       "1 package could not be installed — its copy went to the trash and nothing replaced it",

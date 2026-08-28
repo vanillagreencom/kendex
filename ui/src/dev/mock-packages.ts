@@ -79,6 +79,24 @@ export const packageHandlers: Record<string, Handler> = {
   // answers the same way, so both read the one builder.
   package_set_rev: ({ scope }: { scope: Scope }) => packageUpdate(scope),
   package_update: ({ scope }: { scope: Scope }) => packageUpdate(scope),
+  // A place's batched apply answers per package it was named, so the bulk
+  // count reads each row's own disposition rather than one shared answer.
+  package_update_many: ({
+    scope,
+    targets,
+  }: {
+    scope: Scope;
+    targets: { kind: ItemKind; name: string }[];
+  }) => ({
+    view: view(scope),
+    packages: targets.map((target) => ({
+      kind: target.kind,
+      name: target.name,
+      heldBack: [],
+      removed: [],
+      moved: [],
+    })),
+  }),
   package_diff: ({ from, to }: { from: VersionSel; to: VersionSel }) => ({
     files: [
       {

@@ -417,6 +417,7 @@ fn declared_rev(w: &World, name: &str) -> Option<String> {
     loaded.declared(ItemKind::Skill)[name].rev.clone()
 }
 
+mod batched_update;
 mod sets;
 mod single_update;
 mod validate;

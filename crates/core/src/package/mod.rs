@@ -18,6 +18,8 @@ pub(crate) mod item_file;
 mod outcome;
 pub use outcome::{held_back, moving, removed};
 mod timeline;
+mod update;
+pub use update::{UpdateTarget, update_many, update_one};
 pub mod updates;
 pub use timeline::{VersionRow, resolve_version, versions};
 
@@ -153,66 +155,6 @@ pub(crate) fn package_ref_for(
         subtree,
         tip,
     })
-}
-
-/// Bring one package current and leave the rest of the scope where it is:
-/// the plan resolves this package — and, for a derived one, the
-/// declarations that carry it, since the owner is what holds its revision —
-/// at the source's tip, while every other follower reads the commit its
-/// lock entries record — bar one the lock cannot place, which resolves
-/// fresh as a whole-scope apply would give it anyway. A hold still holds:
-/// a package pinned by its own
-/// `rev`, its source, or a parent moves only when that hold moves. The
-/// whole-scope apply and `refresh` are unchanged and bring every follower
-/// current at once.
-pub fn update_one(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Result<EngineReport> {
-    let path = crate::manifest::manifest_path(env, scope);
-    let manifest = match crate::manifest::load(&path)? {
-        crate::manifest::ManifestFile::Current(manifest) => *manifest,
-        // An absent manifest declares nothing to update; a legacy one is
-        // refused loudly — the whole-scope audit's read-only posture would
-        // silently answer this targeted verb with an empty plan.
-        crate::manifest::ManifestFile::Absent => {
-            return Err(CoreError::NotDeclared {
-                kind,
-                name: name.to_owned(),
-            });
-        }
-        crate::manifest::ManifestFile::Legacy { .. } => {
-            return Err(CoreError::LegacyManifest { path });
-        }
-    };
-    // Derived packages (bundle members, dependencies) have no declaration
-    // of their own — their lock entries are what names them here.
-    let declared = manifest.declared(kind).contains_key(name);
-    let lock_path = crate::lock::lock_path(env, scope);
-    let installed = match crate::lock::load_file(&lock_path)? {
-        crate::lock::LockFile::Current(lock) => lock
-            .entries
-            .values()
-            .any(|entry| entry.kind == kind && entry.name == name),
-        // Nothing recorded yet — a declared package still plans.
-        crate::lock::LockFile::Absent => false,
-        // A v1 lock is refused here for the same reason a v1 manifest is:
-        // read as "not installed", a declared package would fall through
-        // to the whole-scope audit's observation-only posture and this
-        // verb would answer with an empty plan nothing surfaces, while a
-        // derived one would be blamed on the name the caller typed.
-        crate::lock::LockFile::Legacy { .. } => {
-            return Err(CoreError::LegacyLock { path: lock_path });
-        }
-    };
-    if !declared && !installed {
-        return Err(CoreError::NotDeclared {
-            kind,
-            name: name.to_owned(),
-        });
-    }
-    crate::engine::plan_apply(
-        env,
-        scope,
-        &crate::engine::PlanOptions::for_package(kind, name),
-    )
 }
 
 /// Hold an item at a version, or let it follow its source again.

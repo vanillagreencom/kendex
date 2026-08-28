@@ -110,6 +110,11 @@ export const removedNotReplacedCountToastLabel = (removed: number): string =>
     : `${removed} packages could not be installed — their copies went to the trash and nothing replaced them`;
 export const notUpdatedToastLead = (name: string): string =>
   `${name} was not updated`;
+// A place's apply answers for every package it was asked about. One
+// missing means the run cannot say what became of that package, and a
+// count that quietly leaves it out would claim more than the run knows.
+export const unansweredPackageError = (name: string): string =>
+  `${name} was applied with its place, but the answer for it did not come back — check the package's own row`;
 // A run where one place failed: the error is already on screen, so this
 // says what the rest of it came to — as a fact, never as a success.
 export const movedDespiteErrorToastLabel = (packages: number): string =>

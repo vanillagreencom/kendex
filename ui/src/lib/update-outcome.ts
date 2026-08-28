@@ -40,11 +40,20 @@ export type UpdateOutcome = {
   moved: boolean;
 };
 
-/** Read what a single-package apply reported. Every command that applies
- *  one package answers with this record — the update and the version
- *  switch alike — so there is no shape here meaning "it succeeded, ask no
- *  further". */
-export const outcomeOf = (update: PackageUpdate_Serialize): UpdateOutcome => {
+/** The three dispositions a plan reports for one package, wherever they
+ *  are carried: a single-package apply's own answer, or one entry of a
+ *  place's batched one. Both say the same thing about one package, and
+ *  reading them apart is how two surfaces end up disagreeing. */
+export type PackageDispositions = Pick<
+  PackageUpdate_Serialize,
+  "removed" | "heldBack" | "moved"
+>;
+
+/** Read what an apply reported about one package. Every command that
+ *  applies a package answers with this record — the update, the batched
+ *  update and the version switch alike — so there is no shape here meaning
+ *  "it succeeded, ask no further". */
+export const outcomeOf = (update: PackageDispositions): UpdateOutcome => {
   const removed = toolsOf(update.removed);
   const held = toolsOf(update.heldBack);
   return {

@@ -1,6 +1,8 @@
 //! The types an engine pass hands back — drift rows, warnings, the report
 //! itself — and the options a plan is asked with.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -233,8 +235,8 @@ pub struct PlanOptions {
     /// "discard" the app offers, which must never take a neighbour's
     /// edits with it, even one that shares a name across kinds.
     pub overwrite_edited_names: Option<Vec<(ItemKind, String)>>,
-    /// Bring one package current and hold everything else where it is
-    /// installed. The named package — and, for a derived one, every
+    /// Bring these packages current and hold everything else where it is
+    /// installed. Each named package — and, for a derived one, every
     /// declaration that accounts for it, since the owner is what carries
     /// its revision — resolves at the source's tip; every other unpinned
     /// remote declaration and bundle is read at the commit its lock
@@ -243,7 +245,15 @@ pub struct PlanOptions {
     /// installations disagreeing on their commit) resolves fresh, which
     /// is what a whole-scope apply does for it anyway. Refresh and the
     /// whole-scope apply never set this.
-    pub update_only: Option<(ItemKind, String)>,
+    ///
+    /// A set of them is one pass, not several: `Update all` over a place
+    /// with five followers reconciles the scope once instead of planning,
+    /// journalling and applying it five times. What the extra targets
+    /// change is only which declarations go unpinned — every other
+    /// reading is stated per declaration against the pins this pass
+    /// invented, so it reads the same whether one package is exempt or
+    /// five.
+    pub update_only: Option<BTreeSet<(ItemKind, String)>>,
     /// The base of the manifest copy this plan reconciles to, where the
     /// manifest arrived whole from an editor rather than being read here.
     /// The plan's manifest write binds its precondition to it, so a file
@@ -260,8 +270,16 @@ impl PlanOptions {
     /// records. What every single-package surface asks for — the Updates
     /// page, the package page, a hold move from the app or the CLI.
     pub fn for_package(kind: ItemKind, name: impl Into<String>) -> Self {
+        PlanOptions::for_packages([(kind, name.into())])
+    }
+
+    /// [`PlanOptions::for_package`] over several packages at once: they
+    /// all resolve at their sources' tips and the rest of the scope holds,
+    /// in one reconcile and one apply. What `Update all` asks a place for,
+    /// having grouped its rows by the scope they live in.
+    pub fn for_packages(targets: impl IntoIterator<Item = (ItemKind, String)>) -> Self {
         PlanOptions {
-            update_only: Some((kind, name.into())),
+            update_only: Some(targets.into_iter().collect()),
             ..PlanOptions::default()
         }
     }
@@ -273,8 +291,7 @@ impl PlanOptions {
         let target = (kind, name.into());
         PlanOptions {
             overwrite_edited_names: Some(vec![target.clone()]),
-            update_only: Some(target),
-            ..PlanOptions::default()
+            ..PlanOptions::for_packages([target])
         }
     }
 

@@ -13,6 +13,8 @@ use specta::Type;
 
 use crate::audit::{AuditView, view};
 
+pub mod update;
+
 fn env() -> Result<Env, String> {
     Env::detect().map_err(|e| e.to_string())
 }
@@ -26,118 +28,6 @@ pub fn package_versions(
 ) -> Result<Vec<package::VersionRow>, String> {
     let env = env()?;
     package::versions(&env, &scope, kind, &name).map_err(|e| e.to_string())
-}
-
-/// What a single-package apply did to the package it named, beside the
-/// scope's view afterwards. The plan holds a rendering back rather than
-/// writing over a copy somebody changed, and the view alone cannot say
-/// which of the two happened — a caller reading only the view says
-/// "Updated" over a package that never moved. Every command that applies
-/// one package answers with this, the version switch included: a hold
-/// that moves in the manifest is refused on disk for the same reasons an
-/// update is.
-#[derive(serde::Serialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct PackageUpdate {
-    pub view: AuditView,
-    /// Renderings the plan refused to write over and left exactly as they
-    /// are. Empty when the package moved everywhere it is installed.
-    pub held_back: Vec<engine::DriftRow>,
-    /// Renderings the plan took to the trash with nothing written back —
-    /// refused, and with nothing of the person's in the files to keep.
-    pub removed: Vec<engine::DriftRow>,
-    /// Renderings this apply wrote. Non-empty beside `held_back` is the
-    /// partial case: current in one tool, held in another.
-    pub moved: Vec<engine::DriftRow>,
-}
-
-/// Bring one package current and apply — the Updates page's per-package
-/// and per-place Update, and the package page's. The scope's other
-/// followers stay at the commits their lock records, except one the lock
-/// cannot place, which resolves fresh the way a whole-scope apply gives it
-/// anyway. `kendex refresh` and the whole-scope apply are the plans that
-/// bring a whole place current; `Update all` reaches the same end by
-/// running this command once per row.
-#[tauri::command(async)]
-#[specta::specta]
-pub fn package_update(scope: Scope, kind: ItemKind, name: String) -> Result<PackageUpdate, String> {
-    // The same refusal the CLI verb makes, for the same reason: a kind the
-    // engine never derives plans nothing, and an empty plan reads as
-    // "already current" on the page that asked.
-    if !engine::plans_per_package(kind) {
-        return Err(format!(
-            "{} '{name}' {}",
-            kind.name(),
-            engine::NO_PER_PACKAGE_UPDATE
-        ));
-    }
-    let env = env()?;
-    let report = package::update_one(&env, &scope, kind, &name).map_err(|e| e.to_string())?;
-    settle_package(&env, &scope, kind, &name, &report)
-}
-
-/// Apply one package-scoped plan and answer with what it did to that
-/// package beside the standing it leaves. Read off the report before the
-/// apply runs, because that is the record naming which renderings the
-/// plan writes and which it refuses.
-fn settle_package(
-    env: &Env,
-    scope: &Scope,
-    kind: ItemKind,
-    name: &str,
-    report: &engine::EngineReport,
-) -> Result<PackageUpdate, String> {
-    let held_back = package::held_back(report, kind, name)
-        .into_iter()
-        .cloned()
-        .collect();
-    let removed = package::removed(report, kind, name)
-        .into_iter()
-        .cloned()
-        .collect();
-    let moved = package::moving(report, kind, name)
-        .into_iter()
-        .cloned()
-        .collect();
-    apply::execute(env, &report.plan, None).map_err(|e| e.to_string())?;
-    Ok(PackageUpdate {
-        view: view(env, scope),
-        held_back,
-        removed,
-        moved,
-    })
-}
-
-/// Hold a package at a version (or let it follow again) and apply the
-/// change, scoped to the package: every other follower in the scope reads
-/// the commit its lock records, so moving one hold does not bring the
-/// neighbours current. The exception is a follower the lock cannot place
-/// — never installed, or installations disagreeing — which resolves fresh
-/// here as it would under a whole-scope apply.
-///
-/// The answer is the same `PackageUpdate` the update command gives, and
-/// for the same reason: the manifest takes the new hold either way, while
-/// a rendering somebody edited is held back on disk, so a caller reading
-/// the view alone would report a switch that never reached the files.
-#[tauri::command(async)]
-#[specta::specta]
-pub fn package_set_rev(
-    scope: Scope,
-    kind: ItemKind,
-    name: String,
-    rev: Option<String>,
-) -> Result<PackageUpdate, String> {
-    let env = env()?;
-    let report = package::set_rev_with(
-        &env,
-        &scope,
-        kind,
-        &name,
-        rev.as_deref(),
-        &engine::PlanOptions::for_package(kind, &name),
-    )
-    .map_err(|e| e.to_string())?;
-    settle_package(&env, &scope, kind, &name, &report)
 }
 
 #[tauri::command(async)]
