@@ -24,7 +24,9 @@
 # standard: a line starting with `[` must be a lone `[name]` header, and
 # any other `[`-leading shape fails the load — headers decide which
 # assignments load, so one this reader cannot parse must never pass as an
-# ignorable line.
+# ignorable line. A file that begins with a UTF-8 byte-order mark is
+# refused the same way: the BOM is neither whitespace nor `[` nor a key
+# character, so the first header or assignment would silently misclassify.
 
 # Parent-process env snapshot (name/value pairs). Bash 3.2 (macOS system
 # bash) has no associative arrays, so the snapshot is a pair of parallel
@@ -40,9 +42,22 @@ kendex_parent_env_has() {
   return 1
 }
 
+# A UTF-8 byte-order mark is neither whitespace nor `[` nor a key character
+# to any reader in either resolver family, so a BOM-prefixed first line
+# silently misfiles the header or assignment it hides. Refuse the file
+# whole, same discipline as the header rule. Read via stdin so the path is
+# never an operand.
+kendex_bom_guard() { # FILE — 0 = no leading BOM; 1 + ::error otherwise
+  if [[ "$(head -c 3 < "$1" 2>/dev/null)" == $'\xEF\xBB\xBF' ]]; then
+    echo "::error::$1: file starts with a UTF-8 byte-order mark; remove it (the first header or assignment would otherwise be misread)" >&2
+    return 1
+  fi
+}
+
 kendex_source_env_file() {
   local file="$1"
   [[ -f "$file" ]] || return 0
+  kendex_bom_guard "$file" || return 1
   # shellcheck source=/dev/null
   source "$file"
 }
@@ -67,6 +82,7 @@ kendex_decode_value() { # RAW — decoded value on stdout; 1 = not contract shap
 kendex_load_settings_file() {
   local file="$1"
   [[ -f "$file" ]] || return 0
+  kendex_bom_guard "$file" || return 1
 
   local section="" line key value seen=" " lineno=0
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -139,11 +155,12 @@ kendex_load_project_env() {
   # Load order (lowest to highest among project files): settings, then
   # .env.local. kendex_load_settings_file skips parent keys directly; the
   # env file is sourced wholesale, so its clobbers are undone below. A
-  # refused settings load fails the whole call — resolving on a partial
-  # or silently reinterpreted file would be worse than stopping.
+  # refused load — settings or a BOM-prefixed .env.local — fails the whole
+  # call: resolving on a partial or silently reinterpreted file would be
+  # worse than stopping.
   kendex_load_settings_file "$project_root/kendex.settings.toml" || return 1
   kendex_load_settings_file "$project_root/.kendex/settings.toml" || return 1
-  kendex_source_env_file "$project_root/.env.local"
+  kendex_source_env_file "$project_root/.env.local" || return 1
 
   # Re-assert parent values so parent env wins over every project file, while
   # the settings < .env.local order is preserved for non-parent keys.

@@ -248,6 +248,17 @@ gg_settings_source() { # FILE — the path to actually read; nonzero + ::error o
   printf '%s' "$copy"
 }
 
+# A UTF-8 byte-order mark is neither whitespace nor `[` nor a key character
+# to any reader here, so a BOM-prefixed first line silently misfiles the
+# header or assignment it hides. Refuse the source whole, same discipline
+# as the header rule. Read via stdin so the path is never an operand.
+gg_bom_guard() { # FILE — 0 = no leading BOM; 1 + ::error otherwise
+  if [ "$(head -c 3 < "$1" 2>/dev/null)" = "$(printf '\357\273\277')" ]; then
+    echo "::error::$1: file starts with a UTF-8 byte-order mark; remove it (the first header or assignment would otherwise be misread)" >&2
+    return 1
+  fi
+}
+
 # One read discipline for every settings probe: grep exits 0/1 are
 # measurements, anything else is an unreadable source and fails loud —
 # falling through to a lower-precedence layer would silently change the
@@ -273,8 +284,9 @@ gg_settings_grep() { # REGEX FILE — matching lines on stdout; 1 = no match
 # resolver silently returns defaults. awk failing to read the source is an
 # unreadable source and fails loud, same discipline as gg_settings_grep.
 gg_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
-                 # malformed header; 2 + ::error when unreadable
+                 # malformed header or leading BOM; 2 + ::error when unreadable
   local status=0
+  gg_bom_guard "$1" || return 1
   awk -v src="$1" '
     /^[[:space:]]*\[/ && !/^[[:space:]]*\[[A-Za-z0-9_.-]+\][[:space:]]*$/ {
       printf "::error::%s:%d: unsupported table header shape (a header is a lone [name] on its own line, with no comment and no second bracket)\n", src, NR > "/dev/stderr"
@@ -304,6 +316,7 @@ gg_dotenv_layer() { # FILE NAME
   src="$(gg_settings_source "$file")" || return 2
   gg_settings_usable "$src" || return 2
   [ -f "$src" ] || return 1
+  gg_bom_guard "$src" || return 2
   matches="$(gg_settings_grep "^[[:space:]]*(export[[:space:]]+)?${name}=" "$src")" || status=$?
   [ "$status" -le 1 ] || return 2
   line="$(printf '%s\n' "$matches" | tail -n 1)"

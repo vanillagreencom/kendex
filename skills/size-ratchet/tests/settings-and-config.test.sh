@@ -211,6 +211,23 @@ printf '[env]\nSIZE_RATCHET_THRESHOLD = "9"\n' > "$R/kendex.settings.toml"
 run_raw SIZE_RATCHET_SETTINGS_FILE= || true
 case "$OUT" in *"threshold 9"*) ok "a SET-but-EMPTY settings-file override reads the default sources" ;; *) bad "set-but-empty override reads default sources" "rc=$RC out=$OUT" ;; esac
 
+# The BOM is neither whitespace nor `[` nor a key character: a BOM'd [env]
+# header would hide the whole table behind the silent built-in 400, and a
+# BOM'd first dotenv assignment would silently skip the layer.
+printf '\357\273\277[env]\nSIZE_RATCHET_THRESHOLD = "9"\n' > "$R/kendex.settings.toml"
+run_raw || true
+[ "$RC" -eq 2 ] && case "$OUT" in *"byte-order mark"*) true ;; *) false ;; esac \
+  && ok "a BOM-prefixed settings file is exit 2, not an invisible table" \
+  || bad "BOM settings file is exit 2" "rc=$RC out=$OUT"
+
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "9"\n' > "$R/kendex.settings.toml"
+printf '\357\273\277SIZE_RATCHET_THRESHOLD=8\n' > "$R/.env.local"
+run_raw || true
+[ "$RC" -eq 2 ] && case "$OUT" in *"byte-order mark"*) true ;; *) false ;; esac \
+  && ok "a BOM-prefixed .env.local is exit 2, not a skipped layer" \
+  || bad "BOM .env.local is exit 2" "rc=$RC out=$OUT"
+rm -f "$R/.env.local"
+
 echo "=== an EXISTING non-regular settings path never falls back to defaults ==="
 # A directory (FIFO/socket/device are the same shape) fails -f exactly like
 # an absent file, so the configured settings would be skipped with nothing

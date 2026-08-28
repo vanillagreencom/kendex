@@ -299,6 +299,15 @@ $(printf '%s\n' "$badheaders" | sed 's/^/        /')"
   else
     ok "every table header parses as a lone [name]"
   fi
+  # Every settings reader refuses a BOM-prefixed file whole (lib/settings.sh
+  # rg_bom_guard): the BOM is neither whitespace nor `[` nor a key
+  # character, so the first line would misclassify. Findings below a BOM
+  # describe that corrupted read — remove the BOM first.
+  if [ "$(head -c 3 < "$SETTINGS_FILE" 2>/dev/null)" = "$(printf '\357\273\277')" ]; then
+    bad "$SETTINGS_FILE starts with a UTF-8 byte-order mark; remove it (every settings reader refuses the file whole)"
+  else
+    ok "no UTF-8 byte-order mark before the first line"
+  fi
   if [ -n "$(printf '%s' "$unread" | tr -d '[:space:]')" ]; then
     bad "$SETTINGS_FILE names REVIEW_GATE_ in a shape the loader does not read. The loader reads ONE shape — a bare KEY at the start of its own line, followed by its own \`=\` — and everything else is unsupported syntax read by nothing, so the gate runs on the built-in default. This is deliberately unforgiving, string values included: every exception this check has carried became a place for the next spelling to hide. Rewrite, or reword a mention, on the line(s) below:
 $(printf '%s\n' "$unread" | sed 's/^/        /')"

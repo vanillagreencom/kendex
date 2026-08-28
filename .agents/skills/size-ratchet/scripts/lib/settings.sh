@@ -240,6 +240,17 @@ sr_settings_source() { # FILE — the path to actually read; nonzero + ::error o
   printf '%s' "$copy"
 }
 
+# A UTF-8 byte-order mark is neither whitespace nor `[` nor a key character
+# to any reader here, so a BOM-prefixed first line silently misfiles the
+# header or assignment it hides. Refuse the source whole, same discipline
+# as the header rule. Read via stdin so the path is never an operand.
+sr_bom_guard() { # FILE — 0 = no leading BOM; 1 + ::error otherwise
+  if [ "$(head -c 3 < "$1" 2>/dev/null)" = "$(printf '\357\273\277')" ]; then
+    echo "::error::$1: file starts with a UTF-8 byte-order mark; remove it (the first header or assignment would otherwise be misread)" >&2
+    return 1
+  fi
+}
+
 # One read discipline for every settings probe: grep exits 0/1 are
 # measurements, anything else is an unreadable source and fails loud —
 # falling through to a lower-precedence layer would silently change the
@@ -265,8 +276,9 @@ sr_settings_grep() { # REGEX FILE — matching lines on stdout; 1 = no match
 # resolver silently returns defaults. awk failing to read the source is an
 # unreadable source and fails loud, same discipline as sr_settings_grep.
 sr_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
-                 # malformed header; 2 + ::error when unreadable
+                 # malformed header or leading BOM; 2 + ::error when unreadable
   local status=0
+  sr_bom_guard "$1" || return 1
   awk -v src="$1" '
     /^[[:space:]]*\[/ && !/^[[:space:]]*\[[A-Za-z0-9_.-]+\][[:space:]]*$/ {
       printf "::error::%s:%d: unsupported table header shape (a header is a lone [name] on its own line, with no comment and no second bracket)\n", src, NR > "/dev/stderr"
@@ -321,6 +333,7 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   local_env="$(sr_settings_source ".env.local")" || return 1
   sr_settings_usable "$local_env" || return 1
   if [ -f "$local_env" ]; then
+    sr_bom_guard "$local_env" || return 1
     status=0
     matches="$(sr_settings_grep "^[[:space:]]*(export[[:space:]]+)?${name}=" "$local_env")" || status=$?
     [ "$status" -le 1 ] || return 1

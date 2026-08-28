@@ -184,6 +184,14 @@ dir="$DIR"
 printf '\n[env] # comment\nREVIEW_GATE_THREADS = "off"\n' >>"$dir/kendex.settings.toml"
 expect_fail "a header the loader cannot parse is its own finding" "$dir" "table header(s) the loader cannot parse"
 
+# Every settings reader refuses a BOM-prefixed file whole, so the BOM is
+# its own finding — without it the report would blame lines the corrupted
+# read never classified.
+sandbox
+dir="$DIR"
+printf '\357\273\277[env]\nREVIEW_GATE_THREADS = "off"\n' >"$dir/kendex.settings.toml"
+expect_fail "a leading UTF-8 BOM is its own finding" "$dir" "byte-order mark"
+
 # An inline table puts the setting AFTER the line's first `=`, which is why
 # the rule judges the line rather than a position inside it.
 sandbox

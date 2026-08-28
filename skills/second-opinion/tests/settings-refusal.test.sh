@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# A settings file the loader refuses (malformed table header, leading UTF-8
+# BOM) is a configuration error, never "undeclared": every second-opinion
+# run aborts at the startup project-env load naming the defect. Emitting
+# the undeclared refusal instead would send the operator hunting a
+# declaration while the real fix is one line in the settings file. Sibling
+# of review-dual-model.test.sh scenario 33c, split out at the
+# settings-refusal seam — the startup abort needs none of that suite's
+# harness-detection fixtures.
+set -euo pipefail
+
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
+TMP_ROOT="$(mktemp -d)"
+trap 'rm -rf "$TMP_ROOT"' EXIT
+
+PASS=0
+FAIL=0
+ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
+fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
+
+# The declaration reaches the run only through the project settings file,
+# exactly like scenario 33: the skill copy lives inside the project so the
+# script's own root resolution finds the file under test.
+proj="$TMP_ROOT/proj"
+mkdir -p "$proj"
+git -C "$proj" init -q
+cp -R "$REPO_ROOT/skills/second-opinion" "$proj/second-opinion"
+SO="$proj/second-opinion/scripts/second-opinion"
+
+echo "=== a refused settings file fails the run as a config error ==="
+for defect in header bom; do
+  case "$defect" in
+    header)
+      printf '[env] # comment\nSECOND_OPINION_CURRENT_MODEL = "codex"\n' > "$proj/kendex.settings.toml"
+      msg="unsupported table header shape"
+      ;;
+    bom)
+      printf '\357\273\277[env]\nSECOND_OPINION_CURRENT_MODEL = "codex"\n' > "$proj/kendex.settings.toml"
+      msg="byte-order mark"
+      ;;
+  esac
+  rc=0
+  env -u SECOND_OPINION_CURRENT_MODEL "$SO" detect >/dev/null 2>"$TMP_ROOT/err" || rc=$?
+  [ "$rc" -eq 1 ] && ok "($defect) the run exits 1 at the startup settings load" \
+    || fail "($defect) expected exit 1, got $rc: $(cat "$TMP_ROOT/err")"
+  grep -q "$msg" "$TMP_ROOT/err" && ok "($defect) the failure names the settings defect" \
+    || fail "($defect) stderr does not name the defect: $(cat "$TMP_ROOT/err")"
+  if grep -q "model undeclared" "$TMP_ROOT/err"; then
+    fail "($defect) a refused file must not read as an undeclared session"
+  else
+    ok "($defect) not misreported as an undeclared session"
+  fi
+done
+
+echo
+printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

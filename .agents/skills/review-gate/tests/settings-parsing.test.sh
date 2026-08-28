@@ -328,5 +328,17 @@ OUT=""; RC=0
 OUT="$(cd "$TMP" && { unset REVIEW_GATE_TQ 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="policy=on.toml" rg_setting REVIEW_GATE_TQ "dflt" 2>"$TMP/err"; })" || RC=$?
 [[ "$RC" -eq 0 && "$OUT" == "eqfile" ]] && ok "an =-containing relative settings path reads its value (no silent-defaults fallback)" || bad "=-containing settings path" "rc=$RC out=$OUT"
 
+echo "=== a leading UTF-8 BOM fails loud, never parses as content ==="
+# The BOM is neither whitespace nor `[` nor a key character: a BOM'd [env]
+# header would hide the whole table behind silent defaults, and a BOM'd
+# first dotenv assignment would silently skip the layer.
+run_setting "$(printf '\357\273\277')"$'[env]\nREVIEW_GATE_TM = "hidden"' REVIEW_GATE_TM "dflt"
+[[ "$RC" -ne 0 ]] && grep -q "byte-order mark" "$TMP/err" && ok "a BOM-prefixed settings file is a config error, not an invisible table" || bad "BOM settings file" "rc=$RC out=$OUT"
+
+printf '\357\273\277REVIEW_GATE_TM="first"\n' >"$TMP/layers/.env.local"
+dot REVIEW_GATE_TM "dflt"
+[[ "$RC" -ne 0 ]] && grep -q "byte-order mark" "$TMP/err" && ok "a BOM-prefixed .env.local is a config error, not a skipped layer" || bad "BOM .env.local" "rc=$RC out=$OUT"
+rm -f "$TMP/layers/.env.local"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -58,9 +58,9 @@ an outside contributor.
   installs in the main checkout and link its `node_modules` via
   `WORKTREE_SYMLINKS`; an unlinked JS worktree warns, naming the main checkout.
 
-- **Breaking:** every skill resolves settings as env > `.env.local` >
+- **Breaking:** skills resolve settings as env > `.env.local` >
   `.kendex/settings.toml` > `kendex.settings.toml` > default, `[env]` table
-  only; a lingering `.env` is silently ignored (use `.env.local`).
+  only; `.env` is silently ignored (deep-research reads env and `.env.local` only).
 
 - **Breaking:** settings values are single-line double-quoted strings with no
   `"` or `\`; any other shape, a duplicate key, or an unparseable table header

@@ -58,7 +58,7 @@ if [[ -n "$PROJECT_ROOT" ]]; then
     # would report provenance from a file the loader rejected.
     kendex_load_settings_file "$PROJECT_ROOT/kendex.settings.toml" || exit 1
     kendex_load_settings_file "$PROJECT_ROOT/.kendex/settings.toml" || exit 1
-    kendex_source_env_file "$PROJECT_ROOT/.env.local"
+    kendex_source_env_file "$PROJECT_ROOT/.env.local" || exit 1
     printf '%s' "${LINEAR_TEAM:-}"
   )" || project_declared_team=""
 fi
