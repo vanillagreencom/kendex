@@ -4,26 +4,48 @@
 # same CHANGELOG line; this is the step that turns the files back into
 # sections, and only the release commit runs it.
 #
-# Exit codes follow the guard family: 0 collated or nothing to collate,
-# 2 could not run. CHANGELOG.md is replaced whole or not at all.
+# --check judges the fragments and writes nothing. tools/guard runs that mode
+# at commit time, so the fragment format has one judge rather than two
+# spellings that can drift.
+#
+# The fragments are the ones git carries under changelog.d, not the files on
+# disk: guard judges the same set, and an untracked stray nobody wrote cannot
+# stop a release.
+#
+# Exit codes follow the guard family: 0 clean, 1 a fragment the format
+# refuses, 2 could not run. CHANGELOG.md is replaced whole or not at all.
 set -euo pipefail
 
 # The Keep a Changelog sections, in the order they are emitted. The directory
 # name and the heading are both written out: nothing here case-converts.
 SECTIONS="added:Added changed:Changed deprecated:Deprecated removed:Removed fixed:Fixed security:Security"
+KNOWN=" added changed deprecated removed fixed security "
 
-die() {
+CHECK=0
+if [ "${1:-}" = --check ]; then
+  CHECK=1
+  shift
+fi
+if [ $# -ne 0 ]; then
+  echo "changelog-collate: usage: changelog-collate [--check]" >&2
+  exit 2
+fi
+
+die() { # an environment the run cannot work in
   echo "changelog-collate: $1" >&2
   exit 2
+}
+refused=0
+refuse() { # a fragment the format will not take; every one is reported
+  echo "changelog-collate: $1" >&2
+  refused=1
+}
+note() { # progress, silenced in the mode guard runs
+  if [ "$CHECK" -eq 0 ]; then echo "changelog-collate: $1"; fi
 }
 
 ROOT="$(git rev-parse --show-toplevel)" || die "not inside a git work tree — the collation could not run"
 cd "$ROOT" || die "could not enter $ROOT — the collation could not run"
-
-[ -d changelog.d ] || {
-  echo "changelog-collate: no changelog.d directory — nothing to collate"
-  exit 0
-}
 
 TMP="$(mktemp -d)" || die "could not create a work directory — the collation could not run"
 OUT=""
@@ -34,34 +56,83 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Every file under changelog.d is a fragment or the README. Anything else
-# would be collated into nothing, so it stops the run rather than vanishing.
-find changelog.d -type f -print >"$TMP/all" || die "could not list changelog.d — the collation could not run"
-LC_ALL=C sort -o "$TMP/all" "$TMP/all" || die "could not order the fragment list — the collation could not run"
+# A fragment is one Markdown list item: it opens with a hyphen and a space,
+# and every later line indents under it. A second marker or a heading would
+# be a second entry, or would end the [Unreleased] section it is folded into.
+fragment_shape() { # FILE — the complaint, empty when the file is one entry
+  awk '
+    { sub(/\r$/, "") }
+    /^[[:space:]]*$/ { next }
+    !seen {
+      seen = 1
+      if ($0 !~ /^- /) {
+        print "does not open with a list marker — a fragment is the Markdown list item it becomes, opening with a hyphen and a space"
+        exit
+      }
+      next
+    }
+    !/^[ \t]/ {
+      print "holds more than the one entry it becomes — every line after the first indents under it"
+      exit
+    }
+    END { if (!seen) print "has no entry in it — a fragment is the Markdown list item it becomes" }
+  ' "$1"
+}
 
+# git's own index entries: mode 100644/100755 for a file, 120000 for a
+# symlink the collator would follow out of the tree.
+git ls-files -s -z -- changelog.d >"$TMP/index" ||
+  die "could not list changelog.d from the index — the collation could not run"
 : >"$TMP/frags"
-while IFS= read -r f; do
-  if [ "$f" = changelog.d/README.md ]; then continue; fi
-  case "$f" in
-    changelog.d/*/*/*) die "$f sits below a section directory — a fragment is changelog.d/<section>/<name>.md" ;;
+while IFS= read -r -d '' rec; do
+  mode=${rec%% *}
+  path=${rec#*$'\t'}
+  if [ "$path" = changelog.d/README.md ]; then continue; fi
+  if [ "$mode" = 120000 ]; then
+    refuse "$path is a symlink — a fragment is a file of its own"
+    continue
+  fi
+  case "$path" in
+    changelog.d/*/*/*)
+      refuse "$path sits below a section directory — a fragment is changelog.d/<section>/<name>.md"
+      continue
+      ;;
     changelog.d/*/*.md) : ;;
-    *) die "$f is not a changelog fragment — a fragment is changelog.d/<section>/<name>.md" ;;
+    *)
+      refuse "$path is not a changelog fragment — a fragment is changelog.d/<section>/<name>.md"
+      continue
+      ;;
   esac
-  rel=${f#changelog.d/}
-  sec=${rel%%/*}
-  case " added changed deprecated removed fixed security " in
+  sec=${path#changelog.d/}
+  sec=${sec%%/*}
+  case "$KNOWN" in
     *" $sec "*) : ;;
-    *) die "$f names no known section — one of: added changed deprecated removed fixed security" ;;
+    *)
+      refuse "$path names no known section — one of:${KNOWN% }"
+      continue
+      ;;
   esac
-  printf '%s\n' "$f" >>"$TMP/frags"
-done <"$TMP/all"
+  [ -f "$path" ] || die "$path is in the index but not a file on disk — the collation could not run"
+  shape="$(fragment_shape "$path")" || die "could not read $path — the collation could not run"
+  if [ -n "$shape" ]; then
+    refuse "$path $shape"
+    continue
+  fi
+  printf '%s\n' "$path" >>"$TMP/frags"
+done <"$TMP/index"
 
+# Nothing is written while a fragment stands refused: the collation is whole
+# or it has not begun.
+[ "$refused" -eq 0 ] || exit 1
+if [ "$CHECK" -eq 1 ]; then exit 0; fi
+
+LC_ALL=C sort -o "$TMP/frags" "$TMP/frags" || die "could not order the fragment list — the collation could not run"
 count=$(wc -l <"$TMP/frags") || die "could not count the fragments — the collation could not run"
 count=$((count))
-[ "$count" -gt 0 ] || {
-  echo "changelog-collate: no fragments — nothing to collate"
+if [ "$count" -eq 0 ]; then
+  note "no fragments — nothing to collate"
   exit 0
-}
+fi
 
 # awk normalizes a fragment that ends without a newline, which would
 # otherwise glue two entries into one line.
@@ -147,33 +218,49 @@ trim() { # FILE — its content, edge blank lines dropped, interior runs capped 
   ' "$1"
 }
 
-OUT="$(mktemp ./CHANGELOG.md.XXXXXX)" || die "could not create the replacement file — the collation could not run"
-cp -p CHANGELOG.md "$OUT" || die "could not take CHANGELOG.md's mode — the collation could not run"
-{
-  cat "$TMP/pre"
-  trim "$TMP/lead"
+# Every part carries its own failure out. The caller runs this as the left
+# operand of ||, where the shell suppresses errexit and would otherwise pass
+# off the last command's status as the whole file's.
+assemble() {
+  cat "$TMP/pre" || return 1
+  trim "$TMP/lead" || return 1
   for pair in $SECTIONS; do
     low=${pair%%:*}
     name=${pair#*:}
-    [ -s "$TMP/sec.$low" ] || [ -s "$TMP/frag.$low" ] || continue
-    printf '\n### %s\n\n' "$name"
-    cat "$TMP/sec.$low"
-    cat "$TMP/frag.$low"
+    if [ -s "$TMP/sec.$low" ] || [ -s "$TMP/frag.$low" ]; then
+      printf '\n### %s\n\n' "$name" || return 1
+      cat "$TMP/sec.$low" || return 1
+      cat "$TMP/frag.$low" || return 1
+    fi
   done
-  if [ -s "$TMP/post" ]; then printf '\n'; fi
-  cat "$TMP/post"
-} >"$OUT" || die "could not write the collated changelog — CHANGELOG.md is untouched"
+  if [ -s "$TMP/post" ]; then
+    printf '\n' || return 1
+  fi
+  cat "$TMP/post" || return 1
+}
+
+OUT="$(mktemp ./CHANGELOG.md.XXXXXX)" || die "could not create the replacement file — the collation could not run"
+cp -p CHANGELOG.md "$OUT" || die "could not take CHANGELOG.md's mode — the collation could not run"
+assemble >"$OUT" || die "could not write the collated changelog — CHANGELOG.md is untouched"
 mv -- "$OUT" CHANGELOG.md || die "could not replace CHANGELOG.md — the collation could not run"
 OUT=""
 
+# Past the move, every fragment is in CHANGELOG.md. Deleting stops for none of
+# them: one left behind folds in a second time on the next run, so the refusal
+# has to name every survivor, not the first.
+survivors=""
 while IFS= read -r f; do
-  rm -f -- "$f" || die "could not delete $f — CHANGELOG.md is collated; remove the fragment by hand"
+  rm -f -- "$f" || survivors="$survivors  $f"$'\n'
 done <"$TMP/frags"
+if [ -n "$survivors" ]; then
+  die "CHANGELOG.md is collated, but these fragments survived and would fold in a second time — delete them by hand:
+${survivors%$'\n'}"
+fi
 # A section directory the collation emptied goes with it. Not-empty and
 # not-found are both ordinary here, and neither leaves anything to act on.
 for pair in $SECTIONS; do
   rmdir "changelog.d/${pair%%:*}" 2>/dev/null || true
 done
 
-if [ "$count" -eq 1 ]; then noun=fragment; else noun=fragments; fi
-echo "changelog-collate: folded $count $noun into CHANGELOG.md's [Unreleased] section"
+if [ "$count" -eq 1 ]; then noun=entry; else noun=entries; fi
+note "folded $count $noun into CHANGELOG.md's [Unreleased] section"

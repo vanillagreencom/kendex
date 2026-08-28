@@ -80,28 +80,19 @@ $long"
   else
     say "$f is unreadable — the entry-length check could not run"
   fi
-done < <({ echo CHANGELOG.md; printf '%s\n' "$files" | grep -E '^changelog\.d/[^/]+/[^/]+\.md$'; })
+done < <({ echo CHANGELOG.md; printf '%s\n' "$files" | grep -E '^changelog\.d/' | grep -vx 'changelog.d/README.md'; })
 
-# An entry is a file: changelog.d/<section>/<name>.md holding the Markdown
-# list item it becomes. The collator looks nowhere else, so a fragment filed
-# anywhere else is an entry that ships nothing.
-while IFS= read -r f; do
-  [ -n "$f" ] || continue
-  [ -f "$f" ] || continue
-  [ "$f" = changelog.d/README.md ] && continue
-  if [[ ! "$f" =~ ^changelog\.d/(added|changed|deprecated|removed|fixed|security)/[^/]+\.md$ ]]; then
-    say "$f is not a changelog fragment — name it changelog.d/<section>/<name>.md, section one of: added changed deprecated removed fixed security"
-    continue
+# The fragment format has one judge, and it is the tool that has to read the
+# fragments: tools/changelog-collate --check names every path and body it
+# would refuse, and writes nothing.
+if [ -x tools/changelog-collate ]; then
+  if ! collate_out=$(tools/changelog-collate --check 2>&1); then
+    say "changelog.d holds a fragment the collator refuses:
+$(printf '%s\n' "$collate_out" | head -5 | sed 's/^/  /')"
   fi
-  first=$(sed -n '/[^[:space:]]/{p;q;}' "$f" 2>/dev/null) || {
-    say "$f is unreadable — the fragment shape check could not run"
-    continue
-  }
-  case "$first" in
-    [-*+]\ *) : ;;
-    *) say "$f is not the list item it becomes — a fragment opens with '- ', continuation lines indented" ;;
-  esac
-done < <(printf '%s\n' "$files" | grep -E '^changelog\.d/')
+else
+  say "tools/changelog-collate is missing or not executable — the fragment format check could not run"
+fi
 
 # Two branches that both write CHANGELOG.md's [Unreleased] list insert at the
 # same line, and the merge queue ejects the trailing one. Entries go to
@@ -109,8 +100,11 @@ done < <(printf '%s\n' "$files" | grep -E '^changelog\.d/')
 # new lines are the collator's, the way RATCHET_RAISE=1 declares a baseline.
 if [ "${CHANGELOG_COLLATE:-}" != "1" ] && [ -f CHANGELOG.md ] && git cat-file -e HEAD:CHANGELOG.md 2>/dev/null; then
   unreleased() { awk '/^## / { seen = ($0 ~ /^## \[Unreleased\]/); next } seen && NF'; }
-  if head_ur=$(git show HEAD:CHANGELOG.md | unreleased) && work_ur=$(unreleased <CHANGELOG.md); then
-    added=$(comm -13 <(printf '%s\n' "$head_ur" | LC_ALL=C sort -u) <(printf '%s\n' "$work_ur" | LC_ALL=C sort -u))
+  # One collation for the sort and for comm, or comm calls a byte-ordered
+  # file unsorted and prints lines neither side gained. No -u either: a
+  # second copy of a line HEAD carries once is a line this tree gained.
+  if head_ur=$(git show HEAD:CHANGELOG.md | unreleased) && work_ur=$(unreleased <CHANGELOG.md) &&
+    added=$(LC_ALL=C comm -13 <(printf '%s\n' "$head_ur" | LC_ALL=C sort) <(printf '%s\n' "$work_ur" | LC_ALL=C sort)); then
     [ -n "$added" ] && say "CHANGELOG.md gained lines under [Unreleased] — write changelog.d/<section>/<name>.md instead; tools/changelog-collate folds it in at release:
 $(printf '%s\n' "$added" | head -5 | sed 's/^/  /')"
   else

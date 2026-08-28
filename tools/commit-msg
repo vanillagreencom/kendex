@@ -48,6 +48,13 @@ staged=$(git diff --cached --name-only) || {
   echo "commit-msg: could not read the staged file list — the changelog rule could not run"
   exit 2
 }
+# Deleting a fragment is not writing one, and the staged list does not say
+# which it was. Evidence of an entry comes from the additions and
+# modifications alone.
+written=$(git diff --cached --name-only --diff-filter=AM) || {
+  echo "commit-msg: could not read the staged additions — the changelog rule could not run"
+  exit 2
+}
 gg_commit_header "$MSG"
 subject="$GG_COMMIT_HEADER"
 
@@ -66,9 +73,12 @@ gg_git_generated_header "$subject" ||
 
 # Code changes ship with a changelog entry: a changelog.d fragment, or
 # CHANGELOG.md itself on the release commit that collates them.
-# [no-changelog] is the escape hatch for pure refactors.
+# [no-changelog] is the escape hatch for pure refactors. Which section names
+# are real and what a fragment must contain are tools/guard's judgment, run
+# in the same commit chain; a path inside some section directory is all this
+# lane needs to see.
 if echo "$staged" | grep -qE '^(crates|ui)/' &&
-  ! echo "$staged" | grep -qE '^(CHANGELOG\.md$|changelog\.d/[^/]+/[^/]+\.md$)' &&
+  ! echo "$written" | grep -qE '^(CHANGELOG\.md|changelog\.d/[^/]+/[^/]+\.md)$' &&
   ! printf '%s' "$subject" | grep -qF '[no-changelog]'; then
   say "crates/ or ui/ changed without a changelog entry — add changelog.d/<section>/<name>.md or put [no-changelog] in the subject"
 fi
