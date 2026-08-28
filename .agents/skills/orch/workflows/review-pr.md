@@ -399,15 +399,15 @@ Follow the § 4 pattern — collect, present, then delegate through `workflows/d
 
 ### Converged
 
-This section owns its exit; it borrows nothing from § 4's cap. **Converged** means a re-check surfaced no new blocker AND no new `category == "fix"` suggestion, twice running — a suggestion arriving on the last re-check is a new finding and the loop is not converged. The loop otherwise runs on while each round finds a DISTINCT defect this diff introduced, each of those earning its fix, and stops the moment one root cause reappears at a new site: that round's answer is SKILL.md § Review must converge's structural close, cutting the surface that generates the class, never another patch round.
+This section owns its exit; it borrows nothing from § 4's cap. **Converged** means a re-check surfaced no new finding of any category, twice running — a blocker, a `category == "fix"` suggestion, or a `category == "issue"` suggestion first raised on the last re-check is a new finding, and the loop is not converged. The exit stops repeated patching of a finding already answered; it never discards one. The loop otherwise runs on while each round finds a DISTINCT defect this diff introduced, each of those earning its fix, and stops the moment one root cause reappears at a new site: that round's answer is SKILL.md § Review must converge's structural close, cutting the surface that generates the class, never another patch round.
 
-On the way out, and before § 8, disposition every item still outstanding — every blocker and every `category == "fix"` suggestion this round's QA artifacts report, whether or not `fixed_items` already lists it, excluding only what `escalated_items` carries and what this section declined. One write per item, which drops any superseded `fixed_items` entry and records the item in the same command:
+On the way out, and before § 8, disposition every item still outstanding — every blocker and every suggestion this round's QA artifacts report, `category == "fix"` and `category == "issue"` alike, whether or not `fixed_items` already lists it, excluding only what `escalated_items` carries and what this section declined. One write per item, which drops any superseded `fixed_items` entry and records the item in the same command:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile art '[ARTIFACT_PATH]' '$art[0].[ARRAY][[INDEX]] as $item | .fixed_items = ((.fixed_items // []) | map(select(.location != $item.location or .description != $item.description))) | .escalated_items = ((.escalated_items // []) + [{description: $item.description, location: $item.location, reason: "QA loop converged with the item unresolved", outcome: "blocked", source: "qa-review"}])'
 ```
 
-`[ARTIFACT_PATH]` is the `json_paths` entry the item came from, `[ARRAY]` is `blockers` or `suggestions`, and `[INDEX]` is its position there: the finding's own text reaches jq through the file, never a quoted shell word. The reason is this exit's own — the loop converged with the item unresolved — never the cap's. An item dev returns as Blocked reaches `escalated_items` through `dev-fix.md` unchanged.
+`[ARTIFACT_PATH]` is the `json_paths` entry the item came from, `[ARRAY]` is `blockers` or `suggestions` — every bucket the artifact carries — and `[INDEX]` is its position there: the finding's own text reaches jq through the file, never a quoted shell word. The reason is this exit's own — the loop converged with the item unresolved — never the cap's. An item dev returns as Blocked reaches `escalated_items` through `dev-fix.md` unchanged.
 
 ## 8. Summary And Issue Audit
 

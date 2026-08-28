@@ -214,24 +214,30 @@ s7_converged() { s7_exit "$1" | grep -F 'Converged** means'; }
 s7_dispo()     { s7_exit "$1" | grep -F 'On the way out'; }
 s7_write()     { s7_exit "$1" | grep -F -- '--slurpfile art'; }
 
-# --- 12: convergence tests both item classes --------------------------------
-# Two consecutive re-checks with no new BLOCKER satisfy a blocker-only test
-# whatever the suggestions say, so the last re-check could smuggle a new
-# `category == "fix"` suggestion past the exit.
-if grep -q -F 'category == "fix"' <<<"$(s7_converged "$REVIEW_PR_WF")"; then
-  pass "converging needs no new suggestion, not just no new blocker"
+# --- 12: convergence tests every category ------------------------------------
+# A test that names only some categories lets the last re-check smuggle a new
+# finding past the exit — a `category == "issue"` suggestion as surely as a
+# `category == "fix"` one. The exit stops repeated patching of an answered
+# finding; it never discards a genuine one.
+CONV="$(s7_converged "$REVIEW_PR_WF")"
+if grep -q -F 'category == "fix"' <<<"$CONV" \
+   && grep -q -F 'category == "issue"' <<<"$CONV" \
+   && grep -q -F 'blocker' <<<"$CONV"; then
+  pass "converging needs no new finding of any category"
 else
-  fail "the convergence test ignores suggestions"
+  fail "the convergence test ignores a category of finding"
 fi
 
-# --- 13: the disposition set is both classes, whatever fixed_items holds -----
-# Scoped to what `fixed_items` lists, a suggestion first raised on the final
-# re-check reaches § 8 in neither bucket and § 8 re-derives it as a decline.
+# --- 13: the disposition set is every category, whatever fixed_items holds ---
+# Scoped to what `fixed_items` lists, or to one category, a finding first
+# raised on the final re-check reaches § 8 in neither bucket and § 8
+# re-derives it as a decline.
 DISPO="$(s7_dispo "$REVIEW_PR_WF")"
 if grep -q -F 'category == "fix"' <<<"$DISPO" \
+   && grep -q -F 'category == "issue"' <<<"$DISPO" \
    && grep -q -F 'blocker' <<<"$DISPO" \
    && grep -q -F 'fixed_items' <<<"$DISPO"; then
-  pass "the exit dispositions blockers and suggestions alike, listed or not"
+  pass "the exit dispositions every category and bucket, listed or not"
 else
   fail "the exit's disposition set covers only part of what is outstanding"
 fi
@@ -434,19 +440,28 @@ else
   pass "lint flags a § 7 exit that records nothing before § 8"
 fi
 
-# The blocker-only convergence test.
-if ! plant_pr s7conv 's/no new blocker AND no new .category == "fix". suggestion/no new blocker/'; then
+# Convergence narrowed back to blockers and fix suggestions.
+if ! plant_pr s7conv 's/, or a .category == "issue". suggestion first raised/ first raised/'; then
   fail "§ 7 convergence control planted nothing — its sed program matched no text"
-elif grep -q -F 'category == "fix"' <<<"$(s7_converged "$CTRL")"; then
-  fail "lint MISSED a convergence test that ignores suggestions"
+elif grep -q -F 'category == "issue"' <<<"$(s7_converged "$CTRL")"; then
+  fail "lint MISSED a convergence test that ignores a category"
 else
-  pass "lint flags a convergence test that ignores suggestions"
+  pass "lint flags a convergence test that ignores a category"
 fi
 
-# The blocker-only disposition set: suggestions drop out on the way out.
-if ! plant_pr s7sugg 's/every blocker and every .category == "fix". suggestion this round.s QA artifacts report/every blocker this round.s QA artifacts report/'; then
-  fail "§ 7 suggestion control planted nothing — its sed program matched no text"
-elif grep -q -F 'category == "fix"' <<<"$(s7_dispo "$CTRL")"; then
+# The disposition set narrowed to one category on the way out.
+if ! plant_pr s7sugg 's/, .category == "fix". and .category == "issue". alike,/,/'; then
+  fail "§ 7 category control planted nothing — its sed program matched no text"
+elif grep -q -F 'category == "issue"' <<<"$(s7_dispo "$CTRL")"; then
+  fail "lint MISSED a § 7 exit that dispositions one category"
+else
+  pass "lint flags a § 7 exit that dispositions one category"
+fi
+
+# The disposition set narrowed to blockers alone.
+if ! plant_pr s7blk 's/every blocker and every suggestion this round.s QA artifacts report/every blocker this round.s QA artifacts report/'; then
+  fail "§ 7 blocker-only control planted nothing — its sed program matched no text"
+elif grep -q -F 'suggestion' <<<"$(s7_dispo "$CTRL")"; then
   fail "lint MISSED a § 7 exit that dispositions blockers only"
 else
   pass "lint flags a § 7 exit that dispositions blockers only"
