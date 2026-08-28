@@ -6,24 +6,54 @@
 # reader and the loaders are pinned to one grammar.
 #
 # usage: settings-grammar-loaders.sh REPO_ROOT CORPUS
+#
+# The caller's environment is not an input to any of this. Both loader
+# families give an exported variable precedence over the file, so a probe
+# taken under an ambient value for the key it is about would be a reading of
+# the caller — and a harness that can report a wrong verdict is worse than
+# no harness, because it looks authoritative. Every probe therefore starts
+# by unsetting what it is about to ask about.
+#
 # Errexit is on, and every loader call is guarded by `||` or an `if`: their
 # nonzero exits are the observation, and nothing else here may fail quietly.
 set -euo pipefail
 
-root="$1"
+# Absolute, because each probe runs from somewhere else: a relative root
+# leaves the `source` below reading nothing, and a resolver that was never
+# defined answers every row `refused`.
+root="$(cd -- "$1" && pwd)"
 corpus="$2"
+env_lib="$root/skills/orch/scripts/lib/kendex-env.sh"
+settings_lib="$root/skills/review-gate/scripts/lib/settings.sh"
+for lib in "$env_lib" "$settings_lib"; do
+  [ -r "$lib" ] || { echo "cannot read the loader at $lib" >&2; exit 1; }
+done
+
 work="$(mktemp -d)"
 trap 'rm -rf -- "${work:?}"' EXIT
 file="$work/kendex.settings.toml"
 
+# Whether a shell can hold a variable of this name at all. Both loaders skip
+# every other name in silence, and neither the indirect expansion below nor
+# `unset` will take one.
+holdable() { # NAME — 0 = a shell identifier
+  case "$1" in "" | [0-9]* | *[!A-Za-z0-9_]*) return 1 ;; esac
+}
+
 # Verdict for one file under skills/orch/scripts/lib/kendex-env.sh: the load
-# either fails loud, exports the key, or reads past it in silence.
+# either fails loud, assigns the key, or reads past it in silence.
 env_sh() { # KEY -> loads:VALUE | refused | unread
   (
+    unset -v "$1" 2>/dev/null || :
     # shellcheck source=/dev/null
-    source "$root/skills/orch/scripts/lib/kendex-env.sh" 2>/dev/null
+    source "$env_lib"
     kendex_load_settings_file "$file" >/dev/null 2>&1 || { echo refused; exit 0; }
-    if value="$(printenv "$1")"; then echo "loads:$value"; else echo unread; fi
+    # The shell's own variable, not `printenv`: this answers whether the
+    # load created one. `printenv` would only answer whether one exists,
+    # which for an inherited name is true however the file reads — and for
+    # a name no shell can hold it is true while nothing ever read it.
+    holdable "$1" && [ -n "${!1+set}" ] || { echo unread; exit 0; }
+    printf 'loads:%s\n' "${!1}"
   )
 }
 
@@ -32,15 +62,21 @@ env_sh() { # KEY -> loads:VALUE | refused | unread
 # a table it walks past.
 settings_sh() { # KEY -> loads:VALUE | refused | unread
   (
-    cd "$work" || exit 1
+    unset -v "$1" 2>/dev/null || :
+    # This resolver reads two names of its own: REVIEW_GATE_MODE is a
+    # per-key exception in it, and REVIEW_GATE_SETTINGS_FILE selects which
+    # sources answer at all. Which file a corpus row is about is settled
+    # here, never by whoever ran the script.
+    unset -v REVIEW_GATE_MODE
+    cd "$work"
     # shellcheck source=/dev/null
-    source "$root/skills/review-gate/scripts/lib/settings.sh" 2>/dev/null
+    source "$settings_lib"
     rg_env_table "$file" >/dev/null 2>&1 || { echo refused; exit 0; }
-    [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo unread; exit 0; }
-    REVIEW_GATE_SETTINGS_FILE="$file"
-    export REVIEW_GATE_SETTINGS_FILE
+    holdable "$1" || { echo unread; exit 0; }
+    export REVIEW_GATE_SETTINGS_FILE="$file"
     value="$(rg_setting "$1" $'\x01none' 2>/dev/null)" || { echo refused; exit 0; }
-    if [ "$value" = $'\x01none' ]; then echo unread; else echo "loads:$value"; fi
+    [ "$value" != $'\x01none' ] || { echo unread; exit 0; }
+    printf 'loads:%s\n' "$value"
   )
 }
 

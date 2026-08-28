@@ -89,25 +89,50 @@ fn rows() -> Vec<Row> {
         .collect()
 }
 
-/// The real loaders, run over every sample by
-/// `fixtures/settings-grammar-loaders.sh`: `name -> (kendex-env.sh,
-/// settings.sh)`.
+/// A bash carrying only what the harness needs. Both loader families give
+/// an exported variable precedence over the file, so an observation taken
+/// under whatever the developer or the CI runner exports is an observation
+/// of them: `PATH` for the tools the script calls, `TMPDIR` so its scratch
+/// directory lands where the rest of the suite's does, and nothing else.
+fn controlled_bash() -> Command {
+    let mut command = Command::new("bash");
+    command
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap_or_default());
+    if let Ok(tmp) = std::env::var("TMPDIR") {
+        command.env("TMPDIR", tmp);
+    }
+    command
+}
+
+fn script_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/settings-grammar-loaders.sh")
+}
+
+/// The harness's raw output. `extra` is environment a test deliberately
+/// puts back to prove it changes nothing.
 #[allow(clippy::unwrap_used)]
-fn observed() -> Vec<(String, String, String)> {
-    let script =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/settings-grammar-loaders.sh");
-    let output = Command::new("bash")
-        .arg(&script)
-        .arg(root())
-        .arg(corpus_path())
-        .output()
-        .unwrap();
+fn harness(extra: &[(&str, &str)]) -> String {
+    let mut command = controlled_bash();
+    command.arg(script_path()).arg(root()).arg(corpus_path());
+    for (name, value) in extra {
+        command.env(name, value);
+    }
+    let output = command.output().unwrap();
     assert!(
         output.status.success(),
         "the loader harness failed:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    String::from_utf8_lossy(&output.stdout)
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// The real loaders, run over every sample by
+/// `fixtures/settings-grammar-loaders.sh`: `name -> (kendex-env.sh,
+/// settings.sh)`.
+#[allow(clippy::unwrap_used)]
+fn observed() -> Vec<(String, String, String)> {
+    harness(&[])
         .lines()
         .map(|line| {
             let fields: Vec<&str> = line.split('\t').collect();
@@ -193,4 +218,82 @@ fn a_readable_value_decodes_to_what_the_loaders_export() {
             .unwrap_or_else(|| panic!("{}: line {} is off the end", row.name, entry.line));
         assert_eq!(decoded_value(line).as_ref(), Some(exported), "{}", row.name);
     }
+}
+
+/// The caller's environment does not reach the harness. `env_clear` is what
+/// keeps a corpus observation an observation of the file, and this is the
+/// half the hostile run below cannot see: it puts values back deliberately,
+/// so it stays green whether or not anything was cleared first.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_harness_runs_in_a_controlled_environment() {
+    assert!(
+        std::env::var_os("HOME").is_some(),
+        "this test reads HOME as a variable every caller has; without one it proves nothing"
+    );
+    let output = controlled_bash()
+        .arg("-c")
+        .arg("printenv PATH >/dev/null && echo path-reached; printenv HOME && echo home-leaked; true")
+        .output()
+        .unwrap();
+    let seen = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(seen.contains("path-reached"), "{seen}");
+    assert!(
+        !seen.contains("home-leaked"),
+        "the caller's environment reached the harness: {seen}"
+    );
+}
+
+/// An exported value for a probed key changes nothing about what the
+/// loaders are observed to do. Both families read an exported variable
+/// before the file, so without this the corpus would report the caller: an
+/// ambient `WAIT` turned `quoted-key` from `unread` into `loads:ambient`,
+/// and a differently shaped one could just as easily hide a real
+/// divergence behind a verdict that happens to match.
+///
+/// The two names no shell can hold are here for the other half: a probe
+/// that asked `printenv` could not tell an inherited `FOO-BAR` from one a
+/// load created, and no load can create one.
+#[test]
+fn the_observation_ignores_a_hostile_environment() {
+    let hostile = harness(&[
+        ("WAIT", "ambient"),
+        ("_WAIT", "ambient"),
+        ("FOO-BAR", "ambient"),
+        ("FOO.BAR", "ambient"),
+        ("REVIEW_GATE_MODE", "off"),
+        ("REVIEW_GATE_SETTINGS_FILE", "/dev/null"),
+    ]);
+    assert_eq!(
+        harness(&[]),
+        hostile,
+        "an exported value changed what the loaders were observed to do"
+    );
+}
+
+/// A relative `REPO_ROOT` observes what an absolute one observes. Each
+/// probe runs from its own scratch directory, so a root left unresolved
+/// leaves `source` reading nothing — and a resolver that was never defined
+/// answers `refused`, which is a verdict the corpus itself uses. Sixteen
+/// rows would have agreed with reality by coincidence.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_relative_repo_root_observes_the_same_thing() {
+    let output = controlled_bash()
+        .arg(script_path())
+        .arg(".")
+        .arg(corpus_path())
+        .current_dir(root())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "the loader harness failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        harness(&[]),
+        String::from_utf8_lossy(&output.stdout),
+        "a relative repo root changed the observation"
+    );
 }
