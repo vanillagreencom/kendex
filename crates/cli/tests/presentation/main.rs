@@ -8,6 +8,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use kendex_core::env::Env;
+
 /// The frame a terminal gets, and nothing a verb ever writes itself.
 const FRAMING: [char; 12] = ['┌', '│', '└', '├', '╮', '╯', '─', '◇', '◆', '▲', '■', '●'];
 

@@ -242,9 +242,9 @@ fn a_warning_after_the_writes_lands_above_the_closing_ledger() {
         blocked_project_at(home, &project);
         // A file where the snapshot's directory belongs, so deriving it
         // fails and the pass after the writes has a warning to print.
-        let data = home.join(".local/share/kendex");
-        fs::create_dir_all(&data).unwrap();
-        fs::write(data.join("drift"), "not a directory\n").unwrap();
+        let drift = Env::host_rooted(home.clone()).drift_dir();
+        fs::create_dir_all(drift.parent().unwrap()).unwrap();
+        fs::write(&drift, "not a directory\n").unwrap();
 
         let printed = said(&kendex(
             home,

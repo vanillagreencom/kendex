@@ -249,7 +249,7 @@ fn a_failure_after_the_write_still_records_and_reports_it() {
         printed.contains("applied 2 changes"),
         "the run said nothing about what it wrote: {printed}"
     );
-    let drift = home.join(".local/share/kendex/drift");
+    let drift = Env::host_rooted(home.clone()).drift_dir();
     let recorded = fs::read_dir(&drift).map(|d| d.count()).unwrap_or(0);
     assert_eq!(
         recorded, 1,

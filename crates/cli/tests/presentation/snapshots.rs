@@ -313,7 +313,7 @@ fn a_late_warning_lands_above_the_closing_ledger() {
         );
         // The snapshot's own directory, made unwritable so deriving it
         // fails after the plan has already been written.
-        let drift = home.join(".local/share/kendex/drift");
+        let drift = Env::host_rooted(home.clone()).drift_dir();
         assert!(drift.is_dir(), "the fixture never derived a snapshot");
         let mut mode = fs::metadata(&drift).unwrap().permissions();
         mode.set_readonly(true);

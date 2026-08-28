@@ -93,6 +93,15 @@ impl Env {
         Self::rooted(home.into(), os)
     }
 
+    /// This machine's own layout under a home of your choosing. A test
+    /// that runs the binary against a temporary home asks here for the
+    /// paths that run will write, instead of spelling them a second
+    /// time: a spelling agrees with the code until a platform makes the
+    /// two disagree, and the data dir is one that does.
+    pub fn host_rooted(home: impl Into<PathBuf>) -> Self {
+        Self::rooted(home.into(), HOST_OS)
+    }
+
     /// Every root under one home, laid out the way `os` lays them out.
     fn rooted(home: PathBuf, os: FakeOs) -> Self {
         let (config, cache, data) = match os {
