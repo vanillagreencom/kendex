@@ -7,6 +7,7 @@ use crate::model::Scope;
 mod common;
 pub mod journal;
 mod op;
+mod plain;
 mod pre;
 mod transaction;
 

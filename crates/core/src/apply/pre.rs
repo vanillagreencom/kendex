@@ -36,6 +36,14 @@ pub enum Pre {
     PlainHashIs {
         hash: String,
     },
+    /// Nothing is here, and nothing may arrive. The other half of
+    /// `PlainHashIs`: a write binding to one of these two is proving the
+    /// path IS the file rather than a link to one, and the pair spells
+    /// "this exact plain file, or nothing at all". Kept apart from
+    /// [`Pre::Absent`], which several ops bind while meaning only "first
+    /// write" — one of them goes on to create a symlink, and the stricter
+    /// reading would be wrong for it.
+    PlainAbsent,
     SymlinkTo {
         target: PathBuf,
     },
@@ -70,7 +78,7 @@ impl Pre {
             }),
             // Nothing of the kind is here, and the write binds to that: a
             // link arriving where nothing was fails it too.
-            _ => Ok(Pre::Absent),
+            _ => Ok(Pre::PlainAbsent),
         }
     }
 
@@ -102,7 +110,7 @@ impl Pre {
     pub(super) fn check(&self, path: &Path) -> Result<()> {
         let ok = match self {
             Pre::Any => true,
-            Pre::Absent => !path.exists() && !path.is_symlink(),
+            Pre::Absent | Pre::PlainAbsent => !path.exists() && !path.is_symlink(),
             Pre::HashIs { hash } => {
                 path.exists() && hash_tree(path).map(|h| h == *hash).unwrap_or(false)
             }
