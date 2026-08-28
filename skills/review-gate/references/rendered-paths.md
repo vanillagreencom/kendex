@@ -42,25 +42,27 @@ hook's own script into `.agents/hooks` and rewrites the registration around
 it, and that script is the repo's. Each of the rest can also hold files kendex
 never writes.
 
-Start by listing candidates, then subtract:
+**The file list of a real refresh PR is the authority.** kendex exposes no
+single answer to what it renders here, and the commands below only build a
+candidate list to check against that PR.
 
 ```bash
 # Candidates only — this lists every tracked lowercase dot-directory,
-# including .vscode, .devcontainer, .husky and the rest. It is not an answer.
+# including .vscode, .devcontainer, .husky and the rest.
 git ls-files | grep -oE '^\.[a-z]+/' | sort -u
 
-# Items whose content this repo owns. The manifest is the declaration; the
-# lock is what the last apply recorded, and the two disagree until a refresh
-# rewrites the lock, so read both.
+# Items whose content this repo owns. Subtract the UNION of both lists: the
+# manifest is the declaration, the lock is what the last apply recorded, and
+# an item kendex refused to install keeps its old lock entry verbatim through
+# every later refresh — where they disagree, the manifest settles it.
 awk -F'[].[]' '/^\[/ { t = $2; n = $3 } /^[[:space:]]*source[[:space:]]*=[[:space:]]*.in-place./ { print t "/" n }' kendex.toml
 jq -r '.entries | to_entries[] | select(.value.source == "in-place") | .value.name' .kendex-lock.json | sort -u
 
-# Exact render destinations, where the lock recorded them, as absolute paths
-# to strip the repo root from. Absent on entries written before the field
-# existed, so this narrows the list and never completes it — compare the
-# count against the entry count.
+# Recorded render destinations, as absolute paths to strip the repo root
+# from. The lock carries this field for skills and commands only, so it names
+# no agent file, no hook script, and nothing for the other kinds — it adds
+# exact paths and never completes the list.
 jq -r '.entries[] | select(.emitted != null) | .emitted.paths[]' .kendex-lock.json | sort -u
-jq -r '"emitted on \([.entries[] | select(.emitted != null)] | length) of \(.entries | length) entries"' .kendex-lock.json
 ```
 
 Four shapes the glob must not take:
@@ -75,22 +77,26 @@ Four shapes the glob must not take:
   edited here. The subtraction is a name list, from the two commands above.
   The item's per-harness copies are still render output.
 - **The harness memory files** — `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`.
-  kendex writes none of them; they are project markers it reads. A repo
-  keeping `.claude/CLAUDE.md` has one inside a `.claude/**` glob.
-- **Structured config and settings files kendex merges into.** It writes its
-  own entries and leaves the rest of the file alone: `.claude/settings.json`
-  and `settings.local.json`, `.codex/config.toml`, `.codex/hooks.json`,
-  `.cursor/hooks.json`, `.cursor/mcp.json`, `.gemini/settings.json`,
-  `.mcp.json`, the Copilot files above, and — outside every dot-directory, so
-  the candidate list above cannot see it — the root `opencode.json` or
-  `opencode.jsonc`. This is the shape that most needs keeping out. The
-  template asserts that nothing under the glob is edited here and that a
-  refresh overwrites it wholesale; over a merged file both are false, and the
-  flat no-carve-out rule would then forbid raising a correctness or security
-  defect over content this repo owns and can fix.
+  kendex writes none of them. A repo keeping `.claude/CLAUDE.md` has one
+  inside a `.claude/**` glob.
+- **Anything kendex merges into rather than writes whole.** This is a class,
+  not a list: where kendex writes its own entries into a file or directory the
+  repo owns the rest of, that path is repo-owned and stays out. Named
+  instances, which are examples and not the whole set —
+  `.claude/settings.json` and `settings.local.json`, `.codex/config.toml`,
+  `.codex/hooks.json`, `.cursor/hooks.json`, `.cursor/mcp.json`,
+  `.gemini/settings.json`, `.pi/settings.json`, `.mcp.json`, the Copilot files
+  above, `.opencode/instructions/` where only `kendex-hook-*.md` is render
+  output, and — outside every dot-directory, so the candidate list cannot see
+  it — the root `opencode.json` or `opencode.jsonc`. This is the shape that
+  most needs keeping out. The template asserts that nothing under the glob is
+  edited here and that a refresh overwrites it wholesale; over a merged path
+  both are false, and the flat no-carve-out rule would then forbid raising a
+  correctness or security defect over content this repo owns and can fix.
 
-Check the result against the file list of a real refresh PR before relying on
-it.
+Read the shapes as the rule and the file list of a real refresh PR as the
+check. A path that appears in neither the candidate list nor that PR does not
+belong in the glob.
 
 ## Wiring a repo
 
