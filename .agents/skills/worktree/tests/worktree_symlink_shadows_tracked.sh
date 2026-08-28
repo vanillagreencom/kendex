@@ -289,7 +289,7 @@ mkdir -p "$IGN_ROOT/main/.opencode/agents"
 printf 'agent\n' >"$IGN_ROOT/main/.opencode/agents/dev.md"
 printf 'bun.lock\n' >"$IGN_ROOT/main/.opencode/.gitignore"
 printf 'lock\n' >"$IGN_ROOT/main/.opencode/bun.lock"
-printf 'WORKTREE_SYMLINKS=".opencode"\n' >"$IGN_ROOT/main/.env"
+printf 'WORKTREE_SYMLINKS=".opencode"\n' >"$IGN_ROOT/main/.env.local"
 git -C "$IGN_ROOT/main" add .opencode/agents/dev.md
 git -C "$IGN_ROOT/main" commit -q -m 'track opencode agents'
 push_main "$IGN_ROOT"

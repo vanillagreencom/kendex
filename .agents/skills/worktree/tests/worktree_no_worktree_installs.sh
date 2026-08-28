@@ -130,7 +130,7 @@ git -C "$ROOT/repo" add package.json
 git -C "$ROOT/repo" commit -q -m "js: linked deps"
 git -C "$ROOT/repo" push -q origin main
 mkdir -p "$ROOT/repo/node_modules/dep"
-printf 'WORKTREE_SYMLINKS="node_modules"\n' >"$ROOT/repo/.env"
+printf 'WORKTREE_SYMLINKS="node_modules"\n' >"$ROOT/repo/.env.local"
 STDERR_LINKED="$TMP_ROOT/linked-stderr.log"
 (cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-linked >/dev/null 2>"$STDERR_LINKED")
 WT_LINKED="$ROOT/.worktrees/repo/issue-linked"
@@ -151,7 +151,7 @@ printf '{ "name": "ui", "devDependencies": {} }\n' >"$ROOT/repo/ui/package.json"
 git -C "$ROOT/repo" add ui/package.json
 git -C "$ROOT/repo" commit -q -m "js: nested ui package"
 git -C "$ROOT/repo" push -q origin main
-printf 'WORKTREE_SYMLINKS="ui/node_modules"\n' >"$ROOT/repo/.env"
+printf 'WORKTREE_SYMLINKS="ui/node_modules"\n' >"$ROOT/repo/.env.local"
 STDERR_NESTED="$TMP_ROOT/nested-stderr.log"
 (cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-nested >/dev/null 2>"$STDERR_NESTED")
 WT_NESTED="$ROOT/.worktrees/repo/issue-nested"
@@ -180,7 +180,7 @@ printf '{ "name": "app", "devDependencies": {} }\n' >"$ROOT/repo/package.json"
 git -C "$ROOT/repo" add package.json
 git -C "$ROOT/repo" commit -q -m "js: root entry"
 git -C "$ROOT/repo" push -q origin main
-printf 'WORKTREE_SYMLINKS="node_modules"\n' >"$ROOT/repo/.env"
+printf 'WORKTREE_SYMLINKS="node_modules"\n' >"$ROOT/repo/.env.local"
 STDERR_ROOT="$TMP_ROOT/rootentry-stderr.log"
 (cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-rootentry >/dev/null 2>"$STDERR_ROOT")
 WARN_COUNT="$(grep -c "dependencies were not installed" "$STDERR_ROOT" || true)"
@@ -206,7 +206,7 @@ printf '{ "name": "ui", "devDependencies": {} }\n' >"$ROOT/repo/ui/package.json"
 git -C "$ROOT/repo" add ui/package.json
 git -C "$ROOT/repo" commit -q -m "js: nested ui package"
 git -C "$ROOT/repo" push -q origin main
-printf 'WORKTREE_SYMLINKS="ui/node_modules"\n' >"$ROOT/repo/.env"
+printf 'WORKTREE_SYMLINKS="ui/node_modules"\n' >"$ROOT/repo/.env.local"
 (cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-repair >/dev/null 2>&1)
 WT_REPAIR="$ROOT/.worktrees/repo/issue-repair"
 [ -L "$WT_REPAIR/ui/node_modules" ] && ok "repair case starts from a linked worktree" \
@@ -225,7 +225,7 @@ assert_no_pm_calls "repair repo: no package manager invoked" || true
 echo "=== a configured entry with no package.json beside it stays silent ==="
 ROOT="$TMP_ROOT/nopkg"
 make_repo "$ROOT" repo
-printf 'WORKTREE_SYMLINKS="ui/node_modules"\n' >"$ROOT/repo/.env"
+printf 'WORKTREE_SYMLINKS="ui/node_modules"\n' >"$ROOT/repo/.env.local"
 STDERR_NOPKG="$TMP_ROOT/nopkg-stderr.log"
 (cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-nopkg >/dev/null 2>"$STDERR_NOPKG")
 if grep -q "dependencies were not installed" "$STDERR_NOPKG"; then
