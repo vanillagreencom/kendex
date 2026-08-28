@@ -228,26 +228,75 @@ describe("a read racing a deliberate change", () => {
     expect(useAccountStore.getState().error).toBe("the approval was denied");
   });
 
-  it("drops a read that began before a sign-out", async () => {
-    useAccountStore.setState({ account: { kind: "signed-in", identity: ADA } });
-    const gate: { land?: (answer: AccountRead) => void } = {};
-    setAccountReader(
-      () =>
-        new Promise<AccountRead>((resolve) => {
-          gate.land = resolve;
-        }),
-    );
-    const reading = load();
+  /** A reader whose answers are released by hand, in any order. */
+  const staged = () => {
+    const gates: ((answer: AccountRead) => void)[] = [];
+    setAccountReader(() => new Promise<AccountRead>((r) => gates.push(r)));
+    return gates;
+  };
+
+  const signedIn: AccountRead = { ok: { kind: "signed-in", identity: ADA } };
+
+  const logsOut = () =>
     vi.mocked(commands.accountLogout).mockResolvedValue({
       status: "ok",
       data: null,
     } as Awaited<ReturnType<typeof commands.accountLogout>>);
-    await useAccountStore.getState().signOut();
-    expect(account()).toEqual({ kind: "signed-out" });
 
-    gate.land?.({ ok: { kind: "signed-in", identity: ADA } });
+  it("lets the newest read speak, whichever answers first", async () => {
+    const gates = staged();
+    const startup = load();
+    const focus = load();
+    gates[1]?.({ ok: { kind: "signed-out" } });
+    await focus;
+    gates[0]?.(signedIn);
+    await startup;
+    expect(account()).toEqual({ kind: "signed-out" });
+  });
+
+  it("drops a read that began before a sign-out", async () => {
+    useAccountStore.setState({ account: { kind: "signed-in", identity: ADA } });
+    const gates = staged();
+    const reading = load();
+    logsOut();
+    await useAccountStore.getState().signOut();
+    gates[0]?.(signedIn);
     await reading;
     expect(account()).toEqual({ kind: "signed-out" });
+  });
+
+  // The sign-out is not the account changing hands; the reply that says
+  // the credential is gone is. A read begun in between knows neither.
+  it("drops a read that began while a sign-out was landing", async () => {
+    useAccountStore.setState({ account: { kind: "signed-in", identity: ADA } });
+    const answered: { now?: () => void } = {};
+    vi.mocked(commands.accountLogout).mockReturnValue(
+      new Promise((resolve) => {
+        answered.now = () => resolve({ status: "ok", data: null });
+      }) as ReturnType<typeof commands.accountLogout>,
+    );
+    const out = useAccountStore.getState().signOut();
+    const gates = staged();
+    const reading = load();
+    answered.now?.();
+    await out;
+    expect(account()).toEqual({ kind: "signed-out" });
+
+    gates[0]?.(signedIn);
+    await reading;
+    expect(account()).toEqual({ kind: "signed-out" });
+  });
+
+  // Signing out drops the rows; a read that finds the credential gone has
+  // to leave the same thing behind, or someone else's stay on screen.
+  it("drops the submissions when a read finds the credential gone", async () => {
+    useAccountStore.setState({
+      account: { kind: "signed-in", identity: ADA },
+      submissions: [],
+    });
+    stored(false);
+    await load();
+    expect(useAccountStore.getState().submissions).toBeNull();
   });
 });
 

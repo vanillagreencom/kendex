@@ -99,10 +99,17 @@ interface AccountStore {
   loadSubmissions: () => Promise<void>;
 }
 
-/** Bumped by every deliberate change of account: a sign-in starting, a
- *  sign-out, a closed dialog. It abandons the poll loop behind it and
- *  drops any read that began before it. */
+/** Bumped to abandon a poll loop whose dialog was closed. */
 let generation = 0;
+
+/** Bumped where the account changes hands: a credential stored, a
+ *  credential dropped. A read still out when that happens is stale, and
+ *  the bump is at the change itself, not at the action that begins it. */
+let handover = 0;
+
+/** Reads in the order they were asked for. Only the newest may land: two
+ *  can be out at once, and the slower one is not the truer one. */
+let reads = 0;
 
 const wait = (seconds: number) =>
   new Promise((resolve) => setTimeout(resolve, seconds * 1000));
@@ -117,12 +124,13 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
   submissions: null,
 
   load: async () => {
-    const at = generation;
+    reads += 1;
+    const mine = reads;
+    const before = handover;
     const answer = await readAccount();
-    // Signing in, signing out and cancelling all say what the account is
-    // now. A read that began before one of them is older news, and would
-    // put back the state the person just left.
-    if (generation !== at) return;
+    // An older read and a read overtaken by a sign-in or sign-out are the
+    // same thing: news about an account that has already moved on.
+    if (mine !== reads || before !== handover) return;
     if ("error" in answer) {
       // A read that failed knows nothing new, so it never takes anything
       // away. With an identity already in hand the failure is exactly
@@ -137,7 +145,10 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       else set({ readError: answer.error });
       return;
     }
-    set({ account: answer.ok, readError: null });
+    // Submissions belong to the credential. A read that finds it gone
+    // leaves what signing out leaves, so nobody's rows outlive them.
+    if (hasCredential(answer.ok)) set({ account: answer.ok, readError: null });
+    else set({ account: answer.ok, readError: null, submissions: null });
   },
 
   signIn: async () => {
@@ -169,6 +180,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
         // before anything else is asked: a read that fails after this must
         // not leave the person looking at a sign-in button. The read that
         // follows is what puts a name to it.
+        handover += 1;
         set({
           signingIn: false,
           userCode: null,
@@ -187,12 +199,12 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
   },
 
   signOut: async () => {
-    generation += 1;
     const out = await commands.accountLogout();
     if (out.status === "error") {
       set({ error: out.error });
       return;
     }
+    handover += 1;
     set({
       account: { kind: "signed-out" },
       submissions: null,
