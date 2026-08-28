@@ -175,3 +175,40 @@ fn a_toml_error_in_column_one_reports_its_own_line() {
         "{found:?}"
     );
 }
+
+/// A template with no `[env]` table seeds nothing at all, whatever else it
+/// says. The corpus next door is the shell loaders' grammar, and they have
+/// no opinion here — a consumer's settings file without `[env]` simply
+/// resolves every key to its built-in default. This is the template's own
+/// rule, so it is pinned here rather than as a corpus row.
+#[test]
+fn a_template_with_no_env_table_is_located() {
+    let absent = [
+        "",
+        "# Just a preamble, and nothing under it.\n",
+        "# What this package reads.\n# It never gets there.\nWAIT = \"900\"\n",
+        "[envs]\n# How long to wait.\nWAIT = \"900\"\n",
+    ];
+    for text in absent {
+        assert_eq!(
+            located(text),
+            [(
+                0,
+                "there is no [env] table, so this template seeds nothing".to_owned()
+            )],
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn a_header_shaped_wrong_is_not_also_reported_as_an_absent_table() {
+    let found = located("[env] # the table\n# How long to wait.\nWAIT = \"900\"\n");
+    assert_eq!(
+        found,
+        [(
+            1,
+            "this is not a table header the settings loaders read".to_owned()
+        )]
+    );
+}

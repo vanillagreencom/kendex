@@ -146,6 +146,22 @@ fn line_at(text: &str, offset: usize) -> usize {
 /// The line scan: everything an author can be told precisely.
 fn scan(text: &str) -> TemplateRead {
     let mut read = TemplateRead::default();
+    // Whether the table is there at all is settled before any key is
+    // judged. With no `[env]` the file seeds nothing whatever it holds, so
+    // that is said once, in place of saying it again under every key. The
+    // name is enough: a header spelled `[env] # note` is a shape finding of
+    // its own, and reporting an absent table over it would name one typo
+    // twice.
+    let has_env = text
+        .lines()
+        .any(|line| table_header(line.trim()).0 == "env");
+    if !has_env {
+        read.findings.push(TemplateFinding {
+            line: 0,
+            problem: "there is no [env] table, so this template seeds nothing".to_owned(),
+            fix: "open the table with a lone [env] header and put the keys under it".to_owned(),
+        });
+    }
     let mut env_header: Option<usize> = None;
     let mut in_env = false;
     let mut comment: Vec<(usize, String)> = Vec::new();
@@ -199,50 +215,60 @@ fn scan(text: &str) -> TemplateRead {
             continue;
         }
         if !in_env {
-            read.findings.push(TemplateFinding {
-                line,
-                problem: format!("{key} is assigned outside [env]"),
-                fix: "move it under the [env] header; nothing else is seeded".to_owned(),
-            });
+            if has_env {
+                read.findings.push(TemplateFinding {
+                    line,
+                    problem: format!("{key} is assigned outside [env]"),
+                    fix: "move it under the [env] header; nothing else is seeded".to_owned(),
+                });
+            }
             continue;
         }
-        if !is_env_name(key) {
-            read.findings.push(TemplateFinding {
+        match decode_entry(key, line, trimmed, &taken) {
+            Ok(value) => read.entries.push(TemplateEntry {
+                key: key.to_owned(),
+                comment_span: (taken[0].0, taken[taken.len() - 1].0),
+                comment: taken.into_iter().map(|(_, text)| text).collect(),
+                value,
                 line,
-                problem: format!("{key} is not a name a shell can export, so nothing reads it"),
-                fix: "spell keys with letters, digits and underscores, starting with a letter or underscore"
-                    .to_owned(),
-            });
-            continue;
+            }),
+            Err(finding) => read.findings.push(finding),
         }
-        if taken.is_empty() {
-            read.findings.push(TemplateFinding {
-                line,
-                problem: format!("{key} has no comment block above it"),
-                fix: "write the # lines that say what the key does; seeding carries them"
-                    .to_owned(),
-            });
-            continue;
-        }
-        let Some(value) = decoded_value(trimmed) else {
-            read.findings.push(TemplateFinding {
-                line,
-                problem: format!(
-                    "{key}'s default is not a one-line double-quoted string free of \" and \\"
-                ),
-                fix: "spell every default as a plain \"...\" string on one line".to_owned(),
-            });
-            continue;
-        };
-        read.entries.push(TemplateEntry {
-            key: key.to_owned(),
-            comment_span: (taken[0].0, taken[taken.len() - 1].0),
-            comment: taken.into_iter().map(|(_, text)| text).collect(),
-            value,
-            line,
-        });
     }
     read
+}
+
+/// One `[env]` assignment judged on its own: the decoded default, or what
+/// is wrong with it. Everything here needs the line and its comment block
+/// and nothing else about the file.
+fn decode_entry(
+    key: &str,
+    line: usize,
+    trimmed: &str,
+    comment: &[(usize, String)],
+) -> Result<String, TemplateFinding> {
+    if !is_env_name(key) {
+        return Err(TemplateFinding {
+            line,
+            problem: format!("{key} is not a name a shell can export, so nothing reads it"),
+            fix: "spell keys with letters, digits and underscores, starting with a letter or underscore"
+                .to_owned(),
+        });
+    }
+    if comment.is_empty() {
+        return Err(TemplateFinding {
+            line,
+            problem: format!("{key} has no comment block above it"),
+            fix: "write the # lines that say what the key does; seeding carries them".to_owned(),
+        });
+    }
+    decoded_value(trimmed).ok_or_else(|| TemplateFinding {
+        line,
+        problem: format!(
+            "{key}'s default is not a one-line double-quoted string free of \" and \\"
+        ),
+        fix: "spell every default as a plain \"...\" string on one line".to_owned(),
+    })
 }
 
 #[cfg(test)]
