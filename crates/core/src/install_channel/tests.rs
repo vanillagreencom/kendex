@@ -11,6 +11,7 @@ struct Fake {
     present: Vec<String>,
     on_path: Vec<String>,
     os_release: Option<String>,
+    links: Vec<(String, String)>,
 }
 
 impl Fake {
@@ -33,6 +34,11 @@ impl Fake {
         self.os_release = Some(text.to_owned());
         self
     }
+
+    fn links(mut self, from: &str, to: &str) -> Self {
+        self.links.push((from.to_owned(), to.to_owned()));
+        self
+    }
 }
 
 impl HostProbe for Fake {
@@ -50,6 +56,13 @@ impl HostProbe for Fake {
 
     fn os_release(&self) -> Option<String> {
         self.os_release.clone()
+    }
+
+    fn resolve(&self, path: &Path) -> PathBuf {
+        self.links
+            .iter()
+            .find(|(from, _)| Path::new(from) == path)
+            .map_or_else(|| path.to_owned(), |(_, to)| PathBuf::from(to))
     }
 }
 
@@ -192,17 +205,69 @@ fn the_windows_installer_is_the_only_windows_channel() {
     );
 }
 
+/// Homebrew runs the command through a link in its prefix's `bin/`, and
+/// macOS hands a process that link's own path rather than the Cellar file
+/// behind it. Prefix-matching what the process was handed calls an Intel
+/// mac's `/usr/local/bin/kendex` a direct install and renames a download
+/// over Homebrew's link.
 #[test]
-fn a_cli_under_any_homebrew_prefix_is_brews_to_upgrade() {
-    for prefix in BREW_PREFIXES {
-        let exe = format!("{prefix}bin/kendex");
-        let probe = Fake::default().replaceable(&exe).os_release(ARCH);
+fn a_brew_linked_cli_is_brews_to_upgrade_however_it_was_reached() {
+    for (linked, cellar) in [
+        (
+            "/opt/homebrew/bin/kendex",
+            "/opt/homebrew/Cellar/kendex-cli/5.0.1/bin/kendex",
+        ),
+        (
+            "/usr/local/bin/kendex",
+            "/usr/local/Cellar/kendex-cli/5.0.1/bin/kendex",
+        ),
+        (
+            "/home/linuxbrew/.linuxbrew/bin/kendex",
+            "/home/linuxbrew/.linuxbrew/Cellar/kendex-cli/5.0.1/bin/kendex",
+        ),
+    ] {
+        let probe = Fake::default()
+            .links(linked, cellar)
+            .replaceable(linked)
+            .replaceable(cellar)
+            .os_release(ARCH);
         assert_eq!(
-            for_cli(Path::new(&exe), &probe),
+            for_cli(Path::new(linked), &probe),
             managed("brew upgrade kendex-cli"),
-            "{prefix}"
+            "{linked}"
+        );
+        // Reached at the Cellar path directly, the answer cannot change.
+        assert_eq!(
+            for_cli(Path::new(cellar), &probe),
+            managed("brew upgrade kendex-cli"),
+            "{cellar}"
         );
     }
+}
+
+/// A real binary at the same place Homebrew would have linked one stays
+/// ours to replace: following the link is what decides, not the prefix.
+#[test]
+fn a_plain_binary_in_usr_local_bin_is_still_a_direct_install() {
+    let exe = "/usr/local/bin/kendex";
+    let probe = Fake::default().replaceable(exe);
+    assert_eq!(for_cli(Path::new(exe), &probe), InstallChannel::Direct);
+}
+
+/// The same name reached through a link into a package's tree belongs to
+/// that package, on the app side as much as the command's.
+#[test]
+fn an_appimage_reached_through_a_link_belongs_to_whatever_it_points_at() {
+    let link = "/home/pat/.local/share/kendex/kendex.AppImage";
+    let probe = Fake::default()
+        .links(link, PACKAGED_APP_IMAGE)
+        .replaceable(link)
+        .os_release(ARCH)
+        .on_path("paru");
+    assert_eq!(
+        for_app(&app_image(link), &probe),
+        managed("paru -S kendex-bin")
+    );
 }
 
 #[test]
@@ -252,4 +317,17 @@ fn an_os_release_value_is_read_unquoted_and_whole() {
     assert!(!is_arch("ID_LIKE=\"archlinux\"\n"));
     assert!(!is_arch("BUILD_ID=arch\n"));
     assert!(!is_arch("no equals sign here\n"));
+}
+
+/// The one question that gates writing over an install answers for both
+/// shells, so neither can decide it differently. Every channel but the one
+/// kendex owns is refused, and a managed one says what to run instead.
+#[test]
+fn in_place_replacement_is_refused_off_a_direct_install() {
+    assert_eq!(InstallChannel::Direct.allow_replacement(), Ok(()));
+    assert_eq!(
+        managed("paru -S kendex-bin").allow_replacement(),
+        Err("a package manager owns this install; update it with: paru -S kendex-bin".to_owned())
+    );
+    assert!(InstallChannel::Unknown.allow_replacement().is_err());
 }

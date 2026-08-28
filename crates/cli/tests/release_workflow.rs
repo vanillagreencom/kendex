@@ -236,18 +236,24 @@ fn lane_triples(workflow: &str) -> Vec<&str> {
         .collect()
 }
 
+/// Read past the comments: a commented-out copy of the command carrying
+/// the flag would vouch for a real line that had lost it, and the step
+/// already keeps a comment block about `--target` directly above itself.
 #[test]
 fn both_build_commands_emit_into_the_per_target_dir() {
     let workflow = workflow();
     for tool in ["cargo build", "tauri build"] {
-        let line = workflow
+        let lines: Vec<&str> = workflow
             .lines()
-            .find(|l| l.contains(tool))
-            .unwrap_or_else(|| panic!("release.yml has no {tool} step"));
-        assert!(
-            line.contains(&format!("--target {TARGET_EXPR}")),
-            "{tool} must pass --target {TARGET_EXPR}: {line}"
-        );
+            .filter(|l| !l.trim_start().starts_with('#') && l.contains(tool))
+            .collect();
+        assert!(!lines.is_empty(), "release.yml has no {tool} step");
+        for line in lines {
+            assert!(
+                line.contains(&format!("--target {TARGET_EXPR}")),
+                "{tool} must pass --target {TARGET_EXPR}: {line}"
+            );
+        }
     }
 }
 
@@ -278,12 +284,22 @@ fn staging_reads_only_the_per_target_output_dir() {
 #[test]
 fn no_lane_triple_is_hardcoded_into_build_or_staging() {
     let workflow = workflow();
+    let triples = lane_triples(&workflow);
+    // With no triples read, every assertion below is unreachable and the
+    // test passes over any hardcoded path. A matrix written in YAML flow
+    // style reads as no lanes, so the count has to match the lanes too.
+    let lanes = workflow
+        .lines()
+        .filter(|l| l.trim().trim_start_matches("- ").starts_with("os: "))
+        .count();
+    assert!(!triples.is_empty(), "release.yml declares no lane targets");
+    assert_eq!(triples.len(), lanes, "every lane must name its own target");
     let build_lines: Vec<&str> = workflow
         .lines()
         .filter(|l| l.contains("cargo build") || l.contains("tauri build"))
         .collect();
     let stage = step(&workflow, "name: Stage release assets");
-    for triple in lane_triples(&workflow) {
+    for triple in triples {
         for line in build_lines.iter().chain(stage.iter()) {
             assert!(
                 !line.contains(triple),

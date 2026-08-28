@@ -36,6 +36,23 @@ pub enum InstallChannel {
     Unknown,
 }
 
+impl InstallChannel {
+    /// Whether replacing these bytes in place is ours to do. Both shells ask
+    /// here, so a refusal reads the same wherever it is met.
+    pub fn allow_replacement(&self) -> Result<(), String> {
+        match self {
+            Self::Direct => Ok(()),
+            Self::Managed { command } => Err(format!(
+                "a package manager owns this install; update it with: {command}"
+            )),
+            Self::Unknown => Err(
+                "kendex cannot tell how this copy was installed, so it will not replace it"
+                    .to_owned(),
+            ),
+        }
+    }
+}
+
 /// The running desktop build, as the shell that launched it knows. Each
 /// variant carries only what its platform's rules read, so the `cfg` that
 /// picks one lives at the single call site in the app.
@@ -60,6 +77,13 @@ pub trait HostProbe {
 
     /// Whether a path is present on this machine.
     fn exists(&self, path: &Path) -> bool;
+
+    /// The path with every symlink followed, or the path itself where it
+    /// cannot be resolved. Which install owns a file is a fact about the
+    /// file, never about the name it was reached by: a Homebrew formula
+    /// links its prefix's `bin/` at the Cellar, and macOS hands a process
+    /// the path it was exec'd with, symlinks intact.
+    fn resolve(&self, path: &Path) -> PathBuf;
 
     /// Whether a command is on `PATH`.
     fn on_path(&self, command: &str) -> bool;
@@ -94,6 +118,10 @@ impl HostProbe for Host {
         path.exists()
     }
 
+    fn resolve(&self, path: &Path) -> PathBuf {
+        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
+    }
+
     fn on_path(&self, command: &str) -> bool {
         let Some(path) = std::env::var_os("PATH") else {
             return false;
@@ -111,21 +139,26 @@ pub fn for_app(install: &AppInstall, probe: &dyn HostProbe) -> InstallChannel {
     match install {
         AppInstall::AppImage(None) => InstallChannel::Unknown,
         AppInstall::AppImage(Some(image)) => {
-            if system_owned(image) {
+            let image = probe.resolve(image);
+            if system_owned(&image) {
                 return arch_channel(ArchPackage::Bin, probe);
             }
-            replaceable_or_unknown(image, probe)
+            replaceable_or_unknown(&image, probe)
         }
-        AppInstall::MacBundle(exe) => match bundle_root(exe) {
-            Some(root) => replaceable_or_unknown(root, probe),
-            None => InstallChannel::Unknown,
-        },
+        AppInstall::MacBundle(exe) => {
+            let exe = probe.resolve(exe);
+            match bundle_root(&exe) {
+                Some(root) => replaceable_or_unknown(root, probe),
+                None => InstallChannel::Unknown,
+            }
+        }
         AppInstall::WindowsInstaller => InstallChannel::Direct,
     }
 }
 
 /// The channel the running `kendex` command installed through.
 pub fn for_cli(exe: &Path, probe: &dyn HostProbe) -> InstallChannel {
+    let exe = &probe.resolve(exe);
     if starts_with_any(exe, &BREW_PREFIXES) {
         return InstallChannel::Managed {
             command: "brew upgrade kendex-cli".to_owned(),

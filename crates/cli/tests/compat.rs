@@ -24,6 +24,16 @@ fn kendex_in(home: &Path, cwd: &Path, args: &[&str], envs: &[(&str, String)]) ->
     command.output().expect("kendex binary runs")
 }
 
+/// The CLI replaces a desktop app only where the release publishes one it
+/// installed. Elsewhere the app arrives by its own route and is not the
+/// command's to touch or to describe.
+fn publishes_an_app_image() -> bool {
+    matches!(
+        env!("KENDEX_TARGET"),
+        "x86_64-unknown-linux-gnu" | "aarch64-unknown-linux-gnu"
+    )
+}
+
 #[allow(clippy::unwrap_used)]
 fn sandbox_with_catalog() -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
@@ -212,11 +222,13 @@ fn update_replaces_the_binary_from_a_local_feed() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(fs::read_to_string(&me).unwrap(), "#!/bin/sh\necho v9\n");
-    assert!(
-        String::from_utf8_lossy(&output.stdout).contains("no kendex desktop app here"),
-        "a machine with no app of ours says so: {}",
-        String::from_utf8_lossy(&output.stdout)
-    );
+    let said = String::from_utf8_lossy(&output.stdout);
+    match publishes_an_app_image() {
+        true => assert!(said.contains("no kendex desktop app here"), "{said}"),
+        // Nothing here installs an app, so nothing here may claim one way
+        // or the other about the app this platform does have.
+        false => assert!(!said.contains("desktop app"), "{said}"),
+    }
 
     // Same version → no-op without --force.
     let same = fs::read_to_string(home.join("feed.json"))
@@ -364,11 +376,7 @@ fn update_reports_a_desktop_app_it_cannot_replace() {
         fs::read_to_string(app_dir.join("kendex.AppImage")).unwrap(),
         "old app"
     );
-    let publishes_an_app_image = matches!(
-        env!("KENDEX_TARGET"),
-        "x86_64-unknown-linux-gnu" | "aarch64-unknown-linux-gnu"
-    );
-    if publishes_an_app_image {
+    if publishes_an_app_image() {
         assert!(!output.status.success(), "{stderr}");
         assert!(
             stderr.contains("the kendex command is updated to 9.9.9") && stderr.contains("is not"),
@@ -379,6 +387,66 @@ fn update_reports_a_desktop_app_it_cannot_replace() {
         // replace and nothing to refuse.
         assert!(output.status.success(), "{stderr}");
     }
+}
+
+/// A copy kendex cannot place is a copy it will not overwrite. The command
+/// says so in the channel's own words rather than failing at the rename
+/// with an io error, and a package-owned path on a distro it cannot name
+/// reaches this the same way.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn update_refuses_a_copy_it_cannot_account_for() {
+    let tmp = sandbox_with_catalog();
+    let home = tmp.path();
+    let bin = home.join("sealed");
+    fs::create_dir_all(&bin).unwrap();
+    let me = bin.join("kendex");
+    fs::copy(env!("CARGO_BIN_EXE_kendex"), &me).unwrap();
+    fs::set_permissions(&me, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::set_permissions(&bin, fs::Permissions::from_mode(0o555)).unwrap();
+    // Root writes through the mode bits, so the channel this test needs
+    // never comes back Unknown there.
+    if fs::write(bin.join("probe"), "").is_ok() {
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+
+    fs::write(home.join("new-binary"), "#!/bin/sh\necho v9\n").unwrap();
+    let target = env!("KENDEX_TARGET");
+    fs::write(
+        home.join("feed.json"),
+        format!(
+            r#"{{"schema":1,"version":"9.9.9","assets":{{"{target}":"file://{}/new-binary"}}}}"#,
+            home.display()
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(&me)
+        .args(["update"])
+        .env_clear()
+        .env("HOME", home)
+        .env("KENDEX_REAL_HOME", "1")
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env(
+            "KENDEX_UPDATE_FEED",
+            format!("file://{}/feed.json", home.display()),
+        )
+        .output()
+        .unwrap();
+    fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("cannot tell how this copy was installed"),
+        "{stderr}"
+    );
+    assert_eq!(
+        fs::read(&me).unwrap(),
+        fs::read(env!("CARGO_BIN_EXE_kendex")).unwrap(),
+        "the refused copy was left exactly as it was"
+    );
 }
 
 #[test]

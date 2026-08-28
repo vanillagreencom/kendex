@@ -62,6 +62,10 @@ pub fn run(env: &Env, force: bool) -> CliResult {
         out(&format!("  {command}"));
         return Ok(());
     }
+    // Managed answered above with the one thing it has to say and an exit
+    // code of zero. What is left here is Direct, which passes, or Unknown,
+    // whose refusal core words for both shells.
+    channel.allow_replacement()?;
     let feed_bytes = fetch(&feed_url())?;
     let feed = ReleaseFeed::parse(&feed_bytes)?;
     let latest = feed.version.as_str();
@@ -103,18 +107,17 @@ pub fn run(env: &Env, force: bool) -> CliResult {
 /// A machine with no app of ours is the whole install already; a machine
 /// whose app cannot be replaced is told so rather than left half-updated.
 fn update_app(env: &Env, latest: &str) -> CliResult {
+    // Only the Linux AppImage is an install this command made. Every other
+    // platform's app arrives and updates by its own route, and the CLI says
+    // nothing about one it did not put there.
+    let Some(url) = app_image_url(latest, target_triple())? else {
+        return Ok(());
+    };
     let path = env.app_image_file();
     if !Host.exists(&path) {
         out("no kendex desktop app here; the kendex command is the whole install");
         return Ok(());
     }
-    let Some(url) = app_image_url(latest, target_triple())? else {
-        out(&format!(
-            "no desktop app is published for {}; the kendex command is updated",
-            target_triple()
-        ));
-        return Ok(());
-    };
     if !Host.replaceable(&path) {
         return Err(format!(
             "the kendex command is updated to {latest}; the desktop app at {} is not, because that directory refuses writes",
