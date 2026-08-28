@@ -50,6 +50,7 @@ let rows: MineListRow[] = [
       findings: [
         {
           file: "skills/gh/SKILL.md",
+          line: 12,
           kind: "skill",
           name: "gh",
           pass: "safety",

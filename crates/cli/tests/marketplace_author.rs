@@ -78,7 +78,7 @@ fn use_registers_a_discovered_repo_without_writing_into_it() {
 
     let mine = kendex(home, &["marketplace", "mine", "--json"]);
     let json: serde_json::Value = serde_json::from_slice(&mine.stdout).unwrap();
-    assert_eq!(json["schema"], 2);
+    assert_eq!(json["schema"], 3);
     let rows = json["marketplaces"].as_array().unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["counts"]["skill"], 1);

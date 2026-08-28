@@ -206,12 +206,14 @@ export function MineRowCard({
             <ul className="mt-2 space-y-2">
               {row.findings.map((finding) => (
                 <li
-                  key={`${finding.pass}-${finding.file}-${finding.message}`}
+                  key={`${finding.pass}-${finding.file}-${finding.line}-${finding.message}`}
                   className="rounded-md bg-muted/40 p-2 text-sm"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate font-mono text-xs">
-                      {finding.file}
+                      {finding.line === null
+                        ? finding.file
+                        : `${finding.file}:${finding.line}`}
                     </span>
                     <Button
                       variant="ghost"

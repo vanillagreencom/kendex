@@ -2259,6 +2259,11 @@ export type SourceRow = {
 /**  One check finding shaped for a screen with an Open button. */
 export type StatusFinding = {
 	file: string,
+	/**
+	 *  The 1-based line within `file`, where the finding has one. Kept
+	 *  apart from the path so the row can offer to open the file.
+	 */
+	line: number | null,
 	kind: string,
 	name: string,
 	pass: string,

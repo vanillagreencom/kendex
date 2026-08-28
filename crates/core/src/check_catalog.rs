@@ -28,12 +28,17 @@ use crate::render::validate;
 use crate::source::{CatalogMode, SourceConfig};
 use crate::source_read::SealedSource;
 
+mod settings;
+pub use settings::SETTINGS_PASS;
+
 /// The versioned envelope `check --catalog --json` and `marketplace mine
-/// --json` wrap their reports in. Schema 2 counts safety findings as
+/// --json` wrap their reports in. Schema 3 counts safety findings as
 /// `safety_findings`, carries no per-finding token, and `ok` answers what
 /// fails the run — breakage, plus advisories under `--strict` — never a
-/// safety finding.
-pub const CHECK_SCHEMA: u32 = 2;
+/// safety finding. Schema 2 spelled a finding's line into `file`; schema 3
+/// keeps `file` a path and puts the line in `line`, which is a change of
+/// meaning in a field that was already there, not an addition.
+pub const CHECK_SCHEMA: u32 = 3;
 
 /// The `pass` a safety finding carries; a structural finding carries the
 /// harness whose loader complained, and a settings finding
@@ -43,10 +48,6 @@ pub const SAFETY_PASS: &str = "safety";
 /// The `pass`/`kind` of a finding about the catalog itself rather than any
 /// one item — a broken control file, a skipped colliding directory.
 pub const CATALOG_PASS: &str = "catalog";
-
-/// The `pass` a settings-template finding carries — neither a harness
-/// loader's complaint nor a safety rule.
-pub const SETTINGS_PASS: &str = "settings";
 
 /// Every kind a catalog can offer, in report order.
 const CHECKED_KINDS: [ItemKind; 5] = [
@@ -61,9 +62,17 @@ const CHECKED_KINDS: [ItemKind; 5] = [
 /// needs to place it. Field order is the JSON field order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CheckFinding {
-    /// Where the finding is: a path within the catalog, carrying `:line`
-    /// for a settings finding and whatever place a safety rule reported.
+    /// The file this is about, as a path within the catalog: joined to the
+    /// catalog's path it is something a viewer opens, which is what the
+    /// Mine row's Open does with it. A line goes in `line`, never here. Two
+    /// values are not paths and cannot be: an item listed that cannot be
+    /// read names what was listed, and the safety pass writes `PATH
+    /// (command)` / `PATH (entry)` for the parts of a hook or MCP entry
+    /// that are no file at all.
     pub file: String,
+    /// The 1-based line within `file`, where the finding has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
     pub kind: &'static str,
     pub name: String,
     /// The harness whose loader complains, [`SETTINGS_PASS`], or [`SAFETY_PASS`].
@@ -114,22 +123,28 @@ pub struct CheckedItem {
 }
 
 impl CheckedItem {
-    /// Every finding as a schema-2 row: `structural` first, then safety.
-    /// The one adapter from the advisory payload to the report shape — a
-    /// safety finding's `remediation` becomes `fix`, `location` its `file`.
+    /// Every finding as a report row: `structural` first, then safety. The
+    /// one adapter from the advisory payload to the report shape — a safety
+    /// finding's `remediation` becomes `fix`, and its `location`, which the
+    /// safety rules write as `PATH:LINE` for display, comes apart here into
+    /// the path and the line the report keeps separately.
     pub fn rows(&self) -> impl Iterator<Item = CheckFinding> + '_ {
         self.structural
             .iter()
             .cloned()
-            .chain(self.advisory.findings.iter().map(|finding| CheckFinding {
-                file: finding.location.clone(),
-                kind: self.kind.name(),
-                name: self.name.clone(),
-                pass: SAFETY_PASS.to_owned(),
-                severity: finding.severity.name(),
-                rule: Some(finding.rule.clone()),
-                message: finding.message.clone(),
-                fix: finding.remediation.clone(),
+            .chain(self.advisory.findings.iter().map(|finding| {
+                let (file, line) = located(&finding.location);
+                CheckFinding {
+                    file,
+                    line,
+                    kind: self.kind.name(),
+                    name: self.name.clone(),
+                    pass: SAFETY_PASS.to_owned(),
+                    severity: finding.severity.name(),
+                    rule: Some(finding.rule.clone()),
+                    message: finding.message.clone(),
+                    fix: finding.remediation.clone(),
+                }
             }))
     }
 }
@@ -221,6 +236,7 @@ pub fn check_with(
         .findings()
         .map(|finding| CheckFinding {
             file: finding.location.clone(),
+            line: None,
             kind: CATALOG_PASS,
             name: display.to_owned(),
             pass: CATALOG_PASS.to_owned(),
@@ -245,6 +261,7 @@ pub fn check_with(
                 // say) is a catalog problem, not content to score.
                 None => report.catalog.push(CheckFinding {
                     file: name.clone(),
+                    line: None,
                     kind: kind.name(),
                     name,
                     pass: CATALOG_PASS.to_owned(),
@@ -275,7 +292,7 @@ pub fn check_item(
         .display()
         .to_string();
     let mut structural = structural(kind, name, &file, &content);
-    structural.extend(settings_findings(sealed, kind, name, &file, path)?);
+    structural.extend(settings::findings(sealed, kind, name, &file, path)?);
     // The safety half of the authoring check: the same rules an install
     // runs, over the same content.
     let advisory = quality::audit(AuditInput {
@@ -294,39 +311,17 @@ pub fn check_item(
     })
 }
 
-/// The package's settings template, read the way the shell loaders read
-/// what seeding makes of it. Advisory, so `check --catalog` reports it and
-/// `marketplace check` — strict — fails on it: nothing else looks at a
-/// template before somebody's shell does.
-fn settings_findings(
-    sealed: &SealedSource,
-    kind: ItemKind,
-    name: &str,
-    file: &str,
-    path: &Path,
-) -> Result<Vec<CheckFinding>> {
-    let name_of = crate::settings_seed::SETTINGS_TEMPLATE;
-    if kind != ItemKind::Skill || !sealed.is_dir(path) {
-        return Ok(Vec::new());
+/// A safety rule's `location` split into path and line. Only a trailing
+/// `:` and digits comes off, so `PATH (command)` and its kin are left whole
+/// rather than cut at a colon that means something else.
+fn located(location: &str) -> (String, Option<u32>) {
+    match location
+        .rsplit_once(':')
+        .and_then(|(path, line)| Some((path, line.parse::<u32>().ok()?)))
+    {
+        Some((path, line)) => (path.to_owned(), Some(line)),
+        None => (location.to_owned(), None),
     }
-    let Some(text) = sealed.read_if_exists(&path.join(name_of))? else {
-        return Ok(Vec::new());
-    };
-    let at = format!("{file}/{name_of}");
-    Ok(crate::settings_template::read(&text)
-        .findings
-        .into_iter()
-        .map(|finding| CheckFinding {
-            file: format!("{at}:{}", finding.line),
-            kind: kind.name(),
-            name: name.to_owned(),
-            pass: SETTINGS_PASS.to_owned(),
-            severity: "warning",
-            rule: None,
-            message: finding.problem,
-            fix: finding.fix,
-        })
-        .collect())
 }
 
 /// A skill's whole tree; anything else is one file. Read through the same
@@ -382,6 +377,7 @@ fn structural(kind: ItemKind, name: &str, file: &str, content: &Content) -> Vec<
         }
         out.extend(findings.into_iter().map(|finding| CheckFinding {
             file: file.to_owned(),
+            line: None,
             kind: kind.name(),
             name: name.to_owned(),
             pass: harness.name().to_owned(),

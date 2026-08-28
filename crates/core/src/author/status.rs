@@ -42,15 +42,20 @@ pub struct MineRow {
 }
 
 /// The versioned envelope `marketplace mine --json` wraps its rows in.
-/// Schema 2 counts safety findings as `safetyFindings` per marketplace,
-/// with no verdict beside them.
-pub const MINE_SCHEMA: u32 = 2;
+/// Schema 3 counts safety findings as `safetyFindings` per marketplace,
+/// with no verdict beside them, and carries a finding's line in `line`
+/// rather than spelled into `file` — the same split schema 3 of the check
+/// envelope makes, and for the same reason: `file` is a path to open.
+pub const MINE_SCHEMA: u32 = 3;
 
 /// One check finding shaped for a screen with an Open button.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusFinding {
     pub file: String,
+    /// The 1-based line within `file`, where the finding has one. Kept
+    /// apart from the path so the row can offer to open the file.
+    pub line: Option<u32>,
     pub kind: String,
     pub name: String,
     pub pass: String,
@@ -116,6 +121,7 @@ pub fn status(path: &Path) -> Result<MineRow> {
 fn shape(finding: CheckFinding) -> StatusFinding {
     StatusFinding {
         file: finding.file,
+        line: finding.line,
         kind: finding.kind.to_owned(),
         name: finding.name,
         pass: finding.pass,

@@ -48,6 +48,24 @@ fn machine(report: &CatalogCheck, ok: bool) -> CliResult {
     Ok(())
 }
 
+/// One finding and its fix. The line rides beside the path here rather
+/// than inside it: `file` is what something opens, and `PATH:LINE` is how a
+/// terminal spells a place.
+fn say_finding(finding: &kendex_core::check_catalog::CheckFinding) {
+    use kendex_core::names::shown;
+    let at = match finding.line {
+        Some(line) => format!("{}:{line}", shown(&finding.file)),
+        None => shown(&finding.file),
+    };
+    say(&format!(
+        "[{}] {}: {at}: {}",
+        finding.severity,
+        finding.pass,
+        shown(&finding.message)
+    ));
+    say(&format!("    fix: {}", shown(&finding.fix)));
+}
+
 /// Every file, name and message here is read off the catalog's own
 /// files, so each is printed as what it is, never as an escape sequence
 /// the terminal would act on — the rule the plan's safety printer follows.
@@ -57,27 +75,12 @@ fn machine(report: &CatalogCheck, ok: bool) -> CliResult {
 /// safety pass prints as the advisory block every other verb prints, fix
 /// lines and all left out — the score decides nothing here either.
 fn lines(report: &CatalogCheck) {
-    use kendex_core::names::shown;
     for finding in &report.catalog {
-        say(&format!(
-            "[{}] {}: {}: {}",
-            finding.severity,
-            finding.pass,
-            shown(&finding.file),
-            shown(&finding.message)
-        ));
-        say(&format!("    fix: {}", shown(&finding.fix)));
+        say_finding(finding);
     }
     for item in &report.items {
         for finding in &item.structural {
-            say(&format!(
-                "[{}] {}: {}: {}",
-                finding.severity,
-                finding.pass,
-                shown(&finding.file),
-                shown(&finding.message)
-            ));
-            say(&format!("    fix: {}", shown(&finding.fix)));
+            say_finding(finding);
         }
         print_advisory(
             item.kind,
