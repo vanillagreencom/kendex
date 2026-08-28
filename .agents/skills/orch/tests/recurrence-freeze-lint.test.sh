@@ -67,6 +67,7 @@ strip_comments() {
 recurrence_section() { strip_comments "$1" | awk '/^## Recurrence$/{on=1;next} /^## /{on=0} on'; }
 section_6_head() { strip_comments "$1" | awk '/^## 6\./{on=1} /^### 6\.1/{on=0} on'; }
 section_6_1() { strip_comments "$1" | awk '/^### 6\.1/{on=1;next} /^### 6\.2/{on=0} on'; }
+section_6_2() { strip_comments "$1" | awk '/^### 6\.2/{on=1;next} /^### 6\.3/{on=0} on'; }
 signals_route() { strip_comments "$1" | grep -E '^\| .+ \| § Recurrence' || true; }
 
 # Every grep reads a herestring, never a pipe: `grep -q` exits at the first
@@ -164,14 +165,36 @@ for token in '`fix set`' '`structural-close`' '`reply-only`' '`freeze`' '`declin
     fail "§ 6 no longer states eligibility in terms of $token"
   fi
 done
-if grep -qF '`fix set`' <<<"$(section_6_1 "$COMMENTS_WF")"; then
-  pass "§ 6.1's gate opens on the fix set, not on Fixing rows alone"
+# The three passes the routing used to break, each read off the named set by
+# the step that acts on it rather than re-derived there.
+SIX_ONE="$(section_6_1 "$COMMENTS_WF")"
+if grep -qF '[For each item in the fix set:]' <<<"$SIX_ONE" \
+   && ! grep -qF '[For each item marked "Fixing":]' <<<"$SIX_ONE"; then
+  pass "a structural-close-only pass delegates the fix set, not the Fixing rows"
 else
-  fail "§ 6.1's gate no longer reads the fix set"
+  fail "the delegation re-derives its own membership instead of reading the fix set"
 fi
-check_token "$COMMENTS_WF" '`→ § 6.1`' \
-  "§ 6.2 returns a freeze to the reply step after filing"
 
+GATE="$(grep -F '`fix set` is empty' <<<"$SIX_ONE" || true)"
+if [[ -n "$GATE" ]] && grep -qF '`reply step`' <<<"$GATE"; then
+  pass "a declined-only pass reaches the reply step"
+else
+  fail "an empty fix set no longer routes the pass to the reply step"
+fi
+
+REPLY="$(grep -F '**Reply step.**' <<<"$SIX_ONE" || true)"
+if [[ -n "$REPLY" ]] && grep -qF '`reply-only`' <<<"$REPLY" && grep -qF '`freeze`' <<<"$REPLY"; then
+  pass "the reply step names who reaches it, delegating or not"
+else
+  fail "the reply step no longer names the passes that reach it"
+fi
+
+SIX_TWO="$(section_6_2 "$COMMENTS_WF")"
+if grep -qF '`→ § 6.1`' <<<"$SIX_TWO" && grep -qF '`reply step`' <<<"$SIX_TWO"; then
+  pass "a freeze-only pass returns from § 6.2 to the reply step"
+else
+  fail "§ 6.2 no longer returns a freeze to the reply step"
+fi
 # The two records the recurrence check reads. A resolved thread is invisible to
 # the next pass, so a cause is recurrence only if a pass wrote it down.
 check_token "$COMMENTS_WF" "append [ISSUE_ID] pr_comment_review.patched_causes" \
@@ -304,8 +327,22 @@ gone section_6_1 "$(drop gate "$COMMENTS_WF" '`fix set`')" \
   '`fix set`' "a § 6.1 gate that stopped reading the fix set"
 gone section_6_head "$(drop replyonly "$COMMENTS_WF" '`reply-only`')" \
   '`reply-only`' "a freeze or decline let into the push path"
-gone strip_comments "$(drop freezereturn "$COMMENTS_WF" '`→ § 6.1`')" \
+gone section_6_1 "$(plant delegation "$COMMENTS_WF" 's/\[For each item in the fix set:\]/[For each item marked "Fixing":]/')" \
+  '[For each item in the fix set:]' "a delegation that re-derives membership from Fixing rows"
+gone section_6_2 "$(drop freezereturn "$COMMENTS_WF" '`→ § 6.1`')" \
   '`→ § 6.1`' "a freeze that files without returning to reply"
+
+# One token, three readers: dropping `reply step` must redden the gate, the
+# step's own label, and § 6.2's return alike.
+CTRL="$(drop replystep "$COMMENTS_WF" '`reply step`')"
+if grep -qF '`reply step`' <<<"$(section_6_1 "$CTRL")" || grep -qF '`reply step`' <<<"$(section_6_2 "$CTRL")"; then
+  fail "lint MISSED a reply step nothing routes to"
+else
+  pass "lint flags a reply step nothing routes to"
+fi
+
+gone section_6_1 "$(drop replylabel "$COMMENTS_WF" '**Reply step.**')" \
+  '**Reply step.**' "a reply step that stopped saying who reaches it"
 gone strip_comments "$(drop patched "$COMMENTS_WF" 'patched_causes')" \
   'patched_causes' "a patched cause nothing records"
 gone strip_comments "$(drop frozen "$COMMENTS_WF" 'frozen_causes')" \
