@@ -23,13 +23,15 @@ import { useNavStore } from "@/stores/nav";
  *  no name, and nothing where the account has neither. A blank name is no
  *  name, which is why the fallback runs on the empty string as well as on a
  *  missing one. Split by code point so a first character outside the BMP
- *  survives being taken apart. */
+ *  survives being taken apart, and cased without the runtime's locale: the
+ *  circle wants one glyph, and a Turkish locale cases an 'i' into a
+ *  dotted capital instead. */
 export function accountInitial(
   identity: AccountIdentity | null,
 ): string | null {
   const source = identity?.name?.trim() || identity?.githubLogin.trim() || "";
   const [first] = [...source];
-  return first ? first.toLocaleUpperCase() : null;
+  return first ? first.toUpperCase() : null;
 }
 
 /** The circle in the icon lane. It carries a letter once the server has
@@ -112,8 +114,13 @@ function Label({
  *
  *  The state decides on its own: a credential in the keychain is not a
  *  confirmed sign-in, so an unconfirmed one reads as offline and one the
- *  server has rejected asks to sign in again. `readError` only separates the
- *  two ways a read can have failed to land. */
+ *  server has rejected asks to sign in again.
+ *
+ *  `readError` is why the last read did not land, and it outlives that read:
+ *  a failure after an answer that worked leaves the settled state exactly as
+ *  it was. Every row therefore says the cause in place of the sentence it
+ *  would otherwise carry, or the failure would be visible before the first
+ *  answer and invisible after it. */
 function accountRow(
   account: AccountState,
   readError: string | null,
@@ -135,14 +142,14 @@ function accountRow(
   switch (account.kind) {
     case "signed-out":
       return (
-        <Row onClick={open} title={ACCOUNT_ROW_TITLE}>
+        <Row onClick={open} title={readError ?? ACCOUNT_ROW_TITLE}>
           <LogIn className="size-[18px] shrink-0 opacity-70" />
           <Label>{ACCOUNT_SIGN_IN_LABEL}</Label>
         </Row>
       );
     case "expired":
       return (
-        <Row onClick={open} title={ACCOUNT_EXPIRED_TITLE}>
+        <Row onClick={open} title={readError ?? ACCOUNT_EXPIRED_TITLE}>
           <LogIn className="size-[18px] shrink-0 opacity-70" />
           <Label>{ACCOUNT_SIGN_IN_AGAIN_LABEL}</Label>
         </Row>
@@ -150,7 +157,7 @@ function accountRow(
     case "signed-in": {
       const handle = account.identity?.githubLogin.trim();
       return (
-        <Row onClick={open} title={ACCOUNT_ROW_TITLE}>
+        <Row onClick={open} title={readError ?? ACCOUNT_ROW_TITLE}>
           <Avatar identity={account.identity} />
           <Label mono={Boolean(handle)} title={handle}>
             {handle || ACCOUNT_SIGNED_IN_LABEL}
@@ -160,7 +167,7 @@ function accountRow(
     }
     case "offline":
       return (
-        <Row onClick={open} title={ACCOUNT_OFFLINE_TITLE}>
+        <Row onClick={open} title={readError ?? ACCOUNT_OFFLINE_TITLE}>
           <Avatar identity={account.identity} />
           <Label mono title={account.identity.githubLogin}>
             {account.identity.githubLogin}
@@ -177,8 +184,11 @@ function accountRow(
 
 /**
  * The foot of the sidebar: who the last account read found, and the way in
- * to the account settings. The retry for a read that failed belongs to that
- * page, not to this row.
+ * to the account settings.
+ *
+ * Nothing here retries a read. The startup effect in `App.tsx` owns that,
+ * reading again every time the window comes back, so a failure that was the
+ * network's clears itself when the person returns to the app.
  */
 export function SidebarAccount() {
   const account = useAccountStore((s) => s.account);

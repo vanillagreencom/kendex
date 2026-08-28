@@ -24,10 +24,8 @@ import { type Page, useNavStore } from "@/stores/nav";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 
-// A nav item is the shared sidebar row in the nav's own typeface. The
-// transparent border is load-bearing: the selected row shows one, and
-// without it here every other row would shift a pixel when selection moved.
-const NAV_ROW = `${SIDEBAR_ROW} border border-transparent font-mono text-sm`;
+// A nav item is the shared sidebar row in the nav's own typeface.
+const NAV_ROW = `${SIDEBAR_ROW} font-mono text-sm`;
 
 const NAV: { page: Page; label: string; icon: typeof Home }[] = [
   { page: "home", label: "Home", icon: Home },

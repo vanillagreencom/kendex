@@ -25,6 +25,22 @@ const show = (account: AccountState, readError: string | null = null) => {
   return mount(<SidebarAccount />);
 };
 
+/** The row itself, which is the gutter wrapper's only child. */
+const rowOf = (host: HTMLElement): HTMLElement => {
+  const row = host.firstElementChild?.firstElementChild;
+  if (!(row instanceof HTMLElement))
+    throw new Error("no account row on screen");
+  return row;
+};
+
+/** The states a read can settle on, each named for the message it fails in. */
+const SETTLED: [string, AccountState][] = [
+  ["signed-in", { kind: "signed-in", identity: ADA }],
+  ["signed-out", { kind: "signed-out" }],
+  ["expired", { kind: "expired" }],
+  ["offline", { kind: "offline", identity: ADA }],
+];
+
 beforeEach(() => {
   useAccountStore.setState({ account: { kind: "loading" }, readError: null });
   useNavStore.setState({ page: "home", history: [], future: [] });
@@ -36,11 +52,14 @@ describe("what the account row draws", () => {
   });
 
   it("says a read failed rather than showing a signed-out row", () => {
-    const row = show({ kind: "loading" }, "no network");
-    expect(row.textContent).toContain(ACCOUNT_UNREADABLE_LABEL);
-    expect(row.textContent).not.toContain(ACCOUNT_SIGN_IN_LABEL);
-    // The retry for a failed read belongs to Settings, not to this row.
-    expect(row.querySelector("button")).toBeNull();
+    const host = show({ kind: "loading" }, "no network");
+    expect(host.textContent).toContain(ACCOUNT_UNREADABLE_LABEL);
+    expect(host.textContent).not.toContain(ACCOUNT_SIGN_IN_LABEL);
+    // Nothing here retries a read: the startup effect does that on focus.
+    expect(host.querySelector("button")).toBeNull();
+    // The label says a read failed; the tooltip is the only place the
+    // reason for it reaches a person.
+    expect(rowOf(host).title).toBe("no network");
   });
 
   it("offers a quiet sign-in when signed out", () => {
@@ -78,20 +97,28 @@ describe("what the account row draws", () => {
 });
 
 describe("where the row leads", () => {
-  it("opens the settings page from a signed-in row", async () => {
-    const row = show({ kind: "signed-in", identity: ADA });
-    const button = row.querySelector("button");
-    if (!button) throw new Error("the signed-in row is not clickable");
-    await userEvent.click(button);
-    expect(useNavStore.getState().page).toBe("settings");
-  });
+  it.each(SETTLED)(
+    "opens the settings page from the %s row",
+    async (_state, account) => {
+      const host = show(account);
+      const button = host.querySelector("button");
+      if (!button) throw new Error("the row is not clickable");
+      await userEvent.click(button);
+      expect(useNavStore.getState().page).toBe("settings");
+    },
+  );
+});
 
-  it("opens the settings page from a signed-out row", async () => {
-    const row = show({ kind: "signed-out" });
-    const button = row.querySelector("button");
-    if (!button) throw new Error("the signed-out row is not clickable");
-    await userEvent.click(button);
-    expect(useNavStore.getState().page).toBe("settings");
+// A read that fails after one that landed changes no state: it leaves the
+// account exactly as the last good answer left it and records only why it
+// could not be repeated. Without the cause on the row, the same failure
+// would be loud before the first answer and silent ever after.
+describe("a read that failed after one that landed", () => {
+  it.each(SETTLED)("marks the %s row with the cause", (_state, account) => {
+    const clean = rowOf(show(account)).title;
+    const failed = rowOf(show(account, "keychain locked")).title;
+    expect(failed).toBe("keychain locked");
+    expect(failed).not.toBe(clean);
   });
 });
 
@@ -112,6 +139,15 @@ describe("the letter on the avatar", () => {
 
   it("has no letter for an account with no identity", () => {
     expect(accountInitial(null)).toBeNull();
+  });
+
+  // The circle wants a glyph, not text cased in whatever locale the app is
+  // running under: a Turkish locale cases an "i" into a dotted capital,
+  // which is not the letter this avatar is for.
+  it("uppercases the same letter whatever locale the app runs under", () => {
+    const initial = accountInitial({ name: "ilhan", githubLogin: "x" });
+    expect(initial).toBe("I");
+    expect(initial).not.toBe("i".toLocaleUpperCase("tr"));
   });
 
   it("keeps a first character that is a surrogate pair whole", () => {

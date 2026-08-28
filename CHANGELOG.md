@@ -34,9 +34,9 @@ an outside contributor.
 - `REVIEW_GATE_CARRY_FORWARD` gains a `vendored` class: a `kendex refresh`
   push under the render trees a repo lists in `REVIEW_GATE_VENDORED_PATHS`
   carries the prior review, whatever the files' extensions.
-- The foot of the app's sidebar shows your kendex.ai account: the GitHub
-  handle when the server confirms it, Offline when it could not be reached,
-  and a quiet Sign in when there is nothing to show. Clicking opens Settings.
+- The foot of the app's sidebar says whether you are signed in to kendex.ai,
+  and clicking it opens Settings. It offers a quiet Sign in when you are not,
+  and says so with nothing to press when the check did not land.
 
 ### Changed
 

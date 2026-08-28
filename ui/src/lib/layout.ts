@@ -30,5 +30,9 @@ export function isWidePage(page: string): boolean {
 
 // One row lane for the sidebar. Nav items and the account row share the
 // height, the gutters and the gap, so their icon column and their text
-// column line up from the top of the column to the bottom.
-export const SIDEBAR_ROW = "flex h-9 items-center gap-2.5 rounded-lg px-2";
+// column line up from the top of the column to the bottom. The transparent
+// border is load-bearing and belongs to the lane rather than to either
+// consumer: the selected nav row shows one, and a row without it would sit
+// a pixel across from every row that has it.
+export const SIDEBAR_ROW =
+  "flex h-9 items-center gap-2.5 rounded-lg border border-transparent px-2";
