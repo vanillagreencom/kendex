@@ -314,6 +314,48 @@ test("validate warns when Key Findings duplicates the Executive Summary", () => 
   assert.ok(json.warnings.some((w) => /duplicates the Executive Summary/.test(w)));
 });
 
+// The loader reads .env.local only — the .env fallback is removed — and an
+// explicit process value beats a file value per key. The mock-file path is
+// itself an env key read after loadEnv, so WHICH mock answered shows whose
+// value won at value level, not just presence.
+test("a key present only in .env is ignored; .env.local and process env keep their precedence", () => {
+  const dir = mkdtempSync(join(tmpdir(), "deep-research-dotenv-"));
+  const localMock = join(dir, "local-mock.json");
+  const processMock = join(dir, "process-mock.json");
+  const dotenvMock = join(dir, "dotenv-mock.json");
+  for (const [path, answer] of [[localMock, "FromEnvLocal"], [processMock, "FromProcess"], [dotenvMock, "FromDotenv"]]) {
+    writeFileSync(path, JSON.stringify({ answer, results: [{ title: "Source", url: "https://example.com" }] }));
+  }
+  const env = { ...process.env };
+  delete env.EXA_API_KEY;
+  delete env.EXA_MOCK_RESPONSE_FILE;
+
+  // .env alone supplies both a mock and a key: read, the run would succeed
+  // against that mock; ignored, it stops at the missing EXA_API_KEY with no
+  // network touched in either direction.
+  writeFileSync(join(dir, ".env"), `EXA_MOCK_RESPONSE_FILE=${dotenvMock}\nEXA_API_KEY=from-dotenv\n`);
+  const ignored = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
+  assert.notEqual(ignored.status, 0);
+  assert.match(ignored.stderr, /EXA_API_KEY is required/);
+
+  // .env.local supplies the value when the process does not carry the key.
+  const localOut = join(dir, "local.md");
+  writeFileSync(join(dir, ".env.local"), `EXA_MOCK_RESPONSE_FILE=${localMock}\n`);
+  const fromLocal = spawnSync(process.execPath, [script, "report", "q", "--output", localOut], { encoding: "utf8", env, cwd: dir });
+  assert.equal(fromLocal.status, 0, fromLocal.stderr);
+  assert.match(readFileSync(localOut, "utf8"), /FromEnvLocal/);
+
+  // An explicit process value beats the .env.local assignment for the same key.
+  const processOut = join(dir, "process.md");
+  const fromProcess = spawnSync(process.execPath, [script, "report", "q", "--output", processOut], {
+    encoding: "utf8",
+    env: { ...env, EXA_MOCK_RESPONSE_FILE: processMock },
+    cwd: dir,
+  });
+  assert.equal(fromProcess.status, 0, fromProcess.stderr);
+  assert.match(readFileSync(processOut, "utf8"), /FromProcess/);
+});
+
 test("resolves EXA_API_KEY op:// references with op CLI", () => {
   const dir = mkdtempSync(join(tmpdir(), "deep-research-op-"));
   const bin = join(dir, "bin");
