@@ -32,7 +32,7 @@ Uncertain about category, prefer `fix` (if related); uncertain about relevance, 
 | Error-handling gaps | `issue` |
 | Security vulnerability | `fix` if quick, else `issue` — never skipped |
 | Data validation gaps | `fix` if quick, else `issue` |
-| The same claim or enumeration drifting for two rounds running | `fix` as a structural close — derive, bind, or delete the claim |
+| The same claim, enumeration, or duplicated copy arriving in two rounds running | `fix` as a structural close — derive, bind, or delete the generator |
 
 ## Filing bar
 
@@ -44,6 +44,8 @@ An `issue` signal is necessary but not sufficient. Every candidate carries its s
 - **Unexplained anomalies with evidence** — observed and reproducible, cause unknown; filed as an investigation issue whose deliverable is the diagnosis.
 
 Never for a race between two invocations on one machine, a crash between two writes, an input no shipped producer emits, or a hole in a mechanism that itself came from a review round: those are declined, not filed. The one exception is a security or data-loss defect a shipped path reaches, which follows the rows above.
+
+A recurring finding class never files as "improve X": the structural-close row closes its generator in this PR.
 
 The audit pipeline applies project-management's creation bar (its SKILL.md § Disposition) as the final authority; these classes describe what clears it.
 

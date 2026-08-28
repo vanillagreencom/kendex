@@ -58,7 +58,7 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.agent // empty'
    ```
 
-2. **Group items by agent domain** when multi-domain, ordered per [SKILL.md § Coordination](../SKILL.md#coordination). Prefer two scoped rounds over one broad round past roughly eight items.
+2. **Group items by agent domain** when multi-domain, ordered per [SKILL.md § Coordination](../SKILL.md#coordination). Prefer two scoped rounds over one broad round past roughly eight items — at 24 items, a round injects 8 new blockers, 2 of them P1.
 
 3. **Gather decision context**:
 
