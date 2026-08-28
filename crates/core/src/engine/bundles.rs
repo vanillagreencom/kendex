@@ -28,6 +28,7 @@ use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::find_item;
 
 use super::ItemWarning;
+use super::desired::hold::HeldPins;
 use super::desired::{DesiredState, target_harnesses};
 use super::expansion::{Catalogs, Expansion};
 
@@ -46,6 +47,7 @@ struct Carried {
 pub(super) fn expand(
     scope: &Scope,
     manifest: &Manifest,
+    held: Option<&HeldPins>,
     expansion: &mut Expansion,
     catalogs: &mut Catalogs,
     state: &mut DesiredState,
@@ -53,7 +55,7 @@ pub(super) fn expand(
     let mut carried: BTreeMap<(ItemKind, String), Carried> = BTreeMap::new();
     for (name, decl) in &manifest.bundles {
         for (kind, member, member_decl, harnesses) in
-            installable(name, decl, scope, manifest, catalogs, state)
+            installable(name, decl, scope, manifest, held, catalogs, state)
         {
             let edge = (
                 Reason::MemberOf {
@@ -137,6 +139,44 @@ pub(crate) fn member_decl(bundle: &ItemDecl) -> ItemDecl {
     }
 }
 
+/// The revision one member reads, where the set is not the only thing that
+/// says.
+///
+/// A set carries one revision to everything in it, and that is the answer
+/// wherever the member has nothing else to read. A member the manifest
+/// declares does: a single-package update pins the declarations it holds
+/// still, so reading the set's pin onto a declared member wants one
+/// package at two revisions this pass invented, and a plan that refuses
+/// both writes nothing for a package nobody pinned. The declaration is
+/// what the person acted on, so it decides.
+///
+/// Only a revision this pass invented gives way. Where the person wrote
+/// one — on the set, on the member, or on both — the two stand as written
+/// and whatever they disagree about is theirs to reconcile, reported the
+/// way a whole-scope pass reports it.
+fn carried_rev(
+    manifest: &Manifest,
+    held: Option<&HeldPins>,
+    bundle: &str,
+    bundle_rev: Option<String>,
+    kind: ItemKind,
+    member: &str,
+) -> Option<String> {
+    let Some(decl) = manifest.declared(kind).get(member) else {
+        return bundle_rev;
+    };
+    let set_pin_invented = held.is_some_and(|pins| pins.invented_bundle(bundle));
+    let member_pin_invented = held.is_some_and(|pins| pins.invented_item(kind, member));
+    let set_holds_a_chosen_rev = bundle_rev.is_some() && !set_pin_invented;
+    let member_holds_a_chosen_rev = decl.rev.is_some() && !member_pin_invented;
+    if set_holds_a_chosen_rev || member_holds_a_chosen_rev {
+        // A revision the person wrote is in play, so both sides stand as
+        // they wrote them — the set's without the pin this pass put on it.
+        return if set_pin_invented { None } else { bundle_rev };
+    }
+    decl.rev.clone()
+}
+
 /// The members of one set this plan can actually install, each with the
 /// declaration it installs under and the tools it lands on. Every member left
 /// out is accounted for: held back by a removal, not offered by the catalog,
@@ -146,6 +186,7 @@ fn installable(
     decl: &ItemDecl,
     scope: &Scope,
     manifest: &Manifest,
+    held: Option<&HeldPins>,
     catalogs: &mut Catalogs,
     state: &mut DesiredState,
 ) -> Vec<(ItemKind, String, ItemDecl, Vec<HarnessId>)> {
@@ -189,7 +230,15 @@ fn installable(
             });
             continue;
         }
-        let member_decl = member_decl(decl);
+        let mut member_decl = member_decl(decl);
+        member_decl.rev = carried_rev(
+            manifest,
+            held,
+            name,
+            member_decl.rev,
+            member.kind,
+            &member.name,
+        );
         let harnesses = target_harnesses(&member_decl, manifest, member.kind, scope);
         if harnesses.is_empty() {
             state.notes.push(format!(

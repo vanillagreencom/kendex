@@ -202,18 +202,22 @@ pub(super) mod hold;
 /// and hashes and renderings must reflect that rewrite — otherwise the very
 /// next audit reads the merged manifest and calls a clean install stale. The
 /// merge is idempotent, so recomputing against it converges in one repeat.
-pub fn desired_state(
+///
+/// `held` names the declarations a single-package update pinned itself, so
+/// the closure can tell them from the holds the person chose.
+pub(super) fn desired_state(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
     lock: &Lock,
     hold_upstream_skills: bool,
+    held: Option<&hold::HeldPins>,
 ) -> Result<DesiredState> {
-    let first = compute(env, scope, manifest, lock, hold_upstream_skills)?;
+    let first = compute(env, scope, manifest, lock, hold_upstream_skills, held)?;
     let Some(merged) = first.manifest_update else {
         return Ok(first);
     };
-    let mut second = compute(env, scope, &merged, lock, hold_upstream_skills)?;
+    let mut second = compute(env, scope, &merged, lock, hold_upstream_skills, held)?;
     second.manifest_update = Some(merged);
     Ok(second)
 }
@@ -224,6 +228,7 @@ fn compute(
     manifest: &Manifest,
     lock: &Lock,
     hold_upstream_skills: bool,
+    held: Option<&hold::HeldPins>,
 ) -> Result<DesiredState> {
     let mut state = DesiredState::default();
     let mut updated_manifest = manifest.clone();
@@ -231,7 +236,7 @@ fn compute(
     // Everything is planned from the closure — what was declared, what the
     // installed bundles carry, and what those skills require — while the
     // manifest keeps holding only what was chosen.
-    let expansion = super::expansion::expand(env, scope, manifest, &mut state);
+    let expansion = super::expansion::expand(env, scope, manifest, held, &mut state);
     let collisions = super::catalog::Collisions::find(&expansion, &mut state);
 
     for kind in super::expansion::PLANNED_KINDS {

@@ -260,7 +260,7 @@ fn still_derived(
     names: &[String],
 ) -> BTreeSet<(ItemKind, String)> {
     let mut state = crate::engine::desired::DesiredState::default();
-    let expansion = super::expansion::expand(env, scope, manifest, &mut state);
+    let expansion = super::expansion::expand(env, scope, manifest, None, &mut state);
     let mut derived = BTreeSet::new();
     for name in names {
         for kind in super::expansion::PLANNED_KINDS {

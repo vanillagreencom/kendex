@@ -281,10 +281,16 @@ impl Catalogs<'_> {
 
 /// The whole installed set this manifest asks for: what it declares, what the
 /// bundles it installs carry, and what those skills require.
+///
+/// `held` names the declarations this pass pinned itself, where the
+/// manifest is a single-package update's pinned copy: a set's members read
+/// it to tell a hold the person chose from one invented to keep the rest
+/// of the scope still.
 pub(super) fn expand(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
+    held: Option<&super::desired::hold::HeldPins>,
     state: &mut DesiredState,
 ) -> Expansion {
     let mut expansion = Expansion::default();
@@ -310,7 +316,7 @@ pub(super) fn expand(
         manifest,
         open: BTreeMap::new(),
     };
-    super::bundles::expand(scope, manifest, &mut expansion, &mut catalogs, state);
+    super::bundles::expand(scope, manifest, held, &mut expansion, &mut catalogs, state);
     super::deps::expand(scope, manifest, &mut expansion, &mut catalogs, state);
     expansion.report_rev_disagreements(state);
     expansion

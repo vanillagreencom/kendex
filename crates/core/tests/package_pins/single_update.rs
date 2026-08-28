@@ -6,7 +6,7 @@
 use std::fs;
 
 use kendex_core::apply;
-use kendex_core::engine::{PlanOptions, plan_refresh};
+use kendex_core::engine::{DriftState, PlanOptions, plan_refresh};
 use kendex_core::error::CoreError;
 use kendex_core::lock::{entry_key, load as load_lock, lock_path};
 use kendex_core::manifest;
@@ -117,6 +117,164 @@ fn updating_a_bundle_member_moves_its_bundle_and_no_one_else() {
     );
     assert_eq!(locked_commit(&w, "m1"), second);
     assert_eq!(locked_commit(&w, "solo"), first);
+}
+
+/// A world whose catalog carries a set of `a` and `b`, with `a` declared
+/// outright as well: the scope that has two readings of one package's
+/// revision to reconcile. Returns the commit everything is installed from
+/// and the one upstream moved to.
+#[allow(clippy::unwrap_used)]
+fn a_declared_member_of_a_set(w: &World, also_declared: &str) -> (String, String) {
+    write_skill(&w.upstream, "a", "", "a version one.");
+    write_skill(&w.upstream, "b", "", "b version one.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[bundles.kit]\ndescription = \"a set\"\nskills = [\"a\", \"b\"]\n",
+    )
+    .unwrap();
+    let first = commit(&w.upstream, "one");
+    declare(w, also_declared);
+    sync_and_apply(w);
+
+    write_skill(&w.upstream, "a", "", "a version two.");
+    write_skill(&w.upstream, "b", "", "b version two.");
+    let second = commit(&w.upstream, "two");
+    fetch_mirrors(w);
+    (first, second)
+}
+
+/// Whether the plan reports this package as wanted at two revisions at
+/// once — the conflict that writes nothing and asks the person to
+/// reconcile pins.
+fn reports_a_rev_conflict(report: &kendex_core::engine::EngineReport, name: &str) -> bool {
+    report
+        .drift
+        .iter()
+        .any(|row| row.name == name && row.state == DriftState::Conflict)
+        || report
+            .warnings
+            .iter()
+            .any(|w| w.name == name && w.message.contains("wanted at"))
+}
+
+/// A package the person declared and a set also carries has two readings
+/// of its revision. Their own declaration is the one they acted on, so it
+/// decides: the package moves, and the set stays where its record says it
+/// is with every other member still on it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn updating_a_declared_package_a_set_also_carries_moves_it_alone() {
+    let w = world();
+    let (first, second) = a_declared_member_of_a_set(
+        &w,
+        "[skills.a]\nsource = \"cat\"\n\n[bundles.kit]\nsource = \"cat\"\n",
+    );
+
+    let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "a").unwrap();
+    assert!(
+        !reports_a_rev_conflict(&report, "a"),
+        "the declaration and the set's hold are both this pass's reading, not a conflict the person made: {:?}",
+        report.warnings
+    );
+    apply::execute(&w.env, &report.plan, None).unwrap();
+
+    assert!(installed_body(&w, "a").contains("a version two."));
+    assert!(
+        installed_body(&w, "b").contains("b version one."),
+        "a fellow member of the set must not come current as a side effect"
+    );
+    assert_eq!(locked_commit(&w, "a"), second);
+    assert_eq!(
+        locked_commit(&w, "b"),
+        first,
+        "the set stays at the commit its record says it is on"
+    );
+    assert_eq!(
+        declared_rev(&w, "a"),
+        None,
+        "the target was never held, and nothing invented a hold for it"
+    );
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        loaded.bundles["kit"].rev, None,
+        "the hold that held the set still for this pass is not a hold the person chose"
+    );
+}
+
+/// The scope the update above leaves behind: the set's members sit on two
+/// commits, and the declared one is the record for where it is. Moving the
+/// other member reads it that way instead of pinning it through the set
+/// again and refusing to write either revision.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn moving_the_rest_of_the_set_afterwards_leaves_the_declared_member_put() {
+    let w = world();
+    let (_, second) = a_declared_member_of_a_set(
+        &w,
+        "[skills.a]\nsource = \"cat\"\n\n[bundles.kit]\nsource = \"cat\"\n",
+    );
+
+    let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "a").unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+
+    // `b` has no declaration of its own, so the set is what carries its
+    // revision and moving it moves the set.
+    let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "b").unwrap();
+    assert!(
+        !reports_a_rev_conflict(&report, "a"),
+        "the declared member is read off its own declaration, not pinned through the set twice: {:?}",
+        report.warnings
+    );
+    apply::execute(&w.env, &report.plan, None).unwrap();
+
+    assert!(installed_body(&w, "b").contains("b version two."));
+    assert!(installed_body(&w, "a").contains("a version two."));
+    assert_eq!(locked_commit(&w, "a"), second);
+    assert_eq!(locked_commit(&w, "b"), second);
+}
+
+/// The must-fail control: a set and a member pinned at different commits
+/// is a disagreement the person wrote, and a single-package update
+/// elsewhere in the scope still reports it and writes nothing for the
+/// package it is about.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_hold_the_person_wrote_against_their_set_still_conflicts() {
+    let w = world();
+    write_skill(&w.upstream, "solo", "", "solo version one.");
+    let (first, second) = a_declared_member_of_a_set(
+        &w,
+        "[skills.solo]\nsource = \"cat\"\n\n[skills.a]\nsource = \"cat\"\n\n[bundles.kit]\nsource = \"cat\"\n",
+    );
+
+    // The person pins the package one way and the set that carries it
+    // another. Nothing invented either revision.
+    declare(
+        &w,
+        &format!(
+            "[skills.solo]\nsource = \"cat\"\n\n[skills.a]\nsource = \"cat\"\nrev = \"{second}\"\n\n[bundles.kit]\nsource = \"cat\"\nrev = \"{first}\"\n"
+        ),
+    );
+
+    let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "solo").unwrap();
+    assert!(
+        reports_a_rev_conflict(&report, "a"),
+        "two revisions the person pinned must still conflict: {:?}",
+        report.drift
+    );
+    apply::execute(&w.env, &report.plan, None).unwrap();
+
+    assert!(
+        installed_body(&w, "a").contains("a version one."),
+        "nothing is written for a conflicted package"
+    );
+    assert_eq!(
+        locked_commit(&w, "a"),
+        first,
+        "and its record is left exactly as it was"
+    );
 }
 
 #[test]

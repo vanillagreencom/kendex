@@ -279,6 +279,7 @@ fn desired_pass<'a>(
         planning.as_ref(),
         lock,
         options.hold_upstream_skills,
+        held_pins.as_ref(),
     )?;
     if let (Some(pins), Some(update)) = (&held_pins, state.manifest_update.as_mut()) {
         pins.unpin(update);

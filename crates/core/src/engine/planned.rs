@@ -33,7 +33,7 @@ pub fn planned_declarations(
 ) -> Vec<PlannedDeclaration> {
     let scope = scope.canonical();
     let mut state = desired::DesiredState::default();
-    let expanded = expansion::expand(env, &scope, manifest, &mut state);
+    let expanded = expansion::expand(env, &scope, manifest, None, &mut state);
     let mut out = Vec::new();
     for kind in expansion::PLANNED_KINDS {
         for (name, planned) in expanded.of(kind) {

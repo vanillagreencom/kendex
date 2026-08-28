@@ -111,6 +111,21 @@ pub(crate) struct HeldPins {
 }
 
 impl HeldPins {
+    /// Whether the revision this declaration now reads is one this pass
+    /// invented. A member of a set consults it to tell a hold the person
+    /// chose from a hold that only exists to keep the rest of the scope
+    /// still — the first is theirs to reconcile, the second is not.
+    pub(crate) fn invented_item(&self, kind: ItemKind, name: &str) -> bool {
+        self.items
+            .iter()
+            .any(|(of_kind, of_name)| *of_kind == kind && of_name == name)
+    }
+
+    /// [`HeldPins::invented_item`] for a set's own declaration.
+    pub(crate) fn invented_bundle(&self, name: &str) -> bool {
+        self.bundles.iter().any(|of_name| of_name == name)
+    }
+
     /// Remove the synthetic pins from a manifest the plan is about to
     /// write. Every pinned declaration had no `rev` before the hold, so
     /// clearing it restores the declaration exactly.
@@ -145,11 +160,12 @@ pub(crate) fn planning_manifest<'a>(
     }
 }
 
-/// The manifest a single-package update plans from: the target — and every
-/// declaration that accounts for it, because the owner is what carries a
-/// derived package's revision — reads fresh, while every other unpinned
-/// remote declaration and bundle is pinned at the commit its lock entries
-/// agree on. A declaration the lock cannot place — nothing installed,
+/// The manifest a single-package update plans from: the target reads
+/// fresh, and so does whatever carries its revision — the parent of a
+/// dependency always, and the sets that hold it only where the target has
+/// no declaration of its own to read. Every other unpinned remote
+/// declaration and bundle is pinned at the commit its lock entries agree
+/// on. A declaration the lock cannot place — nothing installed,
 /// installations disagreeing on their commit, or any one of them recorded
 /// against a source this declaration no longer reads from — is left to
 /// resolve fresh: a wrong pin would move it somewhere nobody asked for,
@@ -188,6 +204,16 @@ fn held_manifest(
                 .is_none_or(|source| &entry.source == source)
     }) {
         exempt.extend(owners_of(lock, entry, &mut BTreeSet::new()));
+    }
+    // A target with a declaration of its own reads that declaration, so the
+    // sets that also carry it are held still along with everything else —
+    // `bundles::carried_rev` lets the declaration decide what the member
+    // installs. A set left free instead takes its other
+    // members current as a side effect of an update nobody asked it for. A
+    // target with no declaration has only the set's revision to read, which
+    // has to resolve fresh for it to move at all.
+    if reads_from.is_some() {
+        exempt.retain(|owner| !matches!(owner, Owner::Bundle { .. }));
     }
     let mut held = manifest.clone();
     let mut pins = HeldPins {
