@@ -24,6 +24,7 @@ import { UnmanagedPage } from "@/pages/unmanaged";
 import { UpdatesPage } from "@/pages/updates";
 import { useAuditStore } from "@/stores/audit";
 import { useNavStore } from "@/stores/nav";
+import { useNoticeStore } from "@/stores/notice";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 import { useUpdatesStore } from "@/stores/updates";
@@ -103,14 +104,19 @@ function useScanTriggers() {
   const auditRefresh = useAuditStore((s) => s.refresh);
   const updatesLoad = useUpdatesStore((s) => s.load);
   const load = useSettingsStore((s) => s.load);
+  const noticeLoad = useNoticeStore((s) => s.load);
   useEffect(() => {
-    // Four independent reads, started together: the audit is the slow one
+    // Five independent reads, started together: the audit is the slow one
     // (it scores every installed file), and chaining it behind the scan
     // meant the Library sat empty waiting on work it does not need.
     void load();
     void refresh();
     void auditRefresh();
     void updatesLoad();
+    // The app's own release check, read once a session: the backend keeps
+    // the answer and contacts the feed at most six-hourly, so a re-read on
+    // every focus would tell the card nothing it does not already say.
+    void noticeLoad();
     let last = Date.now();
     const onFocus = () => {
       if (Date.now() - last < FOCUS_RESCAN_DEBOUNCE_MS) return;
@@ -126,7 +132,7 @@ function useScanTriggers() {
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [refresh, auditRefresh, updatesLoad, load]);
+  }, [refresh, auditRefresh, updatesLoad, load, noticeLoad]);
 }
 
 export default function App() {

@@ -194,3 +194,24 @@ export const FORKED_ATTENTION_DETAIL =
   "Your changes are safe — nothing will overwrite them. Decide whether to keep each as your own copy.";
 
 export const FOLLOW_SOURCE_TOAST = "Now following its source";
+
+// The app's own out-of-date notice, in the sidebar. It names both versions
+// and offers the one action the install channel allows: a replacement where
+// kendex owns the files, the package manager's own command where it does
+// not, and nothing to press where nothing could tell.
+export const APP_UPDATE_TITLE = "Update available";
+export const appUpdateVersionsLabel = (
+  latest: string,
+  current: string,
+): string => `kendex ${latest} is out. You have ${current}.`;
+export const APP_UPDATE_INSTALL_LABEL = "Update now";
+export const APP_UPDATE_INSTALLING_LABEL = "Updating…";
+export const APP_UPDATE_NOTES_LABEL = "View release notes";
+export const APP_UPDATE_DISMISS_LABEL = "Hide until the next version";
+export const APP_UPDATE_MANAGED_NOTE = "Update it with:";
+export const APP_UPDATE_UNKNOWN_NOTE =
+  "Update kendex the way you installed it.";
+// A whole-settings write the engine refused because the file moved under
+// it. Said wherever a change is one field and the retry is to press again.
+export const SETTINGS_MOVED_MESSAGE =
+  "Your settings changed in another window. Try again.";

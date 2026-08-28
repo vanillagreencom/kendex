@@ -1,0 +1,118 @@
+import { create } from "zustand";
+import { commands, type InstallChannel } from "@/bindings";
+import { SETTINGS_MOVED_MESSAGE } from "@/lib/copy";
+import { settled } from "@/lib/settled";
+
+/** The two versions the card names. Null until a check has found this
+ *  build behind a release, and null again once this version is hidden. */
+export interface AppUpdateNotice {
+  /** What is running now. */
+  current: string;
+  /** The release it is behind. */
+  latest: string;
+  releaseNotesUrl: string;
+}
+
+/** A channel nothing could resolve offers what an unrecognised one
+ *  offers: name the release, replace nothing, invent no command. */
+const UNRESOLVED: InstallChannel = { kind: "unknown" };
+
+interface NoticeState {
+  notice: AppUpdateNotice | null;
+  /** Which action the card may offer. Read once beside the check. */
+  channel: InstallChannel;
+  /** A replacement is running. There are no progress events, so this is
+   *  the whole of what the card can say about it. */
+  installing: boolean;
+  /** Why the last action on the card did not happen, shown on the card
+   *  with the app still usable. */
+  error: string | null;
+  load: () => Promise<void>;
+  install: () => Promise<void>;
+  openNotes: () => Promise<void>;
+  dismiss: () => Promise<void>;
+}
+
+/** Hide this version's notice and only this version's: the field holds one
+ *  version, so a later release notifies again. The file is read on the
+ *  spot and written back with the base that read returned, so the copy
+ *  written is never older than the file. Returns the reason it did not
+ *  happen, or null. */
+async function mute(version: string): Promise<string | null> {
+  const read = await settled(commands.getSettings());
+  if (read.status === "error") return read.error;
+  try {
+    const written = await commands.updateSettings(
+      { ...read.data.settings, "muted-app-notice": version },
+      read.data.base,
+    );
+    if (written.status === "ok") return null;
+    return written.error.kind === "failed"
+      ? written.error.message
+      : SETTINGS_MOVED_MESSAGE;
+  } catch (thrown) {
+    return thrown instanceof Error ? thrown.message : String(thrown);
+  }
+}
+
+/**
+ * The app's own out-of-date notice: one read at startup, one card in the
+ * sidebar, and the one action the running install's channel allows.
+ *
+ * A check that failed shows nothing. The card states that a named release
+ * is out, which a failed read is no evidence of, and the release check
+ * keeps its own error for the surface that reports on checking.
+ */
+export const useNoticeStore = create<NoticeState>((set, get) => ({
+  notice: null,
+  channel: UNRESOLVED,
+  installing: false,
+  error: null,
+
+  load: async () => {
+    const [view, channel, current] = await Promise.all([
+      settled(commands.appUpdateCheck(false)),
+      settled(commands.appUpdateChannel()),
+      // The running version is the half of the sentence the release feed
+      // cannot supply; without it there is no notice to write.
+      commands.appVersion().catch(() => null),
+    ]);
+    if (view.status === "error" || current === null) return;
+    const status = view.data.status;
+    if (status.kind !== "updateAvailable" || status.muted) return;
+    set({
+      notice: {
+        current,
+        latest: status.version,
+        releaseNotesUrl: status.releaseNotesUrl,
+      },
+      channel: channel.status === "ok" ? channel.data : UNRESOLVED,
+    });
+  },
+
+  install: async () => {
+    if (get().installing) return;
+    set({ installing: true, error: null });
+    const response = await settled(commands.appUpdateInstall());
+    // A replacement that worked does not come back: the app restarts into
+    // the new version. So only a failure ends the in-flight state, and it
+    // leaves the action on the card to try again.
+    if (response.status === "error")
+      set({ installing: false, error: response.error });
+  },
+
+  openNotes: async () => {
+    const notice = get().notice;
+    if (notice === null) return;
+    const response = await settled(commands.openUrl(notice.releaseNotesUrl));
+    if (response.status === "error") set({ error: response.error });
+  },
+
+  dismiss: async () => {
+    const notice = get().notice;
+    if (notice === null) return;
+    const refused = await mute(notice.latest);
+    if (refused === null) set({ notice: null, error: null });
+    else set({ error: refused });
+  },
+}));

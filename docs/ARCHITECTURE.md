@@ -292,12 +292,12 @@ lives in one capability table read by core and UI.
   as the last kendex could check, never a definite count — least of all
   zero. Startup reads — settings, scan, audit, updates — run side by side.
 - **Discovery is the unsigned feed; delivery is a signed manifest.** Off the
-  launch path, one cross-process transaction reads the fixed GitHub feed at
-  most once per six hours, keeps the last result beside any error, and never
-  follows the final link; the preference gates automatic contact, a manual
-  check is explicit, debug builds alone honor `KENDEX_UPDATE_FEED`. Replacing
-  an install needs the running path writable and outside a system prefix; a
-  package prefix names its update command instead, and anything else neither.
+  launch path, one cross-process transaction reads the fixed feed at most once
+  per six hours, keeps the last result beside any error, and never follows the
+  final link; the preference gates automatic contact, debug builds alone honor
+  `KENDEX_UPDATE_FEED`. Replacing an install needs a writable running path
+  outside a system prefix; a package prefix names its command instead,
+  anything else neither. One sidebar card offers whichever it is.
 - Commands that touch disk, git, or a subprocess are
   `#[tauri::command(async)]`. Only window operations stay synchronous.
 - No database: manifests, locks, and native dirs are the state; scans are

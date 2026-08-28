@@ -2,11 +2,45 @@ import type { AppSettings, HarnessId, ItemKind, Scope } from "@/bindings";
 import { capabilityTable } from "./caps";
 import { type Handler, label, same, store, view } from "./mock-state";
 
+const RUNNING_VERSION = "0.1.0";
+const RELEASED_VERSION = "0.2.0";
+
+/** The query string drives the update notice, so browser automation walks
+ *  every state of the card without a rebuild:
+ *
+ *  - `?update=direct` — the card with Update now (the default when the
+ *    parameter names nothing else).
+ *  - `?update=managed` — the card with a package manager's command.
+ *  - `?update=unknown` — the card with no action at all.
+ *  - `?update=none` — no card: this build is the latest.
+ *  - `?updateFails=1` — the replacement refuses, and says so on the card. */
+const wanted = (name: string): string | null =>
+  typeof window === "undefined"
+    ? null
+    : new URLSearchParams(window.location.search).get(name);
+
+/** Every settings-returning command answers with the file and what it was
+ *  when it was read. The mock has one writer, so the copy it hands out is
+ *  always current and carries no base to check it against. */
+const settingsRead = () => ({ settings: store.state.settings, base: null });
+
 export const coreHandlers: Record<string, Handler> = {
-  app_version: () => "0.1.0",
+  app_version: () => RUNNING_VERSION,
   app_update_check: () => ({
     automaticCheckEnabled: true,
-    status: { kind: "upToDate", version: "0.1.0" },
+    status:
+      wanted("update") === "none" || wanted("update") === null
+        ? { kind: "upToDate", version: RUNNING_VERSION }
+        : {
+            kind: "updateAvailable",
+            version: RELEASED_VERSION,
+            releaseNotesUrl: `https://github.com/vanillagreencom/kendex/releases/tag/v${RELEASED_VERSION}`,
+            cliAssetAvailable: true,
+            // What a dismissal wrote, read back the way the engine reads
+            // it: one version, so the next release notifies again.
+            muted:
+              store.state.settings["muted-app-notice"] === RELEASED_VERSION,
+          },
     lastAttemptAt: "2026-08-25T16:00:00Z",
     lastSuccessAt: "2026-08-25T16:00:00Z",
     servedFeedAt: "2026-08-25T16:00:00Z",
@@ -14,9 +48,25 @@ export const coreHandlers: Record<string, Handler> = {
     servedFeedInFuture: false,
     lastError: null,
   }),
-  app_update_channel: () => ({ kind: "direct" }),
-  // The mock browser harness has no install to replace.
-  app_update_install: () => null,
+  app_update_channel: () => {
+    switch (wanted("update")) {
+      case "managed":
+        return { kind: "managed", command: "paru -S kendex-bin" };
+      case "unknown":
+        return { kind: "unknown" };
+      default:
+        return { kind: "direct" };
+    }
+  },
+  // The mock browser harness has no install to replace, so the successful
+  // path is the one thing it cannot show: the real command relaunches the
+  // app and never returns. A refusal is a plain string, which is what the
+  // bridge rejects with.
+  app_update_install: () => {
+    if (wanted("updateFails") !== null)
+      throw "the release could not be verified against the updater key";
+    return null;
+  },
   capability_table: () => capabilityTable(),
   // No real window or OS pickers to act on in the mock browser harness.
   window_minimize: () => null,
@@ -65,12 +115,12 @@ export const coreHandlers: Record<string, Handler> = {
     missingProjects: store.state.missingProjects,
     warnings: store.state.warnings,
   }),
-  get_settings: () => store.state.settings,
+  get_settings: () => settingsRead(),
   update_settings: ({ settings }: { settings: AppSettings }) => {
     // The size is the window's; a settings save carries a copy that may
     // predate the last resize, so the stored one stands.
     store.state.settings = { ...settings, zoom: store.state.settings.zoom };
-    return store.state.settings;
+    return settingsRead();
   },
   save_zoom: ({ percent }: { percent: number }) => {
     store.state.settings.zoom = percent;
@@ -82,7 +132,7 @@ export const coreHandlers: Record<string, Handler> = {
       store.state.settings.projects = [...projects, path];
     }
     view({ scope: "project", root: path });
-    return store.state.settings;
+    return settingsRead();
   },
   install_drift_hook: () => null,
   // A freshly registered project in the dev app has nothing waiting: the
@@ -95,7 +145,7 @@ export const coreHandlers: Record<string, Handler> = {
     store.state.views = store.state.views.filter(
       (v) => label(v.scope) !== path,
     );
-    return store.state.settings;
+    return settingsRead();
   },
   discover_projects: ({ root }: { root: string }) =>
     ["acme-web", "api-server", "demo-app"].map(

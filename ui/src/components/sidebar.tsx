@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useEffect } from "react";
 import { commands } from "@/bindings";
+import { SidebarNotice } from "@/components/sidebar-notice";
 import { Button } from "@/components/ui/button";
 import { UPDATES_ATTENTION_TITLE } from "@/lib/copy";
 import { rescanEverything } from "@/lib/rescan";
@@ -123,6 +124,7 @@ export function Sidebar() {
           </button>
         ))}
       </nav>
+      <SidebarNotice />
     </aside>
   );
 }
