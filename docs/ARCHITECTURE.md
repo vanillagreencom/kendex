@@ -70,16 +70,16 @@ lives in one capability table read by core and UI.
 4. Locks record durable provenance; same-source reinstall is a no-op,
    cross-source name collision is a hard error naming the original. A name
    is claimed by a lock entry or by a not-yet-applied manifest entry —
-   both collide. The one sanctioned rebind is a recorded fork: remote to
-   `local`, written into `[forks.<kind>.<name>]` by the fork operation the
-   user confirmed. A fork keeps the item's installed name, so dependents
-   and bundles keep resolving; a fork made beside (`fork_beside`) takes a
-   new name the user chose, its frontmatter `name:` rewritten to match,
-   and leaves the original declared from its source. That name is proven
-   free before the first durable write — no declaration, lock entry,
-   folding neighbour, or occupied render destination — and a namespaced
-   one may neither nest inside a package the local source already holds
-   nor reach its slot through a link.
+   both collide. The one sanctioned rebind is a fork the user confirmed: remote
+   to `local`, recorded in `[forks.<kind>.<name>]`. A fork keeps the installed
+   name so dependents and bundles resolve; one made beside (`fork_beside`)
+   takes a chosen name, `name:` rewritten to match, leaving the original on its
+   source. An agent's bytes come from its published file at the installed
+   commit, with the catalog's tables and the person's own overrides; a
+   rendering restricting tools further is refused. The new name is proven free
+   before the first durable write — no declaration, lock entry, folding
+   neighbour, or occupied render destination — and a namespaced one neither
+   nests inside a local package nor reaches its slot through a link.
 5. Enable/disable is non-destructive and lossless: file-backed kinds
    toggle by rename; kinds embedded in shared config files toggle by a
    structured edit that preserves every unrelated key. Uninstalling the

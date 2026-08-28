@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use super::{SKILL_NAME_FILES, local_item, named_bytes, vacant_name};
 use crate::apply::{Op, Plan, PlannedOp, Pre};
+use crate::engine::agent_carry::{OldName, rekey_agent_tables};
 use crate::engine::ops::manifest_for_mutation;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
@@ -93,6 +94,12 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
         && let Some(provenance) = forks.remove(old)
     {
         forks.insert(new.to_owned(), provenance);
+    }
+    // The tables an agent answers to by name go with it. Nothing reads the
+    // old name after this, so leaving them there would render the fork
+    // without the project's tool denies and without its instructions.
+    if kind == ItemKind::Agent {
+        rekey_agent_tables(&mut manifest, old, new, OldName::Gone);
     }
     let manifest_path = manifest::manifest_path(env, scope);
     ops.push(PlannedOp {

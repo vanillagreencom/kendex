@@ -8,6 +8,7 @@ use crate::manifest::{self, Manifest, ManifestFile};
 use crate::model::Scope;
 
 pub mod adopt;
+mod agent_carry;
 mod agent_skills;
 pub(crate) mod bundles;
 mod catalog;

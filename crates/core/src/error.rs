@@ -211,6 +211,13 @@ pub enum CoreError {
     #[error("`{name}` can't be your copy's name: {problem}")]
     ForkNameUnusable { name: String, problem: String },
 
+    /// A fork refused before writing anything: the rendering on disk keeps
+    /// tools from this agent that the fork would hand back. Landing it
+    /// would leave the person an agent more permissive than the one they
+    /// forked, which is the one thing a fork must never do.
+    #[error("keeping '{name}' as your own cannot carry {problem} — nothing was written")]
+    ForkWidensAccess { name: String, problem: String },
+
     /// Adoption refused before writing anything: a name kendex would not
     /// install, or a hook entry doing something a declaration has no field
     /// for, is refused rather than followed or quietly reshaped.

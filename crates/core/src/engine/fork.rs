@@ -4,10 +4,9 @@
 //! manifest records what it replaced. The name never changes, so nothing
 //! that depends on it breaks.
 
-use std::fs;
 use std::path::PathBuf;
 
-use super::desired::{native_dir, skill_canonical};
+use super::desired::native_dir;
 use super::ops::manifest_for_mutation;
 use crate::apply::{Op, Plan, PlannedOp, Pre};
 use crate::env::Env;
@@ -16,14 +15,18 @@ use crate::manifest::{self, ForkProvenance, INPLACE_SOURCE_NAME, LOCAL_SOURCE_NA
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::local_source_root;
 
+mod agent;
 mod beside;
 mod forkable;
 mod rename;
+mod skill_tree;
 mod vacant;
+use agent::capture_agent;
 pub use beside::fork_beside;
 use forkable::{ambiguous_skill_tree, source_form};
 pub use forkable::{forkable_harness, forkable_rendering};
 pub use rename::rename_fork;
+pub(crate) use skill_tree::skill_content_path;
 use vacant::vacant_name;
 
 /// Turn one edited installation into a local fork. The harness names which
@@ -57,9 +60,27 @@ pub fn fork(
         });
     }
     let edited = edited_rendering(env, scope, kind, name, harness)?;
-    let captured = capture(kind, &edited)?;
-    let mut ops = capture_ops(env, scope, kind, name, &edited, captured)?;
+    let captured = capture(
+        &ForkOf {
+            env,
+            scope,
+            manifest: &manifest,
+            decl: &decl,
+            kind,
+            name,
+            installed_as: name,
+            harness,
+        },
+        &edited,
+    )?;
+    let mut ops = capture_ops(env, scope, kind, name, &edited, captured.files)?;
     let provenance = provenance(env, scope, kind, name, harness, &manifest, &decl)?;
+    // The catalog's mapping tables shaped the rendering and the fork stops
+    // reading them, so their effective values move into the manifest or the
+    // very next apply renders a different agent under the same name.
+    if let Some(carry) = captured.carry {
+        carry.apply(&mut manifest, name);
+    }
     let entry = manifest
         .declared_mut(kind)
         .get_mut(name)
@@ -169,17 +190,7 @@ fn provenance(
     manifest: &manifest::Manifest,
     decl: &manifest::ItemDecl,
 ) -> Result<ForkProvenance> {
-    let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
-    let mut recorded = lock
-        .entries
-        .values()
-        .filter(|entry| entry.kind == kind && entry.name == name)
-        .filter(|entry| entry.source_commit.is_some());
-    let commit = recorded
-        .clone()
-        .find(|entry| entry.harness == harness)
-        .or_else(|| recorded.next())
-        .and_then(|entry| entry.source_commit.clone());
+    let commit = installed_commit(env, scope, kind, name, harness, decl)?;
     Ok(ForkProvenance {
         repo: manifest
             .sources
@@ -189,6 +200,34 @@ fn provenance(
         commit,
         forked_at: crate::clock::timestamp(),
     })
+}
+
+/// The commit this installation's bytes came from: the captured harness's
+/// own lock record, then any other tool's, then the declaration's own pin.
+/// Installations can sit at different commits mid-refresh and the edits
+/// live in the one rendering being kept, so the captured tool answers
+/// first. `None` where nothing recorded one, which reads as the source's
+/// head — an approximate base beats none.
+fn installed_commit(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    harness: HarnessId,
+    decl: &manifest::ItemDecl,
+) -> Result<Option<String>> {
+    let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
+    let mut recorded = lock
+        .entries
+        .values()
+        .filter(|entry| entry.kind == kind && entry.name == name)
+        .filter(|entry| entry.source_commit.is_some());
+    Ok(recorded
+        .clone()
+        .find(|entry| entry.harness == harness)
+        .or_else(|| recorded.next())
+        .and_then(|entry| entry.source_commit.clone())
+        .or_else(|| decl.rev.clone()))
 }
 
 /// The edited bytes in source form: a skill's whole tree, an agent's one
@@ -201,10 +240,43 @@ enum Capture {
     File(Vec<u8>),
 }
 
-fn capture(kind: ItemKind, edited: &std::path::Path) -> Result<Capture> {
-    Ok(match kind {
-        ItemKind::Skill => Capture::Tree(source_form(crate::capture::read_tree(edited)?)),
-        _ => Capture::File(fs::read(edited).map_err(|e| CoreError::io(edited, e))?),
+/// What a fork takes from one installation: the bytes the local source
+/// will hold, plus — for an agent — the catalog values that shaped its
+/// rendering from outside its own file.
+struct Captured {
+    files: Capture,
+    carry: Option<crate::engine::agent_carry::AgentCarry>,
+}
+
+/// One fork's inputs, gathered so the capture side reads them in one
+/// place. `installed_as` is the name the fork will answer to — the
+/// original's for a fork in place, the person's choice for one beside it.
+struct ForkOf<'a> {
+    env: &'a Env,
+    scope: &'a Scope,
+    manifest: &'a manifest::Manifest,
+    decl: &'a manifest::ItemDecl,
+    kind: ItemKind,
+    name: &'a str,
+    installed_as: &'a str,
+    harness: HarnessId,
+}
+
+fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
+    Ok(match of.kind {
+        ItemKind::Skill => Captured {
+            files: Capture::Tree(source_form(crate::capture::read_tree(edited)?)),
+            carry: None,
+        },
+        // Every other kind is turned away by `edited_rendering` first, so
+        // what reaches here is an agent.
+        _ => {
+            let captured = capture_agent(of, edited)?;
+            Captured {
+                files: Capture::File(captured.bytes),
+                carry: captured.carry,
+            }
+        }
     })
 }
 
@@ -304,71 +376,8 @@ fn capture_ops(
     Ok(ops)
 }
 
-/// The tree that holds a skill's content for one harness: its own native
-/// tree when it was copied there (each tool a real directory), or the
-/// shared canonical tree when tools symlink to one. Picking canonical-first
-/// would capture whichever tool happens to share it, not the one asked for.
-pub(crate) fn skill_content_path(
-    env: &Env,
-    scope: &Scope,
-    name: &str,
-    harness: HarnessId,
-) -> Option<PathBuf> {
-    if let Some(dir) = native_dir(env, scope, harness, ItemKind::Skill) {
-        let native = dir.join(crate::harness::rendered_name(harness, name));
-        // A real directory here is this tool's own copy (copy method). A
-        // symlink is followed to the tree this tool actually reads — the
-        // shared canonical tree, or its own divergent variant under the
-        // variants directory. Resolving it gives a real directory either
-        // way, never the wrong tool's bytes.
-        if native.is_symlink() {
-            if let Ok(target) = std::fs::read_link(&native) {
-                let resolved = if target.is_absolute() {
-                    target
-                } else {
-                    dir.join(target)
-                };
-                // Only a link into a location kendex itself manages is
-                // followed — the shared canonical tree or this tool's
-                // variant. A foreign link the user pointed elsewhere is
-                // not this skill's content, and reading (then trashing) it
-                // would expose and move whatever it happens to point at.
-                if resolved.is_dir() && managed_skill_tree(env, scope, name, &resolved) {
-                    return Some(resolved);
-                }
-            }
-        } else if native.is_dir() {
-            return Some(native);
-        }
-    }
-    let canonical = skill_canonical(env, scope, name);
-    canonical.is_dir().then_some(canonical)
-}
-
-/// Whether `path` is a skill tree kendex manages for `name`: the shared
-/// canonical tree, or a per-tool variant under the rendered-variants
-/// directory. Compared canonically so a `..`-laden link cannot dress a
-/// foreign directory up as a managed one.
-fn managed_skill_tree(env: &Env, scope: &Scope, name: &str, path: &std::path::Path) -> bool {
-    let real = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let canonical = skill_canonical(env, scope, name);
-    if real == canonical.canonicalize().unwrap_or(canonical) {
-        return true;
-    }
-    // Variant trees live below the rendered-variants root, one dir per
-    // harness. Any harness's variant of this name is a managed tree.
-    let _ = scope;
-    HarnessId::ALL.iter().any(|h| {
-        let variant = env.rendered_skill_variants_dir(h.name()).join(name);
-        real == variant.canonicalize().unwrap_or(variant)
-    })
-}
-
-/// Whether an agent rendered for this harness can be re-read as local
-/// source. Only the plain `.md`-with-frontmatter shape round-trips; codex
-/// (TOML), cursor (`.mdc`), copilot (`.agent.md`), and opencode (`.md`
-/// without a name field) do not.
-/// A disabled installation keeps its bytes under the `.disabled` name.
+/// The path an agent's rendering stands at: a switched-off installation
+/// keeps its bytes under the `.disabled` name.
 fn existing_or_disabled(path: PathBuf) -> PathBuf {
     if path.exists() || path.is_symlink() {
         return path;
