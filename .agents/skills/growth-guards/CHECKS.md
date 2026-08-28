@@ -67,8 +67,9 @@ is wrapped.
 
 An entry opens on a list marker (`-`, `*`, `+`) at column 0 followed by a
 space or tab, so a horizontal rule or a front-matter fence opens none. It runs
-to the next such marker, a heading, or a blank line followed by a line that is
-neither indented nor a marker. A blank line alone does not end it: an indented
+to the next such marker, an ATX heading (one to six hashes then whitespace or
+end of line, so a continuation naming an issue number opens none), or a blank
+line followed by a line that is neither indented nor a marker. A blank line alone does not end it: an indented
 second paragraph is part of the entry, the shape a Markdown list item and the
 fragment tooling both accept, and an indented bullet belongs to the entry it
 sits under rather than being one. Its text is those lines with CR stripped and

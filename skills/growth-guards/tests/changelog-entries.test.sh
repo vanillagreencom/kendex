@@ -180,7 +180,7 @@ stage
   && ok "fixture: git calls the blob text, so the binary skip does not reach it" \
   || bad "fixture: git calls the blob text" "git grep skipped it"
 run_ce
-[ "$RC" -eq 2 ] && case "$OUT" in *"CHANGELOG.md' line 1 is not valid UTF-8"*) true ;; *) false ;; esac \
+[ "$RC" -eq 2 ] && case "$OUT" in *"CHANGELOG.md line 1 is not valid UTF-8"*) true ;; *) false ;; esac \
   && ok "a line that is not valid UTF-8 is a collection error naming the line" \
   || bad "a line that is not valid UTF-8 is a collection error" "rc=$RC out=$OUT"
 case "$OUT" in *"changelog-entries: OK"*) bad "no OK verdict may accompany unmeasurable text" "$OUT" ;; *) ok "no OK verdict accompanies unmeasurable text" ;; esac
@@ -277,6 +277,44 @@ run_ce
 [ "$RC" -eq 1 ] && case "$OUT" in *"299 characters"*) true ;; *) false ;; esac \
   && ok "control: with no boundary the two halves are one 299-character entry" \
   || bad "control: with no boundary the two halves are one entry" "rc=$RC out=$OUT"
+
+echo "=== the heading boundary is ATX syntax, not any leading hash ==="
+new_repo atx
+# A continuation naming an issue number: a hash with no space after it. Ending
+# the entry there would leave 14 characters of it unmeasured and report the
+# 200-character head as clean.
+{
+  printf -- '- %s\n' "$(rep a 198)"
+  printf '#601 and more.\n'
+} >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"215 characters"*) true ;; *) false ;; esac \
+  && ok "a continuation opening with a hash and no space stays in the entry" \
+  || bad "a continuation opening with a hash and no space stays in the entry" "rc=$RC out=$OUT"
+# Seven hashes is a paragraph, not a heading, and continues the entry too.
+{
+  printf -- '- %s\n' "$(rep a 198)"
+  printf '####### deep.\n'
+} >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"214 characters"*) true ;; *) false ;; esac \
+  && ok "seven hashes open no heading and continue the entry" \
+  || bad "seven hashes open no heading and continue the entry" "rc=$RC out=$OUT"
+# The other direction: a real ATX heading still ends it, at every depth the
+# syntax allows and with no text after the hashes.
+for atx in '# One' '###### Six' '#' '######'; do
+  {
+    printf -- '- %s\n' "$(rep a 198)"
+    printf '%s\n' "$atx"
+    printf '  %s\n' "$(rep b 148)"
+  } >"$R/CHANGELOG.md"
+  stage
+  run_ce
+  [ "$RC" -eq 0 ] || bad "the ATX heading '$atx' ends the entry" "rc=$RC out=$OUT"
+done
+ok "an ATX heading ends the entry at one through six hashes, bare or with text"
 
 echo "=== an unindented continuation line joins with one space ==="
 new_repo lazy
@@ -498,6 +536,58 @@ esac
 printf 'x%s' "$OUT" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\037\177]')" \
   && bad "no C0 control byte may survive into the diagnostic" "$OUT" \
   || ok "no C0 control byte survives into the diagnostic"
+
+echo "=== hostile bytes in a name or a pattern never leave their line ==="
+new_repo hostile
+# A tracked filename carrying a newline and an ESC: both are legal bytes in a
+# path, and both decide what a message does if they reach one raw.
+HOSTILE="$(printf 'CHANGE\nLOG\033X.md')"
+printf -- '- %s\n' "$(rep x 250)" >"$R/$HOSTILE"
+stage
+[ "$(git -C "$R" ls-files | wc -l)" -eq 1 ] \
+  && ok "fixture: the hostile name is the one tracked path" \
+  || bad "fixture: the hostile name is the one tracked path" "$(git -C "$R" ls-files)"
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=*.md'
+[ "$RC" -eq 1 ] && ok "the entry under the hostile name is measured and fails" \
+  || bad "the entry under the hostile name is measured and fails" "rc=$RC out=$OUT"
+# Four lines exactly: the FAIL line, its entry, its remedies, the summary. A
+# raw newline in the name would split one of them and hide the rest from a
+# caller reading the first.
+[ "$(printf '%s\n' "$OUT" | grep -c .)" -eq 4 ] \
+  && ok "the verdict stays on its four lines despite the newline in the name" \
+  || bad "the verdict stays on its four lines" "lines=$(printf '%s\n' "$OUT" | grep -c .) out=$OUT"
+printf '%s' "$OUT" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\037\177]')" \
+  && bad "no control byte from the name may reach the output" "$OUT" \
+  || ok "no control byte from the name reaches the output"
+
+# The skip line carries a path too, and a run that measures nothing is where
+# a raw newline in one would be least visible.
+new_repo hostile_skip
+printf -- '- %s\n' "$(rep x 250)" >"$R/real.md"
+ln -s real.md "$R/$HOSTILE"
+git -C "$R" add -- "$HOSTILE"
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=*.md'
+[ "$RC" -eq 0 ] && case "$OUT" in *"not measured"*"tracked as a symlink"*) true ;; *) false ;; esac \
+  && ok "the hostile name is named as unmeasured" \
+  || bad "the hostile name is named as unmeasured" "rc=$RC out=$OUT"
+[ "$(printf '%s\n' "$OUT" | grep -c .)" -eq 2 ] \
+  && ok "the skip note and its verdict are two lines" \
+  || bad "the skip note and its verdict are two lines" "lines=$(printf '%s\n' "$OUT" | grep -c .) out=$OUT"
+printf '%s' "$OUT" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\037\177]')" \
+  && bad "no control byte from the skipped name may reach the output" "$OUT" \
+  || ok "no control byte from the skipped name reaches the output"
+
+# The same for a configured pattern, which is somebody's bytes too.
+run_ce_env "$(printf 'GROWTH_GUARDS_CHANGELOG_PATHS=no\033match.md')"
+[ "$RC" -eq 0 ] && case "$OUT" in *"no tracked file matches"*) true ;; *) false ;; esac \
+  && ok "a pattern matching nothing is still a clean pass" \
+  || bad "a pattern matching nothing is still a clean pass" "rc=$RC out=$OUT"
+[ "$(printf '%s\n' "$OUT" | grep -c .)" -eq 1 ] \
+  && ok "the nothing-matched verdict is one line" \
+  || bad "the nothing-matched verdict is one line" "out=$OUT"
+printf '%s' "$OUT" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\037\177]')" \
+  && bad "no control byte from the pattern may reach the output" "$OUT" \
+  || ok "no control byte from the pattern reaches the output"
 
 echo "=== fail-closed: an unread blob and an unmerged index are exit 2 ==="
 new_repo unreadable
