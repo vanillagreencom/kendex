@@ -119,9 +119,13 @@ Delegate to the architecture reviewer with the domain report paths, asking for c
 
 Read every report, aggregate across agents preserving attribution, and deduplicate by (location, description), keeping the first and noting all sources. `blockers[]` and `category: "fix"` suggestions are fix items; `category: "issue"` suggestions defer to § 6.2; `questions[]` are auto-answered in § 7.
 
-**Recurrence before the cap.** A finding sharing a root cause with one a prior pass already answered is dispositioned by [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence), which allows `structural-close` or `freeze` and no further patch round. Check it here, ahead of § 6.3's `iterations` cap: that cap counts rounds, and one cause recurs several times inside its budget.
+**Recurrence before the cap.** A finding sharing a root cause with one a prior pass patched is dispositioned by [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence), which allows `structural-close` or `freeze` and no further patch round. Check it here, ahead of § 6.3's `iterations` cap: that cap counts rounds, and one cause recurs several times inside its budget. Read the causes this PR has already frozen first, and disposition a finding on one of them `declined` without re-triaging it:
 
-Auto-fix every valid item — do not prompt for a selection. Skip an item only when it contradicts an active decision (cite the decision id), is too vague to act on, is out of the PR's scope (→ issue), or cannot affect real usage (decline with one line, per [SKILL.md § The Cycle](../SKILL.md#the-cycle)).
+```bash
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_comment_review.frozen_causes // []'
+```
+
+Auto-fix every valid item — do not prompt for a selection. Skip an item only when it contradicts an active decision (cite the decision id), is too vague to act on, is out of the PR's scope (→ issue), carries a root cause § Recurrence dispositions (→ RECURRENCE, never an auto-fix), or cannot affect real usage (decline with one line, per [SKILL.md § The Cycle](../SKILL.md#the-cycle)).
 
 <output_format>
 
@@ -149,6 +153,12 @@ Auto-fix every valid item — do not prompt for a selection. Skip an item only w
 |---|-------|--------|----------|-------------|--------|
 | 1 | [agent] | [bot] | [file:line] | [description] | Contradicts [DECISION_ID] |
 
+### ♻️ RECURRENCE
+
+| # | Agent | Author | Location | Root cause | Disposition |
+|---|-------|--------|----------|------------|-------------|
+| 1 | [AGENT] | [BOT_1] | [file:line] | [one line] | `structural-close` |
+
 ### 💬 QUESTIONS (auto-responding)
 
 | # | Agent | Location | Question | Draft Response |
@@ -164,9 +174,23 @@ Omit empty sections and proceed straight to § 6 — no user prompt.
 
 ## 6. Apply Fixes And Loop
 
+Every § 5 RECURRENCE row takes its branch here, and none of them is another patch round:
+
+| Disposition | Route |
+|-------------|-------|
+| `structural-close` | § 6.1 delegates one closing round whose item names the generator, not the site. Cutting surface the Done-when does not require is a close |
+| `freeze` | § 6.2 files the class issue FIRST, then § 6.1 replies `Tracked: [CLASS_ISSUE_ID]` and pushes no further fix for that cause |
+| `declined` | § 6.1 replies `Declined: [REASON]` naming the class issue, and the loop never re-triages that cause |
+
+A `freeze` records its cause before the reply, which is what makes the next pass decline instead of re-triage:
+
+```bash
+.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.frozen_causes '{"cause":"[ONE_LINE]","issue":"[CLASS_ISSUE_ID]"}'
+```
+
 ### 6.1 Delegate Fixes
 
-**Skip if** nothing is marked Fixing → § 6.2.
+**Skip if** nothing is marked Fixing and no branch above routes an item here → § 6.2.
 
 Read the round budget first. The cap governs what may be pushed, so it decides before the fix round, never after one:
 

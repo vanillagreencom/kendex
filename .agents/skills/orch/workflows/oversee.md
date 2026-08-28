@@ -59,12 +59,12 @@ handled under these rules:
   back to the contract: keep the oversized work on a branch, land the
   contract. Machinery no issue ordered — a new subsystem, scanner, or lexer —
   is cut, never reviewed into shape.
-- **End spirals.** A round whose finding shares a root cause with one
-  already answered ends the patch sequence: structural fix when it shrinks
-  the diff, else land narrow with `Tracked: [ID]` — for work the diff does
-  not arm only; a defect the diff introduces is fixed, never tracked
-  (SKILL.md § Review must converge). Bots drip-feeding one class get the
-  class exhausted in one audit pass, then dispositions without pushes.
+- **End spirals.** A round whose finding shares a root cause with one a
+  prior round patched is dispositioned by
+  [references/finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence),
+  which states the branches and their limits. Bots drip-feeding one class
+  get the class exhausted in one audit pass, then dispositions without
+  pushes.
 - **Fix the source.** The same finding class on a third PR is a mechanism
   gap: file it and route the smallest deterministic check (a guard lane, a
   preflight rule, a refusing script) or one sentence in the owning skill
