@@ -5,7 +5,7 @@ use kendex_core::manifest::{self, ManifestFile};
 
 use super::engine_common::{confirm_and_apply, print_report, print_unmanaged};
 use super::ledger::{Wrote, say_ledger, say_preview};
-use super::{CliResult, resolve_scopes, say, warn};
+use super::{CliResult, resolve_scopes, say, scope_label, warn};
 use crate::scope::ScopeFilter;
 use crate::ui;
 
@@ -55,7 +55,7 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
         match manifest::load(&path)? {
             ManifestFile::Current(_) => {}
             ManifestFile::Absent => {
-                say(&format!("{}: no manifest", scope.label()));
+                say(&format!("{}: no manifest", scope_label(&scope)));
                 continue;
             }
             ManifestFile::Legacy { .. } => return Err(CoreError::LegacyManifest { path }.into()),
@@ -68,7 +68,7 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
             ..PlanOptions::default()
         };
         let report = {
-            let _planning = ui::spinner(&format!("planning {}", scope.label()));
+            let _planning = ui::spinner(&format!("planning {}", scope_label(&scope)));
             plan_apply(env, &scope, &options)?
         };
         planned.push((scope.clone(), report));

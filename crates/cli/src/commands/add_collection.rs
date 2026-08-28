@@ -13,7 +13,7 @@ use kendex_core::source_ops::{self, SourceAction};
 use super::engine_common::{apply_report, ask_before_writing, print_report, print_safety};
 use super::ledger::{Wrote, say_ledger};
 use super::offers::Blocked;
-use super::{CliResult, say};
+use super::{CliResult, say, scope_label};
 
 pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -> CliResult {
     let collection = collections::resolve(&CurlFetch, id)?;
@@ -169,7 +169,7 @@ fn install_step(
             applied += apply_report(env, &subscribed.report)?;
             say(&format!(
                 "{}: subscribed to '{}'",
-                scope.label(),
+                scope_label(scope),
                 subscribed.name
             ));
             subscribed.name

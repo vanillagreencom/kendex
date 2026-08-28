@@ -213,6 +213,34 @@ fn a_name_off_a_foreign_tree_cannot_forge_a_line() {
     }
 }
 
+/// The place a run names is escaped too. A scope label is a path somebody
+/// chose, and a path carries whatever the filesystem allowed, so the
+/// closing line cannot hand a terminal an escape sequence to act on.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_scope_a_line_names_is_escaped_with_the_rest() {
+    for ui in ["plain", "pretty"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let project = home.join("we\u{1b}[31mird");
+        blocked_project_at(home, &project);
+        let printed = said(&kendex(
+            home,
+            &project,
+            ui,
+            &["refresh", "-y", "--scope", "project"],
+        ));
+        assert!(
+            printed.contains("we\\u{1b}[31mird"),
+            "the place was not printed as what it is ({ui}): {printed}"
+        );
+        assert!(
+            !printed.contains('\u{1b}'),
+            "a control character reached the terminal ({ui}): {printed:?}"
+        );
+    }
+}
+
 /// The verdict counts what the reader was shown. The report drops lines to
 /// fit its own budgets, so a count taken from the report behind it would
 /// name items that never reached the page.

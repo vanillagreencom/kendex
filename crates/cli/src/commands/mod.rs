@@ -49,6 +49,15 @@ pub use crate::ui::{fail, note, out, say, warn};
 
 pub type CliResult = Result<(), Box<dyn std::error::Error>>;
 
+/// A scope as a human line names it. The label is a path somebody chose,
+/// and a path carries whatever the filesystem allowed, so it is escaped
+/// here — where a foreign value enters a sentence, not where the sentence
+/// is printed. [`out`] never takes this: stdout carries the label as its
+/// own bytes, for whatever is parsing it.
+pub fn scope_label(scope: &Scope) -> String {
+    kendex_core::names::shown(&scope.label())
+}
+
 /// The scopes a filter selects on this machine: the current project (walked
 /// up from CWD, v1 rules) and/or global.
 pub fn resolve_scopes(env: &Env, filter: ScopeFilter) -> Result<Vec<Scope>, String> {

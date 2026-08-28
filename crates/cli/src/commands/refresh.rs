@@ -7,7 +7,7 @@ use super::engine_common::{
     refresh_failures,
 };
 use super::ledger::{Wrote, say_ledger};
-use super::{CliResult, resolve_scopes, say, warn};
+use super::{CliResult, resolve_scopes, say, scope_label, warn};
 use crate::scope::ScopeFilter;
 use crate::ui;
 
@@ -42,7 +42,7 @@ fn print_set_changes(
 ) {
     say(&format!(
         "{}: this changes what is installed",
-        scope.label()
+        scope_label(scope)
     ));
     for change in &report.set_changes {
         let verb = match change.direction {
@@ -92,7 +92,7 @@ pub fn run(
             // An unreachable catalog is reported, not fatal: what came from
             // every other catalog still refreshes.
             let notes = {
-                let _reading = ui::spinner(&format!("reading sources for {}", scope.label()));
+                let _reading = ui::spinner(&format!("reading sources for {}", scope_label(&scope)));
                 kendex_core::remote::sync_declared_sources(env, &manifest)
             };
             for note in notes {
@@ -105,7 +105,7 @@ pub fn run(
             ..PlanOptions::default()
         };
         let planned = {
-            let _planning = ui::spinner(&format!("planning {}", scope.label()));
+            let _planning = ui::spinner(&format!("planning {}", scope_label(&scope)));
             plan_apply(env, &scope, &options)
         };
         let report = match planned {
@@ -151,7 +151,7 @@ pub fn run(
             // failing to refresh. Collected as a failure it would come out
             // as "failed to refresh 1 item/source(s)" and exit 1, and the
             // exit code a script keys a cancel on is 130.
-            Err(error) if crate::interrupted(error.as_ref()) => return Err(error),
+            Err(error) if ui::cancelled(error.as_ref()) => return Err(error),
             Err(error) => failures.push(error.to_string()),
         }
     }

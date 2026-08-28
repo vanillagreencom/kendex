@@ -1,7 +1,7 @@
 use std::io::IsTerminal;
 
 use super::ledger::{Wrote, say_ledger};
-use super::{CliResult, note, resolve_scopes, say, warn};
+use super::{CliResult, note, resolve_scopes, say, scope_label, warn};
 use crate::scope::ScopeFilter;
 use crate::ui;
 use kendex_core::apply::Op;
@@ -30,7 +30,7 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
     let mut removed_any = false;
     for scope in resolve_scopes(env, filter)? {
         let planned = {
-            let _planning = ui::spinner(&format!("planning {}", scope.label()));
+            let _planning = ui::spinner(&format!("planning {}", scope_label(&scope)));
             match mode {
                 Removal::Disown { sweep } => {
                     ops::remove(env, &scope, &names, None, sweep.unwrap_or(false))
@@ -74,7 +74,7 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
         if matches!(mode, Removal::KeepDeclaration) {
             say(&format!(
                 "{}: kendex.toml unchanged; refresh installs what it declares again",
-                scope.label()
+                scope_label(&scope)
             ));
         }
         // A removal refuses nothing and prints no scores, so it hands

@@ -3,7 +3,7 @@ use kendex_core::env::Env;
 use kendex_core::{remote, source_ops};
 
 use super::engine_common::apply_report;
-use super::{CliResult, out, resolve_scopes, say};
+use super::{CliResult, out, resolve_scopes, say, scope_label};
 use crate::scope::ScopeFilter;
 
 #[derive(Subcommand)]
@@ -60,12 +60,15 @@ pub fn run(env: &Env, command: SourceCommand, filter: ScopeFilter) -> CliResult 
             SourceCommand::Add { name, reference } => {
                 let report = source_ops::add_source(env, &scope, name, reference)?;
                 apply_report(env, &report)?;
-                say(&format!("{}: declared source '{name}'", scope.label()));
+                say(&format!(
+                    "{}: declared source '{name}'",
+                    scope_label(&scope)
+                ));
             }
             SourceCommand::Remove { name } => {
                 let report = source_ops::remove_source(env, &scope, name)?;
                 apply_report(env, &report)?;
-                say(&format!("{}: removed source '{name}'", scope.label()));
+                say(&format!("{}: removed source '{name}'", scope_label(&scope)));
             }
             SourceCommand::Enable { name } | SourceCommand::Disable { name } => {
                 let enabled = matches!(command, SourceCommand::Enable { .. });
@@ -73,7 +76,7 @@ pub fn run(env: &Env, command: SourceCommand, filter: ScopeFilter) -> CliResult 
                 apply_report(env, &report)?;
                 say(&format!(
                     "{}: source '{name}' {}",
-                    scope.label(),
+                    scope_label(&scope),
                     if enabled { "enabled" } else { "disabled" }
                 ));
             }
@@ -93,7 +96,7 @@ pub fn run(env: &Env, command: SourceCommand, filter: ScopeFilter) -> CliResult 
                 if let Err(error) = kendex_core::drift::snapshot::record(env, &scope) {
                     say(&format!("warning: snapshot not derived ({error})"));
                 }
-                say(&format!("{}: sources refreshed", scope.label()));
+                say(&format!("{}: sources refreshed", scope_label(&scope)));
             }
         }
     }

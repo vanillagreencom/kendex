@@ -5,7 +5,7 @@ use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
 
 use super::engine_common::print_unmanaged;
-use super::{fail, resolve_scopes, say};
+use super::{fail, resolve_scopes, say, scope_label};
 use crate::scope::ScopeFilter;
 use crate::ui;
 
@@ -34,13 +34,13 @@ pub fn run(
         // is worth a line, not a failure, and the exit code answers about
         // drift alone. A scope that does have installs fails loudly.
         let audited = {
-            let _reading = ui::spinner(&format!("checking {}", scope.label()));
+            let _reading = ui::spinner(&format!("checking {}", scope_label(&scope)));
             audit(env, &scope)
         };
         let report = match (audited, lock.entries.is_empty()) {
             (Ok(report), _) => report,
             (Err(error), true) => {
-                fail(&format!("! {} not checked: {error}", scope.label()));
+                fail(&format!("! {} not checked: {error}", scope_label(&scope)));
                 continue;
             }
             (Err(error), false) => return Err(error.into()),

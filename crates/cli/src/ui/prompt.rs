@@ -69,6 +69,19 @@ pub fn ask(label: &str) -> std::io::Result<String> {
     }
 }
 
+/// Whether an error is a run its user cancelled.
+///
+/// It belongs here because this is where one is made: a plain prompt lets
+/// SIGINT kill the process and the shell reports 130 itself, while the
+/// framed one reads keys in raw mode, where Ctrl-C arrives as a byte and
+/// comes back as an interrupted read. Nothing else in the CLI produces
+/// one, so nothing else decides what one means.
+pub fn cancelled(error: &(dyn std::error::Error + 'static)) -> bool {
+    error
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|error| error.kind() == std::io::ErrorKind::Interrupted)
+}
+
 /// What counts as a yes. Everything else is a no, the empty line
 /// included: a prompt whose default is no has to read a bare Enter, an
 /// end of input, and a typo the same way.
@@ -124,5 +137,35 @@ mod tests {
         for no in ["", "\n", "n", "N", "no", "Yes", "YES", "ye", "1", "  "] {
             assert!(!answered(no), "{no:?} authorised a write");
         }
+    }
+}
+
+#[cfg(test)]
+mod cancel_tests {
+    use super::cancelled;
+
+    /// A cancel is the one failure that is not one, so nothing but the
+    /// read that makes it may be read as one: an ordinary error still has
+    /// to exit 1.
+    #[test]
+    fn only_an_interrupted_read_is_a_cancel() {
+        let stopped: Box<dyn std::error::Error> =
+            Box::new(std::io::Error::from(std::io::ErrorKind::Interrupted));
+        assert!(cancelled(stopped.as_ref()));
+
+        for other in [
+            std::io::ErrorKind::NotFound,
+            std::io::ErrorKind::PermissionDenied,
+            std::io::ErrorKind::UnexpectedEof,
+        ] {
+            let error: Box<dyn std::error::Error> = Box::new(std::io::Error::from(other));
+            assert!(!cancelled(error.as_ref()), "{other:?} read as a cancel");
+        }
+
+        let message: Box<dyn std::error::Error> = "apply cancelled".into();
+        assert!(
+            !cancelled(message.as_ref()),
+            "a message saying cancelled read as one"
+        );
     }
 }

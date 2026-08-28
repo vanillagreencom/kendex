@@ -102,7 +102,7 @@ fn read_selection(
     rows: &[HarnessId],
     detected: &[HarnessId],
 ) -> Result<Vec<HarnessId>, Box<dyn std::error::Error>> {
-    let answer = prompt("tools? ")?;
+    let answer = crate::ui::ask("tools? ")?;
     let answer = answer.trim();
     if answer.eq_ignore_ascii_case("all") {
         return Ok(rows.to_vec());
@@ -131,16 +131,10 @@ fn read_selection(
 
 fn read_method() -> Result<Method, Box<dyn std::error::Error>> {
     say("Delivery: 1) symlink — one shared copy every tool reads  2) copy — a tree each");
-    let answer = prompt("delivery? [1] ")?;
+    let answer = crate::ui::ask("delivery? [1] ")?;
     match answer.trim() {
         "" | "1" | "symlink" => Ok(Method::Symlink),
         "2" | "copy" => Ok(Method::Copy),
         other => Err(format!("'{other}' is not 1 or 2").into()),
     }
-}
-
-/// A cancel comes back as the `io::Error` it is, never as its text: main
-/// reads its kind to exit 130, and a String would hide that.
-fn prompt(label: &str) -> Result<String, Box<dyn std::error::Error>> {
-    Ok(crate::ui::ask(label)?)
 }

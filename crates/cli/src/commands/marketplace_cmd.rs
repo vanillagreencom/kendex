@@ -3,7 +3,7 @@ use kendex_core::env::Env;
 use kendex_core::source_ops;
 
 use super::engine_common::apply_report;
-use super::{CliResult, out, resolve_scopes, say};
+use super::{CliResult, out, resolve_scopes, say, scope_label};
 use crate::scope::ScopeFilter;
 
 #[derive(Subcommand)]
@@ -171,7 +171,10 @@ fn run_unsubscribe(
     if closure.items.is_empty() {
         let report = kendex_core::source_ops::remove_source(env, &scope, name)?;
         apply_report(env, &report)?;
-        say(&format!("{}: unsubscribed from '{name}'", scope.label()));
+        say(&format!(
+            "{}: unsubscribed from '{name}'",
+            scope_label(&scope)
+        ));
         return Ok(());
     }
 
@@ -207,7 +210,7 @@ fn run_unsubscribe(
     let kept = if keep_packages { "kept" } else { "removed" };
     say(&format!(
         "{}: unsubscribed from '{name}', {} {kept}",
-        scope.label(),
+        scope_label(&scope),
         closure.items.len()
     ));
     Ok(())
@@ -272,7 +275,7 @@ fn run_subscribe(
     }
     say(&format!(
         "{}: subscribed to '{}' ({})",
-        scope.label(),
+        scope_label(&scope),
         subscribed.name,
         subscribed.reference
     ));

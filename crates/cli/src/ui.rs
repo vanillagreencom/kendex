@@ -40,7 +40,7 @@ mod blocks;
 mod prompt;
 
 pub use blocks::{finish, flush, intro};
-pub use prompt::{ask, confirm, spinner};
+pub use prompt::{ask, cancelled, confirm, spinner};
 
 use std::io::{IsTerminal, Write};
 use std::sync::OnceLock;
