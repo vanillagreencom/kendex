@@ -196,9 +196,9 @@ fn hash_of(path: &Path) -> String {
 }
 
 /// Not a directory, pipe, socket or device — what `plain_tree` asked of a
-/// path before anything opened it, asked here of the handle itself. The
-/// pipe is the one that matters twice: refused, and refused without the
-/// open being able to hold the apply still.
+/// path before anything opened it, asked here of the handle itself. A
+/// socket and a directory carry the claim everywhere; the pipe carries a
+/// second claim of its own, below.
 #[test]
 fn nothing_but_a_regular_file_gets_through() {
     let (tmp, _, _) = fixture();
@@ -208,24 +208,46 @@ fn nothing_but_a_regular_file_gets_through() {
 
     let dir = tmp.path().join("a-directory");
     fs::create_dir(&dir).unwrap();
-    assert!(open(&dir, &pre).is_err(), "a directory must not open");
-
-    let pipe = tmp.path().join("a-pipe");
-    assert_eq!(
-        rustix::fs::mknodat(
-            rustix::fs::CWD,
-            &pipe,
-            rustix::fs::FileType::Fifo,
-            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
-            0,
-        )
-        .map(|()| ()),
-        Ok(())
-    );
     assert!(
-        matches!(open(&pipe, &pre), Err(CoreError::PlanStale { .. })),
-        "a pipe must be refused, and the open must not block on it"
+        matches!(open(&dir, &pre), Err(CoreError::PlanStale { .. })),
+        "a directory must not open"
     );
+
+    let socket = tmp.path().join("a-socket");
+    std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    assert!(
+        matches!(open(&socket, &pre), Err(CoreError::PlanStale { .. })),
+        "a socket must not open"
+    );
+}
+
+/// The pipe's own claim: refused, AND refused without the open being able
+/// to hold the apply still, which is what `O_NONBLOCK` on the open is for.
+///
+/// Linux only because `rustix` exposes no `mknodat` on Apple targets and
+/// there is no portable way to make a FIFO from `std`. The refusal itself
+/// is covered everywhere by the socket and the directory above; what is
+/// pinned only here is that the open does not block.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_pipe_is_refused_without_the_open_holding_the_apply() {
+    let (tmp, _, _) = fixture();
+    let pipe = tmp.path().join("a-pipe");
+    rustix::fs::mknodat(
+        rustix::fs::CWD,
+        &pipe,
+        rustix::fs::FileType::Fifo,
+        rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+        0,
+    )
+    .unwrap();
+    let pre = Pre::PlainHashIs {
+        hash: "whatever".to_owned(),
+    };
+    assert!(matches!(
+        open(&pipe, &pre),
+        Err(CoreError::PlanStale { .. })
+    ));
 }
 
 /// The cause a person is given is the one actually met. Re-plan and retry

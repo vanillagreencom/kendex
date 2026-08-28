@@ -127,6 +127,7 @@ mod tests {
     /// bytes. `HashIs` follows it and passes, so the write would land
     /// outside the place kendex was asked to manage.
     #[test]
+    #[cfg(unix)]
     fn a_link_carrying_the_same_bytes_passes_the_following_check_and_fails_the_plain_one() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("kendex.settings.toml");
