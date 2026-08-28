@@ -247,6 +247,29 @@ case "$(cat "$R/CHANGELOG.md")" in *"An untracked entry"*) bad "the untracked fr
   || bad "the untracked fragment is not deleted" "it is gone"
 rm -f "$R/changelog.d/.DS_Store" "$R/changelog.d/fixed/untracked.md"
 
+echo "=== a fragment the index carries and the disk does not is a deletion ==="
+# The release runs the collation, then tools/guard, then stages: between the
+# first two the fragments are gone from the disk and still in the index, and
+# guard's --check has to pass over exactly that state.
+reset
+fragment fixed ken-1.md '- An entry the release folds in.
+'
+git -C "$R" commit -q -m "chore: carry a fragment"
+run_collate
+[ "$RC" -eq 0 ] && ok "the collation folds the committed fragment in" \
+  || bad "the collation folds the committed fragment in" "rc=$RC out=$OUT"
+run_collate --check
+[ "$RC" -eq 0 ] && [ -z "$OUT" ] && ok "--check passes over the deletion the collation just made" \
+  || bad "--check passes over the deletion the collation just made" "rc=$RC out=$OUT"
+run_collate
+[ "$RC" -eq 2 ] && case "$OUT" in *"changelog.d/fixed/ken-1.md is in the index but not a file on disk"*) true ;; *) false ;; esac \
+  && ok "the writing mode still refuses that same missing path" \
+  || bad "the writing mode still refuses that same missing path" "rc=$RC out=$OUT"
+git -C "$R" add -A
+run_collate --check
+[ "$RC" -eq 0 ] && ok "--check is still clean once the deletion is staged" \
+  || bad "--check is still clean once the deletion is staged" "rc=$RC out=$OUT"
+
 echo "=== the write refuses a changelog.d git and the disk disagree about ==="
 # The run folds in the file on disk and then deletes it. An unstaged edit
 # would be published and erased with nothing left carrying it.

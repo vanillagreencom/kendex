@@ -120,7 +120,14 @@ while IFS= read -r -d '' rec; do
       continue
       ;;
   esac
-  [ -f "$path" ] || die "$path is in the index but not a file on disk — the collation could not run"
+  # A path the index carries and the disk does not is a deletion, staged or
+  # about to be — including the one a successful collation just made. There
+  # is no body to judge, so check mode passes over it; the writing mode needs
+  # the file it is about to fold in.
+  if [ ! -f "$path" ]; then
+    if [ "$CHECK" -eq 1 ]; then continue; fi
+    die "$path is in the index but not a file on disk — the collation could not run"
+  fi
   shape="$(fragment_shape "$path")" || die "could not read $path — the collation could not run"
   if [ -n "$shape" ]; then
     refuse "$path $shape"
