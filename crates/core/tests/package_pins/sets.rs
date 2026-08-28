@@ -8,8 +8,9 @@
 use std::fs;
 
 use kendex_core::apply;
-use kendex_core::engine::DriftState;
-use kendex_core::lock::{load as load_lock, lock_path, save as save_lock};
+use kendex_core::engine::{DriftState, audit};
+use kendex_core::error::CoreError;
+use kendex_core::lock::{LOCK_VERSION, load as load_lock, lock_path, save as save_lock};
 use kendex_core::manifest;
 use kendex_core::model::ItemKind;
 use kendex_core::package;
@@ -674,5 +675,68 @@ fn a_lock_that_records_no_set_commit_reads_the_members_instead() {
     assert!(
         !load_lock(&path).unwrap().bundles.is_empty(),
         "and the write that followed recorded it"
+    );
+}
+
+/// A lock behind the current version is rewritten on the next apply, and
+/// that is the whole migration a bump needs here: a scope holding an older
+/// record gains the new one by being applied, not by machinery that goes
+/// looking for it. The version alone has to be enough — this lock is
+/// otherwise exactly what this build writes.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_lock_behind_the_current_version_is_rewritten() {
+    let w = world();
+    write_skill(&w.upstream, "a", "", "a version one.");
+    write_skill(&w.upstream, "b", "", "b version one.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[bundles.kit]\ndescription = \"a set\"\nskills = [\"a\", \"b\"]\n",
+    )
+    .unwrap();
+    commit(&w.upstream, "one");
+    declare(&w, "[bundles.kit]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+
+    let path = lock_path(&w.env, &w.scope);
+    let mut lock = load_lock(&path).unwrap();
+    assert_eq!(
+        lock.version, LOCK_VERSION,
+        "this build writes the current version"
+    );
+    lock.version = LOCK_VERSION - 1;
+    save_lock(&path, &lock).unwrap();
+
+    let report = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+
+    assert_eq!(
+        load_lock(&path).unwrap().version,
+        LOCK_VERSION,
+        "nothing else about this lock differs, so the version is what asked for the write"
+    );
+}
+
+/// The refusal that makes the bump worth anything: a build whose format is
+/// older than the lock in front of it stops rather than reading it, so it
+/// never writes back a record with the newer evidence stripped out.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_lock_from_a_newer_format_is_refused_rather_than_read() {
+    let w = world();
+    write_skill(&w.upstream, "a", "", "a version one.");
+    commit(&w.upstream, "one");
+    declare(&w, "[skills.a]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+
+    let path = lock_path(&w.env, &w.scope);
+    let mut lock = load_lock(&path).unwrap();
+    lock.version = LOCK_VERSION + 1;
+    save_lock(&path, &lock).unwrap();
+
+    let error = load_lock(&path).unwrap_err();
+    assert!(
+        matches!(error, CoreError::SchemaTooNew { found, .. } if found == i64::from(LOCK_VERSION) + 1),
+        "{error}"
     );
 }

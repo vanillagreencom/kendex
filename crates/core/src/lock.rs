@@ -10,20 +10,24 @@ use crate::fs::{atomic_write, read_if_exists};
 use crate::manifest::Method;
 use crate::model::{HarnessId, ItemKind, Scope};
 
-/// Current lock version. Versions 1 (v0.1) through 4 still load — the
+/// Current lock version. Versions 1 (v0.1) through 5 still load — the
 /// shapes are compatible and the next lock write records the current
 /// version. A lock newer than this build refuses to load. Version 3 added
 /// `source_commit` and `rendered_hash`; version 4 added `settings-seeds`;
 /// version 5 added `left_pi_reserved_name`, a registration's matcher, and
-/// a recorded registration for hooks with a script of their own.
+/// a recorded registration for hooks with a script of their own; version
+/// 6 added `bundles`.
 /// Each bump is what stops an older build from reading the lock, dropping
 /// the newer record on its next write, and erasing evidence — of which
-/// bytes are whose, of which comment blocks seeding wrote, or of a move
-/// out of the directory pi reserved being over. That last one is why
-/// this bump is not optional: a build that dropped the record would read
-/// a finished move as unfinished, and reclaim what the person has since
-/// put under the reserved name.
-pub const LOCK_VERSION: u32 = 5;
+/// bytes are whose, of which comment blocks seeding wrote, of a move out
+/// of the directory pi reserved being over, or of where an installed set
+/// sits. Two of those are why a bump is not optional: a build that
+/// dropped the pi record would read a finished move as unfinished and
+/// reclaim what the person has since put under the reserved name, and one
+/// that dropped a set's commit would leave a set whose members have come
+/// apart placeable at nothing, so the next update of anything else takes
+/// its other members current.
+pub const LOCK_VERSION: u32 = 6;
 
 /// The lock file a project scope carries. The global lock is `lock.json`
 /// under the app's own directory ([`Env::global_lock_file`]).
