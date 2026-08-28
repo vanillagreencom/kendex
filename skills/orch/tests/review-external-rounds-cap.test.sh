@@ -3,7 +3,8 @@
 #
 # `pr_comment_review.iterations` counts the triage passes orch runs against an
 # open PR's bot review. Its bound was a literal 5 written into two workflows;
-# it is now `REVIEW_MAX_EXTERNAL_ROUNDS` (default 4), resolved through
+# it is now `REVIEW_MAX_EXTERNAL_ROUNDS` (default 4), read in § 6.1 before
+# anything is delegated and resolved through
 # `orch-env` beside `REVIEW_MAX_CYCLES`. Past the cap a finding gets a
 # disposition and no fix push — except a defect the diff itself introduces,
 # which is fixed whatever the round count, because a cap that forces a
@@ -113,7 +114,12 @@ slice() {
   '
 }
 
-cap_site() { slice "$1" '### 6.3 Re-Triage Or Exit' '^## 7[.]'; }
+cap_site() { slice "$1" '### 6.1 Delegate Fixes' '^### 6[.]2'; }
+loop_site() { slice "$1" '### 6.3 Re-Triage Or Exit' '^## 7[.]'; }
+# The cap rule itself: § 6.1 from its budget read down to the delegation setup.
+# § 6.1's reply table names every disposition form, so a check over the whole
+# section could not tell the exception's `Fixed in` from the table's.
+cap_rule() { cap_site "$1" | awk '/REVIEW_MAX_EXTERNAL_ROUNDS/ { on = 1 } /^Ensure the worktree exists/ { on = 0 } on'; }
 
 # The prose bounds in submit-pr: every iteration-cap mention that is not the
 # fenced `workflow-state increment` command — § 3.1's triage pass and § 6.1's
@@ -128,30 +134,69 @@ LITERAL_BOUND_RE='(iterations?[^A-Za-z0-9_]*(>=|<=|==|>|<)[[:space:]]*[0-9]|max[
 
 site="$(cap_site "$COMMENTS_WF")"
 if grep -q -F "$SETTING" <<<"$site"; then
-  ok "review-pr-comments § 6.3 names $SETTING"
+  ok "review-pr-comments § 6.1 names $SETTING"
 else
-  bad "review-pr-comments § 6.3 does not name $SETTING"
+  bad "review-pr-comments § 6.1 does not name $SETTING"
 fi
 if grep -q -F 'orch-env' <<<"$site"; then
-  ok "§ 6.3 resolves the cap through orch-env"
+  ok "§ 6.1 resolves the cap through orch-env"
 else
-  bad "§ 6.3 does not resolve the cap through orch-env"
+  bad "§ 6.1 does not resolve the cap through orch-env"
 fi
 if grep -qE "$LITERAL_BOUND_RE" <<<"$site"; then
-  bad "§ 6.3 still carries a literal bound on iterations" "$(grep -nE "$LITERAL_BOUND_RE" <<<"$site")"
+  bad "§ 6.1 still carries a literal bound on iterations" "$(grep -nE "$LITERAL_BOUND_RE" <<<"$site")"
 else
-  ok "§ 6.3 carries no literal bound on iterations"
+  ok "§ 6.1 carries no literal bound on iterations"
+fi
+
+# The cap governs what may be PUSHED, so it has to decide before the round is
+# delegated. Read after the delegation, re-entering at the cap pushes one more
+# fix round and the findings that arrive after it get no disposition at all.
+# Line number of the first line holding a fixed substring, or 0.
+first_line() { awk -v s="$1" 'index($0, s) && !n { n = NR } END { print n + 0 }'; }
+cap_at="$(first_line "$SETTING" <<<"$site")"
+del_at="$(first_line '<delegation_format>' <<<"$site")"
+if [[ "$cap_at" -gt 0 ]] && [[ "$del_at" -gt 0 ]] && [[ "$cap_at" -lt "$del_at" ]]; then
+  ok "§ 6.1 reads the cap before it delegates (cap=$cap_at delegation=$del_at)"
+else
+  bad "§ 6.1 delegates before reading the cap" "cap=$cap_at delegation=$del_at"
 fi
 
 # The exception is what keeps the cap from shipping a defect the diff created.
 # Its tokens are the three reply forms: drop the exception and `Fixed in`
 # leaves the section, so the cap reads as disposition-only.
-if grep -q -F 'Fixed in' <<<"$site" \
-   && grep -q -F 'Declined:' <<<"$site" \
-   && grep -q -F 'Tracked:' <<<"$site"; then
-  ok "§ 6.3 states all three post-cap dispositions, Fixed in included"
+rule="$(cap_rule "$COMMENTS_WF")"
+if grep -q -F 'Fixed in' <<<"$rule" \
+   && grep -q -F 'Declined:' <<<"$rule" \
+   && grep -q -F 'Tracked:' <<<"$rule"; then
+  ok "the cap rule states all three post-cap dispositions, Fixed in included"
 else
-  bad "§ 6.3 lost a post-cap disposition form"
+  bad "the cap rule lost a post-cap disposition form" "$rule"
+fi
+
+# § 6.3 counts the round and decides the loop. Re-applying the cap there is
+# what let the at-cap path exit before the late-thread fetch below it.
+loop="$(loop_site "$COMMENTS_WF")"
+if grep -q -F "$SETTING" <<<"$loop"; then
+  bad "§ 6.3 re-applies the cap instead of leaving it to § 6.1"
+else
+  ok "§ 6.3 leaves the cap to § 6.1"
+fi
+if grep -q -F 'pr-threads' <<<"$loop"; then
+  ok "§ 6.3 fetches late threads on every path out of the round"
+else
+  bad "§ 6.3 lost the late-thread fetch"
+fi
+
+# One counter, one writer. Two callers incrementing it spends two units per
+# round and the documented budget is half what it says.
+writers="$(grep -rc -F 'increment [ISSUE_ID] pr_comment_review.iterations' "$SKILL_DIR"/workflows/*.md | grep -v ':0$' || true)"
+count="$(grep -r -F -l 'increment [ISSUE_ID] pr_comment_review.iterations' "$SKILL_DIR"/workflows/*.md | wc -l | tr -d ' ')"
+total="$(grep -r -F -c 'increment [ISSUE_ID] pr_comment_review.iterations' "$SKILL_DIR"/workflows/*.md | awk -F: '{ n += $2 } END { print n + 0 }')"
+if [[ "$total" -eq 1 ]] && [[ "$count" -eq 1 ]] && [[ "$writers" == *review-pr-comments.md* ]]; then
+  ok "pr_comment_review.iterations has exactly one writer, in review-pr-comments"
+else
+  bad "pr_comment_review.iterations has $total writer(s) across $count file(s)" "$writers"
 fi
 
 bound="$(submit_bound "$SUBMIT_WF")"
@@ -208,26 +253,26 @@ CTRL="$TMP_ROOT/comments-literal.md"
 if ! plant "$CTRL" "$COMMENTS_WF" "s/at or past \`$SETTING\`/>= 5/"; then
   bad "literal-bound control planted nothing — its sed program matched no text"
 elif grep -qE "$LITERAL_BOUND_RE" <<<"$(cap_site "$CTRL")"; then
-  ok "the check flags § 6.3 comparing iterations against a literal"
+  ok "the check flags § 6.1 comparing iterations against a literal"
 else
-  bad "the check MISSED § 6.3 comparing iterations against a literal"
+  bad "the check MISSED § 6.1 comparing iterations against a literal"
 fi
 
 CTRL="$TMP_ROOT/comments-exception.md"
 if ! plant "$CTRL" "$COMMENTS_WF" '/^\*\*The one exception\.\*\*/d'; then
   bad "exception control planted nothing — its sed program matched no text"
-elif grep -q -F 'Fixed in' <<<"$(cap_site "$CTRL")"; then
-  bad "the check MISSED a cap site that dropped the introduced-defect exception"
+elif grep -q -F 'Fixed in' <<<"$(cap_rule "$CTRL")"; then
+  bad "the check MISSED a cap rule that dropped the introduced-defect exception"
 else
-  ok "the check flags a cap site that dropped the introduced-defect exception"
+  ok "the check flags a cap rule that dropped the introduced-defect exception"
 fi
 
 # The evasion of leaving the rule in place but commenting it out, anchored on
 # the heading rather than on any sentence.
 CTRL="$TMP_ROOT/comments-inert.md"
 awk '
-  /^### 6\.3 Re-Triage Or Exit/ && !opened { print "<!--"; opened = 1 }
-  /^## 7\. Replies And Final Summary/ && opened && !closed { print "-->"; closed = 1 }
+  /^### 6\.1 Delegate Fixes/ && !opened { print "<!--"; opened = 1 }
+  /^### 6\.2 Create Issues/ && opened && !closed { print "-->"; closed = 1 }
   { print }
 ' "$COMMENTS_WF" > "$CTRL"
 if ! grep -qF '<!--' "$CTRL"; then
@@ -256,6 +301,21 @@ elif grep -q -F "$SETTING" <<<"$(submit_bound "$CTRL")"; then
   bad "the check MISSED submit-pr bounding the counter on another setting"
 else
   ok "the check flags submit-pr bounding the counter on another setting"
+fi
+
+# A second caller incrementing the counter: the round costs two units and the
+# documented four-round budget is really two.
+CTRL_DIR="$TMP_ROOT/workflows"
+mkdir -p "$CTRL_DIR"
+cp "$SKILL_DIR"/workflows/*.md "$CTRL_DIR/"
+printf '%s\n' '.agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] pr_comment_review.iterations' >> "$CTRL_DIR/submit-pr.md"
+ctrl_total="$(grep -r -F -c 'increment [ISSUE_ID] pr_comment_review.iterations' "$CTRL_DIR"/*.md | awk -F: '{ n += $2 } END { print n + 0 }')"
+if [[ "$ctrl_total" -eq 1 ]]; then
+  bad "second-writer control planted nothing — the count did not move"
+elif [[ "$ctrl_total" -eq 2 ]]; then
+  ok "the check flags a second writer of the iteration counter"
+else
+  bad "the check MISSED a second writer of the iteration counter" "total=$ctrl_total"
 fi
 
 CTRL="$TMP_ROOT/disposition.md"

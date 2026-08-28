@@ -142,9 +142,8 @@ Route the findings per the `review-finding` schema. No blockers and no `category
 ```bash
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.skipped '{"description":"[DESC]","reason":"[REASON]"}'
 ```
-```bash
-.agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] pr_comment_review.iterations
-```
+
+The nested workflow already counted its own pass: `pr_comment_review.iterations` has exactly one writer, review-pr-comments § 6.3. Record the results here and leave the counter alone.
 
 Do not wait for a bot re-review round — late comments are caught by the § 4 gate, the § 6.1 gate-3 check, or queue-wait's late-findings guard (merge-pr § 5, verdict `dequeued`).
 
@@ -214,7 +213,7 @@ For `off` also record the legacy field the gate-4 check reads, then skip the wai
    .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_approval.reviewer_down true
    ```
 
-   **Triage pass**, bounded by `pr_comment_review.iterations` against `orch-env REVIEW_MAX_EXTERNAL_ROUNDS 4` — the same cap review-pr-comments § 6.3 applies, read the same way — at which point present the remaining feedback and ask `Triage again` | `Force merge` | `Stop here`: `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 4 step 1` with managed context.
+   **Triage pass**, bounded by `pr_comment_review.iterations` against `orch-env REVIEW_MAX_EXTERNAL_ROUNDS 4` — the same cap review-pr-comments § 6.1 applies, read the same way — at which point present the remaining feedback and ask `Triage again` | `Force merge` | `Stop here`: `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 4 step 1` with managed context.
 
    **On `timeout`**: `Keep waiting` restarts step 1; `Force merge` records the override and continues to step 2 with the § 6.1 gates still applying; `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
 

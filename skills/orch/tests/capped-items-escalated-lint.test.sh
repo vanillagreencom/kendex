@@ -189,6 +189,23 @@ else
   fail "§ 7 lost the named-bucket exclusion that retains a re-found QA item"
 fi
 
+# --- 11: § 7's own exit records a re-found item ------------------------------
+# § 7 runs no cap check, so its convergence exit is the only place a QA
+# blocker the fix did not hold gets recorded. Two consecutive re-checks
+# surfacing no NEW blocker routes to § 8, and a blocker re-reported every
+# round is not new: without the write it leaves the loop live with its stale
+# `fixed_items` entry standing, and § 8 reports it as fixed.
+s7_exit() { section_7 "$1" | awk '/Before that exit routes/ { on = 1 } on && /^#/ { on = 0 } on'; }
+EXIT7="$(s7_exit "$REVIEW_PR_WF")"
+if [[ -n "$EXIT7" ]] \
+   && grep -q -F 'escalated_items' <<<"$EXIT7" \
+   && grep -q -F 'fixed_items' <<<"$EXIT7" \
+   && grep -q -F 'qa-review' <<<"$EXIT7"; then
+  pass "§ 7's convergence exit records re-found items before § 8"
+else
+  fail "§ 7's convergence exit lost its escalate-and-supersede write"
+fi
+
 # --- planted controls: prove each check can fail ----------------------------
 echo
 echo "--- planted controls ---"
@@ -355,13 +372,23 @@ else
 fi
 
 # § 7's retaining rule reverted to the blanket exclusion.
-QA_REVERT='s/, and excluding a .fixed_items. entry only when this round.s QA artifact does not report it again//; s/A re-found item is retained on purpose[^.]*[.] //'
+QA_REVERT='s/, and excluding a .fixed_items. entry only when this round.s QA artifact does not report it again//; s/A re-found item is retained on purpose[^.]*[.] //; s/Before that exit routes to § 8[^.]*[.] //'
 if ! plant_pr qa "$QA_REVERT"; then
   fail "qa control planted nothing — its sed program matched no text"
 elif s7_has "$CTRL" 'fixed_items'; then
   fail "lint MISSED § 7 reverting to the blanket fixed-or-escalated exclusion"
 else
   pass "lint flags § 7 reverting to the blanket fixed-or-escalated exclusion"
+fi
+
+# § 7's exit reverted to routing straight to § 8, which is the shape that let
+# a re-reported blocker leave the loop reported as fixed.
+if ! plant_pr s7exit 's/Before that exit routes to § 8[^.]*[.] //'; then
+  fail "§ 7 exit control planted nothing — its sed program matched no text"
+elif [[ -n "$(s7_exit "$CTRL")" ]]; then
+  fail "lint MISSED a § 7 exit that records nothing before § 8"
+else
+  pass "lint flags a § 7 exit that records nothing before § 8"
 fi
 
 SCRATCH_SCHEMA="$TMP_ROOT/schema.md"

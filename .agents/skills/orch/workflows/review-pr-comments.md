@@ -166,6 +166,19 @@ Omit empty sections and proceed straight to § 6 — no user prompt.
 
 **Skip if** nothing is marked Fixing → § 6.2.
 
+Read the round budget first. The cap governs what may be pushed, so it decides before the fix round, never after one:
+
+```bash
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{iterations: (.pr_comment_review.iterations // 0)}'
+```
+```bash
+.agents/skills/orch/scripts/orch-env REVIEW_MAX_EXTERNAL_ROUNDS 4
+```
+
+`iterations` at or past `REVIEW_MAX_EXTERNAL_ROUNDS` ends the fix rounds on this PR. Nothing is delegated and nothing is pushed: every item marked Fixing takes a disposition here instead — `Declined: [REASON]`, or `Tracked: [ISSUE_ID]` for one that clears § 6.2's filing bar, the issue created there first — replied and resolved through the reply table below, then → § 6.2.
+
+**The one exception.** A defect this diff itself introduces or arms is fixed whatever the round count — a cap that forces a disposition onto a defect the change created ships the defect. Delegate exactly those items through the rest of this section, push that fix, and reply `Fixed in [SHA]`. Every other item still takes its disposition.
+
 Ensure the worktree exists (`worktree exists`/`worktree path`, creating with `--pr [PR_NUMBER]` when missing), group the items by `agent`, then stamp the round per group as separate tool calls immediately before delegating, arming the watchdog per [SKILL.md § Round Closure](../SKILL.md#round-closure):
 
 ```bash
@@ -258,27 +271,22 @@ Inline `--body` only for plain strings; a reply containing backticks or fences g
 
 ### 6.3 Re-Triage Or Exit
 
-After pushing, do **not** wait for bots to re-review. Check once for comments that arrived while fixes were being applied, then loop or exit.
+This section counts the round and decides whether to loop; the cap is § 6.1's and is not re-applied here. Do **not** wait for bots to re-review — check once for comments that arrived while fixes were being applied, then loop or exit.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] pr_comment_review.iterations
 ```
+
+This is the only writer of `pr_comment_review.iterations` in any workflow: one triage pass advances it by exactly one, and a caller that runs this workflow records its results without touching the counter.
+
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{iterations: .pr_comment_review.iterations, known: (.pr_review_baseline.last_threads // [])}'
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{known: (.pr_review_baseline.last_threads // [])}'
 ```
-```bash
-.agents/skills/orch/scripts/orch-env REVIEW_MAX_EXTERNAL_ROUNDS 4
-```
-
-`iterations` at or past `REVIEW_MAX_EXTERNAL_ROUNDS` → § 7, and the external round budget is spent: every later finding on this PR gets a disposition and no fix push. Reply `Declined: [REASON]` or `Tracked: [ISSUE_ID]` per [references/finding-disposition.md](../references/finding-disposition.md), never a further round of fixes.
-
-**The one exception.** A defect this diff itself introduces or arms is fixed, whatever the round count — a cap that forces a disposition onto a defect the change created ships the defect. Fix it, reply `Fixed in [SHA]`, and push; the cap still bars a fix push for anything else.
-
 ```bash
 .agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved
 ```
 
-A thread is new when its `threads[].id` is not in `known`. No new threads → § 7. Otherwise update the baseline and loop to § 1:
+A thread is new when its `threads[].id` is not in `known`. No new threads → § 7. Otherwise update the baseline and loop to § 1 — past the cap that next pass dispositions instead of pushing, which is § 6.1's decision, not a reason to skip the threads:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_review_baseline '{"last_threads":[UNRESOLVED_THREAD_IDS]}'
