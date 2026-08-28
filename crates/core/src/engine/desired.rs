@@ -156,7 +156,7 @@ pub struct DesiredState {
     /// itself, strictly, and needs to tell a skill that ships nothing
     /// apart from one nothing could be read for. Project scope only — a
     /// global install seeds nothing.
-    pub settings_templates: BTreeMap<String, crate::settings_view::TemplateSource>,
+    pub settings_templates: BTreeMap<String, crate::settings_template::TemplateSource>,
     /// What each source an item names resolved to. One resolution per
     /// source per pass: resolving a remote reads its checkout to confirm
     /// nothing has altered it, which is worth doing once and wasteful to
@@ -254,7 +254,7 @@ fn compute(
             // every way of not getting there lands on one answer rather
             // than on silence.
             if kind == ItemKind::Skill {
-                crate::settings_view::out_of_reach(scope, name, &mut state.settings_templates);
+                super::settings_scan::out_of_reach(scope, name, &mut state.settings_templates);
             }
             let Some((root, provenance, source_commit)) =
                 resolve_source(env, scope, name, decl, manifest, &mut state)?

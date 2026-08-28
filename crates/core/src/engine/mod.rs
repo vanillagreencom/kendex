@@ -42,6 +42,8 @@ mod planned;
 pub mod posture;
 mod removal;
 mod scope_writes;
+mod settings_scan;
+pub use settings_scan::settings_templates;
 mod scoring;
 mod set_change;
 mod stale;

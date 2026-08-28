@@ -38,6 +38,21 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::settings_seed::SETTINGS_TEMPLATE;
 
+/// Where a skill's template stands for one scope: the bytes it ships, that
+/// it ships none, or why nothing there could read one. Whether there is a
+/// template to read is a different question from what one says, and only a
+/// scope pass can answer it — [`crate::engine::settings_templates`] does,
+/// and [`crate::settings_view`] reads the answer through this.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TemplateSource {
+    /// The template's bytes, as the skill's source ships them.
+    Text(String),
+    /// The skill ships no `kendex.settings.toml.example`.
+    Absent,
+    /// Nothing there could read one, and why.
+    Unreadable(String),
+}
+
 /// A defect at a place in the template, with what to do about it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]

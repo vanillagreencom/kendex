@@ -13,8 +13,12 @@
 //! Global scope has no settings file at all, and says so as an answer
 //! rather than an empty list, so a reader's "does this place have
 //! settings" resolves to false instead of staying unasked.
-
-use std::collections::BTreeMap;
+//!
+//! Which skills are installed here, and which of them ship a template, is
+//! the closure's answer and comes through the engine's one entry point
+//! for it ([`crate::engine::settings_templates`]). Everything after that —
+//! parsing a template strictly, and saying where the consumer's file
+//! stands on each key — is this module's, and none of it is planning.
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -22,24 +26,9 @@ use specta::Type;
 use crate::base::Base;
 use crate::env::Env;
 use crate::error::Result;
-use crate::lock::{Lock, LockFile, lock_path};
-use crate::manifest::{self, ManifestFile};
 use crate::model::Scope;
-use crate::settings_file::{Current, current_of, sites};
-use crate::settings_template::{TemplateFinding, read};
-
-/// What a scope pass found where a skill's settings template would be.
-/// Carried on the desired state so the strict reading happens once, here,
-/// and never in the planning path.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TemplateSource {
-    /// The template's bytes, as the skill's source ships them.
-    Text(String),
-    /// The skill ships no `kendex.settings.toml.example`.
-    Absent,
-    /// Nothing here could read one, and why.
-    Unreadable(String),
-}
+use crate::settings_file::{Current, Site, current_of, sites};
+use crate::settings_template::{TemplateFinding, TemplateSource, read};
 
 /// One skill's settings, in whichever of the four states it is in.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -112,46 +101,21 @@ pub fn scope_settings(env: &Env, scope: &Scope) -> Result<ScopeSettings> {
         });
     };
     let current = crate::fs::read_if_exists(&crate::settings_seed::settings_file_path(root))?;
-    let base = current.as_deref().map_or_else(Base::absent, Base::of);
-    let empty = ScopeSettings {
-        applies: true,
-        skills: Vec::new(),
-        base: base.clone(),
-    };
-    // A place whose files this build reads but will not write declares
-    // nothing it could act on — the same posture `plan_apply` takes.
-    let ManifestFile::Current(manifest) = manifest::load(&manifest::manifest_path(env, scope))?
-    else {
-        return Ok(empty);
-    };
-    let lock = match crate::lock::load_file(&lock_path(env, scope))? {
-        LockFile::Current(lock) => lock,
-        // A place that has never installed still declares skills, and
-        // what they declare is what this view is for — the same reading
-        // `plan_apply` gives an absent lock.
-        LockFile::Absent => Lock {
-            version: crate::lock::LOCK_VERSION,
-            ..Lock::default()
-        },
-        LockFile::Legacy { .. } => return Ok(empty),
-    };
-    let state = crate::engine::desired::desired_state(env, scope, &manifest, &lock, false)?;
     let sites = current.as_deref().map(sites).unwrap_or_default();
     Ok(ScopeSettings {
         applies: true,
-        skills: state
-            .settings_templates
-            .iter()
+        skills: crate::engine::settings_templates(env, scope)?
+            .into_iter()
             .map(|(skill, source)| SkillSettings {
-                skill: skill.clone(),
-                template: template_of(source, &sites),
+                template: template_of(&source, &sites),
+                skill,
             })
             .collect(),
-        base,
+        base: current.as_deref().map_or_else(Base::absent, Base::of),
     })
 }
 
-fn template_of(source: &TemplateSource, sites: &[crate::settings_file::Site]) -> SkillTemplate {
+fn template_of(source: &TemplateSource, sites: &[Site]) -> SkillTemplate {
     let text = match source {
         TemplateSource::Absent => return SkillTemplate::NoTemplate,
         TemplateSource::Unreadable(reason) => {
@@ -178,42 +142,6 @@ fn template_of(source: &TemplateSource, sites: &[crate::settings_file::Site]) ->
                 default: entry.value,
             })
             .collect(),
-    }
-}
-
-/// What a plan records for a skill it has not reached yet: every declared
-/// skill starts out of reach, and the pass overwrites this the moment it
-/// can say better. A skill still carrying it is one whose source never
-/// resolved, whose item the source no longer has, or that a hostile
-/// catalog read refused.
-pub(crate) fn out_of_reach(
-    scope: &Scope,
-    name: &str,
-    templates: &mut BTreeMap<String, TemplateSource>,
-) {
-    if matches!(scope, Scope::Project { .. }) {
-        templates.insert(
-            name.to_owned(),
-            TemplateSource::Unreadable(
-                "nothing here could read this skill's source, so what it declares is unknown"
-                    .to_owned(),
-            ),
-        );
-    }
-}
-
-/// Why this skill seeds nothing even though its source read fine.
-pub(crate) fn seeds_nothing(
-    scope: &Scope,
-    name: &str,
-    reason: &str,
-    templates: &mut BTreeMap<String, TemplateSource>,
-) {
-    if matches!(scope, Scope::Project { .. }) {
-        templates.insert(
-            name.to_owned(),
-            TemplateSource::Unreadable(reason.to_owned()),
-        );
     }
 }
 

@@ -108,7 +108,7 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
     let method = ctx.decl.method.unwrap_or(ctx.manifest.install.method);
     let groups = surface_groups(ctx, method);
     if groups.is_empty() {
-        crate::settings_view::seeds_nothing(
+        super::settings_scan::seeds_nothing(
             ctx.scope,
             ctx.name,
             "no tool here holds a skill, so nothing it declares is seeded",
@@ -122,7 +122,7 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
     if matches!(ctx.scope, Scope::Project { .. }) {
         match enabled {
             true => seed_settings_env(ctx, state)?,
-            false => crate::settings_view::seeds_nothing(
+            false => super::settings_scan::seeds_nothing(
                 ctx.scope,
                 ctx.name,
                 "this skill is switched off here, so nothing it declares is seeded",
@@ -231,9 +231,9 @@ fn seed_settings_env(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()> {
                     owner: ctx.name.to_owned(),
                 });
             }
-            crate::settings_view::TemplateSource::Text(text)
+            crate::settings_template::TemplateSource::Text(text)
         }
-        None => crate::settings_view::TemplateSource::Absent,
+        None => crate::settings_template::TemplateSource::Absent,
     };
     state.settings_templates.insert(ctx.name.to_owned(), source);
     Ok(())
