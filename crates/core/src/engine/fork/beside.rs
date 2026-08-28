@@ -4,7 +4,10 @@
 //! source's content under the name it always had, the edits under the name
 //! the user chose.
 
-use super::{Capture, capture, capture_ops, edited_rendering, provenance, vacant_name};
+use super::{
+    Capture, capture, capture_ops, carries_name, edited_rendering, named_bytes, provenance,
+    vacant_name,
+};
 use crate::apply::{Op, Plan, PlannedOp, Pre};
 use crate::engine::ops::manifest_for_mutation;
 use crate::env::Env;
@@ -89,35 +92,21 @@ pub fn fork_beside(
     })
 }
 
-/// The captured bytes answering to `new_name`. A tool knows a skill or an
-/// agent by the name its frontmatter gives, and discovery treats a
-/// directory and its frontmatter disagreeing as a finding — so a copy under
-/// a new name says that name, or it would shadow the original it sits
-/// beside. A frontmatter without a name gets one, exactly as rendering
-/// would give it one; bytes whose name no single scalar can carry refuse
-/// the fork rather than land a copy that still answers to the old one.
+/// The captured bytes answering to `new_name` — [`named_bytes`] over the
+/// files that carry the name. A copy under a new name says that name, or
+/// it would shadow the original it sits beside: discovery treats a
+/// directory and its frontmatter disagreeing as a finding.
 fn named(captured: Capture, new_name: &str) -> Result<Capture> {
-    let rename = |bytes: Vec<u8>| -> Result<Vec<u8>> {
-        let refused = |problem: String| CoreError::ForkNameUnusable {
-            name: crate::names::shown(new_name),
-            problem,
-        };
-        let text =
-            std::str::from_utf8(&bytes).map_err(|_| refused("the file is not text".to_owned()))?;
-        crate::render::skill::with_name(text, new_name)
-            .map(String::into_bytes)
-            .map_err(|problem| refused(problem.to_string()))
-    };
     Ok(match captured {
         Capture::Tree(files) => Capture::Tree(
             files
                 .into_iter()
-                .map(|(rel, bytes)| match rel.to_str() {
-                    Some("SKILL.md") => rename(bytes).map(|bytes| (rel, bytes)),
-                    _ => Ok((rel, bytes)),
+                .map(|(rel, bytes)| match carries_name(&rel) {
+                    true => named_bytes(bytes, new_name).map(|bytes| (rel, bytes)),
+                    false => Ok((rel, bytes)),
                 })
                 .collect::<Result<Vec<_>>>()?,
         ),
-        Capture::File(bytes) => Capture::File(rename(bytes)?),
+        Capture::File(bytes) => Capture::File(named_bytes(bytes, new_name)?),
     })
 }

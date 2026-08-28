@@ -208,6 +208,37 @@ fn capture(kind: ItemKind, edited: &std::path::Path) -> Result<Capture> {
     })
 }
 
+/// The files of a skill's tree that carry the name the item answers to:
+/// SKILL.md under either spelling, because a switched-off installation
+/// keeps its content under the `.disabled` name and that is the same
+/// claim on the same name. An agent's source is one file, so the file
+/// itself is the one — no list to consult.
+const SKILL_NAME_FILES: [&str; 2] = ["SKILL.md", "SKILL.md.disabled"];
+
+fn carries_name(rel: &std::path::Path) -> bool {
+    rel.to_str()
+        .is_some_and(|rel| SKILL_NAME_FILES.contains(&rel))
+}
+
+/// The bytes answering to `name`. A tool knows a skill or an agent by the
+/// name its frontmatter gives, and the loader validators refuse a
+/// rendering whose file calls it something other than the name it
+/// installs under — so a copy landing under a new name says that name.
+/// A frontmatter without a name gets one, exactly as rendering would give
+/// it one; bytes whose name no single scalar can carry refuse the whole
+/// operation rather than land a copy that still answers to the old name.
+fn named_bytes(bytes: Vec<u8>, name: &str) -> Result<Vec<u8>> {
+    let refused = |problem: String| CoreError::ForkNameUnusable {
+        name: crate::names::shown(name),
+        problem,
+    };
+    let text =
+        std::str::from_utf8(&bytes).map_err(|_| refused("the file is not text".to_owned()))?;
+    crate::render::skill::with_name(text, name)
+        .map(String::into_bytes)
+        .map_err(|problem| refused(problem.to_string()))
+}
+
 /// The local source's path for an item of this kind under `name`.
 fn local_item(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> PathBuf {
     let local_root = local_source_root(env, scope);

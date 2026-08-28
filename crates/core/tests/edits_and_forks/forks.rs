@@ -118,11 +118,110 @@ fn rename_fork_moves_the_declaration_and_refuses_depended_on_names() {
     assert!(text.contains("[skills.my-gh]"), "{text}");
     assert!(text.contains("[forks.skill.my-gh]"));
     assert!(!text.contains("[skills.gh]"));
+    let source = w.home.join("app/.kendex-local/skills/my-gh/SKILL.md");
+    assert!(source.is_file());
+
+    // The rename is not done when the files have moved: every tool knows
+    // a skill by the name its SKILL.md gives, so a fork still calling
+    // itself `gh` installs as a name nobody declared and the loader
+    // validators refuse the rendering outright.
+    let moved = fs::read_to_string(&source).unwrap();
+    assert!(moved.contains("name: my-gh"), "{moved}");
     assert!(
-        w.home
-            .join("app/.kendex-local/skills/my-gh/SKILL.md")
-            .is_file()
+        moved.contains("Mine."),
+        "the rename took the fork's own text"
     );
+
+    let report = audit(&w.env, &w.scope).unwrap();
+    assert!(
+        !report
+            .drift
+            .iter()
+            .any(|row| row.name == "my-gh" && row.state == DriftState::Conflict),
+        "the renamed fork is refused at the next apply: {:?}",
+        report.drift
+    );
+    apply::execute(&w.env, &report.plan, None).unwrap();
+    let installed = fs::read_to_string(w.home.join("app/.agents/skills/my-gh/SKILL.md")).unwrap();
+    assert!(installed.contains("name: my-gh"), "{installed}");
+}
+
+/// The same for an agent, whose source is one file rather than a tree:
+/// Claude and Gemini register an agent under its frontmatter name and
+/// their validators refuse a file calling itself something other than the
+/// name it installs under, exactly as a skill's does.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn renaming_an_agent_fork_leaves_it_answering_to_its_new_name() {
+    let w = world();
+    write_agent(&w.upstream, "rev", "Review.");
+    commit(&w.upstream, "one");
+    declare(&w, "[agents.rev]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+
+    let rendered = w.home.join("app/.claude/agents/rev.md");
+    fs::write(
+        &rendered,
+        "---\nname: rev\ndescription: mine\n---\nMy review.\n",
+    )
+    .unwrap();
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    let report = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+
+    let plan = fork::rename_fork(&w.env, &w.scope, ItemKind::Agent, "rev", "my-rev").unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    let source = fs::read_to_string(w.home.join("app/.kendex-local/agents/my-rev.md")).unwrap();
+    assert!(source.contains("name: my-rev"), "{source}");
+    assert!(source.contains("My review."), "{source}");
+
+    let report = audit(&w.env, &w.scope).unwrap();
+    assert!(
+        !report
+            .drift
+            .iter()
+            .any(|row| row.name == "my-rev" && row.state == DriftState::Conflict),
+        "the renamed agent fork is refused at the next apply: {:?}",
+        report.drift
+    );
+    apply::execute(&w.env, &report.plan, None).unwrap();
+    let installed = fs::read_to_string(w.home.join("app/.claude/agents/my-rev.md")).unwrap();
+    assert!(installed.contains("name: my-rev"), "{installed}");
+}
+
+/// A fork whose own file cannot carry a name refuses the rename instead of
+/// half-doing it: renaming around the problem is exactly how a fork ends
+/// up declared under one name and answering to another.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fork_whose_file_cannot_carry_the_name_refuses_the_rename() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    commit(&w.upstream, "one");
+    declare(&w, "[skills.gh]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    fs::write(
+        skill_file(&w),
+        "---\nname: gh\ndescription: mine\n---\nMine.\n",
+    )
+    .unwrap();
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+
+    let source = w.home.join("app/.kendex-local/skills/gh/SKILL.md");
+    fs::write(&source, "---\nname: gh\nname: gh\n---\nMine.\n").unwrap();
+    let refused = fork::rename_fork(&w.env, &w.scope, ItemKind::Skill, "gh", "my-gh").unwrap_err();
+    assert!(
+        matches!(refused, CoreError::ForkNameUnusable { .. }),
+        "{refused:?}"
+    );
+    assert!(
+        !w.home.join("app/.kendex-local/skills/my-gh").exists(),
+        "a refused rename must write nothing"
+    );
+    let text = fs::read_to_string(manifest::manifest_path(&w.env, &w.scope)).unwrap();
+    assert!(text.contains("[skills.gh]"), "{text}");
 }
 
 /// The rename plan binds to the fork's files as they were when it was
