@@ -7,12 +7,16 @@
 # are not settings: keep GH_TOKEN and friends in `.env.local`. Full
 # reference: github README.md.
 
-# Bot login the sticky-verdict commands target. Empty = review-bot[bot].
+# Bot login the sticky-verdict commands target. Empty means unconfigured:
+# the sticky-comment search still prefers review-bot[bot], but accepts a
+# review summary from any known review-bot login when that one posted none.
+# A value pins the login and turns that fallback off.
 GH_BOT_USERNAME = ""
 
-# Regex extracting the issue id from a branch name. Empty leaves each
-# caller its own default, which differ: the github scripts match Linear-style
-# ids, orch also matches issue-N. Set it only for a shape neither covers.
+# Regex extracting the issue id from a branch name. Empty leaves each reader
+# its own default, and they differ: `pr-issue` and `open-terminal` match
+# [A-Z]+-[0-9]+, `git-context` also matches issue-N. A value here replaces
+# all three, so set one only for a shape none of them covers.
 GH_ISSUE_PATTERN = ""
 
 # Build/test command `pr-cross-check --verify` runs. Empty falls back to a

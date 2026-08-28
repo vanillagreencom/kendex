@@ -10,7 +10,7 @@
 # falling back to `main`.
 WORKTREE_DEFAULT_BRANCH = ""
 
-# Where worktrees live; empty = <parent-of-checkout>/.worktrees/<name>.
+# Where worktrees live; empty = <parent-of-checkout>/.worktrees/<checkout-name>.
 # Never point it inside the repo root — watched build outputs exhaust
 # inotify.
 # WORKTREE_BASE_DIR = "~/dev/.worktrees/myproject"

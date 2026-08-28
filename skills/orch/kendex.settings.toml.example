@@ -10,6 +10,11 @@
 # flag wins where both are set.
 ORCH_STATE_DIR = "tmp"
 
+# Path to the worktree CLI `open-terminal` drives. Empty resolves the
+# installed worktree skill's `scripts/worktree`; a value that is not
+# executable stops the launch with that path named.
+WORKTREE_CLI = ""
+
 # Reviewer merge gate: "approval" needs a GitHub approval; "review" needs a
 # non-author review of the current head plus zero unresolved threads (for
 # bots that comment but never approve); "off" only where no reviewer exists.

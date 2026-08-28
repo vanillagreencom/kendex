@@ -19,5 +19,5 @@ LINEAR_TEAM_PREFIX = "PROJ"
 # such an issue is invisible to agent routing. Empty = guard off.
 LINEAR_AGENT_LABELS = ""
 
-# Default output format for every read command: safe, table, ids, raw.
+# Default output format for read commands: safe, table, ids, raw.
 LINEAR_FORMAT = "safe"
