@@ -82,6 +82,17 @@ pub(super) fn vacant_name(
     {
         return Err(collision("this scope's installed items"));
     }
+    // An agent answers to its name in the manifest's own tables as well as
+    // in its declaration. A name already carrying configuration someone
+    // wrote is not free: the copy's own configuration is written under it,
+    // and merging the two would invent a policy nobody asked for.
+    if kind == ItemKind::Agent
+        && let Some(table) = crate::engine::agent_carry::configured_as(manifest, new)
+    {
+        return Err(unusable(format!(
+            "this scope already configures an agent under that name in [{table}] — pick another name, or clear that entry first"
+        )));
+    }
     let slot = local_item(env, scope, kind, new);
     if fs::symlink_metadata(&slot).is_ok() || crate::names::folding_sibling(&slot).is_some() {
         return Err(collision("this scope's local source"));

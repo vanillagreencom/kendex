@@ -76,7 +76,7 @@ lives in one capability table read by core and UI.
    takes a chosen name, `name:` rewritten to match, leaving the original on its
    source. An agent's bytes come from its published file at the installed
    commit, with the catalog's tables and the person's own overrides; a
-   rendering restricting tools further is refused. The new name is proven free
+   rendering restricting it further is refused. The new name is proven free
    before the first durable write — no declaration, lock entry, folding
    neighbour, or occupied render destination — and a namespaced one neither
    nests inside a local package nor reaches its slot through a link.

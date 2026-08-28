@@ -75,7 +75,17 @@ fn deny_line(text: &str, key: &str) -> String {
 }
 
 fn banners(text: &str) -> usize {
-    text.lines().filter(|line| line.trim() == BANNER).count()
+    times(text, BANNER)
+}
+
+/// How many lines are exactly `line`. Every generated section is asserted
+/// by count rather than presence: a section the capture kept and the next
+/// render wrote again is present either way, so `contains` cannot tell a
+/// carried configuration from a duplicated one.
+fn times(text: &str, line: &str) -> usize {
+    text.lines()
+        .filter(|written| written.trim() == line)
+        .count()
 }
 
 /// Claude states denies in `disallowedTools:`, a key the source form has
@@ -253,9 +263,14 @@ fn renaming_an_agent_fork_carries_its_denies_and_instructions() {
     );
     assert!(text.contains("Read the brief first."), "{text}");
     let recorded = manifest_text(&w);
-    assert!(recorded.contains("my-rev = "), "{recorded}");
     assert!(
-        !recorded.contains("\nrev = "),
+        recorded.contains("[agent-frontmatter.claude.my-rev]")
+            && recorded.contains("my-rev = \"Read the brief first.\""),
+        "the settings and the instructions both move: {recorded}"
+    );
+    assert!(
+        !recorded.contains("[agent-frontmatter.claude.rev]")
+            && !recorded.contains("\nrev = \"Read the brief first.\""),
         "nothing stays keyed to a name no item answers to: {recorded}"
     );
 }
@@ -425,5 +440,305 @@ fn a_settings_edit_rides_into_the_manifest_and_a_description_edit_does_not() {
     assert!(
         settled.contains("description: \"agent rev\""),
         "a description edit has no override field and comes back from the publisher: {settled}"
+    );
+}
+
+/// A hook scoped to one agent by name reaches the copy only if its
+/// selector says so, and after a rename it points at a name nothing
+/// answers to. Either way an agent-scoped PreToolUse restriction quietly
+/// stops applying, which is this issue's own defect in the one table the
+/// first round did not move.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_agent_scoped_hook_reaches_the_copy_and_follows_a_rename() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "[[custom-hooks]]\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./guard.sh\"\nagents = \"rev\"\n",
+    );
+    let guarded = |name: &str| {
+        fs::read_to_string(rendered(&w, HarnessId::Claude, name))
+            .unwrap()
+            .contains("./guard.sh")
+    };
+    assert!(
+        guarded("rev"),
+        "the hook reaches the original to begin with"
+    );
+    edit_body(&rendered(&w, HarnessId::Claude, "rev"));
+
+    let plan = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Agent,
+        "rev",
+        HarnessId::Claude,
+        "rev-mine",
+        None,
+    )
+    .unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+    assert!(
+        guarded("rev-mine"),
+        "the copy must not escape the hook the agent it came from runs under"
+    );
+    assert!(guarded("rev"), "and the original keeps it");
+
+    let plan =
+        fork::rename_fork(&w.env, &w.scope, ItemKind::Agent, "rev-mine", "rev-ours").unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+    assert!(guarded("rev-ours"), "the hook follows the rename");
+    let recorded = manifest_text(&w);
+    assert!(
+        !recorded.contains("rev-mine"),
+        "nothing stays selected by a name no agent answers to: {recorded}"
+    );
+}
+
+/// Forking a skill beside its source must not touch an agent's settings.
+/// The manifest keys agents and skills in separate tables but one shared
+/// namespace of names, so an unguarded rekey copies the settings of an
+/// agent that merely shares the skill's name.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn forking_a_skill_beside_leaves_a_same_named_agents_settings_alone() {
+    let w = world();
+    write_skill(&w.upstream, "rev", "Upstream skill.");
+    let agents = w.upstream.join("agents");
+    fs::create_dir_all(&agents).unwrap();
+    fs::write(
+        agents.join("rev.md"),
+        "---\nname: rev\ndescription: agent rev\n---\nAgent body.\n",
+    )
+    .unwrap();
+    commit(&w.upstream, "one");
+    declare(
+        &w,
+        "[skills.rev]\nsource = \"cat\"\n\n[agents.rev]\nsource = \"cat\"\n\n[agent-frontmatter.claude]\nrev = { deny-tools = [\"Bash\"] }\n",
+    );
+    sync_and_apply(&w);
+    fs::write(
+        w.home.join("app/.agents/skills/rev/SKILL.md"),
+        "---\nname: rev\ndescription: mine\n---\nMy skill.\n",
+    )
+    .unwrap();
+
+    let plan = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Skill,
+        "rev",
+        HarnessId::Claude,
+        "rev-mine",
+        None,
+    )
+    .unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+
+    let recorded = manifest_text(&w);
+    assert!(
+        !recorded.contains("agent-frontmatter.claude.rev-mine"),
+        "a skill fork must not copy an agent's settings onto its new name: {recorded}"
+    );
+}
+
+/// A name already carrying an agent's settings is not free for a copy to
+/// land on. Writing the copy's own settings under it would replace what
+/// the person wrote, and merging the two would invent a policy nobody
+/// asked for, so the fork refuses the way it refuses every other thing it
+/// cannot carry.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn forking_beside_refuses_a_name_that_already_carries_settings() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "[agent-frontmatter.claude]\nrev-mine = { deny-tools = [\"Bash\"] }\n",
+    );
+    edit_body(&rendered(&w, HarnessId::Claude, "rev"));
+
+    let refused = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Agent,
+        "rev",
+        HarnessId::Claude,
+        "rev-mine",
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(refused, CoreError::ForkNameUnusable { .. }),
+        "{refused:?}"
+    );
+    assert!(
+        refused.to_string().contains("agent-frontmatter"),
+        "the refusal names where the settings are: {refused}"
+    );
+    assert!(!captured(&w, "rev-mine").exists(), "nothing was written");
+}
+
+/// The generated sections are written again by the next render out of the
+/// manifest entries this fork carries, so prose that kept a copy of them
+/// renders twice. The banner was the first of these; the instructions and
+/// the skills prose are the rest.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_generated_sections_are_written_once_after_a_fork() {
+    let w = world();
+    write_skill(&w.upstream, "recon", "Recon.");
+    let agents = w.upstream.join("agents");
+    fs::create_dir_all(&agents).unwrap();
+    fs::write(
+        agents.join("rev.md"),
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+    )
+    .unwrap();
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[agent-skills]\nrev = [\"recon\"]\n",
+    )
+    .unwrap();
+    commit(&w.upstream, "one");
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        format!(
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"gemini\"]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\n\n[skills.recon]\nsource = \"cat\"\n\n[agent-launch-instructions]\nrev = \"Read the brief first.\"\n\n[agent-additional-instructions]\nrev = \"Say what you changed.\"\n"
+        ),
+    )
+    .unwrap();
+    sync_and_apply(&w);
+    let file = rendered(&w, HarnessId::Gemini, "rev");
+    let before = fs::read_to_string(&file).unwrap();
+    assert_eq!(times(&before, "## Required Skills"), 1, "{before}");
+    edit_body(&file);
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    for section in [
+        "## Launch Instructions",
+        "## Additional Instructions",
+        "## Required Skills",
+    ] {
+        assert_eq!(
+            times(&source, section),
+            0,
+            "the captured prose must not carry {section}, which the render writes: {source}"
+        );
+    }
+    assert!(source.contains("My body."), "{source}");
+
+    // The instruction sections are keyed by the agent's name, so the fork
+    // still renders both and each must appear exactly once. A skills
+    // section is not asserted here: a local agent's skill list is filtered
+    // to its own source, so a catalog skill leaves the rendering after any
+    // fork for reasons older than this change.
+    let text = fs::read_to_string(&file).unwrap();
+    for section in ["## Launch Instructions", "## Additional Instructions"] {
+        assert_eq!(times(&text, section), 1, "{section} rendered twice: {text}");
+    }
+    assert_eq!(banners(&text), 1, "{text}");
+    assert_eq!(times(&text, "My body."), 1, "{text}");
+}
+
+/// Deleting a rendered key is an edit in the restrictive direction, and
+/// the fork must not answer it by putting the publisher's value back. An
+/// override states what a value is and never that there is none, so only
+/// an effort can be cleared; everything else refuses, naming what was
+/// deleted.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_deleted_setting_is_carried_where_it_can_be_and_refused_where_it_cannot() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\nmodel: sonnet\neffort: high\ncolor: blue\n---\nUpstream body.\n",
+        "",
+        "",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    let rendering = fs::read_to_string(&file).unwrap();
+    assert!(rendering.contains("effort: high") && rendering.contains("color: blue"));
+
+    // An effort can be cleared: every renderer reads `none` as no effort.
+    let without_effort: String = rendering
+        .lines()
+        .filter(|line| !line.starts_with("effort:"))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    fs::write(&file, &without_effort).unwrap();
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+    let settled = fs::read_to_string(&file).unwrap();
+    assert!(
+        !settled.lines().any(|line| line.starts_with("effort:")),
+        "a cleared effort must not come back: {settled}"
+    );
+
+    // A colour cannot: nothing in the override table says there is none.
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\ncolor: blue\n---\nUpstream body.\n",
+        "",
+        "",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    let rendering = fs::read_to_string(&file).unwrap();
+    let without_color: String = rendering
+        .lines()
+        .filter(|line| !line.starts_with("color:"))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    fs::write(&file, &without_color).unwrap();
+    let refused =
+        fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap_err();
+    assert!(
+        matches!(refused, CoreError::ForkWidensAccess { .. }),
+        "{refused:?}"
+    );
+    assert!(
+        refused.to_string().contains("deleted") && refused.to_string().contains("color"),
+        "the refusal names the deleted setting: {refused}"
+    );
+    assert!(!captured(&w, "rev").exists(), "nothing was written");
+}
+
+/// The capture takes the person's prose byte for byte. An indented code
+/// block on the first line is content, not padding, and trimming it would
+/// render the block as ordinary prose.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_indented_first_line_keeps_its_indentation() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    fs::write(
+        &file,
+        text.replace("Upstream body.", "    cargo run --release"),
+    )
+    .unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    assert!(
+        source.contains("\n    cargo run --release"),
+        "the code block lost its indentation: {source:?}"
     );
 }

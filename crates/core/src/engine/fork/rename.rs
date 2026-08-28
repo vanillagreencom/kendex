@@ -95,12 +95,11 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
     {
         forks.insert(new.to_owned(), provenance);
     }
-    // The tables an agent answers to by name go with it. Nothing reads the
-    // old name after this, so leaving them there would render the fork
-    // without the project's tool denies and without its instructions.
-    if kind == ItemKind::Agent {
-        rekey_agent_tables(&mut manifest, old, new, OldName::Gone);
-    }
+    // An agent's configuration goes with it. Nothing reads the old name
+    // after this, so leaving it behind would render the fork without the
+    // project's tool denies, without its instructions, and outside its own
+    // hooks.
+    rekey_agent_tables(&mut manifest, kind, old, new, OldName::Gone);
     let manifest_path = manifest::manifest_path(env, scope);
     ops.push(PlannedOp {
         description: format!("record the rename to {new} in kendex.toml"),

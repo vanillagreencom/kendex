@@ -73,12 +73,12 @@ pub fn fork_beside(
     let files = named(captured.files, new_name)?;
     let mut ops = capture_ops(env, scope, kind, new_name, &edited, files)?;
     let provenance = provenance(env, scope, kind, name, harness, &manifest, &decl)?;
-    // Every manifest table an agent answers to is keyed by its installed
-    // name, so a copy under a new one reads none of them: it would render
-    // without the project's tool denies and without its instructions. The
-    // original keeps its own — it stays declared from its source and goes
-    // on rendering under the name it always had.
-    rekey_agent_tables(&mut manifest, name, new_name, OldName::Kept);
+    // An agent's configuration is keyed by its installed name, so a copy
+    // under a new one reads none of it: it would render without the
+    // project's tool denies, without its instructions, and outside its own
+    // hooks. The original keeps its own — it stays declared from its source
+    // and goes on rendering under the name it always had.
+    rekey_agent_tables(&mut manifest, kind, name, new_name, OldName::Kept);
     if let Some(carry) = captured.carry {
         carry.apply(&mut manifest, new_name);
     }

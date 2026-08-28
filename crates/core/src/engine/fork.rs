@@ -20,6 +20,7 @@ mod beside;
 mod forkable;
 mod rename;
 mod skill_tree;
+mod stated;
 mod vacant;
 use agent::capture_agent;
 pub use beside::fork_beside;
