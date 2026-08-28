@@ -4,16 +4,37 @@
 //! told apart by asking the server; when the network is away the cached
 //! identity is served as the offline state instead of nothing.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use serde::{Deserialize, Serialize};
 
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::registry::client::{self, server_message};
+use crate::registry::client::{self, server_message, sign_in_changed};
 use crate::registry::credentials::{Credential, CredentialStore};
 use crate::registry::generation::GenerationFile;
 use crate::registry::{Fetch, base_url};
 
 const CACHE_FILE: &str = "me.cache.json";
+
+/// How many sign-ins and sign-outs this process has committed. Paired
+/// with the credential itself it tells a replaced sign-in from a rotated
+/// one: the tokens change either way, but only a sign-in or a sign-out
+/// moves this count. Nothing is published through the counter — it is
+/// compared for inequality alone, and the credential it stands beside is
+/// read from the store — so coherence on the single location is all the
+/// comparison needs and no ordering here is load-bearing.
+static SIGN_IN_CHANGES: AtomicU64 = AtomicU64::new(0);
+
+fn sign_in_changes() -> u64 {
+    SIGN_IN_CHANGES.load(Ordering::Relaxed)
+}
+
+/// Advanced before a sign-in or sign-out touches the store, so no
+/// credential change slips in under a read that already took the count.
+fn sign_in_changing() {
+    SIGN_IN_CHANGES.fetch_add(1, Ordering::Relaxed);
+}
 
 /// Who the credential belongs to, as the identity endpoint answers it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -53,11 +74,14 @@ struct WireMe {
 /// dropped; an unreachable or misbehaving server serves the cached
 /// identity as `Offline`, and errors only with nothing cached to serve. A
 /// credential gone by the time the answer lands is `SignedOut` too, and
-/// nothing is written back over the sign-out.
+/// nothing is written back over the sign-out; an answer that outlived the
+/// credential it was issued for is refused as retryable rather than
+/// cached under the replacement.
 pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result<AccountState> {
-    if store.load()?.is_none() {
+    let Some(issued_under) = store.load()? else {
         return Ok(AccountState::SignedOut);
-    }
+    };
+    let changes_before = sign_in_changes();
     let cache = cache(env);
     let cached = cache.read(parse);
     let etag = cached
@@ -82,8 +106,17 @@ pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result
     // A sign-out that landed while this read was in flight already forgot
     // the cache; settling now would write the identity straight back. The
     // module's rule throughout: a missing credential means logout won.
-    if store.load()?.is_none() {
+    let Some(installed) = store.load()? else {
         return Ok(AccountState::SignedOut);
+    };
+    // Existence is not identity: a sign-out followed by a sign-in leaves
+    // a credential here too, and this answer belongs to neither of them.
+    // A different token family under an unmoved count is `with_access`
+    // rotating this same sign-in, which leaves the answer good.
+    let replaced = sign_in_changes() != changes_before
+        && installed.refresh_token != issued_under.refresh_token;
+    if replaced {
+        return Err(sign_in_changed("reading your account"));
     }
     let loaded = cache.settle(cached, fetched, parse, |response| {
         CoreError::RegistryUnavailable {
@@ -101,12 +134,14 @@ pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result
 }
 
 /// Commit a fresh sign-in and drop the previous account's cached
-/// identity, so the new credential never pairs with the old name.
+/// identity, so the new credential never pairs with the old name. A read
+/// still in flight is invalidated here rather than allowed to settle.
 pub fn commit_sign_in(
     env: &Env,
     store: &dyn CredentialStore,
     credential: &Credential,
 ) -> Result<()> {
+    sign_in_changing();
     cache(env).forget()?;
     client::commit_login(store, credential)
 }
@@ -115,6 +150,7 @@ pub fn commit_sign_in(
 /// every surface calls. When revocation fails the credential is kept for
 /// retry, and so is the cache. Returns false when already signed out.
 pub fn sign_out(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result<bool> {
+    sign_in_changing();
     let was_signed_in = client::logout(fetch, store)?;
     cache(env).forget()?;
     Ok(was_signed_in)

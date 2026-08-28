@@ -139,7 +139,7 @@ fn rejected_access() -> CoreError {
     }
 }
 
-fn sign_in_changed(action: &str) -> CoreError {
+pub(super) fn sign_in_changed(action: &str) -> CoreError {
     CoreError::RegistryUnavailable {
         why: format!("the sign-in changed while {action}; retry the request"),
     }

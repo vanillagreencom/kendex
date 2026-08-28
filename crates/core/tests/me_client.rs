@@ -5,7 +5,7 @@
 //! a byte copy of kendex-web's
 //! `contracts/api/v1/me.json` — drift between the repos is a `cmp` away.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::Path;
 
 use kendex_core::env::{Env, FakeOs};
@@ -141,6 +141,75 @@ impl CredentialStore for VanishingStore {
     }
     fn refresh_guard(&self) -> Result<Box<dyn CredentialRefreshGuard + '_>> {
         Ok(Box::new(MemoryGuard))
+    }
+}
+
+/// A transport that lets the sign-out — and, when one is given, the
+/// sign-in that follows it — land while the identity request is still
+/// outstanding. That is the only moment the race is reachable inside one
+/// process: the request hangs on the curl cap while the user signs out
+/// and completes a device flow as somebody else.
+struct RacingFetch<'a> {
+    env: &'a Env,
+    store: &'a MemoryStore,
+    signs_in_as: Option<Credential>,
+    answer: RefCell<Option<Result<FetchResponse>>>,
+    raced: Cell<bool>,
+}
+
+impl<'a> RacingFetch<'a> {
+    fn new(
+        env: &'a Env,
+        store: &'a MemoryStore,
+        signs_in_as: Option<Credential>,
+        answer: Result<FetchResponse>,
+    ) -> RacingFetch<'a> {
+        RacingFetch {
+            env,
+            store,
+            signs_in_as,
+            answer: RefCell::new(Some(answer)),
+            raced: Cell::new(false),
+        }
+    }
+}
+
+impl Fetch for RacingFetch<'_> {
+    fn get_auth(
+        &self,
+        _url: &str,
+        _if_none_match: Option<&str>,
+        _bearer: Option<&str>,
+    ) -> Result<FetchResponse> {
+        if !self.raced.replace(true) {
+            let revoke = Canned::new(vec![ok(200, None, "{}")]);
+            me::sign_out(self.env, &revoke, self.store).expect("sign out mid-read");
+            if let Some(next) = &self.signs_in_as {
+                me::commit_sign_in(self.env, self.store, next).expect("sign in mid-read");
+            }
+        }
+        self.answer
+            .borrow_mut()
+            .take()
+            .expect("the read asked twice")
+    }
+
+    fn post_json_auth(
+        &self,
+        _url: &str,
+        _body: &str,
+        _bearer: Option<&str>,
+    ) -> Result<FetchResponse> {
+        panic!("the identity read posts nothing")
+    }
+}
+
+fn other_account() -> Credential {
+    Credential {
+        endpoint: "https://kendex.ai".to_owned(),
+        access_token: "kxa_other".to_owned(),
+        refresh_token: "kxr_other".to_owned(),
+        capabilities: vec![],
     }
 }
 
@@ -527,5 +596,96 @@ fn an_oversized_identity_cache_reads_as_no_cache() {
     assert!(
         me::load(&env, &down, &MemoryStore::signed_in()).is_err(),
         "a cache past the cap is never read, however well-formed"
+    );
+}
+
+#[test]
+fn a_read_settling_under_a_replacement_credential_is_discarded() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = env_in(dir.path());
+    let store = MemoryStore::signed_in();
+    // Ada's read is in flight when she signs out and somebody else signs
+    // in. A credential is installed again by the time it settles, so
+    // existence alone would wave this answer through.
+    let racing = RacingFetch::new(
+        &env,
+        &store,
+        Some(other_account()),
+        ok(200, None, &fixture_body(&["success", "body"])),
+    );
+    let refused = me::load(&env, &racing, &store).expect_err("a stale identity must be refused");
+    assert!(
+        matches!(refused, CoreError::RegistryUnavailable { .. }),
+        "a replaced credential is a retryable read, not an account state: got {refused:?}"
+    );
+    assert_eq!(
+        store
+            .load()
+            .expect("load")
+            .expect("credential")
+            .access_token,
+        "kxa_other",
+        "the replacement stays installed; only the answer is dropped"
+    );
+    assert!(
+        !env.registry_cache_dir().join("me.cache.json").exists(),
+        "the previous account's identity must not be cached under its successor"
+    );
+}
+
+#[test]
+fn a_read_settling_after_a_plain_sign_out_stays_signed_out() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = env_in(dir.path());
+    let store = MemoryStore::signed_in();
+    let racing = RacingFetch::new(
+        &env,
+        &store,
+        None,
+        ok(200, None, &fixture_body(&["success", "body"])),
+    );
+    assert_eq!(
+        me::load(&env, &racing, &store).expect("load"),
+        AccountState::SignedOut,
+        "a removed credential is signed out, not a refused read"
+    );
+    assert!(
+        !env.registry_cache_dir().join("me.cache.json").exists(),
+        "a read finishing after sign-out must leave no identity on disk"
+    );
+}
+
+#[test]
+fn a_rotation_mid_read_still_settles_the_answer() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = env_in(dir.path());
+    let store = MemoryStore::signed_in();
+    // Refreshing replaces both tokens without changing who is signed in,
+    // so the answer this read comes back with is still that account's.
+    let fetch = Canned::new(vec![
+        ok(401, None, r#"{"error":"invalid_token"}"#),
+        ok(
+            200,
+            None,
+            r#"{"access_token":"kxa_new","refresh_token":"kxr_new","capabilities":[]}"#,
+        ),
+        ok(200, None, &fixture_body(&["success", "body"])),
+    ]);
+    match me::load(&env, &fetch, &store).expect("load") {
+        AccountState::SignedIn { identity } => assert_eq!(identity.name, "Ada Lovelace"),
+        other => panic!("a rotated sign-in is the same sign-in, got {other:?}"),
+    }
+    assert_eq!(
+        store
+            .load()
+            .expect("load")
+            .expect("credential")
+            .refresh_token,
+        "kxr_new",
+        "the rotation is what makes this the case it is"
+    );
+    assert!(
+        env.registry_cache_dir().join("me.cache.json").exists(),
+        "a rotated read caches its identity like any other"
     );
 }
