@@ -11,7 +11,12 @@
 #   * a branch with no merged PR is KEPT and named as unmerged;
 #   * a lookup that cannot answer — gh failing, gh missing — keeps the worktree
 #     and names that too, because an unanswered lookup is not a merge;
-#   * gh's stderr chatter never becomes part of the answer;
+#   * gh's stderr chatter never becomes part of the answer, and chatter on
+#     stdout is an unreadable answer rather than a row that did not match;
+#   * a worktree cleanup can prove nothing about — detached HEAD, or a branch
+#     whose ref is gone from the main checkout — is named, never passed over;
+#   * `remove` distinguishes a lookup that could not answer from a branch
+#     proven unmerged, because one is a retry and the other is a decision;
 #   * a branch whose tip is NOT the head the pull request merged is kept, with
 #     its follow-up commits and uncommitted files intact. One branch name serves
 #     every worktree an issue ever had, so matching on the name alone handed an
@@ -68,6 +73,7 @@ assert_path_absent() {
 #
 # GH_FAIL=1 makes the query fail the way a network or auth error does.
 # GH_STDERR_NOISE=1 prints gh's routine chatter on stderr beside a good answer.
+# GH_NOISE=1 puts that chatter on STDOUT, where it contaminates the answer.
 make_gh_stub() {
   local bin="$1"
   mkdir -p "$bin"
@@ -80,6 +86,9 @@ if [[ "${GH_FAIL:-0}" == "1" ]]; then
 fi
 if [[ "${GH_STDERR_NOISE:-0}" == "1" ]]; then
   echo "A new release of gh is available: 2.40.0 -> 2.63.2" >&2
+fi
+if [[ "${GH_NOISE:-0}" == "1" ]]; then
+  echo "A new release of gh is available: 2.40.0 -> 2.63.2"
 fi
 branch=""
 prev=""
@@ -198,6 +207,25 @@ else
   pass "a failed lookup collects nothing"
 fi
 
+echo "=== an unreadable answer keeps the worktree ==="
+
+# gh chatter on STDOUT lands in the answer itself. Nothing in a response this
+# cannot parse may authorize a delete, so an unreadable row is exit 2, the same
+# arm as a failed query — never a row that simply did not match.
+noise_out_code=0
+noise_out_out=$(cd "$ROOT/main" && GH_NOISE=1 "$WORKTREE_SCRIPT" cleanup 2>"$ROOT/noiseout.err") || noise_out_code=$?
+noise_out_err="$(cat "$ROOT/noiseout.err")"
+
+assert_eq "$noise_out_code" "0" "an unreadable answer is a kept worktree, not a cleanup error"
+assert_path_exists "$OPEN_TREE" "an unreadable answer never removes the worktree"
+assert_contains "$noise_out_err" "gh returned a row this cannot read" \
+  "cleanup names the row it could not read"
+if grep -qF "Cleaned:" <<<"$noise_out_out"; then
+  fail "an unreadable answer collects nothing"
+else
+  pass "an unreadable answer collects nothing"
+fi
+
 echo "=== a missing gh keeps the worktree ==="
 
 # A PATH holding every tool the script reaches for EXCEPT gh. Dropping the real
@@ -229,6 +257,44 @@ if grep -qF "Cleaned:" <<<"$nogh_out"; then
   fail "a missing gh collects nothing"
 else
   pass "a missing gh collects nothing"
+fi
+
+echo "=== a worktree with no branch to prove is named, not passed over ==="
+
+# Detached HEAD is reachable in this tool: a paused restack replay leaves the
+# worktree that way (worktree_restack_replay.sh). The arm exists so the help's
+# "every skip is reported" holds for a worktree cleanup can prove nothing about.
+git -C "$OPEN_TREE" checkout -q --detach
+det_code=0
+det_out=$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" cleanup 2>"$ROOT/detached.err") || det_code=$?
+det_err="$(cat "$ROOT/detached.err")"
+
+assert_eq "$det_code" "0" "cleanup exits 0 with a detached worktree present"
+assert_path_exists "$OPEN_TREE" "the detached worktree survives"
+assert_contains "$det_err" "no branch checked out" "cleanup names the detached HEAD as the reason"
+assert_contains "$det_err" "$OPEN_TREE" "the detached skip names the path"
+if grep -qF "Cleaned:" <<<"$det_out"; then
+  fail "a detached worktree is collected by nothing"
+else
+  pass "a detached worktree is collected by nothing"
+fi
+
+echo "=== a worktree whose branch ref is gone is named too ==="
+
+git -C "$OPEN_TREE" checkout -q issue-open
+git -C "$ROOT/main" update-ref -d refs/heads/issue-open
+noref_code=0
+noref_out=$(cd "$ROOT/main" && "$WORKTREE_SCRIPT" cleanup 2>"$ROOT/noref.err") || noref_code=$?
+noref_err="$(cat "$ROOT/noref.err")"
+
+assert_eq "$noref_code" "0" "cleanup exits 0 with a ref-less worktree present"
+assert_path_exists "$OPEN_TREE" "the ref-less worktree survives"
+assert_contains "$noref_err" "has no ref in the main checkout" \
+  "cleanup names the missing branch ref as the reason"
+if grep -qF "Cleaned:" <<<"$noref_out"; then
+  fail "a ref-less worktree is collected by nothing"
+else
+  pass "a ref-less worktree is collected by nothing"
 fi
 
 echo "=== gh chatter on stderr does not disable the proof ==="
@@ -291,6 +357,8 @@ moved_err="$(cat "$MOVED_ROOT/moved.err")"
 assert_eq "$moved_code" "0" "cleanup exits 0 with a moved-on branch present"
 assert_path_exists "$MOVED_TREE" "the worktree with work past the merge survives"
 assert_path_exists "$MOVED_TREE/scratch.txt" "the uncommitted file survives"
+assert_contains "$moved_err" "is not merged" \
+  "an identity mismatch reads as not merged, not as a failed lookup"
 assert_contains "$moved_err" "carries work past its merged pull request" \
   "cleanup names the moved-on branch as the reason it kept the worktree"
 if grep -qF "Cleaned:" <<<"$moved_out"; then
@@ -352,7 +420,7 @@ keep_err="$(cat "$RM_ROOT/keep.err")"
 
 assert_eq "$keep_code" "1" "remove still exits nonzero when the branch is not merged"
 assert_contains "$keep_err" "Remaining branch: issue-keep" "remove names the branch it kept"
-assert_contains "$keep_err" "No merged pull request for 'issue-keep'" \
+assert_contains "$keep_err" "Not merged by pull request either" \
   "remove says the pull-request proof failed too"
 if git -C "$RM_ROOT/main" show-ref --verify --quiet refs/heads/issue-keep; then
   pass "remove leaves the unmerged branch alone"
@@ -360,6 +428,32 @@ else
   fail "remove leaves the unmerged branch alone"
 fi
 : "${keep_out:=}"
+
+echo "=== remove tells an unanswered lookup apart from a proven-unmerged branch ==="
+
+# The operator has to be able to act on the difference: a branch that is not
+# merged is a decision, a lookup that could not run is a retry.
+add_branch_tree "$RM_ROOT" "issue-down"
+squash_onto_main "$RM_ROOT" "issue-down"
+down_code=0
+down_out=$(cd "$RM_ROOT/main" && GH_FAIL=1 \
+  "$WORKTREE_SCRIPT" remove "$RM_ROOT/trees/issue-down" 2>"$RM_ROOT/down.err") || down_code=$?
+down_err="$(cat "$RM_ROOT/down.err")"
+
+assert_eq "$down_code" "1" "remove exits nonzero when the lookup could not answer"
+assert_contains "$down_err" "Merged-pull-request lookup could not answer" \
+  "remove says the lookup could not answer rather than calling the branch unmerged"
+if grep -qF "Not merged by pull request either" <<<"$down_err"; then
+  fail "an unanswered lookup is not reported as a proven-unmerged branch"
+else
+  pass "an unanswered lookup is not reported as a proven-unmerged branch"
+fi
+if git -C "$RM_ROOT/main" show-ref --verify --quiet refs/heads/issue-down; then
+  pass "remove keeps the branch when the lookup could not answer"
+else
+  fail "remove keeps the branch when the lookup could not answer"
+fi
+: "${down_out:=}"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

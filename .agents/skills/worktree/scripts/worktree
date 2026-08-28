@@ -2881,11 +2881,13 @@ open_pr_for_branch() {
 # be the exact commit some merged PR carried, and `--base` keeps the answer to
 # PRs that landed on the default branch.
 #
-# Exit 0: merged, PR number on stdout. Exit 1: no merged PR for the branch at
-# all. Exit 3: a merged PR exists but the tip is not its head — the branch has
-# moved on and its extra commits are unmerged work. Exit 2: the lookup could
-# not answer. 1, 2 and 3 all print a one-line reason on stdout and are
-# deliberately distinct from each other; only exit 0 may authorize a delete.
+# Exit 0: merged, PR number on stdout. Exit 1: provably NOT merged, either
+# because no merged PR carries the name or because none of the ones that do has
+# this tip as its head — an identity mismatch is a definite answer, so it reads
+# as unmerged rather than as a failed lookup. Exit 2 stays reserved for a lookup
+# that genuinely cannot answer: gh missing, gh failing, a response this cannot
+# read. 1 and 2 print a one-line reason on stdout; only exit 0 authorizes a
+# delete.
 merged_pr_for_branch() {
   local branch="$1" tip="" rows="" err_file="" detail="" oid="" number="" seen="" rc=0
   [[ -n "$branch" ]] || { printf 'no branch to look up\n'; return 2; }
@@ -2917,23 +2919,27 @@ merged_pr_for_branch() {
   fi
   rm -f "$err_file"
   if [[ -z "$rows" ]]; then
-    printf 'no merged pull request on %s for this branch name\n' "$DEFAULT_BRANCH"
+    printf 'no pull request merged into %s carries this branch name\n' "$DEFAULT_BRANCH"
     return 1
   fi
+  # EVERY row must be a commit id and a number before any of them is believed.
+  # A row that is neither is contamination on the answer stream, and reading
+  # past it would mean deciding a delete from a response nobody could parse.
   while read -r oid number; do
-    [[ -n "$oid" ]] || continue
-    seen="$seen #$number"
-    [[ "$oid" == "$tip" ]] || continue
-    if ! [[ "$number" =~ ^[0-9]+$ ]]; then
-      printf 'gh returned an unreadable pull-request number: %s\n' "$number"
+    [[ -n "$oid$number" ]] || continue
+    if ! [[ "$oid" =~ ^[0-9a-f]{7,64}$ ]] || ! [[ "$number" =~ ^[0-9]+$ ]]; then
+      printf 'gh returned a row this cannot read: %s %s\n' "$oid" "$number"
       return 2
     fi
-    printf '%s\n' "$number"
-    return 0
+    seen="$seen #$number"
+    if [[ "$oid" == "$tip" ]]; then
+      printf '%s\n' "$number"
+      return 0
+    fi
   done <<<"$rows"
-  printf 'tip %s is the head of no merged pull request (merged under this name:%s)\n' \
-    "$tip" "$seen"
-  return 3
+  printf 'carries work past its merged pull request (merged under this name:%s; none has this tip %s as its head)\n' \
+    "$seen" "$tip"
+  return 1
 }
 
 resolve_pr_branch() {
@@ -4429,9 +4435,11 @@ case "${1:-}" in
       [[ -d "$WT_PATH" ]] && rm -rf "$WT_PATH"
     fi
     git -C "$PROJECT_ROOT" worktree prune
-    # Only delete local branch if merged (branch -d checks this). If the
-    # worktree was removed but branch deletion is unsafe, report exactly what
-    # remains instead of letting set -e exit silently after partial cleanup.
+    # Only delete the local branch if merged, by either proof: ancestry, which
+    # `branch -d` checks itself, or a merged pull request carrying this tip when
+    # a squash erased the ancestry. If the worktree was removed but neither
+    # proof holds, report exactly what remains instead of letting set -e exit
+    # silently after partial cleanup.
     BRANCH_DELETE_FAILED=false
     if [[ -n "$BRANCH" ]] && git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
       DELETE_OUTPUT=""
@@ -4457,8 +4465,7 @@ case "${1:-}" in
           fi
           case "$REMOVE_MERGE_RC" in
             0) echo "  Merged in pull request #$REMOVE_MERGE_DETAIL, but the forced delete failed." >&2 ;;
-            1) echo "  No merged pull request for '$BRANCH' either: ${REMOVE_MERGE_DETAIL:-no detail}" >&2 ;;
-            3) echo "  The branch carries work past its merged pull request: ${REMOVE_MERGE_DETAIL:-no detail}" >&2 ;;
+            1) echo "  Not merged by pull request either: ${REMOVE_MERGE_DETAIL:-no detail}" >&2 ;;
             *) echo "  Merged-pull-request lookup could not answer: ${REMOVE_MERGE_DETAIL:-no detail}" >&2 ;;
           esac
           echo "  After verifying it is safe, delete manually with: git -C \"$PROJECT_ROOT\" branch -D \"$BRANCH\"" >&2
@@ -4566,12 +4573,7 @@ case "${1:-}" in
         case "$CLEANUP_MERGE_RC" in
           0) ;;
           1)
-            echo "Skipped (branch '$BRANCH' is not merged — not an ancestor of $CLEANUP_MERGE_TARGET and no merged pull request): $wt" >&2
-            continue
-            ;;
-          3)
-            echo "Skipped (branch '$BRANCH' carries work past its merged pull request: $CLEANUP_MERGE_DETAIL): $wt" >&2
-            echo "  Those commits are reachable from this branch alone; merge or drop them, then re-run cleanup." >&2
+            echo "Skipped (branch '$BRANCH' is not merged — not an ancestor of $CLEANUP_MERGE_TARGET, and $CLEANUP_MERGE_DETAIL): $wt" >&2
             continue
             ;;
           *)
