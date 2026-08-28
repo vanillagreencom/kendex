@@ -366,6 +366,11 @@ fn update_replaces_the_binary_from_a_local_feed() {
 /// app goes first and a refusal there stops the run with the old command
 /// still on disk — which is what lets the next run try both halves again,
 /// with no --force and nothing said about one.
+///
+/// Only a target whose release publishes an AppImage has an app half to
+/// order against. Where none is published the command is the whole
+/// install and the opposite has to hold: it updates itself, and it leaves
+/// alone and says nothing about an app it never installed.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_desktop_app_that_cannot_be_replaced_leaves_the_command_alone() {
@@ -380,13 +385,6 @@ fn a_desktop_app_that_cannot_be_replaced_leaves_the_command_alone() {
     let app_dir = home.join(".local/share/kendex");
     fs::create_dir_all(&app_dir).unwrap();
     fs::write(app_dir.join("kendex.AppImage"), "old app").unwrap();
-    fs::set_permissions(&app_dir, fs::Permissions::from_mode(0o555)).unwrap();
-    // Root writes through the mode bits, so the refusal this test needs
-    // never happens there.
-    if fs::write(app_dir.join("probe"), "").is_ok() {
-        fs::set_permissions(&app_dir, fs::Permissions::from_mode(0o755)).unwrap();
-        return;
-    }
 
     fs::write(home.join("new-binary"), "#!/bin/sh\necho v9\n").unwrap();
     let target = env!("KENDEX_TARGET");
@@ -409,6 +407,34 @@ fn a_desktop_app_that_cannot_be_replaced_leaves_the_command_alone() {
             )],
         )
     };
+    // Read as text: the real binary is not UTF-8, so only a command that
+    // moved reads back as the replacement, and a failure prints that line
+    // rather than a megabyte of ELF.
+    let command_moved = || fs::read_to_string(&me).is_ok_and(|got| got == "#!/bin/sh\necho v9\n");
+    let still_old_app = || fs::read_to_string(app_dir.join("kendex.AppImage")).unwrap();
+
+    if !publishes_an_app_image() {
+        let only = update();
+        let said = format!("{}{}", stderr(&only), stdout(&only));
+        assert!(only.status.success(), "{said}");
+        assert!(command_moved(), "the command did not update itself: {said}");
+        // An AppImage sitting here is not this platform's install, so the
+        // command neither touches it nor mentions one.
+        assert_eq!(still_old_app(), "old app", "{said}");
+        assert!(
+            !said.contains("desktop app"),
+            "claimed something about an app it never installed: {said}"
+        );
+        return;
+    }
+
+    fs::set_permissions(&app_dir, fs::Permissions::from_mode(0o555)).unwrap();
+    // Root writes through the mode bits, so the refusal this test needs
+    // never happens there.
+    if fs::write(app_dir.join("probe"), "").is_ok() {
+        fs::set_permissions(&app_dir, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
 
     let first = update();
     // The second run is the whole point: with the command still on its old
@@ -416,21 +442,11 @@ fn a_desktop_app_that_cannot_be_replaced_leaves_the_command_alone() {
     let second = update();
     fs::set_permissions(&app_dir, fs::Permissions::from_mode(0o755)).unwrap();
 
-    // Read as text: the real binary is not UTF-8, so only a command that
-    // moved reads back as the replacement, and a failure prints that line
-    // rather than a megabyte of ELF.
-    let moved = fs::read_to_string(&me).is_ok_and(|got| got == "#!/bin/sh\necho v9\n");
-    assert!(!moved, "the command moved before the app it depends on");
-    assert_eq!(
-        fs::read_to_string(app_dir.join("kendex.AppImage")).unwrap(),
-        "old app"
+    assert!(
+        !command_moved(),
+        "the command moved before the app it depends on"
     );
-    if !publishes_an_app_image() {
-        // No AppImage is published for this target, so there is nothing to
-        // replace and nothing to refuse.
-        assert!(first.status.success(), "{}", stderr(&first));
-        return;
-    }
+    assert_eq!(still_old_app(), "old app");
     for (which, output) in [("first", &first), ("second", &second)] {
         let said = format!("{}{}", stderr(output), stdout(output));
         assert!(!output.status.success(), "{which}: {said}");
