@@ -193,15 +193,33 @@ if ! temp_fixture_hits=$(awk '
     return line
   }
   function finish_declaration() {
-    constructor = "(^|[^A-Za-z0-9_])((tempfile::)?tempdir[[:space:]]*\\(|(tempfile::)?TempDir::new(_in)?[[:space:]]*\\()"
+    constructor = "(^|[^A-Za-z0-9_])((tempfile::)?tempdir(_in)?[[:space:]]*\\(|(tempfile::)?TempDir::(new(_in)?|with_prefix(_in)?)[[:space:]]*\\()"
     builder = "(^|[^A-Za-z0-9_])(tempfile::)?Builder::new[[:space:]]*\\(.*\\.tempdir(_in)?[[:space:]]*\\("
     if (declaration_name != "" && (declaration_text ~ constructor || declaration_text ~ builder))
       temp_vars[file SUBSEP declaration_name] = 1
     declaration_name = ""
     declaration_text = ""
   }
+  function finish_signature() {
+    if (signature_name != "" && signature_text ~ /(TempDir|AsRef[[:space:]]*<[^>]*Path|&[[:space:]]*Path)/)
+      path_helpers[file SUBSEP signature_name] = 1
+    signature_name = ""
+    signature_text = ""
+  }
+  function finish_statement() {
+    if (statement_added && statement_text !~ /^[[:space:]]*$/) {
+      statement_count++
+      statement_file[statement_count] = file
+      statement_line[statement_count] = statement_start
+      statements[statement_count] = statement_text
+    }
+    statement_text = ""
+    statement_added = 0
+  }
   /^diff --git / {
     finish_declaration()
+    finish_signature()
+    finish_statement()
     file = $4
     sub(/^b\//, "", file)
     in_block = 0
@@ -209,6 +227,8 @@ if ! temp_fixture_hits=$(awk '
   }
   /^@@ / {
     finish_declaration()
+    finish_signature()
+    finish_statement()
     spec = $3
     sub(/^\+/, "", spec)
     split(spec, at, ",")
@@ -221,6 +241,10 @@ if ! temp_fixture_hits=$(awk '
     line = substr($0, 2)
     code = source(line)
     new_line++
+    if (statement_text == "") statement_start = new_line
+    statement_text = statement_text " " code
+    if (prefix == "+") statement_added = 1
+    if (code ~ /;/) finish_statement()
     if (declaration_name != "") {
       declaration_text = declaration_text " " code
       if (code ~ /;/) finish_declaration()
@@ -233,26 +257,42 @@ if ! temp_fixture_hits=$(awk '
       declaration_text = code
       if (code ~ /;/) finish_declaration()
     }
-    if (prefix == "+" && code !~ /^[[:space:]]*$/) {
-      added_count++
-      added_file[added_count] = file
-      added_line[added_count] = new_line
-      added_code[added_count] = code
+    if (signature_name != "") {
+      signature_text = signature_text " " code
+      if (code ~ /\{/) finish_signature()
+    } else if (code ~ /^[[:space:]]*(pub([[:space:]]*\([^)]*\))?[[:space:]]+)?(async[[:space:]]+)?fn[[:space:]]+[A-Za-z_][A-Za-z0-9_]*/) {
+      signature = code
+      sub(/^.*fn[[:space:]]+/, "", signature)
+      sub(/[[:space:]]*\(.*/, "", signature)
+      signature_name = signature
+      signature_text = code
+      if (code ~ /\{/) finish_signature()
     }
     next
   }
   /^-/ { next }
-  { finish_declaration() }
+  { finish_declaration(); finish_signature(); finish_statement() }
   END {
     finish_declaration()
-    for (i = 1; i <= added_count; i++) {
+    finish_signature()
+    finish_statement()
+    for (i = 1; i <= statement_count; i++) {
       for (key in temp_vars) {
         split(key, parts, SUBSEP)
-        if (parts[1] != added_file[i]) continue
-        direct = "(^|[^A-Za-z0-9_])" parts[2] "[[:space:]]*\\.(path|as_ref)[[:space:]]*\\("
+        if (parts[1] != statement_file[i]) continue
+        direct = "(^|[^A-Za-z0-9_])" parts[2] "[[:space:]]*\\.(path|as_ref|into_path|keep)[[:space:]]*\\("
         bound = "^[[:space:]]*let[[:space:]]+(mut[[:space:]]+)?[A-Za-z][A-Za-z0-9_]*([[:space:]]*:[^=]+)?[[:space:]]*=[[:space:]]*&?[[:space:]]*" parts[2] "[[:space:]]*\\.(path|as_ref)[[:space:]]*\\(\\)[[:space:]]*\\.canonicalize[[:space:]]*\\(\\)[[:space:]]*\\.(unwrap|expect)[[:space:]]*\\([^;]*;[[:space:]]*$"
-        if (added_code[i] ~ direct && added_code[i] !~ bound)
-          print added_file[i] ":" added_line[i] ": " added_code[i]
+        if (statements[i] ~ direct && statements[i] !~ bound) {
+          print statement_file[i] ":" statement_line[i] ": " statements[i]
+          continue
+        }
+        for (helper_key in path_helpers) {
+          split(helper_key, helper, SUBSEP)
+          if (helper[1] != statement_file[i]) continue
+          reference = "(^|[^A-Za-z0-9_])" helper[2] "[[:space:]]*\\([^;]*&[[:space:]]*" parts[2] "([^A-Za-z0-9_]|$)"
+          if (statements[i] ~ reference)
+            print statement_file[i] ":" statement_line[i] ": " statements[i]
+        }
       }
     }
   }

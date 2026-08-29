@@ -105,6 +105,14 @@ temp_case pass "a bound inline path canonicalization passes" \
   'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let root = tmp.path().canonicalize().unwrap();' ' drop(root);' '}'
 temp_case pass "a bound inline as_ref canonicalization passes" \
   'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let root = tmp.as_ref().canonicalize().expect("root");' ' drop(root);' '}'
+temp_case pass "a wrapped bound canonicalization passes" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let root = tmp' ' .path()' ' .canonicalize()' ' .unwrap();' ' drop(root);' '}'
+temp_case refuse "a wrapped raw path is refused" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let root = tmp' ' .path()' ' .to_path_buf();' ' drop(root);' '}'
+temp_case refuse "a TempDir reference passed to an AsRef path helper is refused" \
+  'fn found(path: impl AsRef<Path>) { drop(path); }' 'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' found(&tmp);' '}'
+temp_case refuse "a wrapped TempDir reference passed to a fixture helper is refused" \
+  'fn project(tmp: &tempfile::TempDir) { drop(tmp); }' 'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' project(' ' &tmp,' ' );' '}'
 temp_case refuse "a helper call hidden in dead code cannot vouch for a raw path" \
   'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' if false { let root = kendex_test_support::rooted(&tmp); drop(root); }' ' let raw = tmp.path();' ' drop(raw);' '}'
 temp_case refuse "a discarded helper result cannot vouch for a raw path" \
@@ -119,7 +127,10 @@ temp_case refuse "an inline canonicalization hidden in dead code is refused" \
 for constructor in \
   'tempfile::TempDir::new().unwrap()' \
   'tempdir().unwrap()' \
+  'tempfile::tempdir_in(".").unwrap()' \
   'TempDir::new_in(".").unwrap()' \
+  'tempfile::TempDir::with_prefix("fixture").unwrap()' \
+  'tempfile::TempDir::with_prefix_in("fixture", ".").unwrap()' \
   'tempfile::Builder::new().tempdir().unwrap()' \
   'tempfile::Builder::new().tempdir_in(".").unwrap()'; do
   temp_case refuse "raw as_ref is refused for $constructor" \
@@ -127,6 +138,10 @@ for constructor in \
 done
 temp_case refuse "a multiline Builder tempdir still establishes a guarded root" \
   'fn fixture() {' ' let tmp = tempfile::Builder::new()' ' .prefix("fixture")' ' .tempdir()' ' .unwrap();' ' let raw = tmp.path();' ' drop(raw);' '}'
+temp_case refuse "into_path cannot expose an uncanonicalized root" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let raw = tmp.into_path();' ' drop(raw);' '}'
+temp_case refuse "keep cannot expose an uncanonicalized root" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let raw = tmp.keep();' ' drop(raw);' '}'
 temp_case pass "comments and strings that mention tempdir roots pass" \
   'fn prose() {' ' // let tmp = tempfile::tempdir().unwrap();' ' let shown = "let tmp = tempfile::tempdir().unwrap();";' ' let path = "tmp.path()";' ' drop((shown, path));' '}'
 
