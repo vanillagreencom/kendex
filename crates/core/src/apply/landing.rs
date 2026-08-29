@@ -35,25 +35,42 @@
 use std::path::{Component, Path, PathBuf};
 
 use crate::error::{CoreError, Result};
-use crate::model::Scope;
 
 use super::{Op, PlannedOp};
 
-/// Land every write target this plan carries, refusing one that lands
-/// outside the scope. The paths are rewritten, so what the plan shows and
-/// what apply writes is the one place the bytes reach.
-pub(super) fn land(scope: &Scope, ops: &mut [PlannedOp]) -> Result<()> {
-    // Landing and judging are two things, and only one of them is a
-    // project's. Every target lands, whatever scope it belongs to: what
-    // the plan shows and what apply writes has to be the place the bytes
-    // reach, and everything downstream is held to that landing. What the
-    // global scope has no answer for is the judgement — nothing encloses
-    // it, so its targets have no root to leave, and somebody keeping
-    // `~/.claude` in a dotfiles repo is describing their layout.
-    let root = match scope.canonical() {
-        Scope::Project { root } => Some(root),
-        Scope::Global => None,
-    };
+/// What a target that reads as outside the root is taken to be.
+#[derive(Clone, Copy)]
+enum Outside {
+    /// Its builder's business. A plan arrives whole from something that
+    /// knows why a target of its own sits outside the scope: an adoption
+    /// captures the folder a link of the person's own points at, and that
+    /// boundary is adoption's to draw.
+    Theirs,
+    /// Refused. An op joining a plan already made carries no such account,
+    /// and what joins one is this scope's own record.
+    Refused,
+}
+
+/// Land every write target this plan carries, refusing one that reads as
+/// inside the root and lands outside it. The paths are rewritten, so what
+/// the plan shows and what apply writes is the one place the bytes reach.
+///
+/// `root` is the canonical scope root, fixed by the caller and never read
+/// again here. `None` is the global scope, which nothing encloses: its
+/// targets still land — everything downstream is held to a landing — but
+/// they have no root to leave, and somebody keeping `~/.claude` in a
+/// dotfiles repo is describing their layout.
+pub(super) fn land(root: Option<&Path>, ops: &mut [PlannedOp]) -> Result<()> {
+    land_with(root, Outside::Theirs, ops)
+}
+
+/// The same for an op joining a plan already made, which must land inside
+/// the root that plan fixed.
+pub(super) fn land_inside(root: Option<&Path>, ops: &mut [PlannedOp]) -> Result<()> {
+    land_with(root, Outside::Refused, ops)
+}
+
+fn land_with(root: Option<&Path>, outside: Outside, ops: &mut [PlannedOp]) -> Result<()> {
     for planned in ops {
         // Read before the landing moves the link, because a link's text
         // is spelled from the parent it was to sit in.
@@ -64,10 +81,10 @@ pub(super) fn land(scope: &Scope, ops: &mut [PlannedOp]) -> Result<()> {
             _ => None,
         };
         for path in planned.op.touched_mut() {
-            *path = landed_within(root.as_deref(), path)?;
+            *path = landed_within(root, outside, path)?;
         }
         if let Some((was, Some(destination))) = intended {
-            respell(root.as_deref(), &was, &destination, &mut planned.op);
+            respell(root, &was, &destination, &mut planned.op);
         }
     }
     Ok(())
@@ -112,23 +129,23 @@ pub(super) fn op_unmoved(op: &Op) -> Result<()> {
 
 /// Where `path` lands, provided a target inside `root` stays inside it.
 ///
-/// Landing is unconditional; only the judgement needs a root, and two
-/// paths are landed without one. A global target has no scope to leave.
-/// So does a path that was never under the project root, which is
-/// somewhere its own caller had to decide about: an adoption captures the
-/// folder a link of the person's own points at, and the boundary for that
-/// is adoption's. Landing both anyway is what lets [`unmoved`] hold them
-/// to the same promise as the rest.
+/// Landing is unconditional; only the judgement needs a root. A global
+/// target has none, and a path that reads as outside a project root may
+/// have none either — see [`Outside`]. Landing them anyway is what lets
+/// [`unmoved`] hold them to the same promise as the rest.
 ///
 /// A `..` still standing in the landing is one no existing directory
 /// resolved away, so where it reaches is not known and containment cannot
 /// be established: refused rather than normalized, since nothing kendex
 /// derives from a scope root carries one.
-fn landed_within(root: Option<&Path>, path: &Path) -> Result<PathBuf> {
+fn landed_within(root: Option<&Path>, outside: Outside, path: &Path) -> Result<PathBuf> {
     let landed = landing(path);
-    let Some(root) = root.filter(|root| path.starts_with(root)) else {
+    let Some(root) = root else {
         return Ok(landed);
     };
+    if !path.starts_with(root) && matches!(outside, Outside::Theirs) {
+        return Ok(landed);
+    }
     if !landed.starts_with(root) || landed.components().any(|part| part == Component::ParentDir) {
         return Err(CoreError::ScopeEscape {
             path: path.to_path_buf(),
@@ -181,7 +198,7 @@ mod tests {
         let target = root.join("absent/../../elsewhere/x");
         assert!(target.starts_with(&root), "it reads as inside the root");
         assert!(matches!(
-            landed_within(Some(&root), &target),
+            landed_within(Some(&root), Outside::Theirs, &target),
             Err(CoreError::ScopeEscape { .. })
         ));
     }

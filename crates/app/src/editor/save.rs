@@ -210,17 +210,22 @@ fn write_customize(
         // Leading the plan: every later op was planned against the manifest
         // this write makes durable, and the base still holds — the file is
         // the one the copy on screen was read from.
-        report.plan.ops.insert(
-            0,
-            PlannedOp {
-                description: "Save kendex.toml".into(),
-                op: Op::WriteManifest {
-                    pre: Pre::from(&claimed),
-                    path: path.clone(),
-                    manifest: Box::new(manifest),
+        report
+            .plan
+            .insert(
+                0,
+                PlannedOp {
+                    description: "Save kendex.toml".into(),
+                    op: Op::WriteManifest {
+                        pre: Pre::from(&claimed),
+                        path: path.clone(),
+                        manifest: Box::new(manifest),
+                    },
                 },
-            },
-        );
+            )
+            .map_err(|error| WriteRefused::Failed {
+                message: error.to_string(),
+            })?;
     }
     // The bound preconditions refuse a file that moved between the checks
     // above and the write itself, and that refusal is the same answer the

@@ -136,7 +136,7 @@ pub(super) fn capture_ops(
     });
     for (_, original) in content {
         ops.push(PlannedOp {
-            description: format!("trash the unmanaged original at {}", original.display()),
+            description: "trash the unmanaged original at {}".to_owned(),
             op: Op::Trash {
                 absent_is_done: false,
                 path: original.clone(),

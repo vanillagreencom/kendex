@@ -117,12 +117,7 @@ pub fn view(env: &Env, scope: &Scope) -> AuditView {
         scope: scope.clone(),
         exits: engine::exits::for_rows(env, scope, &report.drift),
         drift: report.drift,
-        plan: report
-            .plan
-            .ops
-            .iter()
-            .map(|op| op.description.clone())
-            .collect(),
+        plan: report.plan.ops.iter().map(apply::PlannedOp::line).collect(),
         notes: report.notes,
         warnings: report.warnings,
         safety,

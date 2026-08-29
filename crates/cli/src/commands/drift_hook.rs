@@ -28,7 +28,7 @@ pub fn install(env: &Env, scope: &Scope, yes: bool) -> CliResult {
     } else {
         say(&format!("{}: declaring the drift hook", scope_label(scope)));
         for op in &plan.ops {
-            say(&format!("  - {}", shown(&op.description)));
+            say(&format!("  - {}", shown(&op.line())));
         }
         let report = kendex_core::engine::EngineReport {
             repo_effects: Vec::new(),
@@ -50,7 +50,7 @@ pub fn install(env: &Env, scope: &Scope, yes: bool) -> CliResult {
         kendex_core::engine::plan_apply(env, scope, &kendex_core::engine::PlanOptions::default())?;
     if !report.plan.is_empty() {
         for op in &report.plan.ops {
-            say(&format!("  - {}", shown(&op.description)));
+            say(&format!("  - {}", shown(&op.line())));
         }
         print_safety(&report);
         confirm_and_execute(env, &report, yes)?;

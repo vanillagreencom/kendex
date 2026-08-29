@@ -44,7 +44,7 @@ pub fn run(env: &Env, args: ForkArgs) -> CliResult {
         None => kendex_core::engine::fork::fork(env, &scope, kind, &args.name, harness)?,
     };
     for op in &plan.ops {
-        say(&format!("  - {}", shown(&op.description)));
+        say(&format!("  - {}", shown(&op.line())));
     }
     kendex_core::apply::execute(env, &plan, None)?;
 

@@ -92,6 +92,17 @@ fn planned_tree(plan: &apply::Plan) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Where the plan says its file writes go.
+fn planned_writes(plan: &apply::Plan) -> Vec<PathBuf> {
+    plan.ops
+        .iter()
+        .filter_map(|planned| match &planned.op {
+            Op::WriteFile { path, .. } => Some(path.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Where the plan puts this skill's harness link.
 fn planned_links(plan: &apply::Plan) -> Vec<PathBuf> {
     plan.ops
@@ -390,4 +401,138 @@ fn a_global_harness_directory_kept_in_a_dotfiles_repo_is_written_through() {
         "---\nname: ship\ndescription: ship\n---\n\nShip the branch.\n",
         "the bytes are readable through the person's link"
     );
+}
+
+/// The line a confirmation draws names the place the write goes. A person
+/// approving a preview is approving what it says, so the position in the
+/// sentence and the position in the op cannot be two different places.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_line_a_confirmation_draws_names_the_landed_position() {
+    let f = fixture();
+    let elsewhere = f.project.join("shared");
+    link_agents_dir(&f, &elsewhere);
+    // Somebody else's files, sitting where the declaration installs.
+    put(&elsewhere.join("skills/ship/SKILL.md"), "Not kendex's.\n");
+
+    let report = kendex_core::engine::plan_apply(
+        &f.env,
+        &f.scope,
+        &kendex_core::engine::PlanOptions {
+            replace_unmanaged: true,
+            ..kendex_core::engine::PlanOptions::default()
+        },
+    )
+    .unwrap();
+    let lines: Vec<String> = report.plan.ops.iter().map(apply::PlannedOp::line).collect();
+    assert!(
+        lines.contains(&format!(
+            "Move the files already at {} to the trash",
+            elsewhere.join("skills/ship").display()
+        )),
+        "the line names where the trashing happens: {lines:?}"
+    );
+}
+
+/// An op joining a plan after it was made is landed like every op that
+/// arrived with it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_op_joining_a_plan_is_landed_against_the_root_the_plan_fixed() {
+    let f = fixture();
+    let elsewhere = f.project.join("shared");
+    link_agents_dir(&f, &elsewhere);
+
+    let mut plan = apply::Plan::landed(f.scope.clone(), Vec::new()).unwrap();
+    plan.insert(
+        0,
+        apply::PlannedOp {
+            description: "write at {}".into(),
+            op: Op::WriteFile {
+                path: f.project.join(".agents/late"),
+                bytes: b"late".to_vec(),
+                pre: apply::Pre::Absent,
+            },
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        planned_writes(&plan),
+        vec![elsewhere.join("late")],
+        "the op that joined late lands like the rest"
+    );
+    assert_eq!(
+        plan.ops[0].line(),
+        format!("write at {}", elsewhere.join("late").display()),
+    );
+}
+
+/// The root a plan was made with is the root an op joining it is held to.
+/// Re-deriving one now would read it after the swap, and the write would
+/// go wherever the replacement points.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_op_joining_a_plan_after_the_project_was_swapped_is_refused() {
+    let f = fixture();
+    let mut plan = apply::Plan::landed(f.scope.clone(), Vec::new()).unwrap();
+
+    let moved = f.home.join("moved");
+    let victim = f.home.join("victim");
+    fs::create_dir_all(&victim).unwrap();
+    fs::rename(&f.project, &moved).unwrap();
+    std::os::unix::fs::symlink(&victim, &f.project).unwrap();
+
+    // Derived now, the way a caller inserting a record write derives it:
+    // through the scope, which reads the replacement.
+    let path = kendex_core::manifest::manifest_path(&f.env, &f.scope);
+    assert!(path.starts_with(&victim), "the caller derived {path:?}");
+
+    let refused = plan
+        .insert(
+            0,
+            apply::PlannedOp {
+                description: "save the record at {}".into(),
+                op: Op::WriteFile {
+                    path,
+                    bytes: b"schema = 6\n".to_vec(),
+                    pre: apply::Pre::Absent,
+                },
+            },
+        )
+        .unwrap_err();
+    assert!(
+        matches!(refused, CoreError::ScopeEscape { .. }),
+        "an op joining this plan must land inside the root it fixed: {refused}"
+    );
+    assert!(plan.ops.is_empty(), "nothing joined the plan");
+    assert!(!victim.join("kendex.toml").exists());
+}
+
+/// A raw `..` that no existing directory resolves away is refused on the
+/// way in, so an op cannot walk out of the plan's root by spelling.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_op_joining_a_plan_cannot_walk_out_of_its_root() {
+    let f = fixture();
+    let mut plan = apply::Plan::landed(f.scope.clone(), Vec::new()).unwrap();
+
+    let refused = plan
+        .insert(
+            0,
+            apply::PlannedOp {
+                description: "write at {}".into(),
+                op: Op::WriteFile {
+                    path: f.project.join("absent/../../victim"),
+                    bytes: b"taken".to_vec(),
+                    pre: apply::Pre::Absent,
+                },
+            },
+        )
+        .unwrap_err();
+    assert!(
+        matches!(refused, CoreError::ScopeEscape { .. }),
+        "{refused}"
+    );
+    assert!(plan.ops.is_empty(), "nothing joined the plan");
 }

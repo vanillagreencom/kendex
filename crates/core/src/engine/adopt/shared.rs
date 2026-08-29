@@ -212,10 +212,7 @@ pub(super) fn shared_capture_ops(
         },
     });
     ops.push(PlannedOp {
-        description: format!(
-            "trash the shared folder at {} (recoverable)",
-            shared.target.display()
-        ),
+        description: "trash the shared folder at {} (recoverable)".to_owned(),
         op: Op::Trash {
             absent_is_done: false,
             path: shared.target.clone(),
@@ -226,7 +223,7 @@ pub(super) fn shared_capture_ops(
     });
     for (link, raw) in &shared.links {
         ops.push(PlannedOp {
-            description: format!("clear the link at {}", link.display()),
+            description: "clear the link at {}".to_owned(),
             op: Op::Trash {
                 absent_is_done: false,
                 path: link.clone(),

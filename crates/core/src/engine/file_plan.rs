@@ -194,10 +194,7 @@ fn plan_absent_file(
 /// reach a terminal as its own characters.
 pub(super) fn set_aside(path: &std::path::Path, pre: Pre) -> PlannedOp {
     PlannedOp {
-        description: format!(
-            "Move the files already at {} to the trash",
-            crate::names::shown(&path.display().to_string())
-        ),
+        description: "Move the files already at {} to the trash".to_owned(),
         op: Op::Trash {
             absent_is_done: false,
             path: path.to_path_buf(),

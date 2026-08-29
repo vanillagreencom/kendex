@@ -91,7 +91,7 @@ pub(super) fn relocate_ops(
     let mut ops = Vec::new();
     for (link, raw) in links {
         ops.push(PlannedOp {
-            description: format!("clear the link at {}", link.display()),
+            description: "clear the link at {}".to_owned(),
             op: Op::Trash {
                 absent_is_done: false,
                 path: link.clone(),
@@ -113,7 +113,7 @@ pub(super) fn relocate_ops(
     if let Some(from) = from {
         if !cleared && (home.exists() || home.is_symlink()) {
             ops.push(PlannedOp {
-                description: format!("trash what is already at {}", home.display()),
+                description: "trash what is already at {}".to_owned(),
                 op: Op::Trash {
                     absent_is_done: false,
                     path: home.to_path_buf(),
@@ -145,7 +145,7 @@ pub(super) fn relocate_ops(
         // would trash whatever arrived at that position after the plan was
         // read — including content nobody compared with anything.
         ops.push(PlannedOp {
-            description: format!("trash the second copy at {}", path.display()),
+            description: "trash the second copy at {}".to_owned(),
             op: Op::Trash {
                 absent_is_done: false,
                 path: path.clone(),

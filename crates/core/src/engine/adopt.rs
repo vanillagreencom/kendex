@@ -141,7 +141,7 @@ fn move_ops(
     let mut ops: Vec<PlannedOp> = broken
         .iter()
         .map(|(path, pre)| PlannedOp {
-            description: format!("clear the broken link at {}", path.display()),
+            description: "clear the broken link at {}".to_owned(),
             op: Op::Trash {
                 absent_is_done: false,
                 path: path.clone(),

@@ -39,7 +39,7 @@ pub fn run(
 
     let move_plan = adopt::adopt(env, &scope, kind, &name, &harnesses)?;
     for op in &move_plan.ops {
-        say(&format!("  - {}", shown(&op.description)));
+        say(&format!("  - {}", shown(&op.line())));
     }
     kendex_core::apply::execute(env, &move_plan, None)?;
 

@@ -336,7 +336,7 @@ fn drop_old_entries(found: &[Found]) -> Result<Vec<PlannedOp>> {
         .into_iter()
         .map(|(path, edits)| {
             Ok(PlannedOp {
-                description: format!("drop the old registration in {}", path.display()),
+                description: "drop the old registration in {}".to_owned(),
                 op: Op::EditFile {
                     pre: Pre::observed(&path)?,
                     path,

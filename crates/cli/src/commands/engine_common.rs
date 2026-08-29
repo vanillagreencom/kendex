@@ -62,7 +62,7 @@ pub fn print_report(env: &Env, report: &EngineReport) -> Vec<super::offers::Bloc
     // asked to approve a count was never shown what it covers.
     say(&format!("plan: {} change{}", ops, plural(ops)));
     for op in &report.plan.ops {
-        say(&format!("  - {}", shown(&op.description)));
+        say(&format!("  - {}", shown(&op.line())));
     }
     blocked
 }

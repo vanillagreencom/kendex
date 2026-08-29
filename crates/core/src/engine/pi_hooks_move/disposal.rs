@@ -42,12 +42,7 @@ pub(super) fn plan_directory(
     };
     let each = |sink: &mut Sink| {
         for (path, proven) in take {
-            trash(
-                format!("Move pi hooks out of {}", dir.display()),
-                path,
-                proven,
-                sink,
-            );
+            trash("Move pi hooks out of {}".to_owned(), path, proven, sink);
         }
     };
     if !strangers.is_empty() {
@@ -70,12 +65,7 @@ pub(super) fn plan_directory(
     // Nothing here is anybody else's, so the whole directory goes when
     // this pass takes everything the lock names in it.
     if !take.is_empty() && take.len() == ours.len() {
-        return whole(
-            format!("Move pi hooks out of {}", dir.display()),
-            dir,
-            ours,
-            sink,
-        );
+        return whole("Move pi hooks out of {}".to_owned(), dir, ours, sink);
     }
     // And when it names nothing and the directory is empty — the shell a
     // finished move leaves behind, which pi still warns about and which
@@ -84,7 +74,7 @@ pub(super) fn plan_directory(
     // an empty directory here is one the person made, and theirs.
     if claimed && ours.is_empty() {
         let taken = whole(
-            format!("Remove the empty {} pi warns about", dir.display()),
+            "Remove the empty {} pi warns about".to_owned(),
             dir,
             ours,
             sink,
@@ -271,7 +261,7 @@ pub(super) fn plan_registry(
     };
     if after.as_object().is_some_and(|object| object.is_empty()) {
         trash(
-            format!("Move the pi hook registry out of {}", registry.display()),
+            "Move the pi hook registry out of {}".to_owned(),
             registry,
             &crate::hash::hash_bytes(current.as_bytes()),
             sink,

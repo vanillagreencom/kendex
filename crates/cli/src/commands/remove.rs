@@ -74,7 +74,7 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
         // list of writes under the word "removed" says the wrong thing.
         say("changes:");
         for op in &report.plan.ops {
-            say(&format!("  - {}", shown(&op.description)));
+            say(&format!("  - {}", shown(&op.line())));
         }
         if matches!(mode, Removal::KeepDeclaration) {
             say(&format!(
