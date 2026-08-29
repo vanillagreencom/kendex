@@ -69,12 +69,12 @@ require "$audit_issues" 'Linear installation/authentication is not a prerequisit
 
 # --- Preflight branches are tracker-conditional and disjoint ----------------
 
-require "$audit_issues" '1\.2\.2 Preflight — Linear \(TRACKER=linear\)' 'Linear preflight branch'
-require "$audit_issues" '1\.2\.3 Preflight — GitHub \(TRACKER=github\)' 'GitHub preflight branch'
+require "$audit_issues" '1\.2\.1 Preflight — Linear \(TRACKER=linear\)' 'Linear preflight branch'
+require "$audit_issues" '1\.2\.2 Preflight — GitHub \(TRACKER=github\)' 'GitHub preflight branch'
 require_fixed "$audit_issues" '.agents/skills/linear/scripts/linear.sh sync --reconcile' 'Linear sync in the Linear branch'
 require_fixed "$audit_issues" 'gh label list --repo [OWNER/REPO] --limit 200 --json name,description' 'GitHub live label inventory'
 require_fixed "$audit_issues" 'gh issue list --repo [OWNER/REPO] --state open --limit 200 --json number,title,labels' 'GitHub open-issue inventory'
-assert_linear_free "$(extract "$audit_issues" '^#### 1\.2\.3 ' '^### 1\.3 ' github-preflight)" 'GitHub preflight branch'
+assert_linear_free "$(extract "$audit_issues" '^#### 1\.2\.2 ' '^### 1\.3 ' github-preflight)" 'GitHub preflight branch'
 
 # --- Every approved action has a GitHub execution route --------------------
 

@@ -1,6 +1,6 @@
 # Project Management Skill
 
-Turns planning conversations into tracked work: cycle plans, backlog audits, roadmaps, and research-driven decomposition. It exists to keep the backlog small and true — every audit is expected to close more issues than it opens, and an observation only becomes an issue when it changes what someone experiences and someone could finish it as-is.
+Turns planning conversations into tracked work: cycle plans, backlog audits, roadmaps, and research-driven decomposition. It exists to keep the backlog small and true; what qualifies as an issue and what gets closed is the creation bar in [`SKILL.md`](SKILL.md) § Disposition.
 
 ## How it works
 

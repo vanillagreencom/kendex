@@ -30,7 +30,7 @@ Type follows domain count when the caller did not supply one: 1 domain is Target
 
 Resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and this inventory per [labels.md](../references/labels.md); do not assume the literal name `research` exists.
 
-Build `VALIDATED_LABELS = [agent:researcher, RESEARCH_WORKFLOW_LABEL, DOMAINS...]` from issue labels only, and confirm each exists in the live inventory, is assignable (not a parent/group label), and satisfies the taxonomy's category and exclusivity rules. Unknown labels, parent/group labels, missing required categories, or exclusivity violations halt before mutation. A required label missing from the tracker needs explicit user authorization before creation — never create one automatically.
+Build `VALIDATED_LABELS = [agent:researcher, RESEARCH_WORKFLOW_LABEL, DOMAINS...]` from issue labels only and validate it per [labels.md](../references/labels.md) § Validation; any failure there halts before mutation. A label the tracker lacks follows § Creating Labels in the same file.
 
 ### 1.2 Create
 

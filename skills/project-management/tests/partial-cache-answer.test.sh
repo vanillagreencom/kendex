@@ -104,7 +104,7 @@ require "$skill" 'Silence is not inheritance: a new mode adds its row' \
 for path in 'tpm-audit .project., .team.' 'tpm-audit .issues., Linear' \
             'tpm-audit .issues., GitHub' 'tpm-audit .project-order.' \
             'tpm-roadmap-plan' 'tpm-cycle-plan' 'audit-issues §§ 7\.2-7\.5' \
-            'audit-issues § 1\.2\.2, § 3' 'research-complete' 'research-issue'; do
+            'audit-issues § 1\.2\.1, § 3' 'research-complete' 'research-issue'; do
   grep -Eq -- "\| $path \|" "$skill" \
     || fail "the scope enumeration does not carry a row for: $path"
 done

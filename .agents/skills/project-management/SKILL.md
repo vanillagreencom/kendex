@@ -42,7 +42,7 @@ Wrappers run in the primary session: they own the user dialog and every tracker 
 | `research-complete` | `[ISSUE_ID]` | [research-complete](workflows/research-complete.md) |
 | `research-issue` | — | [research-issue](workflows/research-issue.md) — internal, invoked by `research-spike` |
 
-`audit-issues` is **primary-session only**: § 6 needs the session's interactive question tool, and § 7 mutates only against approvals collected there — the roadmap-plan § 5 answer that roadmap-create carries in is validated and admitted at § 6, never around it. Delegate the `tpm-audit.md` analysis it spawns, never the wrapper.
+`audit-issues` is **primary-session only** ([audit-issues](workflows/audit-issues.md) preamble): the roadmap-plan § 5 answer that roadmap-create carries in is validated and admitted at § 6, never around it.
 
 The `@[path]` given to `roadmap plan` may be research findings or a **finished plan** (a design the user has reviewed). A finished plan is the spec: derive issues from it instead of re-planning, and every issue cites it.
 
@@ -57,7 +57,7 @@ TPM analysis workflows, each returning JSON per its schema: [tpm-cycle-plan](wor
 - Every path's scope status is enumerated in § Scope by Path; a mode added later states its own row rather than inheriting silence.
 - Sync the Linear cache before a workflow's first cache read: `sync --reconcile` in a run that mutates the tracker, `sync --if-stale 15` in a read-only lookup. A cache read that comes back missing or stale after that halts the workflow and reports the sync failure — never a partial result, a live-only substitute, or a retry against the stale cache.
 - Resolve tracker context once per run (audit-issues § 1.2) and route every preflight, fetch, and mutation through it. A GitHub-tracked run must not require Linear installation, sync, or authentication; where GitHub lacks a Linear concept, degrade in a documented note, never silently.
-- Before any issue create or label update, run the label preflight in [references/labels.md](references/labels.md) against the live inventory and project taxonomy. Unknown labels, parent/group labels, missing required categories, and exclusivity violations halt before mutation.
+- Before any issue create or label update, run the label preflight in [references/labels.md](references/labels.md) against the live inventory and project taxonomy; any § Validation failure there halts before mutation.
 - In multi-issue analysis, keep verification context per issue. One issue's PR, branch, or resolved path set never scopes another's checks.
 
 ## Scope by Path
@@ -72,8 +72,8 @@ The Linear cache is workspace-wide, so each path states whether it resolves the 
 | tpm-audit `project-order` | yes | § 11 initiatives, projects, and per-project issues |
 | tpm-roadmap-plan | yes, § 1.1 | § 1.4 projects, § 1.5 comparison set |
 | tpm-cycle-plan | **no** | **no** — `session-status` picks the active project workspace-wide, and every later read is scoped to that pick |
-| audit-issues §§ 7.2-7.5 | inherits | reads rooted at an in-scope project or an issue this run mutated |
-| audit-issues § 1.2.2, § 3 | **no** | **no** — `session-status` selects projects workspace-wide |
+| audit-issues §§ 7.2-7.5 | n/a — executes an artifact tpm-audit produced under its scope | reads rooted at an in-scope project or an issue this run mutated |
+| audit-issues § 1.2.1, § 3 | **no** | **no** — `session-status` selects projects workspace-wide |
 | cycle-plan, roadmap-plan, roadmap-create, research-spike | **no** | **no** — project, initiative, and label reads span the workspace |
 | research-complete | n/a | reads are rooted at the caller's issue identifier |
 | research-issue | n/a | reads rooted at the caller's identifiers; the project it creates into is the caller's pick |

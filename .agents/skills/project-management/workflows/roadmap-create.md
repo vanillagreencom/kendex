@@ -93,7 +93,7 @@ Position within the backlog is not set here; `audit-issues project-order` owns p
 .agents/skills/linear/scripts/linear.sh cache labels list --format=safe
 ```
 
-Load the project taxonomy and validate every issue's `labels[]` per [labels.md](../references/labels.md) before writing the audit file. Complete a set from the taxonomy when only `agent`/`agent_label` is present. Unknown labels, parent/group labels, missing required categories, or exclusivity violations halt before mutation.
+Load the project taxonomy and validate every issue's `labels[]` per [labels.md](../references/labels.md) § Validation before writing the audit file. Complete a set from the taxonomy when only `agent`/`agent_label` is present. Any failure there halts before mutation.
 
 ### 4.2 Convert to Audit Input
 
@@ -105,13 +105,17 @@ Deterministic mapping only — do NOT re-analyze, and do NOT re-type: generate t
 | `identifier` | null — all proposed |
 | `title`, `action`, `target`, `reason` | Same fields on `organized_issues[i]` |
 | `project.recommended` | `project_placement.project_name`; `recommended_id` = `PROJECT_ID` from § 3.2 |
-| `add_relations` | `depends_on_proposed` titles → `blocked_by: ["#N"]` by index; `depends_on_existing` → `blocked_by: ["[ISSUE_ID]"]`. A reference to any entry § 2 omitted — a relation or a `hierarchy.parent` — retargets to that entry's existing `target` issue id when the action executed; when the action was skipped, the reference is removed and the dependent re-enters § 5 marked `"reapprove": true` — never a dangling `#N`. Relations are already lifted to parent level — preserve them |
-| `hierarchy` | Bundle children are always `make_child` of `#[parent_index]` — or, when that parent was omitted at § 2, of its existing `target` id per the retargeting rule above. Parents and standalone issues follow `hierarchy_recommendation`: `children_of_origin` → `make_child` of the origin ID, anything else → `none`, `mixed` → per the TPM grouping |
+| `add_relations` | `depends_on_proposed` titles → `blocked_by: ["#N"]` by index; `depends_on_existing` → `blocked_by: ["[ISSUE_ID]"]`. Relations are already lifted to parent level — preserve them. A reference to an entry § 2 omitted follows step 1 below |
+| `hierarchy` | Bundle children are `make_child` of their bundle parent per step 1 below. Parents and standalone issues follow `hierarchy_recommendation`: `children_of_origin` → `make_child` of the origin ID, anything else → `none`, `mixed` → per the TPM grouping |
 | `supersedes` | Supersession entries in `cross_project_findings` — only those § 2 neither executed nor skipped |
 | `cross_project_findings.conflicts[]` | Each resolution is applied before conversion: a wait/sequence resolution becomes `blocked_by: ["[ISSUE_ID]"]` on the affected entry; a `Modify approach` text lands in that entry's `create_fields` and marks it `"reapprove": true`; `Skip this issue` omits it. A resolution with no representable effect halts naming the conflict |
-| existing-work actions decided at § 2 | An action § 2 executed (cancel/expand/descope) is OMITTED from `issues[]` (never `skip`); a `supersede` whose cancellation § 2 executed enters as a plain `create` with `supersedes` cleared; an action § 2 skipped — globally or per action — is omitted as well, a skipped supersession dropping its replacement too; the § 5 report lists every omission with its § 2 outcome. Nothing § 6 or § 7 sees can override a § 2 answer |
 | `obsolete` | `organized_issues[i].obsolete` |
 | `priority_misalignment`, `agent_mismatch` | null — already correct |
+
+The two rules the rows above defer to:
+
+1. **Retargeting.** A reference to any entry § 2 omitted — a relation or a `hierarchy.parent` — retargets to that entry's existing `target` issue id when the action executed; when the action was skipped, the reference is removed and the dependent re-enters § 5 marked `"reapprove": true` — never a dangling `#N`. A bundle child is `make_child` of `#[parent_index]` or, when that parent was omitted at § 2, of its existing `target` id.
+2. **Omission.** An action § 2 executed (cancel/expand/descope) is OMITTED from `issues[]` (never `skip`); a `supersede` whose cancellation § 2 executed enters as a plain `create` with `supersedes` cleared; an action § 2 skipped — globally or per action — is omitted as well, a skipped supersession dropping its replacement too; the § 5 report lists every omission with its § 2 outcome. Nothing § 6 or § 7 sees can override a § 2 answer.
 
 Each entry's `create_fields` carries `description` (synthesized from title, feature context, and breaking changes), `recommendation` (requirement bullets, plus doc updates and migration steps), `location`, `estimate`, `priority`, `labels[]` (authoritative, validated in § 4.1), `agent_label`, `is_bundle_parent`, and `source_path` = the plan markdown path. A bundle parent sets `is_bundle_parent: true` with no description or recommendation; generate [parent-issue-template.md](../templates/parent-issue-template.md) content after the children exist, via workflow-actions § Descriptions (parent rebuild).
 

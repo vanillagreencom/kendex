@@ -4,7 +4,7 @@ Analyze issues and projects for relations, labels, hierarchy, placement, duplica
 
 **Do NOT modify the tracker.** Return recommendations only.
 
-**Hold the creation bar** ([SKILL.md](../SKILL.md) § Disposition). An observation becomes a `create` only when it changes what a user or operator experiences (or blocks work that does), nothing open already covers it, and someone could finish it without a new investigation. Everything else is `skip` with a one-line reason. Every run that reads an issue backlog also completes the § 6 cancellation sweep.
+**Hold the creation bar** ([SKILL.md](../SKILL.md) § Disposition). An observation that clears it is a `create`; everything else is `skip` with a one-line reason. Every run that reads an issue backlog also completes the § 6 cancellation sweep.
 
 ## Inputs
 
@@ -227,7 +227,13 @@ Never add to `obsolete[]` without code verification.
 
 With `DECISION_REF` present, also detect issues the decision made unnecessary by changing the approach (not the scope): read the decision (`.agents/skills/decider/scripts/decisions get [DECISION_REF]`), extract the patterns it explicitly replaced, search the comparison set for issues implementing them, exclude anything already in `supersedes[]`, and record confidence 100 with evidence `{decision_eliminated: true, decision_ref, eliminated_pattern}`.
 
-**Below the bar.** Every active issue in the comparison set as § 1.5 fetched it is re-read against the creation bar's first and third tests as they stand today (the second, coverage by other work, is not reapplied: an issue always covers itself). One that fails (the bar's own list, not restated here) is a cancellation with confidence 100 and evidence `{below_bar: true, test, who_hits_it}`: `test` names the failed test, `who_hits_it` is the one-line user story and how often a user meets it, written after reading the issue's body (on GitHub, `gh issue view <n>`; the § 1.5 list carries no body). In project mode it is an `obsolete[]` entry; in issue mode it is the issue's own `issues[]` entry with `action: "cancel"` and that evidence in its `obsolete` field. The bar's two exceptions (a shipped-path security or data-loss defect; a critical-harm or financial-loss edge case) never go here on likelihood; the third test still applies to them. The code-verification rule above is for implementation-obsolete entries; a `below_bar` entry is verified by reading the body and, where it names a path, producer, or regression, checking that claim in the repository before the entry is written.
+**Below the bar.**
+
+1. Re-read every active issue in the comparison set as § 1.5 fetched it against the creation bar's first and third tests as they stand today (the second, coverage by other work, is not reapplied: an issue always covers itself).
+2. One that fails (the bar's own list, not restated here) is a cancellation with confidence 100 and evidence `{below_bar: true, test, who_hits_it}`: `test` names the failed test, `who_hits_it` is the one-line user story and how often a user meets it, written after reading the issue's body (on GitHub, `gh issue view <n>`; the § 1.5 list carries no body).
+3. In project mode it is an `obsolete[]` entry; in issue mode it is the issue's own `issues[]` entry with `action: "cancel"` and that evidence in its `obsolete` field.
+4. The bar's two exceptions (a shipped-path security or data-loss defect; a critical-harm or financial-loss edge case) never go here on likelihood; the third test still applies to them.
+5. The code-verification rule above is for implementation-obsolete entries; a `below_bar` entry is verified by reading the body and, where it names a path, producer, or regression, checking that claim in the repository before the entry is written.
 
 ### 6.3 Project Fit
 

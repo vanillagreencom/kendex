@@ -19,7 +19,7 @@ Audit tracked issues and projects, apply the mechanical corrections, and take cr
 
 The input file's `tracker` block fixes the tracker for the whole audit. A caller that already resolved one (orch `TRACKER`) must set it.
 
-**Hierarchy contract.** When the input file carries `hierarchy_contract`, every `child_indexes` item comes back as `action: create` with `hierarchy.action: make_child` under the contract parent, in the parent's project. § 4.2 enforces this before anything is presented or executed. A research issue never appears in `parent_issue`.
+**Hierarchy contract.** A `hierarchy_contract` in the input file is binding per [audit-issues-input.md](../schemas/audit-issues-input.md) § Hierarchy Contract; § 4.2 enforces it before anything is presented or executed.
 
 ---
 
@@ -47,7 +47,7 @@ Store as `TRACKER`, plus `[OWNER/REPO]` when `TRACKER=github`.
 
 **GitHub mode runs no Linear commands** — no `sync`, `session-status`, cache read, or Linear mutation anywhere in this workflow. Linear installation/authentication is not a prerequisite for a GitHub-tracked audit.
 
-#### 1.2.2 Preflight — Linear (TRACKER=linear)
+#### 1.2.1 Preflight — Linear (TRACKER=linear)
 
 ```bash
 .agents/skills/linear/scripts/linear.sh sync --reconcile
@@ -60,7 +60,7 @@ Run `reconcile-work-items` only where the orch skill is installed (skip the line
 
 Keep `project` for fallback target resolution and the issue-label inventory for every create/update preflight.
 
-#### 1.2.3 Preflight — GitHub (TRACKER=github)
+#### 1.2.2 Preflight — GitHub (TRACKER=github)
 
 ```bash
 gh label list --repo [OWNER/REPO] --limit 200 --json name,description
@@ -231,7 +231,7 @@ Before any mutation that creates an issue or changes labels:
 
 1. Build the intended operation per finding: `create` and gap issues take the full `create_fields.labels[]`; `agent_mismatch` is `replace_category` on `agent`; `label_cooccurrence` is `add`; a `label_updates[]` entry carries its own mode and category.
 2. For an existing issue, fetch current labels and compute the full final set, preserving unrelated labels — Linear `cache issues get [ISSUE_ID]`, GitHub `gh issue view [N] --repo [OWNER/REPO] --json labels`.
-3. Validate against the § 1.2 inventory and taxonomy per [labels.md](../references/labels.md). Unknown labels, parent/group labels, missing required categories, or exclusivity violations halt before mutation and report the failing set. A required label missing from the tracker needs explicit user authorization before creation — never auto-create.
+3. Validate against the § 1.2 inventory and taxonomy per [labels.md](../references/labels.md) § Validation. Any failure there halts before mutation and reports the failing set. A required label missing from the tracker needs explicit user authorization before creation — never auto-create.
 4. Pass only the validated final set: Linear `--labels`, GitHub `gh issue create --label` and the github skill's `label-add`/`label-remove`.
 
 ### 7.1 Apply Corrections
@@ -305,11 +305,11 @@ For each issue cancelled in § 7.1 or § 7.2:
 
 **Linear**: `issues list-relations [CANCELED_ID]`, then `issues remove-relation [CANCELED_ID] --blocks [TARGET_ID]` for each `blocks` relation to a non-cancelled issue. `related` relations stay as historical record.
 
-**GitHub**: there are no relation objects. Scan the § 1.2.3 inventory and the issues touched here for body lines referencing the closed number, and update those bodies through the § 7.2 route or note the stale reference in a comment.
+**GitHub**: there are no relation objects. Scan the § 1.2.2 inventory and the issues touched here for body lines referencing the closed number, and update those bodies through the § 7.2 route or note the stale reference in a comment.
 
 If a target is left with no remaining blocker and this audit created an issue covering the same domain, ask: "[ISSUE_ID] unblocked by cancellation of [ISSUE_ID]. Add blocker?" Execute approved additions.
 
-For decision-eliminated or superseded cancellations, take the old pattern from `obsolete[].evidence.eliminated_pattern` or `supersedes[].reason`, check the parent and siblings (GitHub: the § 1.2.3 inventory) for non-cancelled issues whose title or description still names it, and ask "Update stale references?" before rewriting title or description and commenting `"Updated: [OLD] → [NEW] per [DECISION_ID]"`.
+For decision-eliminated or superseded cancellations, take the old pattern from `obsolete[].evidence.eliminated_pattern` or `supersedes[].reason`, check the parent and siblings (GitHub: the § 1.2.2 inventory) for non-cancelled issues whose title or description still names it, and ask "Update stale references?" before rewriting title or description and commenting `"Updated: [OLD] → [NEW] per [DECISION_ID]"`.
 
 ### 7.5 Post-Mutation Verification
 

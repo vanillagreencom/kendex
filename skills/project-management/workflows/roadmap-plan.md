@@ -11,19 +11,25 @@ Plan a roadmap: research gate, specialist consultation, TPM analysis, architectu
 | `... --origin-issue [ISSUE_ID]` | Supply origin-issue context for the hierarchy decision |
 | `... --planner-handoff @[plan-file]` | Consume a plan from a scout → planner chain |
 
-Extract `FEATURE`, `RESEARCH_PATH`, `ORIGIN_ISSUE`, and `PLANNER_HANDOFF` (each null when absent). Read the `@[path]` file and classify it: research findings inform planning; a **finished plan** — a design document the user has reviewed that already settles approach and workstreams — is the SPEC. With a SPEC: § 1 is satisfied, § 2 runs in slicing mode, the § 5 report presents the derived issues against it, and the spec's path travels as `RESEARCH_PATH` → `research_ref`, which the issue template writes as the `**Research**` line on every created issue (unconditionally; the § 6 research question offers the reference to pre-existing issues only). The spec skips no approval and no creation gate. Refresh a stale cache before the first read here and in §§ 1-2. Planning itself only reads; the § 1 research-spike branch delegates to research-issue, which reconciles again before it creates anything:
+1. Extract `FEATURE`, `RESEARCH_PATH`, `ORIGIN_ISSUE`, and `PLANNER_HANDOFF` (each null when absent).
 
-```bash
-.agents/skills/linear/scripts/linear.sh sync --if-stale 15
-```
+2. Read the `@[path]` file and classify it: research findings inform planning; a **finished plan** — a design document the user has reviewed that already settles approach and workstreams — is the SPEC.
 
-With `--origin-issue`, fetch it and keep `id`, `title`, `project`, `description`, `children`:
+3. With a SPEC: § 1 is satisfied, § 2 runs in slicing mode, the § 5 report presents the derived issues against it, and the spec's path travels as `RESEARCH_PATH` → `research_ref`, which the issue template writes as the `**Research**` line on every created issue (unconditionally; the § 6 research question offers the reference to pre-existing issues only). The spec skips no approval and no creation gate.
 
-```bash
-.agents/skills/linear/scripts/linear.sh cache issues get [ORIGIN_ISSUE_ID]
-```
+4. Refresh a stale cache before the first read here and in §§ 1-2. Planning itself only reads; the § 1 research-spike branch delegates to research-issue, which reconciles again before it creates anything:
 
-With `--planner-handoff`, read the file and keep its plan path, recommended approach, proposed phases or issue candidates, any TPM handoff recommendation, and referenced issue or project names. Never run `planner` from here. A handoff skips no gate, no TPM step, no approval, and no creation confirmation.
+   ```bash
+   .agents/skills/linear/scripts/linear.sh sync --if-stale 15
+   ```
+
+5. With `--origin-issue`, fetch it and keep `id`, `title`, `project`, `description`, `children`:
+
+   ```bash
+   .agents/skills/linear/scripts/linear.sh cache issues get [ORIGIN_ISSUE_ID]
+   ```
+
+6. With `--planner-handoff`, read the file and keep its plan path, recommended approach, proposed phases or issue candidates, any TPM handoff recommendation, and referenced issue or project names. Never run `planner` from here. A handoff skips no gate, no TPM step, no approval, and no creation confirmation.
 
 ---
 
@@ -31,13 +37,15 @@ With `--planner-handoff`, read the file and keep its plan path, recommended appr
 
 **Skip if** `RESEARCH_PATH` was provided.
 
-Search existing artifacts on disk first — the project's research and plan directories (`docs/research/`, `docs/plans/`, or the project's equivalents) by `FEATURE` keywords; classify a match with the Inputs rule (research vs SPEC) exactly as an `@[path]` argument, and when several match, ask the user which applies; a selected artifact ends this gate → § 2. Only when the disk search finds nothing, query the tracker: resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and the live inventory (`cache labels list --format=safe`), then query it. If no unambiguous assignable label exists, skip the lookup and continue to § 2; do not query a hard-coded fallback label.
+1. Search existing artifacts on disk first — the project's research and plan directories (`docs/research/`, `docs/plans/`, or the project's equivalents) by `FEATURE` keywords.
 
-```bash
-.agents/skills/linear/scripts/linear.sh cache issues list --label "[RESEARCH_WORKFLOW_LABEL]" --state "Done" --max
-```
+2. Then classify a match with the Inputs rule (research vs SPEC) exactly as an `@[path]` argument, and when several match, ask the user which applies; a selected artifact ends this gate → § 2. Only when the disk search finds nothing, query the tracker: resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and the live inventory (`cache labels list --format=safe`), then query it. If no unambiguous assignable label exists, skip the lookup and continue to § 2; do not query a hard-coded fallback label.
 
-Filter for `FEATURE` keywords. A match supplies `RESEARCH_PATH` from the issue → § 2.
+   ```bash
+   .agents/skills/linear/scripts/linear.sh cache issues list --label "[RESEARCH_WORKFLOW_LABEL]" --state "Done" --max
+   ```
+
+3. Filter for `FEATURE` keywords. A match supplies `RESEARCH_PATH` from the issue → § 2.
 
 With no match, ask the user:
 
@@ -117,9 +125,13 @@ Report as JSON:
 6. Out-of-spec work (spec mode only): anything needed beyond the spec's phases — each entry names the work and whether the spec's own deliverables need it
 </delegation_format>
 
-Keep the result as `ARCH_FINDINGS` (`validated_findings[]`, `deprecated_code[]`, `breaking_changes[]`, `required_refactors[]`, `risk_assessment`, `out_of_spec[]`). Fold verified findings into the TPM JSON before presenting: scope additions go into the issues they belong to, ordering fixes into relations, and any standalone addition — a `required_refactors[]` prerequisite, a second-opinion finding, or a needed `out_of_spec[]` entry — re-enters § 2's delegation table for its domain and § 3; the fold never invents issue fields. In spec mode the fold stops at the spec's boundary, with the same exception the TPM applies: an `out_of_spec[]` entry the spec's own deliverables need re-enters planning like any standalone addition; every other entry becomes an `architecture_gaps[]` row with `recommendation: out_of_scope` — never `defer` — naming the spec in `reason`, rendered under ARCHITECTURE GAPS in § 5.
+1. Keep the result as `ARCH_FINDINGS` (`validated_findings[]`, `deprecated_code[]`, `breaking_changes[]`, `required_refactors[]`, `risk_assessment`, `out_of_spec[]`).
 
-For a major feature — any of: ten or more creation entries, entries spanning two or more `agent:*` domains, a listed breaking change, or `risk_assessment.level: high` — planned without an already-reviewed spec, also run the `second-opinion` skill (challenge mode) on the plan here and fold verified findings in the same way. When the skill is not installed, or is installed but cannot complete (no eligible target, missing external CLI, timeout, nonzero exit), the § 5 report's `Cross-model review` field reads `unavailable — <reason>` and the workflow continues. A SPEC that already passed external review skips this (`skipped — reviewed spec`); a non-major plan records `skipped — not required`.
+2. Fold verified findings into the TPM JSON before presenting: scope additions go into the issues they belong to, ordering fixes into relations, and any standalone addition — a `required_refactors[]` prerequisite, a second-opinion finding, or a needed `out_of_spec[]` entry — re-enters § 2's delegation table for its domain and § 3; the fold never invents issue fields.
+
+3. In spec mode the fold stops at the spec's boundary, with the same exception the TPM applies: an `out_of_spec[]` entry the spec's own deliverables need re-enters planning like any standalone addition; every other entry becomes an `architecture_gaps[]` row with `recommendation: out_of_scope` — never `defer` — naming the spec in `reason`, rendered under ARCHITECTURE GAPS in § 5.
+
+4. For a major feature — any of: ten or more creation entries, entries spanning two or more `agent:*` domains, a listed breaking change, or `risk_assessment.level: high` — planned without an already-reviewed spec, also run the `second-opinion` skill (challenge mode) on the plan here and fold verified findings in the same way. When the skill is not installed, or is installed but cannot complete (no eligible target, missing external CLI, timeout, nonzero exit), the § 5 report's `Cross-model review` field reads `unavailable — <reason>` and the workflow continues. A SPEC that already passed external review skips this (`skipped — reviewed spec`); a non-major plan records `skipped — not required`.
 
 ---
 

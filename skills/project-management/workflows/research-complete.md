@@ -29,7 +29,7 @@ Capture the researcher metadata from `raw-exa.json` (`.metadata`: `researchMode`
 .agents/skills/linear/scripts/linear.sh cache labels list --format=safe
 ```
 
-Issue labels only, validated per [labels.md](../references/labels.md) — unknown labels, parent/group labels, missing required categories, or exclusivity violations halt before mutation.
+Issue labels only, validated per [labels.md](../references/labels.md) § Validation; any failure there halts before mutation.
 
 **Skip if** the issue already carries domain labels. Otherwise infer them from `findings.md` by matching component paths, compute `FINAL_LABELS = EXISTING + INFERRED` preserving unrelated labels, preflight, then `issues update [ISSUE_ID] --labels "[FINAL_LABELS]"`. When the domain is unclear or spans several, add every likely one.
 
