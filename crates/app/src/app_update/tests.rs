@@ -300,10 +300,13 @@ fn the_app_s_own_image_is_never_the_command_it_carries() {
         ours
     );
 
-    // The same file with nothing claiming it: the exclusion above is what
-    // answered, and not a search that never reached it. `AppImage(None)`
-    // rather than `WindowsInstaller`, because on Windows this process's own
-    // executable is excluded too and a test binary is not the app.
+    // The same file with nothing claiming it as the app, and an installer's
+    // record behind it: the exclusion above is what answered, and not a
+    // search that never reached it or a command nothing vouched for.
+    // `AppImage(None)` rather than `WindowsInstaller`, because on Windows
+    // this process's own executable is excluded too and a test binary is
+    // not the app.
+    kendex_core::command_update::record_command(&env, &image).unwrap();
     assert_eq!(
         command_beside(&env, &AppInstall::AppImage(None), Some(&path_var)),
         ours

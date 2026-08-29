@@ -60,6 +60,17 @@ base="https://github.com/$repo/releases/download/$version"
 work="$(mktemp -d)" || { echo "install.sh: nowhere to download to" >&2; exit 1; }
 trap 'rm -rf "$work"' EXIT
 
+# Where kendex keeps its own state, spelled the way the app's resolver
+# spells it — `dirs::data_dir()`, which is XDG on Linux and Application
+# Support on macOS. Both ends have to agree or the app reads an empty
+# directory and decides the command is nobody's.
+kendex_data() {
+  case "$kind" in
+    macos) printf '%s' "$HOME/Library/Application Support/kendex" ;;
+    *) printf '%s' "${XDG_DATA_HOME:-$HOME/.local/share}/kendex" ;;
+  esac
+}
+
 # Pick a bin dir already on PATH; prefer a writable user dir over sudo.
 bindir=""
 for candidate in "$HOME/.local/bin" "/usr/local/bin"; do
@@ -106,6 +117,18 @@ install_cli() {
     sudo install -D -m 0755 "$work/kendex" "$bindir/kendex"
   fi
   echo "Installed the kendex command to $bindir/kendex"
+  # What this script installed, so the desktop app can tell this file from
+  # any other executable someone has named `kendex` — a wrapper script in a
+  # writable directory answers every other test the same way, and the app
+  # would otherwise write a release binary over it. Failing to record it
+  # costs the app-side update, never the install, so it is reported and the
+  # run continues.
+  state="$(kendex_data)"
+  if mkdir -p "$state" 2>/dev/null && printf '%s\n' "$bindir/kendex" > "$state/installed-command"; then
+    :
+  else
+    echo "install.sh: could not record the command's path in $state; the desktop app will not update it." >&2
+  fi
 }
 
 # One icon size into the theme directory it belongs to.
@@ -172,7 +195,7 @@ desktop_arg() {
 install_app_linux() {
   local data libdir
   data="${XDG_DATA_HOME:-$HOME/.local/share}"
-  libdir="$data/kendex"
+  libdir="$(kendex_data)"
   echo "Downloading the desktop app…"
   if ! curl -fSL --proto '=https' -o "$work/kendex.AppImage" \
       "$base/kendex_${plain}_${appimage_arch}.AppImage"; then

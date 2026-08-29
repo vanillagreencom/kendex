@@ -31,6 +31,7 @@ use std::time::Duration;
 
 use semver::Version;
 
+use crate::env::Env;
 use crate::install_channel::{HostProbe, InstallChannel, for_cli};
 use crate::process::Hardened;
 use crate::update_feed::{ReleaseFeed, signature_url, verify_signature};
@@ -126,12 +127,23 @@ pub fn command_candidates(home: &Path, path_var: Option<&OsStr>) -> Vec<PathBuf>
 /// while the desktop executable is `kendex.exe` — the same name the
 /// command carries. Written over, the command binary lands on the app and
 /// the app is then written back over it, leaving no command at all.
+///
+/// `installed` is the command an installer recorded, and it is what makes
+/// a candidate ours. Everything else here is about the file's shape, and
+/// shape is not identity: a wrapper someone wrote that runs the real
+/// `kendex` is executable, is named `kendex`, and sits in a directory that
+/// takes a rename, so every other question answers yes and a release
+/// binary lands on their script. `kendex update` needs no record, because
+/// the path it judges is the one it is running from; this function found
+/// its path by name, and a name is a guess until something confirms it.
 pub fn command_beside_app(
     probe: &dyn HostProbe,
     candidates: &[PathBuf],
     running: &[PathBuf],
+    installed: Option<&Path>,
 ) -> CommandBeside {
     let running: Vec<PathBuf> = running.iter().map(|path| probe.resolve(path)).collect();
+    let installed = installed.map(|path| probe.resolve(path));
     for candidate in candidates {
         if !probe.is_command(candidate) {
             continue;
@@ -141,11 +153,43 @@ pub fn command_beside_app(
             continue;
         }
         return match for_cli(&resolved, probe) {
-            InstallChannel::Direct => CommandBeside::Ours(resolved),
+            // Asked before the record, because a package manager's copy
+            // has an owner worth naming and the card can name it. Only
+            // the arm that would replace the file needs proof.
+            InstallChannel::Direct if installed.as_deref() == Some(resolved.as_path()) => {
+                CommandBeside::Ours(resolved)
+            }
+            // Replaceable, and nothing says it is ours. Refusing costs a
+            // person one command; being wrong costs them their file.
+            InstallChannel::Direct => CommandBeside::NotOurs(InstallChannel::Unknown),
             owned => CommandBeside::NotOurs(owned),
         };
     }
     CommandBeside::Absent
+}
+
+/// The `kendex` command an installer recorded, resolved as written.
+///
+/// Absent where nothing has been recorded — an install older than this
+/// record, or one made some other way — and absent for anything that is
+/// not one absolute path, because a record this build cannot read is not
+/// a record it should act on.
+pub fn recorded_command(env: &Env) -> Option<PathBuf> {
+    let recorded = std::fs::read_to_string(env.installed_command_file()).ok()?;
+    let path = PathBuf::from(recorded.trim());
+    path.is_absolute().then_some(path)
+}
+
+/// Record `path` as the `kendex` command this install owns, so the desktop
+/// app can carry it across. Written by whatever put the command there.
+pub fn record_command(env: &Env, path: &Path) -> Result<(), String> {
+    let file = env.installed_command_file();
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("{} could not be created: {error}", parent.display()))?;
+    }
+    std::fs::write(&file, format!("{}\n", path.display()))
+        .map_err(|error| format!("{} could not be written: {error}", file.display()))
 }
 
 /// Bring the `kendex` command beside a desktop app to `release`, before

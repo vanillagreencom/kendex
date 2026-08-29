@@ -9,6 +9,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::rooted;
+
 #[allow(clippy::unwrap_used)]
 fn write_exe(path: &Path, body: &str) {
     fs::write(path, body).unwrap();
@@ -31,7 +35,23 @@ fn requested_urls(os: &str, arch: &str) -> String {
 #[allow(clippy::unwrap_used)]
 fn run_install(os: &str, arch: &str, fail: Option<(&str, i32)>) -> (std::process::Output, String) {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
+    run_install_in(os, arch, fail, tmp.path())
+}
+
+/// The same run against a home the caller keeps, for a test that reads what
+/// the script left behind rather than only what it fetched.
+#[allow(clippy::unwrap_used)]
+fn run_install_at(os: &str, arch: &str, home: &Path) -> (std::process::Output, String) {
+    run_install_in(os, arch, None, home)
+}
+
+#[allow(clippy::unwrap_used)]
+fn run_install_in(
+    os: &str,
+    arch: &str,
+    fail: Option<(&str, i32)>,
+    home: &Path,
+) -> (std::process::Output, String) {
     let fake = home.join("fake-bin");
     let bindir = home.join(".local/bin");
     fs::create_dir_all(&fake).unwrap();
@@ -267,5 +287,42 @@ fn where_a_real_install_puts_the_command_is_a_candidate() {
             .contains(&PathBuf::from(installed)),
         "install.sh installed {installed}, which no candidate under {} covers",
         home.display()
+    );
+}
+
+/// The desktop app carries the command across only when an installer said
+/// which file it is, so `install.sh` has to leave that record where the
+/// app's own resolver looks — and at the path it actually installed. A
+/// script that installs and records nothing leaves every app-driven update
+/// refusing a command it really does own.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn install_sh_records_the_command_it_installed() {
+    let tmp = tempfile::tempdir().unwrap();
+    // The canonical root, and the same one handed to the script: install.sh
+    // writes under the HOME it was given, and a resolver asked about a
+    // different spelling of that directory reads an empty one.
+    let home = rooted(&tmp);
+    let (output, _) = run_install_at("Linux", "x86_64", &home);
+    assert!(
+        output.status.success(),
+        "install.sh failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let said = String::from_utf8_lossy(&output.stdout);
+    let installed = said
+        .lines()
+        .find_map(|line| line.strip_prefix("Installed the kendex command to "))
+        .unwrap_or_else(|| panic!("install.sh did not say where it installed:\n{said}"));
+
+    // Asked of the resolver rather than spelled a second time: the data
+    // directory differs by platform and a second spelling agrees until it
+    // does not.
+    let record = kendex_core::env::Env::host_rooted(&home).installed_command_file();
+    assert_eq!(
+        fs::read_to_string(&record).unwrap_or_default().trim(),
+        installed,
+        "install.sh recorded nothing usable at {}",
+        record.display()
     );
 }

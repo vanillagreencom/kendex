@@ -437,3 +437,49 @@ fn missing_asset_message_never_calls_current_or_older_available() {
     assert!(older.contains("is newer") && !older.contains("is available"));
     assert!(newer.contains("is available"));
 }
+
+/// The running command is at a path nothing else can vouch for: a lookup
+/// by name cannot tell this binary from a wrapper someone wrote, and this
+/// run is the one place that knows. So it records the path, on a run that
+/// updated and on one that found nothing to do, which is how an install
+/// made before the record existed gains one.
+#[test]
+fn an_update_records_the_command_it_is_running_as() {
+    for force in [true, false] {
+        let dir = tempfile::tempdir().unwrap();
+        let (env, feed_url, installed) = a_release_is_out(&dir);
+
+        run_on(
+            &env,
+            force,
+            &feed_url,
+            &installed,
+            &InstallChannel::Direct,
+            TEST_KEY,
+        )
+        .unwrap();
+
+        assert_eq!(
+            kendex_core::command_update::recorded_command(&env),
+            Some(installed.clone()),
+            "force: {force}"
+        );
+    }
+}
+
+/// A package manager's copy is not ours to record. The run says whose it
+/// is and stops before anything is written, and a record left here would
+/// tell the app to replace bytes the CLI just refused to touch.
+#[test]
+fn a_package_managed_run_records_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (env, feed_url, installed) = a_release_is_out(&dir);
+    let brew = InstallChannel::Managed {
+        manager: "Homebrew".to_owned(),
+        command: "brew upgrade kendex-cli".to_owned(),
+    };
+
+    run_on(&env, false, &feed_url, &installed, &brew, TEST_KEY).unwrap();
+
+    assert_eq!(kendex_core::command_update::recorded_command(&env), None);
+}

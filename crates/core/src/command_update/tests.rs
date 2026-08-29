@@ -1,4 +1,5 @@
 use super::*;
+use crate::install_channel::Host;
 
 #[path = "../../../fixture_url.rs"]
 mod fixture_url;
@@ -247,6 +248,14 @@ fn candidates(paths: &[&str]) -> Vec<PathBuf> {
     paths.iter().map(PathBuf::from).collect()
 }
 
+/// The lookup with an installer's record behind it. Tests about *which*
+/// candidate wins record the one they expect to win: get the order wrong
+/// and the found path is a different file, which reads `NotOurs` and fails
+/// the assertion just as loudly.
+fn located(machine: &Machine, probed: &[PathBuf], installed: &str) -> CommandBeside {
+    command_beside_app(machine, probed, &[], Some(Path::new(installed)))
+}
+
 /// `PATH` order decides which `kendex` a person runs, so it decides which
 /// one a family update replaces: the search reads `PATH` before the
 /// installer's own directories and stops at the first candidate that
@@ -265,7 +274,7 @@ fn the_command_a_shell_resolves_first_is_the_one_replaced() {
     );
 
     assert_eq!(
-        command_beside_app(&machine, &probed, &[]),
+        located(&machine, &probed, on_path),
         CommandBeside::Ours(on_path.into())
     );
 }
@@ -306,8 +315,10 @@ fn a_command_another_installer_owns_is_never_ours_and_names_its_owner() {
         ),
     ];
     for (machine, probed, owner) in cases {
+        // Recorded, so the refusal is the installer's ownership and not
+        // a missing record.
         assert_eq!(
-            command_beside_app(&machine, probed, &[]),
+            located(&machine, probed, &probed[0].display().to_string()),
             CommandBeside::NotOurs(owner),
             "{probed:?}"
         );
@@ -324,7 +335,7 @@ fn nothing_installed_and_the_running_app_both_read_absent() {
     let image = PathBuf::from("/home/pat/.local/bin/kendex");
     let probed = vec![image.clone()];
     assert_eq!(
-        command_beside_app(&Machine::default(), &probed, &[]),
+        located(&Machine::default(), &probed, &image.display().to_string()),
         CommandBeside::Absent
     );
 
@@ -333,7 +344,7 @@ fn nothing_installed_and_the_running_app_both_read_absent() {
         ..Machine::default()
     };
     assert_eq!(
-        command_beside_app(&only_the_app, &probed, &[image]),
+        command_beside_app(&only_the_app, &probed, &[image.clone()], Some(&image)),
         CommandBeside::Absent
     );
 }
@@ -353,14 +364,15 @@ fn a_windows_app_on_path_is_never_taken_for_the_command() {
     };
     let probed = vec![exe.clone()];
 
-    // What the updater offers on Windows: no path at all.
+    // What the updater offers on Windows: no path at all. Recorded, so
+    // the fixture reaches the app and the exclusion is what stops it.
     assert_eq!(
-        command_beside_app(&machine, &probed, &[]),
+        command_beside_app(&machine, &probed, &[], Some(&exe)),
         CommandBeside::Ours(exe.clone()),
         "the fixture has to reach the app before the exclusion can be what stops it"
     );
     assert_eq!(
-        command_beside_app(&machine, &probed, &[exe]),
+        command_beside_app(&machine, &probed, &[exe.clone()], Some(&exe)),
         CommandBeside::Absent
     );
 }
@@ -380,7 +392,7 @@ fn a_directory_or_a_data_file_named_kendex_is_not_a_command() {
     let probed = candidates(&["/opt/a/kendex", "/opt/b/kendex", "/usr/local/bin/kendex"]);
 
     assert_eq!(
-        command_beside_app(&machine, &probed, &[]),
+        located(&machine, &probed, "/usr/local/bin/kendex"),
         CommandBeside::Ours(real)
     );
 
@@ -391,7 +403,7 @@ fn a_directory_or_a_data_file_named_kendex_is_not_a_command() {
         ..Machine::default()
     };
     assert_eq!(
-        command_beside_app(&neither, &probed[..2], &[]),
+        located(&neither, &probed[..2], "/usr/local/bin/kendex"),
         CommandBeside::Absent
     );
 }
@@ -510,4 +522,102 @@ fn a_replacement_that_cannot_land_leaves_no_staged_file() {
 
     assert!(replace_executable(&target, b"bytes").is_err());
     assert!(!staged_path(&target).exists());
+}
+
+/// One machine, one executable named `kendex` in a directory that takes a
+/// rename. Whether it is ours is the only thing the two arms below differ
+/// on, and it is the only thing that decides.
+fn a_kendex_on_this_machine(dir: &tempfile::TempDir) -> (Env, PathBuf) {
+    let bin = dir.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let command = bin.join("kendex");
+    std::fs::write(&command, WRAPPER).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    (Env::host_rooted(dir.path()), command)
+}
+
+/// What someone wrote themselves: a shell script named `kendex` that runs
+/// the real one. Executable, correctly named, and in a writable directory.
+const WRAPPER: &[u8] = b"#!/bin/sh\nexec /opt/kendex/kendex \"$@\"\n";
+
+/// A wrapper someone wrote is not kendex, however much it looks like it
+/// from outside. Nothing recorded it, so it is refused and the card is
+/// told there is no owner to name — and the file is left exactly as its
+/// author wrote it.
+#[test]
+fn a_command_no_installer_recorded_is_never_replaced() {
+    let dir = tempfile::tempdir().unwrap();
+    let (env, wrapper) = a_kendex_on_this_machine(&dir);
+    let probed = vec![wrapper.clone()];
+
+    let beside = command_beside_app(&Host, &probed, &[], recorded_command(&env).as_deref());
+    assert_eq!(beside, CommandBeside::NotOurs(InstallChannel::Unknown));
+
+    let (feed_url, _) = a_release_is_out(&dir);
+    assert_eq!(
+        across(&beside, &feed_url, RELEASE).unwrap(),
+        CommandHalf::Untouched
+    );
+    assert_eq!(std::fs::read(&wrapper).unwrap(), WRAPPER);
+}
+
+/// The same file, the same directory, the same shape — with an installer's
+/// record behind it. Read against the arm above, this is what says the
+/// record is what refused the wrapper, and not a fixture that could never
+/// have been carried in the first place.
+#[test]
+fn the_command_an_installer_recorded_is_carried_across() {
+    let dir = tempfile::tempdir().unwrap();
+    let (env, command) = a_kendex_on_this_machine(&dir);
+    record_command(&env, &command).unwrap();
+    let probed = vec![command.clone()];
+
+    let beside = command_beside_app(&Host, &probed, &[], recorded_command(&env).as_deref());
+    assert_eq!(beside, CommandBeside::Ours(Host.resolve(&command)));
+
+    let (feed_url, _) = a_release_is_out(&dir);
+    assert_eq!(
+        across(&beside, &feed_url, RELEASE).unwrap(),
+        CommandHalf::Moved
+    );
+    assert_eq!(std::fs::read(&command).unwrap(), OFFERED);
+}
+
+/// A record naming one command says nothing about another. Someone with
+/// an install.sh kendex and a wrapper of their own on `PATH` ahead of it
+/// keeps the wrapper.
+#[test]
+fn a_record_of_one_command_does_not_vouch_for_another() {
+    let dir = tempfile::tempdir().unwrap();
+    let (env, wrapper) = a_kendex_on_this_machine(&dir);
+    record_command(&env, Path::new("/home/pat/.local/bin/kendex")).unwrap();
+
+    assert_eq!(
+        command_beside_app(&Host, &[wrapper], &[], recorded_command(&env).as_deref()),
+        CommandBeside::NotOurs(InstallChannel::Unknown)
+    );
+}
+
+/// A record this build cannot read is not a record it acts on: a relative
+/// path, an empty file, or nothing written at all all mean the same thing.
+#[test]
+fn a_record_that_is_not_one_absolute_path_is_no_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = Env::host_rooted(dir.path());
+    assert_eq!(recorded_command(&env), None);
+
+    for written in ["", "  ", "bin/kendex", "\n"] {
+        record_command(&env, Path::new(written)).unwrap();
+        assert_eq!(recorded_command(&env), None, "{written:?}");
+    }
+
+    record_command(&env, Path::new("/usr/local/bin/kendex")).unwrap();
+    assert_eq!(
+        recorded_command(&env),
+        Some(PathBuf::from("/usr/local/bin/kendex"))
+    );
 }

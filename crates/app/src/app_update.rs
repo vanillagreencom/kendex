@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use kendex_core::app_update::AppUpdateView;
 use kendex_core::command_update::{
     CommandBeside, CommandHalf, bring_command_across, command_beside_app, command_candidates,
+    recorded_command,
 };
 use kendex_core::env::Env;
 use kendex_core::install_channel::{AppInstall, Host, InstallChannel};
@@ -236,6 +237,7 @@ fn command_beside(
         &Host,
         &command_candidates(&env.home, path_var),
         &not_the_command(install, std::env::current_exe().ok()),
+        recorded_command(env).as_deref(),
     )
 }
 

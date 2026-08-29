@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use kendex_core::command_update::{fetch, replace_executable};
+use kendex_core::command_update::{fetch, record_command, replace_executable};
 use kendex_core::env::Env;
 use kendex_core::install_channel::{Host, HostProbe, InstallChannel, for_cli};
 use kendex_core::names::shown;
@@ -91,6 +91,16 @@ fn run_on(
     // code of zero. What is left here is Direct, which passes, or Unknown,
     // whose refusal core words for both shells.
     channel.allow_replacement()?;
+    // The running command is at this path and is one of ours, which is the
+    // one thing no lookup by name can establish. Recorded before anything
+    // is fetched, so a machine that installed before this record existed
+    // gains it from any run — including one that finds nothing to do — and
+    // the desktop app can carry the command across from then on.
+    if let Err(why) = record_command(env, current_exe) {
+        say(&format!(
+            "the desktop app will not update this command until it can be recorded: {why}"
+        ));
+    }
     let feed_bytes = fetch(feed_url)?;
     let feed = ReleaseFeed::parse(&feed_bytes)?;
     let latest = feed.version.as_str();
