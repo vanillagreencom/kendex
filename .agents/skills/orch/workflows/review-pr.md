@@ -258,7 +258,7 @@ Collect blockers and `category == "fix"` suggestions from the appended JSONs. No
 
 Omit empty categories. Decline any item that cannot affect real usage with a one-line reason here, per [SKILL.md § The Cycle](../SKILL.md#the-cycle) — it is neither fixed nor filed, and it is reported in § 8.
 
-**Disposition is by rule, not by prompt** — never present a selection menu over the findings. Every blocker and `category == "fix"` suggestion that survives declining goes to the fix round below. That routing is `mode-independent`: `ORCH_DECISION_MODE` gates nothing here, in `ask` and `auto-recommended` alike. The always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) still applies. Nothing left after declines → § 5.
+**Disposition is by rule, not by prompt** — never present a selection menu over the findings. Every blocker and `category == "fix"` suggestion that survives declining goes to the fix round below, in EVERY decision mode; `ORCH_DECISION_MODE` does not gate it. The always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) still applies. Nothing left after declines → § 5.
 
 ### At The Cap
 
@@ -403,7 +403,7 @@ Empty `json_paths` → report "No review items" and → § 9.
 
 Read every JSON, collect the `category == "issue"` suggestions, and deduplicate by (location, description), keeping the first and noting all sources.
 
-**Declined items are re-derived, not remembered.** Every decline is `artifact-derived`: a blocker or `category == "fix"` suggestion that appears in a `json_paths` artifact but in neither `fixed_items` nor `escalated_items` was declined in § 4 or § 7. Carry each one's recorded reason; where a compaction lost it, report `reason: not recorded` rather than inventing one.
+**Declined items are re-derived, not remembered.** A blocker or `category == "fix"` suggestion that appears in a `json_paths` artifact but in neither `fixed_items` nor `escalated_items` was declined in § 4 or § 7. Carry each one's recorded reason; where a compaction lost it, report `reason: not recorded` rather than inventing one.
 
 <output_format>
 
