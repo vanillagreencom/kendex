@@ -296,6 +296,111 @@ fn a_fork_is_refused_where_the_targeted_tools_sit_at_different_revisions() {
     assert!(!captured(&w, "rev-mine").exists());
 }
 
+/// A lock entry holding no revision is not agreement. Something is
+/// installed on that tool and what it was rendered from cannot be
+/// established, so the captured file cannot be shown to answer for it —
+/// the same rule as a recorded mismatch, reaching its other reason.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fork_is_refused_where_a_targeted_tools_revision_is_not_recorded() {
+    let w = agent_world(
+        "\"claude\", \"pi\"",
+        "---\nname: rev\ndescription: agent rev\nrole: reviewer\n---\nUpstream body.\n",
+        "",
+        "",
+    );
+    let roleless = "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n";
+    fs::write(w.upstream.join("agents/rev.md"), roleless).unwrap();
+    commit(&w.upstream, "two");
+    let two = head_commit(&w.upstream);
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
+
+    // Claude records the roleless revision; Pi records none at all, while
+    // its rendering on disk still carries the deny the role earned.
+    let path = lock_path(&w.env, &w.scope);
+    let mut lock = load_lock(&path).unwrap();
+    let entry = |harness| kendex_core::lock::entry_key(ItemKind::Agent, "rev", harness);
+    lock.entries
+        .get_mut(&entry(HarnessId::Claude))
+        .unwrap()
+        .source_commit = Some(two.clone());
+    lock.entries
+        .get_mut(&entry(HarnessId::Pi))
+        .unwrap()
+        .source_commit = None;
+    kendex_core::lock::save(&path, &lock).unwrap();
+    assert!(
+        denied(&w, HarnessId::Pi, "rev").contains("tasks_write"),
+        "the fixture needs a deny the captured revision cannot state"
+    );
+
+    let refused = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Agent,
+        "rev",
+        HarnessId::Claude,
+        "rev-mine",
+        None,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        refused.contains(HarnessId::Pi.display_name()) && refused.contains("does not record"),
+        "the refusal names the tool and says its revision could not be established: {refused}"
+    );
+    assert!(
+        denied(&w, HarnessId::Pi, "rev").contains("tasks_write"),
+        "and nothing was written"
+    );
+    assert!(!captured(&w, "rev-mine").exists());
+}
+
+/// A source whose revisions are not commits records none for anybody, and
+/// every tool reading that one directory does agree. Treating an absent
+/// revision as unproven must not turn every fork of a local package into a
+/// refusal — the control on the rule above.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn forking_a_local_package_beside_itself_still_runs_with_no_revision_anywhere() {
+    let w = forked_world("");
+    let recorded: Vec<Option<String>> = load_lock(&lock_path(&w.env, &w.scope))
+        .unwrap()
+        .entries
+        .iter()
+        .filter(|(key, _)| key.contains("rev"))
+        .map(|(_, entry)| entry.source_commit.clone())
+        .collect();
+    assert!(
+        !recorded.is_empty() && recorded.iter().all(Option::is_none),
+        "the fixture only bites while nothing records a revision: {recorded:?}"
+    );
+
+    let plan = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Agent,
+        "rev",
+        HarnessId::Claude,
+        "rev-mine",
+        None,
+    )
+    .unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+    for (harness, tool) in NAME_KEYED {
+        assert_eq!(
+            denied(&w, harness, "rev-mine"),
+            denied(&w, harness, "rev"),
+            "the copy denies what the original denies on {harness:?}"
+        );
+        assert!(denied(&w, harness, "rev-mine").contains(tool));
+    }
+}
+
 /// A rename that changes no harness's generated deny list still runs. The
 /// proof refuses a name that widens access, not every name.
 #[test]

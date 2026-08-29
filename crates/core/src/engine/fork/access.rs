@@ -58,6 +58,10 @@ pub(super) fn no_catalog() -> OneRevision {
 /// each harness's own revision instead would mean opening the catalog at
 /// every one of them, which is the thing this proof does not do; refusing
 /// keeps that boundary and fails closed.
+///
+/// One rule with two reasons: a harness recorded at another revision, and
+/// a harness whose revision is not recorded at all. Both leave the file
+/// unable to answer for it, so neither is agreement.
 pub(super) fn one_revision(
     env: &Env,
     scope: &Scope,
@@ -67,14 +71,35 @@ pub(super) fn one_revision(
     read_at: Option<&str>,
 ) -> Result<OneRevision> {
     let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
-    let elsewhere: Vec<String> = target_harnesses(decl, after, ItemKind::Agent, scope)
-        .into_iter()
-        .filter_map(|harness| {
-            let key = crate::lock::entry_key(ItemKind::Agent, name, harness);
-            let commit = lock.entries.get(&key)?.source_commit.as_deref()?;
-            (Some(commit) != read_at).then(|| format!("{} from {commit}", harness.display_name()))
-        })
-        .collect();
+    let mut elsewhere: Vec<String> = Vec::new();
+    for harness in target_harnesses(decl, after, ItemKind::Agent, scope) {
+        // No lock entry is no installation on this harness: nothing was
+        // rendered there, so there is no artifact for a name to take a deny
+        // off. An entry holding no revision is the opposite case — something
+        // is installed and what it was rendered from cannot be established,
+        // which is not the same answer as rendering from the same revision.
+        let Some(entry) = lock
+            .entries
+            .get(&crate::lock::entry_key(ItemKind::Agent, name, harness))
+        else {
+            continue;
+        };
+        // Compared as written, absence included: a source whose revisions
+        // are not commits records none for anybody, and every harness
+        // reading that one mutable directory does agree. One recorded and
+        // one absent is a disagreement like any other.
+        let at = entry.source_commit.as_deref();
+        if at == read_at {
+            continue;
+        }
+        elsewhere.push(match at {
+            Some(commit) => format!("{} from {commit}", harness.display_name()),
+            None => format!(
+                "{}, whose revision the lock does not record",
+                harness.display_name()
+            ),
+        });
+    }
     if elsewhere.is_empty() {
         return Ok(OneRevision(()));
     }
