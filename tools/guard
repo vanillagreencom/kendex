@@ -171,26 +171,29 @@ else
     say "test fixture changes could not be read"
 fi
 if ! temp_fixture_hits=$(awk '
-  function source(line, start, finish, rest) {
+  function source(line, line_comment, block_comment, finish, rest) {
     gsub(/"([^"\\]|\\.)*"/, "\"\"", line)
-    if (in_block) {
-      finish = index(line, "*/")
-      if (!finish) return ""
-      line = substr(line, finish + 2)
-      in_block = 0
-    }
-    while ((start = index(line, "/*"))) {
-      rest = substr(line, start + 2)
+    while (1) {
+      if (in_block) {
+        finish = index(line, "*/")
+        if (!finish) return ""
+        line = substr(line, finish + 2)
+        in_block = 0
+      }
+      line_comment = index(line, "//")
+      block_comment = index(line, "/*")
+      if (line_comment && (!block_comment || line_comment < block_comment))
+        return substr(line, 1, line_comment - 1)
+      if (!block_comment) return line
+      rest = substr(line, block_comment + 2)
       finish = index(rest, "*/")
       if (!finish) {
-        line = substr(line, 1, start - 1)
+        line = substr(line, 1, block_comment - 1)
         in_block = 1
-        break
+        return line
       }
-      line = substr(line, 1, start - 1) substr(rest, finish + 2)
+      line = substr(line, 1, block_comment - 1) substr(rest, finish + 2)
     }
-    sub(/\/\/.*/, "", line)
-    return line
   }
   function finish_declaration() {
     constructor = "(^|[^A-Za-z0-9_])((tempfile::)?tempdir(_in)?[[:space:]]*\\(|(tempfile::)?TempDir::(new(_in)?|with_prefix(_in)?)[[:space:]]*\\()"
@@ -241,10 +244,22 @@ if ! temp_fixture_hits=$(awk '
     line = substr($0, 2)
     code = source(line)
     new_line++
-    if (statement_text == "") statement_start = new_line
-    statement_text = statement_text " " code
-    if (prefix == "+") statement_added = 1
-    if (code ~ /;/) finish_statement()
+    statement_code = code
+    block_open = index(statement_code, "{")
+    statement_end = index(statement_code, ";")
+    if (block_open && (!statement_end || block_open < statement_end) && substr(statement_code, 1, block_open) !~ /if[[:space:]]+false/) {
+      if (statement_text == "") statement_start = new_line
+      statement_text = statement_text " " substr(statement_code, 1, block_open)
+      if (prefix == "+") statement_added = 1
+      finish_statement()
+      statement_code = substr(statement_code, block_open + 1)
+    }
+    if (statement_code !~ /^[[:space:]]*$/) {
+      if (statement_text == "") statement_start = new_line
+      statement_text = statement_text " " statement_code
+      if (prefix == "+") statement_added = 1
+      if (statement_code ~ /;/) finish_statement()
+    }
     if (declaration_name != "") {
       declaration_text = declaration_text " " code
       if (code ~ /;/) finish_declaration()

@@ -17,6 +17,8 @@ GUARD="$(cd "$TEST_DIR/.." && pwd)/guard"
 REPO="$(cd "$TEST_DIR/../.." && pwd)"
 RATCHET="$REPO/.agents/skills/size-ratchet/scripts/size-ratchet"
 CHANGELOG_ENTRIES="$REPO/.agents/skills/growth-guards/scripts/changelog-entries"
+REAL_GIT="$(command -v git)"
+REAL_AWK="$(command -v awk)"
 # Enforcement in this repo rests on this key, and a glob matching no tracked
 # file is a documented clean pass — so a hardcoded copy here would stay green
 # after the key stopped reaching the fragment tree.
@@ -107,6 +109,12 @@ temp_case pass "a bound inline as_ref canonicalization passes" \
   'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let root = tmp.as_ref().canonicalize().expect("root");' ' drop(root);' '}'
 temp_case pass "a wrapped bound canonicalization passes" \
   'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let root = tmp' ' .path()' ' .canonicalize()' ' .unwrap();' ' drop(root);' '}'
+temp_case pass "a canonical binding inside a loop passes" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' for _ in 0..1 {' ' let root = tmp.path().canonicalize().unwrap();' ' drop(root);' ' }' '}'
+temp_case pass "a canonical binding inside a conditional passes" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' if cfg!(target_os = "macos") {' ' let root = tmp.path().canonicalize().unwrap();' ' drop(root);' ' }' '}'
+temp_case pass "a canonical binding inside an expression block passes" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let root = {' ' let root = tmp.path().canonicalize().unwrap();' ' root' ' };' ' drop(root);' '}'
 temp_case refuse "a wrapped raw path is refused" \
   'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let root = tmp' ' .path()' ' .to_path_buf();' ' drop(root);' '}'
 temp_case refuse "a TempDir reference passed to an AsRef path helper is refused" \
@@ -123,6 +131,8 @@ temp_case refuse "a discarded inline canonicalization is refused" \
   'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' drop(tmp.path().canonicalize().unwrap());' '}'
 temp_case refuse "an inline canonicalization hidden in dead code is refused" \
   'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' if false { let root = tmp.path().canonicalize().unwrap(); drop(root); }' '}'
+temp_case refuse "a multiline dead block cannot make canonicalization live" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' if false {' ' let root = tmp.path().canonicalize().unwrap();' ' drop(root);' ' }' '}'
 
 for constructor in \
   'tempfile::TempDir::new().unwrap()' \
@@ -144,11 +154,46 @@ temp_case refuse "keep cannot expose an uncanonicalized root" \
   'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let raw = tmp.keep();' ' drop(raw);' '}'
 temp_case pass "comments and strings that mention tempdir roots pass" \
   'fn prose() {' ' // let tmp = tempfile::tempdir().unwrap();' ' let shown = "let tmp = tempfile::tempdir().unwrap();";' ' let path = "tmp.path()";' ' drop((shown, path));' '}'
+temp_case refuse "a line-comment glob cannot hide a later raw temp root" \
+  'fn fixture() {' ' // fixtures live under crates/*/tests' ' let tmp = tempfile::tempdir().unwrap();' ' let raw = tmp.path();' ' drop(raw);' '}'
 
 git -C "$R" config color.diff always
 temp_case refuse "colored diff output cannot hide a raw temp root" \
   'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let raw = tmp.path();' ' drop(raw);' '}'
 git -C "$R" config --unset color.diff
+
+mkdir -p "$R/fake-bin"
+cat >"$R/fake-bin/git" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+is_temp_diff=0
+if [ "${1:-}" = diff ]; then
+  for arg in "$@"; do
+    [ "$arg" = "--unified=100000" ] && is_temp_diff=$((is_temp_diff + 1))
+    [ "$arg" = "crates/*/tests/*.rs" ] && is_temp_diff=$((is_temp_diff + 1))
+  done
+fi
+[ "${FAIL_TEMP_DIFF:-0}" -eq 1 ] && [ "$is_temp_diff" -eq 2 ] && exit 2
+exec "$REAL_GIT" "$@"
+SH
+cat >"$R/fake-bin/awk" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${FAIL_TEMP_AWK:-0}" -eq 1 ] && [[ "${1:-}" == *finish_declaration* ]]; then
+  exit 2
+fi
+exec "$REAL_AWK" "$@"
+SH
+chmod +x "$R/fake-bin/git" "$R/fake-bin/awk"
+run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" REAL_AWK="$REAL_AWK" FAIL_TEMP_DIFF=1
+[ "$RC" -ne 0 ] && case "$OUT" in *"test fixture changes could not be read"*) true ;; *) false ;; esac \
+  && ok "a failed fixture diff blocks guard" \
+  || bad "a failed fixture diff blocks guard" "rc=$RC out=$OUT"
+run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" REAL_AWK="$REAL_AWK" FAIL_TEMP_AWK=1
+[ "$RC" -ne 0 ] && case "$OUT" in *"temporary fixture declarations could not be checked"*) true ;; *) false ;; esac \
+  && ok "a failed fixture parser blocks guard" \
+  || bad "a failed fixture parser blocks guard" "rc=$RC out=$OUT"
+rm -f "$R/fake-bin/git" "$R/fake-bin/awk"
 git -C "$R" reset -q HEAD -- crates/core/tests/temp_path.rs
 rm -f "$R/crates/core/tests/temp_path.rs"
 printf '%s\n' \
