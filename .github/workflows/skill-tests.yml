@@ -294,9 +294,12 @@ jobs:
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1
           npm test
 
-      # The only pi-extension carrying a committed package-lock.json, so it
-      # installs from that lockfile rather than from a pinned argument list.
-      # `npm ci` brings tsx, which the test script runs the suite under.
+      # `npm ci` rather than a pinned argument list because this suite needs
+      # only what the package itself declares: tsx, which its script runs the
+      # suite under. It imports Pi in type position only, so nothing it needs
+      # falls outside the lockfile. The steps that pass explicit pins do so
+      # because their suites need Pi packages declared as peer dependencies,
+      # which a lockfile of theirs never resolves.
       - name: pi-caveman suite
         if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-caveman
