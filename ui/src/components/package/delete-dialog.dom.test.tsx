@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Origin, Scope } from "@/bindings";
+import type { Origin, ProvenanceRow, Scope } from "@/bindings";
 import { commands } from "@/bindings";
 import {
+  DELETE_LABEL,
   DELETE_PLACES_LABEL,
   REINSTALL_OWN,
+  REINSTALL_UNREAD,
   reinstallFrom,
 } from "@/lib/copy-projects";
 import { useAuditStore } from "@/stores/audit";
@@ -30,6 +32,12 @@ beforeEach(() => {
   useProvenanceStore.setState({ rows: [], loaded: true });
 });
 
+/** The dialog's Delete button, read out of the portal. */
+const deleteButton = () =>
+  Array.from(document.querySelectorAll("button")).find(
+    (one) => one.textContent === DELETE_LABEL,
+  );
+
 /** The dialog open over `gh`, installed in `scopes`. base-ui portals the
  *  content out of the mount, so the document is what it is read from. */
 const openDialog = async (scopes: Scope[]) => {
@@ -47,17 +55,26 @@ const openDialog = async (scopes: Scope[]) => {
   return document.body.textContent ?? "";
 };
 
-const from = (...origins: [Scope, Origin][]) =>
-  useProvenanceStore.setState({
-    rows: origins.map(([scope, origin]) => ({
-      scope,
-      kind: "skill",
-      name: "gh",
-      harness: "claude",
-      origin,
-    })),
-    loaded: true,
+const rowsFor = (origins: [Scope, Origin][]): ProvenanceRow[] =>
+  origins.map(([scope, origin]) => ({
+    scope,
+    kind: "skill",
+    name: "gh",
+    harness: "claude",
+    origin,
+  }));
+
+/** The join as it stands and as a fresh read answers: the dialog takes its
+ *  own read on every open, so both have to say the same thing for the
+ *  ordinary cases. */
+const from = (...origins: [Scope, Origin][]) => {
+  const rows = rowsFor(origins);
+  useProvenanceStore.setState({ rows, loaded: true });
+  vi.mocked(commands.libraryProvenance).mockResolvedValue({
+    status: "ok",
+    data: rows,
   });
+};
 
 const MARKET = (source: string): Origin => ({
   origin: "marketplace",
@@ -115,11 +132,76 @@ describe("the Delete dialog", () => {
 
   // Where the package came from is a read like any other: unread is not
   // "your own", and the dialog would rather say nothing than guess.
-  it("claims no origin while the join has not landed", async () => {
+  it("claims no origin when the read does not answer", async () => {
     useProvenanceStore.setState({ rows: [], loaded: false });
 
     const said = await openDialog([VG]);
     expect(said).not.toContain(REINSTALL_OWN);
     expect(said).not.toContain("install it again from");
+  });
+});
+
+// `loaded` says a snapshot landed once, never that it covers this
+// package: installing refreshes the scan and the audit and leaves this
+// join alone. A dialog trusting it would name the marketplace the reader
+// had before they installed anything.
+describe("the read behind the note", () => {
+  it("takes its own read rather than trusting a loaded snapshot", async () => {
+    useProvenanceStore.setState({ rows: rowsFor([[VG, OWN]]), loaded: true });
+    vi.mocked(commands.libraryProvenance).mockResolvedValue({
+      status: "ok",
+      data: rowsFor([[VG, MARKET("acme")]]),
+    });
+
+    const said = await openDialog([VG]);
+    expect(said).toContain(reinstallFrom(["acme"]));
+    expect(said).not.toContain(REINSTALL_OWN);
+  });
+
+  // Naming every marketplace is worth nothing over rows nobody could
+  // read, so the deletion is held rather than confirmed without its note.
+  it("holds Delete while the read has failed", async () => {
+    useProvenanceStore.setState({ rows: rowsFor([[VG, OWN]]), loaded: true });
+    vi.mocked(commands.libraryProvenance).mockResolvedValue({
+      status: "error",
+      error: "the join did not read",
+    });
+
+    const said = await openDialog([VG]);
+    expect(said).toContain(REINSTALL_UNREAD);
+    expect(deleteButton()?.disabled).toBe(true);
+  });
+
+  // The generated wrapper rethrows a transport failure, which is the same
+  // failed read and must not come out as an unhandled rejection.
+  it("holds Delete when the read never answers", async () => {
+    vi.mocked(commands.libraryProvenance).mockRejectedValue(
+      new Error("the channel is gone"),
+    );
+
+    const said = await openDialog([VG]);
+    expect(said).toContain(REINSTALL_UNREAD);
+    expect(deleteButton()?.disabled).toBe(true);
+  });
+
+  it("offers Delete once the read lands", async () => {
+    from([VG, MARKET("acme")]);
+
+    await openDialog([VG]);
+    expect(deleteButton()?.disabled).toBe(false);
+  });
+
+  // Cancel is not held with it: a dialog whose premise could not be read
+  // still has to be closable.
+  it("leaves Cancel live while Delete is held", async () => {
+    vi.mocked(commands.libraryProvenance).mockRejectedValue(
+      new Error("the channel is gone"),
+    );
+
+    await openDialog([VG]);
+    const cancel = Array.from(document.querySelectorAll("button")).find(
+      (one) => one.textContent === "Cancel",
+    );
+    expect(cancel?.disabled).toBe(false);
   });
 });

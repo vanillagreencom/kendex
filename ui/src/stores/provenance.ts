@@ -10,19 +10,37 @@ import { scopeKey } from "@/lib/scope";
 
 interface ProvenanceState {
   rows: ProvenanceRow[];
+  /** Whether a read has ever landed. Never whether the rows cover a given
+   * installation: nothing that installs refreshes this join, so a snapshot
+   * taken before an install stays `loaded` and stays stale. */
   loaded: boolean;
   load: () => Promise<void>;
+  /** Read the join again and say whether it landed. Anything that must not
+   * act on a stale answer asks for its own read rather than trusting
+   * `loaded` — an install refreshes the scan and the audit and leaves this
+   * join where it was. */
+  reload: () => Promise<boolean>;
 }
 
 /** Where every installation came from — the Library's From column reads
  * this join once and matches rows into its groups. */
-export const useProvenanceStore = create<ProvenanceState>((set) => ({
+export const useProvenanceStore = create<ProvenanceState>((set, get) => ({
   rows: [],
   loaded: false,
   load: async () => {
-    const response = await commands.libraryProvenance();
-    if (response.status === "ok") {
+    await get().reload();
+  },
+  reload: async () => {
+    try {
+      const response = await commands.libraryProvenance();
+      if (response.status !== "ok") return false;
       set({ rows: response.data, loaded: true });
+      return true;
+    } catch {
+      // The generated wrapper rethrows a transport failure rather than
+      // answering with an error status. A read that never answered is a
+      // failed read, not a rejection for every caller to catch.
+      return false;
     }
   },
 }));
