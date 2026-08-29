@@ -118,9 +118,16 @@ require_setup() {
     # That is a wrong-cause diagnostic, which is the class this whole change
     # exists to remove. The value is judged once, by the same tool that will
     # use it, and its own message is what the operator sees.
+    # 125 is the only status that means the duration was rejected: timeout
+    # documents it as the tool itself failing. 124 means the opposite — the
+    # duration was accepted and applied, and the command hit it — so treating
+    # any nonzero status as a rejection refuses valid configurations. Which
+    # ones is not even fixed: whether `true` finishes inside the operator's
+    # own bound is a race that moves with the machine and its load, so the
+    # same duration is refused on one run and accepted on the next.
     local probe_err="" probe_rc=0
     probe_err="$("$SUITE_TIMEOUT_BIN" "$SUITE_TIMEOUT" true 2>&1)" || probe_rc=$?
-    if [[ "$probe_rc" -ne 0 ]]; then
+    if [[ "$probe_rc" -eq 125 ]]; then
         probe_err="${probe_err%%$'\n'*}"
         die "VACUOUS_SCAN_TIMEOUT of '$SUITE_TIMEOUT' is not a duration $SUITE_TIMEOUT_BIN accepts${probe_err:+ — $probe_err}"
     fi
