@@ -85,11 +85,14 @@ looking at it. Either way the job fails and the fix is to re-run the tag.
 That guard is a job of its own, and the only one holding a concurrency group,
 so two candidates cut close together cannot interleave their read and write of
 the channel. The group is not a queue: GitHub keeps one pending run per group
-and replaces that pending run when a newer one arrives. Three candidates
-overlapping therefore cost the middle one's repoint, and the channel is left
-carrying whichever of the others is newer — push the newest tag again to move
-it. What that never costs is a release: every tag publishes its own, outside
-the group, and the repoint that a burst can drop takes seconds.
+and replaces that pending run when another arrives. A burst of candidates
+therefore costs one repoint, and arrival order decides which one is dropped,
+not version order. A `channel` job reaches the group only after its own build
+and publish, so a slower candidate arriving last takes the pending slot from a
+higher version already waiting, and the channel is left behind a candidate that
+is already published. Push the newest tag again to move it; the forward-only
+rule above makes that safe. What a burst never costs is a release: every tag
+publishes its own, outside the group, and a repoint takes seconds.
 
 The channel keeps whatever the last candidate left on it, so a machine on
 a candidate stays on candidates until it is moved to a full release by
