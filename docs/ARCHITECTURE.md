@@ -195,10 +195,10 @@ lives in one capability table read by core and UI.
 17. One spelling per path, fixed once where the root enters: a scope root at
     each derivation helper (`Scope::canonical` in `manifest_path`,
     `lock_path`), a source root at `SealedSource::open`, a declared path at
-    `source::resolve`, a plan's targets at `Plan::landed`, which refuses a
-    landing outside the scope root and which every later use is held to. No
-    comparison meets two spellings of one file (macOS fronts `/var` with
-    `/private/var`), and git is handed the repository's own.
+    `source::resolve`, a plan's targets at `Plan::landed`, which refuses an
+    inside spelling that lands outside the root and which every later use is
+    held to. No comparison meets two spellings of one file (macOS fronts
+    `/var` with `/private/var`), and git is handed the repository's own.
 
 ## Decisions
 

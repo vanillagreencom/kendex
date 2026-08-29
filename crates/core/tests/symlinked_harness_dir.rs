@@ -637,3 +637,88 @@ fn a_journal_that_never_said_where_its_paths_reached_is_refused() {
         "the journal stands, for a person to look at"
     );
 }
+
+/// A pre-image copied through a link goes back into the file it came from.
+///
+/// The entry's own landing stops at the link, deliberately, so it says
+/// nothing about the far end. Redirect a directory on the way to that end
+/// and the same link reaches another file — one these bytes never came out
+/// of, and must not be written into.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_pre_image_taken_through_a_link_is_not_put_into_another_file() {
+    let f = fixture();
+    let held = f.project.join("store/kept.md");
+    let decoy = f.project.join("decoy/kept.md");
+    put(&held, "the bytes an apply would put back\n");
+    put(&decoy, "somebody else's file\n");
+    let link = f.project.join("reads");
+    std::os::unix::fs::symlink(&held, &link).unwrap();
+
+    let dir = apply::journal::journal_dir_for(&f.env.journal_dir(), &apply::scope_key(&f.scope));
+    apply::journal::write(&dir, &[link.clone()]).unwrap();
+
+    // The link is untouched and still reads the same text. The directory
+    // on the way to what it names is what changed.
+    fs::rename(f.project.join("store"), f.project.join("kept-store")).unwrap();
+    std::os::unix::fs::symlink(f.project.join("decoy"), f.project.join("store")).unwrap();
+    assert_eq!(fs::canonicalize(&link).unwrap(), decoy, "the far end moved");
+
+    let refused = apply::recover(&f.env, &f.scope).unwrap_err();
+    assert!(
+        matches!(&refused, CoreError::TargetMoved { now, .. } if *now == decoy),
+        "{refused}"
+    );
+    assert_eq!(
+        fs::read_to_string(&decoy).unwrap(),
+        "somebody else's file\n",
+        "the pre-image did not land in a file it never came from"
+    );
+    assert!(apply::journal::pending(&dir), "the journal stands");
+}
+
+/// A subscription's preview and its note name the file the write goes to.
+///
+/// Both are drawn from the op, so a config directory the person keeps
+/// somewhere else cannot leave the two disagreeing — which is what a
+/// spelling derived a second time, after the plan was landed, would do.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_subscription_says_the_file_its_write_lands_in() {
+    let f = fixture();
+    let dotfiles = f.home.join("dotfiles/config");
+    fs::create_dir_all(dotfiles.join("kendex")).unwrap();
+    std::os::unix::fs::symlink(&dotfiles, f.home.join(".config")).unwrap();
+
+    let subscribed = kendex_core::source_ops::subscribe(
+        &f.env,
+        &Scope::Global,
+        &f.home.join("catalog").display().to_string(),
+        Some("cat"),
+    )
+    .unwrap();
+    let derived = f.env.global_manifest_file();
+    let landed = dotfiles.join("kendex").join(derived.file_name().unwrap());
+    assert_ne!(
+        derived, landed,
+        "the config directory is reached through a link"
+    );
+    let said = subscribed
+        .report
+        .plan
+        .ops
+        .iter()
+        .map(apply::PlannedOp::line)
+        .find(|line| line.starts_with("Subscribes"))
+        .expect("the subscription writes the manifest");
+
+    assert!(
+        said.ends_with(&landed.display().to_string()),
+        "the preview names the file the write lands in: {said}"
+    );
+    assert!(
+        subscribed.report.notes.contains(&said),
+        "and the note says the same thing: {:?}",
+        subscribed.report.notes
+    );
+}

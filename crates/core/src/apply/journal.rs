@@ -49,6 +49,19 @@ pub enum PreState {
     Symlink {
         target: PathBuf,
         store: Option<String>,
+        /// The file those bytes were copied from: this link followed the
+        /// whole way, leaf included.
+        ///
+        /// Not the entry's own landing, which stops at the leaf because
+        /// the write path has its own answers for a link sitting at a
+        /// position. These bytes came from the far end of it, and
+        /// redirecting a directory on the way to that end leaves the same
+        /// link reaching a different file — one the pre-image would then
+        /// be written into. `None` where nothing was copied, and where a
+        /// journal was written before the far end was recorded, which the
+        /// restore refuses rather than guesses at.
+        #[serde(default)]
+        reached: Option<PathBuf>,
     },
     /// Tree copied under `store/<index>/` in the journal dir.
     Dir {
@@ -74,12 +87,17 @@ pub fn write(dir: &Path, paths: &[PathBuf]) -> Result<()> {
             let slot_name = index.to_string();
             let slot = store.join(&slot_name);
             let resolved_file = path.exists() && path.is_file();
+            let mut reached = None;
             if resolved_file {
                 copy_file_durable(path, &slot)?;
+                // Read after the copy, so what is recorded is the file the
+                // bytes in the slot actually came from.
+                reached = Some(path.canonicalize().map_err(|e| CoreError::io(path, e))?);
             }
             PreState::Symlink {
                 target: fs::read_link(path).map_err(|e| CoreError::io(path, e))?,
                 store: resolved_file.then_some(slot_name),
+                reached,
             }
         } else if path.is_dir() {
             let slot = store.join(index.to_string());
@@ -252,14 +270,33 @@ fn rollback_where(dir: &Path, restore: impl Fn(&Path) -> bool) -> Result<()> {
             PreState::Symlink {
                 target,
                 store: slot,
+                reached,
             } => {
                 if let Some(parent) = entry.path.parent() {
                     fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
                 }
                 make_symlink(target, &entry.path)?;
                 // A write may have gone through the link: restore the
-                // linked-to file's bytes too.
+                // linked-to file's bytes too, and only into the file they
+                // came from. The link is back where it was, so the far end
+                // is knowable again — and it is a different question from
+                // the entry's own landing, which stops at this link.
                 if let Some(slot) = slot {
+                    let Some(reached) = reached else {
+                        return Err(CoreError::UnrecordedLanding {
+                            path: entry.path.clone(),
+                        });
+                    };
+                    let now = entry
+                        .path
+                        .canonicalize()
+                        .map_err(|e| CoreError::io(&entry.path, e))?;
+                    if now != *reached {
+                        return Err(CoreError::TargetMoved {
+                            path: entry.path.clone(),
+                            now,
+                        });
+                    }
                     copy_file_durable(&store.join(slot), &entry.path)?;
                 }
             }

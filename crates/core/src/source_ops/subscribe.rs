@@ -335,15 +335,21 @@ fn announce_subscription(
         (Some(repo), None) => repo.clone(),
         (None, _) => decl.path.clone().unwrap_or_default(),
     };
-    let line = format!(
-        "Subscribes {} to '{name}' ({what}) — {}",
-        scope.label(),
-        manifest::manifest_path(env, scope).display()
-    );
+    let said = format!("Subscribes {} to '{name}' ({what}) — ", scope.label());
+    // The file is the op's to name, not this line's: the write goes where
+    // the plan landed it, and a spelling derived again here would name
+    // somewhere else the moment a directory on the way is a link.
+    let mut written = None;
     for op in &mut report.plan.ops {
         if let crate::apply::Op::WriteManifest { .. } = &op.op {
-            op.description = line.clone().into();
+            op.description = crate::apply::Description::around(said.clone(), "");
+            written = Some(op.line());
         }
     }
-    report.notes.push(line);
+    // No write, no landed place to name — the file the subscription would
+    // go in is all there is to say, and nothing disagrees with it.
+    report.notes.push(
+        written
+            .unwrap_or_else(|| format!("{said}{}", manifest::manifest_path(env, scope).display())),
+    );
 }
