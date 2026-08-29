@@ -248,7 +248,23 @@ run_output() {
 }
 
 __assert_on_exit() {
-	local rc=$? cmd dir ledger_ran=0 ledger_failed=0 lost=0
+	local rc=$? cmd dir ledger_ran=0 ledger_failed=0 lost=0 outstanding=""
+
+	# A background job still running has not finished writing to the ledger, so
+	# the totals below would be computed over a record that is still being
+	# added to — and the ledger is removed a few lines later, so what the job
+	# writes afterwards goes nowhere. Waiting on it is the other option and it
+	# can hang forever on a job that never exits, so the verdict fails closed
+	# on the job's presence instead: a suite that leaves work outstanding has
+	# not finished being a suite.
+	outstanding="$(jobs -pr | tr '\n' ' ')"
+	if [[ -n "${outstanding// /}" ]]; then
+		printf 'FAIL: the suite ended with background job(s) still running: %s\n' "$outstanding" >&2
+		printf '      an assertion made there would land after this verdict, so it would be\n' >&2
+		printf '      discarded — wait for the job and assert on what it produced\n' >&2
+		rm -f -- "${ASSERT_LEDGER:?}"
+		exit 1
+	fi
 
 	# The ledger is read before cleanup removes it, and it is the true count:
 	# it survives the subshells the counters do not.
@@ -268,9 +284,9 @@ __assert_on_exit() {
 
 	if ((lost > 0)); then
 		printf 'FAIL: %d assertion(s) ran in a subshell, where the suite cannot see them\n' "$lost" >&2
-		printf '      a command substitution, pipeline element or backgrounded block gets its\n' >&2
-		printf '      own copy of the counters, so the result is discarded — capture the status\n' >&2
-		printf '      in the suite and assert on it there\n' >&2
+		printf '      a command substitution, pipeline element, backgrounded or parenthesised\n' >&2
+		printf '      block gets its own copy of the counters, so the result is discarded —\n' >&2
+		printf '      capture the status in the suite and assert on it there\n' >&2
 		exit 1
 	fi
 	if ((ledger_failed > 0)); then

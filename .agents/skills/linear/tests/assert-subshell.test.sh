@@ -52,8 +52,21 @@ run_child failing_in_subshell 'assert_eq "in the parent" 1 1; x="$(assert_eq "in
 
 assert_ne "a failure recorded in a subshell still fails the suite" "$failing_in_subshell_rc" 0
 
-# Every subshell form loses the record, not just command substitution.
+# Every subshell form loses the record, not just command substitution. All four
+# are named in DEVELOPMENT.md, so all four are pinned here.
 run_child in_pipeline 'assert_eq "in the parent" 1 1; assert_eq "in a pipeline" 1 1 | cat'
 
 assert_ne "an assertion made in a pipeline element fails the suite" "$in_pipeline_rc" 0
 assert_contains "for the same reason" "$in_pipeline_out" "ran in a subshell"
+
+run_child in_parens 'assert_eq "in the parent" 1 1; ( assert_eq "in a paren block" 1 1 )'
+
+assert_ne "an assertion made in a parenthesised block fails the suite" "$in_parens_rc" 0
+
+# Waited for, so nothing is outstanding at the verdict — and still refused,
+# because the record was made in a copy either way.
+run_child in_background 'assert_eq "in the parent" 1 1; ( assert_eq "in a background block" 1 1 ) & wait $!'
+
+assert_ne "an assertion made in a backgrounded block fails the suite" "$in_background_rc" 0
+assert_contains "even when the suite waited for it" "$in_background_out" "ran in a subshell"
+
