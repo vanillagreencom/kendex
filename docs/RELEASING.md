@@ -21,10 +21,20 @@ Release with:
   dmg, NSIS installer), and the `.sig` Tauri writes beside each updater
   bundle. `kendex update` fetches `<AppImage>.sig` straight from the
   release, so it is a published asset and not only an input to `latest.json`.
-- `latest.json` — the signed manifest the app's Update button installs
-  from, one `{signature, url}` per platform. The publish job writes it from
-  the `.sig` files the lanes staged, and names any platform whose signature
-  never arrived and fails rather than publishing a release without it.
+- `latest.json` — the manifest the app's Update button installs from, one
+  `{signature, url}` per platform. The publish job writes it from the `.sig`
+  files the lanes staged, and names any platform whose signature never
+  arrived and fails rather than publishing a release without it. Nothing
+  signs the manifest itself, which is what the digests below are for.
+- `digests-<target>.json` and its `.sig` — what one lane published, signed
+  under the release key: the version, the target, and the SHA-256 of that
+  lane's command and app download (`tools/release-digests`). Both shells
+  read the document for their own target from the channel they read their
+  manifest from, hold it to the release and target they asked for, and
+  install nothing whose hash it does not name. A signature proves the bytes
+  it covers and not which release they are, so without this a feed or
+  manifest that can be served or altered can offer a genuine older
+  download, or another platform's, and it verifies.
 - `feed.json` — the update feed `kendex update` reads from
   `releases/latest/download/feed.json`. Publishing the draft makes the
   version "latest". New feeds carry `schema: 1`, a SemVer `version`, and an

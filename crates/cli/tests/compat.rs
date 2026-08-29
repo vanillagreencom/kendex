@@ -328,13 +328,33 @@ fn report_files_through_a_stubbed_gh() {
     assert!(args.contains("kendex-report:v1 asset=guard kind=hook"));
 }
 
+/// A release publishes what it built for this target beside its feed, and
+/// signs it; a fixture feed publishes the document and cannot sign it.
+/// That is the point: nothing here can produce a signature under the
+/// release key, so the real binary driven end to end refuses and leaves
+/// the command exactly as it was. The admitted arm — signatures that check
+/// out, and the write that follows them — is covered in
+/// `commands::update::tests`, which holds a keypair of its own.
+#[allow(clippy::unwrap_used)]
+fn a_release_that_cannot_be_verified(home: &Path, target: &str) {
+    let name = format!("digests-{target}.json");
+    fs::write(
+        home.join(&name),
+        format!(
+            r#"{{"schema":1,"version":"9.9.9","target":"{target}","command":"{zero}","app":"{zero}"}}"#,
+            zero = "0".repeat(64)
+        ),
+    )
+    .unwrap();
+    fs::write(
+        home.join(format!("{name}.sig")),
+        "not the release signature",
+    )
+    .unwrap();
+}
+
 /// The feed is unsigned text naming a host, so what it offers has to be
-/// held to the release key before it lands on the running command. Nothing
-/// here can produce a signature under that key, which is the point: this
-/// drives the real binary end to end and it refuses, leaving the command
-/// exactly as it was. The admitted arm — a signature that checks out, and
-/// the write that follows it — is covered in `commands::update::tests`,
-/// which holds a keypair of its own.
+/// held to the release key before it lands on the running command.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn update_over_a_local_feed_refuses_a_command_it_cannot_verify() {
@@ -360,6 +380,7 @@ fn update_over_a_local_feed_refuses_a_command_it_cannot_verify() {
         ),
     )
     .unwrap();
+    a_release_that_cannot_be_verified(home, target);
 
     let output = kendex_copy(
         &me,
@@ -498,6 +519,7 @@ fn a_desktop_app_that_cannot_be_replaced_leaves_the_command_alone() {
         ),
     )
     .unwrap();
+    a_release_that_cannot_be_verified(home, target);
     let update = || {
         kendex_copy(
             &me,

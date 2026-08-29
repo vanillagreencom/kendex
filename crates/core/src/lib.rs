@@ -30,6 +30,7 @@ pub mod pi_ext;
 pub mod process;
 pub mod quality;
 pub mod registry;
+pub mod release_digests;
 pub mod remote;
 pub mod render;
 pub mod repo_effects;

@@ -5,6 +5,7 @@ use kendex_core::env::Env;
 use kendex_core::install_channel::{Host, HostProbe, InstallChannel, for_cli};
 use kendex_core::names::shown;
 use kendex_core::process::Hardened;
+use kendex_core::release_digests::{ReleaseDigests, release_digests_url};
 use kendex_core::update_channel::feed_url_for;
 use kendex_core::update_feed::{
     ReleaseFeed, UPDATER_PUBLIC_KEY, VersionRelation, app_image_signature_url, app_image_url,
@@ -90,16 +91,18 @@ pub fn run(env: &Env, force: bool) -> CliResult {
         &current_exe,
         &channel,
         UPDATER_PUBLIC_KEY,
+        target_triple(),
     )
 }
 
 /// The update with everything it reads off this process handed to it: the
-/// feed to ask, the command's own path, who owns that path, and the key
-/// every download is held to. Which arm a person lands on is the channel,
-/// and a package-managed one is the arm no test can reach by running:
-/// `for_cli` judges the real `current_exe`, which nothing here can place
-/// under `/usr` or a brew prefix. The key is an argument for the same
-/// reason core's is — a test holds a signature it made itself.
+/// feed to ask, the command's own path, who owns that path, the key every
+/// download is held to, and the target this build was made for. Which arm
+/// a person lands on is the channel, and a package-managed one is the arm
+/// no test can reach by running: `for_cli` judges the real `current_exe`,
+/// which nothing here can place under `/usr` or a brew prefix. The key and
+/// the target are arguments for the same reason core's key is — a test
+/// holds a release it signed itself, for a target it names.
 fn run_on(
     env: &Env,
     force: bool,
@@ -107,6 +110,7 @@ fn run_on(
     current_exe: &Path,
     channel: &InstallChannel,
     public_key: &str,
+    target: &str,
 ) -> CliResult {
     if let InstallChannel::Managed { command } = channel {
         out("a package manager owns this install; update it with:");
@@ -135,7 +139,6 @@ fn run_on(
         }
         VersionRelation::Older | VersionRelation::Current | VersionRelation::Newer => {}
     }
-    let target = target_triple();
     let Some(asset) = feed.asset_for(target) else {
         out(&missing_asset_message(relation, latest, current, target)?);
         return Ok(());
@@ -146,27 +149,56 @@ fn run_on(
     // install, so it is the last thing written. Any failure before it
     // leaves the old command in place, the next run still reads the feed
     // as newer, and both halves are tried again instead of stopping at
-    // already-up-to-date. Its bytes are fetched first so a lost download
-    // costs nothing that is already on disk.
+    // already-up-to-date.
     //
-    // The feed is the one input here nothing signs, so the asset URL is a
-    // host anyone who can alter the feed chooses. The signature published
-    // beside those bytes is what makes that harmless: it is fetched from
-    // wherever they came from and still has to check out under a key baked
-    // into this build, so a redirected download is refused rather than
-    // written over the running command.
+    // What is settled before any download: where the app half stands, so a
+    // machine that cannot take it stops here rather than after paying for
+    // the bytes, and what this release published, so both halves are held
+    // to it. The feed is the one input nothing signs — the version, the
+    // target's asset URL and the host serving it are all whoever wrote it
+    // to choose. The digests document is what makes that harmless: it is
+    // the release's own statement, signed under a key baked into this
+    // build, and it names the release, the target and the hash of each
+    // download. A signature that is genuine over some other release's
+    // artifact is refused here rather than written over the running
+    // command.
+    let app_half = app_half(env, latest, target, channel)?;
+    let digests = release_digests(feed_url, target, latest, public_key)?;
     let binary = fetch(asset)?;
     let signature = fetch(&signature_url(asset))?;
-    let app_replaced = match channel {
-        InstallChannel::Direct => update_app(env, latest, public_key)?,
-        // Nothing here is ours to replace beyond the command itself.
-        InstallChannel::Managed { .. } | InstallChannel::Unknown => false,
+    let app_replaced = match &app_half {
+        Some(half) => {
+            replace_app(half, latest, &digests, public_key)?;
+            true
+        }
+        None => false,
     };
-    if let Err(error) = install_verified(current_exe, &binary, &signature, public_key) {
+    let installed = install_verified(current_exe, &binary, &signature, public_key, |bytes| {
+        digests.verify_command(bytes)
+    });
+    if let Err(error) = installed {
         return Err(command_failure(latest, app_replaced, &error).into());
     }
     out(&format!("updated to {latest}"));
     Ok(())
+}
+
+/// The release's own statement about what it published for this target,
+/// read from beside the manifest the channel served and held to the
+/// release the feed offered. Nothing names this document but the channel
+/// and the running build, so a feed cannot point the check that judges it
+/// somewhere else.
+fn release_digests(
+    feed_url: &str,
+    target: &str,
+    latest: &str,
+    public_key: &str,
+) -> Result<ReleaseDigests, String> {
+    let url = release_digests_url(feed_url, target).map_err(|error| error.to_string())?;
+    let document = fetch(&url)?;
+    let signature = fetch(&signature_url(&url))?;
+    ReleaseDigests::for_release(public_key, &document, &signature, latest, target)
+        .map_err(|error| error.to_string())
 }
 
 /// What to say when the command itself could not be replaced. An app
@@ -182,64 +214,99 @@ fn command_failure(latest: &str, app_replaced: bool, error: &str) -> String {
     }
 }
 
-/// Bring the desktop app on this machine to the same release, answering
-/// whether it replaced one. The URL is built from the version the feed was
-/// validated at, never from feed text. A machine with no app of ours is
-/// the whole install already; a machine whose app cannot be replaced stops
-/// the run before the command moves, so neither half has.
-fn update_app(
+/// The desktop app half of this update: where it sits and where its
+/// download is published. Both URLs are built from the version the feed
+/// was validated at, never from feed text.
+struct AppHalf {
+    path: PathBuf,
+    url: String,
+    signature_url: String,
+}
+
+/// Whether this machine has an app of ours to bring across, decided before
+/// anything is downloaded. A machine with no app of ours is the whole
+/// install already; a machine whose app cannot be replaced stops the run
+/// here, with the old command still on disk, so neither half has moved.
+fn app_half(
     env: &Env,
     latest: &str,
-    public_key: &str,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    // Only the Linux AppImage is an install this command made. Every other
-    // platform's app arrives and updates by its own route, and the CLI says
-    // nothing about one it did not put there.
-    let target = target_triple();
-    let (Some(url), Some(signature_source)) = (
-        app_image_url(latest, target)?,
-        app_image_signature_url(latest, target)?,
+    target: &str,
+    channel: &InstallChannel,
+) -> Result<Option<AppHalf>, String> {
+    // Nothing outside a direct install is ours to replace beyond the
+    // command itself. Only the Linux AppImage is an install this command
+    // made; every other platform's app arrives and updates by its own
+    // route, and the CLI says nothing about one it did not put there.
+    let InstallChannel::Direct = channel else {
+        return Ok(None);
+    };
+    let to_url = |result: kendex_core::error::Result<Option<String>>| {
+        result.map_err(|error| error.to_string())
+    };
+    let (Some(url), Some(signature_url)) = (
+        to_url(app_image_url(latest, target))?,
+        to_url(app_image_signature_url(latest, target))?,
     ) else {
-        return Ok(false);
+        return Ok(None);
     };
     let path = env.app_image_file();
     if !Host.exists(&path) {
         out("no kendex desktop app here; the kendex command is the whole install");
-        return Ok(false);
+        return Ok(None);
     }
     if !Host.replaceable(&path) {
         return Err(app_refused(
             latest,
             &format!("the directory holding {} refuses writes", path.display()),
-        )
-        .into());
+        ));
     }
+    Ok(Some(AppHalf {
+        path,
+        url,
+        signature_url,
+    }))
+}
+
+/// Bring the desktop app on this machine to the same release.
+fn replace_app(
+    half: &AppHalf,
+    latest: &str,
+    digests: &ReleaseDigests,
+    public_key: &str,
+) -> Result<(), String> {
     say(&format!(
         "updating the desktop app at {}",
-        shown(&path.display().to_string())
+        shown(&half.path.display().to_string())
     ));
-    let image = fetch(&url)?;
+    let image = fetch(&half.url)?;
     // The release job publishes each AppImage beside a minisign signature
     // over exactly those bytes. One that arrives without a signature, or
-    // with one that does not check out, is refused rather than installed.
-    let signature = fetch(&signature_source).map_err(|why| app_refused(latest, &why))?;
-    install_verified(&path, &image, &signature, public_key)
-        .map_err(|why| app_refused(latest, &why))?;
+    // with one that does not check out, or that is not the download this
+    // release published for this target, is refused rather than installed.
+    let signature = fetch(&half.signature_url).map_err(|why| app_refused(latest, &why))?;
+    install_verified(&half.path, &image, &signature, public_key, |bytes| {
+        digests.verify_app(bytes)
+    })
+    .map_err(|why| app_refused(latest, &why))?;
     out(&format!("updated the desktop app to {latest}"));
-    Ok(true)
+    Ok(())
 }
 
 /// Write `bytes` over `path` only once `signature` checks out under
-/// `public_key`, so a download that fails verification never reaches an
-/// installed path. Both halves of an update land through here — the desktop
-/// app and the command itself — so neither is the half nothing checks.
+/// `public_key` and `published` recognizes them as the artifact this
+/// release named — the signature makes them the release key's, and
+/// `published` makes them this release's, for this target and this half.
+/// Both halves of an update land through here — the desktop app and the
+/// command itself — so neither is the half nothing checks.
 fn install_verified(
     path: &Path,
     bytes: &[u8],
     signature: &[u8],
     public_key: &str,
+    published: impl Fn(&[u8]) -> kendex_core::error::Result<()>,
 ) -> Result<(), String> {
     verify_signature(public_key, bytes, signature).map_err(|error| error.to_string())?;
+    published(bytes).map_err(|error| error.to_string())?;
     replace_executable(path, bytes).map_err(|error| error.to_string())
 }
 

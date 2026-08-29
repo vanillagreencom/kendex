@@ -1,7 +1,10 @@
 use kendex_core::app_update::AppUpdateView;
 use kendex_core::env::Env;
 use kendex_core::install_channel::{AppInstall, Host, InstallChannel};
-use kendex_core::registry::ReleaseFeedFetch;
+use kendex_core::registry::{Fetch, ReleaseFeedFetch};
+use kendex_core::release_digests::{ReleaseDigests, release_digests_url};
+use kendex_core::update_channel::manifest_url_for;
+use kendex_core::update_feed::{UPDATER_PUBLIC_KEY, signature_url};
 use tauri_plugin_updater::UpdaterExt;
 
 fn feed_url() -> String {
@@ -120,15 +123,57 @@ fn aim_at_install<T: ReplacementTarget>(target: T, install: &AppInstall) -> T {
 /// already put its notice card on, instead of two files that agree only
 /// while nobody edits one.
 fn manifest_endpoint() -> Result<tauri::Url, String> {
-    let url = kendex_core::update_channel::manifest_url_for(env!("CARGO_PKG_VERSION"));
+    let url = manifest_url_for(env!("CARGO_PKG_VERSION"));
     tauri::Url::parse(url)
         .map_err(|error| format!("the update manifest URL {url} is unusable: {error}"))
 }
 
+/// The release's own statement about what it published for this target,
+/// read from beside the manifest this build installs from and held to the
+/// release the manifest offered.
+///
+/// The plugin verifies the signature the manifest carries over the bytes
+/// it downloads, which proves they are a kendex release's and not which
+/// one: nothing signs the manifest, so one that can be served or altered
+/// can name a genuine older download, or another platform's, and that
+/// signature checks out. The document names the release, the target and
+/// the hash of each download, and is signed under the key this build
+/// pins, so a download this release did not publish is refused.
+fn published_for_this_target(version: &str) -> Result<ReleaseDigests, String> {
+    read_published(UPDATER_PUBLIC_KEY, env!("KENDEX_TARGET"), version, |url| {
+        let response = ReleaseFeedFetch
+            .get(url, None)
+            .map_err(|error| error.to_string())?;
+        match response.status {
+            200 => Ok(response.body),
+            status => Err(format!("reading {url} answered {status}")),
+        }
+    })
+}
+
+/// The read itself. The key, the target and the transport are arguments
+/// for the reason core's key is: a test holds a release it signed itself,
+/// for a target it names, without reaching the network.
+fn read_published(
+    public_key: &str,
+    target: &str,
+    version: &str,
+    read: impl Fn(&str) -> Result<Vec<u8>, String>,
+) -> Result<ReleaseDigests, String> {
+    let manifest = manifest_url_for(env!("CARGO_PKG_VERSION"));
+    let url = release_digests_url(manifest, target).map_err(|error| error.to_string())?;
+    let document = read(&url)?;
+    let signature = read(&signature_url(&url))?;
+    ReleaseDigests::for_release(public_key, &document, &signature, version, target)
+        .map_err(|error| error.to_string())
+}
+
 /// Replace this install with the latest release and relaunch into it. The
-/// separately signed updater manifest is the delivery path and verifies
-/// itself; the discovery feed never supplies an install URL. A failure
-/// leaves the running app untouched and usable.
+/// manifest names a download and the signature over it; the release's own
+/// digests document names which download this release published for this
+/// target, and the bytes are held to both before anything is installed.
+/// The discovery feed never supplies an install URL. A failure leaves the
+/// running app untouched and usable.
 #[tauri::command]
 #[specta::specta]
 pub async fn app_update_install(app: tauri::AppHandle) -> Result<(), String> {
@@ -148,10 +193,22 @@ pub async fn app_update_install(app: tauri::AppHandle) -> Result<(), String> {
         .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "this build is already the latest release".to_owned())?;
-    update
-        .download_and_install(|_chunk, _total| {}, || {})
+    // Downloaded, then judged, then installed: the plugin's own check runs
+    // on the way down, and what this release published for this target is
+    // what says those bytes are the ones the version being installed
+    // names. The read is blocking, so it runs off the async runtime.
+    let bytes = update
+        .download(|_chunk, _total| {}, || {})
         .await
         .map_err(|error| error.to_string())?;
+    let offered = update.version.clone();
+    let digests = tauri::async_runtime::spawn_blocking(move || published_for_this_target(&offered))
+        .await
+        .map_err(|error| format!("kendex could not read what this release published: {error}"))??;
+    digests
+        .verify_app(&bytes)
+        .map_err(|error| error.to_string())?;
+    update.install(bytes).map_err(|error| error.to_string())?;
     app.restart()
 }
 
@@ -167,138 +224,4 @@ pub fn schedule_startup_check() {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_debug_builds_accept_a_feed_override() {
-        let fixture = "file:///fixtures/feed.json".to_owned();
-        assert_eq!(selected_feed(Some(fixture.clone()), true), fixture);
-        assert_eq!(
-            selected_feed(Some(fixture), false),
-            kendex_core::update_channel::feed_url_for(env!("CARGO_PKG_VERSION"))
-        );
-    }
-
-    /// The card's check and the install have to be looking at one release,
-    /// or a candidate is offered an update the installer then cannot find.
-    /// Both read the running version, so this asserts they land on the same
-    /// channel and that the endpoint is a URL the plugin will take.
-    #[test]
-    fn the_notice_and_the_install_read_one_channel() {
-        let version = env!("CARGO_PKG_VERSION");
-        let endpoint = manifest_endpoint().expect("the manifest URL parses");
-        assert_eq!(
-            endpoint.as_str(),
-            kendex_core::update_channel::manifest_url_for(version)
-        );
-        use kendex_core::update_channel::{PRERELEASE_FEED_URL, PRERELEASE_MANIFEST_URL};
-        assert_eq!(
-            selected_feed(None, false) == PRERELEASE_FEED_URL,
-            endpoint.as_str() == PRERELEASE_MANIFEST_URL,
-            "the feed and the manifest are on different channels for {version}"
-        );
-    }
-
-    /// Stands in for the updater builder, which keeps what it was handed
-    /// private. What reaches it is what the plugin would have been given.
-    #[derive(Default)]
-    struct Recorder(Option<std::path::PathBuf>);
-
-    impl ReplacementTarget for Recorder {
-        fn replace_at(self, path: &std::path::Path) -> Self {
-            Self(Some(path.to_owned()))
-        }
-    }
-
-    /// The handoff itself. Everything else about this change can be right
-    /// while the approved path never leaves `app_update_install`, and the
-    /// plugin then falls back to rebuilding its own from the launch
-    /// environment, which is the whole defect.
-    #[test]
-    fn the_approved_path_reaches_whatever_will_replace_it() {
-        for install in [
-            AppInstall::AppImage(Some("/home/pat/Apps/kendex.AppImage".into())),
-            AppInstall::MacBundle("/Applications/kendex.app/Contents/MacOS/kendex".into()),
-        ] {
-            assert_eq!(
-                aim_at_install(Recorder::default(), &install).0.as_deref(),
-                install.judged_path(),
-                "{install:?}"
-            );
-        }
-
-        // Nothing to hand over, so the target keeps its own fallback.
-        for install in [AppInstall::WindowsInstaller, AppInstall::AppImage(None)] {
-            assert_eq!(
-                aim_at_install(Recorder::default(), &install).0,
-                None,
-                "{install:?}"
-            );
-        }
-    }
-
-    /// Only the bundle is writable, so `for_app` can approve nothing else.
-    struct OnlyWritable(&'static str);
-
-    impl kendex_core::install_channel::HostProbe for OnlyWritable {
-        fn replaceable(&self, path: &std::path::Path) -> bool {
-            path == std::path::Path::new(self.0)
-        }
-
-        fn exists(&self, _: &std::path::Path) -> bool {
-            false
-        }
-
-        fn resolve(&self, path: &std::path::Path) -> std::path::PathBuf {
-            path.to_owned()
-        }
-
-        fn on_path(&self, _: &str) -> bool {
-            false
-        }
-
-        fn os_release(&self) -> Option<String> {
-            None
-        }
-    }
-
-    /// The plugin decides for itself what to replace, deriving it from the
-    /// path it is handed, so nothing kendex asserts about that path proves
-    /// the two agree. This asks the plugin.
-    ///
-    /// Getting it wrong is not a failed update. The derived path is what the
-    /// macOS installer removes before moving the new bundle in, escalating a
-    /// permission error to a shell `rm -rf` under `with administrator
-    /// privileges`. Hand over the bundle instead of the executable inside it
-    /// and the plugin climbs one level further, to the directory holding
-    /// every other app on the machine. The dependency is a caret range, so a
-    /// minor bump can move this derivation under an unchanged kendex.
-    #[test]
-    fn the_plugin_derives_the_unit_for_app_approved() {
-        let exe = "/Applications/kendex.app/Contents/MacOS/kendex";
-        let bundle = "/Applications/kendex.app";
-        let probe = OnlyWritable(bundle);
-        let install = AppInstall::mac_bundle(&probe, std::path::Path::new(exe));
-        assert_eq!(
-            kendex_core::install_channel::for_app(&install, &probe),
-            InstallChannel::Direct
-        );
-
-        let handed = install.judged_path().expect("a mac bundle carries a path");
-        let derived = tauri_plugin_updater::extract_path_from_executable(handed)
-            .expect("the plugin derives a path from an executable inside a bundle");
-        // True on every platform the function compiles for, and the property
-        // that matters: what the plugin acts on never escapes what kendex
-        // approved.
-        assert!(
-            derived.starts_with(bundle),
-            "plugin derived {} from {handed}, outside the approved {bundle}",
-            derived.display(),
-            handed = handed.display()
-        );
-        // Where the derivation runs for real it lands on the bundle exactly.
-        #[cfg(target_os = "macos")]
-        assert_eq!(derived, std::path::Path::new(bundle));
-    }
-}
+mod tests;

@@ -291,13 +291,13 @@ lives in one capability table read by core and UI.
   mid-read; a failed read shows its error with a retry, kept figures headed
   as the last kendex could check, never a definite count — least of all
   zero. Every read the app starts with runs beside the others.
-- **Discovery is the unsigned feed; both halves verify under one pinned key.**
-  Off the launch path, one cross-process transaction reads the feed at most
-  every six hours, keeps the last result beside any error, and never follows
-  the final link; the preference gates automatic contact; in both shells debug
-  builds alone honor `KENDEX_UPDATE_FEED`. Replacing needs the path behind the
+- **Discovery is unsigned; one pinned key covers a document binding each
+  download to its release and target.** Off the launch path, one transaction
+  reads the feed six-hourly at most, keeps the last result beside any error
+  and never follows the final link; a preference gates automatic contact; only
+  debug builds honor `KENDEX_UPDATE_FEED`. Replacing needs the path behind the
   running one writable, outside a system prefix; a package prefix names its
-  command instead, anything else neither. One sidebar card offers whichever.
+  command instead, anything else neither. A sidebar card offers whichever.
 - Commands that touch disk, git, or a subprocess are
   `#[tauri::command(async)]`. Only window operations stay synchronous.
 - No database: manifests, locks, and native dirs are the state; scans are

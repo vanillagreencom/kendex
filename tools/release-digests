@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# release-digests — what one release lane publishes about what it built:
+# the version, the target, and the SHA-256 of each download that lane
+# staged, in one document signed under the release key.
+#
+# A signature over a download proves the bytes and nothing else — not the
+# version they are, not the target they were built for. Nothing signs the
+# feed that names them, so a feed that can be served or altered can point
+# this target at an older, legitimately signed kendex binary, or at
+# another platform's, and both verify. An update reads this document from
+# the channel it read the feed from, holds it to the release and target it
+# asked for, and installs nothing whose hash it does not name.
+#
+# usage: tools/release-digests [--document-only] TARGET VERSION DIST
+#
+#   TARGET   the Rust target triple this lane built
+#   VERSION  the version this release was built as, without a leading v
+#   DIST     the directory `Stage release assets` filled
+#
+# Writes DIST/digests-TARGET.json, then signs it and the kendex command
+# beside it with the tauri signer under TAURI_SIGNING_PRIVATE_KEY. A lane
+# that produced no signature published a download no client can verify, so
+# it fails here rather than in the release.
+#
+# --document-only writes the document and signs nothing: signing needs the
+# release secret, which no test has, and the document is what a test can
+# hold to the shape the client reads.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+die() {
+  echo "::error::$*" >&2
+  exit 1
+}
+
+document_only=0
+if [ "${1:-}" = "--document-only" ]; then
+  document_only=1
+  shift
+fi
+[ "$#" -eq 3 ] || die "usage: tools/release-digests [--document-only] TARGET VERSION DIST"
+target=$1
+version=$2
+dist=$3
+
+[ -d "$dist" ] || die "$dist is not a directory, so this lane staged nothing to publish."
+# The version reaches a JSON document and a URL, so it is held to the
+# characters a SemVer version is made of before either.
+case "$version" in
+  "" | *[!0-9A-Za-z.+-]*) die "'$version' is not a version this release could have been built as." ;;
+esac
+
+# What this lane's two downloads are named. The command is staged under its
+# triple; the app download is the artifact this platform's updater installs,
+# which is the one the release's latest.json names for it.
+ext=""
+case "$target" in
+  x86_64-unknown-linux-gnu) app_glob="kendex_*_amd64.AppImage" ;;
+  aarch64-unknown-linux-gnu) app_glob="kendex_*_aarch64.AppImage" ;;
+  aarch64-apple-darwin | x86_64-apple-darwin) app_glob="kendex-${target}.app.tar.gz" ;;
+  x86_64-pc-windows-msvc)
+    app_glob="kendex_*_x64-setup.exe"
+    ext=".exe"
+    ;;
+  *) die "'$target' is not a target this release builds; add it here and to the release matrix together." ;;
+esac
+
+# Exactly one match or none: two AppImages in dist/ is a lane that staged
+# another release's artifact beside its own, and picking either would sign
+# a document naming bytes nobody can account for.
+only_match() {
+  local what=$1 pattern=$2 candidate found=""
+  for candidate in "$dist"/$pattern; do
+    [ -f "$candidate" ] || continue
+    [ -z "$found" ] || die "$dist holds more than one $what ($found and $candidate); this lane cannot say which one it published."
+    found=$candidate
+  done
+  [ -n "$found" ] || die "$dist holds no $what matching $pattern; check this lane's staging step, then re-run the tag."
+  printf '%s' "$found"
+}
+
+# Plain SHA-256 in lowercase hex, the shape sha256sum prints and the
+# client recomputes. macOS ships shasum and no sha256sum.
+digest() {
+  local file=$1 line
+  if command -v sha256sum >/dev/null 2>&1; then
+    line=$(sha256sum "$file") || die "sha256sum could not read $file."
+  else
+    line=$(shasum -a 256 "$file") || die "shasum could not read $file."
+  fi
+  line=${line%% *}
+  [ "${#line}" -eq 64 ] || die "the digest of $file came back as '$line', which is not SHA-256."
+  printf '%s' "$line"
+}
+
+command_binary=$(only_match "kendex command" "kendex-${target}${ext}")
+app_download=$(only_match "app download" "$app_glob")
+# Both digests are taken before the document is opened. A command
+# substitution that failed inside the heredoc would leave its field empty
+# and the document written anyway, which is a lane publishing a statement
+# it never measured.
+command_digest=$(digest "$command_binary")
+app_digest=$(digest "$app_download")
+document="$dist/digests-${target}.json"
+
+cat >"$document" <<JSON
+{
+  "schema": 1,
+  "version": "${version}",
+  "target": "${target}",
+  "command": "${command_digest}",
+  "app": "${app_digest}"
+}
+JSON
+
+[ "$document_only" -eq 0 ] || exit 0
+
+for file in "$command_binary" "$document"; do
+  "$ROOT/ui/node_modules/.bin/tauri" signer sign "$file" ||
+    die "The signer failed on ${file}. kendex update refuses what it cannot verify; check TAURI_SIGNING_PRIVATE_KEY, then re-run the tag."
+  [ -s "${file}.sig" ] ||
+    die "No signature for ${file}. kendex update refuses what it cannot verify; check this lane's signer step and TAURI_SIGNING_PRIVATE_KEY, then re-run the tag."
+done

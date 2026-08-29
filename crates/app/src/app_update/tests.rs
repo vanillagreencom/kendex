@@ -1,0 +1,199 @@
+use super::*;
+
+#[test]
+fn only_debug_builds_accept_a_feed_override() {
+    let fixture = "file:///fixtures/feed.json".to_owned();
+    assert_eq!(selected_feed(Some(fixture.clone()), true), fixture);
+    assert_eq!(
+        selected_feed(Some(fixture), false),
+        kendex_core::update_channel::feed_url_for(env!("CARGO_PKG_VERSION"))
+    );
+}
+
+/// The card's check and the install have to be looking at one release,
+/// or a candidate is offered an update the installer then cannot find.
+/// Both read the running version, so this asserts they land on the same
+/// channel and that the endpoint is a URL the plugin will take.
+#[test]
+fn the_notice_and_the_install_read_one_channel() {
+    let version = env!("CARGO_PKG_VERSION");
+    let endpoint = manifest_endpoint().expect("the manifest URL parses");
+    assert_eq!(
+        endpoint.as_str(),
+        kendex_core::update_channel::manifest_url_for(version)
+    );
+    use kendex_core::update_channel::{PRERELEASE_FEED_URL, PRERELEASE_MANIFEST_URL};
+    assert_eq!(
+        selected_feed(None, false) == PRERELEASE_FEED_URL,
+        endpoint.as_str() == PRERELEASE_MANIFEST_URL,
+        "the feed and the manifest are on different channels for {version}"
+    );
+}
+
+/// The document naming what this release published is read from beside
+/// the manifest the install reads, so both come off the channel this
+/// build follows. It is also the one place this build's own target has
+/// to be a name the read will accept: a triple the rule refuses would
+/// leave this platform unable to install anything.
+#[test]
+fn the_digests_document_sits_beside_the_manifest_the_install_reads() {
+    let endpoint = manifest_endpoint().expect("the manifest URL parses");
+    let target = env!("KENDEX_TARGET");
+    let (directory, _) = endpoint
+        .as_str()
+        .rsplit_once('/')
+        .expect("the manifest is served from a directory");
+    assert_eq!(
+        release_digests_url(manifest_url_for(env!("CARGO_PKG_VERSION")), target)
+            .expect("this build's target names a document"),
+        format!("{directory}/digests-{target}.json")
+    );
+}
+
+/// A throwaway minisign keypair and the document it signed for a 9.9.9
+/// Linux lane, so the install's own read runs the real check rather than a
+/// stub standing in for it.
+const TEST_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc1RTYwNzZERUJFMDVFNTcKUldSWFh1RHJiUWZtZFdVSnJYQmd0QnhLVUdUQnN2MWNTR2N6SW9jZ1Z1Q0FoZmlzWDVIeFZJaUkK";
+const TEST_TARGET: &str = "x86_64-unknown-linux-gnu";
+const PUBLISHED: &str = r#"{
+  "schema": 1,
+  "version": "9.9.9",
+  "target": "x86_64-unknown-linux-gnu",
+  "command": "aae05017e20c96dd3cd26b1fd324365c2ab53512db82b53362e75f8f553ffaea",
+  "app": "d489b792c3c3d6e9633ff28507f2c7da40a24eec743521842ebc283c2c3226ff"
+}
+"#;
+const PUBLISHED_SIGNATURE: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSWFh1RHJiUWZtZFpxNkg5WFpISHVZL2xIMWR6eWxZN3djZUU2NXpERjVNMjRUMUJlcXlnS1V5dUpDNGsySlpHZkRBUEhiOFN3dFRhVElPaWltajA3RTNpNVk3NndJcXdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4MDQyMjM0CWZpbGU6ZGlnZXN0cy14ODZfNjQtdW5rbm93bi1saW51eC1nbnUuanNvbgpzSkg3dGJuMXVNSHIyRkE5enlISnVSRWRNS0xXcWxFVEJ1TkRaSXFsR0ZzZm5LbCtqNThBckYzb1JQVE9UeEk5WExEMXpKYTlSZnl0S2xQUXZxTk9Bdz09Cg==";
+/// The app download that document names, and one it does not.
+const PUBLISHED_APP: &[u8] = b"the linux appimage";
+const ANOTHER_RELEASE_APP: &[u8] = b"an older kendex, signed when it shipped";
+
+/// What the install does before it hands the plugin's download back to be
+/// written: read the release's own document off the channel and hold the
+/// bytes to it. The transport answers only at the two URLs this read is
+/// supposed to ask for, so a read that looked anywhere else finds nothing.
+#[test]
+fn the_install_holds_its_download_to_what_this_release_published() {
+    let document = release_digests_url(manifest_url_for(env!("CARGO_PKG_VERSION")), TEST_TARGET)
+        .expect("the channel names a document");
+    let signature = signature_url(&document);
+    let serve = |asked: &str| match asked {
+        _ if asked == document => Ok(PUBLISHED.as_bytes().to_vec()),
+        _ if asked == signature => Ok(PUBLISHED_SIGNATURE.as_bytes().to_vec()),
+        _ => Err(format!("this release published nothing at {asked}")),
+    };
+
+    let published =
+        read_published(TEST_KEY, TEST_TARGET, "9.9.9", serve).expect("the release signed this");
+    published
+        .verify_app(PUBLISHED_APP)
+        .expect("the download this release published");
+    assert!(published.verify_app(ANOTHER_RELEASE_APP).is_err());
+
+    // The manifest is unsigned, so the version it offers is whoever wrote
+    // it to choose; the document is what that claim is held to.
+    let claimed = read_published(TEST_KEY, TEST_TARGET, "9.9.8", serve).unwrap_err();
+    assert!(claimed.contains("the feed offers 9.9.8"), "{claimed}");
+}
+
+/// Stands in for the updater builder, which keeps what it was handed
+/// private. What reaches it is what the plugin would have been given.
+#[derive(Default)]
+struct Recorder(Option<std::path::PathBuf>);
+
+impl ReplacementTarget for Recorder {
+    fn replace_at(self, path: &std::path::Path) -> Self {
+        Self(Some(path.to_owned()))
+    }
+}
+
+/// The handoff itself. Everything else about this change can be right
+/// while the approved path never leaves `app_update_install`, and the
+/// plugin then falls back to rebuilding its own from the launch
+/// environment, which is the whole defect.
+#[test]
+fn the_approved_path_reaches_whatever_will_replace_it() {
+    for install in [
+        AppInstall::AppImage(Some("/home/pat/Apps/kendex.AppImage".into())),
+        AppInstall::MacBundle("/Applications/kendex.app/Contents/MacOS/kendex".into()),
+    ] {
+        assert_eq!(
+            aim_at_install(Recorder::default(), &install).0.as_deref(),
+            install.judged_path(),
+            "{install:?}"
+        );
+    }
+
+    // Nothing to hand over, so the target keeps its own fallback.
+    for install in [AppInstall::WindowsInstaller, AppInstall::AppImage(None)] {
+        assert_eq!(
+            aim_at_install(Recorder::default(), &install).0,
+            None,
+            "{install:?}"
+        );
+    }
+}
+
+/// Only the bundle is writable, so `for_app` can approve nothing else.
+struct OnlyWritable(&'static str);
+
+impl kendex_core::install_channel::HostProbe for OnlyWritable {
+    fn replaceable(&self, path: &std::path::Path) -> bool {
+        path == std::path::Path::new(self.0)
+    }
+
+    fn exists(&self, _: &std::path::Path) -> bool {
+        false
+    }
+
+    fn resolve(&self, path: &std::path::Path) -> std::path::PathBuf {
+        path.to_owned()
+    }
+
+    fn on_path(&self, _: &str) -> bool {
+        false
+    }
+
+    fn os_release(&self) -> Option<String> {
+        None
+    }
+}
+
+/// The plugin decides for itself what to replace, deriving it from the
+/// path it is handed, so nothing kendex asserts about that path proves
+/// the two agree. This asks the plugin.
+///
+/// Getting it wrong is not a failed update. The derived path is what the
+/// macOS installer removes before moving the new bundle in, escalating a
+/// permission error to a shell `rm -rf` under `with administrator
+/// privileges`. Hand over the bundle instead of the executable inside it
+/// and the plugin climbs one level further, to the directory holding
+/// every other app on the machine. The dependency is a caret range, so a
+/// minor bump can move this derivation under an unchanged kendex.
+#[test]
+fn the_plugin_derives_the_unit_for_app_approved() {
+    let exe = "/Applications/kendex.app/Contents/MacOS/kendex";
+    let bundle = "/Applications/kendex.app";
+    let probe = OnlyWritable(bundle);
+    let install = AppInstall::mac_bundle(&probe, std::path::Path::new(exe));
+    assert_eq!(
+        kendex_core::install_channel::for_app(&install, &probe),
+        InstallChannel::Direct
+    );
+
+    let handed = install.judged_path().expect("a mac bundle carries a path");
+    let derived = tauri_plugin_updater::extract_path_from_executable(handed)
+        .expect("the plugin derives a path from an executable inside a bundle");
+    // True on every platform the function compiles for, and the property
+    // that matters: what the plugin acts on never escapes what kendex
+    // approved.
+    assert!(
+        derived.starts_with(bundle),
+        "plugin derived {} from {handed}, outside the approved {bundle}",
+        derived.display(),
+        handed = handed.display()
+    );
+    // Where the derivation runs for real it lands on the bundle exactly.
+    #[cfg(target_os = "macos")]
+    assert_eq!(derived, std::path::Path::new(bundle));
+}

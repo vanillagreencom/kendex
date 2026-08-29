@@ -18,9 +18,11 @@ export const commands = {
 	appUpdateChannel: () => typedError<InstallChannel, string>(__TAURI_INVOKE("app_update_channel")),
 	/**
 	 *  Replace this install with the latest release and relaunch into it. The
-	 *  separately signed updater manifest is the delivery path and verifies
-	 *  itself; the discovery feed never supplies an install URL. A failure
-	 *  leaves the running app untouched and usable.
+	 *  manifest names a download and the signature over it; the release's own
+	 *  digests document names which download this release published for this
+	 *  target, and the bytes are held to both before anything is installed.
+	 *  The discovery feed never supplies an install URL. A failure leaves the
+	 *  running app untouched and usable.
 	 */
 	appUpdateInstall: () => typedError<null, string>(__TAURI_INVOKE("app_update_install")),
 	scanMachine: () => typedError<ScanResult, string>(__TAURI_INVOKE("scan_machine")),
