@@ -96,14 +96,19 @@ list_suites() {
 require_setup() {
     command -v "$SUITE_TIMEOUT_BIN" >/dev/null 2>&1 ||
         die "$SUITE_TIMEOUT_BIN is not installed: every suite is run under it, so without it nothing can be measured (GNU coreutils provides it, as gtimeout on macOS — set VACUOUS_SCAN_TIMEOUT_BIN)"
-    [[ "$SUITE_TIMEOUT" =~ ^[0-9]+[smhd]?$ ]] ||
-        die "VACUOUS_SCAN_TIMEOUT is not a whole-number duration: $SUITE_TIMEOUT"
-    # Matched, not evaluated. Bash arithmetic reads a zero-padded number as
-    # octal, so `-gt 0` on 08 fails with "value too great for base" and the
-    # refusal below then reports a valid duration as a disabled bound — wrong
-    # about the value and wrong about the reason. GNU timeout accepts 08.
-    if [[ "${SUITE_TIMEOUT%[smhd]}" =~ ^0+$ ]]; then
-        die "VACUOUS_SCAN_TIMEOUT of $SUITE_TIMEOUT disables the bound rather than setting it, which is never what a caller means by zero"
+    # One thing is refused here, and timeout judges the rest. Its DURATION is
+    # a floating point number with an optional suffix, so 0.5 and 1.5s are
+    # valid and a whole-number rule here would reject values the tool accepts
+    # — a second copy of someone else's grammar, wrong the moment it drifts.
+    # The scan needs exactly one refusal of its own: a duration with nothing
+    # non-zero in it, because zero disables the bound instead of setting it.
+    #
+    # Matched, never evaluated. Bash arithmetic reads a zero-padded number as
+    # octal, so a comparison against 08 fails with "value too great for base"
+    # and the refusal then reports a valid duration as a disabled bound —
+    # wrong about the value and wrong about the reason.
+    if [[ "${SUITE_TIMEOUT%[smhd]}" =~ ^0*\.?0*$ ]]; then
+        die "VACUOUS_SCAN_TIMEOUT of '$SUITE_TIMEOUT' carries no non-zero duration; zero disables the bound rather than setting it"
     fi
 }
 
