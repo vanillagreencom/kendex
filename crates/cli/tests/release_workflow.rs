@@ -3,10 +3,10 @@
 //! into the per-target output dir and the staging step must read from that
 //! same dir, keyed by the one matrix expression rather than a literal
 //! triple. Staging and the manifest are one contract in two halves, and a
-//! rename on either side drops a platform from `latest.json` with the job
-//! still green, so the two run joined here: the names tauri emits go into
-//! the real staging script and what it produces goes into the real
-//! manifest script.
+//! naming mismatch is otherwise first discovered by a failed tag run
+//! because pull requests do not exercise these steps. The two run joined
+//! here: a hand-maintained model of Tauri 2 output goes into the real
+//! staging script and what it produces goes into the real manifest script.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -132,8 +132,8 @@ fn signing_env_is_exported_only_for_a_complete_secret_set() {
 }
 
 /// One release lane: the platform key the manifest step names it by, the
-/// matrix triple, the `runner.os` its image reports, and the bundle tauri
-/// leaves under `target/<triple>/release/bundle` there.
+/// matrix triple, the `runner.os` its image reports, and the modeled bundle
+/// output under `target/<triple>/release/bundle` there.
 struct Lane {
     platform: &'static str,
     target: &'static str,
@@ -141,13 +141,13 @@ struct Lane {
     bundle: &'static [&'static str],
 }
 
-/// What a full tag run hands the staging step: the names tauri 2 emits for
-/// `productName: kendex` at version 5.1.0 with `createUpdaterArtifacts`
-/// on. Tauri signs every updater-enabled package — AppImage, deb, rpm,
-/// NSIS and MSI — as well as the macOS `.app.tar.gz` it tars from the
-/// `.app`, so a lane offers the staging step several signatures and only
-/// one of them belongs in the manifest. Both Apple lanes name their
-/// archive identically, which is what the staging step's rename is for.
+/// A hand-maintained model of what a full tag run hands the staging step:
+/// Tauri 2 bundle names for `productName: kendex` at version 5.1.0 with
+/// `createUpdaterArtifacts` on. Tauri signs AppImage, deb, rpm, NSIS, and
+/// MSI packages, plus the macOS `.app.tar.gz` it tars from the `.app`. A
+/// lane therefore offers the staging step several signatures, but only one
+/// belongs in the manifest. Both Apple lanes name their archive
+/// identically, which is what the staging step's rename is for.
 const LANES: [Lane; 5] = [
     Lane {
         platform: "linux-x86_64",
@@ -401,8 +401,8 @@ fn the_manifest_pairs_every_signature_with_the_artifact_it_signs() {
 /// `kendex update` fetches both of these by name, so both have to be files
 /// a tag run actually publishes: the AppImage the manifest step names, and
 /// the `.sig` beside it that its `kendex_*_amd64.AppImage.sig` glob matches.
-/// A rename on either side is first seen by a user whose update fails after
-/// the release shipped, because release.yml runs on tags only.
+/// This test checks both names during pull requests because release.yml
+/// runs on tags only.
 #[cfg(unix)]
 #[test]
 fn the_urls_core_builds_are_the_artifact_the_release_signs_and_its_signature() {
@@ -431,7 +431,7 @@ fn the_urls_core_builds_are_the_artifact_the_release_signs_and_its_signature() {
 
 /// Tauri v2 signs the AppImage itself. The `.AppImage.tar.gz` shape belongs
 /// to the deprecated v1-compatible updater, and looking for it leaves Linux
-/// out of the manifest with the job still green.
+/// out of the inputs, so the tag job fails before writing the manifest.
 #[test]
 fn no_step_hunts_for_the_v1_compatible_linux_updater_archive() {
     let workflow = workflow();
@@ -477,10 +477,10 @@ fn a_release_with_nothing_signed_fails_the_job() {
 
 /// The staging step's globs and the manifest step's `add` patterns are two
 /// halves of one naming contract that only a tag run ever puts together.
-/// Here the halves meet: tauri's own bundle names go through the real
-/// staging script, and what it leaves in `dist/` goes to the real manifest
-/// script, so a rename in tauri's output, in the staging globs, or in the
-/// `add` patterns fails this test rather than a release.
+/// Here the halves meet: the hand-maintained Tauri 2 output model goes
+/// through the real staging script, and what it leaves in `dist/` goes to
+/// the real manifest script. A mismatch between the staging globs and the
+/// `add` patterns fails this test rather than a tag run.
 #[cfg(unix)]
 #[test]
 #[allow(clippy::unwrap_used)]
