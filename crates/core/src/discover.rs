@@ -42,16 +42,23 @@ pub fn is_project(dir: &Path) -> bool {
 /// Current-project resolution: walk up from `start`; a `.kendex-lock.json`
 /// wins even at the home directory, otherwise the first directory carrying
 /// a harness marker — refusing home itself.
+///
+/// The walk and the `home` test run in `std::fs::canonicalize`'s spelling,
+/// and `paths::reduced` speaks only for the answer. Reducing each end
+/// separately decides the extended-length prefix per path, and the refusal
+/// here is a comparison: a start deep enough to keep the prefix would
+/// never meet the home that lost it, and a marker at home would be taken
+/// for a project.
 pub fn project_root_from(start: &Path, home: &Path) -> Option<PathBuf> {
-    let start = crate::paths::canonical(start).ok()?;
-    let home = crate::paths::canonical(home).unwrap_or_else(|_| home.to_path_buf());
+    let start = start.canonicalize().ok()?;
+    let home = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
     let mut current = Some(start.as_path());
     while let Some(dir) = current {
         if dir.join(crate::lock::LOCK_FILE).is_file() {
-            return Some(dir.to_path_buf());
+            return Some(crate::paths::reduced(dir));
         }
         if dir != home && MARKER_DIRS.iter().any(|m| dir.join(m).is_dir()) {
-            return Some(dir.to_path_buf());
+            return Some(crate::paths::reduced(dir));
         }
         current = dir.parent();
     }

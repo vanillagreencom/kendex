@@ -61,14 +61,26 @@ fn spelled(text: &str, separator: char) -> String {
 /// The canonical spelling of `path`: symlinks resolved, and on Windows the
 /// extended-length prefix taken back off wherever [`plain`] can.
 pub fn canonical(path: &Path) -> std::io::Result<PathBuf> {
-    let resolved = path.canonicalize()?;
+    Ok(reduced(&path.canonicalize()?))
+}
+
+/// An already-resolved `path` in the spelling kendex hands out —
+/// [`canonical`] without the resolving step.
+///
+/// The prefix is kept or dropped per path, on that path's own length and
+/// components, so two paths reduced apart are two spellings and can no
+/// longer be compared: an ancestor short enough to lose it does not prefix
+/// a descendant long enough to keep it. A walk or a containment test
+/// therefore resolves in [`std::fs::canonicalize`]'s one spelling and
+/// reduces the answer it settles on, here.
+pub fn reduced(path: &Path) -> PathBuf {
     // A path whose bytes are not UTF-8 cannot be reduced without inventing
     // some, and no canonicalized Unix path can carry the prefix anyway —
     // it is absolute and begins with `/` — so this is a Windows rule that
     // costs the other platforms one comparison.
-    match resolved.to_str() {
-        Some(text) => Ok(PathBuf::from(plain(text).as_ref())),
-        None => Ok(resolved),
+    match path.to_str() {
+        Some(text) => PathBuf::from(plain(text).as_ref()),
+        None => path.to_path_buf(),
     }
 }
 
@@ -239,6 +251,24 @@ mod tests {
         // Past the legacy limit the plain spelling is refused outright.
         let long = format!(r"\\?\C:\{}", "d".repeat(LEGACY_MAX_PATH));
         assert_eq!(plain(&long), long);
+    }
+
+    /// And `reduced` is that rule over a path, so a caller that resolved
+    /// in std's own spelling settles on the same answer `canonical` would
+    /// have handed it. Against a `reduced` that gives the path back whole,
+    /// this is red.
+    #[test]
+    fn a_resolved_path_is_reduced_to_the_spelling_canonical_hands_out() {
+        assert_eq!(
+            reduced(Path::new(r"\\?\C:\Users\me\dev\app")),
+            Path::new(r"C:\Users\me\dev\app")
+        );
+        // And keeps the prefix on exactly the shapes `plain` keeps it on,
+        // so the two cannot drift apart.
+        assert_eq!(
+            reduced(Path::new(r"\\?\C:\dev\app ")),
+            Path::new(r"\\?\C:\dev\app ")
+        );
     }
 
     /// A canonical root names the directory it was asked about and does

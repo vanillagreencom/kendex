@@ -54,7 +54,10 @@ fn path_sources_resolve_relative_to_scope_root() {
         root: project.clone(),
     };
     let source = require_ready(&env, &scope, "cat", &manifest).unwrap();
-    assert_eq!(source.root, project.join("catalog").canonicalize().unwrap());
+    assert_eq!(
+        source.root,
+        crate::paths::canonical(&project.join("catalog")).unwrap()
+    );
 
     let sealed = SealedSource::open(&source.root).unwrap();
     let config = source_config(&sealed, "catalog").unwrap();
