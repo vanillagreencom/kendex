@@ -150,6 +150,10 @@ assert_file_contains "$review_pr" '`detail`' "review-pr names the detail field t
 submit_pr="$REPO_ROOT/skills/orch/workflows/submit-pr.md"
 assert_file_contains "$submit_pr" 'review-artifact-check --file "$LOCAL_OUTPUT" [LOCAL_STARTED_AT]' "submit-pr passes a delegated-at boundary to the --file freshness check"
 assert_file_contains "$submit_pr" "git-context timestamp epoch" "submit-pr captures an epoch boundary before running the local review"
+assert_file_contains "$submit_pr" 'stdout with no line beginning `wait:`' "submit-pr branches when launch emits no wait protocol"
+assert_file_contains "$submit_pr" 'continue to § 2 without running the wait command or `review-artifact-check`' "submit-pr skips validation after launch failure"
+assert_file_contains "$submit_pr" 'report the `reason`' "submit-pr surfaces the rejection reason"
+assert_file_contains "$submit_pr" "none of those outcomes is a pass" "submit-pr states a rejected local review is not a pass"
 
 # --- kendex#885: the rejection has to teach the schema, not just flag it ---
 # Four artifacts were rejected in one session by agents that followed the

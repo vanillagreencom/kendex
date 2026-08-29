@@ -46,6 +46,8 @@ mkdir -p [WORKTREE_PATH]/tmp
 .agents/skills/second-opinion/scripts/second-opinion review --cwd [WORKTREE_PATH] --output [WORKTREE_PATH]/tmp/review-local-[TIMESTAMP_FROM_PREVIOUS_COMMAND].json --foreground
 ```
 
+Capture the launch status, stdout, and stderr. A nonzero launch or stdout with no line beginning `wait:` means no wait protocol exists: report `local external review failed — [SECOND-OPINION STDERR]` and continue to § 2 without running the wait command or `review-artifact-check`.
+
 Execute the exact command printed after `wait:`. Exit 75 means the run is still active; do other event checks, then rerun the same command. Continue until it returns a terminal status before running `review-artifact-check`.
 
 Use the epoch output as `LOCAL_STARTED_AT`:
