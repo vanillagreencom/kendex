@@ -20,9 +20,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/.cache/linear/comments"
 git -C "$TMP_ROOT" init -q -b main
@@ -86,16 +87,8 @@ run_validate() {
   cd "$TMP_ROOT" && bash "$LINEAR" cache issues validate-completion "$@"
 }
 
-fail=0
-
 check() {
-  local label="$1" out="$2" filter="$3"
-  if ! jq -e "$filter" >/dev/null 2>&1 <<<"$out"; then
-    echo "FAIL: $label"
-    echo "  filter: $filter"
-    echo "  output: $out"
-    fail=1
-  fi
+  assert_jq "$1" "$2" "$3"
 }
 
 # --- Scenario A: all children completed (the #634 regression) --------------
@@ -157,53 +150,28 @@ check "E: all_ok false while a child is open" "$outE" '.all_ok == false'
 # The marker always wins: a single-PR bundle validates with plain
 # validate-completion (session-root pre-merge state + summary checks), and
 # --container would silently swap in the permissive container role.
-set +e
-outG="$(run_validate CC-950 --include-children-of CC-950 --container 2>&1 >/dev/null)"
-rcG=$?
-set -e
-if [ "$rcG" -eq 0 ]; then
-  echo "FAIL: G: (one PR) bundle accepted under --container (rc=0)"
-  fail=1
-fi
-case "$outG" in
-  *"(one PR)"*) ;;
-  *) echo "FAIL: G: refusal does not name the marker: $outG"; fail=1 ;;
-esac
+rcG=0
+outG="$(run_validate CC-950 --include-children-of CC-950 --container 2>&1 >/dev/null)" || rcG=$?
+
+assert_ne "G: a (one PR) bundle is refused under --container" "$rcG" 0
+assert_contains "G: the refusal names the (one PR) marker" "$outG" "(one PR)"
 
 # --- Scenario F: --container fails closed on misuse ------------------------
 # The flag asserts "this bundle may complete now", so it must name exactly one
 # target, pair with --include-children-of for that same target, and expand to
 # at least one non-canceled child. A leaf or mismatched invocation is a caller
 # error (nonzero exit), never a passing validation.
-set +e
-run_validate CC-901 --include-children-of CC-901 --container >/dev/null 2>&1
-rcF1=$?
-run_validate CC-930 --container >/dev/null 2>&1
-rcF2=$?
-run_validate CC-930 --include-children-of CC-910 --container >/dev/null 2>&1
-rcF3=$?
-set -e
-if [[ "$rcF1" -eq 0 ]]; then
-  echo "FAIL: F: leaf --container (no children in cache) must exit nonzero"
-  fail=1
-fi
-if [[ "$rcF2" -eq 0 ]]; then
-  echo "FAIL: F: --container without --include-children-of must exit nonzero"
-  fail=1
-fi
-if [[ "$rcF3" -eq 0 ]]; then
-  echo "FAIL: F: --container with mismatched --include-children-of must exit nonzero"
-  fail=1
-fi
+run_status rcF1 run_validate CC-901 --include-children-of CC-901 --container >/dev/null 2>&1
+run_status rcF2 run_validate CC-930 --container >/dev/null 2>&1
+run_status rcF3 run_validate CC-930 --include-children-of CC-910 --container >/dev/null 2>&1
+
+assert_ne "F: leaf --container (no children in cache) exits nonzero" "$rcF1" 0
+assert_ne "F: --container without --include-children-of exits nonzero" "$rcF2" 0
+assert_ne "F: --container with mismatched --include-children-of exits nonzero" "$rcF3" 0
 
 # --- Preserve single-issue behavior (no --include-children-of) -------------
 outS="$(run_validate CC-901 2>/dev/null)"
 check "S: single-issue validate has exactly one result" "$outS" \
   '(.results | length) == 1 and .results[0].id == "CC-901"'
 
-if [[ "$fail" -ne 0 ]]; then
-  echo "completion-validation-bundle-children-cache: FAIL"
-  exit 1
-fi
 
-echo "all pass"

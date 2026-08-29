@@ -10,8 +10,11 @@ if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   exec bash "$SCRIPT_DIR/issues-add-relation-hierarchy.test.sh"
 fi
 
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-help_output=$(bash "$SKILL_DIR/scripts/linear.sh" --help)
-grep -q "Bash 4.0 or newer. macOS system Bash 3.2 is unsupported." <<<"$help_output"
 
-echo "all pass"
+help_output=$(bash "$SKILL_DIR/scripts/linear.sh" --help)
+
+assert_contains "--help states the Bash 4+ runtime contract" \
+  "$help_output" "Bash 4.0 or newer. macOS system Bash 3.2 is unsupported."

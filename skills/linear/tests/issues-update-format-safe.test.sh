@@ -11,9 +11,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
@@ -57,62 +58,41 @@ run_update() {
 
 # --- --format=safe (equals form): accepted, emits safe issue with parent_id ------
 safe_out="$(run_update PROJ-42 --priority 2 --format=safe)"
-if ! jq -e '.id == "PROJ-42" and .parent_id == "PROJ-10" and .agent == "iced"' >/dev/null <<<"$safe_out"; then
-  echo "FAIL update --format=safe did not emit safe issue with parent_id/agent, got: $safe_out"
-  exit 1
-fi
+assert "update --format=safe emits the safe issue with parent_id and agent" \
+  jq -e '.id == "PROJ-42" and .parent_id == "PROJ-10" and .agent == "iced"' >/dev/null <<<"$safe_out"
 
 # --- --format safe (space form): same contract ----------------------------------
 safe_space="$(run_update PROJ-42 --priority 2 --format safe)"
-if ! jq -e '.id == "PROJ-42" and .parent_id == "PROJ-10"' >/dev/null <<<"$safe_space"; then
-  echo "FAIL update --format safe (space form) mismatch, got: $safe_space"
-  exit 1
-fi
+assert "the space form --format safe honours the same contract" \
+  jq -e '.id == "PROJ-42" and .parent_id == "PROJ-10"' >/dev/null <<<"$safe_space"
 
 # --- reported repro path: --state ... --format=safe -----------------------------
 state_safe="$(run_update PROJ-42 --state "Todo" --format=safe)"
-if ! jq -e '.id == "PROJ-42" and .parent_id == "PROJ-10"' >/dev/null <<<"$state_safe"; then
-  echo "FAIL update --state Todo --format=safe mismatch, got: $state_safe"
-  exit 1
-fi
+assert "--state with --format=safe emits the safe issue" \
+  jq -e '.id == "PROJ-42" and .parent_id == "PROJ-10"' >/dev/null <<<"$state_safe"
 
 # --- --format=ids: prints ONLY the updated identifier ---------------------------
 ids_out="$(run_update PROJ-42 --priority 2 --format=ids)"
-if [[ "$ids_out" != "PROJ-42" ]]; then
-  echo "FAIL update --format=ids expected exactly 'PROJ-42', got: [$ids_out]"
-  exit 1
-fi
+assert_eq "update --format=ids prints exactly the identifier" \
+  "$ids_out" "PROJ-42"
 
 # --- --format=raw: raw mutation response ----------------------------------------
 raw_out="$(run_update PROJ-42 --priority 2 --format=raw)"
-if ! jq -e '.issueUpdate.success == true and .issueUpdate.issue.identifier == "PROJ-42"' >/dev/null <<<"$raw_out"; then
-  echo "FAIL update --format=raw did not emit raw mutation response, got: $raw_out"
-  exit 1
-fi
+assert "update --format=raw emits the raw mutation response" \
+  jq -e '.issueUpdate.success == true and .issueUpdate.issue.identifier == "PROJ-42"' >/dev/null <<<"$raw_out"
 
 # --- default (no --format): mutation summary is UNCHANGED (backward compat) ------
 default_out="$(run_update PROJ-42 --priority 2)"
-if ! jq -e '.success == true and .identifier == "PROJ-42" and (.data != null)' >/dev/null <<<"$default_out"; then
-  echo "FAIL default update output changed; expected {success, identifier, data}, got: $default_out"
-  exit 1
-fi
+assert "the default update output is still the mutation summary" \
+  jq -e '.success == true and .identifier == "PROJ-42" and (.data != null)' >/dev/null <<<"$default_out"
 
 # --- parser no longer rejects --format (the #625 bug) ---------------------------
-set +e
-err_out="$(run_update PROJ-42 --priority 2 --format=safe 2>&1 >/dev/null)"
-set -e
-if grep -q "Unknown option" <<<"$err_out"; then
-  echo "FAIL parser still rejects --format: $err_out"
-  exit 1
-fi
+err_out="$(run_update PROJ-42 --priority 2 --format=safe 2>&1 >/dev/null)" || true
+assert_not "the parser accepts --format" \
+  grep -q "Unknown option" <<<"$err_out"
 
 # --- unknown flags are STILL rejected (no over-broad parsing) --------------------
-set +e
-bogus_out="$(run_update PROJ-42 --bogus x 2>&1)"
-set -e
-if ! grep -q "Unknown option" <<<"$bogus_out"; then
-  echo "FAIL update no longer rejects a genuinely unknown flag: $bogus_out"
-  exit 1
-fi
+bogus_out="$(run_update PROJ-42 --bogus x 2>&1)" || true
+assert "update still rejects a genuinely unknown flag" \
+  grep -q "Unknown option" <<<"$bogus_out"
 
-echo "all pass"

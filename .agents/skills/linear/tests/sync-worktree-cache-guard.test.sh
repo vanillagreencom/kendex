@@ -17,10 +17,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 LINEAR="$SKILL_DIR/scripts/linear.sh"
-TMP_BASE="$(mktemp -d)"
-trap 'rm -rf "$TMP_BASE"' EXIT
+assert_tmpdir TMP_BASE
 
 CURL_LOG="$TMP_BASE/curl.log"
 
@@ -82,116 +83,79 @@ run_sync() {
     env -u WORKTREE_SYMLINKS bash "$LINEAR" sync --no-attachments "$@")
 }
 
-fail=0
-note_fail() { echo "FAIL: $1"; fail=1; }
-note_ok() { echo "  ok: $1"; }
-
 # --- refusal: clobbered worktree cache with the convention configured ----------
 GUARD_ROOT="$TMP_BASE/guard"
 make_repo "$GUARD_ROOT" $'[env]\nWORKTREE_SYMLINKS = ".cache"'
-if [[ -d "$GUARD_ROOT/wt/.cache" && ! -L "$GUARD_ROOT/wt/.cache" ]]; then
-  note_ok "worktree add materialized .cache as a real directory (incident shape)"
-else
-  note_fail "test setup did not materialize a real .cache in the worktree"
-fi
+
+assert "worktree add materialized .cache as a real directory (incident shape)" \
+  test -d "$GUARD_ROOT/wt/.cache"
+assert_not "the materialized .cache is not a symlink (incident shape)" \
+  test -L "$GUARD_ROOT/wt/.cache"
 
 : >"$CURL_LOG"
-set +e
-err="$(run_sync "$GUARD_ROOT/wt" 2>&1 >/dev/null)"
-rc=$?
-set -e
-if [[ $rc -eq 0 ]]; then
-  note_fail "sync into a clobbered worktree cache unexpectedly succeeded: $err"
-else
-  note_ok "sync refused (rc=$rc)"
-fi
-grep -q "Sync refused" <<<"$err" || note_fail "refusal is not loud/greppable: $err"
-grep -qF "$GUARD_ROOT/wt" <<<"$err" || note_fail "refusal does not name the worktree: $err"
-grep -qF ".cache -> $(cd "$GUARD_ROOT/main" && pwd -P)/.cache" <<<"$err" \
-  || note_fail "refusal does not name the expected symlink: $err"
-grep -qF "worktree fix-links" <<<"$err" || note_fail "refusal does not name the repair command: $err"
-if [[ -s "$CURL_LOG" ]]; then
-  note_fail "refused sync still reached the API ($(wc -l <"$CURL_LOG") curl calls)"
-else
-  note_ok "no API call before the refusal"
-fi
-if [[ -e "$GUARD_ROOT/wt/.cache/linear" ]]; then
-  note_fail "refused sync still created a worktree-local cache dir"
-else
-  note_ok "no worktree-local cache dir was created"
-fi
+rc=0
+err="$(run_sync "$GUARD_ROOT/wt" 2>&1 >/dev/null)" || rc=$?
+
+assert_ne "sync into a clobbered worktree cache is refused" "$rc" 0
+assert_contains "the refusal is loud and greppable" "$err" "Sync refused"
+assert_contains "the refusal names the worktree" "$err" "$GUARD_ROOT/wt"
+assert_contains "the refusal names the expected symlink" \
+  "$err" ".cache -> $(cd "$GUARD_ROOT/main" && pwd -P)/.cache"
+assert_contains "the refusal names the repair command" "$err" "worktree fix-links"
+assert_not "no API call happens before the refusal" test -s "$CURL_LOG"
+assert_not "the refused sync created no worktree-local cache dir" \
+  test -e "$GUARD_ROOT/wt/.cache/linear"
 
 # --full must be refused just as hard
-set +e
-err_full="$(run_sync "$GUARD_ROOT/wt" --full 2>&1 >/dev/null)"
-rc_full=$?
-set -e
-[[ $rc_full -ne 0 ]] && grep -q "Sync refused" <<<"$err_full" \
-  && note_ok "--full refused too" \
-  || note_fail "--full was not refused: rc=$rc_full $err_full"
+rc_full=0
+err_full="$(run_sync "$GUARD_ROOT/wt" --full 2>&1 >/dev/null)" || rc_full=$?
+
+assert_ne "--full is refused too" "$rc_full" 0
+assert_contains "the --full refusal is the same loud refusal" "$err_full" "Sync refused"
 
 # --- control: bare sync on the healthy main checkout ---------------------------
 : >"$CURL_LOG"
-set +e
-err_main="$(run_sync "$GUARD_ROOT/main" 2>&1 >/dev/null)"
-rc_main=$?
-set -e
-if [[ $rc_main -eq 0 && -f "$GUARD_ROOT/main/.cache/linear/meta.json" ]]; then
-  note_ok "bare sync on the main checkout unaffected"
-else
-  note_fail "bare sync on the main checkout broke: rc=$rc_main $err_main"
-fi
-[[ -s "$CURL_LOG" ]] || note_fail "main-checkout control did not exercise the API stub"
+rc_main=0
+err_main="$(run_sync "$GUARD_ROOT/main" 2>&1 >/dev/null)" || rc_main=$?
+
+assert_eq "bare sync on the main checkout is unaffected" "$rc_main" 0
+assert "the main-checkout sync wrote its cache metadata" \
+  test -f "$GUARD_ROOT/main/.cache/linear/meta.json"
+assert "the main-checkout control exercised the API stub" test -s "$CURL_LOG"
 
 # --- control: worktree with an intact .cache symlink ---------------------------
-rm -rf "$GUARD_ROOT/wt/.cache"
+rm -rf -- "${GUARD_ROOT:?}/wt/.cache"
 ln -s "$GUARD_ROOT/main/.cache" "$GUARD_ROOT/wt/.cache"
-set +e
-err_wt="$(run_sync "$GUARD_ROOT/wt" --full 2>&1 >/dev/null)"
-rc_wt=$?
-set -e
-if [[ $rc_wt -eq 0 && -L "$GUARD_ROOT/wt/.cache" ]]; then
-  note_ok "--full in a healthy symlinked worktree unaffected"
-else
-  note_fail "--full in a healthy symlinked worktree broke: rc=$rc_wt $err_wt"
-fi
+rc_wt=0
+err_wt="$(run_sync "$GUARD_ROOT/wt" --full 2>&1 >/dev/null)" || rc_wt=$?
+
+assert_eq "--full in a healthy symlinked worktree is unaffected" "$rc_wt" 0
+assert "the healthy worktree keeps its .cache symlink" test -L "$GUARD_ROOT/wt/.cache"
 
 # --- control: WORKTREE_SYMLINKS configured without .cache is an opt-out --------
 OPTOUT_ROOT="$TMP_BASE/optout"
 make_repo "$OPTOUT_ROOT" $'[env]\nWORKTREE_SYMLINKS = ".agents"'
-set +e
-err_opt="$(run_sync "$OPTOUT_ROOT/wt" 2>&1 >/dev/null)"
-rc_opt=$?
-set -e
-if [[ $rc_opt -eq 0 && -f "$OPTOUT_ROOT/wt/.cache/linear/meta.json" ]]; then
-  note_ok "worktree-local cache allowed when the convention excludes .cache"
-else
-  note_fail "opt-out repo was refused or failed: rc=$rc_opt $err_opt"
-fi
+rc_opt=0
+err_opt="$(run_sync "$OPTOUT_ROOT/wt" 2>&1 >/dev/null)" || rc_opt=$?
+
+assert_eq "a convention that excludes .cache allows a worktree-local cache" "$rc_opt" 0
+assert "the opt-out worktree wrote its own cache metadata" \
+  test -f "$OPTOUT_ROOT/wt/.cache/linear/meta.json"
 
 # --- trailing slashes: ".cache//" is the same managed entry, not an opt-out ---
 SLASH_ROOT="$TMP_BASE/slash"
 make_repo "$SLASH_ROOT" $'[env]\nWORKTREE_SYMLINKS = ".cache//"'
-set +e
-err_slash="$(run_sync "$SLASH_ROOT/wt" 2>&1 >/dev/null)"
-rc_slash=$?
-set -e
-[[ $rc_slash -ne 0 ]] && grep -q "Sync refused" <<<"$err_slash" \
-  && note_ok "'.cache//' still refuses (normalizer strips all trailing slashes)" \
-  || note_fail "'.cache//' was treated as an opt-out: rc=$rc_slash $err_slash"
+rc_slash=0
+err_slash="$(run_sync "$SLASH_ROOT/wt" 2>&1 >/dev/null)" || rc_slash=$?
+
+assert_ne "'.cache//' is refused: the normalizer strips trailing slashes" "$rc_slash" 0
+assert_contains "the '.cache//' refusal is the same loud refusal" "$err_slash" "Sync refused"
 
 # --- no worktree config at all: the issue's bare prescription still refuses ----
 BARE_ROOT="$TMP_BASE/bare"
 make_repo "$BARE_ROOT" ""
-set +e
-err_bare="$(run_sync "$BARE_ROOT/wt" 2>&1 >/dev/null)"
-rc_bare=$?
-set -e
-[[ $rc_bare -ne 0 ]] && grep -q "Sync refused" <<<"$err_bare" \
-  && note_ok "unconfigured repo with a main .cache still refuses" \
-  || note_fail "bare-prescription refusal missing: rc=$rc_bare $err_bare"
+rc_bare=0
+err_bare="$(run_sync "$BARE_ROOT/wt" 2>&1 >/dev/null)" || rc_bare=$?
 
-if [[ $fail -ne 0 ]]; then
-  exit 1
-fi
-echo "all pass"
+assert_ne "an unconfigured repo with a main .cache still refuses" "$rc_bare" 0
+assert_contains "the unconfigured refusal is the same loud refusal" "$err_bare" "Sync refused"

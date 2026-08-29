@@ -12,9 +12,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-ROOT="$(mktemp -d)"
-trap 'rm -rf "$ROOT"' EXIT
+assert_tmpdir ROOT
 
 mkdir -p "$ROOT/.agents/skills" "$ROOT/bin" "$ROOT/.cache/linear/comments"
 cp -R "$SKILL_DIR" "$ROOT/.agents/skills/linear"
@@ -66,49 +67,21 @@ esac
 SH
 chmod +x "$ROOT/bin/curl"
 
-set +e
+rc=0
 out="$(cd "$ROOT" && PATH="$ROOT/bin:$PATH" LINEAR_API_KEY=test-token \
-  bash "$ROOT/.agents/skills/linear/scripts/linear.sh" sync --reconcile --no-attachments 2>"$ROOT/err.txt")"
-rc=$?
-set -e
+  bash "$ROOT/.agents/skills/linear/scripts/linear.sh" sync --reconcile --no-attachments 2>"$ROOT/err.txt")" || rc=$?
 err="$(cat "$ROOT/err.txt")"
 
-if [[ $rc -ne 0 ]]; then
-  echo "FAIL sync exited $rc on a cache with one malformed id: $out / $err"
-  exit 1
-fi
-
-if ! grep -q "skipping 2 cached id" <<<"$err"; then
-  echo "FAIL missing diagnostic naming the skipped malformed id: $err"
-  exit 1
-fi
-
-if [[ ! -f "$RECONCILE_LOG" ]]; then
-  echo "FAIL reconcile query was never sent"
-  exit 1
-fi
-if jq -e '.variables.filter.id.in | index("child-uuid")' "$RECONCILE_LOG" >/dev/null 2>&1; then
-  echo "FAIL malformed id 'child-uuid' was sent to the API: $(cat "$RECONCILE_LOG")"
-  exit 1
-fi
-if jq -e '.variables.filter.id.in | index("uuid-1")' "$RECONCILE_LOG" >/dev/null 2>&1; then
-  echo "FAIL malformed id 'uuid-1' (lowercase identifier shape) was sent to the API: $(cat "$RECONCILE_LOG")"
-  exit 1
-fi
-if ! jq -e --arg id "$VALID_UUID" '.variables.filter.id.in | index($id)' "$RECONCILE_LOG" >/dev/null 2>&1; then
-  echo "FAIL valid uuid was not sent to the API: $(cat "$RECONCILE_LOG")"
-  exit 1
-fi
-
-if jq -e '[.[] | select(.id == "child-uuid" or .id == "uuid-1")] | length == 0' "$ROOT/.cache/linear/issues.json" >/dev/null 2>&1; then
-  : # pruned, expected
-else
-  echo "FAIL malformed cache entry 'child-uuid' was not pruned: $(cat "$ROOT/.cache/linear/issues.json")"
-  exit 1
-fi
-if ! jq -e --arg id "$VALID_UUID" '[.[] | select(.id == $id)] | length == 1' "$ROOT/.cache/linear/issues.json" >/dev/null 2>&1; then
-  echo "FAIL valid cache entry was dropped: $(cat "$ROOT/.cache/linear/issues.json")"
-  exit 1
-fi
-
-echo "all pass"
+assert_eq "a cache holding malformed ids still syncs" "$rc" 0
+assert_contains "the diagnostic names how many cached ids were skipped" "$err" "skipping 2 cached id"
+assert "the reconcile query was sent" test -f "$RECONCILE_LOG"
+assert_not "the malformed id 'child-uuid' never reaches the API" \
+  jq -e '.variables.filter.id.in | index("child-uuid")' "$RECONCILE_LOG"
+assert_not "the identifier-shaped id 'uuid-1' never reaches the API" \
+  jq -e '.variables.filter.id.in | index("uuid-1")' "$RECONCILE_LOG"
+assert "the valid uuid does reach the API" \
+  jq -e --arg id "$VALID_UUID" '.variables.filter.id.in | index($id)' "$RECONCILE_LOG"
+assert "the malformed cache entries are pruned" \
+  jq -e '[.[] | select(.id == "child-uuid" or .id == "uuid-1")] | length == 0' "$ROOT/.cache/linear/issues.json"
+assert "the valid cache entry survives" \
+  jq -e --arg id "$VALID_UUID" '[.[] | select(.id == $id)] | length == 1' "$ROOT/.cache/linear/issues.json"

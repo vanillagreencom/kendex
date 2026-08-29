@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# Finds test suites that pass with their subject blanked.
+#
+# A suite is vacuous when it exits zero against a skill whose every non-test
+# file has been emptied: no script body, no library function, no doc text. Such
+# a suite reports on the process it ran, not on anything it asserted.
+#
+# Both runs happen in copies at matching paths, so a suite that cannot run
+# outside the checkout is reported as unrunnable rather than counted either way.
+#
+#   tools/vacuous-suite-scan skills/linear            # one skill
+#   tools/vacuous-suite-scan skills/*/                # every skill
+#   tools/vacuous-suite-scan --list skills/linear     # names, not just counts
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LIST_NAMES=0
+SUITE_TIMEOUT="${VACUOUS_SCAN_TIMEOUT:-120}"
+SCAN_TMP=""
+
+die() {
+    echo "vacuous-suite-scan: $*" >&2
+    exit 1
+}
+
+# Copies SRC to DEST, then — unless the caller asked for a pristine copy —
+# empties every file outside tests/. Shell files keep a shebang and nothing
+# else: an executed script then exits zero with no output, and a sourced
+# library defines no function, so a caller of one fails loudly instead of
+# inheriting an `exit 0`.
+stage_skill() {
+    local src="$1" dest="$2" blank="$3" rel
+    mkdir -p "$(dirname "$dest")"
+    cp -R "$src" "$dest" || die "could not stage $src"
+    [[ "$blank" == "blank" ]] || return 0
+
+    while IFS= read -r -d '' file; do
+        rel="${file#"$dest"/}"
+        [[ "$rel" == tests/* ]] && continue
+        if [[ "$file" == *.sh ]]; then
+            printf '#!/usr/bin/env bash\n' >"$file"
+        else
+            : >"$file"
+        fi
+    done < <(find "$dest" -type f -print0)
+}
+
+# Suite files live directly in tests/; helper libraries and fixtures live in
+# subdirectories, and run-all.sh drives the others rather than asserting.
+list_suites() {
+    local tests_dir="$1" file base
+    for file in "$tests_dir"/*.sh; do
+        [[ -e "$file" ]] || continue
+        base="$(basename "$file")"
+        case "$base" in run-all.sh | must-fail-controls.sh) continue ;; esac
+        printf '%s\n' "$base"
+    done
+}
+
+run_suite() {
+    local suite_path="$1"
+    timeout "$SUITE_TIMEOUT" bash "$suite_path" >/dev/null 2>&1
+}
+
+scan_skill() {
+    local skill_dir="$1"
+    local name tmp pristine blanked suite
+    local -a suites=() vacuous=() unrunnable=() red=()
+
+    name="$(basename "$skill_dir")"
+    [[ -d "$skill_dir/tests" ]] || die "$skill_dir has no tests directory"
+
+    mapfile -t suites < <(list_suites "$skill_dir/tests")
+    if [[ ${#suites[@]} -eq 0 ]]; then
+        printf '%-20s no shell suites\n' "$name"
+        return 0
+    fi
+
+    tmp="$(mktemp -d)"
+    SCAN_TMP="$tmp"
+    trap 'rm -rf -- "${SCAN_TMP:?}"' EXIT
+    pristine="$tmp/pristine/skills/$name"
+    blanked="$tmp/blanked/skills/$name"
+    stage_skill "$skill_dir" "$pristine" pristine
+    stage_skill "$skill_dir" "$blanked" blank
+    git -C "$tmp/pristine" init -q -b main
+    git -C "$tmp/blanked" init -q -b main
+
+    for suite in "${suites[@]}"; do
+        if ! run_suite "$pristine/tests/$suite"; then
+            unrunnable+=("$suite")
+            continue
+        fi
+        if run_suite "$blanked/tests/$suite"; then
+            vacuous+=("$suite")
+        else
+            red+=("$suite")
+        fi
+    done
+
+    printf '%-20s %3d suites  %3d vacuous  %3d detecting  %3d unrunnable-in-copy\n' \
+        "$name" "${#suites[@]}" "${#vacuous[@]}" "${#red[@]}" "${#unrunnable[@]}"
+
+    if [[ "$LIST_NAMES" -eq 1 ]]; then
+        for suite in "${vacuous[@]}"; do printf '    vacuous     %s\n' "$suite"; done
+        for suite in "${unrunnable[@]}"; do printf '    unrunnable  %s\n' "$suite"; done
+    fi
+
+    rm -rf -- "${tmp:?}"
+}
+
+main() {
+    local -a targets=()
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+        --list) LIST_NAMES=1 ;;
+        -*) die "unknown flag: $arg" ;;
+        *) targets+=("${arg%/}") ;;
+        esac
+    done
+    [[ ${#targets[@]} -gt 0 ]] || die "usage: vacuous-suite-scan [--list] <skill-dir>..."
+
+    for arg in "${targets[@]}"; do
+        [[ "$arg" == /* ]] || arg="$REPO_ROOT/$arg"
+        [[ -d "$arg/tests" ]] || continue
+        scan_skill "$arg"
+    done
+}
+
+main "$@"

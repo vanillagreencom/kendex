@@ -22,9 +22,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/.cache/linear"
 git -C "$TMP_ROOT" init -q -b main
@@ -60,66 +61,33 @@ issue_record() {
 
 run_list() { cd "$TMP_ROOT" && bash "$LINEAR" cache issues list "$@"; }
 
-PASS=0
-FAIL=0
-pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1" >&2; [[ -n "${2:-}" ]] && printf '        %s\n' "$2" >&2; }
-
 # --- A: --no-project returns only the unassigned issues ----------------------
 outA="$(run_list --no-project --max --format=compact 2>/dev/null)"
-if [[ "$(jq -r '[.[].id] | sort | join(",")' <<<"$outA")" == "CC-2,CC-4" ]]; then
-  pass "A: --no-project returns exactly the unassigned issues (null and absent project)"
-else
-  fail "A: --no-project returned the wrong set" "$outA"
-fi
+assert_eq "A: --no-project returns exactly the unassigned issues (null and absent project)" \
+  "$(jq -r '[.[].id] | sort | join(",")' <<<"$outA")" "CC-2,CC-4"
 # The assigned issues must NOT leak through — the reported symptom.
-if jq -e '[.[].id] | (index("CC-1") or index("CC-3")) | not' >/dev/null 2>&1 <<<"$outA"; then
-  pass "A: project-assigned issues do not leak past --no-project"
-else
-  fail "A: an assigned issue leaked past --no-project" "$outA"
-fi
+assert_jq "A: project-assigned issues do not leak past --no-project" \
+  "$outA" '[.[].id] | (index("CC-1") or index("CC-3")) | not'
 # Each returned row's own project field is empty — list agrees with get record.
-if jq -e 'all(.[]; .project == "")' >/dev/null 2>&1 <<<"$outA"; then
-  pass "A: every --no-project row carries an empty project (agrees with its get record)"
-else
-  fail "A: a --no-project row carries a non-empty project" "$outA"
-fi
+assert_jq "A: every --no-project row carries an empty project (agrees with its get record)" \
+  "$outA" 'all(.[]; .project == "")'
 
 # --- B: mutual exclusion -----------------------------------------------------
-if run_list --no-project --project "Trading Panels" >/dev/null 2>&1; then
-  fail "B: --no-project --project should fail"
-else
-  pass "B: --no-project + --project fails loudly"
-fi
-if run_list --no-project --all-projects >/dev/null 2>&1; then
-  fail "B: --no-project --all-projects should fail"
-else
-  pass "B: --no-project + --all-projects fails loudly"
-fi
+run_status rc_project run_list --no-project --project "Trading Panels" >/dev/null 2>&1
+assert_ne "B: --no-project + --project fails loudly" "$rc_project" 0
+run_status rc_all run_list --no-project --all-projects >/dev/null 2>&1
+assert_ne "B: --no-project + --all-projects fails loudly" "$rc_all" 0
 
 # --- C: an unknown filter flag fails loudly, not silently ---------------------
-unk_out="$(run_list --unassigned 2>&1 || true)"
-if run_list --unassigned >/dev/null 2>&1; then
-  fail "C: an unknown flag should not exit 0" "$unk_out"
-elif jq -e '.error | test("Unknown flag")' >/dev/null 2>&1 <<<"$unk_out"; then
-  pass "C: an unknown filter flag is rejected instead of returning every issue"
-else
-  fail "C: unknown flag did not produce the expected error" "$unk_out"
-fi
+unk_rc=0
+unk_out="$(run_list --unassigned 2>&1)" || unk_rc=$?
+assert_ne "C: an unknown flag does not exit 0" "$unk_rc" 0
+assert_jq "C: an unknown filter flag is rejected instead of returning every issue" \
+  "$unk_out" '.error | test("Unknown flag")'
 
 # --- D: --help and an ordinary list are unaffected ---------------------------
-if run_list --help 2>&1 | grep -q "Linear Cache Query"; then
-  pass "D: --help still prints cache help"
-else
-  fail "D: --help no longer prints help"
-fi
+help_out="$(run_list --help 2>&1)" || true
+assert_contains "D: --help still prints cache help" "$help_out" "Linear Cache Query"
 plain="$(run_list --max --format=ids 2>/dev/null)"
-if [[ "$(printf '%s\n' "$plain" | sort | tr '\n' ',' )" == "CC-1,CC-2,CC-3,CC-4," ]]; then
-  pass "D: an ordinary list still returns every issue"
-else
-  fail "D: ordinary list changed" "$plain"
-fi
-
-echo
-printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
-[[ "$FAIL" -eq 0 ]]
+assert_eq "D: an ordinary list still returns every issue" \
+  "$(printf '%s\n' "$plain" | sort | tr '\n' ',')" "CC-1,CC-2,CC-3,CC-4,"

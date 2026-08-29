@@ -60,6 +60,19 @@ Projects are seeded with `kendex.settings.toml.example`, which `kendex add` / `k
 
 ```bash
 for t in skills/linear/tests/*.test.sh; do bash "$t" || echo "FAIL $t"; done
+skills/linear/tests/must-fail-controls.sh
 ```
 
 Each test stands up its own fixture root and a `curl` shim on `PATH`, so none reaches the network. `LINEAR_API_KEY_OVERRIDE` is the inline auth channel they use; `cache.sh` refuses to write when that override is paired with a cache dir inside a real checkout, so a test that forgets to isolate `PROJECT_ROOT` fails instead of polluting live cache data.
+
+### Assertions
+
+Every claim goes through `tests/lib/assert.sh`, which counts assertions and fails a suite that reaches its end without executing one: an exit code reports on the process, not on anything that was checked. Sourcing the library installs that verdict as an EXIT trap, so scratch directories come from `assert_tmpdir` and teardown from `assert_at_exit` — another `trap ... EXIT` replaces the verdict and disarms it. Helpers record a failure and return, so one run reports every failure.
+
+`set -e` is suspended for the whole body of a command used as an `if` condition or as a `&&`/`||` operand, so never branch on the subject's exit status there: capture it (`rc=0; cmd || rc=$?`, or `run_status rc cmd`) and assert on the capture.
+
+### Must-fail controls
+
+`tests/controls/<suite>.control.sh` breaks the one behaviour its suite covers, in a copy of the skill, and `tests/must-fail-controls.sh` requires the suite to go red naming the assertion that covers it. A suite with no control fails the run: an untested control is an untested suite.
+
+A control declares what it expects with `control_expect <assertion description>` and mutates with `control_replace <file> <count> <old line> <new line>` — whole-line and literal, so there is no pattern syntax to mis-escape. `control_replace` aborts unless it matches exactly `count` lines, and the runner refuses a control that changed nothing, so a mutation that failed to land can never be read as a passing control.

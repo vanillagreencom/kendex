@@ -10,9 +10,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 PROJECT="$TMP_ROOT/project"
 mkdir -p "$PROJECT/.agents/skills" "$PROJECT/bin"
@@ -96,22 +97,14 @@ OUT=""
 ERR=""
 RC=0
 
-fail() {
-  echo "FAIL $*"
-  [[ -s "$CURL_LOG" ]] && echo "--- curl payloads ---" && cat "$CURL_LOG"
-  exit 1
-}
-
 run_linear() {
   : >"$CURL_LOG"
-  set +e
+  RC=0
   OUT="$(cd "$PROJECT" && env -u LINEAR_TEAM -u LINEAR_AGENT_LABELS \
     PATH="$PROJECT/bin:$PATH" \
     LINEAR_API_KEY=test-token \
     CURL_LOG="$CURL_LOG" \
-    bash "$LINEAR" "$@" </dev/null 2>"$ERR_FILE")"
-  RC=$?
-  set -e
+    bash "$LINEAR" "$@" </dev/null 2>"$ERR_FILE")" || RC=$?
   ERR="$(cat "$ERR_FILE")"
 }
 
@@ -119,63 +112,71 @@ api_calls() {
   wc -l <"$CURL_LOG" | tr -d ' '
 }
 
+# assert_log DESC FILTER — FILTER must select a true value over the logged
+# curl payloads, read as a stream.
+assert_log() {
+  assert "$1" jq -s -e "$2" "$CURL_LOG"
+}
+
+assert_not_log() {
+  assert_not "$1" jq -s -e "$2" "$CURL_LOG"
+}
+
 echo "=== image attach with no --description appends to the EXISTING description ==="
 
 run_linear issues update TEAM-9 --attach "$TMP_ROOT/shot.png"
-[[ "$RC" -eq 0 ]] || fail "image attach update exited $RC: $ERR"
-jq -s -e 'any(.[]; (.query? // "" | contains("issueUpdate"))
+assert_eq "an image attach update exits zero" "$RC" 0
+assert_log "the embed appends to the existing description" \
+  'any(.[]; (.query? // "" | contains("issueUpdate"))
     and .variables.id == "TEAM-9"
-    and .variables.input.description == "Existing text.\n\n![shot.png](https://uploads.linear.app/asset/shot.png)")' \
-  "$CURL_LOG" >/dev/null || fail "embed did not append to the existing description"
+    and .variables.input.description == "Existing text.\n\n![shot.png](https://uploads.linear.app/asset/shot.png)")'
 
 echo "=== image attach with --description appends to the NEW description ==="
 
 run_linear issues update TEAM-9 --description "New body" --attach "$TMP_ROOT/shot.png"
-[[ "$RC" -eq 0 ]] || fail "image attach + --description update exited $RC: $ERR"
-jq -s -e 'any(.[]; (.query? // "" | contains("issueUpdate"))
-    and .variables.input.description == "New body\n\n![shot.png](https://uploads.linear.app/asset/shot.png)")' \
-  "$CURL_LOG" >/dev/null || fail "embed did not append to the new description"
+assert_eq "an image attach with --description exits zero" "$RC" 0
+assert_log "the embed appends to the new description" \
+  'any(.[]; (.query? // "" | contains("issueUpdate"))
+    and .variables.input.description == "New body\n\n![shot.png](https://uploads.linear.app/asset/shot.png)")'
 
 echo "=== non-image --attach alone is a valid update: attachmentCreate only ==="
 
 run_linear issues update TEAM-9 --attach "$TMP_ROOT/notes.pdf"
-[[ "$RC" -eq 0 ]] || fail "attach-only update exited $RC: $ERR"
-if jq -s -e 'any(.[]; .query? // "" | contains("issueUpdate"))' "$CURL_LOG" >/dev/null; then
-  fail "attach-only update must not run issueUpdate"
-fi
-jq -s -e 'any(.[]; (.query? // "" | contains("attachmentCreate"))
+assert_eq "an attach-only update exits zero" "$RC" 0
+assert_not_log "an attach-only update runs no issueUpdate" \
+  'any(.[]; .query? // "" | contains("issueUpdate"))'
+assert_log "attachmentCreate carries the issue uuid and asset url" \
+  'any(.[]; (.query? // "" | contains("attachmentCreate"))
     and .variables.input.issueId == "issue-uuid-9"
     and .variables.input.url == "https://uploads.linear.app/asset/notes.pdf"
-    and .variables.input.title == "notes.pdf")' "$CURL_LOG" >/dev/null ||
-  fail "attachmentCreate not called with the issue uuid and asset url"
-jq -e '.success == true and .identifier == "TEAM-9"' <<<"$OUT" >/dev/null ||
-  fail "attach-only update output lacks success/identifier: $OUT"
+    and .variables.input.title == "notes.pdf")'
+assert_jq "an attach-only update reports success and the identifier" \
+  "$OUT" '.success == true and .identifier == "TEAM-9"'
 
 echo "=== attachmentCreate failure after a successful update: names issue, non-zero ==="
 
 run_linear issues update TEAM-9 --title "New title" --attach "$TMP_ROOT/boom.pdf"
-[[ "$RC" -ne 0 ]] || fail "failed attachmentCreate exited 0: $OUT"
-jq -s -e 'any(.[]; .query? // "" | contains("issueUpdate"))' "$CURL_LOG" >/dev/null ||
-  fail "issueUpdate did not run before the attachment failure"
-grep -q "TEAM-9" <<<"$ERR" || fail "partial failure does not name the issue: $ERR"
-grep -q '"partial":true' <<<"$ERR" || fail "partial failure lacks partial: true: $ERR"
-grep -q "TEAM-9" <<<"$OUT" || fail "update summary missing from stdout: $OUT"
+assert_ne "a failed attachmentCreate fails the update" "$RC" 0
+assert_log "issueUpdate runs before the attachment failure" \
+  'any(.[]; .query? // "" | contains("issueUpdate"))'
+assert_contains "the partial failure names the issue" "$ERR" "TEAM-9"
+assert_contains "the partial failure is reported as partial" "$ERR" '"partial":true'
+assert_contains "the update summary still reaches stdout" "$OUT" "TEAM-9"
 
 echo "=== missing file refuses before any API call ==="
 
 run_linear issues update TEAM-9 --attach "$TMP_ROOT/nope.png"
-[[ "$RC" -ne 0 ]] || fail "missing --attach path exited 0: $OUT"
-grep -q "not readable" <<<"$ERR" || fail "missing-path refusal lacks 'not readable': $ERR"
-[[ "$(api_calls)" == "0" ]] || fail "missing --attach path attempted $(api_calls) API call(s)"
+assert_ne "a missing --attach path fails" "$RC" 0
+assert_contains "the missing-path refusal says the file is not readable" "$ERR" "not readable"
+assert_eq "a missing --attach path attempts no API call" "$(api_calls)" "0"
 
 echo "=== issueUpdate payload rejection: nothing attached, non-zero ==="
 
 run_linear issues update TEAM-9 --title "REJECT-UPDATE" --attach "$TMP_ROOT/notes.pdf"
-[[ "$RC" -ne 0 ]] || fail "rejected issueUpdate exited 0: $OUT"
-grep -q "rejected" <<<"$ERR" || fail "rejection error missing: $ERR"
-if jq -s -e 'any(.[]; .query? // "" | contains("attachmentCreate"))' "$CURL_LOG" >/dev/null; then
-  fail "attachmentCreate was reached after a rejected update"
-fi
+assert_ne "a rejected issueUpdate fails" "$RC" 0
+assert_contains "the rejection error says so" "$ERR" "rejected"
+assert_not_log "attachmentCreate is never reached after a rejected update" \
+  'any(.[]; .query? // "" | contains("attachmentCreate"))'
 
 echo "=== --labels with --clear-labels is refused BEFORE the upload ==="
 
@@ -183,18 +184,14 @@ echo "=== --labels with --clear-labels is refused BEFORE the upload ==="
 # would strand the asset in Linear storage — the same class the pre-upload
 # label resolution already guards against.
 run_linear issues update TEAM-9 --labels bug --clear-labels --attach "$TMP_ROOT/notes.pdf"
-[[ "$RC" -ne 0 ]] || fail "--labels with --clear-labels exited 0: $OUT"
-grep -q "not both" <<<"$ERR" || fail "conflicting label flags lack the refusal message: $ERR"
-if jq -s -e 'any(.[]; (.query? // "" | contains("fileUpload"))
-    or (.put? != null))' "$CURL_LOG" >/dev/null; then
-  fail "the refused update still uploaded the attachment: $(cat "$CURL_LOG")"
-fi
+assert_ne "--labels with --clear-labels is refused" "$RC" 0
+assert_contains "the conflicting label flags carry a refusal message" "$ERR" "not both"
+assert_not_log "the refused update uploaded nothing" \
+  'any(.[]; (.query? // "" | contains("fileUpload")) or (.put? != null))'
 
 echo "=== bulk-update forwards --attach to each issue ==="
 
 run_linear issues bulk-update TEAM-9 --attach "$TMP_ROOT/shot.png"
-[[ "$RC" -eq 0 ]] || fail "bulk-update --attach failed: $ERR"
-jq -s -e 'any(.[]; .query? // "" | contains("fileUpload"))' "$CURL_LOG" >/dev/null ||
-  fail "bulk-update --attach never uploaded: $(cat "$CURL_LOG")"
-
-echo "all pass"
+assert_eq "bulk-update --attach exits zero" "$RC" 0
+assert_log "bulk-update --attach uploads the file" \
+  'any(.[]; .query? // "" | contains("fileUpload"))'

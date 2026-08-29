@@ -13,9 +13,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 PROJECT="$TMP_ROOT/project"
 mkdir -p "$PROJECT/.agents/skills" "$PROJECT/bin"
@@ -109,22 +110,24 @@ OUT=""
 ERR=""
 RC=0
 
-fail() {
-  echo "FAIL $*"
-  [[ -s "$CURL_LOG" ]] && echo "--- curl payloads ---" && cat "$CURL_LOG"
-  exit 1
+# assert_log DESC FILTER — FILTER must select a true value over the logged
+# curl payloads, read as a stream.
+assert_log() {
+  assert "$1" jq -s -e "$2" "$CURL_LOG"
+}
+
+assert_not_log() {
+  assert_not "$1" jq -s -e "$2" "$CURL_LOG"
 }
 
 run_linear() {
   : >"$CURL_LOG"
-  set +e
+  RC=0
   OUT="$(cd "$PROJECT" && env -u LINEAR_TEAM -u LINEAR_AGENT_LABELS \
     PATH="$PROJECT/bin:$PATH" \
     LINEAR_API_KEY=test-token \
     CURL_LOG="$CURL_LOG" \
-    bash "$LINEAR" "$@" </dev/null 2>"$ERR_FILE")"
-  RC=$?
-  set -e
+    bash "$LINEAR" "$@" </dev/null 2>"$ERR_FILE")" || RC=$?
   ERR="$(cat "$ERR_FILE")"
 }
 
@@ -135,131 +138,126 @@ api_calls() {
 echo "=== image attach: fileUpload -> PUT with returned headers -> embed in description ==="
 
 run_linear issues create --title "With image" --attach "$TMP_ROOT/shot.png"
-[[ "$RC" -eq 0 ]] || fail "image attach create exited $RC: $ERR"
+assert_eq "an image attach create exits zero" "$RC" 0
 
-jq -s -e 'any(.[]; (.query? // "" | contains("fileUpload"))
+assert_log "fileUpload carries the contentType, filename and size read from the file" \
+  'any(.[]; (.query? // "" | contains("fileUpload"))
     and .variables.contentType == "image/png"
     and .variables.filename == "shot.png"
-    and .variables.size == 7)' "$CURL_LOG" >/dev/null ||
-  fail "fileUpload not called with contentType/filename/size from the file"
+    and .variables.size == 7)'
 
-jq -s -e 'any(.[]; .put?.url == "https://uploads.linear.app/put/shot.png"
+assert_log "the PUT carries the returned headers plus Content-Type" \
+  'any(.[]; .put?.url == "https://uploads.linear.app/put/shot.png"
     and (.put.headers | index("x-linear-upload: signed-shot.png"))
     and (.put.headers | index("x-amz-acl: private"))
-    and (.put.headers | index("Content-Type: image/png")))' "$CURL_LOG" >/dev/null ||
-  fail "PUT did not carry the returned headers plus Content-Type"
+    and (.put.headers | index("Content-Type: image/png")))'
 
 # The PUT must precede the create — bytes exist before anything references them.
-jq -s -e '([to_entries[] | select(.value | has("put")) | .key] | first)
-    < ([to_entries[] | select(.value.query? // "" | contains("issueCreate")) | .key] | first)' \
-  "$CURL_LOG" >/dev/null || fail "PUT did not happen before issueCreate"
+assert_log "the PUT happens before issueCreate" \
+  '([to_entries[] | select(.value | has("put")) | .key] | first)
+    < ([to_entries[] | select(.value.query? // "" | contains("issueCreate")) | .key] | first)'
 
-jq -s -e 'any(.[]; (.query? // "" | contains("issueCreate"))
-    and .variables.input.description == "![shot.png](https://uploads.linear.app/asset/shot.png)")' \
-  "$CURL_LOG" >/dev/null || fail "image embed missing from created description"
+assert_log "the image embed lands in the created description" \
+  'any(.[]; (.query? // "" | contains("issueCreate"))
+    and .variables.input.description == "![shot.png](https://uploads.linear.app/asset/shot.png)")'
 
-if jq -s -e 'any(.[]; .query? // "" | contains("attachmentCreate"))' "$CURL_LOG" >/dev/null; then
-  fail "image attach must embed, not attachmentCreate"
-fi
+assert_not_log "an image attach embeds rather than calling attachmentCreate" \
+  'any(.[]; .query? // "" | contains("attachmentCreate"))'
 
 echo "=== non-image attach: attachmentCreate with the created issue id ==="
 
 run_linear issues create --title "With pdf" --attach "$TMP_ROOT/notes.pdf"
-[[ "$RC" -eq 0 ]] || fail "pdf attach create exited $RC: $ERR"
+assert_eq "a pdf attach create exits zero" "$RC" 0
 
-jq -s -e 'any(.[]; (.query? // "" | contains("fileUpload"))
-    and .variables.contentType == "application/pdf")' "$CURL_LOG" >/dev/null ||
-  fail "fileUpload not called with application/pdf"
+assert_log "fileUpload carries application/pdf" \
+  'any(.[]; (.query? // "" | contains("fileUpload"))
+    and .variables.contentType == "application/pdf")'
 
-jq -s -e 'any(.[]; (.query? // "" | contains("attachmentCreate"))
+assert_log "attachmentCreate carries the created issue id and asset url" \
+  'any(.[]; (.query? // "" | contains("attachmentCreate"))
     and .variables.input.issueId == "issue-uuid"
     and .variables.input.url == "https://uploads.linear.app/asset/notes.pdf"
-    and .variables.input.title == "notes.pdf")' "$CURL_LOG" >/dev/null ||
-  fail "attachmentCreate not called with the created issue id and asset url"
+    and .variables.input.title == "notes.pdf")'
 
-jq -s -e 'any(.[]; (.query? // "" | contains("issueCreate"))
-    and (.variables.input | has("description") | not))' "$CURL_LOG" >/dev/null ||
-  fail "non-image attach must not inject a description"
+assert_log "a non-image attach injects no description" \
+  'any(.[]; (.query? // "" | contains("issueCreate"))
+    and (.variables.input | has("description") | not))'
 
 echo "=== --attach composes with --description-file ==="
 
 run_linear issues create --title "Compose" \
   --description-file "$TMP_ROOT/desc.md" --attach "$TMP_ROOT/shot.png"
-[[ "$RC" -eq 0 ]] || fail "composed create exited $RC: $ERR"
+assert_eq "a --description-file plus --attach create exits zero" "$RC" 0
 
-jq -s -e 'any(.[]; (.query? // "" | contains("issueCreate"))
-    and .variables.input.description == "Body from file.\n\n![shot.png](https://uploads.linear.app/asset/shot.png)")' \
-  "$CURL_LOG" >/dev/null || fail "embed did not append to --description-file content"
+assert_log "the embed appends to the --description-file content" \
+  'any(.[]; (.query? // "" | contains("issueCreate"))
+    and .variables.input.description == "Body from file.\n\n![shot.png](https://uploads.linear.app/asset/shot.png)")'
 
 echo "=== missing file refuses before any API call ==="
 
 run_linear issues create --title "Missing" --attach "$TMP_ROOT/nope.png"
-[[ "$RC" -ne 0 ]] || fail "missing --attach path exited 0: $OUT"
-grep -q "not readable" <<<"$ERR" || fail "missing-path refusal lacks 'not readable': $ERR"
-grep -q "nope.png" <<<"$ERR" || fail "missing-path refusal does not name the path: $ERR"
-[[ "$(api_calls)" == "0" ]] || fail "missing --attach path attempted $(api_calls) API call(s)"
+assert_ne "a missing --attach path fails" "$RC" 0
+assert_contains "the missing-path refusal says the file is not readable" "$ERR" "not readable"
+assert_contains "the missing-path refusal names the path" "$ERR" "nope.png"
+assert_eq "a missing --attach path" "$(api_calls)" "0"
 
 echo "=== PUT failure refuses before the issue exists ==="
 
 run_linear issues create --title "PutFail" --attach "$TMP_ROOT/put-fail.png"
-[[ "$RC" -ne 0 ]] || fail "failed PUT exited 0: $OUT"
-grep -q "Upload PUT failed" <<<"$ERR" || fail "failed PUT lacks the PUT error: $ERR"
-if jq -s -e 'any(.[]; .query? // "" | contains("issueCreate"))' "$CURL_LOG" >/dev/null; then
-  fail "issueCreate was reached despite a failed upload PUT"
-fi
+assert_ne "a failed upload PUT fails" "$RC" 0
+assert_contains "the failed-PUT error names the PUT" "$ERR" "Upload PUT failed"
+assert_not_log "issueCreate is never reached after a failed upload PUT" \
+  'any(.[]; .query? // "" | contains("issueCreate"))'
 
 echo "=== attachmentCreate failure AFTER create: names the issue, exits non-zero ==="
 
 run_linear issues create --title "Partial" --attach "$TMP_ROOT/boom.pdf"
-[[ "$RC" -ne 0 ]] || fail "failed attachmentCreate exited 0: $OUT"
-jq -s -e 'any(.[]; .query? // "" | contains("issueCreate"))' "$CURL_LOG" >/dev/null ||
-  fail "issue was not created before the attachment failure"
-grep -q "TEAM-1" <<<"$ERR" || fail "partial failure does not name the created issue: $ERR"
-grep -q '"partial":true' <<<"$ERR" || fail "partial failure lacks partial: true: $ERR"
-grep -q "TEAM-1" <<<"$OUT" || fail "created identifier missing from stdout: $OUT"
+assert_ne "a failed attachmentCreate fails" "$RC" 0
+assert_log "the issue is created before the attachment failure" \
+  'any(.[]; .query? // "" | contains("issueCreate"))'
+assert_contains "the partial failure names the created issue" "$ERR" "TEAM-1"
+assert_contains "the partial failure is reported as partial" "$ERR" '"partial":true'
+assert_contains "the created identifier reaches stdout" "$OUT" "TEAM-1"
 
 echo "=== agent-label guard still refuses BEFORE any upload ==="
 
 printf '[env]\nLINEAR_TEAM = "Configured"\nLINEAR_AGENT_LABELS = "agent:generalist"\n' \
   >"$PROJECT/kendex.settings.toml"
 run_linear issues create --title "Guarded" --attach "$TMP_ROOT/shot.png"
-[[ "$RC" -ne 0 ]] || fail "bare create with --attach passed the routing guard: $OUT"
-grep -q "LINEAR_AGENT_LABELS" <<<"$ERR" || fail "guard refusal missing: $ERR"
-[[ "$(api_calls)" == "0" ]] || fail "guarded create attempted $(api_calls) API call(s)"
+assert_ne "a bare create with --attach under the routing guard fails" "$RC" 0
+assert_contains "the guard refusal names LINEAR_AGENT_LABELS" "$ERR" "LINEAR_AGENT_LABELS"
+assert_eq "a guarded create attempts no API call" "$(api_calls)" "0"
 
 echo "=== markdown label escaping: bracket filename cannot break the embed ==="
 
 printf '[env]\nLINEAR_TEAM = "Configured"\n' >"$PROJECT/kendex.settings.toml"
 printf 'PNG' >"$TMP_ROOT/re]port.png"
 run_linear issues create --title "Escaped" --attach "$TMP_ROOT/re]port.png"
-[[ "$RC" -eq 0 ]] || fail "bracket-name attach failed: $ERR"
-jq -s -e 'any(.[]; (.query? // "" | contains("issueCreate")) and (.variables.input.description | contains("![re\\]port.png](")))' "$CURL_LOG" >/dev/null ||
-  fail "description embed does not escape the bracket filename: $(cat "$CURL_LOG")"
+assert_eq "a bracket-named attach exits zero" "$RC" 0
+assert_log "the description embed escapes the bracket in the label" \
+  'any(.[]; (.query? // "" | contains("issueCreate")) and (.variables.input.description | contains("![re\\]port.png](")))'
 
 echo "=== issueCreate payload rejection: no attach, non-zero, no created claim ==="
 
 run_linear issues create --title "REJECT-CREATE" --attach "$TMP_ROOT/notes.pdf"
-[[ "$RC" -ne 0 ]] || fail "rejected issueCreate exited 0: $OUT"
-grep -q "rejected" <<<"$ERR" || fail "rejection error missing: $ERR"
-if jq -s -e 'any(.[]; .query? // "" | contains("attachmentCreate"))' "$CURL_LOG" >/dev/null; then
-  fail "attachmentCreate was reached after a rejected create"
-fi
+assert_ne "a rejected issueCreate fails" "$RC" 0
+assert_contains "the rejection error says so" "$ERR" "rejected"
+assert_not_log "attachmentCreate is never reached after a rejected create" \
+  'any(.[]; .query? // "" | contains("attachmentCreate"))'
 
 echo "=== declared taxonomy: unresolvable agent label refuses BEFORE uploads ==="
 
 printf '[env]\nLINEAR_TEAM = "Configured"\nLINEAR_AGENT_LABELS = "agent:generalist, agent:ghost"\n' \
   >"$PROJECT/kendex.settings.toml"
 run_linear issues create --title "Orphan guard" --labels "agent:ghost" --attach "$TMP_ROOT/shot.png"
-[[ "$RC" -ne 0 ]] || fail "unresolvable agent label with --attach exited 0: $OUT"
-if jq -s -e 'any(.[]; .query? // "" | contains("fileUpload"))' "$CURL_LOG" >/dev/null; then
-  fail "fileUpload ran before the routed-or-refused check — orphaned upload"
-fi
+assert_ne "an unresolvable agent label with --attach fails" "$RC" 0
+assert_not_log "no upload runs before the routed-or-refused check" \
+  'any(.[]; .query? // "" | contains("fileUpload"))'
 
 echo "=== bare --attach is a structured usage error, not a set -u abort ==="
 
 printf '[env]\nLINEAR_TEAM = "Configured"\n' >"$PROJECT/kendex.settings.toml"
 run_linear issues create --title "Bare" --attach
-[[ "$RC" -ne 0 ]] || fail "bare --attach exited 0: $OUT"
-grep -q "requires a path" <<<"$ERR" || fail "bare --attach lacks the structured error: $ERR"
+assert_ne "a bare --attach fails" "$RC" 0
+assert_contains "a bare --attach gives a structured usage error" "$ERR" "requires a path"
 
-echo "all pass"

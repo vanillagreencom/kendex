@@ -5,10 +5,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+assert_tmpdir tmp
 
 mkdir -p "$tmp/.agents/skills" "$tmp/.cache/linear" "$tmp/bin"
 git -C "$tmp" init -q -b main
@@ -97,90 +98,49 @@ run_cache_read() {
   rm -f "$OP_SENTINEL"
   : > "$err"
 
-  set +e
+  local rc=0
   RUN_OUT=$(cd "$tmp" && PATH="$tmp/bin:$PATH" LINEAR_API_KEY='op://vault/item/field' \
-    bash "$tmp/.agents/skills/linear/scripts/linear.sh" "$@" 2>"$err")
-  local rc=$?
-  set -e
+    bash "$tmp/.agents/skills/linear/scripts/linear.sh" "$@" 2>"$err") || rc=$?
 
-  if (( rc != 0 )); then
-    echo "FAIL $label exited $rc: $(cat "$err")"
-    exit 1
-  fi
-
-  if [[ -e "$OP_SENTINEL" ]]; then
-    echo "FAIL $label attempted 1Password resolution: $(cat "$OP_SENTINEL")"
-    exit 1
-  fi
-
-  if grep -qiE 'Failed to resolve LINEAR_API_KEY|1Password|op CLI' "$err"; then
-    echo "FAIL $label emitted auth error: $(cat "$err")"
-    exit 1
-  fi
+  assert_eq "$label: exits zero without auth" "$rc" 0
+  assert_not "$label: attempts no 1Password resolution" test -e "$OP_SENTINEL"
+  assert_not "$label: emits no auth error" \
+    grep -qiE 'Failed to resolve LINEAR_API_KEY|1Password|op CLI' "$err"
 }
 
 run_cache_read "cache issues list help" cache issues list --help
 help_out="$RUN_OUT"
-if ! grep -q 'Linear Cache Query - Read from local cache' <<<"$help_out"; then
-  echo "FAIL cache issues list --help did not print cache help: $help_out"
-  exit 1
-fi
-if echo "$help_out" | jq -e . >/dev/null 2>&1; then
-  echo "FAIL cache issues list --help returned JSON query output instead of help: $help_out"
-  exit 1
-fi
+assert_contains "cache issues list --help prints cache help" \
+  "$help_out" 'Linear Cache Query - Read from local cache'
+assert_not "cache issues list --help prints help, not JSON query output" \
+  jq -e . <<<"$help_out"
 
 run_cache_read "cache projects list" cache projects list --format=safe
 projects_out="$RUN_OUT"
-if ! echo "$projects_out" | jq -e '.[0].name == "Authless Cache Project"' >/dev/null; then
-  echo "FAIL cache projects list returned unexpected output: $projects_out"
-  exit 1
-fi
+assert_jq "cache projects list reads the cached project" \
+  "$projects_out" '.[0].name == "Authless Cache Project"'
 
 run_cache_read "cache issues list" cache issues list --state "Backlog,Todo,In Progress" --max --format=safe
 issues_out="$RUN_OUT"
-if ! echo "$issues_out" | jq -e '.[0].id == "AUTH-1"' >/dev/null; then
-  echo "FAIL cache issues list returned unexpected output: $issues_out"
-  exit 1
-fi
+assert_jq "cache issues list reads the cached issue" "$issues_out" '.[0].id == "AUTH-1"'
 
 run_cache_read "cache labels list" cache labels list --format=safe
 labels_out="$RUN_OUT"
-if ! echo "$labels_out" | jq -e '.[] | select(.name == "Agent" and .is_group == true)' >/dev/null; then
-  echo "FAIL cache labels list did not expose is_group=true: $labels_out"
-  exit 1
-fi
-if ! echo "$labels_out" | jq -e '.[] | select(.name == "agent:test" and .parent == "Agent" and .is_group == false)' >/dev/null; then
-  echo "FAIL cache labels list returned unexpected child label output: $labels_out"
-  exit 1
-fi
+assert_jq "cache labels list exposes is_group on a group label" \
+  "$labels_out" '.[] | select(.name == "Agent" and .is_group == true)'
+assert_jq "cache labels list reports a child label's parent" \
+  "$labels_out" '.[] | select(.name == "agent:test" and .parent == "Agent" and .is_group == false)'
 
 rm -f "$OP_SENTINEL"
 : > "$err"
-set +e
+auth_rc=0
 (cd "$tmp" && PATH="$tmp/bin:$PATH" LINEAR_API_KEY='op://vault/item/field' \
-  bash "$tmp/.agents/skills/linear/scripts/linear.sh" auth-check >/dev/null 2>"$err")
-auth_rc=$?
-set -e
+  bash "$tmp/.agents/skills/linear/scripts/linear.sh" auth-check >/dev/null 2>"$err") || auth_rc=$?
 
-if (( auth_rc == 0 )); then
-  echo "FAIL auth-check unexpectedly succeeded with fake op resolver"
-  exit 1
-fi
+assert_ne "auth-check fails when the op resolver cannot answer" "$auth_rc" 0
+assert "auth-check does attempt 1Password resolution" test -s "$OP_SENTINEL"
+assert_file_contains "auth-check invokes op with the configured reference" \
+  "$OP_SENTINEL" 'op invoked: read op://vault/item/field'
+assert_file_contains "auth-check names the failed 1Password resolution" \
+  "$err" 'Failed to resolve LINEAR_API_KEY from 1Password'
 
-if [[ ! -s "$OP_SENTINEL" ]]; then
-  echo "FAIL auth-check did not attempt 1Password resolution"
-  exit 1
-fi
-
-if ! grep -q 'op invoked: read op://vault/item/field' "$OP_SENTINEL"; then
-  echo "FAIL auth-check invoked op with unexpected args: $(cat "$OP_SENTINEL")"
-  exit 1
-fi
-
-if ! grep -q 'Failed to resolve LINEAR_API_KEY from 1Password' "$err"; then
-  echo "FAIL auth-check emitted unexpected stderr: $(cat "$err")"
-  exit 1
-fi
-
-echo "all pass"

@@ -7,9 +7,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
@@ -95,80 +96,48 @@ run_list() {
 log1="$TMP_ROOT/limit50.jsonl"
 out1="$(run_list "$log1" --limit 50)"
 
-if ! jq -e 'length == 50' >/dev/null <<<"$out1"; then
-  echo "FAIL --limit 50 expected 50 projects, got: $(jq 'length' <<<"$out1")"
-  exit 1
-fi
+assert "--limit 50 returns 50 projects" \
+  jq -e 'length == 50' >/dev/null <<<"$out1"
 req_count1="$(jq -s 'length' "$log1")"
-if [ "$req_count1" -ne 1 ]; then
-  echo "FAIL --limit 50 should be a single API request, made $req_count1"
-  cat "$log1"
-  exit 1
-fi
-if ! jq -s -e 'all(.[]; .variables.first == 50)' "$log1" >/dev/null; then
-  echo "FAIL --limit 50 per-request first was not 50"
-  cat "$log1"
-  exit 1
-fi
+assert_eq "--limit 50 is a single API request" \
+  "$req_count1" 1
+assert "--limit 50 asks for 50 per request" \
+  jq -s -e 'all(.[]; .variables.first == 50)' "$log1" >/dev/null
 
 # --- Case 2: --limit 100 paginates into two merged pages ---------------------
 log2="$TMP_ROOT/limit100.jsonl"
 out2="$(run_list "$log2" --limit 100)"
 
-if ! jq -e 'length == 100' >/dev/null <<<"$out2"; then
-  echo "FAIL --limit 100 expected 100 projects, got: $(jq 'length' <<<"$out2")"
-  exit 1
-fi
+assert "--limit 100 returns 100 projects" \
+  jq -e 'length == 100' >/dev/null <<<"$out2"
 req_count2="$(jq -s 'length' "$log2")"
-if [ "$req_count2" -ne 2 ]; then
-  echo "FAIL --limit 100 expected 2 paginated requests, made $req_count2"
-  cat "$log2"
-  exit 1
-fi
+assert_eq "--limit 100 paginates into two requests" \
+  "$req_count2" 2
 # Per-request page size must never exceed the connection maximum (50).
-if ! jq -s -e 'all(.[]; .variables.first <= 50)' "$log2" >/dev/null; then
-  echo "FAIL --limit 100 issued a request with first > 50"
-  cat "$log2"
-  exit 1
-fi
+assert "no request exceeds the 50-item connection maximum" \
+  jq -s -e 'all(.[]; .variables.first <= 50)' "$log2" >/dev/null
 # Second page must carry the endCursor from the first.
-if ! jq -s -e '.[1].variables.after == "c50"' "$log2" >/dev/null; then
-  echo "FAIL --limit 100 second page did not pass the endCursor"
-  cat "$log2"
-  exit 1
-fi
+assert "the second page carries the first page endCursor" \
+  jq -s -e '.[1].variables.after == "c50"' "$log2" >/dev/null
 # Merged results are contiguous and de-duplicated across pages.
-if ! jq -e '[.[].id] == (["proj-" + (range(1;101) | tostring)])' >/dev/null <<<"$out2"; then
-  echo "FAIL --limit 100 merged pages are not the expected contiguous set"
-  exit 1
-fi
+assert "the merged pages are contiguous and de-duplicated" \
+  jq -e '[.[].id] == (["proj-" + (range(1;101) | tostring)])' >/dev/null <<<"$out2"
 
 # --- Case 3: --limit 100 against a corpus of only 70 returns 70 --------------
 log3="$TMP_ROOT/limit100-small.jsonl"
 out3="$(LINEAR_TOTAL=70 run_list "$log3" --limit 100)"
-if ! jq -e 'length == 70' >/dev/null <<<"$out3"; then
-  echo "FAIL --limit 100 over a 70-project corpus expected 70, got: $(jq 'length' <<<"$out3")"
-  exit 1
-fi
+assert "--limit 100 over a 70-project corpus returns 70" \
+  jq -e 'length == 70' >/dev/null <<<"$out3"
 
 # --- Case 4: output shape is unchanged (safe list objects) -------------------
-if ! jq -e '.[0] | has("id") and has("name") and has("state") and has("url") and has("teams") and has("labels")' >/dev/null <<<"$out1"; then
-  echo "FAIL output shape changed; expected safe project objects"
-  echo "$out1" | jq '.[0]'
-  exit 1
-fi
+assert "the output shape is still safe project objects" \
+  jq -e '.[0] | has("id") and has("name") and has("state") and has("url") and has("teams") and has("labels")' >/dev/null <<<"$out1"
 
 # --- Case 5: --first single-name path stays a single first:1 request ---------
 log5="$TMP_ROOT/first.jsonl"
 out5="$(run_list "$log5" --first)"
-if [ "$out5" != "Project 1" ]; then
-  echo "FAIL --first expected 'Project 1', got: $out5"
-  exit 1
-fi
-if ! jq -s -e 'length == 1 and .[0].variables.first == 1' "$log5" >/dev/null; then
-  echo "FAIL --first should issue a single first:1 request"
-  cat "$log5"
-  exit 1
-fi
+assert_eq "--first returns exactly that many projects" \
+  "$out5" "Project 1"
+assert "--first issues a single first:1 request" \
+  jq -s -e 'length == 1 and .[0].variables.first == 1' "$log5" >/dev/null
 
-echo "all pass"

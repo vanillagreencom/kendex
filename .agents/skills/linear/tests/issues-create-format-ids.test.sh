@@ -8,9 +8,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
@@ -50,33 +51,22 @@ run_create() {
 }
 
 # --- --format=ids (equals form): accepted, prints ONLY the identifier -----------
-ids_out="$(run_create --title "New task" --team Claude --format=ids)"
-if [[ "$ids_out" != "PROJ-1" ]]; then
-  echo "FAIL create --format=ids expected exactly 'PROJ-1', got: [$ids_out]"
-  exit 1
-fi
+ids_rc=0
+ids_out="$(run_create --title "New task" --team Claude --format=ids 2>&1)" || ids_rc=$?
+assert_eq "create --format=ids exits zero" "$ids_rc" 0
+assert_eq "create --format=ids prints exactly the identifier" "$ids_out" "PROJ-1"
 
 # --- --format ids (space form): same contract -----------------------------------
-ids_out_space="$(run_create --title "New task" --team Claude --format ids)"
-if [[ "$ids_out_space" != "PROJ-1" ]]; then
-  echo "FAIL create --format ids expected exactly 'PROJ-1', got: [$ids_out_space]"
-  exit 1
-fi
+space_rc=0
+ids_out_space="$(run_create --title "New task" --team Claude --format ids 2>&1)" || space_rc=$?
+assert_eq "create --format ids exits zero" "$space_rc" 0
+assert_eq "create --format ids prints exactly the identifier" "$ids_out_space" "PROJ-1"
 
 # --- default (no --format): full JSON create response is unchanged ---------------
-default_out="$(run_create --title "New task" --team Claude)"
-if ! jq -e '.success == true and .identifier == "PROJ-1"' >/dev/null <<<"$default_out"; then
-  echo "FAIL default create output changed; expected JSON with success/identifier, got: $default_out"
-  exit 1
-fi
+default_out="$(run_create --title "New task" --team Claude 2>&1)" || true
+assert_jq "the default create output is still the full JSON response" \
+  "$default_out" '.success == true and .identifier == "PROJ-1"'
 
 # --- parser no longer rejects --format=ids (the #615 bug) ------------------------
-set +e
-err_out="$(run_create --title "New task" --team Claude --format=ids 2>&1 >/dev/null)"
-set -e
-if grep -q "Unknown option" <<<"$err_out"; then
-  echo "FAIL parser still rejects --format=ids: $err_out"
-  exit 1
-fi
-
-echo "all pass"
+err_out="$(run_create --title "New task" --team Claude --format=ids 2>&1 >/dev/null)" || true
+assert_not_contains "the parser does not reject --format=ids" "$err_out" "Unknown option"

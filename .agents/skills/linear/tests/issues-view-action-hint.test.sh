@@ -14,9 +14,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 git -C "$TMP_ROOT" init -q -b main
@@ -35,51 +36,14 @@ chmod +x "$TMP_ROOT/bin/curl"
 mkdir -p "$TMP_ROOT/.cache/linear"
 printf '{"synced_at": "2026-01-01T00:00:00Z"}\n' >"$TMP_ROOT/.cache/linear/meta.json"
 
-PASS=0
-FAIL=0
 ERR_FILE="$TMP_ROOT/stderr"
 
 # Captures stdout in $out, stderr in $err, exit code in $rc.
 run_linear() {
-  set +e
+  rc=0
   out=$(cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY=test-token \
-    bash "$LINEAR_SH" ${ARGS[@]+"${ARGS[@]}"} 2>"$ERR_FILE")
-  rc=$?
-  set -e
+    bash "$LINEAR_SH" ${ARGS[@]+"${ARGS[@]}"} 2>"$ERR_FILE") || rc=$?
   err="$(cat "$ERR_FILE")"
-}
-
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
-
-assert_contains() {
-  local got="$1" needle="$2" name="$3"
-  if [[ "$got" == *"$needle"* ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected to contain: %s\n        got:      %s\n' "$name" "$needle" "$got"
-  fi
-}
-
-assert_not_contains() {
-  local got="$1" needle="$2" name="$3"
-  if [[ "$got" != *"$needle"* ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected NOT to contain: %s\n        got:      %s\n' "$name" "$needle" "$got"
-  fi
 }
 
 echo "=== linear.sh unsupported view action hint (kendex#687) ==="
@@ -87,54 +51,44 @@ echo "=== linear.sh unsupported view action hint (kendex#687) ==="
 # --- Unsupported `view` action gets a targeted hint ---------------------------
 ARGS=(issues view PROJ-42 --format=safe)
 run_linear
-assert_eq "$rc" "1" "issues view exits nonzero"
-assert_eq "$out" "" "issues view emits no stdout result"
-assert_contains "$err" "Unknown action 'view'" "issues view names the unknown action"
-assert_contains "$err" "linear.sh issues bulk-get" "issues view hint names bulk-get"
-assert_contains "$err" "linear.sh cache issues get" "issues view hint names the cache lookup"
-
+assert_eq "issues view exits nonzero" "$rc" "1"
+assert_eq "issues view emits no stdout result" "$out" ""
+assert_contains "issues view names the unknown action" "$err" "Unknown action 'view'"
+assert_contains "issues view hint names bulk-get" "$err" "linear.sh issues bulk-get"
+assert_contains "issues view hint names the cache lookup" "$err" "linear.sh cache issues get"
 ARGS=(issues show PROJ-42)
 run_linear
-assert_eq "$rc" "1" "issues show near-miss exits nonzero"
-assert_contains "$err" "linear.sh issues bulk-get" "issues show hint names bulk-get"
-
+assert_eq "issues show near-miss exits nonzero" "$rc" "1"
+assert_contains "issues show hint names bulk-get" "$err" "linear.sh issues bulk-get"
 # Singular resource normalizes to `issues` and still reaches the hint.
 ARGS=(issue view PROJ-42)
 run_linear
-assert_eq "$rc" "1" "issue view (singular) exits nonzero"
-assert_contains "$err" "linear.sh issues bulk-get" "issue view (singular) hint names bulk-get"
-
+assert_eq "issue view (singular) exits nonzero" "$rc" "1"
+assert_contains "issue view (singular) hint names bulk-get" "$err" "linear.sh issues bulk-get"
 # --- Other unknown actions keep the generic error + usage pointer -------------
 ARGS=(issues frobnicate PROJ-42)
 run_linear
-assert_eq "$rc" "1" "unknown action exits nonzero"
-assert_contains "$err" "Unknown action 'frobnicate'" "unknown action reports generic error"
-assert_contains "$err" "Run 'issues.sh --help' for usage." "unknown action points at usage"
-assert_not_contains "$err" "bulk-get" "unknown action gets no view hint"
-
+assert_eq "unknown action exits nonzero" "$rc" "1"
+assert_contains "unknown action reports generic error" "$err" "Unknown action 'frobnicate'"
+assert_contains "unknown action points at usage" "$err" "Run 'issues.sh --help' for usage."
+assert_not_contains "unknown action gets no view hint" "$err" "bulk-get"
 # --- Cache issues namespace gets the same targeted hint -----------------------
 ARGS=(cache issues view PROJ-42)
 run_linear
-assert_eq "$rc" "1" "cache issues view exits nonzero"
-assert_contains "$err" "Unknown issues action: view" "cache issues view names the unknown action"
-assert_contains "$err" "cache issues get" "cache issues view hint names the cache lookup"
-
+assert_eq "cache issues view exits nonzero" "$rc" "1"
+assert_contains "cache issues view names the unknown action" "$err" "Unknown issues action: view"
+assert_contains "cache issues view hint names the cache lookup" "$err" "cache issues get"
 ARGS=(cache issues frobnicate PROJ-42)
 run_linear
-assert_eq "$rc" "1" "unknown cache action exits nonzero"
-assert_contains "$err" "Unknown issues action: frobnicate" "unknown cache action reports generic error"
-assert_not_contains "$err" "bulk-get" "unknown cache action gets no view hint"
-
+assert_eq "unknown cache action exits nonzero" "$rc" "1"
+assert_contains "unknown cache action reports generic error" "$err" "Unknown issues action: frobnicate"
+assert_not_contains "unknown cache action gets no view hint" "$err" "bulk-get"
 # --- Real commands still route ------------------------------------------------
 ARGS=(issues bulk-get --help)
 run_linear
-assert_eq "$rc" "0" "issues bulk-get --help routes and exits 0"
-assert_contains "$out" "Issue Operations" "issues bulk-get --help prints issues usage"
-
+assert_eq "issues bulk-get --help routes and exits 0" "$rc" "0"
+assert_contains "issues bulk-get --help prints issues usage" "$out" "Issue Operations"
 ARGS=(cache issues get --help)
 run_linear
-assert_eq "$rc" "0" "cache issues get --help routes and exits 0"
-
+assert_eq "cache issues get --help routes and exits 0" "$rc" "0"
 echo
-printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
-[[ "$FAIL" -eq 0 ]]

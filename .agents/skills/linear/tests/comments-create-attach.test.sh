@@ -9,9 +9,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 PROJECT="$TMP_ROOT/project"
 mkdir -p "$PROJECT/.agents/skills" "$PROJECT/bin"
@@ -72,22 +73,14 @@ OUT=""
 ERR=""
 RC=0
 
-fail() {
-  echo "FAIL $*"
-  [[ -s "$CURL_LOG" ]] && echo "--- curl payloads ---" && cat "$CURL_LOG"
-  exit 1
-}
-
 run_linear() {
   : >"$CURL_LOG"
-  set +e
+  RC=0
   OUT="$(cd "$PROJECT" && env -u LINEAR_TEAM -u LINEAR_AGENT_LABELS \
     PATH="$PROJECT/bin:$PATH" \
     LINEAR_API_KEY=test-token \
     CURL_LOG="$CURL_LOG" \
-    bash "$LINEAR" "$@" </dev/null 2>"$ERR_FILE")"
-  RC=$?
-  set -e
+    bash "$LINEAR" "$@" </dev/null 2>"$ERR_FILE")" || RC=$?
   ERR="$(cat "$ERR_FILE")"
 }
 
@@ -95,68 +88,75 @@ api_calls() {
   wc -l <"$CURL_LOG" | tr -d ' '
 }
 
+# assert_log DESC FILTER — FILTER must select a true value over the logged
+# curl payloads, read as a stream.
+assert_log() {
+  assert "$1" jq -s -e "$2" "$CURL_LOG"
+}
+
+assert_not_log() {
+  assert_not "$1" jq -s -e "$2" "$CURL_LOG"
+}
+
 echo "=== image attach embeds into the comment body after --body text ==="
 
 run_linear comments create TEAM-1 --body "Note" --attach "$TMP_ROOT/shot.png"
-[[ "$RC" -eq 0 ]] || fail "image attach comment exited $RC: $ERR"
-jq -s -e 'any(.[]; (.query? // "" | contains("fileUpload"))
+assert_eq "an image attach comment exits zero" "$RC" 0
+assert_log "fileUpload carries the contentType and size read from the file" \
+  'any(.[]; (.query? // "" | contains("fileUpload"))
     and .variables.contentType == "image/png"
-    and .variables.size == 7)' "$CURL_LOG" >/dev/null ||
-  fail "fileUpload not called with contentType/size from the file"
-jq -s -e 'any(.[]; .put?.url == "https://uploads.linear.app/put/shot.png"
+    and .variables.size == 7)'
+assert_log "the PUT carries the returned headers plus Content-Type" \
+  'any(.[]; .put?.url == "https://uploads.linear.app/put/shot.png"
     and (.put.headers | index("x-linear-upload: signed-shot.png"))
-    and (.put.headers | index("Content-Type: image/png")))' "$CURL_LOG" >/dev/null ||
-  fail "PUT did not carry the returned headers plus Content-Type"
-jq -s -e 'any(.[]; (.query? // "" | contains("commentCreate"))
-    and .variables.input.body == "Note\n\n![shot.png](https://uploads.linear.app/asset/shot.png)\n")' \
-  "$CURL_LOG" >/dev/null || fail "image embed missing from comment body"
+    and (.put.headers | index("Content-Type: image/png")))'
+assert_log "the image embed lands in the comment body after the --body text" \
+  'any(.[]; (.query? // "" | contains("commentCreate"))
+    and .variables.input.body == "Note\n\n![shot.png](https://uploads.linear.app/asset/shot.png)\n")'
 
 echo "=== non-image attach appends a markdown link, never attachmentCreate ==="
 
 run_linear comments create TEAM-1 --body "Report" --attach "$TMP_ROOT/notes.pdf"
-[[ "$RC" -eq 0 ]] || fail "pdf attach comment exited $RC: $ERR"
-jq -s -e 'any(.[]; (.query? // "" | contains("commentCreate"))
-    and .variables.input.body == "Report\n\n[notes.pdf](https://uploads.linear.app/asset/notes.pdf)\n")' \
-  "$CURL_LOG" >/dev/null || fail "markdown link missing from comment body"
-if jq -s -e 'any(.[]; .query? // "" | contains("attachmentCreate"))' "$CURL_LOG" >/dev/null; then
-  fail "comments must never call attachmentCreate"
-fi
+assert_eq "a pdf attach comment exits zero" "$RC" 0
+assert_log "a non-image attach appends a markdown link to the body" \
+  'any(.[]; (.query? // "" | contains("commentCreate"))
+    and .variables.input.body == "Report\n\n[notes.pdf](https://uploads.linear.app/asset/notes.pdf)\n")'
+assert_not_log "comments never call attachmentCreate" \
+  'any(.[]; .query? // "" | contains("attachmentCreate"))'
 
 echo "=== --attach alone is a valid comment (body is the embed) ==="
 
 run_linear comments create TEAM-1 --attach "$TMP_ROOT/shot.png"
-[[ "$RC" -eq 0 ]] || fail "attach-only comment exited $RC: $ERR"
-jq -s -e 'any(.[]; (.query? // "" | contains("commentCreate"))
-    and .variables.input.body == "![shot.png](https://uploads.linear.app/asset/shot.png)\n")' \
-  "$CURL_LOG" >/dev/null || fail "attach-only body is not the bare embed"
+assert_eq "an attach-only comment exits zero" "$RC" 0
+assert_log "an attach-only comment body is the bare embed" \
+  'any(.[]; (.query? // "" | contains("commentCreate"))
+    and .variables.input.body == "![shot.png](https://uploads.linear.app/asset/shot.png)\n")'
 
 echo "=== --attach composes with --body-file ==="
 
 run_linear comments create TEAM-1 --body-file "$TMP_ROOT/body.md" --attach "$TMP_ROOT/notes.pdf"
-[[ "$RC" -eq 0 ]] || fail "body-file + attach comment exited $RC: $ERR"
-jq -s -e 'any(.[]; (.query? // "" | contains("commentCreate"))
-    and .variables.input.body == "Body from file.\n\n[notes.pdf](https://uploads.linear.app/asset/notes.pdf)\n")' \
-  "$CURL_LOG" >/dev/null || fail "link did not append to --body-file content"
+assert_eq "a --body-file plus --attach comment exits zero" "$RC" 0
+assert_log "the link appends to the --body-file content" \
+  'any(.[]; (.query? // "" | contains("commentCreate"))
+    and .variables.input.body == "Body from file.\n\n[notes.pdf](https://uploads.linear.app/asset/notes.pdf)\n")'
 
 echo "=== missing file refuses before any API call ==="
 
 run_linear comments create TEAM-1 --attach "$TMP_ROOT/nope.png"
-[[ "$RC" -ne 0 ]] || fail "missing --attach path exited 0: $OUT"
-grep -q "not readable" <<<"$ERR" || fail "missing-path refusal lacks 'not readable': $ERR"
-[[ "$(api_calls)" == "0" ]] || fail "missing --attach path attempted $(api_calls) API call(s)"
+assert_ne "a missing --attach path refuses" "$RC" 0
+assert_contains "the missing-path refusal says the file is not readable" "$ERR" "not readable"
+assert_eq "a missing --attach path attempts no API call" "$(api_calls)" "0"
 
 echo "=== no body and no attach still refuses ==="
 
 run_linear comments create TEAM-1
-[[ "$RC" -ne 0 ]] || fail "body-less, attach-less comment exited 0: $OUT"
-grep -q -- "--attach" <<<"$ERR" || fail "refusal does not mention --attach as an option: $ERR"
+assert_ne "a comment with no body and no attach refuses" "$RC" 0
+assert_contains "the refusal names --attach as an option" "$ERR" "--attach"
 
 echo "=== markdown label escaping in comment embeds ==="
 
 printf 'PNG' >"$TMP_ROOT/re]port.png"
 run_linear comments create TEAM-1 --body "See:" --attach "$TMP_ROOT/re]port.png"
-[[ "$RC" -eq 0 ]] || fail "bracket-name comment attach failed: $ERR"
-jq -s -e 'any(.[]; (.query? // "" | contains("commentCreate")) and (.variables.input.body | contains("![re\\]port.png](")))' "$CURL_LOG" >/dev/null ||
-  fail "comment body does not escape the bracket filename: $(cat "$CURL_LOG")"
-
-echo "all pass"
+assert_eq "a bracket-named attach exits zero" "$RC" 0
+assert_log "the comment body escapes a bracket in the embed label" \
+  'any(.[]; (.query? // "" | contains("commentCreate")) and (.variables.input.body | contains("![re\\]port.png](")))'

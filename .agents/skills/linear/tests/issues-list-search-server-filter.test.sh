@@ -17,9 +17,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
@@ -92,155 +93,83 @@ run_list() {
 # --- Case 1: impossible term returns zero rows (fail closed) -----------------
 log1="$TMP_ROOT/impossible.jsonl"
 out1="$(run_list "$log1" --format=raw --search "zzz-no-such-issue-zzz")"
-count1="$(jq '.issues.nodes | length' <<<"$out1")"
-if [ "$count1" -ne 0 ]; then
-  echo "FAIL impossible term returned $count1 rows instead of 0 (search fails open)"
-  jq '.issues.nodes | map(.identifier)' <<<"$out1"
-  exit 1
-fi
+assert_eq "an impossible term returns zero rows" \
+  "$(jq '.issues.nodes | length' <<<"$out1")" "0"
 
 # --- Case 2: the term is filtered server-side, not client-side ---------------
-if ! jq -s -e '.[0].variables.filter.or ==
+assert "the request filter carries the or/containsIgnoreCase search clauses" \
+  jq -s -e '.[0].variables.filter.or ==
       [{title: {containsIgnoreCase: "zzz-no-such-issue-zzz"}},
-       {description: {containsIgnoreCase: "zzz-no-such-issue-zzz"}}]' \
-      "$log1" >/dev/null; then
-  echo "FAIL request filter missing the or/containsIgnoreCase search clauses"
-  jq -s '.[0].variables.filter' "$log1"
-  exit 1
-fi
+       {description: {containsIgnoreCase: "zzz-no-such-issue-zzz"}}]' "$log1"
 
 # --- Case 3: matching term returns only matches (title OR description) -------
 log3="$TMP_ROOT/match.jsonl"
 out3="$(run_list "$log3" --format=raw --search market_data)"
-if ! jq -e '[.issues.nodes[].identifier] == ["VST-1", "VST-2"]' >/dev/null <<<"$out3"; then
-  echo "FAIL --search market_data expected VST-1 (title) + VST-2 (description)"
-  jq '[.issues.nodes[].identifier]' <<<"$out3"
-  exit 1
-fi
+assert_jq "--search market_data matches on title and on description" \
+  "$out3" '[.issues.nodes[].identifier] == ["VST-1", "VST-2"]'
 
 # --- Case 4: pipe-separated terms are OR'd, matching case-insensitively ------
 log4="$TMP_ROOT/alternation.jsonl"
 out4="$(run_list "$log4" --format=raw --search "market_data|order_book")"
-if ! jq -e '[.issues.nodes[].identifier] == ["VST-1", "VST-2", "VST-3"]' >/dev/null <<<"$out4"; then
-  echo "FAIL alternation expected VST-1..3"
-  jq '[.issues.nodes[].identifier]' <<<"$out4"
-  exit 1
-fi
-if ! jq -s -e '.[0].variables.filter.or | length == 4' "$log4" >/dev/null; then
-  echo "FAIL alternation should produce 4 or-clauses (2 terms x title/description)"
-  jq -s '.[0].variables.filter' "$log4"
-  exit 1
-fi
+assert_jq "pipe-separated terms are OR'd" \
+  "$out4" '[.issues.nodes[].identifier] == ["VST-1", "VST-2", "VST-3"]'
+assert "two terms produce four or-clauses" \
+  jq -s -e '.[0].variables.filter.or | length == 4' "$log4"
 
 # --- Case 5: --search=<term> form behaves identically ------------------------
 log5="$TMP_ROOT/equals-form.jsonl"
 out5="$(run_list "$log5" --format=raw --search=order_book)"
-if ! jq -e '[.issues.nodes[].identifier] == ["VST-3"]' >/dev/null <<<"$out5"; then
-  echo "FAIL --search=order_book expected only VST-3"
-  jq '[.issues.nodes[].identifier]' <<<"$out5"
-  exit 1
-fi
+assert_jq "the --search=<term> form filters the same way" \
+  "$out5" '[.issues.nodes[].identifier] == ["VST-3"]'
 
 # --- Case 6: --search composes with other filters ----------------------------
 log6="$TMP_ROOT/composed.jsonl"
 run_list "$log6" --format=raw --state Todo --search market_data >/dev/null
-if ! jq -s -e '.[0].variables.filter | (.state.name.eq == "Todo") and (.or | length == 2)' \
-      "$log6" >/dev/null; then
-  echo "FAIL --state + --search must send both filter clauses"
-  jq -s '.[0].variables.filter' "$log6"
-  exit 1
-fi
+assert "--state and --search both reach the filter" \
+  jq -s -e '.[0].variables.filter | (.state.name.eq == "Todo") and (.or | length == 2)' "$log6"
 
 # --- Case 7: --search with a missing value errors instead of listing all -----
+# refuse_search LABEL ARGS... — the listing must fail and send nothing.
+refuse_search() {
+  local label="$1" log="$2"
+  shift 2
+  local rc=0
+  : >"$log"
+  run_list "$log" "$@" >/dev/null 2>&1 || rc=$?
+
+  assert_ne "$label: the listing is refused" "$rc" 0
+  assert_not "$label: nothing reaches the API" test -s "$log"
+}
+
 log7="$TMP_ROOT/missing-value.jsonl"
-if out7="$(run_list "$log7" --format=raw --search 2>&1)"; then
-  echo "FAIL --search with no value must exit non-zero, got output:"
-  printf '%s\n' "$out7"
-  exit 1
-fi
-if [ -s "$log7" ]; then
-  echo "FAIL --search with no value must not reach the API"
-  cat "$log7"
-  exit 1
-fi
+refuse_search "--search with no value" "$log7" --format=raw --search
 for empty in '--search=' '--search=|'; do
-  if run_list "$log7" --format=raw "$empty" >/dev/null 2>&1; then
-    echo "FAIL '$empty' (no usable term) must exit non-zero"
-    exit 1
-  fi
-  if [ -s "$log7" ]; then
-    echo "FAIL '$empty' must not reach the API"
-    cat "$log7"
-    exit 1
-  fi
+  refuse_search "$empty (no usable term)" "$log7" --format=raw "$empty"
 done
 
 # --- Case 7b: option token after --search/--format is a missing value --------
 log7b="$TMP_ROOT/option-as-value.jsonl"
-if run_list "$log7b" --format=raw --search --state Todo >/dev/null 2>&1; then
-  echo "FAIL '--search --state Todo' must refuse (--state is not a term)"
-  exit 1
-fi
-if [ -s "$log7b" ]; then
-  echo "FAIL '--search --state Todo' must not reach the API"
-  cat "$log7b"
-  exit 1
-fi
-if run_list "$log7b" --format --search market_data >/dev/null 2>&1; then
-  echo "FAIL '--format --search market_data' must refuse (--search is not a format)"
-  exit 1
-fi
-if [ -s "$log7b" ]; then
-  echo "FAIL '--format --search ...' must not reach the API"
-  cat "$log7b"
-  exit 1
-fi
+refuse_search "--search --state Todo (--state is not a term)" "$log7b" --format=raw --search --state Todo
+refuse_search "--format --search market_data (--search is not a format)" "$log7b" --format --search market_data
 # Whitespace-only patterns have no usable term and must fail closed.
-if run_list "$log7b" --format=raw --search ' | ' >/dev/null 2>&1; then
-  echo "FAIL --search ' | ' (whitespace-only) must exit non-zero"
-  exit 1
-fi
-if [ -s "$log7b" ]; then
-  echo "FAIL --search ' | ' must not reach the API"
-  cat "$log7b"
-  exit 1
-fi
+refuse_search "--search ' | ' (whitespace-only)" "$log7b" --format=raw --search ' | '
 # The full whitespace class, not just space/tab: a CR- or LF-only pattern
 # passed the old check, the jq trim then emptied every term, and an
 # 'or: []' filter reached Linear.
 for ws_pat in $'\r' $'\n' $'\n|\n' $'\302\240'; do
-  if run_list "$log7b" --format=raw --search "$ws_pat" >/dev/null 2>&1; then
-    echo "FAIL --search CR/LF-only pattern must exit non-zero"
-    exit 1
-  fi
-  if [ -s "$log7b" ]; then
-    echo "FAIL --search CR/LF-only pattern must not reach the API"
-    cat "$log7b"
-    exit 1
-  fi
+  refuse_search "--search with a non-space whitespace pattern" "$log7b" --format=raw --search "$ws_pat"
 done
 
 # --- Case 7c: padded terms are trimmed before matching ------------------------
 log7c="$TMP_ROOT/trimmed-terms.jsonl"
 run_list "$log7c" --format=raw --search 'market_data | order_book' >/dev/null
-if ! jq -s -e '[.[0].variables.filter.or[] | .. | strings]
-      | all(test("^[^ ].*[^ ]$|^[^ ]$"))' "$log7c" >/dev/null; then
-  echo "FAIL padded 'a | b' terms must be trimmed in the or-clause"
-  jq -s '.[0].variables.filter.or' "$log7c"
-  exit 1
-fi
-if ! jq -s -e '.[0].variables.filter.or | length == 4' "$log7c" >/dev/null; then
-  echo "FAIL trimmed alternation should still produce 4 or-clauses"
-  exit 1
-fi
+assert "padded terms are trimmed in the or-clause" \
+  jq -s -e '[.[0].variables.filter.or[] | .. | strings]
+      | all(test("^[^ ].*[^ ]$|^[^ ]$"))' "$log7c"
+assert "a trimmed alternation still produces four or-clauses" \
+  jq -s -e '.[0].variables.filter.or | length == 4' "$log7c"
 
 # --- Case 8: space-separated --format is honored (same dropped-flag bug) -----
 log8="$TMP_ROOT/format-space.jsonl"
 out8="$(run_list "$log8" --format raw --search market_data)"
-if ! jq -e '.issues.nodes' >/dev/null 2>&1 <<<"$out8"; then
-  echo "FAIL space-separated '--format raw' did not produce raw JSON output"
-  printf '%s\n' "$out8" | head -5
-  exit 1
-fi
-
-echo "all pass"
+assert_jq "a space-separated --format raw produces raw JSON output" "$out8" '.issues.nodes'

@@ -11,9 +11,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 PROJECT="$TMP_ROOT/project"
 mkdir -p "$PROJECT/.agents/skills" "$PROJECT/bin"
@@ -41,11 +42,6 @@ chmod +x "$PROJECT/bin/curl"
 OUT=""
 RC=0
 
-fail() {
-  echo "FAIL $*"
-  exit 1
-}
-
 fingerprint() {
   if command -v sha256sum &>/dev/null; then
     printf '%s' "$1" | sha256sum | cut -c1-12
@@ -58,14 +54,12 @@ fingerprint() {
 # absent, per-case assignments come in as arguments.
 run_auth() {
   : >"$AUTH_LOG"
-  set +e
+  RC=0
   OUT="$(cd "$PROJECT" && env -u LINEAR_TEAM -u LINEAR_API_KEY -u LINEAR_API_KEY_OVERRIDE \
     PATH="$PROJECT/bin:$PATH" \
     AUTH_LOG="$AUTH_LOG" \
     "$@" \
-    bash "$LINEAR" auth-check 2>"$ERR_FILE")"
-  RC=$?
-  set -e
+    bash "$LINEAR" auth-check 2>"$ERR_FILE")" || RC=$?
 }
 
 sent_key() {
@@ -73,14 +67,14 @@ sent_key() {
 }
 
 assert_source() {
-  local expected="$1"
-  jq -e --arg s "$expected" '.api_key_source == $s' <<<"$OUT" >/dev/null ||
-    fail "expected api_key_source \"$expected\": $OUT"
+  local label="$1" expected="$2"
+  assert_jq "$label: api_key_source is $expected" \
+    "$OUT" "$(printf '.api_key_source == "%s"' "$expected")"
 }
 
 assert_no_shadow_warning() {
-  jq -e '[.warnings[] | select(contains("inherited LINEAR_API_KEY"))] | length == 0' <<<"$OUT" >/dev/null ||
-    fail "unexpected shadowing warning: $OUT"
+  assert_jq "$1: no shadowing warning" \
+    "$OUT" '[.warnings[] | select(contains("inherited LINEAR_API_KEY"))] | length == 0'
 }
 
 echo "=== a project-file key beats a plain inherited env key ==="
@@ -88,40 +82,40 @@ echo "=== a project-file key beats a plain inherited env key ==="
 printf 'LINEAR_API_KEY=%s\n' "$FILE_KEY" >"$PROJECT/.env.local"
 
 run_auth LINEAR_API_KEY="$ENV_KEY"
-[[ "$RC" -eq 0 ]] || fail "auth-check exited $RC with a file key: $(cat "$ERR_FILE")"
-assert_source "project-config"
-[[ "$(sent_key)" == "$FILE_KEY" ]] || fail "the inherited env key shadowed the project key on the wire: $(sent_key)"
+assert_eq "auth-check exits zero with a file key" "$RC" 0
+assert_source "file key beats inherited env" "project-config"
+assert_eq "the project key, not the inherited one, reaches the wire" "$(sent_key)" "$FILE_KEY"
 
 echo "=== the shadowing warning fires exactly when env and file keys differ ==="
 
 env_fp="$(fingerprint "$ENV_KEY")"
 file_fp="$(fingerprint "$FILE_KEY")"
-jq -e --arg env "sha256:$env_fp" --arg file "sha256:$file_fp" \
-  '[.warnings[] | select(contains("inherited LINEAR_API_KEY") and contains($env) and contains($file) and contains("using project-config"))] | length == 1' <<<"$OUT" >/dev/null ||
-  fail "shadowing warning missing or missing fingerprints: $OUT"
-grep -qF "$ENV_KEY" <<<"$OUT" && fail "warning leaked the inherited key material: $OUT"
-grep -qF "$FILE_KEY" <<<"$OUT" && fail "warning leaked the project key material: $OUT"
+assert "the shadowing warning carries both key fingerprints" \
+  jq -e --arg env "sha256:$env_fp" --arg file "sha256:$file_fp" \
+  '[.warnings[] | select(contains("inherited LINEAR_API_KEY") and contains($env) and contains($file) and contains("using project-config"))] | length == 1' <<<"$OUT" 
+assert_not_contains "the warning does not leak the inherited key material" "$OUT" "$ENV_KEY"
+assert_not_contains "the warning does not leak the project key material" "$OUT" "$FILE_KEY"
 
 # Identical env and file keys: nothing is being shadowed.
 run_auth LINEAR_API_KEY="$FILE_KEY"
-[[ "$RC" -eq 0 ]] || fail "auth-check exited $RC with identical keys: $(cat "$ERR_FILE")"
-assert_source "project-config"
-assert_no_shadow_warning
+assert_eq "auth-check exits zero with identical keys" "$RC" 0
+assert_source "identical keys" "project-config"
+assert_no_shadow_warning "identical keys"
 
 # Only the file key: nothing inherited, nothing to warn about.
 run_auth
-[[ "$RC" -eq 0 ]] || fail "auth-check exited $RC with only a file key: $(cat "$ERR_FILE")"
-assert_source "project-config"
-assert_no_shadow_warning
-[[ "$(sent_key)" == "$FILE_KEY" ]] || fail "file key not used on the wire: $(sent_key)"
+assert_eq "auth-check exits zero with only a file key" "$RC" 0
+assert_source "file key only" "project-config"
+assert_no_shadow_warning "file key only"
+assert_eq "the file key reaches the wire" "$(sent_key)" "$FILE_KEY"
 
 echo "=== LINEAR_API_KEY_OVERRIDE beats the project files ==="
 
 run_auth LINEAR_API_KEY="$ENV_KEY" LINEAR_API_KEY_OVERRIDE="$OVERRIDE_KEY"
-[[ "$RC" -eq 0 ]] || fail "auth-check exited $RC with an override: $(cat "$ERR_FILE")"
-assert_source "override"
-assert_no_shadow_warning
-[[ "$(sent_key)" == "$OVERRIDE_KEY" ]] || fail "override key not used on the wire: $(sent_key)"
+assert_eq "auth-check exits zero with an override" "$RC" 0
+assert_source "override beats the project files" "override"
+assert_no_shadow_warning "override"
+assert_eq "the override key reaches the wire" "$(sent_key)" "$OVERRIDE_KEY"
 
 echo "=== a .env key is read by nothing ==="
 
@@ -132,8 +126,8 @@ echo "=== a .env key is read by nothing ==="
 mv "$PROJECT/.env.local" "$PROJECT/.env.local.aside"
 printf 'LINEAR_API_KEY=%s\n' "dot-env-key" >"$PROJECT/.env"
 run_auth LINEAR_API_KEY="$ENV_KEY"
-assert_source "environment"
-[[ "$(sent_key)" == "$ENV_KEY" ]] || fail "a .env key reached the wire: $(sent_key)"
+assert_source "a .env key supplies no project config" "environment"
+assert_eq "no .env key reaches the wire" "$(sent_key)" "$ENV_KEY"
 rm -f "$PROJECT/.env"
 mv "$PROJECT/.env.local.aside" "$PROJECT/.env.local"
 
@@ -142,17 +136,15 @@ echo "=== inherited env is used only when no file provides a key ==="
 rm -f "$PROJECT/.env.local"
 
 run_auth LINEAR_API_KEY="$ENV_KEY"
-[[ "$RC" -eq 0 ]] || fail "auth-check exited $RC with only an env key: $(cat "$ERR_FILE")"
-assert_source "environment"
-assert_no_shadow_warning
-[[ "$(sent_key)" == "$ENV_KEY" ]] || fail "inherited env key not used on the wire: $(sent_key)"
+assert_eq "auth-check exits zero with only an env key" "$RC" 0
+assert_source "inherited env with no file key" "environment"
+assert_no_shadow_warning "env key only"
+assert_eq "the inherited env key reaches the wire" "$(sent_key)" "$ENV_KEY"
 
 echo "=== no key anywhere reports unset and fails ==="
 
 run_auth
-[[ "$RC" -ne 0 ]] || fail "auth-check exited 0 with no key: $OUT"
-jq -e '.ok == false and .api_key_source == "unset"' <<<"$OUT" >/dev/null ||
-  fail "auth-check did not report an unset key: $OUT"
-[[ ! -s "$AUTH_LOG" ]] || fail "a request was sent with no key: $(cat "$AUTH_LOG")"
+assert_ne "auth-check fails with no key anywhere" "$RC" 0
+assert_jq "auth-check reports the key as unset" "$OUT" '.ok == false and .api_key_source == "unset"'
+assert_not "no request is sent with no key" test -s "$AUTH_LOG"
 
-echo "all pass"

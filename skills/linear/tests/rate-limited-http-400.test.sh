@@ -10,34 +10,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_BASE="$(mktemp -d)"
-trap 'rm -rf "$TMP_BASE"' EXIT
-
-PASS=0
-FAIL=0
-
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        wanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-  fi
-}
-
-assert_not_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        must NOT contain: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-  else
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  fi
-}
+assert_tmpdir TMP_BASE
 
 # make_env <root> <http_code> <body-json>: isolated skill copy + a curl stub
 # that always answers with the given status/body (graphql_query appends the
@@ -76,9 +52,8 @@ run_linear() { # root, args...
 echo "=== RATELIMITED body on HTTP 400 routes to the rate-limit path ==="
 make_env "$TMP_BASE/rl" 400 "$RL_BODY"
 out="$(run_linear "$TMP_BASE/rl" statuses list)"
-assert_contains "$out" "Rate limited. Try again later." "rate-limited 400 reports the rate limit"
-assert_not_contains "$out" "HTTP error: 400" "rate-limited 400 is not a generic HTTP error"
-
+assert_contains "rate-limited 400 reports the rate limit" "$out" "Rate limited. Try again later."
+assert_not_contains "rate-limited 400 is not a generic HTTP error" "$out" "HTTP error: 400"
 echo "=== failed team lookup propagates the API failure ==="
 unit="$(cd "$TMP_BASE/rl" && env PATH="$TMP_BASE/rl/bin:$PATH" bash -c '
   set -u
@@ -87,15 +62,10 @@ unit="$(cd "$TMP_BASE/rl" && env PATH="$TMP_BASE/rl/bin:$PATH" bash -c '
   source "$0/.agents/skills/linear/scripts/lib/common.sh"
   resolve_team_id "Claude"
 ' "$TMP_BASE/rl" 2>&1)" || true
-assert_contains "$unit" "Rate limited. Try again later." "team lookup surfaces the rate limit"
-assert_contains "$unit" "Could not resolve team 'Claude'" "team lookup names the failed resolution"
-assert_not_contains "$unit" "Team not found" "team lookup does not claim the team is missing"
-
+assert_contains "team lookup surfaces the rate limit" "$unit" "Rate limited. Try again later."
+assert_contains "team lookup names the failed resolution" "$unit" "Could not resolve team 'Claude'"
+assert_not_contains "team lookup does not claim the team is missing" "$unit" "Team not found"
 echo "=== generic non-200 carries the body's error message ==="
 make_env "$TMP_BASE/gen" 400 "$GENERIC_BODY"
 out="$(run_linear "$TMP_BASE/gen" statuses list)"
-assert_contains "$out" "HTTP error: 400: Argument Validation Error" "generic 400 includes the body message"
-
-echo
-printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
-[ "$FAIL" -eq 0 ]
+assert_contains "generic 400 includes the body message" "$out" "HTTP error: 400: Argument Validation Error"

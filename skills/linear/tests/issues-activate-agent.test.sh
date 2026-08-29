@@ -6,9 +6,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
@@ -70,62 +71,35 @@ run_activate() {
 
 # --- activate --agent applies the label in the same issueUpdate as the state change
 agent_payload="$TMP_ROOT/agent-payloads.jsonl"
-out="$(run_activate "$agent_payload" CC-760 --agent rust 2>"$TMP_ROOT/agent.err")"
+out="$(run_activate "$agent_payload" CC-760 --agent rust 2>"$TMP_ROOT/agent.err")" || true
 
-if ! jq -e '.success == true and .action == "activated" and .agent == "rust"' >/dev/null <<<"$out"; then
-  echo "FAIL activate --agent returned unexpected output: $out"
-  exit 1
-fi
-
-if ! jq -s -e 'any(.[]; (.query | contains("issueUpdate"))
+assert_jq "activate --agent reports the claimed agent" \
+  "$out" '.success == true and .action == "activated" and .agent == "rust"'
+assert "issueUpdate carries the state and the replaced agent label set in one mutation" \
+  jq -s -e 'any(.[]; (.query | contains("issueUpdate"))
     and .variables.input.stateId == "state-in-progress"
-    and .variables.input.labelIds == ["label-backend", "label-agent-rust"])' "$agent_payload" >/dev/null; then
-  echo "FAIL issueUpdate did not carry state + replaced agent label set in one mutation"
-  cat "$agent_payload"
-  exit 1
-fi
-
-if [[ "$(jq -s '[.[] | select(.query | contains("issueUpdate"))] | length' "$agent_payload")" != "1" ]]; then
-  echo "FAIL expected exactly one issueUpdate mutation"
-  cat "$agent_payload"
-  exit 1
-fi
+    and .variables.input.labelIds == ["label-backend", "label-agent-rust"])' "$agent_payload"
+assert_eq "activate --agent sends exactly one issueUpdate mutation" \
+  "$(jq -s '[.[] | select(.query | contains("issueUpdate"))] | length' "$agent_payload")" "1"
 
 # --- unknown agent fails before any state change
 bogus_payload="$TMP_ROOT/bogus-payloads.jsonl"
-set +e
-run_activate "$bogus_payload" CC-760 --agent bogus >"$TMP_ROOT/bogus.out" 2>"$TMP_ROOT/bogus.err"
-rc=$?
-set -e
-if [[ "$rc" -eq 0 ]]; then
-  echo "FAIL activate --agent bogus unexpectedly succeeded"
-  cat "$TMP_ROOT/bogus.out"
-  exit 1
-fi
-if ! grep -q "Agent label not found: 'agent:bogus'" "$TMP_ROOT/bogus.err"; then
-  echo "FAIL missing clear error for unknown agent label"
-  cat "$TMP_ROOT/bogus.err"
-  exit 1
-fi
-if jq -s -e 'any(.[]; .query | contains("issueUpdate"))' "$bogus_payload" >/dev/null; then
-  echo "FAIL unknown agent label still mutated issue state"
-  cat "$bogus_payload"
-  exit 1
-fi
+rc=0
+run_activate "$bogus_payload" CC-760 --agent bogus >"$TMP_ROOT/bogus.out" 2>"$TMP_ROOT/bogus.err" || rc=$?
+
+assert_ne "activate --agent with an unknown agent fails" "$rc" 0
+assert_file_contains "the refusal names the missing agent label" \
+  "$TMP_ROOT/bogus.err" "Agent label not found: 'agent:bogus'"
+assert_not "an unknown agent label mutates no issue state" \
+  jq -s -e 'any(.[]; .query | contains("issueUpdate"))' "$bogus_payload"
 
 # --- activate without --agent keeps prior behavior (state only, no labels touched)
 plain_payload="$TMP_ROOT/plain-payloads.jsonl"
-out="$(run_activate "$plain_payload" CC-760 2>"$TMP_ROOT/plain.err")"
-if ! jq -e '.success == true and .action == "activated" and (has("agent") | not)' >/dev/null <<<"$out"; then
-  echo "FAIL plain activate returned unexpected output: $out"
-  exit 1
-fi
-if ! jq -s -e 'any(.[]; (.query | contains("issueUpdate"))
-    and .variables.input.stateId == "state-in-progress"
-    and (.variables.input | has("labelIds") | not))' "$plain_payload" >/dev/null; then
-  echo "FAIL plain activate should not send labelIds"
-  cat "$plain_payload"
-  exit 1
-fi
+out="$(run_activate "$plain_payload" CC-760 2>"$TMP_ROOT/plain.err")" || true
 
-echo "all pass"
+assert_jq "plain activate reports no agent" \
+  "$out" '.success == true and .action == "activated" and (has("agent") | not)'
+assert "plain activate sends the state change without labelIds" \
+  jq -s -e 'any(.[]; (.query | contains("issueUpdate"))
+    and .variables.input.stateId == "state-in-progress"
+    and (.variables.input | has("labelIds") | not))' "$plain_payload"

@@ -4,9 +4,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/.cache/linear"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
@@ -109,35 +110,21 @@ run_create() {
 success_out="$TMP_ROOT/success.out"
 success_err="$TMP_ROOT/success.err"
 success_payload="$TMP_ROOT/success-payloads.jsonl"
-if ! run_create repair "$success_out" "$success_err" "$success_payload"; then
-  echo "FAIL issues create --parent repair scenario failed"
-  cat "$success_err"
-  exit 1
-fi
+assert "issues create --parent succeeds on the repair scenario" \
+  run_create repair "$success_out" "$success_err" "$success_payload"
 
 out="$(cat "$success_out")"
-if ! jq -e '.success == true and .identifier == "CC-558" and .data.issue.parent.identifier == "CC-557"' >/dev/null <<<"$out"; then
-  echo "FAIL issues create --parent returned unexpected output: $out"
-  exit 1
-fi
+assert "issues create --parent reports the child under its parent" \
+  jq -e '.success == true and .identifier == "CC-558" and .data.issue.parent.identifier == "CC-557"' >/dev/null <<<"$out"
 
-if ! jq -s -e 'any(.[]; (.query | contains("query GetIssue")) and .variables.id == "CC-557")' "$success_payload" >/dev/null; then
-  echo "FAIL --parent identifier was not resolved through GetIssue"
-  cat "$success_payload"
-  exit 1
-fi
+assert "the --parent identifier resolves through GetIssue" \
+  jq -s -e 'any(.[]; (.query | contains("query GetIssue")) and .variables.id == "CC-557")' "$success_payload" >/dev/null
 
-if ! jq -s -e 'any(.[]; (.query | contains("issueCreate")) and .variables.input.parentId == "parent-uuid" and .variables.input.projectId == "project-uuid" and .variables.input.labelIds == ["label-uuid"])' "$success_payload" >/dev/null; then
-  echo "FAIL issueCreate payload did not include resolved parent/project/label ids"
-  cat "$success_payload"
-  exit 1
-fi
+assert "the issueCreate payload carries the resolved parent, project and label ids" \
+  jq -s -e 'any(.[]; (.query | contains("issueCreate")) and .variables.input.parentId == "parent-uuid" and .variables.input.projectId == "project-uuid" and .variables.input.labelIds == ["label-uuid"])' "$success_payload" >/dev/null
 
-if ! jq -s -e 'any(.[]; (.query | contains("issueUpdate")) and .variables.id == "child-uuid" and .variables.input.parentId == "parent-uuid")' "$success_payload" >/dev/null; then
-  echo "FAIL missing follow-up issueUpdate parent repair"
-  cat "$success_payload"
-  exit 1
-fi
+assert "a follow-up issueUpdate repairs the parent link" \
+  jq -s -e 'any(.[]; (.query | contains("issueUpdate")) and .variables.id == "child-uuid" and .variables.input.parentId == "parent-uuid")' "$success_payload" >/dev/null
 
 assert_create_fails() {
   local scenario="$1"
@@ -147,27 +134,18 @@ assert_create_fails() {
   local payload_log="$TMP_ROOT/$scenario-payloads.jsonl"
   local rc
 
-  set +e
-  run_create "$scenario" "$stdout_file" "$stderr_file" "$payload_log"
-  rc=$?
-  set -e
+  rc=0
+  run_create "$scenario" "$stdout_file" "$stderr_file" "$payload_log" || rc=$?
 
-  if [[ "$rc" -eq 0 ]]; then
-    echo "FAIL scenario $scenario unexpectedly succeeded"
-    cat "$stdout_file"
-    exit 1
-  fi
+  assert_ne "scenario $scenario fails" \
+    "$rc" 0
 
-  if ! grep -q "$expected" "$stderr_file"; then
-    echo "FAIL scenario $scenario missing expected error: $expected"
-    cat "$stderr_file"
-    exit 1
-  fi
+  assert "scenario $scenario names the expected error" \
+    grep -q "$expected" "$stderr_file"
 
-  if [[ -s "$stdout_file" ]] && jq -e '.success == true' "$stdout_file" >/dev/null 2>&1; then
-    echo "FAIL scenario $scenario emitted normalized success"
-    cat "$stdout_file"
-    exit 1
+  if [[ -s "$stdout_file" ]]; then
+    assert_not "scenario $scenario emits no normalized success" \
+      jq -e '.success == true' "$stdout_file"
   fi
 }
 
@@ -176,4 +154,3 @@ assert_create_fails missing-child-id "omitted child id"
 assert_create_fails update-error "follow-up repair failed"
 assert_create_fails repair-unverified "could not be verified after follow-up repair"
 
-echo "all pass"

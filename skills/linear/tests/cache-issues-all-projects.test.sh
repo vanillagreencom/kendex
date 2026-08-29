@@ -19,9 +19,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/.cache/linear"
 git -C "$TMP_ROOT" init -q -b main
@@ -54,16 +55,8 @@ run_list() {
   cd "$TMP_ROOT" && bash "$LINEAR" cache issues list "$@"
 }
 
-fail=0
-
 check() {
-  local label="$1" out="$2" filter="$3"
-  if ! jq -e "$filter" >/dev/null 2>&1 <<<"$out"; then
-    echo "FAIL: $label"
-    echo "  filter: $filter"
-    echo "  output: $out"
-    fail=1
-  fi
+  assert_jq "$1" "$2" "$3"
 }
 
 # --- A: rows from every seeded project, each tagged with its project --------
@@ -89,15 +82,9 @@ check "B: Done row excluded by composed state filter" "$outB" \
 # --- C: mutual exclusion with --project fails loudly -------------------------
 rcC=0
 errC="$(run_list --all-projects --project "Alpha" --max 2>&1 >/dev/null)" || rcC=$?
-if [[ "$rcC" -eq 0 ]]; then
-  echo "FAIL: C: --all-projects with --project must exit nonzero"
-  fail=1
-fi
-if [[ "$errC" != *"--all-projects cannot be combined with --project"* ]]; then
-  echo "FAIL: C: conflict error message missing"
-  echo "  stderr: $errC"
-  fail=1
-fi
+assert_ne "C: --all-projects with --project exits nonzero" "$rcC" 0
+assert_contains "C: the conflict error names the combination" \
+  "$errC" "--all-projects cannot be combined with --project"
 
 # --- D: per-project call unchanged; row shape matches --all-projects ---------
 outD="$(run_list --project "Alpha" --max --format=compact 2>/dev/null)"
@@ -108,16 +95,6 @@ check "D: per-project rows keep the compact field set" "$outD" \
 
 per_project_keys="$(jq -c '[.[] | select(.id == "CC-1")][0] | keys | sort' <<<"$outD")"
 all_projects_keys="$(jq -c '[.[] | select(.id == "CC-1")][0] | keys | sort' <<<"$outA")"
-if [[ "$per_project_keys" != "$all_projects_keys" ]]; then
-  echo "FAIL: D: --all-projects row shape diverges from per-project row shape"
-  echo "  per-project:  $per_project_keys"
-  echo "  all-projects: $all_projects_keys"
-  fail=1
-fi
+assert_eq "D: --all-projects rows keep the per-project row shape" \
+  "$all_projects_keys" "$per_project_keys"
 
-if [[ "$fail" -ne 0 ]]; then
-  echo "cache-issues-all-projects: FAIL"
-  exit 1
-fi
-
-echo "all pass"

@@ -8,6 +8,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 ISSUES_SH="$SCRIPT_DIR/../scripts/commands/issues.sh"
 
 # Source only the function under test so we don't trigger the script's main
@@ -17,20 +19,12 @@ source <(awk '/^linear_update_activity_type\(\)/,/^}$/' "$ISSUES_SH")
 
 assert_pair() {
     local label="$1" normalized="$2" expect_type="$3" expect_sev="$4"
-    local out_t out_s
-    set +e
-    read -r out_t out_s < <(linear_update_activity_type "$normalized")
-    local rc=$?
-    set -e
-    if [ "$rc" -ne 0 ]; then
-        echo "FAIL $label: read returned non-zero ($rc) — function missed terminating newline"
-        exit 1
-    fi
-    if [ "$out_t" != "$expect_type" ] || [ "$out_s" != "$expect_sev" ]; then
-        echo "FAIL $label: got '$out_t $out_s', expected '$expect_type $expect_sev'"
-        exit 1
-    fi
-    echo "PASS $label"
+    local out_t="" out_s="" rc=0
+
+    read -r out_t out_s < <(linear_update_activity_type "$normalized") || rc=$?
+
+    assert_eq "$label: output ends with a newline so read returns 0" "$rc" 0
+    assert_eq "$label" "$out_t $out_s" "$expect_type $expect_sev"
 }
 
 assert_pair "completed state -> issue_finished success" \
@@ -44,5 +38,3 @@ assert_pair "canceled state -> issue_cancelled warning" \
 assert_pair "in_progress state -> issue_updated info" \
     '{"data":{"issue":{"state":{"name":"In Progress","type":"started"}}}}' \
     "linear.issue_updated" "info"
-
-echo "all pass"

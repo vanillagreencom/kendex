@@ -9,9 +9,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 PROJECT="$TMP_ROOT/project"
 mkdir -p "$PROJECT/.agents/skills" "$PROJECT/bin"
@@ -77,24 +78,22 @@ OUT=""
 ERR=""
 RC=0
 
-fail() {
-  echo "FAIL $*"
-  [[ -s "$CURL_LOG" ]] && echo "--- curl payloads ---" && cat "$CURL_LOG"
-  exit 1
+# assert_log DESC FILTER — FILTER must select a true value over the logged
+# curl payloads, read as a stream.
+assert_log() {
+  assert "$1" jq -s -e "$2" "$CURL_LOG"
 }
 
 # Run the CLI inside the temp project with LINEAR_TEAM absent from the process
 # environment (parent env wins over project files, so it must be cleared).
 run_linear() {
   : >"$CURL_LOG"
-  set +e
+  RC=0
   OUT="$(cd "$PROJECT" && env -u LINEAR_TEAM \
     PATH="$PROJECT/bin:$PATH" \
     LINEAR_API_KEY=test-token \
     CURL_LOG="$CURL_LOG" \
-    bash "$LINEAR" "$@" 2>"$ERR_FILE")"
-  RC=$?
-  set -e
+    bash "$LINEAR" "$@" 2>"$ERR_FILE")" || RC=$?
   ERR="$(cat "$ERR_FILE")"
 }
 
@@ -103,15 +102,13 @@ run_linear_env_team() {
   local team="$1"
   shift
   : >"$CURL_LOG"
-  set +e
+  RC=0
   OUT="$(cd "$PROJECT" && env \
     PATH="$PROJECT/bin:$PATH" \
     LINEAR_API_KEY=test-token \
     LINEAR_TEAM="$team" \
     CURL_LOG="$CURL_LOG" \
-    bash "$LINEAR" "$@" 2>"$ERR_FILE")"
-  RC=$?
-  set -e
+    bash "$LINEAR" "$@" 2>"$ERR_FILE")" || RC=$?
   ERR="$(cat "$ERR_FILE")"
 }
 
@@ -129,28 +126,26 @@ api_calls() {
 
 assert_no_guessed_team() {
   local label="$1"
-  jq -s -e 'all(.[]; (.variables | tostring | contains("team")) | not)' "$CURL_LOG" >/dev/null ||
-    fail "$label sent a team filter with no configured team: $(cat "$CURL_LOG")"
+  assert_log "$label sends no team filter with no configured team" \
+    'all(.[]; (.variables | tostring | contains("team")) | not)'
   # sync builds team scoping into the query document itself, where a variables-
   # only check cannot see it.
-  jq -s -e 'all(.[]; (.query | test("team[[:space:]]*:")) | not)' "$CURL_LOG" >/dev/null ||
-    fail "$label inlined a team filter into the query document: $(cat "$CURL_LOG")"
-  if grep -riq "claude" "$CURL_LOG"; then
-    fail "$label carried a guessed team name: $(cat "$CURL_LOG")"
-  fi
+  assert_log "$label inlines no team filter into the query document" \
+    'all(.[]; (.query | test("team[[:space:]]*:")) | not)'
+  assert_not "$label carries no guessed team name" grep -riq "claude" "$CURL_LOG"
 }
 
 assert_refused() {
   local label="$1"
-  [[ "$RC" -ne 0 ]] || fail "$label exited 0; expected a refusal. stdout: $OUT"
-  grep -q "No Linear team configured" <<<"$ERR" || fail "$label missing refusal message: $ERR"
-  grep -q "LINEAR_TEAM" <<<"$ERR" || fail "$label refusal does not name LINEAR_TEAM: $ERR"
-  grep -q "kendex.settings.toml" <<<"$ERR" || fail "$label refusal does not name kendex.settings.toml: $ERR"
-  grep -q -- "--team" <<<"$ERR" || fail "$label refusal does not name the per-call override: $ERR"
+  assert_ne "$label is refused" "$RC" 0
+  assert_contains "$label carries the refusal message" "$ERR" "No Linear team configured"
+  assert_contains "$label refusal names LINEAR_TEAM" "$ERR" "LINEAR_TEAM"
+  assert_contains "$label refusal names kendex.settings.toml" "$ERR" "kendex.settings.toml"
+  assert_contains "$label refusal names the per-call override" "$ERR" "--team"
   # The message may only offer --team where a parser actually accepts it.
-  grep -qE 'issues, projects, cycles, labels' <<<"$ERR" ||
-    fail "$label refusal offers --team without naming the actions that take it: $ERR"
-  [[ "$(api_calls)" == "0" ]] || fail "$label attempted $(api_calls) API call(s) before refusing"
+  assert_contains "$label refusal names the actions that take --team" \
+    "$ERR" "issues, projects, cycles, labels"
+  assert_eq "$label refuses before any API call" "$(api_calls)" "0"
 }
 
 echo "=== writes refuse when no team is configured ==="
@@ -216,8 +211,8 @@ run_linear issues create --title "--team=CC"
 assert_refused "issues create with --team=CC as the title"
 
 run_linear issues comment TEAM-1 --body "--team=CC"
-[[ "$RC" -ne 0 ]] || fail "issues comment redirect exited 0"
-[[ "$(api_calls)" == "0" ]] || fail "issues comment redirect issued $(api_calls) API call(s)"
+assert_ne "issues comment redirect fails" "$RC" 0
+assert_eq "the issues comment redirect" "$(api_calls)" "0"
 
 echo "=== a blank configured value stays unset (seeded template is inert) ==="
 
@@ -229,44 +224,44 @@ echo "=== help never needs a team target ==="
 
 clear_settings
 run_linear issues create --help
-[[ "$RC" -eq 0 ]] || fail "issues create --help exited $RC: $ERR"
-grep -q "Create Options:" <<<"$OUT" || fail "issues create --help did not print help: $OUT"
+assert_eq "issues create --help exits zero" "$RC" 0
+assert_contains "issues create --help prints its help" "$OUT" "Create Options:"
 
 # `update` is guarded at the dispatcher, so its help path is the one that needs
 # the exemption.
 run_linear issues update --help
-[[ "$RC" -eq 0 ]] || fail "issues update --help exited $RC: $ERR"
-grep -q "Update Options:" <<<"$OUT" || fail "issues update --help did not print help: $OUT"
-[[ "$(api_calls)" == "0" ]] || fail "issues update --help issued an API call"
+assert_eq "issues update --help exits zero" "$RC" 0
+assert_contains "issues update --help prints its help" "$OUT" "Update Options:"
+assert_eq "issues update --help" "$(api_calls)" "0"
 
 echo "=== explicit --team satisfies the requirement ==="
 
 clear_settings
 run_linear issues create --title "Explicit target" --team Explicit
-[[ "$RC" -eq 0 ]] || fail "issues create --team exited $RC: $ERR"
-jq -s -e 'any(.[]; (.query | contains("teams(filter:")) and .variables.name == "Explicit")' "$CURL_LOG" >/dev/null ||
-  fail "explicit --team was not used to resolve the team"
-jq -s -e 'any(.[]; (.query | contains("issueCreate")) and .variables.input.teamId == "team-uuid")' "$CURL_LOG" >/dev/null ||
-  fail "issueCreate did not carry the resolved team id"
+assert_eq "issues create --team exits zero" "$RC" 0
+assert_log "an explicit --team resolves the team" \
+  'any(.[]; (.query | contains("teams(filter:")) and .variables.name == "Explicit")'
+assert_log "issueCreate carries the resolved team id" \
+  'any(.[]; (.query | contains("issueCreate")) and .variables.input.teamId == "team-uuid")'
 
 echo "=== configured LINEAR_TEAM proceeds ==="
 
 set_settings_team "Configured"
 run_linear issues create --title "Configured target"
-[[ "$RC" -eq 0 ]] || fail "issues create with configured team exited $RC: $ERR"
-jq -s -e 'any(.[]; (.query | contains("teams(filter:")) and .variables.name == "Configured")' "$CURL_LOG" >/dev/null ||
-  fail "configured LINEAR_TEAM was not used"
+assert_eq "issues create with configured team exits zero" "$RC" 0
+assert_log "a configured LINEAR_TEAM is used" \
+  'any(.[]; (.query | contains("teams(filter:")) and .variables.name == "Configured")'
 
 run_linear comments create TEAM-1 --body "hello"
-[[ "$RC" -eq 0 ]] || fail "comments create with configured team exited $RC: $ERR"
-jq -s -e 'any(.[]; .query | contains("commentCreate"))' "$CURL_LOG" >/dev/null ||
-  fail "comments create did not reach the API with a configured team"
+assert_eq "comments create with configured team exits zero" "$RC" 0
+assert_log "comments create reaches the API with a configured team" \
+  'any(.[]; .query | contains("commentCreate"))'
 
 # Free text stays free text: a configured project still writes the body as-is.
 run_linear comments create TEAM-1 --body "--team=CC"
-[[ "$RC" -eq 0 ]] || fail "comments create with a --team-shaped body exited $RC: $ERR"
-jq -s -e 'any(.[]; (.query | contains("commentCreate")) and (.variables.input.body | startswith("--team=CC")))' "$CURL_LOG" >/dev/null ||
-  fail "comment body was not preserved verbatim: $(cat "$CURL_LOG")"
+assert_eq "comments create with a --team-shaped body exits zero" "$RC" 0
+assert_log "the comment body is preserved verbatim" \
+  'any(.[]; (.query | contains("commentCreate")) and (.variables.input.body | startswith("--team=CC")))'
 
 # Every create action that parses --team resolves its target after parsing.
 clear_settings
@@ -277,140 +272,125 @@ for create_case in "projects create --name P --team Explicit:projectCreate" \
   op="${create_case##*:}"
   # shellcheck disable=SC2086
   run_linear $args
-  [[ "$RC" -eq 0 ]] || fail "$args exited $RC: $ERR"
-  jq -s -e --arg op "$op" 'any(.[]; .query | contains($op))' "$CURL_LOG" >/dev/null ||
-    fail "$args did not reach $op: $(cat "$CURL_LOG")"
+  assert_eq "$args exits zero" "$RC" 0
+  assert "$args reaches $op" \
+    jq -s -e --arg op "$op" 'any(.[]; .query | contains($op))' "$CURL_LOG"
 done
 
 # labels create takes an optional --team; with none passed it still needs a
 # configured target, and it must not invent a team scope for the label.
 set_settings_team "Configured"
 run_linear labels create --name backend
-[[ "$RC" -eq 0 ]] || fail "labels create with configured team exited $RC: $ERR"
-jq -s -e 'any(.[]; (.query | contains("issueLabelCreate")) and (.variables.input | has("teamId") | not))' "$CURL_LOG" >/dev/null ||
-  fail "labels create scoped the label to a team that was never requested: $(cat "$CURL_LOG")"
+assert_eq "labels create with configured team exits zero" "$RC" 0
+assert_log "labels create scopes the label to no team it was not asked for" \
+  'any(.[]; (.query | contains("issueLabelCreate")) and (.variables.input | has("teamId") | not))'
 
 echo "=== reads never send a guessed team ==="
 
 clear_settings
 
 run_linear statuses list
-[[ "$RC" -eq 0 ]] || fail "statuses list exited $RC: $ERR"
+assert_eq "statuses list exits zero" "$RC" 0
 assert_no_guessed_team "statuses list"
 
 run_linear cycles list --type current
-[[ "$RC" -eq 0 ]] || fail "cycles list exited $RC: $ERR"
-jq -s -e 'all(.[]; (.query | contains("teams(filter:")) | not)' "$CURL_LOG" >/dev/null ||
-  fail "cycles list resolved a team with no configured team"
+assert_eq "cycles list exits zero" "$RC" 0
+assert_log "cycles list resolves no team when none is configured" \
+  'all(.[]; (.query | contains("teams(filter:")) | not)'
 assert_no_guessed_team "cycles list"
 
 run_linear statuses get --name "In Progress"
-[[ "$RC" -eq 0 ]] || fail "statuses get exited $RC: $ERR"
+assert_eq "statuses get exits zero" "$RC" 0
 assert_no_guessed_team "statuses get"
 
 run_linear issues list --limit 5
-[[ "$RC" -eq 0 ]] || fail "issues list exited $RC: $ERR"
+assert_eq "issues list exits zero" "$RC" 0
 assert_no_guessed_team "issues list"
 
 # The team filter is still applied when one is configured.
 set_settings_team "Configured"
 run_linear cycles list --type current
-[[ "$RC" -eq 0 ]] || fail "cycles list with configured team exited $RC: $ERR"
-jq -s -e 'any(.[]; (.query | contains("teams(filter:")) and .variables.name == "Configured")' "$CURL_LOG" >/dev/null ||
-  fail "cycles list did not resolve the configured team"
-jq -s -e 'any(.[]; .variables.filter.team.id.eq == "team-uuid")' "$CURL_LOG" >/dev/null ||
-  fail "cycles list did not scope to the configured team: $(cat "$CURL_LOG")"
+assert_eq "cycles list with configured team exits zero" "$RC" 0
+assert_log "cycles list did not resolve the configured team" \
+  'any(.[]; (.query | contains("teams(filter:")) and .variables.name == "Configured")'
+assert_log "cycles list scopes to the configured team" \
+  'any(.[]; .variables.filter.team.id.eq == "team-uuid")'
 
 run_linear statuses list
-jq -s -e 'any(.[]; .variables.filter.team.name.eq == "Configured")' "$CURL_LOG" >/dev/null ||
-  fail "statuses list did not scope to the configured team: $(cat "$CURL_LOG")"
+assert_log "statuses list scopes to the configured team" \
+  'any(.[]; .variables.filter.team.name.eq == "Configured")'
 clear_settings
 
 run_linear sync --full --no-attachments
-[[ "$(api_calls)" != "0" ]] || fail "sync issued no requests; the assertion below would be vacuous"
+assert_ne "sync issues requests, so the check below is not vacuous" "$(api_calls)" "0"
 assert_no_guessed_team "sync"
-jq -s -e 'any(.[]; .query | contains("SyncCycles"))' "$CURL_LOG" >/dev/null ||
-  fail "sync did not query cycles"
+assert_log "sync queries cycles" \
+  'any(.[]; .query | contains("SyncCycles"))'
 
 set_settings_team "Configured"
 run_linear sync --full --no-attachments
-jq -s -e 'any(.[]; (.query | contains("SyncCycles")) and .variables.teamName == "Configured")' "$CURL_LOG" >/dev/null ||
-  fail "sync did not scope cycles to the configured team: $(cat "$CURL_LOG")"
+assert_log "sync scopes cycles to the configured team" \
+  'any(.[]; (.query | contains("SyncCycles")) and .variables.teamName == "Configured")'
 clear_settings
 
 echo "=== graphql_query refuses any mutation without a target ==="
 
 : >"$CURL_LOG"
-set +e
+backstop_rc=0
 backstop_err="$(cd "$PROJECT" && env -u LINEAR_TEAM \
   PATH="$PROJECT/bin:$PATH" \
   LINEAR_API_KEY=test-token \
   CURL_LOG="$CURL_LOG" \
   bash -c 'source .agents/skills/linear/scripts/lib/common.sh
 graphql_query "
-    mutation UnregisteredWrite(\$input: IssueCreateInput!) { issueCreate(input: \$input) { success } }" "{}"' 2>&1)"
-backstop_rc=$?
-set -e
-[[ "$backstop_rc" -ne 0 ]] || fail "graphql_query allowed a mutation with no team target"
-grep -q "No Linear team configured" <<<"$backstop_err" || fail "graphql_query refusal message missing: $backstop_err"
-[[ "$(api_calls)" == "0" ]] || fail "graphql_query issued a request before refusing"
+    mutation UnregisteredWrite(\$input: IssueCreateInput!) { issueCreate(input: \$input) { success } }" "{}"' 2>&1)" || backstop_rc=$?
+assert_ne "graphql_query refuses a mutation with no team target" "$backstop_rc" 0
+assert_contains "the graphql_query refusal names the missing team" "$backstop_err" "No Linear team configured"
+assert_eq "graphql_query" "$(api_calls)" "0"
 
 : >"$CURL_LOG"
-set +e
+read_rc=0
 (cd "$PROJECT" && env -u LINEAR_TEAM \
   PATH="$PROJECT/bin:$PATH" \
   LINEAR_API_KEY=test-token \
   CURL_LOG="$CURL_LOG" \
   bash -c 'source .agents/skills/linear/scripts/lib/common.sh
-graphql_query "query Ping { viewer { id } }" "{}"' >/dev/null 2>&1)
-read_rc=$?
-set -e
-[[ "$read_rc" -eq 0 ]] || fail "graphql_query blocked a read with no team target"
-[[ "$(api_calls)" == "1" ]] || fail "read query did not reach the API: $(api_calls) call(s)"
+graphql_query "query Ping { viewer { id } }" "{}"' >/dev/null 2>&1) || read_rc=$?
+assert_eq "graphql_query allows a read with no team target" "$read_rc" 0
+assert_eq "the read query reaches the API" "$(api_calls)" "1"
 
 echo "=== auth-check reports the target ==="
 
 clear_settings
 run_linear auth-check
-[[ "$RC" -eq 0 ]] || fail "auth-check exited $RC with a valid key: $ERR"
-jq -e '.ok == true and .team == null and .team_source == "unset" and .writes_enabled == false' <<<"$OUT" >/dev/null ||
-  fail "auth-check did not report an unresolved team: $OUT"
-jq -e '.api_key_source == "environment"' <<<"$OUT" >/dev/null ||
-  fail "auth-check did not attribute the API key to the environment: $OUT"
-jq -e '[.warnings[] | select(contains("LINEAR_TEAM"))] | length > 0' <<<"$OUT" >/dev/null ||
-  fail "auth-check did not warn about the missing team: $OUT"
-jq -e '[.warnings[] | select(contains("process environment"))] | length > 0' <<<"$OUT" >/dev/null ||
-  fail "auth-check did not flag the global key with no project team: $OUT"
+assert_eq "auth-check exits zero" "$RC" 0
+assert_jq "auth-check reports an unresolved team" "$OUT" '.ok == true and .team == null and .team_source == "unset" and .writes_enabled == false'
+assert_jq "auth-check attributes the API key to the environment" "$OUT" '.api_key_source == "environment"'
+assert_jq "auth-check warns about the missing team" "$OUT" '[.warnings[] | select(contains("LINEAR_TEAM"))] | length > 0'
+assert_jq "auth-check flags a global key with no project team" "$OUT" '[.warnings[] | select(contains("process environment"))] | length > 0'
 
 run_linear auth-check --strict
-[[ "$RC" -ne 0 ]] || fail "auth-check --strict exited 0 with no team configured: $OUT"
+assert_ne "auth-check --strict fails" "$RC" 0
 
 set_settings_team "Configured"
 run_linear auth-check --strict
-[[ "$RC" -eq 0 ]] || fail "auth-check --strict exited $RC with a configured team: $OUT $ERR"
-jq -e '.team == "Configured" and .team_source == "project-config" and .writes_enabled == true and (.warnings | length) == 0' <<<"$OUT" >/dev/null ||
-  fail "auth-check did not report the configured team: $OUT"
-jq -e '.team_source_file == "kendex.settings.toml"' <<<"$OUT" >/dev/null ||
-  fail "auth-check did not name the file that set the team: $OUT"
+assert_eq "auth-check --strict exits zero" "$RC" 0
+assert_jq "auth-check reports the configured team" "$OUT" '.team == "Configured" and .team_source == "project-config" and .writes_enabled == true and (.warnings | length) == 0'
+assert_jq "auth-check names the file that set the team" "$OUT" '.team_source_file == "kendex.settings.toml"'
 
 run_linear_env_team "EnvTeam" auth-check
-[[ "$RC" -eq 0 ]] || fail "auth-check exited $RC with an exported team: $ERR"
-jq -e '.team == "EnvTeam" and .team_source == "environment" and .writes_enabled == true' <<<"$OUT" >/dev/null ||
-  fail "auth-check did not report the exported team: $OUT"
-jq -e '.team_source_file == null' <<<"$OUT" >/dev/null ||
-  fail "auth-check named a project file for an environment-sourced team: $OUT"
-jq -e '[.warnings[] | select(contains("overrides the project value"))] | length > 0' <<<"$OUT" >/dev/null ||
-  fail "auth-check did not warn that the environment shadows project config: $OUT"
+assert_eq "auth-check exits zero" "$RC" 0
+assert_jq "auth-check reports the exported team" "$OUT" '.team == "EnvTeam" and .team_source == "environment" and .writes_enabled == true'
+assert_jq "auth-check names no project file for an environment-sourced team" "$OUT" '.team_source_file == null'
+assert_jq "auth-check warns that the environment shadows project config" "$OUT" '[.warnings[] | select(contains("overrides the project value"))] | length > 0'
 
 # An exported-but-empty LINEAR_TEAM wins over the project file (parent env
 # beats project config) and resolves to nothing. Attribution must say so
 # instead of naming a file that supplied nothing.
 run_linear_env_team "" auth-check
-[[ "$RC" -eq 0 ]] || fail "auth-check exited $RC with an exported empty team: $ERR"
-jq -e '.team == null and .team_source == "unset" and .team_source_file == null and .writes_enabled == false' <<<"$OUT" >/dev/null ||
-  fail "auth-check attribution is self-contradictory for an exported empty team: $OUT"
-jq -e '[.warnings[] | select(contains("exported as an empty value"))] | length > 0' <<<"$OUT" >/dev/null ||
-  fail "auth-check did not warn that an empty export shadows project config: $OUT"
+assert_eq "auth-check exits zero" "$RC" 0
+assert_jq "auth-check attribution is consistent for an exported empty team" "$OUT" '.team == null and .team_source == "unset" and .team_source_file == null and .writes_enabled == false'
+assert_jq "auth-check warns that an empty export shadows project config" "$OUT" '[.warnings[] | select(contains("exported as an empty value"))] | length > 0'
 
 run_linear_env_team "" issues create --title "Empty export"
 assert_refused "issues create with an exported empty LINEAR_TEAM"
@@ -421,8 +401,7 @@ clear_settings
 # file the loader rejected.
 printf '[env]\nLINEAR_TEAM = "Partial"\nDUP = "a"\nDUP = "b"\n' >"$PROJECT/kendex.settings.toml"
 run_linear auth-check
-[[ "$RC" -ne 0 ]] || fail "auth-check ran on a refused settings load: $OUT"
-grep -q "assigned more than once" "$ERR_FILE" || fail "the refusal does not name the settings defect: $(cat "$ERR_FILE")"
+assert_ne "auth-check does not run on a refused settings load" "$RC" 0
+assert_file_contains "the refusal names the settings defect" "$ERR_FILE" "assigned more than once"
 clear_settings
 
-echo "all pass"

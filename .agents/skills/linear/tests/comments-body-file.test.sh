@@ -4,9 +4,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
@@ -27,27 +28,25 @@ cat >"$body_file" <<'MD'
 MD
 
 export CURL_CONFIG_CAPTURE="$TMP_ROOT/curl-config.txt"
-out="$(PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" comments create PROJ-1 --body-file "$body_file")"
+rc=0
+out="$(PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" comments create PROJ-1 --body-file "$body_file" 2>&1)" || rc=$?
 
-if ! jq -e '.success == true and .data.comment.id == "comment-1"' >/dev/null <<<"$out"; then
-  echo "FAIL comments create --body-file returned unexpected output: $out"
-  exit 1
+assert_eq "comments create --body-file exits zero" "$rc" 0
+assert_jq "comments create --body-file reports the created comment" \
+  "$out" '.success == true and .data.comment.id == "comment-1"'
+
+payload="null"
+if [[ -f "$CURL_CONFIG_CAPTURE" ]]; then
+  payload="$(sed -n 's/^data = //p' "$CURL_CONFIG_CAPTURE" | jq -r)"
 fi
+body="$(jq -r '.variables.input.body // ""' <<<"$payload")"
 
-payload="$(sed -n 's/^data = //p' "$CURL_CONFIG_CAPTURE" | jq -r)"
-body="$(jq -r '.variables.input.body' <<<"$payload")"
-if [[ "$body" != *"Completion Summary"* || "$body" != *'`code` and multi-line markdown.'* ]]; then
-  echo "FAIL --body-file payload did not include markdown body: $body"
-  exit 1
-fi
+assert_contains "the --body-file payload carries the file's heading" "$body" "Completion Summary"
+assert_contains "the --body-file payload carries the file's markdown verbatim" \
+  "$body" '`code` and multi-line markdown.'
 
-set +e
-PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" comments create PROJ-1 --body inline --body-file "$body_file" >"$TMP_ROOT/conflict.out" 2>&1
-rc=$?
-set -e
-if [[ "$rc" -eq 0 ]]; then
-  echo "FAIL comments create accepted both --body and --body-file"
-  exit 1
-fi
+conflict_rc=0
+PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" comments create PROJ-1 --body inline --body-file "$body_file" >"$TMP_ROOT/conflict.out" 2>&1 || conflict_rc=$?
 
-echo "all pass"
+assert_ne "comments create refuses both --body and --body-file" "$conflict_rc" 0
+

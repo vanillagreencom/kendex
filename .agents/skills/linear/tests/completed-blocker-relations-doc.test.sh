@@ -17,28 +17,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-PASS=0
-FAIL=0
-
-assert_file_contains() {
-  local file="$1" pattern="$2" name="$3"
-  if grep -Fq -- "$pattern" "$file"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        missing pattern: %s\n        file: %s\n' "$name" "$pattern" "$file"
-  fi
-}
-
-echo "=== linear SKILL.md completed-blocker relation contract ==="
 
 skill_md="$SKILL_DIR/SKILL.md"
 
-assert_file_contains "$skill_md" 'satisfied history, not stale metadata' "completed blockers framed as satisfied history, not stale metadata"
-assert_file_contains "$skill_md" 'gates cleared, ready to schedule' "scheduling signal is the only legitimate audit output"
-
-printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
-[[ "$FAIL" -eq 0 ]]
+assert_file_contains "completed blockers framed as satisfied history, not stale metadata" \
+  "$skill_md" 'satisfied history, not stale metadata'
+assert_file_contains "scheduling signal is the only legitimate audit output" \
+  "$skill_md" 'gates cleared, ready to schedule'

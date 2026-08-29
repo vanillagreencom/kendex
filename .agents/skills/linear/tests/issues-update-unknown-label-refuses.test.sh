@@ -6,9 +6,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 PROJECT="$TMP_ROOT/project"
 mkdir -p "$PROJECT/.agents/skills" "$PROJECT/bin"
@@ -50,10 +51,6 @@ esac
 SH
 chmod +x "$PROJECT/bin/curl"
 
-PASS=0; FAIL=0
-ok()  { PASS=$((PASS+1)); printf '  ok    %s\n' "$1"; }
-bad() { FAIL=$((FAIL+1)); printf '  FAIL  %s\n' "$1"; }
-
 run_update() {
   ( cd "$PROJECT" \
     && CURL_LOG="$CURL_LOG" PATH="$PROJECT/bin:$PATH" LINEAR_API_KEY=stub LINEAR_TEAM=TestTeam \
@@ -62,49 +59,29 @@ run_update() {
 
 # Unknown label → refuse before any mutation.
 : >"$CURL_LOG"
-if run_update "real-label,ghost-label"; then
-  bad "unknown label refuses the update (exited 0)"
-else
-  ok "unknown label refuses the update"
-fi
-if grep -q "ghost-label" "$ERR_FILE" && grep -qi "partial set" "$ERR_FILE"; then
-  ok "refusal names the unknown label and the partial-set hazard"
-else
-  bad "refusal names the unknown label and the partial-set hazard ($(cat "$ERR_FILE"))"
-fi
-if grep -q "issueUpdate" "$CURL_LOG"; then
-  bad "no mutation was sent for the refused update"
-else
-  ok "no mutation was sent for the refused update"
-fi
+run_status refuse_rc run_update "real-label,ghost-label"
+
+assert_ne "unknown label refuses the update" "$refuse_rc" 0
+assert_file_contains "the refusal names the unknown label" "$ERR_FILE" "ghost-label"
+assert_file_contains "the refusal names the partial-set hazard" "$ERR_FILE" "partial set"
+assert_file_lacks "no mutation was sent for the refused update" "$CURL_LOG" "issueUpdate"
 
 # Unknown label + --attach → refuse BEFORE the upload, so no asset is
 # stranded in Linear storage (labels resolve ahead of upload_attach_paths).
 : >"$CURL_LOG"
 printf 'x' >"$TMP_ROOT/asset.bin"
-if ( cd "$PROJECT" \
-    && CURL_LOG="$CURL_LOG" PATH="$PROJECT/bin:$PATH" LINEAR_API_KEY=stub LINEAR_TEAM=TestTeam \
-       "$LINEAR" issues update ISS-1 --labels "ghost-label" --attach "$TMP_ROOT/asset.bin" ) \
-       >"$TMP_ROOT/out.txt" 2>"$ERR_FILE"; then
-  bad "unknown label with --attach refuses the update (exited 0)"
-else
-  ok "unknown label with --attach refuses the update"
-fi
-if grep -qiE "fileUpload|attachment" "$CURL_LOG"; then
-  bad "no upload was sent before the refusal"
-else
-  ok "no upload was sent before the refusal"
-fi
+attach_rc=0
+( cd "$PROJECT" \
+  && CURL_LOG="$CURL_LOG" PATH="$PROJECT/bin:$PATH" LINEAR_API_KEY=stub LINEAR_TEAM=TestTeam \
+     "$LINEAR" issues update ISS-1 --labels "ghost-label" --attach "$TMP_ROOT/asset.bin" ) \
+     >"$TMP_ROOT/out.txt" 2>"$ERR_FILE" || attach_rc=$?
+
+assert_ne "unknown label with --attach refuses the update" "$attach_rc" 0
+assert_not "no upload was sent before the refusal" grep -qiE "fileUpload|attachment" "$CURL_LOG"
 
 # Control: all labels resolve → the update proceeds and mutates.
 : >"$CURL_LOG"
-if run_update "real-label"; then
-  ok "fully-resolved label set still updates"
-else
-  bad "fully-resolved label set still updates ($(cat "$ERR_FILE"))"
-fi
-grep -q "issueUpdate" "$CURL_LOG" && ok "mutation sent for the valid update" || bad "mutation sent for the valid update"
+run_status valid_rc run_update "real-label"
 
-echo
-printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
-[[ "$FAIL" -eq 0 ]]
+assert_eq "a fully-resolved label set still updates" "$valid_rc" 0
+assert_file_contains "the valid update sends its mutation" "$CURL_LOG" "issueUpdate"

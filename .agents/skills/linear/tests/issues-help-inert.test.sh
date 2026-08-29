@@ -5,26 +5,25 @@
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$TEST_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 ISSUES_SH="$SKILL_DIR/scripts/commands/issues.sh"
 LINEAR_SH="$SKILL_DIR/scripts/linear.sh"
-TMP="$(cd "$(mktemp -d)" && pwd -P)"
-trap 'rm -rf "$TMP"' EXIT
 
-PASS=0
-FAIL=0
+assert_tmpdir TMP
+TMP="$(cd "$TMP" && pwd -P)"
 
 check() {
-  local name="$1" script="$2"; shift 2
-  local out
-  if out=$(cd "$TMP/repo" && bash "$script" "$@") && grep -qF "Issue Operations" <<<"$out"; then
-    PASS=$((PASS + 1)); printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$name"
-  fi
-}
+  local name="$1" script="$2"
+  shift 2
+  local out="" rc=0
 
-echo "=== issues.sh help is answered before the libraries load ==="
+  out=$(cd "$TMP/repo" && bash "$script" "$@" 2>&1) || rc=$?
+
+  assert_eq "$name: exits zero" "$rc" 0
+  assert_contains "$name" "$out" "Issue Operations"
+}
 
 mkdir -p "$TMP/repo"
 git -C "$TMP/repo" init -q
@@ -41,27 +40,12 @@ check "routed linear.sh issues --help prints issue help" "$LINEAR_SH" issues --h
 check "get KEN-1 --help prints issue help" "$ISSUES_SH" get KEN-1 --help
 check "list --limit 5 -h prints issue help" "$ISSUES_SH" list --limit 5 -h
 
-if [[ -e "$TMP/env-executed" ]]; then
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "help sourced the project .env.local"
-else
-  PASS=$((PASS + 1)); printf '  ok    %s\n' "no help form sourced the project .env.local"
-fi
+assert_not "no help form sourced the project .env.local" test -e "$TMP/env-executed"
 
 # -h supplied as an option's VALUE stays data: the libraries load (the
 # marker appears) and no help prints.
-set +e
-out=$(cd "$TMP/repo" && bash "$ISSUES_SH" create --title -h 2>&1)
-set -e
-if grep -qF "Issue Operations" <<<"$out"; then
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "create --title -h treats -h as data"
-else
-  PASS=$((PASS + 1)); printf '  ok    %s\n' "create --title -h treats -h as data"
-fi
-if [[ -e "$TMP/env-executed" ]]; then
-  PASS=$((PASS + 1)); printf '  ok    %s\n' "create --title -h loads the libraries"
-else
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "create --title -h loads the libraries"
-fi
+value_out=""
+value_out=$(cd "$TMP/repo" && bash "$ISSUES_SH" create --title -h 2>&1) || true
 
-printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
-[[ "$FAIL" -eq 0 ]]
+assert_not_contains "create --title -h treats -h as data" "$value_out" "Issue Operations"
+assert "create --title -h loads the libraries" test -e "$TMP/env-executed"

@@ -4,9 +4,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
@@ -63,81 +64,56 @@ MD
 create_log="$TMP_ROOT/create-payloads.jsonl"
 : >"$create_log"
 create_out="$(cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam CURL_PAYLOAD_LOG="$create_log" \
-  bash "$LINEAR" issues create --title "New task" --team Claude --description-file "$desc_file")"
+  bash "$LINEAR" issues create --title "New task" --team Claude --description-file "$desc_file" 2>&1)" || true
 
-if ! jq -e '.success == true and .identifier == "PROJ-1"' >/dev/null <<<"$create_out"; then
-  echo "FAIL issues create --description-file returned unexpected output: $create_out"
-  exit 1
-fi
-
-if ! jq -s -e '
-  any(.[];
-    (.query | contains("issueCreate"))
-    and (.variables.input.description | contains("## Plan"))
-    and (.variables.input.description | contains("`foo_bar()`"))
-    and (.variables.input.description | contains("\"quoted\""))
-    and (.variables.input.description | contains("- item one")))
-' "$create_log" >/dev/null; then
-  echo "FAIL issueCreate payload did not carry the markdown description verbatim"
-  cat "$create_log"
-  exit 1
-fi
+assert_jq "issues create --description-file reports the created issue" \
+  "$create_out" '.success == true and .identifier == "PROJ-1"'
+assert "the issueCreate payload carries the markdown description verbatim" \
+  jq -s -e '
+    any(.[];
+      (.query | contains("issueCreate"))
+      and (.variables.input.description | contains("## Plan"))
+      and (.variables.input.description | contains("`foo_bar()`"))
+      and (.variables.input.description | contains("\"quoted\""))
+      and (.variables.input.description | contains("- item one")))
+  ' "$create_log"
 
 # --- update with --description-file --------------------------------------------
 update_log="$TMP_ROOT/update-payloads.jsonl"
 : >"$update_log"
 update_out="$(cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam CURL_PAYLOAD_LOG="$update_log" \
-  bash "$LINEAR" issues update PROJ-1 --description-file "$desc_file")"
+  bash "$LINEAR" issues update PROJ-1 --description-file "$desc_file" 2>&1)" || true
 
-if ! jq -e '.success == true' >/dev/null <<<"$update_out"; then
-  echo "FAIL issues update --description-file returned unexpected output: $update_out"
-  exit 1
-fi
+assert_jq "issues update --description-file reports success" "$update_out" '.success == true'
+assert "the issueUpdate payload carries the markdown description verbatim" \
+  jq -s -e '
+    any(.[];
+      (.query | contains("issueUpdate"))
+      and (.variables.input.description | contains("## Plan"))
+      and (.variables.input.description | contains("`foo_bar()`"))
+      and (.variables.input.description | contains("\"quoted\"")))
+  ' "$update_log"
 
-if ! jq -s -e '
-  any(.[];
-    (.query | contains("issueUpdate"))
-    and (.variables.input.description | contains("## Plan"))
-    and (.variables.input.description | contains("`foo_bar()`"))
-    and (.variables.input.description | contains("\"quoted\"")))
-' "$update_log" >/dev/null; then
-  echo "FAIL issueUpdate payload did not carry the markdown description verbatim"
-  cat "$update_log"
-  exit 1
-fi
-
-# --- helper: assert a command fails with an expected stderr substring -----------
+# --- helper: a command must fail with an expected stderr substring --------------
 assert_fails() {
-  local expected="$1"; shift
-  local err_file="$TMP_ROOT/err.txt"
-  local rc
-  set +e
+  local label="$1" expected="$2"
+  shift 2
+  local err_file="$TMP_ROOT/err.txt" rc=0
   (cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam \
-    bash "$LINEAR" "$@") >"$TMP_ROOT/out.txt" 2>"$err_file"
-  rc=$?
-  set -e
-  if [[ "$rc" -eq 0 ]]; then
-    echo "FAIL command unexpectedly succeeded: $*"
-    cat "$TMP_ROOT/out.txt"
-    exit 1
-  fi
-  if ! grep -q "$expected" "$err_file"; then
-    echo "FAIL command '$*' missing expected error '$expected'"
-    cat "$err_file"
-    exit 1
-  fi
+    bash "$LINEAR" "$@") >"$TMP_ROOT/out.txt" 2>"$err_file" || rc=$?
+
+  assert_ne "$label: exits nonzero" "$rc" 0
+  assert_file_contains "$label" "$err_file" "$expected"
 }
 
 # --- mutual exclusivity (create + update) --------------------------------------
-assert_fails "mutually exclusive" issues create --title "New task" --team Claude \
-  --description inline --description-file "$desc_file"
-assert_fails "mutually exclusive" issues update PROJ-1 \
-  --description inline --description-file "$desc_file"
+assert_fails "create refuses --description with --description-file" "mutually exclusive" \
+  issues create --title "New task" --team Claude --description inline --description-file "$desc_file"
+assert_fails "update refuses --description with --description-file" "mutually exclusive" \
+  issues update PROJ-1 --description inline --description-file "$desc_file"
 
 # --- unreadable / missing path errors (create + update) ------------------------
-assert_fails "not readable" issues create --title "New task" --team Claude \
-  --description-file "$TMP_ROOT/does-not-exist.md"
-assert_fails "not readable" issues update PROJ-1 \
-  --description-file "$TMP_ROOT/does-not-exist.md"
-
-echo "all pass"
+assert_fails "create refuses an unreadable --description-file" "not readable" \
+  issues create --title "New task" --team Claude --description-file "$TMP_ROOT/does-not-exist.md"
+assert_fails "update refuses an unreadable --description-file" "not readable" \
+  issues update PROJ-1 --description-file "$TMP_ROOT/does-not-exist.md"

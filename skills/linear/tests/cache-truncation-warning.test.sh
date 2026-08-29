@@ -14,9 +14,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/.cache/linear"
 git -C "$TMP_ROOT" init -q -b main
@@ -33,44 +34,42 @@ JSON
   done
 } | jq -s '.' >"$TMP_ROOT/.cache/linear/issues.json"
 
-PASS=0; FAIL=0
-ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
-
 cd "$TMP_ROOT"
 
-OUT="$("$LINEAR" cache issues list --no-project --format ids 2>"$TMP_ROOT/err")" || true
-ERR="$(cat "$TMP_ROOT/err")"
-[ "$(printf '%s\n' "$OUT" | wc -l)" -eq 75 ] && ok "default listing carries exactly 75 rows" || bad "default rows" "$(printf '%s' "$OUT" | wc -l)"
-case "$ERR" in
-  *"75 of 80"*) ok "the slice announces itself with both counts" ;;
-  *) bad "truncation warning" "stderr: $ERR" ;;
-esac
+# list_ids VARPREFIX ARGS... — run the listing, leaving <prefix>_out and
+# <prefix>_err holding stdout and stderr.
+list_ids() {
+  local prefix="$1"
+  shift
+  local out
+  out="$("$LINEAR" cache issues list --no-project --format ids "$@" 2>"$TMP_ROOT/err")" || true
+  printf -v "${prefix}_out" '%s' "$out"
+  printf -v "${prefix}_err" '%s' "$(cat "$TMP_ROOT/err")"
+}
 
-OUT="$("$LINEAR" cache issues list --no-project --max --format ids 2>"$TMP_ROOT/err")" || true
-ERR="$(cat "$TMP_ROOT/err")"
-[ "$(printf '%s\n' "$OUT" | wc -l)" -eq 80 ] && ok "--max returns everything" || bad "--max rows" "$(printf '%s' "$OUT" | wc -l)"
-[ -z "$ERR" ] && ok "--max emits no warning" || bad "--max stderr" "$ERR"
+# --- A: the default slice announces itself ------------------------------------
+list_ids def
+assert_eq "default listing carries exactly 75 rows" \
+  "$(printf '%s\n' "$def_out" | wc -l | tr -d ' ')" "75"
+assert_contains "the slice announces itself with both counts" "$def_err" "75 of 80"
 
-OUT="$("$LINEAR" cache issues list --no-project --limit 10 --format ids 2>"$TMP_ROOT/err")" || true
-ERR="$(cat "$TMP_ROOT/err")"
-[ "$(printf '%s\n' "$OUT" | wc -l)" -eq 10 ] && ok "--limit 10 carries 10 rows" || bad "--limit rows" "$(printf '%s' "$OUT" | wc -l)"
-case "$ERR" in
-  *"10 of 80"*) ok "--limit below the total warns" ;;
-  *) bad "--limit warning" "stderr: $ERR" ;;
-esac
+# --- B: --max returns everything, silently ------------------------------------
+list_ids max --max
+assert_eq "--max returns everything" \
+  "$(printf '%s\n' "$max_out" | wc -l | tr -d ' ')" "80"
+assert_eq "--max emits no warning" "$max_err" ""
 
-OUT="$("$LINEAR" cache issues list --no-project --limit 100 --format ids 2>"$TMP_ROOT/err")" || true
-ERR="$(cat "$TMP_ROOT/err")"
-[ "$(printf '%s\n' "$OUT" | wc -l)" -eq 80 ] && ok "a listing within the limit carries every row" || bad "within-limit rows" "$(printf '%s' "$OUT" | wc -l)"
-[ -z "$ERR" ] && ok "a listing within the limit stays quiet" || bad "within-limit stderr" "$ERR"
+# --- C: --limit below the total warns, within it does not ---------------------
+list_ids ten --limit 10
+assert_eq "--limit 10 carries 10 rows" \
+  "$(printf '%s\n' "$ten_out" | wc -l | tr -d ' ')" "10"
+assert_contains "--limit below the total warns" "$ten_err" "10 of 80"
 
-OUT="$("$LINEAR" cache issues list --no-project --limit 9223372036854775808 --format ids 2>"$TMP_ROOT/err")" || true
-ERR="$(cat "$TMP_ROOT/err")"
-case "$ERR" in
-  *"9 digits"*) ok "an overflowing --limit is a loud config error" ;;
-  *) bad "overflow limit" "stderr: $ERR out: $OUT" ;;
-esac
+list_ids wide --limit 100
+assert_eq "a listing within the limit carries every row" \
+  "$(printf '%s\n' "$wide_out" | wc -l | tr -d ' ')" "80"
+assert_eq "a listing within the limit stays quiet" "$wide_err" ""
 
-printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
-[ "$FAIL" -eq 0 ]
+# --- D: an overflowing --limit is a config error, not a silent clamp ----------
+list_ids overflow --limit 9223372036854775808
+assert_contains "an overflowing --limit is a loud config error" "$overflow_err" "9 digits"

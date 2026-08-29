@@ -11,22 +11,16 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 ISSUES_SH="$SCRIPT_DIR/../scripts/commands/issues.sh"
-TMP="$(mktemp -d)"
+assert_tmpdir TMP
 export TMP
-trap 'rm -rf "$TMP"' EXIT
 # Isolate CACHE_DIR resolution (git rev-parse --show-toplevel, from CWD — the
 # common.sh PROJECT_ROOT recompute overrides any inherited PROJECT_ROOT env
 # var) to this throwaway root. Without this, update_issue's cache
 # write-through lands in the real project's `.cache/linear` (kendex#43).
 git -C "$TMP" init -q -b main
-
-fails=0
-pass() { echo "PASS $*"; }
-fail() {
-    echo "FAIL $*"
-    fails=$((fails + 1))
-}
 
 # Run update_issue with a fully mocked API. The mocked graphql_query captures
 # the mutation variables (which carry the built input object) to $1; update_issue
@@ -56,67 +50,51 @@ run_update() {
 # --- --clear-estimate builds estimate: null -------------------------------
 cap="$TMP/clear.json"
 rc="$(run_update "$cap" CC-1 --clear-estimate)"
-if [ "$rc" -eq 0 ] && jq -e '.input | has("estimate") and .estimate == null' "$cap" >/dev/null 2>&1; then
-    pass "--clear-estimate -> estimate: null"
-else
-    fail "--clear-estimate (rc=$rc, input=$(cat "$cap" 2>/dev/null))"
-fi
+assert_eq "--clear-estimate exits zero" "$rc" 0
+assert "--clear-estimate builds estimate: null" \
+    jq -e '.input | has("estimate") and .estimate == null' "$cap"
 
 # --- --estimate 0 aliases to clear ----------------------------------------
 cap="$TMP/zero.json"
 rc="$(run_update "$cap" CC-1 --estimate 0)"
-if [ "$rc" -eq 0 ] && jq -e '.input | has("estimate") and .estimate == null' "$cap" >/dev/null 2>&1; then
-    pass "--estimate 0 -> estimate: null"
-else
-    fail "--estimate 0 (rc=$rc, input=$(cat "$cap" 2>/dev/null))"
-fi
+assert_eq "--estimate 0 exits zero" "$rc" 0
+assert "--estimate 0 aliases to estimate: null" \
+    jq -e '.input | has("estimate") and .estimate == null' "$cap"
 
 # --- --estimate=0 (equals syntax) aliases to clear ------------------------
 cap="$TMP/zero-eq.json"
 rc="$(run_update "$cap" CC-1 --estimate=0)"
-if [ "$rc" -eq 0 ] && jq -e '.input.estimate == null' "$cap" >/dev/null 2>&1; then
-    pass "--estimate=0 -> estimate: null"
-else
-    fail "--estimate=0 (rc=$rc, input=$(cat "$cap" 2>/dev/null))"
-fi
+assert_eq "--estimate=0 exits zero" "$rc" 0
+assert "--estimate=0 aliases to estimate: null" jq -e '.input.estimate == null' "$cap"
 
 # --- valid 1-5 estimate still passes through ------------------------------
 cap="$TMP/three.json"
 rc="$(run_update "$cap" CC-1 --estimate 3)"
-if [ "$rc" -eq 0 ] && jq -e '.input.estimate == 3' "$cap" >/dev/null 2>&1; then
-    pass "--estimate 3 -> estimate: 3"
-else
-    fail "--estimate 3 (rc=$rc, input=$(cat "$cap" 2>/dev/null))"
-fi
+assert_eq "--estimate 3 exits zero" "$rc" 0
+assert "--estimate 3 passes through unchanged" jq -e '.input.estimate == 3' "$cap"
 
 # --- out-of-range / malformed estimates are rejected ----------------------
 for bad in 6 -2 2.5 abc; do
     cap="$TMP/bad-$bad.json"
     rc="$(run_update "$cap" CC-1 --estimate "$bad")"
-    if [ "$rc" -ne 0 ] && [ ! -f "$cap" ] && grep -q "Invalid --estimate" "$cap.err" 2>/dev/null; then
-        pass "--estimate $bad rejected (no mutation built)"
-    else
-        fail "--estimate $bad should be rejected (rc=$rc, err=$(cat "$cap.err" 2>/dev/null))"
-    fi
+    assert_ne "--estimate $bad is rejected" "$rc" 0
+    assert_not "--estimate $bad builds no mutation" test -f "$cap"
+    assert_file_contains "--estimate $bad names the invalid value" "$cap.err" "Invalid --estimate"
 done
 
 # --- --clear-estimate + --estimate <1-5> is mutually exclusive ------------
 cap="$TMP/conflict.json"
 rc="$(run_update "$cap" CC-1 --clear-estimate --estimate 3)"
-if [ "$rc" -ne 0 ] && [ ! -f "$cap" ] && grep -q "not both" "$cap.err" 2>/dev/null; then
-    pass "--clear-estimate + --estimate 3 errors"
-else
-    fail "--clear-estimate + --estimate 3 should error (rc=$rc, err=$(cat "$cap.err" 2>/dev/null))"
-fi
+assert_ne "--clear-estimate with --estimate 3 is refused" "$rc" 0
+assert_not "--clear-estimate with --estimate 3 builds no mutation" test -f "$cap"
+assert_file_contains "the refusal says the two flags are not both allowed" "$cap.err" "not both"
 
 # --- --clear-estimate + --estimate 0 is allowed (both mean clear) ---------
 cap="$TMP/both-clear.json"
 rc="$(run_update "$cap" CC-1 --clear-estimate --estimate 0)"
-if [ "$rc" -eq 0 ] && jq -e '.input.estimate == null' "$cap" >/dev/null 2>&1; then
-    pass "--clear-estimate + --estimate 0 -> estimate: null"
-else
-    fail "--clear-estimate + --estimate 0 (rc=$rc, input=$(cat "$cap" 2>/dev/null))"
-fi
+assert_eq "--clear-estimate with --estimate 0 exits zero" "$rc" 0
+assert "--clear-estimate with --estimate 0 builds estimate: null" \
+    jq -e '.input.estimate == null' "$cap"
 
 # --- cache write-through reflects the cleared value -----------------------
 cache_dir="$TMP/cache"
@@ -138,11 +116,8 @@ LINEAR_API_KEY_OVERRIDE=test-token \
         }
         update_issue CC-1 --clear-estimate
     ' _ "$ISSUES_SH" "$cache_dir" >/dev/null 2>&1
-if jq -e '.[] | select(.id == "uuid-1") | .estimate == null' "$cache_dir/issues.json" >/dev/null 2>&1; then
-    pass "cache write-through stores cleared estimate as null (not stale 3)"
-else
-    fail "cache still holds stale estimate: $(jq -c '.[] | {id, estimate}' "$cache_dir/issues.json" 2>/dev/null)"
-fi
+assert "the cache write-through stores the cleared estimate as null, not a stale 3" \
+    jq -e '.[] | select(.id == "uuid-1") | .estimate == null' "$cache_dir/issues.json"
 
 # --- bulk-update forwards --clear-estimate to the mutation ----------------
 cap="$TMP/bulk-clear.json"
@@ -163,11 +138,9 @@ out="$(
             bulk_update_issues CC-1 --clear-estimate
         ' _ "$ISSUES_SH" 2>/dev/null
 )"
-if jq -e '.updated == 1' <<<"$out" >/dev/null 2>&1 && jq -e '.input.estimate == null' "$cap" >/dev/null 2>&1; then
-    pass "bulk-update --clear-estimate -> estimate: null"
-else
-    fail "bulk-update --clear-estimate (out=$out, input=$(cat "$cap" 2>/dev/null))"
-fi
+assert_jq "bulk-update --clear-estimate reports one update" "$out" '.updated == 1'
+assert "bulk-update forwards --clear-estimate as estimate: null" \
+    jq -e '.input.estimate == null' "$cap"
 
 # --- bulk-update rejects an out-of-range estimate per item ----------------
 out="$(
@@ -183,14 +156,5 @@ out="$(
             bulk_update_issues CC-1 --estimate 6
         ' _ "$ISSUES_SH" 2>/dev/null
 )"
-if jq -e '.failed == 1 and (.results[0].error | contains("Invalid --estimate"))' <<<"$out" >/dev/null 2>&1; then
-    pass "bulk-update --estimate 6 reported as failed"
-else
-    fail "bulk-update --estimate 6 (out=$out)"
-fi
-
-if [ "$fails" -ne 0 ]; then
-    echo "$fails test(s) failed"
-    exit 1
-fi
-echo "all pass"
+assert_jq "bulk-update reports an out-of-range estimate as a failed item" \
+    "$out" '.failed == 1 and (.results[0].error | contains("Invalid --estimate"))' 

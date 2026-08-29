@@ -12,6 +12,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SCRIPTS="$SKILL_DIR/scripts"
 
@@ -19,11 +21,9 @@ SCRIPTS="$SKILL_DIR/scripts"
 eval "$(sed -n '/^linear_query_is_mutation()/,/^}/p' "$SCRIPTS/lib/common.sh")"
 
 if ! declare -F linear_query_is_mutation >/dev/null 2>&1; then
-  echo "FAIL could not load linear_query_is_mutation from lib/common.sh"
-  exit 1
+  assert_stop "linear_query_is_mutation loads from lib/common.sh"
 fi
 
-fails=0
 checked=0
 
 classify_expect() {
@@ -72,16 +72,12 @@ check_document() {
 
   # The property: the classifier is true iff the document performs a write.
   # A mutation the classifier calls a read is posted with no team guard at all.
-  if [ "$has_mutation" -eq 1 ] && [ "$got" != "write" ]; then
-    echo "FAIL $origin: carries a mutation operation but classifies as a read"
-    echo "     the write guard would not see it - put the mutation keyword first"
-    printf '     %s\n' "$(printf '%s' "$doc" | head -c 120)"
-    fails=$((fails + 1))
-  elif [ "$has_mutation" -eq 0 ] && [ "$got" = "write" ]; then
-    echo "FAIL $origin: no mutation operation but classifies as a write"
-    printf '     %s\n' "$(printf '%s' "$doc" | head -c 120)"
-    fails=$((fails + 1))
-  fi
+  local want="read"
+  [ "$has_mutation" -eq 1 ] && want="write"
+
+  # A mutation the classifier calls a read is posted with no team guard at all;
+  # put the mutation keyword first.
+  assert_eq "every document classifies as its operation ($origin)" "$got" "$want"
 }
 
 # Extract every single-quoted document literal. Command scripts assign GraphQL
@@ -133,10 +129,7 @@ assert_class() {
   if linear_query_is_mutation "$doc"; then
     got="write"
   fi
-  if [ "$got" != "$expect" ]; then
-    echo "FAIL classifier: $label expected $expect, got $got"
-    fails=$((fails + 1))
-  fi
+  assert_eq "the classifier reads $label as a $expect" "$got" "$expect"
 }
 
 assert_class write '
@@ -147,14 +140,4 @@ assert_class read 'query GetTeam($name: String!) { teams { nodes { id } } }' "qu
 assert_class read '{ viewer { id } }' "shorthand query"
 assert_class read 'mutationLike { x }' "identifier starting with mutation"
 
-if [ "$checked" -eq 0 ]; then
-  echo "FAIL no GraphQL documents found - the extractor stopped matching"
-  exit 1
-fi
-
-if [ "$fails" -ne 0 ]; then
-  echo "graphql-document-classification: FAIL ($fails)"
-  exit 1
-fi
-
-echo "all pass ($checked documents)"
+assert_ne "the extractor still finds GraphQL documents to check" "$checked" 0

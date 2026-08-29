@@ -11,9 +11,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 PROJECT="$TMP_ROOT/project"
 mkdir -p "$PROJECT/.agents/skills" "$PROJECT/bin"
@@ -60,24 +61,16 @@ OUT=""
 ERR=""
 RC=0
 
-fail() {
-  echo "FAIL $*"
-  [[ -s "$CURL_LOG" ]] && echo "--- curl payloads ---" && cat "$CURL_LOG"
-  exit 1
-}
-
 # Run the CLI inside the temp project with LINEAR_TEAM and LINEAR_AGENT_LABELS
 # absent from the process environment (parent env wins over project files).
 run_linear() {
   : >"$CURL_LOG"
-  set +e
+  RC=0
   OUT="$(cd "$PROJECT" && env -u LINEAR_TEAM -u LINEAR_AGENT_LABELS \
     PATH="$PROJECT/bin:$PATH" \
     LINEAR_API_KEY=test-token \
     CURL_LOG="$CURL_LOG" \
-    bash "$LINEAR" "$@" 2>"$ERR_FILE")"
-  RC=$?
-  set -e
+    bash "$LINEAR" "$@" 2>"$ERR_FILE")" || RC=$?
   ERR="$(cat "$ERR_FILE")"
 }
 
@@ -97,20 +90,20 @@ api_calls() {
 
 assert_refused_bare() {
   local label="$1"
-  [[ "$RC" -ne 0 ]] || fail "$label exited 0; expected a refusal. stdout: $OUT"
-  grep -q "agent" <<<"$ERR" || fail "$label refusal does not mention agent labels: $ERR"
-  grep -q "LINEAR_AGENT_LABELS" <<<"$ERR" || fail "$label refusal does not name LINEAR_AGENT_LABELS: $ERR"
-  grep -q "project-management" <<<"$ERR" || fail "$label refusal does not route to the TPM pipeline (project-management): $ERR"
-  grep -q -- "--no-agent-label" <<<"$ERR" || fail "$label refusal does not name the --no-agent-label escape hatch: $ERR"
-  grep -q "agent:rust" <<<"$ERR" || fail "$label refusal does not list the declared agent labels: $ERR"
-  [[ "$(api_calls)" == "0" ]] || fail "$label attempted $(api_calls) API call(s) before refusing"
+  assert_ne "$label is refused" "$RC" 0
+  assert_contains "$label refusal mentions agent labels" "$ERR" "agent"
+  assert_contains "$label refusal names LINEAR_AGENT_LABELS" "$ERR" "LINEAR_AGENT_LABELS"
+  assert_contains "$label refusal routes to the TPM pipeline" "$ERR" "project-management"
+  assert_contains "$label refusal names the --no-agent-label escape hatch" "$ERR" "--no-agent-label"
+  assert_contains "$label refusal lists the declared agent labels" "$ERR" "agent:rust"
+  assert_eq "$label refuses before any API call" "$(api_calls)" "0"
 }
 
 assert_created() {
   local label="$1"
-  [[ "$RC" -eq 0 ]] || fail "$label exited $RC: $ERR"
-  jq -s -e 'any(.[]; .query | contains("issueCreate"))' "$CURL_LOG" >/dev/null ||
-    fail "$label did not reach issueCreate: $(cat "$CURL_LOG")"
+  assert_eq "$label exits zero" "$RC" 0
+  assert "$label reaches issueCreate" \
+    jq -s -e 'any(.[]; .query | contains("issueCreate"))' "$CURL_LOG"
 }
 
 echo "=== declared taxonomy: bare create refuses before any API call ==="
@@ -128,17 +121,17 @@ echo "=== declared taxonomy: an unknown agent:* label refuses (typo guard) ==="
 # resolve_label_id warns and SKIPS unresolved labels, so a typoed agent label
 # would otherwise create an unrouted issue that looks routed.
 run_linear issues create --title "Typo" --labels "agent:generalst"
-[[ "$RC" -ne 0 ]] || fail "typoed agent label exited 0: $OUT"
-grep -q "agent:generalst" <<<"$ERR" || fail "typo refusal does not name the unknown label: $ERR"
-grep -q "LINEAR_AGENT_LABELS" <<<"$ERR" || fail "typo refusal does not name the declared set: $ERR"
-[[ "$(api_calls)" == "0" ]] || fail "typoed agent label attempted $(api_calls) API call(s)"
+assert_ne "a typoed agent label is refused" "$RC" 0
+assert_contains "the typo refusal names the unknown label" "$ERR" "agent:generalst"
+assert_contains "the typo refusal names the declared set" "$ERR" "LINEAR_AGENT_LABELS"
+assert_eq "a typoed agent label attempts no API call" "$(api_calls)" "0"
 
 echo "=== declared taxonomy: a declared agent label passes ==="
 
 run_linear issues create --title "Routed" --labels "bug,agent:rust"
 assert_created "create with declared agent label"
-jq -s -e 'any(.[]; (.query | contains("issueCreate")) and (.variables.input.labelIds | length == 2))' "$CURL_LOG" >/dev/null ||
-  fail "labels were not all resolved onto the create: $(cat "$CURL_LOG")"
+assert "every label resolves onto the create" \
+  jq -s -e 'any(.[]; (.query | contains("issueCreate")) and (.variables.input.labelIds | length == 2))' "$CURL_LOG"
 
 run_linear issues create --title "Routed single" --label "agent:generalist"
 assert_created "create with --label agent label"
@@ -176,13 +169,12 @@ echo "=== declared taxonomy: comma-space labels normalize for guard AND resolver
 set_settings "agent:generalist, agent:rust"
 run_linear issues create --title "Natural input" --labels "bug, agent:rust"
 assert_created "create with comma-space labels"
-jq -s -e 'any(.[]; .variables.name == "agent:rust")' "$CURL_LOG" >/dev/null ||
-  fail "resolver did not receive the trimmed agent label: $(cat "$CURL_LOG")"
-if jq -s -e 'any(.[]; .variables.name == " agent:rust")' "$CURL_LOG" >/dev/null; then
-  fail "resolver received an untrimmed label name: $(cat "$CURL_LOG")"
-fi
-jq -s -e 'any(.[]; (.query | contains("issueCreate")) and (.variables.input.labelIds | length == 2))' "$CURL_LOG" >/dev/null ||
-  fail "both normalized labels must resolve onto the create: $(cat "$CURL_LOG")"
+assert "the resolver receives the trimmed agent label" \
+  jq -s -e 'any(.[]; .variables.name == "agent:rust")' "$CURL_LOG"
+assert_not "the resolver never receives an untrimmed label name" \
+  jq -s -e 'any(.[]; .variables.name == " agent:rust")' "$CURL_LOG"
+assert "both normalized labels resolve onto the create" \
+  jq -s -e 'any(.[]; (.query | contains("issueCreate")) and (.variables.input.labelIds | length == 2))' "$CURL_LOG"
 
 echo "=== declared taxonomy: a declared label missing in Linear hard-fails the create ==="
 
@@ -191,18 +183,16 @@ echo "=== declared taxonomy: a declared label missing in Linear hard-fails the c
 # the create, never warn-and-skip into an unrouted issue.
 set_settings "agent:generalist, agent:rust, agent:ghost"
 run_linear issues create --title "Stale declared label" --labels "agent:ghost"
-[[ "$RC" -ne 0 ]] || fail "unresolvable agent label exited 0: $OUT"
-grep -q "agent:ghost" <<<"$ERR" || fail "hard-fail does not name the unresolvable label: $ERR"
-if jq -s -e 'any(.[]; .query | contains("issueCreate"))' "$CURL_LOG" >/dev/null; then
-  fail "issueCreate was reached despite an unresolvable agent label"
-fi
+assert_ne "a declared label missing in Linear fails the create" "$RC" 0
+assert_contains "the hard-fail names the unresolvable label" "$ERR" "agent:ghost"
+assert_not "issueCreate is never reached with an unresolvable agent label" \
+  jq -s -e 'any(.[]; .query | contains("issueCreate"))' "$CURL_LOG"
 
 echo "=== help never trips the guard ==="
 
 set_settings "agent:generalist, agent:rust"
 run_linear issues create --help
-[[ "$RC" -eq 0 ]] || fail "issues create --help exited $RC: $ERR"
-grep -q -- "--no-agent-label" <<<"$OUT" || fail "issues create --help does not document --no-agent-label: $OUT"
-[[ "$(api_calls)" == "0" ]] || fail "issues create --help issued an API call"
+assert_eq "issues create --help exits zero" "$RC" 0
+assert_contains "issues create --help documents --no-agent-label" "$OUT" "--no-agent-label"
+assert_eq "issues create --help issues no API call" "$(api_calls)" "0"
 
-echo "all pass"

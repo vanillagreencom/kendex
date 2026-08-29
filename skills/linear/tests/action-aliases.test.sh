@@ -5,9 +5,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
@@ -44,24 +45,25 @@ esac
 SH
 chmod +x "$TMP_ROOT/bin/curl"
 
+issues_rc=0
 issues_out="$(
   PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token \
-    bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues relations PROJ-42 --format=safe
-)"
+    bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues relations PROJ-42 --format=safe 2>&1
+)" || issues_rc=$?
 
-if ! jq -e '.blocks[0].id == "PROJ-43" and .blocked_by[0].id == "PROJ-41"' >/dev/null <<<"$issues_out"; then
-  echo "FAIL issues relations alias returned unexpected output: $issues_out"
-  exit 1
-fi
+assert_eq "issues relations alias exits zero" "$issues_rc" 0
 
+assert_jq "issues relations alias routes to the canonical relation list" \
+  "$issues_out" '.blocks[0].id == "PROJ-43" and .blocked_by[0].id == "PROJ-41"' 
+
+projects_rc=0
 projects_out="$(
   PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token \
-    bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" projects dependencies 'Project "Quoted"' --format=safe
-)"
+    bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" projects dependencies 'Project "Quoted"' --format=safe 2>&1
+)" || projects_rc=$?
 
-if ! jq -e '.name == "Project \"Quoted\"" and .blocked_by[0].name == "Foundation" and .blocks[0].name == "Followup"' >/dev/null <<<"$projects_out"; then
-  echo "FAIL projects dependencies alias returned unexpected output: $projects_out"
-  exit 1
-fi
+assert_eq "projects dependencies alias exits zero" "$projects_rc" 0
 
-echo "all pass"
+assert_jq "projects dependencies alias routes to the canonical dependency list" \
+  "$projects_out" '.name == "Project \"Quoted\"" and .blocked_by[0].name == "Foundation" and .blocks[0].name == "Followup"' 
+

@@ -6,9 +6,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
@@ -77,68 +78,46 @@ MD
 file_payload="$TMP_ROOT/file-payloads.jsonl"
 out="$(run_complete ok "$file_payload" CC-720 --summary-file "$summary_file" 2>"$TMP_ROOT/file.err")"
 
-if ! jq -e '.success == true and .action == "completed" and .summary_posted == true' >/dev/null <<<"$out"; then
-  echo "FAIL complete --summary-file returned unexpected output: $out"
-  exit 1
-fi
+assert "complete --summary-file reports the summary as posted" \
+  jq -e '.success == true and .action == "completed" and .summary_posted == true' >/dev/null <<<"$out"
 
 posted_body="$(jq -s -r '[.[] | select(.query | contains("commentCreate"))][0].variables.input.body' "$file_payload")"
-if [[ "$posted_body" != *"## Completion Summary"* || "$posted_body" != *"Implemented the thing."* ]]; then
-  echo "FAIL posted comment did not carry the summary file content: $posted_body"
-  exit 1
-fi
-if [[ "$posted_body" == *"Completion Summary"*"## Completion Summary"* ]]; then
-  echo "FAIL summary already carrying the marker was double-prefixed: $posted_body"
-  exit 1
-fi
+assert_contains "the posted comment carries the summary file's heading" \
+  "$posted_body" "## Completion Summary"
+assert_contains "the posted comment carries the summary file's body" \
+  "$posted_body" "Implemented the thing."
+assert_not_contains "a summary already carrying the marker is not double-prefixed" \
+  "$posted_body" "Completion Summary
+## Completion Summary"
 
 comment_idx="$(jq -s '[to_entries[] | select(.value.query | contains("commentCreate"))][0].key' "$file_payload")"
 update_idx="$(jq -s '[to_entries[] | select(.value.query | contains("issueUpdate"))][0].key' "$file_payload")"
-if [[ "$comment_idx" == "null" || "$update_idx" == "null" || "$comment_idx" -ge "$update_idx" ]]; then
-  echo "FAIL comment post must precede the Done transition (comment=$comment_idx update=$update_idx)"
-  cat "$file_payload"
-  exit 1
-fi
-if ! jq -s -e 'any(.[]; (.query | contains("issueUpdate")) and .variables.input.stateId == "state-done")' "$file_payload" >/dev/null; then
-  echo "FAIL issueUpdate did not target the Done state"
-  cat "$file_payload"
-  exit 1
-fi
+assert_ne "the comment post is present in the payload log" "$comment_idx" "null"
+assert_ne "the Done transition is present in the payload log" "$update_idx" "null"
+assert "the comment post precedes the Done transition" \
+  test "$comment_idx" -lt "$update_idx"
+assert "the issueUpdate targets the Done state" \
+  jq -s -e 'any(.[]; (.query | contains("issueUpdate")) and .variables.input.stateId == "state-done")' "$file_payload" >/dev/null
 
 # --- inline --summary without a marker gets the canonical heading prefixed
 inline_payload="$TMP_ROOT/inline-payloads.jsonl"
 out="$(run_complete ok "$inline_payload" CC-720 --summary "Shipped it" 2>"$TMP_ROOT/inline.err")"
-if ! jq -e '.success == true and .summary_posted == true' >/dev/null <<<"$out"; then
-  echo "FAIL complete --summary returned unexpected output: $out"
-  exit 1
-fi
+assert "complete --summary reports the summary as posted" \
+  jq -e '.success == true and .summary_posted == true' >/dev/null <<<"$out"
 inline_body="$(jq -s -r '[.[] | select(.query | contains("commentCreate"))][0].variables.input.body' "$inline_payload")"
-if [[ "$inline_body" != "## Completion Summary"$'\n\n'"Shipped it" ]]; then
-  echo "FAIL inline summary was not prefixed with the canonical heading: $inline_body"
-  exit 1
-fi
+assert_eq "an inline summary is prefixed with the canonical heading" \
+  "$inline_body" "## Completion Summary"$'\n\n'"Shipped it"
 
 # --- a failed comment post leaves the issue state unchanged
 fail_payload="$TMP_ROOT/fail-payloads.jsonl"
-set +e
-run_complete comment-fail "$fail_payload" CC-720 --summary "Shipped it" >"$TMP_ROOT/fail.out" 2>"$TMP_ROOT/fail.err"
-rc=$?
-set -e
-if [[ "$rc" -eq 0 ]]; then
-  echo "FAIL complete with failing comment post unexpectedly succeeded"
-  cat "$TMP_ROOT/fail.out"
-  exit 1
-fi
-if ! grep -q "Completion summary comment failed" "$TMP_ROOT/fail.err"; then
-  echo "FAIL missing clear error for failed summary comment"
-  cat "$TMP_ROOT/fail.err"
-  exit 1
-fi
-if jq -s -e 'any(.[]; .query | contains("issueUpdate"))' "$fail_payload" >/dev/null; then
-  echo "FAIL issue was transitioned despite failed summary comment"
-  cat "$fail_payload"
-  exit 1
-fi
+rc=0
+run_complete comment-fail "$fail_payload" CC-720 --summary "Shipped it" >"$TMP_ROOT/fail.out" 2>"$TMP_ROOT/fail.err" || rc=$?
+assert_ne "a failing comment post fails the completion" \
+  "$rc" 0
+assert "missing clear error for failed summary comment" \
+  grep -q "Completion summary comment failed" "$TMP_ROOT/fail.err"
+assert_not "issue was transitioned despite failed summary comment" \
+  jq -s -e 'any(.[]; .query | contains("issueUpdate"))' "$fail_payload" >/dev/null
 
 # --- unknown/trailing arguments are rejected before any mutation
 assert_rejected() {
@@ -149,21 +128,12 @@ assert_rejected() {
   run_complete ok "$payload_log" "$@" >"$TMP_ROOT/reject.out" 2>"$TMP_ROOT/reject.err"
   local rc=$?
   set -e
-  if [[ "$rc" -eq 0 ]]; then
-    echo "FAIL complete $* unexpectedly succeeded"
-    cat "$TMP_ROOT/reject.out"
-    exit 1
-  fi
-  if ! grep -q "$expected" "$TMP_ROOT/reject.err"; then
-    echo "FAIL complete $* missing expected error: $expected"
-    cat "$TMP_ROOT/reject.err"
-    exit 1
-  fi
-  if [[ -s "$payload_log" ]]; then
-    echo "FAIL complete $* reached the API before argument rejection"
-    cat "$payload_log"
-    exit 1
-  fi
+  assert_ne "complete $* unexpectedly succeeded" \
+    "$rc" 0
+  assert "complete $* refuses with the expected error" \
+    grep -q "$expected" "$TMP_ROOT/reject.err"
+  assert_not "complete $* rejects the arguments before reaching the API" \
+    test -s "$payload_log"
 }
 
 assert_rejected "Unexpected argument: stray" CC-720 stray
@@ -174,19 +144,10 @@ assert_rejected "not readable" CC-720 --summary-file "$TMP_ROOT/does-not-exist.m
 # --- plain complete keeps prior behavior (no comment, straight to Done)
 plain_payload="$TMP_ROOT/plain-payloads.jsonl"
 out="$(run_complete ok "$plain_payload" CC-720 2>"$TMP_ROOT/plain.err")"
-if ! jq -e '.success == true and .action == "completed" and (has("summary_posted") | not)' >/dev/null <<<"$out"; then
-  echo "FAIL plain complete returned unexpected output: $out"
-  exit 1
-fi
-if jq -s -e 'any(.[]; .query | contains("commentCreate"))' "$plain_payload" >/dev/null; then
-  echo "FAIL plain complete posted an unexpected comment"
-  cat "$plain_payload"
-  exit 1
-fi
-if ! jq -s -e 'any(.[]; (.query | contains("issueUpdate")) and .variables.input.stateId == "state-done")' "$plain_payload" >/dev/null; then
-  echo "FAIL plain complete did not transition to Done"
-  cat "$plain_payload"
-  exit 1
-fi
+assert "plain complete reports a completion with no summary" \
+  jq -e '.success == true and .action == "completed" and (has("summary_posted") | not)' >/dev/null <<<"$out"
+assert_not "plain complete posts no comment" \
+  jq -s -e 'any(.[]; .query | contains("commentCreate"))' "$plain_payload" >/dev/null
+assert "plain complete transitions to Done" \
+  jq -s -e 'any(.[]; (.query | contains("issueUpdate")) and .variables.input.stateId == "state-done")' "$plain_payload" >/dev/null
 
-echo "all pass"

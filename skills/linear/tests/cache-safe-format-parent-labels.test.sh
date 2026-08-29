@@ -24,10 +24,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+assert_tmpdir tmp
 
 mkdir -p "$tmp/.agents/skills" "$tmp/.cache/linear"
 git -C "$tmp" init -q -b main
@@ -78,47 +79,31 @@ JSON
 run() { cd "$tmp" && PATH="$tmp/bin:$PATH" bash "$LINEAR" "$@"; }
 
 # --- safe: labels:null child still surfaces its real parent_id -------------------
-safe_out="$(run cache issues get CC-803 --format=safe 2>/dev/null)"
-if ! jq -e '.id == "CC-803" and .parent_id == "CC-811"' >/dev/null 2>&1 <<<"$safe_out"; then
-  echo "FAIL safe cache get dropped parent_id on labels:null record, got: [$safe_out]"
-  exit 1
-fi
+safe_out="$(run cache issues get CC-803 --format=safe 2>/dev/null)" || true
+assert_jq "safe cache get keeps parent_id on a labels:null record" \
+  "$safe_out" '.id == "CC-803" and .parent_id == "CC-811"'
 # agent must degrade gracefully to "" (not crash) when labels is null
-if ! jq -e '.agent == "" and (.labels == [])' >/dev/null 2>&1 <<<"$safe_out"; then
-  echo "FAIL safe output did not degrade labels/agent gracefully, got: $safe_out"
-  exit 1
-fi
+assert_jq "safe output degrades labels and agent gracefully" \
+  "$safe_out" '.agent == "" and (.labels == [])' 
 
 # --- raw: unchanged, still shows the parent --------------------------------------
-raw_out="$(run cache issues get CC-803 --format=raw 2>/dev/null)"
-if ! jq -e '.issue.parent.identifier == "CC-811"' >/dev/null 2>&1 <<<"$raw_out"; then
-  echo "FAIL raw cache get no longer shows parent, got: $raw_out"
-  exit 1
-fi
+raw_out="$(run cache issues get CC-803 --format=raw 2>/dev/null)" || true
+assert_jq "raw cache get still shows the parent" \
+  "$raw_out" '.issue.parent.identifier == "CC-811"' 
 
 # --- well-formed control record is unaffected (agent still resolved) -------------
-ctrl_out="$(run cache issues get CC-802 --format=safe 2>/dev/null)"
-if ! jq -e '.parent_id == "CC-811" and .agent == "iced" and (.labels | index("agent:iced"))' >/dev/null 2>&1 <<<"$ctrl_out"; then
-  echo "FAIL well-formed record output changed, got: $ctrl_out"
-  exit 1
-fi
+ctrl_out="$(run cache issues get CC-802 --format=safe 2>/dev/null)" || true
+assert_jq "a well-formed record still resolves parent, agent and labels" \
+  "$ctrl_out" '.parent_id == "CC-811" and .agent == "iced" and (.labels | index("agent:iced"))' 
 
 # --- --with-bundle safe path also resolves parent on the labels:null child -------
-bundle_out="$(run cache issues get CC-803 --with-bundle --format=safe 2>/dev/null)"
-if ! jq -e '.parent_id == "CC-811"' >/dev/null 2>&1 <<<"$bundle_out"; then
-  echo "FAIL bundle safe path dropped parent_id, got: $bundle_out"
-  exit 1
-fi
+bundle_out="$(run cache issues get CC-803 --with-bundle --format=safe 2>/dev/null)" || true
+assert_jq "the --with-bundle safe path keeps parent_id" "$bundle_out" '.parent_id == "CC-811"' 
 
 # --- list --format=safe must not crash the WHOLE list on one labels:null record --
-list_out="$(run cache issues list --max --format=safe 2>/dev/null)"
-if ! jq -e '(map(.id) | index("CC-803")) and (map(.id) | index("CC-802"))' >/dev/null 2>&1 <<<"$list_out"; then
-  echo "FAIL safe list crashed / dropped records on labels:null member, got: $list_out"
-  exit 1
-fi
-if ! jq -e '.[] | select(.id == "CC-803") | .parent_id == "CC-811"' >/dev/null 2>&1 <<<"$list_out"; then
-  echo "FAIL safe list dropped parent_id for labels:null member, got: $list_out"
-  exit 1
-fi
+list_out="$(run cache issues list --max --format=safe 2>/dev/null)" || true
+assert_jq "a labels:null member does not drop records from the safe list" \
+  "$list_out" '(map(.id) | index("CC-803")) and (map(.id) | index("CC-802"))'
+assert_jq "the safe list keeps parent_id for a labels:null member" \
+  "$list_out" '.[] | select(.id == "CC-803") | .parent_id == "CC-811"' 
 
-echo "all pass"

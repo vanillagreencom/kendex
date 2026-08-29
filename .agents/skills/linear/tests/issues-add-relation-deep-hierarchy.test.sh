@@ -18,9 +18,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
@@ -127,137 +128,71 @@ extract_prescription() {
 
 # --- deep ancestor pair (root is beyond the per-query parent cap) ---
 for args in "CC-708 --blocks CC-701" "CC-701 --blocks CC-708"; do
-  set +e
+  rc=0
   # shellcheck disable=SC2086
-  run_add_relation "$TMP_ROOT/payloads.jsonl" $args >"$TMP_ROOT/out" 2>"$TMP_ROOT/err"
-  rc=$?
-  set -e
-  if [ "$rc" -eq 0 ]; then
-    echo "FAIL deep ancestor ($args): expected rejection, got success"
-    exit 1
-  fi
-  if ! grep -q "cannot carry a blocking relation against its own ancestor" "$TMP_ROOT/err"; then
-    echo "FAIL deep ancestor ($args): missing ancestor explanation:"
-    cat "$TMP_ROOT/err"
-    exit 1
-  fi
-  if grep -q -- "--blocks" "$TMP_ROOT/err"; then
-    echo "FAIL deep ancestor ($args): truncated chain produced a bogus prescription:"
-    cat "$TMP_ROOT/err"
-    exit 1
-  fi
-  if ! jq -s -e 'any(.[]; .query | contains("AncestorChunk"))' "$TMP_ROOT/payloads.jsonl" >/dev/null; then
-    echo "FAIL deep ancestor ($args): expected follow-up AncestorChunk queries"
-    cat "$TMP_ROOT/payloads.jsonl"
-    exit 1
-  fi
+  run_add_relation "$TMP_ROOT/payloads.jsonl" $args >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" || rc=$?
+  assert_ne "deep ancestor ($args): the relation is rejected" \
+    "$rc" 0
+  assert "deep ancestor ($args): the rejection explains the ancestor relationship" \
+    grep -q "cannot carry a blocking relation against its own ancestor" "$TMP_ROOT/err"
+  assert_not "deep ancestor ($args): a truncated chain prescribes nothing" \
+    grep -q -- "--blocks" "$TMP_ROOT/err"
+  assert "deep ancestor ($args): the guard follows up with AncestorChunk queries" \
+    jq -s -e 'any(.[]; .query | contains("AncestorChunk"))' "$TMP_ROOT/payloads.jsonl" >/dev/null
 done
 
 # --- deep-but-valid siblings: accepted after their root is proven ---
-if ! run_add_relation "$TMP_ROOT/payloads.jsonl" CC-708 --blocks CC-709 >"$TMP_ROOT/out" 2>"$TMP_ROOT/err"; then
-  echo "FAIL deep siblings: expected acceptance, got rejection:"
-  cat "$TMP_ROOT/err"
-  exit 1
-fi
-if ! jq -s -e 'any(.[]; .query | contains("issueRelationCreate"))' "$TMP_ROOT/payloads.jsonl" >/dev/null; then
-  echo "FAIL deep siblings: accepted relation never sent issueRelationCreate"
-  exit 1
-fi
-if ! jq -s -e 'any(.[]; .query | contains("AncestorChunk"))' "$TMP_ROOT/payloads.jsonl" >/dev/null; then
-  echo "FAIL deep siblings: full-depth accept path did not prove its root"
-  cat "$TMP_ROOT/payloads.jsonl"
-  exit 1
-fi
+assert "deep siblings: the relation is accepted" \
+  run_add_relation "$TMP_ROOT/payloads.jsonl" CC-708 --blocks CC-709 >"$TMP_ROOT/out" 2>"$TMP_ROOT/err"
+assert "deep siblings: the accepted relation sent issueRelationCreate" \
+  jq -s -e 'any(.[]; .query | contains("issueRelationCreate"))' "$TMP_ROOT/payloads.jsonl" >/dev/null
+assert "deep siblings: the full-depth accept path proved its root" \
+  jq -s -e 'any(.[]; .query | contains("AncestorChunk"))' "$TMP_ROOT/payloads.jsonl" >/dev/null
 
 # --- deep cousins: LCA beyond the cap; prescription must be the pair under it ---
-set +e
-run_add_relation "$TMP_ROOT/payloads.jsonl" CC-708 --blocks CC-757 >"$TMP_ROOT/out" 2>"$TMP_ROOT/err"
-rc=$?
-set -e
-if [ "$rc" -eq 0 ]; then
-  echo "FAIL deep cousins: expected rejection, got success"
-  exit 1
-fi
-if [ "$(extract_prescription "$TMP_ROOT/err")" != "CC-702 CC-751" ]; then
-  echo "FAIL deep cousins: expected prescription 'CC-702 --blocks CC-751', stderr:"
-  cat "$TMP_ROOT/err"
-  exit 1
-fi
-if ! run_add_relation "$TMP_ROOT/payloads.jsonl" CC-702 --blocks CC-751 >"$TMP_ROOT/out" 2>"$TMP_ROOT/err"; then
-  echo "FAIL deep cousins: prescribed command 'CC-702 --blocks CC-751' is itself rejected:"
-  cat "$TMP_ROOT/err"
-  exit 1
-fi
+rc=0
+run_add_relation "$TMP_ROOT/payloads.jsonl" CC-708 --blocks CC-757 >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" || rc=$?
+assert_ne "deep cousins: the relation is rejected" \
+  "$rc" 0
+assert_eq "deep cousins: the prescribed pair is the one under the LCA" \
+  "$(extract_prescription "$TMP_ROOT/err")" "CC-702 CC-751"
+assert "deep cousins: the prescribed command is itself accepted" \
+  run_add_relation "$TMP_ROOT/payloads.jsonl" CC-702 --blocks CC-751 >"$TMP_ROOT/out" 2>"$TMP_ROOT/err"
 
 # --- chunk bound exceeded: fail closed, no remediation from a truncated chain ---
-set +e
-run_add_relation "$TMP_ROOT/payloads.jsonl" CC-9120 --blocks CC-9000 >"$TMP_ROOT/out" 2>"$TMP_ROOT/err"
-rc=$?
-set -e
-if [ "$rc" -eq 0 ]; then
-  echo "FAIL chunk bound: expected rejection, got success"
-  exit 1
-fi
-if ! grep -q "Hierarchy too deep to validate" "$TMP_ROOT/err"; then
-  echo "FAIL chunk bound: missing fail-closed error:"
-  cat "$TMP_ROOT/err"
-  exit 1
-fi
-if grep -q "[Uu]se '" "$TMP_ROOT/err"; then
-  echo "FAIL chunk bound: fail-closed rejection must not carry a prescription:"
-  cat "$TMP_ROOT/err"
-  exit 1
-fi
-if [ "$(wc -l <"$TMP_ROOT/err")" -ne 1 ] || ! jq -e '.error' "$TMP_ROOT/err" >/dev/null; then
-  echo "FAIL chunk bound: expected exactly one JSON error line:"
-  cat "$TMP_ROOT/err"
-  exit 1
-fi
-if jq -s -e 'any(.[]; .query | contains("issueRelationCreate"))' "$TMP_ROOT/payloads.jsonl" >/dev/null; then
-  echo "FAIL chunk bound: rejected relation still sent issueRelationCreate"
-  exit 1
-fi
+rc=0
+run_add_relation "$TMP_ROOT/payloads.jsonl" CC-9120 --blocks CC-9000 >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" || rc=$?
+assert_ne "chunk bound: the relation is rejected" \
+  "$rc" 0
+assert "chunk bound: the rejection is the fail-closed diagnostic" \
+  grep -q "Hierarchy too deep to validate" "$TMP_ROOT/err"
+assert_not "chunk bound: a fail-closed rejection carries no prescription" \
+  grep -q "[Uu]se '" "$TMP_ROOT/err"
+assert_eq "chunk bound: the rejection is exactly one line" \
+  "$(wc -l <"$TMP_ROOT/err")" "1"
+assert "chunk bound: the rejection line is a JSON error" jq -e '.error' "$TMP_ROOT/err"
+assert_not "chunk bound: the rejected relation sent no issueRelationCreate" \
+  jq -s -e 'any(.[]; .query | contains("issueRelationCreate"))' "$TMP_ROOT/payloads.jsonl" >/dev/null
 
 # --- cycle crossing a chunk boundary: reject before relation mutation ---
-set +e
-run_add_relation "$TMP_ROOT/payloads.jsonl" CC-850 --blocks CC-701 >"$TMP_ROOT/out" 2>"$TMP_ROOT/err"
-rc=$?
-set -e
-if [ "$rc" -eq 0 ]; then
-  echo "FAIL cross-chunk cycle: expected rejection, got success"
-  exit 1
-fi
-if ! grep -q "parent cycle detected" "$TMP_ROOT/err"; then
-  echo "FAIL cross-chunk cycle: missing cycle diagnostic:"
-  cat "$TMP_ROOT/err"
-  exit 1
-fi
-if jq -s -e 'any(.[]; .query | contains("issueRelationCreate"))' "$TMP_ROOT/payloads.jsonl" >/dev/null; then
-  echo "FAIL cross-chunk cycle: rejected relation still sent issueRelationCreate"
-  exit 1
-fi
+rc=0
+run_add_relation "$TMP_ROOT/payloads.jsonl" CC-850 --blocks CC-701 >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" || rc=$?
+assert_ne "cross-chunk cycle: the relation is rejected" \
+  "$rc" 0
+assert "cross-chunk cycle: the rejection names the parent cycle" \
+  grep -q "parent cycle detected" "$TMP_ROOT/err"
+assert_not "cross-chunk cycle: the rejected relation sent no issueRelationCreate" \
+  jq -s -e 'any(.[]; .query | contains("issueRelationCreate"))' "$TMP_ROOT/payloads.jsonl" >/dev/null
 
 # --- same-parent cycle hidden beyond eager selection: fail before shortcut ---
-set +e
-run_add_relation "$TMP_ROOT/payloads.jsonl" CC-860 --blocks CC-861 >"$TMP_ROOT/out" 2>"$TMP_ROOT/err"
-rc=$?
-set -e
-if [ "$rc" -eq 0 ]; then
-  echo "FAIL hidden same-parent cycle: expected rejection, got success"
-  exit 1
-fi
-if ! grep -q "parent cycle detected" "$TMP_ROOT/err"; then
-  echo "FAIL hidden same-parent cycle: missing cycle diagnostic:"
-  cat "$TMP_ROOT/err"
-  exit 1
-fi
-if ! jq -s -e 'any(.[]; .query | contains("AncestorChunk"))' "$TMP_ROOT/payloads.jsonl" >/dev/null; then
-  echo "FAIL hidden same-parent cycle: no root-proof query was sent"
-  exit 1
-fi
-if jq -s -e 'any(.[]; .query | contains("issueRelationCreate"))' "$TMP_ROOT/payloads.jsonl" >/dev/null; then
-  echo "FAIL hidden same-parent cycle: rejected relation still sent issueRelationCreate"
-  exit 1
-fi
+rc=0
+run_add_relation "$TMP_ROOT/payloads.jsonl" CC-860 --blocks CC-861 >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" || rc=$?
+assert_ne "hidden same-parent cycle: the relation is rejected" \
+  "$rc" 0
+assert "hidden same-parent cycle: the rejection names the parent cycle" \
+  grep -q "parent cycle detected" "$TMP_ROOT/err"
+assert "hidden same-parent cycle: a root-proof query was sent" \
+  jq -s -e 'any(.[]; .query | contains("AncestorChunk"))' "$TMP_ROOT/payloads.jsonl" >/dev/null
+assert_not "hidden same-parent cycle: the rejected relation sent no issueRelationCreate" \
+  jq -s -e 'any(.[]; .query | contains("issueRelationCreate"))' "$TMP_ROOT/payloads.jsonl" >/dev/null
 
-echo "all pass"

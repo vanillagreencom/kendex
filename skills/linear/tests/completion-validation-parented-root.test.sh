@@ -17,26 +17,22 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 LIB="$SCRIPT_DIR/../scripts/lib/issue-validation.sh"
 
 # shellcheck disable=SC1090
 source "$LIB"
 
-pass=0
-fail=0
-
 # assert_result LABEL WANT_STATE_OK WANT_OK -- <args to build_completion_validation_result>
 # Defensive against a build failure (e.g. a pre-fix signature mismatch): a
-# nonzero/invalid result is recorded as a clean FAIL rather than aborting.
+# nonzero/invalid result is recorded as a clean failure rather than aborting.
 assert_result() {
 	local label="$1" want_state_ok="$2" want_ok="$3"
 	shift 3
 
-	local out rc got_state_ok got_ok
-	set +e
-	out=$(build_completion_validation_result "$@" 2>/dev/null)
-	rc=$?
-	set -e
+	local out rc=0 got_state_ok got_ok
+	out=$(build_completion_validation_result "$@" 2>/dev/null) || rc=$?
 	if [[ $rc -ne 0 || -z "$out" ]]; then
 		out='{}'
 	fi
@@ -45,15 +41,7 @@ assert_result() {
 	got_state_ok=$(echo "$out" | jq -r 'if has("state_ok") then (.state_ok | tostring) else "ERR" end')
 	got_ok=$(echo "$out" | jq -r 'if has("ok") then (.ok | tostring) else "ERR" end')
 
-	if [[ "$got_state_ok" == "$want_state_ok" && "$got_ok" == "$want_ok" ]]; then
-		pass=$((pass + 1))
-	else
-		fail=$((fail + 1))
-		echo "FAIL: $label"
-		echo "  want state_ok=$want_state_ok ok=$want_ok"
-		echo "  got  state_ok=$got_state_ok ok=$got_ok"
-		echo "  output: $out"
-	fi
+	assert_eq "$label" "state_ok=$got_state_ok ok=$got_ok" "state_ok=$want_state_ok ok=$want_ok"
 }
 
 # Args order: issue_id state parent_id has_summary role
@@ -96,5 +84,3 @@ assert_result "case5 container already Done"         true  true  "CC-P1" "Done" 
 assert_result "case5 container canceled fails"       false false "CC-P1" "Canceled"    "" "false" "container" "canceled"
 assert_result "case5 container missing state_type fails closed" false false "CC-P1" "Todo" "" "false" "container" ""
 
-echo "pass: $pass fail: $fail"
-[[ "$fail" -eq 0 ]]

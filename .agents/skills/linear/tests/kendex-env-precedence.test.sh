@@ -20,23 +20,11 @@
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$TEST_DIR/lib/assert.sh"
 LIB="$(cd "$TEST_DIR/.." && pwd)/scripts/lib/kendex-env.sh"
-TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
-
-PASS=0
-FAIL=0
-
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
+assert_tmpdir TMP_ROOT
+TMP_ROOT="$(cd "$TMP_ROOT" && pwd -P)"
 
 echo "=== kendex-env precedence ==="
 
@@ -55,33 +43,27 @@ printf 'BAZ="from-local"\n' > "$PROJ/.env.local"
 
 # Scenario 1: no parent values -> settings apply, .kendex beats the root
 # file, .env.local applies, and nothing from .env surfaces.
-set +e
+s1_code=0
 s1_out=$(
   set -euo pipefail
   source "$LIB"
   kendex_load_project_env "$PROJ"
   printf '%s|%s|%s|%s\n' "$FOO" "$BAR" "$BAZ" "${QUX-unset}"
-)
-s1_code=$?
-set -e
-assert_eq "$s1_code" "0" "scenario 1 loads without error"
-assert_eq "$s1_out" "from-settings|bar-nested|from-local|unset" "scenario 1: settings apply, .kendex/settings.toml wins over the root file, .env.local applied, .env ignored"
-
+) || s1_code=$?
+assert_eq "scenario 1 loads without error" "$s1_code" "0"
+assert_eq "scenario 1: settings apply, .kendex/settings.toml wins over the root file, .env.local applied, .env ignored" "$s1_out" "from-settings|bar-nested|from-local|unset"
 # Scenario 2: parent FOO exported -> parent wins over the settings files;
 # a key the parent did not set (BAR) is still taken from settings.
-set +e
+s2_code=0
 s2_out=$(
   set -euo pipefail
   export FOO=from-parent
   source "$LIB"
   kendex_load_project_env "$PROJ"
   printf '%s|%s\n' "$FOO" "$BAR"
-)
-s2_code=$?
-set -e
-assert_eq "$s2_code" "0" "scenario 2 loads without error"
-assert_eq "$s2_out" "from-parent|bar-nested" "scenario 2: parent env wins over project files; other settings keys still applied"
-
+) || s2_code=$?
+assert_eq "scenario 2 loads without error" "$s2_code" "0"
+assert_eq "scenario 2: parent env wins over project files; other settings keys still applied" "$s2_out" "from-parent|bar-nested"
 # Scenario 3: the issue's exact case. Parent GH_ISSUE_PATTERN must survive a
 # conflicting lowercase pattern in project settings.
 PROJ3="$TMP_ROOT/proj3"
@@ -90,18 +72,16 @@ cat > "$PROJ3/kendex.settings.toml" <<'TOML'
 [env]
 GH_ISSUE_PATTERN = "cc-[0-9]+"
 TOML
-set +e
+s3_code=0
 s3_out=$(
   set -euo pipefail
   export GH_ISSUE_PATTERN='CC-[0-9]+'
   source "$LIB"
   kendex_load_project_env "$PROJ3"
   printf '%s\n' "$GH_ISSUE_PATTERN"
-)
-s3_code=$?
-set -e
-assert_eq "$s3_code" "0" "scenario 3 loads without error"
-assert_eq "$s3_out" 'CC-[0-9]+' "scenario 3: parent GH_ISSUE_PATTERN wins over conflicting settings"
+) || s3_code=$?
+assert_eq "scenario 3 loads without error" "$s3_code" "0"
+assert_eq "scenario 3: parent GH_ISSUE_PATTERN wins over conflicting settings" "$s3_out" 'CC-[0-9]+'
 
 # Scenario 4: standalone-call safety. kendex_load_settings_file must work in a
 # fresh subshell with no _KENDEX_PARENT_ENV snapshot, without erroring under
@@ -111,18 +91,15 @@ cat > "$STANDALONE" <<'TOML'
 [env]
 FRESH_KEY = "fresh-val"
 TOML
-set +e
+s4_code=0
 s4_out=$(
   set -euo pipefail
   source "$LIB"
   kendex_load_settings_file "$STANDALONE"
   printf '%s\n' "$FRESH_KEY"
-)
-s4_code=$?
-set -e
-assert_eq "$s4_code" "0" "scenario 4: standalone settings load does not error without a snapshot"
-assert_eq "$s4_out" "fresh-val" "scenario 4: standalone settings load sets a fresh key"
-
+) || s4_code=$?
+assert_eq "scenario 4: standalone settings load does not error without a snapshot" "$s4_code" "0"
+assert_eq "scenario 4: standalone settings load sets a fresh key" "$s4_out" "fresh-val"
 # Scenario 5: only the [env] table loads. A top-level assignment and one
 # under another table belong to other tools; the trailing comment on a
 # loaded value is dropped, and an explicit empty value is a real assignment.
@@ -136,34 +113,28 @@ IN_OTHER = "not-config"
 COMMENTED = "kept"   # the comment is not part of the value
 EMPTIED = ""
 TOML
-set +e
+s5_code=0
 s5_out=$(
   set -euo pipefail
   export EMPTIED=parent-had-it
   source "$LIB"
   kendex_load_project_env "$PROJ5"
   printf '%s|%s|%s|%s\n' "${TOPLEVEL-unset}" "${IN_OTHER-unset}" "$COMMENTED" "$EMPTIED"
-)
-s5_code=$?
-set -e
-assert_eq "$s5_code" "0" "scenario 5 loads without error"
-assert_eq "$s5_out" "unset|unset|kept|parent-had-it" "scenario 5: only [env] loads, comments are stripped, parent set-ness holds"
-
+) || s5_code=$?
+assert_eq "scenario 5 loads without error" "$s5_code" "0"
+assert_eq "scenario 5: only [env] loads, comments are stripped, parent set-ness holds" "$s5_out" "unset|unset|kept|parent-had-it"
 # Scenario 5b: the same explicit empty value IS the assignment when the
 # parent does not set the key — set-but-empty after the load, never unset
 # and never a fallthrough to some other layer.
-set +e
+s5b_code=0
 s5b_out=$(
   set -euo pipefail
   source "$LIB"
   kendex_load_project_env "$PROJ5"
   printf '%s|%s\n' "${EMPTIED+isset}" "${EMPTIED-unset}"
-)
-s5b_code=$?
-set -e
-assert_eq "$s5b_code" "0" "scenario 5b loads without error"
-assert_eq "$s5b_out" "isset|" "scenario 5b: an explicit empty value is a real set-but-empty assignment when no parent value exists"
-
+) || s5b_code=$?
+assert_eq "scenario 5b loads without error" "$s5b_code" "0"
+assert_eq "scenario 5b: an explicit empty value is a real set-but-empty assignment when no parent value exists" "$s5b_out" "isset|"
 # Scenario 6: contract violations fail the load instead of resolving on a
 # reinterpreted file. Each shape must exit nonzero with an ::error naming
 # the key — a loader that silently skipped or leniently decoded any of them
@@ -173,20 +144,15 @@ mkdir -p "$PROJ6"
 s6_case() { # NAME CONTENT EXPECT_SUBSTRING [EXPORT_ASSIGNMENT]
   local name="$1" content="$2" want="$3" exported="${4:-}" code=0 err
   printf '%s\n' "$content" > "$PROJ6/kendex.settings.toml"
-  set +e
   err=$(
     set -euo pipefail
     [[ -z "$exported" ]] || export "$exported"
     source "$LIB"
     kendex_load_project_env "$PROJ6" 2>&1 >/dev/null
-  )
-  code=$?
-  set -e
-  if [[ "$code" -ne 0 && "$err" == *"$want"* ]]; then
-    PASS=$((PASS + 1)); printf '  ok    scenario 6: %s fails the load\n' "$name"
-  else
-    FAIL=$((FAIL + 1)); printf '  FAIL  scenario 6: %s fails the load (code=%s err=%s)\n' "$name" "$code" "$err"
-  fi
+  ) || code=$?
+
+  assert_ne "scenario 6: $name fails the load" "$code" 0
+  assert_contains "scenario 6: $name names the reason" "$err" "$want"
 }
 s6_case "a duplicate key inside [env]" $'[env]\nDUP = "a"\nDUP = "b"' "DUP is assigned more than once in [env]"
 # The malformed-file checks run BEFORE the parent-env skip: a parent export
@@ -214,21 +180,13 @@ s6_case "a BOM-prefixed first header" "$(printf '\357\273\277')"$'[env]\nHIDDEN 
 PROJ7="$TMP_ROOT/proj7"
 mkdir -p "$PROJ7"
 printf '\357\273\277BOMMED="x"\n' > "$PROJ7/.env.local"
-set +e
 s7_err=$(
   set -euo pipefail
   source "$LIB"
   kendex_load_project_env "$PROJ7" 2>&1 >/dev/null
-)
-s7_code=$?
-set -e
-assert_eq "$s7_code" "1" "scenario 7: a BOM-prefixed .env.local fails the load"
-case "$s7_err" in
-  *"byte-order mark"*)
-    PASS=$((PASS + 1)); printf '  ok    scenario 7: the refusal names the BOM\n' ;;
-  *)
-    FAIL=$((FAIL + 1)); printf '  FAIL  scenario 7: the refusal names the BOM\n        stderr: %s\n' "$s7_err" ;;
-esac
+) || s7_code=$?
+assert_eq "scenario 7: a BOM-prefixed .env.local fails the load" "$s7_code" "1"
+assert_contains "scenario 7: the refusal names the BOM" "$s7_err" "byte-order mark"
 
 # Scenario 8: a source is skipped only when ABSENT. A present-but-unusable
 # source (directory, dangling symlink, unreadable file) fails the load
@@ -240,19 +198,14 @@ s8_case() { # NAME STAGE EXPECT_SUBSTRING — STAGE runs inside the project dir
   rm -rf "$proj"
   mkdir -p "$proj"
   ( cd "$proj" && eval "$stage" )
-  set +e
   err=$(
     set -euo pipefail
     source "$LIB"
     kendex_load_project_env "$proj" 2>&1 >/dev/null
-  )
-  code=$?
-  set -e
-  if [ "$code" -ne 0 ] && case "$err" in *"$want"*) true ;; *) false ;; esac; then
-    PASS=$((PASS + 1)); printf '  ok    scenario 8: %s fails the load and names the path\n' "$name"
-  else
-    FAIL=$((FAIL + 1)); printf '  FAIL  scenario 8: %s fails the load and names the path\n        code=%s stderr: %s\n' "$name" "$code" "$err"
-  fi
+  ) || code=$?
+
+  assert_ne "scenario 8: $name fails the load" "$code" 0
+  assert_contains "scenario 8: $name names the path" "$err" "$want"
 }
 s8_case "a DIRECTORY at .env.local" 'mkdir .env.local' ".env.local: source exists but is not a regular file"
 s8_case "a DANGLING SYMLINK at kendex.settings.toml" 'ln -s missing.toml kendex.settings.toml' "kendex.settings.toml: source is a symlink that does not resolve"
@@ -264,5 +217,3 @@ else
 fi
 
 echo
-printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
-[[ "$FAIL" -eq 0 ]]

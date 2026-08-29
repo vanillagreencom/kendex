@@ -19,9 +19,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/assert.sh
+source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+assert_tmpdir TMP_ROOT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
@@ -91,107 +92,62 @@ run_linear() {
 seed_cache
 : > "$TMP_ROOT/posted.log"
 echo "entity_ok" > "$TMP_ROOT/mode"
-out="$(run_linear issues archive PROJ-42)"
-if ! jq -e --arg url "$URL" \
-    '.success == true and .identifier == "PROJ-42" and .url == $url and .data.entity.archivedAt != null' \
-    >/dev/null <<<"$out"; then
-  echo "FAIL archive success envelope missing identifier/url/entity, got: $out"
-  exit 1
-fi
-if ! jq -e --arg id "$UUID" '.query | contains("issueArchive")' >/dev/null 2>&1 < <(grep issueArchive "$TMP_ROOT/posted.log"); then
-  echo "FAIL issueArchive mutation was never posted"
-  exit 1
-fi
-posted_id="$(grep issueArchive "$TMP_ROOT/posted.log" | jq -r '.variables.id')"
-if [[ "$posted_id" != "$UUID" ]]; then
-  echo "FAIL mutation posted [$posted_id] instead of the resolved UUID"
-  exit 1
-fi
-if jq -e '.[] | select(.identifier == "PROJ-42")' >/dev/null <<<"$(cat "$TMP_ROOT/.cache/linear/issues.json")"; then
-  echo "FAIL confirmed archive did not remove PROJ-42 from cache"
-  exit 1
-fi
-if ! jq -e '.[] | select(.identifier == "PROJ-43")' >/dev/null <<<"$(cat "$TMP_ROOT/.cache/linear/issues.json")"; then
-  echo "FAIL archive removed an unrelated issue from cache"
-  exit 1
-fi
-if [[ -f "$TMP_ROOT/.cache/linear/comments/PROJ-42.json" ]]; then
-  echo "FAIL confirmed archive left the comment cache behind"
-  exit 1
-fi
+out="$(run_linear issues archive PROJ-42)" || true
+
+assert "the archive envelope carries identifier, url and the confirming entity" \
+  jq -e --arg url "$URL" \
+  '.success == true and .identifier == "PROJ-42" and .url == $url and .data.entity.archivedAt != null' <<<"$out"
+assert_file_contains "the issueArchive mutation was posted" "$TMP_ROOT/posted.log" "issueArchive"
+assert_eq "the archive mutation posts the resolved UUID" \
+  "$(grep issueArchive "$TMP_ROOT/posted.log" | jq -r '.variables.id')" "$UUID"
+assert_not "a confirmed archive removes PROJ-42 from the cache" \
+  jq -e '.[] | select(.identifier == "PROJ-42")' "$TMP_ROOT/.cache/linear/issues.json"
+assert "a confirmed archive leaves unrelated issues in the cache" \
+  jq -e '.[] | select(.identifier == "PROJ-43")' "$TMP_ROOT/.cache/linear/issues.json"
+assert_not "a confirmed archive drops the comment cache too" \
+  test -f "$TMP_ROOT/.cache/linear/comments/PROJ-42.json"
 
 # --- trash happy path: entity trashed=true confirms ------------------------------
 seed_cache
 : > "$TMP_ROOT/posted.log"
 echo "entity_trashed" > "$TMP_ROOT/mode"
-out="$(run_linear issues trash PROJ-42)"
-if ! jq -e '.success == true and .identifier == "PROJ-42" and .data.entity.trashed == true' >/dev/null <<<"$out"; then
-  echo "FAIL trash success envelope mismatch, got: $out"
-  exit 1
-fi
-posted_id="$(grep issueDelete "$TMP_ROOT/posted.log" | jq -r '.variables.id')"
-if [[ "$posted_id" != "$UUID" ]]; then
-  echo "FAIL trash mutation posted [$posted_id] instead of the resolved UUID"
-  exit 1
-fi
-if jq -e '.[] | select(.identifier == "PROJ-42")' >/dev/null <<<"$(cat "$TMP_ROOT/.cache/linear/issues.json")"; then
-  echo "FAIL confirmed trash did not remove PROJ-42 from cache"
-  exit 1
-fi
+out="$(run_linear issues trash PROJ-42)" || true
+
+assert_jq "the trash envelope carries the confirming entity" \
+  "$out" '.success == true and .identifier == "PROJ-42" and .data.entity.trashed == true'
+assert_eq "the trash mutation posts the resolved UUID" \
+  "$(grep issueDelete "$TMP_ROOT/posted.log" | jq -r '.variables.id')" "$UUID"
+assert_not "a confirmed trash removes PROJ-42 from the cache" \
+  jq -e '.[] | select(.identifier == "PROJ-42")' "$TMP_ROOT/.cache/linear/issues.json"
 
 # --- the #930 shape: success=true, no entity → hard failure, cache untouched -----
 seed_cache
 echo "no_entity" > "$TMP_ROOT/mode"
-set +e
-out="$(run_linear issues archive PROJ-42 2>"$TMP_ROOT/err")"
-rc=$?
-set -e
+rc=0
+out="$(run_linear issues archive PROJ-42 2>"$TMP_ROOT/err")" || rc=$?
 err="$(cat "$TMP_ROOT/err")"
-if [[ $rc -eq 0 ]]; then
-  echo "FAIL archive with success=true but no entity exited 0 (silent no-op), stdout: $out"
-  exit 1
-fi
-if jq -e '.success == true' >/dev/null 2>&1 <<<"$out"; then
-  echo "FAIL archive no-op still printed a success envelope: $out"
-  exit 1
-fi
-if ! grep -q "archive not confirmed for PROJ-42" <<<"$err" || ! grep -q "$UUID" <<<"$err"; then
-  echo "FAIL archive no-op error does not name the reference and resolved id: $err"
-  exit 1
-fi
-if ! jq -e '.[] | select(.identifier == "PROJ-42")' >/dev/null <<<"$(cat "$TMP_ROOT/.cache/linear/issues.json")"; then
-  echo "FAIL unconfirmed archive purged PROJ-42 from cache"
-  exit 1
-fi
+
+assert_ne "an archive reporting success with no entity fails" "$rc" 0
+assert_not "an unconfirmed archive prints no success envelope" jq -e '.success == true' <<<"$out"
+assert_contains "the unconfirmed-archive error names the reference" "$err" "archive not confirmed for PROJ-42"
+assert_contains "the unconfirmed-archive error names the resolved id" "$err" "$UUID"
+assert "an unconfirmed archive leaves PROJ-42 in the cache" \
+  jq -e '.[] | select(.identifier == "PROJ-42")' "$TMP_ROOT/.cache/linear/issues.json"
 
 # --- same shape on trash ----------------------------------------------------------
 echo "no_entity" > "$TMP_ROOT/mode"
-set +e
-run_linear issues trash PROJ-42 >/dev/null 2>"$TMP_ROOT/err"
-rc=$?
-set -e
-if [[ $rc -eq 0 ]]; then
-  echo "FAIL trash with success=true but no entity exited 0 (silent no-op)"
-  exit 1
-fi
-if ! grep -q "trash not confirmed for PROJ-42" "$TMP_ROOT/err"; then
-  echo "FAIL trash no-op error missing, got: $(cat "$TMP_ROOT/err")"
-  exit 1
-fi
+rc=0
+run_linear issues trash PROJ-42 >/dev/null 2>"$TMP_ROOT/err" || rc=$?
+
+assert_ne "a trash reporting success with no entity fails" "$rc" 0
+assert_file_contains "the unconfirmed-trash error names the reference" \
+  "$TMP_ROOT/err" "trash not confirmed for PROJ-42"
 
 # --- entity returned but marker absent (archivedAt null) → still a failure -------
 echo "entity_unconfirmed" > "$TMP_ROOT/mode"
-set +e
-run_linear issues archive PROJ-42 >/dev/null 2>"$TMP_ROOT/err"
-rc=$?
-set -e
-if [[ $rc -eq 0 ]]; then
-  echo "FAIL archive accepted an entity without archivedAt as success"
-  exit 1
-fi
-if ! grep -q "archive not confirmed for PROJ-42" "$TMP_ROOT/err"; then
-  echo "FAIL unconfirmed-entity error missing, got: $(cat "$TMP_ROOT/err")"
-  exit 1
-fi
+rc=0
+run_linear issues archive PROJ-42 >/dev/null 2>"$TMP_ROOT/err" || rc=$?
 
-echo "all pass"
+assert_ne "an entity without archivedAt is not accepted as success" "$rc" 0
+assert_file_contains "the unconfirmed-entity error names the reference" \
+  "$TMP_ROOT/err" "archive not confirmed for PROJ-42"
