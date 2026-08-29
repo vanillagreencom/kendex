@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# vacuous-suite-scan: harness-subject
 # The library's verdict, exercised from outside it.
 #
 # assert.sh decides a suite's exit status in __assert_on_exit, and every other
@@ -70,3 +71,4 @@ run_child aborting 'false'
 assert_ne "a suite that aborts before asserting fails" "$aborting_rc" 0
 assert_contains "and says it aborted rather than checked nothing" \
 	"$aborting_out" "suite aborted with status 1 after 0 assertions"
+

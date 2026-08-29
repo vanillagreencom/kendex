@@ -26,14 +26,30 @@ ASSERT_TMPDIRS=()
 ASSERT_CLEANUP_CMDS=()
 ASSERT_SCRATCH_DIR=""
 
+# A subshell — a command substitution, a pipeline element, a backgrounded or
+# parenthesised block — gets its own copy of every variable, so an assertion
+# made there increments a counter the suite never sees and records a failure
+# nobody reads. The counters alone cannot notice: they are exactly what the
+# subshell copied. So every assertion also appends to a file, which a subshell
+# shares with its parent, and the verdict compares the two. A count that
+# disagrees is the shape, and it is refused rather than left to authors to
+# avoid.
+printf -v ASSERT_LEDGER '%s' "$(mktemp)"
+if [[ -z "$ASSERT_LEDGER" ]]; then
+	printf 'FAIL: could not create the assertion ledger\n' >&2
+	exit 1
+fi
+
 __assert_ran() {
 	ASSERT_COUNT=$((ASSERT_COUNT + 1))
+	printf 'ran\n' >>"$ASSERT_LEDGER"
 }
 
 __assert_failed() {
 	local desc="$1" line
 	shift
 	ASSERT_FAILURES=$((ASSERT_FAILURES + 1))
+	printf 'failed\t%s\n' "$desc" >>"$ASSERT_LEDGER"
 	printf 'FAIL: %s\n' "$desc" >&2
 	for line in "$@"; do
 		printf '      %s\n' "$line" >&2
@@ -232,27 +248,44 @@ run_output() {
 }
 
 __assert_on_exit() {
-	local rc=$? cmd dir
+	local rc=$? cmd dir ledger_ran=0 ledger_failed=0 lost=0
+
+	# The ledger is read before cleanup removes it, and it is the true count:
+	# it survives the subshells the counters do not.
+	if [[ -f "$ASSERT_LEDGER" ]]; then
+		ledger_ran="$(grep -c '^ran$' "$ASSERT_LEDGER" || true)"
+		ledger_failed="$(grep -c '^failed' "$ASSERT_LEDGER" || true)"
+	fi
+	lost=$((ledger_ran - ASSERT_COUNT))
+
 	for cmd in ${ASSERT_CLEANUP_CMDS[@]+"${ASSERT_CLEANUP_CMDS[@]}"}; do
 		eval "$cmd" || true
 	done
 	for dir in ${ASSERT_TMPDIRS[@]+"${ASSERT_TMPDIRS[@]}"}; do
 		rm -rf -- "${dir:?}"
 	done
+	rm -f -- "${ASSERT_LEDGER:?}"
 
-	if ((ASSERT_FAILURES > 0)); then
-		printf '%d of %d assertions failed\n' "$ASSERT_FAILURES" "$ASSERT_COUNT" >&2
+	if ((lost > 0)); then
+		printf 'FAIL: %d assertion(s) ran in a subshell, where the suite cannot see them\n' "$lost" >&2
+		printf '      a command substitution, pipeline element or backgrounded block gets its\n' >&2
+		printf '      own copy of the counters, so the result is discarded — capture the status\n' >&2
+		printf '      in the suite and assert on it there\n' >&2
+		exit 1
+	fi
+	if ((ledger_failed > 0)); then
+		printf '%d of %d assertions failed\n' "$ledger_failed" "$ledger_ran" >&2
 		exit 1
 	fi
 	if ((rc != 0)); then
-		printf 'suite aborted with status %d after %d assertions\n' "$rc" "$ASSERT_COUNT" >&2
+		printf 'suite aborted with status %d after %d assertions\n' "$rc" "$ledger_ran" >&2
 		exit "$rc"
 	fi
-	if ((ASSERT_COUNT == 0)); then
+	if ((ledger_ran == 0)); then
 		printf 'FAIL: suite ended without executing an assertion\n' >&2
 		exit 1
 	fi
-	printf 'ok: %d assertions\n' "$ASSERT_COUNT"
+	printf 'ok: %d assertions\n' "$ledger_ran"
 	exit 0
 }
 

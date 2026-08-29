@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# vacuous-suite-scan: harness-subject
 # run_status keeps errexit in force inside a shell-function subject.
 #
 # bash suspends errexit for the whole body of a command whose status is being

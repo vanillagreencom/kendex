@@ -8,6 +8,19 @@
 # Both runs happen in copies at matching paths, so a suite that cannot run
 # outside the checkout is reported as unrunnable rather than counted either way.
 #
+# A suite whose subject is the test harness itself — the assertion library, the
+# control runner — is not vacuous and is not measurable by this method: this
+# metric works by breaking a skill's PRODUCT files, and the harness is not one
+# of them. Such a suite declares
+#
+#     # vacuous-suite-scan: harness-subject
+#
+# in its first 20 lines and is counted under harness-subject instead. The claim
+# is checked, not taken: a suite that declares it and then FAILS the blanked
+# run is contradicting itself and is reported as an error, because breaking
+# product code did reach it after all. What covers a harness suite is its own
+# must-fail control, which mutates the harness directly.
+#
 # A skill the caller NAMES must be scannable: a path that does not exist, has
 # no tests directory, or holds no shell suites is an error, because a
 # measurement was asked for and cannot be made. --all enumerates candidates
@@ -25,6 +38,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LIST_NAMES=0
 SUITE_TIMEOUT="${VACUOUS_SCAN_TIMEOUT:-120}"
 SCAN_TMP=""
+SCAN_CONTRADICTIONS=0
 
 die() {
     echo "vacuous-suite-scan: $*" >&2
@@ -70,10 +84,17 @@ run_suite() {
     timeout "$SUITE_TIMEOUT" bash "$suite_path" >/dev/null 2>&1
 }
 
+# A suite that declares the harness as its subject: this metric breaks product
+# files, and a harness suite has none, so it can neither pass nor fail on their
+# account.
+declares_harness_subject() {
+    head -n 20 "$1" | grep -q '^# vacuous-suite-scan: harness-subject$'
+}
+
 scan_skill() {
     local skill_dir="$1"
     local name tmp pristine blanked suite
-    local -a suites=() vacuous=() unrunnable=() red=()
+    local -a suites=() vacuous=() unrunnable=() red=() harness=() contradicting=()
 
     name="$(basename "$skill_dir")"
     [[ -d "$skill_dir/tests" ]] || die "$skill_dir has no tests directory"
@@ -102,19 +123,32 @@ scan_skill() {
             continue
         fi
         if run_suite "$blanked/tests/$suite"; then
-            vacuous+=("$suite")
+            if declares_harness_subject "$skill_dir/tests/$suite"; then
+                harness+=("$suite")
+            else
+                vacuous+=("$suite")
+            fi
+        elif declares_harness_subject "$skill_dir/tests/$suite"; then
+            contradicting+=("$suite")
         else
             red+=("$suite")
         fi
     done
 
-    printf '%-20s %3d suites  %3d vacuous  %3d detecting  %3d unrunnable-in-copy\n' \
-        "$name" "${#suites[@]}" "${#vacuous[@]}" "${#red[@]}" "${#unrunnable[@]}"
+    printf '%-20s %3d suites  %3d vacuous  %3d harness-subject  %3d detecting  %3d unrunnable-in-copy\n' \
+        "$name" "${#suites[@]}" "${#vacuous[@]}" "${#harness[@]}" "${#red[@]}" "${#unrunnable[@]}"
+
+    for suite in ${contradicting[@]+"${contradicting[@]}"}; do
+        printf '    CONTRADICTION %s declares harness-subject but breaking product code reached it\n' "$suite"
+    done
 
     if [[ "$LIST_NAMES" -eq 1 ]]; then
-        for suite in "${vacuous[@]}"; do printf '    vacuous     %s\n' "$suite"; done
-        for suite in "${unrunnable[@]}"; do printf '    unrunnable  %s\n' "$suite"; done
+        for suite in ${vacuous[@]+"${vacuous[@]}"}; do printf '    vacuous          %s\n' "$suite"; done
+        for suite in ${harness[@]+"${harness[@]}"}; do printf '    harness-subject  %s\n' "$suite"; done
+        for suite in ${unrunnable[@]+"${unrunnable[@]}"}; do printf '    unrunnable       %s\n' "$suite"; done
     fi
+
+    [[ ${#contradicting[@]} -eq 0 ]] || SCAN_CONTRADICTIONS=1
 
     rm -rf -- "${tmp:?}"
 }
@@ -171,6 +205,9 @@ main() {
     for arg in "${resolved[@]}"; do
         scan_skill "$arg"
     done
+
+    [[ "$SCAN_CONTRADICTIONS" -eq 0 ]] ||
+        die "a suite declared harness-subject that this metric did reach"
 }
 
 main "$@"

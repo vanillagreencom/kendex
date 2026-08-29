@@ -42,21 +42,23 @@ SH
 RL_BODY='{"errors":[{"message":"Rate limit exceeded. Only 2500 requests are allowed per 1 hour.","extensions":{"type":"ratelimited","code":"RATELIMITED","statusCode":429,"userError":true}}]}'
 GENERIC_BODY='{"errors":[{"message":"Argument Validation Error","extensions":{"code":"INVALID_INPUT"}}]}'
 
+# Returns the CLI's combined output and its status. The status is asserted by
+# the caller rather than here: every call site captures this in a command
+# substitution, and a subshell gets its own copy of the counters, so an
+# assertion made inside would be recorded where the suite cannot see it.
 run_linear() { # root, args...
-  local root="$1" rc=0; shift
+  local root="$1"; shift
   (cd "$root" && env PATH="$root/bin:$PATH" \
     LINEAR_API_KEY_OVERRIDE="lin_api_test" LINEAR_TEAM="Claude" \
-    "$root/.agents/skills/linear/scripts/linear.sh" "$@" 2>&1) || rc=$?
-
-  # An expected failure, asserted rather than swallowed: every call here drives
-  # a non-200 response, so a run that started succeeding would mean the error
-  # path stopped being taken at all.
-  assert_ne "$* fails against a non-200 response" "$rc" 0
+    "$root/.agents/skills/linear/scripts/linear.sh" "$@" 2>&1)
 }
 
 echo "=== RATELIMITED body on HTTP 400 routes to the rate-limit path ==="
 make_env "$TMP_BASE/rl" 400 "$RL_BODY"
-out="$(run_linear "$TMP_BASE/rl" statuses list)"
+rl_rc=0
+out="$(run_linear "$TMP_BASE/rl" statuses list)" || rl_rc=$?
+
+assert_ne "a RATELIMITED body on HTTP 400 fails the call" "$rl_rc" 0
 assert_contains "rate-limited 400 reports the rate limit" "$out" "Rate limited. Try again later."
 assert_not_contains "rate-limited 400 is not a generic HTTP error" "$out" "HTTP error: 400"
 echo "=== failed team lookup propagates the API failure ==="
@@ -75,5 +77,8 @@ assert_contains "team lookup names the failed resolution" "$unit" "Could not res
 assert_not_contains "team lookup does not claim the team is missing" "$unit" "Team not found"
 echo "=== generic non-200 carries the body's error message ==="
 make_env "$TMP_BASE/gen" 400 "$GENERIC_BODY"
-out="$(run_linear "$TMP_BASE/gen" statuses list)"
+gen_rc=0
+out="$(run_linear "$TMP_BASE/gen" statuses list)" || gen_rc=$?
+
+assert_ne "a generic non-200 fails the call" "$gen_rc" 0
 assert_contains "generic 400 includes the body message" "$out" "HTTP error: 400: Argument Validation Error"
