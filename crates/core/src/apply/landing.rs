@@ -149,6 +149,12 @@ pub(super) fn op_unmoved(op: &Op) -> Result<()> {
 /// resolved away, so where it reaches is not known and containment cannot
 /// be established: refused rather than normalized, since nothing kendex
 /// derives from a scope root carries one.
+///
+/// Both sides reach here through `crate::paths::canonical`, so they are
+/// one spelling. Its reduction is per path, though, and a root that loses
+/// the extended-length prefix can hold a target long enough to keep it.
+/// That pair does not compare and the write is refused, which is the side
+/// to be wrong on.
 fn landed_within(root: Option<&Path>, outside: Outside, path: &Path) -> Result<PathBuf> {
     let landed = landing(path);
     let Some(root) = root else {
@@ -184,8 +190,14 @@ pub(super) fn landing(path: &Path) -> PathBuf {
 /// The longest existing prefix of `dir` followed, with the rest joined
 /// back on. A target's directories need not exist yet, and the ones that
 /// do are the only ones that can point anywhere.
+///
+/// Followed through `crate::paths::canonical`, because a landing is about
+/// to be tested against a root that rule reduced. `std::fs::canonicalize`
+/// answers every Windows path in the verbatim `\\?\` form, so resolving
+/// here and reducing there would put a verbatim landing against a plain
+/// root and refuse every write inside the scope.
 fn resolved_dir(dir: &Path) -> PathBuf {
-    if let Ok(resolved) = dir.canonicalize() {
+    if let Ok(resolved) = crate::paths::canonical(dir) {
         return resolved;
     }
     match (dir.parent(), dir.file_name()) {
