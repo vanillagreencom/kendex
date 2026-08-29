@@ -1,0 +1,340 @@
+//! Taking the generated wrapper off an agent's prose. The rendering a fork
+//! is captured from is the person's own words inside everything the
+//! renderer wrote around them, and a person may have edited or deleted any
+//! of it: what comes off has to be what the renderer wrote and nothing of
+//! theirs, however much theirs reads like it.
+
+use std::fs;
+
+use super::*;
+
+/// The generated banner is the one line a person reaches for when they
+/// want it out of their way, and deleting it leaves a body the wrapper no
+/// longer starts with. Every section that wrapper introduced is still
+/// generated, so a capture that keeps them renders each of them twice.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn deleting_the_banner_alone_still_takes_the_generated_sections_off() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "[agent-launch-instructions]\nrev = \"Read the brief first.\"\n\n[agent-additional-instructions]\nrev = \"Say what you changed.\"\n",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    edit_body(&file);
+    let edited = fs::read_to_string(&file)
+        .unwrap()
+        .replace(&format!("{BANNER}\n"), "");
+    assert_eq!(banners(&edited), 0, "{edited}");
+    fs::write(&file, &edited).unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+
+    // Each section is counted by its heading and by a line only that
+    // section holds: a heading the capture kept and the render wrote again
+    // stands twice, and so does the text under it.
+    let generated = [
+        "## Launch Instructions",
+        "Read the brief first.",
+        "## Additional Instructions",
+        "Say what you changed.",
+    ];
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    for line in generated {
+        assert_eq!(
+            times(&source, line),
+            0,
+            "the capture kept {line}, which the render writes again: {source}"
+        );
+    }
+    assert!(source.contains("My body."), "{source}");
+
+    let text = fs::read_to_string(&file).unwrap();
+    for line in generated {
+        assert_eq!(times(&text, line), 1, "{line} stands twice: {text}");
+    }
+    assert_eq!(banners(&text), 1, "{text}");
+    assert_eq!(times(&text, "My body."), 1, "{text}");
+}
+
+/// A generated section comes off the prose whole, rows and all. Keeping
+/// any part of one leaves a headerless fragment in the body, standing
+/// beside the freshly generated section it was cut from.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_section_the_fork_writes_again_comes_off_whole() {
+    let w = world();
+    write_skill(&w.upstream, "mine", "Mine.");
+    write_skill(&w.upstream, "theirs", "Theirs.");
+    write_agent(&w.upstream, "rev", "Upstream body.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[agent-skills]\nrev = [\"mine\", \"theirs\"]\n",
+    )
+    .unwrap();
+    commit(&w.upstream, "one");
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        format!(
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"gemini\"]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\n\n[skills.mine]\nsource = \"cat\"\n\n[skills.theirs]\nsource = \"cat\"\n"
+        ),
+    )
+    .unwrap();
+    sync_and_apply(&w);
+    let file = rendered(&w, HarnessId::Gemini, "rev");
+    edit_body(&file);
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    assert_eq!(
+        times(&source, "## Required Skills"),
+        0,
+        "the fork writes the section again, so the capture must not hold it: {source}"
+    );
+    for row in [
+        "- mine: .agents/skills/mine/SKILL.md",
+        "- theirs: .agents/skills/theirs/SKILL.md",
+    ] {
+        assert_eq!(
+            times(&source, row),
+            0,
+            "a row of the section the fork writes again is a headerless fragment: {source}"
+        );
+    }
+    assert!(source.contains("My body."), "{source}");
+
+    let text = fs::read_to_string(&file).unwrap();
+    assert_eq!(times(&text, "## Required Skills"), 1, "{text}");
+    for row in [
+        "- mine: .agents/skills/mine/SKILL.md",
+        "- theirs: .agents/skills/theirs/SKILL.md",
+    ] {
+        assert_eq!(
+            times(&text, row),
+            1,
+            "the fork keeps the skills it was rendered with, each once: {text}"
+        );
+    }
+    assert_eq!(banners(&text), 1, "{text}");
+    assert_eq!(times(&text, "My body."), 1, "{text}");
+}
+
+/// A section is what wrote it, not what it reads like. An agent whose own
+/// instructions spell `## Required Skills` has not made that heading a
+/// section: the instructions are one section, inner heading and all, so
+/// deleting the real skills section leaves the walk to pass over it and
+/// still take the instructions off whole.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_heading_inside_instruction_text_is_not_a_generated_section() {
+    let w = world();
+    write_skill(&w.upstream, "recon", "Recon.");
+    write_agent(&w.upstream, "rev", "Upstream body.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[agent-skills]\nrev = [\"recon\"]\n",
+    )
+    .unwrap();
+    commit(&w.upstream, "one");
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        format!(
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"gemini\"]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\n\n[skills.recon]\nsource = \"cat\"\n\n[agent-additional-instructions]\nrev = \"\"\"\nBefore the heading.\n\n## Required Skills\n\nAfter the heading.\"\"\"\n"
+        ),
+    )
+    .unwrap();
+    sync_and_apply(&w);
+    let file = rendered(&w, HarnessId::Gemini, "rev");
+
+    // The person deletes the generated skills section and leaves the
+    // instructions standing. What follows their prose is now one section
+    // whose own words spell the heading of the one they deleted.
+    let edited = fs::read_to_string(&file)
+        .unwrap()
+        .replace(
+            "\n## Required Skills\n\nRead each before acting:\n- recon: .agents/skills/recon/SKILL.md\n",
+            "",
+        )
+        .replace("Upstream body.", "My body.");
+    assert_eq!(times(&edited, "## Required Skills"), 1, "{edited}");
+    assert_eq!(times(&edited, "Read each before acting:"), 0, "{edited}");
+    fs::write(&file, &edited).unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    for line in [
+        "## Required Skills",
+        "## Additional Instructions",
+        "Before the heading.",
+        "After the heading.",
+    ] {
+        assert_eq!(
+            times(&source, line),
+            0,
+            "the render writes {line} again, so the capture must not hold it: {source}"
+        );
+    }
+    assert!(source.contains("My body."), "{source}");
+
+    let text = fs::read_to_string(&file).unwrap();
+    for line in [
+        "Read each before acting:",
+        "- recon: .agents/skills/recon/SKILL.md",
+        "## Additional Instructions",
+        "Before the heading.",
+        "After the heading.",
+        "My body.",
+    ] {
+        assert_eq!(times(&text, line), 1, "{line} count wrong: {text}");
+    }
+    assert_eq!(
+        times(&text, "## Required Skills"),
+        2,
+        "the generated section and the instructions' own heading, one each: {text}"
+    );
+    assert_eq!(banners(&text), 1, "{text}");
+}
+
+/// A generated instruction saying what the person's own prose already says
+/// is the ordinary reason to delete the generated one. Their line is then
+/// their own, standing where the wrapper's used to, and a subtraction that
+/// goes looking for a line rather than for a whole section takes it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn prose_borrowing_the_wrappers_words_at_either_end_is_kept() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "[agent-launch-instructions]\nrev = \"Read the brief first.\"\n\n[agent-additional-instructions]\nrev = \"Say what you changed.\"\n",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    let edited = fs::read_to_string(&file)
+        .unwrap()
+        .replace("## Launch Instructions\n\nRead the brief first.\n\n", "")
+        .replace(
+            "\n## Additional Instructions\n\nSay what you changed.\n",
+            "",
+        )
+        .replace(
+            "Upstream body.",
+            "Read the brief first.\n\nMiddle of my body.\n\nSay what you changed.",
+        );
+    // Both generated sections deleted, and each of their lines now stands
+    // once — as the person's own first and last line.
+    for line in ["## Launch Instructions", "## Additional Instructions"] {
+        assert_eq!(times(&edited, line), 0, "{edited}");
+    }
+    for line in ["Read the brief first.", "Say what you changed."] {
+        assert_eq!(times(&edited, line), 1, "{edited}");
+    }
+    fs::write(&file, &edited).unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    for line in [
+        "Read the brief first.",
+        "Middle of my body.",
+        "Say what you changed.",
+    ] {
+        assert_eq!(
+            times(&source, line),
+            1,
+            "the capture took {line} for the wrapper's, and it was the person's: {source}"
+        );
+    }
+    for line in ["## Launch Instructions", "## Additional Instructions"] {
+        assert_eq!(times(&source, line), 0, "{source}");
+    }
+
+    // Their line stands beside the generated one it duplicates, which is
+    // what deleting the generated one and writing their own asked for.
+    let text = fs::read_to_string(&file).unwrap();
+    for line in ["Read the brief first.", "Say what you changed."] {
+        assert_eq!(times(&text, line), 2, "{line} count wrong: {text}");
+    }
+    for line in [
+        "## Launch Instructions",
+        "## Additional Instructions",
+        "Middle of my body.",
+    ] {
+        assert_eq!(times(&text, line), 1, "{line} count wrong: {text}");
+    }
+    assert_eq!(banners(&text), 1, "{text}");
+}
+
+/// Nothing here can tell a generated section the person edited from prose
+/// of their own that resembles one — that is the forgery this reading
+/// exists to refuse — so a section the body does not hold whole is kept as
+/// their words, and the canonical one is written beside it. Two copies are
+/// visible and a person can settle them; words taken for the wrapper's are
+/// gone.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_edited_generated_section_is_kept_and_the_canonical_one_written_beside_it() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "[agent-launch-instructions]\nrev = \"Read the brief first.\"\n",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    let edited = fs::read_to_string(&file)
+        .unwrap()
+        .replace(
+            "Read the brief first.",
+            "Read the brief first, then the tests.",
+        )
+        .replace("Upstream body.", "My body.");
+    // The heading still stands; only the line under it was rewritten.
+    assert_eq!(times(&edited, "## Launch Instructions"), 1, "{edited}");
+    assert_eq!(times(&edited, "Read the brief first."), 0, "{edited}");
+    fs::write(&file, &edited).unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    for line in [
+        "## Launch Instructions",
+        "Read the brief first, then the tests.",
+        "My body.",
+    ] {
+        assert_eq!(
+            times(&source, line),
+            1,
+            "the edited section is the person's words now, and {line} is one of them: {source}"
+        );
+    }
+
+    let text = fs::read_to_string(&file).unwrap();
+    assert_eq!(
+        times(&text, "## Launch Instructions"),
+        2,
+        "the section the person edited, and the canonical one beside it: {text}"
+    );
+    assert_eq!(times(&text, "Read the brief first."), 1, "{text}");
+    assert_eq!(
+        times(&text, "Read the brief first, then the tests."),
+        1,
+        "{text}"
+    );
+    assert_eq!(banners(&text), 1, "{text}");
+}

@@ -19,13 +19,18 @@ use crate::manifest::FrontmatterOverrides;
 use crate::model::{HarnessId, ItemKind, Scope};
 
 use crate::render::agent::{
-    EffectiveAgent, GENERATED_BANNER, SourceAgent, hooks_for_agent, merge_overrides,
-    merged_instructions, parse_source_agent,
+    EffectiveAgent, SourceAgent, hooks_for_agent, merge_overrides, merged_instructions,
+    parse_source_agent,
 };
+
+mod prose;
+mod wrapper;
 
 use super::ForkOf;
 use super::stated::{carried_edits, dropped, stated, uncleared};
 use crate::engine::agent_carry::{AgentCarry, agent_carry};
+use prose::prose;
+use wrapper::{Wrapper, wrapper};
 
 /// One captured agent: the source-form bytes for the local source, and the
 /// catalog values that have to reach the manifest with them.
@@ -81,12 +86,17 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
     };
 
     let edited_text = std::fs::read_to_string(edited).map_err(|e| CoreError::io(edited, e))?;
-    let bytes = source_form(
-        &published,
-        &edited_text,
-        name,
-        wrapper(scope, &publisher, harness, &around).as_ref(),
-    )?;
+    // A rendering this reader cannot account for is a refusal, never a
+    // capture taken anyway: the wrapper says which words are the person's,
+    // and one read wrongly cuts their own out of their prose.
+    let read = wrapper(scope, &publisher, harness, &around).map_err(|problem| {
+        CoreError::ForkWrapperUnreadable {
+            name: crate::names::shown(name),
+            harness: harness.display_name().to_owned(),
+            problem,
+        }
+    })?;
+    let bytes = source_form(&published, &edited_text, name, read.as_ref())?;
     let captured = parse_source_agent(&String::from_utf8_lossy(&bytes))
         .map_err(|problem| unreadable(name, &decl.source, problem))?;
     let refused = |problem: String| CoreError::ForkWidensAccess {
@@ -221,7 +231,7 @@ fn source_form(
     published: &[u8],
     edited: &str,
     name: &str,
-    wrapper: Option<&(String, String)>,
+    wrapper: Option<&Wrapper>,
 ) -> Result<Vec<u8>> {
     let refused = |problem: String| CoreError::ForkNameUnusable {
         name: crate::names::shown(name),
@@ -236,31 +246,6 @@ fn source_form(
     Ok(format!("---\n{frontmatter}---\n\n{}", prose(body, wrapper)).into_bytes())
 }
 
-/// The person's own prose: the edited body with the generated wrapper
-/// taken off. Everything in that wrapper is written again by the next
-/// render, out of the manifest entries this fork carries, so prose keeping
-/// a copy of it would render twice — the banner duplication one layer out.
-///
-/// The banner comes off separately as well, because a person who deleted
-/// that one line leaves a body the wrapper no longer matches, and that is
-/// no reason to keep the rest of it.
-fn prose(body: &str, wrapper: Option<&(String, String)>) -> String {
-    let mut kept = body;
-    if let Some((before, after)) = wrapper {
-        kept = kept.strip_prefix(before.as_str()).unwrap_or(kept);
-        kept = kept.strip_suffix(after.as_str()).unwrap_or(kept);
-    }
-    let mut out = String::new();
-    for line in kept.lines().filter(|line| line.trim() != GENERATED_BANNER) {
-        out.push_str(line);
-        out.push('\n');
-    }
-    // Only the blank separators go. A first line indented into a code
-    // block is the person's own content, and trimming it would render
-    // their block as ordinary prose.
-    format!("{}\n", out.trim_start_matches('\n').trim_end())
-}
-
 /// What the project and the catalog put around one agent's prose.
 struct Around<'a> {
     skills: Vec<String>,
@@ -268,27 +253,6 @@ struct Around<'a> {
     launch: Option<String>,
     additional: Option<String>,
     hooks: Vec<&'a crate::manifest::CustomHook>,
-}
-
-/// The generated wrapper this harness writes around an agent's own prose:
-/// everything before it, and everything after. Asked of the renderer with
-/// a stand-in body rather than assembled from a list of headings here, so
-/// a renderer that grows a section cannot leave this reader behind.
-fn wrapper(
-    scope: &Scope,
-    publisher: &SourceAgent,
-    harness: HarnessId,
-    around: &Around,
-) -> Option<(String, String)> {
-    const STAND_IN: &str = "kendexstandsinfortheagentsownprose";
-    let source = SourceAgent {
-        body: STAND_IN.to_owned(),
-        ..publisher.clone()
-    };
-    let text = render(scope, &source, harness, around)?;
-    let (_, body) = crate::frontmatter::split(&text).ok()?;
-    let (before, after) = body.split_once(STAND_IN)?;
-    Some((before.to_owned(), after.to_owned()))
 }
 
 /// One rendering of this agent for this harness, or `None` where the
