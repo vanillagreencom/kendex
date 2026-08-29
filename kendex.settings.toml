@@ -15,7 +15,7 @@ LINEAR_TEAM_PREFIX = "KEN"
 # Declared agent-routing label set (e.g. "agent:generalist, agent:rust").
 # Non-empty makes `issues create` refuse a create carrying none of them —
 # such an issue is invisible to agent routing. Empty = guard off.
-LINEAR_AGENT_LABELS = ""
+LINEAR_AGENT_LABELS = "agent:generalist, agent:rust, agent:iced, agent:researcher, agent:multi, agent:human"
 
 # Reviewer merge gate: "approval" needs a GitHub approval; "review" needs a
 # non-author review of the current head plus zero unresolved threads; "off"
