@@ -402,12 +402,12 @@ jobs:
         run: cargo test --workspace --locked --no-fail-fast
 
   # The app ships on Windows and release.yml builds it there. `cargo check`
-  # does not link, so the Linux runner proves the Windows targets compile at
-  # a fraction of a Windows runner's cost — enough to stop a `std::os::unix`
-  # reach in test code from landing unseen, which is the whole of what had
-  # no check at all. Executing the tests on Windows is a separate cost
-  # question. Scope matches tools/guard's cross-target lane: the app crate
-  # needs the platform's own C toolchain, core and CLI are portable Rust.
+  # does not link, so the Linux runner proves the Windows targets compile
+  # without one — enough to stop a `std::os::unix` reach in test code from
+  # landing unseen. A windows-latest runner is free on this public repo;
+  # what keeps an executing lane out is KEN-817, KEN-818 and KEN-819, and
+  # the lane returns with them. Scope matches tools/guard's cross-target
+  # lane: app needs the platform's C toolchain, core and CLI are portable.
   cargo-check-windows:
     name: Windows cargo (core and CLI targets compile)
     runs-on: ubuntu-latest

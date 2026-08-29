@@ -84,9 +84,8 @@ fn write_then_rename(
     }
     drop(temp_file);
     fs::rename(&tmp, &path).map_err(|e| discard(e, &path))?;
-    #[cfg(unix)]
-    if durable && let Ok(dir) = fs::File::open(parent) {
-        let _ = dir.sync_all();
+    if durable {
+        sync_dir(parent);
     }
     Ok(())
 }
@@ -110,14 +109,42 @@ pub fn read_if_exists(path: &Path) -> Result<Option<String>> {
     }
 }
 
-pub(crate) fn sync_file(path: &Path) -> Result<()> {
-    fs::File::open(path)
-        .and_then(|f| f.sync_all())
-        .map_err(|e| CoreError::io(path, e))
+/// Reproduce a file's bytes at `to` and have them on disk before this
+/// returns, synced through the very handle that wrote them.
+///
+/// The sync cannot be a step of its own against the finished file.
+/// Flushing needs a handle opened for writing — on Windows literally so,
+/// `FlushFileBuffers` is refused without `GENERIC_WRITE` — and the copy
+/// carries the source's permissions, so a read-only source leaves behind
+/// a file this process may not reopen for writing on either platform.
+/// The handle that did the writing is the one handle guaranteed to be
+/// flushable, which is why `atomic_write_durable` syncs its temp file
+/// before the rename rather than the named file after it.
+pub(crate) fn copy_file_durable(from: &Path, to: &Path) -> Result<()> {
+    let mut source = fs::File::open(from).map_err(|e| CoreError::io(from, e))?;
+    let mut copy = fs::File::create(to).map_err(|e| CoreError::io(to, e))?;
+    std::io::copy(&mut source, &mut copy).map_err(|e| CoreError::io(to, e))?;
+    // The mode is part of what a pre-image holds: a hook restored without
+    // its execute bit is a hook that stops running. Set through the open
+    // handle and before the sync, so the write access this handle already
+    // holds is what applies it and one sync persists bytes and mode
+    // together.
+    let mode = source
+        .metadata()
+        .map_err(|e| CoreError::io(from, e))?
+        .permissions();
+    copy.set_permissions(mode)
+        .map_err(|e| CoreError::io(to, e))?;
+    copy.sync_all().map_err(|e| CoreError::io(to, e))
 }
 
-/// Directory fsync is a no-op on platforms where directories cannot be
-/// opened (Windows); rename durability there rides on the volume flush.
+/// Persist a directory's own entries — the names in it, not the bytes of
+/// what they name. Unix only: Windows has no handle to a directory to
+/// flush, so there a new or renamed *name* rides on the volume flush
+/// while the *bytes* under it are already durable, through
+/// `copy_file_durable` or `atomic_write_durable`. That asymmetry is the
+/// whole of the platform gap — file contents are guaranteed on both,
+/// directory entries only on Unix.
 pub(crate) fn sync_dir(path: &Path) {
     #[cfg(unix)]
     if let Ok(dir) = fs::File::open(path) {
@@ -144,30 +171,6 @@ pub(crate) fn sync_dir_durable(path: &Path) -> Result<()> {
     }
 }
 
-/// Sync a tree's files and directories, a link treated as a leaf: the
-/// parent's sync persists the entry itself, and what it points at is not
-/// this tree's — following it would sync files outside the tree, or the
-/// same tree again through a link back into it until the kernel refuses
-/// the path. The same reading of a link as `hash_tree_as_is`.
-pub(crate) fn sync_tree(root: &Path) -> Result<()> {
-    let Ok(kind) = fs::symlink_metadata(root).map(|meta| meta.file_type()) else {
-        return Ok(());
-    };
-    if kind.is_symlink() {
-        return Ok(());
-    }
-    if kind.is_file() {
-        return sync_file(root);
-    }
-    if let Ok(entries) = fs::read_dir(root) {
-        for entry in entries.flatten() {
-            sync_tree(&entry.path())?;
-        }
-        sync_dir(root);
-    }
-    Ok(())
-}
-
 /// Remove whatever is at `path`, if anything is. A remove-if-present: the
 /// journal's restore of an absent pre-image asks for it on paths nothing
 /// ever wrote to, and failing there would strand the journal and take
@@ -181,7 +184,16 @@ pub(crate) fn remove_any(path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn copy_tree(from: &Path, to: &Path) -> Result<()> {
+/// Reproduce a whole tree at `to`, with every file on disk before this
+/// returns: each file synced through the handle that wrote it, each
+/// directory once its entries are in it. Nothing outside the tree is
+/// opened — a link is reproduced as a link and never read through — so
+/// the sync reaches exactly what this copy created and nothing else.
+pub(crate) fn copy_tree_durable(from: &Path, to: &Path) -> Result<()> {
+    copy_tree_inner(from, to, true)
+}
+
+fn copy_tree_inner(from: &Path, to: &Path, durable: bool) -> Result<()> {
     fs::create_dir_all(to).map_err(|e| CoreError::io(to, e))?;
     // An entry the listing could not produce is an entry nothing was
     // proven about, so it stops the copy rather than dropping out of it —
@@ -193,7 +205,10 @@ pub(crate) fn copy_tree(from: &Path, to: &Path) -> Result<()> {
         let Some(name) = source.file_name() else {
             continue;
         };
-        copy_any(&source, &to.join(name))?;
+        copy_any_inner(&source, &to.join(name), durable)?;
+    }
+    if durable {
+        sync_dir(to);
     }
     Ok(())
 }
@@ -207,11 +222,17 @@ pub(crate) fn copy_tree(from: &Path, to: &Path) -> Result<()> {
 /// link whose target is gone fails with the target's ENOENT under the
 /// link's name.
 pub(crate) fn copy_any(from: &Path, to: &Path) -> Result<()> {
+    copy_any_inner(from, to, false)
+}
+
+fn copy_any_inner(from: &Path, to: &Path, durable: bool) -> Result<()> {
     if from.is_symlink() {
         let target = fs::read_link(from).map_err(|e| CoreError::io(from, e))?;
         make_symlink(&target, to)
     } else if from.is_dir() {
-        copy_tree(from, to)
+        copy_tree_inner(from, to, durable)
+    } else if durable {
+        copy_file_durable(from, to)
     } else {
         fs::copy(from, to)
             .map(|_| ())

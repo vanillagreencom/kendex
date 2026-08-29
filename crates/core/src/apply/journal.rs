@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
 use crate::fs::{
-    copy_tree, make_symlink, remove_any, sync_dir, sync_dir_durable, sync_file, sync_tree,
+    copy_file_durable, copy_tree_durable, make_symlink, remove_any, sync_dir, sync_dir_durable,
 };
 
 /// Pre-images of everything an apply is about to touch. Restore is
@@ -60,8 +60,7 @@ pub fn write(dir: &Path, paths: &[PathBuf]) -> Result<()> {
             let slot = store.join(&slot_name);
             let resolved_file = path.exists() && path.is_file();
             if resolved_file {
-                fs::copy(path, &slot).map_err(|e| CoreError::io(path, e))?;
-                sync_file(&slot)?;
+                copy_file_durable(path, &slot)?;
             }
             PreState::Symlink {
                 target: fs::read_link(path).map_err(|e| CoreError::io(path, e))?,
@@ -69,15 +68,13 @@ pub fn write(dir: &Path, paths: &[PathBuf]) -> Result<()> {
             }
         } else if path.is_dir() {
             let slot = store.join(index.to_string());
-            copy_tree(path, &slot)?;
-            sync_tree(&slot)?;
+            copy_tree_durable(path, &slot)?;
             PreState::Dir {
                 store: index.to_string(),
             }
         } else if path.is_file() {
             let slot = store.join(index.to_string());
-            fs::copy(path, &slot).map_err(|e| CoreError::io(path, e))?;
-            sync_file(&slot)?;
+            copy_file_durable(path, &slot)?;
             PreState::File {
                 store: index.to_string(),
             }
@@ -218,9 +215,7 @@ fn rollback_where(dir: &Path, restore: impl Fn(&Path) -> bool) -> Result<()> {
                 if let Some(parent) = entry.path.parent() {
                     fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
                 }
-                fs::copy(store.join(slot), &entry.path)
-                    .map_err(|e| CoreError::io(&entry.path, e))?;
-                sync_file(&entry.path)?;
+                copy_file_durable(&store.join(slot), &entry.path)?;
             }
             PreState::Symlink {
                 target,
@@ -233,14 +228,11 @@ fn rollback_where(dir: &Path, restore: impl Fn(&Path) -> bool) -> Result<()> {
                 // A write may have gone through the link: restore the
                 // linked-to file's bytes too.
                 if let Some(slot) = slot {
-                    fs::copy(store.join(slot), &entry.path)
-                        .map_err(|e| CoreError::io(&entry.path, e))?;
-                    sync_file(&entry.path)?;
+                    copy_file_durable(&store.join(slot), &entry.path)?;
                 }
             }
             PreState::Dir { store: slot } => {
-                copy_tree(&store.join(slot), &entry.path)?;
-                sync_tree(&entry.path)?;
+                copy_tree_durable(&store.join(slot), &entry.path)?;
             }
         }
     }

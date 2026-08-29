@@ -1,12 +1,14 @@
 use super::*;
 
-/// A link is a leaf of the tree it sits in: its parent's sync persists
-/// the entry, and nothing on the far side is this tree's to touch.
-/// Pinned with a link to a directory outside the tree holding a file
-/// nobody may open — followed, the sync would fail on it.
+/// A link is a leaf of the tree it sits in: the durable copy reproduces
+/// the link and never reads through it, so nothing on the far side is
+/// opened or synced. Pinned with a link to a directory outside the tree
+/// holding a file nobody may open, and a link back into the tree —
+/// followed, the copy would fail on the first and never end on the
+/// second.
 #[cfg(unix)]
 #[test]
-fn sync_tree_never_follows_a_link() {
+fn a_durable_tree_copy_never_follows_a_link() {
     use std::os::unix::fs::PermissionsExt as _;
     let tmp = tempfile::tempdir().unwrap();
     let outside = tmp.path().join("outside");
@@ -27,9 +29,64 @@ fn sync_tree_never_follows_a_link() {
     std::os::unix::fs::symlink(&outside, tree.join("out")).unwrap();
     std::os::unix::fs::symlink(".", tree.join("loop")).unwrap();
 
-    let result = sync_tree(&tree);
+    let held = tmp.path().join("held");
+    let result = copy_tree_durable(&tree, &held);
     unlock();
     result.unwrap();
+
+    assert!(held.join("out").is_symlink());
+    assert!(held.join("loop").is_symlink());
+    assert_eq!(fs::read_to_string(held.join("a")).unwrap(), "a");
+}
+
+/// The mode comes across with the bytes, and taking the copy does not
+/// depend on that mode granting write access — the sync goes through the
+/// handle that wrote the file, never through a reopen of the finished
+/// one. A version that reopened it would be refused here: on Unix the
+/// copy is unwritable, and on Windows `FlushFileBuffers` needs write
+/// access on the handle whatever the file's mode says.
+#[test]
+fn a_read_only_file_is_copied_durably_and_keeps_its_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("hook.sh");
+    fs::write(&source, "#!/bin/sh\n").unwrap();
+    #[cfg(unix)]
+    let sealed = {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::Permissions::from_mode(0o500)
+    };
+    #[cfg(not(unix))]
+    let sealed = {
+        let mut mode = fs::metadata(&source).unwrap().permissions();
+        mode.set_readonly(true);
+        mode
+    };
+    fs::set_permissions(&source, sealed).unwrap();
+    if fs::OpenOptions::new().write(true).open(&source).is_ok() {
+        // Permissions do not bind this user (root): a file that refuses a
+        // write handle cannot be set up here.
+        return;
+    }
+
+    let slot = tmp.path().join("store/0");
+    fs::create_dir_all(slot.parent().unwrap()).unwrap();
+    copy_file_durable(&source, &slot).unwrap();
+
+    assert_eq!(fs::read_to_string(&slot).unwrap(), "#!/bin/sh\n");
+    let kept = fs::metadata(&slot).unwrap().permissions();
+    assert!(
+        kept.readonly(),
+        "the copy is writable, the original was not"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        assert_eq!(
+            kept.mode() & 0o777,
+            0o500,
+            "the execute bit did not come across"
+        );
+    }
 }
 
 /// The app saves settings from a Tokio thread pool, so a slider drag can
