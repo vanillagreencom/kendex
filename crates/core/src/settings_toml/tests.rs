@@ -431,3 +431,31 @@ fn a_header_carries_its_key_and_whether_the_loaders_read_it() {
         assert_eq!(header_of(refused), None, "{refused}");
     }
 }
+
+/// `carries` is [`Line::InValue`] told from the line that opened the
+/// value, and the two are not interchangeable: a caller holding an
+/// assignment reads the fact off that line, which is the only place it is
+/// there to read when the file ends with the value still open.
+#[test]
+fn a_line_says_for_itself_whether_it_left_a_value_open() {
+    let carries = |text: &str| -> Vec<bool> { rows(text).iter().map(|row| row.carries).collect() };
+    for open in ["\"\"\"", "'''", "["] {
+        // Opened, carried, closed: only the last line is clear again.
+        let closed = format!("A = {open}\ntext\n{}\n", close_of(open));
+        assert_eq!(carries(&closed), [true, true, false], "{open}");
+        // Left open at the end of the file, where no line below it exists
+        // to be InValue.
+        let unclosed = format!("A = {open}\n");
+        assert_eq!(carries(&unclosed), [true], "{open}");
+    }
+    // A value that closes on its own line carries nothing.
+    assert_eq!(carries("A = \"one\"\nB = \"two\"\n"), [false, false]);
+}
+
+/// The delimiter that closes what this one opens.
+fn close_of(open: &str) -> &str {
+    match open {
+        "[" => "]",
+        other => other,
+    }
+}

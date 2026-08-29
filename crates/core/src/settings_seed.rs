@@ -6,6 +6,12 @@
 //! must never add a key that some assignment outside `[env]` already
 //! names.
 //!
+//! An entry is written whole or not at all. A value TOML lets span lines
+//! carries every one of them; a value nothing closes has no complete text
+//! to copy and is refused by name ([`unterminated_notes`]), because its
+//! opening delimiter alone would leave the consumer's file unparseable
+//! from that line down. Neither case is ever silent.
+//!
 //! Seeded comments stay current ([`refresh`]): the lock keeps, per key, the
 //! FNV-1a hash of the comment block last written by seeding, and a key's
 //! comment is rewritten to the template's revision only while its on-disk
@@ -21,8 +27,10 @@ use crate::lock::SettingsSeed;
 use crate::settings_toml::{Line, Row};
 
 mod env;
+mod notes;
 mod refresh;
 pub use env::{EnvBlocked, env_blocked};
+pub use notes::{conflict_notes, seed_notes, unterminated_notes};
 pub use refresh::refresh_comments;
 
 pub const SETTINGS_FILE: &str = "kendex.settings.toml";
@@ -35,7 +43,32 @@ pub fn settings_file_path(project_root: &std::path::Path) -> std::path::PathBuf 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvEntry {
     pub key: String,
-    pub lines: Vec<String>,
+    /// The comment block above the assignment, in file order.
+    pub comment: Vec<String>,
+    /// Every physical line of the assignment, from the one carrying the
+    /// `=` through the one that closes the value — a value TOML lets span
+    /// lines is seeded whole or not at all. Empty where nothing closes it.
+    ///
+    /// Held apart from the comment rather than counted off one end of a
+    /// list of both: which lines are the value is the walk's answer, and a
+    /// reader that took all-but-the-last would call a multiline value's
+    /// opening line part of the comment above it.
+    pub assignment: Vec<String>,
+}
+
+impl EnvEntry {
+    /// The lines seeding writes for this entry, comment first.
+    fn lines(&self) -> impl Iterator<Item = &String> {
+        self.comment.iter().chain(&self.assignment)
+    }
+
+    /// Whether the template's value closes, which is whether there is
+    /// anything here to write. An assignment nothing closes has no
+    /// complete text to seed, so the key is refused by name
+    /// ([`unterminated_notes`]) rather than written half-finished.
+    pub fn closes(&self) -> bool {
+        !self.assignment.is_empty()
+    }
 }
 
 /// One entry as a scope plans it: the template's lines plus the skill that
@@ -51,10 +84,7 @@ impl SeededEnv {
     /// The comment block this entry would write, trimmed the way the
     /// ledger hashes it.
     fn comment(&self) -> &[String] {
-        let Some((_, comment)) = self.entry.lines.split_last() else {
-            return &[];
-        };
-        trim_blank_edges(comment)
+        trim_blank_edges(&self.entry.comment)
     }
 
     /// The default this entry ships, spelled the way a note shows it: the
@@ -62,16 +92,23 @@ impl SeededEnv {
     /// verbatim where the strict reader cannot decode it. Every entry
     /// `merge` seeds has one, so a note can never drop an owner and then
     /// name the wrong package as the one whose value lands.
+    ///
+    /// A value spanning lines is shown on the note's one line, its lines
+    /// joined by a space. Shown from the `=` line alone every multiline
+    /// value would read as its bare opening delimiter, and two packages
+    /// shipping different ones would be grouped as agreeing — the note
+    /// exists to say they disagree.
     fn default_shown(&self) -> String {
-        let line = self.entry.lines.last().map_or("", String::as_str);
-        match crate::settings_template::decoded_value(line) {
-            Some(value) => format!("\"{value}\""),
-            None => line
-                .split_once('=')
-                .map_or(line, |(_, value)| value)
-                .trim()
-                .to_owned(),
+        let line = self.entry.assignment.first().map_or("", String::as_str);
+        if let Some(value) = crate::settings_template::decoded_value(line) {
+            return format!("\"{value}\"");
         }
+        let opening = line.split_once('=').map_or(line, |(_, value)| value);
+        std::iter::once(opening)
+            .chain(self.entry.assignment.iter().skip(1).map(String::as_str))
+            .map(str::trim)
+            .collect::<Vec<&str>>()
+            .join(" ")
     }
 
     /// The ledger record seeding this entry writes.
@@ -140,18 +177,29 @@ pub(crate) fn table_row(row: &Row) -> bool {
     row.kind == Line::Table
 }
 
+/// Every `[env]` entry the template declares, each holding all of its own
+/// lines: the walk says where a value ends, so one spanning lines is taken
+/// whole. An entry whose value nothing closes comes back with no
+/// assignment lines — still an entry, because [`unterminated_notes`] has
+/// to name it.
 pub fn extract_env_entries(template: &str) -> Vec<EnvEntry> {
+    let rows = crate::settings_toml::rows(template);
     let mut entries = Vec::new();
     let mut in_env = false;
     let mut pending: Vec<String> = Vec::new();
-    for row in crate::settings_toml::rows(template) {
-        // A value's own lines are the value: read as structure they seed
-        // keys the template never declared.
+    let mut index = 0;
+    while index < rows.len() {
+        let row = &rows[index];
+        index += 1;
+        // A value's own lines go with the assignment that opened them,
+        // taken below. Reaching here they belong to a value opened
+        // outside `[env]`: read as structure they seed keys the template
+        // never declared.
         if row.kind == Line::InValue {
             continue;
         }
-        if table_row(&row) {
-            if opens_env(&row) {
+        if table_row(row) {
+            if opens_env(row) {
                 in_env = true;
                 pending.clear();
                 continue;
@@ -167,11 +215,30 @@ pub fn extract_env_entries(template: &str) -> Vec<EnvEntry> {
             Line::Blank => pending.clear(),
             Line::Comment => pending.push(row.text.to_owned()),
             _ => {
-                if let Some(key) = assignment_key(&row) {
-                    let mut lines = std::mem::take(&mut pending);
-                    lines.push(row.text.to_owned());
-                    entries.push(EnvEntry { key, lines });
+                let Some(key) = assignment_key(row) else {
+                    continue;
+                };
+                let comment = std::mem::take(&mut pending);
+                // The assignment runs to wherever its value closes. Every
+                // line under an open value is one the walk called
+                // `InValue`, so the run is exactly this entry's.
+                let mut assignment = vec![row.text.to_owned()];
+                let mut open = row.carries;
+                while open && index < rows.len() {
+                    assignment.push(rows[index].text.to_owned());
+                    open = rows[index].carries;
+                    index += 1;
                 }
+                // The file ended inside the value. There is no complete
+                // text to seed, so this entry carries none.
+                if open {
+                    assignment.clear();
+                }
+                entries.push(EnvEntry {
+                    key,
+                    comment,
+                    assignment,
+                });
             }
         }
     }
@@ -221,7 +288,9 @@ fn render_entries(entries: &[&SeededEnv], eol: &str) -> String {
         if !out.is_empty() {
             out.push_str(eol);
         }
-        for line in &seeded.entry.lines {
+        // Every line of the entry, the value's continuation lines
+        // included: a value is written whole or the entry never got here.
+        for line in seeded.entry.lines() {
             out.push_str(line);
             out.push_str(eol);
         }
@@ -243,9 +312,13 @@ pub fn merge(original: Option<&str>, entries: &[SeededEnv]) -> Option<(String, V
         .unwrap_or_default()
         .into_iter()
         .collect();
-    // First declaration wins a key that several skills ship.
+    // First declaration wins a key that several skills ship — the first
+    // that can be written whole, so one skill's unterminated template does
+    // not claim a key another ships properly. A key nothing can supply is
+    // refused by name in [`unterminated_notes`], never written in part.
     let missing: Vec<&SeededEnv> = entries
         .iter()
+        .filter(|seeded| seeded.entry.closes())
         .filter(|seeded| existing.insert(seeded.entry.key.clone()))
         .collect();
     if missing.is_empty() {
@@ -301,56 +374,6 @@ pub fn merge(original: Option<&str>, entries: &[SeededEnv]) -> Option<(String, V
         out.push_str(row.raw);
     }
     Some((out, added))
-}
-
-/// What the plan says about keys several packages ship with different
-/// defaults: one line per key, naming every default and everyone who ships
-/// it. `merge` takes the first declaration and writes nothing about the
-/// others, so a disagreement about what a key should be is invisible
-/// anywhere else — and packages agreeing on a shared key, which is the
-/// ordinary case, say nothing at all.
-///
-/// Every entry counts, whatever shape its value is in. `merge` reads the
-/// same lenient list, so an entry this dropped would be one the note left
-/// out of a key it does seed — and with it the owner named as the one
-/// whose value lands.
-///
-/// The note is raised before the settings file is even read, because the
-/// disagreement is worth saying either way. So it says which default
-/// seeding WOULD write, under the condition seeding writes at all: a key
-/// the file already assigns is left alone, and a note claiming a value
-/// landed would be false exactly there.
-///
-/// Key, owners and defaults are all catalog text a download supplied, so
-/// the finished line goes through [`crate::names::shown`]: a note is read
-/// on a terminal, and nothing in it is a sequence to act on.
-pub fn conflict_notes(entries: &[SeededEnv]) -> Vec<String> {
-    // Distinct defaults per key, each with its owners, both in declaration
-    // order; the key order is the file's, so the notes read stably.
-    let mut by_key: BTreeMap<&str, Vec<(String, Vec<&str>)>> = BTreeMap::new();
-    for seeded in entries {
-        let default = seeded.default_shown();
-        let defaults = by_key.entry(&seeded.entry.key).or_default();
-        match defaults.iter_mut().find(|(seen, _)| seen == &default) {
-            Some((_, owners)) => owners.push(&seeded.owner),
-            None => defaults.push((default, vec![&seeded.owner])),
-        }
-    }
-    by_key
-        .into_iter()
-        .filter(|(_, defaults)| defaults.len() > 1)
-        .map(|(key, defaults)| {
-            let lands = defaults[0].1[0];
-            let shown: Vec<String> = defaults
-                .iter()
-                .map(|(value, owners)| format!("{value} ({})", owners.join(", ")))
-                .collect();
-            crate::names::shown(&format!(
-                "{SETTINGS_FILE} {key}: packages ship different defaults — {} — where this file does not already assign it, {lands}'s is the one seeded, so set the value yourself if that is not the one you want",
-                shown.join(", ")
-            ))
-        })
-        .collect()
 }
 
 /// The ledger records the added entries were seeded, each under the owner

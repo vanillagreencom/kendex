@@ -27,7 +27,8 @@ fn entries_carry_their_comment_blocks() {
     let entries = extract_env_entries(TEMPLATE);
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].key, "REVIEWERS");
-    assert_eq!(entries[0].lines.len(), 3);
+    assert_eq!(entries[0].comment.len(), 2);
+    assert_eq!(entries[0].assignment, ["REVIEWERS = \"arch,security\""]);
     assert_eq!(entries[1].key, "DEPTH");
 }
 
@@ -452,7 +453,8 @@ fn a_seed_lands_after_the_env_table_and_never_inside_a_value() {
     let seeded = [SeededEnv {
         entry: EnvEntry {
             key: "DEPTH".to_owned(),
-            lines: vec!["# How deep.".to_owned(), "DEPTH = \"2\"".to_owned()],
+            comment: vec!["# How deep.".to_owned()],
+            assignment: vec!["DEPTH = \"2\"".to_owned()],
         },
         owner: "review".to_owned(),
     }];
@@ -488,7 +490,8 @@ fn a_header_the_loaders_refuse_is_still_the_table_a_seed_lands_in() {
     let seeded = [SeededEnv {
         entry: EnvEntry {
             key: "DEPTH".to_owned(),
-            lines: vec!["# How deep.".to_owned(), "DEPTH = \"2\"".to_owned()],
+            comment: vec!["# How deep.".to_owned()],
+            assignment: vec!["DEPTH = \"2\"".to_owned()],
         },
         owner: "review".to_owned(),
     }];
@@ -536,7 +539,8 @@ fn any_spelling_of_the_env_header_is_the_table_a_seed_lands_in() {
     let seeded = [SeededEnv {
         entry: EnvEntry {
             key: "DEPTH".to_owned(),
-            lines: vec!["# How deep.".to_owned(), "DEPTH = \"2\"".to_owned()],
+            comment: vec!["# How deep.".to_owned()],
+            assignment: vec!["DEPTH = \"2\"".to_owned()],
         },
         owner: "review".to_owned(),
     }];
@@ -567,7 +571,8 @@ fn an_env_declared_as_an_array_of_tables_is_refused_rather_than_seeded() {
     let seeded = [SeededEnv {
         entry: EnvEntry {
             key: "DEPTH".to_owned(),
-            lines: vec!["# How deep.".to_owned(), "DEPTH = \"2\"".to_owned()],
+            comment: vec!["# How deep.".to_owned()],
+            assignment: vec!["DEPTH = \"2\"".to_owned()],
         },
         owner: "review".to_owned(),
     }];
@@ -590,7 +595,8 @@ fn a_top_level_env_assignment_is_refused_rather_than_seeded() {
     let seeded = [SeededEnv {
         entry: EnvEntry {
             key: "DEPTH".to_owned(),
-            lines: vec!["# How deep.".to_owned(), "DEPTH = \"2\"".to_owned()],
+            comment: vec!["# How deep.".to_owned()],
+            assignment: vec!["DEPTH = \"2\"".to_owned()],
         },
         owner: "review".to_owned(),
     }];
@@ -618,4 +624,109 @@ fn a_top_level_env_assignment_is_refused_rather_than_seeded() {
         merge(Some(nested), &seeded).is_some(),
         "another table's env is not this file's env"
     );
+}
+
+/// Every entry key in declaration order.
+fn entry_keys(entries: &[EnvEntry]) -> Vec<&str> {
+    entries.iter().map(|entry| entry.key.as_str()).collect()
+}
+
+/// A value TOML lets span lines is seeded whole. Stopping at the line
+/// carrying the `=` would write `BLOB = """` with nothing under it: the
+/// string never closes, every key seeded after it falls inside it, and the
+/// consumer's file stops parsing from there down.
+#[test]
+fn a_value_spanning_lines_is_seeded_whole() {
+    for value in [
+        "\"\"\"\nsome text\n\"\"\"",
+        "'''\nsome text\n'''",
+        "[\n  \"a\",\n  \"b\",\n]",
+    ] {
+        let template = format!("[env]\n# A blob.\nBLOB = {value}\n\n# How deep.\nDEPTH = \"2\"\n");
+        let entries = extract_env_entries(&template);
+        assert_eq!(entry_keys(&entries), ["BLOB", "DEPTH"], "{value}");
+        // The value's continuation lines are the assignment's, and the
+        // comment above it is still only the comment.
+        assert_eq!(entries[0].comment, ["# A blob."], "{value}");
+        // One assignment line per line of the value: the first carries
+        // the `=`, the last closes it.
+        assert_eq!(
+            entries[0].assignment.len(),
+            value.lines().count(),
+            "{value}"
+        );
+        assert!(entries[0].closes(), "{value}");
+
+        let (text, added) = merge(None, &seeded(&template, "review")).expect("both are missing");
+        assert_eq!(added, ["BLOB", "DEPTH"], "{value}");
+        // Spelled as the template spells it, and closed: the seeded file
+        // parses, and BLOB reads back as the value the template declares.
+        assert!(
+            text.contains(&format!("BLOB = {value}\n")),
+            "{value}: {text}"
+        );
+        let want: toml::Table = template.parse().expect("the template parses");
+        let got: toml::Table = text
+            .parse()
+            .unwrap_or_else(|error| panic!("{value}: seeded file must parse: {error}\n{text}"));
+        assert_eq!(got["env"]["BLOB"], want["env"]["BLOB"], "{value}");
+        assert_eq!(got["env"]["DEPTH"], want["env"]["DEPTH"], "{value}");
+    }
+}
+
+/// A value nothing closes is not a multiline value: there is no complete
+/// text to copy, and writing the opening line alone is the corruption
+/// itself. Seeding writes nothing for that key — and says so, naming it.
+/// A silent drop would leave a key nobody finds until a script reads it.
+#[test]
+fn a_value_nothing_closes_is_refused_by_name() {
+    let template = "[env]\n# How deep.\nDEPTH = \"2\"\n\n# A blob.\nBLOB = \"\"\"\nsome text\n";
+    let entries = extract_env_entries(template);
+    assert_eq!(entry_keys(&entries), ["DEPTH", "BLOB"]);
+    assert!(!entries[1].closes(), "{entries:?}");
+    assert!(entries[1].assignment.is_empty(), "{entries:?}");
+
+    let shipped = seeded(template, "review");
+    let (text, added) = merge(None, &shipped).expect("DEPTH is missing");
+    assert_eq!(added, ["DEPTH"]);
+    assert!(
+        !text.contains("BLOB"),
+        "no part of it may be written:\n{text}"
+    );
+    text.parse::<toml::Table>().expect("the seeded file parses");
+
+    let notes = unterminated_notes(&shipped);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("BLOB"), "the key is named: {notes:?}");
+    assert!(notes[0].contains("review"), "and who ships it: {notes:?}");
+
+    // Where another skill ships the same key whole, that one is seeded
+    // and nothing is reported: there is nothing for a person to do.
+    let whole = seeded("[env]\n# A blob.\nBLOB = \"ok\"\n", "other");
+    let both: Vec<SeededEnv> = shipped.iter().cloned().chain(whole).collect();
+    assert!(unterminated_notes(&both).is_empty(), "{both:?}");
+    let (text, added) = merge(None, &both).expect("both are missing");
+    assert_eq!(added, ["DEPTH", "BLOB"]);
+    assert!(text.contains("BLOB = \"ok\""), "{text}");
+}
+
+/// Two packages shipping one key with different multiline values do
+/// disagree, and the note has to say so. Shown from the `=` line alone
+/// both read as a bare `"""` and the note would group them as agreeing.
+#[test]
+fn two_different_multiline_defaults_are_not_one_default() {
+    let template = |body: &str| format!("[env]\n# A blob.\nBLOB = \"\"\"\n{body}\n\"\"\"\n");
+    let mut shipped = seeded(&template("from a"), "a");
+    shipped.extend(seeded(&template("from b"), "b"));
+    let notes = conflict_notes(&shipped);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    // Each value shown whole on the one line, so the two read as the
+    // different defaults they are.
+    assert!(notes[0].contains("\"\"\" from a \"\"\" (a)"), "{notes:?}");
+    assert!(notes[0].contains("\"\"\" from b \"\"\" (b)"), "{notes:?}");
+
+    // And two shipping the SAME multiline value still say nothing.
+    let mut agreeing = seeded(&template("same"), "a");
+    agreeing.extend(seeded(&template("same"), "b"));
+    assert!(conflict_notes(&agreeing).is_empty());
 }

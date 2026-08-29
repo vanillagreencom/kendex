@@ -278,7 +278,7 @@ pub(super) fn plan_settings_seed(
     if state.settings_env.is_empty() && edits.is_empty() {
         return Ok(Vec::new());
     }
-    let notes = crate::settings_seed::conflict_notes(&state.settings_env);
+    let notes = crate::settings_seed::seed_notes(&state.settings_env);
     let path = crate::settings_seed::settings_file_path(root);
     let file = path
         .file_name()

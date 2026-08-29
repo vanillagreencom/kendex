@@ -108,6 +108,12 @@ pub struct Row<'a> {
     /// Byte offset of `text` in the source.
     pub at: usize,
     pub kind: Line<'a>,
+    /// Whether this line leaves a value open — the same fact
+    /// [`Line::InValue`] tells about the lines below it, told from the
+    /// line that opened it. Both tellings are needed: a caller holding an
+    /// assignment cannot ask the line under it whether the value closed
+    /// when the file ends there.
+    pub carries: bool,
 }
 
 impl Row<'_> {
@@ -147,6 +153,7 @@ pub fn rows(text: &str) -> Vec<Row<'_>> {
             text: content,
             at,
             kind,
+            carries: carry.inside(),
         });
         at += raw.len();
     }
