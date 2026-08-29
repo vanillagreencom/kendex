@@ -87,7 +87,7 @@ PATH="$TMP_ROOT/bin:$PATH" \
   "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$default_stderr"
 
 assert_contains "$default_stderr" "timeout=1080s" "default timeout resolves to documented 1080s"
-assert_contains "$default_stderr" "cmd: timeout -k 30 1080s codex" "launch log includes explicit default timeout"
+assert_contains "$default_stderr" "cmd: timeout --foreground -k 30 1080s codex" "launch log includes explicit default timeout"
 
 override_stderr="$TMP_ROOT/override.stderr"
 PATH="$TMP_ROOT/bin:$PATH" \
@@ -97,7 +97,7 @@ PATH="$TMP_ROOT/bin:$PATH" \
   "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$override_stderr"
 
 assert_contains "$override_stderr" "timeout=7s" "caller timeout override wins"
-assert_contains "$override_stderr" "cmd: timeout -k 30 7s codex" "launch log includes explicit override timeout"
+assert_contains "$override_stderr" "cmd: timeout --foreground -k 30 7s codex" "launch log includes explicit override timeout"
 
 # GNU timeout reads 0 as "no limit at all", so --timeout 0 must be refused
 # rather than silently disabling the deadline.
@@ -135,3 +135,52 @@ PATH="$TMP_ROOT/bin:$NOTIMEOUT" \
 
 assert_contains "$notimeout_stderr" "run without a time limit" "missing timeout binary warns instead of refusing"
 assert_contains "$notimeout_stderr" "Response received" "review still runs without a timeout binary"
+
+# The caller owns the lane's lifetime. GNU timeout must not isolate the CLI
+# from a signal sent to second-opinion's process group.
+cat > "$TMP_ROOT/bin/sleeping-codex" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$$" > "$FAKE_CLI_PID_FILE"
+exec sleep 300
+SH
+chmod +x "$TMP_ROOT/bin/sleeping-codex"
+
+sleeping_pid_file="$TMP_ROOT/sleeping-cli.pid"
+abandon_stderr="$TMP_ROOT/abandon.stderr"
+PATH="$TMP_ROOT/bin:$PATH" \
+  SECOND_OPINION_TARGET=codex \
+  SECOND_OPINION_CODEX_CMD=sleeping-codex \
+  FAKE_CLI_PID_FILE="$sleeping_pid_file" \
+  setsid "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$abandon_stderr" &
+abandon_pid=$!
+
+for _attempt in {1..100}; do
+  [[ -s "$sleeping_pid_file" ]] && break
+  sleep 0.05
+done
+if [[ ! -s "$sleeping_pid_file" ]]; then
+  kill -TERM -- "-$abandon_pid" 2>/dev/null || true
+  wait "$abandon_pid" 2>/dev/null || true
+  printf 'FAIL: sleeping CLI did not start\n' >&2
+  sed -n '1,80p' "$abandon_stderr" >&2 || true
+  exit 1
+fi
+
+sleeping_cli_pid=$(<"$sleeping_pid_file")
+kill -TERM -- "-$abandon_pid"
+wait "$abandon_pid" 2>/dev/null || true
+
+sleeping_cli_stopped=0
+for _attempt in {1..100}; do
+  if ! kill -0 "$sleeping_cli_pid" 2>/dev/null; then
+    sleeping_cli_stopped=1
+    break
+  fi
+  sleep 0.05
+done
+if [[ $sleeping_cli_stopped -ne 1 ]]; then
+  kill -TERM "$sleeping_cli_pid" 2>/dev/null || true
+  printf 'FAIL: killing second-opinion process group left the CLI running\n' >&2
+  exit 1
+fi
+printf 'PASS: killing second-opinion process group stops the CLI\n'

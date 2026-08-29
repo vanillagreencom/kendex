@@ -278,9 +278,9 @@ if ! command -v timeout >/dev/null 2>&1; then
     timeout() { gtimeout "$@"; }
   else
     # No timeout available — warn once and run without a limit. The shim
-    # drops this script's fixed `-k 30 SECS` arguments.
+    # drops this script's fixed `--foreground -k 30 SECS` arguments.
     echo "Warning: no timeout or gtimeout on PATH — external CLI calls will run without a time limit" >&2
-    timeout() { shift 3; "$@"; }
+    timeout() { shift 4; "$@"; }
   fi
 fi
 
@@ -2160,9 +2160,9 @@ run_target_cli() {
     echo "{\"error\": \"Unknown target: $TARGET_CLI — set $(target_cmd_var "$TARGET_CLI")\"}" >&2
     return 2
   fi
-  echo "→ cmd: timeout -k 30 ${TIMEOUT}s $cmd" >&2
+  echo "→ cmd: timeout --foreground -k 30 ${TIMEOUT}s $cmd" >&2
   # shellcheck disable=SC2086
-  (cd -- "$CWD" && timeout -k 30 "$TIMEOUT" $cmd < "$prompt_file" 2>"$STDERR_TMP") || rc=$?
+  (cd -- "$CWD" && timeout --foreground -k 30 "$TIMEOUT" $cmd < "$prompt_file" 2>"$STDERR_TMP") || rc=$?
   return "$rc"
 }
 
