@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { ScopeSettings, SettingsRow, SkillTemplate } from "@/bindings";
 import {
+  SETTINGS_DEFAULT_EMPTY,
   SETTINGS_HELP,
   SETTINGS_RESET,
   SETTINGS_TEMPLATE_INVALID,
@@ -80,6 +81,61 @@ describe("SkillSettings", () => {
   it("offers no reset for a key already holding the package default", () => {
     const html = render(place({ state: "rows", rows: [row()] }));
     expect(html).not.toContain(SETTINGS_RESET);
+  });
+
+  /// A key whose default is the empty string gets no placeholder from
+  /// the default-as-placeholder rule, and a blank box states neither
+  /// what the default is nor that empty is a real answer.
+  it("states an empty package default rather than showing a blank box", () => {
+    const container = mount(
+      <SkillSettings
+        skill="gh"
+        settings={place({
+          state: "rows",
+          rows: [row({ default: "", current: { state: "absent" } })],
+        })}
+        edits={[]}
+        onEdit={() => {}}
+      />,
+    );
+    expect(container.querySelector("input")?.placeholder).toBe(
+      SETTINGS_DEFAULT_EMPTY,
+    );
+  });
+
+  /// These keys hold path globs and space-separated lists, so a value
+  /// wider than the box is the ordinary case: the input takes the
+  /// control column and the column takes half the row, rather than
+  /// sitting in a fixed box at the right edge.
+  it("gives the value input half the row, and keeps it there under Reset", () => {
+    const sized = (current: SettingsRow["current"]) => {
+      const container = mount(
+        <SkillSettings
+          skill="gh"
+          settings={place({ state: "rows", rows: [row({ current })] })}
+          edits={[]}
+          onEdit={() => {}}
+        />,
+      );
+      const input = container.querySelector("input");
+      if (!input) throw new Error("the row rendered no input");
+      return { input, column: input.parentElement };
+    };
+
+    const plain = sized({ state: "value", value: "enforce", line: 3 });
+    expect(plain.input.className).toContain("w-full");
+    expect(plain.column?.className).toContain("w-1/2");
+
+    // Reset stacks below the input rather than sharing its line, and
+    // jsdom lays nothing out, so the stack is the fact worth pinning: an
+    // input sharing a row with a button gives up width to it the moment
+    // the value leaves the default, on the row a person is most likely
+    // reading.
+    const reset = sized({ state: "value", value: "advise", line: 3 });
+    expect(reset.column?.textContent).toContain(SETTINGS_RESET);
+    expect(reset.column?.className).toContain("flex-col");
+    expect(reset.input.className).toBe(plain.input.className);
+    expect(reset.column?.className).toBe(plain.column?.className);
   });
 
   /// Core refuses an edit on a key the file answers for in a shape no

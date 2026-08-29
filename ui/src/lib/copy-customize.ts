@@ -60,6 +60,11 @@ export const SETTINGS_SECTION = "Settings";
 export const SETTINGS_HELP =
   "Saved in kendex.settings.toml in the project root. The process environment and .env.local are read first, so a value set in either wins over one set here.";
 export const SETTINGS_RESET = "Reset to default";
+/** The placeholder for a key whose package default is the empty string.
+ *  A blank box states neither what the default is nor that empty is a
+ *  real answer, and one phrase covers every such key — the explainer
+ *  beside it already carries what empty means for that one. */
+export const SETTINGS_DEFAULT_EMPTY = "empty by default";
 /** How a settings value shows up in the Customize index — a statement
  *  about the file, never about who wrote it. */
 export const SETTINGS_VALUES_MARK = "Non-default settings";
