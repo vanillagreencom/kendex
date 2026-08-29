@@ -9,13 +9,11 @@
 # had already made. The rest of the stack disposes by rule and asks only about
 # product or experience.
 #
-# What this pins are TOKENS, never sentences: review-bots.md holds markdown
-# contract lints to setting keys, command names, headings, table rows and
-# stable inline code literals, so an editorial rephrase must not fail a suite
-# while the contract holds.
+# What this pins are TOKENS, never sentences, so an editorial rephrase does not
+# fail the suite while the contract holds, and every token here meets the bar
+# review-bots.md sets for one.
 #
-# A token earns a pin only when its presence cannot be true while the rule is
-# false. `ORCH_DECISION_MODE` and its two values fail that test: they name what
+# `ORCH_DECISION_MODE` and its two values fail that bar: they name what
 # the rule talks about, so a § 4 rewritten to say `ask` prompts for each fix
 # and `auto-recommended` fixes automatically keeps every one of them while
 # inverting the rule, and generic prompt wording slips past MENU_RE. So each
