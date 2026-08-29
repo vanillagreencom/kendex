@@ -1,4 +1,7 @@
 use kendex_core::app_update::AppUpdateView;
+use kendex_core::command_update::{
+    CommandBeside, CommandHalf, bring_command_across, command_beside_app, command_candidates,
+};
 use kendex_core::env::Env;
 use kendex_core::install_channel::{AppInstall, Host, InstallChannel};
 use kendex_core::registry::{Fetch, ReleaseFeedFetch};
@@ -198,12 +201,70 @@ fn read_published(
         .map_err(|error| error.to_string())
 }
 
-/// Replace this install with the latest release and relaunch into it. The
-/// manifest names a download and the signature over it; the release's own
-/// digests document names which download this release published for this
-/// target, and the bytes are held to both before anything is installed.
-/// The discovery feed never supplies an install URL. A failure leaves the
-/// running app untouched and usable.
+/// The `kendex` command this app would carry across with it, if there is
+/// one. `install.sh` puts the two side by side, so an app that moved alone
+/// would leave every terminal on the old release; a dmg or msi that
+/// installed no command has nothing to carry, which is an answer rather
+/// than a failure.
+fn command_beside(
+    env: &Env,
+    install: &AppInstall,
+    path_var: Option<&std::ffi::OsStr>,
+) -> CommandBeside {
+    command_beside_app(
+        &Host,
+        &command_candidates(&env.home, path_var),
+        install.judged_path(),
+    )
+}
+
+/// Run the command half off the async runtime: it downloads a release
+/// binary over the network, which is not work to hold a runtime worker on.
+async fn move_the_command(install: AppInstall, release: String) -> Result<CommandHalf, String> {
+    let feed = feed_url();
+    tauri::async_runtime::spawn_blocking(move || {
+        let env = Env::detect().map_err(|error| error.to_string())?;
+        bring_command_across(
+            &command_beside(&env, &install, std::env::var_os("PATH").as_deref()),
+            &feed,
+            &release,
+            env!("KENDEX_TARGET"),
+            UPDATER_PUBLIC_KEY,
+        )
+    })
+    .await
+    .map_err(|error| format!("the kendex command half did not run: {error}"))?
+}
+
+/// What to say when the app half would not land. A command already across
+/// leaves the machine split, but the app's own version is unchanged, so
+/// the card still offers the release and pressing it again repeats both
+/// halves rather than stopping at already-current.
+fn app_half_failed(release: &str, half: CommandHalf, error: &str) -> String {
+    match half {
+        CommandHalf::Moved => format!(
+            "the kendex command is on {release} and the desktop app is not: {error}; press Update now again to bring the app across"
+        ),
+        CommandHalf::Untouched => format!("the desktop app could not be replaced: {error}"),
+    }
+}
+
+/// Replace this install with the latest release and relaunch into it,
+/// carrying the `kendex` command across with it. The manifest names a
+/// download and the signature over it; the release's own digests document
+/// names which download this release published for this target, and the
+/// app's bytes are held to both before anything is installed. The
+/// discovery feed never supplies an install URL, and the command's own
+/// bytes are held to the same key the CLI holds them to. A failure leaves
+/// the running app untouched and usable.
+///
+/// The command moves first. What this flow's notice card reads is the
+/// app's own baked version, so the app is the state marker here and is
+/// written last — the mirror of `kendex update`, where the command's baked
+/// version is the marker and the command is written last. A command that
+/// will not move therefore leaves both halves where they were and the card
+/// still offering the release, where an app already replaced and relaunched
+/// would report itself current and never come back for the command.
 #[tauri::command]
 #[specta::specta]
 pub async fn app_update_install(app: tauri::AppHandle) -> Result<(), String> {
@@ -223,19 +284,27 @@ pub async fn app_update_install(app: tauri::AppHandle) -> Result<(), String> {
         .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "this build is already the latest release".to_owned())?;
+    let half = move_the_command(install, update.version.clone()).await?;
     // Downloaded, then judged, then installed: the plugin's own check runs
     // on the way down, and what this release published for this target is
     // what says those bytes are the ones the version being installed
     // names. The read is blocking, so it runs off the async runtime.
+    //
+    // Every failure from here reports the command half too. It has already
+    // moved by now, so a bare app error would leave a person reading that
+    // the app did not update while their terminal answers the new version.
     let bytes = update
         .download(|_chunk, _total| {}, || {})
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| app_half_failed(&update.version, half, &error.to_string()))?;
     let offered = update.version.clone();
-    let digests = tauri::async_runtime::spawn_blocking(move || published_for_this_target(&offered))
+    let read = tauri::async_runtime::spawn_blocking(move || published_for_this_target(&offered))
         .await
-        .map_err(|error| format!("kendex could not read what this release published: {error}"))??;
-    install_published(&digests, bytes, &update)?;
+        .map_err(|error| format!("kendex could not read what this release published: {error}"))
+        .and_then(|published| published);
+    let digests = read.map_err(|error| app_half_failed(&update.version, half, &error))?;
+    install_published(&digests, bytes, &update)
+        .map_err(|error| app_half_failed(&update.version, half, &error))?;
     app.restart()
 }
 

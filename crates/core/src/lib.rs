@@ -14,6 +14,7 @@ pub mod base;
 pub(crate) mod capture;
 pub mod check_catalog;
 pub mod clock;
+pub mod command_update;
 pub mod configedit;
 pub mod discover;
 pub mod drift;

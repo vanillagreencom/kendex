@@ -294,10 +294,10 @@ lives in one capability table read by core and UI.
 - **Discovery is unsigned; one pinned key covers a document binding each
   download to its release and target.** Off the launch path, one transaction
   reads the feed six-hourly at most, keeps the last result beside any error
-  and never follows the final link; a preference gates automatic contact; only
-  debug builds honor `KENDEX_UPDATE_FEED`. Replacing needs the path behind the
-  running one writable, outside a system prefix; a package prefix names its
-  command instead, anything else neither. A sidebar card offers whichever.
+  and never follows the final link; a preference gates contact; only debug
+  builds honor `KENDEX_UPDATE_FEED`. Replacing needs the running path
+  writable, outside a system prefix; a package prefix names its command,
+  anything else neither. Either shell carries both halves, version marker last.
 - Commands that touch disk, git, or a subprocess are
   `#[tauri::command(async)]`. Only window operations stay synchronous.
 - No database: manifests, locks, and native dirs are the state; scans are

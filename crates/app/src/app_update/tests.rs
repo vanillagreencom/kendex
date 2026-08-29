@@ -1,3 +1,5 @@
+use kendex_core::install_channel::HostProbe as _;
+
 use super::*;
 
 #[test]
@@ -245,4 +247,53 @@ fn the_plugin_derives_the_unit_for_app_approved() {
     // Where the derivation runs for real it lands on the bundle exactly.
     #[cfg(target_os = "macos")]
     assert_eq!(derived, std::path::Path::new(bundle));
+}
+
+/// The two sentences a failed app half gets, and the difference between
+/// them. A command already across has to be named — the machine is split,
+/// and the card is the only place that can say so — while a command that
+/// never moved leaves nothing to report but the app's own failure.
+#[test]
+fn a_failed_app_half_says_whether_the_command_went_ahead_of_it() {
+    let split = app_half_failed("5.1.0", CommandHalf::Moved, "permission denied");
+    assert!(split.contains("the kendex command is on 5.1.0"), "{split}");
+    assert!(split.contains("permission denied"), "{split}");
+    assert!(split.contains("press Update now again"), "{split}");
+
+    let neither = app_half_failed("5.1.0", CommandHalf::Untouched, "permission denied");
+    assert!(!neither.contains("kendex command"), "{neither}");
+    assert!(neither.contains("permission denied"), "{neither}");
+}
+
+/// The command this app would carry across is looked for beside the app,
+/// never inside it: an image the app is about to replace is not a command,
+/// however it is reached. Read as a difference rather than an absolute,
+/// because the candidate list ends with a system path this machine may
+/// well have a kendex in.
+#[test]
+fn the_app_s_own_image_is_never_the_command_it_carries() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let image = bin.join("kendex");
+    std::fs::write(&image, b"the running AppImage").unwrap();
+    let env = Env::host_rooted(dir.path());
+    let path_var = std::ffi::OsString::from(&bin);
+    let ours = CommandBeside::Ours(Host.resolve(&image));
+
+    assert_ne!(
+        command_beside(
+            &env,
+            &AppInstall::AppImage(Some(image.clone())),
+            Some(&path_var)
+        ),
+        ours
+    );
+
+    // The same file, with nothing claiming it as the app: the exclusion
+    // above is what answered, and not a search that never reached it.
+    assert_eq!(
+        command_beside(&env, &AppInstall::WindowsInstaller, Some(&path_var)),
+        ours
+    );
 }

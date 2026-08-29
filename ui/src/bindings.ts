@@ -17,12 +17,22 @@ export const commands = {
 	 */
 	appUpdateChannel: () => typedError<InstallChannel, string>(__TAURI_INVOKE("app_update_channel")),
 	/**
-	 *  Replace this install with the latest release and relaunch into it. The
-	 *  manifest names a download and the signature over it; the release's own
-	 *  digests document names which download this release published for this
-	 *  target, and the bytes are held to both before anything is installed.
-	 *  The discovery feed never supplies an install URL. A failure leaves the
-	 *  running app untouched and usable.
+	 *  Replace this install with the latest release and relaunch into it,
+	 *  carrying the `kendex` command across with it. The manifest names a
+	 *  download and the signature over it; the release's own digests document
+	 *  names which download this release published for this target, and the
+	 *  app's bytes are held to both before anything is installed. The
+	 *  discovery feed never supplies an install URL, and the command's own
+	 *  bytes are held to the same key the CLI holds them to. A failure leaves
+	 *  the running app untouched and usable.
+	 * 
+	 *  The command moves first. What this flow's notice card reads is the
+	 *  app's own baked version, so the app is the state marker here and is
+	 *  written last — the mirror of `kendex update`, where the command's baked
+	 *  version is the marker and the command is written last. A command that
+	 *  will not move therefore leaves both halves where they were and the card
+	 *  still offering the release, where an app already replaced and relaunched
+	 *  would report itself current and never come back for the command.
 	 */
 	appUpdateInstall: () => typedError<null, string>(__TAURI_INVOKE("app_update_install")),
 	scanMachine: () => typedError<ScanResult, string>(__TAURI_INVOKE("scan_machine")),
