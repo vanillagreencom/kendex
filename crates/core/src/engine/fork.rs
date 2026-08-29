@@ -198,6 +198,9 @@ struct Captured {
     /// The agent's own source form, for the access proof. `None` for a
     /// skill: a skill states no tool policy for a name to widen.
     agent: Option<crate::render::agent::SourceAgent>,
+    /// The catalog revision that source form was read at, read only
+    /// alongside `agent`.
+    read_at: Option<String>,
 }
 
 /// One fork's inputs, gathered so the capture side reads them in one
@@ -220,6 +223,7 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
             files: Capture::Tree(source_form(crate::capture::read_tree(edited)?)),
             carry: None,
             agent: None,
+            read_at: None,
         },
         // Every other kind is turned away by `edited_rendering` first, so
         // what reaches here is an agent.
@@ -229,6 +233,7 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
                 files: Capture::File(captured.bytes),
                 carry: captured.carry,
                 agent: Some(captured.agent),
+                read_at: captured.read_at,
             }
         }
     })

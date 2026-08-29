@@ -233,6 +233,69 @@ fn a_catalog_default_that_retires_a_generated_deny_does_not_refuse_the_fork() {
     );
 }
 
+/// A fork captures one published file and every tool renders from it
+/// afterwards, but before it each renders from its own installed revision
+/// — and those may differ, which the lock records per tool. A revision the
+/// capture did not read can state tools its own does not, so what that
+/// tool's rendering restricts is unreadable from the captured file and its
+/// loss would pass unseen. The proof refuses instead of guessing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fork_is_refused_where_the_targeted_tools_sit_at_different_revisions() {
+    // One revision gives the agent a reviewer role, which is what puts
+    // `tasks_write` in Pi's deny list; the next takes the role away.
+    let w = agent_world(
+        "\"claude\", \"pi\"",
+        "---\nname: rev\ndescription: agent rev\nrole: reviewer\n---\nUpstream body.\n",
+        "",
+        "",
+    );
+    let roleless = "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n";
+    fs::write(w.upstream.join("agents/rev.md"), roleless).unwrap();
+    commit(&w.upstream, "two");
+    let two = head_commit(&w.upstream);
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
+
+    // Claude's installation moves to the roleless revision; Pi's stays on
+    // the one that earned the deny. The capture reads Claude's.
+    let path = lock_path(&w.env, &w.scope);
+    let mut lock = load_lock(&path).unwrap();
+    let key = kendex_core::lock::entry_key(ItemKind::Agent, "rev", HarnessId::Claude);
+    lock.entries.get_mut(&key).unwrap().source_commit = Some(two.clone());
+    kendex_core::lock::save(&path, &lock).unwrap();
+
+    // The control: Pi's rendering holds a deny that the revision the
+    // capture will read cannot state.
+    assert!(
+        denied(&w, HarnessId::Pi, "rev").contains("tasks_write"),
+        "the fixture needs a deny that lives only in the revision Pi is installed from"
+    );
+
+    let refused = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Agent,
+        "rev",
+        HarnessId::Claude,
+        "rev-mine",
+        None,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        refused.contains(HarnessId::Pi.display_name()) && refused.contains(&two),
+        "the refusal names the tool sitting elsewhere and both revisions: {refused}"
+    );
+    assert!(
+        denied(&w, HarnessId::Pi, "rev").contains("tasks_write"),
+        "and nothing was written, so the deny still stands"
+    );
+    assert!(!captured(&w, "rev-mine").exists());
+}
+
 /// A rename that changes no harness's generated deny list still runs. The
 /// proof refuses a name that widens access, not every name.
 #[test]

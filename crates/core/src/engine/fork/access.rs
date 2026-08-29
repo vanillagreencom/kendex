@@ -19,41 +19,127 @@
 //! [`super::stated`] reads that from the file itself; this reads the
 //! declaration. The two answer different questions and neither covers the
 //! other's.
+//!
+//! Both sides are derived from one source form, which is what a fork
+//! installs: one file in the local source that every harness renders from
+//! afterwards. Before it, each harness renders from its own installed
+//! revision, and those can differ — so a source form read at one revision
+//! answers for a harness only if that harness is installed from it.
+//! [`one_revision`] is where that is established, and the proof cannot run
+//! without it.
 
 use crate::engine::desired::target_harnesses;
+use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::manifest::{ItemDecl, Manifest};
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::render::agent::{EffectiveAgent, SourceAgent, access};
 use crate::render::permission::Widened;
 
-/// Refuse a destination name that widens what any harness this declaration
-/// targets leaves the agent able to use. `before` is the manifest the
-/// operation started from and `after` the one it will write, each read
-/// under the name that side answers to, so a table the move left behind
-/// counts as the loss it is.
+/// Evidence that one source form answers for every harness the proof
+/// covers. Only [`one_revision`] and [`no_catalog`] make one, so a caller
+/// cannot reach [`refuse_if_widened`] without having established it.
+pub(super) struct OneRevision(());
+
+/// The answer for a renamed fork: its source form is the local file every
+/// harness already renders from, so there is no catalog revision behind it
+/// and nothing to be at odds about.
+pub(super) fn no_catalog() -> OneRevision {
+    OneRevision(())
+}
+
+/// Refuse a capture whose targeted harnesses are not all installed from
+/// the revision it was read at. `read_at` is that revision.
 ///
-/// Both manifests must already hold everything the rendering they stand
-/// for reads. A value on one side alone is a difference this reports, and
-/// the name is the only difference it is meant to find.
-pub(super) fn refuse_if_widened(
+/// The proof derives both its sides from one published file, and a
+/// harness installed from another revision renders from a different one —
+/// which can state tools this file does not, so what that rendering
+/// restricts is not readable here and its loss would pass unseen. Reading
+/// each harness's own revision instead would mean opening the catalog at
+/// every one of them, which is the thing this proof does not do; refusing
+/// keeps that boundary and fails closed.
+pub(super) fn one_revision(
+    env: &Env,
     scope: &Scope,
-    before: &Manifest,
     after: &Manifest,
     decl: &ItemDecl,
+    name: &str,
+    read_at: Option<&str>,
+) -> Result<OneRevision> {
+    let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
+    let elsewhere: Vec<String> = target_harnesses(decl, after, ItemKind::Agent, scope)
+        .into_iter()
+        .filter_map(|harness| {
+            let key = crate::lock::entry_key(ItemKind::Agent, name, harness);
+            let commit = lock.entries.get(&key)?.source_commit.as_deref()?;
+            (Some(commit) != read_at).then(|| format!("{} from {commit}", harness.display_name()))
+        })
+        .collect();
+    if elsewhere.is_empty() {
+        return Ok(OneRevision(()));
+    }
+    Err(CoreError::ForkWidensAccess {
+        name: crate::names::shown(name),
+        problem: format!(
+            "the tool settings {} state{}: {} — this copy is taken from {}, and a published file at one revision does not say what another one restricts. Refresh so every tool sits at the same revision, then keep it",
+            match elsewhere.len() {
+                1 => "the rendering it leaves behind".to_owned(),
+                n => format!("the {n} renderings it leaves behind"),
+            },
+            if elsewhere.len() == 1 { "s" } else { "" },
+            elsewhere.join(", "),
+            read_at.unwrap_or("a revision nothing recorded")
+        ),
+    })
+}
+
+/// One side of the comparison: the declaration as that side holds it, and
+/// the name the agent answers to there. `kept` is what stands now, `given`
+/// what the operation would write.
+pub(super) struct Side<'a> {
+    pub manifest: &'a Manifest,
+    pub name: &'a str,
+}
+
+/// Refuse a destination name that widens what any harness this declaration
+/// targets leaves the agent able to use. Each side is read under the name
+/// it answers to, so a table the move left behind counts as the loss it is.
+///
+/// Both manifests must already hold everything the rendering they stand
+/// for reads, and `source` must answer for every targeted harness —
+/// [`OneRevision`] is that second obligation. A value on one side alone is
+/// a difference this reports, and the name is the only difference it is
+/// meant to find.
+pub(super) fn refuse_if_widened(
+    scope: &Scope,
+    decl: &ItemDecl,
     source: &SourceAgent,
-    old: &str,
-    new: &str,
+    kept_side: Side,
+    given_side: Side,
+    _: OneRevision,
 ) -> Result<()> {
+    let (old, new) = (kept_side.name, given_side.name);
     if old == new {
         return Ok(());
     }
     let shown_new = crate::names::shown(new);
-    for harness in target_harnesses(decl, after, ItemKind::Agent, scope) {
+    for harness in target_harnesses(decl, given_side.manifest, ItemKind::Agent, scope) {
         let kept_source = under(source, harness, old);
         let given_source = under(source, harness, new);
-        let kept = access(&effective(&kept_source, scope, before, harness, old));
-        let given = access(&effective(&given_source, scope, after, harness, new));
+        let kept = access(&effective(
+            &kept_source,
+            scope,
+            kept_side.manifest,
+            harness,
+            old,
+        ));
+        let given = access(&effective(
+            &given_source,
+            scope,
+            given_side.manifest,
+            harness,
+            new,
+        ));
         let problem = match (kept, given) {
             // The harness refuses this agent's tool intent under the new
             // name, so it installs no file for it: no wider artifact.

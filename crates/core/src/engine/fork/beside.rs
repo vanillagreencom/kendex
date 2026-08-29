@@ -4,7 +4,7 @@
 //! source's content under the name it always had, the edits under the name
 //! the user chose.
 
-use super::access::refuse_if_widened;
+use super::access::{Side, one_revision, refuse_if_widened};
 use super::{
     Capture, Captured, ForkOf, capture, capture_ops, carries_name, edited_rendering, named_bytes,
     provenance, vacant_name,
@@ -76,6 +76,7 @@ pub fn fork_beside(
         files,
         carry,
         agent,
+        read_at,
     } = captured;
     let mut ops = capture_ops(env, scope, kind, new_name, &edited, named(files, new_name)?)?;
     let provenance = provenance(env, scope, kind, name, harness, &manifest, &decl)?;
@@ -122,7 +123,25 @@ pub fn fork_beside(
             .declared(kind)
             .get(new_name)
             .unwrap_or_else(|| unreachable!("declared above"));
-        refuse_if_widened(scope, &before, &manifest, declared, agent, name, new_name)?;
+        // One capture, read at one revision, is what every harness renders
+        // from once the fork lands. Establishing that they are all at that
+        // revision now is what lets the proof below read one source form
+        // for all of them.
+        let one = one_revision(env, scope, &manifest, declared, name, read_at.as_deref())?;
+        refuse_if_widened(
+            scope,
+            declared,
+            agent,
+            Side {
+                manifest: &before,
+                name,
+            },
+            Side {
+                manifest: &manifest,
+                name: new_name,
+            },
+            one,
+        )?;
     }
 
     let manifest_path = manifest::manifest_path(env, scope);

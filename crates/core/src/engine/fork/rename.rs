@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::access::refuse_if_widened;
+use super::access::{Side, no_catalog, refuse_if_widened};
 use super::{SKILL_NAME_FILES, local_item, named_bytes, vacant_name};
 use crate::apply::{Op, Plan, PlannedOp, Pre};
 use crate::engine::agent_carry::{OldName, rekey_agent_tables};
@@ -106,24 +106,10 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
     // project's tool denies, without its instructions, and outside its own
     // hooks.
     rekey_agent_tables(&mut manifest, kind, old, new, OldName::Gone);
-    // Nothing has been written; the declaration the rename will write is
-    // what the proof reads. A harness's own deny rules read the agent's
-    // name, so a rename can take a built-in restriction off an agent on
-    // every harness it targets — this is where that is refused.
-    //
-    // The two manifests are the whole of both sides, with no carry to fold
-    // in: only a fork already reading the local source can be renamed, and
-    // whatever a catalog contributed to it moved into the manifest when it
-    // was forked. The rekey above moved every one of those records to the
-    // new name, so the sides differ in the name alone.
+    // Nothing has been written yet; the declaration the rename will write
+    // is what the proof reads.
     if let Some(source) = &renamed {
-        let Some(decl) = manifest.declared(kind).get(new) else {
-            return Err(CoreError::NotDeclared {
-                kind,
-                name: new.to_owned(),
-            });
-        };
-        refuse_if_widened(scope, &before, &manifest, decl, source, old, new)?;
+        prove_access(scope, &before, &manifest, kind, source, old, new)?;
     }
     let manifest_path = manifest::manifest_path(env, scope);
     ops.push(PlannedOp {
@@ -138,6 +124,50 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
         scope: scope.clone(),
         ops,
     })
+}
+
+/// Refuse a rename that widens the agent's access. A harness's own deny
+/// rules read the agent's name, so a rename can take a built-in
+/// restriction off it on every harness it targets.
+///
+/// The two manifests are the whole of both sides, with no carry to fold
+/// in: only a fork already reading the local source can be renamed, and
+/// whatever a catalog contributed to it moved into the manifest when it
+/// was forked. The rekey the caller has already run moved every one of
+/// those records to the new name, so the sides differ in the name alone.
+///
+/// That one local file is also what every harness already renders from, so
+/// there is no catalog revision behind this source form for them to sit at
+/// odds over — the obligation a capture has to discharge does not arise.
+fn prove_access(
+    scope: &Scope,
+    before: &manifest::Manifest,
+    after: &manifest::Manifest,
+    kind: ItemKind,
+    source: &SourceAgent,
+    old: &str,
+    new: &str,
+) -> Result<()> {
+    let Some(decl) = after.declared(kind).get(new) else {
+        return Err(CoreError::NotDeclared {
+            kind,
+            name: new.to_owned(),
+        });
+    };
+    refuse_if_widened(
+        scope,
+        decl,
+        source,
+        Side {
+            manifest: before,
+            name: old,
+        },
+        Side {
+            manifest: after,
+            name: new,
+        },
+        no_catalog(),
+    )
 }
 
 /// The agent whose access this rename has to prove, or `None` where there
