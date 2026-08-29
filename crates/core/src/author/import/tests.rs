@@ -5,9 +5,13 @@ use std::path::Path;
 
 use super::*;
 use crate::env::FakeOs;
+
+#[path = "../../../../test_util.rs"]
+mod test_util;
 use crate::lock::{Lock, LockEntry};
 use crate::manifest::Method;
 use crate::model::HarnessId;
+use test_util::source_path;
 
 #[allow(clippy::unwrap_used)]
 fn entry(kind: ItemKind, name: &str, source: &str, repo: &str) -> LockEntry {
@@ -65,8 +69,8 @@ fn seeded() -> (tempfile::TempDir, Env, Scope) {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n[sources.cat]\npath = '{}'\n[skills.gh]\nsource = \"cat\"\n",
-            catalog.display()
+            "schema = 6\n[sources.cat]\n{}\n[skills.gh]\nsource = \"cat\"\n",
+            source_path(&catalog)
         ),
     )
     .unwrap();

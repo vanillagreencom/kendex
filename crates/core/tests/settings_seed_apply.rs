@@ -3,6 +3,10 @@
 //! project's settings file — write-if-absent per key, user edits win.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 use std::path::PathBuf;
 
@@ -42,8 +46,8 @@ fn fixture(enabled: bool) -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.review]\nsource = \"cat\"\nenabled = {enabled}\n",
-            source.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.review]\nsource = \"cat\"\nenabled = {enabled}\n",
+            source_path(&source)
         ),
     )
     .unwrap();
@@ -351,8 +355,8 @@ fn many_owners(templates: &[(&str, &str)]) -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n{declared}",
-            source.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n{declared}",
+            source_path(&source)
         ),
     )
     .unwrap();

@@ -2,6 +2,10 @@
 //! still reads.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -71,8 +75,8 @@ fn declare(w: &World, manifest: &Path, harnesses: &str) {
     put(
         manifest,
         &format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [{harnesses}]\nmethod = \"symlink\"\n\n[skills.big]\nsource = \"cat\"\n",
-            w.source.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [{harnesses}]\nmethod = \"symlink\"\n\n[skills.big]\nsource = \"cat\"\n",
+            source_path(&w.source)
         ),
     );
 }
@@ -168,8 +172,8 @@ fn two_tools_sharing_one_link_position_still_applies() {
     put(
         &env.global_manifest_file(),
         &format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"codex\", \"pi\"]\nmethod = \"symlink\"\n\n[skills.big]\nsource = \"cat\"\n",
-            w.source.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"codex\", \"pi\"]\nmethod = \"symlink\"\n\n[skills.big]\nsource = \"cat\"\n",
+            source_path(&w.source)
         ),
     );
 

@@ -4,6 +4,10 @@
 //! command, where a shell would read it as more than one argument.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -54,8 +58,8 @@ fn a_name_a_shell_would_split_is_never_printed_as_an_argument() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.\"{name}\"]\nsource = \"cat\"\n",
-            catalog.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.\"{name}\"]\nsource = \"cat\"\n",
+            source_path(&catalog)
         ),
     )
     .unwrap();

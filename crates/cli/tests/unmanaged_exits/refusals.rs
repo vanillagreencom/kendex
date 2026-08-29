@@ -2,6 +2,8 @@
 //! have to name the scope they were read in. Every offer here is checked
 //! against what a reader could actually run.
 
+use crate::test_util::source_path;
+
 use std::fs;
 
 use super::{folder_at, kendex, link_at, offer, plan, project_with, said};
@@ -96,8 +98,8 @@ fn an_exit_read_in_the_global_scope_says_so() {
     fs::write(
         global.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
-            catalog.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            source_path(&catalog)
         ),
     )
     .unwrap();
@@ -251,8 +253,8 @@ fn an_edit_is_never_told_to_move_files() {
     fs::write(
         &manifest,
         format!(
-            "{head}[sources.other]\npath = '{}'\n\n[install]{}",
-            elsewhere.display(),
+            "{head}[sources.other]\n{}\n\n[install]{}",
+            source_path(&elsewhere),
             tail.replace("source = \"cat\"", "source = \"other\"")
         ),
     )

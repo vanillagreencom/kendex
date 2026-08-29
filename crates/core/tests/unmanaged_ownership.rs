@@ -6,6 +6,10 @@
 //! one that is too mean reports kendex's own output back at the user.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 use std::path::PathBuf;
 
@@ -39,8 +43,8 @@ fn with_method(method: &str) -> World {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"{method}\"\n\n[skills.deploy]\nsource = \"cat\"\n",
-            home.join("catalog").display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"{method}\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            source_path(&home.join("catalog"))
         ),
     )
     .unwrap();
@@ -58,8 +62,8 @@ fn declare_for(w: &World, harnesses: &str) {
     fs::write(
         w.home.join("app/kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = {harnesses}\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"cat\"\n",
-            w.home.join("catalog").display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = {harnesses}\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            source_path(&w.home.join("catalog"))
         ),
     )
     .unwrap();
@@ -86,8 +90,8 @@ fn a_copy_install_never_owns_the_shared_tree() {
     fs::write(
         w.home.join("app/kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
-            w.home.join("catalog").display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            source_path(&w.home.join("catalog"))
         ),
     )
     .unwrap();
@@ -219,8 +223,8 @@ fn a_switched_off_install_is_still_ours_to_update() {
         fs::write(
             project.join("kendex.toml"),
             format!(
-                "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[agents.scout]\nsource = \"cat\"\n{enabled}",
-                home.join("catalog").display()
+                "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[agents.scout]\nsource = \"cat\"\n{enabled}",
+                source_path(&home.join("catalog"))
             ),
         )
         .unwrap();
@@ -320,8 +324,8 @@ fn the_take_over_shows_the_path_it_moves() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
-            home.join("catalog").display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            source_path(&home.join("catalog"))
         ),
     )
     .unwrap();

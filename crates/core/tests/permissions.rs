@@ -3,6 +3,10 @@
 //! allowlist.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 use std::path::PathBuf;
 
@@ -37,8 +41,8 @@ fn fixture() -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\", \"pi\"]\nmethod = \"symlink\"\n\n[agents.rust]\nsource = \"cat\"\n",
-            source.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"pi\"]\nmethod = \"symlink\"\n\n[agents.rust]\nsource = \"cat\"\n",
+            source_path(&source)
         ),
     )
     .unwrap();

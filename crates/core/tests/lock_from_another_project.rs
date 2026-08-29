@@ -8,6 +8,10 @@
 //! not read as this one's to take.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -68,8 +72,8 @@ fn declare(root: &Path, catalog: &Path) {
     put(
         &root.join("kendex.toml"),
         &format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.ship]\nsource = \"cat\"\n",
-            catalog.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.ship]\nsource = \"cat\"\n",
+            source_path(&catalog)
         ),
     );
 }

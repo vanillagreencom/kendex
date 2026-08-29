@@ -3,6 +3,10 @@
 //! and no host bytes reach a rendered artifact.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 
 use kendex_core::apply::Op;
@@ -39,8 +43,8 @@ fn a_symlinked_catalog_cannot_leak_host_files_into_artifacts() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.evil]\nsource = \"cat\"\n\n[skills.good]\nsource = \"cat\"\n",
-            source.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.evil]\nsource = \"cat\"\n\n[skills.good]\nsource = \"cat\"\n",
+            source_path(&source)
         ),
     )
     .unwrap();

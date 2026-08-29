@@ -3,6 +3,10 @@
 //! subscription, and install-all folding in the members it accounts for.
 #![cfg(unix)]
 
+#[path = "../../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -69,7 +73,7 @@ pub fn agent(catalog: &Path, name: &str) {
 pub fn manifest_with(f: &Fixture, sources: &[(&str, &Path)], declarations: &str) {
     let subscriptions: String = sources
         .iter()
-        .map(|(alias, path)| format!("[sources.{alias}]\npath = '{}'\n\n", path.display()))
+        .map(|(alias, path)| format!("[sources.{alias}]\n{}\n\n", source_path(&path)))
         .collect();
     write(
         &f.project,

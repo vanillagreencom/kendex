@@ -4,6 +4,10 @@
 //! click lands on the one a person is reading.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 
 use kendex_app::audit::{replace_unmanaged, view};
@@ -38,8 +42,8 @@ fn fixture() -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n\n[skills.lint]\nsource = \"cat\"\n",
-            source.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n\n[skills.lint]\nsource = \"cat\"\n",
+            source_path(&source)
         ),
     )
     .unwrap();
@@ -334,8 +338,8 @@ fn a_conflict_with_no_exit_of_its_own_still_reaches_the_page() {
     fs::write(
         &manifest,
         format!(
-            "{head}[sources.other]\npath = '{}'\n\n[install]{}",
-            elsewhere.display(),
+            "{head}[sources.other]\n{}\n\n[install]{}",
+            source_path(&elsewhere),
             tail.replace(
                 "[skills.deploy]\nsource = \"cat\"",
                 "[skills.deploy]\nsource = \"other\""

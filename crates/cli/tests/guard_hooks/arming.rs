@@ -2,6 +2,8 @@
 //! verbs, the migration off the retired arming, and what `kendex check`
 //! says about a repository in each state.
 
+use crate::test_util::source_path;
+
 use crate::{git_ok, install_package, install_package_undeclared, repo, run, said};
 
 /// Disarming removes only the helper and the package's own marked line;
@@ -558,8 +560,8 @@ fn an_agent_of_the_same_name_is_not_consent_to_commit_hooks() {
     std::fs::write(
         root.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n",
-            home.join("catalog").display()
+            "schema = 6\n\n[sources.cat]\n{}\n",
+            source_path(&home.join("catalog"))
         ),
     )
     .unwrap();

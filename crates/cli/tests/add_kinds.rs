@@ -3,6 +3,10 @@
 //! found by search, and Pi extensions refused toward their carrier.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -50,8 +54,8 @@ fn project_with_catalog(home: &Path) -> std::path::PathBuf {
         &project,
         "kendex.toml",
         &format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
-            catalog.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+            source_path(&catalog)
         ),
     );
     project

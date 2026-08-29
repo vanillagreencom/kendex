@@ -3,6 +3,8 @@
 //! contract is that a script reading these keeps reading them, and it is
 //! only a contract where every verb the change touched is under it.
 
+use crate::test_util::source_path;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -287,8 +289,8 @@ fn crowded_project(home: &Path, count: usize) -> PathBuf {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n{declared}",
-            catalog.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n{declared}",
+            source_path(&catalog)
         ),
     )
     .unwrap();

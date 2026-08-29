@@ -1,6 +1,10 @@
 //! The v0.1 → v0.2 schema migration: journaled, transactional, surgical.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 
 use kendex_core::apply;
@@ -38,8 +42,8 @@ fn fixture() -> Fixture {
     // Hand-formatted v0.1 manifest: the upgrade must change the schema line
     // and nothing else.
     let original = format!(
-        "# my project setup\nschema = 1\n\n[sources.cat]\npath = '{}'   # local catalog\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
-        source.display()
+        "# my project setup\nschema = 1\n\n[sources.cat]\n{}   # local catalog\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+        source_path(&source)
     );
     let manifest_path = project.join("kendex.toml");
     fs::write(&manifest_path, &original).unwrap();

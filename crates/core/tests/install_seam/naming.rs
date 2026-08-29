@@ -2,6 +2,8 @@
 //! subscription, a `marketplace::name` spelling says exactly which, and
 //! `/` keeps meaning `plugin/item` or `owner/repo` — never a qualifier.
 
+use crate::test_util::source_path;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -137,8 +139,8 @@ fn a_bare_name_offered_twice_refuses_printing_qualified_forms_and_repos() {
         &f.project,
         "kendex.toml",
         &format!(
-            "schema = 6\n\n[sources.a]\nrepo = \"owner1/tools\"\n\n[sources.b]\nrepo = \"owner2/kit\"\n\n[sources.c]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
-            c.display()
+            "schema = 6\n\n[sources.a]\nrepo = \"owner1/tools\"\n\n[sources.b]\nrepo = \"owner2/kit\"\n\n[sources.c]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+            source_path(&c)
         ),
     );
 

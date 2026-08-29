@@ -2290,6 +2290,8 @@ dependencies = [
  "kendex-core",
  "serde_json",
  "tempfile",
+ "toml 1.1.4+spec-1.1.0",
+ "url",
 ]
 
 [[package]]

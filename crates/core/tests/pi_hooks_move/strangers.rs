@@ -2,6 +2,8 @@
 //! did not write, a directory it has nothing left in, and a registry
 //! holding somebody's own hook.
 
+use crate::test_util::source_path;
+
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
@@ -102,8 +104,8 @@ fn a_global_registry_kendex_never_wrote_to_is_left_alone() {
     fs::write(
         &manifest,
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"pi\"]\n\n[hooks.guard]\nsource = \"cat\"\n",
-            w.catalog.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"pi\"]\n\n[hooks.guard]\nsource = \"cat\"\n",
+            source_path(&w.catalog)
         ),
     )
     .unwrap();

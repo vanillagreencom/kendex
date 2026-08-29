@@ -4,6 +4,10 @@
 //! around ours in its settings file untouched.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -62,8 +66,8 @@ fn fixture(declarations: &str) -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"gemini\"]\nmethod = \"symlink\"\n\n{declarations}",
-            source.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"gemini\"]\nmethod = \"symlink\"\n\n{declarations}",
+            source_path(&source)
         ),
     )
     .unwrap();
@@ -309,8 +313,8 @@ fn a_global_server_switches_off_in_the_file_gemini_keeps_that_state_in() {
         fs::write(
             &manifest,
             format!(
-                "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"gemini\"]\n\n[mcp-servers.gh]\nsource = \"cat\"\nenabled = {enabled}\n",
-                f._tmp.path().join("catalog").display()
+                "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"gemini\"]\n\n[mcp-servers.gh]\nsource = \"cat\"\nenabled = {enabled}\n",
+                source_path(&f._tmp.path().join("catalog"))
             ),
         )
         .unwrap();

@@ -4,6 +4,10 @@
 //! name each tool lists it under.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -73,9 +77,9 @@ fn fixture(harnesses: &str, declarations: &str) -> Fixture {
         &project,
         "kendex.toml",
         &format!(
-            "schema = 6\n\n[sources.market]\npath = '{}'\n\n[sources.plain]\npath = '{}'\n\n[install]\nharnesses = [{harnesses}]\nmethod = \"symlink\"\n\n{declarations}",
-            market.display(),
-            plain.display()
+            "schema = 6\n\n[sources.market]\n{}\n\n[sources.plain]\n{}\n\n[install]\nharnesses = [{harnesses}]\nmethod = \"symlink\"\n\n{declarations}",
+            source_path(&market),
+            source_path(&plain)
         ),
     );
 

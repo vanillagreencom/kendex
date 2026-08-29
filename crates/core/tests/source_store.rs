@@ -3,6 +3,10 @@
 //! moves being shown before it is followed.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -244,8 +248,8 @@ fn a_busy_cache_costs_only_its_own_source() {
     fs::write(
         &path,
         format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\nrev = \"main\"\n\n[sources.plain]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n\n[skills.local-gh]\nsource = \"plain\"\n",
-            plain.display()
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\nrev = \"main\"\n\n[sources.plain]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n\n[skills.local-gh]\nsource = \"plain\"\n",
+            source_path(&plain)
         ),
     )
     .unwrap();

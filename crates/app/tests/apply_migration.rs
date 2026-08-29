@@ -5,6 +5,10 @@
 //! longer looks old, and that the upgrade moves only the bytes it has to.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 
 use kendex_app::audit::{apply_scope, view};
@@ -34,8 +38,8 @@ impl Fixture {
 fn v01_fixture() -> Fixture {
     fixture(|source| {
         format!(
-            "# my project setup\nschema = 1\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
-            source.display()
+            "# my project setup\nschema = 1\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            source_path(&source)
         )
     })
 }

@@ -39,7 +39,11 @@ fn a_command_that_would_not_move_says_whether_the_app_went_without_it() {
 /// run needs except who owns the bytes. What each arm did to that
 /// command is then the whole difference between them.
 fn a_release_is_out(dir: &tempfile::TempDir) -> (Env, String, PathBuf) {
-    let home = dir.path();
+    a_release_is_out_under(dir.path())
+}
+
+fn a_release_is_out_under(home: &Path) -> (Env, String, PathBuf) {
+    std::fs::create_dir_all(home).unwrap();
     let installed = home.join("kendex");
     std::fs::write(&installed, INSTALLED).unwrap();
     std::fs::write(home.join("new-command"), OFFERED).unwrap();
@@ -60,15 +64,15 @@ fn a_release_is_out(dir: &tempfile::TempDir) -> (Env, String, PathBuf) {
     )
 }
 
-/// A `file://` URL for a host path. Windows spells a path with `\` and
-/// roots it at a drive letter rather than at `/`, and a URL takes
-/// neither.
+/// A `file://` URL for a host path, built by something that knows the
+/// grammar. Substituting separators is not enough: a path is allowed
+/// characters a URL reserves, so a home directory holding a space or a
+/// `#` would produce a URL that curl reads as a different address, or as
+/// no address at all.
 fn file_url(path: &Path) -> String {
-    let text = path.display().to_string().replace('\\', "/");
-    match text.starts_with('/') {
-        true => format!("file://{text}"),
-        false => format!("file:///{text}"),
-    }
+    url::Url::from_file_path(path)
+        .expect("a fixture path is absolute")
+        .to_string()
 }
 
 const INSTALLED: &[u8] = b"the command already here";
@@ -116,6 +120,30 @@ fn a_direct_command_is_replaced_from_the_feed() {
 
     assert_eq!(std::fs::read(&installed).unwrap(), OFFERED);
     assert!(!staged_path(&installed).exists());
+}
+
+/// The same arm again with the release sitting under a directory whose
+/// name holds characters a URL reserves. A space and a `#` are ordinary in
+/// a Windows profile directory, and spelled into a URL rather than encoded
+/// they address a different file, or none — the fetch either brings back
+/// the wrong bytes or fails outright.
+#[test]
+fn a_release_under_a_name_a_url_reserves_is_still_fetched() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("my release #1");
+    let (env, feed_url, installed) = a_release_is_out_under(&home);
+
+    run_on(
+        &env,
+        false,
+        &feed_url,
+        &installed,
+        &InstallChannel::Direct,
+        TEST_KEY,
+    )
+    .unwrap();
+
+    assert_eq!(std::fs::read(&installed).unwrap(), OFFERED);
 }
 
 /// The whole point of signing the command half: the feed names a host, so

@@ -11,7 +11,7 @@ use std::process::{Command, Output};
 use kendex_core::env::Env;
 #[path = "../../../test_util.rs"]
 mod test_util;
-pub use test_util::rooted;
+pub use test_util::{rooted, source_path};
 
 /// The frame a terminal gets, and nothing a verb ever writes itself.
 const FRAMING: [char; 12] = ['┌', '│', '└', '├', '╮', '╯', '─', '◇', '◆', '▲', '■', '●'];
@@ -151,8 +151,8 @@ fn blocked_project_at(home: &Path, project: &Path) {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n\n[skills.growth-guards]\nsource = \"cat\"\n\n[skills.tidy]\nsource = \"cat\"\n",
-            catalog.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n\n[skills.growth-guards]\nsource = \"cat\"\n\n[skills.tidy]\nsource = \"cat\"\n",
+            source_path(&catalog)
         ),
     )
     .unwrap();

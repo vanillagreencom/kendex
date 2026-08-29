@@ -3,6 +3,8 @@
 //! no frame, no symbol, no colour, and the same hierarchy the verbs
 //! wrote — a headline at column 0 and its detail two spaces in.
 
+use crate::test_util::source_path;
+
 use super::*;
 
 /// The run the issue names, said plainly. Every line of it, in order,
@@ -227,9 +229,9 @@ fn a_failure_after_the_write_still_records_and_reports_it() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = \
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = \
              [\"claude\"]\nmethod = \"copy\"\n\n[skills.armed]\nsource = \"cat\"\n",
-            catalog.display()
+            source_path(&catalog)
         ),
     )
     .unwrap();

@@ -2,6 +2,10 @@
 //! review. Each fails on the behavior it replaced.
 #![cfg(unix)]
 
+#[path = "../../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -60,8 +64,8 @@ fn declare(w: &World, scope: &Scope, body: &str) {
     put(
         &manifest::manifest_path(&w.env, scope),
         &format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{body}",
-            w.source.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{body}",
+            source_path(&w.source)
         ),
     );
 }

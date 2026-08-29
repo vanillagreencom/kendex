@@ -7,6 +7,10 @@
 //! window that closes the dialog leaves the repository as it was.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -108,10 +112,7 @@ fn fixture() -> Fixture {
     git(&project, &["commit", "--quiet", "-m", "start"]);
     fs::write(
         project.join("kendex.toml"),
-        format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n",
-            catalog.display()
-        ),
+        format!("schema = 6\n\n[sources.cat]\n{}\n", source_path(&catalog)),
     )
     .unwrap();
     Fixture {

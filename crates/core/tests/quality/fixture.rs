@@ -1,6 +1,8 @@
 //! The scope the scoring tests run against: one clean skill, one that pipes
 //! a download into a shell, and a project that declares both.
 
+use crate::test_util::source_path;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -63,8 +65,8 @@ pub fn fixture_with_method(method: &str) -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"{method}\"\n\n[skills.clean]\nsource = \"cat\"\n\n[skills.hostile]\nsource = \"cat\"\n",
-            source.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"{method}\"\n\n[skills.clean]\nsource = \"cat\"\n\n[skills.hostile]\nsource = \"cat\"\n",
+            source_path(&source)
         ),
     )
     .unwrap();

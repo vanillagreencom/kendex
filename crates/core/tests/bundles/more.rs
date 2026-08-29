@@ -1,6 +1,8 @@
 //! What a set does when the catalog changes its mind, when the catalog is a
 //! plugin registry, and when it names a member nobody offers.
 
+use crate::test_util::source_path;
+
 use std::fs;
 
 use kendex_core::apply;
@@ -104,8 +106,8 @@ fn a_plugin_registry_plugin_installs_as_a_bundle() {
         &f.project,
         "kendex.toml",
         &format!(
-            "schema = 6\n\n[sources.market]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[bundles.\"data-science\"]\nsource = \"market\"\n",
-            market.display()
+            "schema = 6\n\n[sources.market]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[bundles.\"data-science\"]\nsource = \"market\"\n",
+            source_path(&market)
         ),
     );
     apply_now(&f);

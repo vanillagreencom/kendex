@@ -3,6 +3,10 @@
 //! already installed.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 
 use kendex_core::engine::ops;
@@ -45,8 +49,8 @@ fn a_declared_name_cannot_be_rebound_before_apply() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.first]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"first\"\n",
-            first.display()
+            "schema = 6\n\n[sources.first]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"first\"\n",
+            source_path(&first)
         ),
     )
     .unwrap();

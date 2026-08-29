@@ -2,6 +2,10 @@
 //! agent rendering exactly as it was installed.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 use std::path::Path;
 
@@ -65,8 +69,8 @@ fn world_at(
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n{extra_sources}\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{declarations}",
-            catalog.display()
+            "schema = 6\n\n[sources.cat]\n{}\n{extra_sources}\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{declarations}",
+            source_path(&catalog)
         ),
     )
     .unwrap();

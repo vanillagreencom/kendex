@@ -4,6 +4,10 @@
 //! the default marketplace found by repo rather than by name.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -373,8 +377,8 @@ fn no_default_subscription_is_a_typed_error_never_a_guess() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.other]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
-            other.display()
+            "schema = 6\n\n[sources.other]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+            source_path(&other)
         ),
     )
     .unwrap();

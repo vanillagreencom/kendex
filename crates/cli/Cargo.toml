@@ -19,6 +19,13 @@ cliclack.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# Fixtures write manifests, and the serializer is what decides how a host
+# path is quoted in one. Already in the workspace; the CLI itself parses
+# no TOML.
+toml.workspace = true
+# Fixtures serve the release feed off disk, and a `file://` URL for a host
+# path is a grammar, not a substitution. Already in the tree under tauri.
+url = "2"
 
 [lints]
 workspace = true

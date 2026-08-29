@@ -25,7 +25,7 @@ use std::process::{Command, Output};
 
 #[path = "../../../test_util.rs"]
 mod test_util;
-use test_util::rooted;
+use test_util::{rooted, source_path};
 
 /// The binary, pointed at a fixture home it must treat as real — without
 /// `KENDEX_REAL_HOME` a debug build sandboxes itself into the dev home and
@@ -141,8 +141,8 @@ impl World {
         write(
             &self.project.join("kendex.toml"),
             &format!(
-                "schema = 6\n\n[sources.cat]\npath = '{}'\n",
-                self.catalog.display()
+                "schema = 6\n\n[sources.cat]\n{}\n",
+                source_path(&self.catalog)
             ),
         );
     }
@@ -161,9 +161,9 @@ impl World {
         write(
             &self.project.join("kendex.toml"),
             &format!(
-                "schema = 6\n\n[sources.cat]\npath = '{}'\nenabled = true\n\n\
+                "schema = 6\n\n[sources.cat]\n{}\nenabled = true\n\n\
                  [install]\nharnesses = [{tools}]\nmethod = \"symlink\"\n",
-                self.catalog.display()
+                source_path(&self.catalog)
             ),
         );
     }

@@ -10,6 +10,10 @@
 //! `arming` is putting it in place, taking it away, and reporting on it.
 #![cfg(unix)]
 
+#[path = "../../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 mod arming;
 mod gating;
 
@@ -109,10 +113,7 @@ pub fn install_package(home: &Path, root: &Path, skills: &[&str]) {
     if !manifest.is_file() {
         std::fs::write(
             &manifest,
-            format!(
-                "schema = 6\n\n[sources.cat]\npath = '{}'\n",
-                catalog.display()
-            ),
+            format!("schema = 6\n\n[sources.cat]\n{}\n", source_path(&catalog)),
         )
         .unwrap();
     }

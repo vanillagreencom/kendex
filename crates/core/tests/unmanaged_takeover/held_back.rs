@@ -3,6 +3,8 @@
 //! still gets its way out — one odd corner must not put the whole repo
 //! back where it started.
 
+use crate::test_util::source_path;
+
 use std::fs;
 
 use kendex_core::apply;
@@ -39,8 +41,8 @@ fn declare_tools(w: &World, harnesses: &str, skills: &str) {
     fs::write(
         w.home.join("app/kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = {harnesses}\nmethod = \"copy\"\n\n{skills}",
-            w.home.join("catalog").display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = {harnesses}\nmethod = \"copy\"\n\n{skills}",
+            source_path(&w.home.join("catalog"))
         ),
     )
     .unwrap();
@@ -177,8 +179,8 @@ fn a_linked_item_s_take_over_still_counts_as_settled() {
     fs::write(
         w.home.join("app/kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"cat\"\nharnesses = [\"claude\", \"codex\"]\n\n[skills.lint]\nsource = \"cat\"\n",
-            w.home.join("catalog").display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"cat\"\nharnesses = [\"claude\", \"codex\"]\n\n[skills.lint]\nsource = \"cat\"\n",
+            source_path(&w.home.join("catalog"))
         ),
     )
     .unwrap();
@@ -238,8 +240,8 @@ fn a_held_item_is_named_with_the_place_that_holds_it() {
         fs::write(
             w.home.join("app/kendex.toml"),
             format!(
-                "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"symlink\"\n\n{skills}",
-                w.home.join("catalog").display()
+                "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"symlink\"\n\n{skills}",
+                source_path(&w.home.join("catalog"))
             ),
         )
         .unwrap();

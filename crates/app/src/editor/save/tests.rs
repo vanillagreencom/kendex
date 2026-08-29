@@ -5,6 +5,10 @@ use kendex_core::manifest::{
 use kendex_core::model::HarnessId;
 use std::collections::BTreeMap;
 
+#[path = "../../../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 /// A project scope with a manifest already on disk, under a sandboxed
 /// home, so a save runs the real plan-and-apply.
 fn scope_with_manifest() -> (tempfile::TempDir, Env, Scope) {
@@ -290,8 +294,8 @@ fn scope_with_settings_skill() -> (tempfile::TempDir, Env, Scope) {
     std::fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\n\n[skills.review]\nsource = \"cat\"\n",
-            tmp.path().join("catalog").display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\n\n[skills.review]\nsource = \"cat\"\n",
+            source_path(&tmp.path().join("catalog"))
         ),
     )
     .unwrap();

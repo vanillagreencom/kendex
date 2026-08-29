@@ -2,6 +2,8 @@
 //! `~/.pi/agent` — the install a person makes once and every project then
 //! carries, so the every-start warning bites hardest here.
 
+use crate::test_util::source_path;
+
 use std::fs;
 use std::path::PathBuf;
 
@@ -35,8 +37,8 @@ fn global(body: &str) -> Global {
     fs::write(
         &manifest,
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"pi\"]\n\n{body}",
-            catalog.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"pi\"]\n\n{body}",
+            source_path(&catalog)
         ),
     )
     .unwrap();

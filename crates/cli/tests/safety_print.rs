@@ -7,6 +7,10 @@
 //! recommendation, no prompt, and no score anywhere in the exit code.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -43,8 +47,8 @@ fn declared(home: &Path, body: &str) -> std::path::PathBuf {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
-            catalog.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            source_path(&catalog)
         ),
     )
     .unwrap();

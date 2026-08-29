@@ -3,8 +3,12 @@ use std::path::Path;
 
 use super::*;
 use crate::env::FakeOs;
+
+#[path = "../../../../test_util.rs"]
+mod test_util;
 use crate::lock::{Lock, LockEntry};
 use crate::model::{HarnessId, Scope};
+use test_util::source_path;
 
 mod repo;
 mod root_skill;
@@ -76,10 +80,7 @@ fn cat(scope: &Scope) -> Catalog {
 }
 
 fn sources_decl(catalog: &Path) -> String {
-    format!(
-        "schema = 6\n[sources.cat]\npath = '{}'\n",
-        catalog.display()
-    )
+    format!("schema = 6\n[sources.cat]\n{}\n", source_path(&catalog))
 }
 
 #[test]
@@ -331,9 +332,9 @@ fn a_name_taken_by_another_source_is_shown_before_the_click() {
     let other = tmp.path().join("other");
     skill(&other, "skills", "gh", "body");
     let manifest = format!(
-        "{}[sources.two]\npath = '{}'\n[skills.gh]\nsource = \"two\"\n[bundles.starter]\nsource = \"two\"\n",
+        "{}[sources.two]\n{}\n[skills.gh]\nsource = \"two\"\n[bundles.starter]\nsource = \"two\"\n",
         sources_decl(&catalog),
-        other.display()
+        source_path(&other)
     );
     let (env, scope) = project(tmp.path(), &manifest);
 

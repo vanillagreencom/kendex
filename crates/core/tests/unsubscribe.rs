@@ -3,6 +3,10 @@
 //! and removing the source uninstalls exactly that.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 use std::path::Path;
 
@@ -37,8 +41,8 @@ fn world(
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n{extra_sources}\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{declarations}",
-            catalog.display()
+            "schema = 6\n\n[sources.cat]\n{}\n{extra_sources}\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{declarations}",
+            source_path(&catalog)
         ),
     )
     .unwrap();
@@ -238,9 +242,9 @@ fn a_member_another_bundle_carries_survives_removal() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n[sources.other]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[bundles.core]\nsource = \"cat\"\n[bundles.also]\nsource = \"other\"\n",
-            cat.display(),
-            other.display()
+            "schema = 6\n\n[sources.cat]\n{}\n[sources.other]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[bundles.core]\nsource = \"cat\"\n[bundles.also]\nsource = \"other\"\n",
+            source_path(&cat),
+            source_path(&other)
         ),
     )
     .unwrap();

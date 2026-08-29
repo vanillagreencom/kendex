@@ -4,6 +4,10 @@
 //! ours in its files untouched.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -59,8 +63,8 @@ fn fixture(declarations: &str) -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"copilot\"]\nmethod = \"symlink\"\n\n{declarations}",
-            source.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"copilot\"]\nmethod = \"symlink\"\n\n{declarations}",
+            source_path(&source)
         ),
     )
     .unwrap();

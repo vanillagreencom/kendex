@@ -5,6 +5,10 @@
 //! confirmation (#1292).
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -65,16 +69,16 @@ fn refresh_reads_each_installs_own_recorded_source_across_scopes() {
     fs::write(
         w.env.global_manifest_file(),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
-            w.home.join("catA").display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            source_path(&w.home.join("catA"))
         ),
     )
     .unwrap();
     fs::write(
         w.project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
-            w.home.join("catB").display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            source_path(&w.home.join("catB"))
         ),
     )
     .unwrap();
@@ -182,8 +186,8 @@ fn add_writes_nothing_before_validation_and_confirmation() {
     let w = world();
     write_catalog(&w.home.join("cat"), "Body.");
     let manifest_text = format!(
-        "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
-        w.home.join("cat").display()
+        "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+        source_path(&w.home.join("cat"))
     );
     fs::write(w.project.join("kendex.toml"), &manifest_text).unwrap();
     let scope = Scope::Project {

@@ -5,6 +5,10 @@
 //! not, why, and what to type next.
 #![cfg(unix)]
 
+#[path = "../../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -57,8 +61,8 @@ fn manifest(project: &Path, catalog: &Path, tools: &str, method: &str, declarati
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = {tools}\nmethod = \"{method}\"\n\n{declarations}",
-            catalog.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = {tools}\nmethod = \"{method}\"\n\n{declarations}",
+            source_path(&catalog)
         ),
     )
     .unwrap();

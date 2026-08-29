@@ -3,6 +3,10 @@
 //! model says where every declared key stands.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
@@ -71,8 +75,8 @@ fn fixture_at(home: std::path::PathBuf, template: &str, tmp: tempfile::TempDir) 
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.review]\nsource = \"cat\"\n",
-            source.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.review]\nsource = \"cat\"\n",
+            source_path(&source)
         ),
     )
     .unwrap();

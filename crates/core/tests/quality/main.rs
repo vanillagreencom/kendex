@@ -3,6 +3,9 @@
 //! report.
 #![cfg(unix)]
 
+#[path = "../../../test_util.rs"]
+mod test_util;
+
 mod advisory;
 mod fixture;
 mod kinds;

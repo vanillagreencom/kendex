@@ -2,6 +2,10 @@
 //! take, what it must leave, and what it has to say about the difference.
 #![cfg(unix)]
 
+#[path = "../../../test_util.rs"]
+mod test_util;
+use test_util::source_path;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -83,8 +87,8 @@ fn world_declaring(body: &str) -> World {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"pi\"]\nmethod = \"symlink\"\n\n{body}",
-            catalog.display()
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"pi\"]\nmethod = \"symlink\"\n\n{body}",
+            source_path(&catalog)
         ),
     )
     .unwrap();
