@@ -31,14 +31,28 @@
 #   tools/vacuous-suite-scan --all                    # every skill with suites
 #   tools/vacuous-suite-scan skills/linear            # one named skill
 #   tools/vacuous-suite-scan --list --all             # names, not just counts
+#
+# The invariant, stated once and enforced once, where the exit status is
+# computed: the scan exits nonzero unless suites were actually MEASURED, and
+# the number gating that is the count of measurements taken — not of targets
+# named, directories resolved, or suites found. A suite that could not run in
+# the copy was not measured, so a run where every suite was unrunnable is a
+# total measurement failure and says so, rather than reporting zeroes at
+# status 0 for automation to read as clean.
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LIST_NAMES=0
 SUITE_TIMEOUT="${VACUOUS_SCAN_TIMEOUT:-120}"
+# macOS ships coreutils' timeout as gtimeout when it ships it at all, so the
+# name is overridable — and its absence is a setup error, reported once here
+# rather than as every suite failing to run.
+SUITE_TIMEOUT_BIN="${VACUOUS_SCAN_TIMEOUT_BIN:-timeout}"
 SCAN_TMP=""
 SCAN_CONTRADICTIONS=0
+SCAN_MEASURED=0
+SCAN_UNMEASURED=""
 
 die() {
     echo "vacuous-suite-scan: $*" >&2
@@ -79,9 +93,18 @@ list_suites() {
     done
 }
 
+require_setup() {
+    command -v "$SUITE_TIMEOUT_BIN" >/dev/null 2>&1 ||
+        die "$SUITE_TIMEOUT_BIN is not installed: every suite is run under it, so without it nothing can be measured (GNU coreutils provides it, as gtimeout on macOS — set VACUOUS_SCAN_TIMEOUT_BIN)"
+    [[ "$SUITE_TIMEOUT" =~ ^[0-9]+[smhd]?$ ]] ||
+        die "VACUOUS_SCAN_TIMEOUT is not a whole-number duration: $SUITE_TIMEOUT"
+    [[ "${SUITE_TIMEOUT%[smhd]}" -gt 0 ]] ||
+        die "VACUOUS_SCAN_TIMEOUT of $SUITE_TIMEOUT disables the bound rather than setting it, which is never what a caller means by zero"
+}
+
 run_suite() {
     local suite_path="$1"
-    timeout "$SUITE_TIMEOUT" bash "$suite_path" >/dev/null 2>&1
+    "$SUITE_TIMEOUT_BIN" "$SUITE_TIMEOUT" bash "$suite_path" >/dev/null 2>&1
 }
 
 # A suite that declares the harness as its subject: this metric breaks product
@@ -93,7 +116,7 @@ declares_harness_subject() {
 
 scan_skill() {
     local skill_dir="$1"
-    local name tmp pristine blanked suite
+    local name tmp pristine blanked suite measured=0
     local -a suites=() vacuous=() unrunnable=() red=() harness=() contradicting=()
 
     name="$(basename "$skill_dir")"
@@ -135,6 +158,12 @@ scan_skill() {
         fi
     done
 
+    # A measurement is a suite that produced a verdict. An unrunnable one did
+    # not: it never reached the comparison this scan is made of.
+    measured=$((${#vacuous[@]} + ${#harness[@]} + ${#red[@]} + ${#contradicting[@]}))
+    SCAN_MEASURED=$((SCAN_MEASURED + measured))
+    [[ "$measured" -gt 0 ]] || SCAN_UNMEASURED="$SCAN_UNMEASURED $name"
+
     printf '%-20s %3d suites  %3d vacuous  %3d harness-subject  %3d detecting  %3d unrunnable-in-copy\n' \
         "$name" "${#suites[@]}" "${#vacuous[@]}" "${#harness[@]}" "${#red[@]}" "${#unrunnable[@]}"
 
@@ -161,6 +190,8 @@ scannable() {
 main() {
     local -a targets=() resolved=()
     local arg all=0
+
+    require_setup
     for arg in "$@"; do
         case "$arg" in
         --list) LIST_NAMES=1 ;;
@@ -197,15 +228,21 @@ main() {
         done
     fi
 
-    # The requirement that stands whichever mode ran: never report success
-    # having measured nothing.
-    [[ ${#resolved[@]} -gt 0 ]] ||
-        die "nothing to scan: name a skill directory, or pass --all"
-
-    for arg in "${resolved[@]}"; do
+    for arg in ${resolved[@]+"${resolved[@]}"}; do
         scan_skill "$arg"
     done
 
+    # The one place the exit status is decided, and it is gated on the count of
+    # measurements TAKEN — never on the count of directories resolved, which is
+    # what let a run whose every suite was unrunnable exit 0. Selecting nothing
+    # and measuring nothing are the same failure here, at the whole-run level
+    # and per skill, so neither needs its own check.
+    if [[ "$SCAN_MEASURED" -eq 0 || -n "$SCAN_UNMEASURED" ]]; then
+        die "no suite was measured${SCAN_UNMEASURED:+ in:$SCAN_UNMEASURED} — a scan that measured nothing is not a scan that passed; name a skill directory or pass --all, and check that its suites run from a copy"
+    fi
+
+    # A separate invariant, not a second statement of the one above: this is a
+    # declaration the measurement disproved, not a measurement that failed.
     [[ "$SCAN_CONTRADICTIONS" -eq 0 ]] ||
         die "a suite declared harness-subject that this metric did reach"
 }
