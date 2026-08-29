@@ -27,13 +27,20 @@ const render = (
   automaticSkills: Record<string, string[]>,
   inherited: { skills: string[]; under: string } | null = null,
   agent = "orch",
+) => withInventory(inventory(automaticSkills), chosen, inherited, agent);
+
+const withInventory = (
+  held: EditorInventory | null,
+  chosen: string[] | null,
+  inherited: { skills: string[]; under: string } | null = null,
+  agent = "orch",
 ) =>
   renderToStaticMarkup(
     <ItemSkills
       agent={agent}
       chosen={chosen}
       inherited={inherited}
-      inventory={inventory(automaticSkills)}
+      inventory={held}
       onChange={() => {}}
     />,
   );
@@ -97,5 +104,23 @@ describe("a row this agent inherits", () => {
     const shown = render(["dev"], {}, inherited, "reviewer-rust");
     expect(shown).toContain("Remove dev");
     expect(shown).not.toContain(skillsInherited("rust"));
+  });
+});
+
+// The editor drops a place's inventory when its read fails, so "no entry
+// for this agent" and "no inventory at all" both arrive as undefined.
+// Only the first is a fact about the agent.
+describe("a place whose inventory was not read", () => {
+  it("makes no claim about what the agent gets", () => {
+    const shown = withInventory(null, null);
+    expect(shown).not.toContain(SKILLS_AUTOMATIC_UNRECORDED);
+    expect(shown).not.toContain(SKILLS_AUTOMATIC_NONE);
+    expect(shown).not.toContain(SKILLS_AUTOMATIC);
+  });
+
+  // The claim is still made where an inventory was read and holds nothing
+  // for this agent — that is a fact, and dropping it would lose it.
+  it("still says so where the inventory was read and has no entry", () => {
+    expect(render(null, {})).toContain(SKILLS_AUTOMATIC_UNRECORDED);
   });
 });

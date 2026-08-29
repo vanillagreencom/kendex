@@ -211,8 +211,8 @@ lives in one capability table read by core and UI.
   (`HarnessId` in core, "Harnesses" in the sidebar). Never "tool" on screen.
 - Hue carries exactly one meaning: **which harness** (`--tool-*`, one per
   harness). Status keeps the semantic tokens; item kinds are told apart by
-  icon. One exception: a Library row's kind icon takes `--customized` when
-  the package is changed, and the table prints the key above itself.
+  icon. One exception: a kind icon takes `--customized` where the package
+  is changed, on a Library row and on its own page; the table prints the key.
 - In a table, a harness is its mark (logo + hue), name on hover and for
   screen readers. Where a tool is stated once — a package's own details —
   the name is written out.
@@ -259,12 +259,12 @@ lives in one capability table read by core and UI.
   `lib/customization.ts` slices that draft per package.
 - A place is customized by settings, a hand edit, or a fork, and
   `lib/customized-places.ts::placeStandings` is the one answer, over a
-  `PlacesSource` that only `placesSource` builds. Its three readers: the
-  Library row's mark (`lib/library-standings.ts`), the package header's
-  (`lib/package-mark.ts`), and the Customize index (`lib/customized-here.ts`),
-  which reads the open draft for its place and says nothing is customized
-  only once the update read has landed (`lib/updates-read-state.ts`:
-  pending says it is checking, failed that packages may be missing).
+  `PlacesSource` that only `placesSource` builds. Its readers are what
+  `grep -rn placeStandings ui/src` finds, the Customize index
+  (`lib/customized-here.ts`) among them: it reads the open draft for its
+  place and says nothing is customized only once the update read has
+  landed (`lib/updates-read-state.ts`: pending says it is checking, failed
+  that packages may be missing).
 - Hook events have one vocabulary — Claude Code's names, in
   `core/hook.rs::EVENTS`; every other harness's map is keyed by it. The
   picker offers that list, the validator rejects anything outside it, the renderers read it.

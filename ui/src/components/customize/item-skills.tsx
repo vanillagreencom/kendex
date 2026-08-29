@@ -44,7 +44,8 @@ export function ItemSkills({
 }) {
   // What the catalog gave this agent, so the automatic state names the
   // skills instead of leaving an empty box that reads as "none".
-  // Undefined is "nothing recorded here", which is not "none".
+  // Undefined is "nothing recorded here", which is not "none" — and only
+  // an inventory that was read can say even that.
   const automatic = inventory?.automaticSkills[agent];
   const shown = chosen ?? inherited?.skills ?? automatic ?? [];
   const known = [
@@ -59,11 +60,15 @@ export function ItemSkills({
   // picking one the catalog already assigns is how a declaration that
   // keeps it starts.
   const unchosen = known.filter((skill) => !(chosen ?? []).includes(skill));
-  const note = chosen ? SKILLS_CHOSEN : notChosen(inherited, automatic);
+  const note = chosen
+    ? SKILLS_CHOSEN
+    : notChosen(inventory, inherited, automatic);
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-[13px] text-muted-foreground">{note}</p>
+      {note ? (
+        <p className="text-[13px] text-muted-foreground">{note}</p>
+      ) : null}
       {shown.length > 0 ? (
         <div className="flex flex-wrap gap-1.5">
           {shown.map((skill) => (
@@ -121,11 +126,19 @@ export function ItemSkills({
 
 /** What the section says when this agent has no row of its own: the list
  *  it inherits, the catalog's, or that nothing is recorded here — three
- *  answers, and none of them may be printed over another. */
+ *  answers, and none of them may be printed over another.
+ *
+ *  Null is a fourth: with no inventory read for this place there is
+ *  nothing to say, and "nothing is recorded" would be saying it. The
+ *  editor drops a place's inventory when its read fails, so the two
+ *  arrive here looking alike — an absent entry and an absent inventory —
+ *  and only the second means nobody knows. */
 function notChosen(
+  inventory: EditorInventory | null,
   inherited: { under: string } | null,
   automatic: string[] | undefined,
-): string {
+): string | null {
+  if (!inventory) return null;
   if (inherited) return skillsInherited(inherited.under);
   if (automatic === undefined) return SKILLS_AUTOMATIC_UNRECORDED;
   return automatic.length > 0 ? SKILLS_AUTOMATIC : SKILLS_AUTOMATIC_NONE;

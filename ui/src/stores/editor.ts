@@ -3,7 +3,7 @@ import { commands, type EditorInventory, type Scope } from "@/bindings";
 import { type Draft, emptyDraft, toDraft } from "@/lib/editor-draft";
 import { sameScope, scopeKey } from "@/lib/scope";
 import { useAuditStore } from "./audit";
-import { manifestsOf, openInventory, recorded } from "./editor-cache";
+import { manifestsOf, recorded } from "./editor-cache";
 import { useScanStore } from "./scan";
 import { useSettingsStore } from "./settings";
 

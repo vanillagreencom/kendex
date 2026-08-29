@@ -45,8 +45,9 @@ pub struct EditorInventory {
 
 /// What one scope's lock and manifest say about its agents' skills: the
 /// assignment each got from the catalog, and the `[agent-skills]` entry
-/// each reads. Both keyed by agent name, both off the same pass, so the
-/// two cannot end up keyed by different sets of agents.
+/// each reads. Both are keyed by agent name and filled in one pass, and
+/// an agent is in either only when that question has an answer for it —
+/// so an agent in one may be absent from the other.
 #[derive(Default)]
 struct AgentSkillFacts {
     automatic: std::collections::BTreeMap<String, Vec<String>>,
@@ -151,8 +152,10 @@ pub fn custom_hook_deliveries(
 /// lookup, so a v1 lock degrades to "nothing recorded" like the rest of the
 /// read surface instead of taking the editor's inventory down with it.
 ///
-/// Both answers come off one pass over the lock's agent entries, so the
-/// two maps cannot end up keyed by different sets of agents.
+/// Both answers come off one pass over the lock's agent entries. Presence
+/// in each is its own question: an agent lands in `automatic` only with a
+/// recorded assignment, and in `declared` only where an entry resolves, so
+/// neither map's keys are the other's.
 fn agent_skill_facts(
     env: &Env,
     scope: &Scope,
