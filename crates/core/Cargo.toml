@@ -26,7 +26,6 @@ base64.workspace = true
 rustix.workspace = true
 
 [dev-dependencies]
-kendex-test-support.workspace = true
 tempfile.workspace = true
 fd-lock.workspace = true
 
