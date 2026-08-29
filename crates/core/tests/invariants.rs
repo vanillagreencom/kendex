@@ -270,7 +270,10 @@ fn invariant_4_provenance_is_durable() {
             assert_eq!(name, "gh");
             assert_eq!(
                 existing,
-                f.source.canonicalize().unwrap().display().to_string()
+                kendex_core::paths::canonical(&f.source)
+                    .unwrap()
+                    .display()
+                    .to_string()
             );
         }
         other => panic!("expected SourceCollision, got {other}"),

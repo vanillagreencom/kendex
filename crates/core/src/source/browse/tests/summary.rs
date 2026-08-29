@@ -11,7 +11,7 @@ fn a_subscription_summary_answers_with_itself_and_counts_its_offer() {
     // declared path enters, so the fixture enters canonical space once —
     // macOS reaches its temp directories through a `/var` → `/private/var`
     // symlink, and a declared spelling would compare unequal to it.
-    let root = tmp.path().canonicalize().unwrap();
+    let root = crate::paths::canonical(tmp.path()).unwrap();
     let catalog = root.join("catalog");
     skill(&catalog, "skills", "gh", "body");
     skill(&catalog, "skills", "extra", "body");

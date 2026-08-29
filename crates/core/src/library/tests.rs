@@ -53,7 +53,7 @@ fn origins_are_read_off_the_lock_manifest_and_scan() {
          forked-at = \"2026-01-01\"\n",
     )
     .unwrap();
-    let project = project.canonicalize().unwrap();
+    let project = crate::paths::canonical(&project).unwrap();
     let scope = Scope::Project {
         root: project.clone(),
     };

@@ -188,8 +188,14 @@ pub fn replace(env: &Env, settings: &AppSettings, held: &Base) -> Result<Base> {
 }
 
 /// Canonicalizes, rejects non-directories and duplicates, persists.
+///
+/// Through `crate::paths::canonical`, the rule discovery answers with. A
+/// registry entry is what `project list` prints and what the app renders
+/// on a project card, so registering a path in one spelling while
+/// `project discover` reports it in another leaves two commands disagreeing
+/// about one project.
 pub fn register_project(env: &Env, path: &Path) -> Result<(AppSettings, Base)> {
-    let canonical = path.canonicalize().map_err(|e| CoreError::io(path, e))?;
+    let canonical = crate::paths::canonical(path).map_err(|e| CoreError::io(path, e))?;
     if !canonical.is_dir() {
         return Err(CoreError::NotADirectory { path: canonical });
     }
@@ -205,8 +211,11 @@ pub fn register_project(env: &Env, path: &Path) -> Result<(AppSettings, Base)> {
 
 /// Removes by canonical path when resolvable, else by the recorded path —
 /// a registered project whose directory vanished must still be removable.
+///
+/// By the rule [`register_project`] wrote the entry under, since this is a
+/// comparison against what that stored.
 pub fn unregister_project(env: &Env, path: &Path) -> Result<(AppSettings, Base)> {
-    let target = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let target = crate::paths::canonical(path).unwrap_or_else(|_| path.to_path_buf());
     mutate(env, |settings| {
         let before = settings.projects.len();
         settings.projects.retain(|p| *p != target);

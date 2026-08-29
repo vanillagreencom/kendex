@@ -181,7 +181,7 @@ mod tests {
             .settings;
         assert_eq!(
             settings.projects,
-            [tmp.path().join("dev/hyprtrade").canonicalize().unwrap()]
+            [kendex_core::paths::canonical(&tmp.path().join("dev/hyprtrade")).unwrap()]
         );
     }
 
@@ -199,7 +199,7 @@ mod tests {
             .settings;
         assert_eq!(
             settings.projects,
-            [tmp.path().join("dev/hyprtrade").canonicalize().unwrap()]
+            [kendex_core::paths::canonical(&tmp.path().join("dev/hyprtrade")).unwrap()]
         );
     }
 
