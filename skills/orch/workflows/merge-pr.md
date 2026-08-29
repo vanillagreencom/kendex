@@ -192,10 +192,10 @@ Use the output as `MAIN_REPO_ROOT`.
    c. Close the container through the serialized helper:
 
       ```bash
-      [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/container-close [PARENT_ID]
+      [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/container-close [MAIN_REPO_ROOT] [PARENT_ID]
       ```
 
-      `closed [PARENT_ID]` → record the closure in § 6. If this container has a container parent, re-run the step-2 sync and repeat a-c for that parent.
+      `closed [PARENT_ID]` → record the closure in § 6, including every `container-close: restored [CHILD_ID] to [STATE]` stderr line. If this container has a container parent, re-run the step-2 sync and repeat a-c for that parent.
 
       `deferred [CHILD_IDS...]` → record `container [PARENT_ID] stays open (pending: [CHILD_IDS])` in § 6 and continue to step 3. A bare `deferred` means another merge session still owns the close; report that and continue. On a non-zero exit, carry its diagnostic into § 6, do not climb to another parent, and continue to step 3.
 
@@ -257,7 +257,7 @@ Use the output as `MAIN_REPO_ROOT`.
 | Branch | [BRANCH_NAME] (deleted / kept) |
 | Worktree | removed / kept — [cause] |
 | Issue Tracker | [ISSUE_ID] → Done (via magic words) |
-| Container | [PARENT_ID] → Done / deferred — [pending ids or cause] |
+| Container | [PARENT_ID] → Done / deferred — [pending ids, restorations, or cause] |
 | Base sync | local `[BASE_BRANCH]` → [NEW_SHA] |
 
 </output_format>

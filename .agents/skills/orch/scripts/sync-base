@@ -29,20 +29,31 @@ GIT_AUTH="$SCRIPT_DIR/../../github/scripts/git-https-auth"
 "$GIT_AUTH" -C "$REPO_ROOT" fetch --prune origin \
   "+refs/heads/$BASE_BRANCH:refs/remotes/origin/$BASE_BRANCH"
 
+git -C "$REPO_ROOT" worktree prune
 BASE_WORKTREE=""
 CURRENT_PATH=""
-while IFS= read -r line; do
+while IFS= read -r -d '' line; do
   case "$line" in
     worktree\ *) CURRENT_PATH="${line#worktree }" ;;
-    "branch refs/heads/$BASE_BRANCH") BASE_WORKTREE="$CURRENT_PATH" ;;
+    "branch refs/heads/$BASE_BRANCH")
+      if [[ -n "$CURRENT_PATH" && -d "$CURRENT_PATH" ]]; then
+        BASE_WORKTREE="$(cd -- "$CURRENT_PATH" && pwd -P)"
+      fi
+      ;;
+    '') CURRENT_PATH="" ;;
   esac
-done < <(git -C "$REPO_ROOT" worktree list --porcelain)
+done < <(git -C "$REPO_ROOT" worktree list --porcelain -z)
 
 if [[ -n "$BASE_WORKTREE" ]]; then
+  DIRTY="$(git -C "$BASE_WORKTREE" status --porcelain --untracked-files=all)"
+  if [[ -n "$DIRTY" ]]; then
+    echo "sync-base: base checkout is dirty: $BASE_WORKTREE" >&2
+    printf '%s\n' "$DIRTY" >&2
+    exit 1
+  fi
   git -C "$BASE_WORKTREE" merge --ff-only "origin/$BASE_BRANCH" >&2
 else
   git -C "$REPO_ROOT" fetch . \
     "refs/remotes/origin/$BASE_BRANCH:refs/heads/$BASE_BRANCH" >&2
 fi
-git -C "$REPO_ROOT" worktree prune
 printf '%s\n' "$BASE_BRANCH"

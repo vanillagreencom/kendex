@@ -4,103 +4,114 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-usage: container-close <PARENT_ID>
+usage: container-close <MAIN_REPOSITORY> <PARENT_ID>
 
-Serializes closure per Linear container. Prints `closed <PARENT_ID>` when the
-container is Done, including an idempotent repeat. Prints `deferred` followed
-by pending child ids when closure must wait. A bare `deferred` means another
-caller still owns the close. Operational and validation failures exit 1.
+Serializes closure per Linear container in the shared main repository. Prints
+`closed <PARENT_ID>` when the container is Done, including an idempotent repeat.
+Prints `deferred` followed by pending child ids when closure must wait. A bare
+`deferred` means another caller still owns the close. Operational and validation
+failures exit 1. Restoration records are written to stderr.
 EOF
 }
 
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
-[[ $# -eq 1 && -n "$1" ]] || { usage >&2; exit 2; }
+[[ $# -eq 2 && -n "$1" && -n "$2" ]] || { usage >&2; exit 2; }
 
-PARENT_ID="$1"
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LINEAR="$SCRIPT_DIR/../../linear/scripts/linear.sh"
 [[ -x "$LINEAR" ]] || { echo "container-close: Linear CLI is missing or not executable: $LINEAR" >&2; exit 1; }
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" \
-  || { echo "container-close: not inside a git work tree" >&2; exit 1; }
-mkdir -p "$REPO_ROOT/tmp"
-LOCK_DIR="$REPO_ROOT/tmp/container-close-$PARENT_ID.lock"
-SNAPSHOT="$REPO_ROOT/tmp/container-canceled-$PARENT_ID.lst"
-SUMMARY=""
-LOCK_HELD=false
+command -v flock >/dev/null 2>&1 || { echo "container-close: flock is required" >&2; exit 1; }
+command -v gh >/dev/null 2>&1 || { echo "container-close: gh is required to preserve child PR references" >&2; exit 1; }
+
+MAIN_REPO_ROOT="$(cd -- "$1" 2>/dev/null && pwd -P)" \
+  || { echo "container-close: main repository is not a directory: $1" >&2; exit 1; }
+git -C "$MAIN_REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+  || { echo "container-close: not a git work tree: $MAIN_REPO_ROOT" >&2; exit 1; }
+PARENT_ID="$2"
+[[ "$PARENT_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && "$PARENT_ID" != *..* ]] \
+  || { echo "container-close: invalid parent id: $PARENT_ID" >&2; exit 2; }
+
+mkdir -p "$MAIN_REPO_ROOT/tmp"
+LOCK_FILE="$MAIN_REPO_ROOT/tmp/container-close-$PARENT_ID.lock"
+umask 077
+exec 9>>"$LOCK_FILE"
+if ! flock -n 9; then
+  printf 'deferred\n'
+  exit 0
+fi
+
+RUN_DIR="$(mktemp -d "$MAIN_REPO_ROOT/tmp/container-close-$PARENT_ID.XXXXXX")" \
+  || { echo "container-close: cannot create private run directory" >&2; exit 1; }
+chmod 700 "$RUN_DIR"
+SNAPSHOT="$RUN_DIR/canceled.tsv"
+CURRENT="$RUN_DIR/current.jsonl"
+SUMMARY="$RUN_DIR/summary.md"
 
 cleanup() {
-  [[ -z "$SUMMARY" ]] || rm -f -- "$SUMMARY"
-  if $LOCK_HELD; then rmdir -- "$LOCK_DIR" 2>/dev/null || true; fi
+  rm -f -- "$SNAPSHOT" "$CURRENT" "$SUMMARY"
+  rmdir -- "$RUN_DIR" 2>/dev/null || true
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM HUP
 
-lock_is_stale() {
-  local modified="" now
-  modified="$(stat -c %Y "$LOCK_DIR" 2>/dev/null || stat -f %m "$LOCK_DIR" 2>/dev/null || true)"
-  [[ "$modified" =~ ^[0-9]+$ ]] || return 1
-  now="$(date +%s)"
-  [[ $((now - modified)) -gt 3600 ]]
-}
-
-for _attempt in 1 2 3; do
-  if mkdir "$LOCK_DIR" 2>/dev/null; then
-    LOCK_HELD=true
-    break
-  fi
-  if lock_is_stale; then rmdir -- "$LOCK_DIR" 2>/dev/null || true; fi
-  sleep 0.2
-done
-if ! $LOCK_HELD; then
-  printf 'deferred\n'
-  exit 0
-fi
-
-sync_linear() { "$LINEAR" sync --reconcile >/dev/null; touch "$LOCK_DIR"; }
+sync_linear() { "$LINEAR" sync --reconcile >/dev/null; }
 parent_json() { "$LINEAR" cache issues get "$PARENT_ID"; }
 
 repair_canceled() {
-  [[ -s "$SNAPSHOT" ]] || { rm -f -- "$SNAPSHOT"; return 0; }
-  local ids=() states=() id state current batch=() batch_json index matches
+  [[ -s "$SNAPSHOT" ]] || return 0
+  local ids=() states=() id state batch=() batch_json index matches
   while IFS=$'\t' read -r id state; do
     [[ -n "$id" && -n "$state" ]] || continue
     ids+=("$id")
     states+=("$state")
   done < "$SNAPSHOT"
-  current="$(mktemp "$REPO_ROOT/tmp/container-current-$PARENT_ID.XXXXXX")"
-  : > "$current"
-  for id in "${ids[@]}"; do
+  : > "$CURRENT"
+  for id in ${ids[@]+"${ids[@]}"}; do
     batch+=("$id")
     if [[ ${#batch[@]} -eq 50 ]]; then
-      batch_json="$("$LINEAR" issues bulk-get "${batch[@]}")" || { rm -f -- "$current"; return 1; }
-      jq -c '.[]' <<<"$batch_json" >> "$current"
+      batch_json="$("$LINEAR" issues bulk-get ${batch[@]+"${batch[@]}"})" || return 1
+      jq -c '.[]' <<<"$batch_json" >> "$CURRENT"
       batch=()
     fi
   done
   if [[ ${#batch[@]} -gt 0 ]]; then
-    batch_json="$("$LINEAR" issues bulk-get "${batch[@]}")" || { rm -f -- "$current"; return 1; }
-    jq -c '.[]' <<<"$batch_json" >> "$current"
+    batch_json="$("$LINEAR" issues bulk-get ${batch[@]+"${batch[@]}"})" || return 1
+    jq -c '.[]' <<<"$batch_json" >> "$CURRENT"
   fi
-  [[ "$(wc -l < "$current" | tr -d ' ')" -eq ${#ids[@]} ]] \
-    || { echo "container-close: canceled-child repair lookup was incomplete for $PARENT_ID" >&2; rm -f -- "$current"; return 1; }
+  [[ "$(wc -l < "$CURRENT" | tr -d ' ')" -eq ${#ids[@]} ]] \
+    || { echo "container-close: canceled-child repair lookup was incomplete for $PARENT_ID" >&2; return 1; }
   for ((index=0; index<${#ids[@]}; index++)); do
     id="${ids[$index]}"
     state="${states[$index]}"
-    matches="$(jq -r --arg id "$id" 'select(.id == $id) | .id' "$current" | wc -l | tr -d ' ')"
+    matches="$(jq -r --arg id "$id" 'select(.id == $id) | .id' "$CURRENT" | wc -l | tr -d ' ')"
     [[ "$matches" -eq 1 ]] \
-      || { echo "container-close: canceled-child repair did not return exactly one row for $id" >&2; rm -f -- "$current"; return 1; }
-    [[ "$(jq -r --arg id "$id" 'select(.id == $id) | .state_type' "$current")" == "completed" ]] || continue
-    "$LINEAR" issues update "$id" --state "$state" >/dev/null \
-      || { rm -f -- "$current"; return 1; }
+      || { echo "container-close: canceled-child repair did not return exactly one row for $id" >&2; return 1; }
+    [[ "$(jq -r --arg id "$id" 'select(.id == $id) | .state_type' "$CURRENT")" == "completed" ]] || continue
+    "$LINEAR" issues update "$id" --state "$state" >/dev/null || return 1
+    printf 'container-close: restored %s to %s\n' "$id" "$state" >&2
   done
-  rm -f -- "$current" "$SNAPSHOT"
+}
+
+child_pr() {
+  local child_id="$1" rows number
+  rows="$(cd -- "$MAIN_REPO_ROOT" && env -u GH_REPO -u GITHUB_REPOSITORY \
+    gh pr list --state merged --search "$child_id" --limit 100 \
+      --json number,headRefName,mergedAt,isCrossRepository)" \
+    || { echo "container-close: cannot resolve PR for $child_id" >&2; return 1; }
+  number="$(jq -r --arg id "$child_id" '
+    ($id | ascii_downcase) as $needle |
+    [.[] | select(.isCrossRepository != true) |
+      select((.headRefName | ascii_downcase | split("/") | last) as $branch |
+        $branch == $needle or ($branch | startswith($needle + "-")) or ($branch | startswith($needle + "_")))] |
+    sort_by(.mergedAt) | last | .number // empty
+  ' <<<"$rows")"
+  [[ -n "$number" ]] && printf '#%s\n' "$number" || printf 'unavailable\n'
 }
 
 sync_linear
 PARENT="$(parent_json)"
 if [[ "$(jq -r '.state_type // ""' <<<"$PARENT")" == "completed" ]]; then
-  repair_canceled
   printf 'closed %s\n' "$PARENT_ID"
   exit 0
 fi
@@ -119,26 +130,29 @@ if [[ -n "$PENDING" ]]; then
 fi
 
 CHILDREN="$("$LINEAR" cache issues children "$PARENT_ID" --recursive)"
-SNAPSHOT_TMP="$(mktemp "$REPO_ROOT/tmp/container-canceled-$PARENT_ID.XXXXXX")"
 jq -r '[.[] | select(.state_type == "canceled")] | reverse[] | [.id, .state] | @tsv' \
-  <<<"$CHILDREN" > "$SNAPSHOT_TMP"
-mv -f -- "$SNAPSHOT_TMP" "$SNAPSHOT"
-[[ -s "$SNAPSHOT" ]] || rm -f -- "$SNAPSHOT"
+  <<<"$CHILDREN" > "$SNAPSHOT"
 VALIDATION="$("$LINEAR" issues validate-completion "$PARENT_ID" \
   --include-children-of "$PARENT_ID" --container)" \
-  || { rm -f -- "$SNAPSHOT"; echo "container-close: completion validation failed for $PARENT_ID" >&2; exit 1; }
+  || { echo "container-close: completion validation failed for $PARENT_ID" >&2; exit 1; }
 if [[ "$(jq -r '.all_ok // false' <<<"$VALIDATION")" != "true" ]]; then
-  rm -f -- "$SNAPSHOT"
   jq -c '.results[] | select(.ok != true)' <<<"$VALIDATION" >&2
   echo "container-close: completion validation refused $PARENT_ID" >&2
   exit 1
 fi
+if [[ "$(jq -r --arg id "$PARENT_ID" '.results[] | select(.id == $id) | .state_type // ""' <<<"$VALIDATION")" == "completed" ]]; then
+  repair_canceled
+  printf 'closed %s\n' "$PARENT_ID"
+  exit 0
+fi
 
-SUMMARY="$(mktemp "$REPO_ROOT/tmp/container-summary-$PARENT_ID.XXXXXX")"
 {
   printf '## Bundle Complete\n\n'
-  jq -r '.[] | "- \(.id) ✓ \(.title)"' <<<"$CHILDREN"
+  while IFS=$'\t' read -r id title; do
+    printf -- '- %s ✓ %s — PR %s\n' "$id" "$title" "$(child_pr "$id")"
+  done < <(jq -r '.[] | [.id, .title] | @tsv' <<<"$CHILDREN")
 } > "$SUMMARY"
+
 COMPLETE_RC=0
 "$LINEAR" issues complete "$PARENT_ID" --summary-file "$SUMMARY" >/dev/null || COMPLETE_RC=$?
 if [[ $COMPLETE_RC -ne 0 ]]; then
