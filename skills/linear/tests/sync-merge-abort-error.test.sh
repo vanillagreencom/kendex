@@ -22,7 +22,7 @@ OLD_SYNC="2026-01-01T00:00:00+00:00"
 # Builds an isolated project root with a seeded cache and a curl stub whose
 # SyncIssues delta updates the given issue id.
 make_env() {
-  local root="$1" existing="$2" delta_id="$3"
+  local root="$1" existing="$2" delta_id="$3" extra_node="${4:-}"
   mkdir -p "$root/.agents/skills" "$root/bin" "$root/.cache/linear/comments"
   cp -R "$SKILL_DIR" "$root/.agents/skills/linear"
   git -C "$root" init -q
@@ -42,6 +42,9 @@ make_env() {
 
   delta_node="{\"id\":\"$delta_id\",\"identifier\":\"PROJ-1\",\"title\":\"updated\",\"description\":\"\",\"state\":{\"name\":\"Todo\",\"type\":\"unstarted\"},\"assignee\":null,\"project\":null,\"projectMilestone\":null,\"cycle\":null,\"parent\":null,\"team\":{\"name\":\"Claude\"},\"labels\":{\"nodes\":[]},\"priority\":0,\"estimate\":null,\"sortOrder\":1,\"url\":\"u\",\"createdAt\":\"2026-07-01T00:00:00Z\",\"updatedAt\":\"2026-07-27T00:00:00Z\",\"archivedAt\":null,\"trashed\":null,\"relations\":{\"nodes\":[]},\"inverseRelations\":{\"nodes\":[]}}"
 
+  local delta_nodes="$delta_node"
+  [[ -n "$extra_node" ]] && delta_nodes="$delta_node,$extra_node"
+
   cat >"$root/bin/curl" <<SH
 #!/usr/bin/env bash
 config="\$(cat)"
@@ -49,7 +52,7 @@ payload="\$(sed -n 's/^data = //p' <<<"\$config" | jq -r)"
 query="\$(jq -r '.query' <<<"\$payload")"
 case "\$query" in
 *"SyncIssues("*)
-  printf '%s' '{"data":{"issues":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[$delta_node]}}}___HTTP_CODE___200' ;;
+  printf '%s' '{"data":{"issues":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[$delta_nodes]}}}___HTTP_CODE___200' ;;
 *"SyncProjects("*)
   printf '%s' '{"data":{"projects":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200' ;;
 *"SyncCycles("*)
@@ -59,7 +62,7 @@ case "\$query" in
 *"SyncLabels("*)
   printf '%s' '{"data":{"issueLabels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200' ;;
 *"SyncComments("*)
-  printf '%s' '{"data":{"comments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"c3-new","body":"refetched","issue":{"identifier":"PROJ-3"}}]}}}___HTTP_CODE___200' ;;
+  printf '%s' '{"data":{"comments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"c3-new","body":"refetched","issue":{"identifier":"PROJ-3"}},{"id":"c9","body":"on a brand new issue","issue":{"identifier":"PROJ-9"}}]}}}___HTTP_CODE___200' ;;
 *)
   printf '%s' '{"errors":[{"message":"unexpected query"}]}___HTTP_CODE___200' ;;
 esac
@@ -133,9 +136,10 @@ fi
 
 # --- control: healthy delta merges and sync succeeds -----------------------------
 OK_ROOT="$TMP_BASE/ok"
+NEW_NODE='{"id":"id-9","identifier":"PROJ-9","title":"brand new","description":"","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Claude"},"labels":{"nodes":[]},"priority":0,"estimate":null,"sortOrder":2,"url":"u","createdAt":"2026-07-27T00:00:00Z","updatedAt":"2026-07-27T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}'
 make_env "$OK_ROOT" \
   '[{"id":"id-1","identifier":"PROJ-1","title":"a"},{"id":"id-2","identifier":"PROJ-2","title":"b"},{"id":"id-3","identifier":"PROJ-3","title":"c"}]' \
-  "id-1"
+  "id-1" "$NEW_NODE"
 
 set +e
 run_sync "$OK_ROOT" >/dev/null 2>"$TMP_BASE/ok-err"
@@ -149,8 +153,8 @@ if ! grep -q "Done (" "$TMP_BASE/ok-err"; then
   echo "FAIL healthy sync did not report completion: $(cat "$TMP_BASE/ok-err")"
   exit 1
 fi
-if [[ "$(jq 'length' "$OK_ROOT/.cache/linear/issues.json")" != "3" ]]; then
-  echo "FAIL healthy merge lost cache entries"
+if [[ "$(jq 'length' "$OK_ROOT/.cache/linear/issues.json")" != "4" ]]; then
+  echo "FAIL healthy merge lost cache entries or dropped the created issue"
   exit 1
 fi
 if [[ "$(jq -r '[.[] | select(.id == "id-1")] | first | .title' "$OK_ROOT/.cache/linear/issues.json")" != "updated" ]]; then
@@ -173,6 +177,15 @@ fi
 # to the delta instead, PROJ-3 would keep its seeded file forever.
 if [[ "$(jq -r '.[0].id' "$OK_ROOT/.cache/linear/comments/PROJ-3.json")" != "c3-new" ]]; then
   echo "FAIL unmarked cache did not refetch comments for an issue outside the delta: $(cat "$OK_ROOT/.cache/linear/comments/PROJ-3.json")"
+  exit 1
+fi
+# PROJ-9 is created BY this delta, so it is absent from the issue set until the
+# merge lands. Scope the write from a pre-merge issues.json and its comments are
+# filtered out, the marker is stamped anyway, and no later delta revisits an
+# issue that never changes again — the permanent empty thread this whole change
+# exists to remove, reintroduced for exactly the newly created issue.
+if [[ "$(jq -r '.[0].id' "$OK_ROOT/.cache/linear/comments/PROJ-9.json" 2>/dev/null)" != "c9" ]]; then
+  echo "FAIL comments for an issue created by this delta were dropped: $(cat "$OK_ROOT/.cache/linear/comments/PROJ-9.json" 2>&1)"
   exit 1
 fi
 
