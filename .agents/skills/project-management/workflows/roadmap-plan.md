@@ -11,7 +11,13 @@ Plan a roadmap: research gate, specialist consultation, TPM analysis, architectu
 | `... --origin-issue [ISSUE_ID]` | Supply origin-issue context for the hierarchy decision |
 | `... --planner-handoff @[plan-file]` | Consume a plan from a scout → planner chain |
 
-Extract `FEATURE`, `RESEARCH_PATH`, `ORIGIN_ISSUE`, and `PLANNER_HANDOFF` (each null when absent). Read the `@[path]` file and classify it: research findings inform planning; a **finished plan** — a design document the user has reviewed that already settles approach and workstreams — is the SPEC. With a SPEC: § 1 is satisfied, § 2 runs in slicing mode, the § 5 report presents the derived issues against it, and the spec's path travels as `RESEARCH_PATH` → `research_ref`, which the issue template writes as the `**Research**` line on every created issue (unconditionally; the § 6 research question offers the reference to pre-existing issues only). The spec skips no approval and no creation gate. With `--origin-issue`, fetch it and keep `id`, `title`, `project`, `description`, `children`:
+Extract `FEATURE`, `RESEARCH_PATH`, `ORIGIN_ISSUE`, and `PLANNER_HANDOFF` (each null when absent). Read the `@[path]` file and classify it: research findings inform planning; a **finished plan** — a design document the user has reviewed that already settles approach and workstreams — is the SPEC. With a SPEC: § 1 is satisfied, § 2 runs in slicing mode, the § 5 report presents the derived issues against it, and the spec's path travels as `RESEARCH_PATH` → `research_ref`, which the issue template writes as the `**Research**` line on every created issue (unconditionally; the § 6 research question offers the reference to pre-existing issues only). The spec skips no approval and no creation gate. Planning only reads the tracker, so refresh a stale cache before the first read here and in §§ 1-2:
+
+```bash
+.agents/skills/linear/scripts/linear.sh sync --if-stale 15
+```
+
+With `--origin-issue`, fetch it and keep `id`, `title`, `project`, `description`, `children`:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh cache issues get [ORIGIN_ISSUE_ID]

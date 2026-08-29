@@ -9,13 +9,16 @@ Usage: verification-scope [--worktree PATH] [--base-ref REF]
 
 Resolve repository-aware paths for tpm-audit code and deliverable checks.
 Prefer --changed-file for PR-provided paths or --base-ref for a branch diff.
-Without either, tracked source roots are discovered across the repository.
+Without either, tracked source roots are discovered across the repository,
+skipping the vendored .agents/ harness render tree. An explicit
+--changed-file or --base-ref path under .agents/ is still honored.
 
 Output: one JSON object on stdout with these fields:
   worktree                    Absolute repository root the paths resolve
                               against
   mode                        "changed" (explicit or diffed paths),
-                              "repository" (discovered source roots), or
+                              "repository" (discovered source roots,
+                              excluding .agents/), or
                               "docs-only" (--docs-only, or every changed
                               path is documentation)
   basis                       How the scope was derived
@@ -154,6 +157,16 @@ is_doc_path() {
   esac
 }
 
+# The .agents/ tree is a vendored render of installed harness packages, not
+# repository source. Discovery walks every tracked file, so without this it
+# reports one root per rendered package and floods the audit's search scope.
+is_vendored_render() {
+  case "$1" in
+    .agents/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 is_source_file() {
   local path="$1"
   if [[ -f "$repo_root/$path" && -x "$repo_root/$path" ]]; then
@@ -240,6 +253,9 @@ if [[ "$mode" == "repository" ]]; then
     "git ls-files failed while discovering tracked source roots" \
     ls-files -z
   while IFS= read -r -d '' path; do
+    if is_vendored_render "$path"; then
+      continue
+    fi
     if is_source_file "$path"; then
       add_source_root "$(source_root_for_path "$path")"
     fi
@@ -253,7 +269,7 @@ elif [[ "$mode" == "changed" ]]; then
 fi
 
 if [[ "$mode" == "repository" && ${#source_roots[@]} -eq 0 ]]; then
-  fail "no tracked source roots found; pass changed paths or --docs-only for a documentation-only audit"
+  fail "no tracked source roots found outside the vendored .agents/ render tree; pass changed paths or --docs-only for a documentation-only audit"
 fi
 
 declare -a verification_paths=()

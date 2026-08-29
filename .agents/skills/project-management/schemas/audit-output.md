@@ -6,7 +6,7 @@ Returned inline by `tpm-audit.md` and written by the caller to `tmp/audit-projec
 
 ```json
 {
-  "mode": "project|issue|project-order",
+  "mode": "project|team|issue|project-order",
   "generated": "ISO timestamp",
   "worktree": "path",
   "tracker": {"type": "linear|github", "repository": "owner/repo"},
@@ -23,6 +23,8 @@ Returned inline by `tpm-audit.md` and written by the caller to `tmp/audit-projec
 
 ## PROJECT Mode
 
+Mode `team` uses this same shape with `project: null` — its input set is the whole team rather than one project, and each finding names the project on its own row.
+
 ```json
 {
   "mode": "project",
@@ -30,7 +32,7 @@ Returned inline by `tpm-audit.md` and written by the caller to `tmp/audit-projec
   "summary": {"total_issues": 0, "created": 0, "closed": 0, "relations_to_add": 0, "relations_to_remove": 0,
               "priority_misalignment": 0, "agent_mismatch": 0, "label_cooccurrence": 0, "duplicates": 0,
               "obsolete": 0, "hierarchy_changes": 0, "wrong_project": 0, "combinations": 0,
-              "relation_violations": 0, "ready_to_schedule": 0, "declined": 0,
+              "ready_to_schedule": 0, "declined": 0,
               "architecture_gaps": {"critical": 0, "required": 0, "research": 0},
               "project_recommendations": {"new_projects": 0, "reopen_projects": 0}},
   "findings": {"project_dependency_issues": [], "add_relations": [], "remove_relations": [],
@@ -180,3 +182,5 @@ A parent created or promoted this way is a container by default. `(one PR)` mark
 ```
 
 `layer` is the architectural position: 0 foundation (no dependencies), 1 core infrastructure, 2 features, 3 integration and testing, 4 polish and release. `sort_order` is relative **within one state column only**; compute positions and spacing per column.
+
+`recommended_order[]` is diagnostic: it records the § 11 step 3 ordering in full. The caller executes `reorder[]`, `complete_candidates[]`, and `recommended_next` — never this array.

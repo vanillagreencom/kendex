@@ -98,11 +98,9 @@ Present only when `origin_issue` was supplied; absent or `type: "none"` means `p
   "parent_title": null,
   "depends_on_proposed": [],
   "depends_on_existing": ["[ISSUE_ID]"],
-  "blocked_by_proposed": [],
   "critical_path": true,
   "layer": 0,
   "position": -20,
-  "conflicts_with": [],
   "breaking_changes": [],
   "doc_updates": ["docs/architecture/api.md"]
 }

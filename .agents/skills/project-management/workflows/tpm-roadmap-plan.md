@@ -24,7 +24,7 @@ A `PLANNER_HANDOFF` is technical context, not a project-management decision. Pre
 .agents/skills/linear/scripts/linear.sh cache labels list --format=safe
 ```
 
-Load the project taxonomy alongside it; ask the caller to run `sync --reconcile` if the cache is missing or stale. Every issue emitted must carry a `labels[]` set valid against that inventory. Preserve input `labels[]` when present; derive the agent label and complete required categories from the taxonomy when only `agent` was supplied; flag the gap in `reason` rather than inventing a label when a required category cannot be determined. Never emit a parent/group label.
+Load the project taxonomy alongside it. A missing or stale Linear cache on this or any later read halts the analysis and asks the caller to run `sync --reconcile` first ([SKILL.md](../SKILL.md) § Execution Rules) — never work around it with a partial or live-only read. Every issue emitted must carry a `labels[]` set valid against that inventory. Preserve input `labels[]` when present; derive the agent label and complete required categories from the taxonomy when only `agent` was supplied; flag the gap in `reason` rather than inventing a label when a required category cannot be determined. Never emit a parent/group label.
 
 ### 1.3 Origin Issue
 
@@ -35,15 +35,16 @@ Load the project taxonomy alongside it; ask the caller to run `sync --reconcile`
 .agents/skills/linear/scripts/linear.sh cache issues children [ORIGIN_ISSUE_ID] --recursive --format=safe
 ```
 
+`--recursive` returns three levels; a deeper tree needs a further call rooted at the deepest child returned.
+
 Decide whether the proposed issues decompose the origin issue's scope (`children_of_origin`), reach beyond it (`new_project`), or split (`mixed`), and store `hierarchy_recommendation` with `type`, `origin_issue`, and `rationale`.
 
 ### 1.4 Projects
 
+Fetch every project in ONE command. `cache projects list --state` matches one state exactly and never a comma list, so omit it and read each row's own `state`; ignore `canceled` rows.
+
 ```bash
-.agents/skills/linear/scripts/linear.sh cache projects list --state started
-.agents/skills/linear/scripts/linear.sh cache projects list --state planned
-.agents/skills/linear/scripts/linear.sh cache projects list --state backlog
-.agents/skills/linear/scripts/linear.sh cache projects list --state completed
+.agents/skills/linear/scripts/linear.sh cache projects list
 ```
 
 Store `id`, `name`, `state`, `description`, `content` per project.

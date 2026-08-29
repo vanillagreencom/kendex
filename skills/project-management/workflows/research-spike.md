@@ -16,6 +16,12 @@ Infer the research type from the description and answers.
 
 Infer the affected domains from the topic and answers by matching component paths (project-configurable); do not ask the user to confirm them. State each domain and why in the § 4 report.
 
+Refresh a stale cache before the lookup below — this workflow only reads:
+
+```bash
+.agents/skills/linear/scripts/linear.sh sync --if-stale 15
+```
+
 Look for prior research: resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and the live inventory (`cache labels list --format=safe`), then search it. Without an unambiguous assignable label, skip the lookup and continue — do not query a hard-coded fallback label.
 
 ```bash

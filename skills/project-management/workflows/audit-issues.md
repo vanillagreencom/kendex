@@ -10,6 +10,7 @@ Audit tracked issues and projects, apply the mechanical corrections, and take cr
 |------------|------|--------|
 | `audit-issues project-order` | `project-order` | Project ordering and state transitions only |
 | `audit-issues project` / `project "Name"` | `project` | Active project, or the named one |
+| `audit-issues team` | `team` | Every Backlog/Todo/In Progress/In Review issue on the team |
 | `audit-issues issue [ISSUE_ID] ...` | `issue` | Those issues |
 | `audit-issues --issues [file]` | `issue` | Items from a JSON file per [audit-issues-input.md](../schemas/audit-issues-input.md) |
 | `audit-issues --analyzed [file]` | `analyzed` | Pre-analyzed [audit-output.md](../schemas/audit-output.md) issue-mode JSON — skips § 4 |
@@ -42,7 +43,7 @@ Resolve once, before any tracker command. Precedence:
 
 Store as `TRACKER`, plus `[OWNER/REPO]` when `TRACKER=github`.
 
-**Mode constraint**: `project` and `project-order` audit Linear projects and are Linear only. With `TRACKER=github`, halt: "Project audits are Linear-only; GitHub repositories have no project inventory in this workflow." Never degrade to a partial project audit.
+**Mode constraint**: `project`, `project-order`, and `team` audit Linear projects and are Linear only. With `TRACKER=github`, halt: "Project audits are Linear-only; GitHub repositories have no project inventory in this workflow." Never degrade to a partial project audit.
 
 **GitHub mode runs no Linear commands** — no `sync`, `session-status`, cache read, or Linear mutation anywhere in this workflow. Linear installation/authentication is not a prerequisite for a GitHub-tracked audit.
 
@@ -66,11 +67,13 @@ gh label list --repo [OWNER/REPO] --limit 200 --json name,description
 gh issue list --repo [OWNER/REPO] --state open --limit 200 --json number,title,labels
 ```
 
+`--limit 200` is a stated cap, not a page: a repository whose label or open-issue count reaches 200 is audited against a truncated inventory. Scope the audit to what was fetched and name the truncation on the § 8 degradation line.
+
 No sync step. Load project taxonomy the same way as Linear mode; with no declared taxonomy, validate proposed labels against the live repository label list alone. Never invent or auto-create a label.
 
 ### 1.3 Route
 
-`project-order` → § 2 · `project` → § 3 · `issue` → § 4 · `analyzed` → § 5.
+`project-order` → § 2 · `project` → § 3 · `team` → § 4 · `issue` → § 4 · `analyzed` → § 5.
 
 ---
 
@@ -126,7 +129,7 @@ Then ask "Continue to full audit of [PROJECT]?" — yes sets MODE=project, TARGE
 
 ## 3. Resolve Project Target
 
-**Skip if** MODE = issue. Linear only.
+**Skip if** MODE is `issue` or `team` — team audits the whole team and resolves no target. Linear only.
 
 With `TARGET` set, use it. Otherwise take the first `session-status.projects` entry with `has_active_work`. With no such project, present the ready projects with their blockers and ask which to activate (`Skip` ends the workflow); activate the chosen one, then → § 4.
 
@@ -141,7 +144,7 @@ Spawn a one-shot `[TPM]` sub-agent (not a teammate):
 <delegation_format>
 Follow workflow: .agents/skills/project-management/workflows/tpm-audit.md
 
-Arguments: --project "[PROJECT_NAME]" | --issues [FILE_PATH]
+Arguments: --project "[PROJECT_NAME]" | --team | --issues [FILE_PATH]
 Worktree: [WORKTREE_PATH]
 Tracker: [TRACKER] [OWNER/REPO]
 </delegation_format>
@@ -164,7 +167,7 @@ Two blocks, in this order. Omit empty sections; keep each `Reason` to one line.
 
 <output_format>
 
-### AUDIT — [PROJECT or "[N] item(s) from [SOURCE]"]
+### AUDIT — [PROJECT, "Team", or "[N] item(s) from [SOURCE]"]
 
 **Corrections applied automatically** ([N])
 
@@ -187,7 +190,9 @@ Two blocks, in this order. Omit empty sections; keep each `Reason` to one line.
 
 - [TITLE] — [which creation-bar test it fails]
 
-**Gaps** ([N], project mode) — [SEVERITY] [COMPONENT]: [WHY], blocks [ISSUE_IDS]
+**Ready to schedule** ([N], project and team modes) — [ISSUE_ID]: blockers [CLEARED_BLOCKERS] all complete
+
+**Gaps** ([N], project and team modes) — [SEVERITY] [COMPONENT]: [WHY], blocks [ISSUE_IDS]
 </output_format>
 
 In GitHub mode the Project column is `—` and hierarchy/relations render as the body-link forms from § 7.2 (`Parent: #N`, `Blocked by: #N`).
@@ -237,10 +242,10 @@ Execute every § 5 correction. Linear routes follow the Linear CLI's workflow-ac
 |---------|---------|
 | `priority_misalignment` | `issues update [ID] --priority [P]` + reason comment |
 | `agent_mismatch`, `label_cooccurrence` | § Labels (run § 7.0 first) |
-| `add_relations`, `remove_relations`, `relation_violations` | § Hierarchy and Relations |
+| `add_relations`, `remove_relations` | § Hierarchy and Relations |
 | `hierarchy` | § Hierarchy and Relations, then § Descriptions (parent rebuild) |
 | `wrong_project` | `issues update [ID] --project "[PROJECT]"` + reason comment |
-| `project_dependency_issues`, `project_recommendations` | § Projects and Initiatives (project mode) |
+| `project_dependency_issues`, `project_recommendations` | § Projects and Initiatives (project and team modes) |
 
 GitHub routes carry their commands inline in § 7.2.
 
@@ -282,7 +287,7 @@ Once every create has landed and its relations and parent are attached — never
 
 ```bash
 .agents/skills/linear/scripts/linear.sh cache projects get [PROJECT_ID] | jq -r '.state'
-.agents/skills/linear/scripts/linear.sh cache issues list --project "[PROJECT]" --state "Todo" --format=safe | jq 'sort_by(.sort_order)'
+.agents/skills/linear/scripts/linear.sh cache issues list --project "[PROJECT]" --state "Todo" --max --format=safe | jq 'sort_by(.sort_order)'
 .agents/skills/linear/scripts/linear.sh issues update [NEW_ID] --state "Todo" --sort-order [CALCULATED]
 ```
 
@@ -292,7 +297,7 @@ Once every create has landed and its relations and parent are attached — never
 
 **Skip if** no `research_ref` context. For each approved issue: read the current description (Linear `cache issues get [ISSUE_ID] | jq -r '.description'`, GitHub `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body`); skip if the path is already present; otherwise prepend `**Research**: [RESEARCH_REF]` at the top, converting to a bulleted list when a Research line already exists, and add `**Decision [DECISION_ID]**: [path]` beneath it when `decision_ref` is present. Apply by file (`--description-file` / `--body-file`).
 
-Propagate to children — Linear `cache issues children [ISSUE_ID] --recursive --format=safe | jq -r '.[].id'`, then repeat per child. GitHub has no recursive child query: propagate only to issues created in this audit carrying `Parent: #[N]`, and report deeper propagation as not performed.
+Propagate to children — Linear `cache issues children [ISSUE_ID] --recursive --format=safe | jq -r '.[].id'`, then repeat per child. `--recursive` returns three levels; a deeper tree needs a further call rooted at the deepest child returned. GitHub has no recursive child query: propagate only to issues created in this audit carrying `Parent: #[N]`, and report deeper propagation as not performed.
 
 ### 7.4 Post-Cancellation Cleanup
 

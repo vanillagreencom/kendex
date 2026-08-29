@@ -12,7 +12,10 @@ Commit any uncommitted files under `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/`:
 git add [RESEARCH_DOCS_PATH]/[ISSUE_ID]/ && git commit -m "chore([ISSUE_ID]): Add research findings"
 ```
 
+This workflow updates labels, descriptions, and relations, so it reconciles before its first cache read:
+
 ```bash
+.agents/skills/linear/scripts/linear.sh sync --reconcile
 .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
 ```
 
@@ -23,7 +26,6 @@ Capture the researcher metadata from `raw-exa.json` (`.metadata`: `researchMode`
 ## 2. Domain Labels
 
 ```bash
-.agents/skills/linear/scripts/linear.sh sync --reconcile
 .agents/skills/linear/scripts/linear.sh cache labels list --format=safe
 ```
 
@@ -39,7 +41,7 @@ Issue labels only, validated per [labels.md](../references/labels.md) — unknow
 
 **Skip if** the `.blocks` array is empty (self-initiated spike).
 
-For each blocked issue and, recursively, its children (`cache issues children [BLOCKED_ISSUE_ID] --recursive --format=safe | jq -r '.[].id'`): read the current description, skip when the findings path is already present, and otherwise put the research reference at the top.
+For each blocked issue and, recursively, its children (`cache issues children [BLOCKED_ISSUE_ID] --recursive --format=safe | jq -r '.[].id'`): read the current description, skip when the findings path is already present, and otherwise put the research reference at the top. `--recursive` returns three levels; a deeper tree needs a further call rooted at the deepest child returned.
 
 ```markdown
 **Research**: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md

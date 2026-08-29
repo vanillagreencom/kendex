@@ -28,7 +28,8 @@ require_jq() {
 fixture="$(mktemp -d)"
 docs_fixture="$(mktemp -d)"
 history_fixture="$(mktemp -d)"
-trap 'rm -rf "$fixture" "$docs_fixture" "$history_fixture"' EXIT
+render_fixture="$(mktemp -d)"
+trap 'rm -rf "$fixture" "$docs_fixture" "$history_fixture" "$render_fixture"' EXIT
 
 mkdir -p "$fixture/crate-a/src" "$fixture/crate-b/src" "$fixture/docs"
 printf '[workspace]\nmembers = ["crate-a", "crate-b"]\n' >"$fixture/Cargo.toml"
@@ -139,6 +140,31 @@ if [[ "$disconnected_output" != *"git diff failed for base ref"* ]]; then
   fail "disconnected-history failure did not identify git diff"
 fi
 
+# Repository discovery must skip the vendored .agents/ render tree: it holds
+# one source root per installed harness package and is not repository source.
+# An explicitly named .agents/ path is the caller's own choice and still counts.
+mkdir -p "$render_fixture/src" \
+  "$render_fixture/.agents/skills/alpha/scripts" \
+  "$render_fixture/.agents/skills/beta/scripts"
+printf 'fn main() {}\n' >"$render_fixture/src/main.rs"
+printf '#!/usr/bin/env bash\ntrue\n' >"$render_fixture/.agents/skills/alpha/scripts/alpha.sh"
+printf '#!/usr/bin/env bash\ntrue\n' >"$render_fixture/.agents/skills/beta/scripts/beta.sh"
+git -C "$render_fixture" init -q
+git -C "$render_fixture" add .
+
+render_json="$($RESOLVER --worktree "$render_fixture")"
+require_jq "$render_json" '.source_roots == ["src"]' \
+  "repository discovery did not skip the vendored .agents/ render tree"
+require_jq "$render_json" \
+  '.verification_paths | map(startswith(".agents/")) | any | not' \
+  "vendored .agents/ roots leaked into the verification paths"
+
+render_changed_json="$($RESOLVER --worktree "$render_fixture" \
+  --changed-file .agents/skills/alpha/scripts/alpha.sh)"
+require_jq "$render_changed_json" \
+  '.verification_paths == [".agents/skills/alpha/scripts/alpha.sh"]' \
+  "an explicitly named .agents/ path was dropped"
+
 corrupt_index="$docs_fixture/corrupt-index"
 printf 'invalid index\n' >"$corrupt_index"
 if producer_output="$(GIT_INDEX_FILE="$corrupt_index" \
@@ -156,6 +182,8 @@ grep -Eq 'never assumed|Never substitute `\[WORKTREE\]/src`' "$WORKFLOW" \
   || fail "tpm-audit lost the no-assumed-repository-root-src rule"
 grep -Fq 'scripts/verification-scope' "$WORKFLOW" \
   || fail "tpm-audit does not invoke verification-scope"
+grep -Fq '.agents/' "$RESOLVER" \
+  || fail "verification-scope lost the vendored-render exclusion"
 grep -Fq 'docs-only' "$WORKFLOW" \
   || fail "tpm-audit does not document the docs-only path"
 grep -Fq 'verification_paths' "$WORKFLOW" \

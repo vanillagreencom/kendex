@@ -6,6 +6,12 @@ Execute an approved roadmap plan: resolve existing work, create the project, cre
 
 `roadmap create @[plan-file]`. Without a plan file, error: "Requires a plan file from `workflows/roadmap-plan.md`."
 
+This workflow creates and cancels issues, so it reconciles before the § 3.1 initiatives read and every cache read after it:
+
+```bash
+.agents/skills/linear/scripts/linear.sh sync --reconcile
+```
+
 Read the markdown for `FEATURE` and its `**Plan data**` path, then read that JSON as `TPM_OUTPUT`. A plan whose JSON is missing or unreadable halts: re-run `roadmap plan`.
 
 From `TPM_OUTPUT` take `project_placement`, `organized_issues[]`, `cross_project_findings`, `hierarchy_recommendation`, `architecture_gaps[]`, and `context`.

@@ -4,6 +4,12 @@ Generate a cycle plan, get the user's approval on what ships, and apply it.
 
 ## 1. Generate the Plan
 
+This workflow mutates project state, so it reconciles before anything reads the cache:
+
+```bash
+.agents/skills/linear/scripts/linear.sh sync --reconcile
+```
+
 1. **Delegate** to a one-shot `[TPM]` sub-agent:
 
    <delegation_format>
