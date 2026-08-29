@@ -121,8 +121,8 @@ cap_site() { slice "$1" '### 6.1 Delegate Fixes' '^### 6[.]2'; }
 restart_check() { awk '/^   \*\*Restart check\.\*\*/ { on = 1; print; next } on && (/^   \*\*/ || /^#/) { on = 0 } on' "$1"; }
 loop_site() { slice "$1" '### 6.3 Re-Triage Or Exit' '^## 7[.]'; }
 # The cap rule itself: § 6.1 from its budget read down to the delegation setup.
-# § 6.1's reply table names every disposition form, so a check over the whole
-# section could not tell the exception's `Fixed in` from the table's.
+# The rule names every disposition form, so a bound narrower than the section
+# is what keeps another mention of `Fixed in` out of the check.
 cap_rule() { cap_site "$1" | awk '/REVIEW_MAX_EXTERNAL_ROUNDS/ { on = 1 } /^Ensure the worktree exists/ { on = 0 } on'; }
 
 # The prose bounds in submit-pr: every iteration-cap mention that is not the

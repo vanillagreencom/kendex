@@ -67,7 +67,7 @@ strip_comments() {
 recurrence_section() { strip_comments "$1" | awk '/^## Recurrence$/{on=1;next} /^## /{on=0} on'; }
 section_6_head() { strip_comments "$1" | awk '/^## 6\./{on=1} /^### 6\.1/{on=0} on'; }
 section_6_1() { strip_comments "$1" | awk '/^### 6\.1/{on=1;next} /^### 6\.2/{on=0} on'; }
-section_6_2() { strip_comments "$1" | awk '/^### 6\.2/{on=1;next} /^### 6\.3/{on=0} on'; }
+section_6_3() { strip_comments "$1" | awk '/^### 6\.3/{on=1;next} /^## 7\./{on=0} on'; }
 signals_route() { strip_comments "$1" | grep -E '^\| .+ \| § Recurrence' || true; }
 
 # Every grep reads a herestring, never a pipe: `grep -q` exits at the first
@@ -137,7 +137,7 @@ first_line() {
 check_order() {
   local router cap
   router="$(first_line "$1" 'finding-disposition.md#recurrence')"
-  cap="$(first_line "$1" 'iterations >= 5')"
+  cap="$(first_line "$1" 'REVIEW_MAX_EXTERNAL_ROUNDS')"
   [[ -n "$router" && -n "$cap" ]] || { printf 'missing\n'; return; }
   if [[ "$router" -lt "$cap" ]]; then printf 'before\n'; else printf 'after\n'; fi
 }
@@ -183,15 +183,15 @@ else
   fail "an empty fix set no longer routes the pass to the reply step"
 fi
 
-if grep -qF '**Reply step.**' <<<"$SIX_ONE"; then
-  pass "§ 6.1 carries the reply step the obligation set names"
+if grep -qF '**Reply step.**' <<<"$(section_6_3 "$COMMENTS_WF")"; then
+  pass "the reply step closes the pass, downstream of the section that files"
 else
-  fail "§ 6.1 lost the reply step the obligation set names"
+  fail "the reply step is no longer where the pass closes"
 fi
 
-# One ordered obligation set, stated once in § 6's preamble. The routing it
-# replaced named a jump target per call site and leaked at whichever site the
-# next pass took; these tokens pin the preconditions of the one reply step.
+# One ordered obligation set, stated once in § 6's preamble and performed by
+# the order the subsections appear in. The routing it replaced named a jump
+# target per call site and leaked at whichever site the next pass took.
 HEAD="$(section_6_head "$COMMENTS_WF")"
 while IFS='|' read -r token label; do
   if grep -qF -- "$token" <<<"$HEAD"; then
@@ -207,25 +207,29 @@ frozen_causes|a frozen cause is recorded before the reply closing its thread
 patched_causes|a patched cause is recorded before the reply closing its thread
 OBLIGATIONS
 
-# No section routes a pass by naming another section's step: that is the shape
-# the obligation set replaces, and a mixed pass is the row mix it dropped.
-jump_targets() {
-  # $1 = file — prints one line per section that names another section's step
-  if grep -qF 'through § 6.2' <<<"$(section_6_1 "$1")"; then printf '§ 6.1\n'; fi
-  if grep -qF '→ § 6.1' <<<"$(section_6_2 "$1")"; then printf '§ 6.2\n'; fi
+# Document order is what performs obligation 1: a `Tracked:` body names an id
+# the pass has already filed only while the section that files precedes the one
+# reply step. Stated in prose and contradicted by the layout, it read as an
+# order the document did not execute, and a freeze or mixed pass replied first.
+doc_order() {
+  # $1 = file — `before` when issue creation precedes the reply step
+  local create reply
+  create="$(first_line "$1" '### 6.2 Create Issues')"
+  reply="$(first_line "$1" '**Reply step.**')"
+  [[ -n "$create" && -n "$reply" ]] || { printf 'missing\n'; return; }
+  if [[ "$create" -lt "$reply" ]]; then printf 'before\n'; else printf 'after\n'; fi
 }
 
-JUMPS="$(jump_targets "$COMMENTS_WF" | tr '\n' ' ')"
-if [[ -z "${JUMPS// /}" ]]; then
-  pass "no section routes a pass into another section's step"
-else
-  fail "a section names a jump target again: $JUMPS"
-fi
+case "$(doc_order "$COMMENTS_WF")" in
+  before) pass "issue creation precedes the reply step in document order" ;;
+  after)  fail "the reply step sits ahead of the section that files the class issue" ;;
+  *)      fail "review-pr-comments.md lost its issue-creation section or its reply step" ;;
+esac
 
 # The two records the recurrence check reads. A resolved thread is invisible to
 # the next pass, so a cause is recurrence only if a pass wrote it down.
 check_token "$COMMENTS_WF" "--slurpfile entry [WORKTREE_PATH]/tmp/patched-cause-[ISSUE_ID].json" \
-  "§ 6.1 records a patched cause where it replies and resolves"
+  "§ 6 records a patched cause in workflow state"
 check_token "$COMMENTS_WF" "--slurpfile entry [WORKTREE_PATH]/tmp/frozen-cause-[ISSUE_ID].json" \
   "§ 6 records a frozen cause in workflow state"
 
@@ -371,7 +375,7 @@ else
 fi
 
 # Order control: the line carrying the router token, moved behind the cap line.
-CTRL="$(plant order "$COMMENTS_WF" '/finding-disposition\.md#recurrence/ && !moved { saved = $0; moved = 1; next } { print } /iterations >= 5/ && moved && !placed { print ""; print saved; placed = 1 }' awk)"
+CTRL="$(plant order "$COMMENTS_WF" '/finding-disposition\.md#recurrence/ && !moved { saved = $0; moved = 1; next } { print } /REVIEW_MAX_EXTERNAL_ROUNDS/ && moved && !placed { print ""; print saved; placed = 1 }' awk)"
 case "$(check_order "$CTRL")" in
   after) pass "lint flags a recurrence check moved behind the iterations cap" ;;
   *)     fail "lint MISSED a recurrence check moved behind the iterations cap" ;;
@@ -398,20 +402,13 @@ for token in frozen_causes patched_causes; do
     "$token" "a reply that closes its thread before $token is written"
 done
 
-# Jump controls: the routing shape put back, one section at a time.
-CTRL="$(plant jump61 "$COMMENTS_WF" '/^### 6\.1/ { print; print "Reach it through § 6.2 first."; next } { print }' awk)"
-if [[ "$(jump_targets "$CTRL")" == *"§ 6.1"* ]]; then
-  pass "lint flags § 6.1 routing a pass through another section"
-else
-  fail "lint MISSED § 6.1 routing a pass through another section"
-fi
-
-CTRL="$(plant jump62 "$COMMENTS_WF" '/^### 6\.2/ { print; print "Then → § 6.1 for the reply."; next } { print }' awk)"
-if [[ "$(jump_targets "$CTRL")" == *"§ 6.2"* ]]; then
-  pass "lint flags § 6.2 routing a pass back into the reply step"
-else
-  fail "lint MISSED § 6.2 routing a pass back into the reply step"
-fi
+# Order control: the reply step's own label, lifted back above the section that
+# files. That layout is what a freeze or mixed pass read as reply-then-file.
+CTRL="$(plant replyorder "$COMMENTS_WF" '{ line[NR] = $0 } END { for (i = 1; i <= NR; i++) { if (!r && line[i] ~ /[*][*]Reply step[.][*][*]/) r = i; if (!c && line[i] ~ /^### 6[.]2 Create Issues/) c = i } for (i = 1; i <= NR; i++) { if (i == r) continue; if (i == c) { print line[r]; print "" } print line[i] } }' awk)"
+case "$(doc_order "$CTRL")" in
+  after) pass "lint flags a reply step lifted ahead of issue creation" ;;
+  *)     fail "lint MISSED a reply step lifted ahead of issue creation" ;;
+esac
 
 # One token, two readers: dropping `reply step` must redden the obligation set
 # and the § 6.1 gate alike.
@@ -422,8 +419,8 @@ else
   pass "lint flags a reply step nothing names"
 fi
 
-gone section_6_1 "$(drop replylabel "$COMMENTS_WF" '**Reply step.**')" \
-  '**Reply step.**' "an obligation set naming a reply step § 6.1 does not carry"
+gone section_6_3 "$(drop replylabel "$COMMENTS_WF" '**Reply step.**')" \
+  '**Reply step.**' "an obligation set naming a reply step the pass never reaches"
 gone section_6_head "$(drop obligationmix "$COMMENTS_WF" 'mixed')" \
   'mixed' "an obligation set that leaves the mixed pass out of its row mixes"
 gone strip_comments "$(drop patched "$COMMENTS_WF" '/tmp/patched-cause-[ISSUE_ID].json')" \

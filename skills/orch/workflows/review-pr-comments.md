@@ -119,7 +119,7 @@ Delegate to the architecture reviewer with the domain report paths, asking for c
 
 Read every report, aggregate across agents preserving attribution, and deduplicate by (location, description), keeping the first and noting all sources. `blockers[]` and `category: "fix"` suggestions are fix items; `category: "issue"` suggestions defer to § 6.2; `questions[]` are auto-answered in § 7.
 
-**Recurrence before the cap.** A finding sharing a root cause with one a prior pass patched is dispositioned by [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence), which allows `structural-close` or `freeze` and no further patch round. Check it here, ahead of § 6.3's `iterations` cap: that cap counts rounds, and one cause recurs several times inside its budget. Read what earlier passes patched and froze first, since a pass that resolved its threads leaves nothing else for this check to read: a finding sharing a cause in `patched_causes` is the recurrence this rule ends, and one sharing a cause in `frozen_causes` is `declined` without re-triaging.
+**Recurrence before the cap.** A finding sharing a root cause with one a prior pass patched is dispositioned by [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence), which allows `structural-close` or `freeze` and no further patch round. Check it here, ahead of § 6.1's round cap: that cap counts rounds, and one cause recurs several times inside its budget. Read what earlier passes patched and froze first, since a pass that resolved its threads leaves nothing else for this check to read: a finding sharing a cause in `patched_causes` is the recurrence this rule ends, and one sharing a cause in `frozen_causes` is `declined` without re-triaging.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{patched: (.pr_comment_review.patched_causes // []), frozen: (.pr_comment_review.frozen_causes // [])}'
@@ -176,19 +176,17 @@ Omit empty sections and proceed straight to § 6 — no user prompt.
 
 The `fix set` is every § 5 row marked Fixing plus every `structural-close` row: a structural close IS a fix round, one whose item names the generating surface rather than the site, and cutting surface the Done-when does not require is a close. `freeze` and `declined` rows are `reply-only` — they never join the delegation, the commit, or the push.
 
-**Every pass reaches § 6.1's `reply step`** — fix-only, reply-only, mixed, `freeze`, `declined` alike — and owes both of these before it answers a thread there:
+**Every pass owes both of these before it answers a thread** — fix-only, reply-only, mixed, `freeze`, `declined` alike. The subsections below run in the order they appear and the single `reply step` is the last of them, so a pass reading straight through owes nothing it has not already done:
 
 1. Every class issue a reply names exists. § 6.2 files each `freeze` row's class issue; a `declined` row names the issue its frozen cause carries.
-2. Every cause a reply closes is recorded — a `freeze` row's in `frozen_causes`, an applied item's in `patched_causes`. § 1 hides a resolved thread from the next pass, so a cause the store does not carry is one the next pass re-triages in place of declining it. A cause is reviewer-derived text and never crosses argv: write its file with the harness file-write tool, then bind the path.
+2. Every cause a reply closes is recorded — a `freeze` row's in `frozen_causes`, an applied item's in `patched_causes`. § 1 hides a resolved thread from the next pass, so a cause the store does not carry is one the next pass re-triages in place of declining it. A cause is reviewer-derived text and never crosses argv: write the file its shape below names with the harness file-write tool, then bind the path.
 
 ```json
 {"cause": "[ONE_LINE]", "issue": "[CLASS_ISSUE_ID]"}
+{"cause": "[ONE_LINE]", "commit": "[COMMIT_SHA]"}
 ```
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile entry [WORKTREE_PATH]/tmp/frozen-cause-[ISSUE_ID].json '$entry[0] as $e | .pr_comment_review.frozen_causes = ((.pr_comment_review.frozen_causes // []) + [$e])'
-```
-```json
-{"cause": "[ONE_LINE]", "commit": "[COMMIT_SHA]"}
 ```
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile entry [WORKTREE_PATH]/tmp/patched-cause-[ISSUE_ID].json '$entry[0] as $e | .pr_comment_review.patched_causes = ((.pr_comment_review.patched_causes // []) + [$e])'
@@ -267,13 +265,19 @@ git -C "[WORKTREE_PATH]" log -1 --oneline
 
 Apply the fix-round A×B table in [`dev-fix.md` § 2](dev-fix.md), which is canonical — including exact-commit binding on accept, the bounded git re-read on `accept` with B failing, the report-only tail-reconciliation nudge on `wait` with B passing, and the never-accept `retry` row, which never re-runs the fix. On accept: applied items are marked for reply, items the agent skipped go to the skipped list with their reason, and blocked items become issue candidates in § 6.2.
 
-**Batch per fully-reviewed head.** Push a fix round only after every configured reviewer has reported on the current head.
-
-**Reply step.** Reply to and resolve every inline thread this pass handled, never deferring one to § 7. A pass that delegated pushes first; a pass with nothing to push skips this command:
+**Batch per fully-reviewed head.** Push a fix round only after every configured reviewer has reported on the current head. A pass with nothing to push skips this command:
 
 ```bash
 git -C "[WORKTREE_PATH]" push origin HEAD
 ```
+
+### 6.2 Create Issues
+
+**Skip if** nothing clears the filing bar in [references/finding-disposition.md](../references/finding-disposition.md). Blocked items, `category: "issue"` suggestions, and each `freeze` row's class issue that clear it go into an audit-input file at `[WORKTREE_PATH]/tmp/audit-pr-comments-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md`, with `tracker.type` set to the resolved `TRACKER` (plus `tracker.repository` for GitHub items), then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6.3`.
+
+### 6.3 Re-Triage Or Exit
+
+**Reply step.** Reply to and resolve every inline thread this pass handled, never deferring one to § 7.
 
 | Outcome | Reply body |
 |---------|------------|
@@ -290,14 +294,7 @@ The word "tracked" (any form) without a `KEN-` or `#` issue id turns the gate re
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.replied '{"source_id":"[THREAD_ID]","commit":"[COMMIT_SHA]","outcome":"[applied|skipped|blocked|already_fixed]"}'
 ```
 
-
 Inline `--body` only for plain strings; a reply containing backticks or fences goes to a file and `--body-file` instead. PR-level comments and human-only threads stay deferred to § 7.
-
-### 6.2 Create Issues
-
-**Skip if** nothing clears the filing bar in [references/finding-disposition.md](../references/finding-disposition.md). Blocked items, `category: "issue"` suggestions, and each `freeze` row's class issue that clear it go into an audit-input file at `[WORKTREE_PATH]/tmp/audit-pr-comments-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md`, with `tracker.type` set to the resolved `TRACKER` (plus `tracker.repository` for GitHub items), then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6.3`.
-
-### 6.3 Re-Triage Or Exit
 
 This section counts the round and decides whether to loop; the cap is § 6.1's and is not re-applied here. Do **not** wait for bots to re-review — check once for comments that arrived while fixes were being applied, then loop or exit.
 
@@ -326,7 +323,7 @@ A thread is new when its `threads[].id` is not in `known`. No new threads → §
 
 ### 7.1 Post Remaining Replies
 
-**Backstop only** — inline threads handled per-pass in § 6.1 are already replied to and resolved. This covers PR-level comments, human-only threads, and anything per-pass handling missed. Skip any `source_id` already in `pr_comment_review.replied`.
+**Backstop only** — inline threads handled per-pass in § 6.3 are already replied to and resolved. This covers PR-level comments, human-only threads, and anything per-pass handling missed. Skip any `source_id` already in `pr_comment_review.replied`.
 
 | Outcome | Response |
 |---------|----------|
