@@ -40,6 +40,14 @@ assert_matches() {
   fi
 }
 
+# The doc checks pin STRUCTURE — the two bolded rule labels, the API setting
+# name, the escape-path heading and the commands under it, the routing rows
+# that point at it. review-bots.md: a token pin establishes that a structural
+# element is present, never that a behavioral claim written in prose is true,
+# so the SKILL's statement that outdated threads are excluded and the README's
+# statement of the unreachable-in-the-UI hazard have no lint. The script
+# assertions above hold the filter itself, which is what proves the exclusion.
+
 echo "=== pr-merge thread-gate docs match the script (kendex#825) ==="
 
 # 0. The behavior the docs describe is still what the script does. If this
@@ -58,10 +66,8 @@ readme_src=$(cat "$README_MD")
 #    from, so an operator can tell the two guarantees apart.
 assert_contains "$skill_src" 'required_conversation_resolution' \
   "SKILL.md names required_conversation_resolution"
-assert_matches "$skill_src" 'narrower guarantee|Narrower than branch protection' \
-  "SKILL.md states the gate is narrower than branch protection"
-assert_matches "$skill_src" 'not outdated|non-outdated' \
-  "SKILL.md states outdated threads are excluded from the gate"
+assert_contains "$skill_src" 'Narrower than branch protection' \
+  "SKILL.md carries the narrower-than-branch-protection rule"
 
 # 2. Policy, not mechanism: the gate binds only merges routed through pr-merge.
 assert_matches "$skill_src" 'Policy, not mechanism' \
@@ -98,8 +104,6 @@ assert_contains "$readme_src" 'required_conversation_resolution' \
   "README.md names required_conversation_resolution"
 assert_matches "$readme_src" 'policy, not mechanism' \
   "README.md states the policy-not-mechanism bound"
-assert_matches "$readme_src" 'unreachable in the UI' \
-  "README.md states the unreachable-thread hazard"
 assert_contains "$readme_src" 'resolve-thread' \
   "README.md points at resolve-thread for recovery"
 

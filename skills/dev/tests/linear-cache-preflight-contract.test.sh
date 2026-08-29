@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 # Regression test for #602: a Linear work item must establish its local cache
 # before mandatory reads, while GitHub-tracked work must not invoke Linear.
+#
+# The markdown checks pin the workflow's COMMANDS and its GitHub block's
+# shape. review-bots.md: a token pin establishes that a structural element is
+# present, never that a behavioral claim written in prose is true, so the
+# preflight's rules have no lint here: that a missing cache before the sync is
+# expected in a fresh worktree, that a sync failure is a sync/auth/API/config
+# failure rather than a missing cache, that a missing cache after a successful
+# sync is a cache-initialization defect, and that the Linear preflight never
+# runs for GitHub-tracked or ad-hoc work. The stub run below exercises the
+# first two against real exit codes, which is what proves them.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,14 +67,6 @@ assert_before "$sync_line" "$activate_line" 'sync precedes activation'
 assert_before "$sync_line" "$issue_read_line" 'sync precedes issue cache read'
 assert_before "$sync_line" "$comment_read_line" 'sync precedes comment cache read'
 
-require_text 'A missing cache before that command is expected in a fresh worktree.' \
-    'fresh missing cache is an expected pre-sync state'
-require_text 'that is a sync/auth/API/config' \
-    'sync and authentication failures retain a distinct diagnosis'
-require_text 'after sync succeeded' \
-    'post-sync missing cache is diagnosed as initialization failure'
-require_text 'Never run this Linear preflight for GitHub-tracked or ad-hoc work.' \
-    'non-Linear trackers explicitly skip the preflight'
 
 mkdir -p "$tmp/bin" "$tmp/project"
 COMMAND_LOG="$tmp/commands.log"

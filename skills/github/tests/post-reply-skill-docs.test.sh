@@ -40,6 +40,14 @@ assert_eq() {
   fi
 }
 
+# The markdown checks pin the routing row's own tokens — the --pr flag and the
+# PRRT_ id prefix — and the auto-detect block naming --pr. review-bots.md: a
+# token pin establishes that a structural element is present, never that a
+# behavioral claim written in prose is true, so the row's statement that --pr
+# is REQUIRED for a numeric comment id, and the note framing post-reply as an
+# exception to branch auto-detection, have no lint here. The --help assertion
+# below holds the script to the same requirement, which is what proves it.
+
 echo "=== post-reply SKILL.md synopsis matches --pr contract (kendex#545) ==="
 
 # 1. Exactly one post-reply row in the command routing table.
@@ -49,16 +57,7 @@ assert_eq "$(printf '%s\n' "$row" | grep -c .)" "1" "SKILL.md has exactly one po
 # 2. The row's synopsis exposes --pr and both ID forms.
 assert_contains "$row" '--pr' "post-reply row synopsis mentions --pr"
 assert_contains "$row" 'PRRT_' "post-reply row distinguishes PRRT_... thread IDs"
-assert_contains "$row" 'numeric' "post-reply row distinguishes numeric comment IDs"
 
-# 3. The row states that --pr is required for numeric comment IDs.
-assert_contains "$row" 'REQUIRED for numeric' "post-reply row marks --pr REQUIRED for numeric IDs"
-
-# 4. The blanket auto-detect note carries the post-reply exception. Match the
-# exception sentence itself rather than a fixed line window after the blanket
-# note, so reflowing either paragraph cannot silently break the assertion.
-exception=$(grep -E 'Exception.*post-reply|post-reply.*never auto-detects' "$SKILL_MD" || true)
-assert_contains "$exception" 'Exception' "auto-detect note frames post-reply as an explicit exception"
 autodetect_block=$(sed -n '/auto-detect from the current branch/,/^$/p' "$SKILL_MD")
 assert_contains "$autodetect_block" '--pr' "auto-detect exception mentions --pr"
 

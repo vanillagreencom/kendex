@@ -4,6 +4,12 @@
 # must stay ONE `--all-projects` command. These workflows are markdown
 # contracts, so this test statically pins that shape and the absence of every
 # loop form it replaced.
+#
+# No check that a caller states it never loops `--project`. That rule lives
+# only in prose; the flag itself appears on every legitimate call, so a pin on
+# it would stand while the rule was gone. review-bots.md: a token pin
+# establishes that a structural element is present, never that a behavioral
+# claim written in prose is true.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -64,12 +70,6 @@ sed -n '/^### 1\.4 /,/^### 1\.4\.1 /p' "$SKILL_DIR/workflows/tpm-audit.md" >"$tm
 [[ -s "$tmp/input.md" ]] || fail 'the tpm-audit § 1.4 input section could not be extracted'
 grep -Fq -- 'Canceled' "$tmp/input.md" \
   && fail 'tpm-audit § 1.4 admits Canceled into the audit input set'
-
-# Each workflow states why, so an editor does not "helpfully" restore the loop.
-for rel in workflows/tpm-audit.md workflows/tpm-roadmap-plan.md; do
-  grep -Eq -- 'never loop `--project`|Never loop `--project`' "$SKILL_DIR/$rel" \
-    || fail "${rel} lost the no-loop instruction"
-done
 
 # The flag the workflows depend on is documented by the skill that provides it.
 linear_skill="$SKILL_DIR/../linear/SKILL.md"

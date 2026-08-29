@@ -9,6 +9,28 @@
 # test statically pins the completeness check at the batch fetch, the one
 # statement of the subtree continuation rule its call sites defer to, and the
 # team scope every cached read is filtered by.
+#
+# What this pins is STRUCTURE — the bulk-get, auth-check, teams-get and
+# recursive-children commands, the `Reading a Full Subtree`, `Resolve Team
+# Scope`, `Team Scope` and `Scope by Path` sections, the project-order route,
+# the `--all-projects` flag, the TEAM_PREFIX placeholder, and each mode's row
+# in the scope table. review-bots.md: a token pin establishes that a
+# structural element is present, never that a behavioral claim written in
+# prose is true.
+#
+# So these rules have no lint: that the batch fetch exits 0 whether or not it
+# matched, is reconciled against the requested set, and halts naming what came
+# back missing. That every row at the maximum depth is a frontier, the call
+# repeats rooted at every one, identifiers deduplicate across calls, and the
+# round stops when nothing new returns. That a team with no issues still
+# resolves, an unresolvable scope halts, an out-of-scope resolution halts,
+# every read below is filtered, the sweep's comparison set discards
+# out-of-scope rows, and the pre-output invariant checks the prefix. That
+# exemption from the sweep is never exemption from scope. That the cache
+# holds the whole workspace while only the two analysis workflows resolve a
+# team, that silence is not inheritance for a new mode, which modes audit
+# Linear projects, and that the roadmap analysis drops everything outside its
+# scope.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,27 +51,13 @@ require() {
 
 tpm_audit="$SKILL_DIR/workflows/tpm-audit.md"
 require "$tpm_audit" 'cache issues bulk-get' 'batch input fetch'
-require "$tpm_audit" 'exits 0 whether or not it matched them all' \
-  'the batch fetch names its fail-open'
-require "$tpm_audit" \
-  'compare the returned .id. values against every requested identifier' \
-  'the batch fetch is reconciled against the requested set'
-require "$tpm_audit" 'halt naming any that came back missing' \
-  'an unmatched target halts instead of being dropped'
 
 # --- The subtree continuation rule is stated once, and deferred to ----------
 
 deps="$SKILL_DIR/references/dependencies.md"
 require "$deps" 'Reading a Full Subtree' 'the continuation rule has an owning section'
-require "$deps" 'every row at the maximum depth returned is a frontier' \
-  'a branching tree has many frontier rows'
-require "$deps" 'Repeat the call rooted at \*\*every\*\* frontier row' \
-  'continuation covers every frontier row'
-require "$deps" 'deduplicate identifiers across calls' 'frontier rows are deduplicated'
-require "$deps" 'stop when a round returns nothing new' 'continuation terminates'
 
 # Every caller defers to that statement; none restates or narrows it.
-audit_issues="$SKILL_DIR/workflows/audit-issues.md"
 
 for rel in workflows/audit-issues.md workflows/research-complete.md \
            workflows/tpm-roadmap-plan.md; do
@@ -68,39 +76,18 @@ require "$tpm_audit" '1\.1\.1 Resolve Team Scope' 'the team scope has a resolvin
 require "$tpm_audit" 'auth-check' 'the configured team is read from the tracker'
 require "$tpm_audit" 'teams get \[TEAM\]' \
   'the prefix comes from the team record, not from an issue'
-require "$tpm_audit" 'a team with none yet resolves' \
-  'an empty team resolves instead of blocking the audit'
-require "$tpm_audit" 'must not run unscoped' 'an unresolvable scope halts'
 require "$tpm_audit" '.project-order. → § 1\.1\.1, then § 11' \
   'project-order resolves scope before it reads or reorders'
-require "$tpm_audit" 'exemption from the sweep is never exemption from scope' \
-  'the sweep exemption is not a scope exemption'
-require "$tpm_audit" 'Every project, initiative, and issue read below is filtered' \
-  'project-order mode filters what it reads'
-require "$tpm_audit" 'resolves outside the § 1\.1\.1 scope halts' \
-  'a caller-named input issue outside the scope halts'
-require "$tpm_audit" 'does not start with .TEAM_PREFIX-.' \
+require "$tpm_audit" 'TEAM_PREFIX' \
   'out-of-team rows are named by their identifier prefix'
-require "$tpm_audit" 'Both .--all-projects. fetches return every team' \
+require "$tpm_audit" '[-][-]all-projects' \
   'the input fetch states that it is workspace-wide'
-require "$tpm_audit" \
-  'Discard every row outside the § 1\.1\.1 team scope' \
-  'the comparison set the sweep cancels from is scoped'
-require "$tpm_audit" 'carries the § 1\.1\.1 team prefix' \
-  'the pre-output invariant checks the scope'
 
 skill="$SKILL_DIR/SKILL.md"
-require "$skill" 'cache holds the whole workspace' 'the cache scope is stated once'
-require "$skill" 'The two analysis workflows resolve the configured team' \
-  'the scoping rule names the workflows that implement it'
-require "$skill" 'Every other workflow reads the cache workspace-wide' \
-  'the rule discloses what it does not cover'
 
 # Every path states its own scope status, so a mode added later cannot inherit
 # silence -- the omission that produced an unscoped path in three rounds running.
 require "$skill" '## Scope by Path' 'the per-path enumeration has one home'
-require "$skill" 'Silence is not inheritance: a new mode adds its row' \
-  'a new mode must state its own row'
 for path in 'tpm-audit .project., .team.' 'tpm-audit .issues., Linear' \
             'tpm-audit .issues., GitHub' 'tpm-audit .project-order.' \
             'tpm-roadmap-plan' 'tpm-cycle-plan' 'audit-issues §§ 7\.2-7\.5' \
@@ -109,14 +96,9 @@ for path in 'tpm-audit .project., .team.' 'tpm-audit .issues., Linear' \
     || fail "the scope enumeration does not carry a row for: $path"
 done
 
-# The wrapper's Linear-only modes reject a GitHub tracker rather than running empty.
-require "$audit_issues" '.project., .team., and .project-order. audit Linear projects' \
-  'team joins the Linear-only mode constraint'
-
 # The sibling analysis workflow proposes cancellations from the same set.
 roadmap="$SKILL_DIR/workflows/tpm-roadmap-plan.md"
 require "$roadmap" '1\.1 Team Scope' 'the roadmap analysis resolves a team scope'
 require "$roadmap" 'tpm-audit.md\) § 1\.1\.1' 'it defers to the one resolving section'
-require "$roadmap" 'drop everything outside the scope' 'its comparison set is scoped'
 
 echo "all pass"

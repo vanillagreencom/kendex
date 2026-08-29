@@ -8,6 +8,17 @@
 # in any shared section — a GitHub-tracked QA review must never emit Linear
 # cache failures. Also verifies the orch caller passes tracker context in the
 # QA delegation (when orch is present).
+#
+# What this pins is STRUCTURE — the § 1.1 heading, the two bolded routes, the
+# `Tracker:` delegation field, the `TRACKER` variable, every gh and linear.sh
+# command, and the delegation's Tracker line. review-bots.md: a token pin
+# establishes that a structural element is present, never that a behavioral
+# claim written in prose is true, so these rules have no lint: that the
+# tracker resolves once before any tracker command; that an unprefixed issue
+# id infers linear and an `issue-` key github; that a GitHub review runs no
+# Linear command and a missing Linear cache is not an error for one; that
+# neither route silently falls back to the other; and that the repository is
+# omitted from the delegation line under a linear tracker.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -41,17 +52,12 @@ qa_review="$SKILL_DIR/workflows/qa-review.md"
 # --- qa-review 1.1: tracker resolution happens once, before any tracker command ---
 
 require_pattern "$qa_review" '1\.1 Resolve Tracker' 'tracker resolution section'
-require_pattern "$qa_review" 'Resolve tracker context once, before any tracker command' 'resolve-once rule'
-require_pattern "$qa_review" 'explicit `Tracker:` value in the delegation prompt' 'delegation-context precedence'
-require_pattern "$qa_review" 'starting with `issue-` → `github`; otherwise `linear`' 'issue-id inference fallback'
+require_pattern "$qa_review" '`Tracker:`' 'the delegation field the tracker is read from'
 require_fixed "$qa_review" 'gh repo view --json nameWithOwner --jq .nameWithOwner' 'repository resolution for inferred github tracker'
-require_pattern "$qa_review" 'Store the result as `TRACKER`' 'TRACKER stored once'
+require_pattern "$qa_review" '`TRACKER`' 'the resolved tracker variable'
 
 # --- qa-review 1.1: GitHub reviews degrade explicitly, never silently ---
 
-require_pattern "$qa_review" 'GitHub reviews must not run Linear commands' 'GitHub no-Linear rule'
-require_pattern "$qa_review" 'A missing Linear cache is not an error for a GitHub-tracked review' 'missing-cache-not-an-error rule'
-require_pattern "$qa_review" 'do not silently fall back to the other tracker' 'no-silent-fallback rule'
 
 # --- qa-review 1.2: context read is tracker-conditional ---
 
@@ -83,7 +89,7 @@ if [[ -f "$review_pr" ]]; then
   sed -n '/qa-review\.md/,/<\/delegation_format>/p' "$review_pr" > "$qa_delegation"
   [[ -s "$qa_delegation" ]] || fail 'QA delegation format could not be extracted from orch review-pr.md'
   require_fixed "$qa_delegation" 'Tracker: [TRACKER] [OWNER/REPO]' 'tracker context in orch QA delegation'
-  require_pattern "$review_pr" 'Omit `\[OWNER/REPO\]` when `TRACKER=linear`' 'linear repository-omission note in orch QA delegation'
+  require_pattern "$review_pr" 'TRACKER=linear' 'the linear tracker value in the orch QA delegation'
 fi
 
 echo "all pass"

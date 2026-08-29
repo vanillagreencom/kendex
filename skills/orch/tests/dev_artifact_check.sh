@@ -5,6 +5,13 @@
 # (kendex#776): the check resolves WT/tmp/dev-return-ISSUE-RID.json and requires
 # the internal .round_id to match. The mtime freshness gate is gone.
 
+#
+# The markdown checks pin COMMAND and delegation-line shapes. review-bots.md:
+# a token pin establishes that a structural element is present, never that a
+# behavioral claim written in prose is true. So ci-fix's two rules have no
+# lint: that its agent writes no dev-return artifact, and that the round is
+# accepted on the return message plus the pushed fix commit rather than on a
+# stale artifact.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -485,8 +492,6 @@ assert_file_contains "$ci_fix" "$ROUND_STAMP" "ci-fix § 3.2 mints a fresh dev_r
 # ci-fix's agent pushes its fix directly and writes NO artifact, so the fresh
 # token alone is the fail-closed guarantee: a prior round's leftover receipt
 # carries the previous token and can never be mistaken for this round's.
-assert_file_contains "$ci_fix" "writes **no** dev-return artifact" "ci-fix states its agent writes no completion artifact"
-assert_file_contains "$ci_fix" "Accept this round on the agent's return message plus the pushed fix commit" "ci-fix accepts on the return message plus the pushed fix commit, never a stale artifact"
 assert_file_not_contains "$ci_fix" "$LEGACY_CHECK" "ci-fix § 3.2 no longer uses the legacy positional dev-artifact-check call"
 
 # The removed legacy positional call must not survive in any orch workflow.

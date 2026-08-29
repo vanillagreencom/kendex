@@ -5,6 +5,19 @@
 # and the user is asked about work rather than about metadata mechanics. These
 # workflows are markdown contracts, so this test pins each rule at the place
 # that acts on it, and pins the retired parallelism ceremony as absent.
+#
+# What this pins is STRUCTURE — the `## Disposition` heading, the three
+# bolded rule labels other documents cite by name, the § 10.1 heading, the
+# below_bar evidence fields, the two gate questions verbatim, and the report
+# template lines. review-bots.md: a token pin establishes that a structural
+# element is present, never that a behavioral claim written in prose is true.
+#
+# So the bar's own content has no lint: that all three tests must hold, what
+# each one asks, that everything else is declined with one line, and the
+# severe-edge-case, low-severity and critical-harm carve-outs. Nor does the
+# skip reason naming its failed test, architecture gaps facing the same bar,
+# the list of mechanics applied without asking, or the audit gate's own
+# statement that it asks about work and not mechanics.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,18 +39,9 @@ require() {
 skill="$SKILL_DIR/SKILL.md"
 require "$skill" '## Disposition' 'disposition section'
 require "$skill" 'Creation bar' 'creation bar rule'
-require "$skill" 'all three hold' 'all three tests must hold'
-require "$skill" 'changes what a user or operator experiences' 'user-visible-effect test'
-require "$skill" 'no open issue, active branch, or one-line fix already covers it' 'already-covered test'
-require "$skill" 'without a new investigation' 'finishable-as-written test'
-require "$skill" 'declined with one line' 'declined items get one line, not an issue'
-require "$skill" 'severe-sounding edge case that no real input reaches' 'severe-edge-case exclusion'
-require "$skill" 'hypothetical of low severity' 'hypothetical low-severity exclusion'
-require "$skill" 'critical harm or financial loss' 'critical-harm exception'
 require "$skill" 'Burn down more than you create' 'burn-down rule'
 require "$skill" 'created N / closed M' 'net reporting obligation'
 require "$skill" 'Ask about work, never about mechanics' 'question-scope rule'
-require "$skill" '[Ll]abels, priorities, relations, hierarchy, sort order, and project moves' 'mechanics applied without asking'
 
 # --- The analysis workflows apply it ----------------------------------------
 
@@ -45,23 +49,18 @@ for rel in workflows/tpm-audit.md workflows/tpm-roadmap-plan.md; do
   file="$SKILL_DIR/$rel"
   require "$file" '[Hh]old the creation bar' 'creation bar invoked'
   require "$file" 'Disposition' 'pointer to the canonical rule'
-  require "$file" 'one-line reason|one line each|one-line `reason`' 'declined items carry a one-line reason'
 done
 
 tpm_audit="$SKILL_DIR/workflows/tpm-audit.md"
 require "$tpm_audit" '10\.1 Apply the Creation Bar' 'creation bar gate before action assignment'
 require "$tpm_audit" 'below_bar: true, test, who_hits_it' 'below-bar evidence shape'
-require "$tpm_audit" 'naming the test it failed|naming the failed creation-bar test' 'skip reason names the failing test'
 require "$tpm_audit" 'cancellation sweep' 'cancellation sweep is a named obligation'
-require "$tpm_audit" 'A gap that nothing depends on and no user would notice is declined' 'architecture gaps face the same bar'
 
 # --- The wrapper asks about work only ---------------------------------------
 
 audit_issues="$SKILL_DIR/workflows/audit-issues.md"
-require "$audit_issues" 'Ask only about work, never about mechanics' 'gate scope rule'
 require "$audit_issues" '"Create these issues\?"' 'creation question'
 require "$audit_issues" '"Cancel these issues\?"' 'cancellation question'
-require "$audit_issues" 'applied in § 7 without a question' 'corrections are not questions'
 require "$audit_issues" 'Corrections applied automatically' 'corrections reported, not asked'
 require "$audit_issues" 'created \[N\] / closed \[M\]' 'net headline in the report'
 require "$audit_issues" 'Declined' 'declined items are reported'

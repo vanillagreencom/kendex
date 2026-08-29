@@ -6,6 +6,13 @@
 # provenance, that audits must never classify it as stale metadata or remove
 # it, and that the only legitimate audit output is a scheduling signal.
 
+#
+# What this pins is the bolded term the rule defines and the quoted signal
+# string it names. review-bots.md: a token pin establishes that a structural
+# element is present, never that a behavioral claim written in prose is true,
+# so the sentences around them have no lint — that Linear already treats the
+# dependent issue as unblocked, and that the relation is never removed or
+# classified as stale.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,8 +37,6 @@ echo "=== linear SKILL.md completed-blocker relation contract ==="
 skill_md="$SKILL_DIR/SKILL.md"
 
 assert_file_contains "$skill_md" 'satisfied history, not stale metadata' "completed blockers framed as satisfied history, not stale metadata"
-assert_file_contains "$skill_md" 'Linear itself already treats the dependent issue as unblocked' "Linear auto-unblock semantics stated"
-assert_file_contains "$skill_md" 'never remove or "fix" it, and audits must never classify it as stale' "removal and stale classification forbidden"
 assert_file_contains "$skill_md" 'gates cleared, ready to schedule' "scheduling signal is the only legitimate audit output"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

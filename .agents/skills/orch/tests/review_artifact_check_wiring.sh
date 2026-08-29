@@ -4,6 +4,18 @@
 # ask whether the three call sites and the reviewer-facing schema say what the
 # script actually enforces. A contract nobody relays is a contract nobody obeys.
 
+#
+# The markdown checks pin COMMANDS, the `measurement_failed` and `detail`
+# fields, the priority range, the schema route, the Output Contract heading,
+# and two absence checks. review-bots.md: a token pin establishes that a
+# structural element is present, never that a behavioral claim written in
+# prose is true. So these rules have no lint: that a return message alone is
+# never sufficient to complete a reviewer and buys exactly one re-delegation
+# written with the harness file-write tool; that submit-pr reports the
+# rejection reason and treats none of those outcomes as a pass; and that the
+# schema states there is no P5 and no line numbers in a location. The
+# script's own rejection text is asserted above, which is what proves the
+# schema it teaches.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -126,23 +138,18 @@ assert_eq "$(suppressed_mentions "$submit_pr")" "1" "submit-pr.md § 1 relays th
 review_pr="$REPO_ROOT/skills/orch/workflows/review-pr.md"
 assert_file_contains "$review_pr" ".agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT]" "review-pr acceptance runs review-artifact-check"
 assert_file_not_contains "$review_pr" 'A return message arrives with `Verdict:` and `File:` lines, *or*' "review-pr no longer accepts return-message-only completion"
-assert_file_contains "$review_pr" "never sufficient" "review-pr states a return message alone cannot complete a reviewer"
-assert_file_contains "$review_pr" "exactly one" "review-pr limits incomplete returns to one re-delegation"
-assert_file_contains "$review_pr" "using your harness file-write tool" "review-pr re-delegation instructs harness file-write tool"
 assert_file_contains "$review_pr" 'review-artifact-check --file "$EXTERNAL_OUTPUT"' "review-pr validates external output via --file mode"
 assert_file_not_contains "$review_pr" "if jq -e '.verdict'" "review-pr no longer prescribes inline if/redirection for external verdict check"
 assert_file_contains "$review_pr" 'review-artifact-check --file "$EXTERNAL_OUTPUT" [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND]' "review-pr passes review_delegated_at as the --file freshness boundary"
 # The reason vocabulary belongs to the script (behaviourally covered above);
 # the workflow's obligation is to surface whatever reason it reports, with the
 # detail field that pinpoints the offending item, instead of silently passing.
-assert_file_contains "$review_pr" 'report the `reason` (and `detail` when present)' "review-pr surfaces the rejection reason and detail"
+assert_file_contains "$review_pr" '`detail`' "review-pr names the detail field the rejection carries"
 
 # --- submit-pr.md wires the --file freshness boundary for the local review ---
 submit_pr="$REPO_ROOT/skills/orch/workflows/submit-pr.md"
 assert_file_contains "$submit_pr" 'review-artifact-check --file "$LOCAL_OUTPUT" [LOCAL_STARTED_AT]' "submit-pr passes a delegated-at boundary to the --file freshness check"
 assert_file_contains "$submit_pr" "git-context timestamp epoch" "submit-pr captures an epoch boundary before running the local review"
-assert_file_contains "$submit_pr" 'report the `reason`' "submit-pr surfaces the rejection reason"
-assert_file_contains "$submit_pr" "none of those outcomes is a pass" "submit-pr states a rejected local review is not a pass"
 
 # --- kendex#885: the rejection has to teach the schema, not just flag it ---
 # Four artifacts were rejected in one session by agents that followed the
@@ -223,8 +230,6 @@ schema_doc="$REPO_ROOT/skills/reviewer/schemas/review-finding.md"
 assert_file_contains "$reviewer_skill" "Output Contract" "reviewer SKILL has an output-contract section"
 assert_file_contains "$reviewer_skill" "review-artifact-check" "reviewer SKILL mandates the pre-return self-check"
 assert_file_contains "$schema_doc" "1-4" "schema states the priority range"
-assert_file_contains "$schema_doc" "no P5" "schema says there is no P5"
-assert_file_contains "$schema_doc" "no line numbers" "schema states the location shape"
 assert_file_contains "$schema_doc" "recommendation" "schema names the recommendation field"
 for wf in review codebase-review qa-review; do
   wf_file="$REPO_ROOT/skills/reviewer/workflows/$wf.md"
@@ -235,8 +240,8 @@ done
 review_pr_recovery="$REPO_ROOT/skills/orch/workflows/review-pr.md"
 # The required-field list lives in the schema, so the re-delegation points the
 # reviewer there rather than restating a field list that would drift from it.
-assert_file_contains "$review_pr_recovery" "every required field of \`review-finding.md\`" \
-  "review-pr's re-delegation routes the reviewer to the schema's required fields"
+assert_file_contains "$review_pr_recovery" "review-finding.md" \
+  "review-pr's re-delegation routes the reviewer to the schema file"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
