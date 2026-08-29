@@ -57,21 +57,21 @@ tree() {
   [[ "$grace" =~ ^[1-9][0-9]*$ ]] || die "grace must be positive"
   [[ $# -gt 0 ]] || die "tree command is missing"
   local tree_pid="" tree_rc=0 tree_reaped=false cancel_rc="" gate_fd_open=false
+  close_tree_gate() { $gate_fd_open || return 0; exec 6>&-; gate_fd_open=false; }
   request_cancel() {
     cancel_rc="$1"
+    close_tree_gate
     [[ -z "$tree_pid" ]] || kill -TERM "$tree_pid" 2>/dev/null || true
   }
   stop_and_reap_tree() {
+    close_tree_gate
     if [[ -n "$tree_pid" ]] && ! $tree_reaped; then
       kill -TERM "$tree_pid" 2>/dev/null || true
       wait "$tree_pid" 2>/dev/null || tree_rc=$?
       tree_reaped=true
     fi
   }
-  cleanup_tree() {
-    stop_and_reap_tree
-    if $gate_fd_open; then exec 6>&-; gate_fd_open=false; fi
-  }
+  cleanup_tree() { stop_and_reap_tree; }
   trap cleanup_tree EXIT
   trap 'request_cancel 143' TERM HUP
   trap 'request_cancel 130' INT
@@ -88,8 +88,7 @@ tree() {
     stop_and_reap_tree
     die "cannot release CLI process"
   }
-  exec 6>&-
-  gate_fd_open=false
+  close_tree_gate
   if [[ -n "$cancel_rc" ]]; then
     stop_and_reap_tree
     exit "$cancel_rc"

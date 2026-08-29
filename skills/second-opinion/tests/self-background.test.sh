@@ -715,8 +715,8 @@ if [[ "$(uname -s)" == "Linux" ]] && command -v setsid >/dev/null 2>&1; then
 else
   printf 'SKIP: caller-cancellation control requires Linux and setsid\n'
 fi
-
-if [[ "$(uname -s)" == "Linux" ]]; then
+if [[ "$(uname -s)" == "Linux" ]] && command -v setsid >/dev/null 2>&1 \
+    && command -v timeout >/dev/null 2>&1; then
   startup_ready="$TMP_ROOT/startup.ready"
   startup_pid_file="$TMP_ROOT/startup.pid"
   startup_heartbeat="$TMP_ROOT/startup-heartbeat"
@@ -735,24 +735,24 @@ startup_cancel_in_launch_window() {
 }
 trap startup_cancel_in_launch_window DEBUG
 SH
-  startup_rc=0
-  BASH_ENV="$TMP_ROOT/startup-env" PATH="$PATH" FAKE_MODE=startup \
-    TEST_SESSION_TOKEN="$startup_token" \
+  startup_rc=0 STARTUP_TOKEN="$startup_token"
+  setsid timeout --foreground -k 2 5 env BASH_ENV="$TMP_ROOT/startup-env" PATH="$PATH" \
+    FAKE_MODE=startup TEST_SESSION_TOKEN="$startup_token" \
     FAKE_CLI_READY_FILE="$startup_ready" FAKE_CLI_PID_FILE="$startup_pid_file" \
-    HEARTBEAT_FILE="$startup_heartbeat" \
-    "$RUNTIME" tree 1 "$TMP_ROOT/startup.stderr" codex \
-    >/dev/null 2>"$TMP_ROOT/startup.log" || startup_rc=$?
-  if [[ -s "$startup_pid_file" ]]; then
-    STARTUP_SESSION="$(cat < "$startup_pid_file")"
-    STARTUP_TOKEN="$startup_token"
-  fi
+    HEARTBEAT_FILE="$startup_heartbeat" "$RUNTIME" tree 1 \
+    "$TMP_ROOT/startup.stderr" codex >/dev/null 2>"$TMP_ROOT/startup.log" &
+  STARTUP_SESSION=$!
+  wait "$STARTUP_SESSION" || startup_rc=$?
   [[ $startup_rc -eq 143 ]] || fail "startup-window cancellation returned $startup_rc"
   [[ ! -e "$startup_ready" && ! -e "$startup_heartbeat" ]] \
     || fail "startup-window cancellation released the CLI"
+  for _attempt in {1..20}; do [[ -z "$(owned_session_groups "$startup_token" "$STARTUP_SESSION")" ]] && break; sleep 0.05; done
+  [[ -z "$(owned_session_groups "$startup_token" "$STARTUP_SESSION")" ]] \
+    || fail "startup-window cancellation left a process in its session"
   STARTUP_SESSION=""
   printf 'PASS: startup-window cancellation cannot release the CLI\n'
 else
-  printf 'SKIP: startup-window cancellation control requires Linux\n'
+  printf 'SKIP: startup-window cancellation control requires Linux, setsid, and timeout\n'
 fi
 
 gate_scratch="$TMP_ROOT/gate-scratch"
