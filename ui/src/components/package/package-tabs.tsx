@@ -26,6 +26,7 @@ export function PackageTabs({
   scope,
   scopes,
   harnesses,
+  vendor,
   busy,
   onDelete,
   body,
@@ -37,6 +38,11 @@ export function PackageTabs({
   scope: Scope;
   scopes: Scope[];
   harnesses: HarnessId[];
+  /** Who ships the copy at `scope`, when a tool ships it itself. The audit
+   *  never reads such a package, so its tab says so instead of offering a
+   *  check that will not come. Read off the one installation this page is
+   *  about, the same copy the score would have answered for. */
+  vendor: string | null;
   busy: boolean;
   /** Opens the dialog that deletes every copy — the Projects tab offers
    *  the whole-package deletion beside its per-place removals, and one
@@ -56,7 +62,7 @@ export function PackageTabs({
             <TabsTrigger value="overview">{OVERVIEW_TAB}</TabsTrigger>
             <TabsTrigger value="projects">{PROJECTS_TAB}</TabsTrigger>
             <TabsTrigger value="safety">
-              <SafetyScoreLabel reading={safety} />
+              <SafetyScoreLabel reading={safety} vendor={vendor} />
             </TabsTrigger>
             {customizable ? (
               <TabsTrigger value="customize">{CUSTOMIZE_TAB}</TabsTrigger>
@@ -75,7 +81,7 @@ export function PackageTabs({
             />
           </TabsContent>
           <TabsContent value="safety" className="pt-6">
-            <PackageSafety reading={safety} />
+            <PackageSafety reading={safety} vendor={vendor} />
           </TabsContent>
           {customizable ? (
             <TabsContent value="customize" className="pt-6">

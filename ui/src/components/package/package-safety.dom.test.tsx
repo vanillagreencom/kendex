@@ -32,7 +32,13 @@ const GLOBAL: Scope = { scope: "global" };
 
 /** The tab exactly as the page wires it: one reading behind the label and
  *  the panel, so a test can never see the two disagree. */
-function SafetyTab({ reference }: { reference: PackageRef }) {
+function SafetyTab({
+  reference,
+  vendor = null,
+}: {
+  reference: PackageRef;
+  vendor?: string | null;
+}) {
   const reading = usePackageSafety(
     reference.kind,
     reference.name,
@@ -40,8 +46,8 @@ function SafetyTab({ reference }: { reference: PackageRef }) {
   );
   return (
     <>
-      <SafetyScoreLabel reading={reading} />
-      <PackageSafety reading={reading} />
+      <SafetyScoreLabel reading={reading} vendor={vendor} />
+      <PackageSafety reading={reading} vendor={vendor} />
     </>
   );
 }

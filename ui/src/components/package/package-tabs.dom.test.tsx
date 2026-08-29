@@ -4,8 +4,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuditView, ItemSafety, Scope } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
+import { vendorHelp } from "@/lib/copy";
 import { PROJECTS_TAB } from "@/lib/copy-projects";
-import { SAFETY_TAB, SAFETY_TAB_STALE } from "@/lib/copy-safety";
+import {
+  SAFETY_NOT_READ,
+  SAFETY_RETRY_LABEL,
+  SAFETY_TAB,
+  SAFETY_TAB_STALE,
+  SAFETY_VENDOR,
+} from "@/lib/copy-safety";
 import { useAuditStore } from "@/stores/audit";
 import { mount, settle } from "@/test/dom";
 import { PackageTabs } from "./package-tabs";
@@ -52,7 +59,7 @@ const view = (safety: ItemSafety[]): AuditView => ({
 
 const OVERVIEW_MARKER = "what this package is";
 
-const strip = () =>
+const strip = ({ vendor = null }: { vendor?: string | null } = {}) =>
   mount(
     <PackageTabs
       kind="command"
@@ -60,6 +67,7 @@ const strip = () =>
       scope={GLOBAL}
       scopes={[GLOBAL]}
       harnesses={["claude"]}
+      vendor={vendor}
       busy={false}
       onDelete={() => {}}
       body={<p>{OVERVIEW_MARKER}</p>}
@@ -192,5 +200,53 @@ describe("the tab's figure when the check could not run again", () => {
     expect(tab(host, SAFETY_TAB).textContent).toBe(`${SAFETY_TAB}58`);
     expect(tab(host, SAFETY_TAB).querySelector(".sr-only")).toBeNull();
     expect(disc(host).className).toContain("text-warning");
+  });
+});
+
+// Content a tool ships itself is skipped by observed_rows, so no audit will
+// ever score it. Left to the unscored state it would sit on a permanent
+// dash behind a Try again that asks for a check that is not coming.
+describe("a package the harness ships itself", () => {
+  const VENDOR = "OpenAI";
+
+  const openSafety = async (vendor: string | null) => {
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "ok",
+      data: [view([])],
+    });
+    const host = strip({ vendor });
+    await settle();
+    await act(async () => {
+      tab(host, SAFETY_TAB).click();
+    });
+    await settle();
+    return host;
+  };
+
+  const retryButton = (host: HTMLElement) =>
+    [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === SAFETY_RETRY_LABEL,
+    );
+
+  it("says who ships it, and offers no check it cannot run", async () => {
+    const host = await openSafety(VENDOR);
+
+    // No disc: a dash reads as a figure still on its way.
+    expect(tab(host, SAFETY_TAB).textContent).toBe(SAFETY_TAB);
+    expect(host.textContent).toContain(SAFETY_VENDOR);
+    expect(host.textContent).toContain(vendorHelp(VENDOR));
+    expect(host.textContent).not.toContain(SAFETY_NOT_READ);
+    expect(retryButton(host)).toBeUndefined();
+  });
+
+  // The contrast that makes the case above mean anything: a package kendex
+  // does read, which the audit simply has no row for yet, still asks again.
+  it("leaves a genuinely unscored package its retry", async () => {
+    const host = await openSafety(null);
+
+    expect(tab(host, SAFETY_TAB).textContent).toBe(`${SAFETY_TAB}—`);
+    expect(host.textContent).toContain(SAFETY_NOT_READ);
+    expect(host.textContent).not.toContain(SAFETY_VENDOR);
+    expect(retryButton(host)).toBeDefined();
   });
 });

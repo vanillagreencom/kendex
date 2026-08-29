@@ -219,6 +219,7 @@ export function PackagePage() {
         name={group.name}
         scope={ref.scope}
         scopes={groupScopes(group)}
+        vendor={primary.vendor}
         harnesses={group.harnesses as HarnessId[]}
         busy={mutating}
         onDelete={() => setConfirmDelete(true)}

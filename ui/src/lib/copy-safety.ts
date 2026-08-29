@@ -27,6 +27,11 @@ export const SAFETY_TAB_STALE = "the last reading kendex could check";
 // The audit is the slowest thing the app does, so the tab opens before it
 // has answered. A wait is not an outcome, and this says which it is.
 export const SAFETY_CHECKING = "Checking this package…";
+// Content a tool ships itself is never scored: the audit skips it, because
+// the reader did not choose it and cannot change it. That is a settled
+// answer rather than a reading still to come, so the tab says which — the
+// unscored state's retry would ask for a check that is not coming.
+export const SAFETY_VENDOR = "Shipped with the harness";
 // The audit answered and had no reading for this package. Nothing found and
 // nothing read are different claims, and only the second one is true here.
 export const SAFETY_NOT_READ = "This package hasn't been scored";
