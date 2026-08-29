@@ -18,7 +18,7 @@ REPO="$(cd "$TEST_DIR/../.." && pwd)"
 RATCHET="$REPO/.agents/skills/size-ratchet/scripts/size-ratchet"
 CHANGELOG_ENTRIES="$REPO/.agents/skills/growth-guards/scripts/changelog-entries"
 REAL_GIT="$(command -v git)"
-REAL_AWK="$(command -v awk)"
+REAL_CARGO="$(command -v cargo)"
 # Enforcement in this repo rests on this key, and a glob matching no tracked
 # file is a documented clean pass — so a hardcoded copy here would stay green
 # after the key stopped reaching the fragment tree.
@@ -100,9 +100,7 @@ temp_case() { # pass|refuse LABEL SOURCE-LINE...
 for constructor in \
   'tempfile::tempdir().unwrap()' \
   'tempfile::TempDir::new().unwrap()' \
-  'tempdir().unwrap()' \
   'tempfile::tempdir_in(".").unwrap()' \
-  'TempDir::new_in(".").unwrap()' \
   'tempfile::TempDir::with_prefix("fixture").unwrap()' \
   'tempfile::TempDir::with_prefix_in("fixture", ".").unwrap()' \
   'tempfile::Builder::new().tempdir().unwrap()' \
@@ -110,14 +108,24 @@ for constructor in \
   temp_case refuse "direct fixture ownership is refused for $constructor" \
     'fn fixture() {' " let _tmp = $constructor;" '}'
 done
+temp_case refuse "an imported tempdir function is refused" \
+  'use tempfile::tempdir;' 'fn fixture() {' ' let _tmp = tempdir().unwrap();' '}'
+temp_case refuse "an imported TempDir constructor is refused" \
+  'use tempfile::TempDir;' 'fn fixture() {' ' let _tmp = TempDir::new_in(".").unwrap();' '}'
 temp_case refuse "a multiline Builder constructor is refused" \
   'fn fixture() {' ' let _tmp = tempfile::Builder::new()' ' .prefix("fixture")' ' .tempdir()' ' .unwrap();' '}'
+temp_case refuse "a split free-function call is refused" \
+  'fn fixture() {' ' let _tmp = tempfile::tempdir' ' ();' '}'
+temp_case refuse "an aliased tempfile import is refused" \
+  'use tempfile::tempdir as make_fixture;' 'fn fixture() {' ' let _tmp = make_fixture();' '}'
 temp_case pass "RootedTempDir owns and exposes the canonical fixture root" \
   'struct World { fixture: kendex_test_support::RootedTempDir }' 'fn fixture() {' ' let world = World { fixture: kendex_test_support::RootedTempDir::new().unwrap() };' ' let root = world.fixture.path();' ' drop(root);' '}'
 temp_case pass "same-name non-temporary path owners do not trigger" \
   'fn fixture() {' ' let tmp = ProjectFixture::new();' ' let root = tmp.path();' ' drop(root);' '}'
 temp_case pass "comments and strings that mention tempfile constructors pass" \
   'fn prose() {' ' // let tmp = tempfile::tempdir().unwrap();' ' let shown = "tempfile::TempDir::new()";' ' drop(shown);' '}'
+temp_case pass "multiline raw strings that mention constructors pass" \
+  'fn prose() {' ' let shown = r#"' ' tempfile::tempdir()' ' tempfile::TempDir::new()' ' "#;' ' drop(shown);' '}'
 temp_case refuse "a line-comment glob cannot hide a later constructor" \
   'fn fixture() {' ' // fixtures live under crates/*/tests' ' let _tmp = tempfile::tempdir().unwrap();' '}'
 temp_case refuse "an imported path sink cannot make a raw owner compliant" \
@@ -147,31 +155,31 @@ set -euo pipefail
 is_temp_diff=0
 if [ "${1:-}" = diff ]; then
   for arg in "$@"; do
-    [ "$arg" = "--unified=100000" ] && is_temp_diff=$((is_temp_diff + 1))
+    [ "$arg" = "--unified=0" ] && is_temp_diff=$((is_temp_diff + 1))
     [ "$arg" = "crates/*/tests/*.rs" ] && is_temp_diff=$((is_temp_diff + 1))
   done
 fi
 [ "${FAIL_TEMP_DIFF:-0}" -eq 1 ] && [ "$is_temp_diff" -eq 2 ] && exit 2
 exec "$REAL_GIT" "$@"
 SH
-cat >"$R/fake-bin/awk" <<'SH'
+cat >"$R/fake-bin/cargo" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-if [ "${FAIL_TEMP_AWK:-0}" -eq 1 ] && [[ "${1:-}" == *builder_tempdir* ]]; then
+if [ "${FAIL_TEMP_CHECK:-0}" -eq 1 ] && [[ "$*" == *temp-fixture-check* ]]; then
   exit 2
 fi
-exec "$REAL_AWK" "$@"
+exec "$REAL_CARGO" "$@"
 SH
-chmod +x "$R/fake-bin/git" "$R/fake-bin/awk"
-run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" REAL_AWK="$REAL_AWK" FAIL_TEMP_DIFF=1
+chmod +x "$R/fake-bin/git" "$R/fake-bin/cargo"
+run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" REAL_CARGO="$REAL_CARGO" FAIL_TEMP_DIFF=1
 [ "$RC" -ne 0 ] && case "$OUT" in *"test fixture changes could not be read"*) true ;; *) false ;; esac \
   && ok "a failed fixture diff blocks guard" \
   || bad "a failed fixture diff blocks guard" "rc=$RC out=$OUT"
-run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" REAL_AWK="$REAL_AWK" FAIL_TEMP_AWK=1
+run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" REAL_CARGO="$REAL_CARGO" FAIL_TEMP_CHECK=1
 [ "$RC" -ne 0 ] && case "$OUT" in *"temporary fixture constructors could not be checked"*) true ;; *) false ;; esac \
   && ok "a failed fixture parser blocks guard" \
   || bad "a failed fixture parser blocks guard" "rc=$RC out=$OUT"
-rm -f "$R/fake-bin/git" "$R/fake-bin/awk"
+rm -f "$R/fake-bin/git" "$R/fake-bin/cargo"
 git -C "$R" reset -q HEAD -- crates/core/tests/temp_path.rs
 rm -f "$R/crates/core/tests/temp_path.rs"
 

@@ -2317,6 +2317,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kendex-guard-checks"
+version = "5.0.1"
+dependencies = [
+ "proc-macro2",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "kendex-test-support"
 version = "5.0.1"
 dependencies = [

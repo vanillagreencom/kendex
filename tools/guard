@@ -9,6 +9,10 @@
 # Checks the working tree, not the staged index — accepted trade-off:
 # agents commit whole files; partial staging is out of scope.
 set -uo pipefail
+guard_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd) || {
+  echo "guard: could not resolve the checker workspace"
+  exit 2
+}
 cd "$(git rev-parse --show-toplevel)"
 fail=0
 say() {
@@ -165,64 +169,13 @@ done)
 # is canonical by construction. The diff scope leaves older local fixtures
 # alone while making every new owner obey that boundary.
 if git cat-file -e 'HEAD^{commit}' 2>/dev/null; then
-  temp_fixture_diff=$(git diff --no-color --unified=100000 --no-ext-diff HEAD -- 'crates/*/tests/*.rs') ||
+  temp_fixture_diff=$(git diff --no-color --unified=0 --no-ext-diff HEAD -- 'crates/*/tests/*.rs') ||
     say "test fixture changes could not be read"
 else
-  temp_fixture_diff=$(git diff --cached --no-color --unified=100000 --no-ext-diff -- 'crates/*/tests/*.rs') ||
+  temp_fixture_diff=$(git diff --cached --no-color --unified=0 --no-ext-diff -- 'crates/*/tests/*.rs') ||
     say "test fixture changes could not be read"
 fi
-if ! temp_fixture_hits=$(awk '
-  function source(line, line_comment, block_comment, finish, rest) {
-    gsub(/"([^"\\]|\\.)*"/, "\"\"", line)
-    while (1) {
-      if (in_block) {
-        finish = index(line, "*/")
-        if (!finish) return ""
-        line = substr(line, finish + 2)
-        in_block = 0
-      }
-      line_comment = index(line, "//")
-      block_comment = index(line, "/*")
-      if (line_comment && (!block_comment || line_comment < block_comment))
-        return substr(line, 1, line_comment - 1)
-      if (!block_comment) return line
-      rest = substr(line, block_comment + 2)
-      finish = index(rest, "*/")
-      if (!finish) {
-        line = substr(line, 1, block_comment - 1)
-        in_block = 1
-        return line
-      }
-      line = substr(line, 1, block_comment - 1) substr(rest, finish + 2)
-    }
-  }
-  /^diff --git / {
-    file = $4
-    sub(/^b\//, "", file)
-    in_block = 0
-    next
-  }
-  /^@@ / {
-    spec = $3
-    sub(/^\+/, "", spec)
-    split(spec, at, ",")
-    new_line = at[1] - 1
-    next
-  }
-  /^--- / || /^\+\+\+ / { next }
-  /^[ +]/ {
-    prefix = substr($0, 1, 1)
-    line = substr($0, 2)
-    code = source(line)
-    new_line++
-    constructor = "(^|[^A-Za-z0-9_])((tempfile::)?tempdir(_in)?|(tempfile::)?TempDir::(new(_in)?|with_prefix(_in)?))[[:space:]]*\\("
-    builder_tempdir = "\\.tempdir(_in)?[[:space:]]*\\("
-    if (prefix == "+" && (code ~ constructor || code ~ builder_tempdir))
-      print file ":" new_line ": " line
-    next
-  }
-  /^-/ { next }
-' <<<"$temp_fixture_diff"); then
+if ! temp_fixture_hits=$(cargo run --quiet --manifest-path "$guard_root/Cargo.toml" -p kendex-guard-checks --bin temp-fixture-check -- "$(pwd)" <<<"$temp_fixture_diff"); then
   say "temporary fixture constructors could not be checked"
 fi
 [ -n "$temp_fixture_hits" ] && {
