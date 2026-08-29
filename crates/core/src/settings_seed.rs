@@ -200,11 +200,11 @@ pub fn extract_env_entries(template: &str) -> Vec<EnvEntry> {
                 // `InValue`, so the run is exactly this entry's.
                 let mut assignment = vec![row.text.to_owned()];
                 let mut open = row.carries;
-                let mut broken = row.unterminated;
+                let mut broken = row.broken;
                 while open && index < rows.len() {
                     assignment.push(rows[index].text.to_owned());
                     open = rows[index].carries;
-                    broken |= rows[index].unterminated;
+                    broken |= rows[index].broken;
                     index += 1;
                 }
                 // Complete means BOTH: the value closed, and no line of it

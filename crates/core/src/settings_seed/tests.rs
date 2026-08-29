@@ -688,3 +688,66 @@ fn a_broken_declaration_before_a_valid_one_never_becomes_the_owner() {
     assert!(out.contains("# Ours, revised."), "{out}");
     assert!(!out.contains("Theirs"), "{out}");
 }
+
+/// The third form completeness had not been asked about. TOML 1.0 forbids
+/// a newline inside an inline table, so `MAP = {` is broken where it
+/// stands: nothing carries, and asking only what carries called it
+/// finished and wrote it into the consumer's file. Completeness now comes
+/// off the grammar's own split — a form either may cross a newline or may
+/// not — so every delimited form answers, not the two remembered.
+#[test]
+fn an_inline_table_left_open_is_refused_by_name() {
+    for template in [
+        "[env]\n# A map.\nMAP = {\n",
+        "[env]\n# A map.\nMAP = { a = 1,\n\n# How deep.\nDEPTH = \"2\"\n",
+        "[env]\n# A map.\nMAP = { a = { b = 1 }\n",
+        "[env]\n# A map.\nMAP = {",
+    ] {
+        let entries = extract_env_entries(template);
+        assert!(!entries[0].complete(), "{template:?}: {entries:?}");
+
+        let shipped = seeded(template, "review");
+        let written = merge(None, &shipped);
+        assert!(
+            !written
+                .as_ref()
+                .is_some_and(|(text, _)| text.contains("MAP")),
+            "{template:?}: nothing may be written for it: {written:?}"
+        );
+        if let Some((text, _)) = &written {
+            text.parse::<toml::Table>()
+                .unwrap_or_else(|e| panic!("{template:?}: must parse: {e}\n{text}"));
+        }
+        let notes = unterminated_notes(&shipped);
+        assert_eq!(notes.len(), 1, "{template:?}: {notes:?}");
+        assert!(notes[0].contains("MAP"), "{template:?}: {notes:?}");
+    }
+}
+
+/// The other half: an inline table that closes on its line is an ordinary
+/// complete value and seeds like any other. A completeness rule that
+/// refused every brace would be as wrong as one that accepted every brace.
+#[test]
+fn an_inline_table_that_closes_seeds_like_any_other_value() {
+    for value in [
+        "{ a = 1 }",
+        "{ a = { b = 1 } }",
+        "{ a = \"}\" }",
+        "{ a = [1, 2] }",
+    ] {
+        let template = format!("[env]\n# A map.\nMAP = {value}\n");
+        let entries = extract_env_entries(&template);
+        assert!(entries[0].complete(), "{value}: {entries:?}");
+        assert_eq!(entries[0].assignment, [format!("MAP = {value}")], "{value}");
+
+        let shipped = seeded(&template, "review");
+        assert!(unterminated_notes(&shipped).is_empty(), "{value}");
+        let (text, added) = merge(None, &shipped).expect("MAP is missing");
+        assert_eq!(added, ["MAP"], "{value}");
+        let want: toml::Table = template.parse().expect("the template parses");
+        let got: toml::Table = text
+            .parse()
+            .unwrap_or_else(|e| panic!("{value}: seeded file must parse: {e}\n{text}"));
+        assert_eq!(got["env"]["MAP"], want["env"]["MAP"], "{value}");
+    }
+}

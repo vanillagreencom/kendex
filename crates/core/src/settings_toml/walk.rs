@@ -1,5 +1,5 @@
 //! Reading one line's characters: which of them are inside a string, how
-//! deep the arrays are, and where a value's quotes sit.
+//! deep the arrays and inline tables are, and where a value's quotes sit.
 //!
 //! Split from the row model above it because the two answer different
 //! questions. This one never decides what a line IS — it only says what a
@@ -49,18 +49,22 @@ impl Carry {
     }
 }
 
-/// What one line leaves behind. Two facts, because they are not the same
-/// one: what continues onto the next line, and what this line broke.
+/// What one line leaves behind. Two facts, because the grammar splits its
+/// containers in two: those a later line may close, and those it may not.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) struct Ends {
-    /// What a line below this one starts inside.
+    /// What a line below this one starts inside — the containers a later
+    /// line is allowed to close.
     pub(super) carry: Carry,
-    /// A single-line string opened on this line and never closed. It does
-    /// NOT carry — the grammar ends such a string with its line — so no
-    /// later line completes it and nothing about the value is pending.
-    /// Read closure from the absence of a carry alone and `TOKEN = "`
-    /// answers the same as a value that simply ended: closed.
-    pub(super) unterminated: bool,
+    /// Whether a container the grammar does NOT let cross a newline was
+    /// still open at the end of this line: a single-line string, or an
+    /// inline table. No later line may close either, so the value is
+    /// broken where it stands and nothing about it is pending.
+    ///
+    /// The complement of [`Carry`], not its negation. Read closure from
+    /// the absence of a carry alone and `TOKEN = "` and `MAP = {` both
+    /// answer the same as a value that simply ended: closed.
+    pub(super) broken: bool,
 }
 
 /// The byte offset of the first `=` no string encloses. `None` where the
@@ -82,15 +86,19 @@ pub(super) fn top_level_equals(content: &str) -> Option<usize> {
     None
 }
 
-/// Walk one line and return what it leaves behind: what carries onto the
-/// next line, and whether it broke off inside a single-line string.
+/// Walk one line and return what it leaves behind: the containers a later
+/// line may close, and whether one it may not was left open.
 ///
 /// The one place a line's containers are read, so no classification arm
-/// can drop them: an open string first, then the brackets and strings the
-/// rest of the line opens and closes. A `#` outside a string ends the
-/// line, and a stray `]` cannot take the depth below zero — an unbalanced
-/// file is not TOML, and underflowing here would read the whole rest of
-/// it as one value.
+/// can drop them: an open string first, then the brackets, braces and
+/// strings the rest of the line opens and closes. A `#` outside a string
+/// ends the line, and a stray `]` or `}` cannot take a depth below zero —
+/// an unbalanced file is not TOML, and underflowing here would read the
+/// whole rest of it as one value.
+///
+/// Every delimited form in the grammar is opened here and closed here, so
+/// "was anything left open" is answered for all of them at once rather
+/// than for the ones somebody remembered. See the module doc's table.
 pub(super) fn advance(content: &str, carry: Carry) -> Ends {
     let mut carry = carry;
     let mut index = 0;
@@ -103,12 +111,16 @@ pub(super) fn advance(content: &str, carry: Carry) -> Ends {
             None => {
                 return Ends {
                     carry,
-                    unterminated: false,
+                    broken: false,
                 };
             }
         }
     }
-    let mut unterminated = false;
+    // Inline tables may not hold a newline, so their depth is counted for
+    // this line alone and never joins the carry: one still open where the
+    // line ends can never be closed.
+    let mut tables = 0usize;
+    let mut string_broken = false;
     let bytes = content.as_bytes();
     while index < bytes.len() {
         match bytes[index] {
@@ -121,14 +133,21 @@ pub(super) fn advance(content: &str, carry: Carry) -> Ends {
                 carry.arrays = carry.arrays.saturating_sub(1);
                 index += 1;
             }
+            b'{' => {
+                tables += 1;
+                index += 1;
+            }
+            b'}' => {
+                tables = tables.saturating_sub(1);
+                index += 1;
+            }
             b'"' | b'\'' => match string_at(content, index) {
                 Some(end) => index = end,
                 None => {
-                    // Opens a multiline, which carries — or opens a
-                    // single-line string that never closes, which is the
-                    // one break that leaves nothing pending behind it.
+                    // Opens a multiline, which carries — or a single-line
+                    // string that never closes, which cannot.
                     carry.string = opened_at(content, index);
-                    unterminated = carry.string.is_none();
+                    string_broken = carry.string.is_none();
                     break;
                 }
             },
@@ -137,7 +156,7 @@ pub(super) fn advance(content: &str, carry: Carry) -> Ends {
     }
     Ends {
         carry,
-        unterminated,
+        broken: string_broken || tables > 0,
     }
 }
 

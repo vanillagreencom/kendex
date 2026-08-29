@@ -465,11 +465,11 @@ fn close_of(open: &str) -> &str {
 /// unterminated carries nothing and is still not finished. A caller
 /// reading completeness off `carries` alone calls `TOKEN = "` closed.
 #[test]
-fn an_unterminated_single_line_string_says_so_without_carrying() {
+fn a_form_the_grammar_cannot_continue_says_so_without_carrying() {
     let ends = |text: &str| -> Vec<(bool, bool)> {
         rows(text)
             .iter()
-            .map(|row| (row.carries, row.unterminated))
+            .map(|row| (row.carries, row.broken))
             .collect()
     };
     for quote in ['"', '\''] {
@@ -479,11 +479,50 @@ fn an_unterminated_single_line_string_says_so_without_carrying() {
             "{quote}: broken, and the line under it is structure again"
         );
     }
-    // A value that closes says neither, and one that carries says only
-    // that it carries.
-    assert_eq!(ends("TOKEN = \"ok\"\n"), [(false, false)]);
+    // An inline table may not hold a newline either, so one still open
+    // where the line ends is broken exactly as the string is.
+    assert_eq!(
+        ends("MAP = {\nMODE = \"real\"\n"),
+        [(false, true), (false, false)],
+        "an inline table cannot be continued by the line under it"
+    );
+    assert_eq!(ends("MAP = { a = { b = 1 }\n"), [(false, true)], "nested");
+
+    // A value that closes says neither, whatever its form.
+    for closed in [
+        "TOKEN = \"ok\"\n",
+        "MAP = { a = 1 }\n",
+        "MAP = { a = { b = 1 } }\n",
+        "MAP = { a = \"}\" }\n",
+        "LIST = [1, 2]\n",
+        // The scalars, which have no delimiters to leave open at all.
+        "N = 12\n",
+        "F = 1.5\n",
+        "B = true\n",
+        "D = 1979-05-27T07:32:00Z\n",
+        "D = 1979-05-27\n",
+        "D = 07:32:00\n",
+    ] {
+        assert_eq!(ends(closed), [(false, false)], "{closed:?}");
+    }
+    // And one that carries says only that it carries — the string and
+    // array answers are unchanged.
     assert_eq!(
         ends("BLOB = \"\"\"\ntext\n\"\"\"\n"),
         [(true, false), (true, false), (false, false)]
+    );
+    assert_eq!(
+        ends("LIST = [\n  1,\n]\n"),
+        [(true, false), (true, false), (false, false)]
+    );
+    // A brace inside a carried array still has to close on its own line.
+    assert_eq!(
+        ends("LIST = [\n  { a = 1 },\n]\n"),
+        [(true, false), (true, false), (false, false)]
+    );
+    assert_eq!(
+        ends("LIST = [\n  { a = 1,\n]\n"),
+        [(true, false), (true, true), (false, false)],
+        "the array carries; the inline table on that line does not"
     );
 }
