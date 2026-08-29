@@ -39,12 +39,11 @@ fn a_durable_tree_copy_never_follows_a_link() {
     assert_eq!(fs::read_to_string(held.join("a")).unwrap(), "a");
 }
 
-/// The mode comes across with the bytes, and taking the copy does not
-/// depend on that mode granting write access — the sync goes through the
-/// handle that wrote the file, never through a reopen of the finished
-/// one. A version that reopened it would be refused here: on Unix the
-/// copy is unwritable, and on Windows `FlushFileBuffers` needs write
-/// access on the handle whatever the file's mode says.
+/// The mode comes across with the bytes, and a mode that refuses a write
+/// handle does not stop the flush: it is relaxed for the flush and put
+/// back. This is the one place a Linux run exercises the code Windows
+/// always takes, since there every flush needs a write handle — drop the
+/// restore and the mode assertion below goes red.
 #[test]
 fn a_read_only_file_is_copied_durably_and_keeps_its_mode() {
     let tmp = tempfile::tempdir().unwrap();

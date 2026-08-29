@@ -109,33 +109,67 @@ pub fn read_if_exists(path: &Path) -> Result<Option<String>> {
     }
 }
 
-/// Reproduce a file's bytes at `to` and have them on disk before this
-/// returns, synced through the very handle that wrote them.
+/// Reproduce a file at `to` and have it on disk before this returns.
 ///
-/// The sync cannot be a step of its own against the finished file.
-/// Flushing needs a handle opened for writing — on Windows literally so,
-/// `FlushFileBuffers` is refused without `GENERIC_WRITE` — and the copy
-/// carries the source's permissions, so a read-only source leaves behind
-/// a file this process may not reopen for writing on either platform.
-/// The handle that did the writing is the one handle guaranteed to be
-/// flushable, which is why `atomic_write_durable` syncs its temp file
-/// before the rename rather than the named file after it.
+/// The copy is the platform's own, because a pre-image has to come back
+/// carrying whatever the platform hangs off a file and a hand-rolled byte
+/// loop would reproduce the bytes alone. On Windows `fs::copy` is
+/// `CopyFileExW`, documented to preserve extended attributes, OLE
+/// structured storage, NTFS alternate data streams, security resource
+/// attributes and file attributes; on Unix it carries the mode, which a
+/// restored hook needs to still be executable. Neither carries the
+/// owner or the access-control list: a new file's ACLs are inherited
+/// from its parent directory, on both platforms and before this helper
+/// existed too.
 pub(crate) fn copy_file_durable(from: &Path, to: &Path) -> Result<()> {
-    let mut source = fs::File::open(from).map_err(|e| CoreError::io(from, e))?;
-    let mut copy = fs::File::create(to).map_err(|e| CoreError::io(to, e))?;
-    std::io::copy(&mut source, &mut copy).map_err(|e| CoreError::io(to, e))?;
-    // The mode is part of what a pre-image holds: a hook restored without
-    // its execute bit is a hook that stops running. Set through the open
-    // handle and before the sync, so the write access this handle already
-    // holds is what applies it and one sync persists bytes and mode
-    // together.
-    let mode = source
-        .metadata()
-        .map_err(|e| CoreError::io(from, e))?
-        .permissions();
-    copy.set_permissions(mode)
-        .map_err(|e| CoreError::io(to, e))?;
-    copy.sync_all().map_err(|e| CoreError::io(to, e))
+    fs::copy(from, to).map_err(|e| CoreError::io(from, e))?;
+    sync_written_file(to)
+}
+
+/// Flush a file this process has just written, through a handle the
+/// platform will accept.
+///
+/// A read-only handle is enough on Unix and refused on Windows, whose
+/// `FlushFileBuffers` documents `GENERIC_WRITE` as a requirement, so the
+/// write handle is what this asks for. A file that came from a read-only
+/// source refuses one — `fs::copy` carries `FILE_ATTRIBUTE_READONLY`
+/// across on Windows and the mode on Unix — so a refusal relaxes the
+/// mode for the length of the flush and restores it afterwards, flush
+/// failed or not. The file is one this process created moments ago and
+/// is the only writer of, so the window it opens is over its own work.
+fn sync_written_file(path: &Path) -> Result<()> {
+    let write_handle = || fs::OpenOptions::new().write(true).open(path);
+    let refused = match write_handle() {
+        Ok(file) => return file.sync_all().map_err(|e| CoreError::io(path, e)),
+        Err(refused) if refused.kind() == std::io::ErrorKind::PermissionDenied => refused,
+        Err(other) => return Err(CoreError::io(path, other)),
+    };
+    let Ok(mode) = fs::metadata(path).map(|meta| meta.permissions()) else {
+        return Err(CoreError::io(path, refused));
+    };
+    fs::set_permissions(path, writable(&mode)).map_err(|e| CoreError::io(path, e))?;
+    let flushed = write_handle().and_then(|file| file.sync_all());
+    // Restored before the outcome is reported: a flush that failed must
+    // not also leave the file writable.
+    fs::set_permissions(path, mode).map_err(|e| CoreError::io(path, e))?;
+    flushed.map_err(|e| CoreError::io(path, e))
+}
+
+/// `mode` with this process able to write and nothing else relaxed.
+/// `Permissions::set_readonly(false)` sets every write bit on Unix, group
+/// and other along with owner, which is wider than a flush needs.
+fn writable(mode: &fs::Permissions) -> fs::Permissions {
+    let mut relaxed = mode.clone();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        relaxed.set_mode(mode.mode() | 0o200);
+    }
+    #[cfg(not(unix))]
+    {
+        relaxed.set_readonly(false);
+    }
+    relaxed
 }
 
 /// Persist a directory's own entries — the names in it, not the bytes of
@@ -185,9 +219,9 @@ pub(crate) fn remove_any(path: &Path) -> Result<()> {
 }
 
 /// Reproduce a whole tree at `to`, with every file on disk before this
-/// returns: each file synced through the handle that wrote it, each
-/// directory once its entries are in it. Nothing outside the tree is
-/// opened — a link is reproduced as a link and never read through — so
+/// returns: each file copied and flushed by `copy_file_durable`, each
+/// directory synced once its entries are in it. Nothing outside the tree
+/// is opened — a link is reproduced as a link and never read through — so
 /// the sync reaches exactly what this copy created and nothing else.
 pub(crate) fn copy_tree_durable(from: &Path, to: &Path) -> Result<()> {
     copy_tree_inner(from, to, true)
