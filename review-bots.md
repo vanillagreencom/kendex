@@ -59,8 +59,11 @@ These are known, deliberate trade-offs. Raising them again is noise:
 
 - **No test-coverage asks for instruction markdown or for `tools/guard`
   rules in a change that adds no guard test lane.** What a test must
-  cover is `.github/instructions/tests.instructions.md`; sentence-pinning
-  lints on markdown are banned.
+  cover is `.github/instructions/tests.instructions.md`. A markdown
+  contract lint pins tokens, never sentences: a setting key, command
+  name, flag, schema field, section heading, table row, exit code, or a
+  stable inline code literal. Where a rule carries no such token, the
+  fix is to give its own sentence one and pin that.
 - **The PreToolUse commit hook reads git words, not shell expansion.**
   Quoted flags, `flag=` assignments, aliases, and other spellings the shell
   would have to expand are outside its contract; the installed git hook is

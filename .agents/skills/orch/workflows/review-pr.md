@@ -258,7 +258,7 @@ Collect blockers and `category == "fix"` suggestions from the appended JSONs. No
 
 Omit empty categories. Decline any item that cannot affect real usage with a one-line reason here, per [SKILL.md § The Cycle](../SKILL.md#the-cycle) — it is neither fixed nor filed, and it is reported in § 8.
 
-**Disposition is by rule, not by prompt** — never present a selection menu over the findings. Every blocker and `category == "fix"` suggestion that survives declining goes to the fix round below, in EVERY decision mode; `ORCH_DECISION_MODE` does not gate it. The always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) still applies. Nothing left after declines → § 5.
+**Disposition is by rule, not by prompt** — never present a selection menu over the findings. Every blocker and `category == "fix"` suggestion that survives declining goes to the fix round below; `ORCH_DECISION_MODE` does not gate it, in `ask` and `auto-recommended` alike. The always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) still applies. Nothing left after declines → § 5.
 
 ### At The Cap
 
