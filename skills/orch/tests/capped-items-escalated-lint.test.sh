@@ -499,7 +499,7 @@ else
 fi
 
 # The verification pass routed back onto the gated key.
-if ! plant_pr s7verif 's/with its panel on .verification_panel./with its panel on `rereview_panel`/'; then
+if ! plant_pr s7verif 's/verification_panel/rereview_panel/'; then
   fail "§ 7 verification control planted nothing — its sed program matched no text"
 elif grep -q -F 'verification_panel' <<<"$(section_7 "$CTRL")"; then
   fail "lint MISSED a verification pass gated by the fix-cycle cap"
@@ -516,8 +516,11 @@ else
   pass "lint flags a § 7 write recording the cap's reason"
 fi
 
+# Anchored on the token the check reads, not on the wording around it: the
+# refusal message is free to be reworded without stopping the control planting.
 SCRATCH_WS="$TMP_ROOT/workflow-state"
-sed 's/ and drops its superseded fixed_items entry in the same write//' "$WS_SCRIPT" > "$SCRATCH_WS"
+awk 'index($0, "REVIEW_MAX_CYCLES=") { gsub(/fixed_items/, "∅") } { print }' \
+  "$WS_SCRIPT" > "$SCRATCH_WS"
 if cmp -s "$SCRATCH_WS" "$WS_SCRIPT"; then
   fail "refusal control planted nothing — its sed program matched no text"
 elif grep -q 'fixed_items' <<<"$(cap_refusal "$SCRATCH_WS")"; then

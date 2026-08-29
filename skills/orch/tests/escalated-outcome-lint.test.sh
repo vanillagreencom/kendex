@@ -75,9 +75,12 @@ else
   fail "audit-issues-input origin enum lost skipped"
 fi
 
+# Sliced on the section HEADING, not on the bold lead-in above the table: a
+# lead-in is a sentence fragment, and a prose boundary makes the check
+# prose-dependent however structural the needle inside it is.
 map_table() {
-  awk '/^\*\*Escalated and skipped items\*\*/ { on = 1; next }
-       on && /^\*\*/ { on = 0 }
+  awk '/^## Building from Review Findings/ { on = 1; next }
+       on && /^## / { on = 0 }
        on' "$1"
 }
 MAP="$(map_table "$PM_SCHEMA")"

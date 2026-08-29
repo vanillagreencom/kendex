@@ -2,12 +2,14 @@
 # Regression test for tracker-conditional QA-review context reads (#704, the
 # #655 tracker-routing class reaching the reviewer skill).
 # qa-review.md is a markdown contract, so this test statically verifies that
-# the workflow resolves tracker context once before any tracker command, keeps
-# the Linear cache reads inside an explicit Linear route, gives the GitHub
-# route an exact live-read command, and carries no unconditional `linear.sh`
-# in any shared section — a GitHub-tracked QA review must never emit Linear
-# cache failures. Also verifies the orch caller passes tracker context in the
-# QA delegation (when orch is present).
+# the Linear cache reads sit inside an explicit Linear route, that the GitHub
+# route carries an exact live-read command, and that no shared section holds an
+# unconditional `linear.sh` — a GitHub-tracked QA review must never emit Linear
+# cache failures. Those three are structural and are checked by extracting the
+# routes and reading the commands in them. Also verifies the orch caller
+# carries the Tracker line in the QA delegation (when orch is present). That
+# tracker context resolves once before any tracker command is prose, and is
+# listed below as uncovered.
 #
 # What this pins is STRUCTURE — the § 1.1 heading, the two bolded routes, the
 # `Tracker:` delegation field, the `TRACKER` variable, every gh and linear.sh
@@ -18,7 +20,9 @@
 # id infers linear and an `issue-` key github; that a GitHub review runs no
 # Linear command and a missing Linear cache is not an error for one; that
 # neither route silently falls back to the other; and that the repository is
-# omitted from the delegation line under a linear tracker.
+# omitted from the delegation line under a linear tracker. The Tracker line
+# itself is pinned, sliced between the qa-review.md route and the closing
+# </delegation_format> tag.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -89,7 +93,9 @@ if [[ -f "$review_pr" ]]; then
   sed -n '/qa-review\.md/,/<\/delegation_format>/p' "$review_pr" > "$qa_delegation"
   [[ -s "$qa_delegation" ]] || fail 'QA delegation format could not be extracted from orch review-pr.md'
   require_fixed "$qa_delegation" 'Tracker: [TRACKER] [OWNER/REPO]' 'tracker context in orch QA delegation'
-  require_pattern "$review_pr" 'TRACKER=linear' 'the linear tracker value in the orch QA delegation'
+  # No check that the delegation omits [OWNER/REPO] under a linear tracker.
+  # That rule is a sentence, and `TRACKER=linear` appears in review-pr.md only
+  # after </delegation_format>, so a pin on it never reads the block it names.
 fi
 
 echo "all pass"

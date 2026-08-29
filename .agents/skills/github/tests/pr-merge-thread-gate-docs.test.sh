@@ -45,7 +45,11 @@ assert_matches() {
 # that point at it. review-bots.md: a token pin establishes that a structural
 # element is present, never that a behavioral claim written in prose is true,
 # so the SKILL's statement that outdated threads are excluded and the README's
-# statement of the unreachable-in-the-UI hazard have no lint. The script
+# statement of the unreachable-in-the-UI hazard have no lint. Nor the escape
+# section's account of how a thread becomes unreachable, nor the README's own
+# policy-not-mechanism bound: SKILL.md carries that one as a bolded label
+# other documents cite, the README as an ordinary sentence. Both of those
+# predate this branch. The script
 # assertions above hold the filter itself, which is what proves the exclusion.
 
 echo "=== pr-merge thread-gate docs match the script (kendex#825) ==="
@@ -88,8 +92,6 @@ assert_contains "$escape_block" 'pr-threads' \
   "escape path tells the operator to list threads with pr-threads"
 assert_contains "$escape_block" 'resolve-thread' \
   "escape path tells the operator to resolve by id with resolve-thread"
-assert_matches "$escape_block" 'force-push|rebase' \
-  "escape path explains how a thread becomes unreachable"
 
 # 4. The command table rows stay index entries pointing at that prose.
 threads_row=$(grep '^| `pr-threads ' "$SKILL_MD" || true)
@@ -102,8 +104,6 @@ assert_contains "$resolve_row" 'PR blocked with no visible conversations' \
 # 5. README carries the same three points for the non-agent surface.
 assert_contains "$readme_src" 'required_conversation_resolution' \
   "README.md names required_conversation_resolution"
-assert_matches "$readme_src" 'policy, not mechanism' \
-  "README.md states the policy-not-mechanism bound"
 assert_contains "$readme_src" 'resolve-thread' \
   "README.md points at resolve-thread for recovery"
 

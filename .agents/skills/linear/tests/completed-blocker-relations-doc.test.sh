@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Doc-contract test for the completed-blocker relation rule (#745).
-# SKILL.md's "Blocked Label vs Issue Relations" section must state that a
-# blocking relation pointing at a Done/Canceled issue is satisfied history
-# (Linear already treats the issue as unblocked), that the relation stays for
-# provenance, that audits must never classify it as stale metadata or remove
-# it, and that the only legitimate audit output is a scheduling signal.
+# SKILL.md's "Blocked Label vs Issue Relations" section states that a blocking
+# relation pointing at a Done/Canceled issue is satisfied history, that the
+# relation stays for provenance, that audits must never classify it as stale
+# metadata or remove it, and that the only legitimate audit output is a
+# scheduling signal. What this test pins is the two ANCHORS in that section:
+# the bolded term the rule defines and the quoted signal string it names.
 
 #
 # What this pins is the bolded term the rule defines and the quoted signal

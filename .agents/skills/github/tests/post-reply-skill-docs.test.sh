@@ -58,8 +58,10 @@ assert_eq "$(printf '%s\n' "$row" | grep -c .)" "1" "SKILL.md has exactly one po
 assert_contains "$row" '--pr' "post-reply row synopsis mentions --pr"
 assert_contains "$row" 'PRRT_' "post-reply row distinguishes PRRT_... thread IDs"
 
-autodetect_block=$(sed -n '/auto-detect from the current branch/,/^$/p' "$SKILL_MD")
-assert_contains "$autodetect_block" '--pr' "auto-detect exception mentions --pr"
+# No check that the auto-detect note names --pr. The paragraph has no heading
+# or fence to slice on, only its opening sentence, and a prose boundary makes
+# the check prose-dependent however structural its needle is. The requirement
+# itself is held by the routing row above and by --help below.
 
 # 5. The script's own --help still declares the same requirement, so the
 #    SKILL.md wording above stays pinned to a real contract.

@@ -5,10 +5,10 @@
 # with one frontier row per branch, and every issues read answers workspace-wide
 # because the cache carries no team filter. A workflow reading any of those as
 # complete audits a subset while reporting a whole, or reaches another team's
-# backlog with a cancellation. These workflows are markdown contracts, so this
-# test statically pins the completeness check at the batch fetch, the one
-# statement of the subtree continuation rule its call sites defer to, and the
-# team scope every cached read is filtered by.
+# backlog with a cancellation. This test pins the ANCHORS those rules hang on:
+# the batch fetch command, the section that owns the subtree continuation rule
+# and the call sites that defer to it, and the team-scope sections and table.
+# What each rule then requires is prose, and is listed below as uncovered.
 #
 # What this pins is STRUCTURE — the bulk-get, auth-check, teams-get and
 # recursive-children commands, the `Reading a Full Subtree`, `Resolve Team

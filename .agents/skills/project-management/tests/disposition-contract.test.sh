@@ -2,9 +2,10 @@
 # The TPM's job is to keep the backlog small and true, not to file everything
 # noticed. Three rules carry that and are easy to lose in an edit: an issue is
 # filed only when it clears the creation bar, an audit that creates also closes,
-# and the user is asked about work rather than about metadata mechanics. These
-# workflows are markdown contracts, so this test pins each rule at the place
-# that acts on it, and pins the retired parallelism ceremony as absent.
+# and the user is asked about work rather than about metadata mechanics. This
+# test pins each rule's NAME at the place that cites it — the names are what
+# other documents reference — and pins the retired parallelism ceremony as
+# absent. What each rule requires is prose, listed below as uncovered.
 #
 # What this pins is STRUCTURE — the `## Disposition` heading, the three
 # bolded rule labels other documents cite by name, the § 10.1 heading, the

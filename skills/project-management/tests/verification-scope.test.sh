@@ -7,11 +7,14 @@
 #
 # The markdown checks at the tail pin STRUCTURE — the resolver route, the
 # .agents prefix, the docs-only mode, the verification_paths field, the
-# VERIFICATION_CONTEXTS placeholder, the [WORKTREE]/src literal the rule is
-# about — plus one absence check. review-bots.md: a token pin establishes
-# that a structural element is present, never that a behavioral claim written
-# in prose is true. So the workflow's rules that a source root is never
-# assumed and that no issue reuses another's linked PR have no lint.
+# VERIFICATION_CONTEXTS placeholder — plus one absence check. review-bots.md:
+# a token pin establishes that a structural element is present, never that a
+# behavioral claim written in prose is true. So the workflow's rules that a
+# source root is never assumed and that no issue reuses another's linked PR
+# have no lint. Requiring the `[WORKTREE]/src` literal did not cover the
+# first one either: a sentence inverting the rule carries the literal and
+# passes, while a meaning-preserving reword drops it and fails. The absence
+# check is what holds — the hardcoded root must not appear at all.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -186,8 +189,6 @@ fi
 if grep -Fq '${WORKTREE:-.}/src/' "$WORKFLOW"; then
   fail "tpm-audit still hardcodes a repository-root src directory"
 fi
-grep -Fq '`[WORKTREE]/src`' "$WORKFLOW" \
-  || fail "tpm-audit lost the no-assumed-repository-root-src rule"
 grep -Fq 'scripts/verification-scope' "$WORKFLOW" \
   || fail "tpm-audit does not invoke verification-scope"
 grep -Fq '.agents/' "$RESOLVER" \

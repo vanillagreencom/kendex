@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Two failure modes this pins. (a) The Linear CLI replaces the whole label set
-# and warn-and-skips unknown labels, so a workflow that mutates labels without
-# loading the live inventory and computing a full final set silently strips
-# labels or ships an unlabeled issue. (b) The research workflow label is
-# project-defined; a hard-coded `research` finds nothing in a repo that names
-# it otherwise. These workflows are markdown contracts, so the checks are
-# static. It also pins the artifact-return contract: the TPM child returns JSON
-# inline and the caller writes the file, since assuming a child-written file
-# leaves the caller reading a path nothing created.
+# Two failure modes stand behind this suite. (a) The Linear CLI replaces the
+# whole label set and warn-and-skips unknown labels, so a workflow that mutates
+# labels without loading the live inventory and computing a full final set
+# silently strips labels or ships an unlabeled issue. (b) The research workflow
+# label is project-defined; a hard-coded `research` finds nothing in a repo
+# that names it otherwise. What is pinned is the ANCHORS: the inventory load
+# command, the policy route, and the taxonomy placeholder. Neither failure
+# mode's rule is pinned — both are prose, and both are listed below.
 #
 # What this pins is STRUCTURE — the inventory and issue-fetch commands, the
 # labels.md route, the two bolded rules other documents cite, the

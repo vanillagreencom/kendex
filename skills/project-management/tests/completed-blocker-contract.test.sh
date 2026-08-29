@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # A blocking relation pointing at a Done/Cancelled issue is satisfied history:
 # the tracker already treats the dependent issue as unblocked, so removing the
-# relation destroys valid provenance. These workflows are markdown contracts,
-# so this test statically pins the rule end to end — the reference states the
-# semantics, the analysis workflow forbids removal and stale framing and emits
-# a scheduling signal instead, and the output schema carries that signal.
+# relation destroys valid provenance. This test pins the rule's ANCHORS, not
+# the rule end to end: the reference's defined term, the field the analysis
+# scopes its removals by, and the scheduling signal the output schema carries.
 #
 # What this pins is STRUCTURE — the `auto-satisfied` defined term, the
 # `ready_to_schedule` and `cleared_blockers` schema fields, `remove_relations`,

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# A GitHub-tracked audit must never reach for Linear. Tracker context resolves
-# once, both preflight branches stay disjoint, every approved action has a
-# GitHub execution route, and each Linear concept GitHub lacks degrades in a
-# reported note rather than silently vanishing. These workflows are markdown
-# contracts, so this test statically pins that separation — including a
-# mechanical check that the GitHub-only regions contain no Linear command.
+# A GitHub-tracked audit must never reach for Linear. This test pins the
+# separation itself: the two preflight branches and the two execution routes
+# are extracted by their headings and route labels, every GitHub command in
+# them is pinned, and a mechanical check proves the GitHub-only regions hold no
+# Linear command. The recorded degradation values are pinned too. That tracker
+# context resolves once, and that each degradation is reported rather than
+# silent, are prose and are listed below as uncovered.
 #
 # What this pins is STRUCTURE — the schema example and its table row, the
 # section headings, the two route labels, every gh and linear.sh command, the
