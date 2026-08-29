@@ -47,12 +47,11 @@ pub struct EnvEntry {
     pub comment: Vec<String>,
     /// Every physical line of the assignment, from the one carrying the
     /// `=` through the one that closes the value — a value TOML lets span
-    /// lines is seeded whole or not at all. Empty where nothing closes it.
-    ///
-    /// Held apart from the comment rather than counted off one end of a
-    /// list of both: which lines are the value is the walk's answer, and a
-    /// reader that took all-but-the-last would call a multiline value's
-    /// opening line part of the comment above it.
+    /// lines is seeded whole or not at all. Empty where the template's
+    /// value is not complete text seeding could copy.
+    /// Held apart from the comment because which lines are the value is
+    /// the walk's answer: a reader taking all-but-the-last off one list
+    /// calls a multiline value's opening line part of the comment.
     pub assignment: Vec<String>,
 }
 
@@ -62,11 +61,12 @@ impl EnvEntry {
         self.comment.iter().chain(&self.assignment)
     }
 
-    /// Whether the template's value closes, which is whether there is
-    /// anything here to write. An assignment nothing closes has no
-    /// complete text to seed, so the key is refused by name
-    /// ([`unterminated_notes`]) rather than written half-finished.
-    pub fn closes(&self) -> bool {
+    /// Whether the template spells this value out in full, which is
+    /// whether there is anything here to write. Not the same as ending: a
+    /// value can close, carry on, or break off mid-string, and only the
+    /// first is text seeding may copy. A key with nothing complete behind
+    /// it is refused by name rather than written half-finished.
+    pub fn complete(&self) -> bool {
         !self.assignment.is_empty()
     }
 }
@@ -85,30 +85,6 @@ impl SeededEnv {
     /// ledger hashes it.
     fn comment(&self) -> &[String] {
         trim_blank_edges(&self.entry.comment)
-    }
-
-    /// The default this entry ships, spelled the way a note shows it: the
-    /// decoded value in quotes, or the assignment's right-hand side
-    /// verbatim where the strict reader cannot decode it. Every entry
-    /// `merge` seeds has one, so a note can never drop an owner and then
-    /// name the wrong package as the one whose value lands.
-    ///
-    /// A value spanning lines is shown on the note's one line, its lines
-    /// joined by a space. Shown from the `=` line alone every multiline
-    /// value would read as its bare opening delimiter, and two packages
-    /// shipping different ones would be grouped as agreeing — the note
-    /// exists to say they disagree.
-    fn default_shown(&self) -> String {
-        let line = self.entry.assignment.first().map_or("", String::as_str);
-        if let Some(value) = crate::settings_template::decoded_value(line) {
-            return format!("\"{value}\"");
-        }
-        let opening = line.split_once('=').map_or(line, |(_, value)| value);
-        std::iter::once(opening)
-            .chain(self.entry.assignment.iter().skip(1).map(String::as_str))
-            .map(str::trim)
-            .collect::<Vec<&str>>()
-            .join(" ")
     }
 
     /// The ledger record seeding this entry writes.
@@ -224,14 +200,18 @@ pub fn extract_env_entries(template: &str) -> Vec<EnvEntry> {
                 // `InValue`, so the run is exactly this entry's.
                 let mut assignment = vec![row.text.to_owned()];
                 let mut open = row.carries;
+                let mut broken = row.unterminated;
                 while open && index < rows.len() {
                     assignment.push(rows[index].text.to_owned());
                     open = rows[index].carries;
+                    broken |= rows[index].unterminated;
                     index += 1;
                 }
-                // The file ended inside the value. There is no complete
-                // text to seed, so this entry carries none.
-                if open {
+                // Complete means BOTH: the value closed, and no line of it
+                // left a string nothing closes. Neither implies the other
+                // — `TOKEN = "` carries nothing and is still unfinished —
+                // and either alone would seed text that does not parse.
+                if open || broken {
                     assignment.clear();
                 }
                 entries.push(EnvEntry {
@@ -298,6 +278,24 @@ fn render_entries(entries: &[&SeededEnv], eol: &str) -> String {
     out
 }
 
+/// The declaration that speaks for a key: the first one seeding can write
+/// whole, in declaration order. `None` where no installed template spells
+/// the key's value out in full.
+///
+/// The one answer to "whose value lands", because four things must agree
+/// on it: the bytes `merge` writes, the owner [`record_seeds`] records,
+/// the template a later comment refresh is gated on, and the skill
+/// [`conflict_notes`] names. Derived four times it was changed in one, and
+/// a broken template declaring a key before a valid one had the valid
+/// skill's bytes written under the broken skill's name — which stops the
+/// real owner's comments refreshing and lets the broken one overwrite
+/// them.
+pub fn writable_for<'a>(entries: &'a [SeededEnv], key: &str) -> Option<&'a SeededEnv> {
+    entries
+        .iter()
+        .find(|seeded| seeded.entry.key == key && seeded.entry.complete())
+}
+
 /// Merge missing entries into the settings text, byte-faithfully: the
 /// inserted block is the only change, spelled in the file's own line
 /// terminator. `None` = nothing to add. Returns the new text plus the keys
@@ -307,19 +305,21 @@ pub fn merge(original: Option<&str>, entries: &[SeededEnv]) -> Option<(String, V
     if original.is_some_and(|text| env_blocked(text).is_some()) {
         return None;
     }
-    let mut existing: BTreeSet<String> = original
+    let existing: BTreeSet<String> = original
         .map(assigned_keys)
         .unwrap_or_default()
         .into_iter()
         .collect();
-    // First declaration wins a key that several skills ship — the first
-    // that can be written whole, so one skill's unterminated template does
-    // not claim a key another ships properly. A key nothing can supply is
-    // refused by name in [`unterminated_notes`], never written in part.
+    // Each distinct key once, in declaration order, taken from the one
+    // declaration that speaks for it. The winner comes from `writable_for`
+    // rather than being re-derived here, so the bytes written, the ledger
+    // and the notes cannot name three different skills.
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
     let missing: Vec<&SeededEnv> = entries
         .iter()
-        .filter(|seeded| seeded.entry.closes())
-        .filter(|seeded| existing.insert(seeded.entry.key.clone()))
+        .filter(|seeded| seen.insert(seeded.entry.key.as_str()))
+        .filter(|seeded| !existing.contains(&seeded.entry.key))
+        .filter_map(|seeded| writable_for(entries, &seeded.entry.key))
         .collect();
     if missing.is_empty() {
         return None;
@@ -377,14 +377,16 @@ pub fn merge(original: Option<&str>, entries: &[SeededEnv]) -> Option<(String, V
 }
 
 /// The ledger records the added entries were seeded, each under the owner
-/// whose lines were written — the first declaration, as `merge` chose.
+/// whose lines were written — asked of [`writable_for`], the same question
+/// `merge` asked, so the record names the skill that actually supplied the
+/// bytes.
 pub fn record_seeds(
     seeds: &mut BTreeMap<String, SettingsSeed>,
     entries: &[SeededEnv],
     added: &[String],
 ) {
     for key in added {
-        if let Some(seeded) = entries.iter().find(|seeded| &seeded.entry.key == key) {
+        if let Some(seeded) = writable_for(entries, key) {
             seeds.insert(key.clone(), seeded.seed_record());
         }
     }

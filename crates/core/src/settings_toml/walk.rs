@@ -3,9 +3,9 @@
 //!
 //! Split from the row model above it because the two answer different
 //! questions. This one never decides what a line IS — it only says what a
-//! line leaves open and where its pieces are, which is the state every
-//! classification depends on and none of them is allowed to compute for
-//! itself.
+//! line leaves open, what it left unfinished, and where its pieces are,
+//! which is the state every classification depends on and none of them is
+//! allowed to compute for itself.
 
 use std::ops::Range;
 
@@ -49,6 +49,20 @@ impl Carry {
     }
 }
 
+/// What one line leaves behind. Two facts, because they are not the same
+/// one: what continues onto the next line, and what this line broke.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct Ends {
+    /// What a line below this one starts inside.
+    pub(super) carry: Carry,
+    /// A single-line string opened on this line and never closed. It does
+    /// NOT carry — the grammar ends such a string with its line — so no
+    /// later line completes it and nothing about the value is pending.
+    /// Read closure from the absence of a carry alone and `TOKEN = "`
+    /// answers the same as a value that simply ended: closed.
+    pub(super) unterminated: bool,
+}
+
 /// The byte offset of the first `=` no string encloses. `None` where the
 /// line holds no such `=` — including a string opened where a key belongs,
 /// which is not an assignment this reader will hand out a span for.
@@ -68,7 +82,8 @@ pub(super) fn top_level_equals(content: &str) -> Option<usize> {
     None
 }
 
-/// Walk one line and return what it leaves open.
+/// Walk one line and return what it leaves behind: what carries onto the
+/// next line, and whether it broke off inside a single-line string.
 ///
 /// The one place a line's containers are read, so no classification arm
 /// can drop them: an open string first, then the brackets and strings the
@@ -76,7 +91,7 @@ pub(super) fn top_level_equals(content: &str) -> Option<usize> {
 /// line, and a stray `]` cannot take the depth below zero — an unbalanced
 /// file is not TOML, and underflowing here would read the whole rest of
 /// it as one value.
-pub(super) fn advance(content: &str, carry: Carry) -> Carry {
+pub(super) fn advance(content: &str, carry: Carry) -> Ends {
     let mut carry = carry;
     let mut index = 0;
     if let Some(kind) = carry.string {
@@ -85,9 +100,15 @@ pub(super) fn advance(content: &str, carry: Carry) -> Carry {
                 carry.string = None;
                 index = end;
             }
-            None => return carry,
+            None => {
+                return Ends {
+                    carry,
+                    unterminated: false,
+                };
+            }
         }
     }
+    let mut unterminated = false;
     let bytes = content.as_bytes();
     while index < bytes.len() {
         match bytes[index] {
@@ -103,14 +124,21 @@ pub(super) fn advance(content: &str, carry: Carry) -> Carry {
             b'"' | b'\'' => match string_at(content, index) {
                 Some(end) => index = end,
                 None => {
+                    // Opens a multiline, which carries — or opens a
+                    // single-line string that never closes, which is the
+                    // one break that leaves nothing pending behind it.
                     carry.string = opened_at(content, index);
+                    unterminated = carry.string.is_none();
                     break;
                 }
             },
             _ => index += 1,
         }
     }
-    carry
+    Ends {
+        carry,
+        unterminated,
+    }
 }
 
 /// The byte just past the string starting at `index`, or `None` where it

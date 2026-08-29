@@ -21,11 +21,14 @@
 //! inside `BLOB` to write over. That last one damages a file somebody
 //! owns, which is why the memory lives here now instead of three times.
 //!
-//! What this settles is exactly one thing: **which lines are structure and
-//! which are inside a value**, and where a structure line's top-level `=`
-//! falls. What a table means, what a finding is, and which values the
-//! shell loaders will read stay with the three callers, because they
-//! differ on purpose — the check is strict where seeding is lenient.
+//! What this settles is **which lines are structure and which are inside a
+//! value**, where a structure line's top-level `=` falls, and which lines
+//! left a value unfinished. The last is its own fact, not the absence of
+//! the first: a single-line string ends with its line, so one left open
+//! carries nothing and finishes nothing at the same time. What a table
+//! means, what a finding is, and which values the shell loaders will read
+//! stay with the three callers, because they differ on purpose — the
+//! check is strict where seeding is lenient.
 //!
 //! ## What the grammar can carry across a line
 //!
@@ -39,7 +42,9 @@
 //! - **Arrays** carry over line ends and nest. Tracked by depth, because a
 //!   flag cannot say how deep and a nested `[` is not a table header.
 //! - **Single-line strings**, basic and literal, end with their line by
-//!   definition. The walk steps over them inside a line and never past it.
+//!   definition. The walk steps over them inside a line and never past it,
+//!   and reports one left unterminated as its own fact — nothing carries,
+//!   so no later line could report it.
 //! - **Inline tables** may not hold a newline in TOML 1.0, so they carry
 //!   nothing across one. What they hold on their own line — `=` and `[` —
 //!   reaches no decision: only a line whose first non-blank character is
@@ -114,6 +119,12 @@ pub struct Row<'a> {
     /// assignment cannot ask the line under it whether the value closed
     /// when the file ends there.
     pub carries: bool,
+    /// Whether this line ends inside a string nothing closes. Never the
+    /// same question as [`Row::carries`], and not its opposite: a
+    /// single-line string ends with its line by definition, so one left
+    /// unterminated carries nothing and no later line completes it.
+    /// `TOKEN = "` carries nothing and is not finished either.
+    pub unterminated: bool,
 }
 
 impl Row<'_> {
@@ -146,7 +157,8 @@ pub fn rows(text: &str) -> Vec<Row<'_>> {
             true => Line::InValue,
             false => kind_of(content),
         };
-        carry = advance(content, carry);
+        let ends = advance(content, carry);
+        carry = ends.carry;
         out.push(Row {
             line: line_number(index),
             raw,
@@ -154,6 +166,7 @@ pub fn rows(text: &str) -> Vec<Row<'_>> {
             at,
             kind,
             carries: carry.inside(),
+            unterminated: ends.unterminated,
         });
         at += raw.len();
     }

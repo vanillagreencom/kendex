@@ -459,3 +459,31 @@ fn close_of(open: &str) -> &str {
         other => other,
     }
 }
+
+/// The other half of what a line leaves behind, and not the negation of
+/// `carries`: a single-line string ends with its line, so one left
+/// unterminated carries nothing and is still not finished. A caller
+/// reading completeness off `carries` alone calls `TOKEN = "` closed.
+#[test]
+fn an_unterminated_single_line_string_says_so_without_carrying() {
+    let ends = |text: &str| -> Vec<(bool, bool)> {
+        rows(text)
+            .iter()
+            .map(|row| (row.carries, row.unterminated))
+            .collect()
+    };
+    for quote in ['"', '\''] {
+        assert_eq!(
+            ends(&format!("TOKEN = {quote}\nMODE = \"real\"\n")),
+            [(false, true), (false, false)],
+            "{quote}: broken, and the line under it is structure again"
+        );
+    }
+    // A value that closes says neither, and one that carries says only
+    // that it carries.
+    assert_eq!(ends("TOKEN = \"ok\"\n"), [(false, false)]);
+    assert_eq!(
+        ends("BLOB = \"\"\"\ntext\n\"\"\"\n"),
+        [(true, false), (true, false), (false, false)]
+    );
+}

@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 
 use super::*;
 
+mod notes;
+
 const TEMPLATE: &str = "# ignored preamble\n[env]\n# Which reviewer set to run.\n# Comma separated.\nREVIEWERS = \"arch,security\"\n\nDEPTH = \"2\"\n\n[other]\nX = \"1\"\n";
 
 fn seeded(template: &str, owner: &str) -> Vec<SeededEnv> {
@@ -339,111 +341,6 @@ fn comment_hash_matches_v1s_algorithm() {
     });
 }
 
-/// Every `[env]` entry each named owner's template ships, in the order the
-/// owners are given — the order seeding resolves a shared key in.
-fn shipped(owners: &[(&str, &str)]) -> Vec<SeededEnv> {
-    owners
-        .iter()
-        .flat_map(|(owner, template)| seeded(template, owner))
-        .collect()
-}
-
-#[test]
-fn one_note_groups_every_owner_and_every_distinct_default() {
-    let notes = conflict_notes(&shipped(&[
-        ("alpha", "[env]\n# Wait.\nWAIT = \"900\"\n"),
-        ("beta", "[env]\n# Wait.\nWAIT = \"900\"\n"),
-        ("gamma", "[env]\n# Wait.\nWAIT = \"600\"\n"),
-    ]));
-    assert_eq!(
-        notes,
-        [
-            "kendex.settings.toml WAIT: packages ship different defaults — \"900\" (alpha, beta), \"600\" (gamma) — where this file does not already assign it, alpha's is the one seeded, so set the value yourself if that is not the one you want"
-        ]
-    );
-}
-
-#[test]
-fn packages_agreeing_on_a_shared_key_say_nothing() {
-    let notes = conflict_notes(&shipped(&[
-        (
-            "alpha",
-            "[env]\n# Mode.\nMODE = \"enforce\"\n# Wait.\nWAIT = \"900\"\n",
-        ),
-        (
-            "beta",
-            "[env]\n# Mode.\nMODE = \"enforce\"\n# Wait.\nWAIT = \"900\"\n",
-        ),
-    ]));
-    assert!(notes.is_empty(), "{notes:?}");
-}
-
-#[test]
-fn a_key_only_one_package_ships_says_nothing() {
-    let notes = conflict_notes(&shipped(&[
-        ("alpha", "[env]\n# Depth.\nDEPTH = \"2\"\n"),
-        ("beta", "[env]\n# Width.\nWIDTH = \"3\"\n"),
-    ]));
-    assert!(notes.is_empty(), "{notes:?}");
-}
-
-#[test]
-fn the_note_names_the_owner_whose_value_merge_actually_seeds() {
-    // alpha's default carries a trailing comment, which the loaders read
-    // and a stricter decoder once threw away — dropping alpha from the note
-    // and naming beta as the package whose value lands.
-    let entries = shipped(&[
-        ("alpha", "[env]\n# Wait.\nWAIT = \"900\" # seconds\n"),
-        ("beta", "[env]\n# Wait.\nWAIT = \"600\"\n"),
-        ("gamma", "[env]\n# Wait.\nWAIT = \"300\"\n"),
-    ]);
-    let notes = conflict_notes(&entries);
-    assert_eq!(
-        notes,
-        [
-            "kendex.settings.toml WAIT: packages ship different defaults — \"900\" (alpha), \"600\" (beta), \"300\" (gamma) — where this file does not already assign it, alpha's is the one seeded, so set the value yourself if that is not the one you want"
-        ]
-    );
-    // And alpha is what merge writes, which is what the note claims.
-    let (merged, added) = merge(None, &entries).unwrap();
-    assert_eq!(added, ["WAIT"]);
-    assert!(merged.contains("WAIT = \"900\" # seconds"), "{merged}");
-}
-
-#[test]
-fn a_default_no_decoder_reads_still_names_its_owner() {
-    let notes = conflict_notes(&shipped(&[
-        ("alpha", "[env]\n# Wait.\nWAIT = 900\n"),
-        ("beta", "[env]\n# Wait.\nWAIT = \"600\"\n"),
-    ]));
-    assert_eq!(
-        notes,
-        [
-            "kendex.settings.toml WAIT: packages ship different defaults — 900 (alpha), \"600\" (beta) — where this file does not already assign it, alpha's is the one seeded, so set the value yourself if that is not the one you want"
-        ]
-    );
-}
-
-#[test]
-fn a_trailing_comment_is_not_a_different_default() {
-    let notes = conflict_notes(&shipped(&[
-        ("alpha", "[env]\n# Wait.\nWAIT = \"900\"\n"),
-        ("beta", "[env]\n# Wait.\nWAIT = \"900\" # seconds\n"),
-    ]));
-    assert!(notes.is_empty(), "{notes:?}");
-}
-
-#[test]
-fn catalog_text_reaches_a_note_escaped() {
-    let notes = conflict_notes(&shipped(&[
-        ("alpha", "[env]\n# Wait.\nWAIT = \"90\u{1b}[31m0\"\n"),
-        ("be\u{1b}[31mta", "[env]\n# Wait.\nWAIT = \"600\"\n"),
-    ]));
-    assert_eq!(notes.len(), 1, "{notes:?}");
-    assert!(!notes[0].contains('\u{1b}'), "{notes:?}");
-    assert!(notes[0].contains("\\u{1b}[31m"), "{notes:?}");
-}
-
 /// A container the reader does not track ends the `[env]` section where
 /// no table starts, and the seed lands inside somebody's value. Both
 /// shapes: a nested `[` taken for a header, and a header the boundary
@@ -655,7 +552,7 @@ fn a_value_spanning_lines_is_seeded_whole() {
             value.lines().count(),
             "{value}"
         );
-        assert!(entries[0].closes(), "{value}");
+        assert!(entries[0].complete(), "{value}");
 
         let (text, added) = merge(None, &seeded(&template, "review")).expect("both are missing");
         assert_eq!(added, ["BLOB", "DEPTH"], "{value}");
@@ -683,7 +580,7 @@ fn a_value_nothing_closes_is_refused_by_name() {
     let template = "[env]\n# How deep.\nDEPTH = \"2\"\n\n# A blob.\nBLOB = \"\"\"\nsome text\n";
     let entries = extract_env_entries(template);
     assert_eq!(entry_keys(&entries), ["DEPTH", "BLOB"]);
-    assert!(!entries[1].closes(), "{entries:?}");
+    assert!(!entries[1].complete(), "{entries:?}");
     assert!(entries[1].assignment.is_empty(), "{entries:?}");
 
     let shipped = seeded(template, "review");
@@ -710,23 +607,84 @@ fn a_value_nothing_closes_is_refused_by_name() {
     assert!(text.contains("BLOB = \"ok\""), "{text}");
 }
 
-/// Two packages shipping one key with different multiline values do
-/// disagree, and the note has to say so. Shown from the `=` line alone
-/// both read as a bare `"""` and the note would group them as agreeing.
+/// Closing and being finished are different questions, and the shape that
+/// proves it is the one closest to what this all exists to prevent: a
+/// single-line string ends with its line by definition, so `TOKEN = "`
+/// carries nothing onto the next line and is still unfinished. Read
+/// completeness off the absence of a carry and it seeds, putting an
+/// unterminated line in the consumer's file — the exact outcome refused
+/// everywhere else here.
 #[test]
-fn two_different_multiline_defaults_are_not_one_default() {
-    let template = |body: &str| format!("[env]\n# A blob.\nBLOB = \"\"\"\n{body}\n\"\"\"\n");
-    let mut shipped = seeded(&template("from a"), "a");
-    shipped.extend(seeded(&template("from b"), "b"));
-    let notes = conflict_notes(&shipped);
-    assert_eq!(notes.len(), 1, "{notes:?}");
-    // Each value shown whole on the one line, so the two read as the
-    // different defaults they are.
-    assert!(notes[0].contains("\"\"\" from a \"\"\" (a)"), "{notes:?}");
-    assert!(notes[0].contains("\"\"\" from b \"\"\" (b)"), "{notes:?}");
+fn a_one_line_value_left_unterminated_is_refused_by_name() {
+    for template in [
+        "[env]\n# A token.\nTOKEN = \"\n",
+        // With the file continuing under it, and with no terminator.
+        "[env]\n# A token.\nTOKEN = \"\n\n# How deep.\nDEPTH = \"2\"\n",
+        "[env]\n# A token.\nTOKEN = \"",
+    ] {
+        let entries = extract_env_entries(template);
+        assert!(!entries[0].complete(), "{template:?}: {entries:?}");
+        assert!(entries[0].assignment.is_empty(), "{template:?}");
 
-    // And two shipping the SAME multiline value still say nothing.
-    let mut agreeing = seeded(&template("same"), "a");
-    agreeing.extend(seeded(&template("same"), "b"));
-    assert!(conflict_notes(&agreeing).is_empty());
+        let shipped = seeded(template, "review");
+        let written = merge(None, &shipped);
+        assert!(
+            !written
+                .as_ref()
+                .is_some_and(|(text, _)| text.contains("TOKEN")),
+            "{template:?}: nothing may be written for it: {written:?}"
+        );
+        if let Some((text, _)) = &written {
+            text.parse::<toml::Table>()
+                .unwrap_or_else(|e| panic!("{template:?}: seeded file must parse: {e}\n{text}"));
+        }
+        let notes = unterminated_notes(&shipped);
+        assert_eq!(notes.len(), 1, "{template:?}: {notes:?}");
+        assert!(notes[0].contains("TOKEN"), "{template:?}: {notes:?}");
+    }
+}
+
+/// One key, one winner, and everyone has to name it. A broken template
+/// declaring a key before a valid one had `merge` write the valid skill's
+/// bytes while the ledger and the notes named the broken one — a record
+/// pointing at a template that supplied nothing, which stops the real
+/// owner's comments refreshing and lets the broken owner's overwrite them.
+#[test]
+fn a_broken_declaration_before_a_valid_one_never_becomes_the_owner() {
+    let mut shipped = seeded("[env]\n# Theirs.\nMODE = \"\n", "broken");
+    shipped.extend(seeded("[env]\n# Ours.\nMODE = \"real\"\n", "good"));
+    assert_eq!(shipped.len(), 2, "both declarations are entries");
+
+    // The bytes written.
+    let (text, added) = merge(None, &shipped).expect("MODE is missing");
+    assert_eq!(added, ["MODE"]);
+    assert!(text.contains("MODE = \"real\""), "{text}");
+    assert!(text.contains("# Ours."), "the winner's comment too: {text}");
+
+    // The ledger.
+    let mut ledger = BTreeMap::new();
+    record_seeds(&mut ledger, &shipped, &added);
+    assert_eq!(ledger["MODE"].owner.as_deref(), Some("good"));
+
+    // The selection everyone asks.
+    assert_eq!(
+        writable_for(&shipped, "MODE").map(|s| s.owner.as_str()),
+        Some("good")
+    );
+
+    // And the notes: a broken declaration is not a competing default that
+    // lands, so nothing claims the broken skill's value was seeded.
+    for note in seed_notes(&shipped) {
+        assert!(!note.contains("broken's is the one seeded"), "{note}");
+    }
+
+    // The refresh gate follows the same winner: with the ledger naming
+    // `good`, `good`'s template is the one whose comment may rewrite.
+    let file = "[env]\n# Ours.\nMODE = \"mine\"\n";
+    let mut revised = seeded("[env]\n# Theirs, revised.\nMODE = \"\n", "broken");
+    revised.extend(seeded("[env]\n# Ours, revised.\nMODE = \"real\"\n", "good"));
+    let (out, updated) = refresh_comments(file, &revised, &mut ledger);
+    assert_eq!(updated, ["MODE"]);
+    assert!(out.contains("# Ours, revised."), "{out}");
+    assert!(!out.contains("Theirs"), "{out}");
 }
