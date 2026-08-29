@@ -34,10 +34,22 @@ second_opinion_wait_for_setup() {
 }
 
 second_opinion_cleanup_failed_launch() {
-  local supervisor_pid="$1" runtime_dir="$2" token="$3"
+  local supervisor_pid="$1" runtime_dir="$2" token="$3" end job_pid running
   exec 8<&- 9>&-
   if ! ${SECOND_OPINION_SETUP_REAPED:-false}; then
     kill -TERM "$supervisor_pid" 2>/dev/null || true
+    end=$(($(date +%s) + 2))
+    while :; do
+      running=false
+      if ! jobs -r -p > "$runtime_dir/cleanup.jobs"; then running=true; break; fi
+      while IFS= read -r job_pid; do
+        [[ "$job_pid" == "$supervisor_pid" ]] && running=true
+      done < "$runtime_dir/cleanup.jobs"
+      rm -f -- "$runtime_dir/cleanup.jobs" || true
+      $running && [[ $(date +%s) -lt $end ]] || break
+      sleep 0.1
+    done
+    $running && kill -KILL "$supervisor_pid" 2>/dev/null || true
     wait "$supervisor_pid" 2>/dev/null || true
   fi
   runtime_dir_valid "$runtime_dir" "$token" && rm -rf -- "$runtime_dir" || true

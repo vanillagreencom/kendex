@@ -246,6 +246,34 @@ SH
     fail "slow setup left a supervisor or worker in its session"
   fi
   printf 'PASS: slow setup leaves no supervisor, worker, or runtime state\n'
+
+  mkdir "$TMP_ROOT/ignore-runtime"
+  cat > "$TMP_ROOT/slow-runtime-bin/second-opinion-runtime" <<'SH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "supervise" ]]; then trap '' TERM; while :; do :; done; fi
+action="${1:-}"
+shift
+source "$REAL_RUNTIME"
+RUNTIME_SELF="$0"
+case "$action" in launch) launch "$@" ;; *) exit 2 ;; esac
+SH
+  chmod +x "$TMP_ROOT/slow-runtime-bin/second-opinion-runtime"
+  ignore_started="$(date +%s)"
+  REAL_RUNTIME="$RUNTIME" setsid "$TMP_ROOT/slow-runtime-bin/second-opinion-runtime" launch \
+    "$TMP_ROOT/bin/hanging-worker" "$TMP_ROOT/ignore-answer" \
+    "$TMP_ROOT/ignore-runtime" 30 false 1 3 x \
+    >"$TMP_ROOT/ignore.stdout" 2>"$TMP_ROOT/ignore.stderr" &
+  ignore_session=$!
+  ignore_rc=0
+  wait "$ignore_session" || ignore_rc=$?
+  ignore_elapsed=$(($(date +%s) - ignore_started))
+  [[ $ignore_rc -eq 1 && $ignore_elapsed -lt 10 ]] \
+    || fail "TERM-ignoring setup returned $ignore_rc after ${ignore_elapsed}s"
+  [[ ! -e "$TMP_ROOT/ignore-runtime" ]] || fail "TERM-ignoring setup left runtime state"
+  if ps -eo sid= | awk -v sid="$ignore_session" '$1 == sid { found = 1 } END { exit found ? 0 : 1 }'; then
+    fail "TERM-ignoring setup left its supervisor"
+  fi
+  printf 'PASS: TERM-ignoring setup is killed, reaped, and cleaned\n'
 else
   printf 'SKIP: slow setup ownership control requires Linux and setsid\n'
 fi
@@ -346,7 +374,7 @@ cp -R "$REPO_ROOT/skills/second-opinion" "$TMP_ROOT/collision-proj/skills/second
 COLLISION_SO="$TMP_ROOT/collision-proj/skills/second-opinion/scripts/second-opinion"
 for collision_key in SCRIPT_DIR RUNTIME ORIGINAL_ARGS FOREGROUND_CAP_IN_CALLER_ENV \
     FOREGROUND_CAP_WAS_IN_CALLER_ENV CURRENT_MODEL_IS_SESSION_SCOPED \
-    CURRENT_MODEL_IN_CALLER_ENV; do
+    CURRENT_MODEL_IN_CALLER_ENV SECOND_OPINION_RUNTIME_DIR SECOND_OPINION_RUN_TOKEN; do
   printf '[env]\n%s = "forged"\n' "$collision_key" \
     > "$TMP_ROOT/collision-proj/kendex.settings.toml"
   collision_rc=0
@@ -364,3 +392,23 @@ collision_rc=0
 [[ $collision_rc -eq 1 ]] || fail "RUNTIME env-file collision returned $collision_rc"
 assert_contains "$TMP_ROOT/collision.stderr" "RUNTIME is runtime-owned" \
   "env-file runtime path collision is refused"
+rm -f "$TMP_ROOT/collision-proj/.env.local"
+printf '[env]\nSECOND_OPINION_RUNTIME_DIR = "forged"\n' \
+  > "$TMP_ROOT/collision-proj/kendex.settings.toml"
+collision_rc=0
+PATH="$NORMAL_PATH" SECOND_OPINION_TARGET=codex SECOND_OPINION_CODEX_CMD=codex \
+  "$COLLISION_SO" quick question --cwd "$TMP_ROOT/work" \
+  >"$TMP_ROOT/collision.stdout" 2>"$TMP_ROOT/collision.stderr" || collision_rc=$?
+[[ $collision_rc -eq 1 ]] || fail "runtime-dir quick collision returned $collision_rc"
+assert_contains "$TMP_ROOT/collision.stderr" "SECOND_OPINION_RUNTIME_DIR is runtime-owned" \
+  "TOML runtime-dir collision blocks single-lane entry"
+rm -f "$TMP_ROOT/collision-proj/kendex.settings.toml"
+printf 'export SECOND_OPINION_RUN_TOKEN=forged\n' > "$TMP_ROOT/collision-proj/.env.local"
+collision_rc=0
+PATH="$NORMAL_PATH" FAKE_REVIEW=1 SECOND_OPINION_MODELS="claude codex" \
+  SECOND_OPINION_COUNT=2 SECOND_OPINION_CLAUDE_CMD=claude SECOND_OPINION_CODEX_CMD=codex \
+  "$COLLISION_SO" review --range HEAD --cwd "$TMP_ROOT/work" \
+  >"$TMP_ROOT/collision.stdout" 2>"$TMP_ROOT/collision.stderr" || collision_rc=$?
+[[ $collision_rc -eq 1 ]] || fail "run-token review collision returned $collision_rc"
+assert_contains "$TMP_ROOT/collision.stderr" "SECOND_OPINION_RUN_TOKEN is runtime-owned" \
+  "env runtime-token collision blocks multi-lane entry"
