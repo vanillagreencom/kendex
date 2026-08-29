@@ -75,6 +75,13 @@ to it. Nothing it could not establish counts as permission to write — a
 listing it could not make, a manifest naming no version, a version that is
 not SemVer — each of those stops the job with the channel as it was.
 
+An upload that fails partway is the one case where something did change, and
+the job puts the channel back: the manifests it found go up again, anything
+it added comes off, and a channel this run created is deleted outright. When
+it cannot finish that, it says so and names what the channel carries, because
+a half-written channel reporting itself as repaired is what stops anyone
+looking at it. Either way the job fails and the fix is to re-run the tag.
+
 That guard is a job of its own, and the only one holding a concurrency group,
 so two candidates cut close together cannot interleave their read and write of
 the channel. The group is not a queue: GitHub keeps one pending run per group

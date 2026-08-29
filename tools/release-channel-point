@@ -6,7 +6,7 @@
 # downloads by the tag that built them. The release workflow's channel job is
 # the only caller; CHANNEL, NEW_VERSION, GITHUB_REPOSITORY and a GH_TOKEN gh
 # can use come from it. Exit 0 wrote the channel or left it alone on purpose,
-# exit 1 wrote nothing.
+# exit 1 wrote nothing or says what it left behind.
 #
 # One verdict decides the write, and only `write` and `hold` are verdicts.
 # Each read leaves either a channel state this run established or the reason
@@ -18,32 +18,88 @@
 # through.
 set -euo pipefail
 
+# The manifests this run is about to replace, and so the ones it has to be
+# able to put back. `gh release upload --clobber` deletes an asset before
+# uploading its replacement, so a copy taken now is the only copy of what the
+# channel had if that upload then fails. A channel carrying neither leaves
+# saved/ absent, which is that channel's pre-upload set just as truly.
+save_manifests() {
+  local patterns=() name
+  for name in latest.json feed.json; do
+    if grep -qxF "$name" <<< "$assets"; then patterns+=(--pattern "$name"); fi
+  done
+  [ ${#patterns[@]} -gt 0 ] || return 0
+  gh release download "$CHANNEL" --repo "$GITHUB_REPOSITORY" \
+    --dir saved "${patterns[@]}" --clobber
+}
+
+# Puts the channel back the way this run found it and says which in
+# `restored`: `removed` when the release this run created is gone, `put-back`
+# when the manifests it found are up and the ones it added are off. Anything
+# else is a channel nobody has repaired, and `left` names what is on it.
+#
+# Always returns 0. The verdict is `restored`, so a caller under `set -e`
+# reaches its `case` rather than exiting on this function's own status.
+#
+# What the channel carries is read again rather than assumed: a failed upload
+# stops partway, and only the channel says how far it got. A read that fails
+# leaves `restored` empty, because a set this run cannot see is one it cannot
+# claim to have put back.
+restored=""
+left=""
+restore() {
+  local name now
+  if ! now=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${CHANNEL}" --jq '.assets[].name'); then
+    left="a set this run could not read"
+    return 0
+  fi
+  left=$(paste -sd' ' - <<< "$now")
+  [ -n "$left" ] || left="no manifests"
+  # The tag stays behind. `gh release create` reuses an existing tag, so this
+  # run cannot tell one it made from one that was already there carrying no
+  # release, and deleting the second would destroy something it never
+  # created. A tag with no release on it publishes nothing either way.
+  if [ -n "$created" ]; then
+    if gh release delete "$CHANNEL" --repo "$GITHUB_REPOSITORY" --yes; then
+      restored=removed
+      left="nothing"
+    fi
+    return 0
+  fi
+  if [ -n "$(ls -A saved 2>/dev/null)" ]; then
+    gh release upload "$CHANNEL" saved/*.json --repo "$GITHUB_REPOSITORY" --clobber || return 0
+  fi
+  for name in latest.json feed.json; do
+    if [ ! -f "saved/$name" ] && grep -qxF "$name" <<< "$now"; then
+      gh release delete-asset "$CHANNEL" "$name" --repo "$GITHUB_REPOSITORY" --yes || return 0
+    fi
+  done
+  restored=put-back
+  return 0
+}
+
 state=unknown
 why=""
 current=""
-saved=""
+created=""
 if ! tags=$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate --jq '.[].tag_name'); then
   why="this repository's releases could not be listed"
 elif ! grep -qxF "$CHANNEL" <<< "$tags"; then
   if gh release create "$CHANNEL" --repo "$GITHUB_REPOSITORY" --prerelease \
        --title "Pre-release channel" \
        --notes "The update manifests of the newest kendex pre-release. Nothing here is a download; each manifest names assets on the release it came from."; then
+    created=1
     state=fresh
   else
     why="the ${CHANNEL} channel does not exist and could not be created"
   fi
 elif ! assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${CHANNEL}" --jq '.assets[].name'); then
   why="the ${CHANNEL} channel is published but its assets could not be read"
+elif ! save_manifests; then
+  why="the ${CHANNEL} channel carries a manifest that could not be downloaded"
 elif ! grep -qxF latest.json <<< "$assets"; then
   state=fresh  # Published carrying nothing: no write has landed here yet.
-# Both manifests come down, not only the one the comparison reads: `gh release
-# upload --clobber` deletes an asset before uploading its replacement, so
-# these are the only copies of what the channel had if that upload then fails.
-elif ! gh release download "$CHANNEL" --repo "$GITHUB_REPOSITORY" \
-       --dir saved --pattern latest.json --pattern feed.json --clobber; then
-  why="the ${CHANNEL} channel carries a manifest that could not be downloaded"
 else
-  saved=1
   current=$(jq -r '.version // empty' saved/latest.json) || current=""
   if [ -n "$current" ]; then
     state=carrying
@@ -94,14 +150,18 @@ if ! gh release upload "$CHANNEL" dist/latest.json dist/feed.json \
      --repo "$GITHUB_REPOSITORY" --clobber; then
   # An upload that failed after the delete leaves the channel short a
   # manifest, and a candidate reading a channel with no latest.json sees no
-  # update at all, so what came down goes back up. Not an atomic swap: the run
-  # fails either way, and the second message is there because a channel nobody
-  # repaired needs saying out loud.
-  if [ -n "$saved" ] && ! gh release upload "$CHANNEL" saved/*.json \
-       --repo "$GITHUB_REPOSITORY" --clobber; then
-    echo "::error::Uploading to the ${CHANNEL} channel failed and the manifests it had could not be put back. Candidates see no updates until a tag re-run repairs the channel."
-    exit 1
-  fi
-  echo "::error::Uploading to the ${CHANNEL} channel failed; what it carried is back in place. Re-run the tag."
+  # update at all. Not an atomic swap: the run fails whatever the restore
+  # does. What the restore may not do is report a channel it did not put
+  # back, because a half-written channel that announces itself as repaired is
+  # what stops anyone looking at it.
+  restore
+  case "$restored" in
+    removed)
+      echo "::error::Uploading to the ${CHANNEL} channel failed, and the channel this run created has been removed. Nothing is published there. Re-run the tag." ;;
+    put-back)
+      echo "::error::Uploading to the ${CHANNEL} channel failed; the channel is back as this run found it. Re-run the tag." ;;
+    *)
+      echo "::error::Uploading to the ${CHANNEL} channel failed and the channel could not be put back. It carries ${left}. Candidates read that until a tag re-run repairs the channel." ;;
+  esac
   exit 1
 fi
