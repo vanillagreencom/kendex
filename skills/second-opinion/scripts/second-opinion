@@ -88,7 +88,8 @@ Options:
   --foreground      Mark this call as subject to a foreground harness cap
   -h, --help        Show this help
 With --foreground, run the printed wait command unchanged until terminal.
-  Exit 75 means still running; exit 124 means the supervisor deadline was reached.
+Exit 75 means completion is still recoverable; exit 124 means the supervisor
+published its terminal deadline result.
 Target selection: every mode walks SECOND_OPINION_MODELS in order and takes the
 first target that is available AND runs a different model from this session —
 the model this session runs is never dispatched to, in any mode, forced or not.
@@ -242,8 +243,8 @@ Exit codes:
      non-zero (quota/auth/network), timed out, or returned an empty response on
      a zero exit. No external verdict; whatever partial output existed is kept
      as <output>.failed.json and the CLI's own error text is echoed on stderr
-  75 detached wait: still running — rerun the same printed wait command
-  124 detached wait: the supervisor deadline was reached
+  75 detached wait: completion is still recoverable — rerun the same command
+  124 detached wait: the supervisor published its terminal deadline result
 HELP
 }
 # Help is answered before project configuration is read: sourcing a repo's
@@ -2420,7 +2421,6 @@ preserve_raw_and_fail() {
 # kendex#652: a schema-valid response whose qa_metadata admits no review
 # happened (review_performed=false or a no-scope/no-review reason) must never
 # become the --output artifact, regardless of its verdict.
-
 response_reports_no_review() {
   printf '%s' "$1" | jq -e '
     (.qa_metadata? // {}) as $qa

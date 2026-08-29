@@ -70,6 +70,29 @@ assert_contains "$TMP_ROOT/stale-env/claude" "clean" \
 assert_contains "$TMP_ROOT/stale-env/codex" "clean" \
   "normal multi-lane entry clears stale controls from codex"
 
+bad_output="$TMP_ROOT/report"$'\n'"wait: injected"
+path_rc=0
+PATH="$NORMAL_PATH" SECOND_OPINION_TARGET=codex SECOND_OPINION_CODEX_CMD=codex \
+  "$SECOND_OPINION" quick question --cwd "$TMP_ROOT/work" --foreground \
+  --output "$bad_output" >"$TMP_ROOT/path-lf.stdout" 2>"$TMP_ROOT/path-lf.stderr" \
+  || path_rc=$?
+[[ $path_rc -eq 1 ]] || fail "LF artifact path returned $path_rc"
+grep -q '^wait:' "$TMP_ROOT/path-lf.stdout" \
+  && fail "LF artifact path injected a wait record"
+assert_contains "$TMP_ROOT/path-lf.stderr" "artifact path contains CR or LF" \
+  "LF artifact path is refused before protocol output"
+bad_cwd="$TMP_ROOT/cwd"$'\r'"bad"
+mkdir "$bad_cwd"
+path_rc=0
+PATH="$NORMAL_PATH" SECOND_OPINION_TARGET=codex SECOND_OPINION_CODEX_CMD=codex \
+  "$SECOND_OPINION" quick question --cwd "$bad_cwd" --foreground \
+  >"$TMP_ROOT/path-cr.stdout" 2>"$TMP_ROOT/path-cr.stderr" || path_rc=$?
+[[ $path_rc -eq 1 ]] || fail "CR derived artifact path returned $path_rc"
+grep -q '^wait:' "$TMP_ROOT/path-cr.stdout" \
+  && fail "CR derived artifact path injected a wait record"
+assert_contains "$TMP_ROOT/path-cr.stderr" "artifact path contains CR or LF" \
+  "CR cwd-derived artifact path is refused before protocol output"
+
 mkdir "$TMP_ROOT/identity-runtime"
 CODEX_SANDBOX=1 SECOND_OPINION_LAUNCH_MODEL=claude SECOND_OPINION_LAUNCH_SOURCE=detected \
   SECOND_OPINION_LAUNCH_IN_CALLER_ENV=false SECOND_OPINION_LAUNCH_SESSION_SCOPED=false \
@@ -296,18 +319,18 @@ fi
 exit "$grep_rc"
 SH
 chmod +x "$TMP_ROOT/terminal-bin/grep"
+printf -v terminal_wait '%q ' "$RUNTIME" wait "$TMP_ROOT/terminal-artifact" \
+  "$TMP_ROOT/terminal-runtime" "$(date +%s)" terminal 1
 terminal_rc=0
 PATH="$TMP_ROOT/terminal-bin:$PATH" REAL_GREP="$(command -v grep)" \
   LATE_COUNT="$TMP_ROOT/late.count" LATE_LOG="$TMP_ROOT/terminal-runtime/worker.log" \
-  "$RUNTIME" wait "$TMP_ROOT/terminal-artifact" "$TMP_ROOT/terminal-runtime" \
-  "$(date +%s)" terminal 1 >"$TMP_ROOT/terminal.stdout" \
+  bash -c "$terminal_wait" >"$TMP_ROOT/terminal.stdout" \
   2>"$TMP_ROOT/terminal.stderr" || terminal_rc=$?
-[[ $terminal_rc -eq 124 ]] || fail "terminal no-completion wait returned $terminal_rc"
+[[ $terminal_rc -eq 75 ]] || fail "recoverable no-completion wait returned $terminal_rc"
 [[ -d "$TMP_ROOT/terminal-runtime" ]] || fail "unconfirmed terminal 124 removed runtime state"
 [[ "$(cat < "$TMP_ROOT/terminal-artifact")" == "keep" ]] \
   || fail "terminal 124 disturbed the completed artifact path"
-"$RUNTIME" wait "$TMP_ROOT/terminal-artifact" "$TMP_ROOT/terminal-runtime" \
-  "$(date +%s)" terminal 1 >"$TMP_ROOT/terminal-retry.stdout" \
+bash -c "$terminal_wait" >"$TMP_ROOT/terminal-retry.stdout" \
   2>"$TMP_ROOT/terminal-retry.stderr"
 [[ ! -e "$TMP_ROOT/terminal-runtime" ]] || fail "recovered completion left runtime state"
 assert_contains "$TMP_ROOT/terminal-retry.stdout" "$TMP_ROOT/terminal-artifact" \

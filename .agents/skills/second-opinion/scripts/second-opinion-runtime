@@ -315,6 +315,7 @@ second_opinion_detach_if_needed() {
     owned=true
   elif [[ "$artifact" != /* ]]; then artifact="$(pwd)/$artifact"; fi
   [[ -n "$artifact" ]] || die "no writable artifact path for detached run"
+  [[ "$artifact" != *$'\r'* && "$artifact" != *$'\n'* ]] || die "artifact path contains CR or LF"
   runtime_dir=$(create_runtime_dir)
   [[ "$MODE" == "review" || "$MODE" == "audit" ]] && attempts=2
   budget=$((attempts * (10#$TIMEOUT + 30) + 60))
@@ -374,8 +375,8 @@ wait_for_run() {
         line=$(completion_line "$log" "$prefix") || grep_rc=$?
         [[ $grep_rc -ne 2 ]] || die "cannot read worker log: $log"
         [[ -z "$line" ]] || continue
-        echo "Error: detached supervisor did not publish completion by deadline $deadline" >&2
-        exit 124
+        echo "second-opinion: deadline passed without terminal completion; rerun the same wait command" >&2
+        exit 75
       fi
       echo "second-opinion: still running; rerun the same wait command" >&2
       exit 75

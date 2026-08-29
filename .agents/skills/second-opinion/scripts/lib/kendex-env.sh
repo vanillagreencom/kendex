@@ -93,17 +93,26 @@ kendex_source_usable() { # PATH — 0 = readable regular file or absent; 1 + ::e
 }
 
 kendex_source_env_file() {
-  local file="$1" line trimmed key
+  local file="$1" line trimmed key assignment
   kendex_source_usable "$file" || return 1
   [[ -f "$file" ]] || return 0
   kendex_bom_guard "$file" || return 1
   while IFS= read -r line || [[ -n "$line" ]]; do
     trimmed="$(kendex_trim "$line")"
-    [[ "$trimmed" == export[[:space:]]* ]] && trimmed="${trimmed#export}"
-    trimmed="$(kendex_trim "$trimmed")"
-    key="${trimmed%%[[:space:]=]*}"
-    if [[ "$trimmed" == *=* ]] && kendex_key_protected "$key"; then
-      kendex_refuse_protected "$file" "$key"; return 1
+    if [[ "$trimmed" == export[[:space:]]* ]]; then
+      trimmed="$(kendex_trim "${trimmed#export}")"
+      trimmed="${trimmed//;/ }"
+      for assignment in $trimmed; do
+        [[ "$assignment" == *=* ]] || continue
+        key="${assignment%%=*}"
+        kendex_key_protected "$key" \
+          && { kendex_refuse_protected "$file" "$key"; return 1; }
+      done
+    else
+      key="${trimmed%%[[:space:]=]*}"
+      if [[ "$trimmed" == *=* ]] && kendex_key_protected "$key"; then
+        kendex_refuse_protected "$file" "$key"; return 1
+      fi
     fi
   done < "$file"
   # shellcheck source=/dev/null

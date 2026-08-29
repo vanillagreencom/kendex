@@ -77,6 +77,15 @@ SECOND_OPINION_FOREGROUND_CAP=1 "$SO" detect >/dev/null 2>"$TMP_ROOT/err" || rc=
 grep -q "session-only SECOND_OPINION_FOREGROUND_CAP" "$TMP_ROOT/err" \
   && ok "(foreground-cap-shadow) refusal still names the project collision" \
   || fail "(foreground-cap-shadow) refusal lost the project key: $(cat "$TMP_ROOT/err")"
+rm -f "$proj/kendex.settings.toml"
+printf 'export SAFE=1 SECOND_OPINION_FOREGROUND_CAP=1\n' > "$proj/.env.local"
+rc=0
+SECOND_OPINION_FOREGROUND_CAP=1 "$SO" detect >/dev/null 2>"$TMP_ROOT/err" || rc=$?
+[ "$rc" -eq 1 ] && ok "(foreground-cap-later-export) every export assignment is checked" \
+  || fail "(foreground-cap-later-export) expected exit 1, got $rc: $(cat "$TMP_ROOT/err")"
+grep -q "session-only SECOND_OPINION_FOREGROUND_CAP" "$TMP_ROOT/err" \
+  && ok "(foreground-cap-later-export) later protected assignment is refused" \
+  || fail "(foreground-cap-later-export) protected assignment escaped: $(cat "$TMP_ROOT/err")"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

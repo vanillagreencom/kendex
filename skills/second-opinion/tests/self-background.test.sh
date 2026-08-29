@@ -408,7 +408,7 @@ for workflow_file in "${workflow_files[@]}"; do
   assert_workflow_commands_detach "$workflow_file"
   assert_contains "$workflow_file" 'exact command printed after `wait:`' \
     "${workflow_file##*/} executes the emitted wait command"
-  assert_contains "$workflow_file" 'Exit 75 means the run is still active' \
+  assert_contains "$workflow_file" 'Exit 75 means completion is still recoverable' \
     "${workflow_file##*/} resumes bounded waits"
 done
 assert_contains "${workflow_files[0]}" 'cat < [ARTIFACT_PATH]' \
@@ -422,7 +422,7 @@ assert_contains "$REPO_ROOT/skills/second-opinion/SKILL.md" \
   'Pass `--foreground` when the call can outlast the harness foreground cap.' \
   "skill execution rules require foreground-cap opt-in"
 assert_contains "$REPO_ROOT/skills/second-opinion/SKILL.md" \
-  'Exit 75 means the run is still active' \
+  'Exit 75 means completion is still recoverable' \
   "skill execution rules resume bounded waits"
 cat > "$TMP_ROOT/no-command-workflow.md" <<'EOF'
 Execute the exact command printed after `wait:` and read the artifact.
@@ -499,9 +499,9 @@ bash -c "$empty_wait_cmd" >"$TMP_ROOT/empty-wait.stdout" \
 assert_contains "$TMP_ROOT/empty-wait.stderr" "exited 0 without writing its artifact" \
   "zero-exit empty artifact names its failure"
 "$SECOND_OPINION" --help > "$TMP_ROOT/help.stdout"
-assert_contains "$TMP_ROOT/help.stdout" "Exit 75 means still running" \
+assert_contains "$TMP_ROOT/help.stdout" "Exit 75 means completion is still recoverable" \
   "help documents resumable detached waits"
-assert_contains "$TMP_ROOT/help.stdout" "124 detached wait: the supervisor deadline was reached" \
+assert_contains "$TMP_ROOT/help.stdout" "124 detached wait: the supervisor published its terminal deadline result" \
   "help documents the detached supervisor deadline"
 artifact="$TMP_ROOT/answer.txt"
 launch_stdout="$TMP_ROOT/launch.stdout"
