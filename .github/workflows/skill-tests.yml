@@ -382,10 +382,10 @@ jobs:
           CARGO_INCREMENTAL: '0'
         run: cargo test --workspace --locked
 
-  # The app ships on macOS, so this required context compiles and tests the
-  # workspace there before merge. tools/guard checks the core and CLI test
-  # targets for Apple at commit time; this runner covers the full workspace
-  # and executes the tests on the platform.
+  # The app ships on macOS. This required context tests the full workspace on
+  # every pull-request SHA and stays outside the fast/full split. tools/guard
+  # checks the core and CLI Apple targets at commit time; this runner executes
+  # the tests on the platform.
   cargo-tests-macos:
     name: macOS cargo (workspace tests)
     runs-on: macos-latest

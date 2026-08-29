@@ -2266,6 +2266,7 @@ name = "kendex-app"
 version = "5.0.1"
 dependencies = [
  "kendex-core",
+ "kendex-test-support",
  "png 0.18.1",
  "serde",
  "serde_json",
@@ -2288,6 +2289,7 @@ dependencies = [
  "clap",
  "cliclack",
  "kendex-core",
+ "kendex-test-support",
  "serde_json",
  "tempfile",
 ]
@@ -2299,6 +2301,7 @@ dependencies = [
  "base64 0.22.1",
  "dirs",
  "fd-lock",
+ "kendex-test-support",
  "keyring",
  "minisign-verify",
  "rustix",
@@ -2313,6 +2316,13 @@ dependencies = [
  "toml 1.1.4+spec-1.1.0",
  "unicode-normalization",
  "yaml-rust2",
+]
+
+[[package]]
+name = "kendex-test-support"
+version = "5.0.1"
+dependencies = [
+ "tempfile",
 ]
 
 [[package]]

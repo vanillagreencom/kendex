@@ -161,15 +161,13 @@ done)
   say 'fixture HOME without KENDEX_REAL_HOME on the next line — that command would run in the dev sandbox'
 }
 
-# A fixture root is canonical from the moment the test creates it. This is
-# diff-scoped so an unrelated edit does not inherit every older direct use of
-# TempDir::path(). New fixtures take rooted() immediately, and later additions
-# cannot bypass the canonical root with a direct path call.
+# A test that exposes a temporary root binds its canonical form. This stays
+# diff-scoped so an unrelated edit does not inherit older raw root uses.
 if git cat-file -e 'HEAD^{commit}' 2>/dev/null; then
-  temp_fixture_diff=$(git diff --unified=100000 --no-ext-diff HEAD -- 'crates/*/tests/*.rs') ||
+  temp_fixture_diff=$(git diff --no-color --unified=100000 --no-ext-diff HEAD -- 'crates/*/tests/*.rs') ||
     say "test fixture changes could not be read"
 else
-  temp_fixture_diff=$(git diff --cached --unified=100000 --no-ext-diff -- 'crates/*/tests/*.rs') ||
+  temp_fixture_diff=$(git diff --cached --no-color --unified=100000 --no-ext-diff -- 'crates/*/tests/*.rs') ||
     say "test fixture changes could not be read"
 fi
 if ! temp_fixture_hits=$(awk '
@@ -194,19 +192,23 @@ if ! temp_fixture_hits=$(awk '
     sub(/\/\/.*/, "", line)
     return line
   }
-  function flush() {
-    if (pending != "") print file ":" pending_line ": " pending_text
-    pending = ""
+  function finish_declaration() {
+    constructor = "(^|[^A-Za-z0-9_])((tempfile::)?tempdir[[:space:]]*\\(|(tempfile::)?TempDir::new(_in)?[[:space:]]*\\()"
+    builder = "(^|[^A-Za-z0-9_])(tempfile::)?Builder::new[[:space:]]*\\(.*\\.tempdir(_in)?[[:space:]]*\\("
+    if (declaration_name != "" && (declaration_text ~ constructor || declaration_text ~ builder))
+      temp_vars[file SUBSEP declaration_name] = 1
+    declaration_name = ""
+    declaration_text = ""
   }
   /^diff --git / {
-    flush()
+    finish_declaration()
     file = $4
     sub(/^b\//, "", file)
     in_block = 0
     next
   }
   /^@@ / {
-    flush()
+    finish_declaration()
     spec = $3
     sub(/^\+/, "", spec)
     split(spec, at, ",")
@@ -219,23 +221,17 @@ if ! temp_fixture_hits=$(awk '
     line = substr($0, 2)
     code = source(line)
     new_line++
-    if (pending != "") {
-      if (code ~ /^[[:space:]]*$/) next
-      rooted = "rooted[[:space:]]*\\([[:space:]]*&[[:space:]]*" pending "[[:space:]]*\\)"
-      if (code !~ rooted) print file ":" pending_line ": " pending_text
-      pending = ""
-    }
-    if (code ~ /^[[:space:]]*let[[:space:]]+(mut[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*([[:space:]]*:[^=]+)?[[:space:]]*=[[:space:]]*(tempfile::tempdir\(\)|TempDir::new\(\))/) {
+    if (declaration_name != "") {
+      declaration_text = declaration_text " " code
+      if (code ~ /;/) finish_declaration()
+    } else if (code ~ /^[[:space:]]*let[[:space:]]+(mut[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*([[:space:]]*:[^=]+)?[[:space:]]*=/) {
       declaration = code
       sub(/^[[:space:]]*let[[:space:]]+/, "", declaration)
       sub(/^mut[[:space:]]+/, "", declaration)
       sub(/([[:space:]]*:[^=]+)?[[:space:]]*=.*/, "", declaration)
-      temp_vars[file SUBSEP declaration] = 1
-      if (prefix == "+") {
-        pending = declaration
-        pending_line = new_line
-        pending_text = line
-      }
+      declaration_name = declaration
+      declaration_text = code
+      if (code ~ /;/) finish_declaration()
     }
     if (prefix == "+" && code !~ /^[[:space:]]*$/) {
       added_count++
@@ -246,15 +242,16 @@ if ! temp_fixture_hits=$(awk '
     next
   }
   /^-/ { next }
-  { flush() }
+  { finish_declaration() }
   END {
-    flush()
+    finish_declaration()
     for (i = 1; i <= added_count; i++) {
       for (key in temp_vars) {
         split(key, parts, SUBSEP)
         if (parts[1] != added_file[i]) continue
-        direct = "(^|[^A-Za-z0-9_])" parts[2] "[[:space:]]*\\.path[[:space:]]*\\("
-        if (added_code[i] ~ direct)
+        direct = "(^|[^A-Za-z0-9_])" parts[2] "[[:space:]]*\\.(path|as_ref)[[:space:]]*\\("
+        bound = "^[[:space:]]*let[[:space:]]+(mut[[:space:]]+)?[A-Za-z][A-Za-z0-9_]*([[:space:]]*:[^=]+)?[[:space:]]*=[[:space:]]*&?[[:space:]]*" parts[2] "[[:space:]]*\\.(path|as_ref)[[:space:]]*\\(\\)[[:space:]]*\\.canonicalize[[:space:]]*\\(\\)[[:space:]]*\\.(unwrap|expect)[[:space:]]*\\([^;]*;[[:space:]]*$"
+        if (added_code[i] ~ direct && added_code[i] !~ bound)
           print added_file[i] ":" added_line[i] ": " added_code[i]
       }
     }
@@ -264,7 +261,7 @@ if ! temp_fixture_hits=$(awk '
 fi
 [ -n "$temp_fixture_hits" ] && {
   echo "$temp_fixture_hits" | head -5
-  say 'temporary fixture root bypasses rooted(): derive the canonical root on the next source line'
+  say 'raw temporary fixture root added: bind kendex_test_support::rooted(&temp) or temp.path().canonicalize().unwrap()'
 }
 
 # Structural invariants.

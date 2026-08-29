@@ -9,10 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use kendex_core::env::Env;
-
-#[path = "../../../test_util.rs"]
-mod test_util;
-pub use test_util::rooted;
+use kendex_test_support::rooted;
 
 /// The frame a terminal gets, and nothing a verb ever writes itself.
 const FRAMING: [char; 12] = ['┌', '│', '└', '├', '╮', '╯', '─', '◇', '◆', '▲', '■', '●'];

@@ -80,54 +80,60 @@ TAB="$(printf '\t')"
 
 echo "=== new temporary fixtures derive their canonical root at creation ==="
 mkdir -p "$R/crates/core/tests"
-printf '%s\n' \
-  'fn fixture() {' \
-  '    let tmp = tempfile::tempdir().unwrap();' \
-  '    let root = tmp.path();' \
-  '    drop(root);' \
-  '}' >"$R/crates/core/tests/temp_path.rs"
-git -C "$R" add -A
-run_guard RATCHET_RAISE=
-[ "$RC" -ne 0 ] && case "$OUT" in *"temp_path.rs:2"*"temporary fixture root bypasses rooted()"*) true ;; *) false ;; esac \
-  && ok "a new tempdir fixture that uses its raw path is refused" \
-  || bad "a new tempdir fixture that uses its raw path is refused" "rc=$RC out=$OUT"
-printf '%s\n' \
-  'fn fixture() {' \
-  '    let tmp = tempfile::tempdir().unwrap();' \
-  '    // Resolve the root before the fixture leaves setup.' \
-  '    let root = rooted(&tmp);' \
-  '    drop(root);' \
-  '}' >"$R/crates/core/tests/temp_path.rs"
-git -C "$R" add -A
-run_guard RATCHET_RAISE=
-[ "$RC" -eq 0 ] \
-  && ok "a new tempdir fixture routed through rooted passes" \
-  || bad "a new tempdir fixture routed through rooted passes" "rc=$RC out=$OUT"
-printf '%s\n' \
-  'fn fixture() {' \
-  '    let mut tmp: TempDir = TempDir::new().unwrap();' \
-  '    let root = tmp.path();' \
-  '    drop(&mut tmp);' \
-  '    drop(root);' \
-  '}' >"$R/crates/core/tests/temp_path.rs"
-git -C "$R" add -A
-run_guard RATCHET_RAISE=
-[ "$RC" -ne 0 ] && case "$OUT" in *"temp_path.rs:2"*"temporary fixture root bypasses rooted()"*) true ;; *) false ;; esac \
-  && ok "a new TempDir fixture that uses its raw path is refused" \
-  || bad "a new TempDir fixture that uses its raw path is refused" "rc=$RC out=$OUT"
-printf '%s\n' \
-  'fn prose() {' \
-  '    // let tmp = tempfile::tempdir().unwrap();' \
-  '    let shown = "let tmp = tempfile::tempdir().unwrap();";' \
-  '    let path = "tmp.path()";' \
-  '    drop(shown);' \
-  '    drop(path);' \
-  '}' >"$R/crates/core/tests/temp_path.rs"
-git -C "$R" add -A
-run_guard RATCHET_RAISE=
-[ "$RC" -eq 0 ] \
-  && ok "comments and strings that mention tempdir constructors pass" \
-  || bad "comments and strings that mention tempdir constructors pass" "rc=$RC out=$OUT"
+temp_case() { # pass|refuse LABEL SOURCE-LINE...
+  local expected=$1 label=$2
+  shift 2
+  printf '%s\n' "$@" >"$R/crates/core/tests/temp_path.rs"
+  git -C "$R" add -A
+  run_guard RATCHET_RAISE=
+  if [ "$expected" = pass ] && [ "$RC" -eq 0 ]; then
+    ok "$label"
+  elif [ "$expected" = refuse ] && [ "$RC" -ne 0 ] && [[ "$OUT" == *"raw temporary fixture root added"* ]]; then
+    ok "$label"
+  else
+    bad "$label" "rc=$RC out=$OUT"
+  fi
+}
+
+temp_case refuse "a raw tempdir path is refused" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let root = tmp.path();' ' drop(root);' '}'
+temp_case pass "a tempdir whose root is never exposed passes" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' drop(tmp);' '}'
+temp_case pass "a real binding from the shared helper passes" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let root = kendex_test_support::rooted(&tmp);' ' drop(root);' '}'
+temp_case pass "a bound inline path canonicalization passes" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let root = tmp.path().canonicalize().unwrap();' ' drop(root);' '}'
+temp_case pass "a bound inline as_ref canonicalization passes" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let root = tmp.as_ref().canonicalize().expect("root");' ' drop(root);' '}'
+temp_case refuse "a helper call hidden in dead code cannot vouch for a raw path" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' if false { let root = kendex_test_support::rooted(&tmp); drop(root); }' ' let raw = tmp.path();' ' drop(raw);' '}'
+temp_case refuse "a discarded helper result cannot vouch for a raw path" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' kendex_test_support::rooted(&tmp);' ' let raw = tmp.path();' ' drop(raw);' '}'
+temp_case refuse "an underscore canonical binding is refused" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let _root = tmp.path().canonicalize().unwrap();' '}'
+temp_case refuse "a discarded inline canonicalization is refused" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' drop(tmp.path().canonicalize().unwrap());' '}'
+temp_case refuse "an inline canonicalization hidden in dead code is refused" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' if false { let root = tmp.path().canonicalize().unwrap(); drop(root); }' '}'
+
+for constructor in \
+  'tempfile::TempDir::new().unwrap()' \
+  'tempdir().unwrap()' \
+  'TempDir::new_in(".").unwrap()' \
+  'tempfile::Builder::new().tempdir().unwrap()' \
+  'tempfile::Builder::new().tempdir_in(".").unwrap()'; do
+  temp_case refuse "raw as_ref is refused for $constructor" \
+    'fn fixture() {' " let tmp = $constructor;" ' let raw = tmp.as_ref();' ' drop(raw);' '}'
+done
+temp_case refuse "a multiline Builder tempdir still establishes a guarded root" \
+  'fn fixture() {' ' let tmp = tempfile::Builder::new()' ' .prefix("fixture")' ' .tempdir()' ' .unwrap();' ' let raw = tmp.path();' ' drop(raw);' '}'
+temp_case pass "comments and strings that mention tempdir roots pass" \
+  'fn prose() {' ' // let tmp = tempfile::tempdir().unwrap();' ' let shown = "let tmp = tempfile::tempdir().unwrap();";' ' let path = "tmp.path()";' ' drop((shown, path));' '}'
+
+git -C "$R" config color.diff always
+temp_case refuse "colored diff output cannot hide a raw temp root" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let raw = tmp.path();' ' drop(raw);' '}'
+git -C "$R" config --unset color.diff
 git -C "$R" reset -q HEAD -- crates/core/tests/temp_path.rs
 rm -f "$R/crates/core/tests/temp_path.rs"
 printf '%s\n' \
@@ -138,7 +144,7 @@ printf '%s\n' \
   '}' >"$R/crates/core/tests/existing_temp.rs"
 git -C "$R" add crates/core/tests/existing_temp.rs
 run_guard RATCHET_RAISE=
-[ "$RC" -ne 0 ] && case "$OUT" in *"existing_temp.rs:3"*"temporary fixture root bypasses rooted()"*) true ;; *) false ;; esac \
+[ "$RC" -ne 0 ] && case "$OUT" in *"existing_temp.rs:3"*"raw temporary fixture root added"*) true ;; *) false ;; esac \
   && ok "a direct path added to an older temp fixture is refused" \
   || bad "a direct path added to an older temp fixture is refused" "rc=$RC out=$OUT"
 git -C "$R" restore --staged --worktree crates/core/tests/existing_temp.rs

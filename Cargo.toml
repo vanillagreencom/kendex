@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/app", "crates/cli"]
+members = ["crates/core", "crates/app", "crates/cli", "crates/test-support"]
 
 [workspace.package]
 version = "5.0.1"
@@ -9,6 +9,7 @@ rust-version = "1.96"
 
 [workspace.dependencies]
 kendex-core = { path = "crates/core" }
+kendex-test-support = { path = "crates/test-support" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 toml = "1.1"
