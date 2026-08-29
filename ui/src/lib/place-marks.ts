@@ -17,6 +17,14 @@ export interface PlaceMark {
 
 const customized = (s: PlaceStanding) => s.standing === "customized";
 
+/** Names in a line, the way a person writes them: no serial comma, and
+ *  the `and` only in front of the last one. Three places joined with two
+ *  `and`s read as a chant rather than a list. */
+const listed = (names: string[]): string =>
+  names.length < 3
+    ? names.join(" and ")
+    : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+
 /** What a counted set of places is called. Projects among themselves are
  *  projects; the personal scope makes the set a mixed one, and "places" is
  *  the word the rest of the app already uses for that. */
@@ -41,7 +49,7 @@ export function packageMark(standings: PlaceStanding[]): PlaceMark | null {
   const mine = standings.filter(customized);
   if (mine.length === 0) return null;
   const unknown = standings.some((s) => s.standing === "unknown");
-  const named = mine.map((s) => placeName(s.scope, all)).join(" and ");
+  const named = listed(mine.map((s) => placeName(s.scope, all)));
   // With a place unread, "1 of 3" would be counting places nobody has
   // looked at — so the count is left off rather than guessed at.
   const label =

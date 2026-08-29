@@ -59,7 +59,7 @@ describe("packageMark", () => {
 describe("one rule wherever the mark is drawn", () => {
   it("answers the same for a package however the page was opened at it", () => {
     const standings = [mine(HYPR), mine(KENDEX), mine(VG)];
-    const label = "Customized in hyprtrade and kendex and vg · 3 of 3 projects";
+    const label = "Customized in hyprtrade, kendex and vg · 3 of 3 projects";
     expect(packageMark(standings)?.label).toBe(label);
     // The same standings read in any order are the same fact about the
     // package; nothing here takes a place to answer about.
@@ -85,6 +85,38 @@ describe("the word a count is in", () => {
     expect(packageMark([mine(GLOBAL), stock(VG)])?.label).toBe(
       `Customized in ${USER_LEVEL_PLACE} · 1 of 2 places`,
     );
+  });
+});
+
+// A list a person would write: commas up to the last name, one "and"
+// before it, no serial comma. Two names take the "and" alone.
+describe("how the names are joined", () => {
+  const DOCS: Scope = { scope: "project", root: "/work/docs" };
+
+  it("joins two with and", () => {
+    expect(packageMark([mine(VG), mine(HYPR)])?.label).toBe(
+      "Customized in vg and hyprtrade · 2 of 2 projects",
+    );
+  });
+
+  it("joins three as a comma list ending in and", () => {
+    expect(packageMark([mine(VG), mine(HYPR), mine(KENDEX)])?.label).toBe(
+      "Customized in vg, hyprtrade and kendex · 3 of 3 projects",
+    );
+  });
+
+  it("keeps to one and however many places there are", () => {
+    const label =
+      packageMark([mine(VG), mine(HYPR), mine(KENDEX), mine(DOCS)])?.label ??
+      "";
+    expect(label).toBe(
+      "Customized in vg, hyprtrade, kendex and docs · 4 of 4 projects",
+    );
+    expect(label.match(/ and /g)).toHaveLength(1);
+  });
+
+  it("names one place on its own", () => {
+    expect(packageMark([mine(VG)])?.label).toBe("Customized in vg");
   });
 });
 
