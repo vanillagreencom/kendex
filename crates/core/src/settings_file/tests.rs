@@ -297,6 +297,51 @@ fn either_quoted_spelling_is_ambiguous_and_blocks_a_seed() {
     }
 }
 
+/// A dotted key declares its first segment as a table: `MODE.part` makes
+/// `MODE` a table, not a value any script reads. So `MODE` is ambiguous
+/// rather than absent — absent would let seeding write a scalar `MODE`
+/// beside it, defining `env.MODE` twice and stopping the file loading.
+#[test]
+fn a_dotted_key_is_ambiguous_and_blocks_a_seed_of_its_first_segment() {
+    for spelling in ["MODE.part", "MODE.\"part\"", "\"MODE\".part"] {
+        let file = format!("[env]\n{spelling} = \"a\"\n");
+        assert!(
+            matches!(
+                current(&file, "MODE"),
+                Current::Ambiguous { ref problem, ref lines }
+                    if lines == &[2] && problem.contains("dotted key")
+            ),
+            "{spelling}: {:?}",
+            current(&file, "MODE")
+        );
+        assert!(
+            crate::settings_seed::assigned_keys(&file).contains(&"MODE".to_owned()),
+            "{spelling} must block a seed of MODE"
+        );
+        assert!(
+            crate::settings_seed::merge(Some(&file), &[seeded("noise", "MODE", "MODE = \"q\"")])
+                .is_none(),
+            "{spelling} must not be seeded over"
+        );
+
+        // And the edit refuses through the span it never produced.
+        let refused = apply_edits(
+            &file,
+            &[set("noise", "MODE", "loud")],
+            &[seeded("noise", "MODE", "MODE = \"quiet\"")],
+            Path::new("/w/kendex.settings.toml"),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                refused,
+                CoreError::SettingsRefused(SettingsRefusal::Ambiguous { .. })
+            ),
+            "{spelling}: {refused:?}"
+        );
+    }
+}
+
 /// The same shape reaching the editor: a key that exists only inside a
 /// string an array element opened is not a site, so no span is ever
 /// produced for it and an edit naming it refuses.

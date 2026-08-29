@@ -619,7 +619,7 @@ fn an_env_declared_as_an_array_of_tables_stops_the_write_and_says_why() {
     assert!(
         matches!(
             refused,
-            CoreError::SettingsRefused(SettingsRefusal::EnvIsAnArray { .. })
+            CoreError::SettingsRefused(SettingsRefusal::EnvNotSeedable { .. })
         ),
         "{refused:?}"
     );

@@ -20,7 +20,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::lock::SettingsSeed;
 use crate::settings_toml::{Line, Row};
 
+mod env;
 mod refresh;
+pub use env::{EnvBlocked, env_blocked};
 pub use refresh::refresh_comments;
 
 pub const SETTINGS_FILE: &str = "kendex.settings.toml";
@@ -119,30 +121,15 @@ pub(crate) fn opens_env(row: &Row) -> bool {
     table_row(row) && crate::settings_toml::header_of(row.text).is_some_and(|h| h.opens("env"))
 }
 
-/// The key one row assigns, by the name every spelling of it shares. That
-/// name is what blocks a seed: inserting beside `'MODE'` because the bare
-/// spelling was not found would put one key in the file twice and stop it
-/// loading at all.
+/// The name one row's assignment declares, by the spelling every reading
+/// of it shares. That name is what blocks a seed: inserting beside
+/// `'MODE'` because the bare spelling was not found would put one key in
+/// the file twice and stop it loading at all. A dotted key declares its
+/// first segment as a table, so `MODE.part` occupies `MODE` and blocks a
+/// seed of it exactly as a plain `MODE` would.
 pub(crate) fn assignment_key(row: &Row) -> Option<String> {
     let (key, _, _) = row.assignment()?;
     crate::settings_toml::key_of(key).map(|key| key.name)
-}
-
-/// The line where this file declares `env` as an array of tables, if it
-/// does.
-///
-/// TOML lets one name be a table or an array of tables and never both, so
-/// a file holding `[[env]]` has nowhere a seed can go. Writing `[env]`
-/// beside it declares `env` twice and the file stops loading at all;
-/// writing inside it puts a setting under a header no loader reads. The
-/// shape is refused rather than written around, and the plan says so.
-pub fn env_as_array(text: &str) -> Option<u32> {
-    crate::settings_toml::rows(text)
-        .into_iter()
-        .find_map(|row| {
-            let header = crate::settings_toml::header_of(row.text)?;
-            (row.kind == Line::Table && header.array && header.path == ["env"]).then_some(row.line)
-        })
 }
 
 /// Whether this row is a table header the section walk ends on. The
@@ -248,7 +235,7 @@ fn render_entries(entries: &[&SeededEnv], eol: &str) -> String {
 /// that were added.
 pub fn merge(original: Option<&str>, entries: &[SeededEnv]) -> Option<(String, Vec<String>)> {
     // Nowhere to write: the plan reports the shape, and no byte moves.
-    if original.is_some_and(|text| env_as_array(text).is_some()) {
+    if original.is_some_and(|text| env_blocked(text).is_some()) {
         return None;
     }
     let mut existing: BTreeSet<String> = original

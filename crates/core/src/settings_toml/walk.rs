@@ -119,7 +119,7 @@ pub(super) fn advance(content: &str, carry: Carry) -> Carry {
 /// is not TOML at all; it ends with its line here rather than swallowing
 /// the rest of the file, which is what the grep-shaped shell loaders do
 /// with it too.
-fn string_at(content: &str, index: usize) -> Option<usize> {
+pub(super) fn string_at(content: &str, index: usize) -> Option<usize> {
     let bytes = content.as_bytes();
     let quote = bytes[index];
     let kind = match quote {
@@ -282,35 +282,23 @@ fn close_at(rest: &str, array: bool) -> Option<(&str, &str)> {
 }
 
 /// A header's dotted key: its parts in order, each decoded. `None` where
-/// any part is not a key TOML would accept.
+/// any part is not a key TOML would accept. Split by the same reader an
+/// assignment's key goes through, so a header and an assignment can never
+/// disagree about where one name ends and the next begins.
 fn dotted_key(inside: &str) -> Option<Vec<String>> {
-    let mut parts = Vec::new();
-    let mut start = 0;
-    let bytes = inside.as_bytes();
-    let mut index = 0;
-    while index <= bytes.len() {
-        if index == bytes.len() || bytes[index] == b'.' {
-            parts.push(header_part(&inside[start..index])?);
-            start = index + 1;
-            index += 1;
-            continue;
-        }
-        index = match bytes[index] {
-            b'"' | b'\'' => string_at(inside, index)?,
-            _ => index + 1,
-        };
-    }
-    (!parts.is_empty()).then_some(parts)
+    super::key::segments(inside)?
+        .into_iter()
+        .map(header_part)
+        .collect()
 }
 
-/// One part of a dotted key. A quoted part decodes through the same
-/// reader every other key goes through; a bare one is held to TOML's bare
-/// key: letters, digits, underscore and hyphen, and nothing else.
-fn header_part(part: &str) -> Option<String> {
-    let key = super::key_of(part)?;
-    let bare_ok = key
+/// One part of a dotted key. A quoted part is whatever it decoded to; a
+/// bare one is held to TOML's bare key: letters, digits, underscore and
+/// hyphen, and nothing else.
+fn header_part(part: super::key::Segment) -> Option<String> {
+    let bare_ok = part
         .name
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'));
-    (key.quoted || (bare_ok && !key.name.is_empty())).then_some(key.name)
+    (part.quoted || (bare_ok && !part.name.is_empty())).then_some(part.name)
 }

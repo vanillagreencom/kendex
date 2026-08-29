@@ -24,7 +24,7 @@ use specta::Type;
 
 use crate::base::Base;
 use crate::error::Result;
-use crate::settings_seed::{SeededEnv, loaders_read_env};
+use crate::settings_seed::{EnvBlocked, SeededEnv, loaders_read_env};
 use crate::settings_template::decoded_value;
 use crate::settings_toml::{Line, decoded, key_of, quoted_span};
 
@@ -74,9 +74,10 @@ pub enum SettingsRefusal {
     },
 
     #[error(
-        "{path} declares env as an array of tables on line {line}, so there is nowhere a setting can go — make it a plain [env] table"
+        "{path} {}, so there is nowhere a setting can go — make it a plain [env] table",
+        env.problem()
     )]
-    EnvIsAnArray { path: PathBuf, line: u32 },
+    EnvNotSeedable { path: PathBuf, env: EnvBlocked },
 }
 
 /// One assignment of one key in the file.
@@ -85,9 +86,9 @@ pub struct Site {
     /// The key seeding matches on: quotes trimmed, so `"WAIT" = "x"` and
     /// `WAIT = "x"` are one key's two spellings and neither is seeded over.
     pub key: String,
-    /// How the key was spelled. TOML reads all three spellings as one
-    /// key, so all three block a seed; the loaders match the text as
-    /// written, so only the bare one is a name they read.
+    /// How the key was spelled. Every spelling of a name blocks a seed of
+    /// it; the loaders match the text as written, so only the bare one is
+    /// a name they read.
     pub written: Written,
     /// 1-based line.
     pub line: u32,
@@ -106,6 +107,10 @@ pub struct Site {
 pub enum Written {
     Bare,
     Quoted,
+    /// A dotted path, whatever its first segment's own spelling. It
+    /// declares that name as a table rather than assigning it a value, so
+    /// it occupies the name and holds no value to read.
+    Dotted,
 }
 
 /// Where one key stands in the file, as a reader can act on it.
@@ -177,9 +182,10 @@ pub fn sites(text: &str) -> Vec<Site> {
             continue;
         };
         out.push(Site {
-            written: match key.quoted {
-                true => Written::Quoted,
-                false => Written::Bare,
+            written: match (key.dotted(), key.quoted) {
+                (true, _) => Written::Dotted,
+                (false, true) => Written::Quoted,
+                (false, false) => Written::Bare,
             },
             key: key.name,
             line: row.line,
@@ -219,10 +225,18 @@ fn readable(site: &Site, key: &str) -> std::result::Result<String, String> {
     if !site.in_env {
         return Err("it is assigned outside the [env] table, where no script reads it".to_owned());
     }
-    if site.written == Written::Quoted {
-        return Err(format!(
-            "it is assigned as a quoted key, which is not a name a shell can export — spell it {key}"
-        ));
+    match site.written {
+        Written::Bare => {}
+        Written::Quoted => {
+            return Err(format!(
+                "it is assigned as a quoted key, which is not a name a shell can export — spell it {key}"
+            ));
+        }
+        Written::Dotted => {
+            return Err(format!(
+                "it is assigned as a dotted key, which makes {key} a table rather than a setting"
+            ));
+        }
     }
     site.value.clone().ok_or_else(|| {
         "its value is not a one-line double-quoted string free of \" and \\".to_owned()

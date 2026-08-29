@@ -101,7 +101,8 @@ fn three_spellings_of_one_key_share_a_name_and_differ_on_being_bare() {
         key_of("MODE"),
         Some(Key {
             name: "MODE".to_owned(),
-            quoted: false
+            quoted: false,
+            under: Vec::new()
         })
     );
     for spelling in ["\"MODE\"", "'MODE'"] {
@@ -109,12 +110,55 @@ fn three_spellings_of_one_key_share_a_name_and_differ_on_being_bare() {
             key_of(spelling),
             Some(Key {
                 name: "MODE".to_owned(),
-                quoted: true
+                quoted: true,
+                under: Vec::new()
             }),
             "{spelling}"
         );
     }
     assert_eq!(key_of("   "), None);
+}
+
+/// A dotted key names a PATH. Read as one literal name it occupies
+/// nothing anyone asks about: `env.MODE` leaves `env` looking undeclared
+/// and `MODE.part` leaves `MODE` looking absent, and the seed written
+/// beside either one defines its name a second time and stops the file
+/// loading. The name a dotted key declares is its FIRST segment; what
+/// hangs below it is that table's business.
+#[test]
+fn a_dotted_key_reads_as_the_path_it_names() {
+    // One path, however its segments are spelled and spaced.
+    for spelling in ["env.MODE", "env.\"MODE\"", "env.'MODE'", "env . MODE"] {
+        assert_eq!(
+            key_of(spelling),
+            Some(Key {
+                name: "env".to_owned(),
+                quoted: false,
+                under: vec!["MODE".to_owned()]
+            }),
+            "{spelling}"
+        );
+    }
+    // A `.` inside a quoted segment is that name's character, not a
+    // separator: this is ONE segment and declares nothing called `a`.
+    assert_eq!(
+        key_of("\"a.b\""),
+        Some(Key {
+            name: "a.b".to_owned(),
+            quoted: true,
+            under: Vec::new()
+        })
+    );
+    assert!(!key_of("\"a.b\"").expect("a key").dotted());
+    assert!(key_of("a.b").expect("a key").dotted());
+    // A segment TOML would not accept is not half a key: the whole key is
+    // none, as an empty one already was.
+    for spelling in ["a.", ".b", "a..b"] {
+        assert_eq!(key_of(spelling), None, "{spelling}");
+    }
+    // The declared name is what a walk over the file reports.
+    assert_eq!(keys("MODE.part = \"x\"\n"), vec!["MODE".to_owned()]);
+    assert_eq!(keys("env.MODE = \"x\"\n"), vec!["env".to_owned()]);
 }
 
 /// The `=` that splits an assignment is the first one no string holds, so
@@ -192,7 +236,8 @@ fn a_basic_key_decodes_its_escapes_and_a_literal_key_does_not() {
             key_of(spelling),
             Some(Key {
                 name: "MODE".to_owned(),
-                quoted: true
+                quoted: true,
+                under: Vec::new()
             }),
             "{spelling}"
         );
@@ -207,7 +252,8 @@ fn a_basic_key_decodes_its_escapes_and_a_literal_key_does_not() {
         key_of("'MO\\u0044E'"),
         Some(Key {
             name: "MO\\u0044E".to_owned(),
-            quoted: true
+            quoted: true,
+            under: Vec::new()
         })
     );
     // The rest of the basic escapes, and one TOML does not define.

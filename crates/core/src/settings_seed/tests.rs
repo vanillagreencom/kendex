@@ -572,10 +572,50 @@ fn an_env_declared_as_an_array_of_tables_is_refused_rather_than_seeded() {
         owner: "review".to_owned(),
     }];
     let file = "[[env]]\nMODE = \"a\"\n";
-    assert_eq!(env_as_array(file), Some(1));
+    assert_eq!(env_blocked(file), Some(EnvBlocked::Array(1)));
     assert_eq!(
         merge(Some(file), &seeded),
         None,
         "nothing may be written into a file with nowhere to write"
+    );
+}
+
+/// A top-level assignment of `env` declares the name the seeded table
+/// would open. `env = "a"` makes it a value; `env.MODE = "a"` makes it a
+/// table by dotted key, which a `[env]` header may not reopen. Either way
+/// appending `[env]` defines `env` twice and the file stops parsing, so
+/// the shape is refused where `[[env]]` already is.
+#[test]
+fn a_top_level_env_assignment_is_refused_rather_than_seeded() {
+    let seeded = [SeededEnv {
+        entry: EnvEntry {
+            key: "DEPTH".to_owned(),
+            lines: vec!["# How deep.".to_owned(), "DEPTH = \"2\"".to_owned()],
+        },
+        owner: "review".to_owned(),
+    }];
+    for (file, line) in [
+        ("env.MODE = \"a\"\n", 1),
+        ("env = \"a\"\n", 1),
+        ("# note\nenv.\"MODE\" = \"a\"\n[other]\nX = \"y\"\n", 2),
+    ] {
+        assert_eq!(
+            env_blocked(file),
+            Some(EnvBlocked::Assigned(line)),
+            "{file}"
+        );
+        assert_eq!(
+            merge(Some(file), &seeded),
+            None,
+            "{file}: nothing may be written into a file with nowhere to write"
+        );
+    }
+    // Under a header the name belongs to that table, not the top level,
+    // so the `[env]` a seed opens is still free.
+    let nested = "[other]\nenv.MODE = \"a\"\n";
+    assert_eq!(env_blocked(nested), None);
+    assert!(
+        merge(Some(nested), &seeded).is_some(),
+        "another table's env is not this file's env"
     );
 }

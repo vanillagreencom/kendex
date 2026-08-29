@@ -298,23 +298,25 @@ pub(super) fn plan_settings_seed(
         return Ok(notes);
     }
     let current = crate::fs::read_if_exists(&path)?;
-    // A file that declares env as an array of tables has nowhere a
-    // setting can go, and writing around it would leave a document that
-    // does not load. Said the way the non-regular file is said: the plan
-    // reports it, and an edit aimed at it refuses outright.
-    if let Some(line) = current
+    // A file that already declares env — as an array of tables, or in a
+    // top-level assignment — has nowhere a setting can go, and writing
+    // around it would leave a document that does not load. Said the way
+    // the non-regular file is said: the plan reports it, and an edit
+    // aimed at it refuses outright.
+    if let Some(env) = current
         .as_deref()
-        .and_then(crate::settings_seed::env_as_array)
+        .and_then(crate::settings_seed::env_blocked)
     {
         if !edits.is_empty() {
-            return Err(crate::settings_file::SettingsRefusal::EnvIsAnArray { path, line }.into());
+            return Err(crate::settings_file::SettingsRefusal::EnvNotSeedable { path, env }.into());
         }
         drift.push(cannot_write(
             scope,
             file,
             format!(
-                "{} declares env as an array of tables on line {line}, so no setting can be seeded",
-                path.display()
+                "{} {}, so no setting can be seeded",
+                path.display(),
+                env.problem()
             ),
         ));
         return Ok(notes);
