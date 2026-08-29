@@ -15,6 +15,7 @@ use crate::manifest::{self, ForkProvenance, INPLACE_SOURCE_NAME, LOCAL_SOURCE_NA
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::local_source_root;
 
+mod access;
 mod agent;
 mod beside;
 mod forkable;
@@ -247,6 +248,9 @@ enum Capture {
 struct Captured {
     files: Capture,
     carry: Option<crate::engine::agent_carry::AgentCarry>,
+    /// The agent's own source form, for the access proof. `None` for a
+    /// skill: a skill states no tool policy for a name to widen.
+    agent: Option<crate::render::agent::SourceAgent>,
 }
 
 /// One fork's inputs, gathered so the capture side reads them in one
@@ -268,6 +272,7 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
         ItemKind::Skill => Captured {
             files: Capture::Tree(source_form(crate::capture::read_tree(edited)?)),
             carry: None,
+            agent: None,
         },
         // Every other kind is turned away by `edited_rendering` first, so
         // what reaches here is an agent.
@@ -276,6 +281,7 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
             Captured {
                 files: Capture::File(captured.bytes),
                 carry: captured.carry,
+                agent: Some(captured.agent),
             }
         }
     })

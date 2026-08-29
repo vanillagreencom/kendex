@@ -22,7 +22,6 @@ use crate::render::agent::{
     EffectiveAgent, GENERATED_BANNER, SourceAgent, hooks_for_agent, merge_overrides,
     merged_instructions, parse_source_agent,
 };
-use crate::render::permission::PermissionIntent;
 
 use super::ForkOf;
 use super::stated::{carried_edits, dropped, stated, uncleared};
@@ -33,6 +32,9 @@ use crate::engine::agent_carry::{AgentCarry, agent_carry};
 pub(super) struct CapturedAgent {
     pub bytes: Vec<u8>,
     pub carry: Option<AgentCarry>,
+    /// The captured bytes as the source parser reads them, which is what
+    /// the fork's own renderings will be generated from.
+    pub agent: SourceAgent,
 }
 
 /// The agent as the local source should hold it. `installed_as` is the
@@ -108,10 +110,14 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
     // against, and no rendering to read the person's edits back off.
     let named = SourceAgent {
         name: installed_as.to_owned(),
-        ..captured
+        ..captured.clone()
     };
     let Some(rendering) = render(scope, &named, harness, &forked) else {
-        return Ok(CapturedAgent { bytes, carry });
+        return Ok(CapturedAgent {
+            bytes,
+            carry,
+            agent: captured,
+        });
     };
     let after = stated(harness, &rendering)
         .map_err(|problem| refused(format!("its own rendering reads back as {problem}")))?;
@@ -134,6 +140,7 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
     Ok(CapturedAgent {
         bytes,
         carry: (!carry.is_empty()).then_some(carry),
+        agent: captured,
     })
 }
 
@@ -352,11 +359,7 @@ fn render(
     harness: HarnessId,
     around: &Around,
 ) -> Option<String> {
-    let permissions = PermissionIntent::effective(
-        &source.permissions,
-        around.overrides.allow_tools.as_deref(),
-        around.overrides.deny_tools.as_deref(),
-    );
+    let permissions = EffectiveAgent::intent(source, &around.overrides);
     let effective = EffectiveAgent {
         source,
         harness,

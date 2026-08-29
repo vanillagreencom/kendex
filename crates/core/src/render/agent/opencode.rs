@@ -2,7 +2,7 @@ use super::{EffectiveAgent, GENERATED_BANNER, RenderedAgent, hooks_prose, skills
 use crate::harness::models::resolve_model;
 use crate::manifest::FrontmatterOverrides;
 use crate::model::{HarnessId, Scope};
-use crate::render::permission::PermissionIntent;
+use crate::render::permission::{Access, PermissionIntent};
 use crate::render::vocab::{opencode_permission, rewrite_prose};
 use crate::render::yaml_scalar;
 
@@ -74,6 +74,18 @@ fn mode(o: &FrontmatterOverrides) -> &str {
     match o.mode.as_deref().map(str::trim) {
         Some(mode) if !mode.is_empty() && !mode.eq_ignore_ascii_case("all") => mode,
         _ => "subagent",
+    }
+}
+
+/// What OpenCode's own rules leave this agent able to use. Its `permission:`
+/// map is deny-only — an allowlist is already enumerated into denies over
+/// the known permission set — so the policy names no allow side. The
+/// advisories [`denied_permissions`] raises belong to the rendering that
+/// writes the file; a proof raising them again would say everything twice.
+pub(super) fn access(agent: &EffectiveAgent) -> Access {
+    Access {
+        allow: None,
+        deny: denied_permissions(agent, mode(&agent.overrides), &mut Vec::new()),
     }
 }
 

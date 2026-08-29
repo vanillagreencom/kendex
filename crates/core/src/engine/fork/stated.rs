@@ -8,7 +8,7 @@
 
 use crate::manifest::FrontmatterOverrides;
 use crate::model::HarnessId;
-use crate::render::permission::normalize;
+use crate::render::permission::{Access, Widened};
 
 /// The one value an override can state that means "no effort at all": the
 /// renderers filter it out rather than writing it, which is what makes a
@@ -24,32 +24,20 @@ const NO_EFFORT: &str = "none";
 /// harness's own deny rules — Claude's fleet denies, Pi's delegation set —
 /// count on both sides and never read as a difference.
 pub(super) fn dropped(on_disk: &Stated, after: &Stated, harness: HarnessId) -> Option<String> {
-    let mut given_back: Vec<String> = on_disk
-        .deny
-        .iter()
-        .filter(|tool| grants(after, tool))
-        .cloned()
-        .collect();
-    match (&on_disk.allow, &after.allow) {
-        (Some(kept), Some(allowed)) => {
-            for tool in allowed {
-                if !holds(kept, tool) && !holds(&given_back, tool) {
-                    given_back.push(tool.clone());
-                }
-            }
-        }
+    let given_back = match after.access.widened_over(&on_disk.access) {
         // The file states an allowlist and the fork would state none, so
         // what comes back is every tool the harness offers — a set no
         // reading of either file can name.
-        (Some(kept), None) => {
+        Widened::PastAnAllowlist(kept) => {
             return Some(format!(
                 "the tool allowlist its {} file states: {}",
                 harness.display_name(),
                 kept.join(", ")
             ));
         }
-        _ => {}
-    }
+        Widened::Tools(tools) => tools,
+        Widened::No => Vec::new(),
+    };
     // A hook the person put in the file gates tool use from inside it, and
     // no override table holds one — a hook is a `[[custom-hooks]]` entry
     // with a selector, not a field. One the fork would not run again is a
@@ -89,8 +77,9 @@ pub(super) struct Stated {
     /// Whether this file is still the harness's own rendering rather than
     /// a document the person wrote over the top of it.
     rendering: bool,
-    allow: Option<Vec<String>>,
-    deny: Vec<String>,
+    /// The tool policy the file states, read into the type a derived
+    /// policy uses, so one comparison answers both.
+    access: Access,
     /// Pi's delegation list: which child agents this one may invoke. An
     /// allowlist like `tools`, in a key only Pi writes.
     subagents: Option<Vec<String>>,
@@ -135,10 +124,12 @@ pub(super) fn stated(harness: HarnessId, text: &str) -> std::result::Result<Stat
     };
     Ok(Stated {
         rendering: is_rendering(harness, &parsed.map),
-        allow: allow_key.and_then(|key| parsed.map.string_list(key)),
-        deny: deny_key
-            .and_then(|key| parsed.map.string_list(key))
-            .unwrap_or_default(),
+        access: Access {
+            allow: allow_key.and_then(|key| parsed.map.string_list(key)),
+            deny: deny_key
+                .and_then(|key| parsed.map.string_list(key))
+                .unwrap_or_default(),
+        },
         subagents: (harness == HarnessId::Pi)
             .then(|| parsed.map.string_list("allowed-subagents"))
             .flatten(),
@@ -330,20 +321,4 @@ fn permission_keys(harness: HarnessId) -> (Option<&'static str>, Option<&'static
             (None, None)
         }
     }
-}
-
-/// Whether a rendering hands this tool to the agent: it neither denies it
-/// nor keeps an allowlist that leaves it out.
-fn grants(rendering: &Stated, tool: &str) -> bool {
-    if holds(&rendering.deny, tool) {
-        return false;
-    }
-    match &rendering.allow {
-        Some(allow) => holds(allow, tool),
-        None => true,
-    }
-}
-
-fn holds(tools: &[String], tool: &str) -> bool {
-    tools.iter().any(|kept| normalize(kept) == normalize(tool))
 }

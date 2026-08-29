@@ -3,6 +3,7 @@
 //! the two ways out are explicit: keep it as a fork, or discard the edits.
 #![cfg(unix)]
 
+mod access;
 mod agent_capture;
 mod agent_settings;
 mod agent_tables;

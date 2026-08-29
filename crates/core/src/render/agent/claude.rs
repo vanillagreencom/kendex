@@ -1,7 +1,7 @@
 use super::{EffectiveAgent, GENERATED_BANNER, RenderedAgent, default_pane};
 use crate::harness::models::resolve_model;
 use crate::model::HarnessId;
-use crate::render::permission::PermissionIntent;
+use crate::render::permission::{Access, PermissionIntent};
 use crate::render::vocab::claude_tool_name;
 use crate::render::{yaml_quoted as forced_quote, yaml_scalar};
 
@@ -49,16 +49,16 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     if let Some(memory) = &o.memory {
         push(format!("memory: {}", yaml_scalar(memory)));
     }
-    if let PermissionIntent::AllowOnly { allow, .. } = &agent.permissions {
-        let mapped: Vec<String> = allow.iter().map(|tool| claude_tool_name(tool)).collect();
-        match mapped.is_empty() {
+    let access = access(agent);
+    if let Some(allow) = &access.allow {
+        match allow.is_empty() {
             true => push("tools: []".to_owned()),
-            false => push(format!("tools: {}", yaml_scalar(&mapped.join(", ")))),
+            false => push(format!("tools: {}", yaml_scalar(&allow.join(", ")))),
         }
     }
     push(format!(
         "disallowedTools: {}",
-        yaml_scalar(&deny_list(agent).join(", "))
+        yaml_scalar(&access.deny.join(", "))
     ));
     if let Some(color) = o.color.as_deref().or(source.color.as_deref()) {
         push(format!("color: {}", yaml_scalar(color)));
@@ -91,6 +91,21 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     RenderedAgent {
         text: body,
         warnings,
+    }
+}
+
+/// What Claude's own rules leave this agent able to use: the intent's
+/// allowlist in Claude's tool names, and [`deny_list`]. The rendering
+/// writes these two lines out of this, so nothing states the policy twice.
+pub(super) fn access(agent: &EffectiveAgent) -> Access {
+    Access {
+        allow: match &agent.permissions {
+            PermissionIntent::AllowOnly { allow, .. } => {
+                Some(allow.iter().map(|tool| claude_tool_name(tool)).collect())
+            }
+            _ => None,
+        },
+        deny: deny_list(agent),
     }
 }
 

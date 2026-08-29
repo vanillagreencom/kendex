@@ -8,7 +8,6 @@ use crate::render::agent::{
     EffectiveAgent, RenderedAgent, Selects, SourceAgent, file_name, generate, hooks_for_agent,
     merge_overrides, merged_instructions, parse_source_agent, selects,
 };
-use crate::render::permission::PermissionIntent;
 use crate::render::validate::validate_agent;
 
 use super::desired::{Artifact, Desired, DesiredState, ItemCtx, native_dir};
@@ -372,11 +371,7 @@ fn effective_agent<'a>(
             .and_then(|by_agent| by_agent.get(ctx.name)),
         project.frontmatter,
     );
-    let permissions = PermissionIntent::effective(
-        &source.permissions,
-        overrides.allow_tools.as_deref(),
-        overrides.deny_tools.as_deref(),
-    );
+    let permissions = EffectiveAgent::intent(source, &overrides);
     EffectiveAgent {
         source,
         harness,

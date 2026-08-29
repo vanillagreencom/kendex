@@ -4,9 +4,10 @@
 //! source's content under the name it always had, the edits under the name
 //! the user chose.
 
+use super::access::refuse_if_widened;
 use super::{
-    Capture, ForkOf, capture, capture_ops, carries_name, edited_rendering, named_bytes, provenance,
-    vacant_name,
+    Capture, Captured, ForkOf, capture, capture_ops, carries_name, edited_rendering, named_bytes,
+    provenance, vacant_name,
 };
 use crate::apply::{Op, Plan, PlannedOp, Pre};
 use crate::engine::agent_carry::{OldName, rekey_agent_tables};
@@ -57,6 +58,7 @@ pub fn fork_beside(
         }
     };
     let edited = edited_rendering(env, scope, kind, name, harness)?;
+    let before = manifest.clone();
     let captured = capture(
         &ForkOf {
             env,
@@ -70,8 +72,12 @@ pub fn fork_beside(
         },
         &edited,
     )?;
-    let files = named(captured.files, new_name)?;
-    let mut ops = capture_ops(env, scope, kind, new_name, &edited, files)?;
+    let Captured {
+        files,
+        carry,
+        agent,
+    } = captured;
+    let mut ops = capture_ops(env, scope, kind, new_name, &edited, named(files, new_name)?)?;
     let provenance = provenance(env, scope, kind, name, harness, &manifest, &decl)?;
     // An agent's configuration is keyed by its installed name, so a copy
     // under a new one reads none of it: it would render without the
@@ -79,7 +85,7 @@ pub fn fork_beside(
     // hooks. The original keeps its own — it stays declared from its source
     // and goes on rendering under the name it always had.
     rekey_agent_tables(&mut manifest, kind, name, new_name, OldName::Kept);
-    if let Some(carry) = captured.carry {
+    if let Some(carry) = carry {
         carry.apply(&mut manifest, new_name);
     }
 
@@ -98,6 +104,17 @@ pub fn fork_beside(
             .get_mut(name)
             .unwrap_or_else(|| unreachable!("declared above"))
             .rev = Some(commit);
+    }
+
+    // The declaration as the fork will write it, proven before any of it
+    // reaches disk: the copy answers to a new name, and a harness's own
+    // deny rules read that name.
+    if let Some(agent) = &agent {
+        let declared = manifest
+            .declared(kind)
+            .get(new_name)
+            .unwrap_or_else(|| unreachable!("declared above"));
+        refuse_if_widened(scope, &before, &manifest, declared, agent, name, new_name)?;
     }
 
     let manifest_path = manifest::manifest_path(env, scope);

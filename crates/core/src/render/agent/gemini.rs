@@ -1,7 +1,7 @@
 use super::{EffectiveAgent, GENERATED_BANNER, RenderedAgent, hooks_prose, skills_prose};
 use crate::harness::models::resolve_model;
 use crate::model::{HarnessId, Scope};
-use crate::render::permission::PermissionIntent;
+use crate::render::permission::{Access, PermissionIntent};
 use crate::render::vocab::{gemini_tool_name, rewrite_prose};
 use crate::render::{RenderWarning, yaml_quoted, yaml_scalar};
 
@@ -37,30 +37,25 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
         "model: {}",
         yaml_scalar(resolved.id.as_deref().unwrap_or("inherit"))
     ));
-    match &agent.permissions {
-        PermissionIntent::AllowOnly { allow, .. } => {
-            let allow: Vec<String> = allow.iter().map(|tool| gemini_tool_name(tool)).collect();
-            match allow.is_empty() {
-                true => push("tools: []".to_owned()),
-                false => {
-                    push("tools:".to_owned());
-                    for tool in allow {
-                        push(format!("  - {}", yaml_scalar(&tool)));
-                    }
+    if let Some(allow) = access(agent).allow {
+        match allow.is_empty() {
+            true => push("tools: []".to_owned()),
+            false => {
+                push("tools:".to_owned());
+                for tool in allow {
+                    push(format!("  - {}", yaml_scalar(&tool)));
                 }
             }
         }
-        // Gemini's agent frontmatter carries an allowlist and nothing else,
-        // and completing one from a deny list would take the agent's own
-        // tools away the moment Gemini grows a built-in it never named.
-        PermissionIntent::DenyExtra(deny) => warnings.push(RenderWarning::with_fix(
-            format!(
-                "Gemini subagents take a tool allowlist and no deny list, so this agent keeps access to {}",
-                deny.join(", ")
-            ),
+    }
+    // Gemini's agent frontmatter carries an allowlist and nothing else, and
+    // completing one from a deny list would take the agent's own tools away
+    // the moment Gemini grows a built-in it never named.
+    if let PermissionIntent::DenyExtra(deny) = &agent.permissions {
+        warnings.push(RenderWarning::with_fix(
+            format!("Gemini subagents take a tool allowlist and no deny list, so this agent keeps access to {}", deny.join(", ")),
             "declare the agent's tools as an allowlist, or drop Gemini from its harnesses",
-        )),
-        PermissionIntent::Unspecified => {}
+        ));
     }
 
     let mut body = format!("---\n{fm}---\n\n{GENERATED_BANNER}\n\n");
@@ -89,6 +84,21 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     RenderedAgent {
         text: body,
         warnings,
+    }
+}
+
+/// What Gemini's own rules leave this agent able to use. Its frontmatter
+/// carries an allowlist and no deny list, so a deny intent restricts
+/// nothing here — the rendering warns about exactly that.
+pub(super) fn access(agent: &EffectiveAgent) -> Access {
+    Access {
+        allow: match &agent.permissions {
+            PermissionIntent::AllowOnly { allow, .. } => {
+                Some(allow.iter().map(|tool| gemini_tool_name(tool)).collect())
+            }
+            _ => None,
+        },
+        deny: Vec::new(),
     }
 }
 
