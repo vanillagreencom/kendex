@@ -21,12 +21,13 @@
 #                                (default: tmp/second-opinion under --cwd)
 #   SECOND_OPINION_REVIEW_INSTRUCTIONS  Repo instruction-file globs for review
 set -euo pipefail
-
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME="$SCRIPT_DIR/second-opinion-runtime"
 ORIGINAL_ARGS=("$@")
 FOREGROUND_CAP_IN_CALLER_ENV=false
 [[ "${SECOND_OPINION_FOREGROUND_CAP:-}" == "1" ]] && FOREGROUND_CAP_IN_CALLER_ENV=true
+FOREGROUND_CAP_WAS_IN_CALLER_ENV=false
+[[ -z "${SECOND_OPINION_FOREGROUND_CAP+x}" ]] || FOREGROUND_CAP_WAS_IN_CALLER_ENV=true
 # Whether SECOND_OPINION_CURRENT_MODEL arrived from the CALLER'S OWN
 # environment rather than a project settings file. Captured here because this
 # is the only moment the two can be told apart — project loading exports the
@@ -46,7 +47,6 @@ FOREGROUND_CAP_IN_CALLER_ENV=false
 # project file — which is precisely why nothing is declared afterwards.)
 CURRENT_MODEL_IS_SESSION_SCOPED=false
 [[ -z "${SECOND_OPINION_CURRENT_MODEL:-}" ]] || CURRENT_MODEL_IS_SESSION_SCOPED=true
-
 # Present in the caller's environment AT ALL — set-but-EMPTY included. A
 # different question from the one above, and both are needed:
 #   IS_SESSION_SCOPED  is there a non-empty DECLARATION, and is it this
@@ -61,7 +61,6 @@ CURRENT_MODEL_IS_SESSION_SCOPED=false
 # suppressed.
 CURRENT_MODEL_IN_CALLER_ENV=false
 [[ -z "${SECOND_OPINION_CURRENT_MODEL+x}" ]] || CURRENT_MODEL_IN_CALLER_ENV=true
-
 show_help() {
   cat <<'HELP'
 Cross-model second opinion via external AI CLI.
@@ -248,7 +247,6 @@ Exit codes:
   124 detached wait: the supervisor deadline was reached
 HELP
 }
-
 # Help is answered before project configuration is read: sourcing a repo's
 # .env.local under --help would execute repository-controlled shell code. The
 # option parser treats -h/--help at any position as help, so the same scan
@@ -259,11 +257,9 @@ for _arg in "$@"; do
   esac
 done
 unset _arg
-
 # Resolved only after help is answered: help must not require a git
 # checkout around the installed script.
 PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
-
 # Source project config/secrets. .env.local overrides public settings; the
 # caller's own environment (set or set-but-empty) outranks every project file —
 # kendex_load_project_env snapshots and re-asserts it.
@@ -277,11 +273,13 @@ kendex_load_project_env "$PROJECT_ROOT" || {
   echo "second-opinion: refusing to run on a rejected settings load" >&2
   exit 1
 }
-
+if ! $FOREGROUND_CAP_WAS_IN_CALLER_ENV && [[ -n "${SECOND_OPINION_FOREGROUND_CAP+x}" ]]; then
+  echo "Error: project settings set session-only SECOND_OPINION_FOREGROUND_CAP; remove it there and pass --foreground or export it in this session" >&2
+  exit 1
+fi
 source "$RUNTIME"
 second_opinion_runtime_setup
 # --- Defaults -----------------------------------------------------------------
-
 MODE=""
 PROMPT_FILE=""
 INLINE_PROMPT=""
@@ -292,7 +290,7 @@ CWD="."
 RANGE=""
 FOREGROUND_CAP=false
 DETACHED_WORKER=false
-
+DETACHED_CURRENT_MODEL=""
 # Distinct exit codes (kendex#652) so callers can tell "there was nothing to
 # review" and "the model reported it performed no review" apart from generic
 # failures (1). A response missing the required qa_metadata object (kendex#672)
@@ -386,6 +384,7 @@ while [[ $# -gt 0 ]]; do
     --timeout=*) TIMEOUT="${1#--timeout=}"; shift ;;
     --foreground) FOREGROUND_CAP=true; shift ;;
     --detached-worker) DETACHED_WORKER=true; shift ;;
+    --detached-current-model=*) DETACHED_CURRENT_MODEL="${1#--detached-current-model=}"; shift ;;
     # The multi-lane parent's word to its own children, and the reason it is a
     # flag rather than an environment variable: a project settings file's [env]
     # table names any variable it likes, and whether an output path belongs to
@@ -722,7 +721,6 @@ canon_identity() {
     *)                            printf '%s' "$id" ;;
   esac
 }
-
 CURRENT_HARNESS=""
 CURRENT_MODEL=""
 # Where the identity came from — the basis for how far it is trusted:
@@ -738,14 +736,17 @@ CURRENT_MODEL_SOURCE=""
 # A declaration that contradicts a positively detected harness, held for the
 # refusal that names both values. Empty when there is no such conflict.
 CURRENT_MODEL_CONFLICT=""
-
 resolve_current_model() {
+  if $DETACHED_WORKER && [[ -n "$DETACHED_CURRENT_MODEL" ]]; then
+    CURRENT_HARNESS="detached-parent"
+    CURRENT_MODEL=$(canon_identity "$DETACHED_CURRENT_MODEL")
+    CURRENT_MODEL_SOURCE="detached"
+    return
+  fi
   CURRENT_HARNESS=$(detect_current_harness)
-
   local harness_model="" declared=""
   case "$CURRENT_HARNESS" in claude|codex) harness_model="$CURRENT_HARNESS" ;; esac
   [[ -z "${SECOND_OPINION_CURRENT_MODEL:-}" ]] || declared=$(canon_identity "$SECOND_OPINION_CURRENT_MODEL")
-
   if [[ -n "$harness_model" ]]; then
     # ONE rule for a harness that can be identified: detection wins, whatever
     # the declaration's source. A single-model harness is direct evidence about
@@ -761,7 +762,6 @@ resolve_current_model() {
     [[ -z "$declared" || "$declared" == "$harness_model" ]] || CURRENT_MODEL_CONFLICT="$declared"
     return
   fi
-
   # Detection cannot arbitrate (Pi, OpenCode, Cursor, undetected): the
   # declaration is the only identity available, and this is the one place its
   # SOURCE still decides anything — a project file is read by every session in
@@ -775,7 +775,6 @@ resolve_current_model() {
     fi
   fi
 }
-
 # Does $1 declare SECOND_OPINION_CURRENT_MODEL the way the LOADER would read it?
 # $2 is `toml` for a settings file, `env` for a shell env file. Naming a file
 # that did not actually supply the value sends the operator to edit the wrong
@@ -1864,7 +1863,8 @@ if $MULTI_LANE; then
       # invocation, so the restriction reaches those writes and nothing else
       # the lane creates.
       exec "$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" review --target="$lane" --range="$REVIEW_RANGE" --cwd="$CWD" \
-        --timeout="$TIMEOUT" --output="$lane_out" --scratch-output --detached-worker >/dev/null 2>&3 3>&-
+        --timeout="$TIMEOUT" --output="$lane_out" --scratch-output --detached-worker \
+        --detached-current-model="$CURRENT_MODEL" >/dev/null 2>&3 3>&-
     ) &
     LANE_PIDS+=($!)
     LANE_OUTS+=("$lane_out")

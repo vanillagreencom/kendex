@@ -59,6 +59,18 @@ for defect in header bom; do
   fi
 done
 
+printf '[env]\nSECOND_OPINION_FOREGROUND_CAP = "1"\n' > "$proj/kendex.settings.toml"
+rc=0
+env -u SECOND_OPINION_FOREGROUND_CAP "$SO" detect >/dev/null 2>"$TMP_ROOT/err" || rc=$?
+[ "$rc" -eq 1 ] && ok "(foreground-cap) a project declaration exits 1" \
+  || fail "(foreground-cap) expected exit 1, got $rc: $(cat "$TMP_ROOT/err")"
+grep -q "session-only SECOND_OPINION_FOREGROUND_CAP" "$TMP_ROOT/err" \
+  && ok "(foreground-cap) the refusal names the session-only key" \
+  || fail "(foreground-cap) refusal did not name the key: $(cat "$TMP_ROOT/err")"
+grep -q "pass --foreground" "$TMP_ROOT/err" \
+  && ok "(foreground-cap) the refusal names the supported flag" \
+  || fail "(foreground-cap) refusal did not name --foreground: $(cat "$TMP_ROOT/err")"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

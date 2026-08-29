@@ -129,7 +129,7 @@ supervise() {
 
   local worker_pid="" worker_rc=0 worker_wait_rc=0 worker_reaped=false
   local cancel_rc="" cancel_message="" gate="" watchdog_pid="" event=""
-  local owner_open=false event_open=false
+  local owner_open=false event_open=false event_guard_open=false
   local status_file="$runtime_dir/worker.status" stop_at=$((deadline - grace))
   local owner_fifo="$runtime_dir/owner" event_fifo="$runtime_dir/events"
   request_cancel() {
@@ -152,8 +152,12 @@ supervise() {
     fi
   }
   close_event_channel() {
+    if $event_guard_open; then
+      exec 7>&-
+      event_guard_open=false
+    fi
     if $event_open; then
-      exec 7<&-
+      exec 10<&-
       event_open=false
     fi
   }
@@ -197,12 +201,14 @@ supervise() {
     printf 'deadline\n' > "$event_fifo"
   ) &
   watchdog_pid=$!
+  exec 7<>"$event_fifo"
+  event_guard_open=true
   set -m
   (
-    exec 6>&-
+    exec 6>&- 7>&-
     exec 9>"$event_fifo" || exit 1
     while [[ ! -e "$gate/release" ]]; do sleep 0.01; done
-    unset SECOND_OPINION_RUNTIME_DIR SECOND_OPINION_RUN_TOKEN
+    unset SECOND_OPINION_RUNTIME_DIR SECOND_OPINION_RUN_TOKEN SECOND_OPINION_CURRENT_MODEL
     worker_args=("$@" --detached-worker "--output=$artifact")
     $owned && worker_args+=(--scratch-output)
     set +e
@@ -216,14 +222,16 @@ supervise() {
   ) &
   worker_pid=$!
   set +m
-  exec 7<"$event_fifo"
+  exec 10<"$event_fifo"
   event_open=true
+  exec 7>&-
+  event_guard_open=false
   [[ -z "$cancel_rc" ]] || finish_supervisor "$cancel_rc" ""
   (umask 077 && set -C && : > "$gate/release") || {
     stop_and_reap_worker
     die "cannot release detached worker"
   }
-  IFS= read -r event <&7 || true
+  IFS= read -r event <&10 || true
   [[ -z "$cancel_rc" ]] || finish_supervisor "$cancel_rc" "$cancel_message"
   runtime_dir_valid "$runtime_dir" "$token" \
     || finish_supervisor 1 "Error: detached runtime directory or token changed after release"
@@ -291,7 +299,8 @@ second_opinion_detach_if_needed() {
   [[ "$MODE" == "review" || "$MODE" == "audit" ]] && attempts=2
   budget=$((attempts * (10#$TIMEOUT + 30) + 60))
   exec "$RUNTIME_SELF" launch "$SCRIPT_DIR/second-opinion" "$artifact" "$runtime_dir" \
-    "$budget" "$owned" 30 300 "${ORIGINAL_ARGS[@]}"
+    "$budget" "$owned" 30 300 "${ORIGINAL_ARGS[@]}" \
+    "--detached-current-model=$CURRENT_MODEL"
 }
 
 completion_line() {
@@ -344,6 +353,7 @@ wait_for_run() {
         line=$(completion_line "$log" "$prefix") || grep_rc=$?
         [[ $grep_rc -ne 2 ]] || die "cannot read worker log: $log"
         [[ -z "$line" ]] || continue
+        rm -rf -- "$runtime_dir" || die "cannot remove runtime directory: $runtime_dir"
         echo "Error: detached supervisor did not publish completion by deadline $deadline" >&2
         exit 124
       fi
