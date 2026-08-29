@@ -182,7 +182,17 @@ export const useEditorStore = create<EditorState>((set, get) => {
 
     loadPlaces: async (scopes) => {
       const read = await manifestsOf(scopes);
-      set((state) => ({ saved: { ...state.saved, ...read } }));
+      set((state) => {
+        const saved = { ...state.saved };
+        // Every scope asked for leaves first. A read that failed has to
+        // land as unread, and merging over what is already there would
+        // leave the last answer standing instead — a place that read
+        // fine once and cannot be read now would go on being counted
+        // customized, which is the one thing the third state exists to
+        // prevent.
+        for (const scope of scopes) delete saved[scopeKey(scope)];
+        return { saved: { ...saved, ...read } };
+      });
     },
 
     edit: (change) => {

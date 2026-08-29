@@ -3,10 +3,12 @@ import {
   canCustomize,
   clearItemCustomization,
   customizedItems,
+  declaredSkillsRow,
   frontmatterFor,
   isCustomized,
   itemCustomization,
   sharedCustomization,
+  skillsBaseAgent,
 } from "./customization";
 import { type Draft, EMPTY_FRONTMATTER, emptyDraft } from "./editor-draft";
 
@@ -92,5 +94,60 @@ describe("clearItemCustomization", () => {
     const after = clearItemCustomization(draft(), "skill", "github");
     expect(after["skill-instructions"]).toEqual({ all: "be brief" });
     expect(after["agent-skills"]).toEqual({ orch: ["github", "docs"] });
+  });
+});
+
+// The engine renders a `reviewer-` agent with no row of its own from its
+// base agent's row (`crates/core/src/engine/desired_agent.rs`,
+// `declared_skills`). A reader here that asked for the exact name alone
+// called a real assignment absent.
+describe("declaredSkillsRow", () => {
+  const rows = (agentSkills: Record<string, string[]>): Draft => ({
+    ...emptyDraft(),
+    "agent-skills": agentSkills,
+  });
+
+  it("returns the agent's own row under its own name", () => {
+    expect(declaredSkillsRow(rows({ rust: ["worktree"] }), "rust")).toEqual({
+      skills: ["worktree"],
+      under: "rust",
+    });
+  });
+
+  it("falls back to the base agent's row for a reviewer agent", () => {
+    expect(
+      declaredSkillsRow(rows({ rust: ["worktree"] }), "reviewer-rust"),
+    ).toEqual({ skills: ["worktree"], under: "rust" });
+  });
+
+  it("prefers the agent's own row over the one it would inherit", () => {
+    const both = rows({ rust: ["worktree"], "reviewer-rust": ["dev"] });
+    expect(declaredSkillsRow(both, "reviewer-rust")).toEqual({
+      skills: ["dev"],
+      under: "reviewer-rust",
+    });
+  });
+
+  // An empty row is a declaration saying "none", not an absent one.
+  it("keeps an empty row as a declaration", () => {
+    expect(declaredSkillsRow(rows({ rust: [] }), "rust")).toEqual({
+      skills: [],
+      under: "rust",
+    });
+  });
+
+  it("says nothing where no row reaches this agent", () => {
+    expect(
+      declaredSkillsRow(rows({ orch: ["dev"] }), "reviewer-rust"),
+    ).toBeNull();
+    expect(declaredSkillsRow(emptyDraft(), "rust")).toBeNull();
+    expect(declaredSkillsRow(null, "rust")).toBeNull();
+  });
+
+  // Only `reviewer-` is stripped; nothing else inherits.
+  it("gives no other prefix a base agent", () => {
+    expect(skillsBaseAgent("reviewer-rust")).toBe("rust");
+    expect(skillsBaseAgent("planner-rust")).toBe("planner-rust");
+    expect(skillsBaseAgent("reviewer")).toBe("reviewer");
   });
 });

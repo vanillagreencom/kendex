@@ -10,6 +10,7 @@ import {
   SKILLS_BACK_TO_AUTOMATIC,
   SKILLS_CHOSEN,
   SKILLS_NONE_AVAILABLE,
+  skillsInherited,
 } from "@/lib/copy-customize";
 import {
   clearAgentSkills,
@@ -26,12 +27,18 @@ import { cn } from "@/lib/utils";
 export function ItemSkills({
   agent,
   chosen,
+  inherited,
   inventory,
   onChange,
 }: {
   agent: string;
-  /** null while the catalog's own assignment stands. */
+  /** This agent's own `[agent-skills]` row; null where it has none. */
   chosen: string[] | null;
+  /** The row this agent inherits and the agent it is set on — a reviewer
+   *  agent with no row of its own renders its base agent's list, and that
+   *  list, not the catalog's, is what it gets. Null when nothing is
+   *  inherited, and never set alongside `chosen`. */
+  inherited: { skills: string[]; under: string } | null;
   inventory: EditorInventory | null;
   onChange: (change: (draft: Draft) => Draft) => void;
 }) {
@@ -39,7 +46,7 @@ export function ItemSkills({
   // skills instead of leaving an empty box that reads as "none".
   // Undefined is "nothing recorded here", which is not "none".
   const automatic = inventory?.automaticSkills[agent];
-  const shown = chosen ?? automatic ?? [];
+  const shown = chosen ?? inherited?.skills ?? automatic ?? [];
   const known = [
     ...new Set([
       ...(inventory?.declaredSkills ?? []),
@@ -52,13 +59,7 @@ export function ItemSkills({
   // picking one the catalog already assigns is how a declaration that
   // keeps it starts.
   const unchosen = known.filter((skill) => !(chosen ?? []).includes(skill));
-  const note = chosen
-    ? SKILLS_CHOSEN
-    : automatic === undefined
-      ? SKILLS_AUTOMATIC_UNRECORDED
-      : automatic.length > 0
-        ? SKILLS_AUTOMATIC
-        : SKILLS_AUTOMATIC_NONE;
+  const note = chosen ? SKILLS_CHOSEN : notChosen(inherited, automatic);
 
   return (
     <div className="flex flex-col gap-3">
@@ -116,6 +117,18 @@ export function ItemSkills({
       </div>
     </div>
   );
+}
+
+/** What the section says when this agent has no row of its own: the list
+ *  it inherits, the catalog's, or that nothing is recorded here — three
+ *  answers, and none of them may be printed over another. */
+function notChosen(
+  inherited: { under: string } | null,
+  automatic: string[] | undefined,
+): string {
+  if (inherited) return skillsInherited(inherited.under);
+  if (automatic === undefined) return SKILLS_AUTOMATIC_UNRECORDED;
+  return automatic.length > 0 ? SKILLS_AUTOMATIC : SKILLS_AUTOMATIC_NONE;
 }
 
 function Chip({

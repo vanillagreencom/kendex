@@ -67,6 +67,39 @@ export function itemCustomization(
   };
 }
 
+/** The base agent a `reviewer-` agent reads its skills from — its own name
+ *  for every other agent. The engine's own lookup, spelled
+ *  `crates/core/src/mapping.rs::skill_match_prefix`. */
+export const skillsBaseAgent = (name: string): string =>
+  name.startsWith(REVIEWER_PREFIX) ? name.slice(REVIEWER_PREFIX.length) : name;
+
+const REVIEWER_PREFIX = "reviewer-";
+
+/** One agent's `[agent-skills]` row and the name it lives under, or null
+ *  where nothing is declared for it.
+ *
+ *  The lookup the engine renders by
+ *  (`crates/core/src/engine/desired_agent.rs::declared_skills`): a
+ *  `reviewer-` agent with no row of its own reads its base agent's. Asking
+ *  for the exact name alone calls a real assignment absent, and the screen
+ *  then names the catalog's list over a list the person wrote.
+ *
+ *  `under` is the agent's own name for a row it owns and the base agent's
+ *  for one it inherits — the two cases the screen has to tell apart, since
+ *  only the first is the reader's to edit here. */
+export function declaredSkillsRow(
+  draft: Draft | null,
+  name: string,
+): { skills: string[]; under: string } | null {
+  const rows = draft?.["agent-skills"];
+  if (!rows) return null;
+  const own = rows[name];
+  if (own) return { skills: own, under: name };
+  const base = skillsBaseAgent(name);
+  const inherited = base === name ? undefined : rows[base];
+  return inherited ? { skills: inherited, under: base } : null;
+}
+
 /** Whether a person has set anything at all on this package. */
 export const isCustomized = (one: ItemCustomization): boolean =>
   one.launch != null ||

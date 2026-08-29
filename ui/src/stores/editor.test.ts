@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AuditView_Serialize, EditorInventory } from "@/bindings";
+import type { AuditView_Serialize, EditorInventory, Scope } from "@/bindings";
 import { commands } from "@/bindings";
+import { groupItems } from "@/lib/derive";
 import { emptyDraft } from "@/lib/editor-draft";
+import { markFor } from "@/lib/package-mark";
 import { useEditorStore } from "./editor";
 
 vi.mock("@/bindings", () => ({
@@ -112,5 +114,72 @@ describe("editor store", () => {
     expect(state.base).toBe("b2");
     expect(state.draft).toEqual(emptyDraft());
     expect(state.dirty).toBe(false);
+  });
+});
+
+// A place whose manifest cannot be read is unread, not whatever it last
+// said. Left standing, the cached answer keeps the mark claiming a
+// customization nobody can see any more — the one thing the third state
+// ("unknown", never "stock") exists to prevent.
+describe("loadPlaces after a read stops working", () => {
+  const VG: Scope = { scope: "project", root: "/work/vg" };
+  const HYPR: Scope = { scope: "project", root: "/work/hyprtrade" };
+  const CUSTOMIZED = {
+    schema: 1,
+    install: {},
+    "skill-instructions": { gh: "mine" },
+  };
+
+  const item = (scope: Scope) => ({
+    kind: "skill",
+    name: "gh",
+    scope,
+    harness: "claude",
+    path: "/x/.claude/skills/gh",
+    fileState: "file",
+    enabled: true,
+    origin: null,
+    description: "about gh",
+    tags: [],
+  });
+  const group = groupItems([item(VG), item(HYPR)] as never)[0];
+
+  const answer = (ok: boolean) =>
+    vi.mocked(commands.getManifest).mockImplementation((scope) =>
+      Promise.resolve(
+        ok || scope.scope !== "project" || scope.root !== VG.root
+          ? {
+              status: "ok" as const,
+              data: {
+                manifest: (scope.scope === "project" && scope.root === VG.root
+                  ? CUSTOMIZED
+                  : { schema: 1, install: {} }) as never,
+                base: null,
+              },
+            }
+          : { status: "error" as const, error: "permission denied" },
+      ),
+    );
+
+  it("drops the place it can no longer read instead of keeping its last answer", async () => {
+    answer(true);
+    await useEditorStore.getState().loadPlaces([VG, HYPR]);
+    expect(
+      markFor(useEditorStore.getState().saved, [], true, group)?.label,
+    ).toBe("Customized in vg");
+
+    answer(false);
+    await useEditorStore.getState().loadPlaces([VG, HYPR]);
+    expect(useEditorStore.getState().saved["/work/vg"]).toBeUndefined();
+    expect(
+      markFor(useEditorStore.getState().saved, [], true, group),
+    ).toBeNull();
+  });
+
+  it("leaves the places it was not asked about alone", async () => {
+    useEditorStore.setState({ saved: { elsewhere: emptyDraft() } });
+    answer(true);
+    await useEditorStore.getState().loadPlaces([VG]);
+    expect(useEditorStore.getState().saved.elsewhere).toEqual(emptyDraft());
   });
 });

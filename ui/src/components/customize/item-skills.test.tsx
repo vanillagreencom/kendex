@@ -6,6 +6,7 @@ import {
   SKILLS_AUTOMATIC,
   SKILLS_AUTOMATIC_NONE,
   SKILLS_AUTOMATIC_UNRECORDED,
+  skillsInherited,
 } from "@/lib/copy-customize";
 
 const inventory = (
@@ -23,11 +24,14 @@ const inventory = (
 const render = (
   chosen: string[] | null,
   automaticSkills: Record<string, string[]>,
+  inherited: { skills: string[]; under: string } | null = null,
+  agent = "orch",
 ) =>
   renderToStaticMarkup(
     <ItemSkills
-      agent="orch"
+      agent={agent}
       chosen={chosen}
+      inherited={inherited}
       inventory={inventory(automaticSkills)}
       onChange={() => {}}
     />,
@@ -59,5 +63,38 @@ describe("the automatic state", () => {
     const shown = render(null, {});
     expect(shown).toContain(SKILLS_AUTOMATIC_UNRECORDED);
     expect(shown).not.toContain(SKILLS_AUTOMATIC_NONE);
+  });
+});
+
+// A reviewer agent with no row of its own renders the row set on its base
+// agent. Naming the catalog's list there says the agent gets skills it
+// does not get, over a list the person wrote by hand.
+describe("a row this agent inherits", () => {
+  const inherited = { skills: ["worktree"], under: "rust" };
+
+  it("names the inherited list, not the catalog's", () => {
+    const shown = render(
+      null,
+      { "reviewer-rust": ["dev"] },
+      inherited,
+      "reviewer-rust",
+    );
+    expect(shown).toContain("worktree");
+    expect(shown).not.toContain(">dev<");
+    expect(shown).toContain(skillsInherited("rust"));
+    expect(shown).not.toContain(SKILLS_AUTOMATIC);
+  });
+
+  // The row lives under another agent, and the controls here write this
+  // agent's own. An X that silently changed nothing is worse than none.
+  it("offers no Remove on a row that is not this agent's", () => {
+    const shown = render(null, {}, inherited, "reviewer-rust");
+    expect(shown).not.toContain("Remove worktree");
+  });
+
+  it("prefers this agent's own row when it has one", () => {
+    const shown = render(["dev"], {}, inherited, "reviewer-rust");
+    expect(shown).toContain("Remove dev");
+    expect(shown).not.toContain(skillsInherited("rust"));
   });
 });

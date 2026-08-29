@@ -20,7 +20,11 @@ import {
   SKILLS_SECTION,
   WRITTEN_INTO,
 } from "@/lib/copy-customize";
-import { itemCustomization, sharedCustomization } from "@/lib/customization";
+import {
+  declaredSkillsRow,
+  itemCustomization,
+  sharedCustomization,
+} from "@/lib/customization";
 import {
   manifestsForEditing,
   placeStandings,
@@ -63,6 +67,12 @@ export function ItemCustomize({
   const updatesLoaded = useUpdatesStore((s) => s.loaded);
 
   const mine = itemCustomization(draft, kind, name);
+  // The row this agent renders with when it has none of its own. The
+  // engine resolves a reviewer agent to its base agent's row, so a screen
+  // that only asked for the exact name named the catalog's list over one
+  // the person wrote.
+  const declared = declaredSkillsRow(draft, name);
+  const inheritedSkills = declared && declared.under !== name ? declared : null;
   const shared = sharedCustomization(draft);
   const tools = (inventory?.harnesses ?? []).filter((id) =>
     harnesses.includes(id),
@@ -175,6 +185,7 @@ export function ItemCustomize({
             <ItemSkills
               agent={name}
               chosen={mine.skills}
+              inherited={inheritedSkills}
               inventory={inventory}
               onChange={edit}
             />

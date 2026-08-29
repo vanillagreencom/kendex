@@ -41,6 +41,11 @@ export const SKILLS_AUTOMATIC =
   "The catalog gives this agent these. Add one and this agent keeps exactly what you choose.";
 export const SKILLS_AUTOMATIC_NONE =
   "The catalog gives this agent no skills. Add one and this agent keeps exactly what you choose.";
+/** A reviewer agent with no row of its own renders its base agent's list.
+ *  The chips are that row, so the line names where it lives — this page
+ *  edits this agent's row, and picking here starts one. */
+export const skillsInherited = (base: string): string =>
+  `Set on ${base}, which this agent reads its skills from. Add one and this agent keeps exactly what you choose instead.`;
 export const SKILLS_AUTOMATIC_UNRECORDED =
   "The catalog picks these, and kendex records which ones the next time it installs here. Add one and this agent keeps exactly what you choose.";
 export const SKILLS_CHOSEN =
