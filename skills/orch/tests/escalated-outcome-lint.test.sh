@@ -78,12 +78,33 @@ fi
 # Sliced on the section HEADING, not on the bold lead-in above the table: a
 # lead-in is a sentence fragment, and a prose boundary makes the check
 # prose-dependent however structural the needle inside it is.
-map_table() {
+map_section() {
   awk '/^## Building from Review Findings/ { on = 1; next }
        on && /^## / { on = 0 }
        on' "$1"
 }
-MAP="$(map_table "$PM_SCHEMA")"
+
+# ONE table, parsed as a structure: the header, the delimiter that must sit on
+# the line IMMEDIATELY below it, then the unbroken run of rows beneath that.
+# Checking header, delimiter and rows as independent facts would not establish
+# that they form a table — a delimiter moved below the rows leaves all three
+# present and the markdown invalid. Order is the relation, so the parse has to
+# carry it, exactly as one pin rather than two has to carry outcome → origin.
+contiguous_table() {
+  awk -v hdr="$1" '
+    !started && index($0, hdr) == 1 { started = 1; want_delim = 1; print; next }
+    want_delim {
+      if ($0 ~ /^\|[-:]+\|[-:| ]*$/) { want_delim = 0; print; next }
+      exit
+    }
+    started {
+      if (index($0, "|") == 1) { print; next }
+      exit
+    }
+  '
+}
+
+MAP="$(map_section "$PM_SCHEMA" | contiguous_table '| `outcome` | `origin` |')"
 MAP_ROWS=(
   '| `"blocked"` | `"escalated"` |'
   '| absent | `"escalated"` |'
@@ -95,12 +116,12 @@ for row in "${MAP_ROWS[@]}"; do
 done
 if ! grep -qF -- '| `outcome` | `origin` |' <<<"$MAP"; then
   fail "the outcome → origin mapping lost its table header"
-elif ! grep -qE '^\|-+\|-+\|$' <<<"$MAP"; then
-  fail "the outcome → origin mapping lost its table delimiter"
+elif ! grep -qE '^\|[-:]+\|[-:| ]*$' <<<"$MAP"; then
+  fail "the outcome → origin mapping has no delimiter under its header"
 elif [[ -n "$missing_row" ]]; then
-  fail "the outcome → origin mapping lost a row:$missing_row"
+  fail "a row is not in the contiguous table under the header:$missing_row"
 else
-  pass "audit-issues-input maps each outcome to its origin, one row each"
+  pass "audit-issues-input maps each outcome to its origin, one contiguous table"
 fi
 
 echo
