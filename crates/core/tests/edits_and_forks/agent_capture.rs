@@ -522,6 +522,51 @@ fn a_pin_on_another_kind_does_not_supply_its_revisions_skills() {
     }
 }
 
+/// A set names its members; whether the catalog carries one is a separate
+/// question, and the planner asks it before installing any of them. Read
+/// without asking, a member nothing can install is offered to an agent's
+/// assignment — the inventory saying a skill is available when no plan
+/// will ever write it, which satisfies the refusal instead of raising it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_set_member_the_catalog_lacks_is_not_offered() {
+    let w = world();
+    write_agent(&w.upstream, "rev", "Upstream body.");
+    // The set names `ghost`; the catalog has never carried it.
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[bundles.kit]\ndescription = \"kit\"\nskills = [\"ghost\"]\n",
+    )
+    .unwrap();
+    commit(&w.upstream, "one");
+    let pinned = head_commit(&w.upstream);
+
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        format!(
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"gemini\"]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\n\n[bundles.kit]\nsource = \"cat\"\nrev = \"{pinned}\"\n\n[agent-skills]\nrev = [\"ghost\"]\n"
+        ),
+    )
+    .unwrap();
+    sync_and_apply(&w);
+
+    let file = rendered(&w, HarnessId::Gemini, "rev");
+    let before = fs::read_to_string(&file).unwrap();
+    assert_eq!(times(&before, "## Required Skills"), 0, "{before}");
+    edit_body(&file);
+
+    // Said out loud, not passed over: the assignment names a skill nothing
+    // in this scope can install.
+    match fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini) {
+        Err(CoreError::AgentSkillUnavailable { name, skill }) => {
+            assert_eq!((name.as_str(), skill.as_str()), ("rev", "ghost"))
+        }
+        other => panic!("a set member nothing can install must not satisfy it: {other:?}"),
+    }
+}
+
 /// A fork made while the supplying source is already gone cannot wait for
 /// the renderer to catch it: nothing is a recorded fork until the fork is
 /// written. Left to the render it succeeds, keeps the section as prose,

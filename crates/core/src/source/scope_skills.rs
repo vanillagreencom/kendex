@@ -12,6 +12,7 @@ use crate::error::Result;
 use crate::manifest::{INPLACE_SOURCE_NAME, LOCAL_SOURCE_NAME, Manifest};
 use crate::model::{ItemKind, Scope};
 
+use super::bundles::BundleMember;
 use super::{
     SourceConfig, SourceState, bundles, find_item, list_items, resolve, resolve_at,
     source_config_for,
@@ -63,7 +64,7 @@ impl ScopeSkills {
             let Ok(config) = source_config_for(&sealed, &ready.provenance) else {
                 continue;
             };
-            skills.extend(root.supplies(&sealed, &config));
+            skills.extend(root.supplies(&sealed, &config, manifest));
         }
         skills.sort();
         skills.dedup();
@@ -111,7 +112,12 @@ impl Root<'_> {
     }
 
     /// The skills this checkout supplies, once it is open.
-    fn supplies(&self, sealed: &SealedSource, config: &SourceConfig) -> Vec<String> {
+    fn supplies(
+        &self,
+        sealed: &SealedSource,
+        config: &SourceConfig,
+        manifest: &Manifest,
+    ) -> Vec<String> {
         match self {
             Root::Source(_) => list_items(sealed, config, ItemKind::Skill),
             Root::Pinned {
@@ -130,12 +136,34 @@ impl Root<'_> {
                     set.members
                         .into_iter()
                         .filter(|member| member.kind == ItemKind::Skill)
+                        .filter(|member| installs(sealed, config, manifest, member))
                         .map(|member| member.name)
                         .collect()
                 })
                 .unwrap_or_default(),
         }
     }
+}
+
+/// Whether a set's member is one this scope can install: the person has
+/// not taken it away, and the catalog carries it. Both are the checks
+/// `engine::bundles::installable` applies to every member as it expands a
+/// set, spelled here rather than called because that function sits inside
+/// the planner and takes the planner's own types.
+///
+/// Two spellings of one question is what the reading below is: KEN-821
+/// replaces it with the planner's closure, which answers what a pinned
+/// revision installs once. Until then, offering a member that is held back
+/// or that the catalog does not carry answers an agent's assignment with a
+/// skill no plan will ever write.
+fn installs(
+    sealed: &SealedSource,
+    config: &SourceConfig,
+    manifest: &Manifest,
+    member: &BundleMember,
+) -> bool {
+    !manifest.is_held_back(member.kind, &member.name)
+        && find_item(sealed, config, member.kind, &member.name).is_some()
 }
 
 /// Every checkout the scope reads: each declared source plus both reserved
