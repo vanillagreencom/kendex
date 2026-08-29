@@ -61,18 +61,28 @@ nothing. Being marked pre-release is what keeps it to candidates, since
 GitHub resolves `releases/latest` past every one of them.
 
 That same resolution is why a candidate cannot reach the next one through
-`releases/latest`. The publish job therefore also overwrites `latest.json`
+`releases/latest`. A `channel` job therefore overwrites `latest.json`
 and `feed.json` on a fixed `prerelease` release, and a build whose own
 version is a candidate reads its updates from there
 (`update_channel::feed_url_for`, which the app and `kendex update` both
 call with their baked version). A shipped `1.0.0` is on the release channel
 and is never offered a candidate; nothing on the machine selects this.
 
-The channel only ever moves forward: the publish job reads the version it
-already carries and leaves it alone when that is ahead of the tag being
-published, so re-running an older tag cannot roll every candidate back to
-it. Two tag runs are queued rather than interleaved by the `publish` job's
-concurrency group, which is what keeps that read and its write together.
+The channel only ever moves forward: `tools/release-channel-point` reads the
+version it already carries and leaves it alone when that is ahead of the tag
+being published, so re-running an older tag cannot roll every candidate back
+to it. Nothing it could not establish counts as permission to write — a
+listing it could not make, a manifest naming no version, a version that is
+not SemVer — each of those stops the job with the channel as it was.
+
+That guard is a job of its own, and the only one holding a concurrency group,
+so two candidates cut close together cannot interleave their read and write of
+the channel. The group is not a queue: GitHub keeps one pending run per group
+and replaces that pending run when a newer one arrives. Three candidates
+overlapping therefore cost the middle one's repoint, and the channel is left
+carrying whichever of the others is newer — push the newest tag again to move
+it. What that never costs is a release: every tag publishes its own, outside
+the group, and the repoint that a burst can drop takes seconds.
 
 The channel keeps whatever the last candidate left on it, so a machine on
 a candidate stays on candidates until it is moved to a full release by

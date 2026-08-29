@@ -47,6 +47,56 @@ fn step<'a>(workflow: &'a str, first_line_marker: &str) -> Vec<&'a str> {
     body
 }
 
+/// The lines of one job: its `  name:` line and everything indented under it.
+fn job<'a>(workflow: &'a str, name: &str) -> Vec<&'a str> {
+    let head = format!("  {name}:");
+    let mut lines = workflow.lines().skip_while(|l| *l != head);
+    let first = lines
+        .next()
+        .unwrap_or_else(|| panic!("release.yml declares no {name} job"));
+    let indent = first.len() - first.trim_start().len();
+    let mut body = vec![first];
+    for line in lines {
+        if !line.trim().is_empty() && line.len() - line.trim_start().len() <= indent {
+            break;
+        }
+        body.push(line);
+    }
+    body
+}
+
+/// Every job the workflow declares, in file order.
+fn job_names(workflow: &str) -> Vec<&str> {
+    workflow
+        .lines()
+        .skip_while(|l| l.trim() != "jobs:")
+        .filter(|l| l.starts_with("  ") && !l.starts_with("   "))
+        .filter_map(|l| l.trim().strip_suffix(':'))
+        .collect()
+}
+
+/// The one job whose lines contain `marker`. Asked of the file rather than
+/// named here, so moving a step between jobs moves what the claims below are
+/// made about rather than quietly leaving them on the wrong job.
+fn job_declaring<'a>(workflow: &'a str, marker: &str) -> &'a str {
+    let mut found: Vec<&str> = job_names(workflow)
+        .into_iter()
+        .filter(|name| job(workflow, name).iter().any(|l| l.contains(marker)))
+        .collect();
+    assert_eq!(found.len(), 1, "{marker} is declared by {found:?}");
+    found.remove(0)
+}
+
+/// The concurrency group a job declares, if any. A job declaring none never
+/// waits behind another run of this workflow, and so is never cancelled while
+/// it waits.
+fn concurrency_group<'a>(job_lines: &[&'a str]) -> Option<&'a str> {
+    job_lines
+        .iter()
+        .skip_while(|l| l.trim() != "concurrency:")
+        .find_map(|l| l.trim().strip_prefix("group: "))
+}
+
 /// The body of a step's `run: |` block, dedented so bash can run it.
 fn run_script(step_lines: &[&str]) -> String {
     let mut lines = step_lines

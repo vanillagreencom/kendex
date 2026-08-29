@@ -9,7 +9,7 @@
 use std::fs;
 
 use crate::test_util::rooted;
-use crate::{run_script, step, workflow};
+use crate::{concurrency_group, job, job_declaring, job_names, run_script, step, workflow};
 
 /// Whether core sends a build of this version to the pre-release channel.
 /// Every claim below about what the workflow should do is written against
@@ -100,9 +100,14 @@ fn eval_flag(expression: &str, prerelease: &str) -> bool {
     let (read, want) = body
         .split_once("==")
         .unwrap_or_else(|| panic!("not a comparison: {expression}"));
-    assert_eq!(
-        read.trim(),
-        "steps.tag.outputs.prerelease",
+    // The classifier's output, read inside its own job or passed out of it to
+    // the channel job. Anything else is a value this test cannot fill in.
+    assert!(
+        [
+            "steps.tag.outputs.prerelease",
+            "needs.publish.outputs.prerelease"
+        ]
+        .contains(&read.trim()),
         "this test only evaluates the classifier's output; rewrite it for: {expression}"
     );
     prerelease == want.trim().trim_matches('\'')
@@ -289,11 +294,21 @@ fn a_candidate_publishes_and_a_full_release_stays_a_draft() {
 #[test]
 fn the_channel_is_repointed_for_a_candidate_and_no_other_tag() {
     let workflow = workflow();
-    let guard = step(&workflow, "name: Point the pre-release channel at this tag")
+    let repointing = job_declaring(&workflow, "name: Point the pre-release channel at this tag");
+    let guard = job(&workflow, repointing)
         .iter()
         .find_map(|l| l.trim().strip_prefix("if: "))
-        .expect("the channel step runs unconditionally")
+        .expect("the channel job runs unconditionally")
         .to_owned();
+    // The value that `if:` reads has to be one the publish job passes out.
+    // Named but never declared, it is empty on every tag and the channel is
+    // never repointed at all — which reads to a candidate as up to date.
+    assert!(
+        job(&workflow, "publish")
+            .iter()
+            .any(|l| l.trim() == "prerelease: ${{ steps.tag.outputs.prerelease }}"),
+        "the publish job does not pass the classifier's verdict out"
+    );
     for tag in ["v1.0.0-rc1", "v1.0.0-rc2", "v1.0.0", "v1.0.0+build-1"] {
         let (code, prerelease) = classify(tag);
         assert_eq!(code, 0, "{tag} did not classify");
@@ -315,6 +330,16 @@ fn channel_step_env(name: &str) -> String {
         .unwrap_or_else(|| panic!("the channel step sets no {name}"))
         .to_owned()
 }
+
+/// The guard the channel job runs, as a path this test can execute.
+fn channel_script() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../{CHANNEL_SCRIPT}"))
+}
+
+/// Named once, and checked below against the line the channel job runs: a
+/// guard renamed on one side and not the other leaves every test here
+/// exercising a file no tag run reaches.
+const CHANNEL_SCRIPT: &str = "tools/release-channel-point";
 
 /// What one run of the channel step did.
 #[cfg(unix)]
@@ -412,18 +437,9 @@ fn point_channel(channel: Channel, new_version: &str, fail: Option<&str>) -> Poi
         Channel::Unreadable => ("1", "1", "{}".to_owned()),
     };
 
-    let workflow = workflow();
-    let script = run_script(&step(
-        &workflow,
-        "name: Point the pre-release channel at this tag",
-    ));
-    // `shell: bash` on a runner is `bash -e`, so a failed `gh` fails the
-    // step. Without it the exit code below is the last command's alone and
-    // an upload that never landed would read as a run that worked.
-    let run = std::process::Command::new("bash")
-        .arg("-e")
-        .arg("-c")
-        .arg(&script)
+    // The guard itself, run the way the channel job runs it, rather than a
+    // copy of its text lifted out of the YAML.
+    let run = std::process::Command::new(channel_script())
         .current_dir(&root)
         .env_clear()
         .env(
@@ -487,6 +503,35 @@ fn a_read_it_could_not_make_stops_the_write() {
     let run = point_channel(Channel::Unreadable, "1.0.0-rc1", None);
     assert_ne!(run.code, 0, "an unreadable manifest was survivable");
     assert!(run.ran("release upload").is_none(), "{:?}", run.calls);
+}
+
+/// A channel version nothing can put in an order is the same answer again.
+/// The guard's whole job is to refuse a write it cannot justify, and it
+/// cannot say `NEW_VERSION` moves the channel forward from a string that is
+/// not a version — so it writes nothing rather than clobbering whatever is
+/// really there. Each of these is refused by core too, asked of core rather
+/// than asserted from the shapes, and the versions the test below drives
+/// through are all accepted, so this cannot pass by refusing everything.
+#[cfg(unix)]
+#[test]
+fn a_channel_version_that_is_not_a_version_stops_the_write() {
+    let malformed: Vec<&str> = REFUSED_VERSIONS
+        .into_iter()
+        .chain(["not a version", "5", "", "v1.0.0", "1.0.0-rc1 "])
+        .collect();
+    for carried in malformed {
+        assert!(
+            !core_can_read(carried),
+            "{carried} reads, so it is not an example of anything"
+        );
+        let run = point_channel(Channel::Carrying(carried), "1.0.0-rc2", None);
+        assert_ne!(run.code, 0, "{carried} was survivable: {:?}", run.calls);
+        assert!(
+            run.ran("release upload").is_none(),
+            "{carried} still uploaded: {:?}",
+            run.calls
+        );
+    }
 }
 
 /// Both manifests reach the channel whether or not the release behind it
@@ -617,26 +662,98 @@ fn a_tag_behind_the_channel_leaves_it_alone() {
     }
 }
 
-/// Two tag runs that interleave a read and a write would leave the older
-/// manifests on the channel however carefully each one compares, so the
-/// job that owns the channel takes a concurrency group and the runs queue.
-/// Cancelling instead would answer a tag with no release at all.
+/// What a burst of tags does to one job, under GitHub's concurrency rules:
+/// one run of a group executes, one waits, and a third arrival replaces the
+/// one that was waiting rather than joining a queue behind it — the same
+/// behaviour `.github/workflows/review-gate-writer.yml` is written around.
+/// Returns, per tag in push order, whether that tag's job got to run at all.
+/// The burst is the worst case a group has to answer for: every tag arrives
+/// while the first is still executing.
+fn burst(group: Option<&str>, tags: usize) -> Vec<bool> {
+    let mut ran = vec![group.is_none(); tags];
+    if group.is_none() {
+        return ran;
+    }
+    let mut waiting = None;
+    for (arrival, slot) in ran.iter_mut().enumerate() {
+        if arrival == 0 {
+            *slot = true; // Nothing holds the group yet.
+        } else {
+            waiting = Some(arrival); // Replaces whatever was waiting.
+        }
+    }
+    // Whatever still waits when the burst ends runs once the group frees.
+    if let Some(last) = waiting {
+        ran[last] = true;
+    }
+    ran
+}
+
+/// Three candidates cut close enough together that the second and third reach
+/// this workflow while the first is still publishing. Each has to end in a
+/// release or in a visible failure: a run cancelled while it waited for a
+/// concurrency group is neither, and answers its tag with nothing at all. So
+/// the job that publishes the release holds no group.
 #[test]
-fn two_publishes_cannot_interleave_their_writes_to_the_channel() {
+fn three_overlapping_tags_each_publish_their_release() {
     let workflow = workflow();
-    let publish: Vec<&str> = workflow
-        .lines()
-        .skip_while(|l| l.trim() != "publish:")
-        .take_while(|l| l.trim() != "steps:")
-        .collect();
-    let value = |key: &str| {
-        publish
+    let publishing = job_declaring(&workflow, "uses: softprops/action-gh-release@v2");
+    let group = concurrency_group(&job(&workflow, publishing));
+    assert_eq!(
+        burst(group, 3),
+        [true, true, true],
+        "the {publishing} job is in {group:?}, which loses a tag in a burst of three"
+    );
+    // The claim above is only worth making if the model can see a tag lost:
+    // in a group, three overlapping runs are two.
+    assert_eq!(burst(Some("held"), 3), [true, false, true]);
+}
+
+/// Two runs interleaving a read and a write of the channel would leave the
+/// older manifests on it however carefully each one compares, so the job that
+/// writes the channel is serialized — and it is the only one, because the
+/// group costs a run in a burst and nothing else here is worth that. Cancelling
+/// the run in progress instead would answer a candidate with a channel written
+/// halfway.
+#[test]
+fn the_channel_write_is_the_only_thing_a_group_holds() {
+    let workflow = workflow();
+    let writing = job_declaring(&workflow, "name: Point the pre-release channel at this tag");
+    for name in job_names(&workflow) {
+        let group = concurrency_group(&job(&workflow, name));
+        assert_eq!(
+            group.is_some(),
+            name == writing,
+            "the {name} job is in {group:?}"
+        );
+    }
+    assert!(
+        job(&workflow, writing)
             .iter()
-            .find_map(|l| l.trim().strip_prefix(&format!("{key}: ")))
-            .unwrap_or_else(|| panic!("the publish job declares no {key}:\n{publish:#?}"))
-    };
-    assert!(!value("group").is_empty());
-    assert_eq!(value("cancel-in-progress"), "false");
+            .any(|l| l.trim() == "cancel-in-progress: false"),
+        "the {writing} job cancels a channel write in progress"
+    );
+}
+
+/// The guard is a file the workflow names, so the two have to agree: renamed
+/// on one side, every test here exercises something no tag run reaches.
+#[test]
+fn the_channel_job_runs_the_guard_these_tests_run() {
+    let workflow = workflow();
+    assert!(
+        step(&workflow, "name: Point the pre-release channel at this tag")
+            .iter()
+            .any(|l| l.trim() == format!("run: {CHANNEL_SCRIPT}")),
+        "the channel step does not run {CHANNEL_SCRIPT}"
+    );
+    assert!(channel_script().is_file(), "{CHANNEL_SCRIPT} is not a file");
+    // The job has to check the repository out, or that line runs nothing.
+    assert!(
+        job(&workflow, job_declaring(&workflow, CHANNEL_SCRIPT))
+            .iter()
+            .any(|l| l.contains("actions/checkout")),
+        "the channel job never checks out {CHANNEL_SCRIPT}"
+    );
 }
 
 /// The channel tag in the workflow and the URLs core sends a candidate to
