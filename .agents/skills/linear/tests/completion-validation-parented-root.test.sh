@@ -32,7 +32,10 @@ assert_result() {
 	shift 3
 
 	local out rc=0 got_state_ok got_ok
-	out=$(build_completion_validation_result "$@" 2>/dev/null) || rc=$?
+	# The lib is sourced into this suite, so its status comes from run_output:
+	# a command substitution in a `||` operand suspends the errexit the lib
+	# relies on, and a signature mismatch would report success.
+	run_output out rc build_completion_validation_result "$@" 2>/dev/null
 	if [[ $rc -ne 0 || -z "$out" ]]; then
 		out='{}'
 	fi

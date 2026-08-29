@@ -24,6 +24,7 @@ ASSERT_COUNT=0
 ASSERT_FAILURES=0
 ASSERT_TMPDIRS=()
 ASSERT_CLEANUP_CMDS=()
+ASSERT_SCRATCH_DIR=""
 
 __assert_ran() {
 	ASSERT_COUNT=$((ASSERT_COUNT + 1))
@@ -180,15 +181,54 @@ assert_stop() {
 	exit 1
 }
 
-# run_status VARNAME CMD [ARG...] — run CMD with errexit suspended and put its
-# exit status in VARNAME. `set -e` does not apply inside an `if` condition or a
-# `&&`/`||` operand, so a command whose status a suite means to inspect is
-# captured here and asserted on, never branched on in place.
+# run_status VARNAME CMD [ARG...] — run CMD and put its exit status in VARNAME.
+#
+# bash suspends errexit for the whole body of a command whose status is being
+# tested — an `if` condition, a `&&`/`||` operand, a `!` — and the suspension
+# reaches into a shell function called there and into every function it calls.
+# `func || rc=$?` therefore reports 0 for a function that relied on errexit and
+# was meant to abort partway: the exact fail-open this suite family exists to
+# catch. Neither `set +e` around the call nor an explicit `set -e` inside a
+# subshell restores it.
+#
+# So the subject is never put in a tested position. It runs in a background
+# subshell, forked before any test, and `wait` reports the status it already
+# finished with.
 run_status() {
 	local __var="$1" __rc=0
 	shift
-	"$@" || __rc=$?
+
+	# The suspension is inherited by a background subshell too, so errexit is
+	# proved in force rather than assumed: under errexit this canary dies at
+	# `false`, and only where errexit is suspended — or absent — does it live
+	# to reach `exit 0`.
+	( false; exit 0 ) &
+	if wait $!; then
+		assert_stop "run_status needs errexit in force at the call site" \
+			"it is suspended inside an if condition, a &&/|| operand or a !," \
+			"and absent in a suite that does not set -e"
+	fi
+
+	( "$@" ) &
+	wait $! || __rc=$?
 	printf -v "$__var" '%s' "$__rc"
+}
+
+# run_output OUTVAR RCVAR CMD [ARG...] — run_status, plus CMD's stdout in
+# OUTVAR. Command substitution cannot be used for this: `out=$(func) || rc=$?`
+# puts the subject back in a tested position, which is what run_status exists
+# to avoid. The output goes through a file the background subshell writes.
+run_output() {
+	local __out_var="$1" __rc_var="$2" __file
+	shift 2
+	if [[ -z "$ASSERT_SCRATCH_DIR" ]]; then
+		assert_tmpdir ASSERT_SCRATCH_DIR
+	fi
+	__file="$ASSERT_SCRATCH_DIR/run-output"
+
+	run_status "$__rc_var" "$@" >"$__file"
+
+	printf -v "$__out_var" '%s' "$(cat "$__file")"
 }
 
 __assert_on_exit() {

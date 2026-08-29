@@ -26,6 +26,11 @@ trap 'rm -rf -- "${WORK:?}"' EXIT
 # matches nothing, or matches a different number of lines than declared, aborts
 # the control instead of reporting a green suite as proof of anything.
 
+die() {
+	printf 'must-fail-controls: %s\n' "$*" >&2
+	exit 2
+}
+
 control_die() {
 	printf 'control %s: %s\n' "$CONTROL_NAME" "$*" >&2
 	exit 2
@@ -146,18 +151,32 @@ run_one() {
 }
 
 main() {
-	local -a wanted=("$@")
-	local suite stem failures=0 total=0
+	local -a wanted=("$@") stems=()
+	local suite_path suite stem want failures=0 total=0
 
 	for suite_path in "$TESTS_DIR"/*.test.sh; do
-		suite="$(basename "$suite_path")"
-		stem="${suite%.test.sh}"
+		stems+=("$(basename "$suite_path" .test.sh)")
+	done
+	[[ ${#stems[@]} -gt 0 ]] || die "no suites in $TESTS_DIR"
+
+	# A run that selected nothing is not a clean run: a mistyped stem would
+	# otherwise report "0 controls, 0 failing" and exit 0.
+	for want in ${wanted[@]+"${wanted[@]}"}; do
+		if [[ " ${stems[*]} " != *" $want "* ]]; then
+			die "no such suite: $want.test.sh"
+		fi
+	done
+
+	for stem in "${stems[@]}"; do
+		suite="$stem.test.sh"
 		if [[ ${#wanted[@]} -gt 0 ]] && [[ " ${wanted[*]} " != *" $stem "* ]]; then
 			continue
 		fi
 		total=$((total + 1))
 		run_one "$suite" "$stem" || failures=$((failures + 1))
 	done
+
+	[[ "$total" -gt 0 ]] || die "selection matched no suites"
 
 	printf '\n%d controls, %d failing\n' "$total" "$failures"
 	[[ "$failures" -eq 0 ]]

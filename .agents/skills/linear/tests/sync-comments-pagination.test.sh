@@ -111,8 +111,10 @@ echo 0 >"$COUNTER"
 } >"$TMP_ROOT/pages.jsonl"
 
 echo 0 >"$COUNTER"
-rc=0
-OUT="$(sync_comments '{}')" || rc=$?
+# sync_comments is product code sourced into this suite, so its status has to
+# come from run_output: a command substitution in a `||` operand suspends the
+# errexit it relies on, and a pull that aborted partway would report success.
+run_output OUT rc sync_comments '{}'
 
 assert_eq "a complete three-page pull succeeds" "$rc" 0
 assert_eq "every page is concatenated into one pull" "$(echo "$OUT" | jq 'length')" "3"
@@ -123,8 +125,7 @@ assert_eq "paging stops when hasNextPage goes false" "$(calls)" "3"
 STUB_MODE=endless
 echo 0 >"$COUNTER"
 ERR_FILE="$TMP_ROOT/err"
-rc=0
-OUT="$(sync_comments '{}' 2>"$ERR_FILE")" || rc=$?
+run_output OUT rc sync_comments '{}' 2>"$ERR_FILE"
 
 assert_ne "a pull that never completes fails instead of returning a prefix" "$rc" 0
 assert_file_contains "the failure says the cache was left alone" "$ERR_FILE" "nothing was written"
@@ -143,7 +144,7 @@ check_failure() { # check_failure <mode> <expected fragment>
   local rc=0
   STUB_MODE="$1"
   echo 0 >"$COUNTER"
-  OUT="$(sync_comments '{}' 2>"$ERR_FILE")" || rc=$?
+  run_output OUT rc sync_comments '{}' 2>"$ERR_FILE"
 
   assert_ne "a $1 response fails the pull" "$rc" 0
   assert_file_contains "a $1 response is diagnosed as: $2" "$ERR_FILE" "$2"

@@ -69,10 +69,12 @@ Each test stands up its own fixture root and a `curl` shim on `PATH`, so none re
 
 Every claim goes through `tests/lib/assert.sh`, which counts assertions and fails a suite that reaches its end without executing one: an exit code reports on the process, not on anything that was checked. Sourcing the library installs that verdict as an EXIT trap, so scratch directories come from `assert_tmpdir` and teardown from `assert_at_exit` — another `trap ... EXIT` replaces the verdict and disarms it. Helpers record a failure and return, so one run reports every failure.
 
-`set -e` is suspended for the whole body of a command used as an `if` condition or as a `&&`/`||` operand, so never branch on the subject's exit status there: capture it (`rc=0; cmd || rc=$?`, or `run_status rc cmd`) and assert on the capture.
+`set -e` is suspended for the whole body of a command whose status is being tested — an `if` condition, a `&&`/`||` operand, a `!` — and that suspension reaches into a shell function called there and every function it calls, so capture the subject's status instead of branching on it: `rc=0; cmd || rc=$?` where the subject is its own process and carries its own errexit, and `run_status rc func` / `run_output out rc func` where it is a shell function, which run it in a background subshell whose errexit was never suspended.
+
+The distinction is not a judgement call left to the author: `run_status` refuses a call site where errexit is not in force rather than reporting a status it cannot stand behind, and `tests/run-status-errexit.test.sh` pins both the property and that refusal.
 
 ### Must-fail controls
 
 `tests/controls/<suite>.control.sh` breaks the one behaviour its suite covers, in a copy of the skill, and `tests/must-fail-controls.sh` requires the suite to go red naming the assertion that covers it. A suite with no control fails the run: an untested control is an untested suite.
 
-A control declares what it expects with `control_expect <assertion description>` and mutates with `control_replace <file> <count> <old line> <new line>` — whole-line and literal, so there is no pattern syntax to mis-escape. `control_replace` aborts unless it matches exactly `count` lines, and the runner refuses a control that changed nothing, so a mutation that failed to land can never be read as a passing control.
+A control declares what it expects with `control_expect <assertion description>` and mutates with `control_replace <file> <count> <old line> <new line>` — whole-line and literal, so there is no pattern syntax to mis-escape. `control_replace` aborts unless it matches exactly `count` lines, and the runner refuses a control that changed nothing, so a mutation that failed to land can never be read as a passing control. It also refuses a stem that names no suite and a selection that matched none, because a run that measured nothing is not a run that passed.

@@ -71,10 +71,12 @@ scan_skill() {
     name="$(basename "$skill_dir")"
     [[ -d "$skill_dir/tests" ]] || die "$skill_dir has no tests directory"
 
-    mapfile -t suites < <(list_suites "$skill_dir/tests")
+    while IFS= read -r suite; do
+        [[ -n "$suite" ]] || continue
+        suites+=("$suite")
+    done < <(list_suites "$skill_dir/tests")
     if [[ ${#suites[@]} -eq 0 ]]; then
-        printf '%-20s no shell suites\n' "$name"
-        return 0
+        die "$skill_dir/tests holds no shell suites"
     fi
 
     tmp="$(mktemp -d)"
@@ -111,7 +113,7 @@ scan_skill() {
 }
 
 main() {
-    local -a targets=()
+    local -a targets=() resolved=()
     local arg
     for arg in "$@"; do
         case "$arg" in
@@ -122,9 +124,20 @@ main() {
     done
     [[ ${#targets[@]} -gt 0 ]] || die "usage: vacuous-suite-scan [--list] <skill-dir>..."
 
+    # A measurement that selected nothing is not a clean result. Every target
+    # is resolved before any is scanned, so a typo fails the run instead of
+    # reporting a green zero-sample scan.
     for arg in "${targets[@]}"; do
-        [[ "$arg" == /* ]] || arg="$REPO_ROOT/$arg"
-        [[ -d "$arg/tests" ]] || continue
+        case "$arg" in
+        /*) ;;
+        *) arg="$REPO_ROOT/$arg" ;;
+        esac
+        [[ -d "$arg" ]] || die "no such skill directory: $arg"
+        [[ -d "$arg/tests" ]] || die "$arg has no tests directory"
+        resolved+=("$arg")
+    done
+
+    for arg in "${resolved[@]}"; do
         scan_skill "$arg"
     done
 }
