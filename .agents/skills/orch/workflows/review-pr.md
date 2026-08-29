@@ -150,12 +150,12 @@ Fresh session — you have no memory of earlier cycles. Read your prior report [
 
 `[PRIOR_REPORT_PATH]` is that reviewer's most recent `review-[AGENT]-*.json` from state `json_paths`.
 
-**External review** (only when requested). Run `second-opinion …`; it backgrounds itself and prints when to check.
+**External review** (only when requested). Run `second-opinion …`; it backgrounds itself and prints when to check. `[RANGE_FLAG]` is `--range [PRE_SHA]...HEAD` on a re-entry whose `pre_delegate_sha` read returned a sha, and empty otherwise, leaving the script's own `origin/BASE...HEAD` default: the external lane sits in the scoped panel and takes the panel's boundary.
 
 ```bash
 mkdir -p [WORKTREE_PATH]/tmp
 .agents/skills/orch/scripts/git-context timestamp compact
-.agents/skills/second-opinion/scripts/second-opinion review --cwd [WORKTREE_PATH] --output [WORKTREE_PATH]/tmp/review-external-[TIMESTAMP_FROM_PREVIOUS_COMMAND].json --foreground
+.agents/skills/second-opinion/scripts/second-opinion review --cwd [WORKTREE_PATH] --output [WORKTREE_PATH]/tmp/review-external-[TIMESTAMP_FROM_PREVIOUS_COMMAND].json --foreground [RANGE_FLAG]
 ```
 
 Execute the exact command printed after `wait:`. Exit 75 means completion is still recoverable; process other reviewer events, then rerun the same command. Exit 124 is the supervisor's published terminal deadline result. When terminal, validate its artifact like a reviewer JSON, with `review_delegated_at` as the freshness boundary (the § 3.1 sweep covers a silent finisher):

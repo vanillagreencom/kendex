@@ -73,6 +73,7 @@ slice() {
 }
 
 delegation_of() { slice "${1:-$REVIEW_PR_WF}" '^<delegation_format>$' '^</delegation_format>$'; }
+launch_region() { slice "${1:-$REVIEW_PR_WF}" '^### 2[.]2 Launch And Delegate$' '^## '; }
 diff_region()   { slice "${1:-$REVIEW_WF}" '^## 1[.] Diff$' '^## '; }
 # The one line the wire hangs on, isolated from the block around it.
 range_line()    { grep -E -e '^Diff-range:' <<<"$1" || true; }
@@ -134,6 +135,49 @@ if unscoped_path_fires "$(delegation_of)" "$(diff_region)"; then
   pass "the missing-boundary render is the line review.md § 1 routes on"
 else
   fail "the missing-boundary render is not what review.md § 1 matches"
+fi
+
+# --- 3. the external lane takes the same boundary ---------------------------
+# § 4 declares external review part of the scoped panel. It is a shell command,
+# not a delegation, so the range reaches it as a flag or not at all — and its
+# own default is the whole branch, so omitting the flag silently reads exactly
+# the surface the scoped pass excludes.
+#
+# Rendered, not grepped. `--range` appearing somewhere proves nothing: spelled
+# literally in the command it survives the empty branch as `--range ...HEAD`,
+# which is the same placeholder-inside-a-value shape as the field line. So both
+# branches are rendered and each is asserted to be a command that runs.
+external_cmd()   { grep -F -e 'second-opinion review' <<<"$1" || true; }
+range_binding()  { grep -oE '`\[[A-Z_]+\]` is `--range [^`]*`' <<<"$1" | head -1; }
+
+external_range_resolves() {
+  local region="$1" cmd bind tok val missing sha
+  cmd="$(external_cmd "$region")"
+  bind="$(range_binding "$region")"
+  if [[ -z "$cmd" ]] || [[ -z "$bind" ]]; then return 1; fi
+  tok="$(sed -E 's/^`(\[[A-Z_]+\])`.*/\1/' <<<"$bind")"
+  val="$(sed -E 's/^.* is `(--range [^`]*)`.*/\1/' <<<"$bind")"
+
+  # The flag lives wholly inside the token. Spelled in the command it cannot be
+  # withdrawn, and the empty branch leaves it dangling over a broken value.
+  if grep -qF -e '--range' <<<"$cmd"; then return 1; fi
+  if ! grep -qF -e "$tok" <<<"$cmd"; then return 1; fi
+
+  # Missing boundary: the token vanishes and takes the whole flag with it, so
+  # the script falls back to its own documented default.
+  missing="${cmd//"$tok"/}"
+  if grep -qE -e '(--range|\.\.\.HEAD)' <<<"$missing"; then return 1; fi
+
+  # Real boundary: a resolvable range actually reaches the command.
+  sha="${cmd//"$tok"/$val}"
+  sha="${sha//\[PRE_SHA\]/deadbee}"
+  grep -qE -e '--range deadbee\.\.\.HEAD' <<<"$sha"
+}
+
+if external_range_resolves "$(launch_region)"; then
+  pass "the external lane renders the panel's boundary, and no flag without one"
+else
+  fail "the external lane reads the whole branch inside a scoped panel"
 fi
 
 # --- planted controls: prove each check can fail ----------------------------
@@ -200,6 +244,15 @@ S=$(held unscoped_path_fires "$(delegation_of)" "$(diff_region "$REVIEW_WF")")
 K=$(held unscoped_path_fires "$(delegation_of)" "$(diff_region "$C")")
 if cmp -s "$C" "$REVIEW_WF"; then P=0; else P=1; fi
 verdict "a reader matching a sentinel the sender never renders" "$P" "$S" "$K"
+
+# The flag spelled literally in the command, which is what makes it
+# unwithdrawable: the empty branch renders `--range ...HEAD`.
+C="$TMP_ROOT/literal-range.md"
+sub_lines "$REVIEW_PR_WF" '[[]RANGE_FLAG[]]' '--range [PRE_SHA]...HEAD' 'second-opinion review' > "$C"
+S=$(held external_range_resolves "$(launch_region "$REVIEW_PR_WF")")
+K=$(held external_range_resolves "$(launch_region "$C")")
+if cmp -s "$C" "$REVIEW_PR_WF"; then P=0; else P=1; fi
+verdict "an external range that cannot be withdrawn" "$P" "$S" "$K"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
