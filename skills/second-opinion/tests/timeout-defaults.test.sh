@@ -99,7 +99,7 @@ if [[ -n "$resolved_timeout" ]]; then
   assert_contains "$default_stderr" "cmd: $resolved_timeout --foreground -k 30 1080s " "launch log includes resolved default timeout"
   assert_contains "$default_stderr" "second-opinion-runtime tree 25" "launch log includes CLI-tree supervision"
 else
-  assert_contains "$default_stderr" "cmd: direct codex" "launch log names direct default execution"
+  assert_contains "$default_stderr" "cmd: direct-tree codex" "launch log names supervised direct default execution"
 fi
 
 override_stderr="$TMP_ROOT/override.stderr"
@@ -118,7 +118,7 @@ if [[ -n "$resolved_timeout" ]]; then
   fi
   printf 'PASS: override launch puts codex after the timeout and tree arguments\n'
 else
-  assert_contains "$override_stderr" "cmd: direct codex" "launch log names direct override execution"
+  assert_contains "$override_stderr" "cmd: direct-tree codex" "launch log names supervised direct override execution"
 fi
 
 # GNU timeout reads 0 as "no limit at all", so --timeout 0 must be refused
@@ -158,6 +158,18 @@ PATH="$TMP_ROOT/bin:$NOTIMEOUT" \
 assert_contains "$notimeout_stderr" "run without a time limit" "missing timeout binary warns instead of refusing"
 assert_contains "$notimeout_stderr" "cmd: direct-tree codex" "missing timeout binary logs supervised direct execution"
 assert_contains "$notimeout_stderr" "Response received" "review still runs without a timeout binary"
+
+notimeout_override_stderr="$TMP_ROOT/notimeout-override.stderr"
+PATH="$TMP_ROOT/bin:$NOTIMEOUT" \
+  SECOND_OPINION_TARGET=codex \
+  SECOND_OPINION_CODEX_CMD=codex \
+  SECOND_OPINION_TIMEOUT=7 \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null \
+    2>"$notimeout_override_stderr"
+assert_contains "$notimeout_override_stderr" "timeout=7s" \
+  "missing-timeout mode preserves the caller override"
+assert_contains "$notimeout_override_stderr" "cmd: direct-tree codex" \
+  "missing-timeout override uses supervised direct execution"
 
 # The caller owns the lane's lifetime. GNU timeout must not isolate the CLI
 # from a signal sent to second-opinion's process group.
