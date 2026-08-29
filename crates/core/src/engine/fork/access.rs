@@ -32,6 +32,10 @@ use crate::render::permission::Widened;
 /// operation started from and `after` the one it will write, each read
 /// under the name that side answers to, so a table the move left behind
 /// counts as the loss it is.
+///
+/// Both manifests must already hold everything the rendering they stand
+/// for reads. A value on one side alone is a difference this reports, and
+/// the name is the only difference it is meant to find.
 pub(super) fn refuse_if_widened(
     scope: &Scope,
     before: &Manifest,
@@ -99,10 +103,14 @@ fn under(source: &SourceAgent, harness: HarnessId, name: &str) -> SourceAgent {
 /// This agent as one harness would render it under `name`, with what the
 /// given manifest contributes to its tool policy folded in.
 ///
+/// The manifest is the whole of it. A catalog's own per-harness defaults
+/// sit beneath the project's in a rendering, and they reach a fork through
+/// the carry its caller folds into both manifests — read from the catalog
+/// once, by the capture, rather than opened again here by a proof whose
+/// whole subject is an item that has stopped reading it.
+///
 /// Skills, instructions and hooks are left out: they reach the prose and
-/// the file's hook block, never the allow or deny list this compares, and
-/// gathering them would have this reader open a catalog the operation has
-/// already stopped reading.
+/// the file's hook block, never the allow or deny list this compares.
 fn effective<'a>(
     source: &'a SourceAgent,
     scope: &'a Scope,

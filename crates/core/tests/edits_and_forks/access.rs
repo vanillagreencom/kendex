@@ -183,6 +183,56 @@ fn forking_beside_onto_a_name_a_harness_reads_is_refused_from_one_that_states_no
     );
 }
 
+/// A catalog's own per-harness defaults are part of what the original
+/// renders with, and they reach the copy through the carry. Both sides of
+/// the proof have to hold them: reading the manifest alone leaves the
+/// default on the copy's side only, and a default that removes a generated
+/// deny — Pi's `allowed-subagents`, which retires the `delegate_subagent`
+/// deny — then reads as a deny that vanished and refuses a fork that
+/// widens nothing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_catalog_default_that_retires_a_generated_deny_does_not_refuse_the_fork() {
+    let w = agent_world(
+        "\"claude\", \"pi\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "[agent-frontmatter.pi]\nrev = { allowed-subagents = [\"scout\"] }\n",
+        "",
+    );
+    // The fixture only bites while the catalog default is doing something:
+    // an agent that never lost the deny cannot show it coming back.
+    let was = denied(&w, HarnessId::Pi, "rev");
+    assert!(
+        !was.contains("delegate_subagent"),
+        "the catalog default has to have retired the deny for this to be about carrying it: {was:?}"
+    );
+
+    edit_body(&rendered(&w, HarnessId::Claude, "rev"));
+    let plan = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Agent,
+        "rev",
+        HarnessId::Claude,
+        "rev-mine",
+        None,
+    )
+    .unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+
+    assert_eq!(
+        denied(&w, HarnessId::Pi, "rev-mine"),
+        was,
+        "the copy denies what the original denied, no more and no less"
+    );
+    assert_eq!(
+        denied(&w, HarnessId::Claude, "rev-mine"),
+        denied(&w, HarnessId::Claude, "rev"),
+        "and the harness the fork was captured from is unchanged too"
+    );
+}
+
 /// A rename that changes no harness's generated deny list still runs. The
 /// proof refuses a name that widens access, not every name.
 #[test]

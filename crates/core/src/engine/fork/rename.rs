@@ -110,6 +110,12 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
     // what the proof reads. A harness's own deny rules read the agent's
     // name, so a rename can take a built-in restriction off an agent on
     // every harness it targets — this is where that is refused.
+    //
+    // The two manifests are the whole of both sides, with no carry to fold
+    // in: only a fork already reading the local source can be renamed, and
+    // whatever a catalog contributed to it moved into the manifest when it
+    // was forked. The rekey above moved every one of those records to the
+    // new name, so the sides differ in the name alone.
     if let Some(source) = &renamed {
         let Some(decl) = manifest.declared(kind).get(new) else {
             return Err(CoreError::NotDeclared {

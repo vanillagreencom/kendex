@@ -15,7 +15,7 @@ use crate::source_read::SealedSource;
 
 /// The catalog-level values one kept agent rendered with: the effective
 /// skill list and the merged per-harness frontmatter.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct AgentCarry {
     skills: Vec<String>,
     frontmatter: Vec<(String, FrontmatterOverrides)>,

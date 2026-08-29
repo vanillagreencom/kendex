@@ -58,7 +58,7 @@ pub fn fork_beside(
         }
     };
     let edited = edited_rendering(env, scope, kind, name, harness)?;
-    let before = manifest.clone();
+    let mut before = manifest.clone();
     let captured = capture(
         &ForkOf {
             env,
@@ -86,6 +86,13 @@ pub fn fork_beside(
     // and goes on rendering under the name it always had.
     rekey_agent_tables(&mut manifest, kind, name, new_name, OldName::Kept);
     if let Some(carry) = carry {
+        // The same carry lands on both sides of the access proof: on the
+        // copy under its new name, and on the original under the name it
+        // already answers to. The catalog's own per-harness defaults reach
+        // the manifest only through this, so folding it into one side
+        // alone would read a default the copy keeps as a restriction that
+        // vanished — and refuse a fork that widens nothing.
+        carry.clone().apply(&mut before, name);
         carry.apply(&mut manifest, new_name);
     }
 
@@ -106,9 +113,10 @@ pub fn fork_beside(
             .rev = Some(commit);
     }
 
-    // The declaration as the fork will write it, proven before any of it
-    // reaches disk: the copy answers to a new name, and a harness's own
-    // deny rules read that name.
+    // The declaration as the fork will write it against the declaration as
+    // it stands, proven before any of it reaches disk. The two differ in
+    // the name and nothing else, which is what makes a difference in what
+    // a harness denies the name's doing.
     if let Some(agent) = &agent {
         let declared = manifest
             .declared(kind)
