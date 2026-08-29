@@ -1,5 +1,6 @@
 import type {
   ItemKind,
+  ObservedItem,
   PackageMeta_Serialize,
   ProvenanceRow,
   Scope,
@@ -8,7 +9,6 @@ import type {
 import { sameScope, scopeKey } from "@/lib/scope";
 import { placeName, updatablePlaces } from "@/lib/update-groups";
 import { rowUnsettled } from "@/lib/updates-read-state";
-import { originFor } from "@/stores/provenance";
 
 /** How the update read stands, as `rowUnsettled` asks it. The store keeps
  *  last-known rows through a failed or running read, so the rows alone
@@ -37,20 +37,35 @@ export interface PackagePlace {
   removable: boolean;
 }
 
-/** Whether kendex owns this package's installation in one place. A copy
- *  the scan only observed carries an `unmanaged` origin, and content the
- *  tool ships itself carries no provenance row at all — the join drops
- *  vendor content rather than calling it unmanaged, so an absent row is
- *  "not ours" the same as an unmanaged one. */
+/** Whether kendex owns every one of this package's installations in one
+ *  place.
+ *
+ *  A place holds one installation per harness and the provenance join is
+ *  keyed the same way, so one row speaks for one harness and never for
+ *  the place. Removing takes the declarations it finds and leaves the
+ *  rest: with a managed copy beside an unmanaged or vendor one, a Remove
+ *  would take half and the card would stay. So every installation has to
+ *  be ours, and a place kendex knows nothing about is not ours either —
+ *  vendor content is absent from the join by design, so a missing row is
+ *  "not ours", never "nothing is there". */
 const removableIn = (
   provenance: ProvenanceRow[],
+  installs: ObservedItem[],
   kind: ItemKind,
   name: string,
   scope: Scope,
-): boolean => {
-  const origin = originFor(provenance, kind, name, [scope]);
-  return origin !== null && origin.origin !== "unmanaged";
-};
+): boolean =>
+  installs.length > 0 &&
+  installs.every((install) => {
+    const row = provenance.find(
+      (one) =>
+        one.kind === kind &&
+        one.name === name &&
+        one.harness === install.harness &&
+        sameScope(one.scope, scope),
+    );
+    return row !== undefined && row.origin.origin !== "unmanaged";
+  });
 
 /** This package's row in one place, or null where the update read never
  *  spoke for it. */
@@ -92,6 +107,7 @@ export function packagePlaces(
   metas: Record<string, PackageMeta_Serialize | null>,
   standing: UpdatesStanding,
   provenance: ProvenanceRow[],
+  installed: ObservedItem[],
 ): PackagePlace[] {
   return scopes.map((scope) => {
     const row = rowFor(rows, kind, name, scope);
@@ -109,7 +125,18 @@ export function packagePlaces(
         row !== null &&
         !rowUnsettled(standing, row) &&
         updatablePlaces([row]).length === 1,
-      removable: removableIn(provenance, kind, name, scope),
+      removable: removableIn(
+        provenance,
+        installed.filter(
+          (one) =>
+            one.kind === kind &&
+            one.name === name &&
+            sameScope(one.scope, scope),
+        ),
+        kind,
+        name,
+        scope,
+      ),
     };
   });
 }

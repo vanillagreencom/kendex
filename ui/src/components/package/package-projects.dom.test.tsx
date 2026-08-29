@@ -11,7 +11,9 @@ import {
   vi,
 } from "vitest";
 import type {
+  HarnessId,
   ItemKind,
+  ObservedItem,
   Origin,
   PackageMeta_Serialize,
   ProvenanceRow,
@@ -29,6 +31,7 @@ import {
 import { scopeKey } from "@/lib/scope";
 import { useAuditStore } from "@/stores/audit";
 import { useProvenanceStore } from "@/stores/provenance";
+import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount, settle } from "@/test/dom";
 import { PackageProjects } from "./package-projects";
@@ -51,6 +54,37 @@ const ownedBy = (...owned: [Scope, Origin][]): ProvenanceRow[] =>
     harness: "claude",
     origin,
   }));
+
+/** One installation as the scan found it: a place holds one per harness,
+ *  and removability is decided over all of them. */
+const install = (
+  scope: Scope,
+  harness: HarnessId = "claude",
+): ObservedItem => ({
+  kind: "skill",
+  name: "gh",
+  harness,
+  scope,
+  path: `/x/${harness}`,
+  fileState: { state: "file" },
+  enabled: true,
+  origin: null,
+  description: null,
+  tags: [],
+  modifiedAt: null,
+  vendor: null,
+});
+
+/** What the scan found in these places. */
+const scanFound = (...items: ObservedItem[]) =>
+  useScanStore.setState({
+    result: {
+      harnesses: [],
+      items,
+      missingProjects: [],
+      warnings: [],
+    },
+  });
 
 /** What the tab's own provenance read answers with. */
 const joinSays = (rows: ProvenanceRow[]) =>
@@ -145,6 +179,7 @@ beforeEach(() => {
   });
   useProvenanceStore.setState({ rows: [], loaded: false });
   joinSays(ownedBy([VG, OURS], [HYPR, OURS]));
+  scanFound(install(VG), install(HYPR));
   vi.mocked(commands.packageMeta).mockImplementation((scope) =>
     Promise.resolve({
       status: "ok",
@@ -399,6 +434,96 @@ describe("a place kendex does not own", () => {
     const host = await openTab([VG, HYPR]);
 
     expect(host.textContent).toContain(REMOVE_ALL_LABEL);
+  });
+
+  // A place holds one copy per harness and the join answers per harness.
+  // Removing takes the declaration it finds and leaves the other copy, so
+  // a place is only ours when every one of its copies is.
+  it("offers no Remove where one of a place's harnesses is not ours", async () => {
+    scanFound(install(VG, "claude"), install(VG, "codex"));
+    joinSays(ownedBy([VG, OURS]));
+    const host = await openTab([VG]);
+
+    expect(
+      buttons(host).filter((one) => one.textContent === REMOVE_LABEL),
+    ).toEqual([]);
+  });
+
+  it("keeps Remove where every one of a place's harnesses is ours", async () => {
+    scanFound(install(VG, "claude"), install(VG, "codex"));
+    joinSays([
+      ...ownedBy([VG, OURS]),
+      { scope: VG, kind: "skill", name: "gh", harness: "codex", origin: OURS },
+    ]);
+    const host = await openTab([VG]);
+
+    expect(
+      buttons(host).filter((one) => one.textContent === REMOVE_LABEL),
+    ).toHaveLength(1);
+  });
+
+  // The store keeps its older rows when the read fails, and those say
+  // nothing about who owns these copies now. A destructive control drawn
+  // from them is the fail-open case: it stays closed instead.
+  it("offers no Remove when the ownership read fails", async () => {
+    useProvenanceStore.setState({
+      rows: ownedBy([VG, OURS], [HYPR, OURS]),
+      loaded: true,
+    });
+    vi.mocked(commands.libraryProvenance).mockResolvedValue({
+      status: "error",
+      error: "the join did not read",
+    });
+    const host = await openTab([VG, HYPR]);
+
+    // The cards still draw: the package is installed there either way.
+    expect(host.textContent).toContain("vg");
+    expect(host.textContent).toContain("hyprtrade");
+    expect(
+      buttons(host).filter((one) => one.textContent === REMOVE_LABEL),
+    ).toEqual([]);
+    expect(host.textContent).not.toContain(REMOVE_ALL_LABEL);
+  });
+
+  it("offers no Remove when the ownership read never answers", async () => {
+    useProvenanceStore.setState({
+      rows: ownedBy([VG, OURS], [HYPR, OURS]),
+      loaded: true,
+    });
+    vi.mocked(commands.libraryProvenance).mockRejectedValue(
+      new Error("the channel is gone"),
+    );
+    const host = await openTab([VG, HYPR]);
+
+    expect(
+      buttons(host).filter((one) => one.textContent === REMOVE_LABEL),
+    ).toEqual([]);
+  });
+});
+
+// An age label that froze at mount reads as a fact. The tab is a surface
+// people leave open, so the card takes the shared clock every other age on
+// screen takes rather than the moment it happened to render.
+describe("the age a card shows as time passes", () => {
+  it("follows the clock rather than the render that drew it", async () => {
+    // Fake timers take Date over, so the clock the card reads and the
+    // clock its tick runs on are the same one from here.
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    try {
+      const host = await openTab([VG]);
+      expect(host.textContent).toContain("Installed 3d ago");
+
+      // Two days pass with the tab open and nothing else touching it.
+      await act(async () => {
+        vi.advanceTimersByTime(2 * 24 * 60 * 60 * 1000);
+      });
+
+      expect(host.textContent).toContain("Installed 5d ago");
+      expect(host.textContent).not.toContain("Installed 3d ago");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

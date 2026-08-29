@@ -4,6 +4,7 @@ import { UPDATE_LABEL } from "@/lib/copy";
 import { installedAgo, REMOVE_LABEL } from "@/lib/copy-projects";
 import { scopePath } from "@/lib/labels";
 import type { PackagePlace } from "@/lib/package-places";
+import { useNowTick } from "@/lib/use-now-tick";
 
 /** One place this package is installed in: what the place is called, when
  *  this copy landed there, and the two things you can do to that copy
@@ -20,13 +21,13 @@ export function ProjectCard({
   onUpdate: () => void;
   onRemove: () => void;
 }) {
+  // On the shared tick, not the render: a tab left open would otherwise
+  // keep saying a copy was installed just now hours after it was.
+  const now = useNowTick();
   // Two facts on one line, and the line is dropped rather than padded when
   // neither read answered: an install date the record does not carry is
   // not a date to guess at, and the personal scope has no path to print.
-  const detail = [
-    installedAgo(place.installedAt, Date.now()),
-    scopePath(place.scope),
-  ]
+  const detail = [installedAgo(place.installedAt, now), scopePath(place.scope)]
     .filter((part) => part !== null)
     .join(" · ");
 

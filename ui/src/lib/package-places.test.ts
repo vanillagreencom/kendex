@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type {
+  HarnessId,
   ItemKind,
+  ObservedItem,
   Origin,
   PackageMeta_Serialize,
   ProvenanceRow,
@@ -67,6 +69,33 @@ const SETTLED: UpdatesStanding = {
 };
 
 const OURS: Origin = { origin: "marketplace", source: "cat", repo: "o/r" };
+const UNMANAGED: Origin = { origin: "unmanaged" };
+
+/** One installation as the scan found it: a place holds one per harness. */
+const install = (
+  scope: Scope,
+  harness: HarnessId = "claude",
+): ObservedItem => ({
+  kind: "skill",
+  name: "gh",
+  harness,
+  scope,
+  path: `/x/${harness}`,
+  fileState: { state: "file" },
+  enabled: true,
+  origin: null,
+  description: null,
+  tags: [],
+  modifiedAt: null,
+  vendor: null,
+});
+
+/** One provenance row, which the join keys per harness the same way. */
+const joined = (
+  scope: Scope,
+  origin: Origin,
+  harness: HarnessId = "claude",
+): ProvenanceRow => ({ scope, kind: "skill", name: "gh", harness, origin });
 
 /** The join as it reads for places kendex owns. Vendor content carries no
  *  row at all, which is why a place is named here to be removable. */
@@ -86,7 +115,18 @@ const places = (
   kind: ItemKind = "skill",
   standing: UpdatesStanding = SETTLED,
   provenance: ProvenanceRow[] = owned(scopes),
-) => packagePlaces(scopes, kind, "gh", rows, metas, standing, provenance);
+  installed: ObservedItem[] = scopes.map((scope) => install(scope)),
+) =>
+  packagePlaces(
+    scopes,
+    kind,
+    "gh",
+    rows,
+    metas,
+    standing,
+    provenance,
+    installed,
+  );
 
 describe("the places one package sits in", () => {
   it("names each place among the others and carries its install date", () => {
@@ -211,16 +251,64 @@ describe("which places kendex can remove", () => {
 
   it("leaves a copy it only observed alone", () => {
     const built = places([VG], [], {}, "skill", SETTLED, [
-      {
-        scope: VG,
-        kind: "skill",
-        name: "gh",
-        harness: "claude",
-        origin: { origin: "unmanaged" },
-      },
+      joined(VG, UNMANAGED),
     ]);
 
     expect(built[0].removable).toBe(false);
+  });
+
+  // A place holds one copy per harness and the join answers per harness.
+  // Removing takes the declaration it finds and leaves the rest, so half
+  // an answer is not an answer: the card would stay either way.
+  it("leaves a place alone where one of its harnesses is unmanaged", () => {
+    const built = places(
+      [VG],
+      [],
+      {},
+      "skill",
+      SETTLED,
+      [joined(VG, OURS, "claude"), joined(VG, UNMANAGED, "codex")],
+      [install(VG, "claude"), install(VG, "codex")],
+    );
+
+    expect(built[0].removable).toBe(false);
+  });
+
+  // Vendor content is absent from the join by design, so a copy with no
+  // row is one kendex knows nothing about, never one that is not there.
+  it("leaves a place alone where one of its harnesses ships with the tool", () => {
+    const built = places(
+      [VG],
+      [],
+      {},
+      "skill",
+      SETTLED,
+      [joined(VG, OURS, "claude")],
+      [install(VG, "claude"), install(VG, "codex")],
+    );
+
+    expect(built[0].removable).toBe(false);
+  });
+
+  it("removes a place whose every harness is ours", () => {
+    const built = places(
+      [VG],
+      [],
+      {},
+      "skill",
+      SETTLED,
+      [joined(VG, OURS, "claude"), joined(VG, OURS, "codex")],
+      [install(VG, "claude"), install(VG, "codex")],
+    );
+
+    expect(built[0].removable).toBe(true);
+  });
+
+  // The join says nothing about a place the scan found nothing in.
+  it("removes nothing where no installation was observed", () => {
+    expect(
+      places([VG], [], {}, "skill", SETTLED, owned([VG]), [])[0].removable,
+    ).toBe(false);
   });
 
   // The join drops vendor content rather than calling it unmanaged, so a

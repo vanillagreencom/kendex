@@ -12,9 +12,20 @@ import {
 } from "@/lib/package-places";
 import { scopeKey } from "@/lib/scope";
 import { useProvenanceStore } from "@/stores/provenance";
+import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 
 type Metas = Record<string, PackageMeta_Serialize | null>;
+
+/** What one pass over a package's places came back with: each place's own
+ *  record, and whether the ownership join landed. Held together so a card
+ *  never draws on one without the other. */
+interface Read {
+  metas: Metas;
+  /** The provenance read answered. False keeps every removal closed: the
+   *  rows on hand may predate an install or a take-over. */
+  joined: boolean;
+}
 
 /** Every place this package sits in, with its install date and its update
  *  standing.
@@ -45,7 +56,11 @@ export function usePackagePlaces(
   // package that was just installed.
   const provenance = useProvenanceStore((s) => s.rows);
   const reloadProvenance = useProvenanceStore((s) => s.reload);
-  const [metas, setMetas] = useState<Metas | null>(null);
+  // What is actually installed in each place, harness by harness. The join
+  // answers per harness too, so this is what says whether every one of a
+  // place's copies is accounted for.
+  const installed = useScanStore((s) => s.result?.items);
+  const [read, setRead] = useState<Read | null>(null);
   // The scan rebuilds the group on every read, so what is watched is which
   // places those are, not the array they arrived in.
   const subject = `${kind}|${name}|${scopes.map(scopeKey).join("|")}`;
@@ -62,7 +77,7 @@ export function usePackagePlaces(
     // already on screen rather than flashing the loading state over them.
     if (shown.current !== subject) {
       shown.current = subject;
-      setMetas(null);
+      setRead(null);
     }
     void Promise.all([
       // Both reads settle before any card draws: a card is its date and
@@ -86,8 +101,8 @@ export function usePackagePlaces(
           }
         }),
       ),
-    ]).then(([, pairs]) => {
-      if (!cancelled) setMetas(Object.fromEntries(pairs));
+    ]).then(([joined, pairs]) => {
+      if (!cancelled) setRead({ metas: Object.fromEntries(pairs), joined });
     });
     return () => {
       cancelled = true;
@@ -100,10 +115,15 @@ export function usePackagePlaces(
       kind,
       name,
       rows,
-      metas ?? {},
+      read?.metas ?? {},
       { loaded, checking, overviewInFlight, pendingFollows },
-      provenance,
+      // A read that failed leaves the store's older rows in place, and
+      // those say nothing about who owns these copies now. Passing none
+      // holds the removal controls closed rather than deriving a
+      // destructive button from a snapshot that may have gone stale.
+      read?.joined ? provenance : [],
+      installed ?? [],
     ),
-    loading: metas === null,
+    loading: read === null,
   };
 }
