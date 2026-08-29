@@ -393,10 +393,7 @@ pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
             manifest: Box::new(converted),
         },
     });
-    Ok(Plan {
-        scope: scope.clone(),
-        ops,
-    })
+    Plan::landed(scope.clone(), ops)
 }
 
 /// The manifest this conversion writes: every kept package reading `local`

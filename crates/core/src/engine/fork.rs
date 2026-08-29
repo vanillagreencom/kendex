@@ -106,10 +106,7 @@ pub fn fork(
             manifest: Box::new(manifest),
         },
     });
-    Ok(Plan {
-        scope: scope.clone(),
-        ops,
-    })
+    Plan::landed(scope.clone(), ops)
 }
 
 /// The file or tree holding this rendering's edited bytes. Skills capture

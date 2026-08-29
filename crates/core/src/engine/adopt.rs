@@ -118,10 +118,7 @@ pub fn adopt(
             manifest: Box::new(manifest),
         },
     });
-    Ok(Plan {
-        scope: scope.clone(),
-        ops,
-    })
+    Plan::landed(scope.clone(), ops)
 }
 
 /// Everything the move itself takes: the broken links cleared, and then

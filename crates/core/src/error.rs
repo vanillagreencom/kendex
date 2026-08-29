@@ -66,6 +66,13 @@ pub enum CoreError {
     #[error("{path}: refused catalog read — {reason}")]
     SourceEscape { path: PathBuf, reason: String },
 
+    #[error("{path} lands at {landed}, outside {root} — refusing to write there")]
+    ScopeEscape {
+        path: PathBuf,
+        landed: PathBuf,
+        root: PathBuf,
+    },
+
     #[error("'{name}' already installed from {existing} — refusing to rebind to {requested}")]
     SourceCollision {
         name: String,

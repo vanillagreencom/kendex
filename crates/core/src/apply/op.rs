@@ -6,7 +6,6 @@ use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::lock::Lock;
 use crate::manifest::Manifest;
-use crate::model::Scope;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Op {
@@ -111,6 +110,25 @@ impl Op {
             Op::WriteManifest { path, .. } => vec![path.clone()],
             Op::WriteExecutable { path, .. } => vec![path.clone()],
             Op::GitConfigSwap { file, .. } => vec![file.clone()],
+        }
+    }
+
+    /// The same paths, borrowed so they can be replaced by where they
+    /// land ([`super::landing`]). Exhaustive like [`Op::touched`], so an
+    /// op added to this enum can no more skip the landing than the
+    /// journal.
+    pub(super) fn touched_mut(&mut self) -> Vec<&mut PathBuf> {
+        match self {
+            Op::WriteFile { path, .. } => vec![path],
+            Op::WriteTree { root, .. } => vec![root],
+            Op::Symlink { link, .. } => vec![link],
+            Op::Rename { from, to, .. } => vec![from, to],
+            Op::Trash { path, .. } => vec![path],
+            Op::EditFile { path, .. } => vec![path],
+            Op::WriteLock { path, .. } => vec![path],
+            Op::WriteManifest { path, .. } => vec![path],
+            Op::WriteExecutable { path, .. } => vec![path],
+            Op::GitConfigSwap { file, .. } => vec![file],
         }
     }
 
@@ -371,22 +389,4 @@ fn unique_in(dir: &Path, base: &str) -> PathBuf {
         counter += 1;
     }
     candidate
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct PlannedOp {
-    pub description: String,
-    pub op: Op,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Plan {
-    pub scope: Scope,
-    pub ops: Vec<PlannedOp>,
-}
-
-impl Plan {
-    pub fn is_empty(&self) -> bool {
-        self.ops.is_empty()
-    }
 }

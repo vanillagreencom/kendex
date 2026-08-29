@@ -192,13 +192,13 @@ lives in one capability table read by core and UI.
     absolute path is used as written; a child process inherits this
     process's environment (`process/mod.rs`), so `npm` run for a Pi
     package sees the real home.
-17. One spelling per path, fixed once where the root enters: a scope root
-    at each derivation helper (`Scope::canonical` in `manifest_path`,
-    `lock_path`, and the engine's plan entries),
-    a source root at `SealedSource::open`, a declared path at
-    `source::resolve`. Nothing re-canonicalizes downstream, no comparison
-    may meet two spellings of one file (macOS fronts `/var` with
-    `/private/var`), and a path handed to git speaks the repository's own.
+17. One spelling per path, fixed once where the root enters: a scope root at
+    each derivation helper (`Scope::canonical` in `manifest_path`,
+    `lock_path`, plan entries), a source root at `SealedSource::open`, a
+    declared path at `source::resolve`, a plan's targets at `Plan::landed` —
+    one landing outside the scope root is refused. No comparison may meet
+    two spellings of one file (macOS fronts `/var` with `/private/var`), and
+    a path handed to git speaks the repository's own.
 
 ## Decisions
 

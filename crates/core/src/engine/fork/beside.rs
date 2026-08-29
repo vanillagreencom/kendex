@@ -153,10 +153,7 @@ pub fn fork_beside(
             manifest: Box::new(manifest),
         },
     });
-    Ok(Plan {
-        scope: scope.clone(),
-        ops,
-    })
+    Plan::landed(scope.clone(), ops)
 }
 
 /// The captured bytes answering to `new_name` — [`named_bytes`] over the

@@ -89,10 +89,7 @@ pub(super) fn adopt_hook(
             manifest: Box::new(manifest),
         },
     });
-    Ok(Plan {
-        scope: scope.clone(),
-        ops,
-    })
+    Plan::landed(scope.clone(), ops)
 }
 
 /// Every named tool's copy of the registration this name identifies, read

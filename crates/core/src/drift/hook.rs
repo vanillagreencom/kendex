@@ -159,5 +159,5 @@ pub fn install_plan(env: &Env, scope: &Scope) -> Result<Plan> {
         });
     }
 
-    Ok(Plan { scope, ops })
+    Plan::landed(scope, ops)
 }

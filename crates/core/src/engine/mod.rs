@@ -237,10 +237,7 @@ fn plan_scope_once(
         repo_effects: repo_effects::run(&state, &drift, &set_changes, lock),
         repo_effects_leaving,
         drift,
-        plan: Plan {
-            scope: scope.clone(),
-            ops,
-        },
+        plan: Plan::landed(scope.clone(), ops)?,
         notes: state.notes,
         warnings: state.warnings,
         set_changes,
@@ -358,10 +355,7 @@ pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Eng
     // that would touch a file this build won't write to.
     let mut report = EngineReport {
         drift: Vec::new(),
-        plan: Plan {
-            scope: scope.clone(),
-            ops: Vec::new(),
-        },
+        plan: Plan::landed(scope.clone(), Vec::new())?,
         notes: Vec::new(),
         warnings: Vec::new(),
         set_changes: Vec::new(),
