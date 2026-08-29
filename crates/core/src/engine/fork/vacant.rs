@@ -90,7 +90,7 @@ pub(super) fn vacant_name(
     // wrote is not free: the copy's own configuration is written under it,
     // and merging the two would invent a policy nobody asked for.
     if kind == ItemKind::Agent
-        && let Some(entry) = crate::engine::agent_carry::configured_as(manifest, new)
+        && let Some(entry) = crate::engine::agent_carry::configured_as(manifest, from, new)
     {
         return Err(unusable(format!(
             "this scope already configures that agent in {entry} — pick another name, or clear that entry first"

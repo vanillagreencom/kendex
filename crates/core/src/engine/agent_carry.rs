@@ -190,7 +190,7 @@ fn carry_skills(manifest: &mut Manifest, from: &str, to: &str, gone: bool) {
         carry(&mut manifest.agent_skills, from, to, gone);
         return;
     }
-    let inherited = crate::engine::desired_agent::declared_skills(manifest, from).cloned();
+    let inherited = crate::engine::agent_skills::declared_skills(manifest, from).cloned();
     if let Some(skills) = inherited {
         manifest.agent_skills.insert(to.to_owned(), skills);
     }
@@ -242,16 +242,22 @@ fn reselect(agents: &mut HookAgents, from: &str, to: &str, gone: bool) {
     };
 }
 
-/// Where this scope already configures an agent under `name`, said as the
+/// Where this scope already configures an agent under `to`, said as the
 /// person would find it in kendex.toml. A fork or a rename landing on a
 /// name that carries configuration would replace what is there, so the
 /// operation refuses instead: the same enumeration as [`rekey_agent_tables`],
 /// asked as a question rather than moved.
-pub(crate) fn configured_as(manifest: &Manifest, name: &str) -> Option<&'static str> {
+///
+/// `from` is the name being left, which the one table read by fallback
+/// needs: a destination reaching the source agent's own row shadows
+/// nothing, since that row is what [`carry_skills`] moves. Only a row some
+/// other agent's name resolves to is in the way — the same distinction
+/// [`unwritable_under`] draws between owning a spelling and reaching it.
+pub(crate) fn configured_as(manifest: &Manifest, from: &str, to: &str) -> Option<&'static str> {
     if manifest
         .agent_frontmatter
         .values()
-        .any(|by_agent| by_agent.contains_key(name))
+        .any(|by_agent| by_agent.contains_key(to))
     {
         return Some("[agent-frontmatter]");
     }
@@ -259,8 +265,9 @@ pub(crate) fn configured_as(manifest: &Manifest, name: &str) -> Option<&'static 
     // moves what it moves: a name with no row of its own reads the base
     // agent's, and a row written here would shadow the person's — the
     // exact-key question would call that name vacant.
-    if crate::engine::desired_agent::declared_skills(manifest, name).is_some() {
-        return Some(match manifest.agent_skills.contains_key(name) {
+    let reached = crate::engine::agent_skills::skills_key(manifest, to);
+    if reached.is_some() && reached != crate::engine::agent_skills::skills_key(manifest, from) {
+        return Some(match manifest.agent_skills.contains_key(to) {
             true => "[agent-skills]",
             false => "[agent-skills], under the base name this one reads",
         });
@@ -268,14 +275,14 @@ pub(crate) fn configured_as(manifest: &Manifest, name: &str) -> Option<&'static 
     // An instructions entry under a shared key is every agent's, so it is
     // not this name's to be replaced — the same reading [`rekey_agent_tables`]
     // refuses to move.
-    let its_own = !crate::render::agent::shared_instructions_key(name);
-    if its_own && manifest.agent_launch_instructions.contains_key(name) {
+    let its_own = !crate::render::agent::shared_instructions_key(to);
+    if its_own && manifest.agent_launch_instructions.contains_key(to) {
         return Some("[agent-launch-instructions]");
     }
-    if its_own && manifest.agent_additional_instructions.contains_key(name) {
+    if its_own && manifest.agent_additional_instructions.contains_key(to) {
         return Some("[agent-additional-instructions]");
     }
-    gated_by_name(manifest, name).map(|_| "[custom-hooks]")
+    gated_by_name(manifest, to).map(|_| "[custom-hooks]")
 }
 
 /// Whether this selector is this agent's own name — the one kind a rename

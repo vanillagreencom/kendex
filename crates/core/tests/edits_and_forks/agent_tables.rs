@@ -527,6 +527,54 @@ fn forking_beside_refuses_a_name_that_reads_the_base_agents_skill_row() {
     );
 }
 
+/// The mirror of the refusal above. A destination reaches the base row
+/// only because the source agent owns it, so nothing there would be
+/// shadowed: that row is the very assignment the copy carries away with
+/// it. Refusing it would tell the person to clear the entry the operation
+/// exists to move, which is the assignment gone rather than kept.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn forking_beside_takes_a_name_that_reads_the_source_agents_own_skill_row() {
+    let w = world();
+    write_skill(&w.upstream, "recon", "Recon.");
+    write_agent(&w.upstream, "go", "Upstream body.");
+    fs::write(w.upstream.join("kendex.toml"), "").unwrap();
+    commit(&w.upstream, "one");
+    declare(
+        &w,
+        "[agents.go]\nsource = \"cat\"\n\n[skills.recon]\nsource = \"cat\"\n\n[agent-skills]\ngo = [\"recon\"]\n",
+    );
+    sync_and_apply(&w);
+    edit_body(&rendered(&w, HarnessId::Claude, "go"));
+
+    let plan = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Agent,
+        "go",
+        HarnessId::Claude,
+        "reviewer-go",
+        None,
+    )
+    .unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+
+    let settled = manifest_of(&w);
+    assert_eq!(
+        settled.agent_skills.keys().collect::<Vec<_>>(),
+        vec!["go", "reviewer-go"],
+        "the copy holds a row of its own and the source keeps the one it owns: {}",
+        manifest_text(&w)
+    );
+    assert_eq!(
+        settled.agent_skills.get("reviewer-go").map(Vec::as_slice),
+        Some(["recon".to_owned()].as_slice()),
+        "and what travelled is the source's assignment: {}",
+        manifest_text(&w)
+    );
+}
+
 /// A hook selects one agent by spelling its name, so the selector has to
 /// travel when the name does — but a selector spelling `all` or a role
 /// name is read as a population, and rewriting one to the new name would

@@ -11,6 +11,7 @@ use crate::render::agent::{
 use crate::render::permission::PermissionIntent;
 use crate::render::validate::validate_agent;
 
+use super::agent_skills::declared_skills;
 use super::desired::{Artifact, Desired, DesiredState, ItemCtx, native_dir};
 
 /// The agent as this tool will know it, or `None` where that is the agent
@@ -313,19 +314,6 @@ fn from_manifest<'a>(manifest: &'a Manifest, harness: HarnessId, name: &str) -> 
             .filter(|hook| hook.enabled && targets(&hook.agents, name))
             .collect(),
     }
-}
-
-/// The `[agent-skills]` entry this agent reads, found by the same lookup
-/// the mapping uses: a reviewer agent falls back to its base agent's entry.
-/// Asking for the exact name alone would call a real assignment absent and
-/// render the upstream list over the top of it, which is the removal the
-/// person made coming back.
-pub(super) fn declared_skills<'a>(manifest: &'a Manifest, name: &str) -> Option<&'a Vec<String>> {
-    manifest.agent_skills.get(name).or_else(|| {
-        manifest
-            .agent_skills
-            .get(crate::mapping::skill_match_prefix(name))
-    })
 }
 
 /// Whether a custom hook's agent selector could reach this agent. `all` and

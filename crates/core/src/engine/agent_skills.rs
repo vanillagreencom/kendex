@@ -71,3 +71,26 @@ fn merge_key(manifest: &Manifest, name: &str) -> String {
         false => name.to_owned(),
     }
 }
+
+/// Which `[agent-skills]` key this agent's assignment is written under —
+/// its own name, or the base name a reviewer agent falls back to — and
+/// `None` where neither holds a row. Asked for the key rather than the
+/// value, a caller can tell a row the agent owns from one it only reaches,
+/// which is the difference between shadowing someone's assignment and
+/// moving the agent's own.
+pub(super) fn skills_key<'a>(manifest: &'a Manifest, name: &str) -> Option<&'a str> {
+    let base = crate::mapping::skill_match_prefix(name);
+    manifest
+        .agent_skills
+        .get_key_value(name)
+        .or_else(|| manifest.agent_skills.get_key_value(base))
+        .map(|(key, _)| key.as_str())
+}
+
+/// The `[agent-skills]` entry this agent reads, at the key above. Asking
+/// for the exact name alone would call a real assignment absent and render
+/// the upstream list over the top of it, which is the removal the person
+/// made coming back.
+pub(super) fn declared_skills<'a>(manifest: &'a Manifest, name: &str) -> Option<&'a Vec<String>> {
+    skills_key(manifest, name).and_then(|key| manifest.agent_skills.get(key))
+}
