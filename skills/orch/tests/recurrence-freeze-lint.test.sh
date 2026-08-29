@@ -14,7 +14,9 @@
 #   git diff --shortstat [THAT_COMMIT] HEAD
 #
 # The rule has one home, `references/finding-disposition.md` § Recurrence, and
-# one router, `workflows/review-pr-comments.md`; `workflows/oversee.md`
+# two routers: `workflows/review-pr-comments.md`, pinned below, and
+# `workflows/review-pr.md`, pinned in `review-disposition-by-rule-lint.test.sh`
+# alongside the rest of that twin's contract. `workflows/oversee.md`
 # § End spirals points at the section instead of restating it. Every assertion
 # pins a token — a heading, an inline code literal, a state field, a link
 # anchor — so a reworded sentence never reddens the suite.

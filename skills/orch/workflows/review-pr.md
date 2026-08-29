@@ -260,6 +260,12 @@ Omit empty categories. Decline any item that cannot affect real usage with a one
 
 **Disposition is by rule, not by prompt** — never present a selection menu over the findings. Every blocker and `category == "fix"` suggestion that survives declining goes to the fix round below, in EVERY decision mode; `ORCH_DECISION_MODE` does not gate it. The always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) still applies. Nothing left after declines → § 5.
 
+**Recurrence before the cap.** A finding sharing a root cause with one a prior round patched is dispositioned by [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence), which allows `structural-close` or `freeze` and no further patch round. Check it here, ahead of the cap below: that cap counts rounds, and one cause recurs several times inside its budget. Read what prior rounds patched and froze first — `dev-fix.md` § 2 records this loop's patched causes and `review-pr-comments.md` § 6 the comment loop's, so one record answers the check whichever loop patched the cause. A finding sharing a cause in `patched_causes` is the recurrence this rule ends, and one sharing a cause in `frozen_causes` is declined without re-triaging:
+
+```bash
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{patched: (.pr_comment_review.patched_causes // []), frozen: (.pr_comment_review.frozen_causes // [])}'
+```
+
 ### At The Cap
 
 The cap decides before any delegation. Read the re-review cycles already entered:
@@ -286,7 +292,7 @@ The cap decides before any delegation. Read the re-review cycles already entered
 
 ### Fix Delegation
 
-**Skip if** the cap check above routed to § 5. When a defect class recurs across rounds on the same diff, apply SKILL.md § Review must converge before delegating. Findings that leave `items` are never dropped: declined per [finding-disposition](../references/finding-disposition.md) when a cut removed their surface, recorded in `escalated_items` when a split moved them.
+**Skip if** the cap check above routed to § 5. A `structural-close` from the recurrence check above delegates the generating surface in place of the site; a `freeze` delegates nothing. Findings that leave `items` are never dropped: declined per [finding-disposition](../references/finding-disposition.md) when a cut removed their surface, recorded in `escalated_items` when a freeze deferred them.
 Never fix as the main agent.
 
 ```bash
@@ -385,7 +391,7 @@ When **Converged** below is false, follow the § 4 pattern — collect, present,
 
 ### Converged
 
-This is the one exit predicate for QA, and the only route to § 8: § 6, a QA re-check, and a § 2 verification pass all come back here and none of them returns on its own. **Converged** is true when this round's QA artifacts report nothing this section can act on: a blocker or a `category == "fix"` suggestion first raised on this pass is a new finding, and the predicate is false. A `category == "issue"` suggestion is not one of them. § 7 delegates blockers and `category == "fix"` suggestions, so an issue suggestion would turn the loop with nothing to hand a fix round; it rides through to § 8, where the audit pipeline files it as the finding contract says. True → the disposition below, then § 8. False → the fix round above. The predicate stops repeated patching of a finding already answered; it never discards one. The loop otherwise runs on while each round finds a DISTINCT defect this diff introduced, each of those earning its fix, and stops the moment one root cause reappears at a new site: that round's answer is SKILL.md § Review must converge's structural close, cutting the surface that generates the class, never another patch round.
+This is the one exit predicate for QA, and the only route to § 8: § 6, a QA re-check, and a § 2 verification pass all come back here and none of them returns on its own. **Converged** is true when this round's QA artifacts report nothing this section can act on: a blocker or a `category == "fix"` suggestion first raised on this pass is a new finding, and the predicate is false. A `category == "issue"` suggestion is not one of them. § 7 delegates blockers and `category == "fix"` suggestions, so an issue suggestion would turn the loop with nothing to hand a fix round; it rides through to § 8, where the audit pipeline files it as the finding contract says. True → the disposition below, then § 8. False → the fix round above. The predicate stops repeated patching of a finding already answered; it never discards one. The loop otherwise runs on while each round finds a DISTINCT defect this diff introduced, each of those earning its fix, and stops the moment one root cause reappears at a new site: that round's answer is [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence)'s structural close, cutting the surface that generates the class, never another patch round.
 
 On the way out, and before § 8, disposition every item still outstanding — every blocker and every `category == "fix"` suggestion this round's QA artifacts report, whether or not `fixed_items` already lists it, excluding only what `escalated_items` carries and what this section declined; an item dev returns as Blocked reaches `escalated_items` through `dev-fix.md` unchanged. One write per item, which drops any superseded `fixed_items` entry and records the item in the same command, its `[ARTIFACT_PATH]` the `json_paths` entry the item came from, `[ARRAY]` either `blockers` or `suggestions` and `[INDEX]` its position there, so the finding's own text reaches jq through the file, never a quoted shell word, and the reason is this exit's own, never the cap's:
 

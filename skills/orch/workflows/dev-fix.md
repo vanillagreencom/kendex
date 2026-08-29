@@ -178,6 +178,16 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile item tmp/state-item-[ISSUE_ID].json '$item[0] as $e | .fixed_items = ((.fixed_items // []) | map(select(.location != $e.location or .description != $e.description))) | .escalated_items = ((.escalated_items // []) | map(select(.location != $e.location or .description != $e.description))) | .escalated_items += [$e]'
    ```
 
+   A fixed item's root cause is recorded too, in `pr_comment_review.patched_causes` — the one record [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence) reads, whichever loop patched the cause. `pr-review`, `qa-review`, and `review` rounds reach that rule through this step, and a cause missing from it is one the next pass reads as never patched and answers with an ordinary patch round. One entry per fixed item, through a file like the entry above:
+
+   ```json
+   {"cause": "[ONE_LINE]", "commit": "[SHA]"}
+   ```
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile cause tmp/patched-cause-[ISSUE_ID].json '$cause[0] as $e | .pr_comment_review.patched_causes = ((.pr_comment_review.patched_causes // []) + [$e])'
+   ```
+
    ```bash
    .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] cycles
    ```

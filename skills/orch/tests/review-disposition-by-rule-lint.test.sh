@@ -106,6 +106,42 @@ else
   fail "review.md § 4 lost the audit-issues route"
 fi
 
+# The twin's half of the one contract: review-pr.md § 4 names the same
+# recurrence route review-pr-comments.md § 5 names, and names it ahead of its
+# own round cap. Both are structural — a link route is present, and it precedes
+# the cap in document order — never a claim that the prose around either reads
+# any particular way.
+RECURRENCE_ROUTE='../references/finding-disposition.md#recurrence'
+
+if s4_has "$REVIEW_PR_WF" "$RECURRENCE_ROUTE"; then
+  pass "review-pr.md § 4 names the recurrence route"
+else
+  fail "review-pr.md § 4 lost the recurrence route"
+fi
+
+# No `head` on a grep: `head` exits at line one, the SIGPIPE reaches grep, and
+# `pipefail` would promote it into a failed check for a route that is present.
+first_line() {
+  local out
+  out=$(grep -nF -- "$2" "$1" || true)
+  [[ -n "$out" ]] || return 0
+  printf '%s' "${out%%$'\n'*}" | cut -d: -f1
+}
+
+route_vs_cap() {
+  local route cap
+  route="$(first_line "$1" "$RECURRENCE_ROUTE")"
+  cap="$(first_line "$1" 'REVIEW_MAX_CYCLES')"
+  [[ -n "$route" && -n "$cap" ]] || { printf 'missing\n'; return; }
+  if [[ "$route" -lt "$cap" ]]; then printf 'before\n'; else printf 'after\n'; fi
+}
+
+case "$(route_vs_cap "$REVIEW_PR_WF")" in
+  before) pass "review-pr.md routes to Recurrence ahead of REVIEW_MAX_CYCLES" ;;
+  after)  fail "review-pr.md's recurrence route now sits behind REVIEW_MAX_CYCLES" ;;
+  *)      fail "review-pr.md lost its recurrence route or its REVIEW_MAX_CYCLES cap" ;;
+esac
+
 # --- planted controls: prove each check can fail ----------------------------
 echo
 echo "--- planted controls ---"
@@ -132,6 +168,18 @@ plant_drop() {
   CTRL="$TMP_ROOT/$2.md"
   awk -v tok="$3" '
     index($0, tok) { hit = 1; next }
+    { print }
+    END { exit(hit ? 0 : 1) }
+  ' "$1" > "$CTRL"
+}
+
+# Same, deleting only the FIRST line that carries the token. § 4's route and
+# § 7's both spell it, so dropping § 4's alone leaves § 7's standing behind the
+# cap — which is what puts the route on the wrong side of it.
+plant_drop_first() {
+  CTRL="$TMP_ROOT/$2.md"
+  awk -v tok="$3" '
+    !hit && index($0, tok) { hit = 1; next }
     { print }
     END { exit(hit ? 0 : 1) }
   ' "$1" > "$CTRL"
@@ -207,6 +255,22 @@ elif has_menu "$CTRL"; then
   fail "lint false-flagged a menu outside review-pr § 4"
 else
   pass "lint scopes the review-pr menu check to § 4"
+fi
+
+if ! plant_drop "$REVIEW_PR_WF" pr-recurrence "$RECURRENCE_ROUTE"; then
+  fail "recurrence control planted nothing — the route was not found"
+elif s4_has "$CTRL" "$RECURRENCE_ROUTE"; then
+  fail "lint MISSED a dropped recurrence route in review-pr § 4"
+else
+  pass "lint flags a dropped recurrence route in review-pr § 4"
+fi
+
+if ! plant_drop_first "$REVIEW_PR_WF" pr-recurrence-order "$RECURRENCE_ROUTE"; then
+  fail "recurrence order control planted nothing — the route was not found"
+elif [[ "$(route_vs_cap "$CTRL")" == after ]]; then
+  pass "lint flags a recurrence route that falls behind the cap"
+else
+  fail "lint MISSED a recurrence route behind the cap"
 fi
 
 echo

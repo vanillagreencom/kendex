@@ -162,7 +162,7 @@ grep -q -F 'At The Cap' <<<"$S7" \
 # nothing new. A loop where every round finds a DIFFERENT blocker fires
 # neither, so the section needs the recurrence exit as well: one root cause
 # reappearing ends it with a structural close, not another patch round.
-grep -q -F 'Review must converge' <<<"$S7" \
+grep -q -F 'finding-disposition.md#recurrence' <<<"$S7" \
   && ok "§ 7 carries the recurrence exit for a loop that never surfaces nothing" \
   || bad "§ 7 has no exit for a loop where every round finds something new"
 
@@ -318,10 +318,10 @@ fi
 # § 7 back to convergence exits alone: a loop whose every round finds a new
 # blocker would never end.
 CTRL_WF="$TMP_ROOT/review-pr-norecur.md"
-sed 's/SKILL[.]md § Review must converge.s structural close/a structural close/' "$REVIEW_PR_WF" > "$CTRL_WF"
+sed 's|\[finding-disposition[.]md § Recurrence\](../references/finding-disposition[.]md#recurrence).s structural close|a structural close|' "$REVIEW_PR_WF" > "$CTRL_WF"
 if cmp -s "$CTRL_WF" "$REVIEW_PR_WF"; then
   bad "§ 7 recurrence control planted nothing — its sed program matched no text"
-elif grep -q -F 'Review must converge' <<<"$(section_7 "$CTRL_WF")"; then
+elif grep -q -F 'finding-disposition.md#recurrence' <<<"$(section_7 "$CTRL_WF")"; then
   bad "the assertion MISSED § 7 losing its recurrence exit"
 else
   ok "the assertion flags § 7 losing its recurrence exit"
