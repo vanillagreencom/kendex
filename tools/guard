@@ -161,6 +161,112 @@ done)
   say 'fixture HOME without KENDEX_REAL_HOME on the next line — that command would run in the dev sandbox'
 }
 
+# A fixture root is canonical from the moment the test creates it. This is
+# diff-scoped so an unrelated edit does not inherit every older direct use of
+# TempDir::path(). New fixtures take rooted() immediately, and later additions
+# cannot bypass the canonical root with a direct path call.
+if git cat-file -e 'HEAD^{commit}' 2>/dev/null; then
+  temp_fixture_diff=$(git diff --unified=100000 --no-ext-diff HEAD -- 'crates/*/tests/*.rs') ||
+    say "test fixture changes could not be read"
+else
+  temp_fixture_diff=$(git diff --cached --unified=100000 --no-ext-diff -- 'crates/*/tests/*.rs') ||
+    say "test fixture changes could not be read"
+fi
+if ! temp_fixture_hits=$(awk '
+  function source(line, start, finish, rest) {
+    gsub(/"([^"\\]|\\.)*"/, "\"\"", line)
+    if (in_block) {
+      finish = index(line, "*/")
+      if (!finish) return ""
+      line = substr(line, finish + 2)
+      in_block = 0
+    }
+    while ((start = index(line, "/*"))) {
+      rest = substr(line, start + 2)
+      finish = index(rest, "*/")
+      if (!finish) {
+        line = substr(line, 1, start - 1)
+        in_block = 1
+        break
+      }
+      line = substr(line, 1, start - 1) substr(rest, finish + 2)
+    }
+    sub(/\/\/.*/, "", line)
+    return line
+  }
+  function flush() {
+    if (pending != "") print file ":" pending_line ": " pending_text
+    pending = ""
+  }
+  /^diff --git / {
+    flush()
+    file = $4
+    sub(/^b\//, "", file)
+    in_block = 0
+    next
+  }
+  /^@@ / {
+    flush()
+    spec = $3
+    sub(/^\+/, "", spec)
+    split(spec, at, ",")
+    new_line = at[1] - 1
+    next
+  }
+  /^--- / || /^\+\+\+ / { next }
+  /^[ +]/ {
+    prefix = substr($0, 1, 1)
+    line = substr($0, 2)
+    code = source(line)
+    new_line++
+    if (pending != "") {
+      if (code ~ /^[[:space:]]*$/) next
+      rooted = "rooted[[:space:]]*\\([[:space:]]*&[[:space:]]*" pending "[[:space:]]*\\)"
+      if (code !~ rooted) print file ":" pending_line ": " pending_text
+      pending = ""
+    }
+    if (code ~ /^[[:space:]]*let[[:space:]]+(mut[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*([[:space:]]*:[^=]+)?[[:space:]]*=[[:space:]]*(tempfile::tempdir\(\)|TempDir::new\(\))/) {
+      declaration = code
+      sub(/^[[:space:]]*let[[:space:]]+/, "", declaration)
+      sub(/^mut[[:space:]]+/, "", declaration)
+      sub(/([[:space:]]*:[^=]+)?[[:space:]]*=.*/, "", declaration)
+      temp_vars[file SUBSEP declaration] = 1
+      if (prefix == "+") {
+        pending = declaration
+        pending_line = new_line
+        pending_text = line
+      }
+    }
+    if (prefix == "+" && code !~ /^[[:space:]]*$/) {
+      added_count++
+      added_file[added_count] = file
+      added_line[added_count] = new_line
+      added_code[added_count] = code
+    }
+    next
+  }
+  /^-/ { next }
+  { flush() }
+  END {
+    flush()
+    for (i = 1; i <= added_count; i++) {
+      for (key in temp_vars) {
+        split(key, parts, SUBSEP)
+        if (parts[1] != added_file[i]) continue
+        direct = "(^|[^A-Za-z0-9_])" parts[2] "[[:space:]]*\\.path[[:space:]]*\\("
+        if (added_code[i] ~ direct)
+          print added_file[i] ":" added_line[i] ": " added_code[i]
+      }
+    }
+  }
+' <<<"$temp_fixture_diff"); then
+  say "temporary fixture declarations could not be checked"
+fi
+[ -n "$temp_fixture_hits" ] && {
+  echo "$temp_fixture_hits" | head -5
+  say 'temporary fixture root bypasses rooted(): derive the canonical root on the next source line'
+}
+
 # Structural invariants.
 [ "$(readlink .claude/CLAUDE.md 2>/dev/null)" = "../AGENTS.md" ] ||
   say ".claude/CLAUDE.md must be a symlink to ../AGENTS.md"
@@ -176,6 +282,17 @@ if [ -f Cargo.toml ]; then
     grep -A1 '^\[lints\]' "$m" | grep -q 'workspace *= *true' ||
       say "$m: missing [lints] workspace = true — workspace lints are not inherited"
   done
+  apple_target=aarch64-apple-darwin
+  if ! installed_targets=$(rustup target list --installed); then
+    say "rustup could not list installed targets: the Apple cross-target check could not run"
+  elif ! grep -Fxq "$apple_target" <<<"$installed_targets"; then
+    say "Rust target $apple_target is not installed: run rustup target add $apple_target"
+  else
+    # The app's Objective-C build dependencies require an Apple compiler.
+    # Core and CLI reach the portable Rust code and every one of their tests.
+    cargo check -p kendex-core -p kendex-cli --all-targets --target "$apple_target" ||
+      say "Apple core and CLI test targets failed to compile"
+  fi
   cargo fmt --check || say "cargo fmt --check failed"
   cargo clippy --workspace --quiet -- -D warnings || say "clippy failed"
   cargo doc --no-deps --document-private-items --workspace --quiet || say "cargo doc failed"

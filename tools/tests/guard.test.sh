@@ -35,6 +35,7 @@ bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
 R="$TMP/repo"
 mkdir -p "$R/.claude" "$R/tools"
+mkdir -p "$R/crates/core/tests"
 git -C "$R" init -q
 git -C "$R" symbolic-ref HEAD refs/heads/main
 git -C "$R" config user.email test@example.com
@@ -43,6 +44,11 @@ git -C "$R" config core.hooksPath "$TMP/nohooks"
 echo '# fixture' >"$R/AGENTS.md"
 ln -s ../AGENTS.md "$R/.claude/CLAUDE.md"
 : >"$R/tools/size-ratchet-baseline.tsv"
+printf '%s\n' \
+  'fn existing_fixture() {' \
+  '    let tmp = tempfile::tempdir().unwrap();' \
+  '    drop(tmp);' \
+  '}' >"$R/crates/core/tests/existing_temp.rs"
 # The fragment format is changelog-collate's verdict and guard runs it, so
 # the fixture carries the collator the way a clone does.
 cp "$(cd "$TEST_DIR/.." && pwd)/changelog-collate" "$R/tools/changelog-collate"
@@ -71,6 +77,121 @@ run_ratchet() { # sets OUT and RC — the repo's classes, nothing else
 }
 
 TAB="$(printf '\t')"
+
+echo "=== new temporary fixtures derive their canonical root at creation ==="
+mkdir -p "$R/crates/core/tests"
+printf '%s\n' \
+  'fn fixture() {' \
+  '    let tmp = tempfile::tempdir().unwrap();' \
+  '    let root = tmp.path();' \
+  '    drop(root);' \
+  '}' >"$R/crates/core/tests/temp_path.rs"
+git -C "$R" add -A
+run_guard RATCHET_RAISE=
+[ "$RC" -ne 0 ] && case "$OUT" in *"temp_path.rs:2"*"temporary fixture root bypasses rooted()"*) true ;; *) false ;; esac \
+  && ok "a new tempdir fixture that uses its raw path is refused" \
+  || bad "a new tempdir fixture that uses its raw path is refused" "rc=$RC out=$OUT"
+printf '%s\n' \
+  'fn fixture() {' \
+  '    let tmp = tempfile::tempdir().unwrap();' \
+  '    // Resolve the root before the fixture leaves setup.' \
+  '    let root = rooted(&tmp);' \
+  '    drop(root);' \
+  '}' >"$R/crates/core/tests/temp_path.rs"
+git -C "$R" add -A
+run_guard RATCHET_RAISE=
+[ "$RC" -eq 0 ] \
+  && ok "a new tempdir fixture routed through rooted passes" \
+  || bad "a new tempdir fixture routed through rooted passes" "rc=$RC out=$OUT"
+printf '%s\n' \
+  'fn fixture() {' \
+  '    let mut tmp: TempDir = TempDir::new().unwrap();' \
+  '    let root = tmp.path();' \
+  '    drop(&mut tmp);' \
+  '    drop(root);' \
+  '}' >"$R/crates/core/tests/temp_path.rs"
+git -C "$R" add -A
+run_guard RATCHET_RAISE=
+[ "$RC" -ne 0 ] && case "$OUT" in *"temp_path.rs:2"*"temporary fixture root bypasses rooted()"*) true ;; *) false ;; esac \
+  && ok "a new TempDir fixture that uses its raw path is refused" \
+  || bad "a new TempDir fixture that uses its raw path is refused" "rc=$RC out=$OUT"
+printf '%s\n' \
+  'fn prose() {' \
+  '    // let tmp = tempfile::tempdir().unwrap();' \
+  '    let shown = "let tmp = tempfile::tempdir().unwrap();";' \
+  '    let path = "tmp.path()";' \
+  '    drop(shown);' \
+  '    drop(path);' \
+  '}' >"$R/crates/core/tests/temp_path.rs"
+git -C "$R" add -A
+run_guard RATCHET_RAISE=
+[ "$RC" -eq 0 ] \
+  && ok "comments and strings that mention tempdir constructors pass" \
+  || bad "comments and strings that mention tempdir constructors pass" "rc=$RC out=$OUT"
+git -C "$R" reset -q HEAD -- crates/core/tests/temp_path.rs
+rm -f "$R/crates/core/tests/temp_path.rs"
+printf '%s\n' \
+  'fn existing_fixture() {' \
+  '    let tmp = tempfile::tempdir().unwrap();' \
+  '    let raw = tmp.path();' \
+  '    drop((tmp, raw));' \
+  '}' >"$R/crates/core/tests/existing_temp.rs"
+git -C "$R" add crates/core/tests/existing_temp.rs
+run_guard RATCHET_RAISE=
+[ "$RC" -ne 0 ] && case "$OUT" in *"existing_temp.rs:3"*"temporary fixture root bypasses rooted()"*) true ;; *) false ;; esac \
+  && ok "a direct path added to an older temp fixture is refused" \
+  || bad "a direct path added to an older temp fixture is refused" "rc=$RC out=$OUT"
+git -C "$R" restore --staged --worktree crates/core/tests/existing_temp.rs
+
+echo "=== Apple test targets compile before the host suite ==="
+mkdir -p "$R/fake-bin"
+cat >"$R/fake-bin/rustup" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "$*" = "target list --installed" ]
+[ "${RUSTUP_LIST_RESULT:-0}" -eq 0 ]
+printf '%s\n' "${RUSTUP_INSTALLED_TARGETS:-}"
+SH
+cat >"$R/fake-bin/cargo" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$CARGO_CALL_LOG"
+if [ "$*" = "check -p kendex-core -p kendex-cli --all-targets --target aarch64-apple-darwin" ]; then
+  [ "${APPLE_CHECK_RESULT:-0}" -eq 0 ]
+fi
+SH
+chmod +x "$R/fake-bin/rustup" "$R/fake-bin/cargo"
+printf '[workspace]\n' >"$R/Cargo.toml"
+git -C "$R" add Cargo.toml
+CARGO_CALL_LOG="$TMP/cargo-calls"
+: >"$CARGO_CALL_LOG"
+run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_LIST_RESULT=1
+[ "$RC" -ne 0 ] && case "$OUT" in *"rustup could not list installed targets"*) true ;; *) false ;; esac \
+  && ok "a failed installed-target lookup blocks guard" \
+  || bad "a failed installed-target lookup blocks guard" "rc=$RC out=$OUT"
+run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS=x86_64-unknown-linux-gnu
+[ "$RC" -ne 0 ] && case "$OUT" in *"Rust target aarch64-apple-darwin is not installed"*) true ;; *) false ;; esac \
+  && ok "a missing Apple target is refused with the install command" \
+  || bad "a missing Apple target is refused with the install command" "rc=$RC out=$OUT"
+if grep -qF -- '--target aarch64-apple-darwin' "$CARGO_CALL_LOG"; then
+  bad "a missing target is not handed to cargo" "$(cat "$CARGO_CALL_LOG")"
+else
+  ok "a missing target is not handed to cargo"
+fi
+: >"$CARGO_CALL_LOG"
+run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS=aarch64-apple-darwin APPLE_CHECK_RESULT=1
+[ "$RC" -ne 0 ] && case "$OUT" in *"Apple core and CLI test targets failed to compile"*) true ;; *) false ;; esac \
+  && ok "a failing Apple compiler verdict blocks guard" \
+  || bad "a failing Apple compiler verdict blocks guard" "rc=$RC out=$OUT"
+[ "$(grep -cFx 'check -p kendex-core -p kendex-cli --all-targets --target aarch64-apple-darwin' "$CARGO_CALL_LOG")" -eq 1 ] \
+  && ok "guard asks cargo for every core and CLI test target" \
+  || bad "guard asks cargo for every core and CLI test target" "$(cat "$CARGO_CALL_LOG")"
+run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS=aarch64-apple-darwin APPLE_CHECK_RESULT=0
+[ "$RC" -eq 0 ] \
+  && ok "an installed target and passing Apple check reach the host suite" \
+  || bad "an installed target and passing Apple check reach the host suite" "rc=$RC out=$OUT"
+git -C "$R" reset -q HEAD -- Cargo.toml
+rm -f "$R/Cargo.toml"
 
 echo "=== a baseline row this change adds is a raise ==="
 mkfile crates/big.rs 401

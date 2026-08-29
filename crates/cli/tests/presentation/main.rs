@@ -10,6 +10,10 @@ use std::process::{Command, Output};
 
 use kendex_core::env::Env;
 
+#[path = "../../../test_util.rs"]
+mod test_util;
+pub use test_util::rooted;
+
 /// The frame a terminal gets, and nothing a verb ever writes itself.
 const FRAMING: [char; 12] = ['┌', '│', '└', '├', '╮', '╯', '─', '◇', '◆', '▲', '■', '●'];
 
@@ -29,20 +33,6 @@ pub fn escaped_the_frame(printed: &str) -> Vec<String> {
         }
     }
     loose
-}
-
-/// The fixture root as the binary will see it. A macOS temporary
-/// directory resolves under `/private`, so a fixture that keeps the path
-/// it was handed builds project and catalog paths the run never prints:
-/// what it prints is the resolved form, which merely ends with the one
-/// the fixture holds. Redaction keyed to the unresolved path then leaves
-/// `/private` standing in front of the placeholder, and a fixture that
-/// compares its own paths against printed ones never matches.
-#[allow(clippy::unwrap_used)]
-pub fn rooted(tmp: &tempfile::TempDir) -> PathBuf {
-    tmp.path()
-        .canonicalize()
-        .unwrap_or_else(|_| tmp.path().to_owned())
 }
 
 #[allow(clippy::expect_used)]

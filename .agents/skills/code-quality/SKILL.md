@@ -46,7 +46,7 @@ A new or modified check, guard, assertion, or test ships with a must-fail contro
 
 ## Language Discipline
 
-- **Rust**: make illegal states unrepresentable; exhaustive matches (no `_ =>` over enums you own); enums over strings/sentinels/booleans-with-meaning.
+- **Rust**: make illegal states unrepresentable; exhaustive matches (no `_ =>` over enums you own); enums over strings/sentinels/booleans-with-meaning. A test that hands a temporary path to code that may resolve symlinks canonicalizes it at creation; platform-only test APIs carry a `cfg` and, when the property is portable, a portable twin.
 - **Bash**: `set -euo pipefail` in every new script; check the result of every effectful substitution; `--` before path arguments sourced from configuration, argv, or the environment (not paths the script built itself, e.g. `mktemp -d`); no `[A-Za-z]`-class assumptions under arbitrary locales.
 - **TypeScript/JS**: distinguish missing from present-but-falsy (`""`, `0`) at every guard; no `any` at module boundaries.
 

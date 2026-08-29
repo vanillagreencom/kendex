@@ -1,5 +1,5 @@
 .github/workflows/review-gate-writer.yml	662
-.github/workflows/skill-tests.yml	408
+.github/workflows/skill-tests.yml	402
 crates/core/src/engine/detach.rs	547
 crates/core/src/engine/pi_hooks_move/migrated.rs	540
 crates/core/src/engine/pi_hooks_move/mod.rs	503
