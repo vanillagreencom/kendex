@@ -9,7 +9,7 @@
 
 use crate::env::Env;
 use crate::error::Result;
-use crate::manifest::{INPLACE_SOURCE_NAME, LOCAL_SOURCE_NAME, Manifest};
+use crate::manifest::{INPLACE_SOURCE_NAME, ItemDecl, LOCAL_SOURCE_NAME, Manifest};
 use crate::model::{ItemKind, Scope};
 
 use super::bundles::BundleMember;
@@ -64,7 +64,7 @@ impl ScopeSkills {
             let Ok(config) = source_config_for(&sealed, &ready.provenance) else {
                 continue;
             };
-            skills.extend(root.supplies(&sealed, &config, manifest));
+            skills.extend(root.supplies(&sealed, &config, manifest, scope));
         }
         skills.sort();
         skills.dedup();
@@ -87,8 +87,7 @@ enum Root<'a> {
     /// installs. Offering those would let a fork keep a `## Required
     /// Skills` row pointing at a file no plan ever writes.
     Pinned {
-        source: &'a str,
-        rev: &'a str,
+        decl: &'a ItemDecl,
         reaches: Reaches<'a>,
     },
 }
@@ -107,7 +106,9 @@ impl Root<'_> {
     fn resolve(&self, env: &Env, scope: &Scope, manifest: &Manifest) -> Result<SourceState> {
         match self {
             Root::Source(name) => resolve(env, scope, name, manifest),
-            Root::Pinned { source, rev, .. } => resolve_at(env, scope, source, manifest, Some(rev)),
+            Root::Pinned { decl, .. } => {
+                resolve_at(env, scope, &decl.source, manifest, decl.rev.as_deref())
+            }
         }
     }
 
@@ -117,32 +118,45 @@ impl Root<'_> {
         sealed: &SealedSource,
         config: &SourceConfig,
         manifest: &Manifest,
+        scope: &Scope,
     ) -> Vec<String> {
         match self {
             Root::Source(_) => list_items(sealed, config, ItemKind::Skill),
             Root::Pinned {
+                decl,
                 reaches: Reaches::Skill(name),
-                ..
             } => find_item(sealed, config, ItemKind::Skill, name)
+                .filter(|_| lands(decl, manifest, ItemKind::Skill, scope))
                 .map(|_| vec![(*name).to_owned()])
                 .unwrap_or_default(),
             Root::Pinned {
+                decl,
                 reaches: Reaches::Bundle(name),
-                ..
             } => bundles::find(sealed, config, name)
                 .ok()
                 .flatten()
                 .map(|set| {
+                    let member_decl = crate::engine::bundles::member_decl(decl);
                     set.members
                         .into_iter()
                         .filter(|member| member.kind == ItemKind::Skill)
                         .filter(|member| installs(sealed, config, manifest, member))
+                        .filter(|member| lands(&member_decl, manifest, member.kind, scope))
                         .map(|member| member.name)
                         .collect()
                 })
                 .unwrap_or_default(),
         }
     }
+}
+
+/// Whether a declaration lands anywhere: at least one tool it targets can
+/// hold this kind in this scope. The planner's own answer, called rather
+/// than restated — a declaration that lands nowhere is dropped from the
+/// plan, and offering what it names would answer an agent's assignment
+/// with a file no tool was ever given.
+fn lands(decl: &ItemDecl, manifest: &Manifest, kind: ItemKind, scope: &Scope) -> bool {
+    !crate::engine::desired::target_harnesses(decl, manifest, kind, scope).is_empty()
 }
 
 /// Whether a set's member is one this scope can install: the person has
@@ -190,12 +204,8 @@ fn roots(manifest: &Manifest) -> Vec<Root<'_>> {
                 .map(|(name, decl)| (decl, Reaches::Bundle(name.as_str()))),
         );
     for (decl, reaches) in pinned {
-        if let Some(rev) = decl.rev.as_deref() {
-            roots.push(Root::Pinned {
-                source: decl.source.as_str(),
-                rev,
-                reaches,
-            });
+        if decl.rev.is_some() {
+            roots.push(Root::Pinned { decl, reaches });
         }
     }
     roots

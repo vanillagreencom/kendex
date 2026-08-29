@@ -567,6 +567,88 @@ fn a_set_member_the_catalog_lacks_is_not_offered() {
     }
 }
 
+/// A declaration that lands on no tool is dropped from the plan, so what
+/// it names is never written. Offered anyway, it answers an agent's
+/// assignment with a file nothing installs — the same fail-open direction
+/// as a set member the catalog lacks, by a different route.
+///
+/// The fixture reaches "lands nowhere" through a declaration that targets
+/// no tool. Every tool holds a skill in a project, so a restricted
+/// declaration only lands nowhere in a global scope, and both spellings
+/// meet at the same empty answer from the planner.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_pinned_skill_that_lands_nowhere_is_not_offered() {
+    let w = pinned_only_world(
+        "[skills.recon]\nsource = \"cat\"\nrev = \"REV\"\nharnesses = []\n",
+        "",
+    );
+    let file = rendered(&w, HarnessId::Gemini, "rev");
+    let before = fs::read_to_string(&file).unwrap();
+    assert_eq!(times(&before, "## Required Skills"), 0, "{before}");
+    edit_body(&file);
+
+    match fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini) {
+        Err(CoreError::AgentSkillUnavailable { name, skill }) => {
+            assert_eq!((name.as_str(), skill.as_str()), ("rev", "recon"))
+        }
+        other => panic!("a skill no tool can hold must not satisfy it: {other:?}"),
+    }
+}
+
+/// The set branch answers the same question about its members: a set that
+/// lands on no tool installs none of them, so none of them is the scope's
+/// to offer.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_set_member_that_lands_nowhere_is_not_offered() {
+    let w = pinned_only_world(
+        "[bundles.kit]\nsource = \"cat\"\nrev = \"REV\"\nharnesses = []\n",
+        "[bundles.kit]\ndescription = \"kit\"\nskills = [\"recon\"]\n",
+    );
+    let file = rendered(&w, HarnessId::Gemini, "rev");
+    let before = fs::read_to_string(&file).unwrap();
+    assert_eq!(times(&before, "## Required Skills"), 0, "{before}");
+    edit_body(&file);
+
+    match fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini) {
+        Err(CoreError::AgentSkillUnavailable { name, skill }) => {
+            assert_eq!((name.as_str(), skill.as_str()), ("rev", "recon"))
+        }
+        other => panic!("a set member no tool can hold must not satisfy it: {other:?}"),
+    }
+}
+
+/// A settled scope where `recon` exists only at the pinned revision, so
+/// the pinned declaration is the whole of what could offer it. `REV` in
+/// `declaration` stands for that commit; `catalog` is the catalog's own
+/// `kendex.toml` at it.
+#[allow(clippy::unwrap_used)]
+fn pinned_only_world(declaration: &str, catalog: &str) -> World {
+    let w = world();
+    write_skill(&w.upstream, "recon", "Recon.");
+    write_agent(&w.upstream, "rev", "Upstream body.");
+    fs::write(w.upstream.join("kendex.toml"), catalog).unwrap();
+    commit(&w.upstream, "one");
+    let pinned = head_commit(&w.upstream);
+    fs::remove_dir_all(w.upstream.join("skills/recon")).unwrap();
+    fs::write(w.upstream.join("kendex.toml"), "").unwrap();
+    commit(&w.upstream, "two");
+
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        format!(
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"gemini\"]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\n\n{}\n[agent-skills]\nrev = [\"recon\"]\n",
+            declaration.replace("REV", &pinned)
+        ),
+    )
+    .unwrap();
+    sync_and_apply(&w);
+    w
+}
+
 /// A fork made while the supplying source is already gone cannot wait for
 /// the renderer to catch it: nothing is a recorded fork until the fork is
 /// written. Left to the render it succeeds, keeps the section as prose,
