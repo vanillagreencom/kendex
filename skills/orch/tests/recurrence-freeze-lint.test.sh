@@ -183,19 +183,45 @@ else
   fail "an empty fix set no longer routes the pass to the reply step"
 fi
 
-REPLY="$(grep -F '**Reply step.**' <<<"$SIX_ONE" || true)"
-if [[ -n "$REPLY" ]] && grep -qF '`reply-only`' <<<"$REPLY" && grep -qF '`freeze`' <<<"$REPLY"; then
-  pass "the reply step names who reaches it, delegating or not"
+if grep -qF '**Reply step.**' <<<"$SIX_ONE"; then
+  pass "§ 6.1 carries the reply step the obligation set names"
 else
-  fail "the reply step no longer names the passes that reach it"
+  fail "§ 6.1 lost the reply step the obligation set names"
 fi
 
-SIX_TWO="$(section_6_2 "$COMMENTS_WF")"
-if grep -qF '`→ § 6.1`' <<<"$SIX_TWO" && grep -qF '`reply step`' <<<"$SIX_TWO"; then
-  pass "a freeze-only pass returns from § 6.2 to the reply step"
+# One ordered obligation set, stated once in § 6's preamble. The routing it
+# replaced named a jump target per call site and leaked at whichever site the
+# next pass took; these tokens pin the preconditions of the one reply step.
+HEAD="$(section_6_head "$COMMENTS_WF")"
+while IFS='|' read -r token label; do
+  if grep -qF -- "$token" <<<"$HEAD"; then
+    pass "§ 6 states as an obligation that $label"
+  else
+    fail "§ 6 no longer states that $label"
+  fi
+done <<'OBLIGATIONS'
+`reply step`|every pass reaches one reply step
+mixed|a mixed pass owes what every other pass owes
+§ 6.2|a class issue is filed before the reply naming it
+frozen_causes|a frozen cause is recorded before the reply closing its thread
+patched_causes|a patched cause is recorded before the reply closing its thread
+OBLIGATIONS
+
+# No section routes a pass by naming another section's step: that is the shape
+# the obligation set replaces, and a mixed pass is the row mix it dropped.
+jump_targets() {
+  # $1 = file — prints one line per section that names another section's step
+  if grep -qF 'through § 6.2' <<<"$(section_6_1 "$1")"; then printf '§ 6.1\n'; fi
+  if grep -qF '→ § 6.1' <<<"$(section_6_2 "$1")"; then printf '§ 6.2\n'; fi
+}
+
+JUMPS="$(jump_targets "$COMMENTS_WF" | tr '\n' ' ')"
+if [[ -z "${JUMPS// /}" ]]; then
+  pass "no section routes a pass into another section's step"
 else
-  fail "§ 6.2 no longer returns a freeze to the reply step"
+  fail "a section names a jump target again: $JUMPS"
 fi
+
 # The two records the recurrence check reads. A resolved thread is invisible to
 # the next pass, so a cause is recurrence only if a pass wrote it down.
 check_token "$COMMENTS_WF" "--slurpfile entry [WORKTREE_PATH]/tmp/patched-cause-[ISSUE_ID].json" \
@@ -361,20 +387,45 @@ gone section_6_head "$(drop replyonly "$COMMENTS_WF" '`reply-only`')" \
   '`reply-only`' "a freeze or decline let into the push path"
 gone section_6_1 "$(plant delegation "$COMMENTS_WF" 's/\[For each item in the fix set:\]/[For each item marked "Fixing":]/')" \
   '[For each item in the fix set:]' "a delegation that re-derives membership from Fixing rows"
-gone section_6_2 "$(drop freezereturn "$COMMENTS_WF" '`→ § 6.1`')" \
-  '`→ § 6.1`' "a freeze that files without returning to reply"
+# The obligation controls: each precondition of the reply, planted back out of
+# § 6's preamble. Dropping § 6.2 is the mixed pass the routing lost — a fix set
+# and a freeze row together, reaching the reply owing a `Tracked:` id nothing
+# filed. Dropping either cause field is a thread closed with nothing remembered.
+gone section_6_head "$(drop obligationfile "$COMMENTS_WF" '§ 6.2')" \
+  '§ 6.2' "a mixed pass that replies with a class issue nothing filed"
+for token in frozen_causes patched_causes; do
+  gone section_6_head "$(drop "obligation-$token" "$COMMENTS_WF" "$token")" \
+    "$token" "a reply that closes its thread before $token is written"
+done
 
-# One token, three readers: dropping `reply step` must redden the gate, the
-# step's own label, and § 6.2's return alike.
-CTRL="$(drop replystep "$COMMENTS_WF" '`reply step`')"
-if grep -qF '`reply step`' <<<"$(section_6_1 "$CTRL")" || grep -qF '`reply step`' <<<"$(section_6_2 "$CTRL")"; then
-  fail "lint MISSED a reply step nothing routes to"
+# Jump controls: the routing shape put back, one section at a time.
+CTRL="$(plant jump61 "$COMMENTS_WF" '/^### 6\.1/ { print; print "Reach it through § 6.2 first."; next } { print }' awk)"
+if [[ "$(jump_targets "$CTRL")" == *"§ 6.1"* ]]; then
+  pass "lint flags § 6.1 routing a pass through another section"
 else
-  pass "lint flags a reply step nothing routes to"
+  fail "lint MISSED § 6.1 routing a pass through another section"
+fi
+
+CTRL="$(plant jump62 "$COMMENTS_WF" '/^### 6\.2/ { print; print "Then → § 6.1 for the reply."; next } { print }' awk)"
+if [[ "$(jump_targets "$CTRL")" == *"§ 6.2"* ]]; then
+  pass "lint flags § 6.2 routing a pass back into the reply step"
+else
+  fail "lint MISSED § 6.2 routing a pass back into the reply step"
+fi
+
+# One token, two readers: dropping `reply step` must redden the obligation set
+# and the § 6.1 gate alike.
+CTRL="$(drop replystep "$COMMENTS_WF" '`reply step`')"
+if grep -qF '`reply step`' <<<"$(section_6_head "$CTRL")" || grep -qF '`reply step`' <<<"$(section_6_1 "$CTRL")"; then
+  fail "lint MISSED a reply step nothing names"
+else
+  pass "lint flags a reply step nothing names"
 fi
 
 gone section_6_1 "$(drop replylabel "$COMMENTS_WF" '**Reply step.**')" \
-  '**Reply step.**' "a reply step that stopped saying who reaches it"
+  '**Reply step.**' "an obligation set naming a reply step § 6.1 does not carry"
+gone section_6_head "$(drop obligationmix "$COMMENTS_WF" 'mixed')" \
+  'mixed' "an obligation set that leaves the mixed pass out of its row mixes"
 gone strip_comments "$(drop patched "$COMMENTS_WF" '/tmp/patched-cause-[ISSUE_ID].json')" \
   '--slurpfile entry [WORKTREE_PATH]/tmp/patched-cause-[ISSUE_ID].json' "a patched cause nothing records"
 gone strip_comments "$(drop frozen "$COMMENTS_WF" '/tmp/frozen-cause-[ISSUE_ID].json')" \
