@@ -35,9 +35,11 @@ Release with:
 Review the draft, then publish it. That is the release.
 
 `install.sh` is the exception and says so in its own comments: a machine
-with nothing installed has neither the release key nor minisign, so a first
-install rests on TLS to kendex.ai and github.com. Every update after it is
-held to the key.
+with nothing installed has neither the release key nor minisign, so the
+script rests on TLS to kendex.ai and github.com. That is every run of it,
+not only the first, because the script is the upgrade path too and a re-run
+overwrites what is installed with another unchecked download. `kendex
+update` is the path held to the key.
 
 ## Pre-releases
 

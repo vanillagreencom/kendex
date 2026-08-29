@@ -139,12 +139,10 @@ jobs:
           done
           ls -l dist
         shell: bash
-      # `kendex update` replaces the running command with the bytes the feed
-      # names, and refuses any the signature beside them does not cover, so
-      # the command is signed under the same key as the app bundles rather
-      # than being the one download nothing checks. Tauri's signer writes
-      # `<file>.sig`; a lane that produced none has published a download no
-      # client can verify, so it fails here instead.
+      # `kendex update` refuses a command the signature beside it does not
+      # cover, so the command is signed under the same key as the app
+      # bundles. Tauri's signer writes `<file>.sig`; a lane that produced
+      # none published a download no client can verify, so it fails here.
       - name: Sign the kendex command
         shell: bash
         env:
