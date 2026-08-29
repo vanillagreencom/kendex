@@ -208,7 +208,7 @@ test("native caption timeout cancellation reaches the transcript fetcher", async
 			observedSignal = config.signal;
 			if (!config.signal) throw new Error("missing timeout signal");
 			if (config.signal.aborted) throw config.signal.reason;
-			await new Promise<never>((_resolve, reject) => config.signal!.addEventListener("abort", () => reject(config.signal!.reason), { once: true }));
+			await new Promise<never>((_resolve, reject) => { const alive = setTimeout(() => {}, 1000); config.signal!.addEventListener("abort", () => { clearTimeout(alive); reject(config.signal!.reason); }, { once: true }); }); // `alive` is ref'd because the extractor unrefs its timeout timer: without it nothing holds the runner's loop open across this await and node cancels the test
 			throw new Error("unreachable");
 		},
 	}), (error) => error instanceof DOMException && error.name === "TimeoutError");

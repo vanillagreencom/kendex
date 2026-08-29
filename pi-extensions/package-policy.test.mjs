@@ -14,6 +14,16 @@ function packages() {
 		.map((entry) => ({ ...entry, pkg: JSON.parse(readFileSync(entry.packagePath, "utf8")) }));
 }
 
+const workflowPath = join(root, "..", ".github", "workflows", "skill-tests.yml");
+
+// The node shard runs each package's suite from the package directory, so a
+// `working-directory:` under pi-extensions is what marks a step as covering
+// that package.
+function steppedPackages() {
+	const workflow = readFileSync(workflowPath, "utf8");
+	return new Set([...workflow.matchAll(/^\s*working-directory:\s*pi-extensions\/([\w.-]+)\s*$/gm)].map(([, dir]) => dir));
+}
+
 function tsFiles(dir) {
 	const out = [];
 	for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -95,4 +105,18 @@ test("every Pi extension carries a consumer-facing CHANGELOG.md", () => {
 		const version = JSON.parse(readFileSync(join(root, dir, "package.json"), "utf8")).version;
 		assert.ok(changelog.split("\n").some((line) => line.trimEnd() === `### ${version}`), `${dir}: CHANGELOG.md has a "### ${version}" entry for the current package.json version — record consumer-impacting changes with the version bump that ships them`);
 	}
+});
+
+test("every Pi extension suite has a CI step and every step names a package", () => {
+	const stepped = steppedPackages();
+	const dirs = packages().map(({ dir }) => dir);
+	const tested = packages().filter(({ pkg }) => pkg.scripts?.test).map(({ dir }) => dir);
+	// Both sides are derived from the tree and the workflow, so an extractor
+	// that matched nothing would pass this case vacuously — which is the gap
+	// it exists to close. Floor each side first; a zero here means the reader
+	// is broken, not that the repo is empty.
+	assert.ok(stepped.size > 0, `no per-package \`working-directory:\` steps found in ${workflowPath} — the workflow reader is broken`);
+	assert.ok(tested.length > 0, "no package declares a test script — the manifest reader is broken");
+	assert.deepEqual(tested.filter((dir) => !stepped.has(dir)), [], "packages declare a test script that no skill-tests.yml step runs — add a step, or the suite ships uncovered");
+	assert.deepEqual([...stepped].filter((dir) => !dirs.includes(dir)), [], "skill-tests.yml steps name a pi-extensions directory that is not a package");
 });

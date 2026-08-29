@@ -267,6 +267,56 @@ jobs:
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1
           bun test ./extensions/__tests__
 
+      # pi-session-bridge imports nothing from Pi outside type positions, the
+      # same case as pi-hooks above, so its suite runs with no install.
+      - name: pi-session-bridge suite
+        if: matrix.shard == 'node'
+        working-directory: pi-extensions/pi-session-bridge
+        run: npm test
+
+      # The suite mocks @earendil-works/pi-tui with bun's mock.module and
+      # imports only the package's leaf modules, so the Pi value imports
+      # elsewhere in the package are never loaded and no install is needed.
+      - name: pi-session-manager suite
+        if: matrix.shard == 'node'
+        working-directory: pi-extensions/pi-session-manager
+        run: npm test
+
+      # pi-ai-compat.ts value-imports pi-ai, so unlike the two above this
+      # suite needs a real install. The 0.84.1 line is what the extensions are
+      # audited against; pi-agent-core, pi-coding-agent and pi-tui are pinned
+      # alongside it because the package value-imports them too and an
+      # unpinned resolution mismatches pi-coding-agent's exports.
+      - name: pi-skills-manager suite
+        if: matrix.shard == 'node'
+        working-directory: pi-extensions/pi-skills-manager
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1
+          npm test
+
+      # The only pi-extension carrying a committed package-lock.json, so it
+      # installs from that lockfile rather than from a pinned argument list.
+      # `npm ci` brings tsx, which the test script runs the suite under.
+      - name: pi-caveman suite
+        if: matrix.shard == 'node'
+        working-directory: pi-extensions/pi-caveman
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+
+      # youtube-transcript-plus is pinned to the package's own declared range
+      # for the reason undici is above: unversioned resolves the registry's
+      # latest major, so the transcript tests would validate a different major
+      # than consumers install. The Pi packages and typebox are value imports
+      # on the paths the suite exercises, and tsx is what the test script runs
+      # the suite under.
+      - name: pi-web-tools suite
+        if: matrix.shard == 'node'
+        working-directory: pi-extensions/pi-web-tools
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox tsx 'youtube-transcript-plus@^2.0.1'
+          npm test
+
       # Build first: one suite loads bundle/connector-inventory.js rather
       # than src, so a src change without a rebuild has to fail here.
       # `npm ci` is deliberately NOT allowed to fall back to `npm install`:
