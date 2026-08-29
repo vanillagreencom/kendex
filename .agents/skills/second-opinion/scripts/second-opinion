@@ -20,7 +20,6 @@
 #   SECOND_OPINION_ARTIFACT_DIR  Home for artifacts not anchored by --output
 #                                (default: tmp/second-opinion under --cwd)
 #   SECOND_OPINION_REVIEW_INSTRUCTIONS  Repo instruction-file globs for review
-
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,8 +27,6 @@ RUNTIME="$SCRIPT_DIR/second-opinion-runtime"
 ORIGINAL_ARGS=("$@")
 FOREGROUND_CAP_IN_CALLER_ENV=false
 [[ "${SECOND_OPINION_FOREGROUND_CAP:-}" == "1" ]] && FOREGROUND_CAP_IN_CALLER_ENV=true
-
-
 # Whether SECOND_OPINION_CURRENT_MODEL arrived from the CALLER'S OWN
 # environment rather than a project settings file. Captured here because this
 # is the only moment the two can be told apart — project loading exports the
@@ -92,7 +89,8 @@ Options:
   --timeout <secs>  CLI timeout (default: 1080, env: SECOND_OPINION_TIMEOUT)
   --foreground      Mark this call as subject to a foreground harness cap
   -h, --help        Show this help
-
+With --foreground, run the printed wait command unchanged until terminal.
+  Exit 75 means still running; exit 124 means the supervisor deadline was reached.
 Target selection: every mode walks SECOND_OPINION_MODELS in order and takes the
 first target that is available AND runs a different model from this session —
 the model this session runs is never dispatched to, in any mode, forced or not.
@@ -246,6 +244,8 @@ Exit codes:
      non-zero (quota/auth/network), timed out, or returned an empty response on
      a zero exit. No external verdict; whatever partial output existed is kept
      as <output>.failed.json and the CLI's own error text is echoed on stderr
+  75 detached wait: still running — rerun the same printed wait command
+  124 detached wait: the supervisor deadline was reached
 HELP
 }
 

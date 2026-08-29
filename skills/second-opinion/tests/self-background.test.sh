@@ -12,8 +12,6 @@ STARTUP_SESSION=""
 STARTUP_TOKEN=""
 FAILURE_SESSION=""
 FAILURE_TOKEN=""
-LIVENESS_SESSION=""
-LIVENESS_TOKEN=""
 owned_group_member() {
   local token="$1" group="$2" environ pid stat rest
   for environ in /proc/[1-9]*/environ; do
@@ -76,9 +74,6 @@ cleanup() {
   if [[ -n "$FAILURE_SESSION" ]] \
       && owned_group_member "$FAILURE_TOKEN" "$FAILURE_SESSION" >/dev/null; then
     kill -KILL -- "-$FAILURE_SESSION" 2>/dev/null || true
-  fi
-  if [[ -n "$LIVENESS_SESSION" ]]; then
-    stop_owned_session "$LIVENESS_TOKEN" "$LIVENESS_SESSION" 1
   fi
   rm -rf "$TMP_ROOT"
 }
@@ -227,15 +222,6 @@ supervise_blocks_without_polling() {
     END { if (!inside) exit 3 }
   ' "$1"
 }
-waiter_is_observation_only() {
-  awk '
-    /^wait_for_run\(\)/ { inside = 1 }
-    inside && /same_process/ { saw_identity = 1 }
-    inside && /(^|[[:space:]])kill([[:space:]]|$)/ { exit 1 }
-    inside && /^}/ { exit(saw_identity ? 0 : 2) }
-    END { if (!inside) exit 3 }
-  ' "$1"
-}
 
 mkdir -p "$TMP_ROOT/broken-bin"
 cat > "$TMP_ROOT/broken-bin/grep" <<'SH'
@@ -249,7 +235,7 @@ printf 'worker log\n' > "$TMP_ROOT/broken-runtime/worker.log"
 broken_wait_rc=0
 PATH="$TMP_ROOT/broken-bin:$PATH" \
   "$RUNTIME" wait "$TMP_ROOT/broken-artifact" "$TMP_ROOT/broken-runtime" \
-    "$(date +%s)" token "$$" fake 1 >"$TMP_ROOT/broken.stdout" \
+    "$(date +%s)" token 1 >"$TMP_ROOT/broken.stdout" \
     2>"$TMP_ROOT/broken.stderr" || broken_wait_rc=$?
 [[ $broken_wait_rc -eq 1 ]] || fail "broken worker-log read did not fail closed"
 assert_contains "$TMP_ROOT/broken.stderr" "cannot read worker log" \
@@ -289,9 +275,20 @@ cat > "$TMP_ROOT/bin/no-timeout-worker" <<'SH'
 exec "$RUNTIME_FOR_WORKER" tree 1 "$WORKER_STDERR" codex
 SH
 chmod +x "$TMP_ROOT/bin/no-timeout-worker"
+cat > "$TMP_ROOT/bash3-read-env" <<'SH'
+read() {
+  local previous="" arg
+  for arg in "$@"; do
+    if [[ "$previous" == "-t" ]]; then sleep "$arg"; return 1; fi
+    previous="$arg"
+  done
+  command read "$@"
+}
+SH
 mkdir "$TMP_ROOT/deadline-runtime"
 deadline_heartbeat="$TMP_ROOT/deadline-heartbeat"
-PATH="$PATH" RUNTIME_FOR_WORKER="$RUNTIME" WORKER_STDERR="$TMP_ROOT/deadline-tree.stderr" \
+BASH_ENV="$TMP_ROOT/bash3-read-env" PATH="$PATH" RUNTIME_FOR_WORKER="$RUNTIME" \
+  WORKER_STDERR="$TMP_ROOT/deadline-tree.stderr" \
   FAKE_MODE=nested HEARTBEAT_FILE="$deadline_heartbeat" \
   "$RUNTIME" launch "$TMP_ROOT/bin/no-timeout-worker" "$TMP_ROOT/deadline-answer" \
     "$TMP_ROOT/deadline-runtime" 4 false 3 5 x >"$TMP_ROOT/deadline-launch.stdout"
@@ -353,8 +350,8 @@ assert_contains "$RUNTIME" 'mkfifo "$owner_fifo" "$event_fifo"' \
   "supervisor deadline uses owned channels"
 supervise_blocks_without_polling "$RUNTIME" \
   || fail "supervisor executable path polls or lacks blocking event and worker waits"
-waiter_is_observation_only "$RUNTIME" \
-  || fail "waiter liveness path can signal or lacks identity observation"
+assert_not_contains "$RUNTIME" "process_identity" \
+  "wait protocol has no supervisor identity control flow"
 cat > "$TMP_ROOT/polling-supervisor" <<'SH'
 supervise() {
   : > "$gate/release"
@@ -372,20 +369,24 @@ printf 'race\n' > "$TMP_ROOT/race-runtime/token"
 printf 'answer\n' > "$TMP_ROOT/race-answer"
 cat > "$TMP_ROOT/race-bin/grep" <<'SH'
 #!/usr/bin/env bash
-if [[ ! -e "$RACE_ONCE" ]]; then
-  : > "$RACE_ONCE"
+count=0
+[[ ! -e "$RACE_COUNT" ]] || count="$(cat < "$RACE_COUNT")"
+count=$((count + 1))
+printf '%s\n' "$count" > "$RACE_COUNT"
+grep_rc=0
+"$REAL_GREP" "$@" || grep_rc=$?
+if [[ $count -eq 2 ]]; then
   printf '%s\n' "$RACE_COMPLETION" >> "$RACE_LOG"
-  exit 1
 fi
-exec "$REAL_GREP" "$@"
+exit "$grep_rc"
 SH
 chmod +x "$TMP_ROOT/race-bin/grep"
 race_rc=0
 PATH="$TMP_ROOT/race-bin:$PATH" REAL_GREP="$(command -v grep)" \
-  RACE_ONCE="$TMP_ROOT/race.once" RACE_LOG="$TMP_ROOT/race-runtime/worker.log" \
+  RACE_COUNT="$TMP_ROOT/race.count" RACE_LOG="$TMP_ROOT/race-runtime/worker.log" \
   RACE_COMPLETION="__SECOND_OPINION_EXIT_race__=0" \
   "$RUNTIME" wait "$TMP_ROOT/race-answer" "$TMP_ROOT/race-runtime" \
-    "$(date +%s)" race "$$" fake 1 >"$TMP_ROOT/race.stdout" 2>"$TMP_ROOT/race.stderr" \
+    "$(date +%s)" race 1 >"$TMP_ROOT/race.stdout" 2>"$TMP_ROOT/race.stderr" \
     || race_rc=$?
 [[ $race_rc -eq 0 ]] || fail "waiter missed completion published at its deadline check"
 assert_contains "$TMP_ROOT/race.stdout" "$TMP_ROOT/race-answer" \
@@ -492,39 +493,11 @@ bash -c "$empty_wait_cmd" >"$TMP_ROOT/empty-wait.stdout" \
 [[ $empty_rc -eq 1 ]] || fail "zero-exit empty artifact did not fail closed"
 assert_contains "$TMP_ROOT/empty-wait.stderr" "exited 0 without writing its artifact" \
   "zero-exit empty artifact names its failure"
-if [[ "$(uname -s)" == "Linux" ]] && command -v setsid >/dev/null 2>&1; then
-  cat > "$TMP_ROOT/bin/hanging-worker" <<'SH'
-#!/usr/bin/env bash
-while :; do sleep 1; done
-SH
-  chmod +x "$TMP_ROOT/bin/hanging-worker"
-  mkdir "$TMP_ROOT/liveness-runtime"
-  liveness_token="liveness-$RANDOM-$$"
-  TEST_SESSION_TOKEN="$liveness_token" \
-    setsid "$RUNTIME" launch "$TMP_ROOT/bin/hanging-worker" "$TMP_ROOT/liveness-answer" \
-      "$TMP_ROOT/liveness-runtime" 30 false 1 2 x >"$TMP_ROOT/liveness-launch.stdout" &
-  liveness_session=$!
-  LIVENESS_SESSION="$liveness_session"
-  LIVENESS_TOKEN="$liveness_token"
-  wait "$liveness_session"
-  liveness_wait_cmd="$(sed -n 's/^wait: //p' "$TMP_ROOT/liveness-launch.stdout")"
-  liveness_supervisor="$(printf '%s\n' "$liveness_wait_cmd" | awk '{print $(NF-2)}')"
-  kill -KILL "$liveness_supervisor"
-  liveness_started="$(date +%s)"
-  liveness_rc=0
-  bash -c "$liveness_wait_cmd" >"$TMP_ROOT/liveness-wait.stdout" \
-    2>"$TMP_ROOT/liveness-wait.stderr" || liveness_rc=$?
-  liveness_elapsed=$(($(date +%s) - liveness_started))
-  [[ $liveness_rc -eq 1 && $liveness_elapsed -lt 4 ]] \
-    || fail "waiter did not report the dead supervisor promptly"
-  assert_contains "$TMP_ROOT/liveness-wait.stderr" \
-    "supervisor exited without publishing completion" \
-    "waiter reports a dead supervisor without signaling"
-  stop_owned_session "$liveness_token" "$liveness_session" 1
-  LIVENESS_SESSION=""
-else
-  printf 'SKIP: dead-supervisor control requires Linux and setsid\n'
-fi
+"$SECOND_OPINION" --help > "$TMP_ROOT/help.stdout"
+assert_contains "$TMP_ROOT/help.stdout" "Exit 75 means still running" \
+  "help documents resumable detached waits"
+assert_contains "$TMP_ROOT/help.stdout" "124 detached wait: the supervisor deadline was reached" \
+  "help documents the detached supervisor deadline"
 artifact="$TMP_ROOT/answer.txt"
 launch_stdout="$TMP_ROOT/launch.stdout"
 launch_stderr="$TMP_ROOT/launch.stderr"

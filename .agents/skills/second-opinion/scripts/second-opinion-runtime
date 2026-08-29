@@ -4,25 +4,11 @@ set -euo pipefail
 RUNTIME_SELF="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)/${BASH_SOURCE[0]##*/}"
 
 die() { echo "second-opinion-runtime: $1" >&2; exit 1; }
-process_identity() {
-  local pid="$1" stat rest
-  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
-  if [[ -r "/proc/$pid/stat" ]]; then
-    stat=$(cat < "/proc/$pid/stat") || return 1
-    rest="${stat##*) }"
-    set -- $rest
-    [[ $# -ge 20 ]] || return 1
-    printf 'proc:%s\n' "${20}"
-    return
-  fi
-  stat=$(ps -o lstart= -p "$pid" 2>/dev/null) || return 1
-  [[ -n "$stat" ]] || return 1
-  printf 'ps:%s\n' "$stat"
-}
-same_process() {
-  local current
-  current=$(process_identity "$1") || return 1
-  [[ "$current" == "$2" ]]
+wait_for_deadline() {
+  local owner_fd="$1" stop_at="$2" delay
+  delay=$((stop_at - $(date +%s)))
+  if [[ $delay -gt 0 ]]; then IFS= read -r -t "$delay" _ <&"$owner_fd" || true; fi
+  [[ $(date +%s) -ge $stop_at ]]
 }
 runtime_dir_valid() {
   local dir="$1" token="$2" recorded
@@ -207,12 +193,7 @@ supervise() {
   (
     exec 6>&-
     exec 8<"$owner_fifo" || exit 1
-    delay=$((stop_at - $(date +%s)))
-    read_rc=0
-    if [[ $delay -gt 0 ]]; then
-      IFS= read -r -t "$delay" _ <&8 || read_rc=$?
-      [[ $read_rc -gt 128 ]] || exit 0
-    fi
+    wait_for_deadline 8 "$stop_at" || exit 0
     printf 'deadline\n' > "$event_fifo"
   ) &
   watchdog_pid=$!
@@ -276,7 +257,7 @@ launch() {
   [[ "$grace" =~ ^[1-9][0-9]*$ ]] || die "grace must be positive"
   [[ "$wait_slice" =~ ^[1-9][0-9]*$ && $wait_slice -lt 600 ]] \
     || die "wait slice must be positive and below 600 seconds"
-  local deadline token supervisor_pid supervisor_identity log="$runtime_dir/worker.log"
+  local deadline token log="$runtime_dir/worker.log"
   token="$(date +%s).$$.$RANDOM"
   (umask 077 && set -C && printf '%s\n' "$token" > "$runtime_dir/token") \
     || die "cannot create runtime token: $runtime_dir/token"
@@ -287,15 +268,11 @@ launch() {
   deadline=$(($(date +%s) + budget))
   "$RUNTIME_SELF" supervise "$script" "$artifact" "$runtime_dir" "$deadline" \
     "$owned" "$token" "$grace" "$@" <&8 >&9 2>&1 &
-  supervisor_pid=$!
-  supervisor_identity=$(process_identity "$supervisor_pid") \
-    || die "cannot identify detached supervisor $supervisor_pid"
   exec 8<&- 9>&-
   printf 'artifact: %s\n' "$artifact"
   printf 'deadline: %s\n' "$deadline"
   printf 'wait:'
-  printf ' %q' "$RUNTIME_SELF" wait "$artifact" "$runtime_dir" "$deadline" "$token" \
-    "$supervisor_pid" "$supervisor_identity" "$wait_slice"
+  printf ' %q' "$RUNTIME_SELF" wait "$artifact" "$runtime_dir" "$deadline" "$token" "$wait_slice"
   printf '\n'
 }
 
@@ -327,7 +304,7 @@ completion_line() {
 
 wait_for_run() {
   local artifact="$1" runtime_dir="$2" deadline="$3" token="$4"
-  local supervisor_pid="$5" supervisor_identity="$6" wait_slice="$7" log="$2/worker.log"
+  local wait_slice="$5" log="$2/worker.log"
   [[ "$deadline" =~ ^[1-9][0-9]*$ ]] || die "deadline must be a positive epoch"
   [[ "$token" =~ ^[A-Za-z0-9._-]+$ ]] || die "token is malformed"
   [[ "$wait_slice" =~ ^[1-9][0-9]*$ && $wait_slice -lt 600 ]] \
@@ -355,16 +332,6 @@ wait_for_run() {
       [[ $status -eq 0 ]] && printf '%s\n' "$artifact"
       exit "$status"
     fi
-    if ! same_process "$supervisor_pid" "$supervisor_identity"; then
-      grep_rc=0
-      line=$(completion_line "$log" "$prefix") || grep_rc=$?
-      [[ $grep_rc -ne 2 ]] || die "cannot read worker log: $log"
-      [[ -z "$line" ]] || continue
-      cat < "$log" >&2 || die "cannot replay worker log: $log"
-      rm -rf -- "$runtime_dir" || die "cannot remove runtime directory: $runtime_dir"
-      echo "Error: detached supervisor exited without publishing completion" >&2
-      exit 1
-    fi
     now=$(date +%s)
     if [[ $now -ge $attempt_deadline ]]; then
       grep_rc=0
@@ -373,6 +340,10 @@ wait_for_run() {
       [[ -z "$line" ]] || continue
       if [[ $now -ge $deadline ]]; then
         cat < "$log" >&2 || die "cannot replay worker log: $log"
+        grep_rc=0
+        line=$(completion_line "$log" "$prefix") || grep_rc=$?
+        [[ $grep_rc -ne 2 ]] || die "cannot read worker log: $log"
+        [[ -z "$line" ]] || continue
         echo "Error: detached supervisor did not publish completion by deadline $deadline" >&2
         exit 124
       fi
@@ -391,7 +362,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     tree) [[ $# -ge 3 ]] || die "tree arguments are incomplete"; tree "$@" ;;
     supervise) [[ $# -ge 8 ]] || die "supervise arguments are incomplete"; supervise "$@" ;;
     launch) [[ $# -ge 8 ]] || die "launch arguments are incomplete"; launch "$@" ;;
-    wait) [[ $# -eq 7 ]] || die "wait arguments are incomplete"; wait_for_run "$@" ;;
+    wait) [[ $# -eq 5 ]] || die "wait arguments are incomplete"; wait_for_run "$@" ;;
     *) die "unknown action: $action" ;;
   esac
 fi
