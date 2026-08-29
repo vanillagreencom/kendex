@@ -26,6 +26,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 DISPOSITION="$SKILL_DIR/references/finding-disposition.md"
 COMMENTS_WF="$SKILL_DIR/workflows/review-pr-comments.md"
+DEV_FIX_WF="$SKILL_DIR/workflows/dev-fix.md"
 OVERSEE_WF="$SKILL_DIR/workflows/oversee.md"
 STATE_SCHEMA="$SKILL_DIR/schemas/workflow-state.md"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
@@ -235,6 +236,14 @@ check_token "$COMMENTS_WF" "--slurpfile entry [WORKTREE_PATH]/tmp/patched-cause-
 check_token "$COMMENTS_WF" "--slurpfile entry [WORKTREE_PATH]/tmp/frozen-cause-[ISSUE_ID].json" \
   "§ 6 records a frozen cause in workflow state"
 
+# The other writer of the record § 5 reads. The comment loop fills it from its
+# own reply step; the pr-review, qa-review, and review rounds reach it through
+# `dev-fix.md` § 2, whose write is the only thing standing between those loops
+# and a recurrence check reading an empty history. Structural: the command is
+# present at that step.
+check_token "$DEV_FIX_WF" "--slurpfile cause tmp/patched-cause-[ISSUE_ID].json" \
+  "dev-fix.md § 2 records a patched cause in workflow state"
+
 # Reviewer text never crosses argv: no cause is appended as an inline literal.
 if grep -qE 'append \[ISSUE_ID\] pr_comment_review\.(patched|frozen)_causes' <<<"$(strip_comments "$COMMENTS_WF")"; then
   fail "a cause write puts reviewer text back on the command line"
@@ -328,6 +337,9 @@ gone recurrence_section "$(drop declined "$DISPOSITION" '`decline`')" \
   '`decline`' "a frozen cause that files again instead of declining"
 gone recurrence_section "$(drop trigger "$DISPOSITION" '`patched_causes`')" \
   '`patched_causes`' "a trigger cut loose from the record that proves a patch"
+gone cat "$(drop devfix-cause "$DEV_FIX_WF" '--slurpfile cause tmp/patched-cause-[ISSUE_ID].json')" \
+  '--slurpfile cause tmp/patched-cause-[ISSUE_ID].json' \
+  "a dropped dev-fix cause write, which blinds both readers"
 
 # Two tokens, so two fixtures: dropping either must redden the carve-out.
 for token in introduces arms; do
