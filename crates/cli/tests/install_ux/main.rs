@@ -23,7 +23,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use kendex_test_support::RootedTempDir;
+#[path = "../../../test_util.rs"]
+mod test_util;
+use test_util::rooted;
 
 /// The binary, pointed at a fixture home it must treat as real — without
 /// `KENDEX_REAL_HOME` a debug build sandboxes itself into the dev home and
@@ -87,7 +89,7 @@ pub fn git(dir: &Path, args: &[&str]) -> String {
 /// A fixture home holding a local catalog and an empty git project, with
 /// the harnesses named here looking installed on the machine.
 pub struct World {
-    _fixture: RootedTempDir,
+    pub tmp: tempfile::TempDir,
     pub home: PathBuf,
     pub project: PathBuf,
     pub catalog: PathBuf,
@@ -98,8 +100,13 @@ impl World {
     /// `detected` names the harnesses whose global directory exists, which
     /// is what kendex's own detection reads.
     pub fn new(detected: &[&str]) -> World {
-        let fixture = RootedTempDir::new().unwrap();
-        let home = fixture.path().to_owned();
+        // Canonical once, where the fixture's root enters (invariant 17).
+        // A temporary directory is routinely behind a symlink — macOS
+        // fronts `/var` with `/private/var` — and every path kendex prints
+        // comes back resolved, so a fixture holding the unresolved spelling
+        // compares two names for one directory and reads them as two.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
         let catalog = home.join("catalog");
         write(
             &catalog.join("skills/deploy/SKILL.md"),
@@ -121,7 +128,7 @@ impl World {
         git(&project, &["add", "."]);
         git(&project, &["commit", "--quiet", "-m", "start"]);
         World {
-            _fixture: fixture,
+            tmp,
             home,
             project,
             catalog,

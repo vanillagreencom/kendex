@@ -18,7 +18,6 @@ serde_json.workspace = true
 cliclack.workspace = true
 
 [dev-dependencies]
-kendex-test-support.workspace = true
 tempfile.workspace = true
 
 [lints]

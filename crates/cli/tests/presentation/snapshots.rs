@@ -13,8 +13,8 @@ use super::*;
 /// rules own and this suite does not.
 #[allow(clippy::unwrap_used)]
 fn shape(setup: &[&str], args: &[&str]) -> Vec<String> {
-    let tmp = RootedTempDir::new().unwrap();
-    let home = tmp.path();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
     let project = blocked_project(home);
     let catalog = home.join("catalog").display().to_string();
     let fill = |args: &[&str]| -> Vec<String> {
@@ -166,8 +166,8 @@ fn remove() {
 #[allow(clippy::unwrap_used)]
 fn a_name_off_a_foreign_tree_cannot_forge_a_line() {
     for ui in ["plain", "pretty"] {
-        let tmp = RootedTempDir::new().unwrap();
-        let home = tmp.path();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = &rooted(&tmp);
         let project = home.join("dev/app");
         blocked_project_at(home, &project);
         // Content nothing manages, named with the two characters that
@@ -220,8 +220,8 @@ fn a_name_off_a_foreign_tree_cannot_forge_a_line() {
 #[allow(clippy::unwrap_used)]
 fn the_scope_a_line_names_is_escaped_with_the_rest() {
     for ui in ["plain", "pretty"] {
-        let tmp = RootedTempDir::new().unwrap();
-        let home = tmp.path();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = &rooted(&tmp);
         let project = home.join("we\u{1b}[31mird");
         blocked_project_at(home, &project);
         let printed = said(&kendex(
@@ -247,8 +247,8 @@ fn the_scope_a_line_names_is_escaped_with_the_rest() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_verdict_counts_the_lines_the_report_actually_printed() {
-    let tmp = RootedTempDir::new().unwrap();
-    let home = tmp.path();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
     let project = crowded_project(home, 14);
     let output = kendex(home, &project, "plain", &["check", "--scope", "project"]);
     let report = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -302,8 +302,8 @@ fn crowded_project(home: &Path, count: usize) -> PathBuf {
 #[allow(clippy::unwrap_used)]
 fn a_late_warning_lands_above_the_closing_ledger() {
     for ui in ["plain", "pretty"] {
-        let tmp = RootedTempDir::new().unwrap();
-        let home = tmp.path();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = &rooted(&tmp);
         let project = blocked_project(home);
         kendex(
             home,
@@ -313,7 +313,7 @@ fn a_late_warning_lands_above_the_closing_ledger() {
         );
         // The snapshot's own directory, made unwritable so deriving it
         // fails after the plan has already been written.
-        let drift = Env::host_rooted(home).drift_dir();
+        let drift = Env::host_rooted(home.clone()).drift_dir();
         assert!(drift.is_dir(), "the fixture never derived a snapshot");
         let mut mode = fs::metadata(&drift).unwrap().permissions();
         mode.set_readonly(true);

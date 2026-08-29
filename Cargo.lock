@@ -2288,7 +2288,6 @@ dependencies = [
  "clap",
  "cliclack",
  "kendex-core",
- "kendex-test-support",
  "serde_json",
  "tempfile",
 ]
@@ -2314,21 +2313,6 @@ dependencies = [
  "toml 1.1.4+spec-1.1.0",
  "unicode-normalization",
  "yaml-rust2",
-]
-
-[[package]]
-name = "kendex-guard-checks"
-version = "5.0.1"
-dependencies = [
- "proc-macro2",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "kendex-test-support"
-version = "5.0.1"
-dependencies = [
- "tempfile",
 ]
 
 [[package]]

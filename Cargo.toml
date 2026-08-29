@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/app", "crates/cli", "crates/guard-checks", "crates/test-support"]
+members = ["crates/core", "crates/app", "crates/cli"]
 
 [workspace.package]
 version = "5.0.1"
@@ -9,7 +9,6 @@ rust-version = "1.96"
 
 [workspace.dependencies]
 kendex-core = { path = "crates/core" }
-kendex-test-support = { path = "crates/test-support" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 toml = "1.1"
@@ -42,8 +41,6 @@ semver = "1"
 # two delivery paths for one AppImage hold the same bar.
 minisign-verify = "0.2"
 base64 = "0.22"
-proc-macro2 = { version = "1", features = ["span-locations"] }
-syn = { version = "2", features = ["full", "visit"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

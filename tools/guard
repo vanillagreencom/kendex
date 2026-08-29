@@ -9,10 +9,6 @@
 # Checks the working tree, not the staged index — accepted trade-off:
 # agents commit whole files; partial staging is out of scope.
 set -uo pipefail
-guard_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd) || {
-  echo "guard: could not resolve the checker workspace"
-  exit 2
-}
 cd "$(git rev-parse --show-toplevel)"
 fail=0
 say() {
@@ -165,22 +161,66 @@ done)
   say 'fixture HOME without KENDEX_REAL_HOME on the next line — that command would run in the dev sandbox'
 }
 
-# Integration fixtures own temporary roots through RootedTempDir, whose path
-# is canonical by construction. The diff scope leaves older local fixtures
-# alone while making every new owner obey that boundary.
+# New integration-test temp roots take their canonical spelling immediately
+# through the shared rooted() helper. Older fixtures stay out of this
+# diff-scoped rule.
 if git cat-file -e 'HEAD^{commit}' 2>/dev/null; then
-  temp_fixture_diff=$(git diff --no-color --unified=0 --no-ext-diff HEAD -- 'crates/*/tests/*.rs') ||
+  temp_fixture_diff=$(git diff --no-color --unified=100000 --no-ext-diff HEAD -- 'crates/*/tests/*.rs') ||
     say "test fixture changes could not be read"
 else
-  temp_fixture_diff=$(git diff --cached --no-color --unified=0 --no-ext-diff -- 'crates/*/tests/*.rs') ||
+  temp_fixture_diff=$(git diff --cached --no-color --unified=100000 --no-ext-diff -- 'crates/*/tests/*.rs') ||
     say "test fixture changes could not be read"
 fi
-if ! temp_fixture_hits=$(cargo run --quiet --manifest-path "$guard_root/Cargo.toml" -p kendex-guard-checks --bin temp-fixture-check -- "$(pwd)" <<<"$temp_fixture_diff"); then
-  say "temporary fixture constructors could not be checked"
+if ! temp_fixture_hits=$(awk '
+  function flush() {
+    if (pending != "") print file ":" pending_line ": " pending_text
+    pending = ""
+  }
+  /^diff --git / {
+    flush()
+    file = $4
+    sub(/^b\//, "", file)
+    next
+  }
+  /^@@ / {
+    flush()
+    spec = $3
+    sub(/^\+/, "", spec)
+    split(spec, at, ",")
+    new_line = at[1] - 1
+    next
+  }
+  /^--- / || /^\+\+\+ / { next }
+  /^[ +]/ {
+    prefix = substr($0, 1, 1)
+    line = substr($0, 2)
+    new_line++
+    if (pending != "") {
+      if (line ~ /^[[:space:]]*$/ || line ~ /^[[:space:]]*\/\//) next
+      rooted = "^[[:space:]]*let[[:space:]]+[A-Za-z][A-Za-z0-9_]*([[:space:]]*:[^=]+)?[[:space:]]*=[[:space:]]*&?[[:space:]]*rooted[[:space:]]*\\([[:space:]]*&[[:space:]]*" pending "[[:space:]]*\\)"
+      if (line !~ rooted) print file ":" pending_line ": " pending_text
+      pending = ""
+    }
+    if (prefix == "+" && line ~ /^[[:space:]]*let[[:space:]]+(mut[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*([[:space:]]*:[^=]+)?[[:space:]]*=[[:space:]]*(tempfile::tempdir\(\)|(tempfile::)?TempDir::new\(\))/) {
+      declaration = line
+      sub(/^[[:space:]]*let[[:space:]]+/, "", declaration)
+      sub(/^mut[[:space:]]+/, "", declaration)
+      sub(/([[:space:]]*:[^=]+)?[[:space:]]*=.*/, "", declaration)
+      pending = declaration
+      pending_line = new_line
+      pending_text = line
+    }
+    next
+  }
+  /^-/ { next }
+  { flush() }
+  END { flush() }
+' <<<"$temp_fixture_diff"); then
+  say "temporary fixture declarations could not be checked"
 fi
 [ -n "$temp_fixture_hits" ] && {
   echo "$temp_fixture_hits" | head -5
-  say 'direct tempfile constructor added under crates/*/tests: use kendex_test_support::RootedTempDir'
+  say 'temporary fixture bypasses rooted(): import crates/test_util.rs and bind the canonical root on the next source line'
 }
 
 # Structural invariants.

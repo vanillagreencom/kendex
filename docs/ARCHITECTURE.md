@@ -44,8 +44,8 @@ Observation (scanner truth) · Drift. Core modules mirror the verbs: `model`, `s
 `crates/core` — pure domain, with `quality/` holding the content rules and
 both scores, disjoint from render and engine. `crates/app` — Tauri
 commands, one module per page domain; events stream scan progress.
-`crates/cli` — thin verbs over core; `crates/guard-checks` parses repo policy; `crates/test-support` holds shared fixtures.
-`ui/` — React 19 + Tailwind v4 + shadcn/ui + zustand over generated bindings (tauri-specta). Adapters in
+`crates/cli` — thin verbs over the same core. `ui/` — React 19 + Tailwind v4 +
+shadcn/ui + zustand over generated bindings (tauri-specta). Adapters in
 `core/harness/` own paths and rendering only; what each harness supports
 lives in one capability table read by core and UI.
 

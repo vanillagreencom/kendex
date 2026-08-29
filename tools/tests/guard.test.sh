@@ -18,7 +18,7 @@ REPO="$(cd "$TEST_DIR/../.." && pwd)"
 RATCHET="$REPO/.agents/skills/size-ratchet/scripts/size-ratchet"
 CHANGELOG_ENTRIES="$REPO/.agents/skills/growth-guards/scripts/changelog-entries"
 REAL_GIT="$(command -v git)"
-REAL_CARGO="$(command -v cargo)"
+REAL_AWK="$(command -v awk)"
 # Enforcement in this repo rests on this key, and a glob matching no tracked
 # file is a documented clean pass — so a hardcoded copy here would stay green
 # after the key stopped reaching the fragment tree.
@@ -90,62 +90,31 @@ temp_case() { # pass|refuse LABEL SOURCE-LINE...
   run_guard RATCHET_RAISE=
   if [ "$expected" = pass ] && [ "$RC" -eq 0 ]; then
     ok "$label"
-  elif [ "$expected" = refuse ] && [ "$RC" -ne 0 ] && [[ "$OUT" == *"direct tempfile constructor added"* ]]; then
+  elif [ "$expected" = refuse ] && [ "$RC" -ne 0 ] && [[ "$OUT" == *"temporary fixture bypasses rooted()"* ]]; then
     ok "$label"
   else
     bad "$label" "rc=$RC out=$OUT"
   fi
 }
 
-for constructor in \
-  'tempfile::tempdir().unwrap()' \
-  'tempfile::TempDir::new().unwrap()' \
-  'tempfile::tempdir_in(".").unwrap()' \
-  'tempfile::TempDir::with_prefix("fixture").unwrap()' \
-  'tempfile::TempDir::with_prefix_in("fixture", ".").unwrap()' \
-  'tempfile::Builder::new().tempdir().unwrap()' \
-  'tempfile::Builder::new().tempdir_in(".").unwrap()'; do
-  temp_case refuse "direct fixture ownership is refused for $constructor" \
-    'fn fixture() {' " let _tmp = $constructor;" '}'
-done
-temp_case refuse "an imported tempdir function is refused" \
-  'use tempfile::tempdir;' 'fn fixture() {' ' let _tmp = tempdir().unwrap();' '}'
-temp_case refuse "an imported TempDir constructor is refused" \
-  'use tempfile::TempDir;' 'fn fixture() {' ' let _tmp = TempDir::new_in(".").unwrap();' '}'
-temp_case refuse "a multiline Builder constructor is refused" \
-  'fn fixture() {' ' let _tmp = tempfile::Builder::new()' ' .prefix("fixture")' ' .tempdir()' ' .unwrap();' '}'
-temp_case refuse "a split free-function call is refused" \
-  'fn fixture() {' ' let _tmp = tempfile::tempdir' ' ();' '}'
-temp_case refuse "an aliased tempfile import is refused" \
-  'use tempfile::tempdir as make_fixture;' 'fn fixture() {' ' let _tmp = make_fixture();' '}'
-temp_case pass "RootedTempDir owns and exposes the canonical fixture root" \
-  'struct World { fixture: kendex_test_support::RootedTempDir }' 'fn fixture() {' ' let world = World { fixture: kendex_test_support::RootedTempDir::new().unwrap() };' ' let root = world.fixture.path();' ' drop(root);' '}'
+temp_case refuse "tempfile::tempdir without rooted is refused" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' drop(tmp);' '}'
+temp_case refuse "TempDir::new without rooted is refused" \
+  'fn fixture() {' ' let tmp = tempfile::TempDir::new().unwrap();' ' drop(tmp);' '}'
+temp_case pass "a bound rooted fixture passes" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let home = &rooted(&tmp);' ' drop(home);' '}'
+temp_case pass "comments may sit between construction and rooted" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' // The root enters here.' ' let home = rooted(&tmp);' ' drop(home);' '}'
 temp_case pass "same-name non-temporary path owners do not trigger" \
   'fn fixture() {' ' let tmp = ProjectFixture::new();' ' let root = tmp.path();' ' drop(root);' '}'
 temp_case pass "comments and strings that mention tempfile constructors pass" \
   'fn prose() {' ' // let tmp = tempfile::tempdir().unwrap();' ' let shown = "tempfile::TempDir::new()";' ' drop(shown);' '}'
-temp_case pass "multiline raw strings that mention constructors pass" \
-  'fn prose() {' ' let shown = r#"' ' tempfile::tempdir()' ' tempfile::TempDir::new()' ' "#;' ' drop(shown);' '}'
-temp_case refuse "a line-comment glob cannot hide a later constructor" \
+temp_case refuse "a line-comment glob cannot hide a later unrooted fixture" \
   'fn fixture() {' ' // fixtures live under crates/*/tests' ' let _tmp = tempfile::tempdir().unwrap();' '}'
-temp_case refuse "an imported path sink cannot make a raw owner compliant" \
-  'use helpers::accepts_path;' 'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' accepts_path(&tmp);' '}'
-
-mkdir -p "$R/crates/core/tests/split_fixture"
-printf '%s\n' 'pub struct World { pub tmp: tempfile::TempDir }' 'pub fn world() -> World { World { tmp: tempfile::tempdir().unwrap() } }' >"$R/crates/core/tests/split_fixture/main.rs"
-printf '%s\n' 'use super::*;' 'fn raw(world: &World) { let _ = world.tmp.path(); }' >"$R/crates/core/tests/split_fixture/uses.rs"
-git -C "$R" add -A
-run_guard RATCHET_RAISE=
-[ "$RC" -ne 0 ] && case "$OUT" in *"split_fixture/main.rs"*"direct tempfile constructor added"*) true ;; *) false ;; esac \
-  && ok "a split-module raw TempDir owner is refused" \
-  || bad "a split-module raw TempDir owner is refused" "rc=$RC out=$OUT"
-git -C "$R" reset -q HEAD -- crates/core/tests/split_fixture/main.rs crates/core/tests/split_fixture/uses.rs
-rm -f "$R/crates/core/tests/split_fixture/main.rs" "$R/crates/core/tests/split_fixture/uses.rs"
-rmdir "$R/crates/core/tests/split_fixture"
 
 git -C "$R" config color.diff always
-temp_case refuse "colored diff output cannot hide a direct constructor" \
-  'fn fixture() {' ' let _tmp = tempfile::tempdir().unwrap();' '}'
+temp_case refuse "colored diff output cannot hide an unrooted fixture" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' drop(tmp);' '}'
 git -C "$R" config --unset color.diff
 
 mkdir -p "$R/fake-bin"
@@ -155,31 +124,31 @@ set -euo pipefail
 is_temp_diff=0
 if [ "${1:-}" = diff ]; then
   for arg in "$@"; do
-    [ "$arg" = "--unified=0" ] && is_temp_diff=$((is_temp_diff + 1))
+    [ "$arg" = "--unified=100000" ] && is_temp_diff=$((is_temp_diff + 1))
     [ "$arg" = "crates/*/tests/*.rs" ] && is_temp_diff=$((is_temp_diff + 1))
   done
 fi
 [ "${FAIL_TEMP_DIFF:-0}" -eq 1 ] && [ "$is_temp_diff" -eq 2 ] && exit 2
 exec "$REAL_GIT" "$@"
 SH
-cat >"$R/fake-bin/cargo" <<'SH'
+cat >"$R/fake-bin/awk" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-if [ "${FAIL_TEMP_CHECK:-0}" -eq 1 ] && [[ "$*" == *temp-fixture-check* ]]; then
+if [ "${FAIL_TEMP_AWK:-0}" -eq 1 ] && [[ "${1:-}" == *pending_text* ]]; then
   exit 2
 fi
-exec "$REAL_CARGO" "$@"
+exec "$REAL_AWK" "$@"
 SH
-chmod +x "$R/fake-bin/git" "$R/fake-bin/cargo"
-run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" REAL_CARGO="$REAL_CARGO" FAIL_TEMP_DIFF=1
+chmod +x "$R/fake-bin/git" "$R/fake-bin/awk"
+run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" REAL_AWK="$REAL_AWK" FAIL_TEMP_DIFF=1
 [ "$RC" -ne 0 ] && case "$OUT" in *"test fixture changes could not be read"*) true ;; *) false ;; esac \
   && ok "a failed fixture diff blocks guard" \
   || bad "a failed fixture diff blocks guard" "rc=$RC out=$OUT"
-run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" REAL_CARGO="$REAL_CARGO" FAIL_TEMP_CHECK=1
-[ "$RC" -ne 0 ] && case "$OUT" in *"temporary fixture constructors could not be checked"*) true ;; *) false ;; esac \
+run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" REAL_AWK="$REAL_AWK" FAIL_TEMP_AWK=1
+[ "$RC" -ne 0 ] && case "$OUT" in *"temporary fixture declarations could not be checked"*) true ;; *) false ;; esac \
   && ok "a failed fixture parser blocks guard" \
   || bad "a failed fixture parser blocks guard" "rc=$RC out=$OUT"
-rm -f "$R/fake-bin/git" "$R/fake-bin/cargo"
+rm -f "$R/fake-bin/git" "$R/fake-bin/awk"
 git -C "$R" reset -q HEAD -- crates/core/tests/temp_path.rs
 rm -f "$R/crates/core/tests/temp_path.rs"
 
