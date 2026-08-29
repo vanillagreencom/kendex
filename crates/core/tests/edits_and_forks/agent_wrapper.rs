@@ -484,3 +484,104 @@ fn a_published_section_the_rewrite_makes_identical_is_not_taken() {
     assert_eq!(times(&text, "My body."), 1, "{text}");
     assert_eq!(banners(&text), 1, "{text}");
 }
+
+/// A body may spell the banner as an example of it — indented into a code
+/// block, where it is the person's own content. The walk had the banner
+/// already, as the section the renderer wrote at the top; a filter run
+/// over what the walk kept takes their line as well, wherever it stands.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_banner_line_the_body_spells_as_an_example_is_kept() {
+    let example = format!("    {BANNER}");
+    let w = agent_world(
+        "\"claude\"",
+        &format!(
+            "---\nname: rev\ndescription: agent rev\n---\nUpstream body. Every rendering opens with:\n\n{example}\n"
+        ),
+        "",
+        "",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    // The generated banner, and the person's example of one.
+    assert_eq!(banners(&text), 2, "{text}");
+    edit_body(&file);
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    assert_eq!(
+        banners(&source),
+        1,
+        "the example is the person's own line and the capture took it for the renderer's: {source}"
+    );
+    assert!(
+        source.contains(&example),
+        "the example keeps the indent that makes it a code block: {source}"
+    );
+
+    let text = fs::read_to_string(&file).unwrap();
+    assert_eq!(banners(&text), 2, "{text}");
+    assert_eq!(
+        times(&text, "My body. Every rendering opens with:"),
+        1,
+        "{text}"
+    );
+}
+
+/// A generated section may carry a fenced code block, and inside one a
+/// blank line is a line of the block rather than separation between
+/// sections. A person who edits that whitespace has edited the section,
+/// so it is theirs now and the canonical one is written beside it — a
+/// walk that reads their blank lines as separators subtracts the block
+/// they edited and their edit is gone with it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn whitespace_a_person_edits_inside_a_generated_code_block_is_their_edit() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "[agent-additional-instructions]\nrev = \"\"\"\nRun each in turn:\n\n```sh\nfirst\n\nsecond\n```\"\"\"\n",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    assert!(text.contains("```sh\nfirst\n\nsecond\n```"), "{text}");
+
+    // The person closes the gap inside the block and leaves every other
+    // line of the section standing.
+    let edited = text
+        .replace("first\n\nsecond", "first\nsecond")
+        .replace("Upstream body.", "My body.");
+    assert_eq!(times(&edited, "## Additional Instructions"), 1, "{edited}");
+    fs::write(&file, &edited).unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    assert!(
+        source.contains("```sh\nfirst\nsecond\n```"),
+        "the block they edited is their words now, gap and all: {source}"
+    );
+    for line in [
+        "## Additional Instructions",
+        "Run each in turn:",
+        "My body.",
+    ] {
+        assert_eq!(times(&source, line), 1, "{line} count wrong: {source}");
+    }
+
+    let text = fs::read_to_string(&file).unwrap();
+    assert_eq!(
+        times(&text, "## Additional Instructions"),
+        2,
+        "the section the person edited, and the canonical one beside it: {text}"
+    );
+    assert!(text.contains("```sh\nfirst\nsecond\n```"), "{text}");
+    assert!(text.contains("```sh\nfirst\n\nsecond\n```"), "{text}");
+    assert_eq!(banners(&text), 1, "{text}");
+}

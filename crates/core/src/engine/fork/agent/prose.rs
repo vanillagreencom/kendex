@@ -4,6 +4,7 @@
 //! of the manifest this fork carries would otherwise stand twice.
 
 use crate::render::agent::GENERATED_BANNER;
+use crate::render::fence_marker;
 
 use super::wrapper::Wrapper;
 
@@ -27,20 +28,28 @@ use super::wrapper::Wrapper;
 /// holds more copies of it than the publisher brought.
 pub(super) fn prose(body: &str, wrapper: Option<&Wrapper>) -> String {
     let lines: Vec<&str> = body.lines().collect();
-    let mut kept = lines.as_slice();
-    if let Some(wrapper) = wrapper {
-        let publisher: Vec<&str> = wrapper.published.lines().collect();
-        kept = &kept[taken(kept, &publisher, &said(&wrapper.before, false))..];
-        let body_back: Vec<&str> = kept.iter().rev().copied().collect();
-        let publisher_back: Vec<&str> = publisher.iter().rev().copied().collect();
-        kept =
-            &kept[..kept.len() - taken(&body_back, &publisher_back, &said(&wrapper.after, true))];
-    }
+    let kept: Vec<&str> = match wrapper {
+        Some(wrapper) => {
+            let publisher: Vec<&str> = wrapper.published.lines().collect();
+            let front = &lines[taken(&lines, &publisher, &said(&wrapper.before, false))..];
+            let body_back: Vec<&str> = front.iter().rev().copied().collect();
+            let publisher_back: Vec<&str> = publisher.iter().rev().copied().collect();
+            let back = taken(&body_back, &publisher_back, &said(&wrapper.after, true));
+            front[..front.len() - back].to_vec()
+        }
+        // Nothing was subtracted, so the banner the renderer wrote is
+        // still standing in the body — the one line the next render is
+        // certain to write again. Where a wrapper was read the banner is
+        // a section like any other and the walk has already had it, so
+        // filtering here would take a line the walk deliberately kept.
+        None => lines
+            .iter()
+            .filter(|line| line.trim() != GENERATED_BANNER)
+            .copied()
+            .collect(),
+    };
     let mut out = String::new();
-    // The banner is a section like any other and comes off with them.
-    // Filtered again here for the body no wrapper could be read for,
-    // where nothing was taken off at all.
-    for line in kept.iter().filter(|line| line.trim() != GENERATED_BANNER) {
+    for line in kept {
         out.push_str(line);
         out.push('\n');
     }
@@ -50,16 +59,41 @@ pub(super) fn prose(body: &str, wrapper: Option<&Wrapper>) -> String {
     format!("{}\n", out.trim_start_matches('\n').trim_end())
 }
 
+/// One line a section is identified by. `fenced` is a line standing
+/// inside a fenced code block, where whitespace is content the person can
+/// edit rather than separation between sections.
+struct Line<'a> {
+    text: &'a str,
+    fenced: bool,
+}
+
 /// The lines that identify each section, in the order a walk from this
-/// end meets them. Blank lines are left out: they separate sections
-/// rather than say which one this is, and a person who closed a gap up
-/// has not deleted a section.
-fn said<'a>(sections: &'a [String], from_the_end: bool) -> Vec<Vec<&'a str>> {
-    let lines = |section: &'a String| -> Vec<&'a str> {
-        let said = section.lines().filter(|line| !line.trim().is_empty());
+/// end meets them. A blank line outside a fenced block is left out: it
+/// separates sections rather than says which one this is, and a person
+/// who closed a gap up has not deleted a section. Inside one it is kept,
+/// because there it is a line of the block's own text.
+fn said<'a>(sections: &'a [String], from_the_end: bool) -> Vec<Vec<Line<'a>>> {
+    let lines = |section: &'a String| -> Vec<Line<'a>> {
+        let mut fence: Option<(char, usize)> = None;
+        let mut said = Vec::new();
+        for text in section.lines() {
+            let fenced = fence.is_some();
+            match (fence_marker(text), fence) {
+                (Some((marker, run, bare)), Some((open, len)))
+                    if marker == open && run >= len && bare =>
+                {
+                    fence = None;
+                }
+                (Some((marker, run, _)), None) => fence = Some((marker, run)),
+                _ => {}
+            }
+            if fenced || !text.trim().is_empty() {
+                said.push(Line { text, fenced });
+            }
+        }
         match from_the_end {
-            true => said.rev().collect(),
-            false => said.collect(),
+            true => said.into_iter().rev().collect(),
+            false => said,
         }
     };
     match from_the_end {
@@ -74,7 +108,7 @@ fn said<'a>(sections: &'a [String], from_the_end: bool) -> Vec<Vec<&'a str>> {
 /// where the person's own prose starts. A section the published prose
 /// brought its own copies of is taken only where the body holds one more
 /// than those, which is the copy the wrapper added.
-fn taken(body: &[&str], published: &[&str], sections: &[Vec<&str>]) -> usize {
+fn taken(body: &[&str], published: &[&str], sections: &[Vec<Line>]) -> usize {
     let mut at = 0;
     for section in sections {
         if copies(&body[at..], section) > copies(published, section)
@@ -88,7 +122,7 @@ fn taken(body: &[&str], published: &[&str], sections: &[Vec<&str>]) -> usize {
 
 /// How many copies of this section stand one after another at the front of
 /// `body`.
-fn copies(body: &[&str], section: &[&str]) -> usize {
+fn copies(body: &[&str], section: &[Line]) -> usize {
     let mut at = 0;
     let mut seen = 0;
     while let Some(more) = held(&body[at..], section) {
@@ -100,21 +134,27 @@ fn copies(body: &[&str], section: &[&str]) -> usize {
 
 /// How many lines at the front of `body` hold this whole section, or
 /// `None` where they do not. Whole means every line the section is
-/// identified by, in its order, with nothing but blank lines among them.
-/// A body holding some of a section holds none of it: half a section is
-/// as likely to be the person writing what the renderer would have
-/// written as it is the remains of what it wrote.
-fn held(body: &[&str], section: &[&str]) -> Option<usize> {
+/// identified by, in its order, with nothing but separating blank lines
+/// among them. A body holding some of a section holds none of it: half a
+/// section is as likely to be the person writing what the renderer would
+/// have written as it is the remains of what it wrote.
+fn held(body: &[&str], section: &[Line]) -> Option<usize> {
     if section.is_empty() {
         return None;
     }
     let mut matched = 0;
     let mut through = 0;
     for (at, line) in body.iter().enumerate() {
-        if line.trim().is_empty() {
+        let want = section.get(matched)?;
+        // A blank line the section is not standing on is separation, and
+        // a person may open or close a gap without touching the section.
+        // One the section does stand on is a line of a fenced block, where
+        // their whitespace is content: it has to match byte for byte, and
+        // one they added stands against the block's next line and refuses.
+        if line.trim().is_empty() && !want.fenced {
             continue;
         }
-        if line != section.get(matched)? {
+        if *line != want.text {
             return None;
         }
         matched += 1;
