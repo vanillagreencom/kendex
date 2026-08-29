@@ -148,11 +148,42 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-24.04
+    # The pre-release channel below is one mutable pointer, so two tag runs
+    # must not interleave their reads and writes of it: the run that read
+    # first and uploaded last would leave the older manifests in place.
+    # Queued rather than cancelled — a cancelled publish is a tag with no
+    # release at all.
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+      # What kind of tag this is, decided once for every step below. SemVer
+      # puts build metadata after a `+` and it is not part of the version,
+      # so the `-` that marks a pre-release is only a `-` in what is left:
+      # v1.0.0+build-1 is a full release. Asking whether the tag contains a
+      # `-` calls that one a candidate while the build it produces reads
+      # itself as a release and follows release URLs, which is the two
+      # halves disagreeing about one tag.
+      - name: Classify the tag
+        id: tag
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          core="${version%%+*}"
+          if [[ ! "$core" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} is not a SemVer version. The release version is the tag without its leading v, and the app parses it as SemVer or refuses to update."
+            exit 1
+          fi
+          case "$core" in
+            *-*) prerelease=true ;;
+            *) prerelease=false ;;
+          esac
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Write the update feed
         run: |
           version="${GITHUB_REF_NAME#v}"
@@ -223,24 +254,61 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          draft: ${{ !contains(github.ref_name, '-') }}
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          draft: ${{ steps.tag.outputs.prerelease == 'false' }}
+          prerelease: ${{ steps.tag.outputs.prerelease == 'true' }}
       # And because "latest" skips them, a candidate has no way to reach the
       # next one. This release is that way: one fixed tag whose two manifests
       # are overwritten by each new candidate, which is the URL
-      # `update_feed::feed_url_for` sends a candidate to. The manifests name
-      # their downloads by the tag that built them, so what they point at is
-      # this tag's own release, published by the step above.
+      # `update_channel::feed_url_for` sends a candidate to. The manifests
+      # name their downloads by the tag that built them, so what they point
+      # at is this tag's own release, published by the step above.
       - name: Point the pre-release channel at this tag
-        if: contains(github.ref_name, '-')
+        if: steps.tag.outputs.prerelease == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           CHANNEL: prerelease
+          NEW_VERSION: ${{ steps.tag.outputs.version }}
         run: |
-          gh release view "$CHANNEL" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 ||
+          # Whether $1 is ahead of $2 under SemVer precedence, which is
+          # jq's own ordering once each version is turned into the key
+          # SemVer compares by: the numeric core, then a release ranking
+          # above the pre-releases leading to it, then the pre-release
+          # identifiers, where an all-digit one ranks below an alphanumeric
+          # one and alphanumerics compare as text. That last rule is why
+          # `sort -V` cannot stand in here: it reads rc10 as past rc2,
+          # where SemVer puts rc10 first. Build metadata is not part of the
+          # version and comes off before any of it.
+          ahead_of() {
+            [ "$(jq -rn --arg a "$1" --arg b "$2" '
+              def ident: if test("^[0-9]+$") then [0, tonumber] else [1, .] end;
+              def key: split("+")[0]
+                | (split("-")[0] | split(".") | map(tonumber)) as $core
+                | (index("-") as $i | if $i == null then null else .[$i + 1:] end) as $pre
+                | [$core,
+                   (if $pre == null then 1 else 0 end),
+                   (if $pre == null then [] else ($pre | split(".") | map(ident)) end)];
+              if ($a | key) > ($b | key) then "yes" else "no" end')" = yes ]
+          }
+          current=""
+          if gh release view "$CHANNEL" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            if gh release download "$CHANNEL" --repo "$GITHUB_REPOSITORY" \
+                 --pattern latest.json --output channel.json --clobber > /dev/null 2>&1; then
+              current=$(jq -r '.version // empty' channel.json)
+            fi
+          else
             gh release create "$CHANNEL" --repo "$GITHUB_REPOSITORY" --prerelease \
               --title "Pre-release channel" \
               --notes "The update manifests of the newest kendex pre-release. Nothing here is a download; each manifest names assets on the release it came from."
+          fi
+          # A tag re-run after a later one would otherwise roll every
+          # candidate back to it, and on this channel a rollback looks
+          # exactly like the update path being broken. Only a strictly
+          # newer current refuses the write, so re-running the tag the
+          # channel already carries still refreshes it.
+          if [ -n "$current" ] && ahead_of "$current" "$NEW_VERSION"; then
+            echo "::notice::The pre-release channel carries ${current}, ahead of ${NEW_VERSION}; leaving it as it is."
+            exit 0
+          fi
           gh release upload "$CHANNEL" dist/latest.json dist/feed.json \
             --repo "$GITHUB_REPOSITORY" --clobber

@@ -297,8 +297,11 @@ mod tests {
             VersionRelation::Older
         );
         // A release candidate is behind the next candidate and behind the
-        // release it leads to. Text order puts rc10 behind rc2 and 1.0.0
-        // behind 1.0.0-rc1, which offers a downgrade as an update.
+        // release it leads to. Plain text order puts 1.0.0 behind
+        // 1.0.0-rc1, which offers a downgrade as an update. Within the
+        // identifiers, though, text order is the rule: rc10 is behind rc2,
+        // because SemVer compares an identifier numerically only when it
+        // is all digits.
         for latest in ["1.0.0-rc2", "1.0.0-rc10", "1.0.0"] {
             assert_eq!(
                 ReleaseFeed::parse(&feed(latest))
@@ -313,6 +316,13 @@ mod tests {
             ReleaseFeed::parse(&feed("1.0.0-rc1"))
                 .unwrap()
                 .relation_to("1.0.0")
+                .unwrap(),
+            VersionRelation::Older
+        );
+        assert_eq!(
+            ReleaseFeed::parse(&feed("1.0.0-rc10"))
+                .unwrap()
+                .relation_to("1.0.0-rc2")
                 .unwrap(),
             VersionRelation::Older
         );

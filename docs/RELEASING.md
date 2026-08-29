@@ -43,9 +43,15 @@ That same resolution is why a candidate cannot reach the next one through
 `releases/latest`. The publish job therefore also overwrites `latest.json`
 and `feed.json` on a fixed `prerelease` release, and a build whose own
 version is a candidate reads its updates from there
-(`update_feed::feed_url_for`, which the app and `kendex update` both call
-with their baked version). A shipped `1.0.0` is on the release channel and
-is never offered a candidate; nothing on the machine selects this.
+(`update_channel::feed_url_for`, which the app and `kendex update` both
+call with their baked version). A shipped `1.0.0` is on the release channel
+and is never offered a candidate; nothing on the machine selects this.
+
+The channel only ever moves forward: the publish job reads the version it
+already carries and leaves it alone when that is ahead of the tag being
+published, so re-running an older tag cannot roll every candidate back to
+it. Two tag runs are queued rather than interleaved by the `publish` job's
+concurrency group, which is what keeps that read and its write together.
 
 The channel keeps whatever the last candidate left on it, so a machine on
 a candidate stays on candidates until it is moved to a full release by
