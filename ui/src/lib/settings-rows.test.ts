@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
-import type { ScopeSettings, SettingsEdit, SettingsRow } from "@/bindings";
+import type {
+  ScopeSettings,
+  SettingsEdit,
+  SettingsRow,
+  SkillSettings,
+} from "@/bindings";
 import {
   differsFromDefault,
   editIn,
   effectiveValue,
-  rowsOf,
   settingsDraft,
   settingsValues,
   skillIn,
+  skillValues,
   withEdit,
 } from "./settings-rows";
 
@@ -104,23 +109,6 @@ describe("withEdit", () => {
   });
 });
 
-describe("rowsOf", () => {
-  /// `invalid` says nothing about the settings file — seeding is lenient
-  /// and may have written those keys anyway — so it yields no rows and
-  /// the page renders the state rather than an empty list.
-  it("yields rows only for the state that has them", () => {
-    expect(rowsOf({ state: "rows", rows: [row()] })).toHaveLength(1);
-    expect(rowsOf({ state: "no-template" })).toEqual([]);
-    expect(rowsOf({ state: "unreadable", reason: "gone" })).toEqual([]);
-    expect(
-      rowsOf({
-        state: "invalid",
-        findings: [{ line: 1, problem: "p", fix: "f" }],
-      }),
-    ).toEqual([]);
-  });
-});
-
 describe("skillIn", () => {
   it("has no entry where the place has no settings file", () => {
     const global: ScopeSettings = { applies: false, skills: [], base: null };
@@ -154,15 +142,96 @@ describe("settingsValues", () => {
         { skill: "zed", template: { state: "rows", rows: [row()] } },
       ]),
     });
-    expect(values.get("/work/vg")).toEqual(new Set(["gh"]));
+    expect(values.get("/work/vg")).toEqual(
+      new Map([
+        ["gh", true],
+        ["zed", false],
+      ]),
+    );
     expect(values.has("/work/hyprtrade")).toBe(false);
   });
 
-  it("gives a place that holds nothing an empty answer, not none", () => {
+  it("gives a place that installs nothing an empty answer, not none", () => {
     const values = settingsValues({
       global: { applies: false, skills: [], base: null },
     });
-    expect(values.get("global")).toEqual(new Set());
+    expect(values.get("global")).toEqual(new Map());
+  });
+});
+
+// Only rows the strict reader could read are comparable. Everything else
+// is "cannot tell", and printing that as "as the author shipped it" is
+// the claim this fact exists to refuse.
+describe("skillValues", () => {
+  const gh = (template: SkillSettings["template"]): SkillSettings => ({
+    skill: "gh",
+    template,
+  });
+
+  it("answers false for a skill that declares no settings", () => {
+    expect(skillValues(gh({ state: "no-template" }), [])).toBe(false);
+  });
+
+  /// A template out of reach says nothing about the file it would have
+  /// described, so nothing here can call the skill stock.
+  it("answers unknown for a template out of reach", () => {
+    expect(skillValues(gh({ state: "unreadable", reason: "gone" }), [])).toBe(
+      null,
+    );
+  });
+
+  /// Seeding is lenient, so a template the reader refuses may already
+  /// have put its keys in the file — the one state where "nothing
+  /// differs" is least safe to conclude.
+  it("answers unknown for a template the reader refuses", () => {
+    expect(
+      skillValues(
+        gh({
+          state: "invalid",
+          findings: [{ line: 1, problem: "p", fix: "f" }],
+        }),
+        [],
+      ),
+    ).toBe(null);
+  });
+
+  it("answers off the rows it could read", () => {
+    expect(skillValues(gh({ state: "rows", rows: [row()] }), [])).toBe(false);
+    expect(
+      skillValues(
+        gh({
+          state: "rows",
+          rows: [
+            row({ current: { state: "value", value: "advise", line: 3 } }),
+          ],
+        }),
+        [],
+      ),
+    ).toBe(true);
+  });
+
+  /// A key the file answers for in a shape no script reads has no value
+  /// to compare, so the skill it belongs to cannot be called stock.
+  it("answers unknown for a key nothing can read a value from", () => {
+    const ambiguous = row({
+      current: { state: "ambiguous", problem: "twice", lines: [3, 9] },
+    });
+    expect(skillValues(gh({ state: "rows", rows: [ambiguous] }), [])).toBe(
+      null,
+    );
+    // A row that definitely differs settles it whatever else is unread.
+    expect(
+      skillValues(
+        gh({
+          state: "rows",
+          rows: [
+            ambiguous,
+            row({ current: { state: "value", value: "advise", line: 4 } }),
+          ],
+        }),
+        [],
+      ),
+    ).toBe(true);
   });
 });
 

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
-import type { EditorInventory, Scope } from "@/bindings";
+import type { EditorInventory, Scope, ScopeSettings } from "@/bindings";
 import { ItemCustomize } from "@/components/customize/item-customize";
 import { CUSTOMIZED_MARK, skillsInherited } from "@/lib/copy-customize";
 import { useEditorStore } from "@/stores/editor";
@@ -35,6 +35,35 @@ const rows = [VG, HYPR].map((scope) => ({
   forked: false,
 }));
 
+/** gh declaring one key, standing at `value` in this place's file. */
+const declares = (value: string): ScopeSettings => ({
+  applies: true,
+  base: "b1",
+  skills: [
+    {
+      skill: "gh",
+      template: {
+        state: "rows",
+        rows: [
+          {
+            key: "GH_MODE",
+            explainer: ["what it does"],
+            default: "enforce",
+            current: { state: "value", value, line: 3 },
+          },
+        ],
+      },
+    },
+  ],
+});
+
+// Both places read and both at the package default, so only a draft can
+// move a chip.
+const savedSettings = {
+  "/work/vg": declares("enforce"),
+  "/work/hyprtrade": declares("enforce"),
+};
+
 const seed = (saved: Record<string, unknown>) => {
   useUpdatesStore.setState({ rows: rows as never, loaded: true });
   useEditorStore.setState({
@@ -67,7 +96,12 @@ const markedPlaces = (host: HTMLElement) =>
 // about the same package.
 describe("the place chips", () => {
   beforeEach(() => {
-    useEditorStore.setState({ saved: {}, draft: null });
+    useEditorStore.setState({
+      saved: {},
+      draft: null,
+      savedSettings,
+      settingsEdits: [],
+    });
     useUpdatesStore.setState({ rows: [], loaded: false });
   });
 
@@ -78,6 +112,46 @@ describe("the place chips", () => {
 
   it("marks nothing where no place holds anything", () => {
     seed({ "/work/vg": empty, "/work/hyprtrade": empty });
+    expect(markedPlaces(tab())).toEqual([]);
+  });
+
+  /// The manifest draft beside them already moves these chips before a
+  /// save. A settings value typed here has to move them too, or one tab
+  /// answers two ways about the same place depending which draft holds
+  /// the change.
+  it("marks the open place from a settings value not yet saved", () => {
+    seed({ "/work/vg": empty, "/work/hyprtrade": empty });
+    useEditorStore.setState({ savedSettings, settingsEdits: [] });
+    expect(markedPlaces(tab())).toEqual([]);
+
+    useEditorStore.setState({
+      savedSettings,
+      settingsEdits: [
+        {
+          skill: "gh",
+          key: "GH_MODE",
+          value: { kind: "set", value: "advise" },
+        },
+      ],
+    });
+    expect(markedPlaces(tab())).toEqual(["vg"]);
+  });
+
+  it("unmarks it again on a reset not yet saved", () => {
+    seed({ "/work/vg": empty, "/work/hyprtrade": empty });
+    const advised = {
+      "/work/vg": declares("advise"),
+      "/work/hyprtrade": declares("enforce"),
+    };
+    useEditorStore.setState({ savedSettings: advised, settingsEdits: [] });
+    expect(markedPlaces(tab())).toEqual(["vg"]);
+
+    useEditorStore.setState({
+      savedSettings: advised,
+      settingsEdits: [
+        { skill: "gh", key: "GH_MODE", value: { kind: "reset" } },
+      ],
+    });
     expect(markedPlaces(tab())).toEqual([]);
   });
 });

@@ -77,46 +77,6 @@ export const readError = (
   return null;
 };
 
-/** The newest read taken of each place, by scope. Reads of one place
- *  overlap — a project opened and then another, a startup pass over every
- *  place still out when a save re-reads one of them — and the answer that
- *  arrives last is not the newest one. */
-const issued = new Map<string, number>();
-
-/** One read's turn over the places it asked about. Taken before the
- *  requests go out; taking a turn is how a read starts, so a caller added
- *  later cannot miss the rule. */
-export interface ReadTurn {
-  /** Whether this read is still the newest of that place. */
-  newest: (scope: Scope) => boolean;
-  /** {@link recorded}, refused for a place a newer read has already
-   *  answered for. An older answer landing on top would put a pre-save
-   *  state back under a name that has moved on. */
-  record: <T>(
-    cache: Record<string, T>,
-    scope: Scope,
-    value: T | null,
-  ) => Record<string, T>;
-}
-
-export const readTurn = (scopes: Scope[]): ReadTurn => {
-  const mine = new Map(
-    scopes.map((scope) => {
-      const at = scopeKey(scope);
-      const next = (issued.get(at) ?? 0) + 1;
-      issued.set(at, next);
-      return [at, next] as const;
-    }),
-  );
-  const newest = (scope: Scope) =>
-    mine.get(scopeKey(scope)) === issued.get(scopeKey(scope));
-  return {
-    newest,
-    record: (cache, scope, value) =>
-      newest(scope) ? recorded(cache, scope, value) : cache,
-  };
-};
-
 /** Each named scope's saved manifest, keyed by scope. A read that fails is
  *  left out rather than recorded as an empty manifest: a place nobody could
  *  read is not a place holding nothing, and the marks tell them apart. */
@@ -182,43 +142,38 @@ export interface PlaceCaches {
  *  answered for the place. */
 export const recordedRead =
   (
-    pass: ReadTurn,
     scope: Scope,
     [manifest, inventory, settings]: Awaited<ReturnType<typeof readPlace>>,
   ) =>
   (held: PlaceCaches): PlaceCaches => ({
-    saved: pass.record(held.saved, scope, readDraft(manifest)),
-    inventories: pass.record(
+    saved: recorded(held.saved, scope, readDraft(manifest)),
+    inventories: recorded(
       held.inventories,
       scope,
       inventory.status === "ok" ? inventory.data : null,
     ),
-    savedSettings: pass.record(
+    savedSettings: recorded(
       held.savedSettings,
       scope,
       settings.status === "ok" ? settings.data : null,
     ),
   });
 
-/** One pass over several places, folded into what is held. Merged per
- *  place rather than replacing the record: the turn decides each entry,
- *  and a startup pass still out when a save re-read one place must not
- *  put that place's pre-save answer back. */
+/** One read over several places, folded into what is held. Merged per
+ *  place rather than replacing the record, so a read of some places
+ *  leaves the rest as they were. */
 export const mergedPlaces =
   (
-    pass: ReadTurn,
     scopes: Scope[],
     [manifests, settings]: Awaited<ReturnType<typeof placesOf>>,
   ) =>
   (held: Pick<PlaceCaches, "saved" | "savedSettings">) => ({
     saved: scopes.reduce(
-      (out, scope) =>
-        pass.record(out, scope, manifests[scopeKey(scope)] ?? null),
+      (out, scope) => recorded(out, scope, manifests[scopeKey(scope)] ?? null),
       held.saved,
     ),
     savedSettings: scopes.reduce(
-      (out, scope) =>
-        pass.record(out, scope, settings[scopeKey(scope)] ?? null),
+      (out, scope) => recorded(out, scope, settings[scopeKey(scope)] ?? null),
       held.savedSettings,
     ),
   });

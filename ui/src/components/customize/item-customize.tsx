@@ -87,8 +87,9 @@ export function ItemCustomize({
   // The chips answer the same question the Library row does, by the same
   // rule: a tab whose places all look alike makes "which of these three is
   // mine" a matter of opening each one and reading four sections. The open
-  // draft stands in for its saved manifest, so a change made here marks
-  // its chip before it is saved.
+  // draft stands in for its saved manifest, and the settings edits in
+  // hand for the open place stand in the same way, so a change made here
+  // marks its chip before it is saved — both drafts or neither.
   const customizedIn = new Set(
     placeStandings(
       placesSource(
@@ -96,6 +97,7 @@ export function ItemCustomize({
         rows,
         updatesLoaded,
         savedSettings,
+        { [scopeKey(scope)]: settingsEdits },
       ),
       kind,
       name,

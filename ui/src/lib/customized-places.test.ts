@@ -185,9 +185,10 @@ describe("placeStandings", () => {
   });
 
   /// Only a `value` current is comparable with the default: an ambiguous
-  /// key says what is in the way, never what the value is, so nothing can
-  /// call it off the default.
-  it("does not mark a place over a key nothing can read a value from", () => {
+  /// key says what is in the way, never what the value is. That is not a
+  /// no — nothing can call the place off the default OR on it, and the
+  /// standing has to say so rather than pick the flattering one.
+  it("leaves a place unknown over a key nothing can read a value from", () => {
     const s = source({
       manifests: { "/work/vg": empty() },
       rows: [row(VG)],
@@ -202,7 +203,7 @@ describe("placeStandings", () => {
       },
     });
     const [only] = placeStandings(s, "skill", "gh", [VG]);
-    expect(only.standing).toBe("stock");
+    expect(only.standing).toBe("unknown");
   });
 
   /// The settings read is a fourth source, and a place it has not spoken
@@ -269,6 +270,43 @@ describe("placeStandings", () => {
       edits: {
         "/work/vg": [{ skill: "gh", key: "GH_MODE", value: { kind: "reset" } }],
       },
+    });
+    const [only] = placeStandings(s, "skill", "gh", [VG]);
+    expect(only.standing).toBe("stock");
+  });
+
+  /// Read but undeterminable is not read and stock. A template the
+  /// strict reader refuses may already have seeded its keys into the
+  /// file, so a place holding one cannot be called as the author
+  /// shipped it.
+  it("leaves a place unknown where a skill's template cannot be read", () => {
+    const s = source({
+      manifests: { "/work/vg": empty() },
+      rows: [row(VG)],
+      settings: {
+        "/work/vg": {
+          applies: true,
+          base: "b1",
+          skills: [
+            {
+              skill: "gh",
+              template: { state: "invalid", findings: [] },
+            },
+          ],
+        },
+      },
+    });
+    const [only] = placeStandings(s, "skill", "gh", [VG]);
+    expect(only.standing).toBe("unknown");
+  });
+
+  /// A place that was read and does not install the package has nothing
+  /// there to differ, so it answers stock rather than staying unknown.
+  it("answers for a package the place does not install", () => {
+    const s = source({
+      manifests: { "/work/vg": empty() },
+      rows: [row(VG)],
+      settings: { "/work/vg": read({ zed: [key()] }) },
     });
     const [only] = placeStandings(s, "skill", "gh", [VG]);
     expect(only.standing).toBe("stock");

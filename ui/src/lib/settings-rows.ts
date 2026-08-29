@@ -3,17 +3,7 @@ import type {
   SettingsEdit,
   SettingsRow,
   SkillSettings,
-  SkillTemplate,
 } from "@/bindings";
-
-/** The keys a template declares, empty for every state that declares
- *  none. `invalid` is empty here and still says nothing about the
- *  settings file: seeding is lenient and may have written those keys
- *  anyway, which is why the page renders that state rather than a
- *  section with no rows in it. */
-export function rowsOf(template: SkillTemplate): SettingsRow[] {
-  return template.state === "rows" ? template.rows : [];
-}
 
 /** One skill's entry in a place's read, absent where the place has no
  *  settings file or does not install the skill. */
@@ -71,34 +61,57 @@ export function differsFromDefault(
   return value !== null && value !== row.default;
 }
 
-/** Each place's skills whose settings file answers some key differently
- *  from the package default, keyed by scope.
+/** Whether one skill's settings here are off the package default, or
+ *  null where nothing can tell.
+ *
+ *  Only rows the strict reader could read are comparable. A template out
+ *  of reach says nothing about the file; one the reader refuses says less
+ *  than nothing, since seeding is lenient and may have written its keys
+ *  anyway; and a key the file answers for in a shape no script reads has
+ *  no value to compare. Each of those is "cannot tell", and reading it as
+ *  "as the author shipped it" is the claim this fact exists to refuse. A
+ *  skill shipping no template answers false: there is nothing to differ. */
+export function skillValues(
+  skill: SkillSettings,
+  edits: SettingsEdit[],
+): boolean | null {
+  if (skill.template.state === "no-template") return false;
+  if (skill.template.state !== "rows") return null;
+  let told = true;
+  for (const row of skill.template.rows) {
+    if (row.current.state === "ambiguous") {
+      told = false;
+      continue;
+    }
+    if (differsFromDefault(row, editIn(edits, skill.skill, row.key)))
+      return true;
+  }
+  return told ? false : null;
+}
+
+/** Where each place's skills stand against their package defaults, by
+ *  scope, and by skill within it.
  *
  *  A place absent from `reads` is absent from the map, and that is the
  *  whole point: the fact is unknown until its read lands, never false.
- *  A place that was read and holds nothing gets an empty set, which is
- *  an answer — global's `applies: false` resolves that way. `edits`
- *  never adds a place, only answers for one already read: a draft is
- *  not a read, and inventing a place from one would claim knowledge of
- *  a file nobody opened. */
+ *  A place that was read and installs nothing gets an empty answer, which
+ *  is an answer — global's `applies: false` resolves that way, as does a
+ *  skill this place does not install. `edits` never adds a place, only
+ *  answers for one already read: a draft is not a read, and inventing a
+ *  place from one would claim knowledge of a file nobody opened. */
 export function settingsValues(
   reads: Record<string, ScopeSettings>,
   /** Unsaved edits by place, from a surface editing one of them. A
    *  place absent here simply has none in hand. */
   edits: Record<string, SettingsEdit[]> = {},
-): ReadonlyMap<string, ReadonlySet<string>> {
-  const out = new Map<string, ReadonlySet<string>>();
+): ReadonlyMap<string, ReadonlyMap<string, boolean | null>> {
+  const out = new Map<string, ReadonlyMap<string, boolean | null>>();
   for (const [where, read] of Object.entries(reads)) {
     const drafted = edits[where] ?? [];
-    const differing = new Set<string>();
+    const answers = new Map<string, boolean | null>();
     for (const skill of read.skills)
-      if (
-        rowsOf(skill.template).some((row) =>
-          differsFromDefault(row, editIn(drafted, skill.skill, row.key)),
-        )
-      )
-        differing.add(skill.skill);
-    out.set(where, differing);
+      answers.set(skill.skill, skillValues(skill, drafted));
+    out.set(where, answers);
   }
   return out;
 }

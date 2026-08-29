@@ -19,7 +19,6 @@ import {
   readDraft,
   readError,
   readPlace,
-  readTurn,
   recordedRead,
 } from "./editor-cache";
 import { useScanStore } from "./scan";
@@ -87,35 +86,26 @@ interface EditorState {
 }
 
 export const useEditorStore = create<EditorState>((set, get) => {
-  // Which read the open editor is waiting on — a different question from
-  // the per-place turns. A cache pass answers for a place as truly as a
-  // foreground read, and says nothing about the page: draft, base, rows
-  // and the loading flag belong to the read that opened it.
-  let opened = 0;
   const load = async () => {
     const { scope } = get();
-    const pass = readTurn([scope]);
-    const turn = ++opened;
-    // Whether this read still speaks for the page. Where the editor points
-    // is not a second test: setScope alone writes scope and always starts
-    // a read, so a later place — or the same place come back to — took a
-    // later turn than this one.
-    const showing = () => turn === opened;
     set({ loading: true });
     let read: Awaited<ReturnType<typeof readPlace>>;
     try {
       read = await readPlace(scope);
     } finally {
-      if (showing()) set({ loading: false });
+      set({ loading: false });
     }
     const [manifest, inventory, settings] = read;
     const draft = readDraft(manifest);
-    // The records answer for the place: the page having moved on does not
-    // make what this read saw untrue. Whether it still speaks for the
-    // page is the next question, and a different one.
-    set(recordedRead(pass, scope, read));
-
-    if (!showing()) return;
+    // The records answer for the place, whichever place the editor is on
+    // now: what this read saw is what that place held.
+    set(recordedRead(scope, read));
+    // The page's own copy is another matter. Committed into a scope the
+    // editor has since left, this read puts one project's rows under
+    // another project's name — and with the two bases matching, which
+    // both files being absent is enough for, the next save writes the
+    // value on screen into the wrong project's settings file.
+    if (!sameScope(get().scope, scope)) return;
     if (manifest.status === "error") {
       set({
         ...opening,
@@ -137,8 +127,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
 
   /** Read the named places into the records the marks are drawn from. */
   const places = async (scopes: Scope[]) => {
-    const pass = readTurn(scopes);
-    set(mergedPlaces(pass, scopes, await placesOf(scopes)));
+    set(mergedPlaces(scopes, await placesOf(scopes)));
   };
 
   const write = async (draft: Draft) => {

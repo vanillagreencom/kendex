@@ -50,11 +50,12 @@ export interface PlacesSource {
    *  manifest, and asking it per package per place walks every manifest
    *  again for every row on the Library. */
   settings: ReadonlySet<string>;
-  /** Each place's skills whose settings file answers some key
-   *  differently from the package default, by scope. A place absent
-   *  here has not been read, and that is a third answer rather than a
-   *  no — the same reason `manifests` is a record. */
-  values: ReadonlyMap<string, ReadonlySet<string>>;
+  /** Where each place's skills stand against their package defaults, by
+   *  scope and by skill. A place absent here has not been read, and a
+   *  skill answering null is one nothing can tell about — both are a
+   *  third answer rather than a no, the same reason `manifests` is a
+   *  record. */
+  values: ReadonlyMap<string, ReadonlyMap<string, boolean | null>>;
 }
 
 const placeKey = (kind: ItemKind, name: string, scope: Scope): string =>
@@ -142,8 +143,15 @@ export function placeFacts(
   // cannot speak about — a local source has no version to compare
   // against — so its hand-edit state stays unknown rather than false.
   const edited = source.updatesLoaded && row ? row.blockedByLocalEdit : null;
-  const differing = source.values.get(scopeKey(scope));
-  const values = differing ? kind === "skill" && differing.has(name) : null;
+  // A place that was read answers for every skill it installs; a kind
+  // that ships no settings, and a skill this place does not install,
+  // have nothing there to differ.
+  const answers = source.values.get(scopeKey(scope));
+  const answer = kind === "skill" ? answers?.get(name) : false;
+  // Absent is a skill this place does not install, and there is nothing
+  // there to differ; null is a skill nothing can tell about. Folding the
+  // second into the first is the early stock claim this fact refuses.
+  const values = !answers ? null : answer === undefined ? false : answer;
   return { forked, settings, edited, values };
 }
 
@@ -211,8 +219,8 @@ export function customizedHere(
   for (const row of source.rows.values())
     if (sameScope(row.scope, scope) && (row.blockedByLocalEdit || row.forked))
       add(row.kind, row.name);
-  for (const skill of source.values.get(scopeKey(scope)) ?? [])
-    add("skill", skill);
+  for (const [skill, differs] of source.values.get(scopeKey(scope)) ?? [])
+    if (differs) add("skill", skill);
   const out: CustomizedHere[] = [];
   for (const [kind, name] of candidates.values()) {
     const facts = placeFacts(source, kind, name, scope);
