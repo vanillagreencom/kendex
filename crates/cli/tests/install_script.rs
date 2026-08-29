@@ -45,6 +45,20 @@ fn run_install_at(os: &str, arch: &str, home: &Path) -> (std::process::Output, S
     run_install_in(os, arch, None, home)
 }
 
+/// What `uname -s` answers on the machine running these tests.
+///
+/// A test that reads back what the script wrote has to drive the script as
+/// this host: `install.sh` picks its data directory from `uname`, `Env`
+/// picks the same one from the target it was built for, and told `Linux` on
+/// a mac the script writes under `.local/share` while the resolver reads
+/// `Library/Application Support`. One finds nothing there and reads it as a
+/// script that recorded nothing; the other finds nothing there and reads it
+/// as the record correctly withheld.
+const HOST_UNAME: &str = match cfg!(target_os = "macos") {
+    true => "Darwin",
+    false => "Linux",
+};
+
 #[allow(clippy::unwrap_used)]
 fn run_install_in(
     os: &str,
@@ -309,7 +323,7 @@ fn install_sh_records_the_command_it_installed() {
     // writes under the HOME it was given, and a resolver asked about a
     // different spelling of that directory reads an empty one.
     let home = rooted(&tmp);
-    let (output, _) = run_install_at("Linux", "x86_64", &home);
+    let (output, _) = run_install_at(HOST_UNAME, "x86_64", &home);
     assert!(
         output.status.success(),
         "install.sh failed:\n{}",
@@ -357,7 +371,7 @@ fn install_sh_records_nothing_it_cannot_take_a_digest_for() {
         write_exe(&fake.join(tool), "#!/bin/sh\nexit 1\n");
     }
 
-    let (output, _) = run_install_at("Linux", "x86_64", &home);
+    let (output, _) = run_install_at(HOST_UNAME, "x86_64", &home);
 
     assert!(
         output.status.success(),
