@@ -76,7 +76,7 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
     if from.exists() {
         let stamped = stamp_name(kind, &from, &to, new)?;
         ops.push(PlannedOp {
-            description: format!("rename the fork's files to {new}"),
+            description: format!("rename the fork's files to {new}").into(),
             op: Op::Rename {
                 // The fork moves whole, whatever sits in it: a dangling
                 // link the person left there is carried along, not a
@@ -113,7 +113,7 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
     }
     let manifest_path = manifest::manifest_path(env, scope);
     ops.push(PlannedOp {
-        description: format!("record the rename to {new} in kendex.toml"),
+        description: format!("record the rename to {new} in kendex.toml").into(),
         op: Op::WriteManifest {
             pre: Pre::observed(&manifest_path)?,
             path: manifest_path,
@@ -222,7 +222,7 @@ fn stamp_name(kind: ItemKind, from: &Path, to: &Path, new: &str) -> Result<Vec<P
         }
         let bytes = std::fs::read(&old).map_err(|e| CoreError::io(&old, e))?;
         ops.push(PlannedOp {
-            description: format!("give the renamed {} its new name, {new}", kind.name()),
+            description: format!("give the renamed {} its new name, {new}", kind.name()).into(),
             op: Op::WriteFile {
                 pre,
                 bytes: named_bytes(bytes, new)?,

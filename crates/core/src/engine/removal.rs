@@ -5,7 +5,7 @@ use super::desired;
 use super::owned::{Owned, installed};
 use super::targets::disabled_name;
 use super::{DriftRow, DriftState, PlanOptions};
-use crate::apply::{Op, PlannedOp, Pre};
+use crate::apply::{Description, Op, PlannedOp, Pre};
 use crate::env::Env;
 use crate::error::Result;
 use crate::lock::{Lock, LockEntry};
@@ -59,7 +59,7 @@ pub fn edit_holds(env: &Env, scope: &Scope, entry: &LockEntry) -> bool {
 /// link we manage. Anything edited between preview and apply fails the
 /// precondition and the whole apply rolls back, instead of moving work
 /// nobody looked at into the trash.
-pub(super) fn trash(description: String, path: PathBuf) -> Result<PlannedOp> {
+pub(super) fn trash(description: Description, path: PathBuf) -> Result<PlannedOp> {
     let pre = match path.is_symlink() {
         true => Pre::SymlinkTo {
             target: std::fs::read_link(&path).map_err(|e| crate::error::CoreError::io(&path, e))?,
@@ -102,7 +102,8 @@ pub(super) fn removal_ops(
                         "Move {} {}'s files to the trash",
                         entry.kind.name(),
                         entry.name
-                    ),
+                    )
+                    .into(),
                     candidate,
                 )?);
             }

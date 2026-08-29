@@ -99,7 +99,7 @@ pub fn fork(
 
     let manifest_path = manifest::manifest_path(env, scope);
     ops.push(PlannedOp {
-        description: format!("record the fork of {name} in kendex.toml"),
+        description: format!("record the fork of {name} in kendex.toml").into(),
         op: Op::WriteManifest {
             pre: Pre::observed(&manifest_path)?,
             path: manifest_path,
@@ -302,7 +302,7 @@ fn capture_ops(
     let mut ops = Vec::new();
     if local_item.exists() {
         ops.push(PlannedOp {
-            description: format!("trash the local source's earlier copy of {name}"),
+            description: format!("trash the local source's earlier copy of {name}").into(),
             op: Op::Trash {
                 absent_is_done: false,
                 path: local_item.clone(),
@@ -325,11 +325,11 @@ fn capture_ops(
         },
     };
     ops.push(PlannedOp {
-        description: format!("keep the edited {} {name} as a local fork", kind.name()),
+        description: format!("keep the edited {} {name} as a local fork", kind.name()).into(),
         op: capture,
     });
     ops.push(PlannedOp {
-        description: format!("clear the edited install of {name} for re-render"),
+        description: format!("clear the edited install of {name} for re-render").into(),
         op: Op::Trash {
             absent_is_done: false,
             pre: Pre::HashIs {

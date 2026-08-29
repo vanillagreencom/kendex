@@ -15,7 +15,7 @@ mod transaction;
 
 pub use common::{common_key, execute_common, recover_common_journals};
 pub use op::{Op, Pre, read_git_config};
-pub use plan::{Plan, PlannedOp};
+pub use plan::{Description, Plan, PlannedOp};
 use transaction::run_journaled;
 
 /// Filesystem-safe key naming a scope's journal dir and lock file. Keys off

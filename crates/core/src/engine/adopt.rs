@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use super::ops::manifest_for_mutation;
-use crate::apply::{Op, Plan, PlannedOp, Pre};
+use crate::apply::{Description, Op, Plan, PlannedOp, Pre};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::manifest::{self, INPLACE_SOURCE_NAME, ItemDecl, LOCAL_SOURCE_NAME};
@@ -141,7 +141,7 @@ fn move_ops(
     let mut ops: Vec<PlannedOp> = broken
         .iter()
         .map(|(path, pre)| PlannedOp {
-            description: "clear the broken link at {}".to_owned(),
+            description: Description::around("clear the broken link at ", ""),
             op: Op::Trash {
                 absent_is_done: false,
                 path: path.clone(),

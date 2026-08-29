@@ -244,7 +244,7 @@ fn subscribing_a_project_from_a_personal_subscription_mutates_only_the_project()
         .plan
         .ops
         .iter()
-        .map(|op| op.description.as_str())
+        .map(|op| op.line())
         .find(|description| description.starts_with("Subscribes"))
         .unwrap()
         .to_owned();

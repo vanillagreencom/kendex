@@ -447,7 +447,7 @@ fn an_op_joining_a_plan_is_landed_against_the_root_the_plan_fixed() {
     plan.insert(
         0,
         apply::PlannedOp {
-            description: "write at {}".into(),
+            description: apply::Description::around("write at ", ""),
             op: Op::WriteFile {
                 path: f.project.join(".agents/late"),
                 bytes: b"late".to_vec(),
@@ -535,4 +535,34 @@ fn an_op_joining_a_plan_cannot_walk_out_of_its_root() {
         "{refused}"
     );
     assert!(plan.ops.is_empty(), "nothing joined the plan");
+}
+
+/// A name is content, and a preview draws it whole. The position an op
+/// acts on is not something to go looking for in the sentence — any token
+/// worth searching for is a token some name is allowed to be, and `{}` is
+/// a name kendex accepts.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_name_that_reads_like_a_slot_is_drawn_as_itself() {
+    let f = fixture();
+    put(
+        &f.home.join("catalog/skills/{}/SKILL.md"),
+        "---\nname: \"{}\"\ndescription: braces\n---\n\nBraces.\n",
+    );
+    put(
+        &f.project.join("kendex.toml"),
+        &format!(
+            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\n\n[skills.\"{{}}\"]\nsource = \"cat\"\n",
+            f.home.join("catalog").display()
+        ),
+    );
+
+    let report = audit(&f.env, &f.scope).unwrap();
+    let lines: Vec<String> = report.plan.ops.iter().map(apply::PlannedOp::line).collect();
+    assert!(
+        lines.contains(
+            &"Write skill {}'s files for Claude Code, in the folder its tools share".to_owned()
+        ),
+        "the name is drawn as itself: {lines:?}"
+    );
 }

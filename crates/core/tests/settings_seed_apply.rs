@@ -95,7 +95,7 @@ fn seeds_env_defaults_and_never_overwrites_user_values() {
             .plan
             .ops
             .iter()
-            .any(|op| op.description.contains("kendex.settings.toml")),
+            .any(|op| op.line().contains("kendex.settings.toml")),
         "clean settings file must not be re-planned"
     );
 
@@ -132,7 +132,7 @@ fn occupied_settings_path_is_a_conflict_not_a_clobber() {
             .plan
             .ops
             .iter()
-            .any(|op| op.description.contains("kendex.settings.toml"))
+            .any(|op| op.line().contains("kendex.settings.toml"))
     );
 }
 
@@ -273,7 +273,7 @@ fn a_skill_installed_on_no_harness_seeds_nothing() {
             .plan
             .ops
             .iter()
-            .any(|op| op.description.contains("kendex.settings.toml")),
+            .any(|op| op.line().contains("kendex.settings.toml")),
         "{:?}",
         report
             .plan
@@ -307,7 +307,7 @@ fn an_adoption_only_ledger_change_is_written_to_the_lock() {
             .plan
             .ops
             .iter()
-            .any(|op| op.description.contains("kendex.settings.toml")),
+            .any(|op| op.line().contains("kendex.settings.toml")),
         "adoption changes no file: {:?}",
         report
             .plan
@@ -435,7 +435,7 @@ fn the_note_claims_no_write_for_a_key_the_file_already_assigns() {
             .plan
             .ops
             .iter()
-            .any(|op| op.description.contains("kendex.settings.toml")),
+            .any(|op| op.line().contains("kendex.settings.toml")),
         "an assigned key must not be re-seeded"
     );
     apply_now(&f);

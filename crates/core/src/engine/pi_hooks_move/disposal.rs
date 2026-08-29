@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use crate::apply::Description;
 use crate::configedit::ConfigEdit;
 use crate::error::Result;
 
@@ -42,7 +43,12 @@ pub(super) fn plan_directory(
     };
     let each = |sink: &mut Sink| {
         for (path, proven) in take {
-            trash("Move pi hooks out of {}".to_owned(), path, proven, sink);
+            trash(
+                Description::around("Move pi hooks out of ", ""),
+                path,
+                proven,
+                sink,
+            );
         }
     };
     if !strangers.is_empty() {
@@ -65,7 +71,12 @@ pub(super) fn plan_directory(
     // Nothing here is anybody else's, so the whole directory goes when
     // this pass takes everything the lock names in it.
     if !take.is_empty() && take.len() == ours.len() {
-        return whole("Move pi hooks out of {}".to_owned(), dir, ours, sink);
+        return whole(
+            Description::around("Move pi hooks out of ", ""),
+            dir,
+            ours,
+            sink,
+        );
     }
     // And when it names nothing and the directory is empty — the shell a
     // finished move leaves behind, which pi still warns about and which
@@ -74,7 +85,7 @@ pub(super) fn plan_directory(
     // an empty directory here is one the person made, and theirs.
     if claimed && ours.is_empty() {
         let taken = whole(
-            "Remove the empty {} pi warns about".to_owned(),
+            Description::around("Remove the empty ", " pi warns about"),
             dir,
             ours,
             sink,
@@ -103,7 +114,7 @@ pub(super) fn plan_directory(
 /// unchanged: that, not the order of two reads, is what makes the proof
 /// and the binding describe one state. A file arriving at any point
 /// either shows up in a listing or changes the hash the apply checks.
-fn whole(description: String, dir: &Path, ours: &BTreeSet<OsString>, sink: &mut Sink) -> bool {
+fn whole(description: Description, dir: &Path, ours: &BTreeSet<OsString>, sink: &mut Sink) -> bool {
     // Checked here rather than inferred from the caller: `hash_tree`
     // resolves links, so one child link would walk a tree kendex does not
     // own. The caller only asks about a directory whose every child it
@@ -261,7 +272,7 @@ pub(super) fn plan_registry(
     };
     if after.as_object().is_some_and(|object| object.is_empty()) {
         trash(
-            "Move the pi hook registry out of {}".to_owned(),
+            Description::around("Move the pi hook registry out of ", ""),
             registry,
             &crate::hash::hash_bytes(current.as_bytes()),
             sink,

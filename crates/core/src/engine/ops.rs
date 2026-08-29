@@ -379,7 +379,7 @@ pub(crate) fn insert_manifest_save(
     plan.insert(
         0,
         PlannedOp {
-            description: format!("Save {file}"),
+            description: format!("Save {file}").into(),
             op: Op::WriteManifest {
                 pre: Pre::observed(&path)?,
                 path,

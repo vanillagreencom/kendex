@@ -40,7 +40,7 @@ pub(super) fn run_journaled(
             let error = CoreError::Injected;
             journal::rollback_mutated(&journal_dir, &mutated_before_failure(ops, index, &error))?;
             return Err(CoreError::RolledBack {
-                reason: format!("injected fault before '{}'", planned.description),
+                reason: format!("injected fault before '{}'", planned.line()),
                 cause: Box::new(error),
             });
         }
@@ -51,7 +51,7 @@ pub(super) fn run_journaled(
         if let Err(error) = landing::op_unmoved(&planned.op).and_then(|()| planned.op.run(env)) {
             journal::rollback_mutated(&journal_dir, &mutated_before_failure(ops, index, &error))?;
             return Err(CoreError::RolledBack {
-                reason: format!("'{}' failed: {error}", planned.description),
+                reason: format!("'{}' failed: {error}", planned.line()),
                 cause: Box::new(error),
             });
         }

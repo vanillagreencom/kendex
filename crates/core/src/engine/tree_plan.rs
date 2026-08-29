@@ -235,7 +235,8 @@ fn write_ops(
                 item.harness.display_name(),
                 item.kind.name(),
                 item.name
-            ),
+            )
+            .into(),
             op: Op::Trash {
                 absent_is_done: false,
                 path: canonical.to_path_buf(),
@@ -258,7 +259,8 @@ fn write_ops(
                 true => ", in the folder its tools share",
                 false => "",
             }
-        ),
+        )
+        .into(),
         op: Op::WriteTree {
             root: canonical.to_path_buf(),
             files: files.to_vec(),

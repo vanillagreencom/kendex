@@ -235,12 +235,12 @@ fn a_save_that_seeds_a_missing_key_and_sets_it_is_one_write() {
         ..PlanOptions::default()
     };
     let report = plan_scope(&f.env, &f.scope, &manifest, &lock, &options).unwrap();
-    let writes: Vec<&str> = report
+    let writes: Vec<String> = report
         .plan
         .ops
         .iter()
-        .filter(|op| op.description.contains("kendex.settings.toml"))
-        .map(|op| op.description.as_str())
+        .filter(|op| op.line().contains("kendex.settings.toml"))
+        .map(|op| op.line())
         .collect();
     assert_eq!(writes.len(), 1, "{writes:?}");
     assert!(writes[0].contains("seed REVIEWERS, DEPTH"), "{writes:?}");
@@ -613,7 +613,7 @@ fn an_env_declared_as_an_array_of_tables_stops_the_write_and_says_why() {
             .plan
             .ops
             .iter()
-            .any(|op| op.description.contains("kendex.settings.toml")),
+            .any(|op| op.line().contains("kendex.settings.toml")),
         "nothing may be written into a file with nowhere to write"
     );
     apply::execute(&f.env, &report.plan, None).unwrap();

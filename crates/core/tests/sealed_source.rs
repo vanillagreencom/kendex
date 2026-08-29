@@ -69,11 +69,5 @@ fn a_symlinked_catalog_cannot_leak_host_files_into_artifacts() {
         }
     }
     // The clean skill still installs.
-    assert!(
-        report
-            .plan
-            .ops
-            .iter()
-            .any(|op| op.description.contains("good"))
-    );
+    assert!(report.plan.ops.iter().any(|op| op.line().contains("good")));
 }

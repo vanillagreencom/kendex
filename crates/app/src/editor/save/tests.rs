@@ -61,7 +61,7 @@ fn a_writer_landing_after_the_editor_read_is_refused_mid_apply() {
             .plan
             .ops
             .iter()
-            .any(|op| op.description.contains("Upgrade")),
+            .any(|op| op.line().contains("Upgrade")),
         "the schema upgrade is the plan's manifest write: {:?}",
         report.plan.ops
     );

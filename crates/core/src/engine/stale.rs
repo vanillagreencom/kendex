@@ -61,7 +61,8 @@ pub(super) fn stale_emitted(
                     "Move {} {}'s old files to the trash",
                     recorded.kind.name(),
                     recorded.name
-                ),
+                )
+                .into(),
                 path.clone(),
             )?;
             guard.extend(ops, [planned]);

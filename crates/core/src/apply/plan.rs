@@ -8,33 +8,73 @@ use crate::model::Scope;
 
 use super::{Op, landing};
 
+/// What one op does, said for a preview.
+///
+/// A description that names the position its op acts on is kept as the two
+/// halves that position sits between, never as a sentence with the
+/// position written into it. [`PlannedOp::line`] takes the position from
+/// the op, which is the landed one, so a preview and the write it
+/// describes can only ever name one place.
+///
+/// Two halves rather than a marker inside the sentence: a marker is text,
+/// and text a search looks for is text some name is allowed to be. A skill
+/// called `{}` is a legal name ([`crate::names::segment_problem`]), and
+/// the sentence that carries it must survive being drawn.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Description {
+    opening: String,
+    /// What follows the position. `None` where this description names no
+    /// position at all, which is most of them.
+    closing: Option<String>,
+}
+
+impl Description {
+    /// A description naming the position its op acts on, between these two
+    /// halves. Either may be empty; neither holds the position.
+    pub fn around(opening: impl Into<String>, closing: impl Into<String>) -> Description {
+        Description {
+            opening: opening.into(),
+            closing: Some(closing.into()),
+        }
+    }
+}
+
+impl From<String> for Description {
+    fn from(said: String) -> Description {
+        Description {
+            opening: said,
+            closing: None,
+        }
+    }
+}
+
+impl From<&str> for Description {
+    fn from(said: &str) -> Description {
+        said.to_owned().into()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlannedOp {
-    /// What this op does, said for a preview.
-    ///
-    /// A description that names a position writes `{}` where the position
-    /// goes and never the position itself; [`PlannedOp::line`] fills it in
-    /// from the op. Written in, it would say where the plan first joined
-    /// the path rather than where the bytes go, and the two are not the
-    /// same once the landing has followed a directory somebody pointed
-    /// elsewhere.
-    pub description: String,
+    pub description: Description,
     pub op: Op,
 }
 
 impl PlannedOp {
     /// The line a preview draws for this op, with the position it acts on
-    /// filled in. That position comes from the op, which is the landed
-    /// one, so a confirmation and the write it asks about can only ever
-    /// name one place.
+    /// filled in.
     pub fn line(&self) -> String {
-        let Some(path) = self.op.touched().into_iter().next() else {
-            // Every op names at least one path. Without one there is no
-            // position to fill in and the prose stands as written.
-            return self.description.clone();
+        let Description { opening, closing } = &self.description;
+        let Some(closing) = closing else {
+            return opening.clone();
         };
-        let shown = crate::names::shown(&path.display().to_string());
-        self.description.replacen("{}", &shown, 1)
+        let Some(at) = self.op.touched().into_iter().next() else {
+            // Every op names at least one path. Without one there is no
+            // position to draw and the halves close over nothing.
+            return format!("{opening}{closing}");
+        };
+        let at = crate::names::shown(&at.display().to_string());
+        format!("{opening}{at}{closing}")
     }
 }
 

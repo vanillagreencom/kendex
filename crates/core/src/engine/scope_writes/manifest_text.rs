@@ -173,7 +173,10 @@ fn surgical_manifest_write(
             manifest: Box::new(expected),
         },
     };
-    ops.push(PlannedOp { description, op });
+    ops.push(PlannedOp {
+        description: description.into(),
+        op,
+    });
     Ok(())
 }
 

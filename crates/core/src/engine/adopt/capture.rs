@@ -10,7 +10,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::apply::{Op, PlannedOp, Pre};
+use crate::apply::{Description, Op, PlannedOp, Pre};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::{HarnessId, ItemKind, Scope};
@@ -108,7 +108,7 @@ pub(super) fn capture_ops(
     // it goes to the trash first, where it can be got back.
     if local_item.exists() {
         ops.push(PlannedOp {
-            description: format!("trash the local source's earlier copy of {name}"),
+            description: format!("trash the local source's earlier copy of {name}").into(),
             op: Op::Trash {
                 absent_is_done: false,
                 path: local_item.to_path_buf(),
@@ -131,12 +131,12 @@ pub(super) fn capture_ops(
         },
     };
     ops.push(PlannedOp {
-        description: format!("move {name} into the local source"),
+        description: format!("move {name} into the local source").into(),
         op: capture,
     });
     for (_, original) in content {
         ops.push(PlannedOp {
-            description: "trash the unmanaged original at {}".to_owned(),
+            description: Description::around("trash the unmanaged original at ", ""),
             op: Op::Trash {
                 absent_is_done: false,
                 path: original.clone(),

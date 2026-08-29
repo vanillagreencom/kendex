@@ -74,7 +74,7 @@ fn a_v01_scope_upgrades_in_place_changing_only_the_schema_line() {
             .plan
             .ops
             .iter()
-            .any(|op| op.description.contains("Upgrade kendex.toml"))
+            .any(|op| op.line().contains("Upgrade kendex.toml"))
     );
     apply::execute(&f.env, &report.plan, None).unwrap();
 
@@ -95,7 +95,7 @@ fn a_v01_scope_upgrades_in_place_changing_only_the_schema_line() {
             .plan
             .ops
             .iter()
-            .any(|op| op.description.contains("Upgrade"))
+            .any(|op| op.line().contains("Upgrade"))
     );
     assert!(again.drift.is_empty());
 }

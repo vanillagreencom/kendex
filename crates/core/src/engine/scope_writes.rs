@@ -104,7 +104,7 @@ pub(super) fn plan_config_edits(
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string());
         ops.push(PlannedOp {
-            description: format!("Update {file} ({})", labels.join(", ")),
+            description: format!("Update {file} ({})", labels.join(", ")).into(),
             op: Op::EditFile { pre, path, edits },
         });
     }
@@ -362,7 +362,7 @@ pub(super) fn plan_settings_seed(
         said.push(format!("set {}", edited.join(", ")));
     }
     ops.push(PlannedOp {
-        description: format!("Update {file} ({})", said.join("; ")),
+        description: format!("Update {file} ({})", said.join("; ")).into(),
         op: Op::WriteFile {
             // Bound to the bytes AND to their being a plain file. This
             // path refuses a symlinked settings file above, and a check

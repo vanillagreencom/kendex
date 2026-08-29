@@ -340,11 +340,11 @@ fn the_take_over_shows_the_path_it_moves() {
         ..PlanOptions::default()
     };
     let report = plan_apply(&env, &scope, &taking_over).unwrap();
-    let moves: Vec<&str> = report
+    let moves: Vec<String> = report
         .plan
         .ops
         .iter()
-        .map(|op| op.description.as_str())
+        .map(|op| op.line())
         .filter(|line| line.starts_with("Move the files already at"))
         .collect();
     assert!(!moves.is_empty(), "nothing was moved out of the way");

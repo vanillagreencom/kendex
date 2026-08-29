@@ -106,7 +106,7 @@ fn an_edit_landing_after_the_enable_was_planned_refuses_the_toggle() {
             .plan
             .ops
             .iter()
-            .any(|op| op.description.contains("Turn rev on")),
+            .any(|op| op.line().contains("Turn rev on")),
         "{:?}",
         report.plan.ops
     );

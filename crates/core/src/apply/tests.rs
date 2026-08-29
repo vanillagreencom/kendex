@@ -10,7 +10,7 @@ fn write_plan(scope: Scope, path: PathBuf, content: &str, pre: Pre) -> Plan {
     plan(
         scope,
         vec![PlannedOp {
-            description: format!("write {}", path.display()),
+            description: format!("write {}", path.display()).into(),
             op: Op::WriteFile {
                 path,
                 bytes: content.as_bytes().to_vec(),

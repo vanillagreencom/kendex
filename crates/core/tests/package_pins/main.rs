@@ -371,7 +371,7 @@ fn two_parents_pinning_different_revs_of_one_dependency_change_nothing() {
     );
     assert!(
         !report.plan.ops.iter().any(|op| {
-            format!("{:?}", op.op).contains("helper") && op.description.contains("helper")
+            format!("{:?}", op.op).contains("helper") && op.line().contains("helper")
         }),
         "nothing is written for a conflicted item: {:?}",
         report.plan.ops

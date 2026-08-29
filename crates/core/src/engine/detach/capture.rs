@@ -141,7 +141,7 @@ pub(super) fn capture_to_local(
         },
     };
     Ok(vec![PlannedOp {
-        description: format!("keep {} {name} in your local source", kind.name()),
+        description: format!("keep {} {name} in your local source", kind.name()).into(),
         op,
     }])
 }

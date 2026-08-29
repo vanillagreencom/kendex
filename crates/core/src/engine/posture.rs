@@ -78,7 +78,9 @@ pub(super) fn plan_posture(
         return Ok(());
     };
     ops.push(PlannedOp {
-        description: "Keep this machine's install ledger out of the repository".to_owned(),
+        description: "Keep this machine's install ledger out of the repository"
+            .to_owned()
+            .into(),
         op: Op::WriteFile {
             pre: Pre::observed(&path)?,
             path,

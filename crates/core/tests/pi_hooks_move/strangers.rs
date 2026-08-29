@@ -280,12 +280,7 @@ fn the_empty_directory_op_says_what_it_does() {
     fs::create_dir_all(w.dot().join("hooks")).unwrap();
 
     let report = audit(&w.env, &w.scope()).unwrap();
-    let said: Vec<&str> = report
-        .plan
-        .ops
-        .iter()
-        .map(|op| op.description.as_str())
-        .collect();
+    let said: Vec<String> = report.plan.ops.iter().map(|op| op.line()).collect();
     assert!(
         said.iter().any(|line| line.starts_with("Remove the empty")),
         "{said:?}"

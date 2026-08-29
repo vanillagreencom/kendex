@@ -209,10 +209,7 @@ fn bytes_that_already_match_are_never_prescribed_a_replacement() {
         re.drift
     );
     assert!(
-        !re.plan
-            .ops
-            .iter()
-            .any(|op| op.description.contains("trash")),
+        !re.plan.ops.iter().any(|op| op.line().contains("trash")),
         "and nothing needed replacing: {:?}",
         re.plan.ops
     );

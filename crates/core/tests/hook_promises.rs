@@ -100,13 +100,7 @@ fn a_hook_says_which_tools_run_it_and_which_only_read_it() {
         );
     }
 
-    let described = |text: &str| {
-        report
-            .plan
-            .ops
-            .iter()
-            .any(|op| op.description.contains(text))
-    };
+    let described = |text: &str| report.plan.ops.iter().any(|op| op.line().contains(text));
     assert!(described("Install hook guard for Cursor (advisory)"));
     assert!(described("Install hook guard for OpenCode (advisory)"));
     for tool in ["Claude Code", "Codex", "Gemini CLI", "GitHub Copilot"] {

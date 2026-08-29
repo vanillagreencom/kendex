@@ -15,7 +15,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::apply::{Op, PlannedOp, Pre};
+use crate::apply::{Description, Op, PlannedOp, Pre};
 use crate::error::{CoreError, Result};
 use crate::model::{ItemKind, Scope};
 
@@ -91,7 +91,7 @@ pub(super) fn relocate_ops(
     let mut ops = Vec::new();
     for (link, raw) in links {
         ops.push(PlannedOp {
-            description: "clear the link at {}".to_owned(),
+            description: Description::around("clear the link at ", ""),
             op: Op::Trash {
                 absent_is_done: false,
                 path: link.clone(),
@@ -113,7 +113,7 @@ pub(super) fn relocate_ops(
     if let Some(from) = from {
         if !cleared && (home.exists() || home.is_symlink()) {
             ops.push(PlannedOp {
-                description: "trash what is already at {}".to_owned(),
+                description: Description::around("trash what is already at ", ""),
                 op: Op::Trash {
                     absent_is_done: false,
                     path: home.to_path_buf(),
@@ -128,7 +128,7 @@ pub(super) fn relocate_ops(
         // directory swapped for a link to the same bytes between plan and
         // apply would move the wrong object.
         ops.push(PlannedOp {
-            description: format!("move {name} into the shared .agents tree"),
+            description: format!("move {name} into the shared .agents tree").into(),
             op: Op::Rename {
                 from_pre: Pre::tree_as_is(from)?,
                 to_pre: Pre::Absent,
@@ -145,7 +145,7 @@ pub(super) fn relocate_ops(
         // would trash whatever arrived at that position after the plan was
         // read — including content nobody compared with anything.
         ops.push(PlannedOp {
-            description: "trash the second copy at {}".to_owned(),
+            description: Description::around("trash the second copy at ", ""),
             op: Op::Trash {
                 absent_is_done: false,
                 path: path.clone(),

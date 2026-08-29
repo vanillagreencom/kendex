@@ -10,7 +10,7 @@ use super::compared::of_file;
 use super::desired::{Artifact, Desired};
 use super::item_plan::{Planned, unmanaged, unmanaged_compared};
 use super::{DriftCause, DriftState};
-use crate::apply::{Op, PlannedOp, Pre};
+use crate::apply::{Description, Op, PlannedOp, Pre};
 use crate::env::Env;
 use crate::error::Result;
 use crate::hash::hash_tree;
@@ -98,7 +98,8 @@ pub(super) fn plan_written_file(
                     item.name,
                     item.harness.display_name(),
                     advisory(env, scope, item)
-                ),
+                )
+                .into(),
                 op: Op::WriteFile {
                     path: path.to_path_buf(),
                     bytes: bytes.to_vec(),
@@ -171,7 +172,7 @@ fn plan_absent_file(
         };
         let flip = if item.enabled { "on" } else { "off" };
         ops.push(PlannedOp {
-            description: format!("Turn {} {flip}", item.name),
+            description: format!("Turn {} {flip}", item.name).into(),
             op: Op::Rename {
                 from_pre,
                 from: alternate,
@@ -194,7 +195,7 @@ fn plan_absent_file(
 /// reach a terminal as its own characters.
 pub(super) fn set_aside(path: &std::path::Path, pre: Pre) -> PlannedOp {
     PlannedOp {
-        description: "Move the files already at {} to the trash".to_owned(),
+        description: Description::around("Move the files already at ", " to the trash"),
         op: Op::Trash {
             absent_is_done: false,
             path: path.to_path_buf(),
@@ -218,7 +219,8 @@ fn install(
             item.name,
             item.harness.display_name(),
             advisory(env, scope, item)
-        ),
+        )
+        .into(),
         op: Op::WriteFile {
             path: path.to_path_buf(),
             bytes: bytes.to_vec(),

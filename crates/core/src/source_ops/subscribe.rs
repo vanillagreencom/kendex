@@ -342,7 +342,7 @@ fn announce_subscription(
     );
     for op in &mut report.plan.ops {
         if let crate::apply::Op::WriteManifest { .. } = &op.op {
-            op.description = line.clone();
+            op.description = line.clone().into();
         }
     }
     report.notes.push(line);

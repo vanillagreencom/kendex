@@ -26,7 +26,7 @@ use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use crate::apply::{Op, PlannedOp};
+use crate::apply::{Description, Op, PlannedOp};
 use crate::env::Env;
 use crate::error::Result;
 use crate::harness::pi;
@@ -316,7 +316,7 @@ fn move_out(
 /// Nothing else in the plan derives a legacy path, so the guard has no
 /// overlap to catch today — it is the boundary every Trash op in a plan
 /// passes, kept so a future pass that does overlap cannot slip past it.
-fn trash(description: String, path: &Path, proven: &str, sink: &mut Sink) {
+fn trash(description: Description, path: &Path, proven: &str, sink: &mut Sink) {
     sink.guard.extend(
         sink.ops,
         [PlannedOp {

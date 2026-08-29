@@ -149,19 +149,9 @@ fn an_unreadable_settings_file_is_one_conflict_not_a_scope_error() {
         "{}",
         conflict.detail
     );
+    assert!(report.plan.ops.iter().any(|op| op.line().contains("ship")));
     assert!(
-        report
-            .plan
-            .ops
-            .iter()
-            .any(|op| op.description.contains("ship"))
-    );
-    assert!(
-        !report
-            .plan
-            .ops
-            .iter()
-            .any(|op| op.description.contains("guard")),
+        !report.plan.ops.iter().any(|op| op.line().contains("guard")),
         "a hook that cannot register does not half-install"
     );
 }

@@ -445,7 +445,7 @@ fn forking_a_skill_whose_native_link_was_repointed_reads_the_managed_tree() {
             .unwrap();
     // The captured content is the canonical tree, and nothing trashes the
     // foreign directory.
-    let descriptions: Vec<&str> = plan.ops.iter().map(|op| op.description.as_str()).collect();
+    let descriptions: Vec<String> = plan.ops.iter().map(|op| op.line()).collect();
     let debug = format!("{:?}", plan.ops);
     assert!(
         !debug.contains("foreign"),

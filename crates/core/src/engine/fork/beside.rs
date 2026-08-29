@@ -146,7 +146,7 @@ pub fn fork_beside(
 
     let manifest_path = manifest::manifest_path(env, scope);
     ops.push(PlannedOp {
-        description: format!("record the fork of {name} as {new_name} in kendex.toml"),
+        description: format!("record the fork of {name} as {new_name} in kendex.toml").into(),
         op: Op::WriteManifest {
             pre: Pre::observed(&manifest_path)?,
             path: manifest_path,

@@ -57,7 +57,8 @@ pub(super) fn plan_link(
                     item.harness.display_name(),
                     item.kind.name(),
                     item.name
-                ),
+                )
+                .into(),
                 op: Op::Trash {
                     absent_is_done: false,
                     path: link.to_path_buf(),
@@ -73,7 +74,8 @@ pub(super) fn plan_link(
                 item.harness.display_name(),
                 item.kind.name(),
                 item.name
-            ),
+            )
+            .into(),
             op: Op::Symlink {
                 link: link.to_path_buf(),
                 target: spelled,
@@ -156,7 +158,7 @@ fn respell(
     ops: &mut Vec<PlannedOp>,
 ) {
     ops.push(PlannedOp {
-        description: why,
+        description: why.into(),
         op: Op::Trash {
             absent_is_done: false,
             path: link.to_path_buf(),
@@ -169,7 +171,8 @@ fn respell(
             item.harness.display_name(),
             item.kind.name(),
             item.name
-        ),
+        )
+        .into(),
         op: Op::Symlink {
             link: link.to_path_buf(),
             target: spelled,
