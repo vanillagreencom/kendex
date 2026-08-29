@@ -46,7 +46,7 @@ mkdir -p [WORKTREE_PATH]/tmp
 .agents/skills/second-opinion/scripts/second-opinion review --cwd [WORKTREE_PATH] --output [WORKTREE_PATH]/tmp/review-local-[TIMESTAMP_FROM_PREVIOUS_COMMAND].json --foreground
 ```
 
-Execute the exact command printed after `wait:` before running `review-artifact-check`.
+Execute the exact command printed after `wait:`. Exit 75 means the run is still active; do other event checks, then rerun the same command. Continue until it returns a terminal status before running `review-artifact-check`.
 
 Use the epoch output as `LOCAL_STARTED_AT`:
 

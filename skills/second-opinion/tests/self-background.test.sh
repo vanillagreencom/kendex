@@ -12,6 +12,8 @@ STARTUP_SESSION=""
 STARTUP_TOKEN=""
 FAILURE_SESSION=""
 FAILURE_TOKEN=""
+LIVENESS_SESSION=""
+LIVENESS_TOKEN=""
 owned_group_member() {
   local token="$1" group="$2" environ pid stat rest
   for environ in /proc/[1-9]*/environ; do
@@ -74,6 +76,9 @@ cleanup() {
   if [[ -n "$FAILURE_SESSION" ]] \
       && owned_group_member "$FAILURE_TOKEN" "$FAILURE_SESSION" >/dev/null; then
     kill -KILL -- "-$FAILURE_SESSION" 2>/dev/null || true
+  fi
+  if [[ -n "$LIVENESS_SESSION" ]]; then
+    stop_owned_session "$LIVENESS_TOKEN" "$LIVENESS_SESSION" 1
   fi
   rm -rf "$TMP_ROOT"
 }
@@ -208,6 +213,29 @@ assert_workflow_commands_detach() {
   workflow_commands_detach "$1" \
     || fail "$1 has no capped second-opinion command or one lacks --foreground"
 }
+supervise_blocks_without_polling() {
+  awk '
+    /^supervise\(\)/ { inside = 1 }
+    inside && /cannot release detached worker/ { released = 1 }
+    inside && released && /^[[:space:]]*(while|until)[[:space:]]/ { exit 1 }
+    inside && released && /IFS= read -r event/ { saw_event = 1 }
+    inside && released && /wait "\$worker_pid"/ { saw_wait = 1 }
+    inside && /^}/ {
+      if (!released || !saw_event || !saw_wait) exit 2
+      exit 0
+    }
+    END { if (!inside) exit 3 }
+  ' "$1"
+}
+waiter_is_observation_only() {
+  awk '
+    /^wait_for_run\(\)/ { inside = 1 }
+    inside && /same_process/ { saw_identity = 1 }
+    inside && /(^|[[:space:]])kill([[:space:]]|$)/ { exit 1 }
+    inside && /^}/ { exit(saw_identity ? 0 : 2) }
+    END { if (!inside) exit 3 }
+  ' "$1"
+}
 
 mkdir -p "$TMP_ROOT/broken-bin"
 cat > "$TMP_ROOT/broken-bin/grep" <<'SH'
@@ -221,7 +249,7 @@ printf 'worker log\n' > "$TMP_ROOT/broken-runtime/worker.log"
 broken_wait_rc=0
 PATH="$TMP_ROOT/broken-bin:$PATH" \
   "$RUNTIME" wait "$TMP_ROOT/broken-artifact" "$TMP_ROOT/broken-runtime" \
-    "$(date +%s)" token >"$TMP_ROOT/broken.stdout" \
+    "$(date +%s)" token "$$" fake 1 >"$TMP_ROOT/broken.stdout" \
     2>"$TMP_ROOT/broken.stderr" || broken_wait_rc=$?
 [[ $broken_wait_rc -eq 1 ]] || fail "broken worker-log read did not fail closed"
 assert_contains "$TMP_ROOT/broken.stderr" "cannot read worker log" \
@@ -232,7 +260,7 @@ mkdir "$TMP_ROOT/symlink-runtime"
 ln -s "$TMP_ROOT/victim" "$TMP_ROOT/symlink-runtime/worker.log"
 symlink_rc=0
 "$RUNTIME" launch "$TMP_ROOT/bin/codex" "$TMP_ROOT/symlink-answer" \
-  "$TMP_ROOT/symlink-runtime" 2 false 1 x >"$TMP_ROOT/symlink.stdout" \
+  "$TMP_ROOT/symlink-runtime" 2 false 1 1 x >"$TMP_ROOT/symlink.stdout" \
   2>"$TMP_ROOT/symlink.stderr" || symlink_rc=$?
 [[ $symlink_rc -ne 0 ]] || fail "symlinked worker log was opened"
 [[ "$(cat < "$TMP_ROOT/victim")" == "untouched" ]] \
@@ -247,7 +275,7 @@ SH
 chmod +x "$TMP_ROOT/bin/dead-worker"
 mkdir "$TMP_ROOT/dead-runtime"
 "$RUNTIME" launch "$TMP_ROOT/bin/dead-worker" "$TMP_ROOT/dead-answer" \
-  "$TMP_ROOT/dead-runtime" 30 false 1 x >"$TMP_ROOT/dead-launch.stdout"
+  "$TMP_ROOT/dead-runtime" 30 false 1 3 x >"$TMP_ROOT/dead-launch.stdout"
 dead_wait_cmd="$(sed -n 's/^wait: //p' "$TMP_ROOT/dead-launch.stdout")"
 dead_wait_rc=0
 bash -c "$dead_wait_cmd" >"$TMP_ROOT/dead-wait.stdout" \
@@ -266,7 +294,7 @@ deadline_heartbeat="$TMP_ROOT/deadline-heartbeat"
 PATH="$PATH" RUNTIME_FOR_WORKER="$RUNTIME" WORKER_STDERR="$TMP_ROOT/deadline-tree.stderr" \
   FAKE_MODE=nested HEARTBEAT_FILE="$deadline_heartbeat" \
   "$RUNTIME" launch "$TMP_ROOT/bin/no-timeout-worker" "$TMP_ROOT/deadline-answer" \
-    "$TMP_ROOT/deadline-runtime" 4 false 3 x >"$TMP_ROOT/deadline-launch.stdout"
+    "$TMP_ROOT/deadline-runtime" 4 false 3 5 x >"$TMP_ROOT/deadline-launch.stdout"
 deadline_wait_cmd="$(sed -n 's/^wait: //p' "$TMP_ROOT/deadline-launch.stdout")"
 deadline_wait_rc=0
 bash -c "$deadline_wait_cmd" >"$TMP_ROOT/deadline-wait.stdout" \
@@ -294,7 +322,7 @@ PATH="$PATH" RUNTIME_FOR_WORKER="$RUNTIME" \
   WORKER_STDERR="$TMP_ROOT/multi-tree.stderr" FAKE_MODE=lane-heartbeat \
   HEARTBEAT_DIR="$TMP_ROOT/multi-tree-heartbeats" \
   "$RUNTIME" launch "$TMP_ROOT/bin/two-tree-worker" "$TMP_ROOT/multi-tree-answer" \
-    "$TMP_ROOT/multi-tree-runtime" 5 false 3 x >"$TMP_ROOT/multi-tree-launch.stdout"
+    "$TMP_ROOT/multi-tree-runtime" 5 false 3 6 x >"$TMP_ROOT/multi-tree-launch.stdout"
 for _attempt in {1..100}; do
   [[ -s "$TMP_ROOT/multi-tree-heartbeats/codex" \
       && -s "$TMP_ROOT/multi-tree-heartbeats/claude" ]] && break
@@ -317,19 +345,27 @@ for lane in codex claude; do
   [[ "$lane_before" == "$lane_after" ]] || fail "wait deadline left the $lane CLI tree running"
 done
 printf 'PASS: wait deadline stops every concurrent CLI tree\n'
-
-assert_not_contains "$RUNTIME" "process_identity" \
-  "runtime has no waiter PID-recovery machinery"
 assert_not_contains "$RUNTIME" "signal_active" \
   "runtime has no waiter process-signaling path"
-assert_not_contains "$RUNTIME" "sleep 0.2" \
-  "supervisor does not poll while the model runs"
-assert_contains "$RUNTIME" 'wait "$worker_pid"' \
-  "supervisor blocks on its owned worker"
-[[ "$(grep -c 'kill -ALRM' "$RUNTIME")" -eq 1 ]] \
-  || fail "supervisor does not have exactly one deadline watchdog signal"
-printf 'PASS: supervisor has one deadline watchdog\n'
-
+assert_not_contains "$RUNTIME" "kill -ALRM" \
+  "deadline ownership uses no delayed PID signal"
+assert_contains "$RUNTIME" 'mkfifo "$owner_fifo" "$event_fifo"' \
+  "supervisor deadline uses owned channels"
+supervise_blocks_without_polling "$RUNTIME" \
+  || fail "supervisor executable path polls or lacks blocking event and worker waits"
+waiter_is_observation_only "$RUNTIME" \
+  || fail "waiter liveness path can signal or lacks identity observation"
+cat > "$TMP_ROOT/polling-supervisor" <<'SH'
+supervise() {
+  : > "$gate/release"
+  wait "$worker_pid" >/dev/null 2>&1 &
+  while kill -0 "$worker_pid" 2>/dev/null; do sleep 0.07; done
+}
+SH
+if supervise_blocks_without_polling "$TMP_ROOT/polling-supervisor"; then
+  fail "no-polling control accepted alternate polling with a decoy wait"
+fi
+printf 'PASS: supervisor blocks without polling and the control rejects a live mutant\n'
 mkdir "$TMP_ROOT/race-runtime" "$TMP_ROOT/race-bin"
 printf 'race\n' > "$TMP_ROOT/race-runtime/token"
 : > "$TMP_ROOT/race-runtime/worker.log"
@@ -349,12 +385,11 @@ PATH="$TMP_ROOT/race-bin:$PATH" REAL_GREP="$(command -v grep)" \
   RACE_ONCE="$TMP_ROOT/race.once" RACE_LOG="$TMP_ROOT/race-runtime/worker.log" \
   RACE_COMPLETION="__SECOND_OPINION_EXIT_race__=0" \
   "$RUNTIME" wait "$TMP_ROOT/race-answer" "$TMP_ROOT/race-runtime" \
-    "$(date +%s)" race >"$TMP_ROOT/race.stdout" 2>"$TMP_ROOT/race.stderr" \
+    "$(date +%s)" race "$$" fake 1 >"$TMP_ROOT/race.stdout" 2>"$TMP_ROOT/race.stderr" \
     || race_rc=$?
 [[ $race_rc -eq 0 ]] || fail "waiter missed completion published at its deadline check"
 assert_contains "$TMP_ROOT/race.stdout" "$TMP_ROOT/race-answer" \
   "waiter rechecks completion at its deadline"
-
 workflow_files=(
   "$REPO_ROOT/skills/second-opinion/workflows/quick.md"
   "$REPO_ROOT/skills/second-opinion/workflows/challenge.md"
@@ -367,6 +402,8 @@ for workflow_file in "${workflow_files[@]}"; do
   assert_workflow_commands_detach "$workflow_file"
   assert_contains "$workflow_file" 'exact command printed after `wait:`' \
     "${workflow_file##*/} executes the emitted wait command"
+  assert_contains "$workflow_file" 'Exit 75 means the run is still active' \
+    "${workflow_file##*/} resumes bounded waits"
 done
 assert_contains "${workflow_files[0]}" 'cat < [ARTIFACT_PATH]' \
   "quick workflow reads the detached artifact"
@@ -378,6 +415,9 @@ assert_workflow_commands_detach "$REPO_ROOT/skills/second-opinion/SKILL.md"
 assert_contains "$REPO_ROOT/skills/second-opinion/SKILL.md" \
   'Pass `--foreground` when the call can outlast the harness foreground cap.' \
   "skill execution rules require foreground-cap opt-in"
+assert_contains "$REPO_ROOT/skills/second-opinion/SKILL.md" \
+  'Exit 75 means the run is still active' \
+  "skill execution rules resume bounded waits"
 cat > "$TMP_ROOT/no-command-workflow.md" <<'EOF'
 Execute the exact command printed after `wait:` and read the artifact.
 EOF
@@ -386,7 +426,105 @@ if workflow_commands_detach "$TMP_ROOT/no-command-workflow.md"; then
 fi
 printf 'PASS: workflow wiring check rejects a missing launch command\n'
 printf 'PASS: every shipped workflow detaches and consumes the protocol\n'
-
+cat > "$TMP_ROOT/bin/slow-worker" <<'SH'
+#!/usr/bin/env bash
+output=""
+for arg in "$@"; do case "$arg" in --output=*) output="${arg#--output=}" ;; esac; done
+sleep 2
+printf 'slow answer\n' > "$output"
+SH
+chmod +x "$TMP_ROOT/bin/slow-worker"
+mkdir "$TMP_ROOT/resume-runtime"
+"$RUNTIME" launch "$TMP_ROOT/bin/slow-worker" "$TMP_ROOT/resume-answer" \
+  "$TMP_ROOT/resume-runtime" 10 false 1 1 x >"$TMP_ROOT/resume-launch.stdout"
+resume_wait_cmd="$(sed -n 's/^wait: //p' "$TMP_ROOT/resume-launch.stdout")"
+resume_started="$(date +%s)"
+resume_rc=0
+bash -c "$resume_wait_cmd" >"$TMP_ROOT/resume-first.stdout" \
+  2>"$TMP_ROOT/resume-first.stderr" || resume_rc=$?
+resume_elapsed=$(($(date +%s) - resume_started))
+[[ $resume_rc -eq 75 && $resume_elapsed -lt 4 ]] \
+  || fail "bounded wait did not return still-running promptly"
+for _attempt in {1..5}; do
+  resume_rc=0
+  bash -c "$resume_wait_cmd" >"$TMP_ROOT/resume-final.stdout" \
+    2>"$TMP_ROOT/resume-final.stderr" || resume_rc=$?
+  [[ $resume_rc -eq 75 ]] || break
+done
+[[ $resume_rc -eq 0 ]] || fail "resumed wait did not collect the terminal result"
+assert_contains "$TMP_ROOT/resume-answer" "slow answer" \
+  "bounded wait resumes to the final artifact"
+cat > "$TMP_ROOT/bin/instant-worker" <<'SH'
+#!/usr/bin/env bash
+output=""
+for arg in "$@"; do case "$arg" in --output=*) output="${arg#--output=}" ;; esac; done
+printf 'instant answer\n' > "$output"
+printf '0\n' > "$BOUNDARY_STATUS_DIR/worker.status"
+sleep 1.2
+SH
+chmod +x "$TMP_ROOT/bin/instant-worker"
+mkdir "$TMP_ROOT/boundary-runtime"
+BOUNDARY_STATUS_DIR="$TMP_ROOT/boundary-runtime" \
+  "$RUNTIME" launch "$TMP_ROOT/bin/instant-worker" "$TMP_ROOT/boundary-answer" \
+    "$TMP_ROOT/boundary-runtime" 2 false 1 3 x >"$TMP_ROOT/boundary-launch.stdout"
+boundary_wait_cmd="$(sed -n 's/^wait: //p' "$TMP_ROOT/boundary-launch.stdout")"
+boundary_rc=0
+bash -c "$boundary_wait_cmd" >"$TMP_ROOT/boundary-wait.stdout" \
+  2>"$TMP_ROOT/boundary-wait.stderr" || boundary_rc=$?
+if [[ $boundary_rc -ne 0 ]]; then
+  sed -n '1,100p' "$TMP_ROOT/boundary-wait.stderr" >&2 || true
+  fail "deadline event overrode an atomically completed worker"
+fi
+assert_contains "$TMP_ROOT/boundary-answer" "instant answer" \
+  "completion wins the post-worker deadline boundary"
+cat > "$TMP_ROOT/bin/empty-worker" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+chmod +x "$TMP_ROOT/bin/empty-worker"
+mkdir "$TMP_ROOT/empty-runtime"
+"$RUNTIME" launch "$TMP_ROOT/bin/empty-worker" "$TMP_ROOT/empty-answer" \
+  "$TMP_ROOT/empty-runtime" 10 false 1 2 x >"$TMP_ROOT/empty-launch.stdout"
+empty_wait_cmd="$(sed -n 's/^wait: //p' "$TMP_ROOT/empty-launch.stdout")"
+empty_rc=0
+bash -c "$empty_wait_cmd" >"$TMP_ROOT/empty-wait.stdout" \
+  2>"$TMP_ROOT/empty-wait.stderr" || empty_rc=$?
+[[ $empty_rc -eq 1 ]] || fail "zero-exit empty artifact did not fail closed"
+assert_contains "$TMP_ROOT/empty-wait.stderr" "exited 0 without writing its artifact" \
+  "zero-exit empty artifact names its failure"
+if [[ "$(uname -s)" == "Linux" ]] && command -v setsid >/dev/null 2>&1; then
+  cat > "$TMP_ROOT/bin/hanging-worker" <<'SH'
+#!/usr/bin/env bash
+while :; do sleep 1; done
+SH
+  chmod +x "$TMP_ROOT/bin/hanging-worker"
+  mkdir "$TMP_ROOT/liveness-runtime"
+  liveness_token="liveness-$RANDOM-$$"
+  TEST_SESSION_TOKEN="$liveness_token" \
+    setsid "$RUNTIME" launch "$TMP_ROOT/bin/hanging-worker" "$TMP_ROOT/liveness-answer" \
+      "$TMP_ROOT/liveness-runtime" 30 false 1 2 x >"$TMP_ROOT/liveness-launch.stdout" &
+  liveness_session=$!
+  LIVENESS_SESSION="$liveness_session"
+  LIVENESS_TOKEN="$liveness_token"
+  wait "$liveness_session"
+  liveness_wait_cmd="$(sed -n 's/^wait: //p' "$TMP_ROOT/liveness-launch.stdout")"
+  liveness_supervisor="$(printf '%s\n' "$liveness_wait_cmd" | awk '{print $(NF-2)}')"
+  kill -KILL "$liveness_supervisor"
+  liveness_started="$(date +%s)"
+  liveness_rc=0
+  bash -c "$liveness_wait_cmd" >"$TMP_ROOT/liveness-wait.stdout" \
+    2>"$TMP_ROOT/liveness-wait.stderr" || liveness_rc=$?
+  liveness_elapsed=$(($(date +%s) - liveness_started))
+  [[ $liveness_rc -eq 1 && $liveness_elapsed -lt 4 ]] \
+    || fail "waiter did not report the dead supervisor promptly"
+  assert_contains "$TMP_ROOT/liveness-wait.stderr" \
+    "supervisor exited without publishing completion" \
+    "waiter reports a dead supervisor without signaling"
+  stop_owned_session "$liveness_token" "$liveness_session" 1
+  LIVENESS_SESSION=""
+else
+  printf 'SKIP: dead-supervisor control requires Linux and setsid\n'
+fi
 artifact="$TMP_ROOT/answer.txt"
 launch_stdout="$TMP_ROOT/launch.stdout"
 launch_stderr="$TMP_ROOT/launch.stderr"
@@ -400,7 +538,6 @@ if [[ $launch_rc -ne 0 ]]; then
   sed -n '1,100p' "$launch_stderr" >&2 || true
   fail "foreground-capped launch returned $launch_rc"
 fi
-
 assert_contains "$launch_stdout" "artifact: $artifact" "detached launch names its artifact"
 assert_contains "$launch_stdout" "deadline: " "detached launch computes its deadline"
 assert_contains "$launch_stdout" "wait: " "detached launch prints one wait command"
@@ -482,7 +619,7 @@ PATH="$PATH" RUNTIME_FOR_WORKER="$RUNTIME" WORKER_STDERR="$TMP_ROOT/failure-tree
   FAKE_CLI_READY_FILE="$failure_ready" FAKE_CLI_PID_FILE="$failure_pid_file" \
   HEARTBEAT_FILE="$failure_heartbeat" \
   "$RUNTIME" launch "$TMP_ROOT/bin/no-timeout-worker" "$TMP_ROOT/failure-answer" \
-    "$TMP_ROOT/failure-runtime" 4 false 3 x >"$TMP_ROOT/failure-launch.stdout"
+    "$TMP_ROOT/failure-runtime" 4 false 3 3 x >"$TMP_ROOT/failure-launch.stdout"
 failure_wait_cmd="$(sed -n 's/^wait: //p' "$TMP_ROOT/failure-launch.stdout")"
 failure_wait_rc=0
 bash -c "$failure_wait_cmd" >"$TMP_ROOT/failure-wait.stdout" \

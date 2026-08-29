@@ -57,7 +57,7 @@ Run `second-opinion …`; it backgrounds itself and prints when to check.
   --foreground
 ```
 
-Execute the exact command printed after `wait:`. When it succeeds, read the file printed after `artifact:` with `cat < [ARTIFACT_PATH]`.
+Execute the exact command printed after `wait:`. Exit 75 means the run is still active; do other event checks, then rerun the same command. When it succeeds, read the file printed after `artifact:` with `cat < [ARTIFACT_PATH]`.
 
 ## 3. Present Results
 
