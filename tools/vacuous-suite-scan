@@ -98,8 +98,13 @@ require_setup() {
         die "$SUITE_TIMEOUT_BIN is not installed: every suite is run under it, so without it nothing can be measured (GNU coreutils provides it, as gtimeout on macOS — set VACUOUS_SCAN_TIMEOUT_BIN)"
     [[ "$SUITE_TIMEOUT" =~ ^[0-9]+[smhd]?$ ]] ||
         die "VACUOUS_SCAN_TIMEOUT is not a whole-number duration: $SUITE_TIMEOUT"
-    [[ "${SUITE_TIMEOUT%[smhd]}" -gt 0 ]] ||
+    # Matched, not evaluated. Bash arithmetic reads a zero-padded number as
+    # octal, so `-gt 0` on 08 fails with "value too great for base" and the
+    # refusal below then reports a valid duration as a disabled bound — wrong
+    # about the value and wrong about the reason. GNU timeout accepts 08.
+    if [[ "${SUITE_TIMEOUT%[smhd]}" =~ ^0+$ ]]; then
         die "VACUOUS_SCAN_TIMEOUT of $SUITE_TIMEOUT disables the bound rather than setting it, which is never what a caller means by zero"
+    fi
 }
 
 run_suite() {
@@ -158,9 +163,23 @@ scan_skill() {
         fi
     done
 
-    # A measurement is a suite that produced a verdict. An unrunnable one did
-    # not: it never reached the comparison this scan is made of.
-    measured=$((${#vacuous[@]} + ${#harness[@]} + ${#red[@]} + ${#contradicting[@]}))
+    # A measurement is a suite whose vacuity this metric actually settled.
+    #
+    #   vacuous        settled: it passed with the product blanked
+    #   detecting      settled: it failed with the product blanked
+    #   contradicting  settled the same way as detecting; what is wrong there
+    #                  is the suite's own declaration, which the check at the
+    #                  end of main reports separately
+    #   harness        NOT settled: this metric works by breaking product
+    #                  files and a harness suite has none, which is the whole
+    #                  reason the category exists — counting it would let a
+    #                  target holding only harness suites exit 0 having
+    #                  measured no vacuity at all
+    #   unrunnable     NOT settled: it never reached the comparison
+    #
+    # Every category the loop above can assign appears in this list. Adding
+    # another means deciding which side of it the new one sits on, here.
+    measured=$((${#vacuous[@]} + ${#red[@]} + ${#contradicting[@]}))
     SCAN_MEASURED=$((SCAN_MEASURED + measured))
     [[ "$measured" -gt 0 ]] || SCAN_UNMEASURED="$SCAN_UNMEASURED $name"
 
@@ -238,7 +257,7 @@ main() {
     # and measuring nothing are the same failure here, at the whole-run level
     # and per skill, so neither needs its own check.
     if [[ "$SCAN_MEASURED" -eq 0 || -n "$SCAN_UNMEASURED" ]]; then
-        die "no suite was measured${SCAN_UNMEASURED:+ in:$SCAN_UNMEASURED} — a scan that measured nothing is not a scan that passed; name a skill directory or pass --all, and check that its suites run from a copy"
+        die "no suite was measured${SCAN_UNMEASURED:+ in:$SCAN_UNMEASURED} — a scan that measured nothing is not a scan that passed. Name a skill directory or pass --all; a named one measures nothing when its suites cannot run from a copy, or are all harness-subject, which this metric cannot settle"
     fi
 
     # A separate invariant, not a second statement of the one above: this is a
