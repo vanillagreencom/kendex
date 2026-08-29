@@ -3,7 +3,7 @@
 //! so the rule that no value read off the machine reaches a command string
 //! is kept in one file.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::CommandBeside;
@@ -18,7 +18,7 @@ use crate::names::shown;
 /// Every string is fixed text decided by which arm ran, save the path,
 /// which names one file to a person who may have several — the rule the
 /// [`InstallChannel`] command strings already live under.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(
     tag = "kind",
     rename_all = "camelCase",

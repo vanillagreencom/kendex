@@ -48,13 +48,12 @@ export const commands = {
 	 *  Replace this install with the latest release and relaunch into it,
 	 *  carrying across a `kendex` command that is kendex's to replace. One
 	 *  another installer owns stays where it is, named on the card by
-	 *  `app_update_command_channel` before this ever runs. The manifest names a
-	 *  download and the signature over it; the release's own digests document
-	 *  names which download this release published for this target, and the
-	 *  app's bytes are held to both before anything is installed. The discovery
-	 *  feed never supplies an install URL, and the command's own bytes are held
-	 *  to the same key the CLI holds them to. A failure leaves the running app
-	 *  untouched and usable.
+	 *  `app_update_command_channel` before this ever runs — and `shown` is
+	 *  what that card said, so a command that changed since is refused rather
+	 *  than acted on in silence. The separately signed
+	 *  updater manifest is the delivery path for the app and verifies itself;
+	 *  the command's own bytes are held to the same key the CLI holds them to.
+	 *  A failure leaves the running app untouched and usable.
 	 * 
 	 *  The command moves first. What this flow's notice card reads is the
 	 *  app's own baked version, so the app is the state marker here and is
@@ -64,7 +63,22 @@ export const commands = {
 	 *  still offering the release, where an app already replaced and relaunched
 	 *  would report itself current and never come back for the command.
 	 */
-	appUpdateInstall: () => typedError<null, string>(__TAURI_INVOKE("app_update_install")),
+	appUpdateInstall: (shown: 
+/**
+ *  Another installer owns the command; `manager` names it and
+ *  `command` brings it current.
+ */
+{ kind: "managed"; manager: string; command: string } | 
+/**
+ *  Nothing names an owner and no record proves the file is kendex's,
+ *  so there is no name to print and no command to offer.
+ */
+{ kind: "unknown" } | 
+/**
+ *  Kendex's own command, where this app cannot write. `command` is
+ *  what carries it across with the privilege the app lacks.
+ */
+{ kind: "needsPrivilege"; path: string; command: string } | null) => typedError<null, string>(__TAURI_INVOKE("app_update_install", { shown })),
 	scanMachine: () => typedError<ScanResult, string>(__TAURI_INVOKE("scan_machine")),
 	getSettings: () => typedError<SettingsRead, string>(__TAURI_INVOKE("get_settings")),
 	/**
