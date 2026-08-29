@@ -126,17 +126,27 @@ pub(crate) fn copy_file_durable(from: &Path, to: &Path) -> Result<()> {
     sync_written_file(to)
 }
 
-/// Flush a file this process has just written, through a handle the
-/// platform will accept.
+/// Flush a file this process has just written, leaving its mode on disk
+/// alongside its bytes.
 ///
 /// A read-only handle is enough on Unix and refused on Windows, whose
 /// `FlushFileBuffers` documents `GENERIC_WRITE` as a requirement, so the
 /// write handle is what this asks for. A file that came from a read-only
 /// source refuses one — `fs::copy` carries `FILE_ATTRIBUTE_READONLY`
 /// across on Windows and the mode on Unix — so a refusal relaxes the
-/// mode for the length of the flush and restores it afterwards, flush
-/// failed or not. The file is one this process created moments ago and
-/// is the only writer of, so the window it opens is over its own work.
+/// mode, flushes, puts the mode back through that same handle and
+/// flushes again. The second flush is what makes the restored mode
+/// durable; a chmod by path after the last flush would leave the file
+/// read-only to a reader and writable on disk.
+///
+/// On Ok, what is on disk is the bytes and the mode the copy carried
+/// over. The window this cannot close is between relaxing the mode and
+/// that second flush: a crash inside it leaves the copy owner-writable
+/// on disk, and the only way to avoid opening it would be a flush the
+/// platform refuses. Nothing reads a pre-image through that window — a
+/// journal whose `meta.json` was never written is swept rather than
+/// replayed, and a rollback a crash interrupts is re-run, laying the
+/// pre-image down again.
 fn sync_written_file(path: &Path) -> Result<()> {
     let write_handle = || fs::OpenOptions::new().write(true).open(path);
     let refused = match write_handle() {
@@ -148,9 +158,15 @@ fn sync_written_file(path: &Path) -> Result<()> {
         return Err(CoreError::io(path, refused));
     };
     fs::set_permissions(path, writable(&mode)).map_err(|e| CoreError::io(path, e))?;
-    let flushed = write_handle().and_then(|file| file.sync_all());
-    // Restored before the outcome is reported: a flush that failed must
-    // not also leave the file writable.
+    let flushed = write_handle().and_then(|file| {
+        file.sync_all()?;
+        file.set_permissions(mode.clone())?;
+        file.sync_all()
+    });
+    // The mode goes back whether any of that worked or not, and by path,
+    // because what failed may have been the handle itself. Where the
+    // block above reached its own restore this repeats a mode already on
+    // disk, so a crash losing this chmod cannot leave the file writable.
     fs::set_permissions(path, mode).map_err(|e| CoreError::io(path, e))?;
     flushed.map_err(|e| CoreError::io(path, e))
 }
@@ -220,9 +236,13 @@ pub(crate) fn remove_any(path: &Path) -> Result<()> {
 
 /// Reproduce a whole tree at `to`, with every file on disk before this
 /// returns: each file copied and flushed by `copy_file_durable`, each
-/// directory synced once its entries are in it. Nothing outside the tree
-/// is opened — a link is reproduced as a link and never read through — so
-/// the sync reaches exactly what this copy created and nothing else.
+/// directory synced through `sync_dir_durable` once its entries are in
+/// it. A directory sync that fails stops the copy — the best-effort
+/// `sync_dir` would let this return Ok over a name that never reached
+/// disk, and the journal writes its meta on the strength of that Ok.
+/// Nothing outside the tree is opened — a link is reproduced as a link
+/// and never read through — so the sync reaches exactly what this copy
+/// created and nothing else.
 pub(crate) fn copy_tree_durable(from: &Path, to: &Path) -> Result<()> {
     copy_tree_inner(from, to, true)
 }
@@ -242,7 +262,7 @@ fn copy_tree_inner(from: &Path, to: &Path, durable: bool) -> Result<()> {
         copy_any_inner(&source, &to.join(name), durable)?;
     }
     if durable {
-        sync_dir(to);
+        sync_dir_durable(to)?;
     }
     Ok(())
 }

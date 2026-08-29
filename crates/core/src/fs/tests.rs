@@ -39,6 +39,39 @@ fn a_durable_tree_copy_never_follows_a_link() {
     assert_eq!(fs::read_to_string(held.join("a")).unwrap(), "a");
 }
 
+/// A directory whose entries did not reach disk fails the copy instead of
+/// passing for a durable one — the journal writes its meta on the
+/// strength of this Ok. Pinned with a destination the copy can write into
+/// and cannot open for the sync: `sync_dir_durable` opens the directory,
+/// which needs read permission, and 0o333 withholds it.
+#[cfg(unix)]
+#[test]
+fn a_durable_tree_copy_reports_a_directory_that_did_not_sync() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("skill");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("SKILL.md"), "body").unwrap();
+    let held = tmp.path().join("held");
+    fs::create_dir_all(&held).unwrap();
+    fs::set_permissions(&held, fs::Permissions::from_mode(0o333)).unwrap();
+    let unlock = || fs::set_permissions(&held, fs::Permissions::from_mode(0o700)).unwrap();
+    if fs::File::open(&held).is_ok() {
+        // Permissions do not bind this user (root): the sync cannot be
+        // made to fail here.
+        unlock();
+        return;
+    }
+
+    let outcome = copy_tree_durable(&source, &held);
+    unlock();
+
+    assert!(outcome.is_err(), "an unsynced directory passed as durable");
+    // The bytes did land: what failed is the proof they are on disk, and
+    // that is the part the caller must not be told succeeded.
+    assert_eq!(fs::read_to_string(held.join("SKILL.md")).unwrap(), "body");
+}
+
 /// The mode comes across with the bytes, and a mode that refuses a write
 /// handle does not stop the flush: it is relaxed for the flush and put
 /// back. This is the one place a Linux run exercises the code Windows
