@@ -1,11 +1,17 @@
 //! Bringing an installed kendex binary to a release: the download, the
 //! signature check, the write, and the command half of a family update.
 //!
-//! Both shells drive one release across the desktop app and the `kendex`
-//! command, and both write the half that is their own state marker last.
-//! For `kendex update` that is the command, whose baked version the next
-//! run reads to decide whether it is done; for the app it is the app,
-//! whose baked version the sidebar card reads.
+//! Both shells drive one release across the desktop app and a `kendex`
+//! command that is kendex's to replace, and both write the half that is
+//! their own state marker last. For `kendex update` that is the command,
+//! whose baked version the next run reads to decide whether it is done;
+//! for the app it is the app, whose baked version the sidebar card reads.
+//!
+//! A command another installer owns is not carried, and that is not a
+//! failure — those bytes are that installer's to move. It is never left
+//! in silence either: `kendex update` names the owning command and stops,
+//! and the app's card names it before Update now is pressed, because
+//! afterwards the app has restarted and there is no card to say it on.
 //!
 //! Neither shell moves the two halves atomically, and neither claims to.
 //! A failure before the marker leaves both where they were. A failure
@@ -42,9 +48,12 @@ const COMMAND_NAME: &str = "kendex";
 pub enum CommandBeside {
     /// A `kendex` command whose bytes this install may replace.
     Ours(PathBuf),
-    /// A `kendex` command another installer owns. Those bytes are that
-    /// installer's to move, so the app updates itself alone.
-    NotOurs,
+    /// A `kendex` command another installer owns, carrying the channel
+    /// that names who. Those bytes are that installer's to move, so the
+    /// app updates itself alone — and has to say so, because an app that
+    /// moves while the command stays put is the divergence this whole
+    /// path exists to prevent.
+    NotOurs(InstallChannel),
     /// No `kendex` command beside the app — a dmg or msi install, where
     /// the app is the whole install. An answer, not a failure.
     Absent,
@@ -58,6 +67,17 @@ pub enum CommandHalf {
     Untouched,
 }
 
+/// The two directories `install.sh` chooses its `bindir` between: the
+/// first already on `PATH`, or the first of the pair when neither is.
+///
+/// The script is the source of that choice and this is its only spelling
+/// in Rust. `crates/cli/tests/install_script.rs` reads the list out of the
+/// script itself and fails when the two drift, so a change of destination
+/// there cannot quietly leave app-driven updates unable to find the
+/// command on a machine whose launcher `PATH` omits it.
+const INSTALLER_HOME_BIN: &str = ".local/bin";
+const INSTALLER_SYSTEM_BIN: &str = "/usr/local/bin";
+
 /// Where the `kendex` command may be, in the order a shell resolves it:
 /// everything on `PATH` first, then the two directories `install.sh`
 /// chooses between. Reading `PATH` first is what makes the command a
@@ -70,8 +90,8 @@ pub fn command_candidates(home: &Path, path_var: Option<&OsStr>) -> Vec<PathBuf>
         .flat_map(std::env::split_paths)
         .map(|dir| dir.join(COMMAND_NAME));
     let install_sh = [
-        home.join(".local").join("bin").join(COMMAND_NAME),
-        Path::new("/usr/local/bin").join(COMMAND_NAME),
+        home.join(INSTALLER_HOME_BIN).join(COMMAND_NAME),
+        Path::new(INSTALLER_SYSTEM_BIN).join(COMMAND_NAME),
     ];
     let mut candidates: Vec<PathBuf> = Vec::new();
     for candidate in on_path.chain(install_sh) {
@@ -122,7 +142,7 @@ pub fn command_beside_app(
         }
         return match for_cli(&resolved, probe) {
             InstallChannel::Direct => CommandBeside::Ours(resolved),
-            InstallChannel::Managed { .. } | InstallChannel::Unknown => CommandBeside::NotOurs,
+            owned => CommandBeside::NotOurs(owned),
         };
     }
     CommandBeside::Absent

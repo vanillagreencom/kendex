@@ -45,6 +45,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         commands::app_version,
         app_update::app_update_check,
         app_update::app_update_channel,
+        app_update::app_update_command_channel,
         app_update::app_update_install,
         commands::scan_machine,
         app_settings::get_settings,

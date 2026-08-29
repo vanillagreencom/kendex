@@ -9,6 +9,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppUpdateView, InstallChannel } from "@/bindings";
 import { commands } from "@/bindings";
 import {
+  APP_UPDATE_COMMAND_LEFT_NOTE,
+  APP_UPDATE_COMMAND_MANAGED_NOTE,
   APP_UPDATE_DISMISS_LABEL,
   APP_UPDATE_INSTALL_LABEL,
   APP_UPDATE_INSTALLING_LABEL,
@@ -26,6 +28,7 @@ vi.mock("@/bindings", async (importOriginal) => ({
     appVersion: vi.fn(),
     appUpdateCheck: vi.fn(),
     appUpdateChannel: vi.fn(),
+    appUpdateCommandChannel: vi.fn(),
     appUpdateInstall: vi.fn(),
     getSettings: vi.fn(),
     updateSettings: vi.fn(),
@@ -63,10 +66,17 @@ const available = (muted = false): { status: "ok"; data: AppUpdateView } =>
   });
 
 /** Load the store as the startup fan-out does, then put the card on screen. */
-async function show(channel: InstallChannel = { kind: "direct" }) {
+async function show(
+  channel: InstallChannel = { kind: "direct" },
+  commandChannel: InstallChannel | null = null,
+) {
   vi.mocked(commands.appUpdateChannel).mockResolvedValue({
     status: "ok",
     data: channel,
+  });
+  vi.mocked(commands.appUpdateCommandChannel).mockResolvedValue({
+    status: "ok",
+    data: commandChannel,
   });
   await useNoticeStore.getState().load();
   const container = mount(<SidebarNotice />);
@@ -192,12 +202,48 @@ describe("the action each channel allows", () => {
     expect(container.textContent).not.toContain(APP_UPDATE_INSTALL_LABEL);
   });
 
+  // Update now replaces the app and restarts into it, so anything the
+  // person needs to know about the command it leaves behind has to be on
+  // the card before the button is pressed. Afterwards there is no card.
+  it("says the command is left behind, and who updates it", async () => {
+    const container = await show(
+      { kind: "direct" },
+      { kind: "managed", command: "brew upgrade kendex-cli" },
+    );
+    expect(container.textContent).toContain(APP_UPDATE_INSTALL_LABEL);
+    expect(container.textContent).toContain(APP_UPDATE_COMMAND_LEFT_NOTE);
+    expect(container.textContent).toContain(APP_UPDATE_COMMAND_MANAGED_NOTE);
+    expect(container.textContent).toContain("brew upgrade kendex-cli");
+  });
+
+  // Nothing kendex could name owns it, so the card says the command is
+  // left behind and stops there rather than inventing a way to move it.
+  it("names no command where nothing could tell who owns it", async () => {
+    const container = await show({ kind: "direct" }, { kind: "unknown" });
+    expect(container.textContent).toContain(APP_UPDATE_COMMAND_LEFT_NOTE);
+    expect(container.textContent).not.toContain(
+      APP_UPDATE_COMMAND_MANAGED_NOTE,
+    );
+  });
+
+  // The two cases with nothing to say: no command beside the app, and one
+  // Update now will carry across itself.
+  it("says nothing about the command where it is not left behind", async () => {
+    const container = await show({ kind: "direct" }, null);
+    expect(container.textContent).toContain(APP_UPDATE_INSTALL_LABEL);
+    expect(container.textContent).not.toContain(APP_UPDATE_COMMAND_LEFT_NOTE);
+  });
+
   // A channel read that failed is the same offer as one nothing
   // recognised: never a replacement built on a guess.
   it("falls back to no action when the channel could not be read", async () => {
     vi.mocked(commands.appUpdateChannel).mockResolvedValue({
       status: "error",
       error: "the running app's own path is unreadable",
+    });
+    vi.mocked(commands.appUpdateCommandChannel).mockResolvedValue({
+      status: "ok",
+      data: null,
     });
     await useNoticeStore.getState().load();
     const container = mount(<SidebarNotice />);

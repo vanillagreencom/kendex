@@ -6,7 +6,7 @@
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[allow(clippy::unwrap_used)]
@@ -175,4 +175,97 @@ fn a_network_failure_does_not_blame_the_release() {
     );
     assert!(!stderr.contains("may have no build"), "{stderr}");
     assert!(!stderr.contains("chmod"), "{stderr}");
+}
+
+/// Every directory `install.sh` can install the command into, read out of
+/// the script's own selection rather than restated here. A shape this
+/// cannot parse fails the same way a changed destination does, because a
+/// silent no-match would be the drift it exists to catch.
+#[allow(clippy::unwrap_used)]
+fn installer_bin_dirs(script: &str) -> Vec<String> {
+    let chosen_from = script
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix("for candidate in ")?
+                .strip_suffix("; do")
+        })
+        .expect("install.sh picks its bindir from a `for candidate in ...; do` list");
+    // The fallback when none of them is on PATH. Written as its own
+    // assignment, so it is read as its own line.
+    let fallback = script
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix(r#"[ -n "$bindir" ] || bindir=""#)?
+                .strip_suffix('"')
+        })
+        .expect("install.sh falls back to a bindir when none is on PATH");
+    let mut dirs: Vec<String> = chosen_from
+        .split_whitespace()
+        .chain(std::iter::once(fallback))
+        .map(|dir| dir.trim_matches('"').to_owned())
+        .collect();
+    dirs.dedup();
+    assert!(!dirs.is_empty(), "install.sh named no bindir");
+    dirs
+}
+
+/// The one fact `install.sh` and `kendex_core::command_update` both hold:
+/// where the command is installed. The app looks the command up to carry
+/// it across, and a launcher's `PATH` need not carry the installer's
+/// directory, so the fallback roots are what finds it there. If the
+/// installer moves its destination and this list does not follow, an
+/// app-driven update stops finding the command and moves the app alone.
+///
+/// Read against the script itself, so the divergence fails here rather
+/// than on a machine.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn every_directory_the_installer_can_choose_is_a_candidate() {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh");
+    let home = Path::new("/home/pat");
+    // No PATH, so what comes back is the fallback list and nothing else —
+    // the case this contract is about.
+    let candidates = kendex_core::command_update::command_candidates(home, None);
+
+    for dir in installer_bin_dirs(&fs::read_to_string(&script).unwrap()) {
+        let expanded = PathBuf::from(dir.replace("$HOME", &home.display().to_string()));
+        assert!(
+            candidates
+                .iter()
+                .any(|found| found.parent() == Some(&expanded)),
+            "install.sh can install into {}, which no candidate covers: {candidates:?}",
+            expanded.display()
+        );
+    }
+}
+
+/// The same contract from the other end, run rather than read: install.sh
+/// performs a real install and says where it put the command, and that
+/// directory is one the lookup would reach.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn where_a_real_install_puts_the_command_is_a_candidate() {
+    let (output, _) = run_install("Linux", "x86_64", None);
+    let said = String::from_utf8_lossy(&output.stdout);
+    let installed = said
+        .lines()
+        .find_map(|line| line.strip_prefix("Installed the kendex command to "))
+        .unwrap_or_else(|| panic!("install.sh did not say where it installed:\n{said}"));
+    let home = PathBuf::from(installed)
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_owned();
+
+    assert!(
+        kendex_core::command_update::command_candidates(&home, None)
+            .contains(&PathBuf::from(installed)),
+        "install.sh installed {installed}, which no candidate under {} covers",
+        home.display()
+    );
 }

@@ -21,6 +21,10 @@ interface NoticeState {
   notice: AppUpdateNotice | null;
   /** Which action the card may offer. Read once beside the check. */
   channel: InstallChannel;
+  /** Who owns the `kendex` command beside this app, when that is not
+   *  kendex. Null when there is no command here or when Update now will
+   *  carry it across, which are the two cases with nothing to say. */
+  commandChannel: InstallChannel | null;
   /** A replacement is running. There are no progress events, so this is
    *  the whole of what the card can say about it. */
   installing: boolean;
@@ -66,13 +70,15 @@ async function mute(version: string): Promise<string | null> {
 export const useNoticeStore = create<NoticeState>((set, get) => ({
   notice: null,
   channel: UNRESOLVED,
+  commandChannel: null,
   installing: false,
   error: null,
 
   load: async () => {
-    const [view, channel, current] = await Promise.all([
+    const [view, channel, commandChannel, current] = await Promise.all([
       settled(commands.appUpdateCheck(false)),
       settled(commands.appUpdateChannel()),
+      settled(commands.appUpdateCommandChannel()),
       // The running version is the half of the sentence the release feed
       // cannot supply; without it there is no notice to write.
       commands.appVersion().catch(() => null),
@@ -87,6 +93,11 @@ export const useNoticeStore = create<NoticeState>((set, get) => ({
         releaseNotesUrl: status.releaseNotesUrl,
       },
       channel: channel.status === "ok" ? channel.data : UNRESOLVED,
+      // A read that failed says nothing rather than guessing: the note is
+      // about a command this app will not touch, and inventing one would
+      // send a person to a package manager that does not own it.
+      commandChannel:
+        commandChannel.status === "ok" ? commandChannel.data : null,
     });
   },
 

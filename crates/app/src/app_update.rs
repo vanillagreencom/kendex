@@ -98,6 +98,25 @@ pub fn app_update_channel() -> Result<InstallChannel, String> {
     ))
 }
 
+/// What the card has to say about the `kendex` command beside this app:
+/// the channel that owns it where kendex must not replace it, and nothing
+/// where there is none or where Update now will carry it across.
+///
+/// Without this the app replaces itself, restarts, and clears its card
+/// while the terminal command stays on the old release with nothing on
+/// screen having said so — the silent divergence this issue was written
+/// about, arrived at from the other side.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn app_update_command_channel() -> Result<Option<InstallChannel>, String> {
+    let env = Env::detect().map_err(|error| error.to_string())?;
+    let beside = command_beside(&env, &app_install()?, std::env::var_os("PATH").as_deref());
+    Ok(match beside {
+        CommandBeside::NotOurs(channel) => Some(channel),
+        CommandBeside::Ours(_) | CommandBeside::Absent => None,
+    })
+}
+
 /// Somewhere to put the path kendex approved, on whatever will perform the
 /// replacement. The plugin keeps what it was handed private, so this side
 /// of the handoff is the only side a test can watch.
@@ -266,13 +285,15 @@ fn app_half_failed(release: &str, half: CommandHalf, error: &str) -> String {
 }
 
 /// Replace this install with the latest release and relaunch into it,
-/// carrying the `kendex` command across with it. The manifest names a
+/// carrying across a `kendex` command that is kendex's to replace. One
+/// another installer owns stays where it is, named on the card by
+/// `app_update_command_channel` before this ever runs. The manifest names a
 /// download and the signature over it; the release's own digests document
 /// names which download this release published for this target, and the
-/// app's bytes are held to both before anything is installed. The
-/// discovery feed never supplies an install URL, and the command's own
-/// bytes are held to the same key the CLI holds them to. A failure leaves
-/// the running app untouched and usable.
+/// app's bytes are held to both before anything is installed. The discovery
+/// feed never supplies an install URL, and the command's own bytes are held
+/// to the same key the CLI holds them to. A failure leaves the running app
+/// untouched and usable.
 ///
 /// The command moves first. What this flow's notice card reads is the
 /// app's own baked version, so the app is the state marker here and is

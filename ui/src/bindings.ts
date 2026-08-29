@@ -17,14 +17,39 @@ export const commands = {
 	 */
 	appUpdateChannel: () => typedError<InstallChannel, string>(__TAURI_INVOKE("app_update_channel")),
 	/**
+	 *  What the card has to say about the `kendex` command beside this app:
+	 *  the channel that owns it where kendex must not replace it, and nothing
+	 *  where there is none or where Update now will carry it across.
+	 * 
+	 *  Without this the app replaces itself, restarts, and clears its card
+	 *  while the terminal command stays on the old release with nothing on
+	 *  screen having said so — the silent divergence this issue was written
+	 *  about, arrived at from the other side.
+	 */
+	appUpdateCommandChannel: () => typedError<
+/**  The running install is ours to replace. */
+{ kind: "direct" } | 
+/**
+ *  A system package manager owns these bytes; `command` brings them
+ *  current and is the only thing to offer.
+ */
+{ kind: "managed"; command: string } | 
+/**
+ *  Not recognised: say a release is out, never replace anything, never
+ *  invent a command.
+ */
+{ kind: "unknown" } | null, string>(__TAURI_INVOKE("app_update_command_channel")),
+	/**
 	 *  Replace this install with the latest release and relaunch into it,
-	 *  carrying the `kendex` command across with it. The manifest names a
+	 *  carrying across a `kendex` command that is kendex's to replace. One
+	 *  another installer owns stays where it is, named on the card by
+	 *  `app_update_command_channel` before this ever runs. The manifest names a
 	 *  download and the signature over it; the release's own digests document
 	 *  names which download this release published for this target, and the
-	 *  app's bytes are held to both before anything is installed. The
-	 *  discovery feed never supplies an install URL, and the command's own
-	 *  bytes are held to the same key the CLI holds them to. A failure leaves
-	 *  the running app untouched and usable.
+	 *  app's bytes are held to both before anything is installed. The discovery
+	 *  feed never supplies an install URL, and the command's own bytes are held
+	 *  to the same key the CLI holds them to. A failure leaves the running app
+	 *  untouched and usable.
 	 * 
 	 *  The command moves first. What this flow's notice card reads is the
 	 *  app's own baked version, so the app is the state marker here and is

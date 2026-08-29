@@ -221,6 +221,13 @@ export const APP_UPDATE_DISMISS_LABEL = "Hide until the next version";
 export const APP_UPDATE_MANAGED_NOTE = "Update it with:";
 export const APP_UPDATE_UNKNOWN_NOTE =
   "Update kendex the way you installed it.";
+// Said under Update now when the app is kendex's to replace and the
+// `kendex` command beside it is not. The app moves and the command does
+// not, so the card names that before the button is pressed rather than
+// leaving a terminal on the old version with nothing having said so.
+export const APP_UPDATE_COMMAND_LEFT_NOTE =
+  "Update now moves the app. The kendex command here is not kendex's to replace.";
+export const APP_UPDATE_COMMAND_MANAGED_NOTE = "Update the command with:";
 // A whole-settings write the engine refused because the file moved under
 // it. Said wherever a change is one field and the retry is to press again.
 export const SETTINGS_MOVED_MESSAGE =

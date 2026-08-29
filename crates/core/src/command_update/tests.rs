@@ -144,7 +144,10 @@ fn no_command_or_one_another_installer_owns_lets_the_app_go_alone() {
     let dir = tempfile::tempdir().unwrap();
     let (feed_url, installed) = a_release_is_out(&dir);
 
-    for beside in [CommandBeside::Absent, CommandBeside::NotOurs] {
+    for beside in [
+        CommandBeside::Absent,
+        CommandBeside::NotOurs(InstallChannel::Unknown),
+    ] {
         assert_eq!(
             across(&beside, &feed_url, RELEASE).unwrap(),
             CommandHalf::Untouched,
@@ -267,35 +270,44 @@ fn the_command_a_shell_resolves_first_is_the_one_replaced() {
     );
 }
 
-/// A copy another installer owns is never replaced, whether this build
-/// can name the command that owns it or not — and it is judged by the
+/// A copy another installer owns is never replaced, and the answer names
+/// who owns it, so the card can tell the person which command moves it
+/// rather than leaving the app to update alone in silence. Judged by the
 /// file behind the name, because a link on `PATH` is how a package's copy
 /// is reached without ever naming its prefix.
+///
+/// Both arms of "not ours" run: a distro whose helper this build can name,
+/// and one it cannot, where the honest answer carries no command at all.
 #[test]
-fn a_command_another_installer_owns_is_never_ours() {
+fn a_command_another_installer_owns_is_never_ours_and_names_its_owner() {
     let named = candidates(&["/usr/bin/kendex"]);
     let linked = candidates(&["/home/pat/.local/bin/kendex"]);
-    for (machine, probed) in [
+    let cases = [
         (
             Machine {
                 present: named.clone(),
+                arch: true,
                 ..Machine::default()
             },
             &named,
+            InstallChannel::Managed {
+                command: "update kendex with your AUR helper".to_owned(),
+            },
         ),
         (
             Machine {
                 present: linked.clone(),
                 links: vec![(linked[0].clone(), named[0].clone())],
-                arch: true,
                 ..Machine::default()
             },
             &linked,
+            InstallChannel::Unknown,
         ),
-    ] {
+    ];
+    for (machine, probed, owner) in cases {
         assert_eq!(
             command_beside_app(&machine, probed, &[]),
-            CommandBeside::NotOurs,
+            CommandBeside::NotOurs(owner),
             "{probed:?}"
         );
     }
@@ -386,27 +398,30 @@ fn a_directory_or_a_data_file_named_kendex_is_not_a_command() {
 /// `PATH` first, then the two directories `install.sh` chooses between,
 /// each named once — a launcher whose `PATH` already carries `.local/bin`
 /// must not have it probed twice.
+///
+/// Written against the constants rather than against their values: what
+/// those values have to be is `install.sh`'s to say, and the contract test
+/// in `crates/cli/tests/install_script.rs` reads them out of the script.
 #[test]
 fn candidates_are_path_then_the_installer_s_own_dirs_without_repeats() {
     let home = Path::new("/home/pat");
-    let path = std::ffi::OsString::from("/home/pat/.local/bin:/usr/bin");
-    let found = command_candidates(home, Some(&path));
+    let home_bin = home.join(INSTALLER_HOME_BIN);
+    let system = Path::new(INSTALLER_SYSTEM_BIN).join(COMMAND_NAME);
+    let path = std::ffi::OsString::from(format!("{}:/usr/bin", home_bin.display()));
+
     assert_eq!(
-        found,
-        candidates(&[
-            &format!("/home/pat/.local/bin/{COMMAND_NAME}"),
-            &format!("/usr/bin/{COMMAND_NAME}"),
-            &format!("/usr/local/bin/{COMMAND_NAME}"),
-        ])
+        command_candidates(home, Some(&path)),
+        vec![
+            home_bin.join(COMMAND_NAME),
+            PathBuf::from(format!("/usr/bin/{COMMAND_NAME}")),
+            system.clone(),
+        ]
     );
 
-    // No PATH at all still leaves the installer's own two.
+    // No PATH at all still leaves the installer's own two, in its order.
     assert_eq!(
         command_candidates(home, None),
-        candidates(&[
-            &format!("/home/pat/.local/bin/{COMMAND_NAME}"),
-            &format!("/usr/local/bin/{COMMAND_NAME}"),
-        ])
+        vec![home_bin.join(COMMAND_NAME), system]
     );
 }
 

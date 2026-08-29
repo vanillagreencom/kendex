@@ -23,6 +23,7 @@ vi.mock("@/bindings", () => ({
     mineSubmissionStates: vi.fn(async () => ({})),
     appUpdateCheck: vi.fn(),
     appUpdateChannel: vi.fn(),
+    appUpdateCommandChannel: vi.fn(),
     appVersion: vi.fn(),
   },
   ZOOM: { min: 50, max: 200, step: 10, default: 100 },
@@ -83,6 +84,10 @@ describe("who reads the account", () => {
       status: "error",
       error: "no channel in a test",
     } as Awaited<ReturnType<typeof commands.appUpdateChannel>>);
+    vi.mocked(commands.appUpdateCommandChannel).mockResolvedValue({
+      status: "error",
+      error: "no command channel in a test",
+    } as Awaited<ReturnType<typeof commands.appUpdateCommandChannel>>);
     vi.mocked(commands.appVersion).mockResolvedValue(
       "0.0.0-test" as Awaited<ReturnType<typeof commands.appVersion>>,
     );
