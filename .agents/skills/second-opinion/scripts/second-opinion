@@ -251,12 +251,20 @@ HELP
 # .env.local under --help would execute repository-controlled shell code. The
 # option parser treats -h/--help at any position as help, so the same scan
 # decides here.
+DETACHED_AUTH_REQUESTED=false
+DETACHED_LANE_REQUESTED=false
 for _arg in "$@"; do
   case "$_arg" in
     -h|--help) show_help; exit 0 ;;
+    --detached-worker) DETACHED_AUTH_REQUESTED=true ;;
+    --lane-worker) DETACHED_LANE_REQUESTED=true ;;
   esac
 done
 unset _arg
+if $DETACHED_LANE_REQUESTED && [[ -n "${SECOND_OPINION_RUNTIME_DIR:-}" ]]; then DETACHED_AUTH_REQUESTED=true; fi
+# shellcheck source=lib/detached-auth.sh
+source "$SCRIPT_DIR/lib/detached-auth.sh"
+second_opinion_authenticate_detached "$DETACHED_AUTH_REQUESTED" || exit 1
 # Resolved only after help is answered: help must not require a git
 # checkout around the installed script.
 PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
@@ -290,7 +298,6 @@ CWD="."
 RANGE=""
 FOREGROUND_CAP=false
 DETACHED_WORKER=false
-DETACHED_CURRENT_MODEL=""
 # Distinct exit codes (kendex#652) so callers can tell "there was nothing to
 # review" and "the model reported it performed no review" apart from generic
 # failures (1). A response missing the required qa_metadata object (kendex#672)
@@ -384,7 +391,7 @@ while [[ $# -gt 0 ]]; do
     --timeout=*) TIMEOUT="${1#--timeout=}"; shift ;;
     --foreground) FOREGROUND_CAP=true; shift ;;
     --detached-worker) DETACHED_WORKER=true; shift ;;
-    --detached-current-model=*) DETACHED_CURRENT_MODEL="${1#--detached-current-model=}"; shift ;;
+    --lane-worker) DETACHED_WORKER=true; shift ;;
     # The multi-lane parent's word to its own children, and the reason it is a
     # flag rather than an environment variable: a project settings file's [env]
     # table names any variable it likes, and whether an output path belongs to
@@ -737,10 +744,10 @@ CURRENT_MODEL_SOURCE=""
 # refusal that names both values. Empty when there is no such conflict.
 CURRENT_MODEL_CONFLICT=""
 resolve_current_model() {
-  if $DETACHED_WORKER && [[ -n "$DETACHED_CURRENT_MODEL" ]]; then
+  if $DETACHED_WORKER && [[ -n "$DETACHED_AUTH_MODEL" ]]; then
     CURRENT_HARNESS="detached-parent"
-    CURRENT_MODEL=$(canon_identity "$DETACHED_CURRENT_MODEL")
-    CURRENT_MODEL_SOURCE="detached"
+    CURRENT_MODEL=$(canon_identity "$DETACHED_AUTH_MODEL")
+    CURRENT_MODEL_SOURCE="$DETACHED_AUTH_SOURCE"
     return
   fi
   CURRENT_HARNESS=$(detect_current_harness)
@@ -1854,6 +1861,9 @@ if $MULTI_LANE; then
         echo "→ lane stderr capture could not be opened — log replay lost: $lane" >&2
       fi
       umask "$lane_umask_prev"
+      if [[ -n "$DETACHED_RUNTIME_DIR" ]]; then
+        export SECOND_OPINION_RUNTIME_DIR="$DETACHED_RUNTIME_DIR" SECOND_OPINION_RUN_TOKEN="$DETACHED_RUN_TOKEN"
+      fi
       # `=` form throughout: a split-form option now refuses a flag-shaped
       # value, and every one of these is derived from caller input that may
       # legitimately begin with '-' (--output above all). The child would
@@ -1863,8 +1873,8 @@ if $MULTI_LANE; then
       # invocation, so the restriction reaches those writes and nothing else
       # the lane creates.
       exec "$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" review --target="$lane" --range="$REVIEW_RANGE" --cwd="$CWD" \
-        --timeout="$TIMEOUT" --output="$lane_out" --scratch-output --detached-worker \
-        --detached-current-model="$CURRENT_MODEL" >/dev/null 2>&3 3>&-
+        --timeout="$TIMEOUT" --output="$lane_out" --scratch-output --lane-worker \
+        >/dev/null 2>&3 3>&-
     ) &
     LANE_PIDS+=($!)
     LANE_OUTS+=("$lane_out")
@@ -2447,7 +2457,6 @@ response_incomplete_schema() {
     and ((.questions? | type) == "array")
   ' >/dev/null 2>&1
 }
-
 # Persist the rejected response as a sidecar (durable record), emit an error
 # JSON carrying its path, and exit EXIT_NO_REVIEW. OUTPUT_PATH itself is never
 # written, so no pass artifact can exist for a review that did not verifiably
@@ -2459,7 +2468,6 @@ preserve_no_review_and_fail() {
   local errmsg="${2:-}"
   local suffix="${3:-noreview}"
   local sidecar reason
-
   if [[ -z "$errmsg" ]]; then
     reason=$(printf '%s' "$json" | jq -r '.qa_metadata.reason? // "review_performed=false"' 2>/dev/null) || reason="review_performed=false"
     errmsg="self-reported that no review was performed ($reason)"
@@ -2482,7 +2490,6 @@ preserve_no_review_and_fail() {
   fi
   exit "$EXIT_NO_REVIEW"
 }
-
 if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
   # Two retryable defects in the first response share the one-shot retry: no
   # parseable JSON at all (kendex#509 — prose claiming the JSON was "already
@@ -2508,7 +2515,6 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
   else
     RETRY_WHY="extract_json failed on first response"
   fi
-
   if [[ -n "$RETRY_WHY" ]]; then
     echo "→ $RETRY_WHY; retrying once with captured response" >&2
     # Persist the raw first response now, before the retry outcome is known
@@ -2520,12 +2526,10 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
     else
       build_retry_prompt "$RESULT" > "$RETRY_PROMPT_TMP"
     fi
-
     RETRY_RESULT=""
     RETRY_EXIT=0
     RETRY_RESULT=$(run_target_cli "$RETRY_PROMPT_TMP") || RETRY_EXIT=$?
     RETRY_RESPONSE_BYTES=${#RETRY_RESULT}
-
     if [[ $RETRY_EXIT -eq 124 ]]; then
       echo "→ retry timed out after ${TIMEOUT}s" >&2
       preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
@@ -2554,7 +2558,6 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
       preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
     fi
   fi
-
   # Reject a self-reported no-review before the artifact can be written — a
   # "pass" from a model that admits it reviewed nothing is a false pass. These
   # gates run on whichever response became RESULT: first or retried.
@@ -2565,7 +2568,6 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
     preserve_no_review_and_fail "$RESULT" \
       "returned non-conforming JSON with no qa_metadata object (missing_qa_metadata)"
   fi
-
   # Stamp the authoritative timestamp ourselves. The reviewing model serializes
   # a `timestamp` field, but a model-supplied value is unverifiable — it can emit
   # a stale or fabricated time (kendex#629). Overwrite it with the wrapper's own
@@ -2614,9 +2616,7 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
     RESULT="$STAMPED"
   fi
 fi
-
 # --- Output -------------------------------------------------------------------
-
 if [[ -n "$OUTPUT_PATH" ]]; then
   mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
   write_owned "$OUTPUT_PATH" "$RESULT"

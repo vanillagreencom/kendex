@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 RUNTIME_SELF="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)/${BASH_SOURCE[0]##*/}"
-
 die() { echo "second-opinion-runtime: $1" >&2; exit 1; }
 wait_for_deadline() {
   local owner_fd="$1" stop_at="$2" delay
@@ -53,13 +51,11 @@ stop_process_group() {
     sleep 0.1
   done
 }
-
 tree() {
   local grace="$1" stderr_file="$2"
   shift 2
   [[ "$grace" =~ ^[1-9][0-9]*$ ]] || die "grace must be positive"
   [[ $# -gt 0 ]] || die "tree command is missing"
-
   local tree_pid="" tree_rc=0 tree_reaped=false cancel_rc="" gate=""
   request_cancel() {
     cancel_rc="$1"
@@ -79,7 +75,6 @@ tree() {
   trap cleanup_tree EXIT
   trap 'request_cancel 143' TERM HUP
   trap 'request_cancel 130' INT
-
   gate=$(mktemp -d) || die "cannot create CLI startup gate"
   set -m
   (while [[ ! -e "$gate/release" ]]; do sleep 0.01; done; exec "$@") 2>"$stderr_file" &
@@ -103,7 +98,6 @@ tree() {
   [[ -z "$cancel_rc" ]] || exit "$cancel_rc"
   exit "$tree_rc"
 }
-
 create_runtime_dir() {
   local dir=""
   artifact_home
@@ -117,7 +111,6 @@ create_runtime_dir() {
   chmod 700 "$dir" || die "cannot secure runtime directory: $dir"
   printf '%s\n' "$dir"
 }
-
 supervise() {
   local script="$1" artifact="$2" runtime_dir="$3" deadline="$4"
   local owned="$5" token="$6" grace="$7"
@@ -129,6 +122,7 @@ supervise() {
 
   local worker_pid="" worker_rc=0 worker_wait_rc=0 worker_reaped=false
   local cancel_rc="" cancel_message="" gate="" watchdog_pid="" event=""
+  local completion_published=false
   local owner_open=false event_open=false event_guard_open=false
   local status_file="$runtime_dir/worker.status" stop_at=$((deadline - grace))
   local owner_fifo="$runtime_dir/owner" event_fifo="$runtime_dir/events"
@@ -169,13 +163,19 @@ supervise() {
     fi
   }
   cleanup_supervisor() {
+    local cleanup_status=$?
     close_deadline_owner
     stop_and_reap_worker
     close_event_channel
     [[ -z "$gate" ]] || rm -rf -- "$gate" || true
     rm -f -- "$owner_fifo" "$event_fifo" || true
+    if ! $completion_published; then
+      [[ $cleanup_status -ne 0 ]] || cleanup_status=1
+      printf '__SECOND_OPINION_EXIT_%s__=%s\n' "$token" "$cleanup_status" >&2
+    fi
   }
   publish_completion() {
+    completion_published=true
     printf '__SECOND_OPINION_EXIT_%s__=%s\n' "$token" "$1" >&2
   }
   finish_supervisor() {
@@ -208,7 +208,8 @@ supervise() {
     exec 6>&- 7>&-
     exec 9>"$event_fifo" || exit 1
     while [[ ! -e "$gate/release" ]]; do sleep 0.01; done
-    unset SECOND_OPINION_RUNTIME_DIR SECOND_OPINION_RUN_TOKEN SECOND_OPINION_CURRENT_MODEL
+    export SECOND_OPINION_RUNTIME_DIR="$runtime_dir" SECOND_OPINION_RUN_TOKEN="$token"
+    unset SECOND_OPINION_CURRENT_MODEL
     worker_args=("$@" --detached-worker "--output=$artifact")
     $owned && worker_args+=(--scratch-output)
     set +e
@@ -226,7 +227,9 @@ supervise() {
   event_open=true
   exec 7>&-
   event_guard_open=false
-  [[ -z "$cancel_rc" ]] || finish_supervisor "$cancel_rc" ""
+  [[ -z "$cancel_rc" ]] || finish_supervisor "$cancel_rc" "$cancel_message"
+  (umask 077 && set -C && : > "$runtime_dir/ready") \
+    || finish_supervisor 1 "Error: cannot publish supervisor readiness"
   (umask 077 && set -C && : > "$gate/release") || {
     stop_and_reap_worker
     die "cannot release detached worker"
@@ -265,10 +268,19 @@ launch() {
   [[ "$grace" =~ ^[1-9][0-9]*$ ]] || die "grace must be positive"
   [[ "$wait_slice" =~ ^[1-9][0-9]*$ && $wait_slice -lt 600 ]] \
     || die "wait slice must be positive and below 600 seconds"
-  local deadline token log="$runtime_dir/worker.log"
+  local deadline token line prefix log="$runtime_dir/worker.log"
   token="$(date +%s).$$.$RANDOM"
   (umask 077 && set -C && printf '%s\n' "$token" > "$runtime_dir/token") \
     || die "cannot create runtime token: $runtime_dir/token"
+  if [[ -n "${SECOND_OPINION_LAUNCH_MODEL:-}" ]]; then
+    (umask 077 && set -C && printf '%s\n%s\n%s\n%s\n%s\n' "$token" \
+      "$SECOND_OPINION_LAUNCH_MODEL" "${SECOND_OPINION_LAUNCH_SOURCE:-}" \
+      "${SECOND_OPINION_LAUNCH_IN_CALLER_ENV:-false}" \
+      "${SECOND_OPINION_LAUNCH_SESSION_SCOPED:-false}" > "$runtime_dir/identity") \
+      || die "cannot create detached identity state"
+  fi
+  unset SECOND_OPINION_LAUNCH_MODEL SECOND_OPINION_LAUNCH_SOURCE \
+    SECOND_OPINION_LAUNCH_IN_CALLER_ENV SECOND_OPINION_LAUNCH_SESSION_SCOPED
   set -C
   exec 9>"$log" || die "cannot create worker log: $log"
   set +C
@@ -276,6 +288,12 @@ launch() {
   deadline=$(($(date +%s) + budget))
   "$RUNTIME_SELF" supervise "$script" "$artifact" "$runtime_dir" "$deadline" \
     "$owned" "$token" "$grace" "$@" <&8 >&9 2>&1 &
+  prefix="__SECOND_OPINION_EXIT_${token}__="
+  while [[ ! -f "$runtime_dir/ready" ]]; do
+    line=$(completion_line "$log" "$prefix") || die "cannot read supervisor setup log"
+    [[ -z "$line" ]] || break
+    sleep 0.01
+  done
   exec 8<&- 9>&-
   printf 'artifact: %s\n' "$artifact"
   printf 'deadline: %s\n' "$deadline"
@@ -298,9 +316,12 @@ second_opinion_detach_if_needed() {
   runtime_dir=$(create_runtime_dir)
   [[ "$MODE" == "review" || "$MODE" == "audit" ]] && attempts=2
   budget=$((attempts * (10#$TIMEOUT + 30) + 60))
+  export SECOND_OPINION_LAUNCH_MODEL="$CURRENT_MODEL" \
+    SECOND_OPINION_LAUNCH_SOURCE="$CURRENT_MODEL_SOURCE" \
+    SECOND_OPINION_LAUNCH_IN_CALLER_ENV="$CURRENT_MODEL_IN_CALLER_ENV" \
+    SECOND_OPINION_LAUNCH_SESSION_SCOPED="$CURRENT_MODEL_IS_SESSION_SCOPED"
   exec "$RUNTIME_SELF" launch "$SCRIPT_DIR/second-opinion" "$artifact" "$runtime_dir" \
-    "$budget" "$owned" 30 300 "${ORIGINAL_ARGS[@]}" \
-    "--detached-current-model=$CURRENT_MODEL"
+    "$budget" "$owned" 30 300 "${ORIGINAL_ARGS[@]}"
 }
 
 completion_line() {

@@ -1172,7 +1172,6 @@ if $ANCESTOR_VISIBLE; then
 else
   echo "  skip  scenario 33: ps hides script ancestors on this platform"
 fi
-
 echo "=== scenario 33e: the agreeing-value exemption survives the recursive lane launch ==="
 # The settings loader EXPORTS a project-file value, so each recursive lane child
 # would find it already in its environment and read it as caller-supplied —
@@ -1199,9 +1198,11 @@ if $ANCESTOR_VISIBLE; then
   assert_eq "$(count lane-claude)" "1" "the claude lane runs"
   assert_eq "$(count lane-extra)" "1" "the deepseek lane runs"
   assert_jq "$TMP_ROOT/out33e.json" '.agent' "external-union(claude+my-model)" "a union artifact is produced"
+  assert_jq "$TMP_ROOT/out33e.json" '.qa_metadata.selected_count' "2" \
+    "the detected-source exemption preserves the narrowed roster"
   grep -q "matches no roster identity" "$TMP_ROOT/last.stderr" \
     && fail "a lane child re-read the exported project value as a caller declaration"
-  # control: a value the CALLER exported really is session-scoped, and the lanes
+  # Control: a value the CALLER exported really is session-scoped, and the lanes
   # still inherit it — the child must not lose a genuine declaration either.
   # The roster names codex so the declared identity is spelled (it is then a
   # known identity and excluded), leaving the other two as the fan-out.
@@ -1223,7 +1224,6 @@ if $ANCESTOR_VISIBLE; then
 else
   echo "  skip  scenario 33e: ps hides script ancestors on this platform"
 fi
-
 echo "=== scenario 33f: an exported EMPTY value suppresses the project file in the lanes too ==="
 # The caller's environment outranks project files, set-but-empty included — that
 # is how an operator suppresses a committed declaration for one session. The

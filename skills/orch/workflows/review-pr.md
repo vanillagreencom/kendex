@@ -199,7 +199,7 @@ Still `ok == false` after that, or the § 3.2 deadline reached → mark the agen
 
 ### 3.2 Watchdog
 
-Sweep the filesystem on every event. Per-agent deadline from `review_delegated_at`: 25 minutes for an agent whose name contains `perf`, 15 minutes for every other agent. The external lane uses the deadline printed by `second-opinion`; if no deadline metadata prints, use 2 × `SECOND_OPINION_TIMEOUT` plus 3 minutes, with 1080 seconds as the timeout default. It is not a messageable agent, so the ping row and its early end never apply to it.
+Sweep the filesystem on every event. Per-agent deadline from `review_delegated_at`: 25 minutes for an agent whose name contains `perf`, 15 minutes for every other agent. The external lane's printed deadline is absolute Unix epoch seconds; compare it with `date +%s`. If no deadline metadata prints, use 2 × `SECOND_OPINION_TIMEOUT` plus 3 minutes, with 1080 seconds as the timeout default. It is not a messageable agent, so the ping row and its early end never apply to it.
 
 | Event | Action |
 |-------|--------|
