@@ -33,28 +33,39 @@ save_manifests() {
     --dir saved "${patterns[@]}" --clobber
 }
 
+# What the channel carries, read at the moment of asking. The one reader of
+# this is an operator standing in front of a broken channel deciding what to
+# repair, and every restore command below changes the asset set on its way to
+# failing, so an answer from before the restore reads as current and sends
+# that operator at the wrong thing. A read this run cannot make says so
+# rather than falling back to one it made earlier.
+carrying_now() {
+  local now
+  if ! now=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${CHANNEL}" --jq '.assets[].name'); then
+    echo "a set this run could not read"
+    return 0
+  fi
+  now=$(paste -sd' ' - <<< "$now")
+  [ -n "$now" ] || now="no manifests"
+  echo "$now"
+}
+
 # Puts the channel back the way this run found it and says which in
 # `restored`: `removed` when the release this run created is gone, `put-back`
 # when the manifests it found are up and the ones it added are off. Anything
-# else is a channel nobody has repaired, and `left` names what is on it.
+# else is a channel nobody has repaired.
 #
 # Always returns 0. The verdict is `restored`, so a caller under `set -e`
 # reaches its `case` rather than exiting on this function's own status.
 #
-# What the channel carries is read again rather than assumed: a failed upload
-# stops partway, and only the channel says how far it got. A read that fails
-# leaves `restored` empty, because a set this run cannot see is one it cannot
-# claim to have put back.
+# What the channel carries is read rather than assumed: a failed upload stops
+# partway, and only the channel says how far it got. A read that fails leaves
+# `restored` empty, because a set this run cannot see is one it cannot claim
+# to have put back.
 restored=""
-left=""
 restore() {
   local name now
-  if ! now=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${CHANNEL}" --jq '.assets[].name'); then
-    left="a set this run could not read"
-    return 0
-  fi
-  left=$(paste -sd' ' - <<< "$now")
-  [ -n "$left" ] || left="no manifests"
+  now=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${CHANNEL}" --jq '.assets[].name') || return 0
   # The tag stays behind. `gh release create` reuses an existing tag, so this
   # run cannot tell one it made from one that was already there carrying no
   # release, and deleting the second would destroy something it never
@@ -62,7 +73,6 @@ restore() {
   if [ -n "$created" ]; then
     if gh release delete "$CHANNEL" --repo "$GITHUB_REPOSITORY" --yes; then
       restored=removed
-      left="nothing"
     fi
     return 0
   fi
@@ -161,7 +171,7 @@ if ! gh release upload "$CHANNEL" dist/latest.json dist/feed.json \
     put-back)
       echo "::error::Uploading to the ${CHANNEL} channel failed; the channel is back as this run found it. Re-run the tag." ;;
     *)
-      echo "::error::Uploading to the ${CHANNEL} channel failed and the channel could not be put back. It carries ${left}. Candidates read that until a tag re-run repairs the channel." ;;
+      echo "::error::Uploading to the ${CHANNEL} channel failed and the channel could not be put back. It carries $(carrying_now). Candidates read that until a tag re-run repairs the channel." ;;
   esac
   exit 1
 fi

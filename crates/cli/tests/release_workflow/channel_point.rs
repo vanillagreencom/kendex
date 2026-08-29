@@ -58,6 +58,9 @@ enum Channel<'a> {
     Empty,
     /// Published, its manifest naming this version.
     Carrying(&'a str),
+    /// Published, carrying `feed.json` and no `latest.json` — the shape a
+    /// half-written channel is left in, which the guard reads as fresh.
+    HalfWritten,
     /// Published, with a manifest that names no version at all.
     Unreadable,
 }
@@ -166,6 +169,9 @@ fn point_channel(channel: Channel, new_version: &str, fail: &[&str], landed: &[&
         for name in ["latest.json", "feed.json"] {
             fs::write(published.join(name), "").unwrap();
         }
+    }
+    if matches!(channel, Channel::HalfWritten) {
+        fs::write(published.join("feed.json"), "").unwrap();
     }
 
     let run = std::process::Command::new(channel_script())
@@ -465,6 +471,48 @@ fn a_restore_that_could_not_finish_says_what_the_channel_carries() {
     assert!(
         !run.output.contains("is back as this run found it"),
         "a channel that was not put back was reported as put back: {}",
+        run.output
+    );
+}
+
+/// Every command the restore runs changes the asset set on its way to
+/// failing: `--clobber` deletes an asset before uploading its replacement,
+/// and a `delete-asset` only runs once a saved upload has already landed. So
+/// the set as the restore found it is not the set the operator will find,
+/// and naming that one is worse than naming none, because it reads as
+/// current and sends them at the wrong thing.
+#[cfg(unix)]
+#[test]
+fn a_restore_that_changed_the_channel_names_what_is_there_now() {
+    let run = point_channel(
+        Channel::HalfWritten,
+        "1.0.0-rc2",
+        &["dist/latest.json", "delete-asset"],
+        &["latest.json"],
+    );
+    assert_ne!(
+        run.code, 0,
+        "a failed restore was survivable: {:?}",
+        run.calls
+    );
+    // The saved feed.json is back up, and the latest.json this run added is
+    // still there because taking it off is the command that failed.
+    assert_eq!(
+        run.after,
+        Some(vec!["feed.json".to_owned(), "latest.json".to_owned()]),
+        "the restore left the channel unchanged, so this proves nothing: {:?}",
+        run.calls
+    );
+    assert!(
+        run.output.contains("It carries feed.json latest.json"),
+        "{}",
+        run.output
+    );
+    // What the channel carried when the restore began, and so what a snapshot
+    // taken before it would have named.
+    assert!(
+        !run.output.contains("It carries latest.json"),
+        "the message names the channel as the restore found it: {}",
         run.output
     );
 }
