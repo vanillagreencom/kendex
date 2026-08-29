@@ -268,7 +268,7 @@ launch() {
   [[ "$grace" =~ ^[1-9][0-9]*$ ]] || die "grace must be positive"
   [[ "$wait_slice" =~ ^[1-9][0-9]*$ && $wait_slice -lt 600 ]] \
     || die "wait slice must be positive and below 600 seconds"
-  local deadline token line prefix log="$runtime_dir/worker.log"
+  local deadline token supervisor_pid prefix log="$runtime_dir/worker.log"
   token="$(date +%s).$$.$RANDOM"
   (umask 077 && set -C && printf '%s\n' "$token" > "$runtime_dir/token") \
     || die "cannot create runtime token: $runtime_dir/token"
@@ -288,12 +288,10 @@ launch() {
   deadline=$(($(date +%s) + budget))
   "$RUNTIME_SELF" supervise "$script" "$artifact" "$runtime_dir" "$deadline" \
     "$owned" "$token" "$grace" "$@" <&8 >&9 2>&1 &
+  supervisor_pid=$!
   prefix="__SECOND_OPINION_EXIT_${token}__="
-  while [[ ! -f "$runtime_dir/ready" ]]; do
-    line=$(completion_line "$log" "$prefix") || die "cannot read supervisor setup log"
-    [[ -z "$line" ]] || break
-    sleep 0.01
-  done
+  source "${RUNTIME_SELF%/*}/lib/runtime-ready.sh"
+  second_opinion_wait_for_setup "$supervisor_pid" "$runtime_dir" "$log" "$prefix" || return 1
   exec 8<&- 9>&-
   printf 'artifact: %s\n' "$artifact"
   printf 'deadline: %s\n' "$deadline"

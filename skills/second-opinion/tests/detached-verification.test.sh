@@ -67,6 +67,31 @@ bash -c "$setup_wait" >"$TMP_ROOT/setup-wait.stdout" \
 assert_contains "$TMP_ROOT/setup-wait.stderr" "cannot create supervisor channels" \
   "first wait reports supervisor setup failure"
 
+mkdir -p "$TMP_ROOT/bad-runtime-bin/lib" "$TMP_ROOT/pretrap-runtime"
+cp "$REPO_ROOT/skills/second-opinion/scripts/lib/runtime-ready.sh" \
+  "$TMP_ROOT/bad-runtime-bin/lib/runtime-ready.sh"
+cat > "$TMP_ROOT/bad-runtime-bin/second-opinion-runtime" <<'SH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "supervise" ]]; then exit 7; fi
+action="${1:-}"
+shift
+source "$REAL_RUNTIME"
+RUNTIME_SELF="$0"
+case "$action" in launch) launch "$@" ;; *) exit 2 ;; esac
+SH
+chmod +x "$TMP_ROOT/bad-runtime-bin/second-opinion-runtime"
+pretrap_started="$(date +%s)"
+pretrap_rc=0
+REAL_RUNTIME="$RUNTIME" "$TMP_ROOT/bad-runtime-bin/second-opinion-runtime" launch \
+  "$TMP_ROOT/bin/hanging-worker" "$TMP_ROOT/pretrap-answer" \
+  "$TMP_ROOT/pretrap-runtime" 10 false 1 3 x >"$TMP_ROOT/pretrap.stdout" \
+  2>"$TMP_ROOT/pretrap.stderr" || pretrap_rc=$?
+pretrap_elapsed=$(($(date +%s) - pretrap_started))
+[[ $pretrap_rc -eq 1 && $pretrap_elapsed -lt 4 ]] \
+  || fail "pre-trap supervisor failure returned $pretrap_rc after ${pretrap_elapsed}s"
+assert_contains "$TMP_ROOT/pretrap.stderr" "exited during setup without completion (status 7)" \
+  "launch reports pre-trap supervisor exit promptly"
+
 cat > "$TMP_ROOT/startup-env" <<'SH'
 set -T
 cancel_before_event_reader() {
