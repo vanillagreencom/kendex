@@ -177,10 +177,11 @@ fn a_written_tree_keeps_shebang_files_executable() {
             pre: kendex_core::apply::Pre::Absent,
         },
     };
-    let plan = kendex_core::apply::Plan {
-        scope: kendex_core::model::Scope::Global,
-        ops: vec![op],
-    };
+    // Through the constructor the product builds every plan with: it is
+    // what fixes each path at the place it lands, which the transaction
+    // then holds it to.
+    let plan =
+        kendex_core::apply::Plan::landed(kendex_core::model::Scope::Global, vec![op]).unwrap();
     kendex_core::apply::execute(&env, &plan, None).unwrap();
     let script = std::fs::metadata(root.join("scripts/run")).unwrap();
     assert!(

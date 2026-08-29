@@ -7,9 +7,9 @@ fn env_in(dir: &Path) -> Env {
 }
 
 fn write_plan(scope: Scope, path: PathBuf, content: &str, pre: Pre) -> Plan {
-    Plan {
+    plan(
         scope,
-        ops: vec![PlannedOp {
+        vec![PlannedOp {
             description: format!("write {}", path.display()),
             op: Op::WriteFile {
                 path,
@@ -17,7 +17,14 @@ fn write_plan(scope: Scope, path: PathBuf, content: &str, pre: Pre) -> Plan {
                 pre,
             },
         }],
-    }
+    )
+}
+
+/// Through the constructor the product builds every plan with: it is what
+/// fixes each path at the place it lands, which the transaction then holds
+/// it to.
+fn plan(scope: Scope, ops: Vec<PlannedOp>) -> Plan {
+    Plan::landed(scope, ops).expect("a plan whose targets stay in their scope")
 }
 
 #[test]
@@ -28,9 +35,9 @@ fn fault_at_every_boundary_leaves_disk_untouched() {
     fs::create_dir_all(target.parent().unwrap()).unwrap();
     fs::write(&target, "before").unwrap();
 
-    let plan = Plan {
-        scope: Scope::Global,
-        ops: vec![
+    let plan = plan(
+        Scope::Global,
+        vec![
             PlannedOp {
                 description: "first".into(),
                 op: Op::WriteFile {
@@ -48,7 +55,7 @@ fn fault_at_every_boundary_leaves_disk_untouched() {
                 },
             },
         ],
-    };
+    );
 
     for boundary in 0..=1 {
         let error = execute(&env, &plan, Some(boundary)).unwrap_err();
@@ -152,9 +159,9 @@ fn trash_receives_removals() {
     fs::create_dir_all(&victim).unwrap();
     fs::write(victim.join("SKILL.md"), "content").unwrap();
 
-    let plan = Plan {
-        scope: Scope::Global,
-        ops: vec![PlannedOp {
+    let plan = plan(
+        Scope::Global,
+        vec![PlannedOp {
             description: "remove skill".into(),
             op: Op::Trash {
                 absent_is_done: true,
@@ -162,7 +169,7 @@ fn trash_receives_removals() {
                 pre: Pre::Any,
             },
         }],
-    };
+    );
     execute(&env, &plan, None).unwrap();
     assert!(!victim.exists());
     let trashed: Vec<_> = fs::read_dir(env.trash_dir()).unwrap().flatten().collect();
@@ -183,9 +190,9 @@ fn a_copy_already_gone_does_not_take_the_removal_with_it() {
     fs::create_dir_all(present.parent().unwrap()).unwrap();
     fs::write(&present, "content").unwrap();
 
-    let plan = Plan {
-        scope: Scope::Global,
-        ops: vec![
+    let plan = plan(
+        Scope::Global,
+        vec![
             PlannedOp {
                 description: "remove the copy that is gone".into(),
                 op: Op::Trash {
@@ -205,7 +212,7 @@ fn a_copy_already_gone_does_not_take_the_removal_with_it() {
                 },
             },
         ],
-    };
+    );
 
     assert_eq!(execute(&env, &plan, None).unwrap().applied, 2);
     assert!(!present.exists());
@@ -224,9 +231,9 @@ fn a_link_whose_target_is_gone_still_goes_to_the_trash() {
     fs::create_dir_all(link.parent().unwrap()).unwrap();
     std::os::unix::fs::symlink(&gone, &link).unwrap();
 
-    let plan = Plan {
-        scope: Scope::Global,
-        ops: vec![PlannedOp {
+    let plan = plan(
+        Scope::Global,
+        vec![PlannedOp {
             description: "remove the link".into(),
             op: Op::Trash {
                 absent_is_done: true,
@@ -236,7 +243,7 @@ fn a_link_whose_target_is_gone_still_goes_to_the_trash() {
                 },
             },
         }],
-    };
+    );
 
     execute(&env, &plan, None).unwrap();
     assert!(!link.is_symlink());
@@ -270,9 +277,9 @@ fn a_link_crosses_a_filesystem_boundary_into_the_trash() {
     let gone = elsewhere.path().join("shared/decider");
     std::os::unix::fs::symlink(&gone, &link).unwrap();
 
-    let plan = Plan {
-        scope: Scope::Global,
-        ops: vec![PlannedOp {
+    let plan = plan(
+        Scope::Global,
+        vec![PlannedOp {
             description: "remove the link".into(),
             op: Op::Trash {
                 absent_is_done: true,
@@ -282,7 +289,7 @@ fn a_link_crosses_a_filesystem_boundary_into_the_trash() {
                 },
             },
         }],
-    };
+    );
 
     execute(&env, &plan, None).unwrap();
     assert!(!link.is_symlink());
@@ -312,9 +319,9 @@ fn a_copy_that_cannot_be_read_stops_the_removal() {
         return;
     }
 
-    let plan = Plan {
-        scope: Scope::Global,
-        ops: vec![PlannedOp {
+    let plan = plan(
+        Scope::Global,
+        vec![PlannedOp {
             description: "remove the copy nothing can read".into(),
             op: Op::Trash {
                 absent_is_done: true,
@@ -322,7 +329,7 @@ fn a_copy_that_cannot_be_read_stops_the_removal() {
                 pre: Pre::Any,
             },
         }],
-    };
+    );
 
     // Unlocked before anything can panic: a sealed directory outlives the
     // TempDir that cannot remove it.
@@ -341,9 +348,9 @@ fn a_copy_that_changed_still_stops_the_removal() {
     let edited = tmp.path().join("edited.md");
     fs::write(&edited, "not what the plan read").unwrap();
 
-    let plan = Plan {
-        scope: Scope::Global,
-        ops: vec![PlannedOp {
+    let plan = plan(
+        Scope::Global,
+        vec![PlannedOp {
             description: "remove the edited copy".into(),
             op: Op::Trash {
                 absent_is_done: true,
@@ -353,7 +360,7 @@ fn a_copy_that_changed_still_stops_the_removal() {
                 },
             },
         }],
-    };
+    );
 
     let error = execute(&env, &plan, None).unwrap_err();
     assert!(matches!(error, CoreError::RolledBack { .. }));

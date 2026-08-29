@@ -92,6 +92,17 @@ fn planned_tree(plan: &apply::Plan) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Where the plan puts this skill's harness link.
+fn planned_links(plan: &apply::Plan) -> Vec<PathBuf> {
+    plan.ops
+        .iter()
+        .filter_map(|planned| match &planned.op {
+            Op::Symlink { link, .. } => Some(link.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
 /// A link inside the scope is followed: the bytes land at its target, and
 /// the plan names that position rather than the spelling it was joined
 /// from. A plan naming the joined spelling would describe a write that
@@ -344,5 +355,39 @@ fn a_restore_whose_path_moved_is_refused_and_leaves_the_journal() {
     assert!(
         apply::journal::pending(&dir),
         "the journal stands, for a person to look at"
+    );
+}
+
+/// The dotfiles shape at global scope: the harness directory is a link
+/// into a repository the person keeps their config in. Nothing encloses
+/// the global scope, so there is no root for the write to leave — it goes
+/// where the link points, and the plan says so.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_global_harness_directory_kept_in_a_dotfiles_repo_is_written_through() {
+    let f = fixture();
+    let dotfiles = f.home.join("dotfiles/.claude");
+    fs::create_dir_all(dotfiles.join("skills")).unwrap();
+    std::os::unix::fs::symlink(&dotfiles, f.home.join(".claude")).unwrap();
+    put(
+        &f.env.global_manifest_file(),
+        &format!(
+            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\n\n[skills.ship]\nsource = \"cat\"\n",
+            f.home.join("catalog").display()
+        ),
+    );
+
+    let report = audit(&f.env, &Scope::Global).unwrap();
+    assert_eq!(
+        planned_links(&report.plan),
+        vec![dotfiles.join("skills/ship")],
+        "the plan names the place the link points at"
+    );
+
+    apply::execute(&f.env, &report.plan, None).unwrap();
+    assert_eq!(
+        fs::read_to_string(dotfiles.join("skills/ship/SKILL.md")).unwrap(),
+        "---\nname: ship\ndescription: ship\n---\n\nShip the branch.\n",
+        "the bytes are readable through the person's link"
     );
 }
