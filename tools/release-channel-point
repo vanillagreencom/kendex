@@ -126,9 +126,14 @@ fi
 # rc2, where SemVer puts rc10 first. Build metadata is not part of the version
 # and comes off first. A string that is not a version has no place in the
 # ordering, so `key` refuses it and jq leaves no verdict behind.
+#
+# Every digit class is spelled out rather than written `\d`, which jq reads
+# as any Unicode digit: `1.0.0-1١` would pass as a version here and be
+# ordered against `1.0.0-rc2`, while the parser every candidate reads the
+# manifest with refuses it.
 verdict=$(jq -rn --arg state "$state" --arg current "$current" \
   --arg new "$NEW_VERSION" '
-  def semver: "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$";
+  def semver: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$";
   def ident: if test("^[0-9]+$") then [0, tonumber] else [1, .] end;
   def key: (if test(semver) then . else error("not a version: \(.)") end
             | split("+")[0]) as $v

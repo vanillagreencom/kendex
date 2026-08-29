@@ -266,7 +266,18 @@ fn a_read_it_could_not_make_stops_the_write() {
 fn a_channel_version_that_is_not_a_version_stops_the_write() {
     let malformed: Vec<&str> = REFUSED_VERSIONS
         .into_iter()
-        .chain(["not a version", "5", "", "v1.0.0", "1.0.0-rc1 "])
+        .chain([
+            "not a version",
+            "5",
+            "",
+            "v1.0.0",
+            "1.0.0-rc1 ",
+            // A digit outside ASCII. The guard's own pattern is where this
+            // is decided, and a regex engine that reads `\d` as any Unicode
+            // digit would order this against a candidate rather than refuse
+            // it.
+            "1.0.0-1\u{661}",
+        ])
         .collect();
     for carried in malformed {
         assert!(
