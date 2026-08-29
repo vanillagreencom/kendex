@@ -11,6 +11,7 @@ import {
   packagePlaces,
 } from "@/lib/package-places";
 import { scopeKey } from "@/lib/scope";
+import { useProvenanceStore } from "@/stores/provenance";
 import { useUpdatesStore } from "@/stores/updates";
 
 type Metas = Record<string, PackageMeta_Serialize | null>;
@@ -38,6 +39,12 @@ export function usePackagePlaces(
   const checking = useUpdatesStore((s) => s.checking);
   const overviewInFlight = useUpdatesStore((s) => s.overviewInFlight);
   const pendingFollows = useUpdatesStore((s) => s.pendingFollows);
+  // Who owns each copy. Read beside the records rather than trusted from
+  // an earlier visit: installing refreshes the scan and the audit and
+  // leaves this join alone, so a stale snapshot would hide Remove on a
+  // package that was just installed.
+  const provenance = useProvenanceStore((s) => s.rows);
+  const reloadProvenance = useProvenanceStore((s) => s.reload);
   const [metas, setMetas] = useState<Metas | null>(null);
   // The scan rebuilds the group on every read, so what is watched is which
   // places those are, not the array they arrived in.
@@ -57,38 +64,46 @@ export function usePackagePlaces(
       shown.current = subject;
       setMetas(null);
     }
-    void Promise.all(
-      scopes.map(async (scope) => {
-        try {
-          const response = await commands.packageMeta(scope, kind, name);
-          return [
-            scopeKey(scope),
-            response.status === "ok" ? response.data : null,
-          ] as const;
-        } catch {
-          // The generated wrapper rethrows a transport failure, and one
-          // rejection would take the whole `Promise.all` with it: the
-          // places that answered would be thrown away and the tab would
-          // load forever. A place nobody could reach is a dateless card,
-          // the same as one whose record did not read.
-          return [scopeKey(scope), null] as const;
-        }
-      }),
-    ).then((pairs) => {
+    void Promise.all([
+      // Both reads settle before any card draws: a card is its date and
+      // what can be done to the copy, and half of that is not a card.
+      reloadProvenance(),
+      Promise.all(
+        scopes.map(async (scope) => {
+          try {
+            const response = await commands.packageMeta(scope, kind, name);
+            return [
+              scopeKey(scope),
+              response.status === "ok" ? response.data : null,
+            ] as const;
+          } catch {
+            // The generated wrapper rethrows a transport failure, and one
+            // rejection would take the whole `Promise.all` with it: the
+            // places that answered would be thrown away and the tab would
+            // load forever. A place nobody could reach is a dateless card,
+            // the same as one whose record did not read.
+            return [scopeKey(scope), null] as const;
+          }
+        }),
+      ),
+    ]).then(([, pairs]) => {
       if (!cancelled) setMetas(Object.fromEntries(pairs));
     });
     return () => {
       cancelled = true;
     };
-  }, [subject, commits]);
+  }, [subject, commits, reloadProvenance]);
 
   return {
-    places: packagePlaces(scopes, kind, name, rows, metas ?? {}, {
-      loaded,
-      checking,
-      overviewInFlight,
-      pendingFollows,
-    }),
+    places: packagePlaces(
+      scopes,
+      kind,
+      name,
+      rows,
+      metas ?? {},
+      { loaded, checking, overviewInFlight, pendingFollows },
+      provenance,
+    ),
     loading: metas === null,
   };
 }

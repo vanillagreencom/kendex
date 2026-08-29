@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type {
   ItemKind,
+  Origin,
   PackageMeta_Serialize,
+  ProvenanceRow,
   Scope,
   UpdateRow,
 } from "@/bindings";
 import {
   packagePlaces,
+  removablePlaces,
   type UpdatesStanding,
   updatableRows,
 } from "@/lib/package-places";
@@ -63,13 +66,27 @@ const SETTLED: UpdatesStanding = {
   pendingFollows: [],
 };
 
+const OURS: Origin = { origin: "marketplace", source: "cat", repo: "o/r" };
+
+/** The join as it reads for places kendex owns. Vendor content carries no
+ *  row at all, which is why a place is named here to be removable. */
+const owned = (scopes: Scope[], origin: Origin = OURS): ProvenanceRow[] =>
+  scopes.map((scope) => ({
+    scope,
+    kind: "skill",
+    name: "gh",
+    harness: "claude",
+    origin,
+  }));
+
 const places = (
   scopes: Scope[],
   rows: UpdateRow[],
   metas: Record<string, PackageMeta_Serialize | null> = {},
   kind: ItemKind = "skill",
   standing: UpdatesStanding = SETTLED,
-) => packagePlaces(scopes, kind, "gh", rows, metas, standing);
+  provenance: ProvenanceRow[] = owned(scopes),
+) => packagePlaces(scopes, kind, "gh", rows, metas, standing, provenance);
 
 describe("the places one package sits in", () => {
   it("names each place among the others and carries its install date", () => {
@@ -174,5 +191,47 @@ describe("which places can take an update", () => {
     );
 
     expect(updatableRows(built).map((one) => one.scope)).toEqual([VG]);
+  });
+});
+
+// `removeItem` removes what the manifest declares and what the lock owns.
+// A copy the scan only observed, and content the tool ships itself, are
+// neither — a Remove on those would leave the card exactly where it is.
+describe("which places kendex can remove", () => {
+  it("removes a place it declares", () => {
+    expect(places([VG], [])[0].removable).toBe(true);
+  });
+
+  it("removes a place whose copy is the reader's own", () => {
+    const own: Origin = { origin: "own", source: "own", forkedFrom: null };
+    const built = places([VG], [], {}, "skill", SETTLED, owned([VG], own));
+
+    expect(built[0].removable).toBe(true);
+  });
+
+  it("leaves a copy it only observed alone", () => {
+    const built = places([VG], [], {}, "skill", SETTLED, [
+      {
+        scope: VG,
+        kind: "skill",
+        name: "gh",
+        harness: "claude",
+        origin: { origin: "unmanaged" },
+      },
+    ]);
+
+    expect(built[0].removable).toBe(false);
+  });
+
+  // The join drops vendor content rather than calling it unmanaged, so a
+  // place with no row at all is not ours either.
+  it("leaves content the tool ships alone", () => {
+    expect(places([VG], [], {}, "skill", SETTLED, [])[0].removable).toBe(false);
+  });
+
+  it("hands Remove all only the places it owns", () => {
+    const built = places([VG, HYPR], [], {}, "skill", SETTLED, owned([VG]));
+
+    expect(removablePlaces(built).map((one) => one.scope)).toEqual([VG]);
   });
 });

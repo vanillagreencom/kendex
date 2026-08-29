@@ -48,9 +48,20 @@ export function ProjectCard({
             {UPDATE_LABEL}
           </Button>
         ) : null}
-        <Button size="sm" variant="outline" disabled={busy} onClick={onRemove}>
-          {REMOVE_LABEL}
-        </Button>
+        {/* Same rule as Update: offered only where the engine can take
+            it. kendex removes what it declares and what its lock owns, so
+            a copy it merely observed, or one the tool ships itself, has no
+            Remove — the click would leave this card exactly where it is. */}
+        {place.removable ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            onClick={onRemove}
+          >
+            {REMOVE_LABEL}
+          </Button>
+        ) : null}
       </div>
     </Card>
   );

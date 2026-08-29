@@ -12,7 +12,9 @@ import {
 } from "vitest";
 import type {
   ItemKind,
+  Origin,
   PackageMeta_Serialize,
+  ProvenanceRow,
   Scope,
   UpdateRow,
   VersionRef,
@@ -26,14 +28,36 @@ import {
 } from "@/lib/copy-projects";
 import { scopeKey } from "@/lib/scope";
 import { useAuditStore } from "@/stores/audit";
+import { useProvenanceStore } from "@/stores/provenance";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount, settle } from "@/test/dom";
 import { PackageProjects } from "./package-projects";
 
 vi.mock("@/bindings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/bindings")>()),
-  commands: { packageMeta: vi.fn() },
+  commands: { packageMeta: vi.fn(), libraryProvenance: vi.fn() },
 }));
+
+const OURS: Origin = { origin: "marketplace", source: "cat", repo: "o/r" };
+
+/** The join as the tab reads it: a row per place kendex owns. Vendor
+ *  content carries no row at all, so a place left out here is one the
+ *  tool ships. */
+const ownedBy = (...owned: [Scope, Origin][]): ProvenanceRow[] =>
+  owned.map(([scope, origin]) => ({
+    scope,
+    kind: "skill",
+    name: "gh",
+    harness: "claude",
+    origin,
+  }));
+
+/** What the tab's own provenance read answers with. */
+const joinSays = (rows: ProvenanceRow[]) =>
+  vi.mocked(commands.libraryProvenance).mockResolvedValue({
+    status: "ok",
+    data: rows,
+  });
 
 const VG: Scope = { scope: "project", root: "/work/vg" };
 const HYPR: Scope = { scope: "project", root: "/work/hyprtrade" };
@@ -119,6 +143,8 @@ beforeEach(() => {
     updateOne,
     updateRows,
   });
+  useProvenanceStore.setState({ rows: [], loaded: false });
+  joinSays(ownedBy([VG, OURS], [HYPR, OURS]));
   vi.mocked(commands.packageMeta).mockImplementation((scope) =>
     Promise.resolve({
       status: "ok",
@@ -308,6 +334,71 @@ describe("the date a place shows after an update lands", () => {
 
     expect(vi.mocked(commands.packageMeta).mock.calls).toHaveLength(reads);
     expect(host.textContent).toContain("Installed 3d ago");
+  });
+});
+
+// `removeItem` removes what the manifest declares and what the lock owns,
+// and deliberately cannot delete a file kendex only observed. A Remove on
+// one of those advertises an action it cannot perform.
+describe("a place kendex does not own", () => {
+  it("draws its card without Remove", async () => {
+    joinSays(ownedBy([VG, OURS]));
+    const host = await openTab([VG, HYPR]);
+
+    expect(host.textContent).toContain("hyprtrade");
+    expect(
+      buttons(host).filter((one) => one.textContent === REMOVE_LABEL),
+    ).toHaveLength(1);
+    await click(host, REMOVE_LABEL);
+    expect(removeItem).toHaveBeenCalledWith(VG, "skill", "gh");
+  });
+
+  it("keeps Remove on the place it does own", async () => {
+    joinSays(ownedBy([VG, OURS], [HYPR, OURS]));
+    const host = await openTab([VG, HYPR]);
+
+    expect(
+      buttons(host).filter((one) => one.textContent === REMOVE_LABEL),
+    ).toHaveLength(2);
+  });
+
+  // A copy the scan only observed says so in the join; content the tool
+  // ships carries no row at all. Neither is kendex's to remove.
+  it("offers no Remove over a copy it only observed", async () => {
+    joinSays(
+      ownedBy([VG, { origin: "unmanaged" }], [HYPR, { origin: "unmanaged" }]),
+    );
+    const host = await openTab([VG, HYPR]);
+
+    expect(
+      buttons(host).filter((one) => one.textContent === REMOVE_LABEL),
+    ).toEqual([]);
+  });
+
+  it("offers no Remove over content the tool ships", async () => {
+    joinSays([]);
+    const host = await openTab([VG, HYPR]);
+
+    expect(host.textContent).toContain("vg");
+    expect(
+      buttons(host).filter((one) => one.textContent === REMOVE_LABEL),
+    ).toEqual([]);
+  });
+
+  // Held to the same judge as the cards: with nothing here kendex owns,
+  // the link has no removal to ask for.
+  it("drops Remove all when it owns none of the places", async () => {
+    joinSays([]);
+    const host = await openTab([VG, HYPR]);
+
+    expect(host.textContent).not.toContain(REMOVE_ALL_LABEL);
+  });
+
+  it("keeps Remove all while it owns one of them", async () => {
+    joinSays(ownedBy([VG, OURS]));
+    const host = await openTab([VG, HYPR]);
+
+    expect(host.textContent).toContain(REMOVE_ALL_LABEL);
   });
 });
 

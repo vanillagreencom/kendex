@@ -1,12 +1,14 @@
 import type {
   ItemKind,
   PackageMeta_Serialize,
+  ProvenanceRow,
   Scope,
   UpdateRow,
 } from "@/bindings";
 import { sameScope, scopeKey } from "@/lib/scope";
 import { placeName, updatablePlaces } from "@/lib/update-groups";
 import { rowUnsettled } from "@/lib/updates-read-state";
+import { originFor } from "@/stores/provenance";
 
 /** How the update read stands, as `rowUnsettled` asks it. The store keeps
  *  last-known rows through a failed or running read, so the rows alone
@@ -28,7 +30,27 @@ export interface PackagePlace {
    *  somebody else's hold, or a row the store is holding is one the
    *  engine goes on to refuse. */
   updatable: boolean;
+  /** kendex can take this copy away. `removeItem` removes what the
+   *  manifest declares and what the lock owns, and deliberately cannot
+   *  delete a file it only observed — so a Remove on one of those would
+   *  leave the card exactly where it was. */
+  removable: boolean;
 }
+
+/** Whether kendex owns this package's installation in one place. A copy
+ *  the scan only observed carries an `unmanaged` origin, and content the
+ *  tool ships itself carries no provenance row at all — the join drops
+ *  vendor content rather than calling it unmanaged, so an absent row is
+ *  "not ours" the same as an unmanaged one. */
+const removableIn = (
+  provenance: ProvenanceRow[],
+  kind: ItemKind,
+  name: string,
+  scope: Scope,
+): boolean => {
+  const origin = originFor(provenance, kind, name, [scope]);
+  return origin !== null && origin.origin !== "unmanaged";
+};
 
 /** This package's row in one place, or null where the update read never
  *  spoke for it. */
@@ -69,6 +91,7 @@ export function packagePlaces(
   rows: UpdateRow[],
   metas: Record<string, PackageMeta_Serialize | null>,
   standing: UpdatesStanding,
+  provenance: ProvenanceRow[],
 ): PackagePlace[] {
   return scopes.map((scope) => {
     const row = rowFor(rows, kind, name, scope);
@@ -86,9 +109,16 @@ export function packagePlaces(
         row !== null &&
         !rowUnsettled(standing, row) &&
         updatablePlaces([row]).length === 1,
+      removable: removableIn(provenance, kind, name, scope),
     };
   });
 }
+
+/** The places "Remove all" would reach — one judge for that link and the
+ *  cards' own buttons, so the link can never appear over a set of cards
+ *  that carry none. */
+export const removablePlaces = (places: PackagePlace[]): PackagePlace[] =>
+  places.filter((place) => place.removable);
 
 /** The rows "Update all" acts on — one judge for the link and the buttons,
  *  so the link can never appear over a set of cards that carry none. */

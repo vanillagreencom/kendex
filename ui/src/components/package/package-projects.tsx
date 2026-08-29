@@ -11,7 +11,7 @@ import {
   REMOVE_ALL_LABEL,
   UPDATE_ALL_LABEL,
 } from "@/lib/copy-projects";
-import { updatableRows } from "@/lib/package-places";
+import { removablePlaces, updatableRows } from "@/lib/package-places";
 import { scopeKey } from "@/lib/scope";
 import { useAuditStore } from "@/stores/audit";
 import { useUpdatesStore } from "@/stores/updates";
@@ -55,6 +55,7 @@ export function PackageProjects({
   const updateRows = useUpdatesStore((s) => s.updateRows);
   const removeItem = useAuditStore((s) => s.removeItem);
   const waiting = updatableRows(places);
+  const removable = removablePlaces(places);
 
   return (
     <Section
@@ -73,15 +74,20 @@ export function PackageProjects({
                 {UPDATE_ALL_LABEL}
               </Button>
             ) : null}
-            <Button
-              variant="link"
-              size="sm"
-              className="px-0"
-              disabled={busy}
-              onClick={onDelete}
-            >
-              {REMOVE_ALL_LABEL}
-            </Button>
+            {/* Held to the same judge as the cards: with nothing here
+                kendex owns, there is no removal for this link to ask
+                for. */}
+            {removable.length > 0 ? (
+              <Button
+                variant="link"
+                size="sm"
+                className="px-0"
+                disabled={busy}
+                onClick={onDelete}
+              >
+                {REMOVE_ALL_LABEL}
+              </Button>
+            ) : null}
           </span>
         )
       }
