@@ -207,6 +207,12 @@ impl kendex_core::install_channel::HostProbe for OnlyWritable {
         path.to_owned()
     }
 
+    /// Nothing routed through this fake asks either: `for_app` judges a
+    /// path, never the bytes at it.
+    fn digest(&self, _: &std::path::Path) -> Option<String> {
+        None
+    }
+
     fn on_path(&self, _: &str) -> bool {
         false
     }
@@ -306,7 +312,7 @@ fn the_app_s_own_image_is_never_the_command_it_carries() {
     // `AppImage(None)` rather than `WindowsInstaller`, because on Windows
     // this process's own executable is excluded too and a test binary is
     // not the app.
-    kendex_core::command_update::record_command(&env, &image).unwrap();
+    kendex_core::command_update::record_installed(&env, &image).unwrap();
     assert_eq!(
         command_beside(&env, &AppInstall::AppImage(None), Some(&path_var)),
         ours

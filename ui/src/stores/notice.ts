@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { commands, type InstallChannel } from "@/bindings";
+import { type CommandNotice, commands, type InstallChannel } from "@/bindings";
 import { SETTINGS_MOVED_MESSAGE } from "@/lib/copy";
 import { settled } from "@/lib/settled";
 
@@ -21,10 +21,11 @@ interface NoticeState {
   notice: AppUpdateNotice | null;
   /** Which action the card may offer. Read once beside the check. */
   channel: InstallChannel;
-  /** Who owns the `kendex` command beside this app, when that is not
-   *  kendex. Null when there is no command here or when Update now will
-   *  carry it across, which are the two cases with nothing to say. */
-  commandChannel: InstallChannel | null;
+  /** What the card owes a person about the `kendex` command beside this
+   *  app: who owns it where kendex does not, or the one command that moves
+   *  a command kendex owns but cannot write. Null when there is no command
+   *  here or when Update now will carry it across. */
+  commandChannel: CommandNotice | null;
   /** A replacement is running. There are no progress events, so this is
    *  the whole of what the card can say about it. */
   installing: boolean;

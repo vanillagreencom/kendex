@@ -68,17 +68,27 @@ export const coreHandlers: Record<string, Handler> = {
         return { kind: "direct" };
     }
   },
-  // Who owns the `kendex` command beside the app, when that is not kendex.
+  // What the card owes a person about the `kendex` command beside the app.
   // Null is the ordinary machine: no command here, or one Update now
   // carries across itself.
-  app_update_command_channel: () =>
-    wanted("update") === "commandManaged"
-      ? {
+  app_update_command_channel: () => {
+    switch (wanted("update")) {
+      case "commandManaged":
+        return {
           kind: "managed",
           manager: "Homebrew",
           command: "brew upgrade kendex-cli",
-        }
-      : null,
+        };
+      case "commandPrivilege":
+        return {
+          kind: "needsPrivilege",
+          path: "/usr/local/bin/kendex",
+          command: "sudo kendex update",
+        };
+      default:
+        return null;
+    }
+  },
   // The mock browser harness has no install to replace, so the successful
   // path is the one thing it cannot show: the real command relaunches the
   // app and never returns. A refusal is a plain string, which is what the

@@ -32,9 +32,15 @@ use std::time::Duration;
 use semver::Version;
 
 use crate::env::Env;
-use crate::install_channel::{HostProbe, InstallChannel, for_cli};
+use crate::install_channel::{HostProbe, InstallChannel, package_owner};
 use crate::process::Hardened;
 use crate::update_feed::{ReleaseFeed, signature_url, verify_signature};
+
+mod notice;
+mod record;
+
+pub use notice::CommandNotice;
+pub use record::{InstalledCommand, record_command, record_installed, recorded_command};
 
 /// What `install.sh` installs the command as. Windows has no command
 /// beside the app — the installer carries the app alone — so the name
@@ -55,6 +61,14 @@ pub enum CommandBeside {
     /// moves while the command stays put is the divergence this whole
     /// path exists to prevent.
     NotOurs(InstallChannel),
+    /// A `kendex` command an installer recorded, in a directory this
+    /// process cannot write. `install.sh` reaches `/usr/local/bin` with
+    /// `sudo` whenever that is the first of its two directories on `PATH`,
+    /// and the desktop app runs unprivileged, so this is an ordinary
+    /// install rather than an exotic one. It is ours; what is missing is
+    /// the privilege, and saying "not ours" here would name no owner and
+    /// offer no way out of a state a single command fixes.
+    NeedsPrivilege(PathBuf),
     /// No `kendex` command beside the app — a dmg or msi install, where
     /// the app is the whole install. An answer, not a failure.
     Absent,
@@ -128,23 +142,34 @@ pub fn command_candidates(home: &Path, path_var: Option<&OsStr>) -> Vec<PathBuf>
 /// command carries. Written over, the command binary lands on the app and
 /// the app is then written back over it, leaving no command at all.
 ///
-/// `installed` is the command an installer recorded, and it is what makes
-/// a candidate ours. Everything else here is about the file's shape, and
+/// `installed` is what an installer recorded, and it is what makes a
+/// candidate ours. Everything else here is about the file's shape, and
 /// shape is not identity: a wrapper someone wrote that runs the real
 /// `kendex` is executable, is named `kendex`, and sits in a directory that
 /// takes a rename, so every other question answers yes and a release
 /// binary lands on their script. `kendex update` needs no record, because
 /// the path it judges is the one it is running from; this function found
 /// its path by name, and a name is a guess until something confirms it.
+///
+/// The record is read from both ends. It is searched as well as checked,
+/// so a command installed where neither `PATH` nor `install.sh` would put
+/// it — `~/.cargo/bin/kendex`, under an app a Finder launch hands the four
+/// system directories — is reachable at all; and it is a path *and* a
+/// digest, because a path is a name and names outlive the files that held
+/// them. Remove the recorded binary, drop a wrapper or a retargeted
+/// symlink at that path, and the path still compares equal.
 pub fn command_beside_app(
     probe: &dyn HostProbe,
     candidates: &[PathBuf],
     running: &[PathBuf],
-    installed: Option<&Path>,
+    installed: Option<&InstalledCommand>,
 ) -> CommandBeside {
     let running: Vec<PathBuf> = running.iter().map(|path| probe.resolve(path)).collect();
-    let installed = installed.map(|path| probe.resolve(path));
-    for candidate in candidates {
+    let record = installed.map(|record| (probe.resolve(&record.path), record.digest.as_str()));
+    // Last in the search, because everything ahead of it is what a shell
+    // resolves first, and that is the copy a person actually runs.
+    let searched = candidates.iter().chain(installed.map(|r| &r.path));
+    for candidate in searched {
         if !probe.is_command(candidate) {
             continue;
         }
@@ -152,44 +177,26 @@ pub fn command_beside_app(
         if running.contains(&resolved) {
             continue;
         }
-        return match for_cli(&resolved, probe) {
-            // Asked before the record, because a package manager's copy
-            // has an owner worth naming and the card can name it. Only
-            // the arm that would replace the file needs proof.
-            InstallChannel::Direct if installed.as_deref() == Some(resolved.as_path()) => {
-                CommandBeside::Ours(resolved)
-            }
-            // Replaceable, and nothing says it is ours. Refusing costs a
-            // person one command; being wrong costs them their file.
-            InstallChannel::Direct => CommandBeside::NotOurs(InstallChannel::Unknown),
-            owned => CommandBeside::NotOurs(owned),
+        // Asked before the record, because a package manager's copy has an
+        // owner worth naming and no record of ours changes whose bytes
+        // those are.
+        if let Some(owner) = package_owner(&resolved, probe) {
+            return CommandBeside::NotOurs(owner);
+        }
+        let ours = record.as_ref().is_some_and(|(path, digest)| {
+            *path == resolved && probe.digest(&resolved).as_deref() == Some(*digest)
+        });
+        if !ours {
+            // Nothing proves it ours. Refusing costs a person one command;
+            // being wrong costs them their file.
+            return CommandBeside::NotOurs(InstallChannel::Unknown);
+        }
+        return match probe.replaceable(&resolved) {
+            true => CommandBeside::Ours(resolved),
+            false => CommandBeside::NeedsPrivilege(resolved),
         };
     }
     CommandBeside::Absent
-}
-
-/// The `kendex` command an installer recorded, resolved as written.
-///
-/// Absent where nothing has been recorded — an install older than this
-/// record, or one made some other way — and absent for anything that is
-/// not one absolute path, because a record this build cannot read is not
-/// a record it should act on.
-pub fn recorded_command(env: &Env) -> Option<PathBuf> {
-    let recorded = std::fs::read_to_string(env.installed_command_file()).ok()?;
-    let path = PathBuf::from(recorded.trim());
-    path.is_absolute().then_some(path)
-}
-
-/// Record `path` as the `kendex` command this install owns, so the desktop
-/// app can carry it across. Written by whatever put the command there.
-pub fn record_command(env: &Env, path: &Path) -> Result<(), String> {
-    let file = env.installed_command_file();
-    if let Some(parent) = file.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| format!("{} could not be created: {error}", parent.display()))?;
-    }
-    std::fs::write(&file, format!("{}\n", path.display()))
-        .map_err(|error| format!("{} could not be written: {error}", file.display()))
 }
 
 /// Bring the `kendex` command beside a desktop app to `release`, before
@@ -204,7 +211,12 @@ pub fn record_command(env: &Env, path: &Path) -> Result<(), String> {
 /// A release with no command for this target stops the run for the same
 /// reason. There is a command installed here — that is what `Ours` means —
 /// and a release that cannot move it can only leave it behind.
+///
+/// Every other `beside` leaves the command where it is, `NeedsPrivilege`
+/// included: the app cannot write that directory, and the card named it
+/// before Update now was pressed.
 pub fn bring_command_across(
+    env: &Env,
     beside: &CommandBeside,
     feed_url: &str,
     release: &str,
@@ -229,12 +241,23 @@ pub fn bring_command_across(
     // Named as the command half. Read off a card that has just been
     // pressed, a bare fetch or signature error says nothing about which of
     // the two halves it came from.
-    download(asset)
-        .and_then(|command| command.install_at(path, public_key))
-        .map_err(|why| {
-            format!("the kendex command could not be updated: {why}; nothing was updated")
-        })?;
+    let command = download(asset).map_err(command_half_failed)?;
+    command
+        .install_at(path, public_key)
+        .map_err(command_half_failed)?;
+    // The record now names bytes that are gone, so it is rewritten for the
+    // bytes that replaced them. A rewrite that fails costs the next
+    // app-driven update, never this one: the record stops matching, the
+    // app then refuses a command it does own rather than replacing one it
+    // does not, and any `kendex update` run restores it. That is why this
+    // is not an error — the command is across, and saying otherwise would
+    // send a person to press a button that has already done its work.
+    let _ = record_command(env, path, &command.bytes);
     Ok(CommandHalf::Moved)
+}
+
+fn command_half_failed(why: String) -> String {
+    format!("the kendex command could not be updated: {why}; nothing was updated")
 }
 
 /// One release under SemVer precedence, so build metadata cannot split a

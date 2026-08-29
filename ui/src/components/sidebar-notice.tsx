@@ -10,6 +10,7 @@ import {
   APP_UPDATE_TITLE,
   APP_UPDATE_UNKNOWN_NOTE,
   appUpdateCommandManagedNote,
+  appUpdateCommandPrivilegeNote,
   appUpdateVersionsLabel,
 } from "@/lib/copy";
 import { useNoticeStore } from "@/stores/notice";
@@ -85,22 +86,24 @@ export function SidebarNotice() {
               before the button is pressed, because afterwards the app has
               restarted and the card is gone. */}
           {commandChannel === null ? null : commandChannel.kind ===
-            "managed" ? (
-            <>
-              <p className="mt-2 text-xs text-muted-foreground">
-                {appUpdateCommandManagedNote(commandChannel.manager)}
-              </p>
-              <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded bg-foreground/[0.05] px-2 py-1.5 font-mono text-[11px] leading-5">
-                {commandChannel.command}
-              </pre>
-            </>
-          ) : (
+            "unknown" ? (
             // Nothing named the installer, so there is no name to print
             // and no command to run: the card says the app moves alone and
             // stops, rather than leaving a gap where a name would go.
             <p className="mt-2 text-xs text-muted-foreground">
               {APP_UPDATE_COMMAND_UNKNOWN_NOTE}
             </p>
+          ) : (
+            <>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {commandChannel.kind === "managed"
+                  ? appUpdateCommandManagedNote(commandChannel.manager)
+                  : appUpdateCommandPrivilegeNote(commandChannel.path)}
+              </p>
+              <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded bg-foreground/[0.05] px-2 py-1.5 font-mono text-[11px] leading-5">
+                {commandChannel.command}
+              </pre>
+            </>
           )}
         </>
       ) : channel.kind === "managed" ? (

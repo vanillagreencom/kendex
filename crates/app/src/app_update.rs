@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use kendex_core::app_update::AppUpdateView;
 use kendex_core::command_update::{
-    CommandBeside, CommandHalf, bring_command_across, command_beside_app, command_candidates,
-    recorded_command,
+    CommandBeside, CommandHalf, CommandNotice, bring_command_across, command_beside_app,
+    command_candidates, recorded_command,
 };
 use kendex_core::env::Env;
 use kendex_core::install_channel::{AppInstall, Host, InstallChannel};
@@ -100,8 +100,10 @@ pub fn app_update_channel() -> Result<InstallChannel, String> {
 }
 
 /// What the card has to say about the `kendex` command beside this app:
-/// the channel that owns it where kendex must not replace it, and nothing
-/// where there is none or where Update now will carry it across.
+/// the channel that owns it where another installer does, the one command
+/// that moves it where it is kendex's own but sits where this app cannot
+/// write, and nothing where there is none or where Update now carries it
+/// across itself.
 ///
 /// Without this the app replaces itself, restarts, and clears its card
 /// while the terminal command stays on the old release with nothing on
@@ -109,13 +111,10 @@ pub fn app_update_channel() -> Result<InstallChannel, String> {
 /// about, arrived at from the other side.
 #[tauri::command(async)]
 #[specta::specta]
-pub fn app_update_command_channel() -> Result<Option<InstallChannel>, String> {
+pub fn app_update_command_channel() -> Result<Option<CommandNotice>, String> {
     let env = Env::detect().map_err(|error| error.to_string())?;
     let beside = command_beside(&env, &app_install()?, std::env::var_os("PATH").as_deref());
-    Ok(match beside {
-        CommandBeside::NotOurs(channel) => Some(channel),
-        CommandBeside::Ours(_) | CommandBeside::Absent => None,
-    })
+    Ok(CommandNotice::for_card(&beside))
 }
 
 /// Somewhere to put the path kendex approved, on whatever will perform the
@@ -237,7 +236,7 @@ fn command_beside(
         &Host,
         &command_candidates(&env.home, path_var),
         &not_the_command(install, std::env::current_exe().ok()),
-        recorded_command(env).as_deref(),
+        recorded_command(env).as_ref(),
     )
 }
 
@@ -262,6 +261,7 @@ async fn move_the_command(install: AppInstall, release: String) -> Result<Comman
     tauri::async_runtime::spawn_blocking(move || {
         let env = Env::detect().map_err(|error| error.to_string())?;
         bring_command_across(
+            &env,
             &command_beside(&env, &install, std::env::var_os("PATH").as_deref()),
             &feed,
             &release,

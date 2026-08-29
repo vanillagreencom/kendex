@@ -6,7 +6,7 @@
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppUpdateView, InstallChannel } from "@/bindings";
+import type { AppUpdateView, CommandNotice, InstallChannel } from "@/bindings";
 import { commands } from "@/bindings";
 import {
   APP_UPDATE_COMMAND_UNKNOWN_NOTE,
@@ -17,6 +17,7 @@ import {
   APP_UPDATE_TITLE,
   APP_UPDATE_UNKNOWN_NOTE,
   appUpdateCommandManagedNote,
+  appUpdateCommandPrivilegeNote,
 } from "@/lib/copy";
 import { useNoticeStore } from "@/stores/notice";
 import { mount, settle } from "@/test/dom";
@@ -68,7 +69,7 @@ const available = (muted = false): { status: "ok"; data: AppUpdateView } =>
 /** Load the store as the startup fan-out does, then put the card on screen. */
 async function show(
   channel: InstallChannel = { kind: "direct" },
-  commandChannel: InstallChannel | null = null,
+  commandChannel: CommandNotice | null = null,
 ) {
   vi.mocked(commands.appUpdateChannel).mockResolvedValue({
     status: "ok",
@@ -237,6 +238,30 @@ describe("the action each channel allows", () => {
       appUpdateCommandManagedNote("an AUR helper"),
     );
     expect(container.textContent).not.toContain("Homebrew");
+  });
+
+  // The command is kendex's own and the app cannot write where it sits,
+  // which is neither of the two answers above: there is an owner, and one
+  // command moves it. Said with the path, because a person may have more
+  // than one kendex and only one of them is the file this is about.
+  it("names the command that moves one only privilege withholds", async () => {
+    const container = await show(
+      { kind: "direct" },
+      {
+        kind: "needsPrivilege",
+        path: "/usr/local/bin/kendex",
+        command: "sudo kendex update",
+      },
+    );
+    expect(container.textContent).toContain(
+      appUpdateCommandPrivilegeNote("/usr/local/bin/kendex"),
+    );
+    expect(container.textContent).toContain("sudo kendex update");
+    // Not the answer for a command nothing could place: that one names
+    // nothing to run, and this one does.
+    expect(container.textContent).not.toContain(
+      APP_UPDATE_COMMAND_UNKNOWN_NOTE,
+    );
   });
 
   // Nothing kendex could name owns it, so the card says the command is

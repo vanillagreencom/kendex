@@ -237,6 +237,12 @@ export const appUpdateCommandManagedNote = (manager: string): string =>
 // for the app, about the command instead.
 export const APP_UPDATE_COMMAND_UNKNOWN_NOTE =
   "Update now updates the app only. Update the kendex command the way you installed it.";
+// The command is kendex's own — an installer recorded it — but it sits in
+// a directory this app cannot write, which is where install.sh puts it
+// whenever /usr/local/bin is the first of its two directories on PATH.
+// Not the unknown note: there is an owner, and one command moves it.
+export const appUpdateCommandPrivilegeNote = (path: string): string =>
+  `Update now updates the app only. The kendex command at ${path} needs permissions this app does not have; update it with:`;
 // A whole-settings write the engine refused because the file moved under
 // it. Said wherever a change is one field and the retry is to press again.
 export const SETTINGS_MOVED_MESSAGE =

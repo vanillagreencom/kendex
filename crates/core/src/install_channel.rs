@@ -181,6 +181,10 @@ pub trait HostProbe {
     /// the path it was exec'd with, symlinks intact.
     fn resolve(&self, path: &Path) -> PathBuf;
 
+    /// The plain SHA-256 of a file's bytes, absent where it cannot be read.
+    /// A name kendex once answered to says nothing about what answers now.
+    fn digest(&self, path: &Path) -> Option<String>;
+
     /// Whether a command is on `PATH`.
     fn on_path(&self, command: &str) -> bool;
 
@@ -220,6 +224,12 @@ impl HostProbe for Host {
 
     fn resolve(&self, path: &Path) -> PathBuf {
         std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
+    }
+
+    fn digest(&self, path: &Path) -> Option<String> {
+        std::fs::read(path)
+            .ok()
+            .map(|b| crate::hash::sha256_hex(&b))
     }
 
     fn on_path(&self, command: &str) -> bool {
@@ -262,20 +272,29 @@ pub fn for_app(install: &AppInstall, probe: &dyn HostProbe) -> InstallChannel {
 /// call, once, on the path it will also write to. Resolving here instead
 /// would decide about the file while the caller still held the link.
 pub fn for_cli(exe: &Path, probe: &dyn HostProbe) -> InstallChannel {
+    package_owner(exe, probe).unwrap_or_else(|| replaceable_or_unknown(exe, probe))
+}
+
+/// The package manager whose prefix `exe` sits under, where one does.
+///
+/// Split from [`for_cli`], whose `Unknown` is both "a manager this build
+/// cannot name owns it" and "nobody owns it and we cannot write it" —
+/// opposites, to a caller holding proof the file is kendex's.
+pub fn package_owner(exe: &Path, probe: &dyn HostProbe) -> Option<InstallChannel> {
     if starts_with_any(exe, &BREW_PREFIXES) {
-        return InstallChannel::Managed {
+        return Some(InstallChannel::Managed {
             manager: HOMEBREW.to_owned(),
             command: "brew upgrade kendex-cli".to_owned(),
-        };
+        });
     }
     if system_owned(exe) {
         let package = match probe.exists(Path::new(PACKAGED_APP_IMAGE)) {
             true => ArchPackage::Bin,
             false => ArchPackage::Cli,
         };
-        return arch_channel(package, probe);
+        return Some(arch_channel(package, probe));
     }
-    replaceable_or_unknown(exe, probe)
+    None
 }
 
 /// The two AUR packages that carry kendex. The name comes from where the
