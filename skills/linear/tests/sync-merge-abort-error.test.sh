@@ -29,6 +29,13 @@ make_env() {
 
   printf '%s' "$existing" > "$root/.cache/linear/issues.json"
   echo '[]' > "$root/.cache/linear/projects.json"
+
+  # Comment files the abort must leave alone. meta.json carries no
+  # comments_source, which is the legacy state and the wider blast radius: an
+  # unmarked cache refetches every comment and scopes the write to the whole
+  # issue set, so a write that ran before the merge would sweep these.
+  printf '[{"id":"c1","body":"kept"}]' > "$root/.cache/linear/comments/PROJ-1.json"
+  printf '[{"id":"c3","body":"kept too"}]' > "$root/.cache/linear/comments/PROJ-3.json"
   # Old synced_at forces an issues delta; fresh reconciled_at skips reconcile
   jq -n --arg synced "$OLD_SYNC" --arg rec "$(date -Iseconds)" \
     '{synced_at: $synced, reconciled_at: $rec, stats: {}}' > "$root/.cache/linear/meta.json"
@@ -52,7 +59,7 @@ case "\$query" in
 *"SyncLabels("*)
   printf '%s' '{"data":{"issueLabels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200' ;;
 *"SyncComments("*)
-  printf '%s' '{"data":{"comments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200' ;;
+  printf '%s' '{"data":{"comments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"c3-new","body":"refetched","issue":{"identifier":"PROJ-3"}}]}}}___HTTP_CODE___200' ;;
 *)
   printf '%s' '{"errors":[{"message":"unexpected query"}]}___HTTP_CODE___200' ;;
 esac
@@ -66,6 +73,12 @@ run_sync() {
     bash "$root/.agents/skills/linear/scripts/linear.sh" sync --no-attachments)
 }
 
+run_sync_if_stale() {
+  local root="$1"
+  (cd "$root" && PATH="$root/bin:$PATH" LINEAR_API_KEY=test-token \
+    bash "$root/.agents/skills/linear/scripts/linear.sh" sync --if-stale 15 --no-attachments)
+}
+
 # --- abort case: merge result would shrink below the existing cache --------------
 # Two cached entries share an id, so the delta merge dedupes 3 -> 2 and trips
 # the cache_merge guard — the same guard a transient empty/partial query
@@ -74,6 +87,8 @@ ABORT_ROOT="$TMP_BASE/abort"
 make_env "$ABORT_ROOT" \
   '[{"id":"dup-id","identifier":"PROJ-1","title":"a"},{"id":"dup-id","identifier":"PROJ-1","title":"b"},{"id":"id-3","identifier":"PROJ-3","title":"c"}]' \
   "dup-id"
+
+COMMENTS_BEFORE="$(cd "$ABORT_ROOT/.cache/linear/comments" && find . -type f | LC_ALL=C sort | xargs cat)"
 
 set +e
 run_sync "$ABORT_ROOT" >/dev/null 2>"$TMP_BASE/abort-err"
@@ -105,6 +120,16 @@ if [[ "$(jq -r '.synced_at' "$ABORT_ROOT/.cache/linear/meta.json")" != "$OLD_SYN
   echo "FAIL failed sync still advanced synced_at"
   exit 1
 fi
+# The per-issue comment files are the live cache, not a staging area: a pull
+# written before the merge could reject leaves them rewritten or swept while
+# the command reports the cache unchanged.
+COMMENTS_AFTER="$(cd "$ABORT_ROOT/.cache/linear/comments" && find . -type f | LC_ALL=C sort | xargs cat)"
+if [[ "$COMMENTS_AFTER" != "$COMMENTS_BEFORE" ]]; then
+  echo "FAIL aborted merge changed the comment cache it reported unchanged"
+  echo "  before: $COMMENTS_BEFORE"
+  echo "  after:  $COMMENTS_AFTER"
+  exit 1
+fi
 
 # --- control: healthy delta merges and sync succeeds -----------------------------
 OK_ROOT="$TMP_BASE/ok"
@@ -134,6 +159,47 @@ if [[ "$(jq -r '[.[] | select(.id == "id-1")] | first | .title' "$OK_ROOT/.cache
 fi
 if [[ "$(jq -r '.synced_at' "$OK_ROOT/.cache/linear/meta.json")" == "$OLD_SYNC" ]]; then
   echo "FAIL successful sync did not advance synced_at"
+  exit 1
+fi
+# The marker is what stops the next incremental sync refetching every comment,
+# and what stops --if-stale skipping the sync that would write it.
+if [[ "$(jq -r '.comments_source // empty' "$OK_ROOT/.cache/linear/meta.json")" != "paginated" ]]; then
+  echo "FAIL successful sync did not record how the comment cache was built"
+  exit 1
+fi
+# PROJ-3 is not in the delta. A cache with no marker holds first-page-only
+# threads for exactly the issues a delta never revisits, so an unmarked sync
+# refetches every comment and scopes the write to the whole issue set. Scoped
+# to the delta instead, PROJ-3 would keep its seeded file forever.
+if [[ "$(jq -r '.[0].id' "$OK_ROOT/.cache/linear/comments/PROJ-3.json")" != "c3-new" ]]; then
+  echo "FAIL unmarked cache did not refetch comments for an issue outside the delta: $(cat "$OK_ROOT/.cache/linear/comments/PROJ-3.json")"
+  exit 1
+fi
+
+# --- freshness must not skip the sync that would mark the cache ------------------
+# OK_ROOT is now both fresh and marked, so a read-only caller skips. Strip the
+# marker and the same call has to run: a cache whose comments are legacy is not
+# usable however recently it was synced, and skipping here is how a machine
+# keeps first-page threads indefinitely.
+set +e
+run_sync_if_stale "$OK_ROOT" >/dev/null 2>"$TMP_BASE/stale-marked"
+set -e
+if ! grep -q "Cache fresh" "$TMP_BASE/stale-marked"; then
+  echo "FAIL --if-stale re-synced a fresh, marked cache: $(cat "$TMP_BASE/stale-marked")"
+  exit 1
+fi
+
+jq 'del(.comments_source)' "$OK_ROOT/.cache/linear/meta.json" > "$TMP_BASE/meta-unmarked"
+mv "$TMP_BASE/meta-unmarked" "$OK_ROOT/.cache/linear/meta.json"
+set +e
+run_sync_if_stale "$OK_ROOT" >/dev/null 2>"$TMP_BASE/stale-unmarked"
+set -e
+if grep -q "Cache fresh" "$TMP_BASE/stale-unmarked"; then
+  echo "FAIL --if-stale skipped an unmarked cache, leaving legacy comments in place"
+  exit 1
+fi
+if [[ "$(jq -r '.comments_source // empty' "$OK_ROOT/.cache/linear/meta.json")" != "paginated" ]]; then
+  echo "FAIL the forced sync did not mark the cache"
   exit 1
 fi
 

@@ -172,6 +172,18 @@ sync_comments() {
     echo "$all_nodes"
 }
 
+# A comment cache built before the paginated fetch holds first pages passed off
+# as whole threads. The cache is regenerable state, so it is discarded and
+# refetched rather than repaired: no conversion, no reader for the old shape.
+# meta.json carries the marker, and its absence forces one full comment pull
+# before any incremental sync is allowed to run.
+COMMENTS_SOURCE="paginated"
+
+comments_cache_is_current() {
+    [[ -f "$CACHE_DIR/meta.json" ]] || return 1
+    [[ "$(jq -r '.comments_source // empty' "$CACHE_DIR/meta.json")" == "$COMMENTS_SOURCE" ]]
+}
+
 # Rewrite the per-issue comment files from a complete comment pull. Every
 # issue in the pull's scope is rewritten or removed, so an issue whose last
 # comment was deleted loses its file instead of keeping a stale one.
@@ -642,7 +654,7 @@ main() {
     fi
 
     # Check if sync needed when --if-stale specified
-    if [[ -n "$if_stale" ]] && cache_is_fresh "$if_stale"; then
+    if [[ -n "$if_stale" ]] && cache_is_fresh "$if_stale" && comments_cache_is_current; then
         echo "Cache fresh (< ${if_stale}m), skipped" >&2
         if [[ "$show_stats" == true ]]; then
             cache_status
@@ -746,24 +758,34 @@ main() {
             delta_count=$(jq 'length' "$CACHE_DIR/.delta_issues.json")
             # Scoped to the issues this delta touched, which is the set whose
             # threads may have moved, and rewritten whole so a thread never
-            # ends up holding only its newest comments.
-            if ! sync_comments "{\"issue\": {\"updatedAt\": {\"gte\": \"$last_sync\"}}}" > "$CACHE_DIR/.delta_comments.json"; then
+            # ends up holding only its newest comments. An unmarked cache is
+            # refetched entirely instead: its unchanged issues are exactly the
+            # ones a delta would never revisit.
+            local comment_filter="{\"issue\": {\"updatedAt\": {\"gte\": \"$last_sync\"}}}"
+            local comment_scope="$CACHE_DIR/.delta_issues.json"
+            if ! comments_cache_is_current; then
+                comment_filter="{}"
+                comment_scope="$CACHE_DIR/issues.json"
+            fi
+            if ! sync_comments "$comment_filter" > "$CACHE_DIR/.delta_comments.json"; then
                 rm -f "$CACHE_DIR/.delta_issues.json" "$CACHE_DIR/.delta_issues_raw.json" "$CACHE_DIR/.delta_comments.json"
                 cache_unlock
                 return 1
             fi
-            write_comments "$CACHE_DIR/.delta_comments.json" "$CACHE_DIR/.delta_issues.json"
-            rm -f "$CACHE_DIR/.delta_comments.json"
             # An aborted merge means the issues query returned less than the
             # cache holds — likely a transient/partial API result. Refusing
             # the overwrite is correct, but it must fail the sync loudly, not
             # end as "no changes" (#930).
             if ! cache_merge "issues.json" "$CACHE_DIR/.delta_issues.json"; then
-                rm -f "$CACHE_DIR/.delta_issues.json" "$CACHE_DIR/.delta_issues_raw.json"
+                rm -f "$CACHE_DIR/.delta_issues.json" "$CACHE_DIR/.delta_issues_raw.json" "$CACHE_DIR/.delta_comments.json"
                 cache_unlock
                 echo "Sync error: issues cache merge aborted — the merge result was smaller than the existing cache, which usually means the issues query returned an incomplete or empty result (transient API failure). Cache left unchanged; retry sync." >&2
                 return 1
             fi
+            # Held until the merge succeeded: this rewrites the live per-issue
+            # files, and an abort must leave them as they were.
+            write_comments "$CACHE_DIR/.delta_comments.json" "$comment_scope"
+            rm -f "$CACHE_DIR/.delta_comments.json"
             # Patch stale embedded relation snapshots for delta issues
             jq -c '.[]' "$CACHE_DIR/.delta_issues.json" 2>/dev/null | while IFS= read -r issue; do
                 cache_patch_relation_snapshots "$issue"
@@ -847,9 +869,11 @@ main() {
         --argjson cycles "$cycle_count" \
         --argjson initiatives "$initiative_count" \
         --argjson elapsed "$elapsed" \
+        --arg comments_source "$COMMENTS_SOURCE" \
         '{
             synced_at: $ts,
             reconciled_at: (if $reconciled != "" then $reconciled else null end),
+            comments_source: $comments_source,
             elapsed_seconds: $elapsed,
             stats: {issues: $issues, projects: $projects, cycles: $cycles, initiatives: $initiatives}
         }' \
