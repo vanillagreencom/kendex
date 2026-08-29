@@ -229,7 +229,10 @@ reviewer_skill="$REPO_ROOT/skills/reviewer/SKILL.md"
 schema_doc="$REPO_ROOT/skills/reviewer/schemas/review-finding.md"
 assert_file_contains "$reviewer_skill" "Output Contract" "reviewer SKILL has an output-contract section"
 assert_file_contains "$reviewer_skill" "review-artifact-check" "reviewer SKILL mandates the pre-return self-check"
-assert_file_contains "$schema_doc" "1-4" "schema states the priority range"
+# No check that the schema states the priority range. `1-4` is a number a
+# sentence widening or denying the range carries too, so the pin covers
+# nothing. The range is enforced against the script above, which is what
+# proves it; the schema's statement of it is uncovered.
 assert_file_contains "$schema_doc" "recommendation" "schema names the recommendation field"
 for wf in review codebase-review qa-review; do
   wf_file="$REPO_ROOT/skills/reviewer/workflows/$wf.md"

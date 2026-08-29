@@ -11,9 +11,10 @@
 # state-write boundary as an `outcome` field ("blocked"|"skipped") and maps it
 # to distinct audit origins (blocked/absent → "escalated", skipped →
 # "skipped"). This lint pins the tokens that chain carries in the instruction
-# docs — the `outcome` field and, in the schema, one table row per outcome
-# binding it to its origin. A relation needs one pin that spans both halves:
-# two independent token greps would stay green with the mapping inverted.
+# docs — the `outcome` field, the route from each builder to the schema, and
+# in the schema one table row per outcome binding it to its origin. A relation
+# needs one pin that spans both halves: two independent token greps would stay
+# green with the mapping inverted.
 #
 # NOT covered: that those rows form a well-formed table at all — a header, a
 # delimiter on the line below it, and a consistent cell count across every row.
@@ -22,8 +23,8 @@
 # calls must ship inside orch too, and dep-radar's policy lint needs the
 # identical checker but cannot reach it: dep-radar declares `required:
 # [github]`, and no test in this repo sources another skill's file. A
-# repo-level `tools/` lane is the right home and is filed as its own work;
-# until it lands, table well-formedness has no lint anywhere.
+# repo-level `tools/` lane is the right home for it. Until such a lane exists,
+# table well-formedness has no lint anywhere.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -51,21 +52,24 @@ else
   fail "dev-fix escalated entry lost the \"outcome\" field or its write"
 fi
 
-# --- b: audit-input builders carry the skipped mapping and the schema route -
-# `"skipped"` → `origin: "skipped"` is ONE contiguous literal, so it binds the
-# outcome to the origin. The blocked branch is not: the workflows spell it
-# `"blocked"` or no `outcome` field → `origin: "escalated"`, and any pin short
-# of that whole run of text leaves the two halves independent. Two independent
-# token pins never establish a relation between the tokens. So the blocked
-# branch is unpinned in the workflows; what is pinned is that each builder
-# routes to the schema that owns the mapping, where § d reads the table.
+# --- b: audit-input builders route to the schema that owns the mapping ------
+# Neither branch of the mapping is pinned in the workflows. Contiguity was not
+# enough: `"skipped"` → `origin: "skipped"` is one literal, but a sentence
+# NEGATING it carries that literal too, so the condition passed on a doc that
+# said the opposite while failing on a faithful rewrite. A pin a negation
+# satisfies covers nothing. What is pinned is the route to the schema, where
+# § d reads the mapping off the rows.
+#
+# So these rules have no lint in review-pr.md or review.md: that `"skipped"`
+# maps to origin "skipped", and that `"blocked"` or an absent `outcome` field
+# maps to origin "escalated". The schema's rows are the only coverage either
+# has.
 for wf in review-pr review; do
   doc="$SKILL_DIR/workflows/$wf.md"
-  if grep -q '`"skipped"` → `origin: "skipped"`' "$doc" \
-     && grep -q 'schemas/audit-issues-input.md' "$doc"; then
-    pass "$wf.md maps skipped → skipped and routes to the schema"
+  if grep -q 'schemas/audit-issues-input.md' "$doc"; then
+    pass "$wf.md routes to the schema that owns the mapping"
   else
-    fail "$wf.md lost the skipped mapping or the schema route"
+    fail "$wf.md lost the schema route"
   fi
 done
 

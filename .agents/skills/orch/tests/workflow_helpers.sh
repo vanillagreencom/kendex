@@ -185,15 +185,12 @@ for phrase in 'exit 75 refuses a second writer' 'rather than adding a second wri
     pass "SKILL.md does not over-claim the possession gate: $phrase"
   fi
 done
-# Paired with the absence checks: deleting the rows entirely would satisfy them
-# while losing the contract, so the accurate condition must be present in both
-# places that state it.
-assert_file_contains "$SKILL_DIR/SKILL.md" \
-  'exits 75' \
-  "SKILL.md's scripts table carries the worktree-claim exit code"
-assert_file_contains "$SKILL_DIR/SKILL.md" \
-  'exit 75 aborts' \
-  "SKILL.md's Round Closure step carries the same exit code"
+# No check that either site states what actually exits 75 — the scripts table
+# row and the Round Closure step both say it in prose, and a sentence denying
+# the behaviour carries the number just as well as one asserting it. Deleting
+# the rows outright would satisfy the absence checks above, and this pin did
+# not close that: it covers nothing a negation does not also satisfy. Both
+# rules are uncovered.
 
 # The delegated agent re-verifies the same lease, so a delegation that lands in
 # a tree another session has taken fails closed instead of clobbering it. The
