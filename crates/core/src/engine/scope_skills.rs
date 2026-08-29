@@ -16,7 +16,7 @@
 //! revision is full of packages nothing installs — so what comes out of
 //! one is what the plan installs from it, asked of the plan itself.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::env::Env;
 use crate::error::Result;
@@ -55,23 +55,35 @@ impl ScopeSkills {
     ) -> Result<ScopeSkills> {
         let mut state = DesiredState::default();
         let expansion = super::expansion::expand(env, scope, manifest, None, &mut state);
-        ScopeSkills::planned(env, scope, manifest, &expansion, arriving)
+        ScopeSkills::planned(
+            env,
+            scope,
+            manifest,
+            &expansion,
+            &state.rev_conflicts,
+            arriving,
+        )
     }
 
     /// The scope for a pass that already derived the closure. The notes and
     /// warnings [`ScopeSkills::after`] throws away belong to that pass, and
     /// deriving a second closure there would let the inventory and the plan
-    /// answer from two of them.
+    /// answer from two of them. `refused` is that pass's
+    /// [`DesiredState::rev_conflicts`], the closure's own record of what it
+    /// planned and then held back.
     pub(super) fn planned(
         env: &Env,
         scope: &Scope,
         manifest: &Manifest,
         expansion: &Expansion,
+        refused: &BTreeSet<(ItemKind, String)>,
         arriving: &[String],
     ) -> Result<ScopeSkills> {
         let mut skills: Vec<String> = arriving.to_vec();
         skills.extend(offered(env, scope, manifest));
-        skills.extend(installed_from_pins(env, scope, manifest, expansion));
+        skills.extend(installed_from_pins(
+            env, scope, manifest, expansion, refused,
+        ));
         skills.sort();
         skills.dedup();
         Ok(ScopeSkills(skills))
@@ -123,11 +135,17 @@ fn offered(env: &Env, scope: &Scope, manifest: &Manifest) -> Vec<String> {
 /// catalog carries a set's member, whether a removal holds one back, and
 /// which tools a declaration lands on are already settled by the time an
 /// item is in the closure, so none of them is asked again.
+///
+/// `refused` names the items the closure marked as wanted at two revisions
+/// at once. Reaching the closure is not the same as being written: one
+/// filesystem identity exists, so the plan writes nothing for those and the
+/// pins supply nothing.
 fn installed_from_pins(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
     expansion: &Expansion,
+    refused: &BTreeSet<(ItemKind, String)>,
 ) -> Vec<String> {
     let mut wanted: BTreeMap<(&str, &str), Vec<&str>> = BTreeMap::new();
     for (name, planned) in expansion.of(ItemKind::Skill) {
@@ -135,6 +153,15 @@ fn installed_from_pins(
         // can report that it produced nothing. It installs nothing, so it
         // supplies nothing.
         if planned.harnesses.is_empty() {
+            continue;
+        }
+        // Two derivations wanting it at different commits: the plan holds it
+        // back and says so, and a revision the closure picked would be one
+        // somebody pinned away from. `offered` above is not filtered the
+        // same way — a source read at its own revision has no second
+        // revision to disagree with, and narrowing that refuses a fork over
+        // a skill sitting right there.
+        if refused.contains(&(ItemKind::Skill, name.clone())) {
             continue;
         }
         let Some(rev) = planned.decl.rev.as_deref() else {

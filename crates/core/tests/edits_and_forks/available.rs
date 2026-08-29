@@ -362,3 +362,63 @@ fn a_pinned_skill_the_revision_does_not_carry_is_not_offered() {
         other => panic!("a pin naming a skill its revision lacks must not satisfy it: {other:?}"),
     }
 }
+
+/// Two pinned parents requiring one dependency at different commits: one
+/// filesystem identity exists, so the plan writes nothing for it and says
+/// so. Counted from the closure alone the name is still offered — the
+/// closure is where the conflict is recorded, not where it is settled — and
+/// the agent assigned it renders a row for instructions no plan wrote.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_dependency_two_pins_disagree_over_is_not_offered() {
+    let w = world();
+    for parent in ["gh", "top"] {
+        let path = w.upstream.join("skills").join(parent).join("SKILL.md");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            format!(
+                "---\nname: {parent}\ndescription: about {parent}\ndependencies:\n  required: [helper]\n---\nParent {parent}.\n"
+            ),
+        )
+        .unwrap();
+    }
+    write_skill(&w.upstream, "helper", "Helper one.");
+    write_agent(&w.upstream, "rev", "Upstream body.");
+    commit(&w.upstream, "one");
+    let first = head_commit(&w.upstream);
+    write_skill(&w.upstream, "helper", "Helper two.");
+    commit(&w.upstream, "two");
+    let second = head_commit(&w.upstream);
+    // Upstream drops it, so its own revision offers nothing here and the
+    // two pins are the whole of what could.
+    fs::remove_dir_all(w.upstream.join("skills/helper")).unwrap();
+    commit(&w.upstream, "three");
+
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        format!(
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"gemini\"]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\n\n[skills.gh]\nsource = \"cat\"\nrev = \"{first}\"\n\n[skills.top]\nsource = \"cat\"\nrev = \"{second}\"\n\n[agent-skills]\nrev = [\"helper\"]\n"
+        ),
+    )
+    .unwrap();
+    sync_and_apply(&w);
+    assert!(
+        !w.home.join("app/.agents/skills/helper/SKILL.md").exists(),
+        "the fixture proves nothing unless the conflict left the dependency uninstalled"
+    );
+
+    let file = rendered(&w, HarnessId::Gemini, "rev");
+    let before = fs::read_to_string(&file).unwrap();
+    assert_eq!(times(&before, "## Required Skills"), 0, "{before}");
+    edit_body(&file);
+
+    match fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini) {
+        Err(CoreError::AgentSkillUnavailable { name, skill }) => {
+            assert_eq!((name.as_str(), skill.as_str()), ("rev", "helper"))
+        }
+        other => panic!("a dependency the plan refused must not satisfy it: {other:?}"),
+    }
+}

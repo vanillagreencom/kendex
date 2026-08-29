@@ -250,7 +250,8 @@ fn compute(
     // What this scope can supply, read once from the closure above: an
     // agent's skill assignment resolves against the whole scope, and
     // reading it per agent would open every catalog again for each one.
-    let scope_skills = super::ScopeSkills::planned(env, scope, manifest, &expansion, &[])?;
+    let scope_skills =
+        super::ScopeSkills::planned(env, scope, manifest, &expansion, &state.rev_conflicts, &[])?;
 
     for kind in super::expansion::PLANNED_KINDS {
         for (name, planned) in expansion.of(kind) {
