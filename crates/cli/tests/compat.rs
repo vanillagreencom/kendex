@@ -3,7 +3,7 @@
 //! init scaffolding.
 #![cfg(unix)]
 
-#[path = "../fixture_url.rs"]
+#[path = "../../fixture_url.rs"]
 mod fixture_url;
 use fixture_url::file_url;
 

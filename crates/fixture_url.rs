@@ -1,8 +1,8 @@
-//! The one `file://` URL builder the CLI's fixtures share. Kept beside
-//! `src/` so cargo does not build it as a test target of its own, and
-//! separate from `crates/test_util.rs` because it needs the `url`
-//! dev-dependency that only this crate carries — and named for what it
-//! holds, so neither include can resolve to the other file by accident.
+//! The one `file://` URL builder the fixtures share. Kept beside
+//! `test_util.rs` so cargo does not build it as a test target of its own,
+//! and separate from it because it needs a `url` dev-dependency that only
+//! the crates including this file carry — and named for what it holds, so
+//! neither include can resolve to the other file by accident.
 
 use std::path::Path;
 

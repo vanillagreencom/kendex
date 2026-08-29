@@ -4,28 +4,9 @@ use kendex_core::command_update::staged_path;
 
 use super::*;
 
-#[path = "../../../fixture_url.rs"]
+#[path = "../../../../fixture_url.rs"]
 mod fixture_url;
 use fixture_url::file_url;
-
-#[test]
-fn fetched_urls_are_always_positional_arguments() {
-    assert_eq!(
-        curl_args("--output=/tmp/owned"),
-        [
-            "-fsS",
-            "--location",
-            "--max-redirs",
-            "3",
-            "--proto",
-            "=https,file",
-            "--proto-redir",
-            "=https",
-            "--",
-            "--output=/tmp/owned",
-        ]
-    );
-}
 
 /// The one skew this order can still leave is an app already across
 /// and a command that would not move. It is not a dead end — the

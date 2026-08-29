@@ -28,6 +28,9 @@ rustix.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 fd-lock.workspace = true
+# Fixtures serve the release feed off disk, and a `file://` URL for a host
+# path is a grammar, not a substitution. Already in the tree under tauri.
+url = "2"
 
 [lints]
 workspace = true

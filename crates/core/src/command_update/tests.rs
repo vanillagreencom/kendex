@@ -1,5 +1,9 @@
 use super::*;
 
+#[path = "../../../fixture_url.rs"]
+mod fixture_url;
+use fixture_url::file_url;
+
 /// A throwaway minisign keypair signing `OFFERED`, so the admitted arm
 /// runs the real check rather than a stub standing in for it. One pair
 /// serves both halves: the app and the command are held to one key.
@@ -20,20 +24,27 @@ const TARGET: &str = "x86_64-unknown-linux-gnu";
 /// behind it. What each arm does to that command is the whole difference
 /// between them.
 fn a_release_is_out(dir: &tempfile::TempDir) -> (String, PathBuf) {
-    let home = dir.path();
+    a_release_is_out_under(dir.path())
+}
+
+fn a_release_is_out_under(home: &Path) -> (String, PathBuf) {
+    std::fs::create_dir_all(home).unwrap();
     let installed = home.join("kendex");
     std::fs::write(&installed, INSTALLED).unwrap();
     std::fs::write(home.join("new-command"), OFFERED).unwrap();
     std::fs::write(home.join("new-command.sig"), TEST_SIGNATURE).unwrap();
+    // A path spliced into a URL is not a URL: a home directory holding a
+    // space or a `#` addresses a different file, or none. The feed is JSON,
+    // which has no literal string, so the URL goes through serde too.
     std::fs::write(
         home.join("feed.json"),
         format!(
-            r#"{{"schema": 1, "version": "{RELEASE}", "assets": {{"{TARGET}": "file://{}/new-command"}}}}"#,
-            home.display()
+            r#"{{"schema": 1, "version": "{RELEASE}", "assets": {{"{TARGET}": {}}}}}"#,
+            serde_json::to_string(&file_url(&home.join("new-command"))).unwrap()
         ),
     )
     .unwrap();
-    (format!("file://{}/feed.json", home.display()), installed)
+    (file_url(&home.join("feed.json")), installed)
 }
 
 fn across(beside: &CommandBeside, feed: &str, release: &str) -> Result<CommandHalf, String> {
@@ -53,6 +64,20 @@ fn the_command_lands_on_the_release_the_app_is_installing() {
     assert_eq!(half, CommandHalf::Moved);
     assert_eq!(std::fs::read(&installed).unwrap(), OFFERED);
     assert!(!staged_path(&installed).exists());
+}
+
+/// The same arm with the release sitting under a directory whose name holds
+/// characters a URL reserves. A space and a `#` are ordinary in a Windows
+/// profile directory, and spelled into a URL rather than encoded they
+/// address a different file, or none.
+#[test]
+fn a_release_under_a_name_a_url_reserves_is_still_fetched() {
+    let dir = tempfile::tempdir().unwrap();
+    let (feed_url, installed) = a_release_is_out_under(&dir.path().join("my release #1"));
+
+    across(&CommandBeside::Ours(installed.clone()), &feed_url, RELEASE).unwrap();
+
+    assert_eq!(std::fs::read(&installed).unwrap(), OFFERED);
 }
 
 /// Skew, driven from both sides: the app installing a release the feed is
