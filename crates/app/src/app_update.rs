@@ -116,6 +116,36 @@ fn aim_at_install<T: ReplacementTarget>(target: T, install: &AppInstall) -> T {
     }
 }
 
+/// Whatever will write the downloaded bytes over this install. The plugin
+/// does that behind a method of its own, so this is the only side of the
+/// handoff a test can watch — and the one thing every install has to pass
+/// through on its way there is below.
+trait Installer {
+    fn place(&self, bytes: Vec<u8>) -> Result<(), String>;
+}
+
+impl Installer for tauri_plugin_updater::Update {
+    fn place(&self, bytes: Vec<u8>) -> Result<(), String> {
+        self.install(bytes).map_err(|error| error.to_string())
+    }
+}
+
+/// Write `bytes` only once this release's own document names them as the
+/// download it published for this target. The plugin has already checked
+/// the signature the manifest carried over them, which says they are a
+/// kendex release's and not which one; this is what says they are the
+/// release being installed. Bytes that fail it never reach `installer`.
+fn install_published(
+    digests: &ReleaseDigests,
+    bytes: Vec<u8>,
+    installer: &impl Installer,
+) -> Result<(), String> {
+    digests
+        .verify_app(&bytes)
+        .map_err(|error| error.to_string())?;
+    installer.place(bytes)
+}
+
 /// Where this build installs from, as the plugin wants it. `tauri.conf.json`
 /// names the release channel so the plugin has a configured default, and a
 /// test holds that entry to the same constant; handing the choice over on
@@ -205,10 +235,7 @@ pub async fn app_update_install(app: tauri::AppHandle) -> Result<(), String> {
     let digests = tauri::async_runtime::spawn_blocking(move || published_for_this_target(&offered))
         .await
         .map_err(|error| format!("kendex could not read what this release published: {error}"))??;
-    digests
-        .verify_app(&bytes)
-        .map_err(|error| error.to_string())?;
-    update.install(bytes).map_err(|error| error.to_string())?;
+    install_published(&digests, bytes, &update)?;
     app.restart()
 }
 

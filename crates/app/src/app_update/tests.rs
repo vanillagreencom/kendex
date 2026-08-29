@@ -74,17 +74,7 @@ const ANOTHER_RELEASE_APP: &[u8] = b"an older kendex, signed when it shipped";
 /// supposed to ask for, so a read that looked anywhere else finds nothing.
 #[test]
 fn the_install_holds_its_download_to_what_this_release_published() {
-    let document = release_digests_url(manifest_url_for(env!("CARGO_PKG_VERSION")), TEST_TARGET)
-        .expect("the channel names a document");
-    let signature = signature_url(&document);
-    let serve = |asked: &str| match asked {
-        _ if asked == document => Ok(PUBLISHED.as_bytes().to_vec()),
-        _ if asked == signature => Ok(PUBLISHED_SIGNATURE.as_bytes().to_vec()),
-        _ => Err(format!("this release published nothing at {asked}")),
-    };
-
-    let published =
-        read_published(TEST_KEY, TEST_TARGET, "9.9.9", serve).expect("the release signed this");
+    let published = published();
     published
         .verify_app(PUBLISHED_APP)
         .expect("the download this release published");
@@ -94,6 +84,65 @@ fn the_install_holds_its_download_to_what_this_release_published() {
     // it to choose; the document is what that claim is held to.
     let claimed = read_published(TEST_KEY, TEST_TARGET, "9.9.8", serve).unwrap_err();
     assert!(claimed.contains("the feed offers 9.9.8"), "{claimed}");
+}
+
+/// A channel serving what this release published, and answering at exactly
+/// the two URLs the install's read is supposed to ask for: a read that
+/// looked anywhere else finds nothing.
+fn serve(asked: &str) -> Result<Vec<u8>, String> {
+    let document = release_digests_url(manifest_url_for(env!("CARGO_PKG_VERSION")), TEST_TARGET)
+        .expect("the channel names a document");
+    if asked == document {
+        return Ok(PUBLISHED.as_bytes().to_vec());
+    }
+    if asked == signature_url(&document) {
+        return Ok(PUBLISHED_SIGNATURE.as_bytes().to_vec());
+    }
+    Err(format!("this release published nothing at {asked}"))
+}
+
+/// The release's own document, read the way the install reads it.
+fn published() -> ReleaseDigests {
+    read_published(TEST_KEY, TEST_TARGET, "9.9.9", serve).expect("the release signed this")
+}
+
+/// Stands in for the plugin's installer. What reaches it is what would
+/// have been written over this install.
+#[derive(Default)]
+struct Placed(std::cell::RefCell<Option<Vec<u8>>>);
+
+impl Installer for Placed {
+    fn place(&self, bytes: Vec<u8>) -> Result<(), String> {
+        *self.0.borrow_mut() = Some(bytes);
+        Ok(())
+    }
+}
+
+/// The boundary itself, driven through the step the install takes rather
+/// than through its halves. Everything else about this change can be right
+/// while the check never runs on the way to the installer, which is the
+/// whole defect: the plugin's signature check admits any kendex release's
+/// bytes, so what this release published for this target is the only thing
+/// between an older signed download and the disk.
+#[test]
+fn only_the_download_this_release_published_reaches_the_installer() {
+    let digests = published();
+
+    let landed = Placed::default();
+    install_published(&digests, PUBLISHED_APP.to_vec(), &landed).expect("the published download");
+    assert_eq!(landed.0.borrow().as_deref(), Some(PUBLISHED_APP));
+
+    let refused = Placed::default();
+    let error = install_published(&digests, ANOTHER_RELEASE_APP.to_vec(), &refused)
+        .expect_err("a download this release never published");
+    assert!(
+        error.contains("the desktop app download hashes to"),
+        "{error}"
+    );
+    assert!(
+        refused.0.borrow().is_none(),
+        "a download this release never published reached the installer"
+    );
 }
 
 /// Stands in for the updater builder, which keeps what it was handed
