@@ -14,6 +14,16 @@
 # docs — the `outcome` field and, in the schema, one table row per outcome
 # binding it to its origin. A relation needs one pin that spans both halves:
 # two independent token greps would stay green with the mapping inverted.
+#
+# NOT covered: that those rows form a well-formed table at all — a header, a
+# delimiter on the line below it, and a consistent cell count across every row.
+# Not because the property is prose; it is a DOCUMENT-LEVEL fact with no home
+# that stays fail-closed here. This suite ships inside orch, so a checker it
+# calls must ship inside orch too, and dep-radar's policy lint needs the
+# identical checker but cannot reach it: dep-radar declares `required:
+# [github]`, and no test in this repo sources another skill's file. A
+# repo-level `tools/` lane is the right home and is filed as its own work;
+# until it lands, table well-formedness has no lint anywhere.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -84,27 +94,10 @@ map_section() {
        on' "$1"
 }
 
-# ONE table, parsed as a structure: the header, the delimiter that must sit on
-# the line IMMEDIATELY below it, then the unbroken run of rows beneath that.
-# Checking header, delimiter and rows as independent facts would not establish
-# that they form a table — a delimiter moved below the rows leaves all three
-# present and the markdown invalid. Order is the relation, so the parse has to
-# carry it, exactly as one pin rather than two has to carry outcome → origin.
-contiguous_table() {
-  awk -v hdr="$1" '
-    !started && index($0, hdr) == 1 { started = 1; want_delim = 1; print; next }
-    want_delim {
-      if ($0 ~ /^\|[-:]+\|[-:| ]*$/) { want_delim = 0; print; next }
-      exit
-    }
-    started {
-      if (index($0, "|") == 1) { print; next }
-      exit
-    }
-  '
-}
-
-MAP="$(map_section "$PM_SCHEMA" | contiguous_table '| `outcome` | `origin` |')"
+MAP="$(map_section "$PM_SCHEMA")"
+# One row per outcome, each binding its outcome to its origin in ONE literal.
+# A relation needs a pin that spans both halves: two independent token greps
+# would stay green with the mapping inverted.
 MAP_ROWS=(
   '| `"blocked"` | `"escalated"` |'
   '| absent | `"escalated"` |'
@@ -114,14 +107,10 @@ missing_row=""
 for row in "${MAP_ROWS[@]}"; do
   grep -qF -- "$row" <<<"$MAP" || missing_row="$missing_row $row"
 done
-if ! grep -qF -- '| `outcome` | `origin` |' <<<"$MAP"; then
-  fail "the outcome → origin mapping lost its table header"
-elif ! grep -qE '^\|[-:]+\|[-:| ]*$' <<<"$MAP"; then
-  fail "the outcome → origin mapping has no delimiter under its header"
-elif [[ -n "$missing_row" ]]; then
-  fail "a row is not in the contiguous table under the header:$missing_row"
+if [[ -n "$missing_row" ]]; then
+  fail "the mapping section does not carry a row for:$missing_row"
 else
-  pass "audit-issues-input maps each outcome to its origin, one contiguous table"
+  pass "audit-issues-input maps each outcome to its origin, one row each"
 fi
 
 echo

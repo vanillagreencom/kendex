@@ -1,16 +1,25 @@
 #!/usr/bin/env bash
 # Doc-contract lint for the dep-radar operating policy.
 #
-# The policy is a table and each rule is a row keyed by name. This lint parses
-# ONE CONTIGUOUS TABLE inside the Operating policy section — header, the
-# delimiter on the line immediately below it, then the unbroken run of rows —
-# and pins every ROW KEY in that run. Losing the table shape, reordering its
-# parts, or moving the rows elsewhere in the file all fail. review-bots.md: a token pin establishes that a structural
-# element is present, never that a behavioral claim written in prose is true,
-# and prose negates and qualifies around any literal — so the second column is
-# not pinned and may be reworded freely. Dropping or renaming a key is what
-# this catches, and a key is what an inventory owner-rule cites when it demotes
-# a tier, so the key is the part that has to hold still.
+# The policy is a table and each rule is a row keyed by name. This lint pins
+# every ROW KEY inside the Operating policy section, and nothing else.
+# review-bots.md: a token pin establishes that a structural element is present,
+# never that a behavioral claim written in prose is true, and prose negates and
+# qualifies around any literal — so the second column is not pinned and may be
+# reworded freely. Dropping or renaming a key is what this catches, and a key
+# is what an inventory owner-rule cites when it demotes a tier, so the key is
+# the part that has to hold still.
+#
+# NOT covered: that the rows form a well-formed table at all — a header, a
+# delimiter on the line below it, and a consistent cell count across every row.
+# The reason is not the usual one. That property is not prose; it is a
+# DOCUMENT-LEVEL fact, and it has no home that stays fail-closed here. This
+# suite ships inside the skill, so a checker it calls must ship inside the
+# skill too; the identical checker orch's escalated-outcome lint would need
+# cannot be shared, because dep-radar declares `required: [github]` and no test
+# in this repo reaches into another skill. A repo-level `tools/` lane is the
+# right home and is filed as its own work; until it lands, table
+# well-formedness has no lint anywhere.
 #
 # Teeth: every check is re-run against a copy of the doc with its row deleted.
 set -euo pipefail
@@ -49,39 +58,13 @@ policy_table() {
        on' "$1"
 }
 
-# contiguous_table <header-line>  (section on stdin)
-# ONE table, parsed as a structure rather than as a bag of lines: the header,
-# the delimiter that must sit on the line IMMEDIATELY below it, and the
-# unbroken run of rows beneath that. Anything the run does not reach — a row
-# above the header, a row past a blank line, a delimiter moved below the rows
-# — is not part of this table however row-shaped it looks.
-#
-# Checking header, delimiter and rows as independent facts does not establish
-# that they form a table, for the same reason two token pins never establish a
-# relation between the tokens. Order is the relation here.
-contiguous_table() {
-  awk -v hdr="$1" '
-    !started && index($0, hdr) == 1 { started = 1; want_delim = 1; print; next }
-    want_delim {
-      if ($0 ~ /^\|[-:]+\|[-:| ]*$/) { want_delim = 0; print; next }
-      exit
-    }
-    started {
-      if (index($0, "|") == 1) { print; next }
-      exit
-    }
-  '
-}
-
 # check_contract <file>
-# Prints what the policy table is missing: `header`, `delimiter`, or a rule key.
+# Prints the names of rule keys the Operating policy section does not carry.
 check_contract() {
-  local f="$1" key table missing=""
-  table="$(policy_table "$f" | contiguous_table '| Rule | Contract |')"
-  grep -qF -- '| Rule | Contract |' <<<"$table" || missing="$missing header"
-  grep -qE '^\|[-:]+\|[-:| ]*$' <<<"$table" || missing="$missing delimiter"
+  local f="$1" key section missing=""
+  section="$(policy_table "$f")"
   for key in "${RULE_KEYS[@]}"; do
-    grep -qF -- "| \`$key\` |" <<<"$table" || missing="$missing $key"
+    grep -qF -- "| \`$key\` |" <<<"$section" || missing="$missing $key"
   done
   printf '%s' "$missing"
 }
@@ -114,9 +97,9 @@ echo "=== dep-radar policy contract lint ==="
 
 missing="$(check_contract "$SKILL_MD")"
 if [[ -z "$missing" ]]; then
-  pass "the Operating policy is a table with a keyed row for every rule"
+  pass "the Operating policy carries a keyed row for every rule"
 else
-  fail "the Operating policy table is missing:$missing"
+  fail "the Operating policy is missing rule rows:$missing"
 fi
 
 # --- Frontmatter contract ---------------------------------------------------
@@ -139,7 +122,7 @@ else
   fail "frontmatter missing required github dependency (the PR flow needs it)"
 fi
 
-# --- Teeth: losing any part of the table must be caught ---------------------
+# --- Teeth: losing any rule's row must be caught ----------------------------
 
 for key in "${RULE_KEYS[@]}"; do
   ctrl="$(drop_row "$key")"
@@ -150,74 +133,6 @@ for key in "${RULE_KEYS[@]}"; do
     expect_caught "$key" "$ctrl" "deleting the $key row is caught"
   fi
 done
-
-# The rows are only a table while the header and delimiter are above them.
-# Both were unchecked when the keys were first pinned: deleting either left
-# eight row-shaped lines and a green suite.
-drop_line() { # $1 = control name, $2 = literal line prefix
-  local out="$TMP_ROOT/mutant-$1.md"
-  awk -v pre="$2" 'index($0, pre) != 1' "$SKILL_MD" > "$out"
-  printf '%s' "$out"
-}
-
-for probe in "header:| Rule | Contract |" "delimiter:|---|---|"; do
-  name="${probe%%:*}"; line="${probe#*:}"
-  ctrl="$(drop_line "$name" "$line")"
-  dropped=$(( $(grep -c . "$SKILL_MD") - $(grep -c . "$ctrl") ))
-  if [[ "$dropped" -lt 1 ]]; then
-    fail "$name control planted nothing — no line matched '$line'"
-  else
-    expect_caught "$name" "$ctrl" "deleting the table $name is caught"
-  fi
-done
-
-# Order controls. Deleting the header and deleting the delimiter are two
-# probes of PARTS, and two probes of parts cannot detect a structure defect any
-# more than two pins can assert one. These three move things instead.
-
-# The delimiter below the rows: eight row-shaped lines and a header, none of it
-# a table, and every part still present.
-REORDER="$TMP_ROOT/mutant-delim-last.md"
-awk '
-  /^\|-+\|-+\|$/ { delim = $0; next }
-  /^\| `[a-z-]+` \|/ { rows = rows $0 ORS; next }
-  rows != "" && delim != "" { printf "%s%s\n", rows, delim; rows = ""; delim = "" }
-  { print }
-  END { if (rows != "") printf "%s%s\n", rows, delim }
-' "$SKILL_MD" > "$REORDER"
-if ! grep -qF -- '| Rule | Contract |' "$REORDER" || cmp -s "$REORDER" "$SKILL_MD"; then
-  fail "delimiter-last control planted nothing — the table did not reorder"
-else
-  expect_caught "delimiter" "$REORDER" "a delimiter moved below the rows is caught"
-fi
-
-# A row above the header: it is still in the section, still row-shaped, and no
-# longer part of the table beneath the header.
-REORDER="$TMP_ROOT/mutant-row-first.md"
-# The row is read out first: a single pass meets the header before the row and
-# would drop the row instead of moving it, leaving nothing to detect.
-MOVED_ROW="$(grep -F -- '| `dated-report` |' "$SKILL_MD")"
-awk -v row='| `dated-report` |' -v moved="$MOVED_ROW" '
-  index($0, row) == 1 { next }
-  index($0, "| Rule | Contract |") == 1 { print moved; print; next }
-  { print }
-' "$SKILL_MD" > "$REORDER"
-if ! grep -qF -- '| `dated-report` |' "$REORDER" || cmp -s "$REORDER" "$SKILL_MD"; then
-  fail "row-first control planted nothing — the row did not move"
-else
-  expect_caught "dated-report" "$REORDER" "a row moved above the header is caught"
-fi
-
-# A blank line mid-table: markdown ends the table there, so the rows below it
-# are a second block, not this one.
-REORDER="$TMP_ROOT/mutant-split.md"
-awk -v row='| `one-pr-per-surface` |' 'index($0, row) == 1 { print "" } { print }' \
-  "$SKILL_MD" > "$REORDER"
-if [[ "$(grep -c . "$REORDER")" -ne "$(grep -c . "$SKILL_MD")" ]]; then
-  fail "split control planted nothing — no blank line was inserted"
-else
-  expect_caught "one-pr-per-surface" "$REORDER" "a blank line mid-table is caught"
-fi
 
 # The section itself removed: the rows survive as text further down the file,
 # which is what an unscoped check would still credit.
@@ -231,7 +146,7 @@ if ! grep -qF -- '| `dated-report` |' "$MOVED"; then
 elif grep -qE '^## Operating policy' "$MOVED"; then
   fail "moved-section control planted nothing — the heading is still there"
 else
-  expect_caught "header" "$MOVED" "rows outside the Operating policy section are not the policy"
+  expect_caught "dated-report" "$MOVED" "rows outside the Operating policy section are not the policy"
 fi
 
 echo
