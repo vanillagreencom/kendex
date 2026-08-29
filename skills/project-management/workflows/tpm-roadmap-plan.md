@@ -35,7 +35,7 @@ Load the project taxonomy alongside it. A missing or stale Linear cache on this 
 .agents/skills/linear/scripts/linear.sh cache issues children [ORIGIN_ISSUE_ID] --recursive --format=safe
 ```
 
-`--recursive` returns three levels; a deeper tree needs a further call rooted at the deepest child returned.
+`--recursive` returns three levels; walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree.
 
 Decide whether the proposed issues decompose the origin issue's scope (`children_of_origin`), reach beyond it (`new_project`), or split (`mixed`), and store `hierarchy_recommendation` with `type`, `origin_issue`, and `rationale`.
 

@@ -4,7 +4,7 @@ Analyze issues and projects for relations, labels, hierarchy, placement, duplica
 
 **Do NOT modify the tracker.** Return recommendations only.
 
-**Hold the creation bar** ([SKILL.md](../SKILL.md) § Disposition). An observation becomes a `create` only when it changes what a user or operator experiences (or blocks work that does), nothing open already covers it, and someone could finish it without a new investigation. Everything else is `skip` with a one-line reason. Every run also completes the § 6 cancellation sweep.
+**Hold the creation bar** ([SKILL.md](../SKILL.md) § Disposition). An observation becomes a `create` only when it changes what a user or operator experiences (or blocks work that does), nothing open already covers it, and someone could finish it without a new investigation. Everything else is `skip` with a one-line reason. Every run that reads an issue backlog also completes the § 6 cancellation sweep.
 
 ## Inputs
 
@@ -21,11 +21,13 @@ Analyze issues and projects for relations, labels, hierarchy, placement, duplica
 
 ### 1.1 Determine Mode
 
-`project-order` → § 11 directly (§§ 2-10 do not apply).
+`project-order` → § 11 directly (§§ 2-10 and § 12 do not apply). An ordering-only run reads no issue backlog, so the § 6 cancellation sweep is not among its obligations.
 
 **project**: store `WORKTREE` from the delegation prompt (default `.`). Linear only — this mode audits Linear projects.
 
-**team**: store `WORKTREE` the same way. Linear only — this mode audits Linear projects. The input set is every Backlog/Todo/In Progress/In Review issue on the team, in whatever project each sits and including the rows carrying none. Team mode returns the project-mode shape with `project: null` per [audit-output.md](../schemas/audit-output.md).
+**team**: store `WORKTREE` the same way. The input set is every Backlog/Todo/In Progress/In Review issue on the team, in whatever project each sits and including the rows carrying none.
+
+**Team mode reads as project mode.** Every rule, `Skip if`, and output field this workflow states for `project` applies unchanged to `team`, a rule added later included; only a rule naming `team` overrides one. The two differences are the input set above and `project: null` in the output ([audit-output.md](../schemas/audit-output.md)).
 
 **issues**: read the JSON file and extract `TRACKER` (plus `REPOSITORY` for github) from the delegation's `Tracker:` line or the file's `tracker` field — absent both, infer `github` from a `parent_issue` starting with `issue-`, else `linear` — along with `WORKTREE`, `PARENT_ISSUE`, `SOURCE`, `INPUT_ITEMS` from `items[]`, and the optional research-complete fields `blocked_issues`, `research_issue`, `research_ref`, `decision_ref`, and `hierarchy_contract` (binding — § 7.0).
 
@@ -61,7 +63,7 @@ Fetch every project in ONE command. `cache projects list --state` matches one st
 gh issue view [N] --repo [REPOSITORY] --json number,title,body,labels,state,url                                                           # issues mode, github
 ```
 
-Issues mode fetches the whole input set in one `bulk-get`, never one call per issue; a lone input issue is `cache issues get [ISSUE_ID]`.
+Issues mode fetches the whole input set in one `bulk-get`, never one call per issue; a lone input issue is `cache issues get [ISSUE_ID]`. `cache issues bulk-get` returns the rows it matched and exits 0 whether or not it matched them all, so compare the returned `id` values against every requested identifier and halt naming any that came back missing. An unmatched target is a mistyped, deleted, or unsynced issue, never an absent one, and auditing the remainder would report a complete result over a subset.
 
 The cached Linear issue payload carries `blocks`, `blocked_by`, and `related`. GitHub: read relations from body links (`Blocks: #N`, `Blocked by: #N`, `Related: #N`, `Parent: #N`). Proposed items use their provided fields directly.
 
@@ -190,7 +192,7 @@ Validate every recommended replacement against the § 1.2 inventory first. If th
 
 ## 6. Duplicates, Supersession, and Obsolete
 
-This is the cancellation sweep. Run it on every audit.
+This is the cancellation sweep. No mode that reaches this section skips it.
 
 ### 6.1 Duplicates and Supersession
 
@@ -294,7 +296,7 @@ Recommend a new project in `project_recommendations[]` only when 3+ related gaps
 
 ## 10. Determine Actions
 
-**Skip if** MODE = project or team.
+**Skip if** MODE = project.
 
 ### 10.1 Apply the Creation Bar
 
@@ -343,6 +345,8 @@ Return per § 13 with the `tmp/audit-project-order-YYYYMMDD-HHMMSS.json` hint an
 ---
 
 ## 12. Pre-Output Verification
+
+**Skip if** MODE = project-order — §§ 2-10 built none of these (§ 1.1).
 
 Any invariant failing sends you back before the JSON is built.
 

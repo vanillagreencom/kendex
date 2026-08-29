@@ -15,7 +15,7 @@ Audit tracked issues and projects, apply the mechanical corrections, and take cr
 | `audit-issues --issues [file]` | `issue` | Items from a JSON file per [audit-issues-input.md](../schemas/audit-issues-input.md) |
 | `audit-issues --analyzed [file]` | `analyzed` | Pre-analyzed [audit-output.md](../schemas/audit-output.md) issue-mode JSON — skips § 4 |
 
-`analyzed` follows every `issue`-mode rule in §§ 5-9.
+`analyzed` follows every `issue`-mode rule in §§ 5-9. `team` follows every `project`-mode rule in §§ 4-8, a rule added later included; only a rule naming `team` overrides one.
 
 The input file's `tracker` block fixes the tracker for the whole audit. A caller that already resolved one (orch `TRACKER`) must set it.
 
@@ -43,7 +43,7 @@ Resolve once, before any tracker command. Precedence:
 
 Store as `TRACKER`, plus `[OWNER/REPO]` when `TRACKER=github`.
 
-**Mode constraint**: `project`, `project-order`, and `team` audit Linear projects and are Linear only. With `TRACKER=github`, halt: "Project audits are Linear-only; GitHub repositories have no project inventory in this workflow." Never degrade to a partial project audit.
+**Mode constraint**: `project` and `project-order` audit Linear projects and are Linear only. With `TRACKER=github`, halt: "Project audits are Linear-only; GitHub repositories have no project inventory in this workflow." Never degrade to a partial project audit.
 
 **GitHub mode runs no Linear commands** — no `sync`, `session-status`, cache read, or Linear mutation anywhere in this workflow. Linear installation/authentication is not a prerequisite for a GitHub-tracked audit.
 
@@ -190,9 +190,9 @@ Two blocks, in this order. Omit empty sections; keep each `Reason` to one line.
 
 - [TITLE] — [which creation-bar test it fails]
 
-**Ready to schedule** ([N], project and team modes) — [ISSUE_ID]: blockers [CLEARED_BLOCKERS] all complete
+**Ready to schedule** ([N], project mode) — [ISSUE_ID]: blockers [CLEARED_BLOCKERS] all complete
 
-**Gaps** ([N], project and team modes) — [SEVERITY] [COMPONENT]: [WHY], blocks [ISSUE_IDS]
+**Gaps** ([N], project mode) — [SEVERITY] [COMPONENT]: [WHY], blocks [ISSUE_IDS]
 </output_format>
 
 In GitHub mode the Project column is `—` and hierarchy/relations render as the body-link forms from § 7.2 (`Parent: #N`, `Blocked by: #N`).
@@ -245,7 +245,7 @@ Execute every § 5 correction. Linear routes follow the Linear CLI's workflow-ac
 | `add_relations`, `remove_relations` | § Hierarchy and Relations |
 | `hierarchy` | § Hierarchy and Relations, then § Descriptions (parent rebuild) |
 | `wrong_project` | `issues update [ID] --project "[PROJECT]"` + reason comment |
-| `project_dependency_issues`, `project_recommendations` | § Projects and Initiatives (project and team modes) |
+| `project_dependency_issues`, `project_recommendations` | § Projects and Initiatives (project mode) |
 
 GitHub routes carry their commands inline in § 7.2.
 
@@ -297,7 +297,7 @@ Once every create has landed and its relations and parent are attached — never
 
 **Skip if** no `research_ref` context. For each approved issue: read the current description (Linear `cache issues get [ISSUE_ID] | jq -r '.description'`, GitHub `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body`); skip if the path is already present; otherwise prepend `**Research**: [RESEARCH_REF]` at the top, converting to a bulleted list when a Research line already exists, and add `**Decision [DECISION_ID]**: [path]` beneath it when `decision_ref` is present. Apply by file (`--description-file` / `--body-file`).
 
-Propagate to children — Linear `cache issues children [ISSUE_ID] --recursive --format=safe | jq -r '.[].id'`, then repeat per child. `--recursive` returns three levels; a deeper tree needs a further call rooted at the deepest child returned. GitHub has no recursive child query: propagate only to issues created in this audit carrying `Parent: #[N]`, and report deeper propagation as not performed.
+Propagate to children — Linear `cache issues children [ISSUE_ID] --recursive --format=safe | jq -r '.[].id'`, then repeat per child. `--recursive` returns three levels; walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree. GitHub has no recursive child query: propagate only to issues created in this audit carrying `Parent: #[N]`, and report deeper propagation as not performed.
 
 ### 7.4 Post-Cancellation Cleanup
 

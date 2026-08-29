@@ -41,7 +41,7 @@ Issue labels only, validated per [labels.md](../references/labels.md) — unknow
 
 **Skip if** the `.blocks` array is empty (self-initiated spike).
 
-For each blocked issue and, recursively, its children (`cache issues children [BLOCKED_ISSUE_ID] --recursive --format=safe | jq -r '.[].id'`): read the current description, skip when the findings path is already present, and otherwise put the research reference at the top. `--recursive` returns three levels; a deeper tree needs a further call rooted at the deepest child returned.
+For each blocked issue and, recursively, its children (`cache issues children [BLOCKED_ISSUE_ID] --recursive --format=safe | jq -r '.[].id'`): read the current description, skip when the findings path is already present, and otherwise put the research reference at the top. `--recursive` returns three levels; walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree.
 
 ```markdown
 **Research**: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md

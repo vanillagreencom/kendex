@@ -25,7 +25,13 @@ The Linear CLI rejects malformed relations at mutation time (peers of one bundle
 A blocking relation pointing at a Done or Canceled issue is **auto-satisfied**: the relation stays as provenance.
 
 - Never remove or "fix" a relation whose blocker is Done/Canceled, and never list one under a stale-metadata heading.
-- The only legitimate finding for an active issue whose blockers have all completed is a scheduling signal: `ready_to_schedule[]` (project mode) or "gates cleared, ready to schedule" in the issue's `reason` (issue mode).
+- The only legitimate finding for an active issue whose blockers have all completed is a scheduling signal: `ready_to_schedule[]` where the audit reports findings per project, or "gates cleared, ready to schedule" in the issue's `reason` where it reports per issue.
+
+### Reading a Full Subtree
+
+`cache issues children [ISSUE_ID] --recursive` returns three levels, flattened, every row carrying its own `depth`. A deeper tree is not truncated to one branch: every row at the maximum depth returned is a frontier, and a branching tree has as many frontier rows as it has branches.
+
+Repeat the call rooted at **every** frontier row, deduplicate identifiers across calls, and stop when a round returns nothing new. Continuing from one frontier row drops every subtree under the rest.
 
 ## Parent-Child Placement
 
