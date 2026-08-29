@@ -119,4 +119,9 @@ entries are still under that heading.
 ## Version bumps
 
 The workspace version in `Cargo.toml` and `crates/app/tauri.conf.json`
-must match the tag (minus the `v`).
+must match the tag (minus the `v`). The publish job enforces it: it reads
+the version back out of the CLI it just built and stops the tag when the
+two differ, so a tag naming a version no artifact carries never publishes
+a feed. `crates/app/tests/tauri_config.rs` holds the two config files to
+one version, and Cargo refuses a version that is not SemVer, which is what
+makes the version the tag is held to one the app can parse.

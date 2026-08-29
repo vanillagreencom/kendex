@@ -161,24 +161,47 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      # What kind of tag this is, decided once for every step below. SemVer
-      # puts build metadata after a `+` and it is not part of the version,
-      # so the `-` that marks a pre-release is only a `-` in what is left:
-      # v1.0.0+build-1 is a full release. Asking whether the tag contains a
-      # `-` calls that one a candidate while the build it produces reads
-      # itself as a release and follows release URLs, which is the two
-      # halves disagreeing about one tag.
+      # What kind of tag this is, decided once for every step below, and
+      # taken from the version this release was built as rather than from
+      # the tag's punctuation. Nothing here can run kendex's own parser, and
+      # a regex written to stand in for it is not SemVer: it admits
+      # v01.0.0, v1.0.0-01 and v1.0.0-alpha..1, which the parser refuses, so
+      # the release would publish a manifest version every candidate then
+      # fails to read. Cargo will not build a package whose version is not
+      # SemVer, so the string read back here has already been through that
+      # parser, and holding the tag to it is a real verdict rather than a
+      # second opinion about one.
+      #
+      # It is also the check docs/RELEASING.md asks for and nothing
+      # enforced. A tag naming a version no artifact carries publishes a
+      # feed pointing at downloads that are not there, which every install
+      # reads as a release it cannot fetch.
       - name: Classify the tag
         id: tag
         shell: bash
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          core="${version%%+*}"
-          if [[ ! "$core" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} is not a SemVer version. The release version is the tag without its leading v, and the app parses it as SemVer or refuses to update."
+          # The artifact upload does not carry the executable bit across.
+          built_cli=dist/kendex-x86_64-unknown-linux-gnu
+          chmod +x "$built_cli"
+          if ! built=$("./$built_cli" --version); then
+            echo "::error::Could not read the version back from ${built_cli}, so nothing here can say what this release was built as."
             exit 1
           fi
-          case "$core" in
+          built=${built##* }
+          version="${GITHUB_REF_NAME#v}"
+          if [ "$version" != "$built" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} names version ${version}, and this release was built as ${built}. The tag is the version without its leading v; bump the version to match, or re-tag the commit that carries it."
+            exit 1
+          fi
+          # SemVer keeps build metadata after a `+` and out of the version,
+          # so the `-` opening a pre-release is only a `-` in what is left:
+          # 1.0.0+build-1 is a full release. On a string a parser has
+          # already accepted, that is the grammar rather than a guess about
+          # it. Asking only whether the tag contains a `-` calls
+          # v1.0.0+build-1 a candidate while the build it produces reads
+          # itself as a release and follows release URLs, which is the two
+          # halves disagreeing about one tag.
+          case "${version%%+*}" in
             *-*) prerelease=true ;;
             *) prerelease=false ;;
           esac
@@ -290,11 +313,36 @@ jobs:
                    (if $pre == null then [] else ($pre | split(".") | map(ident)) end)];
               if ($a | key) > ($b | key) then "yes" else "no" end')" = yes ]
           }
+          # Every read below either answers or stops the job. A guard on a
+          # destructive write that cannot tell "nothing published there
+          # yet" from "the read failed" is not a guard: one lost
+          # connection reads as an empty channel and the upload rolls it
+          # back to this tag, which is the case the guard exists for. So
+          # whether the channel is there is settled by a listing that
+          # succeeded, never by a call that failed.
+          if ! tags=$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate --jq '.[].tag_name'); then
+            echo "::error::Could not list this repository's releases, so nothing here can say what the ${CHANNEL} channel carries. Nothing was written; re-run the tag."
+            exit 1
+          fi
           current=""
-          if gh release view "$CHANNEL" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            if gh release download "$CHANNEL" --repo "$GITHUB_REPOSITORY" \
-                 --pattern latest.json --output channel.json --clobber > /dev/null 2>&1; then
+          if grep -qxF "$CHANNEL" <<< "$tags"; then
+            if ! assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${CHANNEL}" --jq '.assets[].name'); then
+              echo "::error::The ${CHANNEL} channel is published but its assets could not be read. Nothing was written; re-run the tag."
+              exit 1
+            fi
+            # An absent manifest is a channel nothing has published to yet,
+            # which is the one case that leaves `current` empty on purpose.
+            if grep -qxF latest.json <<< "$assets"; then
+              if ! gh release download "$CHANNEL" --repo "$GITHUB_REPOSITORY" \
+                   --pattern latest.json --output channel.json --clobber; then
+                echo "::error::The ${CHANNEL} channel carries a manifest that could not be downloaded. Nothing was written; re-run the tag."
+                exit 1
+              fi
               current=$(jq -r '.version // empty' channel.json)
+              if [ -z "$current" ]; then
+                echo "::error::The ${CHANNEL} channel's manifest names no version, so nothing here can say whether ${NEW_VERSION} is ahead of it. Repair the channel, then re-run the tag."
+                exit 1
+              fi
             fi
           else
             gh release create "$CHANNEL" --repo "$GITHUB_REPOSITORY" --prerelease \
