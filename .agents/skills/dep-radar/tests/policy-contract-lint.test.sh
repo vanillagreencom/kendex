@@ -2,7 +2,9 @@
 # Doc-contract lint for the dep-radar operating policy.
 #
 # The policy is a table and each rule is a row keyed by name. This lint pins
-# those ROW KEYS. review-bots.md: a token pin establishes that a structural
+# the table — its header, its delimiter, and every ROW KEY — inside the
+# Operating policy section, so neither losing the table shape nor moving the
+# rows elsewhere in the file passes. review-bots.md: a token pin establishes that a structural
 # element is present, never that a behavioral claim written in prose is true,
 # and prose negates and qualifies around any literal — so the second column is
 # not pinned and may be reworded freely. Dropping or renaming a key is what
@@ -36,13 +38,28 @@ RULE_KEYS=(
   demote-only
 )
 
+# policy_table <file>
+# The Operating policy section only. Row-shaped text elsewhere in SKILL.md is
+# not the policy, and matching it anywhere would let the section be deleted
+# outright while every check stayed green.
+policy_table() {
+  awk '/^## Operating policy/ { on = 1; next }
+       on && /^## / { on = 0 }
+       on' "$1"
+}
+
 # check_contract <file>
-# Prints the names of missing rule rows (empty output = every key present).
-# A row is `| `key` |`, so a key mentioned in prose elsewhere does not satisfy it.
+# Prints what the policy table is missing: `header`, `delimiter`, or a rule key.
+# The header and delimiter are what make the rows a TABLE — without them the
+# keys are just lines beginning with a pipe, and the surface the keys are
+# supposed to be is gone.
 check_contract() {
-  local f="$1" key missing=""
+  local f="$1" key table missing=""
+  table="$(policy_table "$f")"
+  grep -qF -- '| Rule | Contract |' <<<"$table" || missing="$missing header"
+  grep -qE '^\|-+\|-+\|$' <<<"$table" || missing="$missing delimiter"
   for key in "${RULE_KEYS[@]}"; do
-    grep -qF -- "| \`$key\` |" "$f" || missing="$missing $key"
+    grep -qF -- "| \`$key\` |" <<<"$table" || missing="$missing $key"
   done
   printf '%s' "$missing"
 }
@@ -75,9 +92,9 @@ echo "=== dep-radar policy contract lint ==="
 
 missing="$(check_contract "$SKILL_MD")"
 if [[ -z "$missing" ]]; then
-  pass "SKILL.md carries a keyed row for every policy rule"
+  pass "the Operating policy is a table with a keyed row for every rule"
 else
-  fail "SKILL.md is missing policy rule rows:$missing"
+  fail "the Operating policy table is missing:$missing"
 fi
 
 # --- Frontmatter contract ---------------------------------------------------
@@ -100,7 +117,7 @@ else
   fail "frontmatter missing required github dependency (the PR flow needs it)"
 fi
 
-# --- Teeth: deleting any rule's row must be caught --------------------------
+# --- Teeth: losing any part of the table must be caught ---------------------
 
 for key in "${RULE_KEYS[@]}"; do
   ctrl="$(drop_row "$key")"
@@ -111,6 +128,41 @@ for key in "${RULE_KEYS[@]}"; do
     expect_caught "$key" "$ctrl" "deleting the $key row is caught"
   fi
 done
+
+# The rows are only a table while the header and delimiter are above them.
+# Both were unchecked when the keys were first pinned: deleting either left
+# eight row-shaped lines and a green suite.
+drop_line() { # $1 = control name, $2 = literal line prefix
+  local out="$TMP_ROOT/mutant-$1.md"
+  awk -v pre="$2" 'index($0, pre) != 1' "$SKILL_MD" > "$out"
+  printf '%s' "$out"
+}
+
+for probe in "header:| Rule | Contract |" "delimiter:|---|---|"; do
+  name="${probe%%:*}"; line="${probe#*:}"
+  ctrl="$(drop_line "$name" "$line")"
+  dropped=$(( $(grep -c . "$SKILL_MD") - $(grep -c . "$ctrl") ))
+  if [[ "$dropped" -lt 1 ]]; then
+    fail "$name control planted nothing — no line matched '$line'"
+  else
+    expect_caught "$name" "$ctrl" "deleting the table $name is caught"
+  fi
+done
+
+# The section itself removed: the rows survive as text further down the file,
+# which is what an unscoped check would still credit.
+MOVED="$TMP_ROOT/mutant-moved.md"
+{
+  awk '/^## Operating policy/ { on = 1; next } on && /^## / { on = 0 } !on' "$SKILL_MD"
+  policy_table "$SKILL_MD"
+} > "$MOVED"
+if ! grep -qF -- '| `dated-report` |' "$MOVED"; then
+  fail "moved-section control planted nothing — the rows did not survive the move"
+elif grep -qE '^## Operating policy' "$MOVED"; then
+  fail "moved-section control planted nothing — the heading is still there"
+else
+  expect_caught "header" "$MOVED" "rows outside the Operating policy section are not the policy"
+fi
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -6,9 +6,9 @@
 # semantics, the analysis workflow forbids removal and stale framing and emits
 # a scheduling signal instead, and the output schema carries that signal.
 #
-# What this pins is STRUCTURE — the `auto-satisfied` and `issue labels only`
-# style defined terms, the `ready_to_schedule` and `cleared_blockers` schema
-# fields, `remove_relations`, and the JSON template and summary literals.
+# What this pins is STRUCTURE — the `auto-satisfied` defined term, the
+# `ready_to_schedule` and `cleared_blockers` schema fields, `remove_relations`,
+# and the JSON template and summary literals.
 # review-bots.md: a token pin establishes that a structural element is
 # present, never that a behavioral claim written in prose is true. So these
 # rules have no lint: that the relation stays as satisfied history and is

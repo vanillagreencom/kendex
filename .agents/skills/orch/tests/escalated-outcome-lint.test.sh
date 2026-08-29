@@ -11,8 +11,9 @@
 # state-write boundary as an `outcome` field ("blocked"|"skipped") and maps it
 # to distinct audit origins (blocked/absent → "escalated", skipped →
 # "skipped"). This lint pins the tokens that chain carries in the instruction
-# docs — the `outcome` field, its two values, and the origins they map to.
-# The absent-field half of the rule is prose only and has no pin.
+# docs — the `outcome` field and, in the schema, one table row per outcome
+# binding it to its origin. A relation needs one pin that spans both halves:
+# two independent token greps would stay green with the mapping inverted.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -40,35 +41,63 @@ else
   fail "dev-fix escalated entry lost the \"outcome\" field or its write"
 fi
 
-# --- b: audit-input builders map outcome to distinct origins ----------------
+# --- b: audit-input builders carry the skipped mapping and the schema route -
+# `"skipped"` → `origin: "skipped"` is ONE contiguous literal, so it binds the
+# outcome to the origin. The blocked branch is not: the workflows spell it
+# `"blocked"` or no `outcome` field → `origin: "escalated"`, and any pin short
+# of that whole run of text leaves the two halves independent. Two independent
+# token pins never establish a relation between the tokens. So the blocked
+# branch is unpinned in the workflows; what is pinned is that each builder
+# routes to the schema that owns the mapping, where § d reads the table.
 for wf in review-pr review; do
   doc="$SKILL_DIR/workflows/$wf.md"
   if grep -q '`"skipped"` → `origin: "skipped"`' "$doc" \
-     && grep -q '`origin: "escalated"`' "$doc"; then
-    pass "$wf.md maps outcome → origin (skipped vs escalated)"
+     && grep -q 'schemas/audit-issues-input.md' "$doc"; then
+    pass "$wf.md maps skipped → skipped and routes to the schema"
   else
-    fail "$wf.md lost the outcome → origin mapping"
+    fail "$wf.md lost the skipped mapping or the schema route"
   fi
 done
 
-# No check here for the legacy rule that an entry WITHOUT an `outcome` field
-# maps to origin "escalated". Both builders state it in prose around the
-# `outcome` token the mapping check above already reads, so no token is
-# present only while the rule holds. It is uncovered in review-pr.md, in
-# review.md, and in the audit-issues-input schema.
+# The legacy rule — an entry WITHOUT an `outcome` field maps to origin
+# "escalated" — now has its own row in the schema table § d reads. It stays
+# uncovered in review-pr.md and review.md, where both builders state it in
+# prose that no token tracks.
 
-# --- d: the audit-input schema knows the skipped origin ---------------------
+# --- d: the audit-input schema carries the mapping as a table ---------------
+# One row per outcome, so each row binds its outcome to its origin. Scoped to
+# the mapping section and gated on the header and delimiter: row-shaped text
+# elsewhere in the file must not satisfy it, and rows with no table above them
+# are not a table.
 if grep -q 'suggestion|escalated|skipped|planned|discovered' "$PM_SCHEMA"; then
   pass "audit-issues-input origin enum includes skipped"
 else
   fail "audit-issues-input origin enum lost skipped"
 fi
-if grep -q 'outcome "skipped" → origin: "skipped"' "$PM_SCHEMA" \
-   && grep -q 'outcome "blocked"' "$PM_SCHEMA" \
-   && grep -q 'origin: "escalated"' "$PM_SCHEMA"; then
-  pass "audit-issues-input documents the outcome → origin mapping"
+
+map_table() {
+  awk '/^\*\*Escalated and skipped items\*\*/ { on = 1; next }
+       on && /^\*\*/ { on = 0 }
+       on' "$1"
+}
+MAP="$(map_table "$PM_SCHEMA")"
+MAP_ROWS=(
+  '| `"blocked"` | `"escalated"` |'
+  '| absent | `"escalated"` |'
+  '| `"skipped"` | `"skipped"` |'
+)
+missing_row=""
+for row in "${MAP_ROWS[@]}"; do
+  grep -qF -- "$row" <<<"$MAP" || missing_row="$missing_row $row"
+done
+if ! grep -qF -- '| `outcome` | `origin` |' <<<"$MAP"; then
+  fail "the outcome → origin mapping lost its table header"
+elif ! grep -qE '^\|-+\|-+\|$' <<<"$MAP"; then
+  fail "the outcome → origin mapping lost its table delimiter"
+elif [[ -n "$missing_row" ]]; then
+  fail "the outcome → origin mapping lost a row:$missing_row"
 else
-  fail "audit-issues-input lost the outcome → origin mapping"
+  pass "audit-issues-input maps each outcome to its origin, one row each"
 fi
 
 echo
