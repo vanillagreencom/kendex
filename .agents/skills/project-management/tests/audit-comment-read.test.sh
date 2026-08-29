@@ -48,12 +48,35 @@ grep -Fq -- '--json comments' "$section" \
 grep -Eq '^\.agents/skills/linear/scripts/linear\.sh comments list' "$section" \
   && fail '§ 1.4.1 reads comments live instead of from the cache'
 
+# --- the read covers the closed rows the comparison set now carries ---------
+
+# Canceled and Done rows are compared against for duplicates, relations and
+# supersession, and a supersession note or cancellation rationale lives in the
+# comments. Narrowing the read back to the active rows would judge a closed
+# duplicate on its body alone, which is the decision this step exists to stop.
+grep -Fq -- '§ 1.5' "$section" \
+  || fail '§ 1.4.1 no longer covers the § 1.5 comparison set'
+grep -Fq -- 'active rows' "$section" \
+  && fail '§ 1.4.1 narrows the comment read back to the active comparison rows'
+
 # --- the section that disposes below-bar issues points at the step ----------
 
 sed -n '/^\*\*Below the bar\.\*\*/,/^$/p' "$AUDIT" >"$tmp/below-bar.md"
 [[ -s "$tmp/below-bar.md" ]] || fail 'the § 6.2 below-the-bar paragraph could not be extracted'
 grep -Fq -- '§ 1.4.1' "$tmp/below-bar.md" \
   || fail '§ 6.2 below-the-bar evidence no longer cites the § 1.4.1 comment read'
+
+# --- the always-loaded rule agrees with what a cached read enforces ---------
+
+# SKILL.md is loaded on every run, so a stale-halt promise there outranks the
+# workflows' own wording. A cached read halts on a missing cache; freshness
+# comes from the sync-first rule, not from the read.
+skill_md="$SKILL_DIR/SKILL.md"
+[[ -f "$skill_md" ]] || fail "project-management SKILL.md not found at $skill_md"
+grep -Fq -- 'missing or stale' "$skill_md" \
+  && fail 'SKILL.md promises a stale cache read halts, which no cached read does'
+grep -Fq -- 'sync --if-stale 15' "$skill_md" \
+  || fail 'SKILL.md no longer names the read-only sync that keeps the cache fresh'
 
 # --- the provider still routes the command the workflow names ---------------
 

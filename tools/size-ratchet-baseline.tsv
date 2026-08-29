@@ -97,7 +97,7 @@ skills/linear/scripts/commands/initiatives.sh	492
 skills/linear/scripts/commands/issues.sh	3376
 skills/linear/scripts/commands/projects.sh	1364
 skills/linear/scripts/commands/session-status.sh	430
-skills/linear/scripts/commands/sync.sh	799
+skills/linear/scripts/commands/sync.sh	860
 skills/linear/scripts/lib/attachments.sh	527
 skills/linear/scripts/lib/cache.sh	618
 skills/linear/scripts/lib/common.sh	780

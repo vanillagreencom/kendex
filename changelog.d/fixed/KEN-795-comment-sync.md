@@ -1,2 +1,3 @@
-- Syncing the Linear cache now names any issue whose comments came back a full
-  page, instead of caching part of a thread as if it were the whole thing.
+- Syncing the Linear cache now fetches comments in their own paginated request
+  and pages them to completion, so a long thread is cached whole rather than
+  cut off at its first page.

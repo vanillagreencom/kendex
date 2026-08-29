@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
-# The issues sync pulls each issue's comments inline. Asking for `comments {
-# nodes }` with no page size takes Linear's default connection page and drops
-# the remainder with no signal — the per-issue comment file that lands in the
-# cache looks complete either way, and every reader downstream (tpm-audit's
-# § 1.4.1 read included) treats it as the whole thread.
+# Comments are fetched as their own connection, not nested inside the issues
+# query. Two reasons, and the test pins both.
+#
+# Linear scores a query on the product of its requested connection sizes, so a
+# per-issue comment page inside an issue page crosses the complexity limit and
+# the ISSUES query is rejected outright. And a nested connection can only ever
+# return its first page: there is no cursor to ask for the rest, so a long
+# thread lands in the cache truncated and indistinguishable from a whole one.
 #
 # Locks in:
-#   A. the query asks for a page size and for pageInfo on the comments
-#      connection, so a full page is detectable at all;
-#   B. extract_comments names the issues whose page came back full;
-#   C. a normal sync stays silent, and the comment files it writes are
-#      unaffected by the extra pageInfo field.
+#   A. the issues query nests no comments connection;
+#   B. sync_comments is a top-level comments query with a cursor and pageInfo;
+#   C. it pages to completion, concatenating every page;
+#   D. it FAILS rather than returning a partial pull, and writes nothing;
+#   E. write_comments groups a flat pull by issue, drops the issue field, and
+#      removes the file of a scoped issue the pull returned nothing for.
 #
-# Fully offline: extract_comments is called directly on fixture nodes, no
-# GraphQL and no network.
+# Fully offline: graphql_query is stubbed after sourcing, no network.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,58 +29,135 @@ PASS=0; FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
-# --- A. the query can tell a full page from a complete one ------------------
+# --- A. the issues query carries no comments connection ---------------------
 
-comments_query="$(grep -F 'comments(' "$SYNC" || true)"
-case "$comments_query" in
-  *"first:"*) ok "the comments connection asks for an explicit page size" ;;
-  *) bad "comments page size" "no comments(first: N) in sync.sh" ;;
-esac
-case "$comments_query" in
-  *"pageInfo"*"hasNextPage"*) ok "the comments connection asks for hasNextPage" ;;
-  *) bad "comments pageInfo" "line: ${comments_query:-<none>}" ;;
+issues_query="$(sed -n '/query SyncIssues/,/^    }'"'"'$/p' "$SYNC")"
+[ -n "$issues_query" ] || bad "issues query" "could not extract query SyncIssues from sync.sh"
+case "$issues_query" in
+  *comments*) bad "nested comments" "query SyncIssues still nests a comments connection" ;;
+  *) ok "the issues query nests no comments connection" ;;
 esac
 
-# --- B/C. extract_comments over fixture nodes -------------------------------
+# --- B. the comments query is top-level, cursored, and asks for pageInfo ----
+
+comments_query="$(sed -n '/query SyncComments/,/^    }'"'"'$/p' "$SYNC")"
+[ -n "$comments_query" ] || bad "comments query" "could not extract query SyncComments from sync.sh"
+for token in 'comments(filter:' '$after' 'hasNextPage' 'endCursor' 'issue { identifier }'; do
+  case "$comments_query" in
+    *"$token"*) ok "the comments query carries $token" ;;
+    *) bad "comments query" "missing $token" ;;
+  esac
+done
+
+# --- setup: source the script, stub the API ---------------------------------
 
 # sync.sh sources the skill's libs and self-executes only when run as a
-# command; sourced with no arguments it just defines its functions.
-export CACHE_DIR="$TMP_ROOT/cache"
-mkdir -p "$CACHE_DIR/comments"
+# command; sourced with no arguments it just defines its functions. The libs
+# resolve the cache from the enclosing git worktree and assign CACHE_DIR
+# unconditionally, so the sandbox is a throwaway repo entered before the
+# source, not an environment variable set after it.
+git -C "$TMP_ROOT" init -q -b main
+mkdir -p "$TMP_ROOT/.cache/linear/comments"
+cd "$TMP_ROOT"
 # shellcheck disable=SC1090
 source "$SYNC"
 
-node() { # node <identifier> <hasNextPage>
-  printf '{"identifier":"%s","comments":{"pageInfo":{"hasNextPage":%s},"nodes":[{"id":"c-%s","body":"b","createdAt":"2026-01-01","updatedAt":"2026-01-01","user":{"name":"n"}}]}}' \
-    "$1" "$2" "$1"
+# Anything that writes outside the sandbox would be editing the developer's
+# own Linear cache, so stop before the first write rather than after it.
+case "$CACHE_DIR" in
+  "$TMP_ROOT"/*) ok "the cache under test is sandboxed" ;;
+  *) echo "REFUSING: CACHE_DIR resolved outside the sandbox: $CACHE_DIR" >&2; exit 1 ;;
+esac
+
+# sync_comments captures each response through a command substitution, which
+# runs the stub in a subshell, so the call counter lives in a file rather than
+# a variable that the subshell would only increment for itself.
+COUNTER="$TMP_ROOT/calls"
+calls() { cat "$COUNTER"; }
+graphql_query() {
+  local n
+  n=$(( $(cat "$COUNTER") + 1 ))
+  echo "$n" >"$COUNTER"
+  if [ "$STUB_MODE" = "endless" ]; then
+    printf '{"comments":{"pageInfo":{"hasNextPage":true,"endCursor":"c%s"},"nodes":[{"id":"c%s","body":"b","issue":{"identifier":"T-1"}}]}}' \
+      "$n" "$n"
+    return 0
+  fi
+  sed -n "${n}p" "$TMP_ROOT/pages.jsonl"
 }
 
-{ node T-1 false; echo; node T-2 true; echo; node T-3 true; echo; } \
-  | jq -s '.' >"$TMP_ROOT/full.json"
-extract_comments "$TMP_ROOT/full.json" 2>"$TMP_ROOT/err"
-ERR="$(cat "$TMP_ROOT/err")"
-case "$ERR" in
-  *"T-2"*"T-3"*) ok "a full comment page names every short issue" ;;
-  *) bad "truncation warning" "stderr: ${ERR:-<empty>}" ;;
-esac
-case "$ERR" in
-  *"T-1"*) bad "truncation warning" "named T-1, whose page was complete" ;;
-  *) ok "an issue whose page was complete is not named" ;;
-esac
+# --- C. pages to completion -------------------------------------------------
 
-{ node U-1 false; echo; node U-2 false; echo; } | jq -s '.' >"$TMP_ROOT/clean.json"
-extract_comments "$TMP_ROOT/clean.json" 2>"$TMP_ROOT/err"
-ERR="$(cat "$TMP_ROOT/err")"
-[ -z "$ERR" ] && ok "a complete pull says nothing" || bad "clean sync stderr" "$ERR"
+STUB_MODE=canned
+echo 0 >"$COUNTER"
+{
+  printf '{"comments":{"pageInfo":{"hasNextPage":true,"endCursor":"c1"},"nodes":[{"id":"a1","body":"one","issue":{"identifier":"T-1"}}]}}\n'
+  printf '{"comments":{"pageInfo":{"hasNextPage":true,"endCursor":"c2"},"nodes":[{"id":"a2","body":"two","issue":{"identifier":"T-1"}}]}}\n'
+  printf '{"comments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"b1","body":"three","issue":{"identifier":"T-2"}}]}}\n'
+} >"$TMP_ROOT/pages.jsonl"
 
-# The extra pageInfo field must not leak into the per-issue comment files the
-# cache readers parse.
-if [ "$(jq -r 'type' "$CACHE_DIR/comments/U-1.json")" = "array" ] \
-  && [ "$(jq -r '.[0].id' "$CACHE_DIR/comments/U-1.json")" = "c-U-1" ]; then
-  ok "the comment file is still the bare node array"
+echo 0 >"$COUNTER"
+if OUT="$(sync_comments '{}')"; then
+  [ "$(echo "$OUT" | jq 'length')" = "3" ] \
+    && ok "every page is concatenated into one pull" \
+    || bad "page concatenation" "got $(echo "$OUT" | jq 'length') nodes"
+  [ "$(calls)" = "3" ] \
+    && ok "paging stops when hasNextPage goes false" \
+    || bad "page count" "$(calls) calls"
 else
-  bad "comment file shape" "$(cat "$CACHE_DIR/comments/U-1.json")"
+  bad "sync_comments" "failed on a complete three-page pull"
 fi
+
+# --- D. a pull that cannot complete fails and writes nothing ----------------
+
+STUB_MODE=endless
+echo 0 >"$COUNTER"
+ERR_FILE="$TMP_ROOT/err"
+if OUT="$(sync_comments '{}' 2>"$ERR_FILE")"; then
+  bad "endless pull" "sync_comments exited 0 on a pull that never completed"
+else
+  ok "a pull that never completes fails instead of returning a prefix"
+  case "$(cat "$ERR_FILE")" in
+    *"nothing was written"*) ok "the failure says the cache was left alone" ;;
+    *) bad "failure message" "stderr: $(cat "$ERR_FILE")" ;;
+  esac
+fi
+[ -z "$(ls -A "$CACHE_DIR/comments")" ] \
+  && ok "a failed pull writes no comment file" \
+  || bad "failed pull" "wrote $(ls -A "$CACHE_DIR/comments")"
+
+# --- E. write_comments ------------------------------------------------------
+
+cat >"$TMP_ROOT/scope.json" <<'JSON'
+[{"identifier":"T-1"},{"identifier":"T-2"},{"identifier":"T-3"}]
+JSON
+# T-3 is in scope with no comments in the pull; its stale file must go. The
+# project comment belongs to no issue and must land nowhere.
+printf '[]' | jq '.' >"$CACHE_DIR/comments/T-3.json"
+cat >"$TMP_ROOT/pull.json" <<'JSON'
+[{"id":"a1","body":"one","issue":{"identifier":"T-1"}},
+ {"id":"a2","body":"two","issue":{"identifier":"T-1"}},
+ {"id":"b1","body":"three","issue":{"identifier":"T-2"}},
+ {"id":"p1","body":"project note","issue":null}]
+JSON
+
+write_comments "$TMP_ROOT/pull.json" "$TMP_ROOT/scope.json"
+
+[ "$(jq -r 'length' "$CACHE_DIR/comments/T-1.json")" = "2" ] \
+  && ok "an issue's comments are grouped into its own file" \
+  || bad "T-1 grouping" "$(cat "$CACHE_DIR/comments/T-1.json")"
+[ "$(jq -r '.[0] | has("issue")' "$CACHE_DIR/comments/T-1.json")" = "false" ] \
+  && ok "the issue field is stripped from the cached node" \
+  || bad "issue field" "$(jq -c '.[0]' "$CACHE_DIR/comments/T-1.json")"
+[ "$(jq -r '.[0].id' "$CACHE_DIR/comments/T-2.json")" = "b1" ] \
+  && ok "each issue gets its own file" \
+  || bad "T-2 file" "$(cat "$CACHE_DIR/comments/T-2.json" 2>&1)"
+[ ! -f "$CACHE_DIR/comments/T-3.json" ] \
+  && ok "a scoped issue with no comments loses its stale file" \
+  || bad "T-3 file" "still present"
+[ -z "$(ls "$CACHE_DIR/comments" | grep -v '^T-')" ] \
+  && ok "a comment on no issue lands in no file" \
+  || bad "stray file" "$(ls "$CACHE_DIR/comments")"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -81,7 +81,7 @@ The cached Linear issue payload carries `blocks`, `blocked_by`, and `related`. G
 
 ### 1.4.1 Read Comments
 
-Comments carry what no listing does: an issue's scope changes, its supersession notes, and its partial-completion reports. `sync` writes them per issue and this is the workflow's only read of them. Read them for the § 1.4 input set here, and for the active rows of the § 1.5 comparison set as soon as that fetch returns — § 6.2 writes dispositions for those too:
+Comments carry what no listing does: an issue's scope changes, its supersession notes, and its partial-completion reports. `sync` writes them per issue and this is the workflow's only read of them. Read them for the § 1.4 input set here, and for every in-scope row of the § 1.5 comparison set as soon as that fetch returns, closed rows included: a supersession note, or the reason a row was canceled, is what makes a closed row worth comparing against. Dispositions stay active-only (§ 1.1):
 
 ```bash
 .agents/skills/linear/scripts/linear.sh cache comments list [ISSUE_ID]   # one call per issue, TRACKER=linear
