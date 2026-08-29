@@ -347,7 +347,7 @@ fn resolve(edit: &SettingsEdit, templates: &[SeededEnv]) -> Refused<String> {
     let value = match &edit.value {
         SettingsEditValue::Set { value } => value.clone(),
         SettingsEditValue::Reset => {
-            let line = declared.entry.assignment.first().map_or("", String::as_str);
+            let line = declared.entry.opening();
             decoded_value(line).ok_or_else(|| SettingsRefusal::Value {
                 key: edit.key.clone(),
                 problem: format!(

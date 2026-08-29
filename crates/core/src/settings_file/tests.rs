@@ -9,7 +9,7 @@ fn seeded(owner: &str, key: &str, line: &str) -> SeededEnv {
         entry: EnvEntry {
             key: key.to_owned(),
             comment: vec![format!("# what {key} does")],
-            assignment: vec![line.to_owned()],
+            assignment: line.to_owned(),
         },
         owner: owner.to_owned(),
     }

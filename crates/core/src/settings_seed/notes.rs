@@ -33,17 +33,28 @@ use super::{SETTINGS_FILE, SeededEnv};
 pub fn conflict_notes(entries: &[SeededEnv]) -> Vec<String> {
     // Distinct defaults per key, each with its owners, both in declaration
     // order; the key order is the file's, so the notes read stably.
+    //
+    // The declarations come from `writable_all`, the same selection every
+    // other consumer takes, rather than from a filter of this loop's own.
+    // An incomplete declaration ships no default to disagree with — it
+    // grouped as an empty one and reported two skills as conflicting when
+    // only one of them had said anything.
     let mut by_key: BTreeMap<&str, Vec<Shipped>> = BTreeMap::new();
-    for seeded in entries {
-        let identity = seeded.default_key();
-        let defaults = by_key.entry(&seeded.entry.key).or_default();
-        match defaults.iter_mut().find(|had| had.identity == identity) {
-            Some(had) => had.owners.push(&seeded.owner),
-            None => defaults.push(Shipped {
-                identity,
-                shown: seeded.default_shown(),
-                owners: vec![&seeded.owner],
-            }),
+    for key in entries.iter().map(|seeded| seeded.entry.key.as_str()) {
+        let defaults = by_key.entry(key).or_default();
+        if !defaults.is_empty() {
+            continue;
+        }
+        for seeded in super::writable_all(entries, key) {
+            let identity = seeded.default_key();
+            match defaults.iter_mut().find(|had| had.identity == identity) {
+                Some(had) => had.owners.push(&seeded.owner),
+                None => defaults.push(Shipped {
+                    identity,
+                    shown: seeded.default_shown(),
+                    owners: vec![&seeded.owner],
+                }),
+            }
         }
     }
     by_key
@@ -81,11 +92,16 @@ struct Shipped<'a> {
 /// What the plan says about a key seeding will not write at all: a
 /// template that never finishes the value. That is an unterminated
 /// template, not a multiline one — a value that closes is seeded whole,
-/// however many lines it takes — and it covers a string broken off on its
-/// own line as much as one that runs to the end of the file. There is no
-/// complete text to copy either way, and writing what there is would leave
-/// the consumer's file unparseable from that line down, so the key is
-/// refused and named rather than dropped in silence.
+/// however many lines it takes.
+///
+/// Which delimiter was left open is deliberately not named. Completeness
+/// comes off the enumerated grammar in [`crate::settings_toml`], so a form
+/// added there would leave a list here stale, and the message would send
+/// somebody to the wrong part of their template. The key name is what
+/// tells them where to look. There is no complete text to copy whatever
+/// the shape, and writing what there is would leave the consumer's file
+/// unparseable from that line down, so the key is refused and named
+/// rather than dropped in silence.
 ///
 /// Only a key NO installed template can supply is named: where one skill
 /// ships it broken and another ships it whole, [`super::merge`] seeds the whole
@@ -109,7 +125,7 @@ pub fn unterminated_notes(entries: &[SeededEnv]) -> Vec<String> {
         .filter(|(_, (complete, _))| !complete)
         .map(|(key, (_, owners))| {
             crate::names::shown(&format!(
-                "{SETTINGS_FILE} {key}: {}'s template leaves this value unfinished — a string or array nothing closes — so there is no complete default to seed and nothing was written for this key; fix the template, or set the key yourself",
+                "{SETTINGS_FILE} {key}: {}'s template never finishes this value — it opens something that is never closed — so there is no complete default to seed and nothing was written for this key; fix the template, or set the key yourself",
                 owners.join(", ")
             ))
         })
@@ -173,17 +189,16 @@ impl SeededEnv {
     /// The default where the strict reader can read one: a plain one-line
     /// double-quoted string.
     fn decoded(&self) -> Option<String> {
-        let line = self.entry.assignment.first().map_or("", String::as_str);
-        crate::settings_template::decoded_value(line)
+        crate::settings_template::decoded_value(self.entry.opening())
     }
 
     /// The assignment's right-hand side, line by line, as written. The
     /// opening line's is trimmed of the space after its `=`; every line
     /// after it is the value's own text and is left alone.
     fn raw_default(&self) -> impl Iterator<Item = &str> {
-        let line = self.entry.assignment.first().map_or("", String::as_str);
-        let opening = line.split_once('=').map_or(line, |(_, value)| value);
-        std::iter::once(opening.trim())
-            .chain(self.entry.assignment.iter().skip(1).map(String::as_str))
+        let mut lines = self.entry.assignment.lines();
+        let opening = lines.next().unwrap_or("");
+        let right = opening.split_once('=').map_or(opening, |(_, value)| value);
+        std::iter::once(right.trim()).chain(lines)
     }
 }

@@ -10,9 +10,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::lock::SettingsSeed;
 
-use super::{
-    SeededEnv, assignment_key, comment_hash, env_section, file_eol, table_row, trim_blank_edges,
-};
+use super::write::{env_section, file_eol};
+use super::{SeededEnv, assignment_key, comment_hash, table_row, trim_blank_edges};
 use crate::settings_toml::Line;
 
 /// Rewrite `[env]` comment blocks whose upstream template text changed,
@@ -146,9 +145,8 @@ fn template_for<'a>(
     if first.owner == owner {
         return Some(first);
     }
-    entries
-        .iter()
-        .find(|seeded| seeded.entry.key == key && seeded.entry.complete() && seeded.owner == owner)
+    super::writable_all(entries, key)
+        .find(|seeded| seeded.owner == owner)
         .or(Some(first))
 }
 

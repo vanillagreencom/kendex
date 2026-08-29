@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use super::*;
 
 mod notes;
+mod refresh;
 
 const TEMPLATE: &str = "# ignored preamble\n[env]\n# Which reviewer set to run.\n# Comma separated.\nREVIEWERS = \"arch,security\"\n\nDEPTH = \"2\"\n\n[other]\nX = \"1\"\n";
 
@@ -16,21 +17,13 @@ fn seeded(template: &str, owner: &str) -> Vec<SeededEnv> {
         .collect()
 }
 
-/// The ledger as seeding would have left it for these entries.
-fn ledger_for(entries: &[SeededEnv]) -> BTreeMap<String, SettingsSeed> {
-    entries
-        .iter()
-        .map(|seeded| (seeded.entry.key.clone(), seeded.seed_record()))
-        .collect()
-}
-
 #[test]
 fn entries_carry_their_comment_blocks() {
     let entries = extract_env_entries(TEMPLATE);
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].key, "REVIEWERS");
     assert_eq!(entries[0].comment.len(), 2);
-    assert_eq!(entries[0].assignment, ["REVIEWERS = \"arch,security\""]);
+    assert_eq!(entries[0].assignment, "REVIEWERS = \"arch,security\"");
     assert_eq!(entries[1].key, "DEPTH");
 }
 
@@ -83,264 +76,6 @@ fn merge_at_file_end_repairs_a_missing_terminator_once() {
     assert!(merged.ends_with("DEPTH = \"2\"\n"));
 }
 
-#[test]
-fn unedited_seeded_comment_refreshes_when_the_template_revises_it() {
-    let v1 = seeded("[env]\n# Old words.\nDEPTH = \"2\"\n", "review");
-    let mut ledger = ledger_for(&v1);
-    let file = "[env]\n# Old words.\nDEPTH = \"9\"\n";
-
-    let v2 = seeded(
-        "[env]\n# New words.\n# Two lines now.\nDEPTH = \"2\"\n",
-        "review",
-    );
-    let (out, updated) = refresh_comments(file, &v2, &mut ledger);
-    assert_eq!(updated, ["DEPTH"]);
-    assert_eq!(
-        out,
-        "[env]\n# New words.\n# Two lines now.\nDEPTH = \"9\"\n"
-    );
-    assert_eq!(
-        ledger.get("DEPTH").unwrap().hash,
-        comment_hash(&["# New words.".to_owned(), "# Two lines now.".to_owned()]),
-        "the ledger follows the rewrite"
-    );
-
-    // Idempotent: running again changes nothing.
-    let (again, updated) = refresh_comments(&out, &v2, &mut ledger);
-    assert_eq!(again, out);
-    assert!(updated.is_empty());
-}
-
-#[test]
-fn a_hand_edited_comment_is_preserved_forever() {
-    let v1 = seeded("[env]\n# Old words.\nDEPTH = \"2\"\n", "review");
-    let mut ledger = ledger_for(&v1);
-    let file = "[env]\n# My own explanation.\nDEPTH = \"9\"\n";
-
-    let v2 = seeded("[env]\n# New words.\nDEPTH = \"2\"\n", "review");
-    let (out, updated) = refresh_comments(file, &v2, &mut ledger);
-    assert_eq!(out, file, "a hand-edited comment never rewrites");
-    assert!(updated.is_empty());
-}
-
-#[test]
-fn value_lines_are_untouched_byte_for_byte() {
-    let v1 = seeded("[env]\n# Old.\nDEPTH = \"2\"\n", "review");
-    let mut ledger = ledger_for(&v1);
-    // Odd spacing and a trailing comment on the value line must survive.
-    let file = "[env]\n# Old.\nDEPTH   =\t\"9\"   # keep me\n";
-    let v2 = seeded("[env]\n# New.\nDEPTH = \"2\"\n", "review");
-    let (out, _) = refresh_comments(file, &v2, &mut ledger);
-    assert_eq!(out, "[env]\n# New.\nDEPTH   =\t\"9\"   # keep me\n");
-}
-
-#[test]
-fn crlf_and_missing_terminator_survive_outside_the_comment_block() {
-    let v1 = seeded("[env]\n# Old.\nDEPTH = \"2\"\n", "review");
-    let mut ledger = ledger_for(&v1);
-    let file = "# head\r\n[env]\r\n# Old.\r\nDEPTH = \"9\"\r\n\r\n[custom]\r\nX = \"1\"";
-    let v2 = seeded("[env]\n# New.\nDEPTH = \"2\"\n", "review");
-    let (out, updated) = refresh_comments(file, &v2, &mut ledger);
-    assert_eq!(updated, ["DEPTH"]);
-    assert_eq!(
-        out, "# head\r\n[env]\r\n# New.\r\nDEPTH = \"9\"\r\n\r\n[custom]\r\nX = \"1\"",
-        "comment bytes are the only bytes that changed"
-    );
-}
-
-#[test]
-fn another_owners_template_never_rewrites_a_seeded_comment() {
-    let original_owner = seeded("[env]\n# Old.\nDEPTH = \"2\"\n", "review");
-    let mut ledger = ledger_for(&original_owner);
-    let file = "[env]\n# Old.\nDEPTH = \"9\"\n";
-    // A different skill now ships the same key with new words.
-    let intruder = seeded("[env]\n# Their words.\nDEPTH = \"3\"\n", "other-skill");
-    let (out, updated) = refresh_comments(file, &intruder, &mut ledger);
-    assert_eq!(out, file);
-    assert!(updated.is_empty());
-    assert_eq!(
-        ledger.get("DEPTH").unwrap().owner.as_deref(),
-        Some("review"),
-        "the record stays with its owner"
-    );
-}
-
-#[test]
-fn a_v1_imported_record_verifies_but_never_rewrites() {
-    let mut ledger = BTreeMap::new();
-    ledger.insert(
-        "DEPTH".to_owned(),
-        SettingsSeed {
-            owner: None,
-            hash: comment_hash(&["# Old.".to_owned()]),
-        },
-    );
-    let file = "[env]\n# Old.\nDEPTH = \"9\"\n";
-    let v2 = seeded("[env]\n# New.\nDEPTH = \"2\"\n", "review");
-    let (out, updated) = refresh_comments(file, &v2, &mut ledger);
-    assert_eq!(out, file, "legacy-owned: preserved, never rewritten");
-    assert!(updated.is_empty());
-    assert_eq!(ledger.get("DEPTH").unwrap().owner, None);
-}
-
-#[test]
-fn bootstrap_adopts_a_template_matching_comment_and_freezes_an_edited_one() {
-    // Pre-ledger install: the file matches the current template exactly.
-    let mut ledger = BTreeMap::new();
-    let file = "[env]\n# Current words.\nDEPTH = \"9\"\n";
-    let current = seeded("[env]\n# Current words.\nDEPTH = \"2\"\n", "review");
-    let (out, updated) = refresh_comments(file, &current, &mut ledger);
-    assert_eq!(out, file);
-    assert!(updated.is_empty());
-    assert_eq!(
-        ledger.get("DEPTH").unwrap().owner.as_deref(),
-        Some("review"),
-        "a matching comment is adopted into the ledger"
-    );
-    // The next template revision now refreshes it.
-    let revised = seeded("[env]\n# Revised words.\nDEPTH = \"2\"\n", "review");
-    let (out, updated) = refresh_comments(&out, &revised, &mut ledger);
-    assert_eq!(updated, ["DEPTH"]);
-    assert!(out.contains("# Revised words."));
-
-    // Pre-ledger install whose comment differs: hand-edited, never adopted.
-    let mut ledger = BTreeMap::new();
-    let edited = "[env]\n# Somebody's own words.\nDEPTH = \"9\"\n";
-    let (out, updated) = refresh_comments(edited, &revised, &mut ledger);
-    assert_eq!(out, edited);
-    assert!(updated.is_empty());
-    assert!(!ledger.contains_key("DEPTH"));
-}
-
-/// A bare key says nothing about who wrote it: an empty on-disk block
-/// matching an empty template block is not adoption evidence, or a later
-/// template revision would write prose above a line the user typed.
-#[test]
-fn a_bare_key_is_never_adopted() {
-    let mut ledger = BTreeMap::new();
-    let file = "[env]\nDEPTH = \"9\"\n";
-    let bare = seeded("[env]\nDEPTH = \"2\"\n", "review");
-    let (out, updated) = refresh_comments(file, &bare, &mut ledger);
-    assert_eq!(out, file);
-    assert!(updated.is_empty());
-    assert!(!ledger.contains_key("DEPTH"), "nothing to adopt");
-
-    let with_words = seeded("[env]\n# Now with words.\nDEPTH = \"2\"\n", "review");
-    let (out, updated) = refresh_comments(file, &with_words, &mut ledger);
-    assert_eq!(out, file, "the user's bare key stays bare");
-    assert!(updated.is_empty());
-}
-
-/// A v1 import names no owner. A template earns the record when the
-/// comment on disk is provably what v1 seeded and matches the template
-/// word for word; a comment that drifted stays legacy-owned.
-#[test]
-fn a_v1_record_is_adopted_only_by_a_matching_template_over_unedited_text() {
-    let mut ledger = BTreeMap::new();
-    ledger.insert(
-        "DEPTH".to_owned(),
-        SettingsSeed {
-            owner: None,
-            hash: comment_hash(&["# Old.".to_owned()]),
-        },
-    );
-    let file = "[env]\n# Old.\nDEPTH = \"9\"\n";
-    let same_words = seeded("[env]\n# Old.\nDEPTH = \"2\"\n", "review");
-    let (out, updated) = refresh_comments(file, &same_words, &mut ledger);
-    assert_eq!(out, file);
-    assert!(updated.is_empty());
-    assert_eq!(
-        ledger.get("DEPTH").unwrap().owner.as_deref(),
-        Some("review"),
-        "provably unedited and word-for-word the template: adopted"
-    );
-    let revised = seeded("[env]\n# Newer.\nDEPTH = \"2\"\n", "review");
-    let (out, updated) = refresh_comments(&out, &revised, &mut ledger);
-    assert_eq!(updated, ["DEPTH"]);
-    assert!(out.contains("# Newer."));
-
-    // Hand-edited since v1 seeded it (hash no longer matches), even if the
-    // words now happen to equal a template: legacy-owned, frozen.
-    let mut ledger = BTreeMap::new();
-    ledger.insert(
-        "DEPTH".to_owned(),
-        SettingsSeed {
-            owner: None,
-            hash: comment_hash(&["# What v1 wrote.".to_owned()]),
-        },
-    );
-    let edited = "[env]\n# Old.\nDEPTH = \"9\"\n";
-    refresh_comments(edited, &same_words, &mut ledger);
-    assert_eq!(ledger.get("DEPTH").unwrap().owner, None);
-}
-
-/// Two skills ship one key. Seeding wrote the first declaration; a later
-/// pass where the other skill enumerates first must still refresh from
-/// the recorded owner's template — declaration order never shadows the
-/// ledger.
-#[test]
-fn the_recorded_owner_speaks_for_a_key_several_skills_ship() {
-    let review = seeded("[env]\n# Review's words.\nDEPTH = \"2\"\n", "review");
-    let mut ledger = ledger_for(&review);
-    let file = "[env]\n# Review's words.\nDEPTH = \"9\"\n";
-    let mut entries = seeded("[env]\n# Lint's words.\nDEPTH = \"1\"\n", "aaa-lint");
-    entries.extend(seeded(
-        "[env]\n# Review's better words.\nDEPTH = \"2\"\n",
-        "review",
-    ));
-    let (out, updated) = refresh_comments(file, &entries, &mut ledger);
-    assert_eq!(updated, ["DEPTH"]);
-    assert!(out.contains("# Review's better words."), "{out}");
-    assert!(!out.contains("# Lint's words."));
-    assert_eq!(
-        ledger.get("DEPTH").unwrap().owner.as_deref(),
-        Some("review")
-    );
-}
-
-/// Seeding writes the first declaration of a key and the ledger records
-/// that skill — the same choice, so the owner can refresh what it wrote.
-#[test]
-fn merge_seeds_the_first_declaration_and_records_it_as_owner() {
-    let mut entries = seeded("[env]\n# First.\nDEPTH = \"1\"\n", "first");
-    entries.extend(seeded("[env]\n# Second.\nDEPTH = \"2\"\n", "second"));
-    let (out, added) = merge(Some("[env]\n"), &entries).unwrap();
-    assert_eq!(added, ["DEPTH"]);
-    assert!(out.contains("# First.\nDEPTH = \"1\""), "{out}");
-    assert!(!out.contains("# Second."));
-    let mut ledger = BTreeMap::new();
-    record_seeds(&mut ledger, &entries, &added);
-    assert_eq!(ledger.get("DEPTH").unwrap().owner.as_deref(), Some("first"));
-}
-
-/// A hand-made duplicate inside `[env]` is judged once, at its first
-/// site — never two rewrites and never a key listed twice in the plan.
-#[test]
-fn a_duplicated_key_is_refreshed_once() {
-    let v1 = seeded("[env]\n# Old.\nDEPTH = \"2\"\n", "review");
-    let mut ledger = ledger_for(&v1);
-    let file = "[env]\n# Old.\nDEPTH = \"9\"\n# Old.\nDEPTH = \"8\"\n";
-    let v2 = seeded("[env]\n# New.\nDEPTH = \"2\"\n", "review");
-    let (out, updated) = refresh_comments(file, &v2, &mut ledger);
-    assert_eq!(updated, ["DEPTH"]);
-    assert_eq!(out, "[env]\n# New.\nDEPTH = \"9\"\n# Old.\nDEPTH = \"8\"\n");
-}
-
-#[test]
-fn comment_hash_matches_v1s_algorithm() {
-    // Locked against v1's `format!("{:016x}", fnv1a(join("\n")))` so
-    // imported ledgers verify without re-guessing.
-    assert_eq!(comment_hash(&[]), "cbf29ce484222325");
-    assert_eq!(comment_hash(&["# a".to_owned()]), {
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for b in b"# a" {
-            h ^= u64::from(*b);
-            h = h.wrapping_mul(0x0000_0100_0000_01b3);
-        }
-        format!("{h:016x}")
-    });
-}
-
 /// A container the reader does not track ends the `[env]` section where
 /// no table starts, and the seed lands inside somebody's value. Both
 /// shapes: a nested `[` taken for a header, and a header the boundary
@@ -351,7 +86,7 @@ fn a_seed_lands_after_the_env_table_and_never_inside_a_value() {
         entry: EnvEntry {
             key: "DEPTH".to_owned(),
             comment: vec!["# How deep.".to_owned()],
-            assignment: vec!["DEPTH = \"2\"".to_owned()],
+            assignment: "DEPTH = \"2\"".to_owned(),
         },
         owner: "review".to_owned(),
     }];
@@ -388,7 +123,7 @@ fn a_header_the_loaders_refuse_is_still_the_table_a_seed_lands_in() {
         entry: EnvEntry {
             key: "DEPTH".to_owned(),
             comment: vec!["# How deep.".to_owned()],
-            assignment: vec!["DEPTH = \"2\"".to_owned()],
+            assignment: "DEPTH = \"2\"".to_owned(),
         },
         owner: "review".to_owned(),
     }];
@@ -437,7 +172,7 @@ fn any_spelling_of_the_env_header_is_the_table_a_seed_lands_in() {
         entry: EnvEntry {
             key: "DEPTH".to_owned(),
             comment: vec!["# How deep.".to_owned()],
-            assignment: vec!["DEPTH = \"2\"".to_owned()],
+            assignment: "DEPTH = \"2\"".to_owned(),
         },
         owner: "review".to_owned(),
     }];
@@ -469,7 +204,7 @@ fn an_env_declared_as_an_array_of_tables_is_refused_rather_than_seeded() {
         entry: EnvEntry {
             key: "DEPTH".to_owned(),
             comment: vec!["# How deep.".to_owned()],
-            assignment: vec!["DEPTH = \"2\"".to_owned()],
+            assignment: "DEPTH = \"2\"".to_owned(),
         },
         owner: "review".to_owned(),
     }];
@@ -493,7 +228,7 @@ fn a_top_level_env_assignment_is_refused_rather_than_seeded() {
         entry: EnvEntry {
             key: "DEPTH".to_owned(),
             comment: vec!["# How deep.".to_owned()],
-            assignment: vec!["DEPTH = \"2\"".to_owned()],
+            assignment: "DEPTH = \"2\"".to_owned(),
         },
         owner: "review".to_owned(),
     }];
@@ -545,13 +280,8 @@ fn a_value_spanning_lines_is_seeded_whole() {
         // The value's continuation lines are the assignment's, and the
         // comment above it is still only the comment.
         assert_eq!(entries[0].comment, ["# A blob."], "{value}");
-        // One assignment line per line of the value: the first carries
-        // the `=`, the last closes it.
-        assert_eq!(
-            entries[0].assignment.len(),
-            value.lines().count(),
-            "{value}"
-        );
+        // The whole assignment, spelled as the template spells it.
+        assert_eq!(entries[0].assignment, format!("BLOB = {value}"), "{value}");
         assert!(entries[0].complete(), "{value}");
 
         let (text, added) = merge(None, &seeded(&template, "review")).expect("both are missing");
@@ -738,7 +468,7 @@ fn an_inline_table_that_closes_seeds_like_any_other_value() {
         let template = format!("[env]\n# A map.\nMAP = {value}\n");
         let entries = extract_env_entries(&template);
         assert!(entries[0].complete(), "{value}: {entries:?}");
-        assert_eq!(entries[0].assignment, [format!("MAP = {value}")], "{value}");
+        assert_eq!(entries[0].assignment, format!("MAP = {value}"), "{value}");
 
         let shipped = seeded(&template, "review");
         assert!(unterminated_notes(&shipped).is_empty(), "{value}");
@@ -749,5 +479,107 @@ fn an_inline_table_that_closes_seeds_like_any_other_value() {
             .parse()
             .unwrap_or_else(|e| panic!("{value}: seeded file must parse: {e}\n{text}"));
         assert_eq!(got["env"]["MAP"], want["env"]["MAP"], "{value}");
+    }
+}
+
+/// Two kinds of newline meet in a seeded block and only one of them is the
+/// file's. The terminators between entries and around the block are the
+/// destination's; the ones INSIDE a multiline value are the value's own
+/// content, and rewriting them hands the consumer a different string from
+/// the one the template declared.
+#[test]
+fn a_values_own_newlines_survive_a_file_that_spells_them_differently() {
+    let template = "[env]\n# A blob.\nBLOB = \"\"\"\nline one\nline two\n\"\"\"\n";
+    let file = "[env]\r\nMODE = \"a\"\r\n";
+    let (out, added) = merge(Some(file), &seeded(template, "review")).expect("BLOB is missing");
+    assert_eq!(added, ["BLOB"]);
+
+    // The value arrives exactly as the template spelled it.
+    assert!(
+        out.contains("BLOB = \"\"\"\nline one\nline two\n\"\"\""),
+        "{out:?}"
+    );
+    // And the lines around it are the file's own.
+    assert!(out.contains("# A blob.\r\n"), "{out:?}");
+    assert!(out.ends_with("\"\"\"\r\n"), "{out:?}");
+    assert!(
+        out.starts_with(file),
+        "the original bytes are untouched: {out:?}"
+    );
+
+    // What the consumer reads back is the template's value, unchanged.
+    let want: toml::Table = template.parse().expect("the template parses");
+    let got: toml::Table = out.parse().expect("the seeded file parses");
+    assert_eq!(got["env"]["BLOB"], want["env"]["BLOB"], "{out:?}");
+
+    // The other direction too: a CRLF template into an LF file.
+    let crlf = "[env]\r\n# A blob.\r\nBLOB = \"\"\"\r\nline one\r\n\"\"\"\r\n";
+    let (out, _) = merge(Some("[env]\nMODE = \"a\"\n"), &seeded(crlf, "review")).expect("missing");
+    assert!(
+        out.contains("BLOB = \"\"\"\r\nline one\r\n\"\"\""),
+        "{out:?}"
+    );
+    assert!(out.contains("# A blob.\n"), "{out:?}");
+}
+
+/// An incomplete declaration ships no default, so it cannot disagree with
+/// one. Grouped as if it did, a broken declaration beside a valid one
+/// produced a conflict note between two skills where only one had said
+/// anything — and the seed itself was already correct, so the note sent a
+/// person to arbitrate a disagreement that did not exist.
+#[test]
+fn an_incomplete_declaration_is_not_a_default_to_disagree_with() {
+    let mut shipped = seeded("[env]\n# Theirs.\nBLOB = \"\"\"\n", "broken");
+    shipped.extend(seeded("[env]\n# Ours.\nBLOB = \"ok\"\n", "good"));
+
+    assert!(
+        conflict_notes(&shipped).is_empty(),
+        "one default is not a disagreement: {:?}",
+        conflict_notes(&shipped)
+    );
+    // The key is supplied, so nothing is refused either: no note at all.
+    assert!(unterminated_notes(&shipped).is_empty());
+    assert!(
+        seed_notes(&shipped).is_empty(),
+        "{:?}",
+        seed_notes(&shipped)
+    );
+
+    let (text, added) = merge(None, &shipped).expect("BLOB is missing");
+    assert_eq!(added, ["BLOB"]);
+    assert!(text.contains("BLOB = \"ok\""), "{text}");
+
+    // Two complete declarations that really do differ still say so.
+    let mut real = seeded("[env]\n# Theirs.\nBLOB = \"theirs\"\n", "one");
+    real.extend(seeded("[env]\n# Ours.\nBLOB = \"ours\"\n", "two"));
+    assert_eq!(
+        conflict_notes(&real).len(),
+        1,
+        "{:?}",
+        conflict_notes(&real)
+    );
+}
+
+/// The refusal fires for every form the grammar can leave open, so it may
+/// not name a subset of them. Naming "a string or an array" sent somebody
+/// whose inline table was unclosed to the wrong part of their template,
+/// and any list goes stale the moment the enumerated grammar grows.
+#[test]
+fn the_refusal_names_the_key_and_no_particular_delimiter() {
+    for (template, key) in [
+        ("[env]\n# A.\nTOKEN = \"\n", "TOKEN"),
+        ("[env]\n# A.\nMAP = {\n", "MAP"),
+        ("[env]\n# A.\nLIST = [\n", "LIST"),
+        ("[env]\n# A.\nBLOB = \"\"\"\n", "BLOB"),
+    ] {
+        let notes = unterminated_notes(&seeded(template, "review"));
+        assert_eq!(notes.len(), 1, "{template:?}: {notes:?}");
+        assert!(notes[0].contains(key), "the key is named: {notes:?}");
+        for named in ["string", "array", "inline table", "quote", "bracket"] {
+            assert!(
+                !notes[0].contains(named),
+                "{template:?}: names {named}, which is only true of some: {notes:?}"
+            );
+        }
     }
 }
