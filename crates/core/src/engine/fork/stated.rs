@@ -106,13 +106,21 @@ pub(super) struct Stated {
     background: Option<bool>,
 }
 
-/// What the file states, or why it could not be read. A file with no
-/// frontmatter at all states nothing and is no failure: a person who
-/// replaced the whole rendering with prose took no tools away.
+/// What the file states, or why it could not be read. The one reading
+/// that is no failure is a file opening no frontmatter block at all: it
+/// states nothing, and a person who replaced the whole rendering with
+/// prose took no tools away. A block that opens and never ends is the
+/// other answer [`crate::frontmatter::split`] reports the same error for,
+/// and it is frontmatter that will not read — whatever it restricts cannot
+/// be proven carried, so the caller refuses on it.
 pub(super) fn stated(harness: HarnessId, text: &str) -> std::result::Result<Stated, String> {
     let (allow_key, deny_key) = permission_keys(harness);
-    let Ok((yaml, _)) = crate::frontmatter::split(text) else {
-        return Ok(Stated::default());
+    let yaml = match crate::frontmatter::split(text) {
+        Ok((yaml, _)) => yaml,
+        Err(problem) => match crate::frontmatter::opens(text) {
+            true => return Err(problem),
+            false => return Ok(Stated::default()),
+        },
     };
     let parsed = crate::frontmatter::parse_tolerant(yaml)?;
     let scalar = |key: &str| {

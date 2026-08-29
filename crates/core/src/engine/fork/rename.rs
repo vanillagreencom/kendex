@@ -33,7 +33,7 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
             name: old.to_owned(),
         });
     };
-    vacant_name(env, scope, &manifest, kind, &decl, new)?;
+    vacant_name(env, scope, &manifest, kind, &decl, old, new)?;
     let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
     let depended_on = lock
         .entries

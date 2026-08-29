@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::manifest::{FrontmatterOverrides, HookAgents, Manifest};
+use crate::manifest::{CustomHook, FrontmatterOverrides, HookAgents, Manifest};
 use crate::model::ItemKind;
 use crate::render::agent::Selects;
 use crate::source::SourceConfig;
@@ -56,19 +56,27 @@ impl AgentCarry {
 
     /// Write the carried values into the manifest under `name`. Skills
     /// land only where the manifest has nothing of its own, since an
-    /// entry already governs; frontmatter is written over, because the
-    /// value carried is the catalog-beneath-project merge and already
-    /// holds whatever the project said.
+    /// entry already governs; frontmatter folds in over what is there,
+    /// carried value winning per field.
+    ///
+    /// Folding rather than replacing, because a carry holds a record only
+    /// for a harness the catalog configured this agent under: where the
+    /// catalog configured none and the project did, the carry's whole
+    /// record is the person's edit alone, and writing that over the
+    /// project's entry drops the denies it held. `uncleared` refuses a
+    /// deliberate deletion before anything reaches here, so nothing folded
+    /// back in is a value the person took away.
     pub(crate) fn apply(self, manifest: &mut Manifest, name: &str) {
         if !self.skills.is_empty() && !manifest.agent_skills.contains_key(name) {
             manifest.agent_skills.insert(name.to_owned(), self.skills);
         }
-        for (harness, merged) in self.frontmatter {
-            manifest
-                .agent_frontmatter
-                .entry(harness)
-                .or_default()
-                .insert(name.to_owned(), merged);
+        for (harness, carried) in self.frontmatter {
+            let by_agent = manifest.agent_frontmatter.entry(harness).or_default();
+            let held = by_agent.get(name).cloned().unwrap_or_default();
+            by_agent.insert(
+                name.to_owned(),
+                crate::render::agent::merge_overrides(Some(&held), Some(&carried)),
+            );
         }
     }
 }
@@ -151,14 +159,40 @@ pub(crate) fn rekey_agent_tables(
         return;
     }
     let gone = matches!(old, OldName::Gone);
-    carry(&mut manifest.agent_launch_instructions, from, to, gone);
-    carry(&mut manifest.agent_additional_instructions, from, to, gone);
-    carry(&mut manifest.agent_skills, from, to, gone);
+    // An entry under a shared key belongs to every agent that reads it,
+    // not to the agent whose name spells it. Moving one because that agent
+    // moved would rewrite what every other agent renders.
+    if !crate::render::agent::shared_instructions_key(from) {
+        carry(&mut manifest.agent_launch_instructions, from, to, gone);
+        carry(&mut manifest.agent_additional_instructions, from, to, gone);
+    }
+    carry_skills(manifest, from, to, gone);
     for by_agent in manifest.agent_frontmatter.values_mut() {
         carry(by_agent, from, to, gone);
     }
     for hook in &mut manifest.custom_hooks {
         reselect(&mut hook.agents, from, to, gone);
+    }
+}
+
+/// Move the skill assignment. Alone among these tables it is not read by
+/// exact name: a `reviewer-` agent with no row of its own reads the base
+/// agent's, so a name whose list came through that fallback has no row for
+/// [`carry`] to find and renders with the source's list instead of the
+/// project's.
+///
+/// What it reaches is asked of the reader that resolves it, so the
+/// fallback rule has one spelling. The resolved row is copied and never
+/// moved, even for a rename: it is the base agent's own row, shared with
+/// every other `reviewer-` agent, and taking it away would strip them all.
+fn carry_skills(manifest: &mut Manifest, from: &str, to: &str, gone: bool) {
+    if manifest.agent_skills.contains_key(from) {
+        carry(&mut manifest.agent_skills, from, to, gone);
+        return;
+    }
+    let inherited = crate::engine::desired_agent::declared_skills(manifest, from).cloned();
+    if let Some(skills) = inherited {
+        manifest.agent_skills.insert(to.to_owned(), skills);
     }
 }
 
@@ -183,9 +217,7 @@ fn carry<T: Clone>(table: &mut BTreeMap<String, T>, from: &str, to: &str, gone: 
 /// for it would take the restriction off every other agent the population
 /// holds — an operation that never mentioned them.
 fn reselect(agents: &mut HookAgents, from: &str, to: &str, gone: bool) {
-    let mine = |selector: &String| {
-        selector == from && crate::render::agent::selects(selector) == Selects::Named
-    };
+    let mine = |selector: &String| names_agent(selector, from);
     let mut names = match agents {
         HookAgents::One(selector) => vec![selector.clone()],
         HookAgents::Many(list) => list.clone(),
@@ -226,25 +258,76 @@ pub(crate) fn configured_as(manifest: &Manifest, name: &str) -> Option<&'static 
     if manifest.agent_skills.contains_key(name) {
         return Some("agent-skills");
     }
-    if manifest.agent_launch_instructions.contains_key(name) {
+    // An instructions entry under a shared key is every agent's, so it is
+    // not this name's to be replaced — the same reading [`rekey_agent_tables`]
+    // refuses to move.
+    let its_own = !crate::render::agent::shared_instructions_key(name);
+    if its_own && manifest.agent_launch_instructions.contains_key(name) {
         return Some("agent-launch-instructions");
     }
-    if manifest.agent_additional_instructions.contains_key(name) {
+    if its_own && manifest.agent_additional_instructions.contains_key(name) {
         return Some("agent-additional-instructions");
     }
-    // Only a selector whose kind is an agent name configures one agent.
-    // A role selector spelling the same word describes a population the
-    // new name would join by role, not configuration it would inherit.
-    let mine = |selector: &String| {
-        selector == name && crate::render::agent::selects(selector) == Selects::Named
-    };
+    gated_by_name(manifest, name).map(|_| "custom-hooks")
+}
+
+/// Whether this selector is this agent's own name — the one kind a rename
+/// or a copy moves. `all` and a role name describe a population, so an
+/// agent that happens to be called one never owns the selector spelling
+/// it, and one agent's move must not rewrite it.
+fn names_agent(selector: &str, agent: &str) -> bool {
+    selector == agent && crate::render::agent::selects(selector) == Selects::Named
+}
+
+/// The first hook that gates this agent by its own name, so the selector
+/// has to travel when the name does.
+fn gated_by_name<'a>(manifest: &'a Manifest, name: &str) -> Option<&'a CustomHook> {
     let named = |agents: &HookAgents| match agents {
-        HookAgents::One(selector) => mine(selector),
-        HookAgents::Many(list) => list.iter().any(mine),
+        HookAgents::One(selector) => names_agent(selector, name),
+        HookAgents::Many(list) => list.iter().any(|selector| names_agent(selector, name)),
     };
     manifest
         .custom_hooks
         .iter()
-        .any(|hook| named(&hook.agents))
-        .then_some("custom-hooks")
+        .find(|hook| named(&hook.agents))
+}
+
+/// Why one agent's configuration cannot be keyed under `to`, or `None`
+/// where it can. Every piece of that configuration answers to the
+/// installed name, but two readers give some spellings a meaning of their
+/// own: [`crate::render::agent::selects`] reads `all` and a role name as a
+/// population, and an instructions entry under a shared key is the one
+/// every agent reads. Neither can be written as one agent's, so a move
+/// onto such a name is refused rather than made — the representation has
+/// no way to say "this one agent, despite the spelling".
+///
+/// Only where there is something to move. A population spelling is an
+/// ordinary name for an agent nothing gates and nothing instructs, and
+/// refusing it there would invent a naming rule the operation never
+/// needed.
+pub(crate) fn unwritable_under(manifest: &Manifest, from: &str, to: &str) -> Option<String> {
+    // What the new spelling would gate, said as the refusal says it, or
+    // `None` where it names one agent and the selector can simply move.
+    let population = match crate::render::agent::selects(to) {
+        Selects::Named => None,
+        Selects::Everyone => Some("every agent".to_owned()),
+        Selects::Role(role) => Some(format!("the {} role", role.name())),
+    };
+    if let Some(population) = population
+        && let Some(hook) = gated_by_name(manifest, from)
+    {
+        return Some(format!(
+            "a custom hook gates {from} by name, running {}, and that selector travels with the name — but a selector spelling this one reads as {population}, so the gate would move onto every agent it names; pick a name no role uses, or take {from} out of the hook's selector first",
+            hook.command,
+        ));
+    }
+    if crate::render::agent::shared_instructions_key(to)
+        && (manifest.agent_launch_instructions.contains_key(from)
+            || manifest.agent_additional_instructions.contains_key(from))
+    {
+        return Some(format!(
+            "{from} has instructions of its own, and an entry under this name is the one every agent reads — pick another name, or clear those instructions first"
+        ));
+    }
+    None
 }

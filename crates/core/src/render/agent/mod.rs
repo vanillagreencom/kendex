@@ -33,13 +33,25 @@ pub struct EffectiveAgent<'a> {
 pub const SHARED_START: &str = "<!-- kendex:shared-instructions:start -->";
 pub const SHARED_END: &str = "<!-- kendex:shared-instructions:end -->";
 
+/// The keys an instructions table reads as everyone's rather than one
+/// agent's, in the order the shared entry is looked for.
+const SHARED_INSTRUCTIONS: [&str; 2] = [EVERY_AGENT, "*"];
+
+/// Whether an instructions-table key names the entry every agent reads
+/// rather than one agent's own. An agent may legally be called `all`, so
+/// the key is a population before it is that agent's: moving it because
+/// the agent moved would rewrite what every other agent renders.
+pub fn shared_instructions_key(key: &str) -> bool {
+    SHARED_INSTRUCTIONS.contains(&key)
+}
+
 /// Shared (`all`/`*`) text renders first inside strippable markers, then the
 /// agent-specific text.
 pub fn merged_instructions(
     table: &std::collections::BTreeMap<String, String>,
     agent_name: &str,
 ) -> Option<String> {
-    let shared = table.get("all").or_else(|| table.get("*"));
+    let shared = SHARED_INSTRUCTIONS.iter().find_map(|key| table.get(*key));
     let specific = table.get(agent_name);
     match (shared, specific) {
         (None, None) => None,

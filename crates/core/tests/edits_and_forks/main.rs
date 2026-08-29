@@ -5,6 +5,7 @@
 
 mod agent_capture;
 mod agent_settings;
+mod agent_tables;
 mod beside;
 mod disabled;
 mod edited_harness;
@@ -96,6 +97,18 @@ fn write_agent(dir: &Path, name: &str, body: &str) {
 #[allow(clippy::unwrap_used)]
 fn manifest_text(w: &World) -> String {
     fs::read_to_string(manifest::manifest_path(&w.env, &w.scope)).unwrap()
+}
+
+/// The manifest as the loader reads it back, for assertions about the
+/// records themselves. A record is what the next render is written from,
+/// and its text spells one field per line: a reading that searches the
+/// text cannot tell a record holding one field from the same record
+/// holding three.
+#[allow(clippy::unwrap_used)]
+fn manifest_of(w: &World) -> manifest::Manifest {
+    manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap()
 }
 
 #[allow(clippy::unwrap_used)]

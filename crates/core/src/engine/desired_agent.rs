@@ -320,7 +320,7 @@ fn from_manifest<'a>(manifest: &'a Manifest, harness: HarnessId, name: &str) -> 
 /// Asking for the exact name alone would call a real assignment absent and
 /// render the upstream list over the top of it, which is the removal the
 /// person made coming back.
-fn declared_skills<'a>(manifest: &'a Manifest, name: &str) -> Option<&'a Vec<String>> {
+pub(super) fn declared_skills<'a>(manifest: &'a Manifest, name: &str) -> Option<&'a Vec<String>> {
     manifest.agent_skills.get(name).or_else(|| {
         manifest
             .agent_skills

@@ -1,97 +1,14 @@
-//! What a fork carries, refuses, and moves. An agent's tool access, its
-//! delegation, its hooks and its settings all shape what it may do, and a
-//! copy of it must be no more permissive than the agent it came from: what
-//! can ride does, what cannot refuses, and what is keyed by the agent's
-//! name travels with the name.
+//! What one hand-edited rendering states, and what a fork makes of it.
+//! An agent's tool access, its delegation and its hooks all shape what it
+//! may do, and a copy of it must be no more permissive than the agent it
+//! came from: what the override table can hold rides into the manifest,
+//! and what nothing can hold refuses.
 
 use std::fs;
 
 use kendex_core::error::CoreError;
 
 use super::*;
-
-/// Every manifest table an agent answers to is keyed by its installed
-/// name. A copy under a new name reads none of them unless they come with
-/// it, and the original — still declared from its source — has to keep
-/// its own.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn forking_beside_carries_the_projects_denies_without_taking_them() {
-    let w = agent_world(
-        "\"claude\"",
-        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
-        "",
-        "[agent-frontmatter.claude]\nrev = { deny-tools = [\"Bash\"] }\n\n[agent-launch-instructions]\nrev = \"Read the brief first.\"\n",
-    );
-    edit_body(&rendered(&w, HarnessId::Claude, "rev"));
-
-    let plan = fork::fork_beside(
-        &w.env,
-        &w.scope,
-        ItemKind::Agent,
-        "rev",
-        HarnessId::Claude,
-        "rev-mine",
-        None,
-    )
-    .unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
-    resettle(&w);
-
-    let copy = fs::read_to_string(rendered(&w, HarnessId::Claude, "rev-mine")).unwrap();
-    assert!(
-        deny_line(&copy, "disallowedTools:").contains("Bash"),
-        "the copy must not be more permissive than the agent it came from: {copy}"
-    );
-    assert!(copy.contains("Read the brief first."), "{copy}");
-    assert!(copy.contains("My body."), "{copy}");
-
-    let original = fs::read_to_string(rendered(&w, HarnessId::Claude, "rev")).unwrap();
-    assert!(
-        deny_line(&original, "disallowedTools:").contains("Bash"),
-        "the original stays declared from its source and keeps its own denies: {original}"
-    );
-}
-
-/// A rename is the same problem with the old name gone: the tables move
-/// rather than being copied, and nothing is left keyed to a name no item
-/// answers to.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn renaming_an_agent_fork_carries_its_denies_and_instructions() {
-    let w = agent_world(
-        "\"claude\"",
-        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
-        "",
-        "[agent-frontmatter.claude]\nrev = { deny-tools = [\"Bash\"] }\n\n[agent-launch-instructions]\nrev = \"Read the brief first.\"\n",
-    );
-    edit_body(&rendered(&w, HarnessId::Claude, "rev"));
-    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
-    resettle(&w);
-
-    let plan = fork::rename_fork(&w.env, &w.scope, ItemKind::Agent, "rev", "my-rev").unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
-    resettle(&w);
-
-    let text = fs::read_to_string(rendered(&w, HarnessId::Claude, "my-rev")).unwrap();
-    assert!(
-        deny_line(&text, "disallowedTools:").contains("Bash"),
-        "the renamed fork must not be more permissive than it was: {text}"
-    );
-    assert!(text.contains("Read the brief first."), "{text}");
-    let recorded = manifest_text(&w);
-    assert!(
-        recorded.contains("[agent-frontmatter.claude.my-rev]")
-            && recorded.contains("my-rev = \"Read the brief first.\""),
-        "the settings and the instructions both move: {recorded}"
-    );
-    assert!(
-        !recorded.contains("[agent-frontmatter.claude.rev]")
-            && !recorded.contains("\nrev = \"Read the brief first.\""),
-        "nothing stays keyed to a name no item answers to: {recorded}"
-    );
-}
 
 /// A person who tightens a generated file by hand states something the
 /// local source has no key for and the manifest is not being written from.
@@ -235,145 +152,6 @@ fn a_settings_edit_rides_into_the_manifest_and_a_description_edit_does_not() {
         settled.contains("description: \"agent rev\""),
         "a description edit has no override field and comes back from the publisher: {settled}"
     );
-}
-
-/// A hook scoped to one agent by name reaches the copy only if its
-/// selector says so, and after a rename it points at a name nothing
-/// answers to. Either way an agent-scoped PreToolUse restriction quietly
-/// stops applying, which is this issue's own defect in the one table the
-/// first round did not move.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn an_agent_scoped_hook_reaches_the_copy_and_follows_a_rename() {
-    let w = agent_world(
-        "\"claude\"",
-        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
-        "",
-        "[[custom-hooks]]\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./guard.sh\"\nagents = \"rev\"\n",
-    );
-    let guarded = |name: &str| {
-        fs::read_to_string(rendered(&w, HarnessId::Claude, name))
-            .unwrap()
-            .contains("./guard.sh")
-    };
-    assert!(
-        guarded("rev"),
-        "the hook reaches the original to begin with"
-    );
-    edit_body(&rendered(&w, HarnessId::Claude, "rev"));
-
-    let plan = fork::fork_beside(
-        &w.env,
-        &w.scope,
-        ItemKind::Agent,
-        "rev",
-        HarnessId::Claude,
-        "rev-mine",
-        None,
-    )
-    .unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
-    resettle(&w);
-    assert!(
-        guarded("rev-mine"),
-        "the copy must not escape the hook the agent it came from runs under"
-    );
-    assert!(guarded("rev"), "and the original keeps it");
-
-    let plan =
-        fork::rename_fork(&w.env, &w.scope, ItemKind::Agent, "rev-mine", "rev-ours").unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
-    resettle(&w);
-    assert!(guarded("rev-ours"), "the hook follows the rename");
-    let recorded = manifest_text(&w);
-    assert!(
-        !recorded.contains("rev-mine"),
-        "nothing stays selected by a name no agent answers to: {recorded}"
-    );
-}
-
-/// Forking a skill beside its source must not touch an agent's settings.
-/// The manifest keys agents and skills in separate tables but one shared
-/// namespace of names, so an unguarded rekey copies the settings of an
-/// agent that merely shares the skill's name.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn forking_a_skill_beside_leaves_a_same_named_agents_settings_alone() {
-    let w = world();
-    write_skill(&w.upstream, "rev", "Upstream skill.");
-    let agents = w.upstream.join("agents");
-    fs::create_dir_all(&agents).unwrap();
-    fs::write(
-        agents.join("rev.md"),
-        "---\nname: rev\ndescription: agent rev\n---\nAgent body.\n",
-    )
-    .unwrap();
-    commit(&w.upstream, "one");
-    declare(
-        &w,
-        "[skills.rev]\nsource = \"cat\"\n\n[agents.rev]\nsource = \"cat\"\n\n[agent-frontmatter.claude]\nrev = { deny-tools = [\"Bash\"] }\n",
-    );
-    sync_and_apply(&w);
-    fs::write(
-        w.home.join("app/.agents/skills/rev/SKILL.md"),
-        "---\nname: rev\ndescription: mine\n---\nMy skill.\n",
-    )
-    .unwrap();
-
-    let plan = fork::fork_beside(
-        &w.env,
-        &w.scope,
-        ItemKind::Skill,
-        "rev",
-        HarnessId::Claude,
-        "rev-mine",
-        None,
-    )
-    .unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
-
-    let recorded = manifest_text(&w);
-    assert!(
-        !recorded.contains("agent-frontmatter.claude.rev-mine"),
-        "a skill fork must not copy an agent's settings onto its new name: {recorded}"
-    );
-}
-
-/// A name already carrying an agent's settings is not free for a copy to
-/// land on. Writing the copy's own settings under it would replace what
-/// the person wrote, and merging the two would invent a policy nobody
-/// asked for, so the fork refuses the way it refuses every other thing it
-/// cannot carry.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn forking_beside_refuses_a_name_that_already_carries_settings() {
-    let w = agent_world(
-        "\"claude\"",
-        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
-        "",
-        "[agent-frontmatter.claude]\nrev-mine = { deny-tools = [\"Bash\"] }\n",
-    );
-    edit_body(&rendered(&w, HarnessId::Claude, "rev"));
-
-    let refused = fork::fork_beside(
-        &w.env,
-        &w.scope,
-        ItemKind::Agent,
-        "rev",
-        HarnessId::Claude,
-        "rev-mine",
-        None,
-    )
-    .unwrap_err();
-    assert!(
-        matches!(refused, CoreError::ForkNameUnusable { .. }),
-        "{refused:?}"
-    );
-    assert!(
-        refused.to_string().contains("agent-frontmatter"),
-        "the refusal names where the settings are: {refused}"
-    );
-    assert!(!captured(&w, "rev-mine").exists(), "nothing was written");
 }
 
 /// Deleting a rendered key is an edit in the restrictive direction, and
@@ -559,72 +337,6 @@ fn a_hand_written_hook_refuses_the_fork() {
     assert!(!captured(&w, "rev").exists(), "nothing was written");
 }
 
-/// A role selector describes a population, not one agent. An agent that
-/// happens to be named for a role does not own the selector spelling it,
-/// and renaming that agent must not rewrite it: doing so takes the gate
-/// off every other agent holding the role, from an operation that never
-/// mentioned them.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn renaming_an_agent_named_for_a_role_leaves_the_roles_hook_alone() {
-    let w = world();
-    let agents = w.upstream.join("agents");
-    fs::create_dir_all(&agents).unwrap();
-    fs::write(
-        agents.join("engineer.md"),
-        "---\nname: engineer\ndescription: agent engineer\n---\nUpstream body.\n",
-    )
-    .unwrap();
-    fs::write(
-        agents.join("rev.md"),
-        "---\nname: rev\ndescription: agent rev\nrole: engineer\n---\nOther body.\n",
-    )
-    .unwrap();
-    commit(&w.upstream, "one");
-    let path = manifest::manifest_path(&w.env, &w.scope);
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(
-        &path,
-        format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[agents.engineer]\nsource = \"cat\"\n\n[agents.rev]\nsource = \"cat\"\n\n[[custom-hooks]]\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./guard.sh\"\nagents = \"engineer\"\n"
-        ),
-    )
-    .unwrap();
-    sync_and_apply(&w);
-    let guarded = |name: &str| {
-        fs::read_to_string(rendered(&w, HarnessId::Claude, name))
-            .unwrap()
-            .contains("./guard.sh")
-    };
-    assert!(guarded("rev"), "the role's hook reaches an engineer");
-
-    edit_body(&rendered(&w, HarnessId::Claude, "engineer"));
-    let plan = fork::fork(
-        &w.env,
-        &w.scope,
-        ItemKind::Agent,
-        "engineer",
-        HarnessId::Claude,
-    )
-    .unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
-    resettle(&w);
-    let plan = fork::rename_fork(&w.env, &w.scope, ItemKind::Agent, "engineer", "my-eng").unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
-    resettle(&w);
-
-    assert!(
-        guarded("rev"),
-        "renaming one agent took the gate off every other engineer: {}",
-        manifest_text(&w)
-    );
-    assert!(
-        manifest_text(&w).contains("agents = \"engineer\""),
-        "the role selector is untouched: {}",
-        manifest_text(&w)
-    );
-}
-
 /// A hook is its scope as well as its command. Tightening the scope by
 /// hand — the same command moved to an earlier event, or onto a broader
 /// matcher — leaves the command alone, so a reading that compares commands
@@ -657,4 +369,82 @@ fn a_hand_tightened_hook_scope_refuses_the_fork() {
         "the refusal names the gate whole, not just its command: {said}"
     );
     assert!(!captured(&w, "rev").exists(), "nothing was written");
+}
+
+/// The other reading `split` reports the same error for. A block that
+/// opens and never ends is frontmatter that will not read, not a file
+/// stating nothing: whatever the person restricted in it cannot be read
+/// back, so it cannot be proven carried either, and the fork refuses
+/// rather than proceed on an empty reading of a file full of denies.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_unterminated_frontmatter_refuses_the_fork() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "[agent-frontmatter.claude]\nrev = { deny-tools = [\"Bash\"] }\n",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    assert!(
+        deny_line(&text, "disallowedTools:").contains("Bash"),
+        "the block the edit leaves unterminated is the one stating the denies: {text}"
+    );
+    assert_eq!(
+        times(&text, "---"),
+        2,
+        "the rendering opens and closes exactly one block: {text}"
+    );
+    let mut lines: Vec<&str> = text.lines().collect();
+    let closer = lines.iter().rposition(|line| line.trim() == "---").unwrap();
+    lines.remove(closer);
+    fs::write(
+        &file,
+        lines
+            .iter()
+            .map(|line| format!("{line}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+
+    let refused =
+        fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap_err();
+    assert!(
+        matches!(refused, CoreError::ForkWidensAccess { .. }),
+        "{refused:?}"
+    );
+    assert!(
+        refused.to_string().contains("unterminated frontmatter"),
+        "the refusal names why the file could not be read: {refused}"
+    );
+    assert!(!captured(&w, "rev").exists(), "nothing was written");
+}
+
+/// The reading on the other side of that split, which stays a fork rather
+/// than a refusal: a file opening no block at all states nothing, and a
+/// person who replaced the whole rendering with their own prose took no
+/// tools away.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_rendering_replaced_with_prose_still_forks() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "[agent-frontmatter.claude]\nrev = { deny-tools = [\"Bash\"] }\n",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    fs::write(&file, "My own notes, and nothing the harness reads.\n").unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+
+    let settled = fs::read_to_string(&file).unwrap();
+    assert!(settled.contains("My own notes,"), "{settled}");
+    assert!(
+        deny_line(&settled, "disallowedTools:").contains("Bash"),
+        "the fork is still no wider than the installation: {settled}"
+    );
 }
