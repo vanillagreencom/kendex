@@ -272,11 +272,8 @@ kendex_load_project_env "$PROJECT_ROOT" || {
   exit 1
 }
 
-# Portability: macOS lacks timeout, try gtimeout fallback.
 TIMEOUT_CMD="$(command -v timeout || command -v gtimeout || true)"
-if [[ -z "$TIMEOUT_CMD" ]]; then
-  echo "Warning: no timeout or gtimeout on PATH — external CLI calls will run without a time limit" >&2
-fi
+[[ -n "$TIMEOUT_CMD" ]] || echo "Warning: no timeout or gtimeout on PATH — external CLI calls will run without a time limit" >&2
 
 run_with_timeout() {
   local duration="$1"; shift
@@ -2160,7 +2157,10 @@ run_target_cli() {
     echo "{\"error\": \"Unknown target: $TARGET_CLI — set $(target_cmd_var "$TARGET_CLI")\"}" >&2
     return 2
   fi
-  echo "→ cmd: timeout --foreground -k 30 ${TIMEOUT}s $cmd" >&2
+  case "$TIMEOUT_CMD" in
+    "") echo "→ cmd: direct $cmd" >&2 ;;
+    *) echo "→ cmd: $TIMEOUT_CMD --foreground -k 30 ${TIMEOUT}s $cmd" >&2 ;;
+  esac
   # shellcheck disable=SC2086
   (cd -- "$CWD" && run_with_timeout "$TIMEOUT" $cmd < "$prompt_file" 2>"$STDERR_TMP") || rc=$?
   return "$rc"

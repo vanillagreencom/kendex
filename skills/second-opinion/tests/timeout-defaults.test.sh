@@ -88,13 +88,18 @@ assert_contains() {
 }
 
 default_stderr="$TMP_ROOT/default.stderr"
+resolved_timeout="$(command -v timeout || command -v gtimeout || true)"
 PATH="$TMP_ROOT/bin:$PATH" \
   SECOND_OPINION_TARGET=codex \
   SECOND_OPINION_CODEX_CMD=codex \
   "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$default_stderr"
 
 assert_contains "$default_stderr" "timeout=1080s" "default timeout resolves to documented 1080s"
-assert_contains "$default_stderr" "cmd: timeout --foreground -k 30 1080s codex" "launch log includes explicit default timeout"
+if [[ -n "$resolved_timeout" ]]; then
+  assert_contains "$default_stderr" "cmd: $resolved_timeout --foreground -k 30 1080s codex" "launch log includes resolved default timeout"
+else
+  assert_contains "$default_stderr" "cmd: direct codex" "launch log names direct default execution"
+fi
 
 override_stderr="$TMP_ROOT/override.stderr"
 PATH="$TMP_ROOT/bin:$PATH" \
@@ -104,7 +109,11 @@ PATH="$TMP_ROOT/bin:$PATH" \
   "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$override_stderr"
 
 assert_contains "$override_stderr" "timeout=7s" "caller timeout override wins"
-assert_contains "$override_stderr" "cmd: timeout --foreground -k 30 7s codex" "launch log includes explicit override timeout"
+if [[ -n "$resolved_timeout" ]]; then
+  assert_contains "$override_stderr" "cmd: $resolved_timeout --foreground -k 30 7s codex" "launch log includes resolved override timeout"
+else
+  assert_contains "$override_stderr" "cmd: direct codex" "launch log names direct override execution"
+fi
 
 # GNU timeout reads 0 as "no limit at all", so --timeout 0 must be refused
 # rather than silently disabling the deadline.
@@ -141,6 +150,7 @@ PATH="$TMP_ROOT/bin:$NOTIMEOUT" \
   "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$notimeout_stderr"
 
 assert_contains "$notimeout_stderr" "run without a time limit" "missing timeout binary warns instead of refusing"
+assert_contains "$notimeout_stderr" "cmd: direct codex" "missing timeout binary logs direct execution"
 assert_contains "$notimeout_stderr" "Response received" "review still runs without a timeout binary"
 
 # The caller owns the lane's lifetime. GNU timeout must not isolate the CLI
