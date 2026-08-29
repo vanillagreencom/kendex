@@ -62,7 +62,6 @@ pub(super) fn expand(
                     bundle: BundleRef {
                         source: decl.source.clone(),
                         name: name.clone(),
-                        scope: scope.clone(),
                     },
                 },
                 harnesses,

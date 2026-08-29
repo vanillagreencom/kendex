@@ -141,13 +141,11 @@ fn installing_the_whole_bundle_subsumes_equal_members_and_keeps_shaped_ones() {
     );
     assert!(manifest.bundles.contains_key("starter"));
 
-    let scope = f.scope.canonical();
     let lock = load_lock(&lock_path(&f.env, &f.scope)).unwrap();
     let member = Reason::MemberOf {
         bundle: BundleRef {
             source: "cat".to_owned(),
             name: "starter".to_owned(),
-            scope: scope.clone(),
         },
     };
     assert_eq!(

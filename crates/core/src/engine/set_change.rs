@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::lock::{Lock, LockEntry, Reason};
-use crate::model::{HarnessId, ItemKind, Scope};
+use crate::model::{HarnessId, ItemKind};
 
 /// Whether a plan brings an installation into being or takes one away.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -35,9 +35,9 @@ pub struct SetChange {
 }
 
 impl SetChange {
-    pub(super) fn added(scope: &Scope, entry: &LockEntry) -> SetChange {
+    pub(super) fn added(entry: &LockEntry) -> SetChange {
         SetChange {
-            reason: why_wanted(scope, &entry.reasons),
+            reason: why_wanted(&entry.reasons),
             direction: SetDirection::Add,
             kind: entry.kind,
             name: entry.name.clone(),
@@ -45,12 +45,12 @@ impl SetChange {
         }
     }
 
-    pub(super) fn dropped(scope: &Scope, entry: &LockEntry) -> SetChange {
+    pub(super) fn dropped(entry: &LockEntry) -> SetChange {
         let reason = match entry.reasons.contains(&Reason::Requested) {
             true => "no longer declared here".to_owned(),
             false => format!(
                 "nothing needs it anymore — it was {}",
-                why_wanted(scope, &entry.reasons)
+                why_wanted(&entry.reasons)
             ),
         };
         SetChange {
@@ -77,30 +77,17 @@ pub struct KeptInstall {
 }
 
 /// The reasons an installation exists, said once, in the words a preview
-/// uses. Reasons from another scope name it — a global bundle pulling a
-/// project item in has to read as what it is.
-fn why_wanted(scope: &Scope, reasons: &BTreeSet<Reason>) -> String {
+/// uses. Every reason in a lock was recorded by a pass over the scope that
+/// lock belongs to, so there is no other scope for one of them to name.
+fn why_wanted(reasons: &BTreeSet<Reason>) -> String {
     let mut said: Vec<String> = Vec::new();
     for reason in reasons {
-        let elsewhere = |other: &Scope| match other == scope {
-            true => String::new(),
-            false => format!(" in {}", other.label()),
-        };
         said.push(match reason {
             Reason::Requested => "asked for".to_owned(),
-            Reason::RequiredBy { by } => format!(
-                "required by the {} {}{}",
-                by.kind.name(),
-                by.name,
-                elsewhere(&by.scope)
-            ),
-            Reason::MemberOf { bundle } => {
-                format!(
-                    "part of the {} bundle{}",
-                    bundle.name,
-                    elsewhere(&bundle.scope)
-                )
+            Reason::RequiredBy { by } => {
+                format!("required by the {} {}", by.kind.name(), by.name)
             }
+            Reason::MemberOf { bundle } => format!("part of the {} bundle", bundle.name),
         });
     }
     said.join(", and ")
@@ -109,19 +96,19 @@ fn why_wanted(scope: &Scope, reasons: &BTreeSet<Reason>) -> String {
 /// The installed set before against the installed set after — every
 /// installation this plan brings into being or takes away, whatever the
 /// reason. Regeneration of an installation that stays is not in here.
-pub(super) fn set_changes(scope: &Scope, before: &Lock, after: &Lock) -> Vec<SetChange> {
+pub(super) fn set_changes(before: &Lock, after: &Lock) -> Vec<SetChange> {
     let mut changes: Vec<SetChange> = after
         .entries
         .iter()
         .filter(|(key, _)| !before.entries.contains_key(*key))
-        .map(|(_, entry)| SetChange::added(scope, entry))
+        .map(|(_, entry)| SetChange::added(entry))
         .collect();
     changes.extend(
         before
             .entries
             .iter()
             .filter(|(key, _)| !after.entries.contains_key(*key))
-            .map(|(_, entry)| SetChange::dropped(scope, entry)),
+            .map(|(_, entry)| SetChange::dropped(entry)),
     );
     changes
 }
@@ -130,12 +117,7 @@ pub(super) fn set_changes(scope: &Scope, before: &Lock, after: &Lock) -> Vec<Set
 /// members that survive are here — the ones that went are already in the set
 /// changes — and each reads back with the reasons it has left, which is
 /// exactly what the user needs to see to believe the split.
-pub(super) fn kept_members(
-    scope: &Scope,
-    before: &Lock,
-    after: &Lock,
-    bundles: &[String],
-) -> Vec<KeptInstall> {
+pub(super) fn kept_members(before: &Lock, after: &Lock, bundles: &[String]) -> Vec<KeptInstall> {
     if bundles.is_empty() {
         return Vec::new();
     }
@@ -153,7 +135,7 @@ pub(super) fn kept_members(
             kind: entry.kind,
             name: entry.name.clone(),
             harness: entry.harness,
-            reason: why_wanted(scope, &entry.reasons),
+            reason: why_wanted(&entry.reasons),
         })
         .collect()
 }

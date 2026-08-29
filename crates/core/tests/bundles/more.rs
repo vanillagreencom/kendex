@@ -123,11 +123,7 @@ fn a_plugin_registry_plugin_installs_as_a_bundle() {
         .expect("the plugin's skill installed");
     assert_eq!(
         entry.reasons,
-        std::collections::BTreeSet::from([super::member_of(
-            "market",
-            "data-science",
-            &f.scope.canonical()
-        )])
+        std::collections::BTreeSet::from([super::member_of("market", "data-science")])
     );
     assert!(
         lock.entries

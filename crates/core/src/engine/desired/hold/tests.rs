@@ -1,7 +1,7 @@
 use super::*;
 use crate::lock::{BundleRef, InstallRef, LockEntry};
 use crate::manifest::{ItemDecl, SourceDecl};
-use crate::model::{HarnessId, Scope};
+use crate::model::HarnessId;
 
 fn manifest_with(items: &[(&str, Option<&str>)], bundles: &[&str]) -> Manifest {
     let mut manifest = Manifest::default();
@@ -112,7 +112,6 @@ fn a_derived_targets_bundle_is_exempt_and_a_stranger_bundle_holds() {
         bundle: BundleRef {
             source: "cat".to_owned(),
             name: bundle.to_owned(),
-            scope: Scope::Global,
         },
     };
     let lock = lock_with(&[
@@ -370,14 +369,12 @@ fn an_edge_recorded_against_another_source_exempts_nothing() {
             kind: ItemKind::Skill,
             name: "parent".to_owned(),
             harness: HarnessId::Claude,
-            scope: Scope::Global,
         },
     };
     let of_old_kit = Reason::MemberOf {
         bundle: BundleRef {
             source: "old".to_owned(),
             name: "kit".to_owned(),
-            scope: Scope::Global,
         },
     };
     let lock = lock_with(&[
@@ -394,7 +391,6 @@ fn an_edge_recorded_against_another_source_exempts_nothing() {
                     bundle: BundleRef {
                         source: "cat".to_owned(),
                         name: "kit".to_owned(),
-                        scope: Scope::Global,
                     },
                 }],
             ),
@@ -459,7 +455,6 @@ fn a_left_behind_installation_of_the_target_exempts_nothing() {
             kind: ItemKind::Skill,
             name: "parent".to_owned(),
             harness: HarnessId::Claude,
-            scope: Scope::Global,
         },
     };
     let lock = lock_with(&[

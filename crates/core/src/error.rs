@@ -49,6 +49,16 @@ pub enum CoreError {
     LockCorrupt { path: PathBuf, message: String },
 
     #[error(
+        "{path} records {key} at {recorded}, outside the project at {root} — this lock belongs to another checkout; delete it and apply again"
+    )]
+    LockOutsideProject {
+        path: PathBuf,
+        key: String,
+        recorded: PathBuf,
+        root: PathBuf,
+    },
+
+    #[error(
         "{path} was written by a newer kendex (format {found}) — update this app before touching it"
     )]
     SchemaTooNew { path: PathBuf, found: i64 },

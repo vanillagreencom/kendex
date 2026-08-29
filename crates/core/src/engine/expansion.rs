@@ -346,7 +346,7 @@ pub(super) fn expand(
         open: BTreeMap::new(),
     };
     super::bundles::expand(scope, manifest, held, &mut expansion, &mut catalogs, state);
-    super::deps::expand(scope, manifest, &mut expansion, &mut catalogs, state);
+    super::deps::expand(manifest, &mut expansion, &mut catalogs, state);
     expansion.report_rev_disagreements(state);
     expansion
 }

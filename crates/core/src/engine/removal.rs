@@ -234,7 +234,7 @@ pub(super) fn orphans(
         });
         if !removable {
             if unneeded {
-                sweepable.push(super::SetChange::dropped(scope, entry));
+                sweepable.push(super::SetChange::dropped(entry));
             }
             new_lock.entries.insert(key.clone(), entry.clone());
             continue;

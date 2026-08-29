@@ -1,0 +1,192 @@
+//! A lock that travelled with a copied checkout names the paths of the
+//! checkout it came from.
+//!
+//! Refresh reads `emitted.paths` as the positions this scope owns and takes
+//! back the ones it no longer renders. Pointed at another tree those are
+//! somebody else's files, and a project scope writes only inside its own
+//! root — so the record is refused, naming the path, and the other tree is
+//! not read as this one's to take.
+#![cfg(unix)]
+
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use kendex_core::engine::{PlanOptions, audit, plan_apply};
+use kendex_core::env::{Env, FakeOs};
+use kendex_core::error::CoreError;
+use kendex_core::model::Scope;
+
+/// One path as it sits on disk, in whatever detail tells two states apart:
+/// a file by its bytes, a link by its target, a directory by being one.
+#[derive(Debug, PartialEq, Eq)]
+enum Entry {
+    Dir,
+    /// Read as text: every file this fixture puts on disk is one, and a
+    /// failed comparison has to be readable.
+    File(String),
+    Link(PathBuf),
+}
+
+#[allow(clippy::unwrap_used)]
+fn put(path: &Path, text: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, text).unwrap();
+}
+
+/// Every path under `root`, keyed by its place in the tree. Comparing two of
+/// these compares the file list and the contents at once, so a file gone, a
+/// file added and a byte changed all read as a difference.
+#[allow(clippy::unwrap_used)]
+fn snapshot(root: &Path) -> BTreeMap<PathBuf, Entry> {
+    let mut found = BTreeMap::new();
+    let mut queue = vec![root.to_path_buf()];
+    while let Some(dir) = queue.pop() {
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            let key = path.strip_prefix(root).unwrap().to_path_buf();
+            let meta = fs::symlink_metadata(&path).unwrap();
+            if meta.file_type().is_symlink() {
+                found.insert(key, Entry::Link(fs::read_link(&path).unwrap()));
+            } else if meta.is_dir() {
+                found.insert(key, Entry::Dir);
+                queue.push(path);
+            } else {
+                let bytes = fs::read(&path).unwrap();
+                found.insert(
+                    key,
+                    Entry::File(String::from_utf8_lossy(&bytes).into_owned()),
+                );
+            }
+        }
+    }
+    found
+}
+
+#[allow(clippy::unwrap_used)]
+fn declare(root: &Path, catalog: &Path) {
+    put(
+        &root.join("kendex.toml"),
+        &format!(
+            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.ship]\nsource = \"cat\"\n",
+            catalog.display()
+        ),
+    );
+}
+
+fn project(root: &Path) -> Scope {
+    Scope::Project {
+        root: root.to_path_buf(),
+    }
+}
+
+/// What `kendex refresh` plans with: it sweeps what nothing accounts for.
+fn refresh() -> PlanOptions {
+    PlanOptions {
+        sweep_unneeded: true,
+        ..PlanOptions::default()
+    }
+}
+
+/// The must-fail control for the containment refusal. Without it the copied
+/// record is read as this project's own: every path it names is a position
+/// the new render does not produce, so refresh takes them to the trash —
+/// out of the other checkout.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_lock_carried_from_another_checkout_is_refused_and_that_checkout_stands() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Resolved: the engine resolves a scope root before writing any of the
+    // paths it records, and on macOS the temp directory is reached through
+    // `/var -> private/var`.
+    let home = tmp.path().canonicalize().unwrap();
+    let catalog = home.join("catalog");
+    put(
+        &catalog.join("skills/ship/SKILL.md"),
+        "---\nname: ship\ndescription: ship\n---\n\nShip the branch.\n",
+    );
+    let env = Env::fake(&home, FakeOs::Linux);
+
+    let installed = home.join("dev/app");
+    declare(&installed, &catalog);
+    let report = audit(&env, &project(&installed)).unwrap();
+    kendex_core::apply::execute(&env, &report.plan, None).unwrap();
+
+    // A second checkout of the same project, seeded with the first one's
+    // lock — which is how a linked worktree gets one.
+    let elsewhere = home.join("dev/worktree");
+    declare(&elsewhere, &catalog);
+    fs::copy(
+        installed.join(".kendex-lock.json"),
+        elsewhere.join(".kendex-lock.json"),
+    )
+    .unwrap();
+
+    let before = snapshot(&installed);
+    assert_eq!(
+        before.get(Path::new(".agents/skills/ship/SKILL.md")),
+        Some(&Entry::File(
+            fs::read_to_string(catalog.join("skills/ship/SKILL.md")).unwrap()
+        )),
+        "the install this refusal protects is on disk to begin with"
+    );
+    assert_eq!(
+        before.get(Path::new(".claude/skills/ship")),
+        Some(&Entry::Link(PathBuf::from("../../.agents/skills/ship"))),
+        "and so is the link the tool reads it through"
+    );
+
+    // The whole operation, the way refresh runs it: plan the scope, and
+    // carry out whatever it planned.
+    let refused = match plan_apply(&env, &project(&elsewhere), &refresh()) {
+        Ok(report) => {
+            kendex_core::apply::execute(&env, &report.plan, None).unwrap();
+            None
+        }
+        Err(error) => Some(error),
+    };
+
+    assert_eq!(
+        snapshot(&installed),
+        before,
+        "the checkout the lock came from is exactly as it was"
+    );
+    let refused = refused.expect("a record naming another project is refused");
+    assert!(
+        matches!(
+            &refused,
+            CoreError::LockOutsideProject { key, recorded, root, .. }
+                if key == "skill:ship:claude"
+                    && recorded == &installed.join(".agents/skills/ship")
+                    && root == &elsewhere
+        ),
+        "the refusal names the entry, the path it claims and the project that cannot hold it: {refused:?}"
+    );
+}
+
+/// The refusal is about reaching past the root, not about recording paths:
+/// a project whose lock names its own positions refreshes as it always did.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_lock_naming_its_own_project_refreshes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().canonicalize().unwrap();
+    let catalog = home.join("catalog");
+    put(
+        &catalog.join("skills/ship/SKILL.md"),
+        "---\nname: ship\ndescription: ship\n---\n\nShip the branch.\n",
+    );
+    let env = Env::fake(&home, FakeOs::Linux);
+
+    let root = home.join("dev/app");
+    declare(&root, &catalog);
+    let report = audit(&env, &project(&root)).unwrap();
+    kendex_core::apply::execute(&env, &report.plan, None).unwrap();
+
+    let again = plan_apply(&env, &project(&root), &refresh()).unwrap();
+    assert!(
+        again.plan.ops.is_empty(),
+        "an install that is where its record says settles: {:?}",
+        again.plan.ops
+    );
+}

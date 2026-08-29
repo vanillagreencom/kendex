@@ -87,14 +87,13 @@ fn manifest_of(f: &Fixture) -> kendex_core::manifest::Manifest {
     }
 }
 
-fn required_by(source: &str, name: &str, scope: &Scope) -> Reason {
+fn required_by(source: &str, name: &str) -> Reason {
     Reason::RequiredBy {
         by: kendex_core::lock::InstallRef {
             source: source.to_owned(),
             kind: ItemKind::Skill,
             name: name.to_owned(),
             harness: HarnessId::Claude,
-            scope: scope.clone(),
         },
     }
 }
@@ -119,14 +118,13 @@ fn an_installation_records_every_reason_it_exists() {
     apply_now(&f);
 
     let lock = lock_of(&f);
-    let scope = f.scope.canonical();
     assert_eq!(
         lock.entries["skill:dev:claude"].reasons,
         BTreeSet::from([Reason::Requested])
     );
     assert_eq!(
         lock.entries["skill:github:claude"].reasons,
-        BTreeSet::from([Reason::Requested, required_by("cat", "dev", &scope)])
+        BTreeSet::from([Reason::Requested, required_by("cat", "dev")])
     );
 }
 
@@ -141,10 +139,9 @@ fn a_dependency_installs_without_being_declared() {
 
     assert!(installed(&f, "dev") && installed(&f, "github"));
     assert!(!manifest_of(&f).skills.contains_key("github"));
-    let scope = f.scope.canonical();
     assert_eq!(
         lock_of(&f).entries["skill:github:claude"].reasons,
-        BTreeSet::from([required_by("cat", "dev", &scope)])
+        BTreeSet::from([required_by("cat", "dev")])
     );
 }
 

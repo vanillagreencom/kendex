@@ -138,24 +138,22 @@ pub fn installed(f: &Fixture, kind: ItemKind, name: &str) -> bool {
     path.exists() || path.is_symlink()
 }
 
-pub fn member_of(source: &str, bundle: &str, scope: &Scope) -> Reason {
+pub fn member_of(source: &str, bundle: &str) -> Reason {
     Reason::MemberOf {
         bundle: BundleRef {
             source: source.to_owned(),
             name: bundle.to_owned(),
-            scope: scope.clone(),
         },
     }
 }
 
-pub fn required_by(source: &str, name: &str, scope: &Scope) -> Reason {
+pub fn required_by(source: &str, name: &str) -> Reason {
     Reason::RequiredBy {
         by: InstallRef {
             source: source.to_owned(),
             kind: ItemKind::Skill,
             name: name.to_owned(),
             harness: HarnessId::Claude,
-            scope: scope.clone(),
         },
     }
 }
@@ -178,19 +176,18 @@ fn a_bundle_installs_its_members_and_the_manifest_holds_only_the_bundle() {
     assert!(manifest.skills.is_empty() && manifest.agents.is_empty());
     assert_eq!(manifest.bundles["starter"].source, "cat");
 
-    let scope = f.scope.canonical();
     let lock = lock_of(&f);
     for key in ["skill:dev:claude", "agent:writer:claude"] {
         assert_eq!(
             lock.entries[key].reasons,
-            BTreeSet::from([member_of("cat", "starter", &scope)]),
+            BTreeSet::from([member_of("cat", "starter")]),
             "{key}"
         );
     }
     // What a member needs comes in behind it, as its own kind of edge.
     assert_eq!(
         lock.entries["skill:github:claude"].reasons,
-        BTreeSet::from([required_by("cat", "dev", &scope)])
+        BTreeSet::from([required_by("cat", "dev")])
     );
 }
 
@@ -246,13 +243,12 @@ fn a_multi_edge_member_behaves_through_every_removal_order() {
     let f = fixture(declarations);
     catalog_bundles(&f.source, STARTER_WITH_GITHUB);
     apply_now(&f);
-    let scope = f.scope.canonical();
     assert_eq!(
         lock_of(&f).entries["skill:github:claude"].reasons,
         BTreeSet::from([
             Reason::Requested,
-            member_of("cat", "starter", &scope),
-            required_by("cat", "dev", &scope),
+            member_of("cat", "starter"),
+            required_by("cat", "dev"),
         ])
     );
     remove(&f, "starter", false);

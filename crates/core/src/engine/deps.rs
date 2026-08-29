@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use crate::error::Result;
 use crate::lock::{InstallRef, Reason};
 use crate::manifest::{ItemDecl, Manifest};
-use crate::model::{HarnessId, ItemKind, Scope};
+use crate::model::{HarnessId, ItemKind};
 use crate::source::{SourceConfig, find_item, list_items};
 use crate::source_read::SealedSource;
 
@@ -67,7 +67,6 @@ pub(crate) fn declared_dependencies(
 /// bundle members are walked like any other: what a skill needs does not
 /// depend on how it was chosen.
 pub(super) fn expand(
-    scope: &Scope,
     manifest: &Manifest,
     expansion: &mut Expansion,
     catalogs: &mut Catalogs,
@@ -131,7 +130,6 @@ pub(super) fn expand(
                     kind: ItemKind::Skill,
                     name: parent.clone(),
                     harness,
-                    scope: scope.clone(),
                 };
                 grew |= expansion.add(
                     ItemKind::Skill,

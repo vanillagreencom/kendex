@@ -1,22 +1,22 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::env::Env;
-use crate::error::{CoreError, Result};
-use crate::fs::{atomic_write, read_if_exists};
 use crate::manifest::Method;
 use crate::model::{HarnessId, ItemKind, Scope};
 
-/// Current lock version. Versions 1 (v0.1) through 5 still load — the
+/// Current lock version. Versions 1 (v0.1) through 6 still load — the
 /// shapes are compatible and the next lock write records the current
 /// version. A lock newer than this build refuses to load. Version 3 added
 /// `source_commit` and `rendered_hash`; version 4 added `settings-seeds`;
 /// version 5 added `left_pi_reserved_name`, a registration's matcher, and
 /// a recorded registration for hooks with a script of their own; version
-/// 6 added `bundles`.
+/// 6 added `bundles`; version 7 dropped the scope an install reason
+/// recorded, which was always the scope holding the lock and spelled a
+/// project's root as an absolute path.
 /// Each bump is what stops an older build from reading the lock, dropping
 /// the newer record on its next write, and erasing evidence — of which
 /// bytes are whose, of which comment blocks seeding wrote, of a move out
@@ -27,7 +27,7 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// that dropped a set's commit would leave a set whose members have come
 /// apart placeable at nothing, so the next update of anything else takes
 /// its other members current.
-pub const LOCK_VERSION: u32 = 6;
+pub const LOCK_VERSION: u32 = 7;
 
 /// The lock file a project scope carries. The global lock is `lock.json`
 /// under the app's own directory ([`Env::global_lock_file`]).
@@ -107,7 +107,9 @@ pub struct BundleRev {
 }
 
 /// One installation an edge points at: the counterpart named the way the
-/// manifest and the lock name an installation.
+/// manifest and the lock name an installation. Both ends sit in the scope
+/// whose lock holds the record, so the scope is the file's, not the
+/// reference's.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct InstallRef {
@@ -117,7 +119,6 @@ pub struct InstallRef {
     pub kind: ItemKind,
     pub name: String,
     pub harness: HarnessId,
-    pub scope: Scope,
 }
 
 /// The bundle an installation came in with.
@@ -126,7 +127,6 @@ pub struct InstallRef {
 pub struct BundleRef {
     pub source: String,
     pub name: String,
-    pub scope: Scope,
 }
 
 /// Why one installation exists. An installation holds a *set* of these — the
@@ -272,6 +272,9 @@ pub fn skill_names(lock: &Lock) -> std::collections::BTreeSet<String> {
         .collect()
 }
 
+mod file;
+pub use file::{LockFile, is_v1_text, load, load_file, parse_text, save};
+
 /// Where this scope's lock lives. Off the canonical root, like every
 /// scope-path derivation (`manifest::manifest_path`): the path must
 /// compare equal to the ones the engine's plan speaks, whatever spelling
@@ -281,119 +284,6 @@ pub fn lock_path(env: &Env, scope: &Scope) -> PathBuf {
         Scope::Global => env.global_lock_file(),
         Scope::Project { root } => Env::project_lock_file(root),
     }
-}
-
-/// What sits at a lock path. A v1 lock keys entries by bare name and carries
-/// a `harnesses` array; v2 keys carry `kind:name:harness` with one `harness`
-/// field. The shapes are incompatible — deserializing v1 text straight into
-/// [`Lock`] surfaces a raw "missing field" error instead of naming what the
-/// file actually is.
-#[derive(Debug, Clone, PartialEq)]
-pub enum LockFile {
-    Absent,
-    Legacy { raw: String },
-    Current(Lock),
-}
-
-/// `"version": 1` alone cannot identify the old product generation: this
-/// product's own v0.1 locks also say 1 and load compatibly (see
-/// [`LOCK_VERSION`]). The key shape is the discriminator — bare-name keys
-/// against v2's always-present `kind:name:harness` separator — and it only
-/// applies to files not declaring a version above 1, so a current file with
-/// odd keys is diagnosed as corrupt, never mislabeled v1. An empty map
-/// matches both shapes and reads as current, the only reading a lost lock
-/// or a fresh scope can mean.
-fn is_v1(value: &serde_json::Value) -> bool {
-    let version = value.get("version").and_then(serde_json::Value::as_i64);
-    if version.is_some_and(|v| v > 1) {
-        return false;
-    }
-    value
-        .get("entries")
-        .and_then(serde_json::Value::as_object)
-        .is_some_and(|entries| !entries.is_empty() && entries.keys().all(|k| !k.contains(':')))
-}
-
-/// Text-taking wrapper for callers (the CLI's one-shot v1 importer) that
-/// have not already parsed the JSON. Unparseable text is not v1 — it is
-/// corrupt, and `load_file` names that distinctly.
-pub fn is_v1_text(text: &str) -> bool {
-    serde_json::from_str(text).is_ok_and(|value| is_v1(&value))
-}
-
-pub fn load_file(path: &Path) -> Result<LockFile> {
-    let Some(text) = read_if_exists(path)? else {
-        return Ok(LockFile::Absent);
-    };
-    parse_text(path, &text)
-}
-
-/// [`load_file`] for text the caller already read — the importer binds its
-/// preconditions to the exact bytes it classified, so it must classify the
-/// bytes it read rather than a later re-read.
-pub fn parse_text(path: &Path, text: &str) -> Result<LockFile> {
-    let value: serde_json::Value =
-        serde_json::from_str(text).map_err(|e| CoreError::LockCorrupt {
-            path: path.to_path_buf(),
-            message: e.to_string(),
-        })?;
-    if let Some(version) = value.get("version").and_then(serde_json::Value::as_i64)
-        && version > i64::from(LOCK_VERSION)
-    {
-        return Err(CoreError::SchemaTooNew {
-            path: path.to_path_buf(),
-            found: version,
-        });
-    }
-    if is_v1(&value) {
-        return Ok(LockFile::Legacy {
-            raw: text.to_owned(),
-        });
-    }
-    let mut lock: Lock = serde_json::from_value(value).map_err(|e| CoreError::LockCorrupt {
-        path: path.to_path_buf(),
-        message: e.to_string(),
-    })?;
-    backfill_requested_reason(&mut lock);
-    Ok(LockFile::Current(lock))
-}
-
-// A record written before installations carried their reasons: everything
-// installed then was installed because it was asked for, which is the only
-// reading that cannot invent a dependency nobody declared. The next write
-// records it.
-fn backfill_requested_reason(lock: &mut Lock) {
-    for entry in lock.entries.values_mut() {
-        if entry.reasons.is_empty() {
-            entry.reasons.insert(Reason::Requested);
-        }
-    }
-}
-
-/// Load for mutation: a v1 lock is a hard error, never a write target — same
-/// posture as [`crate::manifest::load_for_mutation`]. Callers that only
-/// observe (the audit view) use [`load_file`] instead so a v1 lock degrades
-/// to a note rather than blocking the read.
-pub fn load(path: &Path) -> Result<Lock> {
-    match load_file(path)? {
-        LockFile::Absent => Ok(Lock {
-            version: LOCK_VERSION,
-            ..Lock::default()
-        }),
-        LockFile::Legacy { .. } => Err(CoreError::LegacyLock {
-            path: path.to_path_buf(),
-        }),
-        LockFile::Current(lock) => Ok(lock),
-    }
-}
-
-pub fn save(path: &Path, lock: &Lock) -> Result<()> {
-    let mut text = serde_json::to_string_pretty(lock).map_err(|e| CoreError::JsonParse {
-        path: path.to_path_buf(),
-        message: e.to_string(),
-    })?;
-    text.push('\n');
-    atomic_write(path, &text)
 }
 
 #[cfg(test)]
