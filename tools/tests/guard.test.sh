@@ -156,53 +156,77 @@ rm -f "$R/fake-bin/git" "$R/fake-bin/awk"
 git -C "$R" reset -q HEAD -- crates/core/tests/temp_path.rs
 rm -f "$R/crates/core/tests/temp_path.rs"
 
-echo "=== Apple test targets compile before the host suite ==="
+echo "=== every cross target's test targets compile before the host suite ==="
 mkdir -p "$R/fake-bin"
 cat >"$R/fake-bin/rustup" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 [ "$*" = "target list --installed" ]
 [ "${RUSTUP_LIST_RESULT:-0}" -eq 0 ]
-printf '%s\n' "${RUSTUP_INSTALLED_TARGETS:-}"
+# Space-separated in, one target per line out, the shape guard greps.
+for t in ${RUSTUP_INSTALLED_TARGETS:-}; do printf '%s\n' "$t"; done
 SH
 cat >"$R/fake-bin/cargo" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$CARGO_CALL_LOG"
-if [ "$*" = "check -p kendex-core -p kendex-cli --all-targets --target aarch64-apple-darwin" ]; then
-  [ "${APPLE_CHECK_RESULT:-0}" -eq 0 ]
-fi
+for t in ${CROSS_CHECK_FAIL:-}; do
+  if [ "$*" = "check -p kendex-core -p kendex-cli --all-targets --target $t" ]; then
+    exit 1
+  fi
+done
 SH
 chmod +x "$R/fake-bin/rustup" "$R/fake-bin/cargo"
 printf '[workspace]\n' >"$R/Cargo.toml"
 git -C "$R" add Cargo.toml
 CARGO_CALL_LOG="$TMP/cargo-calls"
+# The platforms the release builds and this host does not run. Written out
+# here on purpose: a list read back from guard would pass whatever guard
+# named.
+APPLE=aarch64-apple-darwin
+WINDOWS=x86_64-pc-windows-msvc
+BOTH="$APPLE $WINDOWS"
+check_call() { # TARGET — the one cargo line guard is allowed to run for it
+  printf 'check -p kendex-core -p kendex-cli --all-targets --target %s' "$1"
+}
 : >"$CARGO_CALL_LOG"
 run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_LIST_RESULT=1
 [ "$RC" -ne 0 ] && case "$OUT" in *"rustup could not list installed targets"*) true ;; *) false ;; esac \
   && ok "a failed installed-target lookup blocks guard" \
   || bad "a failed installed-target lookup blocks guard" "rc=$RC out=$OUT"
 run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS=x86_64-unknown-linux-gnu
-[ "$RC" -ne 0 ] && case "$OUT" in *"Rust target aarch64-apple-darwin is not installed"*) true ;; *) false ;; esac \
-  && ok "a missing Apple target is refused with the install command" \
-  || bad "a missing Apple target is refused with the install command" "rc=$RC out=$OUT"
-if grep -qF -- '--target aarch64-apple-darwin' "$CARGO_CALL_LOG"; then
+[ "$RC" -ne 0 ] &&
+  case "$OUT" in *"Rust target $APPLE is not installed"*) true ;; *) false ;; esac &&
+  case "$OUT" in *"Rust target $WINDOWS is not installed"*) true ;; *) false ;; esac \
+  && ok "every missing target is refused with its own install command" \
+  || bad "every missing target is refused with its own install command" "rc=$RC out=$OUT"
+if grep -qE -- "--target ($APPLE|$WINDOWS)\$" "$CARGO_CALL_LOG"; then
   bad "a missing target is not handed to cargo" "$(cat "$CARGO_CALL_LOG")"
 else
   ok "a missing target is not handed to cargo"
 fi
 : >"$CARGO_CALL_LOG"
-run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS=aarch64-apple-darwin APPLE_CHECK_RESULT=1
-[ "$RC" -ne 0 ] && case "$OUT" in *"Apple core and CLI test targets failed to compile"*) true ;; *) false ;; esac \
-  && ok "a failing Apple compiler verdict blocks guard" \
-  || bad "a failing Apple compiler verdict blocks guard" "rc=$RC out=$OUT"
-[ "$(grep -cFx 'check -p kendex-core -p kendex-cli --all-targets --target aarch64-apple-darwin' "$CARGO_CALL_LOG")" -eq 1 ] \
-  && ok "guard asks cargo for every core and CLI test target" \
-  || bad "guard asks cargo for every core and CLI test target" "$(cat "$CARGO_CALL_LOG")"
-run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS=aarch64-apple-darwin APPLE_CHECK_RESULT=0
+run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS="$WINDOWS"
+[ "$RC" -ne 0 ] && case "$OUT" in *"Rust target $APPLE is not installed"*) true ;; *) false ;; esac &&
+  [ "$(grep -cFx "$(check_call "$WINDOWS")" "$CARGO_CALL_LOG")" -eq 1 ] \
+  && ok "a missing target does not stop the targets after it" \
+  || bad "a missing target does not stop the targets after it" "rc=$RC out=$OUT log=$(cat "$CARGO_CALL_LOG")"
+for failing in "$APPLE" "$WINDOWS"; do
+  : >"$CARGO_CALL_LOG"
+  run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS="$BOTH" CROSS_CHECK_FAIL="$failing"
+  [ "$RC" -ne 0 ] && case "$OUT" in *"$failing core and CLI test targets failed to compile"*) true ;; *) false ;; esac \
+    && ok "a failing $failing compiler verdict blocks guard, naming it" \
+    || bad "a failing $failing compiler verdict blocks guard, naming it" "rc=$RC out=$OUT"
+done
+: >"$CARGO_CALL_LOG"
+run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS="$BOTH"
 [ "$RC" -eq 0 ] \
-  && ok "an installed target and passing Apple check reach the host suite" \
-  || bad "an installed target and passing Apple check reach the host suite" "rc=$RC out=$OUT"
+  && ok "installed targets that all compile reach the host suite" \
+  || bad "installed targets that all compile reach the host suite" "rc=$RC out=$OUT"
+[ "$(grep -cFx "$(check_call "$APPLE")" "$CARGO_CALL_LOG")" -eq 1 ] &&
+  [ "$(grep -cFx "$(check_call "$WINDOWS")" "$CARGO_CALL_LOG")" -eq 1 ] \
+  && ok "guard asks cargo once for every cross target's core and CLI tests" \
+  || bad "guard asks cargo once for every cross target's core and CLI tests" "$(cat "$CARGO_CALL_LOG")"
 git -C "$R" reset -q HEAD -- Cargo.toml
 rm -f "$R/Cargo.toml"
 

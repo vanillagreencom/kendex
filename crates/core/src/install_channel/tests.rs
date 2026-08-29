@@ -482,11 +482,16 @@ fn the_image_this_process_runs_from_is_its_own_install() {
 #[allow(clippy::unwrap_used)]
 fn resolve_answers_with_the_file_a_link_points_at() {
     let dir = tempfile::tempdir().unwrap();
-    let real = dir.path().join("kendex");
-    std::fs::write(&real, "binary").unwrap();
-    let link = dir.path().join("linked-kendex");
-    std::os::unix::fs::symlink(&real, &link).unwrap();
-    assert_eq!(Host.resolve(&link), std::fs::canonicalize(&real).unwrap());
+    // Resolving through a link needs a link, and a test can only make one
+    // where the platform does not put a privilege in front of it.
+    #[cfg(unix)]
+    {
+        let real = dir.path().join("kendex");
+        std::fs::write(&real, "binary").unwrap();
+        let link = dir.path().join("linked-kendex");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert_eq!(Host.resolve(&link), std::fs::canonicalize(&real).unwrap());
+    }
 
     // A path that resolves to nothing is answered with itself rather than
     // dropped, so a caller always has something to classify and to write.

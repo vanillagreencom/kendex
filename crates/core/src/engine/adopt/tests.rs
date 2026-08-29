@@ -137,6 +137,8 @@ fn adoption_binds_only_the_harnesses_that_had_the_item() {
     assert!(!project.join(".opencode/skills/handmade").exists());
 }
 
+/// Proven where a test can make a symlink without a privilege.
+#[cfg(unix)]
 #[test]
 fn foreign_symlinks_are_conflicts_never_clobbered() {
     let tmp = tempfile::tempdir().unwrap();
@@ -196,7 +198,9 @@ fn a_refused_name_has_no_position_to_offer() {
 
 /// A legal name still spells a path. With `.agents/skills` a link at
 /// somebody else's folder, the home sits outside the sealed tree, and the
-/// move would land on a directory adoption was never pointed at.
+/// move would land on a directory adoption was never pointed at. Proven
+/// where a test can make a symlink without a privilege.
+#[cfg(unix)]
 #[test]
 fn a_symlinked_shared_skills_directory_refuses_the_move() {
     let tmp = tempfile::tempdir().unwrap();
@@ -342,34 +346,39 @@ fn a_plain_agent_and_a_namespaced_agent_both_adopt() {
 fn a_destination_the_capture_refuses_is_never_offered() {
     let tmp = tempfile::tempdir().unwrap();
     let env = Env::fake(tmp.path(), FakeOs::Linux);
-    let project = tmp.path().join("app");
-    let scope = Scope::Project {
-        root: project.clone(),
-    };
-    let outside = tmp.path().join("elsewhere");
-    fs::create_dir_all(outside.join("handmade")).unwrap();
-    fs::create_dir_all(project.join(".agents")).unwrap();
-    std::os::unix::fs::symlink(&outside, project.join(".agents/skills")).unwrap();
-    fs::create_dir_all(project.join(".claude/skills/handmade")).unwrap();
-    fs::write(project.join(".claude/skills/handmade/SKILL.md"), "mine").unwrap();
+    // Both symlink halves need a symlink a test may make, so they run
+    // where the platform hands them out without a privilege.
+    #[cfg(unix)]
+    {
+        let project = tmp.path().join("app");
+        let scope = Scope::Project {
+            root: project.clone(),
+        };
+        let outside = tmp.path().join("elsewhere");
+        fs::create_dir_all(outside.join("handmade")).unwrap();
+        fs::create_dir_all(project.join(".agents")).unwrap();
+        std::os::unix::fs::symlink(&outside, project.join(".agents/skills")).unwrap();
+        fs::create_dir_all(project.join(".claude/skills/handmade")).unwrap();
+        fs::write(project.join(".claude/skills/handmade/SKILL.md"), "mine").unwrap();
 
-    assert!(!can_keep_for(
-        &env,
-        &scope,
-        ItemKind::Skill,
-        "handmade",
-        HarnessId::Claude
-    ));
+        assert!(!can_keep_for(
+            &env,
+            &scope,
+            ItemKind::Skill,
+            "handmade",
+            HarnessId::Claude
+        ));
 
-    // The shared-folder offer reads it too. A row for a hand-made
-    // sharing layout takes its Keep from `link_target`, not from
-    // `can_keep_for`, so the rule has to reach that answer as well.
-    let shared = tmp.path().join("shared/browser");
-    fs::create_dir_all(&shared).unwrap();
-    fs::write(shared.join("SKILL.md"), "shared content").unwrap();
-    let link = project.join(".claude/skills/browser");
-    std::os::unix::fs::symlink(&shared, &link).unwrap();
-    assert!(link_target(&env, &scope, ItemKind::Skill, "browser", &link).is_none());
+        // The shared-folder offer reads it too. A row for a hand-made
+        // sharing layout takes its Keep from `link_target`, not from
+        // `can_keep_for`, so the rule has to reach that answer as well.
+        let shared = tmp.path().join("shared/browser");
+        fs::create_dir_all(&shared).unwrap();
+        fs::write(shared.join("SKILL.md"), "shared content").unwrap();
+        let link = project.join(".claude/skills/browser");
+        std::os::unix::fs::symlink(&shared, &link).unwrap();
+        assert!(link_target(&env, &scope, ItemKind::Skill, "browser", &link).is_none());
+    }
 
     // The package-nesting half, in a scope whose local source is a plain
     // directory.
@@ -402,6 +411,10 @@ fn a_destination_the_capture_refuses_is_never_offered() {
 /// which is macOS by default, where a temporary directory sits under
 /// `/var` fronted by `/private/var` — comparing them raw is comparing two
 /// names for one directory, and the guard silently stops guarding.
+///
+/// The case it describes is a Unix one, and a test can make its symlink
+/// there without a privilege.
+#[cfg(unix)]
 #[test]
 fn the_nesting_refusal_holds_under_a_symlinked_ancestor() {
     let tmp = tempfile::tempdir().unwrap();

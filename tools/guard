@@ -249,16 +249,22 @@ if [ -f Cargo.toml ]; then
     grep -A1 '^\[lints\]' "$m" | grep -q 'workspace *= *true' ||
       say "$m: missing [lints] workspace = true — workspace lints are not inherited"
   done
-  apple_target=aarch64-apple-darwin
+  # Platforms the release builds that this host does not run. The app crate
+  # needs each platform's own C toolchain to build at all; core and CLI are
+  # portable Rust, so their tests are what a cross check can reach. A third
+  # platform is another entry here.
+  cross_targets="aarch64-apple-darwin x86_64-pc-windows-msvc"
   if ! installed_targets=$(rustup target list --installed); then
-    say "rustup could not list installed targets: the Apple cross-target check could not run"
-  elif ! grep -Fxq "$apple_target" <<<"$installed_targets"; then
-    say "Rust target $apple_target is not installed: run rustup target add $apple_target"
+    say "rustup could not list installed targets: the cross-target checks could not run"
   else
-    # The app's Objective-C build dependencies require an Apple compiler.
-    # Core and CLI reach the portable Rust code and every one of their tests.
-    cargo check -p kendex-core -p kendex-cli --all-targets --target "$apple_target" ||
-      say "Apple core and CLI test targets failed to compile"
+    for cross_target in $cross_targets; do
+      if ! grep -Fxq "$cross_target" <<<"$installed_targets"; then
+        say "Rust target $cross_target is not installed: run rustup target add $cross_target"
+      else
+        cargo check -p kendex-core -p kendex-cli --all-targets --target "$cross_target" ||
+          say "$cross_target core and CLI test targets failed to compile"
+      fi
+    done
   fi
   cargo fmt --check || say "cargo fmt --check failed"
   cargo clippy --workspace --quiet -- -D warnings || say "clippy failed"

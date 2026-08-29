@@ -138,8 +138,8 @@ export interface PlaceCaches {
 /** What one place's read records: each half under that place's key, and
  *  gone where that half could not be read. Presence is what says a read
  *  landed, and a mark off a kept entry answers out of a file nobody can
- *  see any more. Refused outright where a newer read has already
- *  answered for the place. */
+ *  see any more. Written as one object, so a place's three halves are
+ *  never left from different reads. */
 export const recordedRead =
   (
     scope: Scope,

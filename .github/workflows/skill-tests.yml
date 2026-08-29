@@ -10,7 +10,7 @@ name: Skill Tests
 # bot review, while the pending "Review gate" status is what actually blocks
 # merge. The full battery runs once per merged result: in the merge queue
 # before the merge, and again on the push to main as the post-merge record.
-# The macOS cargo lane is the exception, and says why where it stands.
+# The two cross-platform cargo lanes are the exceptions; each says why.
 # The review gate never conditions
 # CI (it answers review-only; see the review-gate skill) — there is no gate
 # job here and nothing reads the predicate.
@@ -400,3 +400,30 @@ jobs:
       # instead of one per queue attempt.
       - name: cargo test
         run: cargo test --workspace --locked --no-fail-fast
+
+  # The app ships on Windows and release.yml builds it there. `cargo check`
+  # does not link, so the Linux runner proves the Windows targets compile at
+  # a fraction of a Windows runner's cost — enough to stop a `std::os::unix`
+  # reach in test code from landing unseen, which is the whole of what had
+  # no check at all. Executing the tests on Windows is a separate cost
+  # question. Scope matches tools/guard's cross-target lane: the app crate
+  # needs the platform's own C toolchain, core and CLI are portable Rust.
+  cargo-check-windows:
+    name: Windows cargo (core and CLI targets compile)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # rust-toolchain.toml overrides the toolchain the action installed, so
+      # the target belongs on the pinned one — an action `targets:` input
+      # lands on the other and surfaces as E0463 at compile time. `rustc
+      # --version` resolves the pin; the add is its own step, so a target
+      # that will not install reads as a setup failure.
+      - name: Windows target for the pinned toolchain
+        run: |
+          rustc --version
+          rustup target add x86_64-pc-windows-msvc
+      - name: cargo check
+        run: cargo check -p kendex-core -p kendex-cli --all-targets --locked --target x86_64-pc-windows-msvc

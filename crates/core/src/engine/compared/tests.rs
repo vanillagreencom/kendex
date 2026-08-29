@@ -32,9 +32,15 @@ fn of_file_refuses_a_link_a_directory_and_an_absent_path() {
     let dir = tmp();
     let real = dir.path().join("real.md");
     std::fs::write(&real, b"body\n").expect("write");
-    let link = dir.path().join("link.md");
-    std::os::unix::fs::symlink(&real, &link).expect("symlink");
-    assert!(of_file(&link, b"body\n").is_none(), "a link is not read");
+    // The link arm needs a link, and only a platform that hands them out
+    // without a privilege can make one in a test. The directory and absent
+    // arms are the same everywhere and stay.
+    #[cfg(unix)]
+    {
+        let link = dir.path().join("link.md");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink");
+        assert!(of_file(&link, b"body\n").is_none(), "a link is not read");
+    }
     let folder = dir.path().join("folder");
     std::fs::create_dir(&folder).expect("mkdir");
     assert!(of_file(&folder, b"body\n").is_none());
@@ -107,6 +113,9 @@ fn a_tree_past_the_cumulative_budget_gives_no_answer() {
 /// The position belongs to somebody else. A link inside it would aim the
 /// read at a file nothing about this item chose, so the tree is refused
 /// whole rather than read through it.
+///
+/// Proven where a test can make a link without a privilege.
+#[cfg(unix)]
 #[test]
 #[allow(clippy::expect_used)]
 fn a_link_inside_the_tree_refuses_the_whole_comparison() {
@@ -125,6 +134,10 @@ fn a_link_inside_the_tree_refuses_the_whole_comparison() {
 /// A folder the walk cannot enumerate must refuse the answer. Skipped, it
 /// would leave a partial tree comparing as whole, which is what "identical
 /// to the catalog" is printed from.
+///
+/// The unreadable folder is made with permission bits, so this runs where
+/// permission bits are the access control.
+#[cfg(unix)]
 #[test]
 #[allow(clippy::expect_used)]
 fn a_folder_that_will_not_enumerate_refuses_rather_than_dropping_out() {
@@ -205,7 +218,10 @@ fn a_tree_deeper_than_the_bound_gives_no_answer() {
     assert!(of_tree(&root, &[]).is_none());
 }
 
-/// Something that is neither file nor directory is nobody's to read.
+/// Something that is neither file nor directory is nobody's to read. The
+/// third thing a filesystem entry can be here is a Unix socket, so this
+/// runs where sockets live in the filesystem.
+#[cfg(unix)]
 #[test]
 #[allow(clippy::expect_used)]
 fn an_entry_that_is_neither_file_nor_directory_stops_the_answer() {

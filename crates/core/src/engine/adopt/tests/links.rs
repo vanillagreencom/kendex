@@ -1,5 +1,10 @@
 //! Adoption through a link: the boundary that decides what a link may be
 //! adopted through, and what each refusal leaves exactly where it was.
+//!
+//! Every test that builds a link carries `#[cfg(unix)]` — the layout it
+//! sets up needs a symlink, and a test can only make one where the
+//! platform does not put a privilege in front of it. The name rules below
+//! that never build one run everywhere.
 
 use super::super::*;
 use crate::engine::audit;
@@ -12,6 +17,7 @@ use super::trash_is_empty;
 /// folder through links. Adopting captures the folder's content, and
 /// after the follow-up apply every tool still resolves to real files —
 /// the sharing survives with kendex's copy as canonical.
+#[cfg(unix)]
 #[test]
 fn a_shared_skill_folder_adopts_the_target_and_keeps_every_tool_reading() {
     let tmp = tempfile::tempdir().unwrap();
@@ -65,6 +71,7 @@ fn a_shared_skill_folder_adopts_the_target_and_keeps_every_tool_reading() {
 
 /// "Somewhere kendex has no business touching": a folder that is not a
 /// skill at all. The marker is the boundary — no SKILL.md, no adopt.
+#[cfg(unix)]
 #[test]
 fn a_link_at_a_folder_without_the_marker_still_refuses() {
     let tmp = tempfile::tempdir().unwrap();
@@ -94,6 +101,7 @@ fn a_link_at_a_folder_without_the_marker_still_refuses() {
 
 /// A link the user repointed into kendex's own store is not theirs to
 /// adopt: capturing a managed tree under another name would steal it.
+#[cfg(unix)]
 #[test]
 fn a_link_into_kendexs_own_trees_refuses() {
     let tmp = tempfile::tempdir().unwrap();
@@ -127,6 +135,7 @@ fn a_link_into_kendexs_own_trees_refuses() {
 /// The folder changing between the plan and the apply aborts the whole
 /// transaction: the trash op is bound to the bytes that were captured,
 /// so a stale snapshot can never become "the backup".
+#[cfg(unix)]
 #[test]
 fn a_target_that_changed_after_planning_fails_the_apply() {
     let tmp = tempfile::tempdir().unwrap();
@@ -310,6 +319,7 @@ fn a_namespaced_skill_is_adopted_at_its_rendered_position() {
 /// A link at one name pointing into the shared tree at another names a
 /// second skill that already has a home. Adopting through it would rename
 /// that one under this name, taking its content with it.
+#[cfg(unix)]
 #[test]
 fn a_link_into_the_shared_tree_at_another_name_refuses() {
     let tmp = tempfile::tempdir().unwrap();
@@ -346,6 +356,7 @@ fn a_link_into_the_shared_tree_at_another_name_refuses() {
 
 /// The same link pointing at this item's own home is the finished shape —
 /// a skill already in the shared tree that tools read through links.
+#[cfg(unix)]
 #[test]
 fn a_link_at_this_items_own_home_is_adopted() {
     let tmp = tempfile::tempdir().unwrap();
