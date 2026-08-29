@@ -196,16 +196,63 @@ mkdir "$TMP_ROOT/terminal-runtime"
 printf 'terminal\n' > "$TMP_ROOT/terminal-runtime/token"
 printf 'worker log\n' > "$TMP_ROOT/terminal-runtime/worker.log"
 printf 'keep\n' > "$TMP_ROOT/terminal-artifact"
+mkdir "$TMP_ROOT/terminal-bin"
+cat > "$TMP_ROOT/terminal-bin/grep" <<'SH'
+#!/usr/bin/env bash
+count=0
+[[ ! -e "$LATE_COUNT" ]] || count="$(cat < "$LATE_COUNT")"
+count=$((count + 1))
+printf '%s\n' "$count" > "$LATE_COUNT"
+grep_rc=0
+"$REAL_GREP" "$@" || grep_rc=$?
+if [[ $count -eq 3 ]]; then
+  printf '%s\n' '__SECOND_OPINION_EXIT_terminal__=0' >> "$LATE_LOG"
+fi
+exit "$grep_rc"
+SH
+chmod +x "$TMP_ROOT/terminal-bin/grep"
 terminal_rc=0
-"$RUNTIME" wait "$TMP_ROOT/terminal-artifact" "$TMP_ROOT/terminal-runtime" \
+PATH="$TMP_ROOT/terminal-bin:$PATH" REAL_GREP="$(command -v grep)" \
+  LATE_COUNT="$TMP_ROOT/late.count" LATE_LOG="$TMP_ROOT/terminal-runtime/worker.log" \
+  "$RUNTIME" wait "$TMP_ROOT/terminal-artifact" "$TMP_ROOT/terminal-runtime" \
   "$(date +%s)" terminal 1 >"$TMP_ROOT/terminal.stdout" \
   2>"$TMP_ROOT/terminal.stderr" || terminal_rc=$?
 [[ $terminal_rc -eq 124 ]] || fail "terminal no-completion wait returned $terminal_rc"
-[[ ! -e "$TMP_ROOT/terminal-runtime" ]] || fail "terminal 124 left its runtime directory"
+[[ -d "$TMP_ROOT/terminal-runtime" ]] || fail "unconfirmed terminal 124 removed runtime state"
 [[ "$(cat < "$TMP_ROOT/terminal-artifact")" == "keep" ]] \
   || fail "terminal 124 disturbed the completed artifact path"
-printf 'PASS: terminal 124 removes only the owned runtime directory\n'
+"$RUNTIME" wait "$TMP_ROOT/terminal-artifact" "$TMP_ROOT/terminal-runtime" \
+  "$(date +%s)" terminal 1 >"$TMP_ROOT/terminal-retry.stdout" \
+  2>"$TMP_ROOT/terminal-retry.stderr"
+[[ ! -e "$TMP_ROOT/terminal-runtime" ]] || fail "recovered completion left runtime state"
+assert_contains "$TMP_ROOT/terminal-retry.stdout" "$TMP_ROOT/terminal-artifact" \
+  "late completion is recovered by rerunning wait"
 
 assert_contains "$REPO_ROOT/skills/orch/workflows/review-pr.md" \
   'printed deadline is absolute Unix epoch seconds; compare it with `date +%s`' \
   "review-pr documents the printed deadline as an absolute epoch"
+
+mkdir -p "$TMP_ROOT/collision-proj/skills"
+git -C "$TMP_ROOT/collision-proj" init -q
+cp -R "$REPO_ROOT/skills/second-opinion" "$TMP_ROOT/collision-proj/skills/second-opinion"
+COLLISION_SO="$TMP_ROOT/collision-proj/skills/second-opinion/scripts/second-opinion"
+for collision_key in SCRIPT_DIR RUNTIME ORIGINAL_ARGS FOREGROUND_CAP_IN_CALLER_ENV \
+    FOREGROUND_CAP_WAS_IN_CALLER_ENV CURRENT_MODEL_IS_SESSION_SCOPED \
+    CURRENT_MODEL_IN_CALLER_ENV; do
+  printf '[env]\n%s = "forged"\n' "$collision_key" \
+    > "$TMP_ROOT/collision-proj/kendex.settings.toml"
+  collision_rc=0
+  "$COLLISION_SO" detect >"$TMP_ROOT/collision.stdout" \
+    2>"$TMP_ROOT/collision.stderr" || collision_rc=$?
+  [[ $collision_rc -eq 1 ]] || fail "$collision_key project collision returned $collision_rc"
+  assert_contains "$TMP_ROOT/collision.stderr" "$collision_key is runtime-owned" \
+    "$collision_key project collision is refused"
+done
+rm -f "$TMP_ROOT/collision-proj/kendex.settings.toml"
+printf 'export RUNTIME=forged\n' > "$TMP_ROOT/collision-proj/.env.local"
+collision_rc=0
+"$COLLISION_SO" detect >"$TMP_ROOT/collision.stdout" \
+  2>"$TMP_ROOT/collision.stderr" || collision_rc=$?
+[[ $collision_rc -eq 1 ]] || fail "RUNTIME env-file collision returned $collision_rc"
+assert_contains "$TMP_ROOT/collision.stderr" "RUNTIME is runtime-owned" \
+  "env-file runtime path collision is refused"

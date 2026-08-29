@@ -373,7 +373,6 @@ wait_for_run() {
         line=$(completion_line "$log" "$prefix") || grep_rc=$?
         [[ $grep_rc -ne 2 ]] || die "cannot read worker log: $log"
         [[ -z "$line" ]] || continue
-        rm -rf -- "$runtime_dir" || die "cannot remove runtime directory: $runtime_dir"
         echo "Error: detached supervisor did not publish completion by deadline $deadline" >&2
         exit 124
       fi

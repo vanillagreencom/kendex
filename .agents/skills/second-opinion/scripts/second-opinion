@@ -22,7 +22,6 @@
 #   SECOND_OPINION_REVIEW_INSTRUCTIONS  Repo instruction-file globs for review
 set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RUNTIME="$SCRIPT_DIR/second-opinion-runtime"
 ORIGINAL_ARGS=("$@")
 FOREGROUND_CAP_IN_CALLER_ENV=false
 [[ "${SECOND_OPINION_FOREGROUND_CAP:-}" == "1" ]] && FOREGROUND_CAP_IN_CALLER_ENV=true
@@ -265,6 +264,7 @@ if $DETACHED_LANE_REQUESTED && [[ -n "${SECOND_OPINION_RUNTIME_DIR:-}" ]]; then 
 # shellcheck source=lib/detached-auth.sh
 source "$SCRIPT_DIR/lib/detached-auth.sh"
 second_opinion_authenticate_detached "$DETACHED_AUTH_REQUESTED" || exit 1
+second_opinion_freeze_preloader_state
 # Resolved only after help is answered: help must not require a git
 # checkout around the installed script.
 PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
@@ -285,7 +285,7 @@ if ! $FOREGROUND_CAP_WAS_IN_CALLER_ENV && [[ -n "${SECOND_OPINION_FOREGROUND_CAP
   echo "Error: project settings set session-only SECOND_OPINION_FOREGROUND_CAP; remove it there and pass --foreground or export it in this session" >&2
   exit 1
 fi
-source "$RUNTIME"
+source "$SCRIPT_DIR/second-opinion-runtime"
 second_opinion_runtime_setup
 # --- Defaults -----------------------------------------------------------------
 MODE=""
