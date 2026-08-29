@@ -21,7 +21,8 @@ assert_no_runs() {
 SANDBOX="$TMP_ROOT/repo"
 mkdir -p "$SANDBOX/skills/orch/scripts" "$SANDBOX/skills/linear/scripts" "$TMP_ROOT/bin"
 cp "$REPO_ROOT/skills/orch/scripts/container-close" "$SANDBOX/skills/orch/scripts/container-close"
-chmod +x "$SANDBOX/skills/orch/scripts/container-close"
+cp "$REPO_ROOT/skills/orch/scripts/git-context" "$SANDBOX/skills/orch/scripts/git-context"
+chmod +x "$SANDBOX/skills/orch/scripts/container-close" "$SANDBOX/skills/orch/scripts/git-context"
 git init -q "$SANDBOX"
 git -C "$SANDBOX" config user.email test@example.com
 git -C "$SANDBOX" config user.name test
@@ -107,6 +108,7 @@ case "$resource:$action" in
     printf 'close\n' >> "$root/complete.calls"
     mkdir -p "$root/complete.entries"
     : > "$root/complete.entries/$$"
+    [[ ! -e "$root/fail.complete.before" ]] || exit 9
     if [[ -e "$root/hold.complete" ]]; then
       while [[ ! -e "$root/release.complete" ]]; do sleep 0.02; done
     fi
@@ -163,13 +165,14 @@ reset_state() {
   rm -f "$FAKE_LINEAR_ROOT/complete.calls" "$FAKE_LINEAR_ROOT/summary.body" \
     "$FAKE_LINEAR_ROOT/hold.complete" "$FAKE_LINEAR_ROOT/release.complete" \
     "$FAKE_LINEAR_ROOT/fail.complete.after" "$FAKE_LINEAR_ROOT/interrupt.after.complete" \
-    "$FAKE_LINEAR_ROOT/fail.update.once" "$FAKE_LINEAR_ROOT/gh.mode" \
+    "$FAKE_LINEAR_ROOT/fail.complete.before" "$FAKE_LINEAR_ROOT/fail.update.once" "$FAKE_LINEAR_ROOT/gh.mode" \
     "$SANDBOX/tmp/container-close-recovery/PARENT-1.tsv"
   rm -rf "$FAKE_LINEAR_ROOT/complete.entries"
   mkdir "$FAKE_LINEAR_ROOT/complete.entries"
 }
 
 run_close() { (cd "$CALLER_ONE" && "$SCRIPT" "$SANDBOX" PARENT-1); }
+run_linked_close() { (cd "$CALLER_TWO" && "$SCRIPT" "$CALLER_TWO" PARENT-1); }
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Todo","state_type":"unstarted"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
@@ -193,6 +196,8 @@ assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "1" "conta
 assert_eq "$(jq -r '.[] | select(.id == "CHILD-2") | .state_type' "$FAKE_LINEAR_ROOT/children.json")" "canceled" "cascade repair restores a canceled child"
 assert_contains "$TMP_ROOT/close.err" "restored CHILD-2 to Canceled" "cascade repair reports the restored child"
 assert_contains "$FAKE_LINEAR_ROOT/summary.body" "CHILD-1 ✓ one — PR #101" "bundle summary preserves a child PR reference"
+assert_contains "$FAKE_LINEAR_ROOT/summary.body" "CHILD-2 canceled two — PR #102" "bundle summary marks a canceled child distinctly"
+grep -Fq 'CHILD-2 ✓' "$FAKE_LINEAR_ROOT/summary.body" && fail "bundle summary does not check-mark a canceled child" || ok "bundle summary does not check-mark a canceled child"
 assert_no_runs "successful closure removes private run state"
 out="$(run_close)"
 assert_eq "$out" "closed PARENT-1" "a repeated close is idempotent"
@@ -234,6 +239,55 @@ out="$(run_close 2>"$TMP_ROOT/partial-retry.err")"
 assert_eq "$out" "closed PARENT-1" "completed fast path retries partial repair"
 assert_eq "$(jq -r '.[] | select(.id == "CHILD-3") | .state_type' "$FAKE_LINEAR_ROOT/children.json")" "canceled" "partial repair retry restores the remaining child"
 [[ ! -e "$RECOVERY" ]] && ok "verified partial repair removes its record" || fail "verified partial repair removes its record"
+
+reset_state
+printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+touch "$FAKE_LINEAR_ROOT/fail.complete.before"
+rc=0
+run_close >/dev/null 2>"$TMP_ROOT/open-unchanged.err" || rc=$?
+[[ $rc -ne 0 ]] && ok "failed completion leaves open-parent recovery for retry" || fail "failed completion leaves open-parent recovery for retry"
+rm -f "$FAKE_LINEAR_ROOT/fail.complete.before"
+out="$(run_close 2>"$TMP_ROOT/open-unchanged-retry.err")"
+assert_eq "$out" "closed PARENT-1" "open parent clears unchanged recovery before retry"
+assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "2" "unchanged recovery retries parent completion once"
+[[ ! -e "$RECOVERY" ]] && ok "successful retry consumes unchanged recovery" || fail "successful retry consumes unchanged recovery"
+
+reset_state
+printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+touch "$FAKE_LINEAR_ROOT/fail.complete.before"
+rc=0
+run_close >"$TMP_ROOT/open-recovery.out" 2>"$TMP_ROOT/open-recovery.err" || rc=$?
+[[ $rc -ne 0 ]] && ok "failed parent completion keeps the parent open" || fail "failed parent completion keeps the parent open"
+[[ -s "$RECOVERY" ]] && ok "failed parent completion keeps its recovery record" || fail "failed parent completion keeps its recovery record"
+rm -f "$FAKE_LINEAR_ROOT/fail.complete.before"
+jq 'map(if .id == "CHILD-2" then .state = "Done" | .state_type = "completed" else . end)' \
+  "$FAKE_LINEAR_ROOT/children.json" > "$FAKE_LINEAR_ROOT/children.independent"
+mv "$FAKE_LINEAR_ROOT/children.independent" "$FAKE_LINEAR_ROOT/children.json"
+rc=0
+run_close >"$TMP_ROOT/open-recovery-retry.out" 2>"$TMP_ROOT/open-recovery-retry.err" || rc=$?
+[[ $rc -ne 0 ]] && ok "open parent cannot authorize recovery over an independently completed child" || fail "open parent cannot authorize recovery over an independently completed child"
+assert_contains "$TMP_ROOT/open-recovery-retry.err" "recovery child CHILD-2 moved from Canceled to Done" "authorization refusal names the changed child"
+assert_eq "$(jq -r '.[] | select(.id == "CHILD-2") | .state_type' "$FAKE_LINEAR_ROOT/children.json")" "completed" "authorization refusal preserves the independent completion"
+[[ -s "$RECOVERY" ]] && ok "authorization refusal preserves the recovery record" || fail "authorization refusal preserves the recovery record"
+assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "1" "authorization refusal does not retry parent completion"
+
+AUTH_MUTANT="$SANDBOX/skills/orch/scripts/container-close-auth-mutant"
+assert_eq "$(grep -Fxc 'clear_open_recovery' "$SCRIPT")" "1" "authorization control finds the open-parent boundary"
+awk '$0 == "clear_open_recovery" { print "repair_canceled"; next } { print }' "$SCRIPT" > "$AUTH_MUTANT"
+chmod +x "$AUTH_MUTANT"
+reset_state
+printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+touch "$FAKE_LINEAR_ROOT/fail.complete.before"
+rc=0
+"$SCRIPT" "$SANDBOX" PARENT-1 >/dev/null 2>&1 || rc=$?
+[[ $rc -ne 0 ]] && ok "authorization mutant fixture keeps its recovery record" || fail "authorization mutant fixture keeps its recovery record"
+rm -f "$FAKE_LINEAR_ROOT/fail.complete.before"
+jq 'map(if .id == "CHILD-2" then .state = "Done" | .state_type = "completed" else . end)' \
+  "$FAKE_LINEAR_ROOT/children.json" > "$FAKE_LINEAR_ROOT/children.independent"
+mv "$FAKE_LINEAR_ROOT/children.independent" "$FAKE_LINEAR_ROOT/children.json"
+"$AUTH_MUTANT" "$SANDBOX" PARENT-1 >/dev/null 2>&1
+assert_eq "$(jq -r '.[] | select(.id == "CHILD-2") | .state_type' "$FAKE_LINEAR_ROOT/children.json")" "canceled" "authorization control fails when open parents may restore children"
+assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "2" "authorization mutant retries parent completion"
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
@@ -293,20 +347,60 @@ for _attempt in {1..100}; do
   sleep 0.02
 done
 [[ "$(find "$FAKE_LINEAR_ROOT/complete.entries" -type f | wc -l | tr -d ' ')" -ge 1 ]] || fail "race winner never entered completion"
-(cd "$CALLER_TWO" && "$SCRIPT" "$SANDBOX" PARENT-1 > "$TMP_ROOT/race-two.out" 2> "$TMP_ROOT/race-two.err") &
+(run_linked_close > "$TMP_ROOT/race-two.out" 2> "$TMP_ROOT/race-two.err") &
 pid_two=$!
-rc_two=0
-wait "$pid_two" || rc_two=$?
+sleep 0.1
+[[ ! -s "$TMP_ROOT/race-two.out" ]] && ok "lock loser waits for the owner" || fail "lock loser waits for the owner"
 touch "$FAKE_LINEAR_ROOT/release.complete"
 rc_one=0
 wait "$pid_one" || rc_one=$?
+rc_two=0
+wait "$pid_two" || rc_two=$?
 assert_eq "$rc_one:$rc_two" "0:0" "both racing callers return successfully"
-assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "1" "linked worktrees perform one shared close"
-assert_eq "$(cat "$TMP_ROOT/race-one.out"):$(cat "$TMP_ROOT/race-two.out")" "closed PARENT-1:deferred" "lock loser reports the documented deferred result"
+assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "1" "main and linked checkout callers share one close"
+assert_eq "$(cat "$TMP_ROOT/race-one.out"):$(cat "$TMP_ROOT/race-two.out")" "closed PARENT-1:closed PARENT-1" "lock loser re-evaluates after the owner releases"
+
+WAIT_MUTANT="$SANDBOX/skills/orch/scripts/container-close-wait-mutant"
+assert_eq "$(grep -Fc 'if ! flock -w 2 9; then' "$SCRIPT")" "1" "bounded-wait control finds lock acquisition"
+awk 'index($0, "if ! flock -w 2 9; then") { print "if ! flock -n 9; then"; next } { print }' "$SCRIPT" > "$WAIT_MUTANT"
+chmod +x "$WAIT_MUTANT"
+reset_state
+printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+touch "$FAKE_LINEAR_ROOT/hold.complete"
+"$SCRIPT" "$SANDBOX" PARENT-1 > "$TMP_ROOT/wait-owner.out" 2> "$TMP_ROOT/wait-owner.err" & pid_one=$!
+for _attempt in {1..100}; do
+  [[ "$(find "$FAKE_LINEAR_ROOT/complete.entries" -type f | wc -l | tr -d ' ')" -ge 1 ]] && break
+  sleep 0.02
+done
+"$WAIT_MUTANT" "$CALLER_TWO" PARENT-1 > "$TMP_ROOT/wait-mutant.out" 2> "$TMP_ROOT/wait-mutant.err"
+assert_eq "$(cat "$TMP_ROOT/wait-mutant.out")" "deferred" "bounded-wait control fails with a single nonblocking attempt"
+touch "$FAKE_LINEAR_ROOT/release.complete"
+wait "$pid_one"
+
+COMMON_ROOT_MUTANT="$SANDBOX/skills/orch/scripts/container-close-root-mutant"
+assert_eq "$(grep -Fc 'common-root "$REPOSITORY_CHECKOUT"' "$SCRIPT")" "1" "common-root control finds shared-root resolution"
+awk '
+  index($0, "MAIN_REPO_ROOT=\"$(\"$GIT_CONTEXT\" common-root") { print "MAIN_REPO_ROOT=\"$REPOSITORY_CHECKOUT\""; getline; next }
+  { print }
+' "$SCRIPT" > "$COMMON_ROOT_MUTANT"
+chmod +x "$COMMON_ROOT_MUTANT"
+reset_state
+printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+touch "$FAKE_LINEAR_ROOT/hold.complete"
+"$SCRIPT" "$SANDBOX" PARENT-1 >/dev/null 2>&1 & pid_one=$!
+"$COMMON_ROOT_MUTANT" "$CALLER_TWO" PARENT-1 >/dev/null 2>&1 & pid_two=$!
+for _attempt in {1..100}; do
+  [[ "$(find "$FAKE_LINEAR_ROOT/complete.entries" -type f | wc -l | tr -d ' ')" -eq 2 ]] && break
+  sleep 0.02
+done
+touch "$FAKE_LINEAR_ROOT/release.complete"
+rc_one=0; wait "$pid_one" || rc_one=$?
+rc_two=0; wait "$pid_two" || rc_two=$?
+assert_eq "$rc_one:$rc_two:$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "0:0:2" "common-root control fails when callers keep checkout-local locks"
 
 RACE_MUTANT="$SANDBOX/skills/orch/scripts/container-close-race-mutant"
-assert_eq "$(grep -Fc 'if ! flock -n 9; then' "$SCRIPT")" "1" "race control finds flock acquisition"
-awk 'index($0, "if ! flock -n 9; then") { print "if false; then"; next } { print }' "$SCRIPT" > "$RACE_MUTANT"
+assert_eq "$(grep -Fc 'if ! flock -w 2 9; then' "$SCRIPT")" "1" "race control finds flock acquisition"
+awk 'index($0, "if ! flock -w 2 9; then") { print "if false; then"; next } { print }' "$SCRIPT" > "$RACE_MUTANT"
 chmod +x "$RACE_MUTANT"
 race_failures=0
 for _iteration in {1..10}; do
@@ -326,6 +420,15 @@ for _iteration in {1..10}; do
   [[ "$rc_one:$rc_two:$calls" == "0:0:2" ]] || race_failures=$((race_failures + 1))
 done
 assert_eq "$race_failures" "0" "race control fails without flock in 10 stable runs"
+
+SUMMARY_MUTANT="$SANDBOX/skills/orch/scripts/container-close-summary-mutant"
+assert_eq "$(grep -Fc 'canceled) MARKER="canceled" ;;' "$SCRIPT")" "1" "summary control finds the canceled marker"
+awk 'index($0, "canceled) MARKER=\"canceled\" ;;") { print "    canceled) MARKER=\"✓\" ;;"; next } { print }' "$SCRIPT" > "$SUMMARY_MUTANT"
+chmod +x "$SUMMARY_MUTANT"
+reset_state
+printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+"$SUMMARY_MUTANT" "$SANDBOX" PARENT-1 >/dev/null 2>&1
+assert_contains "$FAKE_LINEAR_ROOT/summary.body" "CHILD-2 ✓ two" "summary control fails when canceled children get the completed marker"
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
@@ -347,6 +450,7 @@ assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "1" "state
 MERGE_WORKFLOW="$REPO_ROOT/skills/orch/workflows/merge-pr.md"
 grep -Fq 'scripts/container-close [MAIN_REPO_ROOT] [PARENT_ID]' "$MERGE_WORKFLOW" && ok "merge-pr passes the shared main root" || fail "merge-pr passes the shared main root"
 grep -Fq 'with every stderr diagnostic from the helper' "$MERGE_WORKFLOW" && ok "merge-pr preserves every closed diagnostic" || fail "merge-pr preserves every closed diagnostic"
+grep -Fq 'bounded lock wait expired' "$MERGE_WORKFLOW" && ok "merge-pr reports only genuine lock timeouts as bare deferred" || fail "merge-pr reports only genuine lock timeouts as bare deferred"
 
 printf 'container-close: %d pass, %d fail\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

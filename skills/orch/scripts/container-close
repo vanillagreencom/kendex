@@ -4,12 +4,13 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-usage: container-close <MAIN_REPOSITORY> <PARENT_ID>
+usage: container-close <REPOSITORY_CHECKOUT> <PARENT_ID>
 
-Serializes closure per Linear container in the shared main repository. Prints
-`closed <PARENT_ID>` when the container is Done, including an idempotent repeat.
+Derives the shared main repository and serializes closure per Linear container.
+Prints `closed <PARENT_ID>` when the container is Done, including an idempotent
+repeat.
 Prints `deferred` followed by pending child ids when closure must wait. A bare
-`deferred` means another caller still owns the close. Operational and validation
+`deferred` means the bounded lock wait expired. Operational and validation
 failures exit 1. A successful `closed` result may carry recovery diagnostics on
 stderr; callers must preserve every one.
 EOF
@@ -20,14 +21,20 @@ case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LINEAR="$SCRIPT_DIR/../../linear/scripts/linear.sh"
+GIT_CONTEXT="$SCRIPT_DIR/git-context"
 [[ -x "$LINEAR" ]] || { echo "container-close: Linear CLI is missing or not executable: $LINEAR" >&2; exit 1; }
+[[ -x "$GIT_CONTEXT" ]] || { echo "container-close: git-context is missing or not executable: $GIT_CONTEXT" >&2; exit 1; }
 command -v flock >/dev/null 2>&1 || { echo "container-close: flock is required" >&2; exit 1; }
 command -v gh >/dev/null 2>&1 || { echo "container-close: gh is required to preserve child PR references" >&2; exit 1; }
 
-MAIN_REPO_ROOT="$(cd -- "$1" 2>/dev/null && pwd -P)" \
-  || { echo "container-close: main repository is not a directory: $1" >&2; exit 1; }
+REPOSITORY_CHECKOUT="$(cd -- "$1" 2>/dev/null && pwd -P)" \
+  || { echo "container-close: repository checkout is not a directory: $1" >&2; exit 1; }
+MAIN_REPO_ROOT="$("$GIT_CONTEXT" common-root "$REPOSITORY_CHECKOUT")" \
+  || { echo "container-close: cannot resolve the shared repository root from $REPOSITORY_CHECKOUT" >&2; exit 1; }
+MAIN_REPO_ROOT="$(cd -- "$MAIN_REPO_ROOT" 2>/dev/null && pwd -P)" \
+  || { echo "container-close: shared repository root is not a directory: $MAIN_REPO_ROOT" >&2; exit 1; }
 git -C "$MAIN_REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
-  || { echo "container-close: not a git work tree: $MAIN_REPO_ROOT" >&2; exit 1; }
+  || { echo "container-close: shared repository root is not a git work tree: $MAIN_REPO_ROOT" >&2; exit 1; }
 PARENT_ID="$2"
 [[ "$PARENT_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && "$PARENT_ID" != *..* ]] \
   || { echo "container-close: invalid parent id: $PARENT_ID" >&2; exit 2; }
@@ -36,7 +43,7 @@ mkdir -p "$MAIN_REPO_ROOT/tmp"
 LOCK_FILE="$MAIN_REPO_ROOT/tmp/container-close-$PARENT_ID.lock"
 umask 077
 exec 9>>"$LOCK_FILE"
-if ! flock -n 9; then
+if ! flock -w 2 9; then
   printf 'deferred\n'
   exit 0
 fi
@@ -158,6 +165,24 @@ repair_canceled() {
   rm -f -- "$RECOVERY" || { echo "container-close: cannot remove verified recovery record for $PARENT_ID" >&2; return 1; }
 }
 
+clear_open_recovery() {
+  [[ -e "$RECOVERY" || -L "$RECOVERY" ]] || return 0
+  [[ -f "$RECOVERY" && ! -L "$RECOVERY" && -O "$RECOVERY" ]] \
+    || { echo "container-close: recovery record is not an owned regular file: $RECOVERY" >&2; return 1; }
+  local ids=() states=() id state current_state index
+  load_recovery_rows "$RECOVERY" || return 1
+  [[ ${#ids[@]} -gt 0 ]] || { echo "container-close: recovery record is empty for $PARENT_ID" >&2; return 1; }
+  fetch_recovery_rows || return 1
+  for ((index=0; index<${#ids[@]}; index++)); do
+    id="${ids[$index]}"; state="${states[$index]}"
+    current_state="$(jq -r --arg id "$id" 'select(.id == $id) | .state // ""' "$CURRENT")" \
+      || { echo "container-close: open-parent recovery could not read the state for $id" >&2; return 1; }
+    [[ "$current_state" == "$state" ]] \
+      || { echo "container-close: parent $PARENT_ID is open and recovery child $id moved from $state to $current_state" >&2; return 1; }
+  done
+  rm -f -- "$RECOVERY" || { echo "container-close: cannot remove unused recovery record for $PARENT_ID" >&2; return 1; }
+}
+
 child_pr() {
   local child_id="$1" rows number
   rows="$(cd -- "$MAIN_REPO_ROOT" && env -u GH_REPO -u GITHUB_REPOSITORY \
@@ -178,8 +203,10 @@ sync_linear || { echo "container-close: Linear sync failed for $PARENT_ID" >&2; 
 PARENT="$(parent_json)" || { echo "container-close: cannot read parent $PARENT_ID" >&2; exit 1; }
 PARENT_TYPE="$(jq -r '.state_type // ""' <<<"$PARENT")" \
   || { echo "container-close: parent response is invalid for $PARENT_ID" >&2; exit 1; }
-repair_canceled
-if [[ "$PARENT_TYPE" == "completed" ]]; then printf 'closed %s\n' "$PARENT_ID"; exit 0; fi
+if [[ "$PARENT_TYPE" == "completed" ]]; then
+  repair_canceled; printf 'closed %s\n' "$PARENT_ID"; exit 0
+fi
+clear_open_recovery
 
 PENDING=""
 for _attempt in 1 2 3; do
@@ -215,12 +242,17 @@ if [[ "$VALIDATED_PARENT_TYPE" == "completed" ]]; then
   publish_recovery; repair_canceled; printf 'closed %s\n' "$PARENT_ID"; exit 0
 fi
 
-jq -r '.[] | [.id, .title] | @tsv' <<<"$CHILDREN" > "$CHILD_ROWS" \
+jq -r '.[] | [.id, .title, .state_type] | @tsv' <<<"$CHILDREN" > "$CHILD_ROWS" \
   || { echo "container-close: cannot build child summary rows for $PARENT_ID" >&2; exit 1; }
 printf '## Bundle Complete\n\n' > "$SUMMARY"
-while IFS=$'\t' read -r id title; do
+while IFS=$'\t' read -r id title state_type; do
+  case "$state_type" in
+    completed) MARKER="✓" ;;
+    canceled) MARKER="canceled" ;;
+    *) echo "container-close: child $id has unexpected summary state: $state_type" >&2; exit 1 ;;
+  esac
   PR_REFERENCE="$(child_pr "$id")" || exit 1
-  printf -- '- %s ✓ %s — PR %s\n' "$id" "$title" "$PR_REFERENCE" >> "$SUMMARY"
+  printf -- '- %s %s %s — PR %s\n' "$id" "$MARKER" "$title" "$PR_REFERENCE" >> "$SUMMARY"
 done < "$CHILD_ROWS"
 publish_recovery
 

@@ -8,8 +8,8 @@ usage: sync-base [REPOSITORY]
 
 Resolves the repository's base branch, fetches that branch from origin, and
 fast-forwards the checkout that owns it or the local branch ref. Prints only
-the base branch name on success. Tracked dirtiness, an untracked clobber, or a
-divergent base fails closed.
+the base branch name on success. Tracked dirtiness, any untracked collision,
+or a divergent base fails closed. Unrelated untracked files are preserved.
 EOF
 }
 
@@ -52,6 +52,33 @@ if [[ -n "$BASE_WORKTREE" ]]; then
     printf '%s\n' "$DIRTY" >&2
     exit 1
   fi
+  COLLISION_DIR="$(mktemp -d)" || { echo "sync-base: cannot create collision scratch" >&2; exit 1; }
+  trap 'rm -rf "$COLLISION_DIR"' EXIT
+  INCOMING_PATHS="$COLLISION_DIR/incoming"
+  LOCAL_PATHS="$COLLISION_DIR/local"
+  git -C "$BASE_WORKTREE" diff --no-renames --name-only -z --diff-filter=A \
+    HEAD "origin/$BASE_BRANCH" -- > "$INCOMING_PATHS" \
+    || { echo "sync-base: cannot enumerate incoming paths" >&2; exit 1; }
+  : > "$LOCAL_PATHS"
+  git -C "$BASE_WORKTREE" ls-files --others --exclude-standard -z >> "$LOCAL_PATHS" \
+    || { echo "sync-base: cannot enumerate untracked paths" >&2; exit 1; }
+  git -C "$BASE_WORKTREE" ls-files --others --ignored --exclude-standard -z >> "$LOCAL_PATHS" \
+    || { echo "sync-base: cannot enumerate ignored untracked paths" >&2; exit 1; }
+  COLLISION=""
+  INCOMING_COLLISION=""
+  while IFS= read -r -d '' incoming; do
+    while IFS= read -r -d '' local_path; do
+      if [[ "$incoming" == "$local_path" || "$incoming" == "$local_path/"* || "$local_path" == "$incoming/"* ]]; then
+        COLLISION="$local_path"
+        INCOMING_COLLISION="$incoming"
+        break 2
+      fi
+    done < "$LOCAL_PATHS"
+  done < "$INCOMING_PATHS"
+  [[ -z "$COLLISION" ]] || {
+    printf 'sync-base: incoming path %s collides with untracked path %s\n' "$INCOMING_COLLISION" "$COLLISION" >&2
+    exit 1
+  }
   git -C "$BASE_WORKTREE" merge --ff-only "origin/$BASE_BRANCH" >&2
 else
   git -C "$REPO_ROOT" fetch . \

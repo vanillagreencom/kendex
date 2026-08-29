@@ -66,12 +66,17 @@ Reruns re-execute the workflow definition and verifier state pinned at the origi
 
 ## Container close
 
-`container-close` owns the per-parent lock, completion gate, canceled-child
-recovery record, completion summary, and cascade repair. Exit zero prints one
-`closed [PARENT_ID]` or `deferred [CHILD_IDS...]` line to stdout. A closed result
-may include recovery diagnostics on stderr, and consumers preserve them all.
+`container-close` derives the shared main checkout, takes a bounded per-parent
+lock, and owns the completion gate, canceled-child recovery record, completion
+summary, and cascade repair. Only confirmed parent completion authorizes repair;
+an open parent discards recovery only while every child still matches it. Exit
+zero prints one `closed [PARENT_ID]` or `deferred [CHILD_IDS...]` line to stdout.
+A closed result may include recovery diagnostics on stderr; consumers preserve
+them all.
 Any incomplete read, summary, completion, or repair exits nonzero. `sync-base`
 likewise owns base resolution, fetch, checkout ownership, and the fast-forward.
+It preserves unrelated untracked paths and refuses incoming collisions with
+untracked paths, including ignored ones.
 
 ## Codex app worktree routing
 

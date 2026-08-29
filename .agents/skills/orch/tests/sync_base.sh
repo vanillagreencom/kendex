@@ -22,7 +22,8 @@ git -C "$SEED" config user.email test@example.com
 git -C "$SEED" config user.name test
 printf 'one\n' > "$SEED/file"
 printf 'tracked\n' > "$SEED/local"
-git -C "$SEED" add file local
+printf 'ignored-*\n' > "$SEED/.gitignore"
+git -C "$SEED" add .gitignore file local
 git -C "$SEED" commit -q -m one
 git -C "$SEED" branch -M main
 git -C "$SEED" push -q "$UPSTREAM" main
@@ -91,6 +92,7 @@ out="$($SYNC "$CLONE" 2>"$TMP_ROOT/sync.err")"
 assert_eq "$out" "main" "cleaned tracked base can catch up"
 
 printf 'untracked\n' > "$BASE_TREE/untracked"
+printf 'ignored\n' > "$BASE_TREE/ignored-unrelated"
 printf 'seven\n' >> "$SEED/file"
 git -C "$SEED" add file
 git -C "$SEED" commit -q -m seven
@@ -111,7 +113,8 @@ out="$($SYNC "$CLONE" 2>"$TMP_ROOT/untracked-safe.err")"
 assert_eq "$out" "main" "unrelated untracked file allows base sync"
 assert_eq "$(git -C "$BASE_TREE" rev-parse HEAD)" "$(git -C "$SEED" rev-parse main)" "unrelated untracked file does not block the fast-forward"
 assert_eq "$(cat "$BASE_TREE/untracked")" "untracked" "unrelated untracked file is preserved"
-rm -f -- "$BASE_TREE/untracked"
+assert_eq "$(cat "$BASE_TREE/ignored-unrelated")" "ignored" "unrelated ignored file is preserved"
+rm -f -- "$BASE_TREE/untracked" "$BASE_TREE/ignored-unrelated"
 
 printf 'local clobber\n' > "$BASE_TREE/clobber"
 printf 'upstream clobber\n' > "$SEED/clobber"
@@ -124,11 +127,36 @@ out="$($SYNC "$CLONE" 2>"$TMP_ROOT/untracked-clobber.err")" || rc=$?
 [[ $rc -ne 0 ]] && ok "untracked clobber fails closed" || fail "untracked clobber fails closed"
 assert_eq "$out" "" "untracked clobber prints no branch"
 assert_eq "$(git -C "$BASE_TREE" rev-parse HEAD)" "$before" "untracked clobber does not advance the base"
-grep -Fq 'would be overwritten by merge' "$TMP_ROOT/untracked-clobber.err" && ok "untracked clobber reports Git's refusal" || fail "untracked clobber reports Git's refusal"
+grep -Fq 'incoming path clobber collides with untracked path clobber' "$TMP_ROOT/untracked-clobber.err" && ok "untracked clobber refusal names both paths" || fail "untracked clobber refusal names both paths"
 assert_eq "$(cat "$BASE_TREE/clobber")" "local clobber" "untracked clobber is preserved"
 rm -f -- "$BASE_TREE/clobber"
 out="$($SYNC "$CLONE" 2>"$TMP_ROOT/sync.err")"
 assert_eq "$out" "main" "cleaned clobber base can catch up"
+
+printf 'local ignored clobber\n' > "$BASE_TREE/ignored-clobber"
+printf 'upstream ignored clobber\n' > "$SEED/ignored-clobber"
+git -C "$SEED" add -f ignored-clobber
+git -C "$SEED" commit -q -m ignored-clobber
+git -C "$SEED" push -q "$UPSTREAM" main
+before="$(git -C "$BASE_TREE" rev-parse HEAD)"
+rc=0
+out="$($SYNC "$CLONE" 2>"$TMP_ROOT/ignored-clobber.err")" || rc=$?
+[[ $rc -ne 0 ]] && ok "ignored untracked clobber fails closed" || fail "ignored untracked clobber fails closed"
+assert_eq "$out" "" "ignored untracked clobber prints no branch"
+assert_eq "$(git -C "$BASE_TREE" rev-parse HEAD)" "$before" "ignored untracked clobber does not advance the base"
+grep -Fq 'incoming path ignored-clobber collides with untracked path ignored-clobber' "$TMP_ROOT/ignored-clobber.err" && ok "ignored collision refusal names both paths" || fail "ignored collision refusal names both paths"
+assert_eq "$(cat "$BASE_TREE/ignored-clobber")" "local ignored clobber" "ignored collision preserves local data"
+
+IGNORED_MUTANT="$TMP_ROOT/sync-base-ignored-mutant"
+assert_eq "$(grep -Fc -- 'ls-files --others --ignored --exclude-standard -z' "$SYNC")" "1" "ignored collision control finds ignored path enumeration"
+awk '
+  index($0, "SCRIPT_DIR=\"$(cd --") { print "SCRIPT_DIR=\"${SYNC_TEST_SCRIPT_DIR:?}\""; next }
+  { sub(/--others --ignored --exclude-standard/, "--others --exclude-standard"); print }
+' "$SYNC" > "$IGNORED_MUTANT"
+chmod +x "$IGNORED_MUTANT"
+out="$(SYNC_TEST_SCRIPT_DIR="$REPO_ROOT/skills/orch/scripts" "$IGNORED_MUTANT" "$CLONE" 2>"$TMP_ROOT/ignored-mutant.err")"
+assert_eq "$out" "main" "ignored collision control fails when ignored paths are omitted"
+assert_eq "$(cat "$BASE_TREE/ignored-clobber")" "upstream ignored clobber" "ignored collision mutant exposes the local data loss"
 
 git -C "$BASE_TREE" commit -q --allow-empty -m diverged
 printf 'eight\n' >> "$SEED/file"
