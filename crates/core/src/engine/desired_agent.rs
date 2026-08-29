@@ -11,7 +11,6 @@ use crate::render::agent::{
 use crate::render::permission::PermissionIntent;
 use crate::render::validate::validate_agent;
 
-use super::agent_skills::declared_skills;
 use super::desired::{Artifact, Desired, DesiredState, ItemCtx, native_dir};
 
 /// The agent as this tool will know it, or `None` where that is the agent

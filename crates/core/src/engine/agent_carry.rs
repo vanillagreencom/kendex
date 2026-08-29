@@ -190,7 +190,7 @@ fn carry_skills(manifest: &mut Manifest, from: &str, to: &str, gone: bool) {
         carry(&mut manifest.agent_skills, from, to, gone);
         return;
     }
-    let inherited = crate::engine::agent_skills::declared_skills(manifest, from).cloned();
+    let inherited = crate::mapping::declared_skills(manifest, from).map(|(list, _)| list.clone());
     if let Some(skills) = inherited {
         manifest.agent_skills.insert(to.to_owned(), skills);
     }
@@ -265,8 +265,8 @@ pub(crate) fn configured_as(manifest: &Manifest, from: &str, to: &str) -> Option
     // moves what it moves: a name with no row of its own reads the base
     // agent's, and a row written here would shadow the person's — the
     // exact-key question would call that name vacant.
-    let reached = crate::engine::agent_skills::skills_key(manifest, to);
-    if reached.is_some() && reached != crate::engine::agent_skills::skills_key(manifest, from) {
+    let reached = crate::mapping::skills_key(manifest, to);
+    if reached.is_some() && reached != crate::mapping::skills_key(manifest, from) {
         return Some(match manifest.agent_skills.contains_key(to) {
             true => "[agent-skills]",
             false => "[agent-skills], under the base name this one reads",

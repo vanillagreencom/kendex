@@ -21,22 +21,33 @@ pub(crate) fn skill_match_prefix(agent_name: &str) -> &str {
     agent_name.strip_prefix("reviewer-").unwrap_or(agent_name)
 }
 
-/// The `[agent-skills]` entry this agent reads and the name it is written
+/// The `[agent-skills]` entry this agent reads, and the key it is written
 /// under. A reviewer agent with no entry of its own reads its base
-/// agent's, so the two names differ exactly when the entry is inherited.
+/// agent's, so the key differs from the name exactly when the entry is
+/// inherited.
 ///
-/// The one place the lookup lives. Asking for the exact name alone calls a
-/// real assignment absent and renders the upstream list over the top of
-/// it, which is the removal the person made coming back.
+/// Both halves from one answer, and the only place the rule is spelled.
+/// Asking for the exact name alone calls a real assignment absent and
+/// renders the upstream list over the top of it, which is the removal the
+/// person made coming back. Asking for the key alone loses the difference
+/// between a row an agent owns and one it only reaches — which is the
+/// difference between moving the agent's own assignment and shadowing
+/// somebody else's.
 pub fn declared_skills<'a>(
     manifest: &'a Manifest,
-    agent_name: &'a str,
+    agent_name: &str,
 ) -> Option<(&'a Vec<String>, &'a str)> {
-    if let Some(own) = manifest.agent_skills.get(agent_name) {
-        return Some((own, agent_name));
-    }
     let base = skill_match_prefix(agent_name);
-    manifest.agent_skills.get(base).map(|list| (list, base))
+    manifest
+        .agent_skills
+        .get_key_value(agent_name)
+        .or_else(|| manifest.agent_skills.get_key_value(base))
+        .map(|(key, list)| (list, key.as_str()))
+}
+
+/// The key alone, for a caller that only has to place a write.
+pub fn skills_key<'a>(manifest: &'a Manifest, agent_name: &str) -> Option<&'a str> {
+    declared_skills(manifest, agent_name).map(|(_, key)| key)
 }
 
 fn prefixed_matches(agent_name: &str, available: &[String]) -> Vec<String> {
@@ -178,6 +189,71 @@ mod tests {
         source.role_skills.insert("engineer".into(), vec![]);
         let skills = upstream_skills("rust", Some(Role::Engineer), &source, &available());
         assert_eq!(skills, ["github"]);
+    }
+
+    fn declaring(rows: &[(&str, &[&str])]) -> Manifest {
+        let mut manifest = Manifest {
+            schema: MANIFEST_SCHEMA,
+            ..Manifest::default()
+        };
+        for (agent, skills) in rows {
+            manifest.agent_skills.insert(
+                (*agent).to_owned(),
+                skills.iter().map(|s| (*s).to_owned()).collect(),
+            );
+        }
+        manifest
+    }
+
+    // One answer carries both halves. A caller that had only the list
+    // could not tell a row an agent owns from one it reaches, and a
+    // caller that had only the key would look the list up again — which
+    // is how the same rule came to be spelled in three places.
+    #[test]
+    fn one_lookup_answers_with_the_entry_and_the_key_it_is_under() {
+        let manifest = declaring(&[("rust", &["dev"]), ("orch", &["github"])]);
+
+        let (skills, key) = declared_skills(&manifest, "reviewer-rust").unwrap();
+        assert_eq!(skills, &["dev".to_owned()]);
+        assert_eq!(key, "rust");
+
+        let (_, own) = declared_skills(&manifest, "orch").unwrap();
+        assert_eq!(own, "orch");
+
+        // Only `reviewer-` reaches a base agent, and a name nothing
+        // declares for reaches nothing.
+        assert!(declared_skills(&manifest, "planner-rust").is_none());
+        assert!(declared_skills(&manifest, "scout").is_none());
+    }
+
+    // The key alone drops a half off the same answer rather than asking
+    // the question a second way.
+    #[test]
+    fn the_key_is_the_same_answer_without_its_list() {
+        let manifest = declaring(&[("rust", &["dev"])]);
+        for name in ["rust", "reviewer-rust", "scout"] {
+            assert_eq!(
+                skills_key(&manifest, name),
+                declared_skills(&manifest, name).map(|(_, key)| key),
+            );
+        }
+    }
+
+    // An agent that reaches its base agent's row renders from that row:
+    // the exact-name question would call it undeclared and put the
+    // upstream list back over the person's removals.
+    #[test]
+    fn a_reviewer_agent_renders_from_the_row_it_reaches() {
+        let manifest = declaring(&[("rust", &["dev"])]);
+        let result = effective_skills(
+            "reviewer-rust",
+            Some(Role::Reviewer),
+            &manifest,
+            &SourceConfig::default(),
+            &available(),
+            None,
+        );
+        assert_eq!(result.effective, ["dev"]);
     }
 
     #[test]

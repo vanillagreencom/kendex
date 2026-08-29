@@ -60,6 +60,12 @@ export function ItemCustomize({
   // drifts. `under` naming another agent is what makes it inherited.
   const declared = inventory?.declaredSkillRows[name];
   const inheritedSkills = declared && declared.under !== name ? declared : null;
+  // An inherited row is named here and is not marked above. The chip and
+  // the Library row answer "did you change this agent here?", and nobody
+  // changed this one — the row is set on another agent, and the Remove on
+  // this page writes this agent's name, so a mark here would point at a
+  // change the reader cannot find or undo. This section answers the other
+  // question: what the agent gets, and which agent it is set on.
   const shared = sharedCustomization(draft);
   const tools = (inventory?.harnesses ?? []).filter((id) =>
     harnesses.includes(id),

@@ -3,7 +3,7 @@
 
 use crate::lock::entry_key;
 use crate::manifest::Manifest;
-use crate::mapping::{EffectiveSkills, effective_skills};
+use crate::mapping::{EffectiveSkills, effective_skills, skills_key};
 use crate::model::ItemKind;
 use crate::render::agent::Role;
 use crate::source::list_items;
@@ -45,10 +45,13 @@ pub(super) fn assigned_skills(
     if skills.manifest_additions.is_empty() {
         return skills;
     }
-    let entry = updated_manifest
-        .agent_skills
-        .entry(merge_key(ctx.manifest, ctx.name))
-        .or_default();
+    // The key the effective list was read from. Writing additions anywhere
+    // else creates an entry that shadows the one being read, and the
+    // shadowed skills silently vanish from the next rendering.
+    let key = skills_key(ctx.manifest, ctx.name)
+        .unwrap_or(ctx.name)
+        .to_owned();
+    let entry = updated_manifest.agent_skills.entry(key).or_default();
     for skill in &skills.manifest_additions {
         if !entry.contains(skill) {
             entry.push(skill.clone());
@@ -56,41 +59,4 @@ pub(super) fn assigned_skills(
     }
     *manifest_changed = true;
     skills
-}
-
-/// The `agent_skills` key the effective list was read from. Writing
-/// additions anywhere else creates an entry that shadows the one being read,
-/// and the shadowed skills silently vanish from the next rendering.
-fn merge_key(manifest: &Manifest, name: &str) -> String {
-    if manifest.agent_skills.contains_key(name) {
-        return name.to_owned();
-    }
-    let stripped = crate::mapping::skill_match_prefix(name);
-    match manifest.agent_skills.contains_key(stripped) {
-        true => stripped.to_owned(),
-        false => name.to_owned(),
-    }
-}
-
-/// Which `[agent-skills]` key this agent's assignment is written under —
-/// its own name, or the base name a reviewer agent falls back to — and
-/// `None` where neither holds a row. Asked for the key rather than the
-/// value, a caller can tell a row the agent owns from one it only reaches,
-/// which is the difference between shadowing someone's assignment and
-/// moving the agent's own.
-pub(super) fn skills_key<'a>(manifest: &'a Manifest, name: &str) -> Option<&'a str> {
-    let base = crate::mapping::skill_match_prefix(name);
-    manifest
-        .agent_skills
-        .get_key_value(name)
-        .or_else(|| manifest.agent_skills.get_key_value(base))
-        .map(|(key, _)| key.as_str())
-}
-
-/// The `[agent-skills]` entry this agent reads, at the key above. Asking
-/// for the exact name alone would call a real assignment absent and render
-/// the upstream list over the top of it, which is the removal the person
-/// made coming back.
-pub(super) fn declared_skills<'a>(manifest: &'a Manifest, name: &str) -> Option<&'a Vec<String>> {
-    skills_key(manifest, name).and_then(|key| manifest.agent_skills.get(key))
 }

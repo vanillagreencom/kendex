@@ -12,6 +12,8 @@ const HYPR: Scope = { scope: "project", root: "/work/hyprtrade" };
 
 const empty = { schema: 1, install: {} };
 const withSetting = { ...empty, "skill-instructions": { gh: "mine" } };
+// The row is set on `rust`; `reviewer-rust` only reaches it.
+const baseRow = { ...empty, "agent-skills": { rust: ["worktree"] } };
 
 const rows = [VG, HYPR].map((scope) => ({
   scope,
@@ -137,5 +139,50 @@ describe("the skills a place declares", () => {
       }),
     });
     expect(host.textContent).not.toContain(skillsInherited("rust"));
+  });
+});
+
+// The two questions on this tab, and the rule that keeps them apart: the
+// chip says whether you changed this agent here, the Skills section says
+// what it gets and from where. A row set on another agent is named by the
+// second and not counted by the first.
+describe("an agent whose only row is set on another agent", () => {
+  const agentRows = [VG, HYPR].map((scope) => ({
+    ...(rows[0] as Record<string, unknown>),
+    scope,
+    kind: "agent",
+    name: "reviewer-rust",
+  }));
+
+  it("names the row without marking the place", () => {
+    useUpdatesStore.setState({ rows: agentRows as never, loaded: true });
+    useEditorStore.setState({
+      scope: VG,
+      draft: baseRow as never,
+      saved: {
+        "/work/vg": baseRow as never,
+        "/work/hyprtrade": empty as never,
+      },
+      inventories: {
+        "/work/vg": {
+          availableSkills: [],
+          automaticSkills: {},
+          declaredSkillRows: {
+            "reviewer-rust": { skills: ["worktree"], under: "rust" },
+          },
+          harnesses: ["claude"],
+        } as unknown as EditorInventory,
+      },
+    });
+    const host = mount(
+      <ItemCustomize
+        kind="agent"
+        name="reviewer-rust"
+        scopes={[VG, HYPR]}
+        harnesses={["claude"]}
+      />,
+    );
+    expect(host.textContent).toContain(skillsInherited("rust"));
+    expect(markedPlaces(host)).toEqual([]);
   });
 });
