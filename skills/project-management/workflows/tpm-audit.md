@@ -81,14 +81,12 @@ The cached Linear issue payload carries `blocks`, `blocked_by`, and `related`. G
 
 ### 1.4.1 Read Comments
 
-Comments carry what no listing does: an issue's scope changes, its supersession notes, and its partial-completion reports. `sync` writes them per issue and this is the workflow's only read of them. Read them for the § 1.4 input set here, and for every in-scope row of the § 1.5 comparison set as soon as that fetch returns, closed rows included: a supersession note, or the reason a row was canceled, is what makes a closed row worth comparing against. Dispositions stay active-only (§ 1.1):
+Comments carry what no listing does: an issue's scope changes, its supersession notes, and its partial-completion reports. `sync` writes them per issue (`.cache/linear/comments/[ISSUE_ID].json`) and this is the workflow's only read of them. Read them for the § 1.4 input set here, and for every in-scope row of the § 1.5 comparison set as soon as that fetch returns, closed rows included: a supersession note, or the reason a row was canceled, is what makes a closed row worth comparing against. Dispositions stay active-only (§ 1.1). An issue with no comments reads as an empty list, and a disposition written before its issue's comments were read rests on unsupported evidence, whatever the body says.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh cache comments list [ISSUE_ID]   # one call per issue, TRACKER=linear
 gh issue view [N] --repo [REPOSITORY] --json comments                    # TRACKER=github
 ```
-
-Per-issue is the shape the cache offers (`.cache/linear/comments/[ISSUE_ID].json`), and an issue with no comments reads as an empty list. A disposition written before its issue's comments were read rests on unsupported evidence, whatever the body says.
 
 ### 1.5 Fetch Comparison Set
 

@@ -61,8 +61,14 @@ grep -Fq -- 'active rows' "$section" \
 
 # --- the section that disposes below-bar issues points at the step ----------
 
-sed -n '/^\*\*Below the bar\.\*\*/,/^$/p' "$AUDIT" >"$tmp/below-bar.md"
-[[ -s "$tmp/below-bar.md" ]] || fail 'the § 6.2 below-the-bar paragraph could not be extracted'
+# The rule runs from its bold marker to the next marker or heading. Stopping
+# at the first blank line instead would read only the marker whenever the rule
+# is written as a list, and the pin would then be looking at nothing.
+awk '/^\*\*Below the bar\.\*\*/ { inside = 1; print; next }
+     inside && (/^### / || /^\*\*/) { exit }
+     inside { print }' "$AUDIT" >"$tmp/below-bar.md"
+[[ $(grep -c . "$tmp/below-bar.md") -gt 1 ]] \
+  || fail 'the § 6.2 below-the-bar rule came back empty or marker-only'
 grep -Fq -- '§ 1.4.1' "$tmp/below-bar.md" \
   || fail '§ 6.2 below-the-bar evidence no longer cites the § 1.4.1 comment read'
 
