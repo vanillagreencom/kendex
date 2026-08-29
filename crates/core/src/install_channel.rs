@@ -19,6 +19,15 @@ const BREW_PREFIXES: [&str; 3] = [
 /// Where the AUR `kendex-bin` package puts the desktop app.
 const PACKAGED_APP_IMAGE: &str = "/usr/lib/kendex/kendex.AppImage";
 
+/// What to call the installer that owns a path. Fixed text, decided by
+/// which branch of the detection ran, so no value read off the machine
+/// ever reaches it — the rule the command string already lives under.
+const HOMEBREW: &str = "Homebrew";
+/// Every Arch arm gets the class, never the tool. `paru` sitting on `PATH`
+/// today says nothing about what fetched the package, so naming it would
+/// be inventing the one fact this build does not have.
+const AUR_HELPER: &str = "an AUR helper";
+
 /// How the running install may be brought up to date.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 #[serde(
@@ -29,9 +38,16 @@ const PACKAGED_APP_IMAGE: &str = "/usr/lib/kendex/kendex.AppImage";
 pub enum InstallChannel {
     /// The running install is ours to replace.
     Direct,
-    /// A system package manager owns these bytes; `command` brings them
-    /// current and is the only thing to offer.
-    Managed { command: String },
+    /// A system package manager owns these bytes. `manager` names it and
+    /// `command` brings them current; both are decided where the manager
+    /// is detected, so nothing downstream has to read a name back out of
+    /// the command string and guess.
+    ///
+    /// `manager` is not optional. Every branch that reaches here knows
+    /// which installer it found, and a detection that could not say who
+    /// owns a path is [`InstallChannel::Unknown`] — which names nobody and
+    /// offers nothing, and is where the honest degradation already lives.
+    Managed { manager: String, command: String },
     /// Not recognised: say a release is out, never replace anything, never
     /// invent a command.
     Unknown,
@@ -43,8 +59,8 @@ impl InstallChannel {
     pub fn allow_replacement(&self) -> Result<(), String> {
         match self {
             Self::Direct => Ok(()),
-            Self::Managed { command } => Err(format!(
-                "a package manager owns this install; update it with: {command}"
+            Self::Managed { manager, command } => Err(format!(
+                "this install came from {manager}; update it with: {command}"
             )),
             Self::Unknown => Err(
                 "kendex cannot tell how this copy was installed, so it will not replace it"
@@ -248,6 +264,7 @@ pub fn for_app(install: &AppInstall, probe: &dyn HostProbe) -> InstallChannel {
 pub fn for_cli(exe: &Path, probe: &dyn HostProbe) -> InstallChannel {
     if starts_with_any(exe, &BREW_PREFIXES) {
         return InstallChannel::Managed {
+            manager: HOMEBREW.to_owned(),
             command: "brew upgrade kendex-cli".to_owned(),
         };
     }
@@ -294,7 +311,10 @@ fn arch_channel(package: ArchPackage, probe: &dyn HostProbe) -> InstallChannel {
     } else {
         format!("update {name} with your AUR helper")
     };
-    InstallChannel::Managed { command }
+    InstallChannel::Managed {
+        manager: AUR_HELPER.to_owned(),
+        command,
+    }
 }
 
 fn replaceable_or_unknown(path: &Path, probe: &dyn HostProbe) -> InstallChannel {

@@ -291,6 +291,7 @@ fn a_command_another_installer_owns_is_never_ours_and_names_its_owner() {
             },
             &named,
             InstallChannel::Managed {
+                manager: "an AUR helper".to_owned(),
                 command: "update kendex with your AUR helper".to_owned(),
             },
         ),

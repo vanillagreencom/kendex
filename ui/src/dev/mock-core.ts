@@ -57,7 +57,11 @@ export const coreHandlers: Record<string, Handler> = {
   app_update_channel: () => {
     switch (wanted("update")) {
       case "managed":
-        return { kind: "managed", command: "paru -S kendex-bin" };
+        return {
+          kind: "managed",
+          manager: "an AUR helper",
+          command: "paru -S kendex-bin",
+        };
       case "unknown":
         return { kind: "unknown" };
       default:
@@ -69,7 +73,11 @@ export const coreHandlers: Record<string, Handler> = {
   // carries across itself.
   app_update_command_channel: () =>
     wanted("update") === "commandManaged"
-      ? { kind: "managed", command: "brew upgrade kendex-cli" }
+      ? {
+          kind: "managed",
+          manager: "Homebrew",
+          command: "brew upgrade kendex-cli",
+        }
       : null,
   // The mock browser harness has no install to replace, so the successful
   // path is the one thing it cannot show: the real command relaunches the

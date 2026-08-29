@@ -1,8 +1,7 @@
 import { Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
-  APP_UPDATE_COMMAND_LEFT_NOTE,
-  APP_UPDATE_COMMAND_MANAGED_NOTE,
+  APP_UPDATE_COMMAND_UNKNOWN_NOTE,
   APP_UPDATE_DISMISS_LABEL,
   APP_UPDATE_INSTALL_LABEL,
   APP_UPDATE_INSTALLING_LABEL,
@@ -10,6 +9,7 @@ import {
   APP_UPDATE_NOTES_LABEL,
   APP_UPDATE_TITLE,
   APP_UPDATE_UNKNOWN_NOTE,
+  appUpdateCommandManagedNote,
   appUpdateVersionsLabel,
 } from "@/lib/copy";
 import { useNoticeStore } from "@/stores/notice";
@@ -84,22 +84,23 @@ export function SidebarNotice() {
               not, so Update now moves one and leaves the other. Said
               before the button is pressed, because afterwards the app has
               restarted and the card is gone. */}
-          {commandChannel === null ? null : (
+          {commandChannel === null ? null : commandChannel.kind ===
+            "managed" ? (
             <>
               <p className="mt-2 text-xs text-muted-foreground">
-                {APP_UPDATE_COMMAND_LEFT_NOTE}
+                {appUpdateCommandManagedNote(commandChannel.manager)}
               </p>
-              {commandChannel.kind === "managed" ? (
-                <>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {APP_UPDATE_COMMAND_MANAGED_NOTE}
-                  </p>
-                  <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded bg-foreground/[0.05] px-2 py-1.5 font-mono text-[11px] leading-5">
-                    {commandChannel.command}
-                  </pre>
-                </>
-              ) : null}
+              <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded bg-foreground/[0.05] px-2 py-1.5 font-mono text-[11px] leading-5">
+                {commandChannel.command}
+              </pre>
             </>
+          ) : (
+            // Nothing named the installer, so there is no name to print
+            // and no command to run: the card says the app moves alone and
+            // stops, rather than leaving a gap where a name would go.
+            <p className="mt-2 text-xs text-muted-foreground">
+              {APP_UPDATE_COMMAND_UNKNOWN_NOTE}
+            </p>
           )}
         </>
       ) : channel.kind === "managed" ? (

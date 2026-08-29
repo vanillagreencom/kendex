@@ -223,11 +223,20 @@ export const APP_UPDATE_UNKNOWN_NOTE =
   "Update kendex the way you installed it.";
 // Said under Update now when the app is kendex's to replace and the
 // `kendex` command beside it is not. The app moves and the command does
-// not, so the card names that before the button is pressed rather than
+// not, so the card says that before the button is pressed rather than
 // leaving a terminal on the old version with nothing having said so.
-export const APP_UPDATE_COMMAND_LEFT_NOTE =
-  "Update now moves the app. The kendex command here is not kendex's to replace.";
-export const APP_UPDATE_COMMAND_MANAGED_NOTE = "Update the command with:";
+//
+// It names the installer that owns the command, never a generic "your
+// package manager": the detection knows which one it found, and the
+// channel carries the name so nothing here has to read it back out of the
+// command string.
+export const appUpdateCommandManagedNote = (manager: string): string =>
+  `Update now updates the app only. The kendex command was installed by ${manager}; update it with:`;
+// Nothing could say who owns the command, so there is no installer to name
+// and no command to offer. The same answer APP_UPDATE_UNKNOWN_NOTE gives
+// for the app, about the command instead.
+export const APP_UPDATE_COMMAND_UNKNOWN_NOTE =
+  "Update now updates the app only. Update the kendex command the way you installed it.";
 // A whole-settings write the engine refused because the file moved under
 // it. Said wherever a change is one field and the retry is to press again.
 export const SETTINGS_MOVED_MESSAGE =

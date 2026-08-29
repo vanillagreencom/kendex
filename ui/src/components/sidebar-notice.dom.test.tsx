@@ -9,14 +9,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppUpdateView, InstallChannel } from "@/bindings";
 import { commands } from "@/bindings";
 import {
-  APP_UPDATE_COMMAND_LEFT_NOTE,
-  APP_UPDATE_COMMAND_MANAGED_NOTE,
+  APP_UPDATE_COMMAND_UNKNOWN_NOTE,
   APP_UPDATE_DISMISS_LABEL,
   APP_UPDATE_INSTALL_LABEL,
   APP_UPDATE_INSTALLING_LABEL,
   APP_UPDATE_NOTES_LABEL,
   APP_UPDATE_TITLE,
   APP_UPDATE_UNKNOWN_NOTE,
+  appUpdateCommandManagedNote,
 } from "@/lib/copy";
 import { useNoticeStore } from "@/stores/notice";
 import { mount, settle } from "@/test/dom";
@@ -190,6 +190,7 @@ describe("the action each channel allows", () => {
   it("shows a package manager's command and offers no replacement", async () => {
     const container = await show({
       kind: "managed",
+      manager: "an AUR helper",
       command: "paru -S kendex-bin",
     });
     expect(container.textContent).toContain("paru -S kendex-bin");
@@ -205,25 +206,47 @@ describe("the action each channel allows", () => {
   // Update now replaces the app and restarts into it, so anything the
   // person needs to know about the command it leaves behind has to be on
   // the card before the button is pressed. Afterwards there is no card.
-  it("says the command is left behind, and who updates it", async () => {
+  it("names the installer that owns the command, and how to move it", async () => {
     const container = await show(
       { kind: "direct" },
-      { kind: "managed", command: "brew upgrade kendex-cli" },
+      {
+        kind: "managed",
+        manager: "Homebrew",
+        command: "brew upgrade kendex-cli",
+      },
     );
     expect(container.textContent).toContain(APP_UPDATE_INSTALL_LABEL);
-    expect(container.textContent).toContain(APP_UPDATE_COMMAND_LEFT_NOTE);
-    expect(container.textContent).toContain(APP_UPDATE_COMMAND_MANAGED_NOTE);
+    expect(container.textContent).toContain(
+      appUpdateCommandManagedNote("Homebrew"),
+    );
     expect(container.textContent).toContain("brew upgrade kendex-cli");
+  });
+
+  // The name comes from the channel, so a different installer reads as
+  // itself rather than as whatever the first case happened to be.
+  it("names whichever installer the channel carries", async () => {
+    const container = await show(
+      { kind: "direct" },
+      {
+        kind: "managed",
+        manager: "an AUR helper",
+        command: "paru -S kendex",
+      },
+    );
+    expect(container.textContent).toContain(
+      appUpdateCommandManagedNote("an AUR helper"),
+    );
+    expect(container.textContent).not.toContain("Homebrew");
   });
 
   // Nothing kendex could name owns it, so the card says the command is
   // left behind and stops there rather than inventing a way to move it.
-  it("names no command where nothing could tell who owns it", async () => {
+  it("names no installer where nothing could tell who owns it", async () => {
     const container = await show({ kind: "direct" }, { kind: "unknown" });
-    expect(container.textContent).toContain(APP_UPDATE_COMMAND_LEFT_NOTE);
-    expect(container.textContent).not.toContain(
-      APP_UPDATE_COMMAND_MANAGED_NOTE,
-    );
+    expect(container.textContent).toContain(APP_UPDATE_COMMAND_UNKNOWN_NOTE);
+    // No half-written sentence, and no invented owner.
+    expect(container.textContent).not.toContain("installed by");
+    expect(container.textContent).not.toContain("update it with:");
   });
 
   // The two cases with nothing to say: no command beside the app, and one
@@ -231,7 +254,7 @@ describe("the action each channel allows", () => {
   it("says nothing about the command where it is not left behind", async () => {
     const container = await show({ kind: "direct" }, null);
     expect(container.textContent).toContain(APP_UPDATE_INSTALL_LABEL);
-    expect(container.textContent).not.toContain(APP_UPDATE_COMMAND_LEFT_NOTE);
+    expect(container.textContent).not.toContain("updates the app only");
   });
 
   // A channel read that failed is the same offer as one nothing

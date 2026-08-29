@@ -80,8 +80,10 @@ fn run_on(
     public_key: &str,
     target: &str,
 ) -> CliResult {
-    if let InstallChannel::Managed { command } = channel {
-        out("a package manager owns this install; update it with:");
+    if let InstallChannel::Managed { manager, command } = channel {
+        out(&format!(
+            "this install came from {manager}; update it with:"
+        ));
         out(&format!("  {command}"));
         return Ok(());
     }

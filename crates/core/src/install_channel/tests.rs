@@ -72,10 +72,17 @@ impl HostProbe for Fake {
     }
 }
 
-fn managed(command: &str) -> InstallChannel {
+fn managed(manager: &str, command: &str) -> InstallChannel {
     InstallChannel::Managed {
+        manager: manager.to_owned(),
         command: command.to_owned(),
     }
+}
+
+/// Every Arch arm names the class rather than the helper it found, so the
+/// expectation is written once here and read at each site.
+fn aur(command: &str) -> InstallChannel {
+    managed(AUR_HELPER, command)
 }
 
 fn app_image(path: &str) -> AppInstall {
@@ -115,7 +122,7 @@ fn a_packaged_appimage_names_its_package_even_where_the_file_is_writable() {
         .on_path("paru");
     assert_eq!(
         for_app(&app_image(PACKAGED_APP_IMAGE), &probe),
-        managed("paru -S kendex-bin")
+        aur("paru -S kendex-bin")
     );
 }
 
@@ -131,7 +138,7 @@ fn an_arch_derivative_naming_arch_in_id_like_is_recognised() {
     let probe = Fake::default().os_release(CACHYOS).on_path("yay");
     assert_eq!(
         for_app(&app_image(PACKAGED_APP_IMAGE), &probe),
-        managed("yay -S kendex-bin")
+        aur("yay -S kendex-bin")
     );
 }
 
@@ -154,7 +161,7 @@ fn with_no_aur_helper_the_command_is_helper_neutral_prose() {
     let probe = Fake::default().os_release(ARCH);
     assert_eq!(
         for_app(&app_image(PACKAGED_APP_IMAGE), &probe),
-        managed("update kendex-bin with your AUR helper")
+        aur("update kendex-bin with your AUR helper")
     );
 }
 
@@ -166,7 +173,7 @@ fn paru_wins_over_yay_when_both_are_installed() {
         .on_path("paru");
     assert_eq!(
         for_app(&app_image(PACKAGED_APP_IMAGE), &probe),
-        managed("paru -S kendex-bin")
+        aur("paru -S kendex-bin")
     );
 }
 
@@ -242,7 +249,7 @@ fn a_brew_linked_cli_is_brews_to_upgrade_however_it_was_reached() {
         for reached in [linked, cellar] {
             assert_eq!(
                 for_cli(&probe.resolve(Path::new(reached)), &probe),
-                managed("brew upgrade kendex-cli"),
+                managed(HOMEBREW, "brew upgrade kendex-cli"),
                 "{reached}"
             );
         }
@@ -279,7 +286,7 @@ fn an_appimage_reached_through_a_link_belongs_to_whatever_it_points_at() {
         install,
         AppInstall::AppImage(Some(PathBuf::from(PACKAGED_APP_IMAGE)))
     );
-    assert_eq!(for_app(&install, &probe), managed("paru -S kendex-bin"));
+    assert_eq!(for_app(&install, &probe), aur("paru -S kendex-bin"));
 }
 
 #[test]
@@ -302,22 +309,25 @@ fn the_packaged_cli_names_whichever_package_put_it_there() {
         .os_release(ARCH)
         .on_path("paru")
         .present(PACKAGED_APP_IMAGE);
-    assert_eq!(for_cli(exe, &both), managed("paru -S kendex-bin"));
+    assert_eq!(for_cli(exe, &both), aur("paru -S kendex-bin"));
     let cli_only = Fake::default().os_release(ARCH).on_path("paru");
-    assert_eq!(for_cli(exe, &cli_only), managed("paru -S kendex"));
+    assert_eq!(for_cli(exe, &cli_only), aur("paru -S kendex"));
 }
 
 /// Anything a resolver read off the machine — a distro name, an os-release
-/// line, the path itself — stays out of the string a person is told to run.
+/// line, the path itself — stays out of the string a person is told to run,
+/// and out of the manager named beside it. Both are fixed text picked by
+/// which branch of the detection ran.
 #[test]
 fn nothing_read_from_the_machine_reaches_a_command_string() {
     let hostile = "ID=arch\nPRETTY_NAME=\"; rm -rf /\"\nID_LIKE=\"arch $(whoami)\"\n";
     let exe = Path::new("/usr/bin/kendex; rm -rf /");
     let probe = Fake::default().os_release(hostile).on_path("paru");
-    let InstallChannel::Managed { command } = for_cli(exe, &probe) else {
+    let InstallChannel::Managed { manager, command } = for_cli(exe, &probe) else {
         panic!("a package-owned path on Arch is Managed");
     };
     assert_eq!(command, "paru -S kendex");
+    assert_eq!(manager, AUR_HELPER);
 }
 
 #[test]
@@ -338,8 +348,10 @@ fn an_os_release_value_is_read_unquoted_and_whole() {
 fn in_place_replacement_is_refused_off_a_direct_install() {
     assert_eq!(InstallChannel::Direct.allow_replacement(), Ok(()));
     assert_eq!(
-        managed("paru -S kendex-bin").allow_replacement(),
-        Err("a package manager owns this install; update it with: paru -S kendex-bin".to_owned())
+        aur("paru -S kendex-bin").allow_replacement(),
+        Err(format!(
+            "this install came from {AUR_HELPER}; update it with: paru -S kendex-bin"
+        ))
     );
     assert!(InstallChannel::Unknown.allow_replacement().is_err());
 }
@@ -544,4 +556,25 @@ fn judged_path_hands_over_the_file_for_app_approved() {
 
     assert_eq!(AppInstall::WindowsInstaller.judged_path(), None);
     assert_eq!(AppInstall::AppImage(None).judged_path(), None);
+}
+
+/// The manager names are what a person reads on the card, so they are
+/// pinned by value here rather than through the constants every per-branch
+/// test compares against. Two managers sharing one name pass all of those
+/// and still send a Homebrew user to an AUR helper.
+#[test]
+fn each_installer_is_named_as_itself() {
+    let named = |channel| match channel {
+        InstallChannel::Managed { manager, .. } => manager,
+        other => panic!("expected a managed channel, got {other:?}"),
+    };
+    let brew = Path::new("/opt/homebrew/Cellar/kendex-cli/5.0.1/bin/kendex");
+    let arch = Fake::default().os_release(ARCH).on_path("paru");
+
+    assert_eq!(named(for_cli(brew, &Fake::default())), "Homebrew");
+    assert_eq!(
+        named(for_cli(Path::new("/usr/bin/kendex"), &arch)),
+        "an AUR helper"
+    );
+    assert_ne!(HOMEBREW, AUR_HELPER);
 }

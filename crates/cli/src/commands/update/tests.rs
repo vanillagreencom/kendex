@@ -80,6 +80,7 @@ fn a_package_managed_command_is_left_for_its_package_manager() {
     let dir = tempfile::tempdir().unwrap();
     let (env, feed_url, installed) = a_release_is_out(&dir);
     let brew = InstallChannel::Managed {
+        manager: "Homebrew".to_owned(),
         command: "brew upgrade kendex-cli".to_owned(),
     };
 

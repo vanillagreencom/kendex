@@ -30,10 +30,17 @@ export const commands = {
 /**  The running install is ours to replace. */
 { kind: "direct" } | 
 /**
- *  A system package manager owns these bytes; `command` brings them
- *  current and is the only thing to offer.
+ *  A system package manager owns these bytes. `manager` names it and
+ *  `command` brings them current; both are decided where the manager
+ *  is detected, so nothing downstream has to read a name back out of
+ *  the command string and guess.
+ * 
+ *  `manager` is not optional. Every branch that reaches here knows
+ *  which installer it found, and a detection that could not say who
+ *  owns a path is [`InstallChannel::Unknown`] — which names nobody and
+ *  offers nothing, and is where the honest degradation already lives.
  */
-{ kind: "managed"; command: string } | 
+{ kind: "managed"; manager: string; command: string } | 
 /**
  *  Not recognised: say a release is out, never replace anything, never
  *  invent a command.
@@ -1495,10 +1502,17 @@ export type InstallChannel =
 /**  The running install is ours to replace. */
 { kind: "direct" } | 
 /**
- *  A system package manager owns these bytes; `command` brings them
- *  current and is the only thing to offer.
+ *  A system package manager owns these bytes. `manager` names it and
+ *  `command` brings them current; both are decided where the manager
+ *  is detected, so nothing downstream has to read a name back out of
+ *  the command string and guess.
+ * 
+ *  `manager` is not optional. Every branch that reaches here knows
+ *  which installer it found, and a detection that could not say who
+ *  owns a path is [`InstallChannel::Unknown`] — which names nobody and
+ *  offers nothing, and is where the honest degradation already lives.
  */
-{ kind: "managed"; command: string } | 
+{ kind: "managed"; manager: string; command: string } | 
 /**
  *  Not recognised: say a release is out, never replace anything, never
  *  invent a command.
