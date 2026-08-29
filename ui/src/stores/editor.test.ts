@@ -6,6 +6,7 @@ import type {
   ScopeSettings,
 } from "@/bindings";
 import { commands } from "@/bindings";
+import { placeFacts, placesSource } from "@/lib/customized-places";
 import { groupItems } from "@/lib/derive";
 import { emptyDraft, setInstruction } from "@/lib/editor-draft";
 import { markFor } from "@/lib/package-mark";
@@ -172,6 +173,57 @@ describe("editor store", () => {
     await useEditorStore.getState().load();
     expect(useEditorStore.getState().settings).toBeNull();
     expect(useEditorStore.getState().error).toBe("permission denied");
+    expect(useEditorStore.getState().savedSettings.global).toBeUndefined();
+  });
+
+  /// A place read once and unreadable since is no longer known. Left in
+  /// `savedSettings`, its entry reads as a completed read, and the
+  /// Library row, the package header and the Customize index go on
+  /// answering stock or customized off a file nobody can read.
+  it("unsays a settings answer whose next read failed", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1" },
+    });
+    await useEditorStore.getState().load();
+    expect(useEditorStore.getState().savedSettings.global).toBeDefined();
+
+    vi.mocked(commands.getScopeSettings).mockResolvedValue({
+      status: "error",
+      error: "permission denied",
+    });
+    await useEditorStore.getState().load();
+
+    const { savedSettings } = useEditorStore.getState();
+    expect(savedSettings.global).toBeUndefined();
+    // The consumers' own answer, not just the record: unknown, never the
+    // fact the last successful read left behind.
+    const places = placesSource({}, [], true, savedSettings);
+    expect(placeFacts(places, "skill", "gh", { scope: "global" }).values).toBe(
+      null,
+    );
+  });
+
+  /// The same record, the same rule, when it is the manifest read that
+  /// failed: a settings answer this pass could not make is dropped
+  /// rather than carried over from the pass before it.
+  it("unsays it too when the manifest read is what failed", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1" },
+    });
+    await useEditorStore.getState().load();
+    expect(useEditorStore.getState().savedSettings.global).toBeDefined();
+
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "error",
+      error: "kendex.toml is unreadable",
+    });
+    vi.mocked(commands.getScopeSettings).mockResolvedValue({
+      status: "error",
+      error: "permission denied",
+    });
+    await useEditorStore.getState().load();
     expect(useEditorStore.getState().savedSettings.global).toBeUndefined();
   });
 
