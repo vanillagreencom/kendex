@@ -96,7 +96,8 @@ PATH="$TMP_ROOT/bin:$PATH" \
 
 assert_contains "$default_stderr" "timeout=1080s" "default timeout resolves to documented 1080s"
 if [[ -n "$resolved_timeout" ]]; then
-  assert_contains "$default_stderr" "cmd: $resolved_timeout --foreground -k 30 1080s codex" "launch log includes resolved default timeout"
+  assert_contains "$default_stderr" "cmd: $resolved_timeout --foreground -k 30 1080s " "launch log includes resolved default timeout"
+  assert_contains "$default_stderr" "second-opinion-runtime tree 25" "launch log includes CLI-tree supervision"
 else
   assert_contains "$default_stderr" "cmd: direct codex" "launch log names direct default execution"
 fi
@@ -110,7 +111,7 @@ PATH="$TMP_ROOT/bin:$PATH" \
 
 assert_contains "$override_stderr" "timeout=7s" "caller timeout override wins"
 if [[ -n "$resolved_timeout" ]]; then
-  assert_contains "$override_stderr" "cmd: $resolved_timeout --foreground -k 30 7s codex" "launch log includes resolved override timeout"
+  assert_contains "$override_stderr" "cmd: $resolved_timeout --foreground -k 30 7s " "launch log includes resolved override timeout"
 else
   assert_contains "$override_stderr" "cmd: direct codex" "launch log names direct override execution"
 fi

@@ -37,13 +37,12 @@ Drain what a review bot would surface before the PR exists.
 
 **Skip if** any holds: `lifecycle` is `"managed"`; a PR number argument was provided (arrived comments are triaged in § 3); or `.agents/skills/second-opinion/scripts/second-opinion` does not exist.
 
-Launch the review **in the background**, never as a foreground shell call: the default timeout (`SECOND_OPINION_TIMEOUT`, 1080s) exceeds the ~600s ceiling on a foreground call. On Claude Code use `run_in_background`; on Pi run it under `bg_task`; on Codex and OpenCode use scheduled re-entry, or pass `--timeout` at or below the foreground ceiling. Wait for it to complete before validating.
+Run `second-opinion …`; it backgrounds itself and prints when to check.
 
 ```bash
 mkdir -p [WORKTREE_PATH]/tmp
 .agents/skills/orch/scripts/git-context timestamp epoch
 .agents/skills/orch/scripts/git-context timestamp compact
-# backgrounded:
 .agents/skills/second-opinion/scripts/second-opinion review --cwd [WORKTREE_PATH] --output [WORKTREE_PATH]/tmp/review-local-[TIMESTAMP_FROM_PREVIOUS_COMMAND].json
 ```
 

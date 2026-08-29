@@ -18,7 +18,7 @@ Answer concisely and directly. If you need to examine code in this project to an
 
 ## 2. Run Script
 
-The default timeout (`SECOND_OPINION_TIMEOUT`, 1080s) exceeds the ~600s ceiling a harness puts on a foreground shell call — on Claude Code use `run_in_background` (Pi: `bg_task`; Codex/OpenCode: scheduled re-entry), or pass `--timeout` at or below the foreground ceiling.
+Run `second-opinion …`; it backgrounds itself and prints when to check.
 
 Either pass the prompt file or the question inline:
 

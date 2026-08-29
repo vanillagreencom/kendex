@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+RUNTIME_SELF="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)/${BASH_SOURCE[0]##*/}"
+
+die() { echo "second-opinion-runtime: $1" >&2; exit 1; }
+
+second_opinion_runtime_setup() {
+  TIMEOUT_CMD="$(command -v timeout || command -v gtimeout || true)"
+  [[ -n "$TIMEOUT_CMD" ]] \
+    || echo "Warning: no timeout or gtimeout on PATH — external CLI calls will run without a time limit" >&2
+}
+
+run_with_timeout() {
+  local duration="$1" stderr_file="$2"
+  shift 2
+  if [[ -z "$TIMEOUT_CMD" ]]; then
+    echo "→ cmd: direct $*" >&2
+    "$@" 2>"$stderr_file"
+    return
+  fi
+  echo "→ cmd: $TIMEOUT_CMD --foreground -k 30 ${duration}s $RUNTIME_SELF tree 25 $stderr_file $*" >&2
+  "$TIMEOUT_CMD" --foreground -k 30 "$duration" "$RUNTIME_SELF" tree 25 "$stderr_file" "$@"
+}
+
+tree() {
+  local grace="$1" stderr_file="$2"
+  shift 2
+  [[ "$grace" =~ ^[1-9][0-9]*$ ]] || die "grace must be positive"
+  [[ $# -gt 0 ]] || die "tree command is missing"
+
+  local tree_pid tree_rc=0 end now
+  set -m
+  "$@" 2>"$stderr_file" &
+  tree_pid=$!
+  set +m
+
+  terminate_tree() {
+    kill -TERM -- "-$tree_pid" 2>/dev/null || true
+    end=$(($(date +%s) + grace))
+    while kill -0 -- "-$tree_pid" 2>/dev/null; do
+      now=$(date +%s)
+      if [[ $now -ge $end ]]; then
+        kill -KILL -- "-$tree_pid" 2>/dev/null || true
+        break
+      fi
+      sleep 0.1
+    done
+    wait "$tree_pid" 2>/dev/null || true
+  }
+  trap 'terminate_tree; exit 143' TERM HUP
+  trap 'terminate_tree; exit 130' INT
+
+  wait "$tree_pid" || tree_rc=$?
+  exit "$tree_rc"
+}
+
+launch() {
+  local script="$1" artifact="$2" log="$3" budget="$4" owned="$5"
+  shift 5
+  [[ "$budget" =~ ^[1-9][0-9]*$ ]] || die "budget must be positive"
+  [[ "$owned" == true || "$owned" == false ]] || die "owned must be true or false"
+  local deadline token
+  deadline=$(($(date +%s) + budget))
+  token="$(date +%s).$$.$RANDOM"
+
+  (
+    set +e
+    worker_args=("$@" --detached-worker "--output=$artifact")
+    $owned && worker_args+=(--scratch-output)
+    "$script" "${worker_args[@]}"
+    rc=$?
+    printf '__SECOND_OPINION_EXIT_%s__=%s\n' "$token" "$rc" >&2
+    exit "$rc"
+  ) >"$log" 2>&1 &
+
+  printf 'artifact: %s\n' "$artifact"
+  printf 'deadline: %s\n' "$deadline"
+  printf 'wait:'
+  printf ' %q' "$RUNTIME_SELF" wait "$artifact" "$log" "$deadline" "$token"
+  printf '\n'
+}
+
+second_opinion_detach_if_needed() {
+  local artifact="$OUTPUT_PATH" owned=false attempts=1 budget log
+  if $DETACHED_WORKER || [[ "$MODE" == "detect" ]] \
+      || { ! $FOREGROUND_CAP && ! $FOREGROUND_CAP_IN_CALLER_ENV; }; then
+    return
+  fi
+  [[ -x "$RUNTIME_SELF" ]] || die "runtime is missing: $RUNTIME_SELF"
+  if [[ -z "$artifact" ]]; then
+    artifact_file detached
+    artifact="$ARTIFACT_PATH"
+    owned=true
+  elif [[ "$artifact" != /* ]]; then
+    artifact="$(pwd)/$artifact"
+  fi
+  [[ -n "$artifact" ]] || die "no writable artifact path for detached run"
+  artifact_file detached-log
+  log="$ARTIFACT_PATH"
+  [[ -n "$log" ]] || die "no writable log path for detached run"
+  [[ "$MODE" == "review" || "$MODE" == "audit" ]] && attempts=2
+  budget=$((attempts * (10#$TIMEOUT + 30) + 60))
+  exec "$RUNTIME_SELF" launch "$SCRIPT_DIR/second-opinion" "$artifact" "$log" \
+    "$budget" "$owned" "${ORIGINAL_ARGS[@]}"
+}
+
+wait_for_run() {
+  local artifact="$1" log="$2" deadline="$3" token="$4"
+  [[ "$deadline" =~ ^[1-9][0-9]*$ ]] || die "deadline must be a positive epoch"
+  [[ "$token" =~ ^[A-Za-z0-9._-]+$ ]] || die "token is malformed"
+  local prefix="__SECOND_OPINION_EXIT_${token}__=" line match matches status now grep_rc
+  while :; do
+    line=""
+    if [[ -r "$log" ]]; then
+      grep_rc=0
+      matches=$(grep -F "$prefix" "$log") || grep_rc=$?
+      [[ $grep_rc -le 1 ]] || die "cannot read worker log: $log"
+      while IFS= read -r match; do
+        line="$match"
+      done <<< "$matches"
+    fi
+    if [[ -n "$line" ]]; then
+      status="${line#"$prefix"}"
+      [[ "$status" =~ ^[0-9]+$ && $status -le 255 ]] || die "worker status is malformed"
+      grep_rc=0
+      grep -vF "$prefix" "$log" >&2 || grep_rc=$?
+      [[ $grep_rc -le 1 ]] || die "cannot replay worker log: $log"
+      rm -f -- "$log" || true
+      if [[ $status -eq 0 && ! -s "$artifact" ]]; then
+        echo "Error: detached run exited 0 without writing its artifact: $artifact" >&2
+        exit 1
+      fi
+      [[ $status -eq 0 ]] && printf '%s\n' "$artifact"
+      exit "$status"
+    fi
+    now=$(date +%s)
+    if [[ $now -ge $deadline ]]; then
+      [[ ! -r "$log" ]] || cat < "$log" >&2
+      echo "Error: detached run did not finish by deadline $deadline" >&2
+      exit 124
+    fi
+    sleep 2
+  done
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  action="${1:-}"
+  [[ -n "$action" ]] || die "action required"
+  shift
+  case "$action" in
+    tree) [[ $# -ge 3 ]] || die "tree arguments are incomplete"; tree "$@" ;;
+    launch) [[ $# -ge 6 ]] || die "launch arguments are incomplete"; launch "$@" ;;
+    wait) [[ $# -eq 4 ]] || die "wait requires artifact, log, deadline, and token"; wait_for_run "$@" ;;
+    *) die "unknown action: $action" ;;
+  esac
+fi

@@ -16,6 +16,7 @@
 #   SECOND_OPINION_<NAME>_CMD    Full command for target <NAME> (claude/codex have defaults)
 #   SECOND_OPINION_TARGET        Force one target (still subject to self-exclusion)
 #   SECOND_OPINION_TIMEOUT       Timeout in seconds (default: 1080)
+#   SECOND_OPINION_FOREGROUND_CAP  Harness adapter marks a capped foreground call
 #   SECOND_OPINION_ARTIFACT_DIR  Home for artifacts not anchored by --output
 #                                (default: tmp/second-opinion under --cwd)
 #   SECOND_OPINION_REVIEW_INSTRUCTIONS  Repo instruction-file globs for review
@@ -23,6 +24,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUNTIME="$SCRIPT_DIR/second-opinion-runtime"
+ORIGINAL_ARGS=("$@")
+FOREGROUND_CAP_IN_CALLER_ENV=false
+[[ "${SECOND_OPINION_FOREGROUND_CAP:-}" == "1" ]] && FOREGROUND_CAP_IN_CALLER_ENV=true
 
 
 # Whether SECOND_OPINION_CURRENT_MODEL arrived from the CALLER'S OWN
@@ -85,6 +90,7 @@ Options:
   --range <ref>     Git diff range for review (default: origin/BASE...HEAD)
   --cwd <path>      Working directory for external CLI (default: .)
   --timeout <secs>  CLI timeout (default: 1080, env: SECOND_OPINION_TIMEOUT)
+  --foreground      Mark this call as subject to a foreground harness cap
   -h, --help        Show this help
 
 Target selection: every mode walks SECOND_OPINION_MODELS in order and takes the
@@ -101,8 +107,8 @@ it as <output>.<target>.json. A failed lane is recorded in the artifact
 and the run exits 4/5.
 
 Environment. Every key below belongs in kendex.settings.toml [env] (or
-.env.local) EXCEPT SECOND_OPINION_CURRENT_MODEL, which is session-scoped —
-export it in the environment of the session that needs it:
+.env.local) except SECOND_OPINION_CURRENT_MODEL and
+SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
   SECOND_OPINION_MODELS      Priority-ordered target roster, space/comma
                              separated (default: "claude codex"); set empty and
                              the run refuses rather than using the default
@@ -134,11 +140,11 @@ export it in the environment of the session that needs it:
   SECOND_OPINION_TIMEOUT     Timeout in seconds (default: 1080), per
                              invocation: review/audit's one retry on a
                              malformed response gets a fresh window, so a lane
-                             can run up to twice this. The default exceeds the
-                             ~600s ceiling most agent harnesses put on a
-                             foreground shell call — run the script in the
-                             background, or pass --timeout at or below that
-                             ceiling
+                             can run up to twice this
+  SECOND_OPINION_FOREGROUND_CAP
+                             Set to 1 by a harness adapter whose foreground
+                             shell calls are capped. The script detaches and
+                             prints its artifact, deadline, and wait command
   SECOND_OPINION_ARTIFACT_DIR
                              Home for review/audit records written without
                              --output (preserved raw, failed, and rejected
@@ -272,19 +278,8 @@ kendex_load_project_env "$PROJECT_ROOT" || {
   exit 1
 }
 
-TIMEOUT_CMD="$(command -v timeout || command -v gtimeout || true)"
-[[ -n "$TIMEOUT_CMD" ]] || echo "Warning: no timeout or gtimeout on PATH — external CLI calls will run without a time limit" >&2
-
-run_with_timeout() {
-  local duration="$1" stderr_file="$2"; shift 2
-  if [[ -z "$TIMEOUT_CMD" ]]; then
-    echo "→ cmd: direct $*" >&2
-    "$@" 2>"$stderr_file"; return
-  fi
-  echo "→ cmd: $TIMEOUT_CMD --foreground -k 30 ${duration}s $*" >&2
-  "$TIMEOUT_CMD" --foreground -k 30 "$duration" "$@" 2>"$stderr_file"
-}
-
+source "$RUNTIME"
+second_opinion_runtime_setup
 # --- Defaults -----------------------------------------------------------------
 
 MODE=""
@@ -295,6 +290,8 @@ TARGET=""
 TIMEOUT="${SECOND_OPINION_TIMEOUT:-1080}"
 CWD="."
 RANGE=""
+FOREGROUND_CAP=false
+DETACHED_WORKER=false
 
 # Distinct exit codes (kendex#652) so callers can tell "there was nothing to
 # review" and "the model reported it performed no review" apart from generic
@@ -387,6 +384,8 @@ while [[ $# -gt 0 ]]; do
     --cwd=*)     CWD="${1#--cwd=}"; shift ;;
     --timeout)   [[ $# -ge 2 && "$2" != -* ]] || { PARSE_ERROR="--timeout requires a value (use --timeout=VALUE for a value beginning with '-')"; break; }; TIMEOUT="$2"; shift 2 ;;
     --timeout=*) TIMEOUT="${1#--timeout=}"; shift ;;
+    --foreground) FOREGROUND_CAP=true; shift ;;
+    --detached-worker) DETACHED_WORKER=true; shift ;;
     # The multi-lane parent's word to its own children, and the reason it is a
     # flag rather than an environment variable: a project settings file's [env]
     # table names any variable it likes, and whether an output path belongs to
@@ -1691,6 +1690,8 @@ read_prompt() {
   fi
 }
 
+second_opinion_detach_if_needed
+
 # --- Multi-lane review orchestration ------------------------------------------
 # With SECOND_OPINION_COUNT >= 2, review mode runs the selected lanes on the
 # SAME derived scope (in parallel — GH bots run concurrently too) and unions
@@ -1756,7 +1757,6 @@ if $MULTI_LANE; then
   # Parameter expansion, not basename: BSD basename's `--` handling is not
   # something this branch can verify, and the shell needs no utility here —
   # the same reasoning that gave this file path_dir instead of dirname.
-  SELF="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}"
   LANE_OUTS=()
   LANE_ERRS=()
   # A lane artifact and the sidecar family a child writes beside it hold the
