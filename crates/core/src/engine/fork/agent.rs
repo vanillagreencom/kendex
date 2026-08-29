@@ -199,7 +199,7 @@ fn published(of: &ForkOf) -> Result<Published> {
         });
     };
     let bytes = sealed.read(&path)?;
-    let in_scope = crate::source::ScopeSkills::of(env, scope, manifest)?;
+    let in_scope = crate::engine::ScopeSkills::of(env, scope, manifest)?;
     Ok(Published {
         read_at: commit,
         agent: parse_source_agent(&String::from_utf8_lossy(&bytes))

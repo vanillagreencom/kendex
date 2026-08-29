@@ -103,7 +103,7 @@ pub(crate) fn agent_carry(
     config: &SourceConfig,
     name: &str,
     bytes: &[u8],
-    in_scope: &crate::source::ScopeSkills,
+    in_scope: &super::ScopeSkills,
 ) -> crate::error::Result<Option<AgentCarry>> {
     let text = String::from_utf8_lossy(bytes);
     let role = crate::render::agent::parse_source_agent(&text)

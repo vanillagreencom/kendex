@@ -42,6 +42,8 @@ mod plan_pass;
 mod planned;
 pub mod posture;
 mod removal;
+mod scope_skills;
+pub use scope_skills::ScopeSkills;
 mod scope_writes;
 mod settings_scan;
 pub use settings_scan::settings_templates;

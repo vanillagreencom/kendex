@@ -26,7 +26,7 @@ pub(super) fn source_form(
     manifest: &Manifest,
     item: &ClosureItem,
     commit: Option<&str>,
-    in_scope: &crate::source::ScopeSkills,
+    in_scope: &crate::engine::ScopeSkills,
 ) -> Result<(SourceFiles, Option<AgentCarry>)> {
     let resolved = match crate::source::resolve_at(env, scope, &item.decl.source, manifest, commit)?
     {

@@ -362,7 +362,7 @@ pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
         .filter(|item| item.kind == ItemKind::Skill)
         .map(|item| item.name.clone())
         .collect();
-    let skills = crate::source::ScopeSkills::after(env, &scope, &converted, &arriving)?;
+    let skills = crate::engine::ScopeSkills::after(env, &scope, &converted, &arriving)?;
     let mut ops = Vec::new();
     let mut carried: Vec<(String, AgentCarry)> = Vec::new();
     for item in &closure.items {

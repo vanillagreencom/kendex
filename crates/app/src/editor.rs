@@ -2,7 +2,6 @@ use kendex_core::engine::{self, ItemSource};
 use kendex_core::env::Env;
 use kendex_core::manifest::{self};
 use kendex_core::model::{HarnessId, ItemKind, Scope};
-use kendex_core::source;
 use serde::Serialize;
 use specta::Type;
 
@@ -227,7 +226,7 @@ pub fn editor_inventory(scope: Scope) -> Result<EditorInventory, String> {
     // The same set the renderer resolves an agent's assignment against:
     // offering a skill here that the render would refuse would put the two
     // answers about one question in two places.
-    inventory.available_skills = source::ScopeSkills::of(&env, &scope, &manifest)
+    inventory.available_skills = engine::ScopeSkills::of(&env, &scope, &manifest)
         .map_err(|e| e.to_string())?
         .names()
         .to_vec();

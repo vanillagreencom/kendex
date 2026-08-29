@@ -8,6 +8,7 @@ mod agent_capture;
 mod agent_settings;
 mod agent_tables;
 mod agent_wrapper;
+mod available;
 mod beside;
 mod disabled;
 mod edited_harness;

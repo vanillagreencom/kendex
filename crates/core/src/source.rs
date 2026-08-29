@@ -375,9 +375,7 @@ pub fn require_ready(
 }
 
 mod config;
-mod scope_skills;
 pub use config::{SourceConfig, find_item, list_items, source_config, source_config_for};
-pub use scope_skills::ScopeSkills;
 
 #[cfg(test)]
 mod tests;
