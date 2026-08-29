@@ -15,8 +15,17 @@
 #![cfg(unix)]
 
 use kendex_core::process::Hardened;
+use std::sync::{Mutex, OnceLock};
 
 const INNER: &str = "KENDEX_TEST_GUARD_ENV_INNER";
+static SCRIPT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn script_lock() -> std::sync::MutexGuard<'static, ()> {
+    SCRIPT_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 /// The redirect has to come from the parent's environment, which a test
 /// cannot set beside its siblings without racing them. The outer run
@@ -25,6 +34,8 @@ const INNER: &str = "KENDEX_TEST_GUARD_ENV_INNER";
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_guard_hook_sees_the_index_git_named() {
+    // A fork can inherit a sibling test's script write descriptor until exec.
+    let _guard = script_lock();
     if std::env::var_os(INNER).is_none() {
         let status = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
@@ -91,6 +102,7 @@ fn a_guard_hook_sees_the_index_git_named() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_guard_hook_relays_its_verdict() {
+    let _guard = script_lock();
     let tmp = tempfile::tempdir().unwrap();
     let script = tmp.path().join("pre-commit");
     std::fs::write(
