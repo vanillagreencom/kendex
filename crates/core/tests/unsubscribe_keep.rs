@@ -218,7 +218,9 @@ fn keeping_a_package_refuses_a_local_source_reached_through_a_link() {
     // is the spelling the refusal names. The root is a real directory; the
     // component below it is the link, and canonicalizing that would follow
     // it.
-    let named = local.canonicalize().unwrap().join("skills");
+    let named = kendex_core::paths::canonical(&local)
+        .unwrap()
+        .join("skills");
     assert!(
         matches!(&refused, CoreError::SourceEscape { path, reason }
             if path == &named && reason.contains("symlink")),

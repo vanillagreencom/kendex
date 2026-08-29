@@ -45,8 +45,22 @@ const VERBATIM: &str = r"\\?\";
 const LEGACY_MAX_PATH: usize = 248;
 
 /// A path as text, spelled with `/` whatever the platform builds it with.
+///
+/// A verbatim path is reduced by [`plain`] first, since `\\?\C:\x` with
+/// its separators swapped is `//?/C:/x`, which names nothing: extended
+/// syntax reads `/` as an ordinary character rather than a separator. One
+/// [`plain`] cannot reduce has no `/` spelling at all and comes back as it
+/// went in, still `\`-spelled — a caller writing it into a shell string
+/// gets a path that shell cannot read, which is the honest answer where
+/// the alternative names a different file or none. A root reaches here
+/// that way only from a harness root somebody set to the verbatim form.
 pub fn slashed(path: &Path) -> String {
-    spelled(&path.to_string_lossy(), std::path::MAIN_SEPARATOR)
+    let text = path.to_string_lossy();
+    let reduced = plain(&text);
+    match reduced.starts_with(VERBATIM) {
+        true => reduced.into_owned(),
+        false => spelled(&reduced, std::path::MAIN_SEPARATOR),
+    }
 }
 
 /// The rule [`slashed`] applies, with the platform's separator passed in.
@@ -251,6 +265,21 @@ mod tests {
         // Past the legacy limit the plain spelling is refused outright.
         let long = format!(r"\\?\C:\{}", "d".repeat(LEGACY_MAX_PATH));
         assert_eq!(plain(&long), long);
+    }
+
+    /// The verbatim form has no `/` spelling, so the prefix comes off
+    /// before the separators move, and stays on where it cannot come off.
+    /// Against a `slashed` that spells whatever it is handed, the first
+    /// of these is red and the second passes for the wrong reason.
+    #[test]
+    fn a_verbatim_path_is_reduced_before_it_is_spelled_or_left_whole() {
+        let out = slashed(Path::new(r"\\?\C:\Users\me"));
+        assert!(!out.starts_with(VERBATIM), "{out}");
+        assert!(!out.starts_with("//?/"), "{out}");
+        assert!(out.ends_with("me"), "{out}");
+        // Nothing to reduce to, so nothing to spell: `/` inside extended
+        // syntax is a character in a name, not a separator.
+        assert_eq!(slashed(Path::new(r"\\?\C:\dev\app ")), r"\\?\C:\dev\app ");
     }
 
     /// And `reduced` is that rule over a path, so a caller that resolved

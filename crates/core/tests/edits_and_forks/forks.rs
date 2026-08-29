@@ -265,10 +265,7 @@ fn a_fork_reached_through_a_link_refuses_the_rename() {
     // The reader probes from the canonicalized local-source root, so that
     // is the spelling the refusal names. The root is a real directory; the
     // slot below it is the link, and canonicalizing that would follow it.
-    let named = w
-        .home
-        .join("app/.kendex-local")
-        .canonicalize()
+    let named = kendex_core::paths::canonical(&w.home.join("app/.kendex-local"))
         .unwrap()
         .join("skills/gh");
     assert!(
@@ -540,10 +537,7 @@ fn a_local_source_reached_through_a_link_refuses_the_fork() {
     // is the spelling the refusal names. The root is a real directory; the
     // component below it is the link, and canonicalizing that would follow
     // it.
-    let named = w
-        .home
-        .join("app/.kendex-local")
-        .canonicalize()
+    let named = kendex_core::paths::canonical(&w.home.join("app/.kendex-local"))
         .unwrap()
         .join("skills");
     assert!(
