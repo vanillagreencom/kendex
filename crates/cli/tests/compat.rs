@@ -3,6 +3,10 @@
 //! init scaffolding.
 #![cfg(unix)]
 
+#[path = "../fixture_url.rs"]
+mod fixture_url;
+use fixture_url::file_url;
+
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -351,8 +355,8 @@ fn update_over_a_local_feed_refuses_a_command_it_cannot_verify() {
     fs::write(
         home.join("feed.json"),
         format!(
-            r#"{{"schema": 1, "version": "9.9.9", "assets": {{"{target}": "file://{}/new-binary"}}}}"#,
-            home.display()
+            r#"{{"schema": 1, "version": "9.9.9", "assets": {{"{target}": {}}}}}"#,
+            serde_json::to_string(&file_url(&home.join("new-binary"))).unwrap()
         ),
     )
     .unwrap();
@@ -361,10 +365,7 @@ fn update_over_a_local_feed_refuses_a_command_it_cannot_verify() {
         &me,
         home,
         &["update"],
-        &[(
-            "KENDEX_UPDATE_FEED",
-            format!("file://{}/feed.json", home.display()),
-        )],
+        &[("KENDEX_UPDATE_FEED", file_url(&home.join("feed.json")))],
     );
     let refused = stderr(&output);
     assert!(!output.status.success(), "{refused}");
@@ -394,10 +395,7 @@ fn update_over_a_local_feed_refuses_a_command_it_cannot_verify() {
         home,
         home,
         &["update"],
-        &[(
-            "KENDEX_UPDATE_FEED",
-            format!("file://{}/feed.json", home.display()),
-        )],
+        &[("KENDEX_UPDATE_FEED", file_url(&home.join("feed.json")))],
     );
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("already up to date"));
@@ -410,10 +408,7 @@ fn update_over_a_local_feed_refuses_a_command_it_cannot_verify() {
         home,
         home,
         &["update"],
-        &[(
-            "KENDEX_UPDATE_FEED",
-            format!("file://{}/feed.json", home.display()),
-        )],
+        &[("KENDEX_UPDATE_FEED", file_url(&home.join("feed.json")))],
     );
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("older than installed"));
@@ -427,10 +422,7 @@ fn update_over_a_local_feed_refuses_a_command_it_cannot_verify() {
         home,
         home,
         &["update"],
-        &[(
-            "KENDEX_UPDATE_FEED",
-            format!("file://{}/feed.json", home.display()),
-        )],
+        &[("KENDEX_UPDATE_FEED", file_url(&home.join("feed.json")))],
     );
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("releases/tag/v99.0.0"));
@@ -447,10 +439,7 @@ fn update_over_a_local_feed_refuses_a_command_it_cannot_verify() {
         home,
         home,
         &["update", "--force"],
-        &[(
-            "KENDEX_UPDATE_FEED",
-            format!("file://{}/feed.json", home.display()),
-        )],
+        &[("KENDEX_UPDATE_FEED", file_url(&home.join("feed.json")))],
     );
     let current = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success());
@@ -465,10 +454,7 @@ fn update_over_a_local_feed_refuses_a_command_it_cannot_verify() {
         home,
         home,
         &["update", "--force"],
-        &[(
-            "KENDEX_UPDATE_FEED",
-            format!("file://{}/feed.json", home.display()),
-        )],
+        &[("KENDEX_UPDATE_FEED", file_url(&home.join("feed.json")))],
     );
     let older = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success());
@@ -507,8 +493,8 @@ fn a_desktop_app_that_cannot_be_replaced_leaves_the_command_alone() {
     fs::write(
         home.join("feed.json"),
         format!(
-            r#"{{"schema":1,"version":"9.9.9","assets":{{"{target}":"file://{}/new-binary"}}}}"#,
-            home.display()
+            r#"{{"schema":1,"version":"9.9.9","assets":{{"{target}":{}}}}}"#,
+            serde_json::to_string(&file_url(&home.join("new-binary"))).unwrap()
         ),
     )
     .unwrap();
@@ -517,10 +503,7 @@ fn a_desktop_app_that_cannot_be_replaced_leaves_the_command_alone() {
             &me,
             home,
             &["update"],
-            &[(
-                "KENDEX_UPDATE_FEED",
-                format!("file://{}/feed.json", home.display()),
-            )],
+            &[("KENDEX_UPDATE_FEED", file_url(&home.join("feed.json")))],
         )
     };
     // Read as text: the real binary is not UTF-8, so only a command that
@@ -610,8 +593,8 @@ fn update_refuses_a_copy_it_cannot_account_for() {
     fs::write(
         home.join("feed.json"),
         format!(
-            r#"{{"schema":1,"version":"9.9.9","assets":{{"{target}":"file://{}/new-binary"}}}}"#,
-            home.display()
+            r#"{{"schema":1,"version":"9.9.9","assets":{{"{target}":{}}}}}"#,
+            serde_json::to_string(&file_url(&home.join("new-binary"))).unwrap()
         ),
     )
     .unwrap();
@@ -620,10 +603,7 @@ fn update_refuses_a_copy_it_cannot_account_for() {
         &me,
         home,
         &["update"],
-        &[(
-            "KENDEX_UPDATE_FEED",
-            format!("file://{}/feed.json", home.display()),
-        )],
+        &[("KENDEX_UPDATE_FEED", file_url(&home.join("feed.json")))],
     );
     fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
 
@@ -659,10 +639,7 @@ fn update_refuses_an_asset_value_that_is_not_a_url() {
         home,
         home,
         &["update"],
-        &[(
-            "KENDEX_UPDATE_FEED",
-            format!("file://{}/feed.json", home.display()),
-        )],
+        &[("KENDEX_UPDATE_FEED", file_url(&home.join("feed.json")))],
     );
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("URL must start"));

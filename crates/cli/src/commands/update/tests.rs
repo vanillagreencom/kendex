@@ -1,5 +1,9 @@
 use super::*;
 
+#[path = "../../../fixture_url.rs"]
+mod fixture_url;
+use fixture_url::file_url;
+
 #[test]
 fn fetched_urls_are_always_positional_arguments() {
     assert_eq!(
@@ -62,17 +66,6 @@ fn a_release_is_out_under(home: &Path) -> (Env, String, PathBuf) {
         file_url(&home.join("feed.json")),
         installed,
     )
-}
-
-/// A `file://` URL for a host path, built by something that knows the
-/// grammar. Substituting separators is not enough: a path is allowed
-/// characters a URL reserves, so a home directory holding a space or a
-/// `#` would produce a URL that curl reads as a different address, or as
-/// no address at all.
-fn file_url(path: &Path) -> String {
-    url::Url::from_file_path(path)
-        .expect("a fixture path is absolute")
-        .to_string()
 }
 
 const INSTALLED: &[u8] = b"the command already here";

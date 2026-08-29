@@ -46,7 +46,7 @@ fn v01_fixture() -> Fixture {
 
 /// The part of a schema-5 manifest that survives: comments, spacing and a
 /// trailing comment on a value, every byte the upgrade must keep.
-const KEPT: &str = "# my project setup\nschema = 5\n\n# where the content comes from\n[sources.cat]\npath = '{source}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"   # keep this\n";
+const KEPT: &str = "# my project setup\nschema = 5\n\n# where the content comes from\n[sources.cat]\n{source}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"   # keep this\n";
 
 /// The tables schema 6 retired, as a pre-6 kendex wrote them.
 const RETIRED: &str = "[safety-overrides.\"skill:gh:claude\"]\nreview-hash = \"abc\"\nruleset = 3\nfindings = [\"f1\"]\ngranted-at = \"2026-01-01T00:00:00Z\"\n\n[safety-reviews.\"skill:gh:claude\"]\nreview-hash = \"abc\"\nruleset = 3\n\n[safety-reviews.\"skill:gh:claude\".dismissed.f2]\nreason = \"intended\"\ndismissed-at = \"2026-01-01T00:00:00Z\"\n";
@@ -57,7 +57,7 @@ fn schema5_fixture() -> Fixture {
         // The blank line introduces the retired table, and goes with it.
         format!(
             "{}\n{RETIRED}",
-            KEPT.replace("{source}", &source.display().to_string())
+            KEPT.replace("{source}", &source_path(&source))
         )
     })
 }
@@ -70,7 +70,11 @@ fn fixture(manifest: impl FnOnce(&std::path::Path) -> String) -> Fixture {
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();
 
-    let source = home.join("catalog");
+    // The catalog sits under a name holding an apostrophe: every fixture
+    // here writes its path into TOML, and an apostrophe is what closes a
+    // literal string early. Spelled by hand rather than by the serializer,
+    // the manifests below stop parsing.
+    let source = home.join("o'brien/catalog");
     fs::create_dir_all(source.join("skills/gh")).unwrap();
     fs::write(
         source.join("skills/gh/SKILL.md"),
@@ -198,7 +202,7 @@ fn every_spelling_of_a_retired_table_is_gone_after_one_apply() {
     );
     for (top, tail) in [quoted, dotted, inline] {
         let f = fixture(|source| {
-            let kept = KEPT.replace("{source}", &source.display().to_string());
+            let kept = KEPT.replace("{source}", &source_path(&source));
             format!(
                 "{}\n{tail}",
                 kept.replacen("schema = 5\n", &format!("schema = 5\n{top}"), 1)
