@@ -8,7 +8,8 @@ usage: sync-base [REPOSITORY]
 
 Resolves the repository's base branch, fetches that branch from origin, and
 fast-forwards the checkout that owns it or the local branch ref. Prints only
-the base branch name on success. A dirty or divergent base fails closed.
+the base branch name on success. Tracked dirtiness, an untracked clobber, or a
+divergent base fails closed.
 EOF
 }
 
@@ -45,7 +46,7 @@ while IFS= read -r -d '' line; do
 done < <(git -C "$REPO_ROOT" worktree list --porcelain -z)
 
 if [[ -n "$BASE_WORKTREE" ]]; then
-  DIRTY="$(git -C "$BASE_WORKTREE" status --porcelain --untracked-files=all)"
+  DIRTY="$(git -C "$BASE_WORKTREE" status --porcelain --untracked-files=no)"
   if [[ -n "$DIRTY" ]]; then
     echo "sync-base: base checkout is dirty: $BASE_WORKTREE" >&2
     printf '%s\n' "$DIRTY" >&2

@@ -195,7 +195,7 @@ Use the output as `MAIN_REPO_ROOT`.
       [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/container-close [MAIN_REPO_ROOT] [PARENT_ID]
       ```
 
-      `closed [PARENT_ID]` → record the closure in § 6, including every `container-close: restored [CHILD_ID] to [STATE]` stderr line. If this container has a container parent, re-run the step-2 sync and repeat a-c for that parent.
+      `closed [PARENT_ID]` → record the closure in § 6 with every stderr diagnostic from the helper. If this container has a container parent, re-run the step-2 sync and repeat a-c for that parent.
 
       `deferred [CHILD_IDS...]` → record `container [PARENT_ID] stays open (pending: [CHILD_IDS])` in § 6 and continue to step 3. A bare `deferred` means another merge session still owns the close; report that and continue. On a non-zero exit, carry its diagnostic into § 6, do not climb to another parent, and continue to step 3.
 

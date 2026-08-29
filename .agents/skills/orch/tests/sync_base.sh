@@ -96,15 +96,39 @@ git -C "$SEED" add file
 git -C "$SEED" commit -q -m seven
 git -C "$SEED" push -q "$UPSTREAM" main
 before="$(git -C "$BASE_TREE" rev-parse HEAD)"
+UNTRACKED_MUTANT="$TMP_ROOT/sync-base-untracked-mutant"
+assert_eq "$(grep -Fc -- '--untracked-files=no' "$SYNC")" "1" "untracked control finds the tracked-only dirtiness check"
+awk '
+  index($0, "SCRIPT_DIR=\"$(cd --") { print "SCRIPT_DIR=\"${SYNC_TEST_SCRIPT_DIR:?}\""; next }
+  { sub(/--untracked-files=no/, "--untracked-files=all"); print }
+' "$SYNC" > "$UNTRACKED_MUTANT"
+chmod +x "$UNTRACKED_MUTANT"
 rc=0
-out="$($SYNC "$CLONE" 2>"$TMP_ROOT/untracked-dirty.err")" || rc=$?
-[[ $rc -ne 0 ]] && ok "nonconflicting untracked dirtiness fails closed" || fail "nonconflicting untracked dirtiness fails closed"
-assert_eq "$out" "" "untracked-dirty sync prints no branch"
-assert_eq "$(git -C "$BASE_TREE" rev-parse HEAD)" "$before" "untracked-dirty base does not advance"
-grep -Fq '?? untracked' "$TMP_ROOT/untracked-dirty.err" && ok "untracked-dirty refusal names the path" || fail "untracked-dirty refusal names the path"
+SYNC_TEST_SCRIPT_DIR="$REPO_ROOT/skills/orch/scripts" "$UNTRACKED_MUTANT" "$CLONE" >/dev/null 2>"$TMP_ROOT/untracked-mutant.err" || rc=$?
+[[ $rc -ne 0 ]] && ok "untracked control fails when unrelated files are classified as dirty" || fail "untracked control fails when unrelated files are classified as dirty"
+assert_eq "$(git -C "$BASE_TREE" rev-parse HEAD)" "$before" "untracked mutant does not advance the base"
+out="$($SYNC "$CLONE" 2>"$TMP_ROOT/untracked-safe.err")"
+assert_eq "$out" "main" "unrelated untracked file allows base sync"
+assert_eq "$(git -C "$BASE_TREE" rev-parse HEAD)" "$(git -C "$SEED" rev-parse main)" "unrelated untracked file does not block the fast-forward"
+assert_eq "$(cat "$BASE_TREE/untracked")" "untracked" "unrelated untracked file is preserved"
 rm -f -- "$BASE_TREE/untracked"
+
+printf 'local clobber\n' > "$BASE_TREE/clobber"
+printf 'upstream clobber\n' > "$SEED/clobber"
+git -C "$SEED" add clobber
+git -C "$SEED" commit -q -m clobber
+git -C "$SEED" push -q "$UPSTREAM" main
+before="$(git -C "$BASE_TREE" rev-parse HEAD)"
+rc=0
+out="$($SYNC "$CLONE" 2>"$TMP_ROOT/untracked-clobber.err")" || rc=$?
+[[ $rc -ne 0 ]] && ok "untracked clobber fails closed" || fail "untracked clobber fails closed"
+assert_eq "$out" "" "untracked clobber prints no branch"
+assert_eq "$(git -C "$BASE_TREE" rev-parse HEAD)" "$before" "untracked clobber does not advance the base"
+grep -Fq 'would be overwritten by merge' "$TMP_ROOT/untracked-clobber.err" && ok "untracked clobber reports Git's refusal" || fail "untracked clobber reports Git's refusal"
+assert_eq "$(cat "$BASE_TREE/clobber")" "local clobber" "untracked clobber is preserved"
+rm -f -- "$BASE_TREE/clobber"
 out="$($SYNC "$CLONE" 2>"$TMP_ROOT/sync.err")"
-assert_eq "$out" "main" "cleaned untracked base can catch up"
+assert_eq "$out" "main" "cleaned clobber base can catch up"
 
 git -C "$BASE_TREE" commit -q --allow-empty -m diverged
 printf 'eight\n' >> "$SEED/file"
