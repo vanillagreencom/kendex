@@ -127,10 +127,13 @@ impl Scope {
     /// that cannot canonicalize (vanished mid-operation) keeps its given
     /// form; its operations then fail on their own terms.
     ///
-    /// Through `crate::paths::canonical`, so the root is a spelling other
-    /// programs read and `label` can print: this one string is both the
-    /// scope's identity and what a message shows, and an identity that
-    /// differs from what is printed is its own trap.
+    /// Through `crate::paths::canonical`, so that wherever a root's plain
+    /// spelling names the same path, the root is one other programs read
+    /// and `label` can print. Where it does not — a length or a component
+    /// with no plain equivalent — the verbatim form is kept, and identity
+    /// and message carry it alike: this one string is both the scope's
+    /// identity and what a message shows, and an identity that differs
+    /// from what is printed is its own trap.
     pub fn canonical(&self) -> Scope {
         match self {
             Scope::Global => Scope::Global,

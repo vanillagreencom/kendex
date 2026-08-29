@@ -83,40 +83,52 @@ pub fn canonical(path: &Path) -> std::io::Result<PathBuf> {
 /// components read. That distinction is the whole rule: what follows only
 /// decides whether an equivalent that exists is also safe.
 ///
-/// It is safe when the Win32 parser would hand the same path back. A
-/// verbatim path reaches the object manager as written; a plain one is
-/// parsed first, and the parser trims a trailing dot or space off each
-/// component, reads a reserved device stem as the device, and refuses the
-/// whole path past the legacy limit. A path carrying any of those keeps the
-/// prefix, because a spelling that names a different file is worse than an
-/// ugly one. The checks are the same for both roots: a share's host and
-/// share name go through them too, which can only keep a verbatim spelling
-/// that already worked.
+/// An equivalent is safe only where it is *proven* to be the same path, and
+/// the proof is `names::win32_preserves` over every component plus the
+/// legacy length. That direction is the point: a verbatim path reaches the
+/// object manager as written, a plain one is parsed by Win32 first, and the
+/// parser has more rewriting rules than are worth listing. Asking each
+/// component to prove itself means a shape nobody anticipated keeps the
+/// prefix — ugly, and still naming what it named — where asking it to match
+/// a list of known-bad shapes means an unlisted one is silently respelled
+/// into something else. The checks are the same for both roots: a share's
+/// host and share name go through them too, which can only ever keep a
+/// verbatim spelling that already worked.
 fn plain(text: &str) -> Cow<'_, str> {
     let Some(rest) = text.strip_prefix(VERBATIM) else {
         return Cow::Borrowed(text);
     };
-    let plain = if drive_rooted(rest) {
-        Cow::Borrowed(rest)
+    // The root itself is not a component — a drive letter holds the `:`
+    // every component is refused for — so each form hands back what sits
+    // below it, and only that is asked to prove itself.
+    let (plain, below) = if let Some(below) = drive_rooted(rest) {
+        (Cow::Borrowed(rest), below)
     } else if let Some(share) = rest.strip_prefix(r"UNC\") {
-        Cow::Owned(format!(r"\\{share}"))
+        (Cow::Owned(format!(r"\\{share}")), share)
     } else {
         return Cow::Borrowed(text);
     };
-    if plain.len() > LEGACY_MAX_PATH || plain.split('\\').any(crate::names::win32_rewrites) {
+    // A root's own trailing separator closes the root rather than opening
+    // an empty component; anywhere else an empty one is unproven like the
+    // rest, because Win32 collapses it and verbatim does not.
+    let below = below.trim_end_matches('\\');
+    if plain.len() > LEGACY_MAX_PATH
+        || (!below.is_empty() && !below.split('\\').all(crate::names::win32_preserves))
+    {
         return Cow::Borrowed(text);
     }
     plain
 }
 
-/// Whether this is a `C:\`-shaped root — the one form that needs nothing
-/// but the prefix taken off.
-fn drive_rooted(text: &str) -> bool {
+/// What sits below a `C:\`-shaped root, or `None` where this is not one —
+/// the one form that needs nothing but the prefix taken off.
+fn drive_rooted(text: &str) -> Option<&str> {
     let mut head = text.chars();
     matches!(
         (head.next(), head.next(), head.next()),
         (Some(letter), Some(':'), Some('\\')) if letter.is_ascii_alphabetic()
     )
+    .then(|| &text[3..])
 }
 
 #[cfg(test)]
@@ -159,6 +171,14 @@ mod tests {
     fn a_verbatim_drive_root_loses_the_prefix_on_any_host() {
         assert_eq!(plain(r"\\?\C:\Users\me\dev\app"), r"C:\Users\me\dev\app");
         assert_eq!(plain(r"\\?\C:\"), r"C:\");
+        // Ordinary components the parser carries through untouched, so
+        // proving each one cannot become a rule that proves nothing: a
+        // dot inside a name, a space inside one, a name that merely
+        // starts with a device's letters, and one that is not ASCII.
+        assert_eq!(
+            plain(r"\\?\C:\Users\my dev\v1.2\console\café\app"),
+            r"C:\Users\my dev\v1.2\console\café\app"
+        );
         // Nothing to take off: already plain, or not Windows at all.
         assert_eq!(plain(r"C:\Users\me\dev\app"), r"C:\Users\me\dev\app");
         assert_eq!(plain("/home/me/dev/app"), "/home/me/dev/app");
@@ -192,12 +212,27 @@ mod tests {
             r"\\?\C:\dev\app ",
             r"\\?\C:\dev.\app",
             // And reads these components as devices — the superscript
-            // serial and parallel ports as surely as the ASCII-digit ones.
+            // serial and parallel ports as surely as the ASCII-digit ones,
+            // and a stem whose trailing spaces Win32 takes off before it
+            // tests the name at all.
             r"\\?\C:\dev\CON\app",
             r"\\?\C:\dev\con.txt",
             r"\\?\C:\dev\COM1\app",
             "\\\\?\\C:\\dev\\COM\u{b9}\\app",
             "\\\\?\\C:\\dev\\LPT\u{b3}\\app",
+            r"\\?\C:\dev\NUL .txt",
+            // A component holding a character the Win32 grammar keeps for
+            // itself was made through the extended namespace and has no
+            // plain spelling at all — the parser would reject it or read
+            // it as syntax.
+            r"\\?\C:\dev\what?\app",
+            r"\\?\C:\dev\a*b\app",
+            r"\\?\C:\dev\a:b\app",
+            "\\\\?\\C:\\dev\\a\u{1}b\\app",
+            // Win32 resolves these where verbatim takes them literally, so
+            // the two spellings name different places.
+            r"\\?\C:\dev\..\app",
+            r"\\?\C:\dev\.\app",
         ] {
             assert_eq!(plain(verbatim), verbatim, "{verbatim}");
         }
