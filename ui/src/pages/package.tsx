@@ -217,6 +217,7 @@ export function PackagePage() {
       <PackageTabs
         kind={group.kind}
         name={group.name}
+        scope={ref.scope}
         scopes={groupScopes(group)}
         harnesses={group.harnesses as HarnessId[]}
         busy={mutating}

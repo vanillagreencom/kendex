@@ -9,7 +9,6 @@ import { DiffView } from "@/components/diff/diff-view";
 import { DotSpinner } from "@/components/loading";
 import { FilePreview } from "@/components/package/file-preview";
 import { EditedNotice } from "@/components/package/fork-notice";
-import { PackageSafety } from "@/components/package/package-safety";
 import { PackageSidebar } from "@/components/package/package-sidebar";
 import type { PackageView } from "@/components/package/use-package-data";
 import type { ItemGroup } from "@/lib/derive";
@@ -17,9 +16,10 @@ import { harnessName } from "@/lib/labels";
 import { versionRowLabel } from "@/lib/versions";
 import type { PackageRef } from "@/stores/nav";
 
-/** What a package is, as installed: its safety reading over the whole
- *  thing, then its provenance and switches on the left with the file it is
- *  made of — or a comparison — on the right. */
+/** What a package is, as installed: its provenance and switches on the
+ *  left, with the file it is made of — or a comparison — on the right. The
+ *  safety reading answers for the whole package rather than for what this
+ *  view happens to show, so it has a tab of its own. */
 export function PackageBody({
   reference,
   group,
@@ -78,11 +78,6 @@ export function PackageBody({
         onResolved={onReload}
       />
       <div className="flex flex-col gap-8">
-        {/* The score answers for the whole package, so it stands above what
-            the page happens to be showing — a file, or a comparison of two
-            versions. Closing a diff is not what makes a package's reading
-            true, and a Preview opens this page straight into one. */}
-        <PackageSafety reference={reference} />
         {view.mode === "diff" ? (
           diff ? (
             <DiffView

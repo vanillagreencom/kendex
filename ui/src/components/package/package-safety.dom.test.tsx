@@ -6,15 +6,22 @@ import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import {
   SAFETY_CHECK_FAILED,
+  SAFETY_NOT_READ,
+  SAFETY_NOT_READ_BODY,
   SAFETY_RETRY_LABEL,
   staleSafetyNote,
 } from "@/lib/copy-safety";
 import { SEVERITY_LABELS } from "@/lib/labels";
 import { useAuditStore } from "@/stores/audit";
 import { refreshDownstream } from "@/stores/marketplaces-shared";
+import type { PackageRef } from "@/stores/nav";
 import { useScanStore } from "@/stores/scan";
 import { mount, settle } from "@/test/dom";
-import { PackageSafety } from "./package-safety";
+import {
+  PackageSafety,
+  SafetyScoreLabel,
+  usePackageSafety,
+} from "./package-safety";
 
 vi.mock("@/bindings", () => ({
   commands: { auditAll: vi.fn(), scanMachine: vi.fn() },
@@ -22,6 +29,22 @@ vi.mock("@/bindings", () => ({
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 const GLOBAL: Scope = { scope: "global" };
+
+/** The tab exactly as the page wires it: one reading behind the label and
+ *  the panel, so a test can never see the two disagree. */
+function SafetyTab({ reference }: { reference: PackageRef }) {
+  const reading = usePackageSafety(
+    reference.kind,
+    reference.name,
+    reference.scope,
+  );
+  return (
+    <>
+      <SafetyScoreLabel reading={reading} />
+      <PackageSafety reading={reading} />
+    </>
+  );
+}
 
 const gh: ItemSafety = {
   kind: "skill",
@@ -96,9 +119,7 @@ describe("a package installed just now", () => {
     });
 
     const host = mount(
-      <PackageSafety
-        reference={{ kind: "skill", name: "gh", scope: GLOBAL }}
-      />,
+      <SafetyTab reference={{ kind: "skill", name: "gh", scope: GLOBAL }} />,
     );
     await settle();
     expect(host.textContent).not.toContain("58/100");
@@ -133,9 +154,7 @@ describe("when the check could not run", () => {
       .mockResolvedValue({ status: "ok", data: [view([gh])] });
 
     const host = mount(
-      <PackageSafety
-        reference={{ kind: "skill", name: "gh", scope: GLOBAL }}
-      />,
+      <SafetyTab reference={{ kind: "skill", name: "gh", scope: GLOBAL }} />,
     );
     await settle();
 
@@ -174,9 +193,7 @@ describe("when the check could not run", () => {
     });
 
     const host = mount(
-      <PackageSafety
-        reference={{ kind: "skill", name: "gh", scope: GLOBAL }}
-      />,
+      <SafetyTab reference={{ kind: "skill", name: "gh", scope: GLOBAL }} />,
     );
     await settle();
 
@@ -208,9 +225,7 @@ describe("when only this package's place could not be read", () => {
     });
 
     const host = mount(
-      <PackageSafety
-        reference={{ kind: "skill", name: "gh", scope: GLOBAL }}
-      />,
+      <SafetyTab reference={{ kind: "skill", name: "gh", scope: GLOBAL }} />,
     );
     await settle();
 
@@ -231,13 +246,44 @@ describe("when only this package's place could not be read", () => {
     });
 
     const host = mount(
-      <PackageSafety
-        reference={{ kind: "skill", name: "gh", scope: GLOBAL }}
-      />,
+      <SafetyTab reference={{ kind: "skill", name: "gh", scope: GLOBAL }} />,
     );
     await settle();
 
     expect(host.textContent).toContain("58/100");
     expect(host.textContent).not.toContain("couldn't run");
+  });
+});
+
+// The audit came back and had no row for this package. Nothing found and
+// nothing read are different claims, and a blank tab would make the first
+// one on the strength of the second.
+describe("when the audit answered with no reading for this package", () => {
+  it("says it has not been scored, and the retry gets a reading", async () => {
+    vi.mocked(commands.auditAll)
+      .mockResolvedValueOnce({ status: "ok", data: [view([])] })
+      .mockResolvedValue({ status: "ok", data: [view([gh])] });
+
+    const host = mount(
+      <SafetyTab reference={{ kind: "skill", name: "gh", scope: GLOBAL }} />,
+    );
+    await settle();
+
+    expect(host.textContent).toContain(SAFETY_NOT_READ);
+    expect(host.textContent).toContain(SAFETY_NOT_READ_BODY);
+    expect(host.textContent).not.toContain(SAFETY_CHECK_FAILED);
+    // The label has nothing to show either, and a dash is not a score.
+    expect(host.textContent).toContain("—");
+
+    const retry = [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === SAFETY_RETRY_LABEL,
+    );
+    if (!retry) throw new Error("expected a retry button");
+    await act(async () => {
+      retry.click();
+    });
+    await settle();
+
+    expect(host.textContent).toContain("58/100");
   });
 });

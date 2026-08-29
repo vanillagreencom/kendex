@@ -249,22 +249,22 @@ lives in one capability table read by core and UI.
   plugin registry a plugin names; an unknown registry is the user's.
   Vendor-owned content is scored by nothing and asked about nowhere: listed
   in the Library, labelled with who ships it, left alone.
-- A package's page tabs `Overview · Projects · Customize`; Customize is last, the
-  only tab a kind can lack. Projects lists each place installed in, with its update
-  and removal; the header's `Delete` takes every copy. Customize edits instructions,
-  the skills an agent gets, per-tool settings, and a skill's own declared settings;
-  the Customize page keeps what is not about one package (the `all` row, custom
-  hooks, a project's skills folder) plus an index of what is customized there. Both
-  edit one manifest draft per scope; the package page adds a settings draft, and one
-  Save bar writes both as one transaction (`stores/editor.ts`; reloads only when
-  nothing is unsaved). `lib/customization.ts` slices it, `lib/settings-rows.ts` the rows.
-- A place is customized by settings, a settings value off its package default,
-  a hand edit, or a fork, and `lib/customized-places.ts::placeStandings` is the
-  one answer, over a `PlacesSource` only `placesSource` builds. Its readers are
-  what `grep -rn placeStandings ui/src` finds, the Customize index
-  (`lib/customized-here.ts`) among them: it reads the drafts open for its place
-  and calls nothing customized until every read lands (`lib/updates-read-state.ts`:
-  pending is checking, failed is packages missing).
+- A package's page tabs `Overview · Projects · Safety score · Customize`; Customize
+  is last, the only tab a kind can lack. Projects lists each place installed in,
+  with its update and removal; the header's `Delete` takes every copy. Safety score
+  carries the automated check's finding. Customize edits instructions, the skills an
+  agent gets, per-tool settings, and a skill's own declared settings; the Customize
+  page keeps what is not about one package (the `all` row, custom hooks, a project's
+  skills folder) plus an index of what is customized there. Both edit one manifest
+  draft per scope; the package page adds a settings draft, and one Save bar writes
+  both as one transaction (`stores/editor.ts`; reloads only when nothing is unsaved).
+  `lib/customization.ts` slices it, `lib/settings-rows.ts` the rows.
+- A place is customized by settings, a settings value off its package default, a
+  hand edit, or a fork, and `lib/customized-places.ts::placeStandings` is the one
+  answer, over a `PlacesSource` only `placesSource` builds. Its readers are what
+  `grep -rn placeStandings ui/src` finds, the Customize index
+  (`lib/customized-here.ts`) among them: it reads the drafts open for its place and calls
+  nothing customized until every read lands (`lib/updates-read-state.ts`: pending is checking, failed is packages missing).
 - Hook events have one vocabulary — Claude Code's names, in
   `core/hook.rs::EVENTS`; every other harness's map is keyed by it. The
   picker offers that list, the validator rejects anything outside it, the renderers read it.

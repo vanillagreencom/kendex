@@ -17,6 +17,7 @@ import {
   OPEN_IN_FILE_BROWSER_LABEL,
   OPEN_IN_LABEL,
 } from "@/lib/copy";
+import { SAFETY_TAB } from "@/lib/copy-safety";
 import { editorOpenPath } from "@/lib/editor-path";
 import { SEVERITY_LABELS } from "@/lib/labels";
 import { scopeKey } from "@/lib/scope";
@@ -46,7 +47,7 @@ vi.mock("@/bindings", async (importOriginal) => ({
     openInEditor: vi.fn(),
     libraryProvenance: vi.fn(),
     packageDiff: vi.fn(),
-    // The page's safety block asks for a fresh audit as it mounts.
+    // The page's safety tab asks for a fresh audit as it mounts.
     auditAll: vi.fn(),
   },
 }));
@@ -232,10 +233,19 @@ const scoredView: AuditView = {
   ],
 };
 
+/** The Safety score tab's own label, which carries the figure. */
+const scoreTab = (host: HTMLElement) => {
+  const found = [...host.querySelectorAll('[data-slot="tabs-trigger"]')].find(
+    (trigger) => trigger.textContent?.startsWith(SAFETY_TAB),
+  );
+  if (!found) throw new Error("no Safety score tab");
+  return found as HTMLElement;
+};
+
 // The score the audit gave this package's bytes, and what produced it.
 // Nothing else in the app renders a scope's `safety` rows, so a page that
-// dropped this block would leave every installed reading unread.
-describe("the package page's safety block", () => {
+// dropped this tab would leave every installed reading unread.
+describe("the package page's safety tab", () => {
   it("shows the score for this place, with the findings behind it", async () => {
     useAuditStore.setState({
       auditedAt: 1,
@@ -244,6 +254,13 @@ describe("the package page's safety block", () => {
 
     const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
 
+    expect(scoreTab(host).textContent).toBe(`${SAFETY_TAB}58`);
+
+    await act(async () => {
+      scoreTab(host).click();
+    });
+    await settle();
+
     expect(host.textContent).toContain("58/100");
     expect(host.textContent).toContain(SEVERITY_LABELS.high);
     expect(host.textContent).toContain("SKILL.md:20");
@@ -251,8 +268,9 @@ describe("the package page's safety block", () => {
 
   // A Preview from an Updates row opens this page straight into a diff. The
   // score answers for the whole package, not for whichever two versions are
-  // side by side, so closing the comparison cannot be what makes it appear.
-  it("stands above a comparison, not only beside the files", async () => {
+  // side by side, so a comparison on the Overview tab cannot be what keeps
+  // the figure off the strip.
+  it("carries the score while a comparison is open", async () => {
     useAuditStore.setState({
       auditedAt: 1,
       views: [scoredView],
@@ -268,6 +286,13 @@ describe("the package page's safety block", () => {
         to: "2222222222",
       },
     );
+
+    expect(scoreTab(host).textContent).toBe(`${SAFETY_TAB}58`);
+
+    await act(async () => {
+      scoreTab(host).click();
+    });
+    await settle();
 
     expect(host.textContent).toContain("58/100");
     expect(host.textContent).toContain("SKILL.md:20");
@@ -305,7 +330,9 @@ describe("the package page's safety block", () => {
 
     const host = await openPage(VG, [VG, HYPR], { [scopeKey(VG)]: PLAIN });
 
-    expect(host.textContent).not.toContain("12/100");
+    // Nothing scored the place this page is about, so the tab shows the
+    // dash rather than the other place's 12.
+    expect(scoreTab(host).textContent).toBe(`${SAFETY_TAB}—`);
   });
 });
 
@@ -418,7 +445,7 @@ describe("the package page's file actions", () => {
   });
 });
 
-// Three tabs in one order, and only one of them can be missing: Customize
+// Four tabs in one order, and only one of them can be missing: Customize
 // is the tab a kind can lack, so it goes last and the others keep their
 // place whatever the package is.
 describe("the package page's tabs", () => {
@@ -427,13 +454,20 @@ describe("the package page's tabs", () => {
       (tab) => tab.textContent,
     );
 
-  it("puts Projects between Overview and Customize", async () => {
+  it("puts Projects and the score between Overview and Customize", async () => {
     const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
 
-    expect(tabs(host)).toEqual(["Overview", "Projects", "Customize"]);
+    // Nothing has scored this package in these tests, so the tab carries
+    // the dash it shows before a reading arrives.
+    expect(tabs(host)).toEqual([
+      "Overview",
+      "Projects",
+      `${SAFETY_TAB}—`,
+      "Customize",
+    ]);
   });
 
-  it("keeps Projects for a kind with nothing to customize", async () => {
+  it("keeps them both for a kind with nothing to customize", async () => {
     const host = await openPage(
       VG,
       [VG],
@@ -442,7 +476,7 @@ describe("the package page's tabs", () => {
       "mcp-server",
     );
 
-    expect(tabs(host)).toEqual(["Overview", "Projects"]);
+    expect(tabs(host)).toEqual(["Overview", "Projects", `${SAFETY_TAB}—`]);
   });
 });
 

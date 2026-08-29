@@ -15,6 +15,18 @@ import { relativeTime } from "@/lib/relative-time";
 // reads whole — so the partial read is named as a skill's.
 export const SAFETY_CAVEAT =
   "An automated check for risky patterns, not a review. It can miss things, and a package too large to read is not checked at all.";
+
+// The package page's own tab for the reading. The score follows these
+// words on the tab itself, so the tab never says the number twice.
+export const SAFETY_TAB = "Safety score";
+// The audit is the slowest thing the app does, so the tab opens before it
+// has answered. A wait is not an outcome, and this says which it is.
+export const SAFETY_CHECKING = "Checking this package…";
+// The audit answered and had no reading for this package. Nothing found and
+// nothing read are different claims, and only the second one is true here.
+export const SAFETY_NOT_READ = "This package hasn't been scored";
+export const SAFETY_NOT_READ_BODY =
+  "The last check answered without a reading for it. Ask for a new check to get one.";
 const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low"];
 
 /** How bad the worst finding is, as a number that only ever gets compared:
