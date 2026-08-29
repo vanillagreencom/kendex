@@ -127,7 +127,7 @@ pub(super) fn desired_agent(
         });
     }
     let skills =
-        super::agent_skills::assigned_skills(ctx, parsed.role, updated_manifest, manifest_changed);
+        super::agent_skills::assigned_skills(ctx, parsed.role, updated_manifest, manifest_changed)?;
     for harness in ctx.harnesses.clone() {
         let Some(native) = native_dir(ctx.env, ctx.scope, harness, ItemKind::Agent) else {
             continue;

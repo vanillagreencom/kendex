@@ -247,6 +247,10 @@ fn compute(
     // manifest keeps holding only what was chosen.
     let expansion = super::expansion::expand(env, scope, manifest, held, &mut state);
     let collisions = super::catalog::Collisions::find(&expansion, &mut state);
+    // What every source here offers, read once: an agent's skill
+    // assignment resolves against the whole scope, and reading it per
+    // agent would open every catalog again for each one.
+    let scope_skills = crate::source::scope_skills(env, scope, manifest)?;
 
     for kind in super::expansion::PLANNED_KINDS {
         for (name, planned) in expansion.of(kind) {
@@ -290,6 +294,7 @@ fn compute(
                 hold_upstream_skills,
                 config: &config,
                 sealed: &sealed,
+                scope_skills: &scope_skills,
                 name,
                 decl,
                 item_path: &item_path,
@@ -337,6 +342,10 @@ pub(super) struct ItemCtx<'a> {
     pub(super) hold_upstream_skills: bool,
     pub(super) config: &'a crate::source::SourceConfig,
     pub(super) sealed: &'a SealedSource,
+    /// Every skill any source this scope has offers. An agent's declared
+    /// assignment resolves against this, so a fork keeps rendering skills
+    /// its own source never held.
+    pub(super) scope_skills: &'a [String],
     pub(super) name: &'a str,
     pub(super) decl: &'a ItemDecl,
     pub(super) item_path: &'a std::path::Path,

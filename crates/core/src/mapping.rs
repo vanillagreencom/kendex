@@ -114,6 +114,11 @@ pub struct EffectiveSkills {
     pub upstream_now: Vec<String>,
     /// Upstream additions that must be merged into the manifest entry.
     pub manifest_additions: Vec<String>,
+    /// Declared skills no source in reach offers: neither the item's own
+    /// catalog nor any other source this scope has. Rendering them would
+    /// name instructions nothing can load, and dropping them takes a
+    /// section away without a word, so the caller refuses on them.
+    pub unresolved: Vec<String>,
 }
 
 /// v2's durable-removal semantics: a project `[agent-skills]` entry is
@@ -121,12 +126,19 @@ pub struct EffectiveSkills {
 /// upstream set) merge in; anything the user removed stays removed. With no
 /// recorded set (cache loss, pre-v2 lock) nothing auto-merges — the
 /// conservative reading that can never resurrect a removal.
+///
+/// `available` is what this item's own source offers and governs what the
+/// source can assign. The declaration resolves wider, against `in_scope`
+/// as well: an assignment is made across every source the scope has, and
+/// a fork rebound to the local source keeps rendering the skills it was
+/// rendered with instead of losing them to a catalog it stopped reading.
 pub fn effective_skills(
     agent_name: &str,
     role: Option<Role>,
     manifest: &Manifest,
     source: &SourceConfig,
     available: &[String],
+    in_scope: &[String],
     recorded_upstream: Option<&[String]>,
 ) -> EffectiveSkills {
     let upstream_now = upstream_skills(agent_name, role, source, available);
@@ -135,6 +147,7 @@ pub fn effective_skills(
             effective: upstream_now.clone(),
             upstream_now,
             manifest_additions: Vec::new(),
+            unresolved: Vec::new(),
         };
     };
     let additions: Vec<String> = match recorded_upstream {
@@ -145,16 +158,17 @@ pub fn effective_skills(
             .collect(),
         None => Vec::new(),
     };
-    let mut effective: Vec<String> = declared
-        .iter()
-        .filter(|skill| available.iter().any(|s| &s == skill))
-        .cloned()
-        .collect();
+    let reachable = |skill: &String| {
+        available.iter().any(|s| s == skill) || in_scope.iter().any(|s| s == skill)
+    };
+    let (mut effective, unresolved): (Vec<String>, Vec<String>) =
+        declared.iter().cloned().partition(reachable);
     effective.extend(additions.iter().cloned());
     EffectiveSkills {
         effective,
         upstream_now,
         manifest_additions: additions,
+        unresolved,
     }
 }
 
@@ -251,6 +265,7 @@ mod tests {
             &manifest,
             &SourceConfig::default(),
             &available(),
+            &[],
             None,
         );
         assert_eq!(result.effective, ["dev"]);
@@ -276,6 +291,7 @@ mod tests {
             &manifest,
             &source,
             &available(),
+            &[],
             Some(&recorded),
         );
         assert_eq!(result.manifest_additions, ["rust-perf"]);
@@ -298,9 +314,50 @@ mod tests {
             &manifest,
             &SourceConfig::default(),
             &available(),
+            &[],
             None,
         );
         assert_eq!(result.effective, ["dev"]);
         assert!(result.manifest_additions.is_empty());
+    }
+
+    /// A fork rebinds the agent to the local source, which holds the agent
+    /// and none of the catalog skills it was assigned. The declaration
+    /// resolves against the scope, so what the agent rendered with before
+    /// the fork is what it renders with after.
+    #[test]
+    fn a_declaration_resolves_against_the_scope_its_own_source_never_held() {
+        let manifest = declaring(&[("rust", &["dev", "github"])]);
+        let local: Vec<String> = Vec::new();
+        let result = effective_skills(
+            "rust",
+            Some(Role::Engineer),
+            &manifest,
+            &SourceConfig::default(),
+            &local,
+            &available(),
+            None,
+        );
+        assert_eq!(result.effective, ["dev", "github"]);
+        assert!(result.unresolved.is_empty());
+    }
+
+    /// A skill nothing in reach offers is reported, never dropped: the
+    /// caller refuses on it rather than rendering an agent short a section.
+    #[test]
+    fn a_skill_no_source_offers_comes_back_unresolved() {
+        let manifest = declaring(&[("rust", &["dev", "gone"])]);
+        let local: Vec<String> = Vec::new();
+        let result = effective_skills(
+            "rust",
+            Some(Role::Engineer),
+            &manifest,
+            &SourceConfig::default(),
+            &local,
+            &available(),
+            None,
+        );
+        assert_eq!(result.effective, ["dev"]);
+        assert_eq!(result.unresolved, ["gone"]);
     }
 }

@@ -1,6 +1,7 @@
 //! An agent's skill list: what the declaration holds, merged with what
 //! upstream added since the last sync, and where that merge is written.
 
+use crate::error::{CoreError, Result};
 use crate::lock::entry_key;
 use crate::manifest::Manifest;
 use crate::mapping::{EffectiveSkills, effective_skills, skills_key};
@@ -16,12 +17,18 @@ use super::desired::ItemCtx;
 /// nothing merges: the list is the declaration's, and `upstream_now`
 /// carries the recorded list instead — it is what renders where nothing is
 /// declared and what the lock keeps, both exactly as they were.
+///
+/// Refuses where the declaration names a skill no source here offers. That
+/// is what a fork costs: the assignment stays while the catalog it names
+/// stops being read, so it has to resolve against the scope, and the scope
+/// losing the skill has to be said out loud rather than taking the agent's
+/// `## Required Skills` section off in silence.
 pub(super) fn assigned_skills(
     ctx: &ItemCtx,
     role: Option<Role>,
     updated_manifest: &mut Manifest,
     manifest_changed: &mut bool,
-) -> EffectiveSkills {
+) -> Result<EffectiveSkills> {
     let available = list_items(ctx.sealed, ctx.config, ItemKind::Skill);
     let recorded = ctx.harnesses.iter().find_map(|h| {
         ctx.lock
@@ -36,14 +43,22 @@ pub(super) fn assigned_skills(
         ctx.manifest,
         ctx.config,
         &available,
+        ctx.scope_skills,
         recorded.as_deref().filter(|_| !held),
     );
+    if let Some(skill) = skills.unresolved.first() {
+        return Err(CoreError::AgentSkillUnavailable {
+            name: crate::names::shown(ctx.name),
+            skill: crate::names::shown(skill),
+            source_name: assignment_source(ctx).to_owned(),
+        });
+    }
     if held {
         skills.upstream_now = recorded.unwrap_or(skills.upstream_now);
-        return skills;
+        return Ok(skills);
     }
     if skills.manifest_additions.is_empty() {
-        return skills;
+        return Ok(skills);
     }
     // The key the effective list was read from. Writing additions anywhere
     // else creates an entry that shadows the one being read, and the
@@ -58,5 +73,19 @@ pub(super) fn assigned_skills(
         }
     }
     *manifest_changed = true;
-    skills
+    Ok(skills)
+}
+
+/// The source that put this agent's skill assignment on it: the catalog a
+/// fork was taken from, or the agent's own declared source. A fork stops
+/// reading its catalog while keeping what that catalog assigned, so the
+/// source worth naming when the assignment stops resolving is the one it
+/// came out of, not the local source it now reads.
+fn assignment_source<'a>(ctx: &'a ItemCtx) -> &'a str {
+    ctx.manifest
+        .forks
+        .get(&ItemKind::Agent)
+        .and_then(|forked| forked.get(ctx.name))
+        .map(|fork| fork.source.as_str())
+        .unwrap_or(&ctx.decl.source)
 }

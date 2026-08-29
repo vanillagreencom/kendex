@@ -84,20 +84,29 @@ impl AgentCarry {
 /// What the catalog contributed to this agent's rendering, or `None` when
 /// it contributed nothing. `bytes` is the agent's own source file, read
 /// for the role its skill assignment keys on.
+///
+/// The assignment resolves against the whole scope here, exactly as the
+/// rendering resolved it. Read against this catalog alone, the carry would
+/// report fewer skills than the file on disk holds, and the capture would
+/// keep a section the next render writes again.
 pub(crate) fn agent_carry(
+    env: &crate::env::Env,
+    scope: &crate::model::Scope,
     manifest: &Manifest,
     sealed: &SealedSource,
     config: &SourceConfig,
     name: &str,
     bytes: &[u8],
-) -> Option<AgentCarry> {
+) -> crate::error::Result<Option<AgentCarry>> {
     let text = String::from_utf8_lossy(bytes);
     let role = crate::render::agent::parse_source_agent(&text)
         .ok()
         .and_then(|agent| agent.role);
     let available = crate::source::list_items(sealed, config, ItemKind::Skill);
+    let in_scope = crate::source::scope_skills(env, scope, manifest)?;
     let skills =
-        crate::mapping::effective_skills(name, role, manifest, config, &available, None).effective;
+        crate::mapping::effective_skills(name, role, manifest, config, &available, &in_scope, None)
+            .effective;
     let mut frontmatter = Vec::new();
     for (harness, by_agent) in &config.frontmatter {
         let Some(defaults) = by_agent.get(name) else {
@@ -113,12 +122,12 @@ pub(crate) fn agent_carry(
         frontmatter.push((harness.clone(), merged));
     }
     if skills.is_empty() && frontmatter.is_empty() {
-        return None;
+        return Ok(None);
     }
-    Some(AgentCarry {
+    Ok(Some(AgentCarry {
         skills,
         frontmatter,
-    })
+    }))
 }
 
 /// Whether the name an agent's configuration is keyed under still exists

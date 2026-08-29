@@ -375,7 +375,9 @@ pub fn require_ready(
 }
 
 mod config;
-pub use config::{SourceConfig, find_item, list_items, source_config, source_config_for};
+pub use config::{
+    SourceConfig, find_item, list_items, scope_skills, source_config, source_config_for,
+};
 
 #[cfg(test)]
 mod tests;

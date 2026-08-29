@@ -9,8 +9,10 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use crate::env::Env;
 use crate::error::Result;
-use crate::model::ItemKind;
+use crate::manifest::Manifest;
+use crate::model::{ItemKind, Scope};
 use crate::source_read::SealedSource;
 
 use super::bundles::{self, CatalogBundle};
@@ -351,4 +353,36 @@ pub fn list_items(sealed: &SealedSource, config: &SourceConfig, kind: ItemKind) 
     names.sort();
     names.dedup();
     names
+}
+
+/// Every skill name the sources this scope declares offer, plus the local
+/// source's own, sorted and deduplicated. An agent's skill assignment
+/// resolves against this and not against the one catalog the agent came
+/// from: the assignment is offered across every source, and a fork's
+/// assignment outlives the catalog it was made in. A source that will not
+/// resolve or open offers nothing here — the skills it held come back
+/// unavailable, named with the source, rather than dropping out in
+/// silence.
+pub fn scope_skills(env: &Env, scope: &Scope, manifest: &Manifest) -> Result<Vec<String>> {
+    let mut skills: Vec<String> = Vec::new();
+    let names = manifest
+        .sources
+        .keys()
+        .map(String::as_str)
+        .chain(std::iter::once(crate::manifest::LOCAL_SOURCE_NAME));
+    for name in names {
+        let super::SourceState::Ready(ready) = super::resolve(env, scope, name, manifest)? else {
+            continue;
+        };
+        let Ok(sealed) = crate::source_read::SealedSource::open(&ready.root) else {
+            continue;
+        };
+        let Ok(config) = source_config_for(&sealed, &ready.provenance) else {
+            continue;
+        };
+        skills.extend(list_items(&sealed, &config, ItemKind::Skill));
+    }
+    skills.sort();
+    skills.dedup();
+    Ok(skills)
 }

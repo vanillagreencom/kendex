@@ -470,9 +470,9 @@ fn source_form(
         }
         _ => {
             let bytes = sealed.read(&path)?;
-            let carry = match item.kind {
-                ItemKind::Agent => agent_carry(manifest, &sealed, &config, &item.name, &bytes),
-                _ => None,
+            let carry = match item.kind == ItemKind::Agent {
+                true => agent_carry(env, scope, manifest, &sealed, &config, &item.name, &bytes)?,
+                false => None,
             };
             let file = path
                 .file_name()

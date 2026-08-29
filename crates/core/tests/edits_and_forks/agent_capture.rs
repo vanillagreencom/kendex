@@ -5,6 +5,8 @@
 
 use std::fs;
 
+use kendex_core::error::CoreError;
+
 use super::*;
 
 /// Claude states denies in `disallowedTools:`, a key the source form has
@@ -176,30 +178,25 @@ fn the_generated_sections_are_written_once_after_a_fork() {
     apply::execute(&w.env, &plan, None).unwrap();
     resettle(&w);
 
-    // The instruction sections are keyed by the agent's name and travel, so
-    // the fork writes them again and the captured prose must not hold a
-    // second copy. The skills section is the opposite case: a local agent's
-    // assignment is filtered to its own source, so a catalog skill is not
-    // coming back, and taking it out of the prose would delete it (KEN-777).
+    // Every generated section is keyed by the agent's name and travels
+    // into the manifest, the skill assignment included: the fork writes
+    // them all again, so the captured prose must hold none of them.
     let source = fs::read_to_string(captured(&w, "rev")).unwrap();
-    for section in ["## Launch Instructions", "## Additional Instructions"] {
+    for section in [
+        "## Launch Instructions",
+        "## Additional Instructions",
+        "## Required Skills",
+    ] {
         assert_eq!(
             times(&source, section),
             0,
             "the captured prose must not carry {section}, which the render writes: {source}"
         );
     }
-    assert_eq!(
-        times(&source, "## Required Skills"),
-        1,
-        "the fork will not write the skills back, so the capture keeps them: {source}"
-    );
-    assert!(source.contains("- recon: "), "{source}");
     assert!(source.contains("My body."), "{source}");
 
-    // Every section stands exactly once in the settled rendering: the two
-    // the fork writes because the prose no longer holds them, and the one
-    // the prose holds because the fork does not write it.
+    // Every section stands exactly once in the settled rendering, written
+    // from the manifest entries the fork carries.
     let text = fs::read_to_string(&file).unwrap();
     for section in [
         "## Launch Instructions",
@@ -208,8 +205,70 @@ fn the_generated_sections_are_written_once_after_a_fork() {
     ] {
         assert_eq!(times(&text, section), 1, "{section} count wrong: {text}");
     }
+    assert_eq!(text.matches("- recon: ").count(), 1, "{text}");
     assert_eq!(banners(&text), 1, "{text}");
     assert_eq!(times(&text, "My body."), 1, "{text}");
+}
+
+/// What resolving a fork's assignment against the scope costs is a
+/// dependency the fork does not declare. The scope losing the source that
+/// offered the skill is said out loud, naming the skill and that source —
+/// never by taking the section off the agent in silence.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fork_refuses_when_the_scope_loses_the_source_its_skill_came_from() {
+    let w = world();
+    write_skill(&w.upstream, "recon", "Recon.");
+    write_agent(&w.upstream, "rev", "Upstream body.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[agent-skills]\nrev = [\"recon\"]\n",
+    )
+    .unwrap();
+    commit(&w.upstream, "one");
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        format!(
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"gemini\"]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\n"
+        ),
+    )
+    .unwrap();
+    sync_and_apply(&w);
+    let file = rendered(&w, HarnessId::Gemini, "rev");
+    edit_body(&file);
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+    let text = fs::read_to_string(&file).unwrap();
+    assert_eq!(times(&text, "## Required Skills"), 1, "{text}");
+
+    // The catalog goes, and with it the only source offering `recon`. The
+    // assignment the fork carries stays exactly where it was.
+    let before = manifest_text(&w);
+    let start = before.find("[sources.cat]").unwrap();
+    let end = before[start..]
+        .find("\n[")
+        .map(|at| start + at + 1)
+        .unwrap_or(before.len());
+    let after = format!("{}{}", &before[..start], &before[end..]);
+    assert!(!after.contains("[sources.cat]"), "{after}");
+    assert!(after.contains("rev = [\"recon\"]"), "{after}");
+    fs::write(&path, after).unwrap();
+
+    match audit(&w.env, &w.scope) {
+        Err(CoreError::AgentSkillUnavailable {
+            name,
+            skill,
+            source_name,
+        }) => assert_eq!(
+            (name.as_str(), skill.as_str(), source_name.as_str()),
+            ("rev", "recon", "cat")
+        ),
+        other => panic!("the render must refuse, naming both halves: {other:?}"),
+    }
 }
 
 /// The capture takes the person's prose byte for byte. An indented code

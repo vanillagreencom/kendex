@@ -1,9 +1,8 @@
 use kendex_core::engine::{self, ItemSource};
 use kendex_core::env::Env;
-use kendex_core::manifest::LOCAL_SOURCE_NAME;
 use kendex_core::manifest::{self};
 use kendex_core::model::{HarnessId, ItemKind, Scope};
-use kendex_core::source::{self, SourceState};
+use kendex_core::source;
 use serde::Serialize;
 use specta::Type;
 
@@ -225,29 +224,11 @@ pub fn editor_inventory(scope: Scope) -> Result<EditorInventory, String> {
     inventory.declared_agents = manifest.agents.keys().cloned().collect();
     inventory.declared_skills = manifest.skills.keys().cloned().collect();
 
-    let mut available: Vec<String> = Vec::new();
-    let names = manifest
-        .sources
-        .keys()
-        .map(String::as_str)
-        .chain(std::iter::once(LOCAL_SOURCE_NAME));
-    for name in names {
-        let resolved = source::resolve(&env, &scope, name, &manifest).map_err(|e| e.to_string())?;
-        let SourceState::Ready(ready) = resolved else {
-            continue;
-        };
-        // A source that cannot be opened offers nothing; it must not take
-        // the whole editor inventory down with it.
-        let Ok(sealed) = kendex_core::source_read::SealedSource::open(&ready.root) else {
-            continue;
-        };
-        let config = source::source_config(&sealed, source::repo_leaf(&ready.provenance))
-            .map_err(|e| e.to_string())?;
-        available.extend(source::list_items(&sealed, &config, ItemKind::Skill));
-    }
-    available.sort();
-    available.dedup();
-    inventory.available_skills = available;
+    // The same set the renderer resolves an agent's assignment against:
+    // offering a skill here that the render would refuse would put the two
+    // answers about one question in two places.
+    inventory.available_skills =
+        source::scope_skills(&env, &scope, &manifest).map_err(|e| e.to_string())?;
     Ok(inventory)
 }
 
