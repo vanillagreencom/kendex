@@ -183,8 +183,15 @@ pub(super) fn read_positions(
     // Anywhere an installation lives, not only its exact root: a link into
     // a folder inside a managed skill, or at a folder holding managed
     // installs, moves them just the same.
+    //
+    // Followed through `crate::paths::canonical`, because what it is held
+    // against is derived from a root that rule reduced, and two spellings
+    // of one file never touch. Its reduction is per path, so a root that
+    // loses the extended-length prefix can still hold a target long enough
+    // to keep it; that pair reads as unmanaged, which is why the position
+    // as it was given is asked first and answers the direct case alone.
     let managed = |path: &Path| {
-        let at = path.canonicalize();
+        let at = crate::paths::canonical(path);
         let touches = |ours: &PathBuf, at: &Path| ours.starts_with(at) || at.starts_with(ours);
         owned
             .iter()
