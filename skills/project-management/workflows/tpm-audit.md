@@ -33,6 +33,17 @@ Analyze issues and projects for relations, labels, hierarchy, placement, duplica
 
 **Done and Cancelled issues are historical records.** Never recommend a change to their labels, agent, priority, or state. They still participate in relation analysis and duplicate detection; only Backlog, Todo, In Progress, and In Review issues are candidates for fixes.
 
+### 1.1.1 Resolve Team Scope
+
+**Skip if** TRACKER=github — a repository is one scope. Otherwise resolve the scope ([SKILL.md](../SKILL.md) § Execution Rules) before any cached read:
+
+```bash
+.agents/skills/linear/scripts/linear.sh auth-check
+.agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --limit 1 --format=ids
+```
+
+`TEAM` is `auth-check`'s `team`; `TEAM_PREFIX` is the returned identifier up to its hyphen. Halt when `auth-check` reports no team, and halt when a configured team returns no identifier — an audit that cannot resolve its own scope must not run unscoped. A row whose `id` does not start with `TEAM_PREFIX-`, and a project row whose `teams[]` omits `TEAM`, is out of scope in every mode.
+
 ### 1.2 Load Label Policy
 
 ```bash
@@ -46,7 +57,7 @@ Load the project taxonomy alongside it. A missing or stale Linear cache on this 
 
 ### 1.3 Fetch Projects
 
-Fetch every project in ONE command. `cache projects list --state` matches one state exactly and never a comma list, so omit it and read each row's own `state`; ignore `canceled` rows.
+Fetch every project in ONE command. `cache projects list --state` matches one state exactly and never a comma list, so omit it and read each row's own `state`; ignore `canceled` rows and every row § 1.1.1 scopes out.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh cache projects list
@@ -63,7 +74,7 @@ Fetch every project in ONE command. `cache projects list --state` matches one st
 gh issue view [N] --repo [REPOSITORY] --json number,title,body,labels,state,url                                                           # issues mode, github
 ```
 
-Issues mode fetches the whole input set in one `bulk-get`, never one call per issue; a lone input issue is `cache issues get [ISSUE_ID]`. `cache issues bulk-get` returns the rows it matched and exits 0 whether or not it matched them all, so compare the returned `id` values against every requested identifier and halt naming any that came back missing. An unmatched target is a mistyped, deleted, or unsynced issue, never an absent one, and auditing the remainder would report a complete result over a subset.
+Both `--all-projects` fetches return every team; keep only the rows § 1.1.1 scopes in. Issues mode fetches the whole input set in one `bulk-get`, never one call per issue; a lone input issue is `cache issues get [ISSUE_ID]`. `cache issues bulk-get` returns the rows it matched and exits 0 whether or not it matched them all, so compare the returned `id` values against every requested identifier and halt naming any that came back missing. An unmatched target is a mistyped, deleted, or unsynced issue, never an absent one, and auditing the remainder would report a complete result over a subset.
 
 The cached Linear issue payload carries `blocks`, `blocked_by`, and `related`. GitHub: read relations from body links (`Blocks: #N`, `Blocked by: #N`, `Related: #N`, `Parent: #N`). Proposed items use their provided fields directly.
 
@@ -75,7 +86,7 @@ Fetch the full backlog in ONE command:
 .agents/skills/linear/scripts/linear.sh cache issues list --all-projects --state "Backlog,Todo,In Progress,In Review,Done" --max
 ```
 
-Each row carries its own `project` name, empty for an issue with none. Never loop `--project` over the projects from § 1.3. In team mode this is the § 1.4 input fetch with `Done` added.
+Each row carries its own `project` name, empty for an issue with none. Discard every row outside the § 1.1.1 team scope before comparing anything against it — the § 6 sweep proposes cancellations from this set. Never loop `--project` over the projects from § 1.3. In team mode this is the § 1.4 input fetch with `Done` added.
 
 **GitHub**:
 
@@ -352,7 +363,7 @@ Any invariant failing sends you back before the JSON is built.
 
 - [ ] Every input issue has its own `VERIFICATION_CONTEXTS[ISSUE_KEY]` — no PR, branch, or resolved path set reused across issues, docs-only handled explicitly (§ 1.7, § 2.1)
 - [ ] No completed-blocker relation appears in `remove_relations[]` or under any stale-metadata framing (§ 4.1)
-- [ ] The § 6 cancellation sweep ran against the full comparison set
+- [ ] The § 6 cancellation sweep ran against the full comparison set, and every issue named anywhere in the output carries the § 1.1.1 team prefix
 - [ ] Every proposed item carries an assigned action, with a one-line reason naming the failed creation-bar test on each `skip` and a complete `create_fields.labels[]` on each `create` (§ 10)
 - [ ] Every `hierarchy_contract.child_indexes` item is `action: create` + `hierarchy.action: make_child` + `hierarchy.parent` = the contract parent, none downgraded (§ 7.0, § 10.2)
 

@@ -18,6 +18,10 @@ A `PLANNER_HANDOFF` is technical context, not a project-management decision. Pre
 
 ## 1. Load Context
 
+### 1.1 Team Scope
+
+Resolve `TEAM` and `TEAM_PREFIX` per [tpm-audit](tpm-audit.md) § 1.1.1 before any cached read. The § 1.4 project list and the § 1.5 comparison set both return the whole workspace; drop everything outside the scope before comparing against either. § 2 proposes `cancel` and `supersede` against that set, and roadmap-create executes them.
+
 ### 1.2 Label Policy
 
 ```bash
@@ -41,7 +45,7 @@ Decide whether the proposed issues decompose the origin issue's scope (`children
 
 ### 1.4 Projects
 
-Fetch every project in ONE command. `cache projects list --state` matches one state exactly and never a comma list, so omit it and read each row's own `state`; ignore `canceled` rows.
+Fetch every project in ONE command. `cache projects list --state` matches one state exactly and never a comma list, so omit it and read each row's own `state`; ignore `canceled` rows and every row § 1.1 scopes out.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh cache projects list
@@ -57,7 +61,7 @@ Fetch every project's issues in ONE command — never loop `--project` per proje
 .agents/skills/linear/scripts/linear.sh cache issues list --all-projects --state "Backlog,Todo,In Progress,In Review,Done" --max
 ```
 
-Store `id`, `title`, `description`, `project`, `state`, `agent`, `labels[]`, `blocked_by[]`, `blocks[]` for comparison.
+Store `id`, `title`, `description`, `project`, `state`, `agent`, `labels[]`, `blocked_by[]`, `blocks[]` for comparison, for the in-scope rows alone.
 
 ### 1.6 Research
 

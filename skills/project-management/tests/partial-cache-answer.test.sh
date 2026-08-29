@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Two cache reads answer with less than was asked for and say nothing about it:
-# `cache issues bulk-get` returns the rows it matched and exits 0 whatever it
-# missed, and `cache issues children --recursive` stops at three levels with one
-# frontier row per branch. A workflow that reads either answer as complete
-# audits a subset while reporting a whole. These workflows are markdown
-# contracts, so this test statically pins the completeness check at the batch
-# fetch and the one statement of the subtree continuation rule the call sites
-# defer to.
+# Three cache reads answer with something other than what was asked for and say
+# nothing about it: `cache issues bulk-get` returns the rows it matched and exits
+# 0 whatever it missed, `cache issues children --recursive` stops at three levels
+# with one frontier row per branch, and every issues read answers workspace-wide
+# because the cache carries no team filter. A workflow reading any of those as
+# complete audits a subset while reporting a whole, or reaches another team's
+# backlog with a cancellation. These workflows are markdown contracts, so this
+# test statically pins the completeness check at the batch fetch, the one
+# statement of the subtree continuation rule its call sites defer to, and the
+# team scope every cached read is filtered by.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,5 +59,32 @@ for rel in workflows/audit-issues.md workflows/research-complete.md \
     fail "$rel continues from a single deepest child, dropping sibling subtrees"
   fi
 done
+
+# --- Every cached issue read is scoped to the configured team --------------
+
+require "$tpm_audit" '1\.1\.1 Resolve Team Scope' 'the team scope has a resolving section'
+require "$tpm_audit" 'auth-check' 'the configured team is read from the tracker'
+require "$tpm_audit" 'issues list --team "\[TEAM\]" --limit 1 --format=ids' \
+  'the team identifier prefix is derived, not assumed'
+require "$tpm_audit" 'must not run unscoped' 'an unresolvable scope halts'
+require "$tpm_audit" 'does not start with .TEAM_PREFIX-.' \
+  'out-of-team rows are named by their identifier prefix'
+require "$tpm_audit" 'Both .--all-projects. fetches return every team' \
+  'the input fetch states that it is workspace-wide'
+require "$tpm_audit" \
+  'Discard every row outside the § 1\.1\.1 team scope' \
+  'the comparison set the sweep cancels from is scoped'
+require "$tpm_audit" 'carries the § 1\.1\.1 team prefix' \
+  'the pre-output invariant checks the scope'
+
+skill="$SKILL_DIR/SKILL.md"
+require "$skill" 'cache holds the whole workspace' 'the cache scope is stated once'
+require "$skill" 'Scope every cached read to the configured team' 'the scoping rule'
+
+# The sibling analysis workflow proposes cancellations from the same set.
+roadmap="$SKILL_DIR/workflows/tpm-roadmap-plan.md"
+require "$roadmap" '1\.1 Team Scope' 'the roadmap analysis resolves a team scope'
+require "$roadmap" 'tpm-audit.md\) § 1\.1\.1' 'it defers to the one resolving section'
+require "$roadmap" 'drop everything outside the scope' 'its comparison set is scoped'
 
 echo "all pass"
