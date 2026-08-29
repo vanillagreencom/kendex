@@ -40,8 +40,11 @@ sed -n '/^### 1\.4\.1 /,/^### 1\.5 /p' "$AUDIT" >"$section"
 grep -Fq -- '.agents/skills/linear/scripts/linear.sh cache comments list [ISSUE_ID]' "$section" \
   || fail '§ 1.4.1 lost the cached per-issue comment read'
 
-grep -Fq -- '--json comments' "$section" \
-  || fail '§ 1.4.1 lost the GitHub comment read'
+# GitHub has no cached body: `gh issue list` omits it, so a comparison row
+# reaches this step with neither. Asking for comments alone would judge a
+# Done or Canceled duplicate on its title.
+grep -Fq -- '--json body,comments' "$section" \
+  || fail '§ 1.4.1 GitHub read no longer fetches the body alongside comments'
 
 # The step reads the cache, never the API: a live `comments list` would work
 # around the sync the whole workflow is scoped to.

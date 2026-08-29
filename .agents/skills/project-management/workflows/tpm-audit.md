@@ -85,7 +85,7 @@ Comments carry what no listing does: an issue's scope changes, its supersession 
 
 ```bash
 .agents/skills/linear/scripts/linear.sh cache comments list [ISSUE_ID]   # one call per issue, TRACKER=linear
-gh issue view [N] --repo [REPOSITORY] --json comments                    # TRACKER=github
+gh issue view [N] --repo [REPOSITORY] --json body,comments               # TRACKER=github
 ```
 
 ### 1.5 Fetch Comparison Set

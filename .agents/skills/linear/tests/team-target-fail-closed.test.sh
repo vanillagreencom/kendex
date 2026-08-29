@@ -60,6 +60,9 @@ case "$query" in
 *"cycles(filter:"*)
   printf '%s' '{"data":{"cycles":{"nodes":[]}}}___HTTP_CODE___200'
   ;;
+*"comments(filter:"*)
+  printf '%s' '{"data":{"comments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200'
+  ;;
 *"issues(filter:"*)
   printf '%s' '{"data":{"issues":{"nodes":[]}}}___HTTP_CODE___200'
   ;;

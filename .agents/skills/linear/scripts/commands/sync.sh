@@ -137,11 +137,22 @@ sync_comments() {
     local max_pages=400
 
     while true; do
+        # Checked rather than left to errexit: the callers invoke this as an
+        # `if !` condition, which suspends errexit for the whole body, so a
+        # failed query would otherwise fall through and the sync would stamp
+        # a complete pull over a cache that never received one.
         local result
-        result=$(graphql_query "$query" "{\"filter\": $filter_json, \"first\": 250, \"after\": $cursor}")
+        if ! result=$(graphql_query "$query" "{\"filter\": $filter_json, \"first\": 250, \"after\": $cursor}"); then
+            echo "Sync error: the comments query failed. Nothing was written; retry sync." >&2
+            return 1
+        fi
 
         local nodes
         nodes=$(echo "$result" | jq '.comments.nodes')
+        if [[ -z "$nodes" || "$nodes" == "null" ]]; then
+            echo "Sync error: the comments query returned no comments connection. Nothing was written; retry sync." >&2
+            return 1
+        fi
         all_nodes=$(echo "$all_nodes" "$nodes" | jq -s 'add')
 
         local has_next

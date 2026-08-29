@@ -94,6 +94,14 @@ graphql_query() {
   local n
   n=$(( $(cat "$COUNTER") + 1 ))
   echo "$n" >"$COUNTER"
+  if [ "$STUB_MODE" = "apierror" ]; then
+    echo '{"error":"unexpected query"}' >&2
+    return 1
+  fi
+  if [ "$STUB_MODE" = "noconnection" ]; then
+    printf '{"somethingElse":{}}'
+    return 0
+  fi
   if [ "$STUB_MODE" = "endless" ]; then
     printf '{"comments":{"pageInfo":{"hasNextPage":true,"endCursor":"c%s"},"nodes":[{"id":"c%s","body":"b","issue":{"identifier":"T-1"}}]}}' \
       "$n" "$n"
@@ -141,6 +149,32 @@ fi
 [ -z "$(ls -A "$CACHE_DIR/comments")" ] \
   && ok "a failed pull writes no comment file" \
   || bad "failed pull" "wrote $(ls -A "$CACHE_DIR/comments")"
+
+# --- D2. a failed query fails the pull, it does not return empty ------------
+
+# The callers invoke sync_comments as an `if !` condition, which suspends
+# errexit for the whole function body. A query failure that is not checked
+# explicitly therefore falls through, and the sync stamps a complete pull over
+# a cache that never received one.
+# Each mode asserts its OWN diagnostic. A shared "nothing was written" match
+# would pass with either guard removed, since the survivor catches the other's
+# case with a vaguer message.
+check_failure() { # check_failure <mode> <expected fragment>
+  STUB_MODE="$1"
+  echo 0 >"$COUNTER"
+  if OUT="$(sync_comments '{}' 2>"$ERR_FILE")"; then
+    bad "$1" "sync_comments exited 0 on a query that returned no comments"
+    return
+  fi
+  ok "a $1 response fails the pull"
+  case "$(cat "$ERR_FILE")" in
+    *"$2"*) ok "a $1 response is diagnosed as: $2" ;;
+    *) bad "$1 message" "stderr: $(cat "$ERR_FILE")" ;;
+  esac
+}
+check_failure apierror 'the comments query failed'
+check_failure noconnection 'returned no comments connection'
+STUB_MODE=canned
 
 # --- E. write_comments ------------------------------------------------------
 
