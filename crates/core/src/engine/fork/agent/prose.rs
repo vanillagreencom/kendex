@@ -18,13 +18,23 @@ use super::wrapper::Wrapper;
 /// passed over without taking anything, so the sections after it still
 /// come off and a line of the person's own is never taken for a line of
 /// the wrapper.
-pub(super) fn prose(body: &str, wrapper: Option<&Wrapper>) -> String {
+///
+/// `published` is the prose as the catalog wrote it, and it is the floor.
+/// A generated section may read exactly like one the published prose
+/// opens or closes with, and where the person deleted the generated copy
+/// the publisher's is what stands in its place. Nothing in the text tells
+/// the two apart, so the count does: the wrapper may take a section only
+/// where the body holds more copies of it than the published prose brought.
+pub(super) fn prose(body: &str, published: &str, wrapper: Option<&Wrapper>) -> String {
     let lines: Vec<&str> = body.lines().collect();
     let mut kept = lines.as_slice();
     if let Some(wrapper) = wrapper {
-        kept = &kept[taken(kept, &said(&wrapper.before, false))..];
-        let back: Vec<&str> = kept.iter().rev().copied().collect();
-        kept = &kept[..kept.len() - taken(&back, &said(&wrapper.after, true))];
+        let publisher: Vec<&str> = published.lines().collect();
+        kept = &kept[taken(kept, &publisher, &said(&wrapper.before, false))..];
+        let body_back: Vec<&str> = kept.iter().rev().copied().collect();
+        let publisher_back: Vec<&str> = publisher.iter().rev().copied().collect();
+        kept =
+            &kept[..kept.len() - taken(&body_back, &publisher_back, &said(&wrapper.after, true))];
     }
     let mut out = String::new();
     // The banner is a section like any other and comes off with them.
@@ -61,15 +71,31 @@ fn said<'a>(sections: &'a [String], from_the_end: bool) -> Vec<Vec<&'a str>> {
 /// How many lines at the front of `body` the wrapper wrote. Each section
 /// is tried where the one before it stopped and nothing is searched for,
 /// so the count is the run of lines the wrapper accounts for and stops
-/// where the person's own prose starts.
-fn taken(body: &[&str], sections: &[Vec<&str>]) -> usize {
+/// where the person's own prose starts. A section the published prose
+/// brought its own copies of is taken only where the body holds one more
+/// than those, which is the copy the wrapper added.
+fn taken(body: &[&str], published: &[&str], sections: &[Vec<&str>]) -> usize {
     let mut at = 0;
     for section in sections {
-        if let Some(more) = held(&body[at..], section) {
+        if copies(&body[at..], section) > copies(published, section)
+            && let Some(more) = held(&body[at..], section)
+        {
             at += more;
         }
     }
     at
+}
+
+/// How many copies of this section stand one after another at the front of
+/// `body`.
+fn copies(body: &[&str], section: &[&str]) -> usize {
+    let mut at = 0;
+    let mut seen = 0;
+    while let Some(more) = held(&body[at..], section) {
+        at += more;
+        seen += 1;
+    }
+    seen
 }
 
 /// How many lines at the front of `body` hold this whole section, or

@@ -338,3 +338,71 @@ fn an_edited_generated_section_is_kept_and_the_canonical_one_written_beside_it()
     );
     assert_eq!(banners(&text), 1, "{text}");
 }
+
+/// The published prose may open and close with sections of its own that
+/// read exactly like the generated ones. Delete the generated copies and
+/// the publisher's are what stands at each boundary — so a walk that knows
+/// only what the renderer writes takes them, and a whole section of
+/// somebody's catalog prose is gone.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_published_section_standing_where_a_generated_one_did_is_not_taken() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\n---\n## Launch Instructions\n\nRead the brief first.\n\nUpstream body.\n\n## Additional Instructions\n\nSay what you changed.\n",
+        "",
+        "[agent-launch-instructions]\nrev = \"Read the brief first.\"\n\n[agent-additional-instructions]\nrev = \"Say what you changed.\"\n",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    // Each section stands twice: the catalog's own copy, and the generated
+    // one that is a duplicate of it.
+    for section in ["## Launch Instructions", "## Additional Instructions"] {
+        assert_eq!(times(&text, section), 2, "{text}");
+    }
+
+    // The person deletes the generated copy of each, keeping the
+    // publisher's. Only theirs is left standing at either boundary.
+    let head = "## Launch Instructions\n\nRead the brief first.\n\n";
+    let tail = "\n## Additional Instructions\n\nSay what you changed.\n";
+    let edited = text.replacen(head, "", 1);
+    let cut = edited.rfind(tail).unwrap();
+    let edited = format!("{}{}", &edited[..cut], &edited[cut + tail.len()..])
+        .replace("Upstream body.", "My body.");
+    for section in ["## Launch Instructions", "## Additional Instructions"] {
+        assert_eq!(times(&edited, section), 1, "{edited}");
+    }
+    assert_eq!(banners(&edited), 1, "{edited}");
+    fs::write(&file, &edited).unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    for line in [
+        "## Launch Instructions",
+        "Read the brief first.",
+        "## Additional Instructions",
+        "Say what you changed.",
+        "My body.",
+    ] {
+        assert_eq!(
+            times(&source, line),
+            1,
+            "{line} is the publisher's own prose and the capture took it for the wrapper's: {source}"
+        );
+    }
+
+    let text = fs::read_to_string(&file).unwrap();
+    for line in [
+        "## Launch Instructions",
+        "Read the brief first.",
+        "## Additional Instructions",
+        "Say what you changed.",
+    ] {
+        assert_eq!(times(&text, line), 2, "{line} count wrong: {text}");
+    }
+    assert_eq!(times(&text, "My body."), 1, "{text}");
+    assert_eq!(banners(&text), 1, "{text}");
+}
