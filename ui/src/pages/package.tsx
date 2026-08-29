@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import type { HarnessId, Scope, VersionRow } from "@/bindings";
 import { SaveBar } from "@/components/customize/save-bar";
+import { DeleteDialog } from "@/components/package/delete-dialog";
 import { PackageActions } from "@/components/package/package-actions";
 import { PackageBody } from "@/components/package/package-body";
 import { PackageHeader } from "@/components/package/package-header";
 import { PackageTabs } from "@/components/package/package-tabs";
-import { RemoveDialog } from "@/components/package/remove-dialog";
 import {
   diffHarness,
   type PackageView,
@@ -54,7 +54,7 @@ export function PackagePage() {
         }
       : { mode: "files", file: null },
   );
-  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [switching, setSwitching] = useState(false);
   useEffect(() => {
     if (initialView) clearPackageView();
@@ -75,7 +75,7 @@ export function PackagePage() {
   }, [ref, result]);
 
   // Every manifest this page's controls can write: the place it was opened
-  // at, and each place Remove and the enable/disable toggle reach.
+  // at, and each place Delete and the enable/disable toggle reach.
   const mutating = useManifestBusy(switching, [
     ...(ref ? [ref.scope] : []),
     ...(group ? groupScopes(group) : []),
@@ -210,7 +210,7 @@ export function PackagePage() {
             busy={mutating}
             onUpdate={() => latest && updateToLatest(latest)}
             onPreview={() => latest && compare(latest)}
-            onRemove={() => setConfirmRemove(true)}
+            onDelete={() => setConfirmDelete(true)}
           />
         }
       />
@@ -219,6 +219,8 @@ export function PackagePage() {
         name={group.name}
         scopes={groupScopes(group)}
         harnesses={group.harnesses as HarnessId[]}
+        busy={mutating}
+        onDelete={() => setConfirmDelete(true)}
         body={body}
       />
       {dirty ? (
@@ -229,9 +231,9 @@ export function PackagePage() {
           onDiscard={() => void load()}
         />
       ) : null}
-      <RemoveDialog
-        open={confirmRemove}
-        onOpenChange={setConfirmRemove}
+      <DeleteDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
         kind={group.kind}
         name={group.name}
         scopes={groupScopes(group)}

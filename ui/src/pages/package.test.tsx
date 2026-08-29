@@ -4,6 +4,7 @@ import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AuditView,
+  ItemKind,
   Manifest_Serialize,
   ObservedItem,
   Scope,
@@ -54,8 +55,11 @@ type Project = Extract<Scope, { scope: "project" }>;
 const VG: Project = { scope: "project", root: "/work/vg" };
 const HYPR: Project = { scope: "project", root: "/work/hyprtrade" };
 
-const installedAt = (scope: Project): ObservedItem => ({
-  kind: "skill",
+const installedAt = (
+  scope: Project,
+  kind: ItemKind = "skill",
+): ObservedItem => ({
+  kind,
   name: "gh",
   scope,
   harness: "claude",
@@ -87,6 +91,9 @@ const openPage = async (
   /** What the page opens showing. An Updates-row Preview hands it a
    *  comparison, so the page starts on a diff rather than on its files. */
   packageView: PackageView | null = null,
+  /** The package's kind. Only the kinds a manifest overlays get a
+   *  Customize tab; every kind gets the rest of the strip. */
+  kind: ItemKind = "skill",
 ) => {
   vi.mocked(commands.getManifest).mockImplementation((scope) =>
     Promise.resolve({
@@ -97,14 +104,14 @@ const openPage = async (
   useScanStore.setState({
     result: {
       harnesses: [],
-      items: installed.map(installedAt),
+      items: installed.map((scope) => installedAt(scope, kind)),
       missingProjects: [],
       warnings: [],
     },
   });
   useNavStore.setState({
     page: "package",
-    packageRef: { kind: "skill", name: "gh", scope: here },
+    packageRef: { kind, name: "gh", scope: here },
     packageView,
   });
   const host = mount(<PackagePage />);
@@ -408,5 +415,54 @@ describe("the package page's file actions", () => {
     expect(commands.openInEditor).toHaveBeenCalledWith(
       editorOpenPath("/work/vg/.claude/skills/gh"),
     );
+  });
+});
+
+// Three tabs in one order, and only one of them can be missing: Customize
+// is the tab a kind can lack, so it goes last and the others keep their
+// place whatever the package is.
+describe("the package page's tabs", () => {
+  const tabs = (host: HTMLElement) =>
+    Array.from(host.querySelectorAll('[role="tab"]')).map(
+      (tab) => tab.textContent,
+    );
+
+  it("puts Projects between Overview and Customize", async () => {
+    const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+
+    expect(tabs(host)).toEqual(["Overview", "Projects", "Customize"]);
+  });
+
+  it("keeps Projects for a kind with nothing to customize", async () => {
+    const host = await openPage(
+      VG,
+      [VG],
+      { [scopeKey(VG)]: PLAIN },
+      null,
+      "mcp-server",
+    );
+
+    expect(tabs(host)).toEqual(["Overview", "Projects"]);
+  });
+});
+
+// The top-right button takes every copy in every place, so it says so —
+// and the dialog behind it names the places before it runs.
+describe("the package page's delete action", () => {
+  it("is named Delete and names every place it would reach", async () => {
+    const host = await openPage(VG, [VG, HYPR], { [scopeKey(VG)]: PLAIN });
+    expect(header(host)).not.toContain("Remove…");
+
+    const trigger = Array.from(host.querySelectorAll("button")).find(
+      (button) => button.textContent === "Delete",
+    );
+    if (!trigger) throw new Error("no Delete button in the header");
+    await userEvent.click(trigger);
+    await settle();
+
+    const said = document.body.textContent ?? "";
+    expect(said).toContain("Delete gh?");
+    expect(said).toContain("/work/vg");
+    expect(said).toContain("/work/hyprtrade");
   });
 });

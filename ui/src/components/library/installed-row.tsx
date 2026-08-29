@@ -33,6 +33,12 @@ import { placeName } from "@/lib/update-groups";
 import { cn } from "@/lib/utils";
 import { originLabel, originTitle } from "@/stores/provenance";
 
+/** How the customization mark reads once the name cell is hovered or
+ *  focused: one type step under the package name, italic and muted, in
+ *  the line the mark used to hold permanently. */
+const MARK_ON_HOVER =
+  "mt-0.5 hidden text-xs italic text-muted-foreground group-hover/name:block group-focus-within/name:block";
+
 const STATUS_TONES: Record<GroupStatus, "good" | "warning" | "critical"> = {
   active: "good",
   off: "warning",
@@ -81,7 +87,7 @@ export function InstalledRow({
     >
       {/* Cells are nowrap by default; the description is the one column that
           wants to wrap rather than run out of the row and get cut mid-word. */}
-      <TableCell className="max-w-[22rem] font-medium whitespace-normal">
+      <TableCell className="group/name max-w-[22rem] font-medium whitespace-normal">
         <span className="flex items-start gap-2">
           {/* The one place colour says something other than "which tool":
               the Library's legend names it, and the row still says so in
@@ -130,15 +136,19 @@ export function InstalledRow({
                 </Badge>
               ) : null}
             </span>
-            {/* In words on the row, not only in a tooltip: the whole point
-                of the mark is saying which place is the reader's, and a
-                fact only a hover reveals is a fact most readers never get.
-                It opens the place it names. */}
+            {/* On demand, not at rest: the description is what a reader
+                scans a row for, and a permanent line above it pushed the
+                description down on every customized package to answer a
+                question few rows were being asked. The coloured icon
+                still says a package is customized at rest; the words say
+                where. Keyboard reaches it too — the mark is focusable
+                where it opens a place, and focus reveals the cell the
+                same as a pointer. */}
             {mark?.goTo ? (
               <button
                 type="button"
                 onClick={() => onOpen(mark.goTo ?? undefined)}
-                className="mt-0.5 block text-left text-xs text-customized hover:underline"
+                className={cn(MARK_ON_HOVER, "text-left hover:underline")}
               >
                 {mark.label}
               </button>
@@ -147,9 +157,7 @@ export function InstalledRow({
               // Sending it to the row's primary place would open somewhere
               // the label never mentioned, and possibly one holding nothing
               // of the reader's.
-              <span className="mt-0.5 block text-xs text-customized">
-                {mark.label}
-              </span>
+              <span className={MARK_ON_HOVER}>{mark.label}</span>
             ) : null}
             {group.description ? (
               <span

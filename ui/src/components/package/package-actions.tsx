@@ -18,11 +18,12 @@ import {
   PREVIEW_CHANGES_LABEL,
   UPDATE_LABEL,
 } from "@/lib/copy";
+import { DELETE_LABEL } from "@/lib/copy-projects";
 import { editorOpenPath } from "@/lib/editor-path";
 import { useProblemsStore } from "@/stores/problems";
 
 /** The package page's header actions: update when a newer version exists,
- *  the open-in menu, remove, and report. */
+ *  the open-in menu, delete, and report. */
 export function PackageActions({
   scope,
   kind,
@@ -33,7 +34,7 @@ export function PackageActions({
   busy,
   onUpdate,
   onPreview,
-  onRemove,
+  onDelete,
 }: {
   scope: Scope;
   kind: ItemKind;
@@ -46,7 +47,7 @@ export function PackageActions({
   busy: boolean;
   onUpdate: () => void;
   onPreview: () => void;
-  onRemove: () => void;
+  onDelete: () => void;
 }) {
   const showError = useProblemsStore((s) => s.showError);
 
@@ -103,8 +104,10 @@ export function PackageActions({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <Button size="sm" variant="outline" disabled={busy} onClick={onRemove}>
-        Remove…
+      {/* Named for what it does: this takes every copy of the package,
+          in every place, not the one place the page names. */}
+      <Button size="sm" variant="outline" disabled={busy} onClick={onDelete}>
+        {DELETE_LABEL}
       </Button>
       <ReportDialog scope={scope} name={name} kind={kind} />
     </div>

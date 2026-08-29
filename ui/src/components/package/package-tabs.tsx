@@ -1,41 +1,65 @@
 import type { ReactNode } from "react";
 import type { HarnessId, ItemKind, Scope } from "@/bindings";
 import { ItemCustomize } from "@/components/customize/item-customize";
+import { PackageProjects } from "@/components/package/package-projects";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CUSTOMIZE_TAB, OVERVIEW_TAB } from "@/lib/copy-customize";
+import { PROJECTS_TAB } from "@/lib/copy-projects";
 import { canCustomize } from "@/lib/customization";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 
-/** The package page's scrolling content: the package's own body, and — for
- *  a kind whose rendering the person can shape — the customize tab beside
- *  it. A kind with nothing to customize gets the body alone rather than a
- *  tab strip with one tab in it. */
+/** The package page's scrolling content: what the package is, the places
+ *  it is installed in, and — for a kind whose rendering the person can
+ *  shape — what they have changed about it.
+ *
+ *  Customize is last because it is the only tab a package kind can lack,
+ *  so every other tab keeps its position whatever the package is. */
 export function PackageTabs({
   kind,
   name,
   scopes,
   harnesses,
+  busy,
+  onDelete,
   body,
 }: {
   kind: ItemKind;
   name: string;
   scopes: Scope[];
   harnesses: HarnessId[];
+  busy: boolean;
+  /** Opens the dialog that deletes every copy — the Projects tab offers
+   *  the whole-package deletion beside its per-place removals, and one
+   *  dialog confirms it wherever it was asked for. */
+  onDelete: () => void;
   body: ReactNode;
 }) {
+  const customizable = canCustomize(kind);
   return (
     <div className={cn("min-h-0 flex-1 overflow-y-auto", PAGE_GUTTER)}>
       <div className={cn("pb-8", WIDE_CONTENT_WIDTH)}>
-        {canCustomize(kind) ? (
-          <Tabs defaultValue="overview">
-            <TabsList>
-              <TabsTrigger value="overview">{OVERVIEW_TAB}</TabsTrigger>
+        <Tabs defaultValue="overview">
+          <TabsList>
+            <TabsTrigger value="overview">{OVERVIEW_TAB}</TabsTrigger>
+            <TabsTrigger value="projects">{PROJECTS_TAB}</TabsTrigger>
+            {customizable ? (
               <TabsTrigger value="customize">{CUSTOMIZE_TAB}</TabsTrigger>
-            </TabsList>
-            <TabsContent value="overview" className="pt-6">
-              {body}
-            </TabsContent>
+            ) : null}
+          </TabsList>
+          <TabsContent value="overview" className="pt-6">
+            {body}
+          </TabsContent>
+          <TabsContent value="projects" className="pt-6">
+            <PackageProjects
+              kind={kind}
+              name={name}
+              scopes={scopes}
+              busy={busy}
+              onDelete={onDelete}
+            />
+          </TabsContent>
+          {customizable ? (
             <TabsContent value="customize" className="pt-6">
               <ItemCustomize
                 kind={kind}
@@ -44,10 +68,8 @@ export function PackageTabs({
                 harnesses={harnesses}
               />
             </TabsContent>
-          </Tabs>
-        ) : (
-          body
-        )}
+          ) : null}
+        </Tabs>
       </div>
     </div>
   );

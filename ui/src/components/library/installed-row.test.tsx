@@ -68,39 +68,6 @@ describe("the row's customized mark", () => {
   });
 });
 
-// Whether a click reaches the row, and what a keypress lands on, are
-// questions about a live DOM that static markup cannot answer.
-afterEach(() => {
-  vi.restoreAllMocks();
-});
-
-const mount = (forkedIn: Scope[] = [], mark: PlaceMark | null = null) => {
-  const onOpen = vi.fn();
-  // A table host, so the row is mounted inside the structure it renders
-  // for rather than under a div.
-  const host = mountTree(
-    <tbody>
-      <InstalledRow
-        group={group}
-        origin={null}
-        mark={mark}
-        forkedIn={forkedIn}
-        onOpen={onOpen}
-      />
-    </tbody>,
-    { host: "table" },
-  );
-  return { host, onOpen };
-};
-
-const nameButton = (host: HTMLElement) => {
-  const name = Array.from(host.querySelectorAll("button")).find(
-    (b) => b.textContent === "gh",
-  );
-  if (!name) throw new Error("the package name is not a button");
-  return name;
-};
-
 describe("opening a package from its Library row", () => {
   it("reaches the keyboard: the name is a button and Enter opens it", async () => {
     const { host, onOpen } = mount();
@@ -184,3 +151,95 @@ describe("opening a package from its Library row", () => {
     expect(onOpen).toHaveBeenCalledWith(VG);
   });
 });
+
+// The mark answers a question most rows are not being asked, and a
+// permanent line above the description pushed the description down on
+// every customized package to answer it. It is drawn on demand instead:
+// the cell that shows it and the mark that hides until then have to be
+// the same pair, so both halves are read here.
+describe("where the row's mark is drawn", () => {
+  const nameCell = (host: HTMLElement) => {
+    const cell = host.querySelector("td");
+    if (!cell) throw new Error("the row has no name cell");
+    return cell;
+  };
+
+  const markElement = (host: HTMLElement) => {
+    const found = Array.from(host.querySelectorAll("td > span *")).find(
+      (node) => node.textContent?.startsWith("Customized"),
+    );
+    if (!found) throw new Error("no mark rendered");
+    return found;
+  };
+
+  const CUSTOMIZED: PlaceMark = {
+    label: "Customized in vg · 1 of 2 places",
+    goTo: VG,
+    why: "settings",
+  };
+
+  it("hides until the name cell is hovered or focused", () => {
+    const { host } = mount([], CUSTOMIZED);
+
+    const classes = markElement(host).className;
+    expect(classes).toContain("hidden");
+    expect(classes).toContain("group-hover/name:block");
+    expect(classes).toContain("group-focus-within/name:block");
+    expect(nameCell(host).className).toContain("group/name");
+  });
+
+  // The description is what a reader scans a row for. With the mark out of
+  // the resting row, the description is what follows the name — not a
+  // third line pushed down by a fact nobody asked for.
+  it("leaves the description under the name at rest", () => {
+    const { host } = mount([], CUSTOMIZED);
+
+    const stacked = nameCell(host).querySelector("span > span:last-child");
+    const resting = Array.from(stacked?.children ?? [])
+      .filter((node) => !node.className.includes("hidden"))
+      .map((node) => node.textContent);
+    expect(resting).toEqual(["gh", "about gh"]);
+  });
+
+  it("reads as a remark, not as the row's coloured mark", () => {
+    const { host } = mount([], CUSTOMIZED);
+
+    const classes = markElement(host).className;
+    expect(classes).toContain("italic");
+    expect(classes).toContain("text-muted-foreground");
+    expect(classes).not.toContain("text-customized");
+  });
+});
+
+// Whether a click reaches the row, and what a keypress lands on, are
+// questions about a live DOM that static markup cannot answer.
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+const mount = (forkedIn: Scope[] = [], mark: PlaceMark | null = null) => {
+  const onOpen = vi.fn();
+  // A table host, so the row is mounted inside the structure it renders
+  // for rather than under a div.
+  const host = mountTree(
+    <tbody>
+      <InstalledRow
+        group={group}
+        origin={null}
+        mark={mark}
+        forkedIn={forkedIn}
+        onOpen={onOpen}
+      />
+    </tbody>,
+    { host: "table" },
+  );
+  return { host, onOpen };
+};
+
+const nameButton = (host: HTMLElement) => {
+  const name = Array.from(host.querySelectorAll("button")).find(
+    (b) => b.textContent === "gh",
+  );
+  if (!name) throw new Error("the package name is not a button");
+  return name;
+};

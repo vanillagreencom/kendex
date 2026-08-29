@@ -206,8 +206,8 @@ export function packageVersionActions(
  *  them apart.
  *
  *  `scopes` is every scope the page's controls can write, not only the one
- *  it was opened at: Remove and the enable/disable toggle run over each
- *  place the package is installed in. */
+ *  it was opened at: Delete, the Projects tab's per-place removal, and the
+ *  enable/disable toggle each run over places the page does not name. */
 export function useManifestBusy(switching: boolean, scopes: Scope[]): boolean {
   const auditBusy = useAuditStore((s) => s.busy);
   const updatesBusy = useUpdatesStore((s) => s.busy);
