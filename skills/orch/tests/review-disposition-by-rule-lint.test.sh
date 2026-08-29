@@ -12,11 +12,19 @@
 # What this pins are TOKENS, never sentences: review-bots.md holds markdown
 # contract lints to setting keys, command names, headings, table rows and
 # stable inline code literals, so an editorial rephrase must not fail a suite
-# while the contract holds. The contract here is carried by `ORCH_DECISION_MODE`
-# and its two values, the `reason: not recorded` fallback, the Declined heading
-# and metric row, and the audit-issues workflow path — plus where each sits:
-# the mode tokens inside the fix-disposition section that must not gate on
-# them, and the audit-issues route inside the section that files issues.
+# while the contract holds.
+#
+# A token earns a pin only when its presence cannot be true while the rule is
+# false. `ORCH_DECISION_MODE` and its two values fail that test: they name what
+# the rule talks about, so a § 4 rewritten to say `ask` prompts for each fix
+# and `auto-recommended` fixes automatically keeps every one of them while
+# inverting the rule, and generic prompt wording slips past MENU_RE. So each
+# rule carries a token stating its own claim — `mode-independent` for
+# disposition, `artifact-derived` for declines — which an edit has to delete in
+# order to lie. The setting key, the mode values and the `reason: not recorded`
+# fallback stay pinned underneath as the enumeration the claim ranges over,
+# each with a control, and the Declined heading, the metric row and the
+# audit-issues path are operative tokens that carry their own claims.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -75,35 +83,42 @@ fi
 
 # The positive statement, so a future edit cannot quietly drop the rule and
 # leave only the absence of a menu (which a truncated file would also satisfy).
-# `ORCH_DECISION_MODE` is the setting the dropped rule spoke about, and § 4 is
-# the one place either workflow names it.
+# `mode-independent` is the rule's own claim: an edit that hands the decision
+# back to the mode has to delete it, whatever it does to the surrounding prose.
 for doc_pair in "$REVIEW_PR_WF|review-pr.md" "$REVIEW_WF|review.md"; do
   doc="${doc_pair%%|*}"
   name="${doc_pair##*|}"
-  if s4_has "$doc" 'ORCH_DECISION_MODE'; then
-    pass "$name § 4 states the disposition-by-rule contract against ORCH_DECISION_MODE"
+  if s4_has "$doc" '`mode-independent`'; then
+    pass "$name § 4 states the disposition-by-rule contract"
   else
     fail "$name § 4 lost the disposition-by-rule contract"
   fi
 
-  # BOTH mode values, not just one — the regression this pins is a rule
-  # narrowed to a single mode, which has to drop a value name to say so.
-  if s4_has "$doc" '`ask`' && s4_has "$doc" '`auto-recommended`'; then
+  # The enumeration the claim ranges over: the setting and BOTH its values, so
+  # a rule narrowed to a single mode has to drop a value name to say so.
+  if s4_has "$doc" 'ORCH_DECISION_MODE' \
+     && s4_has "$doc" '`ask`' && s4_has "$doc" '`auto-recommended`'; then
     pass "$name § 4 binds the rule to every decision mode"
   else
-    fail "$name § 4 lost a decision-mode value from the binding"
+    fail "$name § 4 lost the setting or a decision-mode value from the binding"
   fi
 done
 
 # Declines must reach the report, and must be derivable from disk rather than
-# from a conversation a compaction can drop. `reason: not recorded` is the
-# literal that derivation prints when the reason is gone, and the rule that
-# owns it is the only place either file carries it.
+# from a conversation a compaction can drop. `artifact-derived` is that rule's
+# own claim; the `reason: not recorded` fallback is what the derivation prints
+# when the reason is gone, and it outlives the rule, so it cannot stand in.
 if grep -q '^### 🚫 DECLINED$' "$REVIEW_PR_WF" \
-   && grep -qF -e 'reason: not recorded' "$REVIEW_PR_WF"; then
+   && grep -qF -e '`artifact-derived`' "$REVIEW_PR_WF"; then
   pass "review-pr.md § 8 reports declined items and derives them from artifacts"
 else
   fail "review-pr.md § 8 lost the declined reporting or its artifact derivation"
+fi
+
+if grep -qF -e 'reason: not recorded' "$REVIEW_PR_WF"; then
+  pass "review-pr.md § 8 keeps the unrecorded-reason fallback"
+else
+  fail "review-pr.md § 8 lost the unrecorded-reason fallback"
 fi
 
 # Declines must still surface — dropping a finding silently is the failure
@@ -172,6 +187,43 @@ plant_sub() {
   ' "$1" > "$CTRL"
 }
 
+# $1 = source, $2 = control name, $3 = fixed token anchoring the line to
+# replace, $4 = the line that replaces it. Anchoring on the token rather than
+# on the prose is what keeps a control planting after an editorial rewrite.
+plant_line() {
+  CTRL="$TMP_ROOT/$2.md"
+  awk -v tok="$3" -v repl="$4" '
+    index($0, tok) && !done { print repl; done = 1; next }
+    { print }
+    END { exit(done ? 0 : 1) }
+  ' "$1" > "$CTRL"
+}
+
+# The mutation the token pins exist to catch: the rule handed back to the
+# decision mode, with the setting and both its values still named. Nothing here
+# matches MENU_RE — `ORCH_DECISION_MODE` and `ask` are separated by backticks,
+# and "prompts for each fix" is not one of its shapes — so only a token stating
+# the rule's own claim can catch it.
+GATED_LINE='Disposition follows the decision mode: `ORCH_DECISION_MODE` `ask` prompts for each fix, and `auto-recommended` fixes automatically.'
+RECALLED_LINE='**Declined items are whatever this session recalls.** A blocker or `category == "fix"` suggestion you remember setting aside was declined in § 4 or § 7; where a compaction lost its reason, report `reason: not recorded`.'
+
+# $1 = fixture, $2 = control name. Fails the control, not the lint, when the
+# fixture did not keep every incidental token or tripped MENU_RE: either way it
+# would no longer prove the claim token is what does the catching.
+retains_mode_tokens() {
+  local ctrl="$1" name="$2"
+  if ! s4_has "$ctrl" 'ORCH_DECISION_MODE' \
+     || ! s4_has "$ctrl" '`ask`' || ! s4_has "$ctrl" '`auto-recommended`'; then
+    fail "$name control dropped an incidental mode token — it proves nothing about the claim token"
+    return 1
+  fi
+  if has_menu "$ctrl"; then
+    fail "$name control tripped the menu check — it proves nothing about the claim token"
+    return 1
+  fi
+  return 0
+}
+
 if ! plant_menu "$REVIEW_WF" menu '## 4. Present And Fix'; then
   fail "menu control planted nothing — its § 4 heading was not found"
 elif has_menu "$CTRL"; then
@@ -180,12 +232,22 @@ else
   fail "lint MISSED a reintroduced Apply fixes? multi-select"
 fi
 
-if ! plant_drop "$REVIEW_WF" contract 'ORCH_DECISION_MODE'; then
-  fail "contract control planted nothing — the setting key was not found"
+if ! plant_line "$REVIEW_WF" gated '`mode-independent`' "$GATED_LINE"; then
+  fail "gated control planted nothing — the claim token was not found"
+elif retains_mode_tokens "$CTRL" gated; then
+  if s4_has "$CTRL" '`mode-independent`'; then
+    fail "lint MISSED a disposition handed back to the decision mode"
+  else
+    pass "lint flags a disposition handed back to the decision mode"
+  fi
+fi
+
+if ! plant_sub "$REVIEW_WF" binding 'ORCH_DECISION_MODE' 'the decision-mode setting'; then
+  fail "binding control planted nothing — the setting key was not found"
 elif s4_has "$CTRL" 'ORCH_DECISION_MODE'; then
-  fail "lint MISSED a dropped disposition-by-rule contract"
+  fail "lint MISSED a binding that stops naming the setting"
 else
-  pass "lint flags a dropped disposition-by-rule contract"
+  pass "lint flags a binding that stops naming the setting"
 fi
 
 if ! plant_sub "$REVIEW_WF" every '`ask`' '`auto-recommended`'; then
@@ -238,12 +300,22 @@ else
   fail "lint MISSED a menu reintroduced in review-pr § 7"
 fi
 
-if ! plant_drop "$REVIEW_PR_WF" pr-contract 'ORCH_DECISION_MODE'; then
-  fail "review-pr contract control planted nothing — the setting key was not found"
+if ! plant_line "$REVIEW_PR_WF" pr-gated '`mode-independent`' "$GATED_LINE"; then
+  fail "review-pr gated control planted nothing — the claim token was not found"
+elif retains_mode_tokens "$CTRL" pr-gated; then
+  if s4_has "$CTRL" '`mode-independent`'; then
+    fail "lint MISSED a review-pr disposition handed back to the decision mode"
+  else
+    pass "lint flags a review-pr disposition handed back to the decision mode"
+  fi
+fi
+
+if ! plant_sub "$REVIEW_PR_WF" pr-binding 'ORCH_DECISION_MODE' 'the decision-mode setting'; then
+  fail "review-pr binding control planted nothing — the setting key was not found"
 elif s4_has "$CTRL" 'ORCH_DECISION_MODE'; then
-  fail "lint MISSED a dropped review-pr disposition-by-rule contract"
+  fail "lint MISSED a review-pr binding that stops naming the setting"
 else
-  pass "lint flags a dropped review-pr disposition-by-rule contract"
+  pass "lint flags a review-pr binding that stops naming the setting"
 fi
 
 if ! plant_sub "$REVIEW_PR_WF" pr-every '`ask`' '`auto-recommended`'; then
@@ -262,12 +334,22 @@ else
   pass "lint flags a dropped review-pr DECLINED section"
 fi
 
-if ! plant_sub "$REVIEW_PR_WF" pr-derive 'reason: not recorded' 'whatever you recall'; then
-  fail "review-pr derive control planted nothing — the fallback literal was not found"
-elif grep -qF -e 'reason: not recorded' "$CTRL"; then
-  fail "lint MISSED a dropped artifact-derivation rule"
+if ! plant_line "$REVIEW_PR_WF" pr-recalled '`artifact-derived`' "$RECALLED_LINE"; then
+  fail "review-pr recalled control planted nothing — the claim token was not found"
+elif ! grep -qF -e 'reason: not recorded' "$CTRL"; then
+  fail "recalled control dropped the fallback token — it proves nothing about the claim token"
+elif grep -qF -e '`artifact-derived`' "$CTRL"; then
+  fail "lint MISSED declines taken from memory instead of from the artifacts"
 else
-  pass "lint flags a dropped artifact-derivation rule"
+  pass "lint flags declines taken from memory instead of from the artifacts"
+fi
+
+if ! plant_sub "$REVIEW_PR_WF" pr-fallback 'reason: not recorded' 'whatever you recall'; then
+  fail "review-pr fallback control planted nothing — the fallback literal was not found"
+elif grep -qF -e 'reason: not recorded' "$CTRL"; then
+  fail "lint MISSED a dropped unrecorded-reason fallback"
+else
+  pass "lint flags a dropped unrecorded-reason fallback"
 fi
 
 # Scoping control for review-pr: dev-fix's own standalone ask lives in a
