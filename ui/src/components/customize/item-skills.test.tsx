@@ -17,6 +17,7 @@ const inventory = (
     declaredSkills: [],
     availableSkills: ["dev", "github", "worktree"],
     automaticSkills,
+    declaredSkillRows: {},
     harnesses: ["claude"],
     hookEvents: [],
   }) as unknown as EditorInventory;

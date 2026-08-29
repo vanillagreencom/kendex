@@ -32,7 +32,7 @@ import { useCustomizedHere } from "@/lib/customized-here";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { updatesReadState } from "@/lib/updates-read-state";
 import { cn } from "@/lib/utils";
-import { useEditorStore } from "@/stores/editor";
+import { openInventory, useEditorStore } from "@/stores/editor";
 import { useSettingsStore } from "@/stores/settings";
 import { useUpdatesStore } from "@/stores/updates";
 
@@ -43,7 +43,6 @@ export function CustomizePage() {
   const {
     scope,
     draft,
-    inventory,
     dirty,
     loading,
     saving,
@@ -54,6 +53,7 @@ export function CustomizePage() {
     edit,
     save,
   } = useEditorStore();
+  const inventory = useEditorStore(openInventory);
   const projects = useSettingsStore((s) => s.settings?.projects ?? []);
   const customized = useCustomizedHere(draft, scope);
   const updates = useUpdatesStore(updatesReadState);

@@ -21,6 +21,24 @@ pub(crate) fn skill_match_prefix(agent_name: &str) -> &str {
     agent_name.strip_prefix("reviewer-").unwrap_or(agent_name)
 }
 
+/// The `[agent-skills]` entry this agent reads and the name it is written
+/// under. A reviewer agent with no entry of its own reads its base
+/// agent's, so the two names differ exactly when the entry is inherited.
+///
+/// The one place the lookup lives. Asking for the exact name alone calls a
+/// real assignment absent and renders the upstream list over the top of
+/// it, which is the removal the person made coming back.
+pub fn declared_skills<'a>(
+    manifest: &'a Manifest,
+    agent_name: &'a str,
+) -> Option<(&'a Vec<String>, &'a str)> {
+    if let Some(own) = manifest.agent_skills.get(agent_name) {
+        return Some((own, agent_name));
+    }
+    let base = skill_match_prefix(agent_name);
+    manifest.agent_skills.get(base).map(|list| (list, base))
+}
+
 fn prefixed_matches(agent_name: &str, available: &[String]) -> Vec<String> {
     let name = agent_name.to_lowercase();
     let prefix = skill_match_prefix(&name);
@@ -101,12 +119,7 @@ pub fn effective_skills(
     recorded_upstream: Option<&[String]>,
 ) -> EffectiveSkills {
     let upstream_now = upstream_skills(agent_name, role, source, available);
-    let stripped = skill_match_prefix(agent_name);
-    let declared = manifest
-        .agent_skills
-        .get(agent_name)
-        .or_else(|| manifest.agent_skills.get(stripped));
-    let Some(declared) = declared else {
+    let Some((declared, _)) = declared_skills(manifest, agent_name) else {
         return EffectiveSkills {
             effective: upstream_now.clone(),
             upstream_now,

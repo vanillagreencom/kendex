@@ -3,8 +3,11 @@ import { commands, type EditorInventory, type Scope } from "@/bindings";
 import { type Draft, emptyDraft, toDraft } from "@/lib/editor-draft";
 import { sameScope, scopeKey } from "@/lib/scope";
 import { useAuditStore } from "./audit";
+import { manifestsOf, openInventory, recorded } from "./editor-cache";
 import { useScanStore } from "./scan";
 import { useSettingsStore } from "./settings";
+
+export { openInventory } from "./editor-cache";
 
 interface EditorState {
   /** The single scope being edited — deliberately not the sidebar filter. */
@@ -14,11 +17,16 @@ interface EditorState {
    *  with every save, so a copy of a file something else has since written
    *  is refused instead of putting the older file back. */
   base: string | null;
-  inventory: EditorInventory | null;
   /** Every scope's saved manifest, keyed by scope. What the Library and the
    *  Customize index read to mark what has been customized; `draft` above is
    *  the one copy being edited. */
   saved: Record<string, Draft>;
+  /** Every scope's editor inventory, keyed by scope. Keyed rather than
+   *  held loose beside `scope`, so a read belonging to one place cannot be
+   *  served as another's answer: read it through {@link openInventory},
+   *  which finds nothing for a place that was never read or whose read
+   *  failed. */
+  inventories: Record<string, EditorInventory>;
   dirty: boolean;
   loading: boolean;
   saving: boolean;
@@ -41,23 +49,6 @@ interface EditorState {
   save: () => Promise<void>;
 }
 
-/** Each named scope's saved manifest, keyed by scope. A read that fails is
- *  left out rather than recorded as an empty manifest: a place nobody could
- *  read is not a place holding nothing, and the marks tell them apart. */
-const manifestsOf = async (scopes: Scope[]): Promise<Record<string, Draft>> => {
-  const loaded = await Promise.all(
-    scopes.map((scope) => commands.getManifest(scope)),
-  );
-  const saved: Record<string, Draft> = {};
-  for (const [index, response] of loaded.entries()) {
-    if (response.status !== "ok") continue;
-    saved[scopeKey(scopes[index])] = response.data.manifest
-      ? toDraft(response.data.manifest)
-      : emptyDraft();
-  }
-  return saved;
-};
-
 export const useEditorStore = create<EditorState>((set, get) => {
   const load = async () => {
     const { scope } = get();
@@ -73,13 +64,18 @@ export const useEditorStore = create<EditorState>((set, get) => {
       set({ loading: false });
     }
     if (manifest.status === "error") {
-      set({
+      set((state) => ({
         draft: null,
         base: null,
+        // This place has stopped reading, so what it last said goes with
+        // it. Left in place, the mark would keep answering for this
+        // package here out of a manifest that can no longer be read.
+        saved: recorded(state.saved, scope, null),
+        inventories: recorded(state.inventories, scope, null),
         dirty: false,
         stale: false,
         error: manifest.error,
-      });
+      }));
       return;
     }
     // With no manifest here yet the editor still opens, on an empty one:
@@ -91,8 +87,16 @@ export const useEditorStore = create<EditorState>((set, get) => {
     set((state) => ({
       draft,
       base: manifest.data.base,
-      inventory: inventory.status === "ok" ? inventory.data : state.inventory,
-      saved: { ...state.saved, [scopeKey(scope)]: draft },
+      saved: recorded(state.saved, scope, draft),
+      // An inventory that failed to read leaves this place without one,
+      // rather than leaving the last place's on screen: the Skills section
+      // would otherwise offer another place's assignment as this one's,
+      // and a pick made from it writes a declaration nobody meant.
+      inventories: recorded(
+        state.inventories,
+        scope,
+        inventory.status === "ok" ? inventory.data : null,
+      ),
       dirty: false,
       stale: false,
       error: inventory.status === "ok" ? null : inventory.error,
@@ -137,8 +141,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
     scope: { scope: "global" },
     draft: null,
     base: null,
-    inventory: null,
     saved: {},
+    inventories: {},
     dirty: false,
     loading: false,
     saving: false,
@@ -182,17 +186,12 @@ export const useEditorStore = create<EditorState>((set, get) => {
 
     loadPlaces: async (scopes) => {
       const read = await manifestsOf(scopes);
-      set((state) => {
-        const saved = { ...state.saved };
-        // Every scope asked for leaves first. A read that failed has to
-        // land as unread, and merging over what is already there would
-        // leave the last answer standing instead — a place that read
-        // fine once and cannot be read now would go on being counted
-        // customized, which is the one thing the third state exists to
-        // prevent.
-        for (const scope of scopes) delete saved[scopeKey(scope)];
-        return { saved: { ...saved, ...read } };
-      });
+      set((state) => ({
+        saved: scopes.reduce(
+          (saved, scope) => recorded(saved, scope, read[scopeKey(scope)]),
+          state.saved,
+        ),
+      }));
     },
 
     edit: (change) => {

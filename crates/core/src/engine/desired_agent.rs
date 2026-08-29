@@ -307,7 +307,7 @@ fn from_manifest<'a>(manifest: &'a Manifest, harness: HarnessId, name: &str) -> 
             .agent_frontmatter
             .get(harness.name())
             .and_then(|by_agent| by_agent.get(name)),
-        skills: declared_skills(manifest, name).cloned(),
+        skills: crate::mapping::declared_skills(manifest, name).map(|(list, _)| list.clone()),
         custom_hooks: manifest
             .custom_hooks
             .iter()
@@ -351,7 +351,7 @@ fn gathered<'a>(
         // Still the project's contribution or nothing: with no declaration
         // to read, the source's own assignment is the publisher's and is
         // not folded in here.
-        skills: declared_skills(ctx.manifest, ctx.name).map(|_| effective.to_vec()),
+        skills: crate::mapping::declared_skills(ctx.manifest, ctx.name).map(|_| effective.to_vec()),
         ..from_manifest(ctx.manifest, harness, ctx.name)
     }
 }

@@ -5,6 +5,7 @@ import type {
   Scope,
 } from "@/bindings";
 import { AUTOMATIC_SKILLS, AVAILABLE_SKILLS } from "./fixtures";
+import { declaredSkillRows } from "./mock-agent-skills";
 import {
   DECL_KEYS,
   declTable,
@@ -163,6 +164,7 @@ export const auditHandlers: Record<string, Handler> = {
       declaredSkills: Object.keys(m?.skills ?? {}),
       availableSkills: AVAILABLE_SKILLS,
       automaticSkills: AUTOMATIC_SKILLS,
+      declaredSkillRows: declaredSkillRows(m),
       harnesses: m?.install.harnesses ?? ["claude"],
       hookEvents: HOOK_EVENTS,
     };

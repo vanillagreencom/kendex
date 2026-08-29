@@ -30,11 +30,38 @@ pub struct EditorInventory {
     /// with an assignment no apply has written. An agent absent here has
     /// no recorded assignment — which is not the same as having none.
     pub automatic_skills: std::collections::BTreeMap<String, Vec<String>>,
+    /// The `[agent-skills]` entry each installed agent reads, by agent
+    /// name, resolved by the engine — a reviewer agent with no entry of
+    /// its own reads its base agent's. Sent resolved so the UI never has
+    /// to know which agents inherit from which; an agent absent here has
+    /// no entry reaching it at all.
+    pub declared_skill_rows: std::collections::BTreeMap<String, DeclaredSkillRow>,
     pub harnesses: Vec<HarnessId>,
     /// The events a hook can be written against, and when each fires. Sent
     /// rather than spelled out in the UI so the picker cannot offer an
     /// event the validator would then reject.
     pub hook_events: Vec<HookEvent>,
+}
+
+/// What one scope's lock and manifest say about its agents' skills: the
+/// assignment each got from the catalog, and the `[agent-skills]` entry
+/// each reads. Both keyed by agent name, both off the same pass, so the
+/// two cannot end up keyed by different sets of agents.
+#[derive(Default)]
+struct AgentSkillFacts {
+    automatic: std::collections::BTreeMap<String, Vec<String>>,
+    declared: std::collections::BTreeMap<String, DeclaredSkillRow>,
+}
+
+/// One agent's skill declaration and the agent it is written under. The
+/// two names are the same for an entry an agent owns, and differ for one
+/// it inherits — which is the difference between a list this page edits
+/// and a list it only reports.
+#[derive(Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DeclaredSkillRow {
+    pub skills: Vec<String>,
+    pub under: String,
 }
 
 #[derive(Serialize, Type)]
@@ -123,26 +150,43 @@ pub fn custom_hook_deliveries(
 /// Every agent's recorded upstream assignment in one scope. A read-only
 /// lookup, so a v1 lock degrades to "nothing recorded" like the rest of the
 /// read surface instead of taking the editor's inventory down with it.
-fn automatic_skills(
+///
+/// Both answers come off one pass over the lock's agent entries, so the
+/// two maps cannot end up keyed by different sets of agents.
+fn agent_skill_facts(
     env: &Env,
     scope: &Scope,
-) -> Result<std::collections::BTreeMap<String, Vec<String>>, String> {
+    manifest: Option<&manifest::Manifest>,
+) -> Result<AgentSkillFacts, String> {
     let lock = match kendex_core::lock::load_file(&kendex_core::lock::lock_path(env, scope))
         .map_err(|e| e.to_string())?
     {
         kendex_core::lock::LockFile::Current(lock) => lock,
         kendex_core::lock::LockFile::Absent | kendex_core::lock::LockFile::Legacy { .. } => {
-            return Ok(std::collections::BTreeMap::new());
+            return Ok(AgentSkillFacts::default());
         }
     };
-    Ok(lock
-        .entries
-        .into_values()
-        .filter(|entry| entry.kind == ItemKind::Agent)
+    let mut facts = AgentSkillFacts::default();
+    for entry in lock.entries.into_values() {
+        if entry.kind != ItemKind::Agent {
+            continue;
+        }
         // One row per harness, all carrying the same assignment: the name
         // is the key the editor asks by, and the rows agree on it.
-        .filter_map(|entry| Some((entry.name, entry.upstream_skills?)))
-        .collect())
+        if let Some(skills) = entry.upstream_skills {
+            facts.automatic.insert(entry.name.clone(), skills);
+        }
+        let row = manifest
+            .and_then(|m| kendex_core::mapping::declared_skills(m, &entry.name))
+            .map(|(skills, under)| DeclaredSkillRow {
+                skills: skills.clone(),
+                under: under.to_owned(),
+            });
+        if let Some(row) = row {
+            facts.declared.insert(entry.name, row);
+        }
+    }
+    Ok(facts)
 }
 
 #[tauri::command(async)]
@@ -151,11 +195,13 @@ pub fn editor_inventory(scope: Scope) -> Result<EditorInventory, String> {
     let env = env()?;
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&env, &scope))
         .map_err(|e| e.to_string())?;
+    let facts = agent_skill_facts(&env, &scope, loaded.as_ref())?;
     let mut inventory = EditorInventory {
         declared_agents: Vec::new(),
         declared_skills: Vec::new(),
         available_skills: Vec::new(),
-        automatic_skills: automatic_skills(&env, &scope)?,
+        automatic_skills: facts.automatic,
+        declared_skill_rows: facts.declared,
         // Per-harness settings are only offered for harnesses kendex
         // writes to.
         harnesses: HarnessId::ALL
@@ -221,6 +267,7 @@ mod tests {
     use super::*;
     use kendex_core::env::FakeOs;
     use kendex_core::lock::{Lock, LockEntry, entry_key, lock_path, save};
+    use kendex_core::manifest::Manifest;
 
     fn entry(kind: ItemKind, name: &str, upstream_skills: Option<&[&str]>) -> LockEntry {
         LockEntry {
@@ -260,6 +307,17 @@ mod tests {
         (tmp, env, scope)
     }
 
+    fn manifest_with(rows: &[(&str, &[&str])]) -> Manifest {
+        let mut manifest = Manifest::default();
+        for (agent, skills) in rows {
+            manifest.agent_skills.insert(
+                (*agent).to_owned(),
+                skills.iter().map(|s| (*s).to_owned()).collect(),
+            );
+        }
+        manifest
+    }
+
     #[test]
     #[allow(clippy::unwrap_used)]
     fn reads_each_agents_recorded_assignment() {
@@ -269,12 +327,12 @@ mod tests {
             // other kind is not an assignment and is not reported as one.
             entry(ItemKind::Skill, "dev", Some(&["worktree"])),
         ]);
-        let map = automatic_skills(&env, &scope).unwrap();
+        let automatic = agent_skill_facts(&env, &scope, None).unwrap().automatic;
         assert_eq!(
-            map.get("orch").map(Vec::as_slice),
+            automatic.get("orch").map(Vec::as_slice),
             Some(&["dev".to_owned(), "github".to_owned()][..])
         );
-        assert!(!map.contains_key("dev"));
+        assert!(!automatic.contains_key("dev"));
     }
 
     // An agent with nothing recorded is absent, not empty: the editor
@@ -284,11 +342,8 @@ mod tests {
     #[allow(clippy::unwrap_used)]
     fn leaves_an_unrecorded_agent_out_rather_than_calling_it_empty() {
         let (_tmp, env, scope) = scope_with(vec![entry(ItemKind::Agent, "scout", None)]);
-        assert!(
-            !automatic_skills(&env, &scope)
-                .unwrap()
-                .contains_key("scout")
-        );
+        let automatic = agent_skill_facts(&env, &scope, None).unwrap().automatic;
+        assert!(!automatic.contains_key("scout"));
     }
 
     #[test]
@@ -299,6 +354,33 @@ mod tests {
         let root = tmp.path().join("dev/app");
         std::fs::create_dir_all(&root).unwrap();
         let scope = Scope::Project { root };
-        assert!(automatic_skills(&env, &scope).unwrap().is_empty());
+        let facts = agent_skill_facts(&env, &scope, None).unwrap();
+        assert!(facts.automatic.is_empty() && facts.declared.is_empty());
+    }
+
+    // The UI is told which entry each agent reads and where it lives, so
+    // it never has to know that a reviewer agent inherits.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn resolves_the_entry_each_agent_reads() {
+        let (_tmp, env, scope) = scope_with(vec![
+            entry(ItemKind::Agent, "reviewer-rust", None),
+            entry(ItemKind::Agent, "orch", None),
+            entry(ItemKind::Agent, "scout", None),
+        ]);
+        let manifest = manifest_with(&[("rust", &["worktree"]), ("orch", &["dev"])]);
+        let declared = agent_skill_facts(&env, &scope, Some(&manifest))
+            .unwrap()
+            .declared;
+
+        let inherited = declared.get("reviewer-rust").unwrap();
+        assert_eq!(inherited.skills, vec!["worktree".to_owned()]);
+        assert_eq!(inherited.under, "rust");
+
+        let own = declared.get("orch").unwrap();
+        assert_eq!(own.under, "orch");
+
+        // No entry reaches this one at all.
+        assert!(!declared.contains_key("scout"));
     }
 }

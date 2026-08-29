@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
-import type { Scope } from "@/bindings";
+import type { EditorInventory, Scope } from "@/bindings";
 import { ItemCustomize } from "@/components/customize/item-customize";
-import { CUSTOMIZED_MARK } from "@/lib/copy-customize";
+import { CUSTOMIZED_MARK, skillsInherited } from "@/lib/copy-customize";
 import { useEditorStore } from "@/stores/editor";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount } from "@/test/dom";
@@ -77,5 +77,65 @@ describe("the place chips", () => {
   it("marks nothing where no place holds anything", () => {
     seed({ "/work/vg": empty, "/work/hyprtrade": empty });
     expect(markedPlaces(tab())).toEqual([]);
+  });
+});
+
+// Which agents inherit an [agent-skills] row from which is the engine's
+// rule. The tab reads the answer it is handed, keyed to the place it is
+// open at, and knows nothing about how it was reached.
+describe("the skills a place declares", () => {
+  const inventory = (
+    declaredSkillRows: EditorInventory["declaredSkillRows"],
+  ): EditorInventory =>
+    ({
+      declaredAgents: [],
+      declaredSkills: [],
+      availableSkills: ["dev", "worktree"],
+      automaticSkills: { "reviewer-rust": ["dev"] },
+      declaredSkillRows,
+      harnesses: ["claude"],
+      hookEvents: [],
+    }) as unknown as EditorInventory;
+
+  const openAt = (
+    scope: Scope,
+    inventories: Record<string, EditorInventory>,
+  ) => {
+    useUpdatesStore.setState({ rows: [], loaded: true });
+    useEditorStore.setState({
+      scope,
+      draft: empty as never,
+      saved: { "/work/vg": empty as never },
+      inventories,
+    });
+    return mount(
+      <ItemCustomize
+        kind="agent"
+        name="reviewer-rust"
+        scopes={[VG]}
+        harnesses={["claude"]}
+      />,
+    );
+  };
+
+  it("names the row the engine says this agent reads", () => {
+    const host = openAt(VG, {
+      "/work/vg": inventory({
+        "reviewer-rust": { skills: ["worktree"], under: "rust" },
+      }),
+    });
+    expect(host.textContent).toContain(skillsInherited("rust"));
+    expect(host.textContent).toContain("worktree");
+  });
+
+  // The inventory belongs to a place. Read loose, another place's answer
+  // would offer this agent an assignment nobody set here.
+  it("reads no other place's answer", () => {
+    const host = openAt(HYPR, {
+      "/work/vg": inventory({
+        "reviewer-rust": { skills: ["worktree"], under: "rust" },
+      }),
+    });
+    expect(host.textContent).not.toContain(skillsInherited("rust"));
   });
 });

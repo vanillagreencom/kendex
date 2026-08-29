@@ -20,11 +20,7 @@ import {
   SKILLS_SECTION,
   WRITTEN_INTO,
 } from "@/lib/copy-customize";
-import {
-  declaredSkillsRow,
-  itemCustomization,
-  sharedCustomization,
-} from "@/lib/customization";
+import { itemCustomization, sharedCustomization } from "@/lib/customization";
 import {
   manifestsForEditing,
   placeStandings,
@@ -33,7 +29,7 @@ import {
 import { setInstruction } from "@/lib/editor-draft";
 import { scopeName } from "@/lib/labels";
 import { scopeKey } from "@/lib/scope";
-import { useEditorStore } from "@/stores/editor";
+import { openInventory, useEditorStore } from "@/stores/editor";
 import { useUpdatesStore } from "@/stores/updates";
 
 /** Everything kendex lets a person change about one installed package,
@@ -51,27 +47,18 @@ export function ItemCustomize({
   scopes: Scope[];
   harnesses: HarnessId[];
 }) {
-  const {
-    scope,
-    draft,
-    saved,
-    inventory,
-    dirty,
-    error,
-    stale,
-    setScope,
-    load,
-    edit,
-  } = useEditorStore();
+  const { scope, draft, saved, dirty, error, stale, setScope, load, edit } =
+    useEditorStore();
+  const inventory = useEditorStore(openInventory);
   const rows = useUpdatesStore((s) => s.rows);
   const updatesLoaded = useUpdatesStore((s) => s.loaded);
 
   const mine = itemCustomization(draft, kind, name);
-  // The row this agent renders with when it has none of its own. The
-  // engine resolves a reviewer agent to its base agent's row, so a screen
-  // that only asked for the exact name named the catalog's list over one
-  // the person wrote.
-  const declared = declaredSkillsRow(draft, name);
+  // The row this agent renders with when it has none of its own, resolved
+  // by the engine and read here already answered: which agents inherit
+  // from which is the engine's rule, and a copy of it here is a copy that
+  // drifts. `under` naming another agent is what makes it inherited.
+  const declared = inventory?.declaredSkillRows[name];
   const inheritedSkills = declared && declared.under !== name ? declared : null;
   const shared = sharedCustomization(draft);
   const tools = (inventory?.harnesses ?? []).filter((id) =>

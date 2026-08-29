@@ -913,6 +913,17 @@ export type DeclaredEffects = {
 	root: string,
 } & RepoEffects;
 
+/**
+ *  One agent's skill declaration and the agent it is written under. The
+ *  two names are the same for an entry an agent owns, and differ for one
+ *  it inherits — which is the difference between a list this page edits
+ *  and a list it only reports.
+ */
+export type DeclaredSkillRow = {
+	skills: string[],
+	under: string,
+};
+
 /**  One rule firing once, and what it cost. */
 export type Deduction = {
 	rule: string,
@@ -1119,6 +1130,14 @@ export type EditorInventory = {
 	 *  no recorded assignment — which is not the same as having none.
 	 */
 	automaticSkills: { [key in string]: string[] },
+	/**
+	 *  The `[agent-skills]` entry each installed agent reads, by agent
+	 *  name, resolved by the engine — a reviewer agent with no entry of
+	 *  its own reads its base agent's. Sent resolved so the UI never has
+	 *  to know which agents inherit from which; an agent absent here has
+	 *  no entry reaching it at all.
+	 */
+	declaredSkillRows: { [key in string]: DeclaredSkillRow },
 	harnesses: HarnessId[],
 	/**
 	 *  The events a hook can be written against, and when each fires. Sent
