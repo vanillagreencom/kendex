@@ -199,7 +199,9 @@ Still `ok == false` after that, or the § 3.2 deadline reached → mark the agen
 
 ### 3.2 Watchdog
 
-Sweep the filesystem on every event. Per-agent deadline from `review_delegated_at`: 25 minutes for an agent whose name contains `perf`, 15 minutes for every other agent. The external lane's printed deadline is absolute Unix epoch seconds; compare it with `date +%s`. If no deadline metadata prints, use 2 × `SECOND_OPINION_TIMEOUT` plus 3 minutes, with 1080 seconds as the timeout default. It is not a messageable agent, so the ping row and its early end never apply to it.
+**No wait here is unclocked: while any agent this workflow delegated has not completed (§ 3.1), a wake source for it is armed.** A reviewer that finishes and whose return message is never delivered produces no event, so no row below fires and the wait is silent and unbounded. An agent's wake source is one backgrounded `review-artifact-check [WORKTREE_PATH] [AGENT] [REVIEW_DELEGATED_AT] --wait [SECS]` whose `[SECS]` reaches no further than that agent's deadline; the external lane's is the `wait:` command § 2.2 prints. Arm them with the delegation batch, and re-arm after every action below, a status ping included — a reply promising completion extends nothing without a re-armed clock.
+
+Sweep the filesystem on every wake. Per-agent deadline from `review_delegated_at`: 25 minutes for an agent whose name contains `perf`, 15 minutes for every other agent. The external lane's printed deadline is absolute Unix epoch seconds; compare it with `date +%s`. If no deadline metadata prints, use 2 × `SECOND_OPINION_TIMEOUT` plus 3 minutes, with 1080 seconds as the timeout default. It is not a messageable agent, so the ping row and its early end never apply to it.
 
 | Event | Action |
 |-------|--------|
@@ -291,8 +293,7 @@ The cap decides before any delegation. Read the re-review cycles already entered
 
 ### Fix Delegation
 
-**Skip if** the `fix set` is empty. Findings that leave `items` are never dropped: declined per [finding-disposition](../references/finding-disposition.md) when a cut removed their surface, recorded in `escalated_items` when § 8's audit is to file them.
-Never fix as the main agent.
+**Skip if** the `fix set` is empty. Findings that leave `items` are never dropped: declined per [finding-disposition](../references/finding-disposition.md) when a cut removed their surface, recorded in `escalated_items` when § 8's audit is to file them. Never fix as the main agent.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
@@ -404,9 +405,7 @@ On the way out, and before § 8, disposition every item still outstanding — ev
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{json_paths: (.json_paths // []), fixed: (.fixed_items // []), escalated: (.escalated_items // [])}'
 ```
 
-Empty `json_paths` → report "No review items" and → § 9.
-
-Read every JSON, collect the `category == "issue"` suggestions, and deduplicate by (location, description), keeping the first and noting all sources.
+Empty `json_paths` → report "No review items" and → § 9. Otherwise read every JSON, collect the `category == "issue"` suggestions, and deduplicate by (location, description), keeping the first and noting all sources.
 
 **Declined items are re-derived, not remembered.** A blocker or `category == "fix"` suggestion that appears in a `json_paths` artifact but in neither `fixed_items` nor `escalated_items` was declined in § 4 or § 7. Carry each one's recorded reason; where a compaction lost it, report `reason: not recorded` rather than inventing one.
 

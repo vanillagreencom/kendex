@@ -11,7 +11,7 @@ Cross-script routing behind the artifact rows in [../SKILL.md](../SKILL.md). Eac
 
 ## Round-closure mechanics
 
-- **The watchdog IS the check in blocking mode**: `dev-artifact-check --wait <quiet_window> …` (reviewers: `review-artifact-check … --wait`) polls on-disk state and returns the moment a fresh artifact lands or at the deadline — return-message delivery is never load-bearing. Per-harness backgrounding is in each check's `--help`. Run A/B on its return if the round is still outstanding; re-arm only on entering a new escalation step.
+- **The watchdog IS the check in blocking mode**: `dev-artifact-check --wait <quiet_window> …` polls on-disk state and returns the moment a fresh artifact lands or at the deadline — return-message delivery is never load-bearing. Per-harness backgrounding is in each check's `--help`. Run A/B on its return if the round is still outstanding; re-arm only on entering a new escalation step. The reviewer side of the same invariant is stated once, in review-pr.md § 3.2, and never restated here.
 - **The round token binds A to exactly this delegation's receipt.**
 - **A path whose agent writes no dev-return artifact** (`ci-fix.md` pushes directly) always has A `verdict=wait`: accepted by its return message and the escalation ladder, never by a stale artifact.
 - **Composite B never accepts on its own.** A return-message timeout, clean git status, and no modified files reflect worktree state only. The one positive signal that overrides a missing return is a valid `dev-artifact-check` for the current `dev_round_id`.
