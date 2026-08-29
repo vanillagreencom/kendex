@@ -71,6 +71,12 @@ case "$resource:$action" in
           [[ "$arg" == --pending ]] && pending=true
           [[ "$arg" == --format=ids ]] && format=ids
         done
+        if [[ -e "$root/late.cascade.on.children" ]]; then
+          rm -f "$root/late.cascade.on.children"
+          jq 'map(if .state_type == "canceled" then .state = "Done" | .state_type = "completed" else . end)' \
+            "$root/children.json" > "$root/children.next.$$"
+          mv "$root/children.next.$$" "$root/children.json"
+        fi
         if $pending; then
           if [[ "$format" == ids ]]; then
             jq -r '.[] | select(.state_type != "completed" and .state_type != "canceled") | .id' "$root/children.json"
@@ -166,6 +172,7 @@ reset_state() {
     "$FAKE_LINEAR_ROOT/hold.complete" "$FAKE_LINEAR_ROOT/release.complete" \
     "$FAKE_LINEAR_ROOT/fail.complete.after" "$FAKE_LINEAR_ROOT/interrupt.after.complete" \
     "$FAKE_LINEAR_ROOT/fail.complete.before" "$FAKE_LINEAR_ROOT/fail.update.once" "$FAKE_LINEAR_ROOT/gh.mode" \
+    "$FAKE_LINEAR_ROOT/late.cascade.on.children" \
     "$SANDBOX/tmp/container-close-recovery/PARENT-1.tsv"
   rm -rf "$FAKE_LINEAR_ROOT/complete.entries"
   mkdir "$FAKE_LINEAR_ROOT/complete.entries"
@@ -248,9 +255,39 @@ run_close >/dev/null 2>"$TMP_ROOT/open-unchanged.err" || rc=$?
 [[ $rc -ne 0 ]] && ok "failed completion leaves open-parent recovery for retry" || fail "failed completion leaves open-parent recovery for retry"
 rm -f "$FAKE_LINEAR_ROOT/fail.complete.before"
 out="$(run_close 2>"$TMP_ROOT/open-unchanged-retry.err")"
-assert_eq "$out" "closed PARENT-1" "open parent clears unchanged recovery before retry"
+assert_eq "$out" "closed PARENT-1" "open parent carries unchanged recovery through retry"
 assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "2" "unchanged recovery retries parent completion once"
 [[ ! -e "$RECOVERY" ]] && ok "successful retry consumes unchanged recovery" || fail "successful retry consumes unchanged recovery"
+
+reset_state
+printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+touch "$FAKE_LINEAR_ROOT/fail.complete.before"
+rc=0
+run_close >/dev/null 2>"$TMP_ROOT/late-cascade-first.err" || rc=$?
+[[ $rc -ne 0 ]] && ok "late-cascade fixture keeps the first recovery record" || fail "late-cascade fixture keeps the first recovery record"
+rm -f "$FAKE_LINEAR_ROOT/fail.complete.before"
+touch "$FAKE_LINEAR_ROOT/late.cascade.on.children"
+out="$(run_close 2>"$TMP_ROOT/late-cascade-retry.err")"
+assert_eq "$out" "closed PARENT-1" "late cascade retry closes the parent"
+assert_eq "$(jq -r '.[] | select(.id == "CHILD-2") | .state_type' "$FAKE_LINEAR_ROOT/children.json")" "canceled" "merged recovery restores a cascade after the open-parent check"
+[[ ! -e "$RECOVERY" ]] && ok "late cascade repair removes the merged recovery" || fail "late cascade repair removes the merged recovery"
+
+LATE_MUTANT="$SANDBOX/skills/orch/scripts/container-close-late-mutant"
+assert_eq "$(grep -Fc '"$RECOVERY" "$SNAPSHOT" > "$recovery_tmp"' "$SCRIPT")" "1" "late-cascade control finds recovery merging"
+awk 'index($0, "\"$RECOVERY\" \"$SNAPSHOT\" > \"$recovery_tmp\"") { print "    " sprintf("%c", 39) " \"$SNAPSHOT\" > \"$recovery_tmp\" || {"; next } { print }' "$SCRIPT" > "$LATE_MUTANT"
+chmod +x "$LATE_MUTANT"
+reset_state
+printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+touch "$FAKE_LINEAR_ROOT/fail.complete.before"
+rc=0
+"$SCRIPT" "$SANDBOX" PARENT-1 >/dev/null 2>&1 || rc=$?
+[[ $rc -ne 0 ]] && ok "late-cascade mutant fixture keeps recovery" || fail "late-cascade mutant fixture keeps recovery"
+rm -f "$FAKE_LINEAR_ROOT/fail.complete.before"
+touch "$FAKE_LINEAR_ROOT/late.cascade.on.children"
+rc=0
+"$LATE_MUTANT" "$SANDBOX" PARENT-1 >/dev/null 2>"$TMP_ROOT/late-mutant.err" || rc=$?
+[[ $rc -ne 0 ]] && ok "late-cascade control fails when fresh snapshot replaces recovery" || fail "late-cascade control fails when fresh snapshot replaces recovery"
+assert_eq "$(jq -r '.[] | select(.id == "CHILD-2") | .state_type' "$FAKE_LINEAR_ROOT/children.json")" "completed" "late-cascade mutant loses the recorded restoration"
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
@@ -267,13 +304,15 @@ rc=0
 run_close >"$TMP_ROOT/open-recovery-retry.out" 2>"$TMP_ROOT/open-recovery-retry.err" || rc=$?
 [[ $rc -ne 0 ]] && ok "open parent cannot authorize recovery over an independently completed child" || fail "open parent cannot authorize recovery over an independently completed child"
 assert_contains "$TMP_ROOT/open-recovery-retry.err" "recovery child CHILD-2 moved from Canceled to Done" "authorization refusal names the changed child"
+assert_contains "$TMP_ROOT/open-recovery-retry.err" "$RECOVERY" "authorization refusal names the durable recovery path"
+assert_contains "$TMP_ROOT/open-recovery-retry.err" "reconcile Linear state, then remove" "authorization refusal gives the reconciliation remedy"
 assert_eq "$(jq -r '.[] | select(.id == "CHILD-2") | .state_type' "$FAKE_LINEAR_ROOT/children.json")" "completed" "authorization refusal preserves the independent completion"
 [[ -s "$RECOVERY" ]] && ok "authorization refusal preserves the recovery record" || fail "authorization refusal preserves the recovery record"
 assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "1" "authorization refusal does not retry parent completion"
 
 AUTH_MUTANT="$SANDBOX/skills/orch/scripts/container-close-auth-mutant"
-assert_eq "$(grep -Fxc 'clear_open_recovery' "$SCRIPT")" "1" "authorization control finds the open-parent boundary"
-awk '$0 == "clear_open_recovery" { print "repair_canceled"; next } { print }' "$SCRIPT" > "$AUTH_MUTANT"
+assert_eq "$(grep -Fxc 'check_open_recovery' "$SCRIPT")" "1" "authorization control finds the open-parent boundary"
+awk '$0 == "check_open_recovery" { print "repair_canceled"; next } { print }' "$SCRIPT" > "$AUTH_MUTANT"
 chmod +x "$AUTH_MUTANT"
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"

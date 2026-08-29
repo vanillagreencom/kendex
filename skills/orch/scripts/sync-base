@@ -62,13 +62,14 @@ if [[ -n "$BASE_WORKTREE" ]]; then
   : > "$LOCAL_PATHS"
   git -C "$BASE_WORKTREE" ls-files --others --exclude-standard -z >> "$LOCAL_PATHS" \
     || { echo "sync-base: cannot enumerate untracked paths" >&2; exit 1; }
-  git -C "$BASE_WORKTREE" ls-files --others --ignored --exclude-standard -z >> "$LOCAL_PATHS" \
+  git -C "$BASE_WORKTREE" ls-files --others --ignored --exclude-standard --directory -z >> "$LOCAL_PATHS" \
     || { echo "sync-base: cannot enumerate ignored untracked paths" >&2; exit 1; }
   COLLISION=""
   INCOMING_COLLISION=""
   while IFS= read -r -d '' incoming; do
     while IFS= read -r -d '' local_path; do
-      if [[ "$incoming" == "$local_path" || "$incoming" == "$local_path/"* || "$local_path" == "$incoming/"* ]]; then
+      local_root="${local_path%/}"
+      if [[ "$incoming" == "$local_root" || "$incoming" == "$local_root/"* || "$local_root" == "$incoming/"* ]]; then
         COLLISION="$local_path"
         INCOMING_COLLISION="$incoming"
         break 2
@@ -79,7 +80,7 @@ if [[ -n "$BASE_WORKTREE" ]]; then
     printf 'sync-base: incoming path %s collides with untracked path %s\n' "$INCOMING_COLLISION" "$COLLISION" >&2
     exit 1
   }
-  git -C "$BASE_WORKTREE" merge --ff-only "origin/$BASE_BRANCH" >&2
+  git -C "$BASE_WORKTREE" merge --ff-only --no-overwrite-ignore "origin/$BASE_BRANCH" >&2
 else
   git -C "$REPO_ROOT" fetch . \
     "refs/remotes/origin/$BASE_BRANCH:refs/heads/$BASE_BRANCH" >&2
