@@ -204,10 +204,9 @@ fn a_v1_record_is_adopted_only_by_a_matching_template_over_unedited_text() {
     assert_eq!(ledger.get("DEPTH").unwrap().owner, None);
 }
 
-/// Two skills ship one key. Seeding wrote the first declaration; a later
-/// pass where the other skill enumerates first must still refresh from
-/// the recorded owner's template — declaration order never shadows the
-/// ledger.
+/// Two skills ship one key. Seeding wrote one of them; a later pass where
+/// the other skill enumerates first must still refresh from the recorded
+/// owner's template — declaration order never shadows the ledger.
 #[test]
 fn the_recorded_owner_speaks_for_a_key_several_skills_ship() {
     let review = seeded("[env]\n# Review's words.\nDEPTH = \"2\"\n", "review");
@@ -228,10 +227,11 @@ fn the_recorded_owner_speaks_for_a_key_several_skills_ship() {
     );
 }
 
-/// Seeding writes the first declaration of a key and the ledger records
-/// that skill — the same choice, so the owner can refresh what it wrote.
+/// Seeding writes the first declaration that can be written whole and the
+/// ledger records that skill — one selection, so the owner can refresh
+/// what it wrote.
 #[test]
-fn merge_seeds_the_first_declaration_and_records_it_as_owner() {
+fn merge_seeds_the_first_writable_declaration_and_records_it_as_owner() {
     let mut entries = seeded("[env]\n# First.\nDEPTH = \"1\"\n", "first");
     entries.extend(seeded("[env]\n# Second.\nDEPTH = \"2\"\n", "second"));
     let (out, added) = merge(Some("[env]\n"), &entries).unwrap();

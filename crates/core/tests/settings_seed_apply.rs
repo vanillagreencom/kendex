@@ -382,7 +382,7 @@ fn a_key_shipped_with_differing_defaults_gets_one_grouped_note() {
     assert!(about[0].contains("\"900\" (alpha, beta)"), "{about:?}");
     assert!(about[0].contains("\"600\" (gamma)"), "{about:?}");
 
-    // The note changes nothing: the first declaration is still what lands.
+    // The note changes nothing: the declaration seeding picked still lands.
     apply_now(&f);
     let seeded = fs::read_to_string(f.project.join("kendex.settings.toml")).unwrap();
     assert!(seeded.contains("WAIT = \"900\""), "{seeded}");

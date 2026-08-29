@@ -147,8 +147,10 @@ pub struct DesiredState {
     pub manifest_update: Option<Manifest>,
     /// `[env]` defaults shipped by enabled skills
     /// (kendex.settings.toml.example), every declaration in order — each
-    /// with the skill that ships it. Seeding writes the first declaration
-    /// of a key; a refresh listens to the key's recorded owner.
+    /// with the skill that ships it, incomplete values included, because a
+    /// key nothing can supply is reported by name. Seeding writes the
+    /// first declaration whose template completes the value; a refresh
+    /// listens to the key's recorded owner.
     pub settings_env: Vec<crate::settings_seed::SeededEnv>,
     /// Where each planned skill's settings template stands: read, absent,
     /// or out of reach. `settings_env` is this same text run through the

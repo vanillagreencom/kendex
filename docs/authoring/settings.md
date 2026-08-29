@@ -73,8 +73,14 @@ runs.
 
 Seeding stays lenient, and that is the point of checking: in the consumer's
 `kendex.settings.toml` a duplicate assignment inside `[env]` fails the load,
-while a template with one seeds its first declaration and drops the rest
-without a word. Write each key once.
+while a template with one seeds the first declaration it can write whole and
+drops the rest without a word. Write each key once.
+
+A value the template never closes is the one thing seeding will not pass
+over in silence. It writes nothing for that key — a partial value would stop
+the consumer's file parsing from that line down — and the plan names the key
+instead. A value that does close is seeded whole however many lines it
+takes, spelled exactly as the template spells it.
 
 ## Naming
 

@@ -16,10 +16,11 @@ use super::{SETTINGS_FILE, SeededEnv};
 /// else — and packages agreeing on a shared key, which is the ordinary
 /// case, say nothing at all.
 ///
-/// Every entry counts, whatever shape its value is in. `merge` reads the
-/// same lenient list, so an entry this dropped would be one the note left
-/// out of a key it does seed — and with it the owner named as the one
-/// whose value lands.
+/// The groups are built from the writable declarations, the same
+/// selection `merge` seeds from, so the defaults compared here are the
+/// ones that could actually land. A declaration whose value its template
+/// never completes ships no default to disagree with and is reported by
+/// [`unterminated_notes`] instead.
 ///
 /// The note is raised before the settings file is even read, because the
 /// disagreement is worth saying either way. So it says which default
