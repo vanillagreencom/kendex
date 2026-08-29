@@ -17,6 +17,7 @@ import {
   SAFETY_NOT_READ_BODY,
   SAFETY_RETRY_LABEL,
   SAFETY_TAB,
+  SAFETY_TAB_FAILED,
   SAFETY_TAB_STALE,
   SAFETY_VENDOR,
   severityTone,
@@ -59,6 +60,15 @@ export function SafetyScoreLabel({
   // still on its way, and for this one nothing is on its way.
   if (vendor) return <>{SAFETY_TAB}</>;
   const current = result !== null && failure === null;
+  // A check that failed is marked whether or not it left a reading behind.
+  // A dash alone is what a pending check and an unscored answer both show,
+  // so a failure drawn that way is a failure nobody is told about.
+  const mark =
+    failure === null
+      ? null
+      : result !== null
+        ? SAFETY_TAB_STALE
+        : SAFETY_TAB_FAILED;
   return (
     <>
       {SAFETY_TAB}
@@ -67,11 +77,11 @@ export function SafetyScoreLabel({
         score={result?.safety.score ?? null}
         tone={current ? severityTone(result.findings) : "muted"}
       />
-      {result !== null && failure !== null ? (
+      {mark ? (
         <>
           <TriangleAlert className="size-3.5 text-warning" />
           {/* Colour is never the only carrier of the fact. */}
-          <span className="sr-only">{SAFETY_TAB_STALE}</span>
+          <span className="sr-only">{mark}</span>
         </>
       ) : null}
     </>

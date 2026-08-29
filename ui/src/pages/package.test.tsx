@@ -17,7 +17,7 @@ import {
   OPEN_IN_FILE_BROWSER_LABEL,
   OPEN_IN_LABEL,
 } from "@/lib/copy";
-import { SAFETY_TAB } from "@/lib/copy-safety";
+import { SAFETY_TAB, SAFETY_VENDOR } from "@/lib/copy-safety";
 import { editorOpenPath } from "@/lib/editor-path";
 import { SEVERITY_LABELS } from "@/lib/labels";
 import { scopeKey } from "@/lib/scope";
@@ -160,8 +160,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   // clearAllMocks leaves implementations standing, and a test that
   // answers the audit would otherwise answer it for every test after
-  // it in this file.
+  // it in this file. The default is an audit that ran and found nothing
+  // to say about this package: a check that never answers is a state the
+  // safety tab reports, so a test must ask for it rather than inherit it.
   vi.mocked(commands.auditAll).mockReset();
+  vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
   vi.mocked(commands.packageMeta).mockResolvedValue(nothing);
   vi.mocked(commands.packageFiles).mockResolvedValue(nothing);
   vi.mocked(commands.packageVersions).mockResolvedValue(nothing);
@@ -348,6 +351,47 @@ describe("the package page's safety tab", () => {
     // Nothing scored the place this page is about, so the tab shows the
     // dash rather than the other place's 12.
     expect(scoreTab(host).textContent).toBe(`${SAFETY_TAB}—`);
+  });
+
+  // One place holds one copy per harness, and the reading merges them all.
+  // A vendor read off whichever copy the scan listed first would answer for
+  // a set it does not speak for, and would hide the score the reader's own
+  // copy earned behind "kendex doesn't check this".
+  it("shows the score where one copy is the harness's and one is not", async () => {
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "ok",
+      data: [scoredView],
+    });
+    useAuditStore.setState({ auditedAt: 1, views: [scoredView] });
+    // The bundled copy is listed first, exactly the order that hid the score.
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [
+          { ...installedAt(VG), harness: "claude", vendor: "Anthropic" },
+          { ...installedAt(VG), harness: "codex" },
+        ],
+        missingProjects: [],
+        warnings: [],
+      },
+    });
+    useNavStore.setState({
+      page: "package",
+      packageRef: { kind: "skill", name: "gh", scope: VG },
+      packageView: null,
+    });
+    const host = mount(<PackagePage />);
+    await settle();
+
+    expect(scoreTab(host).textContent).toBe(`${SAFETY_TAB}58`);
+
+    await act(async () => {
+      scoreTab(host).click();
+    });
+    await settle();
+
+    expect(host.textContent).toContain("58/100");
+    expect(host.textContent).not.toContain(SAFETY_VENDOR);
   });
 });
 

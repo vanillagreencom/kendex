@@ -24,6 +24,10 @@ export const SAFETY_TAB = "Safety score";
 // for the mark beside it: a colour and an icon alone would leave a kept
 // number reading as a current one.
 export const SAFETY_TAB_STALE = "the last reading kendex could check";
+// The same job where the failure left nothing behind it. Overview is the
+// tab a page opens on, so without this the only sign of a check that never
+// ran is a dash — which is also what pending and unscored show.
+export const SAFETY_TAB_FAILED = "the check couldn't run";
 // The audit is the slowest thing the app does, so the tab opens before it
 // has answered. A wait is not an outcome, and this says which it is.
 export const SAFETY_CHECKING = "Checking this package…";

@@ -14,6 +14,7 @@ import {
   removablePlaces,
   type UpdatesStanding,
   updatableRows,
+  vendorAt,
 } from "@/lib/package-places";
 import { scopeKey } from "@/lib/scope";
 
@@ -75,6 +76,7 @@ const UNMANAGED: Origin = { origin: "unmanaged" };
 const install = (
   scope: Scope,
   harness: HarnessId = "claude",
+  vendor: string | null = null,
 ): ObservedItem => ({
   kind: "skill",
   name: "gh",
@@ -87,7 +89,7 @@ const install = (
   description: null,
   tags: [],
   modifiedAt: null,
-  vendor: null,
+  vendor,
 });
 
 /** One provenance row, which the join keys per harness the same way. */
@@ -321,5 +323,56 @@ describe("which places kendex can remove", () => {
     const built = places([VG, HYPR], [], {}, "skill", SETTLED, owned([VG]));
 
     expect(removablePlaces(built).map((one) => one.scope)).toEqual([VG]);
+  });
+});
+
+// A place holds one installation per harness, and the safety reading merges
+// every one of them. Reading the vendor off the first row alone answered for
+// a set it does not speak for: a tool's bundled copy beside a copy the
+// reader owns would have suppressed the second one's real score.
+describe("vendorAt", () => {
+  it("names the vendor when every copy in the place is theirs", () => {
+    expect(
+      vendorAt(
+        [install(VG, "claude", "Anthropic"), install(VG, "codex", "Anthropic")],
+        VG,
+      ),
+    ).toBe("Anthropic");
+  });
+
+  it("names nobody when one copy in the place is the reader's own", () => {
+    expect(
+      vendorAt([install(VG, "claude", "Anthropic"), install(VG, "codex")], VG),
+    ).toBeNull();
+  });
+
+  // The reader's own copy is first here, so a check that stopped at row one
+  // would get this right by luck and the case above wrong.
+  it("names nobody whichever copy the scan happened to list first", () => {
+    expect(
+      vendorAt([install(VG, "codex"), install(VG, "claude", "Anthropic")], VG),
+    ).toBeNull();
+  });
+
+  it("names nobody when the copies disagree about who ships them", () => {
+    expect(
+      vendorAt(
+        [install(VG, "claude", "Anthropic"), install(VG, "codex", "OpenAI")],
+        VG,
+      ),
+    ).toBeNull();
+  });
+
+  it("asks only the place it was given", () => {
+    const installs = [
+      install(VG, "claude"),
+      install(HYPR, "claude", "Anthropic"),
+    ];
+    expect(vendorAt(installs, HYPR)).toBe("Anthropic");
+    expect(vendorAt(installs, VG)).toBeNull();
+  });
+
+  it("names nobody where the package is not installed at all", () => {
+    expect(vendorAt([install(VG, "claude", "Anthropic")], MINE)).toBeNull();
   });
 });

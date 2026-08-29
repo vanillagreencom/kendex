@@ -10,6 +10,7 @@ import {
   SAFETY_NOT_READ,
   SAFETY_RETRY_LABEL,
   SAFETY_TAB,
+  SAFETY_TAB_FAILED,
   SAFETY_TAB_STALE,
   SAFETY_VENDOR,
 } from "@/lib/copy-safety";
@@ -248,5 +249,44 @@ describe("a package the harness ships itself", () => {
     expect(host.textContent).toContain(SAFETY_NOT_READ);
     expect(host.textContent).not.toContain(SAFETY_VENDOR);
     expect(retryButton(host)).toBeDefined();
+  });
+});
+
+// Overview is the tab a page opens on, so the label is the only thing most
+// readers see. Before the check moved off Overview a failed audit said so
+// there; the label has to carry that now, and a dash cannot, because a dash
+// is also what a pending check and an unscored answer show.
+describe("the tab's label when no reading arrived at all", () => {
+  const label = async () => {
+    const host = strip();
+    await settle();
+    return tab(host, SAFETY_TAB);
+  };
+
+  it("marks a first check that failed", async () => {
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "error",
+      error: "audit crashed",
+    });
+
+    expect((await label()).textContent).toBe(
+      `${SAFETY_TAB}—${SAFETY_TAB_FAILED}`,
+    );
+  });
+
+  it("leaves a check still running unmarked", async () => {
+    // Never resolves, so nothing has answered and nothing has failed.
+    vi.mocked(commands.auditAll).mockReturnValue(new Promise(() => {}));
+
+    expect((await label()).textContent).toBe(`${SAFETY_TAB}—`);
+  });
+
+  it("leaves an answer with no row for this package unmarked", async () => {
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "ok",
+      data: [view([])],
+    });
+
+    expect((await label()).textContent).toBe(`${SAFETY_TAB}—`);
   });
 });

@@ -153,3 +153,20 @@ export const updatableRows = (places: PackagePlace[]): UpdateRow[] =>
   places.flatMap((place) =>
     place.updatable && place.row !== null ? [place.row] : [],
   );
+
+/** Who ships this package at one place, when a tool ships it itself.
+ *
+ *  A place holds one installation per harness and the safety reading merges
+ *  every one of them, so the vendor question is asked of the same set. One
+ *  vendor copy beside a copy the reader owns is a package with a real score,
+ *  and naming a vendor there would hide it. Null the moment any copy there
+ *  is the reader's own, or the vendors disagree. */
+export function vendorAt(
+  installs: ObservedItem[],
+  scope: Scope,
+): string | null {
+  const here = installs.filter((install) => sameScope(install.scope, scope));
+  const vendor = here[0]?.vendor ?? null;
+  if (!vendor) return null;
+  return here.every((install) => install.vendor === vendor) ? vendor : null;
+}
