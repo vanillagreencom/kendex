@@ -72,6 +72,7 @@ warn_out="$(
         bulk_update_issues CC-600 CC-601 --state Todo
     ' _ "$ISSUES_SH" 2>/dev/null
 )" || warn_rc=$?
+warn_err_rc=0
 warn_err="$(
     LINEAR_API_KEY_OVERRIDE=test-token bash -euo pipefail -c '
         issues_sh="$1"
@@ -85,7 +86,9 @@ warn_err="$(
 
         bulk_update_issues CC-600 --state Todo
     ' _ "$ISSUES_SH" 2>&1 >/dev/null
-)" || true
+)" || warn_err_rc=$?
+
+assert_eq "the warn-only stderr capture exits zero too" "$warn_err_rc" 0
 
 assert_eq "updates that only warned still exit zero" "$warn_rc" 0
 assert_jq "a success-path warning is not reported as a failed update" "$warn_out" '

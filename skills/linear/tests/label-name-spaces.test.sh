@@ -62,9 +62,12 @@ esac
 SH
 chmod +x "$TMP_ROOT/bin/curl"
 
-# Runs linear.sh with the stub curl, logging every payload to $1.
+# Runs linear.sh with the stub curl, logging every payload to $1. Every action
+# driven here is a success path, and the status is asserted rather than
+# swallowed: a mutation that wrote the right payload and then exited nonzero
+# would otherwise leave the payload assertions green.
 run_linear() {
-  local payload_log="$1"
+  local payload_log="$1" rc=0
   shift
   : >"$payload_log"
   (
@@ -74,7 +77,9 @@ run_linear() {
         LINEAR_TEAM=Claude \
         CURL_PAYLOAD_LOG="$payload_log" \
         bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" "$@"
-  ) >/dev/null 2>&1 || true
+  ) >/dev/null 2>&1 || rc=$?
+
+  assert_eq "$* exits zero" "$rc" 0
 }
 
 # Asserts the logged payload for $mutation carries $field == $expected verbatim.

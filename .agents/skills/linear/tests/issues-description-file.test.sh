@@ -63,8 +63,10 @@ MD
 # --- create with --description-file --------------------------------------------
 create_log="$TMP_ROOT/create-payloads.jsonl"
 : >"$create_log"
+create_rc=0
 create_out="$(cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam CURL_PAYLOAD_LOG="$create_log" \
-  bash "$LINEAR" issues create --title "New task" --team Claude --description-file "$desc_file" 2>&1)" || true
+  bash "$LINEAR" issues create --title "New task" --team Claude --description-file "$desc_file" 2>&1)" || create_rc=$?
+assert_eq "issues create --description-file exits zero" "$create_rc" 0
 
 assert_jq "issues create --description-file reports the created issue" \
   "$create_out" '.success == true and .identifier == "PROJ-1"'
@@ -81,8 +83,10 @@ assert "the issueCreate payload carries the markdown description verbatim" \
 # --- update with --description-file --------------------------------------------
 update_log="$TMP_ROOT/update-payloads.jsonl"
 : >"$update_log"
+update_rc=0
 update_out="$(cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam CURL_PAYLOAD_LOG="$update_log" \
-  bash "$LINEAR" issues update PROJ-1 --description-file "$desc_file" 2>&1)" || true
+  bash "$LINEAR" issues update PROJ-1 --description-file "$desc_file" 2>&1)" || update_rc=$?
+assert_eq "issues update --description-file exits zero" "$update_rc" 0
 
 assert_jq "issues update --description-file reports success" "$update_out" '.success == true'
 assert "the issueUpdate payload carries the markdown description verbatim" \

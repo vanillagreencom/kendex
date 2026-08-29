@@ -87,12 +87,16 @@ assert "the default update output is still the mutation summary" \
   jq -e '.success == true and .identifier == "PROJ-42" and (.data != null)' >/dev/null <<<"$default_out"
 
 # --- parser no longer rejects --format (the #625 bug) ---------------------------
-err_out="$(run_update PROJ-42 --priority 2 --format=safe 2>&1 >/dev/null)" || true
+parser_rc=0
+err_out="$(run_update PROJ-42 --priority 2 --format=safe 2>&1 >/dev/null)" || parser_rc=$?
+assert_eq "the parser accepts --format and the update exits zero" "$parser_rc" 0
 assert_not "the parser accepts --format" \
   grep -q "Unknown option" <<<"$err_out"
 
 # --- unknown flags are STILL rejected (no over-broad parsing) --------------------
-bogus_out="$(run_update PROJ-42 --bogus x 2>&1)" || true
+bogus_rc=0
+bogus_out="$(run_update PROJ-42 --bogus x 2>&1)" || bogus_rc=$?
+assert_ne "an unknown flag fails the update" "$bogus_rc" 0
 assert "update still rejects a genuinely unknown flag" \
   grep -q "Unknown option" <<<"$bogus_out"
 

@@ -30,7 +30,9 @@ printf '%s' '[{"id":"uuid-CC-1","identifier":"CC-1","title":"t"' >"$TMP_ROOT/.ca
 
 corrupt_rc=0
 corrupt_out="$(run_list --format=ids 2>&1)" || corrupt_rc=$?
-corrupt_stdout="$(run_list --format=ids 2>/dev/null)" || true
+corrupt_stdout_rc=0
+corrupt_stdout="$(run_list --format=ids 2>/dev/null)" || corrupt_stdout_rc=$?
+assert_ne "the stdout-only read of a corrupt cache also fails" "$corrupt_stdout_rc" 0
 
 assert_ne "a corrupt issues.json exits nonzero" "$corrupt_rc" 0
 assert_contains "the error names cache corruption" "$corrupt_out" "corrupt"

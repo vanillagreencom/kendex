@@ -62,7 +62,9 @@ JSON
 run_relations() { (cd "$TMP_ROOT" && bash "$LINEAR" cache issues relations "$@" <&-); }
 
 # --- A: every relation bucket comes back from the cache file ------------------
-outA="$(run_relations CC-1 2>/dev/null)" || true
+outA_rc=0
+outA="$(run_relations CC-1 2>/dev/null)" || outA_rc=$?
+assert_eq "A: reading a known issue's relations exits zero" "$outA_rc" 0
 assert_jq "A: blocks bucket is read from issues.json" \
   "$outA" '.blocks == [{"id":"CC-2","title":"blocked one","state":"Backlog"}]'
 assert_jq "A: blocked_by bucket comes from inverseRelations" \
@@ -71,13 +73,17 @@ assert_jq "A: related and duplicates buckets are split by relation type" \
   "$outA" '[.related[].id] == ["CC-3"] and [.duplicates[].id] == ["CC-4"]'
 
 # --- B: UUID resolves the same record as the identifier ----------------------
-outB="$(run_relations uuid-CC-1 2>/dev/null)" || true
+outB_rc=0
+outB="$(run_relations uuid-CC-1 2>/dev/null)" || outB_rc=$?
+assert_eq "B: a UUID lookup exits zero" "$outB_rc" 0
 assert_ne "B: a UUID lookup returns a record" "$outB" ""
 assert_eq "B: a UUID resolves the same relations record as the identifier" \
   "$(jq -Sc . <<<"${outB:-null}")" "$(jq -Sc . <<<"${outA:-null}")"
 
 # An issue with no relations is a real empty answer, not a miss.
-outB2="$(run_relations CC-2 2>/dev/null)" || true
+outB2_rc=0
+outB2="$(run_relations CC-2 2>/dev/null)" || outB2_rc=$?
+assert_eq "B: an issue with no relations exits zero" "$outB2_rc" 0
 assert_jq "B: an issue with no relations returns empty buckets, not an error" \
   "$outB2" '.blocks == [] and .blocked_by == [] and .related == [] and .duplicates == []'
 
@@ -90,6 +96,8 @@ assert_jq "C: an unknown issue fails with an error naming the id" \
 
 # --- D: stdin cannot influence the answer ------------------------------------
 decoy='[{"id":"uuid-CC-1","identifier":"CC-1","relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"DECOY-1","title":"decoy","state":{"name":"Todo"}}}]},"inverseRelations":{"nodes":[]}}]'
-outD="$(cd "$TMP_ROOT" && printf '%s' "$decoy" | bash "$LINEAR" cache issues relations CC-1 2>/dev/null)" || true
+outD_rc=0
+outD="$(cd "$TMP_ROOT" && printf '%s' "$decoy" | bash "$LINEAR" cache issues relations CC-1 2>/dev/null)" || outD_rc=$?
+assert_eq "D: a read with stdin piped in exits zero" "$outD_rc" 0
 assert_jq "D: piped stdin is ignored — the cache file is the only input" \
   "$outD" '[.blocks[].id] == ["CC-2"]'

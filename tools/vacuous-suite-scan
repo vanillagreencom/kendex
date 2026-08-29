@@ -8,9 +8,16 @@
 # Both runs happen in copies at matching paths, so a suite that cannot run
 # outside the checkout is reported as unrunnable rather than counted either way.
 #
-#   tools/vacuous-suite-scan skills/linear            # one skill
-#   tools/vacuous-suite-scan skills/*/                # every skill
-#   tools/vacuous-suite-scan --list skills/linear     # names, not just counts
+# A skill the caller NAMES must be scannable: a path that does not exist, has
+# no tests directory, or holds no shell suites is an error, because a
+# measurement was asked for and cannot be made. --all enumerates candidates
+# instead, so a skill with nothing to scan is skipped with a note. Neither mode
+# reports success having measured nothing. The shell expands a glob before this
+# script sees it, so the two cannot be told apart from an argument alone.
+#
+#   tools/vacuous-suite-scan --all                    # every skill with suites
+#   tools/vacuous-suite-scan skills/linear            # one named skill
+#   tools/vacuous-suite-scan --list --all             # names, not just counts
 
 set -euo pipefail
 
@@ -112,30 +119,54 @@ scan_skill() {
     rm -rf -- "${tmp:?}"
 }
 
+scannable() {
+    [[ -d "$1/tests" ]] || return 1
+    [[ -n "$(list_suites "$1/tests")" ]] || return 1
+}
+
 main() {
     local -a targets=() resolved=()
-    local arg
+    local arg all=0
     for arg in "$@"; do
         case "$arg" in
         --list) LIST_NAMES=1 ;;
+        --all) all=1 ;;
         -*) die "unknown flag: $arg" ;;
         *) targets+=("${arg%/}") ;;
         esac
     done
-    [[ ${#targets[@]} -gt 0 ]] || die "usage: vacuous-suite-scan [--list] <skill-dir>..."
 
-    # A measurement that selected nothing is not a clean result. Every target
-    # is resolved before any is scanned, so a typo fails the run instead of
-    # reporting a green zero-sample scan.
-    for arg in "${targets[@]}"; do
+    # Every target is resolved before any is scanned, so a typo fails the run
+    # instead of half-scanning and reporting a clean partial result.
+    for arg in ${targets[@]+"${targets[@]}"}; do
         case "$arg" in
         /*) ;;
         *) arg="$REPO_ROOT/$arg" ;;
         esac
         [[ -d "$arg" ]] || die "no such skill directory: $arg"
         [[ -d "$arg/tests" ]] || die "$arg has no tests directory"
+        scannable "$arg" || die "$arg/tests holds no shell suites"
         resolved+=("$arg")
     done
+
+    if [[ "$all" -eq 1 ]]; then
+        for arg in "$REPO_ROOT"/skills/*/; do
+            arg="${arg%/}"
+            # A skill already named explicitly is not scanned twice: a count
+            # table with a repeated row misreports what was measured.
+            [[ " ${resolved[*]-} " != *" $arg "* ]] || continue
+            if scannable "$arg"; then
+                resolved+=("$arg")
+            else
+                printf '%-20s skipped: no shell suites\n' "$(basename "$arg")"
+            fi
+        done
+    fi
+
+    # The requirement that stands whichever mode ran: never report success
+    # having measured nothing.
+    [[ ${#resolved[@]} -gt 0 ]] ||
+        die "nothing to scan: name a skill directory, or pass --all"
 
     for arg in "${resolved[@]}"; do
         scan_skill "$arg"

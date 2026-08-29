@@ -86,7 +86,9 @@ assert_jq "C: an unknown filter flag is rejected instead of returning every issu
   "$unk_out" '.error | test("Unknown flag")'
 
 # --- D: --help and an ordinary list are unaffected ---------------------------
-help_out="$(run_list --help 2>&1)" || true
+help_rc=0
+help_out="$(run_list --help 2>&1)" || help_rc=$?
+assert_eq "D: --help exits zero" "$help_rc" 0
 assert_contains "D: --help still prints cache help" "$help_out" "Linear Cache Query"
 plain="$(run_list --max --format=ids 2>/dev/null)"
 assert_eq "D: an ordinary list still returns every issue" \

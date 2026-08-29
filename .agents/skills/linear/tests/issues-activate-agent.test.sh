@@ -71,7 +71,9 @@ run_activate() {
 
 # --- activate --agent applies the label in the same issueUpdate as the state change
 agent_payload="$TMP_ROOT/agent-payloads.jsonl"
-out="$(run_activate "$agent_payload" CC-760 --agent rust 2>"$TMP_ROOT/agent.err")" || true
+agent_rc=0
+out="$(run_activate "$agent_payload" CC-760 --agent rust 2>"$TMP_ROOT/agent.err")" || agent_rc=$?
+assert_eq "activate --agent exits zero" "$agent_rc" 0
 
 assert_jq "activate --agent reports the claimed agent" \
   "$out" '.success == true and .action == "activated" and .agent == "rust"'
@@ -95,7 +97,9 @@ assert_not "an unknown agent label mutates no issue state" \
 
 # --- activate without --agent keeps prior behavior (state only, no labels touched)
 plain_payload="$TMP_ROOT/plain-payloads.jsonl"
-out="$(run_activate "$plain_payload" CC-760 2>"$TMP_ROOT/plain.err")" || true
+plain_rc=0
+out="$(run_activate "$plain_payload" CC-760 2>"$TMP_ROOT/plain.err")" || plain_rc=$?
+assert_eq "plain activate exits zero" "$plain_rc" 0
 
 assert_jq "plain activate reports no agent" \
   "$out" '.success == true and .action == "activated" and (has("agent") | not)'

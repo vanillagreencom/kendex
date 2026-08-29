@@ -43,10 +43,15 @@ RL_BODY='{"errors":[{"message":"Rate limit exceeded. Only 2500 requests are allo
 GENERIC_BODY='{"errors":[{"message":"Argument Validation Error","extensions":{"code":"INVALID_INPUT"}}]}'
 
 run_linear() { # root, args...
-  local root="$1"; shift
+  local root="$1" rc=0; shift
   (cd "$root" && env PATH="$root/bin:$PATH" \
     LINEAR_API_KEY_OVERRIDE="lin_api_test" LINEAR_TEAM="Claude" \
-    "$root/.agents/skills/linear/scripts/linear.sh" "$@" 2>&1) || true
+    "$root/.agents/skills/linear/scripts/linear.sh" "$@" 2>&1) || rc=$?
+
+  # An expected failure, asserted rather than swallowed: every call here drives
+  # a non-200 response, so a run that started succeeding would mean the error
+  # path stopped being taken at all.
+  assert_ne "$* fails against a non-200 response" "$rc" 0
 }
 
 echo "=== RATELIMITED body on HTTP 400 routes to the rate-limit path ==="
@@ -55,13 +60,16 @@ out="$(run_linear "$TMP_BASE/rl" statuses list)"
 assert_contains "rate-limited 400 reports the rate limit" "$out" "Rate limited. Try again later."
 assert_not_contains "rate-limited 400 is not a generic HTTP error" "$out" "HTTP error: 400"
 echo "=== failed team lookup propagates the API failure ==="
+unit_rc=0
 unit="$(cd "$TMP_BASE/rl" && env PATH="$TMP_BASE/rl/bin:$PATH" bash -c '
   set -u
   LINEAR_API="https://api.linear.app/graphql"
   LINEAR_API_KEY="lin_api_test"
   source "$0/.agents/skills/linear/scripts/lib/common.sh"
   resolve_team_id "Claude"
-' "$TMP_BASE/rl" 2>&1)" || true
+' "$TMP_BASE/rl" 2>&1)" || unit_rc=$?
+
+assert_ne "a rate-limited team lookup fails" "$unit_rc" 0
 assert_contains "team lookup surfaces the rate limit" "$unit" "Rate limited. Try again later."
 assert_contains "team lookup names the failed resolution" "$unit" "Could not resolve team 'Claude'"
 assert_not_contains "team lookup does not claim the team is missing" "$unit" "Team not found"

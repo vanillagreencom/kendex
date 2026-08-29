@@ -63,10 +63,14 @@ assert_eq "create --format ids exits zero" "$space_rc" 0
 assert_eq "create --format ids prints exactly the identifier" "$ids_out_space" "PROJ-1"
 
 # --- default (no --format): full JSON create response is unchanged ---------------
-default_out="$(run_create --title "New task" --team Claude 2>&1)" || true
+default_rc=0
+default_out="$(run_create --title "New task" --team Claude 2>&1)" || default_rc=$?
+assert_eq "a create with no --format exits zero" "$default_rc" 0
 assert_jq "the default create output is still the full JSON response" \
   "$default_out" '.success == true and .identifier == "PROJ-1"'
 
 # --- parser no longer rejects --format=ids (the #615 bug) ------------------------
-err_out="$(run_create --title "New task" --team Claude --format=ids 2>&1 >/dev/null)" || true
+parser_rc=0
+err_out="$(run_create --title "New task" --team Claude --format=ids 2>&1 >/dev/null)" || parser_rc=$?
+assert_eq "the parser accepts --format=ids and the create exits zero" "$parser_rc" 0
 assert_not_contains "the parser does not reject --format=ids" "$err_out" "Unknown option"

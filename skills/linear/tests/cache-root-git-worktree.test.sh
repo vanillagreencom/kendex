@@ -62,7 +62,9 @@ JSON
 
 assert_cache_and_attachment_roots() {
   local linear="$1" label="$2" out=""
-  out="$(cd "$LINK_ROOT" && bash "$linear" cache issues get CC-779 --with-bundle --format=safe 2>/dev/null)" || true
+  local rc=0
+  out="$(cd "$LINK_ROOT" && bash "$linear" cache issues get CC-779 --with-bundle --format=safe 2>/dev/null)" || rc=$?
+  assert_eq "$label exits zero" "$rc" 0
   assert "$label reads cache and attachments from the physical git root" \
     jq -e --arg attach "$REAL_ROOT/.cache/linear/attachments/files/cc-779.txt" \
     '.id == "CC-779" and .attachments[0].local_path == $attach' <<<"$out"

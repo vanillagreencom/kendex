@@ -92,7 +92,9 @@ run_linear() {
 seed_cache
 : > "$TMP_ROOT/posted.log"
 echo "entity_ok" > "$TMP_ROOT/mode"
-out="$(run_linear issues archive PROJ-42)" || true
+archive_rc=0
+out="$(run_linear issues archive PROJ-42)" || archive_rc=$?
+assert_eq "a confirmed archive exits zero" "$archive_rc" 0
 
 assert "the archive envelope carries identifier, url and the confirming entity" \
   jq -e --arg url "$URL" \
@@ -111,7 +113,9 @@ assert_not "a confirmed archive drops the comment cache too" \
 seed_cache
 : > "$TMP_ROOT/posted.log"
 echo "entity_trashed" > "$TMP_ROOT/mode"
-out="$(run_linear issues trash PROJ-42)" || true
+trash_rc=0
+out="$(run_linear issues trash PROJ-42)" || trash_rc=$?
+assert_eq "a confirmed trash exits zero" "$trash_rc" 0
 
 assert_jq "the trash envelope carries the confirming entity" \
   "$out" '.success == true and .identifier == "PROJ-42" and .data.entity.trashed == true'

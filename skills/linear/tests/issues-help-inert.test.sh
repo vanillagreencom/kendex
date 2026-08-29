@@ -45,7 +45,13 @@ assert_not "no help form sourced the project .env.local" test -e "$TMP/env-execu
 # -h supplied as an option's VALUE stays data: the libraries load (the
 # marker appears) and no help prints.
 value_out=""
-value_out=$(cd "$TMP/repo" && bash "$ISSUES_SH" create --title -h 2>&1) || true
+value_rc=0
+value_out=$(cd "$TMP/repo" && bash "$ISSUES_SH" create --title -h 2>&1) || value_rc=$?
+
+# An expected failure, asserted rather than swallowed: the create is missing
+# required arguments, and a run that started succeeding would mean -h had
+# been taken as help after all.
+assert_ne "create --title -h fails as an ordinary create, not as help" "$value_rc" 0
 
 assert_not_contains "create --title -h treats -h as data" "$value_out" "Issue Operations"
 assert "create --title -h loads the libraries" test -e "$TMP/env-executed"

@@ -106,8 +106,14 @@ assert_ne "an aborted cache merge fails the sync" \
   $rc 0
 assert "the cache_merge guard says it aborted the merge" \
   grep -q "aborting merge" <<<"$err"
-assert "sync names the aborted merge and its likely transient cause" \
-  grep -q "Sync error: issues cache merge aborted" <<<"$err" || ! grep -qi "transient" <<<"$err"
+# Two claims, asserted separately. Chained with `||` they were dead twice
+# over: a helper always returns zero after recording a failure, so the right
+# operand never ran, and its negation would have accepted an ABSENT
+# "transient" anyway.
+assert "sync names the aborted merge" \
+  grep -q "Sync error: issues cache merge aborted" <<<"$err"
+assert "sync names the likely transient cause" \
+  grep -qi "transient" <<<"$err"
 assert_not "sync reports no completion after an aborted merge" \
   grep -q "Done (" <<<"$err"
 assert_eq "an aborted merge leaves issues.json untouched" \
@@ -163,13 +169,17 @@ assert_eq "comments for an issue created by this delta are kept" \
 # marker and the same call has to run: a cache whose comments are legacy is not
 # usable however recently it was synced, and skipping here is how a machine
 # keeps first-page threads indefinitely.
-run_sync_if_stale "$OK_ROOT" >/dev/null 2>"$TMP_BASE/stale-marked" || true
+marked_rc=0
+run_sync_if_stale "$OK_ROOT" >/dev/null 2>"$TMP_BASE/stale-marked" || marked_rc=$?
+assert_eq "--if-stale on a fresh, marked cache exits zero" "$marked_rc" 0
 assert "--if-stale skips a fresh, marked cache" \
   grep -q "Cache fresh" "$TMP_BASE/stale-marked"
 
 jq 'del(.comments_source)' "$OK_ROOT/.cache/linear/meta.json" > "$TMP_BASE/meta-unmarked"
 mv "$TMP_BASE/meta-unmarked" "$OK_ROOT/.cache/linear/meta.json"
-run_sync_if_stale "$OK_ROOT" >/dev/null 2>"$TMP_BASE/stale-unmarked" || true
+unmarked_rc=0
+run_sync_if_stale "$OK_ROOT" >/dev/null 2>"$TMP_BASE/stale-unmarked" || unmarked_rc=$?
+assert_eq "--if-stale on an unmarked cache exits zero" "$unmarked_rc" 0
 assert_not "--if-stale re-syncs an unmarked cache rather than leaving legacy comments" \
   grep -q "Cache fresh" "$TMP_BASE/stale-unmarked"
 assert_eq "the forced sync marks the cache" \
