@@ -1863,8 +1863,8 @@ if $MULTI_LANE; then
       # the caller's, so it and its sidecars are written owner-only. Told per
       # invocation, so the restriction reaches those writes and nothing else
       # the lane creates.
-      exec "$SELF" review --target="$lane" --range="$REVIEW_RANGE" --cwd="$CWD" \
-        --timeout="$TIMEOUT" --output="$lane_out" --scratch-output >/dev/null 2>&3 3>&-
+      exec "$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" review --target="$lane" --range="$REVIEW_RANGE" --cwd="$CWD" \
+        --timeout="$TIMEOUT" --output="$lane_out" --scratch-output --detached-worker >/dev/null 2>&3 3>&-
     ) &
     LANE_PIDS+=($!)
     LANE_OUTS+=("$lane_out")

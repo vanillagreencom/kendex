@@ -151,7 +151,7 @@ PATH="$TMP_ROOT/bin:$NOTIMEOUT" \
   "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$notimeout_stderr"
 
 assert_contains "$notimeout_stderr" "run without a time limit" "missing timeout binary warns instead of refusing"
-assert_contains "$notimeout_stderr" "cmd: direct codex" "missing timeout binary logs direct execution"
+assert_contains "$notimeout_stderr" "cmd: direct-tree codex" "missing timeout binary logs supervised direct execution"
 assert_contains "$notimeout_stderr" "Response received" "review still runs without a timeout binary"
 
 # The caller owns the lane's lifetime. GNU timeout must not isolate the CLI
