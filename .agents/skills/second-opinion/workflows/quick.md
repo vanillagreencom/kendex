@@ -26,14 +26,18 @@ Either pass the prompt file or the question inline:
 # With prompt file:
 .agents/skills/second-opinion/scripts/second-opinion quick \
   --prompt tmp/second-opinion-prompt.md \
-  --cwd [PROJECT_PATH]
+  --cwd [PROJECT_PATH] \
+  --foreground
 
 # Or inline (when no file context is needed):
 .agents/skills/second-opinion/scripts/second-opinion quick \
   "[QUESTION]" \
-  --cwd [PROJECT_PATH]
+  --cwd [PROJECT_PATH] \
+  --foreground
 ```
+
+Execute the exact command printed after `wait:`. When it succeeds, read the file printed after `artifact:` with `cat < [ARTIFACT_PATH]`.
 
 ## 3. Present Results
 
-Present the response directly — no additional framing.
+Present the artifact contents directly — no additional framing.

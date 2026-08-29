@@ -28,8 +28,11 @@ Run `second-opinion …`; it backgrounds itself and prints when to check.
 .agents/skills/second-opinion/scripts/second-opinion review \
   [--range RANGE] \
   --cwd [PROJECT_PATH] \
-  --output [PROJECT_PATH]/tmp/review-external-YYYYMMDD-HHMMSS.json
+  --output [PROJECT_PATH]/tmp/review-external-YYYYMMDD-HHMMSS.json \
+  --foreground
 ```
+
+Execute the exact command printed after `wait:` before reading or validating the artifact.
 
 ## 3. Present Results
 

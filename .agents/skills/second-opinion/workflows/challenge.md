@@ -53,9 +53,12 @@ Run `second-opinion …`; it backgrounds itself and prints when to check.
 ```bash
 .agents/skills/second-opinion/scripts/second-opinion challenge \
   --prompt tmp/second-opinion-prompt.md \
-  --cwd [PROJECT_PATH]
+  --cwd [PROJECT_PATH] \
+  --foreground
 ```
+
+Execute the exact command printed after `wait:`. When it succeeds, read the file printed after `artifact:` with `cat < [ARTIFACT_PATH]`.
 
 ## 3. Present Results
 
-Present the structured response directly. Highlight CRITICAL/HIGH risks with emphasis.
+Present the structured artifact contents directly. Highlight CRITICAL/HIGH risks with emphasis.

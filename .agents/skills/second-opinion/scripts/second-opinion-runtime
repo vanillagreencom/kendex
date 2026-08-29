@@ -5,34 +5,18 @@ RUNTIME_SELF="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)/${BASH_SOURCE[0]#
 
 die() { echo "second-opinion-runtime: $1" >&2; exit 1; }
 
-process_identity() {
-  local pid="$1" stat rest
-  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
-  if [[ -r "/proc/$pid/stat" ]]; then
-    stat=$(cat < "/proc/$pid/stat") || return 1
-    rest="${stat##*) }"
-    set -- $rest
-    [[ $# -ge 20 ]] || return 1
-    printf 'proc:%s\n' "${20}"
-    return
-  fi
-  stat=$(ps -o lstart= -p "$pid" 2>/dev/null) || return 1
-  [[ -n "$stat" ]] || return 1
-  printf 'ps:%s\n' "$stat"
-}
-
-same_process() {
-  local current
-  current=$(process_identity "$1") || return 1
-  [[ "$current" == "$2" ]]
+runtime_dir_valid() {
+  local dir="$1" token="$2" recorded
+  [[ -d "$dir" && ! -L "$dir" ]] || return 1
+  [[ -f "$dir/token" && ! -L "$dir/token" ]] || return 1
+  recorded=$(cat < "$dir/token") || return 1
+  [[ "$recorded" == "$token" ]]
 }
 
 validate_runtime_dir() {
-  local dir="$1" token="$2" recorded
-  [[ -d "$dir" && ! -L "$dir" ]] || die "runtime directory is missing or unsafe: $dir"
-  [[ -f "$dir/token" && ! -L "$dir/token" ]] || die "runtime token is missing or unsafe: $dir/token"
-  recorded=$(cat < "$dir/token") || die "cannot read runtime token: $dir/token"
-  [[ "$recorded" == "$token" ]] || die "runtime token does not match"
+  local dir="$1" token="$2"
+  runtime_dir_valid "$dir" "$token" \
+    || die "runtime directory or token is missing, unsafe, or changed: $dir"
 }
 
 second_opinion_runtime_setup() {
@@ -53,38 +37,17 @@ run_with_timeout() {
   "$TIMEOUT_CMD" --foreground -k 30 "$duration" "$RUNTIME_SELF" tree 25 "$stderr_file" "$@"
 }
 
-write_active_handle() {
-  local dir="$1" token="$2" supervisor_pid="$3" supervisor_identity="$4"
-  local leader_pid="$5" leader_identity="$6"
-  local handle="$1/active.$3" tmp="$1/.active.$3.$$"
-  [[ -n "$dir" ]] || return 0
-  validate_runtime_dir "$dir" "$token"
-  (umask 077 && set -C && printf '%s\n%s\n%s\n%s\n%s\n' \
-    "$token" "$supervisor_pid" "$supervisor_identity" "$leader_pid" "$leader_identity" > "$tmp") \
-    || die "cannot create CLI-tree handle: $tmp"
-  mv -f -- "$tmp" "$handle" || die "cannot publish CLI-tree handle: $handle"
-}
+process_group_alive() { kill -0 -- "-$1" 2>/dev/null; }
 
-clear_active_handle() {
-  local dir="$1" token="$2" supervisor_pid="$3" recorded=""
-  local handle="$1/active.$3"
-  [[ -n "$dir" && -f "$handle" && ! -L "$handle" ]] || return 0
-  recorded=$(sed -n '1p' "$handle") || return 0
-  [[ "$recorded" == "$token" ]] || return 0
-  rm -f -- "$handle" || true
-}
-
-tree_group_alive() { kill -0 -- "-$1" 2>/dev/null; }
-
-stop_tree_group() {
-  local tree_pid="$1" grace="$2" end now
-  tree_group_alive "$tree_pid" || return 0
-  kill -TERM -- "-$tree_pid" 2>/dev/null || true
+stop_process_group() {
+  local leader="$1" grace="$2" end now
+  process_group_alive "$leader" || return 0
+  kill -TERM -- "-$leader" 2>/dev/null || true
   end=$(($(date +%s) + grace))
-  while tree_group_alive "$tree_pid"; do
+  while process_group_alive "$leader"; do
     now=$(date +%s)
     if [[ $now -ge $end ]]; then
-      kill -KILL -- "-$tree_pid" 2>/dev/null || true
+      kill -KILL -- "-$leader" 2>/dev/null || true
       break
     fi
     sleep 0.1
@@ -96,60 +59,47 @@ tree() {
   shift 2
   [[ "$grace" =~ ^[1-9][0-9]*$ ]] || die "grace must be positive"
   [[ $# -gt 0 ]] || die "tree command is missing"
-  local tree_pid="" tree_identity="" tree_rc=0 cancel_rc="" supervisor_identity gate
-  local runtime_dir="${SECOND_OPINION_RUNTIME_DIR:-}" token="${SECOND_OPINION_RUN_TOKEN:-}"
+
+  local tree_pid="" tree_rc=0 tree_reaped=false cancel_rc="" gate=""
   request_cancel() {
     cancel_rc="$1"
-    [[ -z "$tree_pid" ]] || stop_tree_group "$tree_pid" "$grace"
+    [[ -z "$tree_pid" ]] || stop_process_group "$tree_pid" "$grace"
+  }
+  stop_and_reap_tree() {
+    [[ -z "$tree_pid" ]] || stop_process_group "$tree_pid" "$grace"
+    if [[ -n "$tree_pid" ]] && ! $tree_reaped; then
+      wait "$tree_pid" 2>/dev/null || tree_rc=$?
+      tree_reaped=true
+    fi
   }
   cleanup_tree() {
-    [[ "${BASH_SUBSHELL:-0}" -eq 0 && -n "$gate" ]] || return 0
-    rm -rf -- "$gate" || true
+    stop_and_reap_tree
+    [[ -z "$gate" ]] || rm -rf -- "$gate" || true
   }
   trap cleanup_tree EXIT
   trap 'request_cancel 143' TERM HUP
   trap 'request_cancel 130' INT
+
   gate=$(mktemp -d) || die "cannot create CLI startup gate"
   set -m
   (while [[ ! -e "$gate/release" ]]; do sleep 0.01; done; exec "$@") 2>"$stderr_file" &
   tree_pid=$!
   set +m
   if [[ -n "$cancel_rc" ]]; then
-    stop_tree_group "$tree_pid" "$grace"
-    wait "$tree_pid" 2>/dev/null || true
-    exit "$cancel_rc"
-  fi
-  tree_identity=$(process_identity "$tree_pid") || {
-    stop_tree_group "$tree_pid" "$grace"
-    wait "$tree_pid" 2>/dev/null || true
-    [[ -z "$cancel_rc" ]] || exit "$cancel_rc"
-    die "cannot identify CLI process $tree_pid"
-  }
-  if [[ -n "$cancel_rc" ]]; then
-    stop_tree_group "$tree_pid" "$grace"
-    wait "$tree_pid" 2>/dev/null || true
+    stop_and_reap_tree
     exit "$cancel_rc"
   fi
   (umask 077 && set -C && : > "$gate/release") || {
-    stop_tree_group "$tree_pid" "$grace"
-    wait "$tree_pid" 2>/dev/null || true
-    die "cannot release CLI process $tree_pid"
+    stop_and_reap_tree
+    die "cannot release CLI process"
   }
-  if [[ -n "$runtime_dir" ]]; then
-    [[ -n "$token" ]] || die "detached CLI tree has no run token"
-    supervisor_identity=$(process_identity "$$") || die "cannot identify CLI supervisor $$"
-    write_active_handle "$runtime_dir" "$token" "$$" "$supervisor_identity" "$tree_pid" "$tree_identity"
-  fi
   if [[ -n "$cancel_rc" ]]; then
-    stop_tree_group "$tree_pid" "$grace"
-    wait "$tree_pid" 2>/dev/null || true
-    clear_active_handle "$runtime_dir" "$token" "$$"
+    stop_and_reap_tree
     exit "$cancel_rc"
   fi
   wait "$tree_pid" || tree_rc=$?
-  stop_tree_group "$tree_pid" "$grace"
-  rm -rf -- "$gate" || true
-  clear_active_handle "$runtime_dir" "$token" "$$"
+  tree_reaped=true
+  stop_and_reap_tree
   [[ -z "$cancel_rc" ]] || exit "$cancel_rc"
   exit "$tree_rc"
 }
@@ -168,12 +118,96 @@ create_runtime_dir() {
   printf '%s\n' "$dir"
 }
 
-launch() {
-  local script="$1" artifact="$2" runtime_dir="$3" budget="$4" owned="$5"
-  shift 5
-  [[ "$budget" =~ ^[1-9][0-9]*$ ]] || die "budget must be positive"
+supervise() {
+  local script="$1" artifact="$2" runtime_dir="$3" deadline="$4"
+  local owned="$5" token="$6" grace="$7"
+  shift 7
+  [[ "$deadline" =~ ^[1-9][0-9]*$ ]] || die "deadline must be a positive epoch"
   [[ "$owned" == true || "$owned" == false ]] || die "owned must be true or false"
-  local deadline token worker_pid worker_identity log="$runtime_dir/worker.log"
+  [[ "$grace" =~ ^[1-9][0-9]*$ ]] || die "grace must be positive"
+  validate_runtime_dir "$runtime_dir" "$token"
+
+  local worker_pid="" worker_rc=0 worker_reaped=false cancel_rc="" gate=""
+  local status_file="$runtime_dir/worker.status" stop_at=$((deadline - grace)) now
+  request_cancel() {
+    cancel_rc="$1"
+    [[ -z "$worker_pid" ]] || kill -TERM -- "-$worker_pid" 2>/dev/null || true
+  }
+  stop_and_reap_worker() {
+    [[ -z "$worker_pid" ]] || stop_process_group "$worker_pid" "$grace"
+    if [[ -n "$worker_pid" ]] && ! $worker_reaped; then
+      wait "$worker_pid" 2>/dev/null || true
+      worker_reaped=true
+    fi
+  }
+  cleanup_supervisor() {
+    stop_and_reap_worker
+    [[ -z "$gate" ]] || rm -rf -- "$gate" || true
+  }
+  publish_completion() {
+    printf '__SECOND_OPINION_EXIT_%s__=%s\n' "$token" "$1" >&2
+  }
+  finish_supervisor() {
+    local status="$1" message="$2"
+    [[ -z "$message" ]] || echo "$message" >&2
+    stop_and_reap_worker
+    publish_completion "$status"
+    exit "$status"
+  }
+  trap cleanup_supervisor EXIT
+  trap 'request_cancel 143' TERM HUP
+  trap 'request_cancel 130' INT
+
+  gate=$(mktemp -d "$runtime_dir/gate.XXXXXX") || die "cannot create worker startup gate"
+  set -m
+  (
+    while [[ ! -e "$gate/release" ]]; do sleep 0.01; done
+    unset SECOND_OPINION_RUNTIME_DIR SECOND_OPINION_RUN_TOKEN
+    worker_args=("$@" --detached-worker "--output=$artifact")
+    $owned && worker_args+=(--scratch-output)
+    set +e
+    "$script" "${worker_args[@]}"
+    rc=$?
+    (umask 077 && set -C && printf '%s\n' "$rc" > "$status_file") || exit 1
+    exit "$rc"
+  ) &
+  worker_pid=$!
+  set +m
+  [[ -z "$cancel_rc" ]] || finish_supervisor "$cancel_rc" ""
+  (umask 077 && set -C && : > "$gate/release") || {
+    stop_and_reap_worker
+    die "cannot release detached worker"
+  }
+
+  while :; do
+    [[ -z "$cancel_rc" ]] || finish_supervisor "$cancel_rc" ""
+    runtime_dir_valid "$runtime_dir" "$token" \
+      || finish_supervisor 1 "Error: detached runtime directory or token changed after release"
+    if [[ -e "$status_file" ]]; then
+      [[ -f "$status_file" && ! -L "$status_file" ]] \
+        || finish_supervisor 1 "Error: detached worker status is unsafe"
+      worker_rc=$(cat < "$status_file") \
+        || finish_supervisor 1 "Error: cannot read detached worker status"
+      [[ "$worker_rc" =~ ^[0-9]+$ && $worker_rc -le 255 ]] \
+        || finish_supervisor 1 "Error: detached worker status is malformed"
+      finish_supervisor "$worker_rc" ""
+    fi
+    jobs -r -p | grep -Fx "$worker_pid" >/dev/null \
+      || finish_supervisor 1 "Error: detached worker exited without a completion status"
+    now=$(date +%s)
+    if [[ $now -ge $stop_at ]]; then
+      finish_supervisor 124 "Error: detached run reached its supervisor deadline $deadline"
+    fi
+    sleep 0.2
+  done
+}
+
+launch() {
+  local script="$1" artifact="$2" runtime_dir="$3" budget="$4" owned="$5" grace="$6"
+  shift 6
+  [[ "$budget" =~ ^[1-9][0-9]*$ ]] || die "budget must be positive"
+  [[ "$grace" =~ ^[1-9][0-9]*$ ]] || die "grace must be positive"
+  local deadline token log="$runtime_dir/worker.log"
   token="$(date +%s).$$.$RANDOM"
   (umask 077 && set -C && printf '%s\n' "$token" > "$runtime_dir/token") \
     || die "cannot create runtime token: $runtime_dir/token"
@@ -181,36 +215,14 @@ launch() {
   exec 9>"$log" || die "cannot create worker log: $log"
   set +C
   exec 8<&0
-  (
-    while [[ ! -f "$runtime_dir/release" ]]; do sleep 0.01; done
-    set +e
-    export SECOND_OPINION_RUNTIME_DIR="$runtime_dir"
-    export SECOND_OPINION_RUN_TOKEN="$token"
-    worker_args=("$@" --detached-worker "--output=$artifact")
-    $owned && worker_args+=(--scratch-output)
-    "$script" "${worker_args[@]}"
-    rc=$?
-    printf '__SECOND_OPINION_EXIT_%s__=%s\n' "$token" "$rc" >&2
-    exit "$rc"
-  ) <&8 >&9 2>&1 &
-  worker_pid=$!
-  worker_identity=$(process_identity "$worker_pid") || {
-    kill -TERM "$worker_pid" 2>/dev/null || true
-    wait "$worker_pid" 2>/dev/null || true
-    die "cannot identify detached worker $worker_pid"
-  }
-  (umask 077 && set -C && : > "$runtime_dir/release") || {
-    kill -TERM "$worker_pid" 2>/dev/null || true
-    wait "$worker_pid" 2>/dev/null || true
-    die "cannot release detached worker: $runtime_dir/release"
-  }
-  exec 8<&- 9>&-
   deadline=$(($(date +%s) + budget))
+  "$RUNTIME_SELF" supervise "$script" "$artifact" "$runtime_dir" "$deadline" \
+    "$owned" "$token" "$grace" "$@" <&8 >&9 2>&1 &
+  exec 8<&- 9>&-
   printf 'artifact: %s\n' "$artifact"
   printf 'deadline: %s\n' "$deadline"
   printf 'wait:'
-  printf ' %q' "$RUNTIME_SELF" wait "$artifact" "$runtime_dir" "$deadline" \
-    "$token" "$worker_pid" "$worker_identity" 30
+  printf ' %q' "$RUNTIME_SELF" wait "$artifact" "$runtime_dir" "$deadline" "$token"
   printf '\n'
 }
 
@@ -229,57 +241,27 @@ second_opinion_detach_if_needed() {
   [[ "$MODE" == "review" || "$MODE" == "audit" ]] && attempts=2
   budget=$((attempts * (10#$TIMEOUT + 30) + 60))
   exec "$RUNTIME_SELF" launch "$SCRIPT_DIR/second-opinion" "$artifact" "$runtime_dir" \
-    "$budget" "$owned" "${ORIGINAL_ARGS[@]}"
+    "$budget" "$owned" 30 "${ORIGINAL_ARGS[@]}"
 }
 
-read_active_field() { sed -n "${2}p" "$1"; }
-
-signal_active_trees() {
-  local dir="$1" token="$2" signal="$3" handle recorded
-  local supervisor_pid supervisor_identity leader_pid leader_identity
-  for handle in "$dir"/active.*; do
-    [[ -f "$handle" && ! -L "$handle" ]] || continue
-    recorded=$(read_active_field "$handle" 1) || continue
-    [[ "$recorded" == "$token" ]] || die "CLI-tree handle token does not match"
-    supervisor_pid=$(read_active_field "$handle" 2) || continue
-    supervisor_identity=$(read_active_field "$handle" 3) || continue
-    leader_pid=$(read_active_field "$handle" 4) || continue
-    leader_identity=$(read_active_field "$handle" 5) || continue
-    same_process "$supervisor_pid" "$supervisor_identity" \
-      && kill -"$signal" "$supervisor_pid" 2>/dev/null || true
-    same_process "$leader_pid" "$leader_identity" \
-      && kill -"$signal" -- "-$leader_pid" 2>/dev/null || true
-  done
-}
-
-stop_detached_run() {
-  local dir="$1" token="$2" worker_pid="$3" worker_identity="$4" grace="$5" end now
-  signal_active_trees "$dir" "$token" TERM
-  same_process "$worker_pid" "$worker_identity" && kill -TERM "$worker_pid" 2>/dev/null || true
-  end=$(($(date +%s) + grace))
-  while same_process "$worker_pid" "$worker_identity"; do
-    now=$(date +%s)
-    [[ $now -lt $end ]] || break
-    sleep 0.1
-  done
-  signal_active_trees "$dir" "$token" KILL
-  same_process "$worker_pid" "$worker_identity" && kill -KILL "$worker_pid" 2>/dev/null || true
+completion_line() {
+  local log="$1" prefix="$2" line="" match matches grep_rc=0
+  matches=$(grep -F "$prefix" "$log") || grep_rc=$?
+  [[ $grep_rc -le 1 ]] || return 2
+  while IFS= read -r match; do line="$match"; done <<< "$matches"
+  printf '%s' "$line"
 }
 
 wait_for_run() {
-  local artifact="$1" runtime_dir="$2" deadline="$3" token="$4"
-  local worker_pid="$5" worker_identity="$6" grace="$7" log="$2/worker.log"
+  local artifact="$1" runtime_dir="$2" deadline="$3" token="$4" log="$2/worker.log"
   [[ "$deadline" =~ ^[1-9][0-9]*$ ]] || die "deadline must be a positive epoch"
   [[ "$token" =~ ^[A-Za-z0-9._-]+$ ]] || die "token is malformed"
-  [[ "$grace" =~ ^[1-9][0-9]*$ ]] || die "grace must be positive"
   validate_runtime_dir "$runtime_dir" "$token"
-  local prefix="__SECOND_OPINION_EXIT_${token}__=" line match matches status now grep_rc
+  local prefix="__SECOND_OPINION_EXIT_${token}__=" line status now grep_rc
   while :; do
-    line=""
     grep_rc=0
-    matches=$(grep -F "$prefix" "$log") || grep_rc=$?
-    [[ $grep_rc -le 1 ]] || die "cannot read worker log: $log"
-    while IFS= read -r match; do line="$match"; done <<< "$matches"
+    line=$(completion_line "$log" "$prefix") || grep_rc=$?
+    [[ $grep_rc -ne 2 ]] || die "cannot read worker log: $log"
     if [[ -n "$line" ]]; then
       status="${line#"$prefix"}"
       [[ "$status" =~ ^[0-9]+$ && $status -le 255 ]] || die "worker status is malformed"
@@ -294,21 +276,17 @@ wait_for_run() {
       [[ $status -eq 0 ]] && printf '%s\n' "$artifact"
       exit "$status"
     fi
-    if ! same_process "$worker_pid" "$worker_identity"; then
-      stop_detached_run "$runtime_dir" "$token" "$worker_pid" "$worker_identity" "$grace"
-      rm -rf -- "$runtime_dir" || die "cannot remove runtime directory: $runtime_dir"
-      echo "Error: detached worker exited without a completion marker" >&2
-      exit 1
-    fi
     now=$(date +%s)
     if [[ $now -ge $deadline ]]; then
-      stop_detached_run "$runtime_dir" "$token" "$worker_pid" "$worker_identity" "$grace"
+      grep_rc=0
+      line=$(completion_line "$log" "$prefix") || grep_rc=$?
+      [[ $grep_rc -ne 2 ]] || die "cannot read worker log: $log"
+      [[ -z "$line" ]] || continue
       cat < "$log" >&2 || die "cannot replay worker log: $log"
-      rm -rf -- "$runtime_dir" || die "cannot remove runtime directory: $runtime_dir"
-      echo "Error: detached run did not finish by deadline $deadline" >&2
+      echo "Error: detached supervisor did not publish completion by deadline $deadline" >&2
       exit 124
     fi
-    sleep 2
+    sleep 1
   done
 }
 
@@ -318,8 +296,9 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   shift
   case "$action" in
     tree) [[ $# -ge 3 ]] || die "tree arguments are incomplete"; tree "$@" ;;
-    launch) [[ $# -ge 6 ]] || die "launch arguments are incomplete"; launch "$@" ;;
-    wait) [[ $# -eq 7 ]] || die "wait arguments are incomplete"; wait_for_run "$@" ;;
+    supervise) [[ $# -ge 8 ]] || die "supervise arguments are incomplete"; supervise "$@" ;;
+    launch) [[ $# -ge 7 ]] || die "launch arguments are incomplete"; launch "$@" ;;
+    wait) [[ $# -eq 4 ]] || die "wait arguments are incomplete"; wait_for_run "$@" ;;
     *) die "unknown action: $action" ;;
   esac
 fi

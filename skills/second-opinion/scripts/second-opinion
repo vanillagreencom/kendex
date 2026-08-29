@@ -16,7 +16,7 @@
 #   SECOND_OPINION_<NAME>_CMD    Full command for target <NAME> (claude/codex have defaults)
 #   SECOND_OPINION_TARGET        Force one target (still subject to self-exclusion)
 #   SECOND_OPINION_TIMEOUT       Timeout in seconds (default: 1080)
-#   SECOND_OPINION_FOREGROUND_CAP  Harness adapter marks a capped foreground call
+#   SECOND_OPINION_FOREGROUND_CAP  Set to 1 instead of passing --foreground
 #   SECOND_OPINION_ARTIFACT_DIR  Home for artifacts not anchored by --output
 #                                (default: tmp/second-opinion under --cwd)
 #   SECOND_OPINION_REVIEW_INSTRUCTIONS  Repo instruction-file globs for review
@@ -142,9 +142,9 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              malformed response gets a fresh window, so a lane
                              can run up to twice this
   SECOND_OPINION_FOREGROUND_CAP
-                             Set to 1 by a harness adapter whose foreground
-                             shell calls are capped. The script detaches and
-                             prints its artifact, deadline, and wait command
+                             Set to 1 instead of passing --foreground. The
+                             script detaches and prints its artifact, deadline,
+                             and wait command
   SECOND_OPINION_ARTIFACT_DIR
                              Home for review/audit records written without
                              --output (preserved raw, failed, and rejected

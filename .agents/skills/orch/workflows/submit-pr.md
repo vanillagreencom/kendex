@@ -43,8 +43,10 @@ Run `second-opinion …`; it backgrounds itself and prints when to check.
 mkdir -p [WORKTREE_PATH]/tmp
 .agents/skills/orch/scripts/git-context timestamp epoch
 .agents/skills/orch/scripts/git-context timestamp compact
-.agents/skills/second-opinion/scripts/second-opinion review --cwd [WORKTREE_PATH] --output [WORKTREE_PATH]/tmp/review-local-[TIMESTAMP_FROM_PREVIOUS_COMMAND].json
+.agents/skills/second-opinion/scripts/second-opinion review --cwd [WORKTREE_PATH] --output [WORKTREE_PATH]/tmp/review-local-[TIMESTAMP_FROM_PREVIOUS_COMMAND].json --foreground
 ```
+
+Execute the exact command printed after `wait:` before running `review-artifact-check`.
 
 Use the epoch output as `LOCAL_STARTED_AT`:
 

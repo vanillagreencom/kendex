@@ -10,6 +10,8 @@ ABANDON_SESSION=""
 ABANDON_TOKEN=""
 STARTUP_SESSION=""
 STARTUP_TOKEN=""
+FAILURE_SESSION=""
+FAILURE_TOKEN=""
 owned_group_member() {
   local token="$1" group="$2" environ pid stat rest
   for environ in /proc/[1-9]*/environ; do
@@ -28,16 +30,50 @@ owned_group_member() {
   done
   return 1
 }
+owned_session_groups() {
+  local token="$1" session="$2" environ pid stat rest group seen=" "
+  for environ in /proc/[1-9]*/environ; do
+    [[ -r "$environ" ]] || continue
+    { tr '\0' '\n' < "$environ"; } 2>/dev/null \
+      | grep -Fqx "TEST_SESSION_TOKEN=$token" || continue
+    pid="${environ#/proc/}"
+    pid="${pid%/environ}"
+    [[ -r "/proc/$pid/stat" ]] || continue
+    stat="$(cat < "/proc/$pid/stat")"
+    rest="${stat##*) }"
+    set -- $rest
+    [[ $# -ge 4 && "$4" == "$session" ]] || continue
+    group="$3"
+    case "$seen" in *" $group "*) continue ;; esac
+    seen="$seen$group "
+    printf '%s\n' "$group"
+  done
+}
+stop_owned_session() {
+  local token="$1" session="$2" grace="$3" groups group end
+  end=$(($(date +%s) + grace))
+  while :; do
+    groups="$(owned_session_groups "$token" "$session")"
+    [[ -n "$groups" ]] || return 0
+    for group in $groups; do kill -TERM -- "-$group" 2>/dev/null || true; done
+    [[ $(date +%s) -lt $end ]] || break
+    sleep 0.1
+  done
+  groups="$(owned_session_groups "$token" "$session")"
+  for group in $groups; do kill -KILL -- "-$group" 2>/dev/null || true; done
+}
 cleanup() {
   if [[ -n "$ABANDON_SESSION" ]]; then
-    if owned_group_member "$ABANDON_TOKEN" "$ABANDON_SESSION" >/dev/null; then
-      kill -TERM -- "-$ABANDON_SESSION" 2>/dev/null || true
-    fi
+    stop_owned_session "$ABANDON_TOKEN" "$ABANDON_SESSION" 1
     wait "$ABANDON_SESSION" 2>/dev/null || true
   fi
   if [[ -n "$STARTUP_SESSION" ]] \
       && owned_group_member "$STARTUP_TOKEN" "$STARTUP_SESSION" >/dev/null; then
     kill -KILL -- "-$STARTUP_SESSION" 2>/dev/null || true
+  fi
+  if [[ -n "$FAILURE_SESSION" ]] \
+      && owned_group_member "$FAILURE_TOKEN" "$FAILURE_SESSION" >/dev/null; then
+    kill -KILL -- "-$FAILURE_SESSION" 2>/dev/null || true
   fi
   rm -rf "$TMP_ROOT"
 }
@@ -107,10 +143,23 @@ if [[ "${FAKE_MODE:-success}" == "startup" ]]; then
   printf 'ready\n' > "$FAKE_CLI_READY_FILE"
   while :; do printf 'tick\n' >> "$HEARTBEAT_FILE"; sleep 0.05; done
 fi
+if [[ "${FAKE_MODE:-success}" == "runtime-failure" ]]; then
+  trap '' TERM HUP
+  printf '%s\n' "$$" > "$FAKE_CLI_PID_FILE"
+  printf 'ready\n' > "$FAKE_CLI_READY_FILE"
+  while :; do printf 'tick\n' >> "$HEARTBEAT_FILE"; sleep 0.05; done
+fi
 if [[ "${FAKE_MODE:-success}" == "lane-heartbeat" ]]; then
   trap '' TERM HUP
   lane_heartbeat="$HEARTBEAT_DIR/${0##*/}"
   while :; do printf 'tick\n' >> "$lane_heartbeat"; sleep 0.05; done
+fi
+if [[ -n "${CONTROL_ENV_CAPTURE:-}" ]]; then
+  if [[ -n "${SECOND_OPINION_RUNTIME_DIR:-}${SECOND_OPINION_RUN_TOKEN:-}" ]]; then
+    printf 'leaked\n' > "$CONTROL_ENV_CAPTURE"
+  else
+    printf 'clean\n' > "$CONTROL_ENV_CAPTURE"
+  fi
 fi
 sleep 1
 printf 'answer\n'
@@ -126,6 +175,30 @@ assert_contains() {
   }
   printf 'PASS: %s\n' "$3"
 }
+assert_not_contains() {
+  if grep -Fq "$2" "$1"; then
+    fail "$3"
+  fi
+  printf 'PASS: %s\n' "$3"
+}
+assert_workflow_commands_detach() {
+  awk '
+    /scripts\/second-opinion (review|quick|challenge|audit)/ {
+      command = $0
+      collecting = ($0 ~ /\\$/)
+      if (!collecting && command !~ /--foreground/) exit 1
+      next
+    }
+    collecting {
+      command = command "\n" $0
+      if ($0 !~ /\\$/) {
+        if (command !~ /--foreground/) exit 1
+        collecting = 0
+      }
+    }
+    END { if (collecting) exit 2 }
+  ' "$1" || fail "$1 has a capped second-opinion command without --foreground"
+}
 
 mkdir -p "$TMP_ROOT/broken-bin"
 cat > "$TMP_ROOT/broken-bin/grep" <<'SH'
@@ -139,7 +212,7 @@ printf 'worker log\n' > "$TMP_ROOT/broken-runtime/worker.log"
 broken_wait_rc=0
 PATH="$TMP_ROOT/broken-bin:$PATH" \
   "$RUNTIME" wait "$TMP_ROOT/broken-artifact" "$TMP_ROOT/broken-runtime" \
-    "$(date +%s)" token 1 fake 1 >"$TMP_ROOT/broken.stdout" \
+    "$(date +%s)" token >"$TMP_ROOT/broken.stdout" \
     2>"$TMP_ROOT/broken.stderr" || broken_wait_rc=$?
 [[ $broken_wait_rc -eq 1 ]] || fail "broken worker-log read did not fail closed"
 assert_contains "$TMP_ROOT/broken.stderr" "cannot read worker log" \
@@ -150,7 +223,7 @@ mkdir "$TMP_ROOT/symlink-runtime"
 ln -s "$TMP_ROOT/victim" "$TMP_ROOT/symlink-runtime/worker.log"
 symlink_rc=0
 "$RUNTIME" launch "$TMP_ROOT/bin/codex" "$TMP_ROOT/symlink-answer" \
-  "$TMP_ROOT/symlink-runtime" 1 false x >"$TMP_ROOT/symlink.stdout" \
+  "$TMP_ROOT/symlink-runtime" 2 false 1 x >"$TMP_ROOT/symlink.stdout" \
   2>"$TMP_ROOT/symlink.stderr" || symlink_rc=$?
 [[ $symlink_rc -ne 0 ]] || fail "symlinked worker log was opened"
 [[ "$(cat < "$TMP_ROOT/victim")" == "untouched" ]] \
@@ -165,13 +238,13 @@ SH
 chmod +x "$TMP_ROOT/bin/dead-worker"
 mkdir "$TMP_ROOT/dead-runtime"
 "$RUNTIME" launch "$TMP_ROOT/bin/dead-worker" "$TMP_ROOT/dead-answer" \
-  "$TMP_ROOT/dead-runtime" 30 false x >"$TMP_ROOT/dead-launch.stdout"
+  "$TMP_ROOT/dead-runtime" 30 false 1 x >"$TMP_ROOT/dead-launch.stdout"
 dead_wait_cmd="$(sed -n 's/^wait: //p' "$TMP_ROOT/dead-launch.stdout")"
 dead_wait_rc=0
 bash -c "$dead_wait_cmd" >"$TMP_ROOT/dead-wait.stdout" \
   2>"$TMP_ROOT/dead-wait.stderr" || dead_wait_rc=$?
 [[ $dead_wait_rc -eq 1 ]] || fail "dead detached worker was not detected"
-assert_contains "$TMP_ROOT/dead-wait.stderr" "exited without a completion marker" \
+assert_contains "$TMP_ROOT/dead-wait.stderr" "exited without a completion status" \
   "wait fails fast when its worker vanishes"
 
 cat > "$TMP_ROOT/bin/no-timeout-worker" <<'SH'
@@ -184,9 +257,8 @@ deadline_heartbeat="$TMP_ROOT/deadline-heartbeat"
 PATH="$PATH" RUNTIME_FOR_WORKER="$RUNTIME" WORKER_STDERR="$TMP_ROOT/deadline-tree.stderr" \
   FAKE_MODE=nested HEARTBEAT_FILE="$deadline_heartbeat" \
   "$RUNTIME" launch "$TMP_ROOT/bin/no-timeout-worker" "$TMP_ROOT/deadline-answer" \
-    "$TMP_ROOT/deadline-runtime" 1 false x >"$TMP_ROOT/deadline-launch.stdout"
+    "$TMP_ROOT/deadline-runtime" 4 false 3 x >"$TMP_ROOT/deadline-launch.stdout"
 deadline_wait_cmd="$(sed -n 's/^wait: //p' "$TMP_ROOT/deadline-launch.stdout")"
-deadline_wait_cmd="${deadline_wait_cmd% 30} 1"
 deadline_wait_rc=0
 bash -c "$deadline_wait_cmd" >"$TMP_ROOT/deadline-wait.stdout" \
   2>"$TMP_ROOT/deadline-wait.stderr" || deadline_wait_rc=$?
@@ -213,15 +285,16 @@ PATH="$PATH" RUNTIME_FOR_WORKER="$RUNTIME" \
   WORKER_STDERR="$TMP_ROOT/multi-tree.stderr" FAKE_MODE=lane-heartbeat \
   HEARTBEAT_DIR="$TMP_ROOT/multi-tree-heartbeats" \
   "$RUNTIME" launch "$TMP_ROOT/bin/two-tree-worker" "$TMP_ROOT/multi-tree-answer" \
-    "$TMP_ROOT/multi-tree-runtime" 1 false x >"$TMP_ROOT/multi-tree-launch.stdout"
+    "$TMP_ROOT/multi-tree-runtime" 5 false 3 x >"$TMP_ROOT/multi-tree-launch.stdout"
 for _attempt in {1..100}; do
-  active_count="$(find "$TMP_ROOT/multi-tree-runtime" -maxdepth 1 -type f -name 'active.*' | wc -l | tr -d ' ')"
-  [[ "$active_count" -eq 2 ]] && break
+  [[ -s "$TMP_ROOT/multi-tree-heartbeats/codex" \
+      && -s "$TMP_ROOT/multi-tree-heartbeats/claude" ]] && break
   sleep 0.05
 done
-[[ "${active_count:-0}" -eq 2 ]] || fail "concurrent CLI trees did not publish distinct handles"
+[[ -s "$TMP_ROOT/multi-tree-heartbeats/codex" \
+    && -s "$TMP_ROOT/multi-tree-heartbeats/claude" ]] \
+  || fail "concurrent CLI trees did not both start"
 multi_tree_wait_cmd="$(sed -n 's/^wait: //p' "$TMP_ROOT/multi-tree-launch.stdout")"
-multi_tree_wait_cmd="${multi_tree_wait_cmd% 30} 1"
 multi_tree_rc=0
 bash -c "$multi_tree_wait_cmd" >"$TMP_ROOT/multi-tree-wait.stdout" \
   2>"$TMP_ROOT/multi-tree-wait.stderr" || multi_tree_rc=$?
@@ -236,20 +309,56 @@ for lane in codex claude; do
 done
 printf 'PASS: wait deadline stops every concurrent CLI tree\n'
 
-mkdir "$TMP_ROOT/reused-runtime"
-printf 'reused\n' > "$TMP_ROOT/reused-runtime/token"
-: > "$TMP_ROOT/reused-runtime/worker.log"
-sleep 10 &
-unrelated_pid=$!
-reused_rc=0
-"$RUNTIME" wait "$TMP_ROOT/reused-answer" "$TMP_ROOT/reused-runtime" \
-  "$(($(date +%s) + 10))" reused "$unrelated_pid" wrong 1 \
-  >"$TMP_ROOT/reused.stdout" 2>"$TMP_ROOT/reused.stderr" || reused_rc=$?
-[[ $reused_rc -eq 1 ]] || fail "stale worker identity was accepted"
-kill -0 "$unrelated_pid" 2>/dev/null || fail "stale worker handle signaled an unrelated process"
-kill "$unrelated_pid" 2>/dev/null || true
-wait "$unrelated_pid" 2>/dev/null || true
-printf 'PASS: stale worker identity cannot signal a reused pid\n'
+assert_not_contains "$RUNTIME" "process_identity" \
+  "runtime has no waiter PID-recovery machinery"
+assert_not_contains "$RUNTIME" "signal_active" \
+  "runtime has no waiter process-signaling path"
+
+mkdir "$TMP_ROOT/race-runtime" "$TMP_ROOT/race-bin"
+printf 'race\n' > "$TMP_ROOT/race-runtime/token"
+: > "$TMP_ROOT/race-runtime/worker.log"
+printf 'answer\n' > "$TMP_ROOT/race-answer"
+cat > "$TMP_ROOT/race-bin/grep" <<'SH'
+#!/usr/bin/env bash
+if [[ ! -e "$RACE_ONCE" ]]; then
+  : > "$RACE_ONCE"
+  printf '%s\n' "$RACE_COMPLETION" >> "$RACE_LOG"
+  exit 1
+fi
+exec "$REAL_GREP" "$@"
+SH
+chmod +x "$TMP_ROOT/race-bin/grep"
+race_rc=0
+PATH="$TMP_ROOT/race-bin:$PATH" REAL_GREP="$(command -v grep)" \
+  RACE_ONCE="$TMP_ROOT/race.once" RACE_LOG="$TMP_ROOT/race-runtime/worker.log" \
+  RACE_COMPLETION="__SECOND_OPINION_EXIT_race__=0" \
+  "$RUNTIME" wait "$TMP_ROOT/race-answer" "$TMP_ROOT/race-runtime" \
+    "$(date +%s)" race >"$TMP_ROOT/race.stdout" 2>"$TMP_ROOT/race.stderr" \
+    || race_rc=$?
+[[ $race_rc -eq 0 ]] || fail "waiter missed completion published at its deadline check"
+assert_contains "$TMP_ROOT/race.stdout" "$TMP_ROOT/race-answer" \
+  "waiter rechecks completion at its deadline"
+
+workflow_files=(
+  "$REPO_ROOT/skills/second-opinion/workflows/quick.md"
+  "$REPO_ROOT/skills/second-opinion/workflows/challenge.md"
+  "$REPO_ROOT/skills/second-opinion/workflows/audit.md"
+  "$REPO_ROOT/skills/second-opinion/workflows/review.md"
+  "$REPO_ROOT/skills/orch/workflows/review-pr.md"
+  "$REPO_ROOT/skills/orch/workflows/submit-pr.md"
+)
+for workflow_file in "${workflow_files[@]}"; do
+  assert_workflow_commands_detach "$workflow_file"
+  assert_contains "$workflow_file" 'exact command printed after `wait:`' \
+    "${workflow_file##*/} executes the emitted wait command"
+done
+assert_contains "${workflow_files[0]}" 'cat < [ARTIFACT_PATH]' \
+  "quick workflow reads the detached artifact"
+assert_contains "${workflow_files[1]}" 'cat < [ARTIFACT_PATH]' \
+  "challenge workflow reads the detached artifact"
+assert_contains "${workflow_files[4]}" '2 × `SECOND_OPINION_TIMEOUT` plus 3 minutes' \
+  "review-pr keeps a numeric external deadline fallback"
+printf 'PASS: every shipped workflow detaches and consumes the protocol\n'
 
 artifact="$TMP_ROOT/answer.txt"
 launch_stdout="$TMP_ROOT/launch.stdout"
@@ -270,6 +379,7 @@ assert_contains "$launch_stdout" "deadline: " "detached launch computes its dead
 assert_contains "$launch_stdout" "wait: " "detached launch prints one wait command"
 [[ "$(grep -c '^wait:' "$launch_stdout")" -eq 1 ]] \
   || fail "detached launch printed more than one wait command"
+[[ ! -e "$artifact" ]] || fail "documented foreground command waited for the CLI"
 
 deadline="$(sed -n 's/^deadline: //p' "$launch_stdout")"
 now="$(date +%s)"
@@ -298,6 +408,54 @@ piped_wait_cmd="$(sed -n 's/^wait: //p' "$TMP_ROOT/piped-launch.stdout")"
 bash -c "$piped_wait_cmd" >"$TMP_ROOT/piped-wait.stdout" 2>"$TMP_ROOT/piped-wait.stderr"
 assert_contains "$TMP_ROOT/piped.prompt" "piped question" \
   "detached worker preserves a piped prompt"
+
+control_artifact="$TMP_ROOT/control-answer.txt"
+PATH="$PATH" CONTROL_ENV_CAPTURE="$TMP_ROOT/control.env" \
+  SECOND_OPINION_RUNTIME_DIR=hostile SECOND_OPINION_RUN_TOKEN=hostile \
+  SECOND_OPINION_TARGET=codex SECOND_OPINION_CODEX_CMD=codex \
+  "$SECOND_OPINION" quick question --cwd "$TMP_ROOT/work" \
+    --output "$control_artifact" --timeout 2 --foreground \
+    >"$TMP_ROOT/control-launch.stdout"
+control_wait_cmd="$(sed -n 's/^wait: //p' "$TMP_ROOT/control-launch.stdout")"
+bash -c "$control_wait_cmd" >"$TMP_ROOT/control-wait.stdout" \
+  2>"$TMP_ROOT/control-wait.stderr"
+assert_contains "$TMP_ROOT/control.env" "clean" \
+  "external CLI cannot see detached runtime controls"
+
+mkdir "$TMP_ROOT/failure-runtime"
+failure_ready="$TMP_ROOT/failure.ready"
+failure_pid_file="$TMP_ROOT/failure.pid"
+failure_heartbeat="$TMP_ROOT/failure-heartbeat"
+failure_token="failure-$RANDOM-$$"
+PATH="$PATH" RUNTIME_FOR_WORKER="$RUNTIME" WORKER_STDERR="$TMP_ROOT/failure-tree.stderr" \
+  FAKE_MODE=runtime-failure TEST_SESSION_TOKEN="$failure_token" \
+  FAKE_CLI_READY_FILE="$failure_ready" FAKE_CLI_PID_FILE="$failure_pid_file" \
+  HEARTBEAT_FILE="$failure_heartbeat" \
+  "$RUNTIME" launch "$TMP_ROOT/bin/no-timeout-worker" "$TMP_ROOT/failure-answer" \
+    "$TMP_ROOT/failure-runtime" 30 false 3 x >"$TMP_ROOT/failure-launch.stdout"
+failure_wait_cmd="$(sed -n 's/^wait: //p' "$TMP_ROOT/failure-launch.stdout")"
+failure_wait_rc=0
+bash -c "$failure_wait_cmd" >"$TMP_ROOT/failure-wait.stdout" \
+  2>"$TMP_ROOT/failure-wait.stderr" &
+failure_wait_pid=$!
+for _attempt in {1..100}; do
+  [[ -s "$failure_ready" ]] && break
+  sleep 0.05
+done
+[[ -s "$failure_ready" ]] || fail "post-release failure control never started its CLI"
+FAILURE_SESSION="$(cat < "$failure_pid_file")"
+FAILURE_TOKEN="$failure_token"
+sleep 0.1
+rm -f -- "$TMP_ROOT/failure-runtime/token"
+wait "$failure_wait_pid" || failure_wait_rc=$?
+[[ $failure_wait_rc -eq 1 ]] || fail "post-release runtime failure did not fail closed"
+failure_before="$(wc -c < "$failure_heartbeat" | tr -d ' ')"
+sleep 0.3
+failure_after="$(wc -c < "$failure_heartbeat" | tr -d ' ')"
+[[ "$failure_before" == "$failure_after" ]] \
+  || fail "post-release runtime failure left its CLI tree running"
+FAILURE_SESSION=""
+printf 'PASS: post-release runtime failure stops and reaps its CLI tree\n'
 
 review_artifact="$TMP_ROOT/review.json"
 review_stdout="$TMP_ROOT/review-launch.stdout"
@@ -361,7 +519,7 @@ if [[ "$(uname -s)" == "Linux" ]] && command -v setsid >/dev/null 2>&1; then
     sed -n '1,100p' "$TMP_ROOT/abandon.stderr" >&2 || true
     fail "detached CLI did not start for caller-cancellation control"
   fi
-  owned_group_member "$abandon_token" "$abandon_session" >/dev/null \
+  [[ -n "$(owned_session_groups "$abandon_token" "$abandon_session")" ]] \
     || fail "caller-cancellation control lost ownership of its session"
   kill -TERM -- "-$abandon_session" 2>/dev/null || true
   wait "$abandon_session" 2>/dev/null || true
@@ -372,6 +530,12 @@ if [[ "$(uname -s)" == "Linux" ]] && command -v setsid >/dev/null 2>&1; then
   if [[ ! -s "$abandon_term" ]]; then
     fail "canceling the capped caller left its detached CLI running"
   fi
+  for _attempt in {1..100}; do
+    [[ -z "$(owned_session_groups "$abandon_token" "$abandon_session")" ]] && break
+    sleep 0.05
+  done
+  [[ -z "$(owned_session_groups "$abandon_token" "$abandon_session")" ]] \
+    || fail "caller cancellation left a token-owned process in its session"
   ABANDON_SESSION=""
   printf 'PASS: canceling the capped caller stops its detached CLI\n'
 else

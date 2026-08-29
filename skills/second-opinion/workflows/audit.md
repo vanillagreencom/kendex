@@ -33,8 +33,11 @@ Run `second-opinion …`; it backgrounds itself and prints when to check.
 .agents/skills/second-opinion/scripts/second-opinion audit \
   --prompt tmp/second-opinion-prompt.md \
   --cwd [PROJECT_PATH] \
-  --output tmp/audit-external-YYYYMMDD-HHMMSS.json
+  --output tmp/audit-external-YYYYMMDD-HHMMSS.json \
+  --foreground
 ```
+
+Execute the exact command printed after `wait:` before reading or validating the artifact.
 
 ## 3. Present Results
 

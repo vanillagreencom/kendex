@@ -112,6 +112,11 @@ PATH="$TMP_ROOT/bin:$PATH" \
 assert_contains "$override_stderr" "timeout=7s" "caller timeout override wins"
 if [[ -n "$resolved_timeout" ]]; then
   assert_contains "$override_stderr" "cmd: $resolved_timeout --foreground -k 30 7s " "launch log includes resolved override timeout"
+  if ! grep -Eq -- '--foreground -k 30 7s .*second-opinion-runtime tree 25 .* codex$' "$override_stderr"; then
+    sed -n '1,80p' "$override_stderr" >&2 || true
+    fail "override launch puts codex after the timeout and tree arguments"
+  fi
+  printf 'PASS: override launch puts codex after the timeout and tree arguments\n'
 else
   assert_contains "$override_stderr" "cmd: direct codex" "launch log names direct override execution"
 fi
