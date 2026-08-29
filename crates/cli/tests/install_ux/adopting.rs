@@ -67,7 +67,7 @@ fn an_adopted_skill_clones() {
     world.run(&["adopt", "skill", "release"]);
     world.commit_all("adopt release");
 
-    let clone = world.tmp.path().join("elsewhere/adopted");
+    let clone = world.home.join("elsewhere/adopted");
     std::fs::create_dir_all(clone.parent().unwrap()).unwrap();
     crate::git(
         &world.project,

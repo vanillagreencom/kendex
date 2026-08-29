@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use kendex_core::env::Env;
-use kendex_test_support::rooted;
+use kendex_test_support::RootedTempDir;
 
 /// The frame a terminal gets, and nothing a verb ever writes itself.
 const FRAMING: [char; 12] = ['┌', '│', '└', '├', '╮', '╯', '─', '◇', '◆', '▲', '■', '●'];
@@ -167,8 +167,8 @@ fn blocked_project_at(home: &Path, project: &Path) {
 /// leave the frame open.
 #[allow(clippy::unwrap_used)]
 pub fn nothing_declared(args: &[&str]) -> Output {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = &rooted(&tmp);
+    let tmp = RootedTempDir::new().unwrap();
+    let home = tmp.path();
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();
     fs::write(project.join("kendex.toml"), "schema = 6\n").unwrap();
@@ -181,8 +181,8 @@ pub fn nothing_declared(args: &[&str]) -> Output {
 /// stands for the fixture's catalog, which only the fixture knows.
 #[allow(clippy::unwrap_used)]
 pub fn both(args: &[&str]) -> (String, String) {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = &rooted(&tmp);
+    let tmp = RootedTempDir::new().unwrap();
+    let home = tmp.path();
     let catalog = home.join("catalog").display().to_string();
     let filled: Vec<String> = args
         .iter()
@@ -207,8 +207,8 @@ pub fn both(args: &[&str]) -> (String, String) {
 /// fill the machine's temp directory a little more every time.
 #[allow(clippy::unwrap_used)]
 pub fn one(ui: &str, args: &[&str]) -> Ran {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
+    let tmp = RootedTempDir::new().unwrap();
+    let home = tmp.path().to_owned();
     let catalog = home.join("catalog").display().to_string();
     let filled: Vec<String> = args
         .iter()
@@ -229,7 +229,7 @@ pub fn one(ui: &str, args: &[&str]) -> Ran {
 pub struct Ran {
     pub output: Output,
     pub project: PathBuf,
-    _fixture: tempfile::TempDir,
+    _fixture: RootedTempDir,
 }
 
 mod plain;

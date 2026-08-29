@@ -90,51 +90,15 @@ temp_case() { # pass|refuse LABEL SOURCE-LINE...
   run_guard RATCHET_RAISE=
   if [ "$expected" = pass ] && [ "$RC" -eq 0 ]; then
     ok "$label"
-  elif [ "$expected" = refuse ] && [ "$RC" -ne 0 ] && [[ "$OUT" == *"raw temporary fixture root added"* ]]; then
+  elif [ "$expected" = refuse ] && [ "$RC" -ne 0 ] && [[ "$OUT" == *"direct tempfile constructor added"* ]]; then
     ok "$label"
   else
     bad "$label" "rc=$RC out=$OUT"
   fi
 }
 
-temp_case refuse "a raw tempdir path is refused" \
-  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let root = tmp.path();' ' drop(root);' '}'
-temp_case pass "a tempdir whose root is never exposed passes" \
-  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' drop(tmp);' '}'
-temp_case pass "a real binding from the shared helper passes" \
-  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let root = kendex_test_support::rooted(&tmp);' ' drop(root);' '}'
-temp_case pass "a bound inline path canonicalization passes" \
-  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let root = tmp.path().canonicalize().unwrap();' ' drop(root);' '}'
-temp_case pass "a bound inline as_ref canonicalization passes" \
-  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let root = tmp.as_ref().canonicalize().expect("root");' ' drop(root);' '}'
-temp_case pass "a wrapped bound canonicalization passes" \
-  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let root = tmp' ' .path()' ' .canonicalize()' ' .unwrap();' ' drop(root);' '}'
-temp_case pass "a canonical binding inside a loop passes" \
-  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' for _ in 0..1 {' ' let root = tmp.path().canonicalize().unwrap();' ' drop(root);' ' }' '}'
-temp_case pass "a canonical binding inside a conditional passes" \
-  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' if cfg!(target_os = "macos") {' ' let root = tmp.path().canonicalize().unwrap();' ' drop(root);' ' }' '}'
-temp_case pass "a canonical binding inside an expression block passes" \
-  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let root = {' ' let root = tmp.path().canonicalize().unwrap();' ' root' ' };' ' drop(root);' '}'
-temp_case refuse "a wrapped raw path is refused" \
-  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let root = tmp' ' .path()' ' .to_path_buf();' ' drop(root);' '}'
-temp_case refuse "a TempDir reference passed to an AsRef path helper is refused" \
-  'fn found(path: impl AsRef<Path>) { drop(path); }' 'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' found(&tmp);' '}'
-temp_case refuse "a wrapped TempDir reference passed to a fixture helper is refused" \
-  'fn project(tmp: &tempfile::TempDir) { drop(tmp); }' 'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' project(' ' &tmp,' ' );' '}'
-temp_case refuse "a helper call hidden in dead code cannot vouch for a raw path" \
-  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' if false { let root = kendex_test_support::rooted(&tmp); drop(root); }' ' let raw = tmp.path();' ' drop(raw);' '}'
-temp_case refuse "a discarded helper result cannot vouch for a raw path" \
-  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' kendex_test_support::rooted(&tmp);' ' let raw = tmp.path();' ' drop(raw);' '}'
-temp_case refuse "an underscore canonical binding is refused" \
-  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let _root = tmp.path().canonicalize().unwrap();' '}'
-temp_case refuse "a discarded inline canonicalization is refused" \
-  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' drop(tmp.path().canonicalize().unwrap());' '}'
-temp_case refuse "an inline canonicalization hidden in dead code is refused" \
-  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' if false { let root = tmp.path().canonicalize().unwrap(); drop(root); }' '}'
-temp_case refuse "a multiline dead block cannot make canonicalization live" \
-  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' if false {' ' let root = tmp.path().canonicalize().unwrap();' ' drop(root);' ' }' '}'
-
 for constructor in \
+  'tempfile::tempdir().unwrap()' \
   'tempfile::TempDir::new().unwrap()' \
   'tempdir().unwrap()' \
   'tempfile::tempdir_in(".").unwrap()' \
@@ -143,23 +107,37 @@ for constructor in \
   'tempfile::TempDir::with_prefix_in("fixture", ".").unwrap()' \
   'tempfile::Builder::new().tempdir().unwrap()' \
   'tempfile::Builder::new().tempdir_in(".").unwrap()'; do
-  temp_case refuse "raw as_ref is refused for $constructor" \
-    'fn fixture() {' " let tmp = $constructor;" ' let raw = tmp.as_ref();' ' drop(raw);' '}'
+  temp_case refuse "direct fixture ownership is refused for $constructor" \
+    'fn fixture() {' " let _tmp = $constructor;" '}'
 done
-temp_case refuse "a multiline Builder tempdir still establishes a guarded root" \
-  'fn fixture() {' ' let tmp = tempfile::Builder::new()' ' .prefix("fixture")' ' .tempdir()' ' .unwrap();' ' let raw = tmp.path();' ' drop(raw);' '}'
-temp_case refuse "into_path cannot expose an uncanonicalized root" \
-  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let raw = tmp.into_path();' ' drop(raw);' '}'
-temp_case refuse "keep cannot expose an uncanonicalized root" \
-  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let raw = tmp.keep();' ' drop(raw);' '}'
-temp_case pass "comments and strings that mention tempdir roots pass" \
-  'fn prose() {' ' // let tmp = tempfile::tempdir().unwrap();' ' let shown = "let tmp = tempfile::tempdir().unwrap();";' ' let path = "tmp.path()";' ' drop((shown, path));' '}'
-temp_case refuse "a line-comment glob cannot hide a later raw temp root" \
-  'fn fixture() {' ' // fixtures live under crates/*/tests' ' let tmp = tempfile::tempdir().unwrap();' ' let raw = tmp.path();' ' drop(raw);' '}'
+temp_case refuse "a multiline Builder constructor is refused" \
+  'fn fixture() {' ' let _tmp = tempfile::Builder::new()' ' .prefix("fixture")' ' .tempdir()' ' .unwrap();' '}'
+temp_case pass "RootedTempDir owns and exposes the canonical fixture root" \
+  'struct World { fixture: kendex_test_support::RootedTempDir }' 'fn fixture() {' ' let world = World { fixture: kendex_test_support::RootedTempDir::new().unwrap() };' ' let root = world.fixture.path();' ' drop(root);' '}'
+temp_case pass "same-name non-temporary path owners do not trigger" \
+  'fn fixture() {' ' let tmp = ProjectFixture::new();' ' let root = tmp.path();' ' drop(root);' '}'
+temp_case pass "comments and strings that mention tempfile constructors pass" \
+  'fn prose() {' ' // let tmp = tempfile::tempdir().unwrap();' ' let shown = "tempfile::TempDir::new()";' ' drop(shown);' '}'
+temp_case refuse "a line-comment glob cannot hide a later constructor" \
+  'fn fixture() {' ' // fixtures live under crates/*/tests' ' let _tmp = tempfile::tempdir().unwrap();' '}'
+temp_case refuse "an imported path sink cannot make a raw owner compliant" \
+  'use helpers::accepts_path;' 'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' accepts_path(&tmp);' '}'
+
+mkdir -p "$R/crates/core/tests/split_fixture"
+printf '%s\n' 'pub struct World { pub tmp: tempfile::TempDir }' 'pub fn world() -> World { World { tmp: tempfile::tempdir().unwrap() } }' >"$R/crates/core/tests/split_fixture/main.rs"
+printf '%s\n' 'use super::*;' 'fn raw(world: &World) { let _ = world.tmp.path(); }' >"$R/crates/core/tests/split_fixture/uses.rs"
+git -C "$R" add -A
+run_guard RATCHET_RAISE=
+[ "$RC" -ne 0 ] && case "$OUT" in *"split_fixture/main.rs"*"direct tempfile constructor added"*) true ;; *) false ;; esac \
+  && ok "a split-module raw TempDir owner is refused" \
+  || bad "a split-module raw TempDir owner is refused" "rc=$RC out=$OUT"
+git -C "$R" reset -q HEAD -- crates/core/tests/split_fixture/main.rs crates/core/tests/split_fixture/uses.rs
+rm -f "$R/crates/core/tests/split_fixture/main.rs" "$R/crates/core/tests/split_fixture/uses.rs"
+rmdir "$R/crates/core/tests/split_fixture"
 
 git -C "$R" config color.diff always
-temp_case refuse "colored diff output cannot hide a raw temp root" \
-  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let raw = tmp.path();' ' drop(raw);' '}'
+temp_case refuse "colored diff output cannot hide a direct constructor" \
+  'fn fixture() {' ' let _tmp = tempfile::tempdir().unwrap();' '}'
 git -C "$R" config --unset color.diff
 
 mkdir -p "$R/fake-bin"
@@ -179,7 +157,7 @@ SH
 cat >"$R/fake-bin/awk" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-if [ "${FAIL_TEMP_AWK:-0}" -eq 1 ] && [[ "${1:-}" == *finish_declaration* ]]; then
+if [ "${FAIL_TEMP_AWK:-0}" -eq 1 ] && [[ "${1:-}" == *builder_tempdir* ]]; then
   exit 2
 fi
 exec "$REAL_AWK" "$@"
@@ -190,24 +168,12 @@ run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" REAL_AWK=
   && ok "a failed fixture diff blocks guard" \
   || bad "a failed fixture diff blocks guard" "rc=$RC out=$OUT"
 run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" REAL_AWK="$REAL_AWK" FAIL_TEMP_AWK=1
-[ "$RC" -ne 0 ] && case "$OUT" in *"temporary fixture declarations could not be checked"*) true ;; *) false ;; esac \
+[ "$RC" -ne 0 ] && case "$OUT" in *"temporary fixture constructors could not be checked"*) true ;; *) false ;; esac \
   && ok "a failed fixture parser blocks guard" \
   || bad "a failed fixture parser blocks guard" "rc=$RC out=$OUT"
 rm -f "$R/fake-bin/git" "$R/fake-bin/awk"
 git -C "$R" reset -q HEAD -- crates/core/tests/temp_path.rs
 rm -f "$R/crates/core/tests/temp_path.rs"
-printf '%s\n' \
-  'fn existing_fixture() {' \
-  '    let tmp = tempfile::tempdir().unwrap();' \
-  '    let raw = tmp.path();' \
-  '    drop((tmp, raw));' \
-  '}' >"$R/crates/core/tests/existing_temp.rs"
-git -C "$R" add crates/core/tests/existing_temp.rs
-run_guard RATCHET_RAISE=
-[ "$RC" -ne 0 ] && case "$OUT" in *"existing_temp.rs:3"*"raw temporary fixture root added"*) true ;; *) false ;; esac \
-  && ok "a direct path added to an older temp fixture is refused" \
-  || bad "a direct path added to an older temp fixture is refused" "rc=$RC out=$OUT"
-git -C "$R" restore --staged --worktree crates/core/tests/existing_temp.rs
 
 echo "=== Apple test targets compile before the host suite ==="
 mkdir -p "$R/fake-bin"

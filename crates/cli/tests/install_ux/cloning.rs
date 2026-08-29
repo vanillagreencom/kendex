@@ -18,7 +18,7 @@ fn a_clone_has_working_skills_with_no_kendex_run() {
     world.run(&["add", "cat", "--skill", "deploy", "-y"]);
     world.commit_all("install deploy");
 
-    let clone = world.tmp.path().join("elsewhere/fresh-checkout");
+    let clone = world.home.join("elsewhere/fresh-checkout");
     fs::create_dir_all(clone.parent().unwrap()).unwrap();
     git(
         &world.project,
@@ -75,7 +75,7 @@ fn a_copy_install_clones_as_plain_directories() {
     world.run(&["add", "cat", "--skill", "deploy", "--method", "copy", "-y"]);
     world.commit_all("install deploy by copy");
 
-    let clone = world.tmp.path().join("elsewhere/copy-checkout");
+    let clone = world.home.join("elsewhere/copy-checkout");
     fs::create_dir_all(clone.parent().unwrap()).unwrap();
     git(
         &world.project,

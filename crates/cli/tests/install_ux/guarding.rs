@@ -96,7 +96,7 @@ fn the_guards_travel_with_the_repository_and_gate_a_clone() {
 
     world.commit_all("feat: install the commit guards");
 
-    let clone = world.tmp.path().join("elsewhere/fresh-checkout");
+    let clone = world.home.join("elsewhere/fresh-checkout");
     fs::create_dir_all(clone.parent().unwrap()).unwrap();
     git(
         &world.project,
