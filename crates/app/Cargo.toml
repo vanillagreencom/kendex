@@ -13,7 +13,23 @@ serde.workspace = true
 # `tauri::generate_context!` expands the updater plugin's config through it.
 serde_json.workspace = true
 toml.workspace = true
-tauri.workspace = true
+# `process-relaunch-dangerous-allow-symlink-macos` opts out of tauri's refusal
+# to name its own binary when the launch path has a symlinked ancestor. Every
+# Homebrew cask install has one: the `app` stanza puts a symlink at
+# `/Applications/kendex.app` pointing into the Caskroom. That refusal sits
+# behind both `UpdaterBuilder::build` and `AppHandle::restart`, so without
+# this the Update button downloads nothing and a fixed download would exit
+# without relaunching.
+#
+# The launch path is still checked; kendex checks it rather than delegating.
+# `install_channel::for_app` canonicalizes the path through the link and
+# approves only a `.app` bundle it can replace, `app_update_install` refuses
+# any install that resolver did not call `Direct`, and the approved path is
+# what reaches the updater. `crates/app/tests/cask_symlink_launch.rs` holds
+# both halves against a real symlinked layout.
+tauri = { workspace = true, features = [
+    "process-relaunch-dangerous-allow-symlink-macos",
+] }
 tauri-specta.workspace = true
 specta.workspace = true
 specta-typescript.workspace = true

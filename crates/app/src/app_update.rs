@@ -139,8 +139,11 @@ pub async fn app_update_install(app: tauri::AppHandle) -> Result<(), String> {
     let update = aim_at_install(app.updater_builder(), &install)
         .endpoints(vec![manifest_endpoint()?])
         .map_err(|error| error.to_string())?
+        // What is left here after the cask fix is the app failing to place
+        // itself. The plugin's own text for that is a bare io error, which
+        // names no doer and no stage.
         .build()
-        .map_err(|error| error.to_string())?
+        .map_err(|error| format!("kendex could not start an update for this install: {error}"))?
         .check()
         .await
         .map_err(|error| error.to_string())?
