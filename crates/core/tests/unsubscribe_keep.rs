@@ -145,6 +145,45 @@ fn keeping_an_agent_carries_the_catalogs_mapping_tables() {
     );
 }
 
+/// The carry records what the agent was rendering with, and the next plan
+/// resolves that record against the scope the keep leaves behind. Reasoned
+/// from the manifest on disk, a skill only the departing catalog carried
+/// reads as available and the keep writes a scope whose very next audit
+/// fails. It is refused instead, before a single op is planned.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn keeping_a_package_refuses_an_assignment_the_scope_would_lose() {
+    let (_tmp, env, scope, catalog) = world("[agents.scout]\nsource = \"cat\"\n", "");
+    skill(&catalog, "recon", "body");
+    fs::create_dir_all(catalog.join("agents")).unwrap();
+    fs::write(
+        catalog.join("agents/scout.md"),
+        "---\nname: scout\ndescription: finds things\n---\nBody.\n",
+    )
+    .unwrap();
+    // The catalog assigns `recon`, and nothing declares it — so the keep
+    // copies the agent alone and the only provider leaves with the source.
+    fs::write(
+        catalog.join("kendex.toml"),
+        "[agent-skills]\nscout = [\"recon\"]\n",
+    )
+    .unwrap();
+    apply_now(&env, &scope);
+    let before = fs::read_to_string(manifest::manifest_path(&env, &scope)).unwrap();
+
+    match kendex_core::engine::detach::source(&env, &scope, "cat") {
+        Err(CoreError::AgentSkillUnavailable { name, skill }) => {
+            assert_eq!((name.as_str(), skill.as_str()), ("scout", "recon"))
+        }
+        other => panic!("the keep must refuse before it plans anything: {other:?}"),
+    }
+    assert_eq!(
+        fs::read_to_string(manifest::manifest_path(&env, &scope)).unwrap(),
+        before,
+        "a refused keep leaves the subscription declared"
+    );
+}
+
 /// Keeping a marketplace's packages writes source-form bytes into the
 /// local source, and the slot it writes to has to be one that source can
 /// read back. A symlink among the components below the local source's

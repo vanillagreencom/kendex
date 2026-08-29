@@ -121,6 +121,35 @@ pub struct EffectiveSkills {
     pub unresolved: Vec<String>,
 }
 
+impl EffectiveSkills {
+    /// The refusal this outcome earns when `in_scope` cannot answer it:
+    /// one fault, decided once, at whichever moment it is found. Rendering
+    /// an agent short a `## Required Skills` section it was given, and
+    /// writing a local copy carrying an assignment the scope will not
+    /// answer, are the same thing said at two moments.
+    ///
+    /// `in_scope` is the scope that will hold this agent — as it stands
+    /// for a rendering, as an operation will leave it for a capture. Both
+    /// halves are judged against it. The declared half already failed
+    /// against the scope, which is what `unresolved` is; the upstream half
+    /// resolved against the item's own catalog, which a capture may be
+    /// taking away, so it has to be asked again.
+    pub fn refusal(
+        &self,
+        agent_name: &str,
+        in_scope: &[String],
+    ) -> Option<crate::error::CoreError> {
+        self.unresolved
+            .iter()
+            .chain(&self.effective)
+            .find(|skill| !in_scope.iter().any(|held| held == *skill))
+            .map(|skill| crate::error::CoreError::AgentSkillUnavailable {
+                name: crate::names::shown(agent_name),
+                skill: crate::names::shown(skill),
+            })
+    }
+}
+
 /// v2's durable-removal semantics: a project `[agent-skills]` entry is
 /// authoritative; skills the source *newly* lists (vs. the recorded
 /// upstream set) merge in; anything the user removed stays removed. With no

@@ -194,7 +194,7 @@ fn published(of: &ForkOf) -> Result<Published> {
         read_at: commit,
         agent: parse_source_agent(&String::from_utf8_lossy(&bytes))
             .map_err(|problem| unreadable(name, &decl.source, problem))?,
-        carry: agent_carry(manifest, &sealed, &config, name, &bytes, &in_scope),
+        carry: agent_carry(manifest, &sealed, &config, name, &bytes, &in_scope)?,
         overrides: merge_overrides(
             config
                 .frontmatter

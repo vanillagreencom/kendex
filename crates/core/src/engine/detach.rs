@@ -17,8 +17,12 @@ use crate::model::{ItemKind, Scope};
 use crate::source::local_source_root;
 
 use super::EngineReport;
-use super::agent_carry::{AgentCarry, agent_carry};
+use super::agent_carry::AgentCarry;
 use super::planned::planned_declarations;
+
+mod capture;
+
+use capture::{capture_to_local, source_form};
 
 /// One item that leaves with the source: its kind and name, the declaration it
 /// installs under, and whether it was derived (a bundle member or a dependency)
@@ -334,7 +338,7 @@ fn local_target(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Result<
 /// through fork capture inside the same plan is the remaining half.)
 pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
     let scope = scope.canonical();
-    let mut manifest = crate::engine::ops::manifest_for_mutation(env, &scope)?;
+    let manifest = crate::engine::ops::manifest_for_mutation(env, &scope)?;
     let closure = closure(env, &scope, source_name, &manifest)?;
     let lock = crate::lock::load(&crate::lock::lock_path(env, &scope))?;
 
@@ -347,8 +351,18 @@ pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
         });
     }
 
-    // Once for the conversion: read per agent, it reopens every catalog again.
-    let skills = crate::source::ScopeSkills::of(env, &scope, &manifest)?;
+    // What a kept agent's assignment has to resolve against is the scope
+    // this conversion leaves behind, not the one it starts in: the source
+    // is going, and the packages it carried arrive under `local`. Read
+    // once, because per agent it reopens every catalog again.
+    let mut converted = converted_manifest(&manifest, &closure, source_name, &lock)?;
+    let arriving: Vec<String> = closure
+        .items
+        .iter()
+        .filter(|item| item.kind == ItemKind::Skill)
+        .map(|item| item.name.clone())
+        .collect();
+    let skills = crate::source::ScopeSkills::after(env, &scope, &converted, &arriving)?;
     let mut ops = Vec::new();
     let mut carried: Vec<(String, AgentCarry)> = Vec::new();
     for item in &closure.items {
@@ -367,39 +381,8 @@ pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
     // or the very next apply would silently re-render every kept agent
     // differently.
     for (name, carry) in carried {
-        carry.apply(&mut manifest, &name);
+        carry.apply(&mut converted, &name);
     }
-
-    // Flip every converted item to the local source and record the fork.
-    for item in &closure.items {
-        let provenance = ForkProvenance {
-            repo: manifest
-                .sources
-                .get(&item.decl.source)
-                .and_then(|s| s.repo.clone()),
-            source: item.decl.source.clone(),
-            commit: effective_commit(&lock, item)?,
-            forked_at: crate::clock::timestamp(),
-        };
-        // A derived member or dependency becomes a plain declaration; a
-        // declared item flips in place. Either way it now reads `local`, holds
-        // nothing, and its bundle/dependency membership is a request of its own.
-        let decl = manifest
-            .declared_mut(item.kind)
-            .entry(item.name.clone())
-            .or_insert_with(|| ItemDecl::from_source(LOCAL_SOURCE_NAME));
-        decl.source = LOCAL_SOURCE_NAME.to_owned();
-        decl.rev = None;
-        manifest
-            .forks
-            .entry(item.kind)
-            .or_default()
-            .insert(item.name.clone(), provenance);
-    }
-    manifest
-        .bundles
-        .retain(|_, decl| decl.source != source_name);
-    manifest.sources.remove(source_name);
 
     let manifest_path = crate::manifest::manifest_path(env, &scope);
     ops.push(PlannedOp {
@@ -407,7 +390,7 @@ pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
         op: Op::WriteManifest {
             pre: Pre::observed(&manifest_path)?,
             path: manifest_path,
-            manifest: Box::new(manifest),
+            manifest: Box::new(converted),
         },
     });
     Ok(Plan {
@@ -416,134 +399,46 @@ pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
     })
 }
 
-/// `(relative path, bytes)` pairs ready to write under the local target.
-type SourceFiles = Vec<(PathBuf, Vec<u8>)>;
-
-/// One item's source-form files, read through the sealed catalog at the commit
-/// it was installed from: the skill's tree, or the single file the other kinds
-/// keep. `(relative path, bytes)`, ready to write under the local target —
-/// plus, for an agent, the catalog tables its rendering depended on.
-fn source_form(
-    env: &Env,
-    scope: &Scope,
+/// The manifest this conversion writes: every kept package reading `local`
+/// and recorded as a fork, and the source it came from gone. Derived before
+/// anything is read, because it is the scope a kept agent's assignment has
+/// to resolve against — reasoning from the manifest on disk plans against a
+/// catalog the same plan removes.
+fn converted_manifest(
     manifest: &Manifest,
-    item: &ClosureItem,
-    commit: Option<&str>,
-    in_scope: &crate::source::ScopeSkills,
-) -> Result<(SourceFiles, Option<AgentCarry>)> {
-    let resolved = match crate::source::resolve_at(env, scope, &item.decl.source, manifest, commit)?
-    {
-        crate::source::SourceState::Ready(ready) => ready,
-        _ => {
-            return Err(CoreError::SourcePending {
-                name: item.decl.source.clone(),
-            });
-        }
-    };
-    let sealed = crate::source_read::SealedSource::open(&resolved.root)?;
-    let config = crate::source::source_config_for(&sealed, &resolved.provenance)?;
-    let Some(path) = crate::source::find_item(&sealed, &config, item.kind, &item.name) else {
-        return Err(CoreError::ItemNotInSource {
-            name: item.name.clone(),
-            source_name: item.decl.source.clone(),
-        });
-    };
-    match item.kind {
-        ItemKind::Skill => {
-            let files = sealed.collect_skill_tree(&path)?;
-            // A subdirectory carrying its own SKILL.md is a nested skill —
-            // captured as its own item, so its files are not this skill's
-            // content. Without this, keeping both `plugin` and `plugin/item`
-            // would write `item`'s bytes twice and the second write would clash.
-            let nested: Vec<PathBuf> = files
-                .iter()
-                .filter_map(|(rel, _)| {
-                    let parent = rel.parent()?;
-                    (!parent.as_os_str().is_empty() && rel.file_name()? == "SKILL.md")
-                        .then(|| parent.to_path_buf())
-                })
-                .collect();
-            Ok((
-                files
-                    .into_iter()
-                    .filter(|(rel, _)| !nested.iter().any(|dir| rel.starts_with(dir)))
-                    .collect(),
-                None,
-            ))
-        }
-        _ => {
-            let bytes = sealed.read(&path)?;
-            let carry = (item.kind == ItemKind::Agent)
-                .then(|| agent_carry(manifest, &sealed, &config, &item.name, &bytes, in_scope))
-                .flatten();
-            let file = path
-                .file_name()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from(&item.name));
-            Ok((vec![(file, bytes)], carry))
-        }
-    }
-}
-
-/// The write op for one detached item, after preflighting the local target:
-/// an occupied target holding different bytes (an earlier adopt, fork, or
-/// detach of the same kind and name) is a refusal naming it — detach never
-/// overwrites what is already local (invariants 4 and 6). A target already
-/// holding the same bytes needs no write.
-fn capture_to_local(
-    kind: ItemKind,
-    name: &str,
-    target: &std::path::Path,
-    files: Vec<(PathBuf, Vec<u8>)>,
-) -> Result<Vec<PlannedOp>> {
-    let occupied = |path: PathBuf| {
-        Err(CoreError::LocalTargetOccupied {
-            kind,
-            name: name.to_owned(),
-            path,
-        })
-    };
-    // A symlink at the target is not owned local content: never followed, never
-    // trusted as "already the same bytes" — a foreign link outside kendex's
-    // trees must not be adopted as the local source.
-    if target
-        .symlink_metadata()
-        .map(|m| m.file_type().is_symlink())
-        .unwrap_or(false)
-    {
-        return occupied(target.to_path_buf());
-    }
-    // A sibling that folds to the same name on a case- or composition-folding
-    // filesystem would alias or overwrite this one on macOS or Windows, even
-    // where an exact-path check on this planning host sees no collision.
-    if let Some(sibling) = crate::names::folding_sibling(target) {
-        return occupied(sibling);
-    }
-    if target.exists() {
-        let existing = crate::hash::hash_tree(target)?;
-        let incoming = match kind {
-            ItemKind::Skill => crate::hash::hash_files(&files),
-            _ => crate::hash::hash_bytes(&files[0].1),
+    closure: &Closure,
+    source_name: &str,
+    lock: &crate::lock::Lock,
+) -> Result<Manifest> {
+    let mut converted = manifest.clone();
+    for item in &closure.items {
+        let provenance = ForkProvenance {
+            repo: manifest
+                .sources
+                .get(&item.decl.source)
+                .and_then(|s| s.repo.clone()),
+            source: item.decl.source.clone(),
+            commit: effective_commit(lock, item)?,
+            forked_at: crate::clock::timestamp(),
         };
-        if existing == incoming {
-            return Ok(Vec::new());
-        }
-        return occupied(target.to_path_buf());
+        // A derived member or dependency becomes a plain declaration; a
+        // declared item flips in place. Either way it now reads `local`, holds
+        // nothing, and its bundle/dependency membership is a request of its own.
+        let decl = converted
+            .declared_mut(item.kind)
+            .entry(item.name.clone())
+            .or_insert_with(|| ItemDecl::from_source(LOCAL_SOURCE_NAME));
+        decl.source = LOCAL_SOURCE_NAME.to_owned();
+        decl.rev = None;
+        converted
+            .forks
+            .entry(item.kind)
+            .or_default()
+            .insert(item.name.clone(), provenance);
     }
-    let op = match kind {
-        ItemKind::Skill => Op::WriteTree {
-            root: target.to_path_buf(),
-            files,
-            pre: Pre::Absent,
-        },
-        _ => Op::WriteFile {
-            path: target.to_path_buf(),
-            bytes: files.into_iter().next().map(|(_, b)| b).unwrap_or_default(),
-            pre: Pre::Absent,
-        },
-    };
-    Ok(vec![PlannedOp {
-        description: format!("keep {} {name} in your local source", kind.name()),
-        op,
-    }])
+    converted
+        .bundles
+        .retain(|_, decl| decl.source != source_name);
+    converted.sources.remove(source_name);
+    Ok(converted)
 }

@@ -9,10 +9,8 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use crate::env::Env;
 use crate::error::Result;
-use crate::manifest::Manifest;
-use crate::model::{ItemKind, Scope};
+use crate::model::ItemKind;
 use crate::source_read::SealedSource;
 
 use super::bundles::{self, CatalogBundle};
@@ -353,48 +351,4 @@ pub fn list_items(sealed: &SealedSource, config: &SourceConfig, kind: ItemKind) 
     names.sort();
     names.dedup();
     names
-}
-
-/// Every skill name this scope can supply, sorted and deduplicated: each
-/// source the manifest declares, plus both reserved sources — `local` for
-/// adopted content, `in-place` for content whose record of truth is the
-/// shared `.agents` tree. An agent's declared assignment resolves against
-/// this, so a fork rebound to `local` keeps rendering skills its own
-/// source never held. A source that will not resolve or open supplies
-/// nothing, and the skills it held read as unavailable, which the agent
-/// renderer says out loud rather than dropping in silence.
-///
-/// [`ScopeSkills::of`] is the only way to obtain one, and it reads the
-/// whole scope: nothing can hand a narrower set to a resolution that has
-/// to see all of it, and two readings of one scope cannot disagree.
-pub struct ScopeSkills(Vec<String>);
-
-impl ScopeSkills {
-    pub fn of(env: &Env, scope: &Scope, manifest: &Manifest) -> Result<ScopeSkills> {
-        let mut skills: Vec<String> = Vec::new();
-        let reserved = [
-            crate::manifest::LOCAL_SOURCE_NAME,
-            crate::manifest::INPLACE_SOURCE_NAME,
-        ];
-        for name in manifest.sources.keys().map(String::as_str).chain(reserved) {
-            let super::SourceState::Ready(ready) = super::resolve(env, scope, name, manifest)?
-            else {
-                continue;
-            };
-            let Ok(sealed) = crate::source_read::SealedSource::open(&ready.root) else {
-                continue;
-            };
-            let Ok(config) = source_config_for(&sealed, &ready.provenance) else {
-                continue;
-            };
-            skills.extend(list_items(&sealed, &config, ItemKind::Skill));
-        }
-        skills.sort();
-        skills.dedup();
-        Ok(ScopeSkills(skills))
-    }
-
-    pub fn names(&self) -> &[String] {
-        &self.0
-    }
 }

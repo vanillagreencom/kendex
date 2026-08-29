@@ -89,6 +89,14 @@ impl AgentCarry {
 /// rendering resolved it. Read against this catalog alone, the carry would
 /// report fewer skills than the file on disk holds, and the capture would
 /// keep a section the next render writes again.
+///
+/// `in_scope` is the scope the operation leaves behind, so an assignment
+/// nothing there can answer refuses now — the same rule the renderer
+/// applies to a recorded fork, at the moment the copy is made rather than
+/// the moment it is next rendered. Left to the renderer alone it arrives
+/// too late: the copy is already written, its next audit fails, and the
+/// section it kept as prose becomes a second copy the day the source
+/// comes back.
 pub(crate) fn agent_carry(
     manifest: &Manifest,
     sealed: &SealedSource,
@@ -96,7 +104,7 @@ pub(crate) fn agent_carry(
     name: &str,
     bytes: &[u8],
     in_scope: &crate::source::ScopeSkills,
-) -> Option<AgentCarry> {
+) -> crate::error::Result<Option<AgentCarry>> {
     let text = String::from_utf8_lossy(bytes);
     let role = crate::render::agent::parse_source_agent(&text)
         .ok()
@@ -110,8 +118,11 @@ pub(crate) fn agent_carry(
         &available,
         in_scope.names(),
         None,
-    )
-    .effective;
+    );
+    if let Some(refusal) = skills.refusal(name, in_scope.names()) {
+        return Err(refusal);
+    }
+    let skills = skills.effective;
     let mut frontmatter = Vec::new();
     for (harness, by_agent) in &config.frontmatter {
         let Some(defaults) = by_agent.get(name) else {
@@ -127,12 +138,12 @@ pub(crate) fn agent_carry(
         frontmatter.push((harness.clone(), merged));
     }
     if skills.is_empty() && frontmatter.is_empty() {
-        return None;
+        return Ok(None);
     }
-    Some(AgentCarry {
+    Ok(Some(AgentCarry {
         skills,
         frontmatter,
-    })
+    }))
 }
 
 /// Whether the name an agent's configuration is keyed under still exists

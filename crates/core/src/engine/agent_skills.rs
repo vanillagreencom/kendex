@@ -1,7 +1,7 @@
 //! An agent's skill list: what the declaration holds, merged with what
 //! upstream added since the last sync, and where that merge is written.
 
-use crate::error::{CoreError, Result};
+use crate::error::Result;
 use crate::lock::entry_key;
 use crate::manifest::Manifest;
 use crate::mapping::{EffectiveSkills, effective_skills, skills_key};
@@ -48,15 +48,10 @@ pub(super) fn assigned_skills(
         ctx.scope_skills.names(),
         recorded.as_deref().filter(|_| !held),
     );
-    if let Some(skill) = skills
-        .unresolved
-        .first()
-        .filter(|_| ctx.recorded_fork(ItemKind::Agent))
+    if ctx.recorded_fork(ItemKind::Agent)
+        && let Some(refusal) = skills.refusal(ctx.name, ctx.scope_skills.names())
     {
-        return Err(CoreError::AgentSkillUnavailable {
-            name: crate::names::shown(ctx.name),
-            skill: crate::names::shown(skill),
-        });
+        return Err(refusal);
     }
     if held {
         skills.upstream_now = recorded.unwrap_or(skills.upstream_now);
