@@ -227,8 +227,10 @@ pub fn editor_inventory(scope: Scope) -> Result<EditorInventory, String> {
     // The same set the renderer resolves an agent's assignment against:
     // offering a skill here that the render would refuse would put the two
     // answers about one question in two places.
-    inventory.available_skills =
-        source::scope_skills(&env, &scope, &manifest).map_err(|e| e.to_string())?;
+    inventory.available_skills = source::ScopeSkills::of(&env, &scope, &manifest)
+        .map_err(|e| e.to_string())?
+        .names()
+        .to_vec();
     Ok(inventory)
 }
 

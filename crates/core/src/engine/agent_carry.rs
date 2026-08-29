@@ -90,23 +90,28 @@ impl AgentCarry {
 /// report fewer skills than the file on disk holds, and the capture would
 /// keep a section the next render writes again.
 pub(crate) fn agent_carry(
-    env: &crate::env::Env,
-    scope: &crate::model::Scope,
     manifest: &Manifest,
     sealed: &SealedSource,
     config: &SourceConfig,
     name: &str,
     bytes: &[u8],
-) -> crate::error::Result<Option<AgentCarry>> {
+    in_scope: &crate::source::ScopeSkills,
+) -> Option<AgentCarry> {
     let text = String::from_utf8_lossy(bytes);
     let role = crate::render::agent::parse_source_agent(&text)
         .ok()
         .and_then(|agent| agent.role);
     let available = crate::source::list_items(sealed, config, ItemKind::Skill);
-    let in_scope = crate::source::scope_skills(env, scope, manifest)?;
-    let skills =
-        crate::mapping::effective_skills(name, role, manifest, config, &available, &in_scope, None)
-            .effective;
+    let skills = crate::mapping::effective_skills(
+        name,
+        role,
+        manifest,
+        config,
+        &available,
+        in_scope.names(),
+        None,
+    )
+    .effective;
     let mut frontmatter = Vec::new();
     for (harness, by_agent) in &config.frontmatter {
         let Some(defaults) = by_agent.get(name) else {
@@ -122,12 +127,12 @@ pub(crate) fn agent_carry(
         frontmatter.push((harness.clone(), merged));
     }
     if skills.is_empty() && frontmatter.is_empty() {
-        return Ok(None);
+        return None;
     }
-    Ok(Some(AgentCarry {
+    Some(AgentCarry {
         skills,
         frontmatter,
-    }))
+    })
 }
 
 /// Whether the name an agent's configuration is keyed under still exists

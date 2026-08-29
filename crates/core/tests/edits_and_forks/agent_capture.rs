@@ -210,6 +210,19 @@ fn the_generated_sections_are_written_once_after_a_fork() {
     assert_eq!(times(&text, "My body."), 1, "{text}");
 }
 
+/// One TOML table taken out of a manifest, header through to the next
+/// header. Removing the header alone leaves the table's own keys behind,
+/// where they read as a duplicate of whatever table precedes them.
+#[allow(clippy::unwrap_used)]
+fn without_section(manifest: &str, header: &str) -> String {
+    let start = manifest.find(header).unwrap();
+    let end = manifest[start..]
+        .find("\n[")
+        .map(|at| start + at + 1)
+        .unwrap_or(manifest.len());
+    format!("{}{}", &manifest[..start], &manifest[end..])
+}
+
 /// What resolving a fork's assignment against the scope costs is a
 /// dependency the fork does not declare. The scope losing the source that
 /// offered the skill is said out loud, naming the skill and that source —
@@ -248,27 +261,107 @@ fn a_fork_refuses_when_the_scope_loses_the_source_its_skill_came_from() {
     // The catalog goes, and with it the only source offering `recon`. The
     // assignment the fork carries stays exactly where it was.
     let before = manifest_text(&w);
-    let start = before.find("[sources.cat]").unwrap();
-    let end = before[start..]
-        .find("\n[")
-        .map(|at| start + at + 1)
-        .unwrap_or(before.len());
-    let after = format!("{}{}", &before[..start], &before[end..]);
+    let after = without_section(&before, "[sources.cat]");
     assert!(!after.contains("[sources.cat]"), "{after}");
     assert!(after.contains("rev = [\"recon\"]"), "{after}");
     fs::write(&path, after).unwrap();
 
     match audit(&w.env, &w.scope) {
-        Err(CoreError::AgentSkillUnavailable {
-            name,
-            skill,
-            source_name,
-        }) => assert_eq!(
-            (name.as_str(), skill.as_str(), source_name.as_str()),
-            ("rev", "recon", "cat")
-        ),
-        other => panic!("the render must refuse, naming both halves: {other:?}"),
+        Err(CoreError::AgentSkillUnavailable { name, skill }) => {
+            assert_eq!((name.as_str(), skill.as_str()), ("rev", "recon"))
+        }
+        other => panic!("the render must refuse, naming the skill: {other:?}"),
     }
+}
+
+/// The assignment resolves across every source, so the source that
+/// supplied a skill is not the fork's own and is recorded nowhere. The
+/// refusal names the skill alone. Destructuring the variant whole is what
+/// holds that: an attribution field added back stops this compiling
+/// instead of quietly sending someone to restore a source that still
+/// stands and never carried the skill.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fork_refuses_without_blaming_a_source_that_never_supplied_the_skill() {
+    let w = world();
+    write_agent(&w.upstream, "rev", "Upstream body.");
+    commit(&w.upstream, "one");
+    // `recon` comes from a second source, never from the catalog `rev`
+    // itself was published in.
+    let other = w.home.join("other-catalog");
+    write_skill(&other, "recon", "Recon.");
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let sources = format!(
+        "[sources.cat]\nrepo = \"{REPO}\"\n\n[sources.extra]\npath = \"{}\"\n",
+        other.display()
+    );
+    fs::write(
+        &path,
+        format!(
+            "schema = 6\n\n{sources}\n[install]\nharnesses = [\"gemini\"]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\n\n[agent-skills]\nrev = [\"recon\"]\n"
+        ),
+    )
+    .unwrap();
+    sync_and_apply(&w);
+    let file = rendered(&w, HarnessId::Gemini, "rev");
+    assert_eq!(
+        times(&fs::read_to_string(&file).unwrap(), "## Required Skills"),
+        1
+    );
+    edit_body(&file);
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+
+    // The supplying source goes. `cat` stays, enabled, and never held it.
+    let before = manifest_text(&w);
+    let after = without_section(&before, "[sources.extra]");
+    assert!(!after.contains("[sources.extra]"), "{after}");
+    assert!(after.contains("[sources.cat]"), "{after}");
+    fs::write(&path, after).unwrap();
+
+    match audit(&w.env, &w.scope) {
+        Err(CoreError::AgentSkillUnavailable { name, skill }) => {
+            assert_eq!((name.as_str(), skill.as_str()), ("rev", "recon"))
+        }
+        other => panic!("the render must refuse, naming the skill: {other:?}"),
+    }
+}
+
+/// A skill adopted in place is supplied by the reserved `in-place` source,
+/// which no `[sources]` table lists. Left out of the scope's set, a fork
+/// carrying one is refused for a skill whose file is sitting in the tree.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fork_keeps_a_skill_adopted_in_place() {
+    let w = world();
+    write_agent(&w.upstream, "rev", "Upstream body.");
+    commit(&w.upstream, "one");
+    write_skill(&w.home.join("app/.agents"), "recon", "Recon.");
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        format!(
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"gemini\"]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\n\n[agent-skills]\nrev = [\"recon\"]\n"
+        ),
+    )
+    .unwrap();
+    sync_and_apply(&w);
+    let file = rendered(&w, HarnessId::Gemini, "rev");
+    let before = fs::read_to_string(&file).unwrap();
+    assert_eq!(times(&before, "## Required Skills"), 1, "{before}");
+    edit_body(&file);
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+
+    let text = fs::read_to_string(&file).unwrap();
+    assert_eq!(times(&text, "## Required Skills"), 1, "{text}");
+    assert_eq!(text.matches("- recon: ").count(), 1, "{text}");
 }
 
 /// The capture takes the person's prose byte for byte. An indented code

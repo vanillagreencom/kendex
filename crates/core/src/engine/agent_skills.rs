@@ -45,14 +45,17 @@ pub(super) fn assigned_skills(
         ctx.manifest,
         ctx.config,
         &available,
-        ctx.scope_skills,
+        ctx.scope_skills.names(),
         recorded.as_deref().filter(|_| !held),
     );
-    if let Some((skill, source_name)) = skills.unresolved.first().zip(fork_source(ctx)) {
+    if let Some(skill) = skills
+        .unresolved
+        .first()
+        .filter(|_| ctx.recorded_fork(ItemKind::Agent))
+    {
         return Err(CoreError::AgentSkillUnavailable {
             name: crate::names::shown(ctx.name),
             skill: crate::names::shown(skill),
-            source_name: source_name.to_owned(),
         });
     }
     if held {
@@ -76,18 +79,4 @@ pub(super) fn assigned_skills(
     }
     *manifest_changed = true;
     Ok(skills)
-}
-
-/// The catalog this agent was forked out of, or `None` where it is no
-/// fork. A fork stops reading that catalog while keeping what the catalog
-/// assigned, so it is the source worth naming when the assignment stops
-/// resolving — never the local source the fork now reads. Being a fork is
-/// also the whole condition for refusing: it is the one case where this
-/// change made an agent depend on a source its declaration does not name.
-fn fork_source<'a>(ctx: &'a ItemCtx) -> Option<&'a str> {
-    ctx.manifest
-        .forks
-        .get(&ItemKind::Agent)
-        .and_then(|forked| forked.get(ctx.name))
-        .map(|fork| fork.source.as_str())
 }

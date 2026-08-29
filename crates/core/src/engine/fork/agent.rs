@@ -189,11 +189,12 @@ fn published(of: &ForkOf) -> Result<Published> {
         });
     };
     let bytes = sealed.read(&path)?;
+    let in_scope = crate::source::ScopeSkills::of(env, scope, manifest)?;
     Ok(Published {
         read_at: commit,
         agent: parse_source_agent(&String::from_utf8_lossy(&bytes))
             .map_err(|problem| unreadable(name, &decl.source, problem))?,
-        carry: agent_carry(env, scope, manifest, &sealed, &config, name, &bytes)?,
+        carry: agent_carry(manifest, &sealed, &config, name, &bytes, &in_scope),
         overrides: merge_overrides(
             config
                 .frontmatter

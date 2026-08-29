@@ -250,7 +250,7 @@ fn compute(
     // What every source here offers, read once: an agent's skill
     // assignment resolves against the whole scope, and reading it per
     // agent would open every catalog again for each one.
-    let scope_skills = crate::source::scope_skills(env, scope, manifest)?;
+    let scope_skills = crate::source::ScopeSkills::of(env, scope, manifest)?;
 
     for kind in super::expansion::PLANNED_KINDS {
         for (name, planned) in expansion.of(kind) {
@@ -345,7 +345,7 @@ pub(super) struct ItemCtx<'a> {
     /// Every skill any source this scope has offers. An agent's declared
     /// assignment resolves against this, so a fork keeps rendering skills
     /// its own source never held.
-    pub(super) scope_skills: &'a [String],
+    pub(super) scope_skills: &'a crate::source::ScopeSkills,
     pub(super) name: &'a str,
     pub(super) decl: &'a ItemDecl,
     pub(super) item_path: &'a std::path::Path,

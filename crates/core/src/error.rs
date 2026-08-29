@@ -205,15 +205,15 @@ pub enum CoreError {
     /// A forked agent is assigned a skill nothing in reach offers. The fork
     /// stopped reading the catalog that assigned it, so the rendering would
     /// name instructions that cannot be loaded, and leaving the skill out
-    /// takes a whole section off the agent without a word.
+    /// takes a whole section off the agent without a word. No source is
+    /// named: the assignment resolves against every source here, so which
+    /// one supplied the skill is not recorded anywhere, and guessing the
+    /// fork's own catalog would send the person to restore a source that
+    /// may be enabled and may never have carried it.
     #[error(
-        "agent '{name}' is assigned the skill '{skill}', which no source here offers — it came with '{source_name}': restore that source, or drop '{skill}' from the agent's [agent-skills] entry"
+        "agent '{name}' is assigned the skill '{skill}', which no source in this scope offers — install a source that carries '{skill}', or drop it from the agent's [agent-skills] entry"
     )]
-    AgentSkillUnavailable {
-        name: String,
-        skill: String,
-        source_name: String,
-    },
+    AgentSkillUnavailable { name: String, skill: String },
 
     /// A fork of content already the user's own: forking an in-place tree
     /// would demote the content of record to a render of a hidden copy.

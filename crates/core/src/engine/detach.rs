@@ -347,6 +347,8 @@ pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
         });
     }
 
+    // Once for the conversion: read per agent, it reopens every catalog again.
+    let skills = crate::source::ScopeSkills::of(env, &scope, &manifest)?;
     let mut ops = Vec::new();
     let mut carried: Vec<(String, AgentCarry)> = Vec::new();
     for item in &closure.items {
@@ -354,7 +356,7 @@ pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
         // from — not the source head, which may have moved. A declared item
         // that was never applied has no lock entry; its own pin is the commit.
         let commit = effective_commit(&lock, item)?;
-        let (files, carry) = source_form(env, &scope, &manifest, item, commit.as_deref())?;
+        let (files, carry) = source_form(env, &scope, &manifest, item, commit.as_deref(), &skills)?;
         carried.extend(carry.map(|carry| (item.name.clone(), carry)));
         let target = local_target(env, &scope, item.kind, &item.name)?;
         ops.extend(capture_to_local(item.kind, &item.name, &target, files)?);
@@ -427,6 +429,7 @@ fn source_form(
     manifest: &Manifest,
     item: &ClosureItem,
     commit: Option<&str>,
+    in_scope: &crate::source::ScopeSkills,
 ) -> Result<(SourceFiles, Option<AgentCarry>)> {
     let resolved = match crate::source::resolve_at(env, scope, &item.decl.source, manifest, commit)?
     {
@@ -470,10 +473,9 @@ fn source_form(
         }
         _ => {
             let bytes = sealed.read(&path)?;
-            let carry = match item.kind == ItemKind::Agent {
-                true => agent_carry(env, scope, manifest, &sealed, &config, &item.name, &bytes)?,
-                false => None,
-            };
+            let carry = (item.kind == ItemKind::Agent)
+                .then(|| agent_carry(manifest, &sealed, &config, &item.name, &bytes, in_scope))
+                .flatten();
             let file = path
                 .file_name()
                 .map(PathBuf::from)
