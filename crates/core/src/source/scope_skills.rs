@@ -7,14 +7,16 @@
 //! refuses a fork over a skill that is right there, too wide renders one
 //! pointing at instructions nothing can load.
 
-use std::collections::BTreeSet;
-
 use crate::env::Env;
 use crate::error::Result;
 use crate::manifest::{INPLACE_SOURCE_NAME, LOCAL_SOURCE_NAME, Manifest};
 use crate::model::{ItemKind, Scope};
 
-use super::{SourceState, list_items, resolve, resolve_at, source_config_for};
+use super::{
+    SourceConfig, SourceState, bundles, find_item, list_items, resolve, resolve_at,
+    source_config_for,
+};
+use crate::source_read::SealedSource;
 
 /// Every skill name this scope can supply, sorted and deduplicated.
 ///
@@ -61,7 +63,7 @@ impl ScopeSkills {
             let Ok(config) = source_config_for(&sealed, &ready.provenance) else {
                 continue;
             };
-            skills.extend(list_items(&sealed, &config, ItemKind::Skill));
+            skills.extend(root.supplies(&sealed, &config));
         }
         skills.sort();
         skills.dedup();
@@ -73,28 +75,74 @@ impl ScopeSkills {
     }
 }
 
-/// One checkout this scope reads: a source at its own revision, or a
-/// source at the revision one declaration pinned it to. Both are planned
-/// and installable, so both supply skills — reading only the first calls a
-/// pinned skill absent while the planner reads it perfectly well.
+/// One checkout this scope reads, and what may come out of it.
 enum Root<'a> {
+    /// A source at its own revision. Everything it offers is reachable,
+    /// because every declaration reading that source reads it here.
     Source(&'a str),
-    Pinned(&'a str, &'a str),
+    /// A source at a revision one declaration pins it to. Only what that
+    /// declaration reaches comes out — nothing else in the scope reads
+    /// this checkout, and an older revision is full of packages nothing
+    /// installs. Offering those would let a fork keep a `## Required
+    /// Skills` row pointing at a file no plan ever writes.
+    Pinned {
+        source: &'a str,
+        rev: &'a str,
+        reaches: Reaches<'a>,
+    },
+}
+
+/// What a pinned declaration reaches at its own revision: the skill it
+/// declares by name, or the skills the set it installs carries. Those are
+/// the two doors the planner opens for a pinned declaration — its
+/// `declared` walk and its set expansion — and what a set carries is
+/// [`super::bundles::find`]'s answer here as it is there.
+enum Reaches<'a> {
+    Skill(&'a str),
+    Bundle(&'a str),
 }
 
 impl Root<'_> {
     fn resolve(&self, env: &Env, scope: &Scope, manifest: &Manifest) -> Result<SourceState> {
         match self {
             Root::Source(name) => resolve(env, scope, name, manifest),
-            Root::Pinned(name, rev) => resolve_at(env, scope, name, manifest, Some(rev)),
+            Root::Pinned { source, rev, .. } => resolve_at(env, scope, source, manifest, Some(rev)),
+        }
+    }
+
+    /// The skills this checkout supplies, once it is open.
+    fn supplies(&self, sealed: &SealedSource, config: &SourceConfig) -> Vec<String> {
+        match self {
+            Root::Source(_) => list_items(sealed, config, ItemKind::Skill),
+            Root::Pinned {
+                reaches: Reaches::Skill(name),
+                ..
+            } => find_item(sealed, config, ItemKind::Skill, name)
+                .map(|_| vec![(*name).to_owned()])
+                .unwrap_or_default(),
+            Root::Pinned {
+                reaches: Reaches::Bundle(name),
+                ..
+            } => bundles::find(sealed, config, name)
+                .ok()
+                .flatten()
+                .map(|set| {
+                    set.members
+                        .into_iter()
+                        .filter(|member| member.kind == ItemKind::Skill)
+                        .map(|member| member.name)
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 }
 
 /// Every checkout the scope reads: each declared source plus both reserved
 /// ones — `local` for adopted content, `in-place` for content whose record
-/// of truth is the shared `.agents` tree — and every revision a
-/// declaration pins a source to, deduplicated.
+/// of truth is the shared `.agents` tree — and every revision a skill or a
+/// set is pinned to. A pin on any other kind reads no skill out of its
+/// revision, so it is not a checkout this scope reads skills from.
 fn roots(manifest: &Manifest) -> Vec<Root<'_>> {
     let mut roots: Vec<Root<'_>> = manifest
         .sources
@@ -103,20 +151,24 @@ fn roots(manifest: &Manifest) -> Vec<Root<'_>> {
         .chain([LOCAL_SOURCE_NAME, INPLACE_SOURCE_NAME])
         .map(Root::Source)
         .collect();
-    let declared = ItemKind::ALL
+    let pinned = manifest
+        .skills
         .iter()
-        .flat_map(|kind| manifest.declared(*kind).values())
-        .chain(manifest.bundles.values());
-    let mut pinned: BTreeSet<(&str, &str)> = BTreeSet::new();
-    for decl in declared {
+        .map(|(name, decl)| (decl, Reaches::Skill(name.as_str())))
+        .chain(
+            manifest
+                .bundles
+                .iter()
+                .map(|(name, decl)| (decl, Reaches::Bundle(name.as_str()))),
+        );
+    for (decl, reaches) in pinned {
         if let Some(rev) = decl.rev.as_deref() {
-            pinned.insert((decl.source.as_str(), rev));
+            roots.push(Root::Pinned {
+                source: decl.source.as_str(),
+                rev,
+                reaches,
+            });
         }
     }
-    roots.extend(
-        pinned
-            .into_iter()
-            .map(|(name, rev)| Root::Pinned(name, rev)),
-    );
     roots
 }

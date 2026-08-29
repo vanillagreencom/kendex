@@ -226,9 +226,11 @@ fn without_section(manifest: &str, header: &str) -> String {
 }
 
 /// What resolving a fork's assignment against the scope costs is a
-/// dependency the fork does not declare. The scope losing the source that
-/// offered the skill is said out loud, naming the skill and that source —
-/// never by taking the section off the agent in silence.
+/// dependency the fork does not declare. The scope losing what supplied
+/// the skill is said out loud, naming the skill and no source: nothing
+/// records which source supplied it, and by the time a skill is
+/// unresolved none of them does, so an attribution could only be
+/// invented. What it must never do is take the section off in silence.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fork_refuses_when_the_scope_loses_the_source_its_skill_came_from() {
@@ -476,6 +478,48 @@ fn a_skill_only_a_pin_carries_is_not_called_unavailable() {
     let text = fs::read_to_string(&file).unwrap();
     assert_eq!(times(&text, "## Required Skills"), 1, "{text}");
     assert_eq!(text.matches("- recon: ").count(), 1, "{text}");
+}
+
+/// A pin belongs in the inventory because a pinned skill outranks its
+/// source and still supplies what an agent reads. A pin on anything else
+/// reads no skill out of its revision, so an old commit's since-removed
+/// skills are not the scope's to offer: counted, a fork assigned one
+/// passes the refusal and renders a row pointing at a file no plan writes.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_pin_on_another_kind_does_not_supply_its_revisions_skills() {
+    let w = world();
+    write_skill(&w.upstream, "ghost", "Ghost.");
+    write_agent(&w.upstream, "rev", "Upstream body.");
+    write_agent(&w.upstream, "other", "Other body.");
+    commit(&w.upstream, "one");
+    let pinned = head_commit(&w.upstream);
+    // The skill goes; the agent the pin holds stays.
+    fs::remove_dir_all(w.upstream.join("skills/ghost")).unwrap();
+    commit(&w.upstream, "two");
+
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        format!(
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"gemini\"]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\n\n[agents.other]\nsource = \"cat\"\nrev = \"{pinned}\"\n\n[agent-skills]\nrev = [\"ghost\"]\n"
+        ),
+    )
+    .unwrap();
+    sync_and_apply(&w);
+
+    let file = rendered(&w, HarnessId::Gemini, "rev");
+    let before = fs::read_to_string(&file).unwrap();
+    assert_eq!(times(&before, "## Required Skills"), 0, "{before}");
+    edit_body(&file);
+
+    match fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini) {
+        Err(CoreError::AgentSkillUnavailable { name, skill }) => {
+            assert_eq!((name.as_str(), skill.as_str()), ("rev", "ghost"))
+        }
+        other => panic!("a skill no plan installs must not pass the refusal: {other:?}"),
+    }
 }
 
 /// A fork made while the supplying source is already gone cannot wait for
