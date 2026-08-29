@@ -6,9 +6,9 @@ pub mod skill;
 pub mod validate;
 pub mod vocab;
 
-/// Where a fenced code block stands, which is what tells whitespace that
-/// is a block's own content from whitespace that separates prose.
-pub(crate) use fences::fence_marker;
+/// Which lines stand inside a code block, which is what tells whitespace
+/// that is a block's own content from whitespace that separates prose.
+pub(crate) use fences::inside_a_block;
 
 /// One thing the user should hear about a rendering, with the fix when
 /// there is one — every render lint travels through this shape.

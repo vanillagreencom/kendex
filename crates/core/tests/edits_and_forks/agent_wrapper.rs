@@ -585,3 +585,132 @@ fn whitespace_a_person_edits_inside_a_generated_code_block_is_their_edit() {
     assert!(text.contains("```sh\nfirst\n\nsecond\n```"), "{text}");
     assert_eq!(banners(&text), 1, "{text}");
 }
+
+/// The renderer writes a section per hook, so the wrapper has to hold one
+/// entry per hook. Held together, a body one hook was deleted from
+/// matches none of them, and the walk stops where they stand — every
+/// generated section written before them stays in the capture and the
+/// next render writes it a second time.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn deleting_one_of_several_hooks_still_takes_the_sections_before_them_off() {
+    let w = world();
+    write_skill(&w.upstream, "recon", "Recon.");
+    write_agent(&w.upstream, "rev", "Upstream body.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[agent-skills]\nrev = [\"recon\"]\n",
+    )
+    .unwrap();
+    commit(&w.upstream, "one");
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        format!(
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"gemini\"]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\n\n[skills.recon]\nsource = \"cat\"\n\n[[custom-hooks]]\nname = \"first\"\nevent = \"PreToolUse\"\ncommand = \"./scripts/first.sh\"\nagents = [\"rev\"]\n\n[[custom-hooks]]\nname = \"second\"\nevent = \"PostToolUse\"\ncommand = \"./scripts/second.sh\"\nagents = [\"rev\"]\n"
+        ),
+    )
+    .unwrap();
+    sync_and_apply(&w);
+    let file = rendered(&w, HarnessId::Gemini, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    let first = "## Safety: PreToolUse on every match";
+    let second = "## Safety: PostToolUse on every match";
+    for line in ["## Required Skills", first, second] {
+        assert_eq!(times(&text, line), 1, "{line} count wrong: {text}");
+    }
+
+    // The person deletes the last hook's section and leaves the other
+    // hook and the skills section standing.
+    let tail = format!("\n{second}\n\nRun: `./scripts/second.sh`\n");
+    let cut = text.rfind(&tail).unwrap();
+    let edited = format!("{}{}", &text[..cut], &text[cut + tail.len()..])
+        .replace("Upstream body.", "My body.");
+    assert_eq!(times(&edited, second), 0, "{edited}");
+    assert_eq!(times(&edited, first), 1, "{edited}");
+    fs::write(&file, &edited).unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    for line in [
+        "## Required Skills",
+        "- recon: .agents/skills/recon/SKILL.md",
+        first,
+    ] {
+        assert_eq!(
+            times(&source, line),
+            0,
+            "the fork writes {line} again, so the capture must not hold it: {source}"
+        );
+    }
+    assert!(source.contains("My body."), "{source}");
+
+    let text = fs::read_to_string(&file).unwrap();
+    for line in [
+        "## Required Skills",
+        "- recon: .agents/skills/recon/SKILL.md",
+        first,
+        second,
+        "My body.",
+    ] {
+        assert_eq!(times(&text, line), 1, "{line} count wrong: {text}");
+    }
+    assert_eq!(banners(&text), 1, "{text}");
+}
+
+/// A code block indented into the prose is a block like a fenced one, and
+/// a blank line inside it is the block's own. A walk that reads a block
+/// only where its markers are takes the section the person edited, and
+/// their edit goes with it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn whitespace_a_person_edits_inside_an_indented_block_is_their_edit() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "[agent-additional-instructions]\nrev = \"\"\"\nRun each in turn:\n\n    first\n\n    second\"\"\"\n",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    assert!(text.contains("    first\n\n    second"), "{text}");
+
+    // The person closes the gap inside the block and leaves every other
+    // line of the section standing.
+    let edited = text
+        .replace("    first\n\n    second", "    first\n    second")
+        .replace("Upstream body.", "My body.");
+    assert_eq!(times(&edited, "## Additional Instructions"), 1, "{edited}");
+    fs::write(&file, &edited).unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    assert!(
+        source.contains("    first\n    second"),
+        "the block they edited is their words now, gap and all: {source}"
+    );
+    for line in [
+        "## Additional Instructions",
+        "Run each in turn:",
+        "My body.",
+    ] {
+        assert_eq!(times(&source, line), 1, "{line} count wrong: {source}");
+    }
+
+    let text = fs::read_to_string(&file).unwrap();
+    assert_eq!(
+        times(&text, "## Additional Instructions"),
+        2,
+        "the section the person edited, and the canonical one beside it: {text}"
+    );
+    assert!(text.contains("    first\n    second"), "{text}");
+    assert!(text.contains("    first\n\n    second"), "{text}");
+    assert_eq!(banners(&text), 1, "{text}");
+}

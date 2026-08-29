@@ -10,12 +10,15 @@ use crate::render::agent::SourceAgent;
 use super::{Around, render};
 
 /// One input a section can come from. The banner comes from no input —
-/// it is what the bare rendering holds — so it is not one of these.
+/// it is what the bare rendering holds — so it is not one of these. A
+/// hook is one input each: the renderer writes a section per hook, and an
+/// input standing for all of them accounts for a body only where every
+/// one of them is still in it.
 #[derive(Clone, Copy)]
 enum Wrote {
     LaunchInstructions,
     Skills,
-    Hooks,
+    Hook(usize),
     AdditionalInstructions,
 }
 
@@ -39,12 +42,12 @@ pub(super) struct Wrapper {
 /// not the rendering byte for byte, so a renderer that reorders, grows, or
 /// splits a section is a refusal rather than a body cut in the wrong
 /// place.
-const FROM: [Wrote; 4] = [
-    Wrote::LaunchInstructions,
-    Wrote::Skills,
-    Wrote::Hooks,
-    Wrote::AdditionalInstructions,
-];
+fn from(around: &Around) -> Vec<Wrote> {
+    let mut from = vec![Wrote::LaunchInstructions, Wrote::Skills];
+    from.extend((0..around.hooks.len()).map(Wrote::Hook));
+    from.push(Wrote::AdditionalInstructions);
+    from
+}
 
 /// The wrapper this harness writes around this agent's prose, or `None`
 /// where the harness refuses the agent's permission intent and installs
@@ -84,7 +87,7 @@ pub(super) fn wrapper(
         after: Vec::new(),
         published: published.to_owned(),
     };
-    for wrote in FROM {
+    for wrote in from(around) {
         let Some((one_before, one_after)) = ends(scope, publisher, harness, &only(around, wrote))
         else {
             return Ok(None);
@@ -165,7 +168,7 @@ fn only<'a>(around: &Around<'a>, wrote: Wrote) -> Around<'a> {
     match wrote {
         Wrote::LaunchInstructions => one.launch = around.launch.clone(),
         Wrote::Skills => one.skills = around.skills.clone(),
-        Wrote::Hooks => one.hooks = around.hooks.clone(),
+        Wrote::Hook(at) => one.hooks = around.hooks.get(at).copied().into_iter().collect(),
         Wrote::AdditionalInstructions => one.additional = around.additional.clone(),
     }
     one
