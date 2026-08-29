@@ -325,6 +325,7 @@ jobs:
             exit 1
           fi
           current=""
+          saved=""
           if grep -qxF "$CHANNEL" <<< "$tags"; then
             if ! assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${CHANNEL}" --jq '.assets[].name'); then
               echo "::error::The ${CHANNEL} channel is published but its assets could not be read. Nothing was written; re-run the tag."
@@ -333,12 +334,17 @@ jobs:
             # An absent manifest is a channel nothing has published to yet,
             # which is the one case that leaves `current` empty on purpose.
             if grep -qxF latest.json <<< "$assets"; then
+              # Both manifests come down, not only the one the comparison
+              # reads: `gh release upload --clobber` deletes an asset
+              # before uploading its replacement, so these are the only
+              # copies of what the channel had if that upload then fails.
               if ! gh release download "$CHANNEL" --repo "$GITHUB_REPOSITORY" \
-                   --pattern latest.json --output channel.json --clobber; then
+                   --dir saved --pattern latest.json --pattern feed.json --clobber; then
                 echo "::error::The ${CHANNEL} channel carries a manifest that could not be downloaded. Nothing was written; re-run the tag."
                 exit 1
               fi
-              current=$(jq -r '.version // empty' channel.json)
+              saved=1
+              current=$(jq -r '.version // empty' saved/latest.json)
               if [ -z "$current" ]; then
                 echo "::error::The ${CHANNEL} channel's manifest names no version, so nothing here can say whether ${NEW_VERSION} is ahead of it. Repair the channel, then re-run the tag."
                 exit 1
@@ -358,5 +364,19 @@ jobs:
             echo "::notice::The pre-release channel carries ${current}, ahead of ${NEW_VERSION}; leaving it as it is."
             exit 0
           fi
-          gh release upload "$CHANNEL" dist/latest.json dist/feed.json \
-            --repo "$GITHUB_REPOSITORY" --clobber
+          if ! gh release upload "$CHANNEL" dist/latest.json dist/feed.json \
+               --repo "$GITHUB_REPOSITORY" --clobber; then
+            # An upload that failed after the delete leaves the channel
+            # short a manifest, and a candidate reading a channel with no
+            # latest.json sees no update at all. Put back what came down.
+            # This is not an atomic swap and does not pretend to be: the
+            # job fails either way, and the second message is there because
+            # a channel nobody repaired needs saying out loud.
+            if [ -n "$saved" ] && ! gh release upload "$CHANNEL" saved/*.json \
+                 --repo "$GITHUB_REPOSITORY" --clobber; then
+              echo "::error::Uploading to the ${CHANNEL} channel failed and the manifests it had could not be put back. Candidates see no updates until a tag re-run repairs the channel."
+              exit 1
+            fi
+            echo "::error::Uploading to the ${CHANNEL} channel failed; what it carried is back in place. Re-run the tag."
+            exit 1
+          fi

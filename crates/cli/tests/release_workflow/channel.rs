@@ -364,9 +364,10 @@ fn point_channel(channel: Channel, new_version: &str, fail: Option<&str>) -> Poi
     let log = root.join("gh.log");
     // Records every call and answers the three the run reads: whether the
     // channel is among the repository's releases, whether it carries a
-    // manifest, and what that manifest says. `--output` is honoured rather
-    // than assumed, so a step downloading to some other name would read no
-    // version and be caught.
+    // manifest, and what those manifests say. `--dir` and `--pattern` are
+    // honoured rather than assumed, so a step that downloaded somewhere
+    // else, or stopped asking for one of the two manifests, has nothing on
+    // disk to read back or to put back.
     fs::write(
         bin.join("gh"),
         "#!/bin/sh\n\
@@ -386,11 +387,18 @@ fn point_channel(channel: Channel, new_version: &str, fail: Option<&str>) -> Poi
          esac\n\
          if [ \"$1 $2\" = \"release download\" ]; then\n\
            while [ $# -gt 0 ]; do\n\
-             [ \"$1\" = \"--output\" ] && out=$2\n\
+             [ \"$1\" = \"--dir\" ] && dir=$2\n\
+             [ \"$1\" = \"--pattern\" ] && want=\"$want $2\"\n\
              shift\n\
            done\n\
-           [ -n \"$out\" ] || exit 1\n\
-           printf '%s\\n' \"$GH_MANIFEST\" > \"$out\"\n\
+           [ -n \"$dir\" ] || exit 1\n\
+           mkdir -p \"$dir\"\n\
+           for name in $want; do\n\
+             case \"$name\" in\n\
+               latest.json) printf '%s\\n' \"$GH_MANIFEST\" > \"$dir/latest.json\" ;;\n\
+               feed.json) printf '%s\\n' \"$GH_FEED\" > \"$dir/feed.json\" ;;\n\
+             esac\n\
+           done\n\
          fi\n\
          exit 0\n",
     )
@@ -430,6 +438,10 @@ fn point_channel(channel: Channel, new_version: &str, fail: Option<&str>) -> Poi
         .env("GH_EXISTS", exists)
         .env("GH_HAS_MANIFEST", has_manifest)
         .env("GH_MANIFEST", &manifest)
+        .env(
+            "GH_FEED",
+            r#"{"schema":1,"version":"published","assets":{}}"#,
+        )
         .env("GH_FAIL", fail.unwrap_or_default())
         .env("GITHUB_REPOSITORY", "vanillagreencom/kendex")
         .env("CHANNEL", channel_step_env("CHANNEL"))
@@ -514,6 +526,41 @@ fn every_candidate_replaces_both_manifests_on_the_channel() {
         }
         assert!(upload.contains("--clobber"), "{upload}");
     }
+}
+
+/// `gh release upload --clobber` deletes an asset before uploading its
+/// replacement, and says in its own help that a failed upload loses the
+/// original. A candidate reading a channel with no `latest.json` sees no
+/// update at all, so an upload that fell over halfway would break every
+/// candidate machine until somebody re-ran a tag. What came down goes back
+/// up. Not an atomic swap — there is no such thing here — but a failure
+/// that leaves the channel as it found it.
+#[cfg(unix)]
+#[test]
+fn a_failed_upload_puts_back_what_the_channel_had() {
+    let run = point_channel(
+        Channel::Carrying("1.0.0-rc1"),
+        "1.0.0-rc2",
+        Some("dist/latest.json"),
+    );
+    assert_ne!(
+        run.code, 0,
+        "a failed upload was survivable: {:?}",
+        run.calls
+    );
+    let restored = run
+        .calls
+        .iter()
+        .filter(|c| c.starts_with("release upload"))
+        .nth(1)
+        .unwrap_or_else(|| panic!("nothing was put back: {:?}", run.calls));
+    // Both names, and from the copies on disk: the shell expanded the glob
+    // against what the download actually wrote, so a manifest that never
+    // came down could not appear here.
+    for name in ["saved/latest.json", "saved/feed.json"] {
+        assert!(restored.contains(name), "{name} not restored: {restored}");
+    }
+    assert!(restored.contains("--clobber"), "{restored}");
 }
 
 /// Whether core reads `latest` as ahead of `running` — the same comparison
