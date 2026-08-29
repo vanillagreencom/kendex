@@ -358,24 +358,36 @@ fn burst(group: Option<&str>, tags: usize) -> Vec<bool> {
     ran
 }
 
-/// Three candidates cut close enough together that the second and third reach
-/// this workflow while the first is still publishing. Each has to end in a
-/// release or in a visible failure: a run cancelled while it waited for a
-/// concurrency group is neither, and answers its tag with nothing at all. So
-/// the job that publishes the release holds no group.
+/// Candidates cut close enough together that the later ones reach this
+/// workflow while the first is still publishing. Each has to end in a release
+/// or in a visible failure: a run cancelled while it waited for a concurrency
+/// group is neither, and answers its tag with nothing at all. So the job that
+/// publishes the release holds no group, at any size of burst.
 #[test]
-fn three_overlapping_tags_each_publish_their_release() {
+fn overlapping_tags_each_publish_their_release() {
     let workflow = workflow();
     let publishing = job_declaring(&workflow, "uses: softprops/action-gh-release@v2");
     let group = concurrency_group(&job(&workflow, publishing));
-    assert_eq!(
-        burst(group, 3),
-        [true, true, true],
-        "the {publishing} job is in {group:?}, which loses a tag in a burst of three"
-    );
-    // The claim above is only worth making if the model can see a tag lost:
-    // in a group, three overlapping runs are two.
-    assert_eq!(burst(Some("held"), 3), [true, false, true]);
+    for tags in 2..=6 {
+        assert!(
+            burst(group, tags).iter().all(|&ran| ran),
+            "the {publishing} job is in {group:?}, which loses a tag in a burst of {tags}"
+        );
+    }
+    // The claim above is only worth making if the model can see tags lost. A
+    // group keeps the first arrival and the last however many arrive, so what
+    // a burst drops is every repoint in between, not one.
+    for tags in 2..=6 {
+        let ran = burst(Some("held"), tags);
+        assert!(
+            ran[0] && ran[tags - 1],
+            "a burst of {tags} dropped an end: {ran:?}"
+        );
+        assert!(
+            ran[1..tags - 1].iter().all(|&ran| !ran),
+            "a burst of {tags} kept a repoint in the middle: {ran:?}"
+        );
+    }
 }
 
 /// Two runs interleaving a read and a write of the channel would leave the

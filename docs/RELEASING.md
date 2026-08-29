@@ -84,17 +84,19 @@ looking at it. Either way the job fails and the fix is to re-run the tag.
 
 That guard is a job of its own, and the only one holding a concurrency group,
 so two candidates cut close together cannot interleave their read and write of
-the channel. The group is not a queue: GitHub keeps one pending run per group
-and replaces that pending run when another arrives. A burst of candidates
-therefore costs one repoint, and arrival order decides which one is dropped,
-not version order. A `channel` job reaches the group only after its own build
-and publish, so a slower candidate arriving last takes the pending slot from a
-higher version already waiting, and the channel is left behind a candidate that
-is already published. Push the newest tag again to move it; the forward-only
-rule above makes that safe. What a burst never costs is a release: every tag
-publishes its own, outside the group, and a repoint takes seconds.
+the channel. The group is not a queue: it holds one run and one pending slot,
+and each arrival replaces whatever is waiting in that slot. A burst therefore
+costs every repoint but two. The first arrival runs, each one after it takes
+the pending slot and loses it to the next, and the last is still waiting when
+the group frees. Arrival order decides which two survive, not version order: a
+`channel` job reaches the group only after its own build and publish, so a
+slower older candidate arriving last takes the slot from a higher version
+already waiting, and the channel is left behind a candidate that is already
+published. Push the newest tag again to move it; the forward-only rule above
+makes that safe. What a burst never costs is a release: every tag publishes
+its own, outside the group, and a repoint takes seconds.
 
-The channel keeps whatever the last candidate left on it, so a machine on
+The channel keeps whatever the last repoint left on it, so a machine on
 a candidate stays on candidates until it is moved to a full release by
 hand. Cutting candidates for a release means cutting one more when the
 final ships, or reinstalling those machines.

@@ -313,9 +313,10 @@ jobs:
   # in place. The group holds this job and nothing else, because it is not a
   # queue — GitHub keeps one pending run per group and replaces that pending
   # run when another arrives (.github/workflows/review-gate-writer.yml records
-  # the same). Inside the group, a job answers a burst of tags by dropping a
-  # run; outside it, every tag publishes. So the most a burst costs is a
-  # repoint that takes seconds, which is what docs/RELEASING.md promises.
+  # the same). Inside the group, a burst keeps the first arrival and the last
+  # and drops every repoint in between; outside it, every tag publishes. So a
+  # burst costs repoints and never a release, and pushing the newest tag again
+  # moves the channel to it, which is what docs/RELEASING.md records.
   channel:
     needs: publish
     if: needs.publish.outputs.prerelease == 'true'
