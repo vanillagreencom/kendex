@@ -1,18 +1,15 @@
 #!/usr/bin/env bash
 # Doc-contract lint for the dep-radar operating policy.
 #
-# The skill's value rests on an owner-approved contract: the tiers bias toward
-# upgrading (SDKs, agent tooling, runtime binaries, npm/cargo majors, and
-# bundled-extension fork syncs are auto-with-fixes), the report tier holds
-# exactly three things, and uncertain means attempt-and-report-failures rather
-# than defer. Its safety rails are orthogonal to that bias: one PR per surface,
-# never batch, every surface carries a wired upstream check, owner rules demote
-# only, and every run ends with a dated report. An edit that re-broadens the
-# report tier, reverts uncertain to defer-by-default, promotes report→auto, or
-# batches surfaces drifts the skill off that contract, so each clause is pinned
-# here as a fixed string.
+# The policy is a table and each rule is a row keyed by name. This lint pins
+# those ROW KEYS. review-bots.md: a token pin establishes that a structural
+# element is present, never that a behavioral claim written in prose is true,
+# and prose negates and qualifies around any literal — so the second column is
+# not pinned and may be reworded freely. Dropping or renaming a key is what
+# this catches, and a key is what an inventory owner-rule cites when it demotes
+# a tier, so the key is the part that has to hold still.
 #
-# Teeth: every check is re-run against a copy of the doc mutated to violate it.
+# Teeth: every check is re-run against a copy of the doc with its row deleted.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,35 +24,36 @@ FAIL=0
 pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 
+# Every rule the policy table carries, in table order.
+RULE_KEYS=(
+  auto-with-fixes
+  report-never-auto
+  uncertain
+  defer
+  one-pr-per-surface
+  upstream-check-required
+  dated-report
+  demote-only
+)
+
 # check_contract <file>
-# Prints the names of missing/violated contract clauses (empty output = doc
-# honors the full contract). Each clause is pinned as a fixed string that the
-# canonical SKILL.md carries on a single line, so plain grep -F is exact.
+# Prints the names of missing rule rows (empty output = every key present).
+# A row is `| `key` |`, so a key mentioned in prose elsewhere does not satisfy it.
 check_contract() {
-  local f="$1" missing=""
-  grep -qF 'AUTO-with-fixes (default): security fixes; patch/minor bumps; pinned-binary version+SHA refreshes from OFFICIAL manifests only; SDK, agent-tooling, and runtime-binary bumps and npm/cargo majors, doing the bump AND fixing its fallout (API migrations, re-vendored bundled-extension bridges, tests, CI) in the SAME per-surface workstream; bundled-extension fork updates and local patch rebases when the consuming repo'\''s full test suite gates the sync.' "$f" \
-    || missing="$missing auto-tier-list"
-  grep -qF 'REPORT (never auto): model-weight swaps; changes to durable/recorded data scope; anything an inventory owner-rule explicitly demotes. Nothing else is report-by-default.' "$f" \
-    || missing="$missing report-tier-list"
-  grep -qF 'Uncertain → attempt the upgrade; report only what actually failed, with error output.' "$f" \
-    || missing="$missing uncertain-attempt-upgrade"
-  grep -qF 'Every pinned surface must have a wired upstream check command' "$f" \
-    || missing="$missing upstream-check-required"
-  grep -qF 'Every run ends with a dated report.' "$f" \
-    || missing="$missing dated-report-every-run"
-  grep -qF 'never promote report→auto' "$f" \
-    || missing="$missing demote-only-owner-rule"
-  grep -qiF 'one PR per surface' "$f" \
-    || missing="$missing one-pr-per-surface"
-  grep -qF 'never batch' "$f" \
-    || missing="$missing never-batch"
+  local f="$1" key missing=""
+  for key in "${RULE_KEYS[@]}"; do
+    grep -qF -- "| \`$key\` |" "$f" || missing="$missing $key"
+  done
   printf '%s' "$missing"
 }
 
-# mutate <name> <sed-script> → prints mutated copy's path.
-mutate() {
+# drop_row <key> → prints a copy of SKILL.md with that rule's row removed.
+# awk with index(), not sed: the row is full of `|` characters, which end a sed
+# address early and leave an EMPTY mutant that every check reports as missing —
+# a control that passes without proving anything.
+drop_row() {
   local out="$TMP_ROOT/mutant-$1.md"
-  sed "$2" "$SKILL_MD" > "$out"
+  awk -v row="| \`$1\` |" 'index($0, row) != 1' "$SKILL_MD" > "$out"
   printf '%s' "$out"
 }
 
@@ -73,13 +71,13 @@ expect_caught() {
 
 echo "=== dep-radar policy contract lint ==="
 
-# --- The real doc honors the full contract ---------------------------------
+# --- The real doc carries every rule row ------------------------------------
 
 missing="$(check_contract "$SKILL_MD")"
 if [[ -z "$missing" ]]; then
-  pass "SKILL.md carries every policy contract clause"
+  pass "SKILL.md carries a keyed row for every policy rule"
 else
-  fail "SKILL.md is missing contract clauses:$missing"
+  fail "SKILL.md is missing policy rule rows:$missing"
 fi
 
 # --- Frontmatter contract ---------------------------------------------------
@@ -102,39 +100,17 @@ else
   fail "frontmatter missing required github dependency (the PR flow needs it)"
 fi
 
-# --- Teeth: each violated rule must be caught -------------------------------
+# --- Teeth: deleting any rule's row must be caught --------------------------
 
-expect_caught auto-tier-list \
-  "$(mutate no-auto '/AUTO-with-fixes (default): security fixes/d')" \
-  "deleting the AUTO-with-fixes tier list is caught"
-
-expect_caught report-tier-list \
-  "$(mutate no-report '/REPORT (never auto)/d')" \
-  "deleting the REPORT tier list is caught"
-
-expect_caught uncertain-attempt-upgrade \
-  "$(mutate uncertain-flip 's/Uncertain → attempt the upgrade.*/Uncertain → report./')" \
-  "reverting uncertain→attempt-the-upgrade back to uncertain→report (defer-by-default) is caught"
-
-expect_caught upstream-check-required \
-  "$(mutate no-upstream-check '/Every pinned surface must have a wired upstream check command/d')" \
-  "deleting the every-surface-needs-an-upstream-check rule is caught"
-
-expect_caught dated-report-every-run \
-  "$(mutate no-dated '/Every run ends with a dated report/d')" \
-  "deleting the every-run dated report rule is caught"
-
-expect_caught demote-only-owner-rule \
-  "$(mutate promote 's/never promote report→auto/may promote report→auto/g')" \
-  "softening the owner-rule to allow report→auto promotion is caught"
-
-expect_caught one-pr-per-surface \
-  "$(mutate batch-run 's/per surface/per run/g')" \
-  "rewording one-PR-per-surface to one-PR-per-run is caught"
-
-expect_caught never-batch \
-  "$(mutate batch-ok 's/never batch/batch freely/g')" \
-  "removing the never-batch rule is caught"
+for key in "${RULE_KEYS[@]}"; do
+  ctrl="$(drop_row "$key")"
+  dropped=$(( $(grep -c . "$SKILL_MD") - $(grep -c . "$ctrl") ))
+  if [[ "$dropped" -ne 1 ]]; then
+    fail "control for $key planted nothing — $dropped line(s) removed, expected 1"
+  else
+    expect_caught "$key" "$ctrl" "deleting the $key row is caught"
+  fi
+done
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

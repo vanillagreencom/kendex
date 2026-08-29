@@ -31,21 +31,20 @@ when a run applies more than one surface — one working copy per surface branch
 
 ## Operating policy (the contract with the product owner)
 
-> AUTO-with-fixes (default): security fixes; patch/minor bumps; pinned-binary version+SHA refreshes from OFFICIAL manifests only; SDK, agent-tooling, and runtime-binary bumps and npm/cargo majors, doing the bump AND fixing its fallout (API migrations, re-vendored bundled-extension bridges, tests, CI) in the SAME per-surface workstream; bundled-extension fork updates and local patch rebases when the consuming repo's full test suite gates the sync.
->
-> REPORT (never auto): model-weight swaps; changes to durable/recorded data scope; anything an inventory owner-rule explicitly demotes. Nothing else is report-by-default.
->
-> Uncertain → attempt the upgrade; report only what actually failed, with error output.
->
-> Defer only on a strong concrete blocker, never a generic "it's a major" risk.
->
-> One PR per surface; never batch surfaces — a surface's fallout fixes go in THAT surface's PR.
->
-> Every pinned surface must have a wired upstream check command; a surface lacking one is an inventory defect the run must fix.
->
-> Every run ends with a dated report.
->
-> Inventory owner-rules may demote auto→report, never promote report→auto.
+Each rule has a key. The key is the contract's handle — an inventory owner-rule
+cites it, and `tests/policy-contract-lint.test.sh` pins it. The wording in the
+second column may be edited; dropping or renaming a key changes the contract.
+
+| Rule | Contract |
+|---|---|
+| `auto-with-fixes` | The default. Security fixes; patch/minor bumps; pinned-binary version+SHA refreshes from OFFICIAL manifests only; SDK, agent-tooling, and runtime-binary bumps and npm/cargo majors, doing the bump AND fixing its fallout (API migrations, re-vendored bundled-extension bridges, tests, CI) in the SAME per-surface workstream; bundled-extension fork updates and local patch rebases when the consuming repo's full test suite gates the sync. |
+| `report-never-auto` | Model-weight swaps; changes to durable/recorded data scope; anything an inventory owner-rule explicitly demotes. Nothing else is report-by-default. |
+| `uncertain` | Attempt the upgrade; report only what actually failed, with error output. |
+| `defer` | Only on a strong concrete blocker, never a generic "it's a major" risk. |
+| `one-pr-per-surface` | One PR per surface; never batch surfaces — a surface's fallout fixes go in THAT surface's PR. |
+| `upstream-check-required` | Every pinned surface must have a wired upstream check command; a surface lacking one is an inventory defect the run must fix. |
+| `dated-report` | Every run ends with a dated report. |
+| `demote-only` | Inventory owner-rules may demote auto→report, never promote report→auto. |
 
 A blocker is something you actually hit (a dropped capability with no migration
 path, a transitive that does not support the new version), never an anticipated
