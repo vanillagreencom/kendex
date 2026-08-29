@@ -70,6 +70,13 @@ grep -q "session-only SECOND_OPINION_FOREGROUND_CAP" "$TMP_ROOT/err" \
 grep -q "pass --foreground" "$TMP_ROOT/err" \
   && ok "(foreground-cap) the refusal names the supported flag" \
   || fail "(foreground-cap) refusal did not name --foreground: $(cat "$TMP_ROOT/err")"
+rc=0
+SECOND_OPINION_FOREGROUND_CAP=1 "$SO" detect >/dev/null 2>"$TMP_ROOT/err" || rc=$?
+[ "$rc" -eq 1 ] && ok "(foreground-cap-shadow) caller precedence does not hide the project key" \
+  || fail "(foreground-cap-shadow) expected exit 1, got $rc: $(cat "$TMP_ROOT/err")"
+grep -q "session-only SECOND_OPINION_FOREGROUND_CAP" "$TMP_ROOT/err" \
+  && ok "(foreground-cap-shadow) refusal still names the project collision" \
+  || fail "(foreground-cap-shadow) refusal lost the project key: $(cat "$TMP_ROOT/err")"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -256,11 +256,10 @@ for _arg in "$@"; do
   case "$_arg" in
     -h|--help) show_help; exit 0 ;;
     --detached-worker) DETACHED_AUTH_REQUESTED=true ;;
-    --lane-worker) DETACHED_LANE_REQUESTED=true ;;
+    --lane-worker) DETACHED_LANE_REQUESTED=true; DETACHED_AUTH_REQUESTED=true ;;
   esac
 done
 unset _arg
-if $DETACHED_LANE_REQUESTED && [[ -n "${SECOND_OPINION_RUNTIME_DIR:-}" ]]; then DETACHED_AUTH_REQUESTED=true; fi
 # shellcheck source=lib/detached-auth.sh
 source "$SCRIPT_DIR/lib/detached-auth.sh"
 second_opinion_authenticate_detached "$DETACHED_AUTH_REQUESTED" || exit 1
@@ -1863,6 +1862,9 @@ if $MULTI_LANE; then
       umask "$lane_umask_prev"
       if [[ -n "$DETACHED_RUNTIME_DIR" ]]; then
         export SECOND_OPINION_RUNTIME_DIR="$DETACHED_RUNTIME_DIR" SECOND_OPINION_RUN_TOKEN="$DETACHED_RUN_TOKEN"
+        lane_worker_arg=--lane-worker
+      else
+        lane_worker_arg=
       fi
       # `=` form throughout: a split-form option now refuses a flag-shaped
       # value, and every one of these is derived from caller input that may
@@ -1873,7 +1875,7 @@ if $MULTI_LANE; then
       # invocation, so the restriction reaches those writes and nothing else
       # the lane creates.
       exec "$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" review --target="$lane" --range="$REVIEW_RANGE" --cwd="$CWD" \
-        --timeout="$TIMEOUT" --output="$lane_out" --scratch-output --lane-worker \
+        --timeout="$TIMEOUT" --output="$lane_out" --scratch-output ${lane_worker_arg:+"$lane_worker_arg"} \
         >/dev/null 2>&3 3>&-
     ) &
     LANE_PIDS+=($!)
@@ -2350,7 +2352,6 @@ Emit exactly this JSON structure:
 ${schema}
 RETRY
 }
-
 # kendex#940: persist the raw first response the moment a retry is attempted —
 # BEFORE the retry outcome is known. A successful reformat retry replaces
 # RESULT wholesale, so without this sidecar the only record of what the model
@@ -2371,7 +2372,6 @@ preserve_raw_response() {
   [[ -n "$RAW_PRESERVED_PATH" ]] \
     || echo "→ raw first response could not be stored anywhere" >&2
 }
-
 # Persist the raw (and optional retry) response so a lost review is auditable,
 # emit an error JSON that carries the sidecar path(s), then exit 1.
 preserve_raw_and_fail() {

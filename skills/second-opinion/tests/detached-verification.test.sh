@@ -17,11 +17,58 @@ RUNTIME="$TMP_ROOT/proj/skills/second-opinion/scripts/second-opinion-runtime"
 cat > "$TMP_ROOT/bin/codex" <<'SH'
 #!/usr/bin/env bash
 cat >/dev/null
+if [[ -n "${CONTROL_ENV_DIR:-}" ]]; then
+  control_file="$CONTROL_ENV_DIR/${0##*/}"
+  if [[ -n "${SECOND_OPINION_RUNTIME_DIR:-}${SECOND_OPINION_RUN_TOKEN:-}" ]]; then
+    printf 'leaked\n' > "$control_file"
+  else
+    printf 'clean\n' > "$control_file"
+  fi
+fi
+if [[ "${FAKE_REVIEW:-}" == 1 ]]; then
+  target="${0##*/}"
+  printf '{"agent":"external-%s","verdict":"pass","summary":"ok","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{}}\n' "$target"
+  exit 0
+fi
 printf 'answer\n'
 SH
 chmod +x "$TMP_ROOT/bin/codex"
+ln -s codex "$TMP_ROOT/bin/claude"
 PATH="$TMP_ROOT/bin:$PATH"
 export PATH SECOND_OPINION_CURRENT_MODEL=none
+git -C "$TMP_ROOT/work" init -q
+git -C "$TMP_ROOT/work" config user.email test@example.com
+git -C "$TMP_ROOT/work" config user.name test
+printf 'scope\n' > "$TMP_ROOT/work/file.txt"
+git -C "$TMP_ROOT/work" add file.txt
+git -C "$TMP_ROOT/work" -c commit.gpgsign=false commit -q -m init
+printf 'changed\n' >> "$TMP_ROOT/work/file.txt"
+
+mkdir "$TMP_ROOT/psbin"
+cat > "$TMP_ROOT/psbin/ps" <<'SH'
+#!/usr/bin/env bash
+mode=""; while [[ $# -gt 0 ]]; do case "$1" in -o) mode="$2"; shift 2 ;; *) shift ;; esac; done
+case "$mode" in ppid=) printf '1\n' ;; comm=) printf 'bash\n' ;; esac
+SH
+chmod +x "$TMP_ROOT/psbin/ps"
+NORMAL_PATH="$TMP_ROOT/psbin:$PATH"
+mkdir "$TMP_ROOT/stale-env"
+PATH="$NORMAL_PATH" SECOND_OPINION_RUNTIME_DIR=stale SECOND_OPINION_RUN_TOKEN=stale \
+  CONTROL_ENV_DIR="$TMP_ROOT/stale-env" SECOND_OPINION_TARGET=codex \
+  SECOND_OPINION_CODEX_CMD=codex "$SECOND_OPINION" quick question \
+  --cwd "$TMP_ROOT/work" --output "$TMP_ROOT/stale-answer" >/dev/null
+assert_contains "$TMP_ROOT/stale-env/codex" "clean" \
+  "normal entry clears stale runtime controls before the CLI"
+rm -f "$TMP_ROOT/stale-env/codex"
+PATH="$NORMAL_PATH" SECOND_OPINION_RUNTIME_DIR=stale SECOND_OPINION_RUN_TOKEN=stale FAKE_REVIEW=1 \
+  CONTROL_ENV_DIR="$TMP_ROOT/stale-env" SECOND_OPINION_MODELS="claude codex" \
+  SECOND_OPINION_COUNT=2 SECOND_OPINION_CLAUDE_CMD=claude SECOND_OPINION_CODEX_CMD=codex \
+  "$SECOND_OPINION" review --range HEAD --cwd "$TMP_ROOT/work" \
+  --output "$TMP_ROOT/stale-review.json" >/dev/null
+assert_contains "$TMP_ROOT/stale-env/claude" "clean" \
+  "normal multi-lane entry clears stale controls from claude"
+assert_contains "$TMP_ROOT/stale-env/codex" "clean" \
+  "normal multi-lane entry clears stale controls from codex"
 
 mkdir "$TMP_ROOT/identity-runtime"
 CODEX_SANDBOX=1 SECOND_OPINION_LAUNCH_MODEL=claude SECOND_OPINION_LAUNCH_SOURCE=detected \
@@ -44,6 +91,44 @@ forged_rc=0
 [[ $forged_rc -eq 1 ]] || fail "forged direct worker mode returned $forged_rc"
 assert_contains "$TMP_ROOT/forged.stderr" "requires runtime ownership proof" \
   "forged direct worker mode is refused"
+forged_rc=0
+"$SECOND_OPINION" quick question --target=codex --cwd "$TMP_ROOT/work" \
+  --foreground --lane-worker >"$TMP_ROOT/forged-lane.stdout" \
+  2>"$TMP_ROOT/forged-lane.stderr" || forged_rc=$?
+[[ $forged_rc -eq 1 ]] || fail "forged lane worker returned $forged_rc"
+assert_contains "$TMP_ROOT/forged-lane.stderr" "requires runtime ownership proof" \
+  "forged lane worker cannot bypass foreground detachment"
+
+if [[ "$(uname -s)" == "Linux" ]] && command -v setsid >/dev/null 2>&1; then
+  cat > "$TMP_ROOT/bin/signal-worker" <<'SH'
+#!/usr/bin/env bash
+output=""
+for arg in "$@"; do case "$arg" in --output=*) output="${arg#--output=}" ;; esac; done
+printf 'answer\n' > "$output"
+printf '0\n' > "$SIGNAL_RUNTIME/worker.status"
+sleep 5
+SH
+  chmod +x "$TMP_ROOT/bin/signal-worker"
+  mkdir "$TMP_ROOT/signal-runtime"
+  SIGNAL_RUNTIME="$TMP_ROOT/signal-runtime" setsid "$RUNTIME" launch \
+    "$TMP_ROOT/bin/signal-worker" "$TMP_ROOT/signal-answer" \
+    "$TMP_ROOT/signal-runtime" 3 false 1 5 x >"$TMP_ROOT/signal-launch.stdout" &
+  signal_session=$!
+  wait "$signal_session"
+  sleep 2.2
+  kill -TERM -- "-$signal_session" 2>/dev/null || true
+  signal_wait="$(sed -n 's/^wait: //p' "$TMP_ROOT/signal-launch.stdout")"
+  signal_rc=0
+  bash -c "$signal_wait" >"$TMP_ROOT/signal-wait.stdout" \
+    2>"$TMP_ROOT/signal-wait.stderr" || signal_rc=$?
+  [[ $signal_rc -eq 143 ]] || fail "signal-during-wait returned $signal_rc"
+  if ps -eo sid= | awk -v sid="$signal_session" '$1 == sid { found = 1 } END { exit found ? 0 : 1 }'; then
+    fail "signal-during-wait left a process in its session"
+  fi
+  printf 'PASS: cancellation during worker wait reaps before returning 143\n'
+else
+  printf 'SKIP: signal-during-wait control requires Linux and setsid\n'
+fi
 
 cat > "$TMP_ROOT/bin/hanging-worker" <<'SH'
 #!/usr/bin/env bash

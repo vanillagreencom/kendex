@@ -249,6 +249,7 @@ supervise() {
     || finish_supervisor 1 "Error: detached worker exited without a completion status"
   close_deadline_owner
   wait "$worker_pid" || worker_wait_rc=$?
+  if [[ -n "$cancel_rc" ]]; then worker_reaped=false; close_event_channel; finish_supervisor "$cancel_rc" "$cancel_message"; fi
   worker_reaped=true
   close_event_channel
   runtime_dir_valid "$runtime_dir" "$token" \

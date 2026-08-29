@@ -586,7 +586,6 @@ bash -c "$control_wait_cmd" >"$TMP_ROOT/control-wait.stdout" \
   2>"$TMP_ROOT/control-wait.stderr"
 assert_contains "$TMP_ROOT/control.env" "clean" \
   "external CLI cannot see detached runtime controls"
-
 mkdir "$TMP_ROOT/failure-runtime"
 failure_ready="$TMP_ROOT/failure.ready"
 failure_pid_file="$TMP_ROOT/failure.pid"
@@ -599,6 +598,7 @@ PATH="$PATH" RUNTIME_FOR_WORKER="$RUNTIME" WORKER_STDERR="$TMP_ROOT/failure-tree
   "$RUNTIME" launch "$TMP_ROOT/bin/no-timeout-worker" "$TMP_ROOT/failure-answer" \
     "$TMP_ROOT/failure-runtime" 4 false 3 3 x >"$TMP_ROOT/failure-launch.stdout"
 failure_wait_cmd="$(sed -n 's/^wait: //p' "$TMP_ROOT/failure-launch.stdout")"
+failure_deadline="$(sed -n 's/^deadline: //p' "$TMP_ROOT/failure-launch.stdout")"
 failure_wait_rc=0
 bash -c "$failure_wait_cmd" >"$TMP_ROOT/failure-wait.stdout" \
   2>"$TMP_ROOT/failure-wait.stderr" &
@@ -613,6 +613,11 @@ FAILURE_TOKEN="$failure_token"
 sleep 0.1
 rm -f -- "$TMP_ROOT/failure-runtime/token"
 wait "$failure_wait_pid" || failure_wait_rc=$?
+while [[ $failure_wait_rc -eq 75 && $(date +%s) -le $failure_deadline ]]; do
+  failure_wait_rc=0
+  bash -c "$failure_wait_cmd" >"$TMP_ROOT/failure-wait.stdout" \
+    2>"$TMP_ROOT/failure-wait.stderr" || failure_wait_rc=$?
+done
 if [[ $failure_wait_rc -ne 1 ]]; then
   sed -n '1,100p' "$TMP_ROOT/failure-wait.stderr" >&2 || true
   fail "post-release runtime failure returned $failure_wait_rc"
@@ -659,6 +664,7 @@ bash -c "$multi_wait_cmd" >"$TMP_ROOT/multi-wait.stdout" 2>"$TMP_ROOT/multi-wait
   || fail "foreground-capped multi-lane review lost a lane"
 assert_contains "$multi_artifact" "external-union" \
   "foreground-capped multi-lane review writes its union"
+
 
 if [[ "$(uname -s)" == "Linux" ]] && command -v setsid >/dev/null 2>&1; then
   abandon_ready="$TMP_ROOT/abandon.ready"
