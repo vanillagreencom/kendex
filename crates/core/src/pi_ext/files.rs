@@ -106,9 +106,15 @@ pub(super) fn package_path(scope_root: &Path, name: &str) -> Result<PathBuf> {
 /// segments checked here rather than by joining the declared string, so
 /// nothing unexamined reaches the filesystem.
 pub(super) fn inside(base: &Path, relative: &str, name: &str) -> Result<PathBuf> {
+    // The path is the package's own text on its way to a terminal, so it is
+    // quoted through the same escape `segment_problem` uses for the segment
+    // it names — both halves of the message or neither.
     let refuse = |detail: &str| CoreError::PiPackage {
         name: name.to_owned(),
-        message: format!("`{relative}` does not name a path inside the package: {detail}"),
+        message: format!(
+            "`{}` does not name a path inside the package: {detail}",
+            crate::names::shown(relative)
+        ),
     };
     if relative.starts_with('/') {
         return Err(refuse("it starts at the root of the drive"));
@@ -259,6 +265,21 @@ mod tests {
                 "{spelling:?} should be refused"
             );
         }
+    }
+
+    /// The refusal quotes a string the package wrote, so it leaves escaped.
+    /// Raw, an escape sequence would clear the line the diagnostic is on and
+    /// a right-to-left override would reorder what follows it, which is a
+    /// package deciding what the terminal says about it.
+    #[test]
+    fn a_refusal_escapes_the_path_it_names() {
+        let message = inside(Path::new("/pkg"), "dist/\u{1b}[2K\u{202e}sj.live", "p")
+            .unwrap_err()
+            .to_string();
+        assert!(!message.contains('\u{1b}'), "{message}");
+        assert!(!message.contains('\u{202e}'), "{message}");
+        assert!(message.contains("\\u{1b}"), "{message}");
+        assert!(message.contains("\\u{202e}"), "{message}");
     }
 
     /// A name a dangling link holds is a name that is taken, and `exists`
