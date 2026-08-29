@@ -213,6 +213,48 @@ else
   fail "the sha path does not render [PRE_SHA]...HEAD with the sha in it"
 fi
 
+# --- 5. the declaration covers every case § 1 routes to it ------------------
+# § 1 sends two cases to the full-branch read, the line absent and the
+# sentinel, and then declares the pass unscoped so no reader mistakes it for a
+# scoped one. The declaration named only the sentinel, so a re-review block
+# carrying no Diff-range read the whole branch and said nothing about it: the
+# silent unscoped pass this suite exists to end, surviving on the half of the
+# routing nobody re-read.
+#
+# Both lines are found by the render check 2 builds, never by anything they
+# say, and their enumerations are required to be the same one. The check holds
+# over any rewording applied to both; narrowing the enumeration in either line
+# turns it red, and so does deleting one of the two lines outright.
+case_clause() { sed -nE 's/^[^—]*— ([^—]*) —.*$/\1/p' <<<"$1" | head -1; }
+
+missing_lines() {
+  local rendered
+  rendered="$(render_missing "$(range_line "$(delegation_of)")")" || return 1
+  grep -F -e "$rendered" <<<"$1" || true
+}
+
+one_rule_for_both_cases() {
+  local first="" clause l n=0
+  while IFS= read -r l; do
+    [[ -n "$l" ]] || continue
+    clause="$(case_clause "$l")"
+    [[ -n "$clause" ]] || return 1
+    if [[ -z "$first" ]]; then
+      first="$clause"
+    elif [[ "$clause" != "$first" ]]; then
+      return 1
+    fi
+    n=$((n + 1))
+  done < <(missing_lines "$1")
+  ((n >= 2))
+}
+
+if one_rule_for_both_cases "$(diff_region)"; then
+  pass "the unscoped declaration enumerates the cases § 1 routes to it"
+else
+  fail "the unscoped declaration covers fewer cases than § 1 routes to it"
+fi
+
 # --- planted controls: prove each check can fail ----------------------------
 echo
 echo "--- planted controls ---"
@@ -296,6 +338,18 @@ S=$(held sha_path_resolves "$(delegation_of "$REVIEW_PR_WF")")
 K=$(held sha_path_resolves "$(delegation_of "$C")")
 if cmp -s "$C" "$REVIEW_PR_WF"; then P=0; else P=1; fi
 verdict "a sha path narrowed off the three-dot range" "$P" "$S" "$K"
+
+# The declaration narrowed back to the sentinel while the routing above it
+# keeps both cases: a re-review block with no Diff-range reads the whole branch
+# and declares nothing. The summary prefix is untouched, which is what makes
+# this survive every other check. Like every mutation here it edits the text as
+# it stands, so rewording the enumeration retires the control and not the check.
+C="$TMP_ROOT/half-declared.md"
+sub_lines "$REVIEW_WF" 'the line absent, or reading ' '' 'unscoped re-review' > "$C"
+S=$(held one_rule_for_both_cases "$(diff_region "$REVIEW_WF")")
+K=$(held one_rule_for_both_cases "$(diff_region "$C")")
+if cmp -s "$C" "$REVIEW_WF"; then P=0; else P=1; fi
+verdict "an absent Diff-range that declares nothing" "$P" "$S" "$K"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

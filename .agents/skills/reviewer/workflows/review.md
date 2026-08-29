@@ -19,7 +19,7 @@ Otherwise — the line absent, or reading `Diff-range: unavailable` — the pass
 git -C [WORKTREE_PATH] diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD
 ```
 
-`Diff-range: unavailable` beside a re-review block is a delegation that lost the boundary a scoped pass needs. The full-branch read above stands in for it and the pass is declared unscoped: open § 3's artifact `summary` with `unscoped re-review: Diff-range unavailable`, so no reader mistakes it for the focused verification it was delegated as.
+Either case beside a re-review block — the line absent, or reading `Diff-range: unavailable` — is a delegation that lost the boundary a scoped pass needs. The full-branch read above stands in for it and the pass is declared unscoped: open § 3's artifact `summary` with `unscoped re-review: Diff-range unavailable`, so no reader mistakes it for the focused verification it was delegated as.
 
 ## 2. Review
 
