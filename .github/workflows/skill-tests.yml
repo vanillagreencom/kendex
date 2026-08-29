@@ -207,19 +207,19 @@ jobs:
         working-directory: pi-extensions/pi-qol
         run: |
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.80.5 @earendil-works/pi-ai@0.80.5 @earendil-works/pi-coding-agent@0.80.5 @earendil-works/pi-tui@0.80.5
-          bun test ./tests
+          npm test
 
       - name: pi-output-policy suite
         if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-output-policy
-        run: bun test ./tests
+        run: npm test
 
       # pi-hooks imports only types from pi-coding-agent, which bun erases,
       # so its suite runs with no install.
       - name: pi-hooks suite
         if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-hooks
-        run: bun test ./tests
+        run: npm test
 
       # Pi 0.84.x is the release the extensions are audited against, so the
       # suites that assert 0.84 wire-format parity install that line rather
@@ -234,7 +234,7 @@ jobs:
         working-directory: pi-extensions/pi-agents-tmux
         run: |
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox
-          bun test ./tests ./extensions/subagent/__tests__
+          npm test
 
       # undici is pinned to the package's own declared range: installing it
       # unversioned resolves the registry's latest major, so the proxy
@@ -253,7 +253,7 @@ jobs:
       - name: pi-questions suite
         if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-questions
-        run: bun test ./extensions/__tests__
+        run: npm test
 
       # The renderer imports pi-tui and pi-coding-agent, so unlike
       # pi-questions its suite needs the 0.84.1 install to resolve at all.
@@ -265,7 +265,7 @@ jobs:
         working-directory: pi-extensions/pi-tool-renderer
         run: |
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1
-          bun test ./extensions/__tests__
+          npm test
 
       # pi-session-bridge imports nothing from Pi outside type positions, the
       # same case as pi-hooks above, so its suite runs with no install.
@@ -317,8 +317,41 @@ jobs:
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox tsx 'youtube-transcript-plus@^2.0.1'
           npm test
 
-      # Build first: one suite loads bundle/connector-inventory.js rather
-      # than src, so a src change without a rebuild has to fail here.
+      # The suite mocks every Pi module and typebox it imports with bun's
+      # mock.module, so like pi-session-manager it needs no install.
+      - name: pi-background-tasks suite
+        if: matrix.shard == 'node'
+        working-directory: pi-extensions/pi-background-tasks
+        run: npm test
+
+      # The package value-imports pi-tui with no mock standing in for it. No
+      # module the suite loads reaches that import today, so the install is
+      # what keeps a test file that does reach it failing as a test rather
+      # than as an unresolved module.
+      - name: pi-extension-manager suite
+        if: matrix.shard == 'node'
+        working-directory: pi-extensions/pi-extension-manager
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1
+          npm test
+
+      # Mocks its Pi imports the way pi-background-tasks does, so no install.
+      # Two of its three files are node:test and one is bun:test; bun's runner
+      # executes both, which is why one `npm test` covers the directory.
+      - name: pi-task-panel suite
+        if: matrix.shard == 'node'
+        working-directory: pi-extensions/pi-task-panel
+        run: npm test
+
+      # The one package whose CI entry point is `test:ci` rather than `test`:
+      # its `test` script also runs integration suites that need API keys and
+      # a live provider, which a runner has neither of. `test:ci` is the
+      # subset CI can prove, and declaring it in the package is what keeps
+      # that exclusion visible to the inventory case in
+      # pi-extensions/package-policy.test.mjs instead of reading as an
+      # uncovered package. It builds first because one suite loads
+      # bundle/connector-inventory.js rather than src, so a src change without
+      # a rebuild has to fail here.
       # `npm ci` is deliberately NOT allowed to fall back to `npm install`:
       # the bundle assertion below only proves the artifact came from the
       # committed lockfile if the install itself was lockfile-strict.
@@ -327,8 +360,7 @@ jobs:
         working-directory: pi-extensions/pi-claude-bridge
         run: |
           npm ci --no-audit --no-fund
-          npm run build
-          npm run test:unit
+          npm run test:ci
 
       # bundle/index.js is the artifact Pi loads and npm publishes. A clean
       # lockfile build must reproduce the committed bytes exactly.

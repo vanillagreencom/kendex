@@ -68,6 +68,9 @@
       ]
     }
   },
+  "scripts": {
+    "test": "bun test ./test"
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"

@@ -18,6 +18,7 @@
     "appendSystem": "./instructions.md"
   },
   "scripts": {
+    "test": "bun test ./tests ./extensions/__tests__",
     "postinstall": "node scripts/append-system.mjs install",
     "preuninstall": "node scripts/append-system.mjs remove"
   },
