@@ -454,6 +454,79 @@ fn forking_beside_refuses_a_name_that_already_carries_settings() {
     assert!(!captured(&w, "rev-mine").exists(), "nothing was written");
 }
 
+/// The skill assignment is the one table an agent does not read by exact
+/// name, so a destination holding no row of its own is not free: it reads
+/// the base agent's. A copy landing there writes an exact row that shadows
+/// the person's, and their assignment stops reaching the agent — silently,
+/// because the exact-key question calls that name vacant. The refusal asks
+/// the reader that resolves the fallback instead.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn forking_beside_refuses_a_name_that_reads_the_base_agents_skill_row() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "[agent-skills]\nrust = []\n",
+    );
+    edit_body(&rendered(&w, HarnessId::Claude, "rev"));
+
+    let refused = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Agent,
+        "rev",
+        HarnessId::Claude,
+        "reviewer-rust",
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(refused, CoreError::ForkNameUnusable { .. }),
+        "{refused:?}"
+    );
+    assert!(
+        refused.to_string().contains("agent-skills"),
+        "the refusal names where the assignment is: {refused}"
+    );
+    assert_eq!(
+        manifest_of(&w).agent_skills.keys().collect::<Vec<_>>(),
+        vec!["rust"],
+        "the row the destination reads is the base agent's, and it stays the only one"
+    );
+    assert!(
+        !captured(&w, "reviewer-rust").exists(),
+        "nothing was written"
+    );
+
+    // The control: a reviewer name whose base row nobody wrote resolves
+    // nothing by either key, and refusing it there would turn the fallback
+    // into a naming rule the operation never needed.
+    let plan = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Agent,
+        "rev",
+        HarnessId::Claude,
+        "reviewer-mine",
+        None,
+    )
+    .unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+    assert!(
+        rendered(&w, HarnessId::Claude, "reviewer-mine").exists(),
+        "{}",
+        manifest_text(&w)
+    );
+    assert_eq!(
+        manifest_of(&w).agent_skills.keys().collect::<Vec<_>>(),
+        vec!["rust"],
+        "and the copy the fallback never reached wrote no row of its own: {}",
+        manifest_text(&w)
+    );
+}
+
 /// A hook selects one agent by spelling its name, so the selector has to
 /// travel when the name does — but a selector spelling `all` or a role
 /// name is read as a population, and rewriting one to the new name would

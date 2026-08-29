@@ -242,7 +242,7 @@ fn reselect(agents: &mut HookAgents, from: &str, to: &str, gone: bool) {
     };
 }
 
-/// Where this scope already configures an agent under `name`, named as the
+/// Where this scope already configures an agent under `name`, said as the
 /// person would find it in kendex.toml. A fork or a rename landing on a
 /// name that carries configuration would replace what is there, so the
 /// operation refuses instead: the same enumeration as [`rekey_agent_tables`],
@@ -253,22 +253,29 @@ pub(crate) fn configured_as(manifest: &Manifest, name: &str) -> Option<&'static 
         .values()
         .any(|by_agent| by_agent.contains_key(name))
     {
-        return Some("agent-frontmatter");
+        return Some("[agent-frontmatter]");
     }
-    if manifest.agent_skills.contains_key(name) {
-        return Some("agent-skills");
+    // Asked of the reader that resolves it, for the reason [`carry_skills`]
+    // moves what it moves: a name with no row of its own reads the base
+    // agent's, and a row written here would shadow the person's — the
+    // exact-key question would call that name vacant.
+    if crate::engine::desired_agent::declared_skills(manifest, name).is_some() {
+        return Some(match manifest.agent_skills.contains_key(name) {
+            true => "[agent-skills]",
+            false => "[agent-skills], under the base name this one reads",
+        });
     }
     // An instructions entry under a shared key is every agent's, so it is
     // not this name's to be replaced — the same reading [`rekey_agent_tables`]
     // refuses to move.
     let its_own = !crate::render::agent::shared_instructions_key(name);
     if its_own && manifest.agent_launch_instructions.contains_key(name) {
-        return Some("agent-launch-instructions");
+        return Some("[agent-launch-instructions]");
     }
     if its_own && manifest.agent_additional_instructions.contains_key(name) {
-        return Some("agent-additional-instructions");
+        return Some("[agent-additional-instructions]");
     }
-    gated_by_name(manifest, name).map(|_| "custom-hooks")
+    gated_by_name(manifest, name).map(|_| "[custom-hooks]")
 }
 
 /// Whether this selector is this agent's own name — the one kind a rename
