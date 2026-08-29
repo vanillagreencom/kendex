@@ -260,7 +260,7 @@ Omit empty categories. Decline any item that cannot affect real usage with a one
 
 **Disposition is by rule, not by prompt** — never present a selection menu over the findings. Every blocker and `category == "fix"` suggestion that survives declining goes to the fix round below, in EVERY decision mode; `ORCH_DECISION_MODE` does not gate it. The always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) still applies. Nothing left after declines → § 5.
 
-**Recurrence before the cap.** A finding sharing a root cause with one a prior round patched is dispositioned by [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence), which allows `structural-close` or `freeze` and no further patch round. Check it here, ahead of the cap below. A finding sharing a cause in `patched_causes` is the recurrence this rule ends, and one sharing a cause in `frozen_causes` is declined without re-triaging:
+**Recurrence before the cap.** A finding sharing a root cause with one a prior round patched is dispositioned by [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence), which gives this loop `structural-close` and no further patch round, `freeze` being the comment loop's. Check it here, ahead of the cap below. A finding sharing a cause in `patched_causes` is the recurrence this rule ends, and one sharing a cause in `frozen_causes` is declined without re-triaging:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{patched: (.pr_comment_review.patched_causes // []), frozen: (.pr_comment_review.frozen_causes // [])}'
@@ -292,7 +292,7 @@ The cap decides before any delegation. Read the re-review cycles already entered
 
 ### Fix Delegation
 
-**Skip if** the cap check above routed to § 5. A `structural-close` from the recurrence check above delegates the generating surface in place of the site; a `freeze` delegates nothing. Findings that leave `items` are never dropped: declined per [finding-disposition](../references/finding-disposition.md) when a cut removed their surface, recorded in `escalated_items` when a freeze deferred them.
+**Skip if** the cap check above routed to § 5. A `structural-close` from the recurrence check above delegates the generating surface in place of the site. Findings that leave `items` are never dropped: declined per [finding-disposition](../references/finding-disposition.md) when a cut removed their surface, recorded in `escalated_items` when § 8's audit is to file them.
 Never fix as the main agent.
 
 ```bash
