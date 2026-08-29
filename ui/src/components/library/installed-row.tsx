@@ -34,10 +34,11 @@ import { cn } from "@/lib/utils";
 import { originLabel, originTitle } from "@/stores/provenance";
 
 /** How the customization mark reads once the name cell is hovered or
- *  focused: one type step under the package name, italic and muted, in
- *  the line the mark used to hold permanently. */
+ *  focused: one type step under the package name, muted and otherwise
+ *  unstyled, in the line the mark used to hold permanently. The package
+ *  header states the same fact in the same words, so neither styles it. */
 const MARK_ON_HOVER =
-  "mt-0.5 hidden text-xs italic text-muted-foreground group-hover/name:block group-focus-within/name:block";
+  "mt-0.5 hidden text-xs text-muted-foreground group-hover/name:block group-focus-within/name:block";
 
 const STATUS_TONES: Record<GroupStatus, "good" | "warning" | "critical"> = {
   active: "good",

@@ -13,11 +13,12 @@ import { scopePath } from "@/lib/labels";
 import { scopeKey } from "@/lib/scope";
 import { placeName } from "@/lib/update-groups";
 import { useAuditStore } from "@/stores/audit";
-import { originFor, useProvenanceStore } from "@/stores/provenance";
+import { originsFor, useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 
-/** Where a deleted package can be had again, or null while nobody can
- *  say — a join that has not landed says nothing rather than "your own". */
+/** Every marketplace a deleted package can be had from again, or null
+ *  while nobody can say — a join that has not landed says nothing rather
+ *  than "your own". */
 function useReinstallNote(
   kind: ItemKind,
   name: string,
@@ -33,9 +34,21 @@ function useReinstallNote(
     if (!loaded) void load();
   }, [loaded, load]);
   if (!loaded) return null;
-  const origin = originFor(rows, kind, name, scopes);
-  if (origin?.origin === "marketplace") return reinstallFrom(origin.source);
-  return origin?.origin === "own" ? REINSTALL_OWN : null;
+  const origins = originsFor(rows, kind, name, scopes);
+  // Every marketplace among them, sorted so the note reads the same on
+  // every open: this deletion reaches each place, and each place records
+  // the source it was installed from, which need not be its neighbour's.
+  const marketplaces = [
+    ...new Set(
+      origins.flatMap((one) =>
+        one.origin === "marketplace" ? [one.source] : [],
+      ),
+    ),
+  ].sort();
+  if (marketplaces.length > 0) return reinstallFrom(marketplaces);
+  // No marketplace to name. "Your own" is a claim, so it is made only
+  // where a row actually says so, never from an origin nothing recorded.
+  return origins.some((one) => one.origin === "own") ? REINSTALL_OWN : null;
 }
 
 /** Deleting a package takes every copy of it with it — it is one thing to

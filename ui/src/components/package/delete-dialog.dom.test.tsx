@@ -47,11 +47,24 @@ const openDialog = async (scopes: Scope[]) => {
   return document.body.textContent ?? "";
 };
 
-const from = (origin: Origin) =>
+const from = (...origins: [Scope, Origin][]) =>
   useProvenanceStore.setState({
-    rows: [{ scope: VG, kind: "skill", name: "gh", harness: "claude", origin }],
+    rows: origins.map(([scope, origin]) => ({
+      scope,
+      kind: "skill",
+      name: "gh",
+      harness: "claude",
+      origin,
+    })),
     loaded: true,
   });
+
+const MARKET = (source: string): Origin => ({
+  origin: "marketplace",
+  source,
+  repo: `${source}/pack`,
+});
+const OWN: Origin = { origin: "own", source: "own", forkedFrom: null };
 
 describe("the Delete dialog", () => {
   it("names the package and every place the deletion reaches", async () => {
@@ -66,13 +79,36 @@ describe("the Delete dialog", () => {
   });
 
   it("names the marketplace it can be installed from again", async () => {
-    from({ origin: "marketplace", source: "acme", repo: "acme/pack" });
+    from([VG, MARKET("acme")]);
 
-    expect(await openDialog([VG])).toContain(reinstallFrom("acme"));
+    expect(await openDialog([VG])).toContain(reinstallFrom(["acme"]));
+  });
+
+  // Each place records the source it was installed from, so the copies
+  // this one deletion reaches can come from different marketplaces. One
+  // of them is not an answer: it sends the reader somewhere that never
+  // held the rest.
+  it("names every marketplace the deleted copies came from", async () => {
+    from([VG, MARKET("beta")], [HYPR, MARKET("acme")]);
+
+    const said = await openDialog([VG, HYPR]);
+    expect(said).toContain("acme");
+    expect(said).toContain("beta");
+    expect(said).toContain(reinstallFrom(["acme", "beta"]));
+  });
+
+  // A place of the reader's own beside a marketplace one leaves the
+  // marketplace worth naming; there is nowhere to send them for the other.
+  it("names the marketplace beside a copy that is the reader's own", async () => {
+    from([VG, MARKET("acme")], [HYPR, OWN]);
+
+    const said = await openDialog([VG, HYPR]);
+    expect(said).toContain(reinstallFrom(["acme"]));
+    expect(said).not.toContain(REINSTALL_OWN);
   });
 
   it("says so where the copy is the reader's own", async () => {
-    from({ origin: "own", source: "own", forkedFrom: null });
+    from([VG, OWN]);
 
     expect(await openDialog([VG])).toContain(REINSTALL_OWN);
   });

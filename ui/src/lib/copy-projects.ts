@@ -28,7 +28,17 @@ export const deleteTitle = (name: string): string => `Delete ${name}?`;
 export const DELETE_BODY =
   "kendex moves the files it manages to the trash and stops keeping this package up to date.";
 export const DELETE_PLACES_LABEL = "Deleted from";
-export const reinstallFrom = (marketplace: string): string =>
-  `You can install it again from ${marketplace}.`;
+/** Marketplaces as a reader says them: "acme", "acme or beta", "acme,
+ *  beta, or gamma". */
+const eitherOf = (names: string[]): string => {
+  if (names.length < 3) return names.join(" or ");
+  return `${names.slice(0, -1).join(", ")}, or ${names[names.length - 1]}`;
+};
+
+/** Every marketplace the deleted copies came from, not one of them: a
+ *  package can be installed from a different source in each place, and
+ *  naming one would send the reader somewhere that never held the rest. */
+export const reinstallFrom = (marketplaces: string[]): string =>
+  `You can install it again from ${eitherOf(marketplaces)}.`;
 export const REINSTALL_OWN =
-  "This copy is your own, so there is no marketplace to install it from again.";
+  "This package is your own, so there is no marketplace to install it from again.";

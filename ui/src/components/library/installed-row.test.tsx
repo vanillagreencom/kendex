@@ -201,12 +201,14 @@ describe("where the row's mark is drawn", () => {
     expect(resting).toEqual(["gh", "about gh"]);
   });
 
+  // The package header states this same fact in the same words and styles
+  // it no further, so the row does not either.
   it("reads as a remark, not as the row's coloured mark", () => {
     const { host } = mount([], CUSTOMIZED);
 
     const classes = markElement(host).className;
-    expect(classes).toContain("italic");
     expect(classes).toContain("text-muted-foreground");
+    expect(classes).not.toContain("italic");
     expect(classes).not.toContain("text-customized");
   });
 });
