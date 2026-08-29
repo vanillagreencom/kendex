@@ -1,4 +1,10 @@
-import type { ItemKind, Scope, ScopeSettings, UpdateRow } from "@/bindings";
+import type {
+  ItemKind,
+  Scope,
+  ScopeSettings,
+  SettingsEdit,
+  UpdateRow,
+} from "@/bindings";
 import {
   customizedItems,
   type ItemCustomization,
@@ -59,6 +65,11 @@ export function placesSource(
   rows: UpdateRow[],
   updatesLoaded: boolean,
   settingsReads: Record<string, ScopeSettings>,
+  /** Unsaved settings edits by place, from the surface editing one.
+   *  The Library and the package header pass none: their manifest half
+   *  reads the saved manifest too, and a draft counting on one half of
+   *  a surface and not the other is the mismatch this answers. */
+  settingsEdits: Record<string, SettingsEdit[]> = {},
 ): PlacesSource {
   const byPlace = new Map<string, UpdateRow>();
   for (const row of rows)
@@ -72,7 +83,7 @@ export function placesSource(
     rows: byPlace,
     updatesLoaded,
     settings,
-    values: settingsValues(settingsReads),
+    values: settingsValues(settingsReads, settingsEdits),
   };
 }
 

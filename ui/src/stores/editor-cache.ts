@@ -42,6 +42,15 @@ export const recorded = <T>(
   return next;
 };
 
+/** The three reads the editor opens one place on, made together so the
+ *  page describes one moment rather than three. */
+export const readPlace = (scope: Scope) =>
+  Promise.all([
+    commands.getManifest(scope),
+    commands.editorInventory(scope),
+    commands.getScopeSettings(scope),
+  ]);
+
 /** Each named scope's saved manifest, keyed by scope. A read that fails is
  *  left out rather than recorded as an empty manifest: a place nobody could
  *  read is not a place holding nothing, and the marks tell them apart. */

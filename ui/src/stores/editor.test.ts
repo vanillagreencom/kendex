@@ -10,6 +10,7 @@ import { placeFacts, placesSource } from "@/lib/customized-places";
 import { groupItems } from "@/lib/derive";
 import { emptyDraft, setInstruction } from "@/lib/editor-draft";
 import { markFor } from "@/lib/package-mark";
+import { scopeKey } from "@/lib/scope";
 import { openInventory, useEditorStore } from "./editor";
 
 vi.mock("@/bindings", () => ({
@@ -56,6 +57,9 @@ const settings = (base: string | null = "s1"): ScopeSettings => ({
   ],
   base,
 });
+
+const VG: Scope = { scope: "project", root: "/work/vg" };
+const HYPR: Scope = { scope: "project", root: "/work/hyprtrade" };
 
 const edit = {
   skill: "gh",
@@ -225,6 +229,100 @@ describe("editor store", () => {
     });
     await useEditorStore.getState().load();
     expect(useEditorStore.getState().savedSettings.global).toBeUndefined();
+  });
+
+  /// A person opens one project and then another before the first one's
+  /// reads return. The older result landing on top would put one
+  /// project's rows, and its base, under the other project's name — and
+  /// an edit made against them writes the value into the wrong
+  /// project's settings file, which is the worst this surface can do.
+  it("drops a load the editor has already moved on from", async () => {
+    const settled: Record<string, () => void> = {};
+    vi.mocked(commands.getManifest).mockImplementation((scope: Scope) =>
+      Promise.resolve({
+        status: "ok",
+        data: { manifest: null, base: `manifest-${scopeKey(scope)}` },
+      }),
+    );
+    vi.mocked(commands.getScopeSettings).mockImplementation(
+      (scope: Scope) =>
+        new Promise((resolve) => {
+          settled[scopeKey(scope)] = () =>
+            resolve({ status: "ok", data: settings(scopeKey(scope)) });
+        }),
+    );
+
+    const first = useEditorStore.getState().setScope(VG);
+    const second = useEditorStore.getState().setScope(HYPR);
+    settled[scopeKey(HYPR)]();
+    await second;
+    settled[scopeKey(VG)]();
+    await first;
+
+    const state = useEditorStore.getState();
+    expect(state.scope).toEqual(HYPR);
+    expect(state.base).toBe(`manifest-${scopeKey(HYPR)}`);
+    expect(state.settings?.base).toBe(scopeKey(HYPR));
+    // The superseded load commits nothing at all, its place's read
+    // included — a mark drawn off it would be a place nobody opened.
+    expect(state.savedSettings[scopeKey(VG)]).toBeUndefined();
+    expect(state.loading).toBe(false);
+  });
+
+  /// The loading flag answers for the read in flight, not for the last
+  /// one to return: cleared by a superseded load, the page stops saying
+  /// it is loading while the read it is waiting on is still out.
+  it("leaves the loading flag to the read still in flight", async () => {
+    const settled: Record<string, () => void> = {};
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1" },
+    });
+    vi.mocked(commands.getScopeSettings).mockImplementation(
+      (scope: Scope) =>
+        new Promise((resolve) => {
+          settled[scopeKey(scope)] = () =>
+            resolve({ status: "ok", data: settings(scopeKey(scope)) });
+        }),
+    );
+
+    const first = useEditorStore.getState().setScope(VG);
+    const second = useEditorStore.getState().setScope(HYPR);
+    settled[scopeKey(VG)]();
+    await first;
+    expect(useEditorStore.getState().loading).toBe(true);
+
+    settled[scopeKey(HYPR)]();
+    await second;
+    expect(useEditorStore.getState().loading).toBe(false);
+  });
+
+  /// The same rule on the other setter: a superseded load whose manifest
+  /// read failed must not blank the place the editor actually shows, nor
+  /// put its own error on screen.
+  it("drops a superseded load whose manifest read failed", async () => {
+    let failLate = () => {};
+    vi.mocked(commands.getManifest).mockImplementation((scope: Scope) =>
+      scopeKey(scope) === scopeKey(VG)
+        ? new Promise((resolve) => {
+            failLate = () => resolve({ status: "error", error: "gone" });
+          })
+        : Promise.resolve({
+            status: "ok",
+            data: { manifest: null, base: "b1" },
+          }),
+    );
+
+    const first = useEditorStore.getState().setScope(VG);
+    const second = useEditorStore.getState().setScope(HYPR);
+    await second;
+    failLate();
+    await first;
+
+    const state = useEditorStore.getState();
+    expect(state.scope).toEqual(HYPR);
+    expect(state.draft).toEqual(emptyDraft());
+    expect(state.error).toBeNull();
   });
 
   /// Reload is the discard: settings edits are the second draft the one

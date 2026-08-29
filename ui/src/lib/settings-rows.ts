@@ -77,15 +77,26 @@ export function differsFromDefault(
  *  A place absent from `reads` is absent from the map, and that is the
  *  whole point: the fact is unknown until its read lands, never false.
  *  A place that was read and holds nothing gets an empty set, which is
- *  an answer — global's `applies: false` resolves that way. */
+ *  an answer — global's `applies: false` resolves that way. `edits`
+ *  never adds a place, only answers for one already read: a draft is
+ *  not a read, and inventing a place from one would claim knowledge of
+ *  a file nobody opened. */
 export function settingsValues(
   reads: Record<string, ScopeSettings>,
+  /** Unsaved edits by place, from a surface editing one of them. A
+   *  place absent here simply has none in hand. */
+  edits: Record<string, SettingsEdit[]> = {},
 ): ReadonlyMap<string, ReadonlySet<string>> {
   const out = new Map<string, ReadonlySet<string>>();
   for (const [where, read] of Object.entries(reads)) {
+    const drafted = edits[where] ?? [];
     const differing = new Set<string>();
     for (const skill of read.skills)
-      if (rowsOf(skill.template).some((row) => differsFromDefault(row)))
+      if (
+        rowsOf(skill.template).some((row) =>
+          differsFromDefault(row, editIn(drafted, skill.skill, row.key)),
+        )
+      )
         differing.add(skill.skill);
     out.set(where, differing);
   }

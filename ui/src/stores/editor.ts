@@ -10,7 +10,7 @@ import { type Draft, emptyDraft, toDraft } from "@/lib/editor-draft";
 import { sameScope, scopeKey } from "@/lib/scope";
 import { settingsDraft, withEdit } from "@/lib/settings-rows";
 import { useAuditStore } from "./audit";
-import { placesOf, recorded } from "./editor-cache";
+import { placesOf, readPlace, recorded } from "./editor-cache";
 import { useScanStore } from "./scan";
 import { useSettingsStore } from "./settings";
 
@@ -63,9 +63,10 @@ interface EditorState {
   /** Read every scope's manifest and settings, for the marks drawn
    *  outside the editor. */
   loadAll: () => Promise<void>;
-  /** Read named places only, merged into what is already read. A page about one package needs the places that package sits in
-   *  and nothing else — asking for every scope would put the machine's
-   *  whole project list behind one package's mark. */
+  /** Read named places only, merged into what is already read. A page
+   *  about one package needs the places that package sits in and nothing
+   *  else — asking for every scope would put the machine's whole project
+   *  list behind one package's mark. */
   loadPlaces: (scopes: Scope[]) => Promise<void>;
   edit: (change: (draft: Draft) => Draft) => void;
   /** Set or reset one package setting, replacing any earlier answer for
@@ -75,21 +76,25 @@ interface EditorState {
 }
 
 export const useEditorStore = create<EditorState>((set, get) => {
+  // Which load may commit. A person opens one project and then another
+  // before the first one's reads return; the older result landing on top
+  // would put one project's rows, and its base, under the other's name,
+  // and an edit made against them writes the value into the wrong
+  // project's settings file. Only the newest read commits anything —
+  // both setters below, and the loading flag with them.
+  let latest = 0;
   const load = async () => {
     const { scope } = get();
+    const mine = ++latest;
     set({ loading: true });
-    let manifest: Awaited<ReturnType<typeof commands.getManifest>>;
-    let inventory: Awaited<ReturnType<typeof commands.editorInventory>>;
-    let settings: Awaited<ReturnType<typeof commands.getScopeSettings>>;
+    let read: Awaited<ReturnType<typeof readPlace>>;
     try {
-      [manifest, inventory, settings] = await Promise.all([
-        commands.getManifest(scope),
-        commands.editorInventory(scope),
-        commands.getScopeSettings(scope),
-      ]);
+      read = await readPlace(scope);
     } finally {
-      set({ loading: false });
+      if (mine === latest) set({ loading: false });
     }
+    if (mine !== latest) return;
+    const [manifest, inventory, settings] = read;
     if (manifest.status === "error") {
       set((state) => ({
         draft: null,

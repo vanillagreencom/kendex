@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { Scope, ScopeSettings, SettingsRow, UpdateRow } from "@/bindings";
+import type {
+  Scope,
+  ScopeSettings,
+  SettingsEdit,
+  SettingsRow,
+  UpdateRow,
+} from "@/bindings";
 import { customizedLine } from "@/lib/copy-customize";
 import type { Draft } from "@/lib/editor-draft";
 import { packageMark } from "@/lib/place-marks";
@@ -71,14 +77,17 @@ function source({
   settings = Object.fromEntries(
     Object.keys(manifests).map((at) => [at, read({})]),
   ),
+  edits = {},
 }: {
   manifests?: Record<string, Draft>;
   rows?: UpdateRow[];
   updatesLoaded?: boolean;
   /** Absent for a place means its read has not landed. */
   settings?: Record<string, ScopeSettings>;
+  /** Unsaved settings edits, by place. */
+  edits?: Record<string, SettingsEdit[]>;
 } = {}) {
-  return placesSource(manifests, rows, updatesLoaded, settings);
+  return placesSource(manifests, rows, updatesLoaded, settings, edits);
 }
 
 describe("placeStandings", () => {
@@ -220,6 +229,71 @@ describe("placeStandings", () => {
     });
     const [only] = placeStandings(s, "skill", "gh", [GLOBAL]);
     expect(only.standing).toBe("stock");
+  });
+
+  /// The page skips its reload while anything is unsaved, so an unsaved
+  /// value has to count where the saved one would: otherwise the marks
+  /// go on calling a package stock while the person looks at the edit
+  /// that made it theirs.
+  it("counts a value the person has typed but not yet saved", () => {
+    const s = source({
+      manifests: { "/work/vg": empty() },
+      rows: [row(VG)],
+      settings: { "/work/vg": read({ gh: [key()] }) },
+      edits: {
+        "/work/vg": [
+          {
+            skill: "gh",
+            key: "GH_MODE",
+            value: { kind: "set", value: "advise" },
+          },
+        ],
+      },
+    });
+    const [only] = placeStandings(s, "skill", "gh", [VG]);
+    expect(only.standing).toBe("customized");
+    expect(only.why).toBe("values");
+  });
+
+  /// And the other way: a reset in hand takes the mark off before the
+  /// save, the way removing a manifest setting does.
+  it("drops the mark for a value reset but not yet saved", () => {
+    const s = source({
+      manifests: { "/work/vg": empty() },
+      rows: [row(VG)],
+      settings: {
+        "/work/vg": read({
+          gh: [key({ current: { state: "value", value: "advise", line: 3 } })],
+        }),
+      },
+      edits: {
+        "/work/vg": [{ skill: "gh", key: "GH_MODE", value: { kind: "reset" } }],
+      },
+    });
+    const [only] = placeStandings(s, "skill", "gh", [VG]);
+    expect(only.standing).toBe("stock");
+  });
+
+  /// A draft is not a read. Edits for a place whose settings read has
+  /// not landed leave that place unknown rather than inventing an
+  /// answer for a file nobody opened.
+  it("does not invent a place from edits alone", () => {
+    const s = source({
+      manifests: { "/work/vg": empty() },
+      rows: [row(VG)],
+      settings: {},
+      edits: {
+        "/work/vg": [
+          {
+            skill: "gh",
+            key: "GH_MODE",
+            value: { kind: "set", value: "advise" },
+          },
+        ],
+      },
+    });
+    const [only] = placeStandings(s, "skill", "gh", [VG]);
+    expect(only.standing).toBe("unknown");
   });
 
   // The row is re-read with the write; the saved manifest is not. Reading
