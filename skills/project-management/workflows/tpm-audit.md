@@ -42,7 +42,7 @@ Analyze issues and projects for relations, labels, hierarchy, placement, duplica
 .agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --limit 1 --format=ids
 ```
 
-`TEAM` is `auth-check`'s `team`; `TEAM_PREFIX` is the returned identifier up to its hyphen. Halt when `auth-check` reports no team, and halt when a configured team returns no identifier — an audit that cannot resolve its own scope must not run unscoped. A row whose `id` does not start with `TEAM_PREFIX-`, and a project row whose `teams[]` omits `TEAM`, is out of scope in every mode.
+`TEAM` is `auth-check`'s `team`; `TEAM_PREFIX` is the returned identifier up to its hyphen. Halt when `auth-check` reports no team, and halt when a configured team returns no identifier — an audit that cannot resolve its own scope must not run unscoped. With the scope resolved, a row whose `id` does not start with `TEAM_PREFIX-`, and a project row whose `teams[]` omits `TEAM`, is out of scope in every mode.
 
 ### 1.2 Load Label Policy
 
@@ -51,7 +51,7 @@ Analyze issues and projects for relations, labels, hierarchy, placement, duplica
 gh label list --repo [REPOSITORY] --limit 200 --json name,description     # TRACKER=github
 ```
 
-`--limit 200` is a stated cap, not a page: a repository reaching it is analyzed against a truncated inventory, which the analysis records and scopes itself to.
+`--limit 200` is a stated cap, not a page: a repository reaching it is analyzed against a truncated inventory, which the analysis notes in `analysis[]` and scopes itself to.
 
 Load the project taxonomy alongside it. A missing or stale Linear cache on this or any later read halts the analysis and reports that the caller must run `sync --reconcile` first ([SKILL.md](../SKILL.md) § Execution Rules) — never work around it with a partial or live-only read. Every `agent_mismatch`, `label_cooccurrence`, `recommended_issue.labels[]`, and `create_fields.labels[]` recommendation must be expressible against this live inventory. Issue labels only.
 
@@ -363,7 +363,8 @@ Any invariant failing sends you back before the JSON is built.
 
 - [ ] Every input issue has its own `VERIFICATION_CONTEXTS[ISSUE_KEY]` — no PR, branch, or resolved path set reused across issues, docs-only handled explicitly (§ 1.7, § 2.1)
 - [ ] No completed-blocker relation appears in `remove_relations[]` or under any stale-metadata framing (§ 4.1)
-- [ ] The § 6 cancellation sweep ran against the full comparison set, and every issue named anywhere in the output carries the § 1.1.1 team prefix
+- [ ] The § 6 cancellation sweep ran against the full comparison set
+- [ ] TRACKER=linear: every issue named anywhere in the output carries the § 1.1.1 team prefix
 - [ ] Every proposed item carries an assigned action, with a one-line reason naming the failed creation-bar test on each `skip` and a complete `create_fields.labels[]` on each `create` (§ 10)
 - [ ] Every `hierarchy_contract.child_indexes` item is `action: create` + `hierarchy.action: make_child` + `hierarchy.parent` = the contract parent, none downgraded (§ 7.0, § 10.2)
 

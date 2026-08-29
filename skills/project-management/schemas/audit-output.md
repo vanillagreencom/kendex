@@ -23,7 +23,7 @@ Returned inline by `tpm-audit.md` and written by the caller to `tmp/audit-projec
 
 ## PROJECT Mode
 
-Mode `team` uses this same shape with `project: null` — its input set is the whole team rather than one project. Findings rows stay keyed by issue identifier and carry no project of their own; `wrong_project[]` alone names projects, in its `from` and `to`, and `architecture_gaps[].project_placement` names one for a gap. A consumer needing a project per finding reads it from the issue.
+Mode `team` uses this same shape with `project: null` — its input set is the whole team rather than one project. A per-issue findings row carries its issue and no project. The project-scoped arrays name their own: `wrong_project[]` in `from`/`to`, `project_dependency_issues[]` in `from_project`/`to_project`, `project_recommendations[]` in its project fields, and `architecture_gaps[].project_placement` for a gap. A consumer needing a project for a per-issue finding reads it from the issue.
 
 ```json
 {

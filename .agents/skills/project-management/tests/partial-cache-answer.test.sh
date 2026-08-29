@@ -79,7 +79,10 @@ require "$tpm_audit" 'carries the § 1\.1\.1 team prefix' \
 
 skill="$SKILL_DIR/SKILL.md"
 require "$skill" 'cache holds the whole workspace' 'the cache scope is stated once'
-require "$skill" 'Scope every cached read to the configured team' 'the scoping rule'
+require "$skill" 'The two analysis workflows resolve the configured team' \
+  'the scoping rule names the workflows that implement it'
+require "$skill" 'Every other workflow reads the cache workspace-wide' \
+  'the rule discloses what it does not cover'
 
 # The sibling analysis workflow proposes cancellations from the same set.
 roadmap="$SKILL_DIR/workflows/tpm-roadmap-plan.md"

@@ -16,7 +16,7 @@ Infer the research type from the description and answers.
 
 Infer the affected domains from the topic and answers by matching component paths (project-configurable); do not ask the user to confirm them. State each domain and why in the § 4 report.
 
-Refresh a stale cache before the lookup below — this workflow only reads:
+Refresh a stale cache before the lookup below. This workflow only reads; the § 3 handoff to research-issue reconciles again before it creates anything:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh sync --if-stale 15

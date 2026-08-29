@@ -12,7 +12,7 @@ Commit any uncommitted files under `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/`:
 git add [RESEARCH_DOCS_PATH]/[ISSUE_ID]/ && git commit -m "chore([ISSUE_ID]): Add research findings"
 ```
 
-This workflow updates labels, descriptions, and relations, so it reconciles before its first cache read:
+This workflow updates labels, descriptions, and issue state, so it reconciles before its first cache read:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh sync --reconcile
