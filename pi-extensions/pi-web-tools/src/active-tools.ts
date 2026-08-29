@@ -16,7 +16,10 @@ export function desiredWebTools(model: ModelLike | undefined, settings: WebTools
 	if (settings.exaAdvancedEnabled) desired.push("web_answer", "web_find_similar", "code_search");
 	if (settings.compatibilityTools) desired.push("fetch_content", "get_search_content", "web_search_exa", "web_fetch_exa", "web_research_exa", "web_answer_exa", "web_find_similar_exa");
 	if (!settings.apiKeys.exa) {
-		for (const exaOnly of ["web_fetch", "web_research", "web_answer", "web_find_similar", "code_search", "fetch_content", "web_fetch_exa", "web_research_exa", "web_answer_exa", "web_find_similar_exa"] as PackageToolName[]) {
+		// web_fetch is not in this list: its primary paths (direct HTTP, GitHub
+		// clone, PDF, YouTube transcripts) need no key, and the Exa /contents
+		// fallback in tools/web-fetch.ts is skipped when the key is unset.
+		for (const exaOnly of ["web_research", "web_answer", "web_find_similar", "code_search", "fetch_content", "web_fetch_exa", "web_research_exa", "web_answer_exa", "web_find_similar_exa"] as PackageToolName[]) {
 			const index = desired.indexOf(exaOnly);
 			if (index >= 0) desired.splice(index, 1);
 		}
