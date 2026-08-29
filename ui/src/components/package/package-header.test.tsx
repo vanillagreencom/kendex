@@ -18,16 +18,34 @@ describe("PackageHeader", () => {
       />,
     );
 
-  it("prints the place the mark names", () => {
-    const shown = render({
-      label: "Customized in vg",
-      goTo: { scope: "project", root: "/work/vg" },
-      why: "settings",
-    });
-    expect(shown).toContain("Customized in vg");
+  const mark: PlaceMark = {
+    label: "Customized in vg · 1 of 3 places",
+    goTo: null,
+    why: "settings",
+  };
+
+  it("prints what the mark says about the package", () => {
+    expect(render(mark)).toContain("Customized in vg · 1 of 3 places");
   });
 
-  it("says nothing where this place holds nothing", () => {
+  it("says nothing where no place holds anything", () => {
     expect(render(null)).not.toContain("Customized");
+  });
+
+  // The Library row marks a customized package by colouring its kind icon
+  // and putting the mark under the name in that colour. The header says
+  // the same thing the same way rather than in a pill of its own.
+  it("marks it the way the Library row does, not with a badge", () => {
+    const shown = render(mark);
+    // The kind icon takes the customized colour, as it does on the row.
+    expect(shown).toContain("translate-y-[0.1875rem] text-customized");
+    // And the words are plain text, not the pill this header used to draw.
+    expect(shown).not.toContain("badge");
+  });
+
+  it("leaves the icon muted where nothing is customized", () => {
+    const shown = render(null);
+    expect(shown).toContain("translate-y-[0.1875rem] text-muted-foreground");
+    expect(shown).not.toContain("text-customized");
   });
 });

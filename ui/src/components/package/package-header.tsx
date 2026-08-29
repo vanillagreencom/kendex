@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { FORKED_BADGE_LABEL } from "@/lib/copy";
 import { kindIcon } from "@/lib/kind-icon";
 import type { PlaceMark } from "@/lib/place-marks";
+import { cn } from "@/lib/utils";
 
 /** The package page's title block: what this is, what it says about itself,
  *  and the things you can do to it. */
@@ -33,21 +34,31 @@ export function PackageHeader({
         // a badge alongside makes the row taller than the words, and
         // centring against that visibly floats the icon off the title.
         <span className="flex items-baseline gap-2.5">
-          <Icon className="size-5 shrink-0 translate-y-[0.1875rem] text-muted-foreground" />
+          <Icon
+            className={cn(
+              "size-5 shrink-0 translate-y-[0.1875rem]",
+              // The same colour the Library row gives a customized
+              // package's icon, so one package is marked one way.
+              mark ? "text-customized" : "text-muted-foreground",
+            )}
+          />
           <span className="min-w-0 truncate">{displayName}</span>
           {forked ? (
             <Badge variant="outline">{FORKED_BADGE_LABEL}</Badge>
           ) : null}
-          {mark ? (
-            // The place it names is the page being read, so there is
-            // nowhere for it to lead: it states where, and the way there
-            // is already underfoot.
-            <Badge variant="customized">{mark.label}</Badge>
-          ) : null}
         </span>
       }
       subtitle={
-        description ? <InlineMarkdown source={description} /> : undefined
+        mark || description ? (
+          <>
+            {/* Under the title and above the description, in words, the
+                way the Library row carries it — not a pill beside the
+                name. A badge there read as a property of the title; this
+                is a sentence about the package. */}
+            {mark ? <p className="mb-1 text-customized">{mark.label}</p> : null}
+            {description ? <InlineMarkdown source={description} /> : null}
+          </>
+        ) : undefined
       }
       action={action}
     />

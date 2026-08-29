@@ -141,14 +141,6 @@ export function placeStandings(
   );
 }
 
-export function standingIn(
-  standings: PlaceStanding[],
-  scope: Scope,
-): PlaceStanding | undefined {
-  const key = scopeKey(scope);
-  return standings.find((s) => scopeKey(s.scope) === key);
-}
-
 /** One row of the Customize page's index: a package this place holds
  *  something for, every fact that makes it so, and what its overlay sets. */
 export interface CustomizedHere {

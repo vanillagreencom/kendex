@@ -12,7 +12,8 @@ import {
 
 // The manifest key is what a hand-written kendex.toml uses; the label is
 // what a reader sees. A list field says what a list looks like in its
-// placeholder rather than in a parenthesis after its name.
+// placeholder rather than in a parenthesis after its name — an example,
+// never a value, which is why a field holding one says so on its label.
 const TEXT_FIELDS = [
   ["model", "Model", "opus"],
   ["effort", "Effort", "high"],
@@ -52,7 +53,7 @@ export function FrontmatterFields({
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {TEXT_FIELDS.map(([field, label, placeholder]) => (
-        <Field key={field} label={label}>
+        <Field key={field} label={label} set={overrides[field] != null}>
           <Input
             aria-label={label}
             placeholder={placeholder}
@@ -67,7 +68,7 @@ export function FrontmatterFields({
         </Field>
       ))}
       {LIST_FIELDS.map(([field, label, placeholder]) => (
-        <Field key={field} label={label}>
+        <Field key={field} label={label} set={overrides[field] != null}>
           <CommitInput
             label={label}
             placeholder={placeholder}
@@ -77,7 +78,7 @@ export function FrontmatterFields({
         </Field>
       ))}
       {FLAG_FIELDS.map(([field, label]) => (
-        <Field key={field} label={label}>
+        <Field key={field} label={label} set={overrides[field] != null}>
           <TriStateSelect
             label={label}
             value={overrides[field]}

@@ -33,8 +33,16 @@ export const SHARED_ALSO_APPLIES =
   "Your instructions for everything apply here too.";
 export const SHARED_VIEW = "See them";
 export const SKILLS_SECTION = "Skills";
+// The automatic state has three answers, not two. A catalog that assigns
+// nothing and a scope whose lock has not recorded an assignment yet are
+// different facts, and printing the first over the second reads an agent
+// nobody has asked about as an agent with no skills.
 export const SKILLS_AUTOMATIC =
-  "kendex picks these from the agent's tags. Add one and this agent keeps exactly what you choose.";
+  "The catalog gives this agent these. Add one and this agent keeps exactly what you choose.";
+export const SKILLS_AUTOMATIC_NONE =
+  "The catalog gives this agent no skills. Add one and this agent keeps exactly what you choose.";
+export const SKILLS_AUTOMATIC_UNRECORDED =
+  "The catalog picks these, and kendex records which ones the next time it installs here. Add one and this agent keeps exactly what you choose.";
 export const SKILLS_CHOSEN =
   "This agent gets exactly these. Remove them all to give it none.";
 export const SKILLS_NONE_AVAILABLE =

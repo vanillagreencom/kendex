@@ -1111,6 +1111,14 @@ export type EditorInventory = {
 	declaredAgents: string[],
 	declaredSkills: string[],
 	availableSkills: string[],
+	/**
+	 *  What each agent gets while nothing is chosen for it, by agent name.
+	 *  Read from the lock rather than recomputed: the question the editor
+	 *  asks is what this agent has, and a fresh computation would answer
+	 *  with an assignment no apply has written. An agent absent here has
+	 *  no recorded assignment — which is not the same as having none.
+	 */
+	automaticSkills: { [key in string]: string[] },
 	harnesses: HarnessId[],
 	/**
 	 *  The events a hook can be written against, and when each fires. Sent

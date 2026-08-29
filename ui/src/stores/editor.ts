@@ -32,9 +32,31 @@ interface EditorState {
   load: () => Promise<void>;
   /** Read every scope's manifest, for the marks drawn outside the editor. */
   loadAll: () => Promise<void>;
+  /** Read the manifests of named places only, merged into what is already
+   *  read. A page about one package needs the places that package sits in
+   *  and nothing else — asking for every scope would put the machine's
+   *  whole project list behind one package's mark. */
+  loadPlaces: (scopes: Scope[]) => Promise<void>;
   edit: (change: (draft: Draft) => Draft) => void;
   save: () => Promise<void>;
 }
+
+/** Each named scope's saved manifest, keyed by scope. A read that fails is
+ *  left out rather than recorded as an empty manifest: a place nobody could
+ *  read is not a place holding nothing, and the marks tell them apart. */
+const manifestsOf = async (scopes: Scope[]): Promise<Record<string, Draft>> => {
+  const loaded = await Promise.all(
+    scopes.map((scope) => commands.getManifest(scope)),
+  );
+  const saved: Record<string, Draft> = {};
+  for (const [index, response] of loaded.entries()) {
+    if (response.status !== "ok") continue;
+    saved[scopeKey(scopes[index])] = response.data.manifest
+      ? toDraft(response.data.manifest)
+      : emptyDraft();
+  }
+  return saved;
+};
 
 export const useEditorStore = create<EditorState>((set, get) => {
   const load = async () => {
@@ -153,17 +175,14 @@ export const useEditorStore = create<EditorState>((set, get) => {
         { scope: "global" },
         ...projects.map((root) => ({ scope: "project" as const, root })),
       ];
-      const loaded = await Promise.all(
-        scopes.map((scope) => commands.getManifest(scope)),
-      );
-      const saved: Record<string, Draft> = {};
-      for (const [index, response] of loaded.entries()) {
-        if (response.status !== "ok") continue;
-        saved[scopeKey(scopes[index])] = response.data.manifest
-          ? toDraft(response.data.manifest)
-          : emptyDraft();
-      }
-      set({ saved });
+      // Replaced, not merged: this is the whole list, so a scope that has
+      // gone leaves with it.
+      set({ saved: await manifestsOf(scopes) });
+    },
+
+    loadPlaces: async (scopes) => {
+      const read = await manifestsOf(scopes);
+      set((state) => ({ saved: { ...state.saved, ...read } }));
     },
 
     edit: (change) => {

@@ -7,6 +7,7 @@ import type {
   Manifest_Serialize,
   ObservedItem,
   Scope,
+  UpdateRow,
 } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
@@ -117,7 +118,34 @@ const openPage = async (
 const editElsewhere = (scope: Project) =>
   act(() => useEditorStore.getState().setScope(scope));
 
-const title = (host: HTMLElement) => host.querySelector("h1")?.textContent;
+const header = (host: HTMLElement) => host.querySelector("header")?.textContent;
+
+/** What the Updates read says about gh in one place: nothing hand-edited
+ *  and nothing forked. Without a row a place's hand-edit state is unread,
+ *  and the mark counts only places somebody has looked at. */
+const updateRow = (scope: Project): UpdateRow => ({
+  scope,
+  kind: "skill",
+  name: "gh",
+  source: "cat",
+  repo: "o/r",
+  repoIdentity: "o/r",
+  current: null,
+  latest: null,
+  updateAvailable: false,
+  pinned: false,
+  holdOwner: null,
+  ignored: false,
+  blockedByLocalEdit: false,
+  editedHarnesses: [],
+  forkableHarness: null,
+  canDiscard: false,
+  canTakeLatest: false,
+  derived: false,
+  forked: false,
+  mixed: false,
+  removedUpstream: false,
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -263,33 +291,59 @@ describe("the package page's safety block", () => {
   });
 });
 
-// The header names a place, and the editor is pointed wherever the
-// Customize tab was last used. Those are different places the moment the
-// tab's project chip is clicked, and the mark has to keep answering for
-// the one the page is about.
-describe("the package page's header mark", () => {
-  it("still names this place after the editor moves to another", async () => {
-    const host = await openPage(VG, [VG, HYPR], {
-      [scopeKey(VG)]: CUSTOMIZED,
-      [scopeKey(HYPR)]: PLAIN,
+// The page names a place; the mark is about the package. It has to say
+// the same thing the package's Library row says, wherever the page was
+// opened from and wherever the editor is pointed — those are the two ways
+// the same package used to get two different answers.
+describe("the package page's mark", () => {
+  beforeEach(() => {
+    useUpdatesStore.setState({
+      rows: [updateRow(VG), updateRow(HYPR)],
+      loaded: true,
     });
-    expect(title(host)).toContain("Customized in vg");
-
-    await editElsewhere(HYPR);
-    expect(useEditorStore.getState().scope).toEqual(HYPR);
-    expect(title(host)).toContain("Customized in vg");
   });
 
-  it("does not borrow the mark of the place the editor moved to", async () => {
+  it("counts every place, not the one the page was opened at", async () => {
+    const host = await openPage(VG, [VG, HYPR], {
+      [scopeKey(VG)]: CUSTOMIZED,
+      [scopeKey(HYPR)]: CUSTOMIZED,
+    });
+    await settle();
+    expect(header(host)).toContain(
+      "Customized in vg and hyprtrade · 2 of 2 projects",
+    );
+  });
+
+  it("says so about a place the page was not opened at", async () => {
     const host = await openPage(VG, [VG, HYPR], {
       [scopeKey(VG)]: PLAIN,
       [scopeKey(HYPR)]: CUSTOMIZED,
     });
-    expect(title(host)).not.toContain("Customized");
+    await settle();
+    expect(header(host)).toContain("Customized in hyprtrade · 1 of 2 projects");
+  });
+
+  it("stands still while the editor moves to another place", async () => {
+    const host = await openPage(VG, [VG, HYPR], {
+      [scopeKey(VG)]: CUSTOMIZED,
+      [scopeKey(HYPR)]: PLAIN,
+    });
+    await settle();
+    const said = "Customized in vg · 1 of 2 projects";
+    expect(header(host)).toContain(said);
 
     await editElsewhere(HYPR);
-    expect(useEditorStore.getState().draft).toEqual(CUSTOMIZED);
-    expect(title(host)).not.toContain("Customized");
+    expect(useEditorStore.getState().scope).toEqual(HYPR);
+    expect(header(host)).toContain(said);
+  });
+
+  it("says nothing where no place holds anything", async () => {
+    const host = await openPage(VG, [VG, HYPR], {
+      [scopeKey(VG)]: PLAIN,
+      [scopeKey(HYPR)]: PLAIN,
+    });
+    await settle();
+    expect(header(host)?.includes("Customized")).toBe(false);
   });
 });
 

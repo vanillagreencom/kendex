@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Scope, UpdateRow } from "@/bindings";
 import { customizedLine } from "@/lib/copy-customize";
 import type { Draft } from "@/lib/editor-draft";
-import { libraryMark } from "@/lib/place-marks";
+import { packageMark } from "@/lib/place-marks";
 import {
   customizedHere,
   manifestsForEditing,
@@ -156,7 +156,7 @@ describe("customizedHere", () => {
       manifests: { "/work/vg": empty() },
       rows: [row(VG, { blockedByLocalEdit: true })],
     });
-    const mark = libraryMark(placeStandings(s, "skill", "gh", [VG]));
+    const mark = packageMark(placeStandings(s, "skill", "gh", [VG]));
     expect(mark?.label).toBe("Customized in vg");
     expect(mark?.why).toBe("edited");
     expect(customizedHere(s, VG)).toMatchObject([

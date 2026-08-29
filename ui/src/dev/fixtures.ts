@@ -22,7 +22,12 @@ import { harnesses, items } from "./fixture-observed";
 import { provenance } from "./fixture-provenance";
 import { ACME, API } from "./fixture-scopes";
 
-export { ACME, API, AVAILABLE_SKILLS } from "./fixture-scopes";
+export {
+  ACME,
+  API,
+  AUTOMATIC_SKILLS,
+  AVAILABLE_SKILLS,
+} from "./fixture-scopes";
 
 export interface MockState {
   settings: AppSettings;

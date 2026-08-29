@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { Scope } from "@/bindings";
+import { USER_LEVEL_PLACE } from "@/lib/copy-updates";
 import type { PlaceStanding } from "./customized-places";
-import { headerMark, libraryMark } from "./place-marks";
+import { packageMark } from "./place-marks";
 
 const GLOBAL: Scope = { scope: "global" };
 const VG: Scope = { scope: "project", root: "/work/vg" };
 const HYPR: Scope = { scope: "project", root: "/work/hyprtrade" };
+const KENDEX: Scope = { scope: "project", root: "/work/kendex" };
 
 const mine = (scope: Scope): PlaceStanding => ({
   scope,
@@ -23,52 +25,66 @@ const unknown = (scope: Scope): PlaceStanding => ({
   why: null,
 });
 
-describe("libraryMark", () => {
+describe("packageMark", () => {
   it("names the place and counts the rest", () => {
-    const got = libraryMark([stock(GLOBAL), mine(VG), stock(HYPR)]);
+    const got = packageMark([stock(GLOBAL), mine(VG), stock(HYPR)]);
     expect(got?.label).toBe("Customized in vg · 1 of 3 places");
     expect(got?.goTo).toEqual(VG);
   });
 
   it("names the place without a count when there is only one", () => {
-    expect(libraryMark([mine(VG)])?.label).toBe("Customized in vg");
+    expect(packageMark([mine(VG)])?.label).toBe("Customized in vg");
   });
 
   it("says nothing where nothing is customized", () => {
-    expect(libraryMark([stock(GLOBAL), stock(VG)])).toBeNull();
+    expect(packageMark([stock(GLOBAL), stock(VG)])).toBeNull();
   });
 
   // A count over places nobody read is a number with no meaning behind it.
   it("drops the count while a place is unread", () => {
-    const got = libraryMark([mine(VG), unknown(HYPR)]);
+    const got = packageMark([mine(VG), unknown(HYPR)]);
     expect(got?.label).toBe("Customized in vg");
   });
 
   it("names both places and leads nowhere in particular", () => {
-    const got = libraryMark([mine(VG), mine(HYPR), stock(GLOBAL)]);
+    const got = packageMark([mine(VG), mine(HYPR), stock(GLOBAL)]);
     expect(got?.label).toBe("Customized in vg and hyprtrade · 2 of 3 places");
     expect(got?.goTo).toBeNull();
   });
 });
 
-describe("headerMark", () => {
-  // The header names a place, so its badge answers for that place — not
-  // for whichever place the package happens to be customized in.
-  it("answers for the place the page is showing", () => {
-    const standings = [mine(VG), stock(HYPR)];
-    expect(headerMark(standings, VG)?.label).toBe("Customized in vg");
-    expect(headerMark(standings, HYPR)).toBeNull();
+// The bug this rule was written for: a Library row said "3 of 3 places"
+// while the package's own header said "Customized in hyprtrade", and
+// nothing on either told the reader they answered different questions.
+describe("one rule wherever the mark is drawn", () => {
+  it("answers the same for a package however the page was opened at it", () => {
+    const standings = [mine(HYPR), mine(KENDEX), mine(VG)];
+    const label = "Customized in hyprtrade and kendex and vg · 3 of 3 projects";
+    expect(packageMark(standings)?.label).toBe(label);
+    // The same standings read in any order are the same fact about the
+    // package; nothing here takes a place to answer about.
+    expect(packageMark([...standings].reverse())?.label).toContain(
+      "3 of 3 projects",
+    );
+  });
+});
+
+describe("the word a count is in", () => {
+  it("calls a set of projects projects", () => {
+    expect(packageMark([mine(VG), stock(HYPR)])?.label).toBe(
+      "Customized in vg · 1 of 2 projects",
+    );
   });
 
-  // The place it names is the page the reader is on, so a control here
-  // would look like a way somewhere and do nothing.
-  it("offers no destination: the place it names is the page itself", () => {
-    expect(headerMark([mine(VG)], VG)?.goTo).toBeNull();
-  });
-
-  it("finds the place by value, not by identity", () => {
-    const got = headerMark([mine(VG)], { scope: "project", root: "/work/vg" });
-    expect(got?.label).toBe("Customized in vg");
+  // The personal scope is not a project, so the set it is in is mixed and
+  // takes the word the rest of the app uses for a mixed set.
+  it("calls a set holding the personal scope places", () => {
+    expect(packageMark([mine(VG), stock(GLOBAL)])?.label).toBe(
+      "Customized in vg · 1 of 2 places",
+    );
+    expect(packageMark([mine(GLOBAL), stock(VG)])?.label).toBe(
+      `Customized in ${USER_LEVEL_PLACE} · 1 of 2 places`,
+    );
   });
 });
 
@@ -78,16 +94,9 @@ const CLIENT_A: Scope = { scope: "project", root: "/work/client" };
 const CLIENT_B: Scope = { scope: "project", root: "/personal/client" };
 
 describe("places that share a folder name", () => {
-  it("names enough of the path to tell them apart on a row", () => {
-    const got = libraryMark([mine(CLIENT_A), stock(CLIENT_B)]);
+  it("names enough of the path to tell them apart", () => {
+    const got = packageMark([mine(CLIENT_A), stock(CLIENT_B)]);
     expect(got?.label).toContain("work/client");
     expect(got?.label).not.toContain("personal/client");
-  });
-
-  it("tells them apart in the header too", () => {
-    const standings = [mine(CLIENT_A), stock(CLIENT_B)];
-    expect(headerMark(standings, CLIENT_A)?.label).toBe(
-      "Customized in work/client",
-    );
   });
 });

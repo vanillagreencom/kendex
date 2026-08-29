@@ -27,7 +27,7 @@ import {
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { isNarrowed, UNFILTERED } from "@/lib/library-handoff";
 import { useLibraryStandings } from "@/lib/library-standings";
-import { libraryMark } from "@/lib/place-marks";
+import { packageMark } from "@/lib/place-marks";
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/stores/editor";
 import {
@@ -166,7 +166,7 @@ export function InstalledView() {
             ref={scroller}
             className="min-w-0 flex-1 overflow-y-auto pr-2 [scrollbar-gutter:stable]"
           >
-            {groups.some((g) => libraryMark(standingsFor(g))) ? (
+            {groups.some((g) => packageMark(standingsFor(g))) ? (
               <LibraryLegend />
             ) : null}
             <Table>
@@ -195,7 +195,7 @@ export function InstalledView() {
                         group.name,
                         groupScopes(group),
                       )}
-                      mark={libraryMark(standingsFor(group))}
+                      mark={packageMark(standingsFor(group))}
                       forkedIn={standingsFor(group)
                         .filter((s) => s.why === "forked")
                         .map((s) => s.scope)}

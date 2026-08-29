@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useState } from "react";
+import { StatusDot } from "@/components/status-dot";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -7,17 +8,39 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { CUSTOMIZED_MARK } from "@/lib/copy-customize";
+import { cn } from "@/lib/utils";
 
 export function Field({
   label,
+  set = false,
   children,
 }: {
   label: string;
+  /** This field holds a value of the reader's. Marked on the label, not
+   *  in the box: every box carries a placeholder example, so a place
+   *  customized only through Settings otherwise reads as untouched until
+   *  someone compares the grid field by field against the examples. */
+  set?: boolean;
   children: ReactNode;
 }) {
   return (
     <div className="space-y-1">
-      <p className="text-xs text-muted-foreground">{label}</p>
+      <p
+        className={cn(
+          "flex items-center gap-1.5 text-xs",
+          set ? "text-customized" : "text-muted-foreground",
+        )}
+      >
+        {label}
+        {set ? (
+          <>
+            <StatusDot tone="customized" className="size-1.5" />
+            {/* Colour is never the only carrier of the fact. */}
+            <span className="sr-only">{CUSTOMIZED_MARK}</span>
+          </>
+        ) : null}
+      </p>
       {children}
     </div>
   );

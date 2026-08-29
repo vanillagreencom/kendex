@@ -98,7 +98,7 @@ export function PackagePage() {
     ),
   );
 
-  const mark = usePackageMark(group, ref?.scope ?? null);
+  const mark = usePackageMark(group);
   // The package can still be installed elsewhere while this place has no
   // copy of it — a page about a place that does not have it has nothing
   // to show and no actions that would land anywhere.

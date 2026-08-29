@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Scope } from "@/bindings";
+import type { Scope, UpdateRow } from "@/bindings";
 import { groupItems } from "@/lib/derive";
 import { markFor } from "./package-mark";
 
@@ -21,6 +21,31 @@ const item = (scope: Scope) => ({
 
 const group = groupItems([item(VG), item(HYPR)] as never)[0];
 
+// Both places have been read for hand edits and forks, so a count over
+// them is a count over places somebody looked at.
+const rows = [VG, HYPR].map(
+  (scope) =>
+    ({
+      scope,
+      kind: "skill",
+      name: "gh",
+      source: "cat",
+      repo: "o/r",
+      repoIdentity: "o/r",
+      current: null,
+      latest: null,
+      updateAvailable: false,
+      pinned: false,
+      holdOwner: null,
+      ignored: false,
+      blockedByLocalEdit: false,
+      editedHarnesses: [],
+      forkableHarness: null,
+      canDiscard: false,
+      forked: false,
+    }) as unknown as UpdateRow,
+);
+
 // Customized in vg and nowhere else.
 const saved = {
   "/work/vg": { schema: 1, install: {}, "skill-instructions": { gh: "mine" } },
@@ -28,13 +53,20 @@ const saved = {
 };
 
 describe("markFor", () => {
-  // The page reads this with the place it is about. Handed the editor's
-  // open place instead, the same package answers differently — which is
-  // what makes the argument worth pinning.
-  it("answers for the place it is given", () => {
-    expect(markFor(saved as never, [], true, group, VG)?.label).toBe(
-      "Customized in vg",
+  // The page names a place; the mark is about the package. Answering for
+  // the place the page happened to open at is what let the Library row and
+  // the package's header state two different facts under the same words.
+  it("answers for the package, not for the place the page opened at", () => {
+    expect(markFor(saved as never, rows, true, group)?.label).toBe(
+      "Customized in vg · 1 of 2 projects",
     );
-    expect(markFor(saved as never, [], true, group, HYPR)).toBeNull();
+  });
+
+  it("says nothing where no place holds anything", () => {
+    const untouched = {
+      "/work/vg": { schema: 1, install: {} },
+      "/work/hyprtrade": { schema: 1, install: {} },
+    };
+    expect(markFor(untouched as never, rows, true, group)).toBeNull();
   });
 });

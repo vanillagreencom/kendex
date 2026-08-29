@@ -4,7 +4,7 @@ import type {
   Manifest_Serialize,
   Scope,
 } from "@/bindings";
-import { AVAILABLE_SKILLS } from "./fixtures";
+import { AUTOMATIC_SKILLS, AVAILABLE_SKILLS } from "./fixtures";
 import {
   DECL_KEYS,
   declTable,
@@ -162,6 +162,7 @@ export const auditHandlers: Record<string, Handler> = {
       declaredAgents: Object.keys(m?.agents ?? {}),
       declaredSkills: Object.keys(m?.skills ?? {}),
       availableSkills: AVAILABLE_SKILLS,
+      automaticSkills: AUTOMATIC_SKILLS,
       harnesses: m?.install.harnesses ?? ["claude"],
       hookEvents: HOOK_EVENTS,
     };
