@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use super::{PlannedOp, journal};
+use super::{PlannedOp, journal, landing};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 
@@ -26,6 +26,10 @@ pub(super) fn run_journaled(
     }
     let journal_dir = journal::journal_dir_for(&env.journal_dir(), key);
     let mut touched: Vec<PathBuf> = ops.iter().flat_map(|p| p.op.touched()).collect();
+    // Before the pre-images, so a path already moved never has somebody
+    // else's bytes copied into this journal on its behalf. It settles
+    // nothing for the ops themselves: each is asked again in the loop.
+    touched.iter().try_for_each(|path| landing::unmoved(path))?;
     touched.extend(created_dir_roots(&touched));
     journal::write(&journal_dir, &touched)?;
 
@@ -40,7 +44,11 @@ pub(super) fn run_journaled(
                 cause: Box::new(error),
             });
         }
-        if let Err(error) = planned.op.run(env) {
+        // Asked here rather than once before the loop: an op ahead of
+        // this one can create the link this one's path would then be
+        // reached through, and a check that ran before either of them saw
+        // a parent that did not exist yet.
+        if let Err(error) = landing::op_unmoved(&planned.op).and_then(|()| planned.op.run(env)) {
             journal::rollback_mutated(&journal_dir, &mutated_before_failure(ops, index, &error))?;
             return Err(CoreError::RolledBack {
                 reason: format!("'{}' failed: {error}", planned.description),
@@ -63,7 +71,12 @@ pub(super) fn run_journaled(
 /// paths are restored too.
 fn mutated_before_failure(ops: &[PlannedOp], index: usize, error: &CoreError) -> Vec<PathBuf> {
     let ran = match error {
-        CoreError::PlanStale { .. } | CoreError::Injected => &ops[..index],
+        // A target that moved is refused before the op is handed the
+        // path, so op `index` mutated nothing, the same as a stale
+        // precondition.
+        CoreError::PlanStale { .. } | CoreError::TargetMoved { .. } | CoreError::Injected => {
+            &ops[..index]
+        }
         _ => &ops[..=index],
     };
     ran.iter().flat_map(|p| p.op.touched()).collect()

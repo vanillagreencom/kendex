@@ -208,6 +208,13 @@ fn rollback_where(dir: &Path, restore: impl Fn(&Path) -> bool) -> Result<()> {
         if !restore(&entry.path) {
             continue;
         }
+        // A pre-image goes back where it was taken from. The journal holds
+        // the landing an apply recorded, so a path that no longer lands on
+        // itself is reached through a directory somebody has changed since,
+        // and restoring there would put these bytes somewhere they never
+        // came from. Refused, leaving the journal pending for inspection,
+        // the way a restore set that will not parse is.
+        super::landing::unmoved(&entry.path)?;
         remove_any(&entry.path)?;
         match &entry.state {
             PreState::Absent => {}

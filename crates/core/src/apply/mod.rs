@@ -96,9 +96,6 @@ pub struct ApplyOutcome {
 pub fn execute(env: &Env, plan: &Plan, fail_after: Option<usize>) -> Result<ApplyOutcome> {
     let _guard = lock_scope(env, &plan.scope)?;
     let recovered_first = recover(env, &plan.scope)?;
-    // Under the lock and after recovery, because both can move what the
-    // directories on the way to a target point at.
-    landing::check(&plan.scope, &plan.ops)?;
     let applied = run_journaled(env, &plan.ops, &scope_key(&plan.scope), fail_after)?;
     // The scope just changed; a drift snapshot describing the old state
     // would send the next session chasing drift that no longer exists.

@@ -69,6 +69,18 @@ fn link_agents_dir(f: &Fixture, target: &Path) {
     std::os::unix::fs::symlink(target, f.project.join(".agents")).unwrap();
 }
 
+/// The place a refused op's path now reaches, when that is why it was
+/// refused.
+fn moved_target(error: &CoreError) -> Option<PathBuf> {
+    match error {
+        // Refused as its op's turn came, so the transaction rolled back
+        // what ran before it.
+        CoreError::RolledBack { cause, .. } => moved_target(cause),
+        CoreError::TargetMoved { now, .. } => Some(now.clone()),
+        _ => None,
+    }
+}
+
 /// Where the plan says this skill's tree goes.
 fn planned_tree(plan: &apply::Plan) -> Vec<PathBuf> {
     plan.ops
@@ -166,5 +178,171 @@ fn a_recorded_path_that_now_lands_outside_takes_nothing_with_it() {
     assert_eq!(
         fs::read_to_string(victim.join("skills/ship/SKILL.md")).unwrap(),
         "Not kendex's.\n"
+    );
+}
+
+/// Between the plan and the apply the project directory is renamed and a
+/// link left in its place. Every planned path still spells the old
+/// project, so nothing about it reads as outside a scope root; what says
+/// so is that the paths no longer land where the plan put them.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_project_directory_swapped_for_a_link_stops_the_apply() {
+    let f = fixture();
+    let report = audit(&f.env, &f.scope).unwrap();
+
+    let moved = f.home.join("moved");
+    let victim = f.home.join("victim");
+    fs::create_dir_all(&victim).unwrap();
+    fs::rename(&f.project, &moved).unwrap();
+    std::os::unix::fs::symlink(&victim, &f.project).unwrap();
+
+    let refused = apply::execute(&f.env, &report.plan, None).unwrap_err();
+    assert!(
+        matches!(moved_target(&refused), Some(now) if now.starts_with(&victim)),
+        "the refusal names where the write would have gone: {refused}"
+    );
+    assert!(
+        !victim.join(".agents").exists(),
+        "nothing was written through the replacement link"
+    );
+}
+
+/// The same swap, to a folder still inside the project. Containment holds
+/// the whole way through, so only comparing against the landing the plan
+/// showed catches it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_ancestor_swapped_for_a_link_inside_the_project_stops_the_apply() {
+    let f = fixture();
+    let report = audit(&f.env, &f.scope).unwrap();
+
+    let elsewhere = f.project.join("elsewhere");
+    fs::create_dir_all(&elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, f.project.join(".agents")).unwrap();
+
+    let refused = apply::execute(&f.env, &report.plan, None).unwrap_err();
+    assert_eq!(
+        moved_target(&refused),
+        Some(elsewhere.join("skills/ship")),
+        "the refusal names the position inside the project the write moved to: {refused}"
+    );
+    assert!(
+        !elsewhere.join("skills").exists(),
+        "the write did not follow the link"
+    );
+}
+
+/// One op in the plan makes the link the next op's path would be reached
+/// through. Nothing is wrong when the plan is made, which is why the
+/// question is asked again as each op's turn comes.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_link_an_earlier_op_creates_stops_the_op_behind_it() {
+    let f = fixture();
+    let victim = f.home.join("victim");
+    fs::create_dir_all(&victim).unwrap();
+    let link = f.project.join("link");
+
+    let plan = apply::Plan::landed(
+        f.scope.clone(),
+        vec![
+            apply::PlannedOp {
+                description: "make the link".into(),
+                op: Op::Symlink {
+                    link: link.clone(),
+                    target: victim.clone(),
+                    pre: apply::Pre::Absent,
+                },
+            },
+            apply::PlannedOp {
+                description: "write behind it".into(),
+                op: Op::WriteFile {
+                    path: link.join("taken"),
+                    bytes: b"kendex's".to_vec(),
+                    pre: apply::Pre::Absent,
+                },
+            },
+        ],
+    )
+    .unwrap();
+
+    let refused = apply::execute(&f.env, &plan, None).unwrap_err();
+    assert_eq!(
+        moved_target(&refused),
+        Some(victim.join("taken")),
+        "the second op is refused by where its path now reaches: {refused}"
+    );
+    assert!(!victim.join("taken").exists(), "nothing was written there");
+    assert!(
+        !link.exists() && !link.is_symlink(),
+        "the first op rolled back"
+    );
+}
+
+/// A link the landing moved has to keep meaning what it meant. Its text is
+/// read from the parent it sits in, and landing gave it another one.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_link_the_landing_moved_still_reaches_the_tree_it_named() {
+    let f = fixture();
+    let shared = f.project.join("shared");
+    fs::create_dir_all(&shared).unwrap();
+    fs::create_dir_all(f.project.join(".claude")).unwrap();
+    std::os::unix::fs::symlink(&shared, f.project.join(".claude/skills")).unwrap();
+
+    let report = audit(&f.env, &f.scope).unwrap();
+    apply::execute(&f.env, &report.plan, None).unwrap();
+
+    let landed = shared.join("ship");
+    assert!(
+        landed.is_symlink(),
+        "the link landed through .claude/skills"
+    );
+    let destination = fs::canonicalize(&landed).unwrap();
+    assert_eq!(
+        destination,
+        fs::canonicalize(f.project.join(".agents/skills/ship")).unwrap(),
+        "it reaches the tree it was made to reach"
+    );
+    assert_eq!(
+        fs::read_to_string(landed.join("SKILL.md")).unwrap(),
+        "---\nname: ship\ndescription: ship\n---\n\nShip the branch.\n",
+    );
+}
+
+/// An apply that never finished leaves pre-images to put back. They go
+/// back where they were taken from, so a directory swapped for a link in
+/// the meantime stops the restore rather than sending somebody's bytes
+/// through it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_restore_whose_path_moved_is_refused_and_leaves_the_journal() {
+    let f = fixture();
+    let held = f.project.join(".agents/skills/ship/SKILL.md");
+    put(&held, "the bytes an apply would put back\n");
+
+    // What an apply that died mid-write leaves behind.
+    let dir = apply::journal::journal_dir_for(&f.env.journal_dir(), &apply::scope_key(&f.scope));
+    apply::journal::write(&dir, &[held.clone()]).unwrap();
+
+    let victim = f.home.join("victim");
+    fs::create_dir_all(&victim).unwrap();
+    fs::remove_dir_all(f.project.join(".agents")).unwrap();
+    std::os::unix::fs::symlink(&victim, f.project.join(".agents")).unwrap();
+
+    let refused = apply::recover(&f.env, &f.scope).unwrap_err();
+    assert_eq!(
+        moved_target(&refused),
+        Some(victim.join("skills/ship/SKILL.md")),
+        "the restore is refused by where the path now reaches: {refused}"
+    );
+    assert!(
+        !victim.join("skills").exists(),
+        "nothing was restored through the link"
+    );
+    assert!(
+        apply::journal::pending(&dir),
+        "the journal stands, for a person to look at"
     );
 }
