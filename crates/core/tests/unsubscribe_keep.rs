@@ -7,6 +7,7 @@ use std::path::Path;
 
 use kendex_core::apply;
 use kendex_core::env::{Env, FakeOs};
+use kendex_core::error::CoreError;
 use kendex_core::manifest::{self, ManifestFile};
 use kendex_core::model::Scope;
 
@@ -27,8 +28,37 @@ fn world(
     extra_sources: &str,
 ) -> (tempfile::TempDir, Env, Scope, std::path::PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
-    let env = Env::fake(home, FakeOs::Linux);
+    let home = tmp.path().to_path_buf();
+    world_at(tmp, home, declarations, extra_sources)
+}
+
+/// [`world`], with every path reaching the home through a symlink — the
+/// spelling macOS hands every test anyway (`/var` → `/private/var` fronts
+/// its temp directories), reproduced here so the canonical spelling the
+/// engine speaks and the one the caller holds differ on every platform.
+#[allow(clippy::unwrap_used)]
+fn world_via_link(
+    declarations: &str,
+    extra_sources: &str,
+) -> (tempfile::TempDir, Env, Scope, std::path::PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let real = tmp.path().join("real");
+    fs::create_dir_all(&real).unwrap();
+    let home = tmp.path().join("via");
+    std::os::unix::fs::symlink(&real, &home).unwrap();
+    world_at(tmp, home, declarations, extra_sources)
+}
+
+/// The fixture body both worlds share; `home` is the spelling every path
+/// handed back speaks.
+#[allow(clippy::unwrap_used)]
+fn world_at(
+    tmp: tempfile::TempDir,
+    home: std::path::PathBuf,
+    declarations: &str,
+    extra_sources: &str,
+) -> (tempfile::TempDir, Env, Scope, std::path::PathBuf) {
+    let env = Env::fake(&home, FakeOs::Linux);
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();
     let catalog = home.join("catalog");
@@ -108,5 +138,57 @@ fn keeping_an_agent_carries_the_catalogs_mapping_tables() {
         settled.plan.is_empty(),
         "a kept scope must audit clean: {:?}",
         settled.plan.ops
+    );
+}
+
+/// Keeping a marketplace's packages writes source-form bytes into the
+/// local source, and the slot it writes to has to be one that source can
+/// read back. A symlink among the components below the local source's
+/// root — its `skills` directory here — sends the write to the far end of
+/// the link, outside anything kendex manages, where no later read of the
+/// source finds the package the keep was for. Refused before an op is
+/// planned, with nothing written through the link.
+///
+/// Built on the world whose home is reached through a symlink: detach
+/// canonicalizes the scope and the sealed reader probes from the
+/// canonicalized root, so an assertion written in the caller's spelling
+/// would pass on Linux and fail on the macOS lane alone.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn keeping_a_package_refuses_a_local_source_reached_through_a_link() {
+    let (_tmp, env, scope, catalog) = world_via_link("[skills.gh]\nsource = \"cat\"\n", "");
+    skill(&catalog, "gh", "Upstream.");
+    apply_now(&env, &scope);
+
+    // The component above the slot — not the slot itself — is the link.
+    let home = catalog.parent().unwrap();
+    let outside = home.join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    let local = home.join("dev/app/.kendex-local");
+    fs::create_dir_all(&local).unwrap();
+    let skills = local.join("skills");
+    std::os::unix::fs::symlink(&outside, &skills).unwrap();
+    let before = fs::read_to_string(manifest::manifest_path(&env, &scope)).unwrap();
+
+    let refused = kendex_core::engine::detach::source(&env, &scope, "cat").unwrap_err();
+    // The reader probes from the canonicalized local-source root, so that
+    // is the spelling the refusal names. The root is a real directory; the
+    // component below it is the link, and canonicalizing that would follow
+    // it.
+    let named = local.canonicalize().unwrap().join("skills");
+    assert!(
+        matches!(&refused, CoreError::SourceEscape { path, reason }
+            if path == &named && reason.contains("symlink")),
+        "the refusal must name the link it stopped at: {refused:?}"
+    );
+    assert!(
+        !outside.join("gh").exists(),
+        "the keep wrote through the link, at the far end of it"
+    );
+    assert!(skills.is_symlink(), "the link itself was replaced");
+    assert_eq!(
+        fs::read_to_string(manifest::manifest_path(&env, &scope)).unwrap(),
+        before,
+        "a refused keep leaves the subscription declared"
     );
 }

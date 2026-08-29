@@ -499,3 +499,68 @@ fn forking_the_users_own_content_is_refused() {
     assert_eq!(manifest_text(&w), before);
     assert!(!w.home.join("app/.kendex-local/skills/here").exists());
 }
+
+/// A fork in place captures under the name the item already has, so it
+/// never passes the vacancy check that asks a new name whether its slot is
+/// reachable. `Pre::Absent` refuses a link wearing the item's own name, but
+/// a link one component above — the `skills` directory of the local source
+/// — leaves the slot absent past it, and the captured tree would land at
+/// the far end, outside anything kendex manages. Refused before an op is
+/// planned, with nothing written through the link.
+/// Built on the world whose home is itself reached through a link, the
+/// spelling macOS hands every test: the sealed reader probes from the
+/// canonicalized root, so an assertion in the caller's spelling would pass
+/// on Linux and fail on the macOS lane alone.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_local_source_reached_through_a_link_refuses_the_fork() {
+    let w = world_via_link();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    commit(&w.upstream, "one");
+    declare(&w, "[skills.gh]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    fs::write(
+        skill_file(&w),
+        "---\nname: gh\ndescription: mine\n---\nMine.\n",
+    )
+    .unwrap();
+
+    // The component above the slot — not the slot itself — is the link.
+    let outside = w.home.join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    fs::create_dir_all(w.home.join("app/.kendex-local")).unwrap();
+    let skills = w.home.join("app/.kendex-local/skills");
+    std::os::unix::fs::symlink(&outside, &skills).unwrap();
+    let before = manifest_text(&w);
+
+    let refused =
+        fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap_err();
+    // The reader probes from the canonicalized local-source root, so that
+    // is the spelling the refusal names. The root is a real directory; the
+    // component below it is the link, and canonicalizing that would follow
+    // it.
+    let named = w
+        .home
+        .join("app/.kendex-local")
+        .canonicalize()
+        .unwrap()
+        .join("skills");
+    assert!(
+        matches!(&refused, CoreError::SourceEscape { path, reason }
+            if path == &named && reason.contains("symlink")),
+        "the refusal must name the link it stopped at: {refused:?}"
+    );
+    assert!(
+        !outside.join("gh").exists(),
+        "the capture wrote through the link, at the far end of it"
+    );
+    assert!(skills.is_symlink(), "the link itself was replaced");
+    assert_eq!(manifest_text(&w), before);
+    assert!(
+        fs::read_to_string(skill_file(&w))
+            .unwrap()
+            .contains("Mine."),
+        "a refused fork must leave the edited install alone"
+    );
+}

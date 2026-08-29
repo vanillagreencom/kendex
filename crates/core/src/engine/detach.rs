@@ -295,10 +295,13 @@ fn effective_commit(lock: &crate::lock::Lock, item: &ClosureItem) -> Result<Opti
 }
 
 /// The path in the local source one detached item's source-form bytes are
-/// written to. A `plugin/item` name nests one directory level, the shape the
-/// local reader lists back.
-fn local_target(local_root: &std::path::Path, kind: ItemKind, name: &str) -> Result<PathBuf> {
-    Ok(match kind {
+/// written to, or why they may not be. A `plugin/item` name nests one
+/// directory level, the shape the local reader lists back. A symlink among
+/// the components below the local source's root puts the write outside the
+/// scope, where no later read of this source finds the kept package.
+fn local_target(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Result<PathBuf> {
+    let local_root = local_source_root(env, scope);
+    let target = match kind {
         ItemKind::Skill => local_root.join("skills").join(name),
         ItemKind::Agent => local_root.join("agents").join(format!("{name}.md")),
         ItemKind::Hook => local_root.join("hooks").join(format!("{name}.sh")),
@@ -310,7 +313,11 @@ fn local_target(local_root: &std::path::Path, kind: ItemKind, name: &str) -> Res
                 source_name: format!("detach does not support {} yet", other.name()),
             });
         }
-    })
+    };
+    if let Some(escape) = crate::source::slot_escapes(env, scope, &target)? {
+        return Err(escape);
+    }
+    Ok(target)
 }
 
 /// Unsubscribe but keep the packages: convert each installation to a local one
@@ -340,7 +347,6 @@ pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
         });
     }
 
-    let local_root = local_source_root(env, &scope);
     let mut ops = Vec::new();
     let mut carried: Vec<(String, AgentCarry)> = Vec::new();
     for item in &closure.items {
@@ -350,7 +356,7 @@ pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
         let commit = effective_commit(&lock, item)?;
         let (files, carry) = source_form(env, &scope, &manifest, item, commit.as_deref())?;
         carried.extend(carry.map(|carry| (item.name.clone(), carry)));
-        let target = local_target(&local_root, item.kind, &item.name)?;
+        let target = local_target(env, &scope, item.kind, &item.name)?;
         ops.extend(capture_to_local(item.kind, &item.name, &target, files)?);
     }
     // The catalog's own mapping tables shaped every rendering — skills the

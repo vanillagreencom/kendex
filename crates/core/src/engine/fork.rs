@@ -326,6 +326,12 @@ fn local_item(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> PathBuf {
 /// are captured under the same name, and the edited artifact itself goes
 /// to the trash — bound to the exact bytes just captured (invariant 7) —
 /// so the follow-up apply renders the fork in its place.
+///
+/// The slot has to be one this scope's local source can read back, asked
+/// here rather than at each caller: a fork in place has no new name to ask
+/// it of. `Pre::Absent` refuses a link wearing the item's own name, but a
+/// link one component above leaves the slot absent past it, and the
+/// capture lands at the far end, outside anything kendex manages.
 fn capture_ops(
     env: &Env,
     scope: &Scope,
@@ -335,6 +341,9 @@ fn capture_ops(
     captured: Capture,
 ) -> Result<Vec<PlannedOp>> {
     let local_item = local_item(env, scope, kind, name);
+    if let Some(escape) = crate::source::slot_escapes(env, scope, &local_item)? {
+        return Err(escape);
+    }
     let mut ops = Vec::new();
     if local_item.exists() {
         ops.push(PlannedOp {
