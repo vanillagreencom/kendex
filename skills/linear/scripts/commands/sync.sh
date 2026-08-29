@@ -76,7 +76,7 @@ sync_issues() {
                 updatedAt
                 archivedAt
                 trashed
-                comments { nodes { id body createdAt updatedAt user { name } } }
+                comments(first: 250) { pageInfo { hasNextPage } nodes { id body createdAt updatedAt user { name } } }
                 relations { nodes { id type relatedIssue { id identifier title state { name type } } } }
                 inverseRelations { nodes { id type issue { id identifier title state { name type } } } }
             }
@@ -130,6 +130,12 @@ extract_comments() {
         "$issues_file" 2>/dev/null | while IFS= read -r issue_id; do
         rm -f "$CACHE_DIR/comments/$issue_id.json" "$CACHE_DIR/comments/$issue_id.json.lock"
     done
+
+    # A full comment page leaves the rest unfetched and the cache carries no
+    # partial marker, so the sync names the issues whose comments are short.
+    local partial
+    partial=$(jq -r '[.[] | select(.comments.pageInfo.hasNextPage == true) | .identifier] | join(", ")' "$issues_file")
+    [[ -z "$partial" ]] || echo "Warning: comments truncated at the page cap for: $partial" >&2
 
     # Strip comments from issues to keep issues.json lean
     jq '[.[] | del(.comments)]' "$issues_file" > "$issues_file.tmp"

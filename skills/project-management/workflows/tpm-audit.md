@@ -31,13 +31,14 @@ Analyze issues and projects for relations, labels, hierarchy, placement, duplica
 
 **issues**: read the JSON file and extract `TRACKER` (plus `REPOSITORY` for github) from the delegation's `Tracker:` line or the file's `tracker` field — absent both, infer `github` from a `parent_issue` starting with `issue-`, else `linear` — along with `WORKTREE`, `PARENT_ISSUE`, `SOURCE`, `INPUT_ITEMS` from `items[]`, and the optional research-complete fields `blocked_issues`, `research_issue`, `research_ref`, `decision_ref`, and `hierarchy_contract` (binding — § 7.0).
 
-**Done and Cancelled issues are historical records.** Never recommend a change to their labels, agent, priority, or state. They still participate in relation analysis and duplicate detection; only Backlog, Todo, In Progress, and In Review issues are candidates for fixes.
+**Done and Canceled issues are historical records.** Never recommend a change to their labels, agent, priority, or state — whichever set they arrive in, they take no disposition. They participate in relation analysis and duplicate detection as § 1.5 comparison evidence, which is the only way a Canceled issue reaches the analysis at all. Only Backlog, Todo, In Progress, and In Review issues are candidates for fixes.
 
 ### 1.1.1 Resolve Team Scope
 
-**Skip if** TRACKER=github — a repository is one scope. Otherwise resolve the scope ([SKILL.md](../SKILL.md) § Execution Rules) before any cached read:
+**Skip if** TRACKER=github — a repository is one scope. Otherwise refresh the cache and resolve the scope ([SKILL.md](../SKILL.md) § Execution Rules) before any cached read:
 
 ```bash
+.agents/skills/linear/scripts/linear.sh sync --if-stale 15
 .agents/skills/linear/scripts/linear.sh auth-check
 .agents/skills/linear/scripts/linear.sh teams get [TEAM]
 ```
@@ -53,7 +54,7 @@ gh label list --repo [REPOSITORY] --limit 200 --json name,description     # TRAC
 
 `--limit 200` is a stated cap, not a page: a repository reaching it is analyzed against a truncated inventory, which the analysis notes in `analysis[]` and scopes itself to.
 
-Load the project taxonomy alongside it. A missing or stale Linear cache on this or any later read halts the analysis and reports that the caller must run `sync --reconcile` first ([SKILL.md](../SKILL.md) § Execution Rules) — never work around it with a partial or live-only read. Every `agent_mismatch`, `label_cooccurrence`, `recommended_issue.labels[]`, and `create_fields.labels[]` recommendation must be expressible against this live inventory. Issue labels only.
+Load the project taxonomy alongside it. Freshness is the § 1.1.1 refresh's job; what a cached read itself enforces is presence, so a missing Linear cache on this or any later read halts the analysis and reports that the caller must run `sync --reconcile` first ([SKILL.md](../SKILL.md) § Execution Rules) — never work around it with a partial or live-only read. Every `agent_mismatch`, `label_cooccurrence`, `recommended_issue.labels[]`, and `create_fields.labels[]` recommendation must be expressible against this live inventory. Issue labels only.
 
 ### 1.3 Fetch Projects
 
@@ -78,15 +79,26 @@ Both `--all-projects` fetches return every team; keep only the rows § 1.1.1 sco
 
 The cached Linear issue payload carries `blocks`, `blocked_by`, and `related`. GitHub: read relations from body links (`Blocks: #N`, `Blocked by: #N`, `Related: #N`, `Parent: #N`). Proposed items use their provided fields directly.
 
+### 1.4.1 Read Comments
+
+Comments carry what no listing does: an issue's scope changes, its supersession notes, and its partial-completion reports. `sync` writes them per issue and this is the workflow's only read of them. Read them for the § 1.4 input set here, and for the active rows of the § 1.5 comparison set as soon as that fetch returns — § 6.2 writes dispositions for those too:
+
+```bash
+.agents/skills/linear/scripts/linear.sh cache comments list [ISSUE_ID]   # one call per issue, TRACKER=linear
+gh issue view [N] --repo [REPOSITORY] --json comments                    # TRACKER=github
+```
+
+Per-issue is the shape the cache offers (`.cache/linear/comments/[ISSUE_ID].json`), and an issue with no comments reads as an empty list. A disposition written before its issue's comments were read rests on unsupported evidence, whatever the body says.
+
 ### 1.5 Fetch Comparison Set
 
 Fetch the full backlog in ONE command:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh cache issues list --all-projects --state "Backlog,Todo,In Progress,In Review,Done" --max
+.agents/skills/linear/scripts/linear.sh cache issues list --all-projects --state "Backlog,Todo,In Progress,In Review,Done,Canceled" --max
 ```
 
-Each row carries its own `project` name, empty for an issue with none. Discard every row outside the § 1.1.1 team scope before comparing anything against it — the § 6 sweep proposes cancellations from this set. Never loop `--project` over the projects from § 1.3. In team mode this is the § 1.4 input fetch with `Done` added.
+Each row carries its own `project` name, empty for an issue with none. Discard every row outside the § 1.1.1 team scope before comparing anything against it. Never loop `--project` over the projects from § 1.3. In team mode this is the § 1.4 input fetch with `Done` and `Canceled` added. `Canceled` is here as comparison evidence and nowhere else — a duplicate an issue already has, a relation it already carries, a child § 7.3 must count — never as an audit input. Neither state takes a disposition (§ 1.1), and the § 6 sweep proposes cancellations only from this set's active rows.
 
 **GitHub**:
 
@@ -189,7 +201,7 @@ A contract that does not match the code: re-evaluate the relation rather than re
 
 ### 5.3 Metadata Checks
 
-Skip Done and Cancelled issues throughout; their metadata is historical.
+Skip Done and Canceled issues throughout; their metadata is historical.
 
 | Check | Rule | Output |
 |-------|------|--------|
@@ -230,7 +242,7 @@ With `DECISION_REF` present, also detect issues the decision made unnecessary by
 **Below the bar.**
 
 1. Re-read every active issue in the comparison set as § 1.5 fetched it against the creation bar's first and third tests as they stand today (the second, coverage by other work, is not reapplied: an issue always covers itself).
-2. One that fails (the bar's own list, not restated here) is a cancellation with confidence 100 and evidence `{below_bar: true, test, who_hits_it}`: `test` names the failed test, `who_hits_it` is the one-line user story and how often a user meets it, written after reading the issue's body (on GitHub, `gh issue view <n>`; the § 1.5 list carries no body).
+2. One that fails (the bar's own list, not restated here) is a cancellation with confidence 100 and evidence `{below_bar: true, test, who_hits_it}`: `test` names the failed test, `who_hits_it` is the one-line user story and how often a user meets it, written after reading the issue's body and its § 1.4.1 comments (on GitHub, `gh issue view <n> --json body,comments`; the § 1.5 list carries neither).
 3. In project mode it is an `obsolete[]` entry; in issue mode it is the issue's own `issues[]` entry with `action: "cancel"` and that evidence in its `obsolete` field.
 4. The bar's two exceptions (a shipped-path security or data-loss defect; a critical-harm or financial-loss edge case) never go here on likelihood; the third test still applies to them.
 5. The code-verification rule above is for implementation-obsolete entries; a `below_bar` entry is verified by reading the body and, where it names a path, producer, or regression, checking that claim in the repository before the entry is written.
@@ -337,7 +349,7 @@ Hierarchy-contract items (§ 7.0) are never `skip`: keep `action: "create"` and 
 
 Otherwise, first match wins: creation bar failed → `skip` for a proposed item, `cancel` for an existing issue (§ 6.2 below the bar); in `obsolete[]` → `cancel`; the `remove` side of a `duplicates[]` pair → `skip` with the kept issue as target; in a `combine[]` `absorb[]` → `combine`; overlaps an existing issue → `expand` or `update` by scope delta; else `create` (proposed) or `valid` (existing).
 
-**Completed-issue guard**: `combine`, `expand`, and `update` never target a Done or Cancelled issue; new scope goes in a new issue with a `related` relation to the completed one.
+**Completed-issue guard**: `combine`, `expand`, and `update` never target a Done or Canceled issue; new scope goes in a new issue with a `related` relation to the completed one.
 
 For every `create`: populate `create_fields` per [audit-output.md](../schemas/audit-output.md) with the full `labels[]` from the input item or completed from § 1.2 taxonomy — an action that can only supply `agent`/`agent_label` is left blocked with a clear `reason`. Verify `supersedes[]` entries carry `identifier`, `title`, and `reason`, and set `summary.superseded` to the total. When `SOURCE == "research-complete"` and `RESEARCH_ISSUE` is set, add it to `add_relations.related[]` on every `create`.
 

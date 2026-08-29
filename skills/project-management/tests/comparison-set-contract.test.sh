@@ -17,20 +17,23 @@ fail() {
   exit 1
 }
 
-batch_cmd='.agents/skills/linear/scripts/linear.sh cache issues list --all-projects --state "Backlog,Todo,In Progress,In Review,Done" --max'
+batch_cmd_prefix='.agents/skills/linear/scripts/linear.sh cache issues list --all-projects --state '
 
-# check_section <file> <start> <end> <label> — the region holds exactly the
-# batch command and none of the loop shapes it replaced.
+# check_section <file> <start> <end> <label> <states> — the region holds
+# exactly the batch command over <states> and none of the loop shapes it
+# replaced. <states> is pinned per workflow: tpm-audit compares against the
+# historical record too, so its set carries Canceled and roadmap-plan's does
+# not, and neither is free to drift into the other.
 check_section() {
-  local file="$1" start="$2" end="$3" label="$4"
+  local file="$1" start="$2" end="$3" label="$4" states="$5"
   [[ -f "$file" ]] || fail "workflow not found: ${file#"$SKILL_DIR"/}"
 
   local section="$tmp/$label.md"
   sed -n "/$start/,/$end/p" "$file" >"$section"
   [[ -s "$section" ]] || fail "$label section could not be extracted"
 
-  grep -Fq -- "$batch_cmd" "$section" \
-    || fail "$label lost the single --all-projects comparison-set command"
+  grep -Fq -- "$batch_cmd_prefix\"$states\" --max" "$section" \
+    || fail "$label lost the single --all-projects comparison-set command over $states"
 
   local shape
   for shape in 'for each project' 'Run for each project' '--project "[PROJECT_NAME]"' 'for p in'; do
@@ -41,10 +44,20 @@ check_section() {
 }
 
 check_section "$SKILL_DIR/workflows/tpm-audit.md" \
-  '^### 1\.5 ' '^### 1\.6 ' tpm-audit
+  '^### 1\.5 ' '^### 1\.6 ' tpm-audit \
+  'Backlog,Todo,In Progress,In Review,Done,Canceled'
 
 check_section "$SKILL_DIR/workflows/tpm-roadmap-plan.md" \
-  '^### 1\.5 ' '^### 1\.6 ' tpm-roadmap-plan
+  '^### 1\.5 ' '^### 1\.6 ' tpm-roadmap-plan \
+  'Backlog,Todo,In Progress,In Review,Done'
+
+# Canceled is comparison evidence only. tpm-audit's INPUT fetches must never
+# pick it up — an audit that put Canceled issues up for disposition would
+# recommend changes to closed history.
+sed -n '/^### 1\.4 /,/^### 1\.4\.1 /p' "$SKILL_DIR/workflows/tpm-audit.md" >"$tmp/input.md"
+[[ -s "$tmp/input.md" ]] || fail 'the tpm-audit § 1.4 input section could not be extracted'
+grep -Fq -- 'Canceled' "$tmp/input.md" \
+  && fail 'tpm-audit § 1.4 admits Canceled into the audit input set'
 
 # Each workflow states why, so an editor does not "helpfully" restore the loop.
 for rel in workflows/tpm-audit.md workflows/tpm-roadmap-plan.md; do

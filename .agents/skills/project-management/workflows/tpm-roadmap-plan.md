@@ -28,7 +28,7 @@ Resolve `TEAM` and `TEAM_PREFIX` per [tpm-audit](tpm-audit.md) § 1.1.1 before a
 .agents/skills/linear/scripts/linear.sh cache labels list --format=safe
 ```
 
-Load the project taxonomy alongside it. A missing or stale Linear cache on this or any later read halts the analysis and asks the caller to run `sync --reconcile` first ([SKILL.md](../SKILL.md) § Execution Rules) — never work around it with a partial or live-only read. Every issue emitted must carry a `labels[]` set valid against that inventory. Preserve input `labels[]` when present; derive the agent label and complete required categories from the taxonomy when only `agent` was supplied; flag the gap in `reason` rather than inventing a label when a required category cannot be determined. Never emit a parent/group label.
+Load the project taxonomy alongside it. Freshness is the § 1.1 refresh's job; what a cached read itself enforces is presence, so a missing Linear cache on this or any later read halts the analysis and asks the caller to run `sync --reconcile` first ([SKILL.md](../SKILL.md) § Execution Rules) — never work around it with a partial or live-only read. Every issue emitted must carry a `labels[]` set valid against that inventory. Preserve input `labels[]` when present; derive the agent label and complete required categories from the taxonomy when only `agent` was supplied; flag the gap in `reason` rather than inventing a label when a required category cannot be determined. Never emit a parent/group label.
 
 ### 1.3 Origin Issue
 
