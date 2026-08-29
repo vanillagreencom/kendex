@@ -21,9 +21,8 @@ batch_cmd_prefix='.agents/skills/linear/scripts/linear.sh cache issues list --al
 
 # check_section <file> <start> <end> <label> <states> — the region holds
 # exactly the batch command over <states> and none of the loop shapes it
-# replaced. <states> is pinned per workflow: tpm-audit compares against the
-# historical record too, so its set carries Canceled and roadmap-plan's does
-# not, and neither is free to drift into the other.
+# replaced. <states> is pinned per workflow; each call site below says what
+# its own set is, and whether the pin defends it.
 check_section() {
   local file="$1" start="$2" end="$3" label="$4" states="$5"
   [[ -f "$file" ]] || fail "workflow not found: ${file#"$SKILL_DIR"/}"
@@ -43,10 +42,17 @@ check_section() {
   done
 }
 
+# tpm-audit compares against the historical record, so Canceled belongs in
+# its set and the pin defends it there.
 check_section "$SKILL_DIR/workflows/tpm-audit.md" \
   '^### 1\.5 ' '^### 1\.6 ' tpm-audit \
   'Backlog,Todo,In Progress,In Review,Done,Canceled'
 
+# roadmap-plan's set is pinned as it stands, NOT as a contract. Its § 2
+# proposes cancel and supersede against this set while Canceled is missing
+# from it, and that is an unresolved gap in the workflow rather than a
+# decision this pin protects. Adding Canceled there is the fix for it, so a
+# red line here means update this literal alongside the workflow.
 check_section "$SKILL_DIR/workflows/tpm-roadmap-plan.md" \
   '^### 1\.5 ' '^### 1\.6 ' tpm-roadmap-plan \
   'Backlog,Todo,In Progress,In Review,Done'
