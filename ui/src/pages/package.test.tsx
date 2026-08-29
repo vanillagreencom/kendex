@@ -158,6 +158,10 @@ const updateRow = (scope: Project): UpdateRow => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks leaves implementations standing, and a test that
+  // answers the audit would otherwise answer it for every test after
+  // it in this file.
+  vi.mocked(commands.auditAll).mockReset();
   vi.mocked(commands.packageMeta).mockResolvedValue(nothing);
   vi.mocked(commands.packageFiles).mockResolvedValue(nothing);
   vi.mocked(commands.packageVersions).mockResolvedValue(nothing);
@@ -247,6 +251,13 @@ const scoreTab = (host: HTMLElement) => {
 // dropped this tab would leave every installed reading unread.
 describe("the package page's safety tab", () => {
   it("shows the score for this place, with the findings behind it", async () => {
+    // The mount asks for a fresh audit and gets one, so the tab's figure is
+    // a reading the check just took rather than one kept from before a
+    // failure — which is a different label and a different claim.
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "ok",
+      data: [scoredView],
+    });
     useAuditStore.setState({
       auditedAt: 1,
       views: [scoredView],
@@ -271,6 +282,10 @@ describe("the package page's safety tab", () => {
   // side by side, so a comparison on the Overview tab cannot be what keeps
   // the figure off the strip.
   it("carries the score while a comparison is open", async () => {
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "ok",
+      data: [scoredView],
+    });
     useAuditStore.setState({
       auditedAt: 1,
       views: [scoredView],

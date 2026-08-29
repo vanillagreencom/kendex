@@ -16,6 +16,7 @@ import {
   SAFETY_NOT_READ_BODY,
   SAFETY_RETRY_LABEL,
   SAFETY_TAB,
+  SAFETY_TAB_STALE,
   severityTone,
 } from "@/lib/copy-safety";
 import { useAuditOnMount } from "@/stores/audit";
@@ -36,17 +37,32 @@ export function usePackageSafety(
 /** The tab's name with the score after it. The words come first: the disc
  *  is decorative, so a tab labelled with the figure alone would name a
  *  number and nothing it is a number of. Until a reading arrives the disc
- *  shows a dash rather than a zero, which is a score a package can earn. */
+ *  shows a dash rather than a zero, which is a score a package can earn.
+ *
+ *  A reading kept from before a failed check is on the tab too, because it
+ *  is the last thing anything knows. It stops being drawn as a current
+ *  severity: the disc goes muted and the tab carries the mark, so the
+ *  figure is not read as a count the check just took. Somebody looking at
+ *  Overview sees only this label, and a kept number that looks current
+ *  there is a claim nothing on the machine supports. */
 export function SafetyScoreLabel({ reading }: { reading: InstalledReading }) {
-  const { result } = reading;
+  const { result, failure } = reading;
+  const current = result !== null && failure === null;
   return (
     <>
       {SAFETY_TAB}
       <ScoreCircle
         size="sm"
         score={result?.safety.score ?? null}
-        tone={result ? severityTone(result.findings) : "muted"}
+        tone={current ? severityTone(result.findings) : "muted"}
       />
+      {result !== null && failure !== null ? (
+        <>
+          <TriangleAlert className="size-3.5 text-warning" />
+          {/* Colour is never the only carrier of the fact. */}
+          <span className="sr-only">{SAFETY_TAB_STALE}</span>
+        </>
+      ) : null}
     </>
   );
 }

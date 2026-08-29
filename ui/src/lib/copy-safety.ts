@@ -19,6 +19,11 @@ export const SAFETY_CAVEAT =
 // The package page's own tab for the reading. The score follows these
 // words on the tab itself, so the tab never says the number twice.
 export const SAFETY_TAB = "Safety score";
+// What the tab's figure is when a reading outlives the check meant to
+// replace it. Short enough to sit on a tab, and it is the accessible name
+// for the mark beside it: a colour and an icon alone would leave a kept
+// number reading as a current one.
+export const SAFETY_TAB_STALE = "the last reading kendex could check";
 // The audit is the slowest thing the app does, so the tab opens before it
 // has answered. A wait is not an outcome, and this says which it is.
 export const SAFETY_CHECKING = "Checking this package…";

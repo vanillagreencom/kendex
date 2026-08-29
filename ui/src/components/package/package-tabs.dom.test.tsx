@@ -5,7 +5,7 @@ import type { AuditView, ItemSafety, Scope } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { PROJECTS_TAB } from "@/lib/copy-projects";
-import { SAFETY_TAB } from "@/lib/copy-safety";
+import { SAFETY_TAB, SAFETY_TAB_STALE } from "@/lib/copy-safety";
 import { useAuditStore } from "@/stores/audit";
 import { mount, settle } from "@/test/dom";
 import { PackageTabs } from "./package-tabs";
@@ -135,5 +135,62 @@ describe("a package's tab strip", () => {
       (trigger) => trigger.textContent,
     );
     expect(labels).toEqual(["Overview", PROJECTS_TAB, `${SAFETY_TAB}58`]);
+  });
+});
+
+// A reading that outlived the check meant to replace it is the last thing
+// anything knows, not what the files say now. The panel already heads it
+// that way; the tab is what somebody standing on Overview or Projects sees,
+// and a kept figure drawn as a current one there is a claim nothing on the
+// machine supports.
+describe("the tab's figure when the check could not run again", () => {
+  const disc = (host: HTMLElement) => {
+    const found = tab(host, SAFETY_TAB).querySelector("span[aria-hidden]");
+    if (!found) throw new Error("no score disc on the tab");
+    return found;
+  };
+
+  it("marks a kept reading and drops its severity tone", async () => {
+    // Three hours is well past the freshness window, so the mount asks for
+    // a new audit — and it is that ask which fails, leaving the earlier
+    // reading on the tab.
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "error",
+      error: "audit crashed",
+    });
+    useAuditStore.setState({
+      views: [view([deploy])],
+      auditedAt: Date.now() - 3 * 60 * 60 * 1000,
+      backgroundFailureAnnounced: true,
+    });
+
+    const host = strip();
+    await settle();
+
+    // The number stays, because it is the last reading there is.
+    expect(tab(host, SAFETY_TAB).textContent).toBe(
+      `${SAFETY_TAB}58${SAFETY_TAB_STALE}`,
+    );
+    // The words carry it, so the mark is never colour alone.
+    expect(tab(host, SAFETY_TAB).querySelector(".sr-only")?.textContent).toBe(
+      SAFETY_TAB_STALE,
+    );
+    // 58 with one high finding is the warning tone when it is current.
+    expect(disc(host).className).toContain("text-muted-foreground");
+    expect(disc(host).className).not.toContain("text-warning");
+  });
+
+  it("leaves a current reading unmarked, in the tone it earned", async () => {
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "ok",
+      data: [view([deploy])],
+    });
+
+    const host = strip();
+    await settle();
+
+    expect(tab(host, SAFETY_TAB).textContent).toBe(`${SAFETY_TAB}58`);
+    expect(tab(host, SAFETY_TAB).querySelector(".sr-only")).toBeNull();
+    expect(disc(host).className).toContain("text-warning");
   });
 });
