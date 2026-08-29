@@ -126,10 +126,7 @@ fn effective_item_on_disk(
     // The seal canonicalizes its own root, so the item has to be resolved
     // the same way: two tools sharing one folder reach it through a symlink,
     // and an unresolved path never sits beneath the resolved root.
-    let resolved = item
-        .path
-        .canonicalize()
-        .map_err(|e| CoreError::io(&item.path, e))?;
+    let resolved = crate::paths::canonical(&item.path).map_err(|e| CoreError::io(&item.path, e))?;
     let (root, item_path) = if resolved.is_dir() {
         (resolved.clone(), resolved)
     } else {

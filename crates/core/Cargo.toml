@@ -9,7 +9,6 @@ serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 dirs.workspace = true
-dunce.workspace = true
 thiserror.workspace = true
 specta.workspace = true
 sha2.workspace = true

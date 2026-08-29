@@ -1,3 +1,12 @@
+// `crates/test_util.rs` is one file `#[path]`-included by the test binaries
+// of all three crates, so it has one spelling for the core crate and that
+// spelling is the external one. This alias makes it resolve here too, where
+// the crate is otherwise only `crate`. Test-only on purpose: production code
+// inside core says `crate::`, and an alias that does not exist there cannot
+// become a second spelling for it.
+#[cfg(test)]
+extern crate self as kendex_core;
+
 pub mod app_update;
 pub mod apply;
 pub mod author;

@@ -57,7 +57,7 @@ pub struct SealedSource {
 impl SealedSource {
     pub fn open(root: &Path) -> Result<SealedSource> {
         let given = root.to_path_buf();
-        let root = root.canonicalize().map_err(|e| CoreError::io(root, e))?;
+        let root = crate::paths::canonical(root).map_err(|e| CoreError::io(root, e))?;
         if !root.is_dir() {
             return Err(CoreError::SourceEscape {
                 path: root,

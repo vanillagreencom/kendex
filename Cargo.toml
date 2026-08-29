@@ -35,11 +35,6 @@ fd-lock = "4"
 # that releases a lock's open file description before the fd closes.
 rustix = { version = "1", features = ["fs"] }
 unicode-normalization = "0.1"
-# Already in the tree under tauri; used directly so the rule for reducing a
-# Windows canonical path to its plain spelling — which components the Win32
-# parser would rewrite, which volumes have no plain spelling at all — is one
-# tested implementation rather than a list kendex maintains by hand.
-dunce = "1"
 semver = "1"
 # The app already verifies its own downloads with these, through
 # tauri-plugin-updater; `kendex update` reaches for them directly so the

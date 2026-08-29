@@ -240,7 +240,7 @@ pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Res
     }
     if let Some(path) = &decl.path {
         let joined = path_root(env, scope, path);
-        return match joined.canonicalize() {
+        return match crate::paths::canonical(&joined) {
             Ok(root) if root.is_dir() => Ok(SourceState::Ready(ResolvedSource {
                 name: name.to_owned(),
                 provenance: root.display().to_string(),

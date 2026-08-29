@@ -20,6 +20,21 @@ const DEVICE_NAMES: &[&str] = &[
     "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
 ];
 
+fn is_device(segment: &str) -> bool {
+    let stem = segment.split('.').next().unwrap_or(segment);
+    DEVICE_NAMES.contains(&stem.to_ascii_lowercase().as_str())
+}
+
+/// Whether the Win32 path parser hands this segment back as something
+/// else: it trims a trailing dot or space off, and reads a reserved device
+/// stem as the device. `segment_problem` refuses both in a name kendex
+/// creates, each with its own reason; `paths::plain` keeps a path already
+/// carrying either in the verbatim spelling, which is the only one that
+/// reaches it. One list, so the two answers cannot drift apart.
+pub(crate) fn win32_rewrites(segment: &str) -> bool {
+    segment.ends_with('.') || segment.ends_with(' ') || is_device(segment)
+}
+
 /// Why this one path segment cannot be a file or directory name.
 pub fn segment_problem(segment: &str) -> Option<String> {
     if segment.is_empty() {
@@ -67,8 +82,7 @@ pub fn segment_problem(segment: &str) -> Option<String> {
             shown(segment)
         ));
     }
-    let stem = segment.split('.').next().unwrap_or(segment);
-    if DEVICE_NAMES.contains(&stem.to_ascii_lowercase().as_str()) {
+    if is_device(segment) {
         return Some(format!(
             "`{}` is a reserved device name on Windows",
             shown(segment)

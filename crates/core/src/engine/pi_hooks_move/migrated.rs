@@ -393,6 +393,13 @@ pub(super) struct Identity {
 /// The registry entry one hook left behind, as the identity that names
 /// it: the event it fires on and the command that runs.
 ///
+/// A search key, never output: every caller asks whether an entry is the
+/// one an older kendex wrote, and `registered` answers by exact string
+/// match. So a re-derived command is spelled the way the release that
+/// wrote it spelled it — `display`, not `paths::slashed`, which on
+/// Windows would read the entry as absent and strand it calling a path
+/// that has gone.
+///
 /// The record carries both for a script-less custom hook, whose command
 /// is the person's own and cannot be re-derived. A script-backed hook
 /// keeps no record of either, so the command is re-derived from the old
@@ -402,11 +409,8 @@ pub(super) struct Identity {
 /// then the registration waiting to be migrated sits under the event the
 /// previous version installed. Reading the new event onto the old entry
 /// would call an ordinary catalog change tampering and hold the
-/// installation with nothing the person could do about it.
-///
-/// What keeps that honest is the uniqueness rule the identity applies:
-/// with no event to check, a command carried once in the document is
-/// kendex's own, and a command carried twice is nobody's to take.
+/// installation with nothing the person could do about it. What keeps
+/// that honest is the uniqueness rule `registered` applies at its arms.
 pub(super) fn legacy_registration(entry: &LockEntry, scope: &Scope, root: &Path) -> Identity {
     match &entry.registration {
         // A hook with no script of its own is one registry entry and
@@ -420,18 +424,14 @@ pub(super) fn legacy_registration(entry: &LockEntry, scope: &Scope, root: &Path)
             command: recorded.command.clone(),
         },
         // A script-backed hook's record describes the entry at the new
-        // path: its command spells that path, and its event is the one
-        // this install registered there — neither of them evidence about
-        // what an older kendex wrote under the reserved name. So the
-        // command is derived from the old layout and the rest stays
-        // unsaid, which is where it was left when reading the new event
-        // onto the old entry turned a catalog's own change into
-        // tampering.
+        // path, which is no evidence about the reserved name — so the
+        // command is derived from the old layout, event unsaid.
         _ => {
             let file = pi::hook_file(&entry.name);
             let script = root.join(LEGACY_DIR).join(&file);
             let command = match scope {
-                Scope::Global => format!("bash \"{}\"", crate::paths::slashed(&script)),
+                // `display`, not `paths::slashed` — see the fn doc.
+                Scope::Global => format!("bash \"{}\"", script.display()),
                 Scope::Project { .. } => {
                     format!("bash \"$(git rev-parse --show-toplevel)/.pi/{LEGACY_DIR}/{file}\"")
                 }
