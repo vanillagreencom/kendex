@@ -190,3 +190,90 @@ fn a_lock_naming_its_own_project_refreshes() {
         again.plan.ops
     );
 }
+
+/// The paths one entry claims, rewritten as they sit in the file.
+#[allow(clippy::unwrap_used)]
+fn claim(lock: &Path, key: &str, paths: &[PathBuf]) {
+    let mut record: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(lock).unwrap()).unwrap();
+    record["entries"][key]["emitted"]["paths"] = paths
+        .iter()
+        .map(|path| serde_json::Value::String(path.display().to_string()))
+        .collect();
+    fs::write(lock, serde_json::to_string_pretty(&record).unwrap()).unwrap();
+}
+
+/// The must-fail control for the escape a prefix comparison alone lets
+/// through: `<project>/../elsewhere` starts with `<project>` component for
+/// component, and every operation on it lands in `elsewhere`.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_lock_walking_back_out_of_its_project_is_refused_and_the_tree_it_points_at_stands() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().canonicalize().unwrap();
+    let catalog = home.join("catalog");
+    put(
+        &catalog.join("skills/ship/SKILL.md"),
+        "---\nname: ship\ndescription: ship\n---\n\nShip the branch.\n",
+    );
+    let env = Env::fake(&home, FakeOs::Linux);
+
+    let installed = home.join("dev/app");
+    declare(&installed, &catalog);
+    let report = audit(&env, &project(&installed)).unwrap();
+    kendex_core::apply::execute(&env, &report.plan, None).unwrap();
+
+    // A project of its own, whose record claims the other one's positions
+    // by walking out of this one.
+    let elsewhere = home.join("dev/other");
+    declare(&elsewhere, &catalog);
+    let out = |rest: &str| elsewhere.join("..").join("app").join(rest);
+    fs::copy(
+        installed.join(".kendex-lock.json"),
+        elsewhere.join(".kendex-lock.json"),
+    )
+    .unwrap();
+    claim(
+        &elsewhere.join(".kendex-lock.json"),
+        "skill:ship:claude",
+        &[out(".agents/skills/ship"), out(".claude/skills/ship")],
+    );
+    assert!(
+        out(".agents/skills/ship").starts_with(&elsewhere),
+        "the escape is one a prefix comparison reads as inside"
+    );
+
+    let before = snapshot(&installed);
+    assert_eq!(
+        before.get(Path::new(".agents/skills/ship/SKILL.md")),
+        Some(&Entry::File(
+            fs::read_to_string(catalog.join("skills/ship/SKILL.md")).unwrap()
+        )),
+        "the install this refusal protects is on disk to begin with"
+    );
+
+    let refused = match plan_apply(&env, &project(&elsewhere), &refresh()) {
+        Ok(report) => {
+            kendex_core::apply::execute(&env, &report.plan, None).unwrap();
+            None
+        }
+        Err(error) => Some(error),
+    };
+
+    assert_eq!(
+        snapshot(&installed),
+        before,
+        "the tree the record walked out to is exactly as it was"
+    );
+    let refused = refused.expect("a record walking out of its project is refused");
+    assert!(
+        matches!(
+            &refused,
+            CoreError::LockOutsideProject { key, recorded, root, .. }
+                if key == "skill:ship:claude"
+                    && recorded == &out(".agents/skills/ship")
+                    && root == &elsewhere
+        ),
+        "the refusal names the entry, the path it claims and the project that cannot hold it: {refused:?}"
+    );
+}

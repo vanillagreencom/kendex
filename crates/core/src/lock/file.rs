@@ -1,7 +1,7 @@
 //! Reading and writing a lock file: what sits at a path, the boundary a
 //! project's record may claim, and the version shapes that still load.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::error::{CoreError, Result};
 use crate::fs::{atomic_write, read_if_exists};
@@ -25,12 +25,28 @@ fn project_root_at(path: &Path) -> Option<&Path> {
     }
 }
 
+/// Whether `path` reaches out of `root`.
+///
+/// Two ways it can. It can name somewhere else outright, which
+/// `Path::starts_with` catches. Or it can start under `root` and walk back
+/// out: `starts_with` matches component against component and resolves
+/// nothing, so `<root>/../elsewhere` reads as inside while every operation
+/// on it lands outside.
+///
+/// A `..` is refused rather than resolved. Nothing kendex writes carries
+/// one — an emitted path is names joined onto a root [`super::lock_path`]
+/// already resolved (invariant 17) — so there is no reading of one to
+/// recover, and refusing does not turn on getting normalization right.
+fn reaches_outside(root: &Path, path: &Path) -> bool {
+    !path.starts_with(root) || path.components().any(|part| part == Component::ParentDir)
+}
+
 /// The first position a lock claims outside `root`, with the entry claiming
 /// it.
 ///
-/// One spelling meets one spelling (invariant 17): `emitted.paths` are
-/// written off the canonical root, and the root here is the parent of a lock
-/// path [`super::lock_path`] already canonicalized. Nothing re-canonicalizes.
+/// Held to [`reaches_outside`] rather than to the spellings kendex's own
+/// writes keep: what this judges is a record kendex may not have written,
+/// which is the whole reason it is here.
 fn outside_the_project(root: &Path, lock: &Lock) -> Option<(String, PathBuf)> {
     lock.entries.iter().find_map(|(key, entry)| {
         let outside = entry
@@ -38,7 +54,7 @@ fn outside_the_project(root: &Path, lock: &Lock) -> Option<(String, PathBuf)> {
             .as_ref()?
             .paths
             .iter()
-            .find(|path| !path.starts_with(root))?;
+            .find(|path| reaches_outside(root, path))?;
         Some((key.clone(), outside.clone()))
     })
 }
