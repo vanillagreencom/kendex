@@ -1,0 +1,6 @@
+# Every tracked file checks out with the bytes it was committed with. Git on
+# Windows otherwise rewrites LF to CRLF at checkout, and this repo compares
+# committed bytes to produced bytes: the scaffold's licence text is compiled
+# in with `include_str!` and asserted to hold no carriage return, and the
+# authoring golden digest is over those same bytes.
+* -text

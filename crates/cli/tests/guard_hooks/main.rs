@@ -110,7 +110,7 @@ pub fn install_package(home: &Path, root: &Path, skills: &[&str]) {
         std::fs::write(
             &manifest,
             format!(
-                "schema = 6\n\n[sources.cat]\npath = \"{}\"\n",
+                "schema = 6\n\n[sources.cat]\npath = '{}'\n",
                 catalog.display()
             ),
         )

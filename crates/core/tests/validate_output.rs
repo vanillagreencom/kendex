@@ -29,7 +29,7 @@ fn a_name_opencode_cannot_load_blocks_there_while_claude_still_installs() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\", \"opencode\"]\nmethod = \"symlink\"\n\n[skills.My_Skill]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\", \"opencode\"]\nmethod = \"symlink\"\n\n[skills.My_Skill]\nsource = \"cat\"\n",
             source.display()
         ),
     )

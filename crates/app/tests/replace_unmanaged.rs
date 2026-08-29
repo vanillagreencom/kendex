@@ -38,7 +38,7 @@ fn fixture() -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n\n[skills.lint]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n\n[skills.lint]\nsource = \"cat\"\n",
             source.display()
         ),
     )
@@ -334,7 +334,7 @@ fn a_conflict_with_no_exit_of_its_own_still_reaches_the_page() {
     fs::write(
         &manifest,
         format!(
-            "{head}[sources.other]\npath = \"{}\"\n\n[install]{}",
+            "{head}[sources.other]\npath = '{}'\n\n[install]{}",
             elsewhere.display(),
             tail.replace(
                 "[skills.deploy]\nsource = \"cat\"",

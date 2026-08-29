@@ -141,7 +141,7 @@ impl World {
         write(
             &self.project.join("kendex.toml"),
             &format!(
-                "schema = 6\n\n[sources.cat]\npath = \"{}\"\n",
+                "schema = 6\n\n[sources.cat]\npath = '{}'\n",
                 self.catalog.display()
             ),
         );
@@ -161,7 +161,7 @@ impl World {
         write(
             &self.project.join("kendex.toml"),
             &format!(
-                "schema = 6\n\n[sources.cat]\npath = \"{}\"\nenabled = true\n\n\
+                "schema = 6\n\n[sources.cat]\npath = '{}'\nenabled = true\n\n\
                  [install]\nharnesses = [{tools}]\nmethod = \"symlink\"\n",
                 self.catalog.display()
             ),

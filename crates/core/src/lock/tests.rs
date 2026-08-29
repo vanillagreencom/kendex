@@ -143,8 +143,10 @@ fn recording(path: &Path, key: &str, emitted: &Path) {
     std::fs::write(
         path,
         format!(
-            r#"{{"version":7,"entries":{{"{key}":{{"name":"gh","kind":"skill","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"symlink","installedAt":"2026-01-01T00:00:00Z","sourceHash":"abc","enabled":true,"emitted":{{"kind":"skill","name":"gh","paths":["{}"]}}}}}}}}"#,
-            emitted.display()
+            r#"{{"version":7,"entries":{{"{key}":{{"name":"gh","kind":"skill","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"symlink","installedAt":"2026-01-01T00:00:00Z","sourceHash":"abc","enabled":true,"emitted":{{"kind":"skill","name":"gh","paths":[{}]}}}}}}}}"#,
+            // A path is data here, not text spliced into the literal: a
+            // backslash in it is an escape JSON has to be told about.
+            serde_json::to_string(&emitted.display().to_string()).unwrap()
         ),
     )
     .unwrap();

@@ -65,7 +65,7 @@ fn world_at(
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n{extra_sources}\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{declarations}",
+            "schema = 6\n\n[sources.cat]\npath = '{}'\n{extra_sources}\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{declarations}",
             catalog.display()
         ),
     )

@@ -58,7 +58,7 @@ fn declare(f: &Fixture, harnesses: &str) {
     put(
         &f.project.join("kendex.toml"),
         &format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [{harnesses}]\nmethod = \"symlink\"\n\n[skills.ship]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [{harnesses}]\nmethod = \"symlink\"\n\n[skills.ship]\nsource = \"cat\"\n",
             f.source.display()
         ),
     );

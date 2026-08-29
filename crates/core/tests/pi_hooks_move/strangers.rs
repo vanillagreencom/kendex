@@ -102,7 +102,7 @@ fn a_global_registry_kendex_never_wrote_to_is_left_alone() {
     fs::write(
         &manifest,
         format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"pi\"]\n\n[hooks.guard]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"pi\"]\n\n[hooks.guard]\nsource = \"cat\"\n",
             w.catalog.display()
         ),
     )

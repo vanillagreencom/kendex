@@ -38,7 +38,7 @@ fn fixture() -> Fixture {
     // Hand-formatted v0.1 manifest: the upgrade must change the schema line
     // and nothing else.
     let original = format!(
-        "# my project setup\nschema = 1\n\n[sources.cat]\npath = \"{}\"   # local catalog\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+        "# my project setup\nschema = 1\n\n[sources.cat]\npath = '{}'   # local catalog\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
         source.display()
     );
     let manifest_path = project.join("kendex.toml");

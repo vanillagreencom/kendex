@@ -80,7 +80,7 @@ fn declare(w: &World, method: &str, harnesses: &str, body: &str) {
     fs::write(
         w.home.join("app/kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = {harnesses}\nmethod = \"{method}\"\n\n{body}",
+            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = {harnesses}\nmethod = \"{method}\"\n\n{body}",
             w.home.join("catalog").display()
         ),
     )

@@ -151,7 +151,7 @@ fn blocked_project_at(home: &Path, project: &Path) {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n\n[skills.growth-guards]\nsource = \"cat\"\n\n[skills.tidy]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n\n[skills.growth-guards]\nsource = \"cat\"\n\n[skills.tidy]\nsource = \"cat\"\n",
             catalog.display()
         ),
     )

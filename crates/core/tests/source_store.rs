@@ -244,7 +244,7 @@ fn a_busy_cache_costs_only_its_own_source() {
     fs::write(
         &path,
         format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\nrev = \"main\"\n\n[sources.plain]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n\n[skills.local-gh]\nsource = \"plain\"\n",
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\nrev = \"main\"\n\n[sources.plain]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n\n[skills.local-gh]\nsource = \"plain\"\n",
             plain.display()
         ),
     )

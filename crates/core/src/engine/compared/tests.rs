@@ -74,6 +74,11 @@ fn a_tree_names_every_side_that_only_one_holds() {
 /// real newline and one holding the two characters that spell its escape
 /// render alike. Merged before counting, one of two differing files would
 /// vanish from both the list and the total.
+///
+/// Unix only because the collision needs both names to exist at once, and
+/// Windows admits neither: a newline in a name is refused outright, and a
+/// backslash in one is a separator.
+#[cfg(unix)]
 #[test]
 #[allow(clippy::expect_used)]
 fn two_names_that_render_alike_stay_two_files() {

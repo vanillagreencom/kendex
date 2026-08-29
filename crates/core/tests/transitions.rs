@@ -71,7 +71,7 @@ fn declare(w: &World, manifest: &Path, harnesses: &str) {
     put(
         manifest,
         &format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [{harnesses}]\nmethod = \"symlink\"\n\n[skills.big]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [{harnesses}]\nmethod = \"symlink\"\n\n[skills.big]\nsource = \"cat\"\n",
             w.source.display()
         ),
     );
@@ -168,7 +168,7 @@ fn two_tools_sharing_one_link_position_still_applies() {
     put(
         &env.global_manifest_file(),
         &format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"codex\", \"pi\"]\nmethod = \"symlink\"\n\n[skills.big]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"codex\", \"pi\"]\nmethod = \"symlink\"\n\n[skills.big]\nsource = \"cat\"\n",
             w.source.display()
         ),
     );

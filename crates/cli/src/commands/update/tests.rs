@@ -47,17 +47,28 @@ fn a_release_is_out(dir: &tempfile::TempDir) -> (Env, String, PathBuf) {
     std::fs::write(
         home.join("feed.json"),
         format!(
-            r#"{{"schema": 1, "version": "9.9.9", "assets": {{"{}": "file://{}/new-command"}}}}"#,
+            r#"{{"schema": 1, "version": "9.9.9", "assets": {{"{}": {}}}}}"#,
             target_triple(),
-            home.display()
+            serde_json::to_string(&file_url(&home.join("new-command"))).unwrap()
         ),
     )
     .unwrap();
     (
         Env::host_rooted(home),
-        format!("file://{}/feed.json", home.display()),
+        file_url(&home.join("feed.json")),
         installed,
     )
+}
+
+/// A `file://` URL for a host path. Windows spells a path with `\` and
+/// roots it at a drive letter rather than at `/`, and a URL takes
+/// neither.
+fn file_url(path: &Path) -> String {
+    let text = path.display().to_string().replace('\\', "/");
+    match text.starts_with('/') {
+        true => format!("file://{text}"),
+        false => format!("file:///{text}"),
+    }
 }
 
 const INSTALLED: &[u8] = b"the command already here";

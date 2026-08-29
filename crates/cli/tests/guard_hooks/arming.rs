@@ -558,7 +558,7 @@ fn an_agent_of_the_same_name_is_not_consent_to_commit_hooks() {
     std::fs::write(
         root.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n",
+            "schema = 6\n\n[sources.cat]\npath = '{}'\n",
             home.join("catalog").display()
         ),
     )

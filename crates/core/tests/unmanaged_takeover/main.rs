@@ -49,7 +49,7 @@ fn with_method(method: &str) -> World {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"{method}\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"{method}\"\n\n[skills.deploy]\nsource = \"cat\"\n",
             home.join("catalog").display()
         ),
     )
@@ -68,7 +68,7 @@ fn declare_for(w: &World, harnesses: &str) {
     fs::write(
         w.home.join("app/kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = {harnesses}\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = {harnesses}\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"cat\"\n",
             w.home.join("catalog").display()
         ),
     )
@@ -543,7 +543,7 @@ fn declare_copy_for(w: &World, harnesses: &str) {
     fs::write(
         w.home.join("app/kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = {harnesses}\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = {harnesses}\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
             w.home.join("catalog").display()
         ),
     )

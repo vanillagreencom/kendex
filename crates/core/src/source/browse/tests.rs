@@ -77,7 +77,7 @@ fn cat(scope: &Scope) -> Catalog {
 
 fn sources_decl(catalog: &Path) -> String {
     format!(
-        "schema = 6\n[sources.cat]\npath = \"{}\"\n",
+        "schema = 6\n[sources.cat]\npath = '{}'\n",
         catalog.display()
     )
 }
@@ -331,7 +331,7 @@ fn a_name_taken_by_another_source_is_shown_before_the_click() {
     let other = tmp.path().join("other");
     skill(&other, "skills", "gh", "body");
     let manifest = format!(
-        "{}[sources.two]\npath = \"{}\"\n[skills.gh]\nsource = \"two\"\n[bundles.starter]\nsource = \"two\"\n",
+        "{}[sources.two]\npath = '{}'\n[skills.gh]\nsource = \"two\"\n[bundles.starter]\nsource = \"two\"\n",
         sources_decl(&catalog),
         other.display()
     );

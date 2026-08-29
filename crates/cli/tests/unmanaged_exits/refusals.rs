@@ -96,7 +96,7 @@ fn an_exit_read_in_the_global_scope_says_so() {
     fs::write(
         global.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
             catalog.display()
         ),
     )
@@ -251,7 +251,7 @@ fn an_edit_is_never_told_to_move_files() {
     fs::write(
         &manifest,
         format!(
-            "{head}[sources.other]\npath = \"{}\"\n\n[install]{}",
+            "{head}[sources.other]\npath = '{}'\n\n[install]{}",
             elsewhere.display(),
             tail.replace("source = \"cat\"", "source = \"other\"")
         ),

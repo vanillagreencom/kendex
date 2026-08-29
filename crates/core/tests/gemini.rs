@@ -62,7 +62,7 @@ fn fixture(declarations: &str) -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"gemini\"]\nmethod = \"symlink\"\n\n{declarations}",
+            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"gemini\"]\nmethod = \"symlink\"\n\n{declarations}",
             source.display()
         ),
     )
@@ -309,7 +309,7 @@ fn a_global_server_switches_off_in_the_file_gemini_keeps_that_state_in() {
         fs::write(
             &manifest,
             format!(
-                "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"gemini\"]\n\n[mcp-servers.gh]\nsource = \"cat\"\nenabled = {enabled}\n",
+                "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"gemini\"]\n\n[mcp-servers.gh]\nsource = \"cat\"\nenabled = {enabled}\n",
                 f._tmp.path().join("catalog").display()
             ),
         )

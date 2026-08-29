@@ -34,7 +34,7 @@ impl Fixture {
 fn v01_fixture() -> Fixture {
     fixture(|source| {
         format!(
-            "# my project setup\nschema = 1\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            "# my project setup\nschema = 1\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
             source.display()
         )
     })
@@ -42,7 +42,7 @@ fn v01_fixture() -> Fixture {
 
 /// The part of a schema-5 manifest that survives: comments, spacing and a
 /// trailing comment on a value, every byte the upgrade must keep.
-const KEPT: &str = "# my project setup\nschema = 5\n\n# where the content comes from\n[sources.cat]\npath = \"{source}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"   # keep this\n";
+const KEPT: &str = "# my project setup\nschema = 5\n\n# where the content comes from\n[sources.cat]\npath = '{source}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"   # keep this\n";
 
 /// The tables schema 6 retired, as a pre-6 kendex wrote them.
 const RETIRED: &str = "[safety-overrides.\"skill:gh:claude\"]\nreview-hash = \"abc\"\nruleset = 3\nfindings = [\"f1\"]\ngranted-at = \"2026-01-01T00:00:00Z\"\n\n[safety-reviews.\"skill:gh:claude\"]\nreview-hash = \"abc\"\nruleset = 3\n\n[safety-reviews.\"skill:gh:claude\".dismissed.f2]\nreason = \"intended\"\ndismissed-at = \"2026-01-01T00:00:00Z\"\n";

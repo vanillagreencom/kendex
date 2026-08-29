@@ -203,7 +203,7 @@ fn verify_names_an_installation_that_cannot_act() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"copilot\"]\nmethod = \"copy\"\n\n[hooks.audit]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"copilot\"]\nmethod = \"copy\"\n\n[hooks.audit]\nsource = \"cat\"\n",
             catalog.display()
         ),
     )
@@ -236,7 +236,7 @@ fn declared(home: &Path, body: &str) -> std::path::PathBuf {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
             catalog.display()
         ),
     )

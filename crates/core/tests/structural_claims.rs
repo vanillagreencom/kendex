@@ -65,7 +65,7 @@ fn refresh_reads_each_installs_own_recorded_source_across_scopes() {
     fs::write(
         w.env.global_manifest_file(),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
             w.home.join("catA").display()
         ),
     )
@@ -73,7 +73,7 @@ fn refresh_reads_each_installs_own_recorded_source_across_scopes() {
     fs::write(
         w.project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
             w.home.join("catB").display()
         ),
     )
@@ -182,7 +182,7 @@ fn add_writes_nothing_before_validation_and_confirmation() {
     let w = world();
     write_catalog(&w.home.join("cat"), "Body.");
     let manifest_text = format!(
-        "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+        "schema = 6\n\n[sources.cat]\npath = '{}'\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
         w.home.join("cat").display()
     );
     fs::write(w.project.join("kendex.toml"), &manifest_text).unwrap();
