@@ -154,11 +154,13 @@ SH
   done
   [[ $signal_rc -eq 143 ]] || fail "signal-during-wait returned $signal_rc"
   for _signal_reap in {1..20}; do
-    ps -eo sid= | awk -v sid="$signal_session" '$1 == sid { found = 1 } END { exit found ? 0 : 1 }' \
+    ps -eo sid=,stat= | awk -v sid="$signal_session" \
+      '$1 == sid && $2 !~ /^Z/ { found = 1 } END { exit found ? 0 : 1 }' \
       || break
     sleep 0.1
   done
-  if ps -eo sid= | awk -v sid="$signal_session" '$1 == sid { found = 1 } END { exit found ? 0 : 1 }'; then
+  if ps -eo sid=,stat= | awk -v sid="$signal_session" \
+    '$1 == sid && $2 !~ /^Z/ { found = 1 } END { exit found ? 0 : 1 }'; then
     fail "signal-during-wait left a process in its session"
   fi
   printf 'PASS: cancellation during worker wait reaps before returning 143\n'
