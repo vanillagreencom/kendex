@@ -91,6 +91,56 @@ pretrap_elapsed=$(($(date +%s) - pretrap_started))
   || fail "pre-trap supervisor failure returned $pretrap_rc after ${pretrap_elapsed}s"
 assert_contains "$TMP_ROOT/pretrap.stderr" "exited during setup without completion (status 7)" \
   "launch reports pre-trap supervisor exit promptly"
+[[ ! -e "$TMP_ROOT/pretrap-runtime" ]] \
+  || fail "pre-trap supervisor exit left authenticated runtime state"
+printf 'PASS: pre-trap supervisor exit leaves no runtime state\n'
+
+if [[ "$(uname -s)" == "Linux" ]] && command -v setsid >/dev/null 2>&1; then
+  mkdir -p "$TMP_ROOT/slow-runtime-bin/lib" "$TMP_ROOT/slow-runtime"
+  cp "$REPO_ROOT/skills/second-opinion/scripts/lib/runtime-ready.sh" \
+    "$TMP_ROOT/slow-runtime-bin/lib/runtime-ready.sh"
+  cat > "$TMP_ROOT/slow-runtime-bin/second-opinion-runtime" <<'SH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "supervise" ]]; then
+  trap 'kill -TERM "$slow_child" 2>/dev/null || true; wait "$slow_child" 2>/dev/null || true; exit 143' TERM HUP INT
+  "$SLOW_WORKER" &
+  slow_child=$!
+  wait "$slow_child"
+  exit 1
+fi
+action="${1:-}"
+shift
+source "$REAL_RUNTIME"
+RUNTIME_SELF="$0"
+case "$action" in launch) launch "$@" ;; *) exit 2 ;; esac
+SH
+  chmod +x "$TMP_ROOT/slow-runtime-bin/second-opinion-runtime"
+  slow_started="$(date +%s)"
+  REAL_RUNTIME="$RUNTIME" SLOW_WORKER="$TMP_ROOT/bin/hanging-worker" \
+    setsid "$TMP_ROOT/slow-runtime-bin/second-opinion-runtime" launch "$TMP_ROOT/bin/hanging-worker" \
+    "$TMP_ROOT/slow-answer" "$TMP_ROOT/slow-runtime" 30 false 1 3 x \
+    >"$TMP_ROOT/slow.stdout" 2>"$TMP_ROOT/slow.stderr" &
+  slow_session=$!
+  slow_rc=0
+  wait "$slow_session" || slow_rc=$?
+  slow_elapsed=$(($(date +%s) - slow_started))
+  [[ $slow_rc -eq 1 && $slow_elapsed -lt 9 ]] \
+    || fail "slow setup returned $slow_rc after ${slow_elapsed}s"
+  assert_contains "$TMP_ROOT/slow.stderr" "did not finish setup within 5 seconds" \
+    "slow setup returns the bounded readiness error"
+  [[ ! -e "$TMP_ROOT/slow-runtime" ]] || fail "slow setup left authenticated runtime state"
+  for _slow_reap in {1..20}; do
+    ps -eo sid= | awk -v sid="$slow_session" '$1 == sid { found = 1 } END { exit found ? 0 : 1 }' \
+      || break
+    sleep 0.1
+  done
+  if ps -eo sid= | awk -v sid="$slow_session" '$1 == sid { found = 1 } END { exit found ? 0 : 1 }'; then
+    fail "slow setup left a supervisor or worker in its session"
+  fi
+  printf 'PASS: slow setup leaves no supervisor, worker, or runtime state\n'
+else
+  printf 'SKIP: slow setup ownership control requires Linux and setsid\n'
+fi
 
 cat > "$TMP_ROOT/startup-env" <<'SH'
 set -T

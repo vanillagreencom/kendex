@@ -291,7 +291,8 @@ launch() {
   supervisor_pid=$!
   prefix="__SECOND_OPINION_EXIT_${token}__="
   source "${RUNTIME_SELF%/*}/lib/runtime-ready.sh"
-  second_opinion_wait_for_setup "$supervisor_pid" "$runtime_dir" "$log" "$prefix" || return 1
+  second_opinion_wait_for_setup "$supervisor_pid" "$runtime_dir" "$log" "$prefix" \
+    || { second_opinion_cleanup_failed_launch "$supervisor_pid" "$runtime_dir" "$token"; return 1; }
   exec 8<&- 9>&-
   printf 'artifact: %s\n' "$artifact"
   printf 'deadline: %s\n' "$deadline"

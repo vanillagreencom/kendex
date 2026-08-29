@@ -2,7 +2,8 @@
 
 second_opinion_wait_for_setup() {
   local supervisor_pid="$1" runtime_dir="$2" log="$3" prefix="$4"
-  local setup_deadline line job_pid running supervisor_rc=0
+  local setup_deadline line job_pid running supervisor_rc=0 jobs_file="$runtime_dir/setup.jobs"
+  SECOND_OPINION_SETUP_REAPED=false
   setup_deadline=$(($(date +%s) + 5))
   while [[ ! -f "$runtime_dir/ready" ]]; do
     line=$(completion_line "$log" "$prefix") || {
@@ -11,11 +12,14 @@ second_opinion_wait_for_setup() {
     }
     [[ -z "$line" ]] || return 0
     running=false
-    for job_pid in $(jobs -r -p); do
+    jobs -r -p > "$jobs_file" || true
+    while IFS= read -r job_pid; do
       [[ "$job_pid" == "$supervisor_pid" ]] && running=true
-    done
+    done < "$jobs_file"
+    rm -f -- "$jobs_file" || true
     if ! $running; then
       wait "$supervisor_pid" 2>/dev/null || supervisor_rc=$?
+      SECOND_OPINION_SETUP_REAPED=true
       line=$(completion_line "$log" "$prefix") || true
       [[ -z "$line" ]] || return 0
       echo "Error: detached supervisor exited during setup without completion (status $supervisor_rc)" >&2
@@ -27,4 +31,14 @@ second_opinion_wait_for_setup() {
     fi
     sleep 0.01
   done
+}
+
+second_opinion_cleanup_failed_launch() {
+  local supervisor_pid="$1" runtime_dir="$2" token="$3"
+  exec 8<&- 9>&-
+  if ! ${SECOND_OPINION_SETUP_REAPED:-false}; then
+    kill -TERM "$supervisor_pid" 2>/dev/null || true
+    wait "$supervisor_pid" 2>/dev/null || true
+  fi
+  runtime_dir_valid "$runtime_dir" "$token" && rm -rf -- "$runtime_dir" || true
 }
