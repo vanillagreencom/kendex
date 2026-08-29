@@ -119,7 +119,7 @@ Delegate to the architecture reviewer with the domain report paths, asking for c
 
 Read every report, aggregate across agents preserving attribution, and deduplicate by (location, description), keeping the first and noting all sources. `blockers[]` and `category: "fix"` suggestions are fix items; `category: "issue"` suggestions defer to § 6.2; `questions[]` are auto-answered in § 7.
 
-**Recurrence before the cap.** A finding sharing a root cause with one a prior pass patched is dispositioned by [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence), which allows `structural-close` or `freeze` and no further patch round. Check it here, ahead of § 6.1's round cap: that cap counts rounds, and one cause recurs several times inside its budget. Read what earlier passes patched and froze first, since a pass that resolved its threads leaves nothing else for this check to read: a finding sharing a cause in `patched_causes` is the recurrence this rule ends, and one sharing a cause in `frozen_causes` is `declined` without re-triaging.
+**Recurrence before the cap.** A finding sharing a root cause with one a prior pass patched is dispositioned by [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence), which allows `structural-close` or `freeze` and no further patch round. Check it here, ahead of § 6.1's round cap. A finding sharing a cause in `patched_causes` is the recurrence this rule ends, and one sharing a cause in `frozen_causes` is `declined` without re-triaging.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{patched: (.pr_comment_review.patched_causes // []), frozen: (.pr_comment_review.frozen_causes // [])}'
