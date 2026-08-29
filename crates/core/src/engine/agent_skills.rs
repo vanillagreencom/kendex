@@ -18,11 +18,13 @@ use super::desired::ItemCtx;
 /// carries the recorded list instead — it is what renders where nothing is
 /// declared and what the lock keeps, both exactly as they were.
 ///
-/// Refuses where the declaration names a skill no source here offers. That
+/// A fork's declaration naming a skill no source here offers refuses. That
 /// is what a fork costs: the assignment stays while the catalog it names
-/// stops being read, so it has to resolve against the scope, and the scope
+/// stops being read, so it resolves against the scope, and the scope
 /// losing the skill has to be said out loud rather than taking the agent's
-/// `## Required Skills` section off in silence.
+/// `## Required Skills` section off in silence. Nothing else refuses — an
+/// agent still reading its own catalog is a project that renders today,
+/// and what its unreachable names should do is a separate question.
 pub(super) fn assigned_skills(
     ctx: &ItemCtx,
     role: Option<Role>,
@@ -46,11 +48,11 @@ pub(super) fn assigned_skills(
         ctx.scope_skills,
         recorded.as_deref().filter(|_| !held),
     );
-    if let Some(skill) = skills.unresolved.first() {
+    if let Some((skill, source_name)) = skills.unresolved.first().zip(fork_source(ctx)) {
         return Err(CoreError::AgentSkillUnavailable {
             name: crate::names::shown(ctx.name),
             skill: crate::names::shown(skill),
-            source_name: assignment_source(ctx).to_owned(),
+            source_name: source_name.to_owned(),
         });
     }
     if held {
@@ -76,16 +78,16 @@ pub(super) fn assigned_skills(
     Ok(skills)
 }
 
-/// The source that put this agent's skill assignment on it: the catalog a
-/// fork was taken from, or the agent's own declared source. A fork stops
-/// reading its catalog while keeping what that catalog assigned, so the
-/// source worth naming when the assignment stops resolving is the one it
-/// came out of, not the local source it now reads.
-fn assignment_source<'a>(ctx: &'a ItemCtx) -> &'a str {
+/// The catalog this agent was forked out of, or `None` where it is no
+/// fork. A fork stops reading that catalog while keeping what the catalog
+/// assigned, so it is the source worth naming when the assignment stops
+/// resolving — never the local source the fork now reads. Being a fork is
+/// also the whole condition for refusing: it is the one case where this
+/// change made an agent depend on a source its declaration does not name.
+fn fork_source<'a>(ctx: &'a ItemCtx) -> Option<&'a str> {
     ctx.manifest
         .forks
         .get(&ItemKind::Agent)
         .and_then(|forked| forked.get(ctx.name))
         .map(|fork| fork.source.as_str())
-        .unwrap_or(&ctx.decl.source)
 }

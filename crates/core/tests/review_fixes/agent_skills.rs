@@ -8,14 +8,12 @@
 
 use std::fs;
 
-use super::{
-    CoreError, add_skill, apply_now, audit, declare, loaded_manifest, project, put, world,
-};
+use super::{add_skill, apply_now, declare, loaded_manifest, project, put, world};
 
 /// The rendering reads the skill list the mapping resolved, not the raw
-/// `[agent-skills]` entry: it carries whatever upstream gained during this
-/// very pass, which the entry on disk does not hold until the pass writes
-/// it back.
+/// `[agent-skills]` entry: filtered to what is actually installed, and
+/// carrying whatever upstream gained during this very pass. Reading the
+/// entry directly renders an agent pointing at a skill that is not there.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_agent_renders_the_skills_it_actually_has() {
@@ -24,49 +22,27 @@ fn an_agent_renders_the_skills_it_actually_has() {
     declare(
         &w,
         &scope,
-        "[agents.rust]\nsource = \"cat\"\n\n[agent-skills]\nrust = [\"gh\"]\n",
+        "[agents.rust]\nsource = \"cat\"\n\n[agent-skills]\nrust = [\"gh\", \"ghost\"]\n",
     );
     apply_now(&w, &scope);
     let rendered = w.home.join("dev/app/.claude/agents/rust.md");
     let first = fs::read_to_string(&rendered).unwrap();
     assert!(first.contains("skills: gh"), "{first}");
+    assert!(
+        !first.contains("ghost"),
+        "a declared skill this catalog does not carry is not rendered: {first}"
+    );
 
     // And what upstream gained this pass is in what this pass wrote.
     add_skill(&w.source, "rust-perf");
     apply_now(&w, &scope);
     assert_eq!(
         loaded_manifest(&w, &scope).agent_skills["rust"],
-        ["gh", "rust-perf"]
+        ["gh", "ghost", "rust-perf"]
     );
     let second = fs::read_to_string(&rendered).unwrap();
     assert!(second.contains("rust-perf"), "{second}");
-}
-
-/// A declaration naming a skill no source here offers refuses, naming it.
-/// Rendering the name would point the agent at instructions that are not
-/// there, and filtering it away would take the agent's whole skills
-/// section off without a word.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_declared_skill_no_source_offers_refuses_by_name() {
-    let w = world();
-    let scope = project(&w);
-    declare(
-        &w,
-        &scope,
-        "[agents.rust]\nsource = \"cat\"\n\n[agent-skills]\nrust = [\"gh\", \"ghost\"]\n",
-    );
-    match audit(&w.env, &scope) {
-        Err(CoreError::AgentSkillUnavailable {
-            name,
-            skill,
-            source_name,
-        }) => assert_eq!(
-            (name.as_str(), skill.as_str(), source_name.as_str()),
-            ("rust", "ghost", "cat")
-        ),
-        other => panic!("a skill nothing offers must be refused by name: {other:?}"),
-    }
+    assert!(!second.contains("ghost"), "{second}");
 }
 
 /// A reviewer agent's declaration is read under its base agent's key, so a

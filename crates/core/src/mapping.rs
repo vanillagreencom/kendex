@@ -115,9 +115,9 @@ pub struct EffectiveSkills {
     /// Upstream additions that must be merged into the manifest entry.
     pub manifest_additions: Vec<String>,
     /// Declared skills no source in reach offers: neither the item's own
-    /// catalog nor any other source this scope has. Rendering them would
-    /// name instructions nothing can load, and dropping them takes a
-    /// section away without a word, so the caller refuses on them.
+    /// catalog nor any other source this scope has. Reported rather than
+    /// dropped silently — what to do about one is the caller's, and the
+    /// answer differs by how the agent came to declare it.
     pub unresolved: Vec<String>,
 }
 
@@ -342,8 +342,9 @@ mod tests {
         assert!(result.unresolved.is_empty());
     }
 
-    /// A skill nothing in reach offers is reported, never dropped: the
-    /// caller refuses on it rather than rendering an agent short a section.
+    /// A skill nothing in reach offers is reported alongside the ones that
+    /// resolved, so a caller can tell the two apart instead of reading a
+    /// short list as the whole answer.
     #[test]
     fn a_skill_no_source_offers_comes_back_unresolved() {
         let manifest = declaring(&[("rust", &["dev", "gone"])]);

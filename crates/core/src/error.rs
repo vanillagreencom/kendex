@@ -202,10 +202,10 @@ pub enum CoreError {
     #[error("'{name}' not found in source '{source_name}'")]
     ItemNotInSource { name: String, source_name: String },
 
-    /// An agent is assigned a skill nothing in reach offers. The rendering
-    /// would name instructions that cannot be loaded, and leaving the skill
-    /// out takes a whole section off the agent without a word, so the plan
-    /// refuses and names both halves.
+    /// A forked agent is assigned a skill nothing in reach offers. The fork
+    /// stopped reading the catalog that assigned it, so the rendering would
+    /// name instructions that cannot be loaded, and leaving the skill out
+    /// takes a whole section off the agent without a word.
     #[error(
         "agent '{name}' is assigned the skill '{skill}', which no source here offers — it came with '{source_name}': restore that source, or drop '{skill}' from the agent's [agent-skills] entry"
     )]
