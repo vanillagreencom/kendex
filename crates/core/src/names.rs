@@ -15,9 +15,23 @@ const MAX_SEGMENT: usize = 100;
 
 /// Names Windows keeps for devices. A file with one of these stems is not
 /// created, it is written to the device, whatever extension it carries.
+///
+/// The membership is Win32's reserved-name set, not a judgement about what
+/// reads badly: an entry belongs here when the Win32 path parser resolves
+/// that stem to a device instead of a file, and nothing else belongs. The
+/// superscript `COM¹`, `COM²`, `COM³` and their `LPT` counterparts are
+/// reserved alongside the ASCII-digit forms and are as much a device as
+/// `COM1` is.
+///
+/// Load-bearing in two directions, so an addition is never only cosmetic:
+/// `segment_problem` refuses a declared name for being on it, and
+/// `paths::plain` consults it before deciding a verbatim root can be
+/// respelled — a stem missing from it lets a path be handed back plain
+/// that resolves to a device rather than the directory it named.
 const DEVICE_NAMES: &[&str] = &[
     "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
-    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+    "com9", "com¹", "com²", "com³", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8",
+    "lpt9", "lpt¹", "lpt²", "lpt³",
 ];
 
 fn is_device(segment: &str) -> bool {

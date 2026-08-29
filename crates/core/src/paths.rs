@@ -32,6 +32,7 @@
 //! that runs past the legacy limit, so kendex's own reads and writes are
 //! unaffected by which spelling it holds.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 /// The prefix Windows canonicalization answers in.
@@ -66,7 +67,7 @@ pub fn canonical(path: &Path) -> std::io::Result<PathBuf> {
     // it is absolute and begins with `/` — so this is a Windows rule that
     // costs the other platforms one comparison.
     match resolved.to_str() {
-        Some(text) => Ok(PathBuf::from(plain(text))),
+        Some(text) => Ok(PathBuf::from(plain(text).as_ref())),
         None => Ok(resolved),
     }
 }
@@ -74,29 +75,48 @@ pub fn canonical(path: &Path) -> std::io::Result<PathBuf> {
 /// `text` without the extended-length prefix where the plain spelling
 /// names the same file, and `text` unchanged where it would not.
 ///
-/// A verbatim path reaches the object manager as written. A plain one goes
-/// through the Win32 parser first, which trims a trailing dot or space off
-/// each component, reads a reserved device stem as the device, and refuses
-/// the whole path past the legacy limit — so a path carrying any of those
-/// keeps the prefix, because a spelling that names a different file is
-/// worse than an ugly one. `\\?\UNC\` shares and volume-GUID roots have no
-/// drive letter to fall back to and are left whole for the same reason.
-fn plain(text: &str) -> &str {
+/// Two verbatim roots have a plain spelling at all: a drive-lettered one is
+/// the same path with the prefix gone, and a share is `\\server\share`,
+/// which is the prefix's own `UNC` swapped back for one separator. A root
+/// with neither — a volume with no mount point above all — has no plain
+/// equivalent to fall back to, so it is not a candidate however clean its
+/// components read. That distinction is the whole rule: what follows only
+/// decides whether an equivalent that exists is also safe.
+///
+/// It is safe when the Win32 parser would hand the same path back. A
+/// verbatim path reaches the object manager as written; a plain one is
+/// parsed first, and the parser trims a trailing dot or space off each
+/// component, reads a reserved device stem as the device, and refuses the
+/// whole path past the legacy limit. A path carrying any of those keeps the
+/// prefix, because a spelling that names a different file is worse than an
+/// ugly one. The checks are the same for both roots: a share's host and
+/// share name go through them too, which can only keep a verbatim spelling
+/// that already worked.
+fn plain(text: &str) -> Cow<'_, str> {
     let Some(rest) = text.strip_prefix(VERBATIM) else {
-        return text;
+        return Cow::Borrowed(text);
     };
-    let mut head = rest.chars();
-    let drive_rooted = matches!(
+    let plain = if drive_rooted(rest) {
+        Cow::Borrowed(rest)
+    } else if let Some(share) = rest.strip_prefix(r"UNC\") {
+        Cow::Owned(format!(r"\\{share}"))
+    } else {
+        return Cow::Borrowed(text);
+    };
+    if plain.len() > LEGACY_MAX_PATH || plain.split('\\').any(crate::names::win32_rewrites) {
+        return Cow::Borrowed(text);
+    }
+    plain
+}
+
+/// Whether this is a `C:\`-shaped root — the one form that needs nothing
+/// but the prefix taken off.
+fn drive_rooted(text: &str) -> bool {
+    let mut head = text.chars();
+    matches!(
         (head.next(), head.next(), head.next()),
         (Some(letter), Some(':'), Some('\\')) if letter.is_ascii_alphabetic()
-    );
-    if !drive_rooted
-        || rest.len() > LEGACY_MAX_PATH
-        || rest.split('\\').any(crate::names::win32_rewrites)
-    {
-        return text;
-    }
-    rest
+    )
 }
 
 #[cfg(test)]
@@ -144,22 +164,40 @@ mod tests {
         assert_eq!(plain("/home/me/dev/app"), "/home/me/dev/app");
     }
 
+    /// A share has a plain spelling too, and the rule holds for it: the
+    /// prefix's own `UNC` becomes the separator that starts `\\server`.
+    /// Against a `plain` that only knows drive letters, this is red.
+    #[test]
+    fn a_verbatim_share_becomes_its_plain_double_separator_spelling() {
+        assert_eq!(plain(r"\\?\UNC\server\share\app"), r"\\server\share\app");
+        assert_eq!(plain(r"\\?\UNC\server\share"), r"\\server\share");
+        // And the same component checks decide it, so a share carrying a
+        // shape the Win32 parser rewrites keeps the prefix like any other.
+        assert_eq!(
+            plain(r"\\?\UNC\server\share\app "),
+            r"\\?\UNC\server\share\app "
+        );
+    }
+
     /// The must-fail control for the exception the doc now states: a
     /// blanket strip would hand back a path naming something else, or
     /// nothing. Each of these keeps the prefix.
     #[test]
     fn the_prefix_stays_where_the_plain_spelling_names_something_else() {
         for verbatim in [
-            // No drive letter to fall back to: a share, and a volume with
-            // no mount point.
-            r"\\?\UNC\server\share\app",
+            // A volume with no mount point has no plain spelling at all —
+            // the distinction the UNC case above turns on.
             r"\\?\Volume{b75e2c83-0000-0000-0000-602f00000000}\app",
             // The Win32 parser trims these away, naming another directory.
             r"\\?\C:\dev\app ",
             r"\\?\C:\dev.\app",
-            // And reads this component as the console device.
+            // And reads these components as devices — the superscript
+            // serial and parallel ports as surely as the ASCII-digit ones.
             r"\\?\C:\dev\CON\app",
             r"\\?\C:\dev\con.txt",
+            r"\\?\C:\dev\COM1\app",
+            "\\\\?\\C:\\dev\\COM\u{b9}\\app",
+            "\\\\?\\C:\\dev\\LPT\u{b3}\\app",
         ] {
             assert_eq!(plain(verbatim), verbatim, "{verbatim}");
         }
