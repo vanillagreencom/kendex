@@ -98,7 +98,15 @@ beforeEach(() => {
     .mockResolvedValue();
   onDelete = vi.fn<() => void>();
   useAuditStore.setState({ removeItem, busy: false });
-  useUpdatesStore.setState({ rows: [], loaded: true, updateOne, updateRows });
+  useUpdatesStore.setState({
+    rows: [],
+    loaded: true,
+    checking: false,
+    overviewInFlight: false,
+    pendingFollows: [],
+    updateOne,
+    updateRows,
+  });
   vi.mocked(commands.packageMeta).mockImplementation((scope) =>
     Promise.resolve({
       status: "ok",
@@ -195,11 +203,85 @@ describe("the update a place is waiting for", () => {
     ]);
   });
 
+  // The store keeps the last-known rows through a failed or running read
+  // and refuses every update over them, saying so. A card that read those
+  // rows alone would offer a button whose only outcome is that error.
+  it("offers nothing while the update read has failed", async () => {
+    useUpdatesStore.setState({
+      rows: [row(VG, true), row(HYPR, true)],
+      loaded: false,
+      error: "the read failed",
+    });
+    const host = await openTab([VG, HYPR]);
+
+    expect(buttons(host).filter((one) => one.textContent === "Update")).toEqual(
+      [],
+    );
+    expect(host.textContent).not.toContain(UPDATE_ALL_LABEL);
+  });
+
+  it("offers nothing while a read that replaces every row is in flight", async () => {
+    useUpdatesStore.setState({
+      rows: [row(VG, true), row(HYPR, true)],
+      overviewInFlight: true,
+    });
+    const host = await openTab([VG, HYPR]);
+
+    expect(buttons(host).filter((one) => one.textContent === "Update")).toEqual(
+      [],
+    );
+    expect(host.textContent).not.toContain(UPDATE_ALL_LABEL);
+  });
+
+  // Every card still draws while the rows are held: the package is
+  // installed in those places whatever the update read is doing.
+  it("still draws the cards while the rows are held", async () => {
+    useUpdatesStore.setState({ rows: [row(VG, true)], checking: true });
+    const host = await openTab([VG, HYPR]);
+
+    expect(host.textContent).toContain("vg");
+    expect(host.textContent).toContain("hyprtrade");
+    expect(
+      buttons(host).filter((one) => one.textContent === REMOVE_LABEL),
+    ).toHaveLength(2);
+  });
+
   it("offers no Update all while nothing is waiting", async () => {
     useUpdatesStore.setState({ rows: [row(VG, false), row(HYPR, false)] });
     const host = await openTab([VG, HYPR]);
 
     expect(host.textContent).not.toContain(UPDATE_ALL_LABEL);
+  });
+});
+
+// The generated command wrapper rethrows a transport failure rather than
+// answering with an error status, so one unreachable place must not take
+// the whole read with it.
+describe("a place whose record could not be read", () => {
+  it("draws every other place and stops loading", async () => {
+    vi.mocked(commands.packageMeta).mockImplementation((scope) =>
+      scopeKey(scope) === scopeKey(VG)
+        ? Promise.reject(new Error("the channel is gone"))
+        : Promise.resolve({ status: "ok", data: meta(THREE_DAYS_AGO) }),
+    );
+    const host = await openTab([VG, HYPR]);
+
+    expect(host.querySelector('[role="status"]')).toBeNull();
+    expect(host.textContent).toContain("hyprtrade");
+    expect(host.textContent).toContain("Installed 3d ago");
+  });
+
+  // The place is installed there whatever the read managed to say, so it
+  // keeps its card and loses only the date.
+  it("keeps the unreachable place, dateless", async () => {
+    vi.mocked(commands.packageMeta).mockRejectedValue(
+      new Error("the channel is gone"),
+    );
+    const host = await openTab([VG, HYPR]);
+
+    expect(host.textContent).toContain("vg");
+    expect(host.textContent).toContain("hyprtrade");
+    expect(host.textContent).not.toMatch(/Installed \d/);
   });
 });
 

@@ -5,7 +5,11 @@ import type {
   Scope,
   UpdateRow,
 } from "@/bindings";
-import { packagePlaces, updatableRows } from "@/lib/package-places";
+import {
+  packagePlaces,
+  type UpdatesStanding,
+  updatableRows,
+} from "@/lib/package-places";
 import { scopeKey } from "@/lib/scope";
 
 const VG: Scope = { scope: "project", root: "/work/vg" };
@@ -50,12 +54,22 @@ const meta = (installedAt: string | null): PackageMeta_Serialize => ({
   catalog: null,
 });
 
+/** A read that landed with nothing running behind it: the only state in
+ *  which a row on screen is a confirmed current answer. */
+const SETTLED: UpdatesStanding = {
+  loaded: true,
+  checking: false,
+  overviewInFlight: false,
+  pendingFollows: [],
+};
+
 const places = (
   scopes: Scope[],
   rows: UpdateRow[],
   metas: Record<string, PackageMeta_Serialize | null> = {},
   kind: ItemKind = "skill",
-) => packagePlaces(scopes, kind, "gh", rows, metas);
+  standing: UpdatesStanding = SETTLED,
+) => packagePlaces(scopes, kind, "gh", rows, metas, standing);
 
 describe("the places one package sits in", () => {
   it("names each place among the others and carries its install date", () => {
@@ -122,6 +136,35 @@ describe("which places can take an update", () => {
       "pi-extension",
     );
     expect(built[0].updatable).toBe(false);
+  });
+
+  // The store keeps the last-known rows through a failed or running read
+  // so the page does not blank, and refuses every commit-applying action
+  // over them. A card reading those rows alone would offer an Update that
+  // can only raise an error.
+  it("offers none while the update read has not landed", () => {
+    const held = { ...SETTLED, loaded: false };
+    expect(places([VG], [row(VG)], {}, "skill", held)[0].updatable).toBe(false);
+  });
+
+  it("offers none while a check is running", () => {
+    const held = { ...SETTLED, checking: true };
+    expect(places([VG], [row(VG)], {}, "skill", held)[0].updatable).toBe(false);
+  });
+
+  it("offers none while a read that replaces every row is in flight", () => {
+    const held = { ...SETTLED, overviewInFlight: true };
+    expect(places([VG], [row(VG)], {}, "skill", held)[0].updatable).toBe(false);
+  });
+
+  // A follow switch reaches its own scope alone, so it holds that place
+  // and leaves the package's other places live.
+  it("holds only the place a follow switch is settling in", () => {
+    const held = { ...SETTLED, pendingFollows: [{ scope: VG }] };
+    const built = places([VG, HYPR], [row(VG), row(HYPR)], {}, "skill", held);
+
+    expect(built[0].updatable).toBe(false);
+    expect(built[1].updatable).toBe(true);
   });
 
   it("hands Update all only the places that can take one", () => {

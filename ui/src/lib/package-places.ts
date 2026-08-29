@@ -6,6 +6,12 @@ import type {
 } from "@/bindings";
 import { sameScope, scopeKey } from "@/lib/scope";
 import { placeName, updatablePlaces } from "@/lib/update-groups";
+import { rowUnsettled } from "@/lib/updates-read-state";
+
+/** How the update read stands, as `rowUnsettled` asks it. The store keeps
+ *  last-known rows through a failed or running read, so the rows alone
+ *  never say whether they may be acted on. */
+export type UpdatesStanding = Parameters<typeof rowUnsettled>[0];
 
 /** One place a package is installed in, as its card reads it. */
 export interface PackagePlace {
@@ -17,9 +23,10 @@ export interface PackagePlace {
   /** The place's update standing, or null while the update read has not
    *  spoken for it. */
   row: UpdateRow | null;
-  /** An update is waiting here and this place can take it. Never merely
-   *  `updateAvailable`: an Update offered over a hand edit or somebody
-   *  else's hold is one the engine goes on to refuse. */
+  /** An update is waiting here and this place can take it right now.
+   *  Never merely `updateAvailable`: an Update offered over a hand edit,
+   *  somebody else's hold, or a row the store is holding is one the
+   *  engine goes on to refuse. */
   updatable: boolean;
 }
 
@@ -33,6 +40,7 @@ export function packagePlaces(
   name: string,
   rows: UpdateRow[],
   metas: Record<string, PackageMeta_Serialize | null>,
+  standing: UpdatesStanding,
 ): PackagePlace[] {
   return scopes.map((scope) => {
     const row =
@@ -45,7 +53,15 @@ export function packagePlaces(
       name: placeName(scope, scopes),
       installedAt: metas[scopeKey(scope)]?.installedAt ?? null,
       row,
-      updatable: row !== null && updatablePlaces([row]).length === 1,
+      // A row the store is holding — a read that failed, a check or a
+      // load running, a follow switch settling here — names a `latest`
+      // nobody confirmed. `updateOne` refuses those and says so, so the
+      // card offers nothing rather than a button that only raises an
+      // error.
+      updatable:
+        row !== null &&
+        !rowUnsettled(standing, row) &&
+        updatablePlaces([row]).length === 1,
     };
   });
 }
