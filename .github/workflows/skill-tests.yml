@@ -10,7 +10,7 @@ name: Skill Tests
 # bot review, while the pending "Review gate" status is what actually blocks
 # merge. The full battery runs once per merged result: in the merge queue
 # before the merge, and again on the push to main as the post-merge record.
-# The two cross-platform cargo lanes are the exceptions; each says why.
+# The cross-platform cargo lanes are the exceptions; each says why.
 # The review gate never conditions
 # CI (it answers review-only; see the review-gate skill) — there is no gate
 # job here and nothing reads the predicate.
@@ -500,11 +500,11 @@ jobs:
 
   # The app ships on Windows and release.yml builds it there. `cargo check`
   # does not link, so the Linux runner proves the Windows targets compile
-  # without one — enough to stop a `std::os::unix` reach in test code from
-  # landing unseen. A windows-latest runner is free on this public repo;
-  # what keeps an executing lane out is KEN-817, KEN-818 and KEN-819, and
-  # the lane returns with them. Scope matches tools/guard's cross-target
-  # lane: app needs the platform's C toolchain, core and CLI are portable.
+  # without one, and it answers in a minute where the executing lane below
+  # takes the workspace build first — a `std::os::unix` reach in test code
+  # fails here before that one has finished linking. Scope matches
+  # tools/guard's cross-target lane: app needs the platform's C toolchain,
+  # core and CLI are portable.
   cargo-check-windows:
     name: Windows cargo (core and CLI targets compile)
     runs-on: ubuntu-latest
@@ -524,3 +524,16 @@ jobs:
           rustup target add x86_64-pc-windows-msvc
       - name: cargo check
         run: cargo check -p kendex-core -p kendex-cli --all-targets --locked --target x86_64-pc-windows-msvc
+
+  cargo-tests-windows:
+    name: Windows cargo (workspace tests)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test
+        run: cargo test --workspace --locked --no-fail-fast
