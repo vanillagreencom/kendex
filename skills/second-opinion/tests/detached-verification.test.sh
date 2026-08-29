@@ -141,11 +141,13 @@ SH
   sleep 2.2
   kill -TERM -- "-$signal_session" 2>/dev/null || true
   signal_wait="$(sed -n 's/^wait: //p' "$TMP_ROOT/signal-launch.stdout")"
-  signal_deadline="$(sed -n 's/^deadline: //p' "$TMP_ROOT/signal-launch.stdout")"
+  signal_test_deadline=$(($(date +%s) + 5))
   signal_rc=0
   bash -c "$signal_wait" >"$TMP_ROOT/signal-wait.stdout" \
     2>"$TMP_ROOT/signal-wait.stderr" || signal_rc=$?
-  while [[ $signal_rc -eq 75 && $(date +%s) -le $signal_deadline ]]; do
+  while [[ $signal_rc -eq 75 ]]; do
+    [[ $(date +%s) -le $signal_test_deadline ]] \
+      || fail "signal-during-wait did not reach a terminal result"
     signal_rc=0
     bash -c "$signal_wait" >"$TMP_ROOT/signal-wait.stdout" \
       2>"$TMP_ROOT/signal-wait.stderr" || signal_rc=$?
