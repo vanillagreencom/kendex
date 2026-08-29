@@ -67,6 +67,18 @@ for candidate in "$HOME/.local/bin" "/usr/local/bin"; do
 done
 [ -n "$bindir" ] || bindir="$HOME/.local/bin"
 
+# What this script trusts, stated rather than left to be inferred: TLS to
+# kendex.ai for the script and to github.com for what it downloads. It does
+# not check the minisign signature the release publishes beside each asset,
+# because minisign is not on a machine that has yet to install anything and
+# a check that runs only where the tool happens to be present is one an
+# attacker's target simply does not have. So a first install is trust on
+# first use, and a swapped release asset reaches it.
+#
+# That window is the first install and nothing after it. The command this
+# installs carries the release public key, and `kendex update` refuses both
+# halves — the command and the desktop app — unless a signature under that
+# key covers the bytes it downloaded.
 install_cli() {
   echo "Downloading the kendex command ($target)…"
   # curl exits 22 on an HTTP error — here a 404 for an asset the release

@@ -26,12 +26,12 @@ fn fetched_urls_are_always_positional_arguments() {
 /// leave a bare io error to be read as total failure.
 #[test]
 fn a_command_that_would_not_move_says_whether_the_app_went_without_it() {
-    let error = || std::io::Error::from(std::io::ErrorKind::PermissionDenied);
-    let split = command_failure("5.1.0", true, &error());
+    let error = "permission denied";
+    let split = command_failure("5.1.0", true, error);
     assert!(split.contains("the desktop app is on 5.1.0"), "{split}");
     assert!(split.contains("run kendex update again"), "{split}");
 
-    let neither = command_failure("5.1.0", false, &error());
+    let neither = command_failure("5.1.0", false, error);
     assert!(!neither.contains("desktop app"), "{neither}");
 }
 
@@ -43,6 +43,7 @@ fn a_release_is_out(dir: &tempfile::TempDir) -> (Env, String, PathBuf) {
     let installed = home.join("kendex");
     std::fs::write(&installed, INSTALLED).unwrap();
     std::fs::write(home.join("new-command"), OFFERED).unwrap();
+    std::fs::write(home.join("new-command.sig"), TEST_SIGNATURE).unwrap();
     std::fs::write(
         home.join("feed.json"),
         format!(
@@ -60,7 +61,9 @@ fn a_release_is_out(dir: &tempfile::TempDir) -> (Env, String, PathBuf) {
 }
 
 const INSTALLED: &[u8] = b"the command already here";
-const OFFERED: &[u8] = b"#!/bin/sh\necho 9.9.9\n";
+/// What the feed offers is the signed blob below, because a release only
+/// offers a command `TEST_SIGNATURE` covers; nothing else gets written.
+const OFFERED: &[u8] = SIGNED_BYTES;
 
 /// The arm no process in this repo can reach, and the one whose absence
 /// costs the most: a package manager owns these bytes, so the run says
@@ -75,7 +78,7 @@ fn a_package_managed_command_is_left_for_its_package_manager() {
         command: "brew upgrade kendex-cli".to_owned(),
     };
 
-    run_on(&env, false, &feed_url, &installed, &brew).unwrap();
+    run_on(&env, false, &feed_url, &installed, &brew, TEST_KEY).unwrap();
 
     assert_eq!(std::fs::read(&installed).unwrap(), INSTALLED);
     assert!(!staged_path(&installed).exists());
@@ -90,17 +93,77 @@ fn a_direct_command_is_replaced_from_the_feed() {
     let dir = tempfile::tempdir().unwrap();
     let (env, feed_url, installed) = a_release_is_out(&dir);
 
-    run_on(&env, false, &feed_url, &installed, &InstallChannel::Direct).unwrap();
+    run_on(
+        &env,
+        false,
+        &feed_url,
+        &installed,
+        &InstallChannel::Direct,
+        TEST_KEY,
+    )
+    .unwrap();
 
     assert_eq!(std::fs::read(&installed).unwrap(), OFFERED);
     assert!(!staged_path(&installed).exists());
 }
 
-/// A throwaway minisign keypair signing `SIGNED_IMAGE`, so the admitted
-/// arm runs the real check rather than a stub standing in for it.
+/// The whole point of signing the command half: the feed names a host, so
+/// a run has to be able to be handed bytes and refuse them. Driven by both
+/// shapes a bad download takes — bytes the signature does not cover, and a
+/// body that is no signature at all — and either way the command that was
+/// already installed is exactly as it was.
+#[test]
+fn a_command_binary_that_fails_verification_is_never_written() {
+    for (file, corrupt) in [
+        (
+            "new-command",
+            b"kendex AppImage bytes, and a little more".as_slice(),
+        ),
+        ("new-command.sig", b"not a signature".as_slice()),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let (env, feed_url, installed) = a_release_is_out(&dir);
+        std::fs::write(dir.path().join(file), corrupt).unwrap();
+
+        let refused = run_on(
+            &env,
+            false,
+            &feed_url,
+            &installed,
+            &InstallChannel::Direct,
+            TEST_KEY,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(
+            refused.contains("could not be replaced"),
+            "{file}: {refused}"
+        );
+        assert_eq!(std::fs::read(&installed).unwrap(), INSTALLED, "{file}");
+        assert!(!staged_path(&installed).exists(), "{file}");
+    }
+}
+
+/// A release build takes the channel's own feed and nothing else: an
+/// override there names the bytes that replace the running command, and
+/// the app holds the same variable to the same rule.
+#[test]
+fn only_debug_builds_accept_a_feed_override() {
+    let fixture = "file:///fixtures/feed.json".to_owned();
+    assert_eq!(selected_feed(Some(fixture.clone()), true), fixture);
+    assert_eq!(
+        selected_feed(Some(fixture), false),
+        feed_url_for(env!("CARGO_PKG_VERSION"))
+    );
+}
+
+/// A throwaway minisign keypair signing `SIGNED_BYTES`, so the admitted
+/// arm runs the real check rather than a stub standing in for it. One pair
+/// serves both halves: the app and the command are held to one key.
 const TEST_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk0QUI0NzI3RTVDMTVCODEKUldTQlc4SGxKMGVybEhxeFovbTJ3U1phMng4aE9VTXByV09pUVRFVFNKbFZ5aWxtUTAvVGgyWEwK";
 const TEST_SIGNATURE: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHJzaWduIHNlY3JldCBrZXkKUlVTQlc4SGxKMGVybElTMUxrbkMyQ0tBWGlnejY1S0xLekovK0tBYllNdkdJTVU0bitTSjRBSCt1RlpwWnZkRHNKcWFTSHVoeStIQkpyVDlOaVRIMmROWVVSb21mMVBVRmd3PQp0cnVzdGVkIGNvbW1lbnQ6IGtlbmRleCB0ZXN0CnpKSnpYYnBtODZYRW40eHgxSTVkeG5YdktxT0k5ZXdmSkEyMkdtZXpreGgwbUNJZysybkJ2cGowUXZ6N2c3RHA4TEZBVXVBQUVMRExuUzFuaVpsaUF3PT0K";
-const SIGNED_IMAGE: &[u8] = b"kendex AppImage bytes";
+const SIGNED_BYTES: &[u8] = b"kendex AppImage bytes";
 
 /// A path with something already installed at it, so every arm can say
 /// whether the bytes there moved.
@@ -117,15 +180,15 @@ fn an_app_image_whose_signature_checks_out_is_written() {
     let dir = tempfile::tempdir().unwrap();
     let installed = installed_app(&dir);
 
-    install_app_image(
+    install_verified(
         &installed,
-        SIGNED_IMAGE,
+        SIGNED_BYTES,
         TEST_SIGNATURE.as_bytes(),
         TEST_KEY,
     )
     .unwrap();
 
-    assert_eq!(std::fs::read(&installed).unwrap(), SIGNED_IMAGE);
+    assert_eq!(std::fs::read(&installed).unwrap(), SIGNED_BYTES);
     assert!(!staged_path(&installed).exists());
 }
 
@@ -137,15 +200,15 @@ fn an_app_image_that_fails_verification_is_never_written() {
     let dir = tempfile::tempdir().unwrap();
     let installed = installed_app(&dir);
 
-    let tampered = install_app_image(&installed, b"tampered", TEST_SIGNATURE.as_bytes(), TEST_KEY)
-        .unwrap_err();
+    let tampered =
+        install_verified(&installed, b"tampered", TEST_SIGNATURE.as_bytes(), TEST_KEY).unwrap_err();
     assert!(
         tampered.contains("signature verification failed"),
         "{tampered}"
     );
 
     let malformed =
-        install_app_image(&installed, SIGNED_IMAGE, b"not a signature", TEST_KEY).unwrap_err();
+        install_verified(&installed, SIGNED_BYTES, b"not a signature", TEST_KEY).unwrap_err();
     assert!(malformed.contains("not base64"), "{malformed}");
 
     assert_eq!(std::fs::read(&installed).unwrap(), b"the app already here");

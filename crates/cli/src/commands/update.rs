@@ -8,18 +8,36 @@ use kendex_core::process::Hardened;
 use kendex_core::update_channel::feed_url_for;
 use kendex_core::update_feed::{
     ReleaseFeed, UPDATER_PUBLIC_KEY, VersionRelation, app_image_signature_url, app_image_url,
-    release_notes_url, verify_signature,
+    release_notes_url, signature_url, verify_signature,
 };
 
 use super::{CliResult, out, say};
 
 /// The release feed is parsed by core so the CLI and app accept one schema,
 /// and core picks which feed off the running version so both shells follow
-/// one channel. `KENDEX_UPDATE_FEED` overrides the URL so compat tests run
-/// against a local fixture instead of the network.
+/// one channel.
 fn feed_url() -> String {
-    std::env::var("KENDEX_UPDATE_FEED")
-        .unwrap_or_else(|_| feed_url_for(env!("CARGO_PKG_VERSION")).to_owned())
+    #[cfg(debug_assertions)]
+    {
+        selected_feed(std::env::var("KENDEX_UPDATE_FEED").ok(), true)
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        selected_feed(None, false)
+    }
+}
+
+/// The feed a run reads, given the override it was handed. A debug build
+/// honors it so the compat suite can point a run at a local fixture; a
+/// release build takes the channel's own URL and nothing else, because the
+/// feed names the bytes that replace the running command and an override
+/// would let anything that can set a variable name them instead. The app
+/// gates the same variable the same way (`crates/app/src/app_update.rs`).
+fn selected_feed(override_url: Option<String>, debug_build: bool) -> String {
+    match (debug_build, override_url) {
+        (true, Some(url)) => url,
+        (true, None) | (false, _) => feed_url_for(env!("CARGO_PKG_VERSION")).to_owned(),
+    }
 }
 
 /// The feed keys its assets by the build target, one per lane in
@@ -65,20 +83,30 @@ pub fn run(env: &Env, force: bool) -> CliResult {
     // through a link is judged by its target and replaced at the link.
     let current_exe = Host.resolve(&std::env::current_exe()?);
     let channel = for_cli(&current_exe, &Host);
-    run_on(env, force, &feed_url(), &current_exe, &channel)
+    run_on(
+        env,
+        force,
+        &feed_url(),
+        &current_exe,
+        &channel,
+        UPDATER_PUBLIC_KEY,
+    )
 }
 
 /// The update with everything it reads off this process handed to it: the
-/// feed to ask, the command's own path, and who owns that path. Which arm a
-/// person lands on is the channel, and a package-managed one is the arm no
-/// test can reach by running: `for_cli` judges the real `current_exe`, which
-/// nothing here can place under `/usr` or a brew prefix.
+/// feed to ask, the command's own path, who owns that path, and the key
+/// every download is held to. Which arm a person lands on is the channel,
+/// and a package-managed one is the arm no test can reach by running:
+/// `for_cli` judges the real `current_exe`, which nothing here can place
+/// under `/usr` or a brew prefix. The key is an argument for the same
+/// reason core's is — a test holds a signature it made itself.
 fn run_on(
     env: &Env,
     force: bool,
     feed_url: &str,
     current_exe: &Path,
     channel: &InstallChannel,
+    public_key: &str,
 ) -> CliResult {
     if let InstallChannel::Managed { command } = channel {
         out("a package manager owns this install; update it with:");
@@ -120,13 +148,21 @@ fn run_on(
     // as newer, and both halves are tried again instead of stopping at
     // already-up-to-date. Its bytes are fetched first so a lost download
     // costs nothing that is already on disk.
+    //
+    // The feed is the one input here nothing signs, so the asset URL is a
+    // host anyone who can alter the feed chooses. The signature published
+    // beside those bytes is what makes that harmless: it is fetched from
+    // wherever they came from and still has to check out under a key baked
+    // into this build, so a redirected download is refused rather than
+    // written over the running command.
     let binary = fetch(asset)?;
+    let signature = fetch(&signature_url(asset))?;
     let app_replaced = match channel {
-        InstallChannel::Direct => update_app(env, latest)?,
+        InstallChannel::Direct => update_app(env, latest, public_key)?,
         // Nothing here is ours to replace beyond the command itself.
         InstallChannel::Managed { .. } | InstallChannel::Unknown => false,
     };
-    if let Err(error) = replace_executable(current_exe, &binary) {
+    if let Err(error) = install_verified(current_exe, &binary, &signature, public_key) {
         return Err(command_failure(latest, app_replaced, &error).into());
     }
     out(&format!("updated to {latest}"));
@@ -137,7 +173,7 @@ fn run_on(
 /// already on the new release does leave the machine split, but the
 /// command still reads older than the feed, so running it again repeats
 /// both halves rather than stopping at already-up-to-date.
-fn command_failure(latest: &str, app_replaced: bool, error: &std::io::Error) -> String {
+fn command_failure(latest: &str, app_replaced: bool, error: &str) -> String {
     match app_replaced {
         true => format!(
             "the desktop app is on {latest} and the kendex command is not: {error}; run kendex update again to bring the command across"
@@ -151,12 +187,16 @@ fn command_failure(latest: &str, app_replaced: bool, error: &std::io::Error) -> 
 /// validated at, never from feed text. A machine with no app of ours is
 /// the whole install already; a machine whose app cannot be replaced stops
 /// the run before the command moves, so neither half has.
-fn update_app(env: &Env, latest: &str) -> Result<bool, Box<dyn std::error::Error>> {
+fn update_app(
+    env: &Env,
+    latest: &str,
+    public_key: &str,
+) -> Result<bool, Box<dyn std::error::Error>> {
     // Only the Linux AppImage is an install this command made. Every other
     // platform's app arrives and updates by its own route, and the CLI says
     // nothing about one it did not put there.
     let target = target_triple();
-    let (Some(url), Some(signature_url)) = (
+    let (Some(url), Some(signature_source)) = (
         app_image_url(latest, target)?,
         app_image_signature_url(latest, target)?,
     ) else {
@@ -182,23 +222,25 @@ fn update_app(env: &Env, latest: &str) -> Result<bool, Box<dyn std::error::Error
     // The release job publishes each AppImage beside a minisign signature
     // over exactly those bytes. One that arrives without a signature, or
     // with one that does not check out, is refused rather than installed.
-    let signature = fetch(&signature_url).map_err(|why| app_refused(latest, &why))?;
-    install_app_image(&path, &image, &signature, UPDATER_PUBLIC_KEY)
+    let signature = fetch(&signature_source).map_err(|why| app_refused(latest, &why))?;
+    install_verified(&path, &image, &signature, public_key)
         .map_err(|why| app_refused(latest, &why))?;
     out(&format!("updated the desktop app to {latest}"));
     Ok(true)
 }
 
-/// Write the app only once `signature` checks out under `public_key`, so a
-/// download that fails verification never reaches the installed path.
-fn install_app_image(
+/// Write `bytes` over `path` only once `signature` checks out under
+/// `public_key`, so a download that fails verification never reaches an
+/// installed path. Both halves of an update land through here — the desktop
+/// app and the command itself — so neither is the half nothing checks.
+fn install_verified(
     path: &Path,
-    image: &[u8],
+    bytes: &[u8],
     signature: &[u8],
     public_key: &str,
 ) -> Result<(), String> {
-    verify_signature(public_key, image, signature).map_err(|error| error.to_string())?;
-    replace_executable(path, image).map_err(|error| error.to_string())
+    verify_signature(public_key, bytes, signature).map_err(|error| error.to_string())?;
+    replace_executable(path, bytes).map_err(|error| error.to_string())
 }
 
 /// The one sentence both app-half refusals say: the reason, then what the

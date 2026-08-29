@@ -11,8 +11,12 @@ per target (Linux x86_64 and aarch64, macOS aarch64 and x86_64, Windows
 x86_64; all free for a public repository) and publishes a **draft** GitHub
 Release with:
 
-- `kendex-<target>[.exe]` — the CLI binary, one per target. These are what
-  `kendex update` downloads.
+- `kendex-<target>[.exe]` — the CLI binary, one per target, and the
+  `<binary>.sig` a lane signs it into. These are what `kendex update`
+  downloads, and it installs neither without the other: a signature the
+  release key does not carry over those exact bytes is refused, so a lane
+  that produced none fails the tag instead of publishing a command no
+  client can verify.
 - The desktop app bundles Tauri produces per platform (deb/rpm/AppImage,
   dmg, NSIS installer), and the `.sig` Tauri writes beside each updater
   bundle. `kendex update` fetches `<AppImage>.sig` straight from the
@@ -29,6 +33,11 @@ Release with:
   unknown value. Keep these fields when adding data.
 
 Review the draft, then publish it. That is the release.
+
+`install.sh` is the exception and says so in its own comments: a machine
+with nothing installed has neither the release key nor minisign, so a first
+install rests on TLS to kendex.ai and github.com. Every update after it is
+held to the key.
 
 ## Pre-releases
 

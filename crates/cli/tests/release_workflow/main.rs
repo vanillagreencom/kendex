@@ -614,3 +614,4 @@ fn no_lane_triple_is_hardcoded_into_build_or_staging() {
 }
 
 mod channel;
+mod signing;

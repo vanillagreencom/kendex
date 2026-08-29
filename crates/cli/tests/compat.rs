@@ -324,9 +324,16 @@ fn report_files_through_a_stubbed_gh() {
     assert!(args.contains("kendex-report:v1 asset=guard kind=hook"));
 }
 
+/// The feed is unsigned text naming a host, so what it offers has to be
+/// held to the release key before it lands on the running command. Nothing
+/// here can produce a signature under that key, which is the point: this
+/// drives the real binary end to end and it refuses, leaving the command
+/// exactly as it was. The admitted arm — a signature that checks out, and
+/// the write that follows it — is covered in `commands::update::tests`,
+/// which holds a keypair of its own.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn update_replaces_the_binary_from_a_local_feed() {
+fn update_over_a_local_feed_refuses_a_command_it_cannot_verify() {
     let tmp = sandbox_with_catalog();
     let home = tmp.path();
     let bin = home.join("bin");
@@ -335,7 +342,11 @@ fn update_replaces_the_binary_from_a_local_feed() {
     fs::copy(env!("CARGO_BIN_EXE_kendex"), &me).unwrap();
     fs::set_permissions(&me, fs::Permissions::from_mode(0o755)).unwrap();
 
+    let installed = fs::read(&me).unwrap();
     fs::write(home.join("new-binary"), "#!/bin/sh\necho v9\n").unwrap();
+    // A release publishes a signature beside every download, so the fixture
+    // does too; this one is not the release's, which is what gets refused.
+    fs::write(home.join("new-binary.sig"), "not the release signature").unwrap();
     let target = env!("KENDEX_TARGET");
     fs::write(
         home.join("feed.json"),
@@ -355,12 +366,17 @@ fn update_replaces_the_binary_from_a_local_feed() {
             format!("file://{}/feed.json", home.display()),
         )],
     );
+    let refused = stderr(&output);
+    assert!(!output.status.success(), "{refused}");
     assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+        refused.contains("does not verify under the pinned release key"),
+        "{refused}"
     );
-    assert_eq!(fs::read_to_string(&me).unwrap(), "#!/bin/sh\necho v9\n");
+    assert_eq!(
+        fs::read(&me).unwrap(),
+        installed,
+        "the command moved anyway"
+    );
     let said = String::from_utf8_lossy(&output.stdout);
     match publishes_an_app_image() {
         true => assert!(said.contains("no kendex desktop app here"), "{said}"),
@@ -467,9 +483,9 @@ fn update_replaces_the_binary_from_a_local_feed() {
 /// with no --force and nothing said about one.
 ///
 /// Only a target whose release publishes an AppImage has an app half to
-/// order against. Where none is published the command is the whole
-/// install and the opposite has to hold: it updates itself, and it leaves
-/// alone and says nothing about an app it never installed.
+/// order against. Where none is published the command is the whole install
+/// and what has to hold instead is that it leaves alone, and says nothing
+/// about, an app it never installed.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_desktop_app_that_cannot_be_replaced_leaves_the_command_alone() {
@@ -486,6 +502,7 @@ fn a_desktop_app_that_cannot_be_replaced_leaves_the_command_alone() {
     fs::write(app_dir.join("kendex.AppImage"), "old app").unwrap();
 
     fs::write(home.join("new-binary"), "#!/bin/sh\necho v9\n").unwrap();
+    fs::write(home.join("new-binary.sig"), "not the release signature").unwrap();
     let target = env!("KENDEX_TARGET");
     fs::write(
         home.join("feed.json"),
@@ -515,8 +532,14 @@ fn a_desktop_app_that_cannot_be_replaced_leaves_the_command_alone() {
     if !publishes_an_app_image() {
         let only = update();
         let said = format!("{}{}", stderr(&only), stdout(&only));
-        assert!(only.status.success(), "{said}");
-        assert!(command_moved(), "the command did not update itself: {said}");
+        // The command is the whole install here, and it is still held to
+        // the release key: this fixture cannot sign under it, so the run
+        // refuses and the command stays where it was.
+        assert!(!only.status.success(), "{said}");
+        assert!(
+            !command_moved(),
+            "an unverified command was written: {said}"
+        );
         // An AppImage sitting here is not this platform's install, so the
         // command neither touches it nor mentions one.
         assert_eq!(still_old_app(), "old app", "{said}");

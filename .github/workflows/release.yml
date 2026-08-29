@@ -139,6 +139,26 @@ jobs:
           done
           ls -l dist
         shell: bash
+      # `kendex update` replaces the running command with the bytes the feed
+      # names, and refuses any the signature beside them does not cover, so
+      # the command is signed under the same key as the app bundles rather
+      # than being the one download nothing checks. Tauri's signer writes
+      # `<file>.sig`; a lane that produced none has published a download no
+      # client can verify, so it fails here instead.
+      - name: Sign the kendex command
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          ext=""
+          [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
+          binary="dist/kendex-${{ matrix.target }}${ext}"
+          ui/node_modules/.bin/tauri signer sign "$binary"
+          if [ ! -s "${binary}.sig" ]; then
+            echo "::error::No signature for ${binary}. kendex update refuses a command it cannot verify; check this lane's signer step and TAURI_SIGNING_PRIVATE_KEY, then re-run the tag."
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: assets-${{ matrix.target }}

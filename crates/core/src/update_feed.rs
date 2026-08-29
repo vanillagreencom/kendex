@@ -144,11 +144,18 @@ pub fn app_image_url(version: &str, target: &str) -> Result<Option<String>> {
     )))
 }
 
-/// The minisign signature published beside that AppImage. The release job
-/// stages every `<artifact>.sig` tauri produces into the same release, so
-/// the name is the artifact's own with the suffix appended.
+/// The minisign signature published beside a release artifact. The release
+/// job publishes every `<artifact>.sig` into the same release, so the name
+/// is the artifact's own with the suffix appended. Both halves of an update
+/// find their signature this way: the AppImage below, and the command
+/// binary the feed names.
+pub fn signature_url(artifact_url: &str) -> String {
+    format!("{artifact_url}.sig")
+}
+
+/// The signature published beside that AppImage.
 pub fn app_image_signature_url(version: &str, target: &str) -> Result<Option<String>> {
-    Ok(app_image_url(version, target)?.map(|url| format!("{url}.sig")))
+    Ok(app_image_url(version, target)?.map(|url| signature_url(&url)))
 }
 
 /// Refuse a download that `signature` does not cover under
@@ -340,6 +347,12 @@ mod tests {
         assert_eq!(
             app_image_signature_url("5.1.0", "aarch64-apple-darwin").unwrap(),
             None
+        );
+        // The feed names the command binary, and its signature is found by
+        // the same rule rather than by a second spelling.
+        assert_eq!(
+            signature_url("https://example.test/kendex-x86_64-unknown-linux-gnu"),
+            "https://example.test/kendex-x86_64-unknown-linux-gnu.sig"
         );
     }
 
