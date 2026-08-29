@@ -8,6 +8,7 @@ const NICKNAME_SUFFIXES: [&str; 6] = ["Atlas", "Delta", "Echo", "Nova", "Orion",
 
 /// Codex agent: TOML whose `developer_instructions` carries the whole prompt.
 /// No native skills field and no hook wiring, so both render as prose.
+/// Tags are left out: Codex denies unknown fields, and one costs the whole file.
 pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     let source = agent.source;
     let o = &agent.overrides;
@@ -26,14 +27,6 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
         "description = \"{}\"\n",
         escape(&source.description)
     ));
-    if !source.tags.is_empty() {
-        let words: Vec<String> = source
-            .tags
-            .iter()
-            .map(|tag| format!("\"{}\"", escape(tag)))
-            .collect();
-        out.push_str(&format!("tags = [{}]\n", words.join(", ")));
-    }
     let model = o.model.as_deref().unwrap_or(&source.model);
     let resolved = resolve_model(HarnessId::Codex, model);
     warnings.extend(resolved.warning.map(crate::render::RenderWarning::new));
@@ -228,7 +221,7 @@ mod tests {
 
     fn source(name: &str, role: &str) -> SourceAgent {
         parse_source_agent(&format!(
-            "---\nname: {name}\ndescription: Codex agent\nmodel: sonnet\nrole: {role}\n---\nBody text.\n"
+            "---\nname: {name}\ndescription: Codex agent\nmodel: sonnet\nrole: {role}\ntags: performance\n---\nBody text.\n"
         ))
         .unwrap()
     }
@@ -261,6 +254,16 @@ mod tests {
         assert!(engineer.contains("model = \"gpt-5.6-sol\""));
         assert!(!engineer.contains("model_reasoning_effort"));
         assert!(engineer.contains("- dev: .agents/skills/dev/SKILL.md"));
+    }
+
+    /// One unknown field costs Codex the whole agent file.
+    #[test]
+    fn a_tagged_source_renders_no_tags_key() {
+        let source = source("rust", "engineer");
+        assert_eq!(source.tags, vec!["performance"]);
+        let text = generate(&effective(&source, &Scope::Global)).text;
+        let (keys, _) = text.split_once("developer_instructions").unwrap();
+        assert!(!keys.contains("tags"), "{keys}");
     }
 
     #[test]

@@ -1,8 +1,7 @@
 name = "planner"
 nickname_candidates = ["Planner-Atlas", "Planner-Delta", "Planner-Echo", "Planner-Nova", "Planner-Orion", "Planner-Vector"]
 description = "Planning specialist that explores requirements and code context, weighs architecture trade-offs, and produces ordered implementation plans or plan files. May write planning artifacts; does not edit production code."
-tags = ["planning", "research"]
-model = "gpt-5.5"
+model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 developer_instructions = '''

@@ -1,8 +1,7 @@
 name = "iced"
 nickname_candidates = ["Iced-Atlas", "Iced-Delta", "Iced-Echo", "Iced-Nova", "Iced-Orion", "Iced-Vector"]
 description = "Iced UI specialist. Use for Iced widgets, Canvas/Shader rendering, pane_grid layout, Theme system, Subscription-based data flow, or Elm Architecture patterns."
-tags = ["ui"]
-model = "gpt-5.5"
+model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 sandbox_mode = "danger-full-access"
 developer_instructions = '''

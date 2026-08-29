@@ -1,8 +1,7 @@
 name = "researcher"
 nickname_candidates = ["Researcher-Atlas", "Researcher-Delta", "Researcher-Echo", "Researcher-Nova", "Researcher-Orion", "Researcher-Vector"]
 description = "Exa-powered research specialist for producing evidence-backed findings reports from project research prompts. Use for research issues, technology investigations, vendor/library comparisons, architectural option analysis, and current-state web research."
-tags = ["research"]
-model = "gpt-5.5"
+model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 developer_instructions = '''

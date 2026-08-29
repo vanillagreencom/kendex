@@ -1,8 +1,7 @@
 name = "reviewer-correctness"
 nickname_candidates = ["Reviewer-Correctness-Atlas", "Reviewer-Correctness-Delta", "Reviewer-Correctness-Echo", "Reviewer-Correctness-Nova", "Reviewer-Correctness-Orion", "Reviewer-Correctness-Vector"]
 description = "Broad correctness and regression reviewer for behavior breakage, boundary/edge-case predicates, API/CLI/devex regressions, feature-gate leaks, migrations, state semantics, and cross-module side effects."
-tags = ["review"]
-model = "gpt-5.5"
+model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 developer_instructions = '''

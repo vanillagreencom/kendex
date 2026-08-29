@@ -577,7 +577,6 @@ background = true
 effort = "high"
 
 [agent-frontmatter.codex.generalist]
-model = "gpt-5.5"
 sandbox-mode = "danger-full-access"
 model-reasoning-effort = "high"
 nickname-candidates = [
@@ -590,7 +589,6 @@ nickname-candidates = [
 ]
 
 [agent-frontmatter.codex.iced]
-model = "gpt-5.5"
 sandbox-mode = "danger-full-access"
 model-reasoning-effort = "high"
 nickname-candidates = [
@@ -603,7 +601,6 @@ nickname-candidates = [
 ]
 
 [agent-frontmatter.codex.planner]
-model = "gpt-5.5"
 sandbox-mode = "workspace-write"
 model-reasoning-effort = "high"
 nickname-candidates = [
@@ -616,7 +613,6 @@ nickname-candidates = [
 ]
 
 [agent-frontmatter.codex.researcher]
-model = "gpt-5.5"
 sandbox-mode = "workspace-write"
 model-reasoning-effort = "high"
 nickname-candidates = [
@@ -629,7 +625,6 @@ nickname-candidates = [
 ]
 
 [agent-frontmatter.codex.reviewer-arch]
-model = "gpt-5.5"
 sandbox-mode = "workspace-write"
 model-reasoning-effort = "high"
 nickname-candidates = [
@@ -642,7 +637,6 @@ nickname-candidates = [
 ]
 
 [agent-frontmatter.codex.reviewer-correctness]
-model = "gpt-5.5"
 sandbox-mode = "workspace-write"
 model-reasoning-effort = "high"
 nickname-candidates = [
@@ -655,7 +649,6 @@ nickname-candidates = [
 ]
 
 [agent-frontmatter.codex.reviewer-doc]
-model = "gpt-5.5"
 sandbox-mode = "workspace-write"
 model-reasoning-effort = "high"
 nickname-candidates = [
@@ -668,7 +661,6 @@ nickname-candidates = [
 ]
 
 [agent-frontmatter.codex.reviewer-error]
-model = "gpt-5.5"
 sandbox-mode = "workspace-write"
 model-reasoning-effort = "high"
 nickname-candidates = [
@@ -681,7 +673,6 @@ nickname-candidates = [
 ]
 
 [agent-frontmatter.codex.reviewer-perf]
-model = "gpt-5.5"
 sandbox-mode = "workspace-write"
 model-reasoning-effort = "high"
 nickname-candidates = [
@@ -694,7 +685,6 @@ nickname-candidates = [
 ]
 
 [agent-frontmatter.codex.reviewer-quality]
-model = "gpt-5.5"
 sandbox-mode = "workspace-write"
 model-reasoning-effort = "high"
 nickname-candidates = [
@@ -707,7 +697,6 @@ nickname-candidates = [
 ]
 
 [agent-frontmatter.codex.reviewer-safety]
-model = "gpt-5.5"
 sandbox-mode = "workspace-write"
 model-reasoning-effort = "high"
 nickname-candidates = [
@@ -720,7 +709,6 @@ nickname-candidates = [
 ]
 
 [agent-frontmatter.codex.reviewer-security]
-model = "gpt-5.5"
 sandbox-mode = "workspace-write"
 model-reasoning-effort = "high"
 nickname-candidates = [
@@ -733,7 +721,6 @@ nickname-candidates = [
 ]
 
 [agent-frontmatter.codex.reviewer-test]
-model = "gpt-5.5"
 sandbox-mode = "workspace-write"
 model-reasoning-effort = "high"
 nickname-candidates = [
@@ -746,7 +733,6 @@ nickname-candidates = [
 ]
 
 [agent-frontmatter.codex.rust]
-model = "gpt-5.5"
 sandbox-mode = "danger-full-access"
 model-reasoning-effort = "high"
 nickname-candidates = [
@@ -759,7 +745,6 @@ nickname-candidates = [
 ]
 
 [agent-frontmatter.codex.scout]
-model = "gpt-5.5"
 sandbox-mode = "workspace-write"
 model-reasoning-effort = "medium"
 nickname-candidates = [
@@ -772,7 +757,6 @@ nickname-candidates = [
 ]
 
 [agent-frontmatter.codex.tpm]
-model = "gpt-5.5"
 sandbox-mode = "workspace-write"
 model-reasoning-effort = "high"
 nickname-candidates = [
