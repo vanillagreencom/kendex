@@ -202,7 +202,11 @@ fn a_retry_over_a_command_already_across_is_not_refused() {
 /// through a real filesystem are reachable here.
 #[derive(Default)]
 struct Machine {
+    /// Paths this machine would run.
     present: Vec<PathBuf>,
+    /// Paths that are there and are not commands: a directory, or a data
+    /// file, carrying a command's name.
+    not_commands: Vec<PathBuf>,
     links: Vec<(PathBuf, PathBuf)>,
     arch: bool,
 }
@@ -213,6 +217,10 @@ impl HostProbe for Machine {
     }
 
     fn exists(&self, path: &Path) -> bool {
+        self.is_command(path) || self.not_commands.iter().any(|p| p == path)
+    }
+
+    fn is_command(&self, path: &Path) -> bool {
         self.present.iter().any(|p| p == path)
     }
 
@@ -254,7 +262,7 @@ fn the_command_a_shell_resolves_first_is_the_one_replaced() {
     );
 
     assert_eq!(
-        command_beside_app(&machine, &probed, None),
+        command_beside_app(&machine, &probed, &[]),
         CommandBeside::Ours(on_path.into())
     );
 }
@@ -280,12 +288,13 @@ fn a_command_another_installer_owns_is_never_ours() {
                 present: linked.clone(),
                 links: vec![(linked[0].clone(), named[0].clone())],
                 arch: true,
+                ..Machine::default()
             },
             &linked,
         ),
     ] {
         assert_eq!(
-            command_beside_app(&machine, probed, None),
+            command_beside_app(&machine, probed, &[]),
             CommandBeside::NotOurs,
             "{probed:?}"
         );
@@ -293,17 +302,16 @@ fn a_command_another_installer_owns_is_never_ours() {
 }
 
 /// Two ways to have no command to move. Nothing installed under any
-/// candidate is a dmg or msi install; the app's own bytes reachable as
-/// `kendex` are not a command at all — written over, they would take the
+/// candidate is a dmg or msi install; the running app reachable as
+/// `kendex` is not a command to carry — written over, it would take the
 /// command binary and then be written back by the app half, leaving the
 /// machine with neither.
 #[test]
-fn nothing_installed_and_the_app_s_own_bytes_both_read_absent() {
-    let image = Path::new("/home/pat/.local/bin/kendex");
-    let probed = vec![image.to_owned()];
-    let empty = Machine::default();
+fn nothing_installed_and_the_running_app_both_read_absent() {
+    let image = PathBuf::from("/home/pat/.local/bin/kendex");
+    let probed = vec![image.clone()];
     assert_eq!(
-        command_beside_app(&empty, &probed, None),
+        command_beside_app(&Machine::default(), &probed, &[]),
         CommandBeside::Absent
     );
 
@@ -312,7 +320,65 @@ fn nothing_installed_and_the_app_s_own_bytes_both_read_absent() {
         ..Machine::default()
     };
     assert_eq!(
-        command_beside_app(&only_the_app, &probed, Some(image)),
+        command_beside_app(&only_the_app, &probed, &[image]),
+        CommandBeside::Absent
+    );
+}
+
+/// Windows is the case the updater's own path cannot cover. It judges no
+/// path there, so nothing but the running executable itself keeps the app
+/// out of the search — and the desktop executable is `kendex.exe`, the
+/// name the command carries, so an install directory on `PATH` puts the
+/// app first in line. Taken for the command, it would be overwritten with
+/// the CLI binary before the updater ever ran.
+#[test]
+fn a_windows_app_on_path_is_never_taken_for_the_command() {
+    let exe = PathBuf::from("C:/Program Files/kendex/kendex.exe");
+    let machine = Machine {
+        present: vec![exe.clone()],
+        ..Machine::default()
+    };
+    let probed = vec![exe.clone()];
+
+    // What the updater offers on Windows: no path at all.
+    assert_eq!(
+        command_beside_app(&machine, &probed, &[]),
+        CommandBeside::Ours(exe.clone()),
+        "the fixture has to reach the app before the exclusion can be what stops it"
+    );
+    assert_eq!(
+        command_beside_app(&machine, &probed, &[exe]),
+        CommandBeside::Absent
+    );
+}
+
+/// A candidate has to be a command. A directory and a data file each carry
+/// the name in a writable place, which answers every other question the
+/// way a real command does, and each would take a release binary written
+/// over it. The search passes both and lands on the command behind them.
+#[test]
+fn a_directory_or_a_data_file_named_kendex_is_not_a_command() {
+    let real = PathBuf::from("/usr/local/bin/kendex");
+    let machine = Machine {
+        present: vec![real.clone()],
+        not_commands: candidates(&["/opt/a/kendex", "/opt/b/kendex"]),
+        ..Machine::default()
+    };
+    let probed = candidates(&["/opt/a/kendex", "/opt/b/kendex", "/usr/local/bin/kendex"]);
+
+    assert_eq!(
+        command_beside_app(&machine, &probed, &[]),
+        CommandBeside::Ours(real)
+    );
+
+    // With nothing runnable behind them they stop nothing: the answer is
+    // that there is no command here, not that one of them is it.
+    let neither = Machine {
+        not_commands: candidates(&["/opt/a/kendex", "/opt/b/kendex"]),
+        ..Machine::default()
+    };
+    assert_eq!(
+        command_beside_app(&neither, &probed[..2], &[]),
         CommandBeside::Absent
     );
 }

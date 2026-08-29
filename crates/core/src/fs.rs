@@ -10,6 +10,22 @@ mod lock;
 pub(crate) use links::{points_at, resolved, spelling};
 pub(crate) use lock::{LockedFile, open_read_no_follow};
 
+/// Whether a path is something a shell would run: a regular file with an
+/// execute bit. Being present is a different question — a directory, or a
+/// data file, can carry the name of a command and answer yes to it.
+pub fn is_executable(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::metadata(path)
+            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        path.is_file()
+    }
+}
+
 /// Write via a sibling temp file + rename so readers never see a torn file.
 /// A symlink at the path is followed: the file it points at is replaced and
 /// the link stays — renaming over the link itself would swap a user's

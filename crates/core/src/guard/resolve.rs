@@ -9,6 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::Result;
+use crate::fs::is_executable;
 
 use super::{SKILL, guard_err};
 
@@ -249,19 +250,6 @@ fn project_root(repo: &super::Repo) -> Option<PathBuf> {
             return None;
         }
         dir = dir.parent()?;
-    }
-}
-
-pub(super) fn is_executable(path: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::metadata(path)
-            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
-    }
-    #[cfg(not(unix))]
-    {
-        path.is_file()
     }
 }
 

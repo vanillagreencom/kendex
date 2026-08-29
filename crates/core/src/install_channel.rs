@@ -151,6 +151,13 @@ pub trait HostProbe {
     /// Whether a path is present on this machine.
     fn exists(&self, path: &Path) -> bool;
 
+    /// Whether a path is a command this machine would run: a regular file
+    /// with an execute bit. Presence is a weaker question — a directory, or
+    /// a data file, can carry a command's name and still never run — and
+    /// answering the weaker one is how a search settles on a path a shell
+    /// would have passed over.
+    fn is_command(&self, path: &Path) -> bool;
+
     /// The path with every symlink followed, or the path itself where it
     /// cannot be resolved. Which install owns a file is a fact about the
     /// file, never about the name it was reached by: a Homebrew formula
@@ -189,6 +196,10 @@ impl HostProbe for Host {
 
     fn exists(&self, path: &Path) -> bool {
         path.exists()
+    }
+
+    fn is_command(&self, path: &Path) -> bool {
+        crate::fs::is_executable(path)
     }
 
     fn resolve(&self, path: &Path) -> PathBuf {

@@ -42,6 +42,12 @@ impl Fake {
 }
 
 impl HostProbe for Fake {
+    /// Nothing routed through this fake asks; `for_app` and `for_cli`
+    /// judge a path they were handed rather than looking one up.
+    fn is_command(&self, path: &Path) -> bool {
+        self.exists(path)
+    }
+
     fn replaceable(&self, path: &Path) -> bool {
         self.replaceable.iter().any(|p| Path::new(p) == path)
     }

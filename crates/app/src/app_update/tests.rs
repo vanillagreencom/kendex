@@ -189,6 +189,12 @@ fn the_approved_path_reaches_whatever_will_replace_it() {
 struct OnlyWritable(&'static str);
 
 impl kendex_core::install_channel::HostProbe for OnlyWritable {
+    /// Nothing routed through this fake asks; `for_app` and `for_cli`
+    /// judge a path they were handed rather than looking one up.
+    fn is_command(&self, path: &Path) -> bool {
+        self.exists(path)
+    }
+
     fn replaceable(&self, path: &std::path::Path) -> bool {
         path == std::path::Path::new(self.0)
     }
@@ -266,10 +272,9 @@ fn a_failed_app_half_says_whether_the_command_went_ahead_of_it() {
 }
 
 /// The command this app would carry across is looked for beside the app,
-/// never inside it: an image the app is about to replace is not a command,
-/// however it is reached. Read as a difference rather than an absolute,
-/// because the candidate list ends with a system path this machine may
-/// well have a kendex in.
+/// never inside it. Read as a difference rather than an absolute, because
+/// the candidate list ends with a system path this machine may well have a
+/// kendex in.
 #[test]
 fn the_app_s_own_image_is_never_the_command_it_carries() {
     let dir = tempfile::tempdir().unwrap();
@@ -277,6 +282,11 @@ fn the_app_s_own_image_is_never_the_command_it_carries() {
     std::fs::create_dir_all(&bin).unwrap();
     let image = bin.join("kendex");
     std::fs::write(&image, b"the running AppImage").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&image, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     let env = Env::host_rooted(dir.path());
     let path_var = std::ffi::OsString::from(&bin);
     let ours = CommandBeside::Ours(Host.resolve(&image));
@@ -290,10 +300,40 @@ fn the_app_s_own_image_is_never_the_command_it_carries() {
         ours
     );
 
-    // The same file, with nothing claiming it as the app: the exclusion
-    // above is what answered, and not a search that never reached it.
+    // The same file with nothing claiming it: the exclusion above is what
+    // answered, and not a search that never reached it. `AppImage(None)`
+    // rather than `WindowsInstaller`, because on Windows this process's own
+    // executable is excluded too and a test binary is not the app.
     assert_eq!(
-        command_beside(&env, &AppInstall::WindowsInstaller, Some(&path_var)),
+        command_beside(&env, &AppInstall::AppImage(None), Some(&path_var)),
         ours
+    );
+}
+
+/// The two paths a family update must never write over, and why naming one
+/// is not enough. An AppImage's executable lives inside a mount that is not
+/// the image the updater judged, so the judged path is needed; the Windows
+/// installer judges no path at all while the desktop executable carries the
+/// command's own name, so the running executable is needed. Excluded by the
+/// judged path alone, a Windows install on `PATH` would replace itself with
+/// the CLI binary.
+#[test]
+fn the_running_executable_is_excluded_where_the_updater_names_no_path() {
+    let exe = PathBuf::from("C:/Program Files/kendex/kendex.exe");
+    assert_eq!(
+        not_the_command(&AppInstall::WindowsInstaller, Some(exe.clone())),
+        vec![exe.clone()],
+        "the updater judges no path on Windows, so nothing else excludes the app"
+    );
+
+    let image = PathBuf::from("/home/pat/Apps/kendex.AppImage");
+    let inside = PathBuf::from("/tmp/.mount_kendex/usr/bin/kendex-app");
+    assert_eq!(
+        not_the_command(
+            &AppInstall::AppImage(Some(image.clone())),
+            Some(inside.clone())
+        ),
+        vec![inside, image],
+        "neither the mounted executable nor the image it came from is the command"
     );
 }

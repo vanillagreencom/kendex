@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use kendex_core::fs::is_executable;
 use tauri_plugin_dialog::DialogExt;
 
 /// Native folder picker. Blocking, so this must not run on the main thread
@@ -92,20 +93,6 @@ fn editor_candidates(editor_override: Option<&str>) -> Vec<&str> {
         .into_iter()
         .chain(EDITOR_CANDIDATES)
         .collect()
-}
-
-fn is_executable(path: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::metadata(path)
-            .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false)
-    }
-    #[cfg(not(unix))]
-    {
-        path.is_file()
-    }
 }
 
 /// The file names a bare command may resolve to: the name itself, and on

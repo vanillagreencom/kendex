@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use kendex_core::app_update::AppUpdateView;
 use kendex_core::command_update::{
     CommandBeside, CommandHalf, bring_command_across, command_beside_app, command_candidates,
@@ -214,8 +216,22 @@ fn command_beside(
     command_beside_app(
         &Host,
         &command_candidates(&env.home, path_var),
-        install.judged_path(),
+        &not_the_command(install, std::env::current_exe().ok()),
     )
+}
+
+/// What this process is, and what it is about to replace. Neither is ever
+/// the command it carries across, and neither stands in for the other: an
+/// AppImage's executable lives inside a mount that is not the image the
+/// updater judged, and the Windows installer judges no path at all while
+/// the desktop executable is `kendex.exe`, the name the command carries
+/// too. Excluded only by the updater's path, a Windows install whose
+/// directory is on `PATH` would take its own executable for the command.
+fn not_the_command(install: &AppInstall, running: Option<PathBuf>) -> Vec<PathBuf> {
+    running
+        .into_iter()
+        .chain(install.judged_path().map(Path::to_owned))
+        .collect()
 }
 
 /// Run the command half off the async runtime: it downloads a release

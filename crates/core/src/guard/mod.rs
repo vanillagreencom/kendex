@@ -29,12 +29,13 @@ use crate::process::Hardened;
 
 mod repo;
 mod resolve;
+use crate::fs::is_executable;
 pub use repo::Repo;
 pub use resolve::Installed;
 /// The tool directories the verbs search, in order — the installer's own
 /// list, pinned against it by `guard_hooks::the_search_roots_match…`.
 pub use resolve::SKILL_ROOTS as SEARCH_ROOTS;
-use resolve::{bind, is_executable};
+use resolve::bind;
 
 /// The package that owns the checks and the git shims.
 pub const SKILL: &str = "growth-guards";

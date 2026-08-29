@@ -5,9 +5,18 @@
 //! command, and both write the half that is their own state marker last.
 //! For `kendex update` that is the command, whose baked version the next
 //! run reads to decide whether it is done; for the app it is the app,
-//! whose baked version the sidebar card reads. Either way a failure before
-//! the marker leaves both halves where they were, so the next attempt
-//! repeats them rather than stopping at already-current.
+//! whose baked version the sidebar card reads.
+//!
+//! Neither shell moves the two halves atomically, and neither claims to.
+//! A failure before the marker leaves both where they were. A failure
+//! while writing the marker leaves the pair split, one half across and
+//! one not, and every caller here reports that rather than hiding it —
+//! `app_half_failed` in the app, `command_failure` in the CLI.
+//!
+//! What the ordering buys is which half is left behind. The marker is the
+//! one still reading old, so the next attempt reads a release newer than
+//! itself and moves both halves again, instead of stopping at
+//! already-current with the other half stranded on the old version.
 
 use std::cmp::Ordering;
 use std::ffi::OsStr;
@@ -74,31 +83,41 @@ pub fn command_candidates(home: &Path, path_var: Option<&OsStr>) -> Vec<PathBuf>
 }
 
 /// The command a desktop app's family update would replace: the first
-/// candidate present on this machine, resolved to the file behind any
-/// link, judged by the rule `kendex update` judges its own bytes by.
+/// candidate this machine would actually run, resolved to the file behind
+/// any link, judged by the rule `kendex update` judges its own bytes by.
 ///
-/// The search stops at the first one that exists rather than hunting for
-/// a replaceable one further down, because the command a person runs is
-/// the one their `PATH` resolves first: passing over a package-owned
+/// A candidate has to be a command, not merely a path that is there. A
+/// directory or a data file named `kendex` sitting in a writable directory
+/// answers every other question the same way a command does — it exists,
+/// and its parent takes a rename — so accepting presence alone would stop
+/// the search on something a shell would have passed over, and write a
+/// release binary onto whatever it was.
+///
+/// Past that, the search stops at the first one, rather than hunting for a
+/// replaceable one further down: the command a person runs is the one
+/// their `PATH` resolves first, and passing over a package-owned
 /// `/usr/bin/kendex` to replace a second copy would move the half nobody
 /// runs and leave the half they do.
 ///
-/// `app_bytes` is what the app itself is about to replace, and is never a
-/// candidate. On a machine where that path is also reachable as `kendex`,
-/// the command binary would otherwise be written over the app and the app
-/// written back over it, leaving no command at all.
+/// `running` is this process and whatever it is about to replace, and
+/// neither is ever the command. Both have to be named, because neither
+/// covers the other: on Linux the AppImage the updater judged is not the
+/// executable inside it, and on Windows the updater judges no path at all
+/// while the desktop executable is `kendex.exe` — the same name the
+/// command carries. Written over, the command binary lands on the app and
+/// the app is then written back over it, leaving no command at all.
 pub fn command_beside_app(
     probe: &dyn HostProbe,
     candidates: &[PathBuf],
-    app_bytes: Option<&Path>,
+    running: &[PathBuf],
 ) -> CommandBeside {
-    let app_bytes = app_bytes.map(|path| probe.resolve(path));
+    let running: Vec<PathBuf> = running.iter().map(|path| probe.resolve(path)).collect();
     for candidate in candidates {
-        if !probe.exists(candidate) {
+        if !probe.is_command(candidate) {
             continue;
         }
         let resolved = probe.resolve(candidate);
-        if app_bytes.as_deref() == Some(resolved.as_path()) {
+        if running.contains(&resolved) {
             continue;
         }
         return match for_cli(&resolved, probe) {
