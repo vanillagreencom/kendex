@@ -43,7 +43,7 @@ Resolve once, before any tracker command. Precedence:
 
 Store as `TRACKER`, plus `[OWNER/REPO]` when `TRACKER=github`.
 
-**Mode constraint**: `project` and `project-order` audit Linear projects and are Linear only. With `TRACKER=github`, halt: "Project audits are Linear-only; GitHub repositories have no project inventory in this workflow." Never degrade to a partial project audit.
+**Mode constraint**: `project`, `team`, and `project-order` audit Linear projects and are Linear only — `team` takes its input set from the Linear cache and has no GitHub equivalent. With `TRACKER=github`, halt: "Project audits are Linear-only; GitHub repositories have no project inventory in this workflow." Never degrade to a partial project audit.
 
 **GitHub mode runs no Linear commands** — no `sync`, `session-status`, cache read, or Linear mutation anywhere in this workflow. Linear installation/authentication is not a prerequisite for a GitHub-tracked audit.
 
@@ -131,7 +131,7 @@ Then ask "Continue to full audit of [PROJECT]?" — yes sets MODE=project, TARGE
 
 **Skip if** MODE is `issue` or `team` — team audits the whole team and resolves no target. Linear only.
 
-With `TARGET` set, use it. Otherwise take the first `session-status.projects` entry with `has_active_work`. With no such project, present the ready projects with their blockers and ask which to activate (`Skip` ends the workflow); activate the chosen one, then → § 4.
+With `TARGET` set, use it. Otherwise take the first `session-status.projects` entry with `has_active_work` — `session-status` selects projects workspace-wide and reports no team, so confirm the chosen project belongs to the configured team before using it ([SKILL.md](../SKILL.md) § Scope by Path). With no such project, present the ready projects with their blockers and ask which to activate (`Skip` ends the workflow); activate the chosen one, then → § 4.
 
 ---
 

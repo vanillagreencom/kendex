@@ -21,7 +21,7 @@ Analyze issues and projects for relations, labels, hierarchy, placement, duplica
 
 ### 1.1 Determine Mode
 
-`project-order` → § 11 directly (§§ 2-10 and § 12 do not apply). An ordering-only run reads no issue backlog, so the § 6 cancellation sweep is not among its obligations.
+`project-order` → § 1.1.1, then § 11 (§§ 2-10 and § 12 do not apply). An ordering-only run reads no issue backlog, so the § 6 cancellation sweep is not among its obligations — exemption from the sweep is never exemption from scope, and § 11 reads and reorders projects.
 
 **project**: store `WORKTREE` from the delegation prompt (default `.`). Linear only — this mode audits Linear projects.
 
@@ -39,10 +39,10 @@ Analyze issues and projects for relations, labels, hierarchy, placement, duplica
 
 ```bash
 .agents/skills/linear/scripts/linear.sh auth-check
-.agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --limit 1 --format=ids
+.agents/skills/linear/scripts/linear.sh teams get [TEAM]
 ```
 
-`TEAM` is `auth-check`'s `team`; `TEAM_PREFIX` is the returned identifier up to its hyphen. Halt when `auth-check` reports no team, and halt when a configured team returns no identifier — an audit that cannot resolve its own scope must not run unscoped. With the scope resolved, a row whose `id` does not start with `TEAM_PREFIX-`, and a project row whose `teams[]` omits `TEAM`, is out of scope in every mode.
+`TEAM` is `auth-check`'s `team`, a name; `TEAM_PREFIX` is that team's `key`. `teams get` looks up by name and needs no issue, so a team with none yet resolves and the audit proceeds. Halt when `auth-check` reports no team and when `teams get` resolves none — an audit that cannot resolve its own scope must not run unscoped. With the scope resolved, a row whose `id` does not start with `TEAM_PREFIX-`, and a project row whose `teams[]` omits `TEAM`, is out of scope in every mode. Which path resolves and filters: [SKILL.md](../SKILL.md) § Scope by Path.
 
 ### 1.2 Load Label Policy
 
@@ -74,7 +74,7 @@ Fetch every project in ONE command. `cache projects list --state` matches one st
 gh issue view [N] --repo [REPOSITORY] --json number,title,body,labels,state,url                                                           # issues mode, github
 ```
 
-Both `--all-projects` fetches return every team; keep only the rows § 1.1.1 scopes in. Issues mode fetches the whole input set in one `bulk-get`, never one call per issue; a lone input issue is `cache issues get [ISSUE_ID]`. `cache issues bulk-get` returns the rows it matched and exits 0 whether or not it matched them all, so compare the returned `id` values against every requested identifier and halt naming any that came back missing. An unmatched target is a mistyped, deleted, or unsynced issue, never an absent one, and auditing the remainder would report a complete result over a subset.
+Both `--all-projects` fetches return every team; keep only the rows § 1.1.1 scopes in. Issues mode fetches the whole input set in one `bulk-get`, never one call per issue; a lone input issue is `cache issues get [ISSUE_ID]`. `cache issues bulk-get` returns the rows it matched and exits 0 whether or not it matched them all, so compare the returned `id` values against every requested identifier and halt naming any that came back missing. An unmatched target is a mistyped, deleted, or unsynced issue, never an absent one, and auditing the remainder would report a complete result over a subset. An input issue the caller named that resolves outside the § 1.1.1 scope halts the same way — the cache holds it, and auditing another team's issue is not the caller's to authorize.
 
 The cached Linear issue payload carries `blocks`, `blocked_by`, and `related`. GitHub: read relations from body links (`Blocks: #N`, `Blocked by: #N`, `Related: #N`, `Parent: #N`). Proposed items use their provided fields directly.
 
@@ -339,7 +339,7 @@ For every `create`: populate `create_fields` per [audit-output.md](../schemas/au
 
 ## 11. Project Order Mode
 
-Entered directly from § 1.1; §§ 2-10 do not apply.
+Entered from § 1.1 after § 1.1.1; §§ 2-10 do not apply. Every project, initiative, and issue read below is filtered to the § 1.1.1 scope first: an initiative naming another team's projects contributes none of them, and a project whose `teams[]` omits `TEAM` is neither ordered nor recommended.
 
 1. **Fetch** initiatives (`cache initiatives list`) and projects in every state (§ 1.3), recording `id`, `name`, `state`, `progress`, `sort_order`, `blocked_by[]`, `blocks[]`, `description`, `content`, plus each initiative's project names. Build the name→initiative map that fills each project's `initiative` field.
 

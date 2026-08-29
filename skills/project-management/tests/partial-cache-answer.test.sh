@@ -49,6 +49,8 @@ require "$deps" 'deduplicate identifiers across calls' 'frontier rows are dedupl
 require "$deps" 'stop when a round returns nothing new' 'continuation terminates'
 
 # Every caller defers to that statement; none restates or narrows it.
+audit_issues="$SKILL_DIR/workflows/audit-issues.md"
+
 for rel in workflows/audit-issues.md workflows/research-complete.md \
            workflows/tpm-roadmap-plan.md; do
   file="$SKILL_DIR/$rel"
@@ -64,9 +66,19 @@ done
 
 require "$tpm_audit" '1\.1\.1 Resolve Team Scope' 'the team scope has a resolving section'
 require "$tpm_audit" 'auth-check' 'the configured team is read from the tracker'
-require "$tpm_audit" 'issues list --team "\[TEAM\]" --limit 1 --format=ids' \
-  'the team identifier prefix is derived, not assumed'
+require "$tpm_audit" 'teams get \[TEAM\]' \
+  'the prefix comes from the team record, not from an issue'
+require "$tpm_audit" 'a team with none yet resolves' \
+  'an empty team resolves instead of blocking the audit'
 require "$tpm_audit" 'must not run unscoped' 'an unresolvable scope halts'
+require "$tpm_audit" '.project-order. → § 1\.1\.1, then § 11' \
+  'project-order resolves scope before it reads or reorders'
+require "$tpm_audit" 'exemption from the sweep is never exemption from scope' \
+  'the sweep exemption is not a scope exemption'
+require "$tpm_audit" 'Every project, initiative, and issue read below is filtered' \
+  'project-order mode filters what it reads'
+require "$tpm_audit" 'resolves outside the § 1\.1\.1 scope halts' \
+  'a caller-named input issue outside the scope halts'
 require "$tpm_audit" 'does not start with .TEAM_PREFIX-.' \
   'out-of-team rows are named by their identifier prefix'
 require "$tpm_audit" 'Both .--all-projects. fetches return every team' \
@@ -83,6 +95,23 @@ require "$skill" 'The two analysis workflows resolve the configured team' \
   'the scoping rule names the workflows that implement it'
 require "$skill" 'Every other workflow reads the cache workspace-wide' \
   'the rule discloses what it does not cover'
+
+# Every path states its own scope status, so a mode added later cannot inherit
+# silence -- the omission that produced an unscoped path in three rounds running.
+require "$skill" '## Scope by Path' 'the per-path enumeration has one home'
+require "$skill" 'Silence is not inheritance: a new mode adds its row' \
+  'a new mode must state its own row'
+for path in 'tpm-audit .project., .team.' 'tpm-audit .issues., Linear' \
+            'tpm-audit .issues., GitHub' 'tpm-audit .project-order.' \
+            'tpm-roadmap-plan' 'tpm-cycle-plan' 'audit-issues §§ 7\.2-7\.5' \
+            'audit-issues § 1\.2\.2, § 3' 'research-complete' 'research-issue'; do
+  grep -Eq -- "\| $path \|" "$skill" \
+    || fail "the scope enumeration does not carry a row for: $path"
+done
+
+# The wrapper's Linear-only modes reject a GitHub tracker rather than running empty.
+require "$audit_issues" '.project., .team., and .project-order. audit Linear projects' \
+  'team joins the Linear-only mode constraint'
 
 # The sibling analysis workflow proposes cancellations from the same set.
 roadmap="$SKILL_DIR/workflows/tpm-roadmap-plan.md"
