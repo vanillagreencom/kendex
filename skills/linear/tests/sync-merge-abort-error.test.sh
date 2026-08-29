@@ -44,6 +44,10 @@ make_env() {
 
   local delta_nodes="$delta_node"
   [[ -n "$extra_node" ]] && delta_nodes="$delta_node,$extra_node"
+  # "none" is the empty delta: nothing changed since synced_at. It is the
+  # ordinary state of a machine that syncs regularly, and the upgrade case a
+  # rebuild carried by the delta would never reach.
+  [[ "$delta_id" == "none" ]] && delta_nodes=""
 
   cat >"$root/bin/curl" <<SH
 #!/usr/bin/env bash
@@ -213,6 +217,66 @@ if grep -q "Cache fresh" "$TMP_BASE/stale-unmarked"; then
 fi
 if [[ "$(jq -r '.comments_source // empty' "$OK_ROOT/.cache/linear/meta.json")" != "paginated" ]]; then
   echo "FAIL the forced sync did not mark the cache"
+  exit 1
+fi
+
+# --- upgrade case: an unmarked cache with an EMPTY delta -------------------------
+# The legacy threads belong to issues that have not changed, so the delta that
+# would carry a rebuild is empty precisely when the rebuild is needed. The
+# rebuild is a precondition of syncing, not part of the delta, so it runs here.
+EMPTY_ROOT="$TMP_BASE/empty"
+make_env "$EMPTY_ROOT" \
+  '[{"id":"id-1","identifier":"PROJ-1","title":"a"},{"id":"id-3","identifier":"PROJ-3","title":"c"}]' \
+  "none"
+
+set +e
+run_sync "$EMPTY_ROOT" >/dev/null 2>"$TMP_BASE/empty-err"
+rc=$?
+set -e
+if [[ $rc -ne 0 ]]; then
+  echo "FAIL sync failed on an unmarked cache with an empty delta: $(cat "$TMP_BASE/empty-err")"
+  exit 1
+fi
+if [[ "$(jq -r '.[0].id' "$EMPTY_ROOT/.cache/linear/comments/PROJ-3.json" 2>/dev/null)" != "c3-new" ]]; then
+  echo "FAIL an empty delta left the legacy comment cache in place: $(cat "$EMPTY_ROOT/.cache/linear/comments/PROJ-3.json" 2>&1)"
+  exit 1
+fi
+if [[ -f "$EMPTY_ROOT/.cache/linear/comments/PROJ-1.json" ]]; then
+  echo "FAIL the rebuild did not own the whole issue set: PROJ-1 kept a file the pull did not carry"
+  exit 1
+fi
+if [[ "$(jq -r '.comments_source // empty' "$EMPTY_ROOT/.cache/linear/meta.json")" != "paginated" ]]; then
+  echo "FAIL the rebuild ran but the cache was not marked"
+  exit 1
+fi
+
+# --- steady state: a MARKED cache takes the delta path only ---------------------
+# Every case above starts unmarked, where the rebuild owns the whole issue set
+# and would mask a wrong delta scope. This is the path every sync after the
+# upgrade takes: no rebuild, and the write scoped to the delta alone.
+MARKED_ROOT="$TMP_BASE/marked"
+make_env "$MARKED_ROOT" \
+  '[{"id":"id-1","identifier":"PROJ-1","title":"a"},{"id":"id-3","identifier":"PROJ-3","title":"c"}]' \
+  "id-1"
+jq '. + {comments_source: "paginated"}' "$MARKED_ROOT/.cache/linear/meta.json" > "$TMP_BASE/marked-meta"
+mv "$TMP_BASE/marked-meta" "$MARKED_ROOT/.cache/linear/meta.json"
+
+set +e
+run_sync "$MARKED_ROOT" >/dev/null 2>"$TMP_BASE/marked-err"
+rc=$?
+set -e
+if [[ $rc -ne 0 ]]; then
+  echo "FAIL sync failed on a marked cache: $(cat "$TMP_BASE/marked-err")"
+  exit 1
+fi
+if grep -q "comment cache rebuilt" "$TMP_BASE/marked-err"; then
+  echo "FAIL a marked cache was rebuilt anyway: $(cat "$TMP_BASE/marked-err")"
+  exit 1
+fi
+# PROJ-3 is outside this delta. The pull carries a comment for it, and only a
+# write scoped past the delta would let that land.
+if [[ "$(jq -r '.[0].id' "$MARKED_ROOT/.cache/linear/comments/PROJ-3.json" 2>/dev/null)" != "c3" ]]; then
+  echo "FAIL the delta write reached past its own scope: $(cat "$MARKED_ROOT/.cache/linear/comments/PROJ-3.json" 2>&1)"
   exit 1
 fi
 

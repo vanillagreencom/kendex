@@ -758,16 +758,8 @@ main() {
             delta_count=$(jq 'length' "$CACHE_DIR/.delta_issues.json")
             # Scoped to the issues this delta touched, which is the set whose
             # threads may have moved, and rewritten whole so a thread never
-            # ends up holding only its newest comments. An unmarked cache is
-            # refetched entirely instead: its unchanged issues are exactly the
-            # ones a delta would never revisit.
-            local comment_filter="{\"issue\": {\"updatedAt\": {\"gte\": \"$last_sync\"}}}"
-            local comment_scope="$CACHE_DIR/.delta_issues.json"
-            if ! comments_cache_is_current; then
-                comment_filter="{}"
-                comment_scope="$CACHE_DIR/issues.json"
-            fi
-            if ! sync_comments "$comment_filter" > "$CACHE_DIR/.delta_comments.json"; then
+            # ends up holding only its newest comments.
+            if ! sync_comments "{\"issue\": {\"updatedAt\": {\"gte\": \"$last_sync\"}}}" > "$CACHE_DIR/.delta_comments.json"; then
                 rm -f "$CACHE_DIR/.delta_issues.json" "$CACHE_DIR/.delta_issues_raw.json" "$CACHE_DIR/.delta_comments.json"
                 cache_unlock
                 return 1
@@ -784,7 +776,7 @@ main() {
             fi
             # Held until the merge succeeded: this rewrites the live per-issue
             # files, and an abort must leave them as they were.
-            write_comments "$CACHE_DIR/.delta_comments.json" "$comment_scope"
+            write_comments "$CACHE_DIR/.delta_comments.json" "$CACHE_DIR/.delta_issues.json"
             rm -f "$CACHE_DIR/.delta_comments.json"
             # Patch stale embedded relation snapshots for delta issues
             jq -c '.[]' "$CACHE_DIR/.delta_issues.json" 2>/dev/null | while IFS= read -r issue; do
@@ -827,6 +819,25 @@ main() {
         sync_cycles > "$CACHE_DIR/cycles.json.tmp" && mv "$CACHE_DIR/cycles.json.tmp" "$CACHE_DIR/cycles.json"
         sync_initiatives > "$CACHE_DIR/initiatives.json.tmp" && mv "$CACHE_DIR/initiatives.json.tmp" "$CACHE_DIR/initiatives.json"
         sync_labels > "$CACHE_DIR/labels.json.tmp" && mv "$CACHE_DIR/labels.json.tmp" "$CACHE_DIR/labels.json"
+
+        # A comment cache built before the paginated fetch is rebuilt whole,
+        # as a precondition of the sync completing rather than as part of the
+        # delta. The legacy threads belong to issues that have not changed, so
+        # an empty delta is both the common upgrade case and the one a
+        # delta-borne rebuild would never reach. It runs last so that a merge
+        # that aborts above leaves the comment cache untouched, and it owns the
+        # whole post-merge issue set, which leaves no subset for a newly
+        # created issue's comments to fall out of.
+        if ! comments_cache_is_current; then
+            if ! sync_comments "{}" > "$CACHE_DIR/.comments.json"; then
+                rm -f "$CACHE_DIR/.comments.json"
+                cache_unlock
+                return 1
+            fi
+            write_comments "$CACHE_DIR/.comments.json" "$CACHE_DIR/issues.json"
+            rm -f "$CACHE_DIR/.comments.json"
+            summary_parts+=("comment cache rebuilt")
+        fi
     fi
 
     # Download file attachments/images from issue descriptions and comments
@@ -861,6 +872,9 @@ main() {
         reconciled_at=$(jq -r '.reconciled_at // empty' "$CACHE_DIR/meta.json" 2>/dev/null || echo "")
     fi
 
+    # Reaching here means the comment cache was built by the paginated fetch:
+    # a full sync pulls every comment, and an incremental sync either found the
+    # marker already set or rebuilt above, failing the sync if it could not.
     jq -n \
         --arg ts "$(date -Iseconds)" \
         --arg reconciled "${reconciled_at:-}" \

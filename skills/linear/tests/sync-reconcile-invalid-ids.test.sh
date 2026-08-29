@@ -57,6 +57,8 @@ case "\$query" in
   printf '%s' '{"data":{"initiatives":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200' ;;
 *"SyncLabels("*)
   printf '%s' '{"data":{"issueLabels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200' ;;
+*"SyncComments("*)
+  printf '%s' '{"data":{"comments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200' ;;
 *)
   printf '%s' '{"errors":[{"message":"unexpected query"}]}___HTTP_CODE___200'
   ;;
