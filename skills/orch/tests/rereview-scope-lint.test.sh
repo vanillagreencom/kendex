@@ -180,6 +180,39 @@ else
   fail "the external lane reads the whole branch inside a scoped panel"
 fi
 
+# --- 4. the sha path renders the range it names -----------------------------
+# Checks 1 to 3 leave the branch this field exists for unrendered. Check 1 asks
+# only that the line is present, and `[[ -n ... ]]` holds over any value at
+# all: a template rendering an unresolvable range, or a range other than the
+# `...HEAD` the instruction spells, passes the whole suite. The header above
+# records the same thing one level over, for tokens. A line being present is
+# not its value being correct.
+#
+# The template is lifted out by the placeholder it carries, never by the range
+# it spells, so an editorial rewrite around it does not fail the check. A
+# stand-in sha goes in, and what is asserted is the render.
+sha_template() { grep -oE -e '`[^`]*\[PRE_SHA\][^`]*`' <<<"$1" | head -1 | tr -d '`'; }
+
+render_sha() {
+  local l="$1" tpl
+  value_wholly_conditional "$l" || return 1
+  tpl="$(sha_template "$l")"
+  [[ -n "$tpl" ]] || return 1
+  printf '%s' "${tpl//\[PRE_SHA\]/deadbee}"
+}
+
+sha_path_resolves() {
+  local rendered
+  rendered="$(render_sha "$(range_line "$1")")" || return 1
+  grep -qE -e '^deadbee\.\.\.HEAD$' <<<"$rendered"
+}
+
+if sha_path_resolves "$(delegation_of)"; then
+  pass "the sha path renders the sha into the range the instruction spells"
+else
+  fail "the sha path does not render [PRE_SHA]...HEAD with the sha in it"
+fi
+
 # --- planted controls: prove each check can fail ----------------------------
 echo
 echo "--- planted controls ---"
@@ -253,6 +286,16 @@ S=$(held external_range_resolves "$(launch_region "$REVIEW_PR_WF")")
 K=$(held external_range_resolves "$(launch_region "$C")")
 if cmp -s "$C" "$REVIEW_PR_WF"; then P=0; else P=1; fi
 verdict "an external range that cannot be withdrawn" "$P" "$S" "$K"
+
+# The range narrowed from three dots to two. The line is still there and still
+# wholly conditional, so checks 1 and 2 stay green over a value that no longer
+# spells the range section 4 hands over.
+C="$TMP_ROOT/two-dot-range.md"
+sub_lines "$REVIEW_PR_WF" '[.][.][.]HEAD' '..HEAD' '^Diff-range:' > "$C"
+S=$(held sha_path_resolves "$(delegation_of "$REVIEW_PR_WF")")
+K=$(held sha_path_resolves "$(delegation_of "$C")")
+if cmp -s "$C" "$REVIEW_PR_WF"; then P=0; else P=1; fi
+verdict "a sha path narrowed off the three-dot range" "$P" "$S" "$K"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
