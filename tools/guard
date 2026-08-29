@@ -178,6 +178,7 @@ if ! temp_fixture_hits=$(awk '
   }
   /^diff --git / {
     flush()
+    for (name in guarded) delete guarded[name]
     file = $4
     sub(/^b\//, "", file)
     next
@@ -198,8 +199,18 @@ if ! temp_fixture_hits=$(awk '
     if (pending != "") {
       if (line ~ /^[[:space:]]*$/ || line ~ /^[[:space:]]*\/\//) next
       rooted = "^[[:space:]]*let[[:space:]]+[A-Za-z][A-Za-z0-9_]*([[:space:]]*:[^=]+)?[[:space:]]*=[[:space:]]*&?[[:space:]]*rooted[[:space:]]*\\([[:space:]]*&[[:space:]]*" pending "[[:space:]]*\\)"
-      if (line !~ rooted) print file ":" pending_line ": " pending_text
+      if (line !~ rooted) {
+        print file ":" pending_line ": " pending_text
+      } else {
+        guarded[pending] = 1
+      }
       pending = ""
+    }
+    if (prefix == "+") {
+      for (name in guarded) {
+        raw = "(^|[^A-Za-z0-9_])" name "[[:space:]]*\\.(path|as_ref|into_path|keep)[[:space:]]*\\("
+        if (line ~ raw) print file ":" new_line ": " line
+      }
     }
     if (prefix == "+" && line ~ /^[[:space:]]*let[[:space:]]+(mut[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*([[:space:]]*:[^=]+)?[[:space:]]*=[[:space:]]*(tempfile::tempdir\(\)|(tempfile::)?TempDir::new\(\))/) {
       declaration = line

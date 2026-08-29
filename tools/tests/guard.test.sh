@@ -103,6 +103,10 @@ temp_case refuse "TempDir::new without rooted is refused" \
   'fn fixture() {' ' let tmp = tempfile::TempDir::new().unwrap();' ' drop(tmp);' '}'
 temp_case pass "a bound rooted fixture passes" \
   'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let home = &rooted(&tmp);' ' drop(home);' '}'
+temp_case refuse "later raw access after rooted is refused" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let home = rooted(&tmp);' ' use_fixture(home);' ' use_fixture(tmp.path());' '}'
+temp_case pass "later canonical binding use passes" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let home = rooted(&tmp);' ' use_fixture(home.join("project"));' '}'
 temp_case pass "comments may sit between construction and rooted" \
   'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' // The root enters here.' ' let home = rooted(&tmp);' ' drop(home);' '}'
 temp_case pass "same-name non-temporary path owners do not trigger" \
