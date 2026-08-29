@@ -263,10 +263,85 @@ describe("editor store", () => {
     expect(state.scope).toEqual(HYPR);
     expect(state.base).toBe(`manifest-${scopeKey(HYPR)}`);
     expect(state.settings?.base).toBe(scopeKey(HYPR));
-    // The superseded load commits nothing at all, its place's read
-    // included — a mark drawn off it would be a place nobody opened.
-    expect(state.savedSettings[scopeKey(VG)]).toBeUndefined();
+    // Its place's record is another question, and this read is still the
+    // only one that asked: the page having moved on does not make what
+    // it read untrue, so the mark for that place keeps its answer.
+    expect(state.savedSettings[scopeKey(VG)]?.base).toBe(scopeKey(VG));
     expect(state.loading).toBe(false);
+  });
+
+  /// Coming back to a place takes a fresh turn, so the read from the
+  /// first visit cannot answer for the second. Where the editor points
+  /// would not catch this one: it points at that place both times.
+  it("keeps the newest read of a place a person came back to", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1" },
+    });
+    const gates: Array<(read: { status: "ok"; data: ScopeSettings }) => void> =
+      [];
+    vi.mocked(commands.getScopeSettings).mockImplementation(
+      () => new Promise((resolve) => gates.push(resolve)),
+    );
+
+    const away = useEditorStore.getState().setScope(VG);
+    const other = useEditorStore.getState().setScope(HYPR);
+    const back = useEditorStore.getState().setScope(VG);
+    expect(gates).toHaveLength(3);
+
+    gates[2]({ status: "ok", data: settings("second-visit") });
+    await back;
+    gates[1]({ status: "ok", data: settings("elsewhere") });
+    await other;
+    gates[0]({ status: "ok", data: settings("first-visit") });
+    await away;
+
+    const state = useEditorStore.getState();
+    expect(state.scope).toEqual(VG);
+    expect(state.settings?.base).toBe("second-visit");
+  });
+
+  /// A cache pass answers for places, never for the page: it commits no
+  /// draft, no rows, no dirty flag and no loading flag, so cancelling a
+  /// read the page is waiting on would leave the editor loading forever,
+  /// dirty against a file the save it followed had already rewritten.
+  it("lets the page's own read finish through a startup pass", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "after-save" },
+    });
+    const gates: Array<(read: { status: "ok"; data: ScopeSettings }) => void> =
+      [];
+    vi.mocked(commands.getScopeSettings).mockImplementation(
+      () => new Promise((resolve) => gates.push(resolve)),
+    );
+    useEditorStore.setState({
+      draft: { schema: 1, "skill-instructions": { gh: "before" } },
+      base: "before-save",
+      dirty: true,
+      manifestDirty: true,
+    });
+
+    // The page's read goes out first; the startup pass takes a later
+    // turn for the same place while it is still out.
+    const reload = useEditorStore.getState().load();
+    const startup = useEditorStore.getState().loadAll();
+    await Promise.resolve();
+    expect(gates).toHaveLength(2);
+    gates[1]({ status: "ok", data: settings("startup") });
+    await startup;
+    gates[0]({ status: "ok", data: settings("after-save") });
+    await reload;
+
+    const state = useEditorStore.getState();
+    expect(state.loading).toBe(false);
+    expect(state.dirty).toBe(false);
+    expect(state.base).toBe("after-save");
+    expect(state.draft).toEqual(emptyDraft());
+    expect(state.settings?.base).toBe("after-save");
+    // And the record is still the newest read of that place, which is
+    // the startup pass — the half the older rule got right.
+    expect(state.savedSettings.global?.base).toBe("startup");
   });
 
   /// The loading flag answers for the read in flight, not for the last
@@ -323,6 +398,115 @@ describe("editor store", () => {
     expect(state.scope).toEqual(HYPR);
     expect(state.draft).toEqual(emptyDraft());
     expect(state.error).toBeNull();
+  });
+
+  /// A startup pass over every place runs while one of them is being
+  /// re-read — a save re-reads the scope it wrote. The pass is older
+  /// than that read, so it must not put the pre-save answer back under
+  /// the marks the Library and the package header draw.
+  it("ignores a startup pass that lands after a newer read of the place", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1" },
+    });
+    const gates: Array<(read: { status: "ok"; data: ScopeSettings }) => void> =
+      [];
+    vi.mocked(commands.getScopeSettings).mockImplementation(
+      () => new Promise((resolve) => gates.push(resolve)),
+    );
+
+    const startup = useEditorStore.getState().loadAll();
+    // The startup pass takes its turn before the newer read takes one:
+    // it waits on the project list first, and the order is the point.
+    await Promise.resolve();
+    const newer = useEditorStore.getState().load();
+    expect(gates).toHaveLength(2);
+
+    gates[1]({ status: "ok", data: settings("after-save") });
+    await newer;
+    gates[0]({ status: "ok", data: settings("before-save") });
+    await startup;
+
+    expect(useEditorStore.getState().savedSettings.global?.base).toBe(
+      "after-save",
+    );
+  });
+
+  /// The turns are per place, not one queue for the editor: a read of
+  /// one project says nothing about another, and a startup pass has to
+  /// keep answering for every place nobody has re-read.
+  it("lets a startup pass answer for a place no newer read touched", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1" },
+    });
+    const gates = new Map<
+      string,
+      (read: { status: "ok"; data: ScopeSettings }) => void
+    >();
+    vi.mocked(commands.getScopeSettings).mockImplementation(
+      (scope: Scope) =>
+        new Promise((resolve) => gates.set(scopeKey(scope), resolve)),
+    );
+
+    const startup = useEditorStore.getState().loadAll();
+    await Promise.resolve();
+    const elsewhere = useEditorStore.getState().setScope(VG);
+    gates.get(scopeKey(VG))?.({ status: "ok", data: settings("vg") });
+    await elsewhere;
+
+    gates.get("global")?.({ status: "ok", data: settings("global") });
+    await startup;
+    expect(useEditorStore.getState().savedSettings.global?.base).toBe("global");
+  });
+
+  /// The same drop-on-failure rule the single read obeys: presence in
+  /// the record is what says a read landed, and a startup pass that
+  /// could not read a place unsays the last answer for it.
+  it("drops a place the startup pass could not read", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1" },
+    });
+    await useEditorStore.getState().load();
+    expect(useEditorStore.getState().savedSettings.global).toBeDefined();
+
+    vi.mocked(commands.getScopeSettings).mockResolvedValue({
+      status: "error",
+      error: "permission denied",
+    });
+    await useEditorStore.getState().loadAll();
+    expect(useEditorStore.getState().savedSettings.global).toBeUndefined();
+  });
+
+  /// Open means both halves landed. Treating a place whose settings read
+  /// failed as open means coming back to it never retries, and a skill
+  /// installed in one place has no other pill to switch to.
+  it("reopens a place whose settings read failed, and only that", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1" },
+    });
+    vi.mocked(commands.getScopeSettings).mockResolvedValue({
+      status: "error",
+      error: "permission denied",
+    });
+    await useEditorStore.getState().openScope(VG);
+    expect(useEditorStore.getState().settings).toBeNull();
+    expect(commands.getScopeSettings).toHaveBeenCalledTimes(1);
+
+    vi.mocked(commands.getScopeSettings).mockResolvedValue({
+      status: "ok",
+      data: settings("s1"),
+    });
+    await useEditorStore.getState().openScope(VG);
+    expect(useEditorStore.getState().settings?.base).toBe("s1");
+    expect(commands.getScopeSettings).toHaveBeenCalledTimes(2);
+
+    // And a place both halves landed for is left alone: the retry is for
+    // the read that failed, not a reload on every visit.
+    await useEditorStore.getState().openScope(VG);
+    expect(commands.getScopeSettings).toHaveBeenCalledTimes(2);
   });
 
   /// Reload is the discard: settings edits are the second draft the one

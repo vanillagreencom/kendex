@@ -6,11 +6,22 @@ import {
   type ScopeSettings,
   type SettingsEdit,
 } from "@/bindings";
-import { type Draft, emptyDraft, toDraft } from "@/lib/editor-draft";
-import { sameScope, scopeKey } from "@/lib/scope";
+import { type Draft, emptyDraft } from "@/lib/editor-draft";
+
+import { sameScope } from "@/lib/scope";
 import { settingsDraft, withEdit } from "@/lib/settings-rows";
 import { useAuditStore } from "./audit";
-import { placesOf, readPlace, recorded } from "./editor-cache";
+import {
+  everyPlace,
+  mergedPlaces,
+  opening,
+  placesOf,
+  readDraft,
+  readError,
+  readPlace,
+  readTurn,
+  recordedRead,
+} from "./editor-cache";
 import { useScanStore } from "./scan";
 import { useSettingsStore } from "./settings";
 
@@ -76,82 +87,58 @@ interface EditorState {
 }
 
 export const useEditorStore = create<EditorState>((set, get) => {
-  // Which load may commit. A person opens one project and then another
-  // before the first one's reads return; the older result landing on top
-  // would put one project's rows, and its base, under the other's name,
-  // and an edit made against them writes the value into the wrong
-  // project's settings file. Only the newest read commits anything —
-  // both setters below, and the loading flag with them.
-  let latest = 0;
+  // Which read the open editor is waiting on — a different question from
+  // the per-place turns. A cache pass answers for a place as truly as a
+  // foreground read, and says nothing about the page: draft, base, rows
+  // and the loading flag belong to the read that opened it.
+  let opened = 0;
   const load = async () => {
     const { scope } = get();
-    const mine = ++latest;
+    const pass = readTurn([scope]);
+    const turn = ++opened;
+    // Whether this read still speaks for the page. Where the editor points
+    // is not a second test: setScope alone writes scope and always starts
+    // a read, so a later place — or the same place come back to — took a
+    // later turn than this one.
+    const showing = () => turn === opened;
     set({ loading: true });
     let read: Awaited<ReturnType<typeof readPlace>>;
     try {
       read = await readPlace(scope);
     } finally {
-      if (mine === latest) set({ loading: false });
+      if (showing()) set({ loading: false });
     }
-    if (mine !== latest) return;
     const [manifest, inventory, settings] = read;
+    const draft = readDraft(manifest);
+    // The records answer for the place: the page having moved on does not
+    // make what this read saw untrue. Whether it still speaks for the
+    // page is the next question, and a different one.
+    set(recordedRead(pass, scope, read));
+
+    if (!showing()) return;
     if (manifest.status === "error") {
-      set((state) => ({
+      set({
+        ...opening,
         draft: null,
         base: null,
         settings: null,
-        settingsEdits: [],
-        // This place has stopped reading, so what it last said goes with
-        // it. Left in place, the mark would keep answering for this
-        // package here out of a manifest that can no longer be read.
-        saved: recorded(state.saved, scope, null),
-        inventories: recorded(state.inventories, scope, null),
-        savedSettings: recorded(state.savedSettings, scope, null),
-        dirty: false,
-        manifestDirty: false,
-        stale: false,
         error: manifest.error,
-      }));
+      });
       return;
     }
-    // With no manifest here yet the editor still opens, on an empty one:
-    // asking someone to press "create" before they can type is a step that
-    // decides nothing. Saving is what writes the file.
-    const draft = manifest.data.manifest
-      ? toDraft(manifest.data.manifest)
-      : emptyDraft();
-    set((state) => ({
-      draft,
+    set({
+      ...opening,
+      draft: draft ?? emptyDraft(),
       base: manifest.data.base,
-      saved: recorded(state.saved, scope, draft),
-      // An inventory that failed to read leaves this place without one,
-      // rather than leaving the last place's on screen: the Skills section
-      // would otherwise offer another place's assignment as this one's,
-      // and a pick made from it writes a declaration nobody meant.
-      inventories: recorded(
-        state.inventories,
-        scope,
-        inventory.status === "ok" ? inventory.data : null,
-      ),
       settings: settings.status === "ok" ? settings.data : null,
-      settingsEdits: [],
-      savedSettings: recorded(
-        state.savedSettings,
-        scope,
-        settings.status === "ok" ? settings.data : null,
-      ),
-      dirty: false,
-      manifestDirty: false,
-      stale: false,
-      // A read that failed is said out loud: a settings section that is
-      // simply missing looks like a skill that ships none.
-      error:
-        inventory.status === "error"
-          ? inventory.error
-          : settings.status === "error"
-            ? settings.error
-            : null,
-    }));
+      error: readError(inventory, settings),
+    });
+  };
+
+  /** Read the named places into the records the marks are drawn from. */
+  const places = async (scopes: Scope[]) => {
+    const pass = readTurn(scopes);
+    set(mergedPlaces(pass, scopes, await placesOf(scopes)));
   };
 
   const write = async (draft: Draft) => {
@@ -206,22 +193,24 @@ export const useEditorStore = create<EditorState>((set, get) => {
 
     setScope: async (scope) => {
       set({
+        ...opening,
         scope,
         draft: null,
         base: null,
         settings: null,
-        settingsEdits: [],
-        dirty: false,
-        manifestDirty: false,
         error: null,
-        stale: false,
       });
       await load();
     },
 
     openScope: async (scope) => {
       const state = get();
-      if (state.draft && sameScope(state.scope, scope)) return;
+      // Open means both halves landed. A manifest read that succeeded
+      // beside a failed settings read leaves a page with no settings
+      // controls that coming back never retries, and a skill installed
+      // in one place has no other pill to switch to.
+      if (state.draft && state.settings && sameScope(state.scope, scope))
+        return;
       await state.setScope(scope);
     },
 
@@ -232,32 +221,11 @@ export const useEditorStore = create<EditorState>((set, get) => {
       // its way — without it this would mark only the global scope.
       const settings = useSettingsStore.getState();
       if (!settings.settings) await settings.load();
-      const projects = useSettingsStore.getState().settings?.projects ?? [];
-      const scopes: Scope[] = [
-        { scope: "global" },
-        ...projects.map((root) => ({ scope: "project" as const, root })),
-      ];
-      const [saved, savedSettings] = await placesOf(scopes);
-      // Replaced, not merged: this is the whole list, so a scope that has
-      // gone leaves with it.
-      set({ saved, savedSettings });
+      const { projects = [] } = useSettingsStore.getState().settings ?? {};
+      await places(everyPlace(projects));
     },
 
-    loadPlaces: async (scopes) => {
-      const [manifests, settings] = await placesOf(scopes);
-      set((state) => ({
-        saved: scopes.reduce(
-          (saved, scope) =>
-            recorded(saved, scope, manifests[scopeKey(scope)] ?? null),
-          state.saved,
-        ),
-        savedSettings: scopes.reduce(
-          (read, scope) =>
-            recorded(read, scope, settings[scopeKey(scope)] ?? null),
-          state.savedSettings,
-        ),
-      }));
-    },
+    loadPlaces: places,
 
     edit: (change) => {
       const { draft } = get();

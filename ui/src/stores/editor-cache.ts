@@ -3,6 +3,7 @@ import {
   type EditorInventory,
   type Scope,
   type ScopeSettings,
+  type SettingsEdit,
 } from "@/bindings";
 import { type Draft, emptyDraft, toDraft } from "@/lib/editor-draft";
 import { scopeKey } from "@/lib/scope";
@@ -51,6 +52,71 @@ export const readPlace = (scope: Scope) =>
     commands.getScopeSettings(scope),
   ]);
 
+/** The manifest a read hands the editor, or null where it could not be
+ *  read at all. With no manifest file here yet the editor still opens, on
+ *  an empty one: asking someone to press "create" before they can type is
+ *  a step that decides nothing. Saving is what writes the file. */
+export const readDraft = (
+  manifest: Awaited<ReturnType<typeof commands.getManifest>>,
+): Draft | null =>
+  manifest.status !== "ok"
+    ? null
+    : manifest.data.manifest
+      ? toDraft(manifest.data.manifest)
+      : emptyDraft();
+
+/** The first of a read's other halves that failed, said out loud: a
+ *  settings section that is simply missing looks like a skill that ships
+ *  none. */
+export const readError = (
+  inventory: Awaited<ReturnType<typeof commands.editorInventory>>,
+  settings: Awaited<ReturnType<typeof commands.getScopeSettings>>,
+): string | null => {
+  if (inventory.status === "error") return inventory.error;
+  if (settings.status === "error") return settings.error;
+  return null;
+};
+
+/** The newest read taken of each place, by scope. Reads of one place
+ *  overlap — a project opened and then another, a startup pass over every
+ *  place still out when a save re-reads one of them — and the answer that
+ *  arrives last is not the newest one. */
+const issued = new Map<string, number>();
+
+/** One read's turn over the places it asked about. Taken before the
+ *  requests go out; taking a turn is how a read starts, so a caller added
+ *  later cannot miss the rule. */
+export interface ReadTurn {
+  /** Whether this read is still the newest of that place. */
+  newest: (scope: Scope) => boolean;
+  /** {@link recorded}, refused for a place a newer read has already
+   *  answered for. An older answer landing on top would put a pre-save
+   *  state back under a name that has moved on. */
+  record: <T>(
+    cache: Record<string, T>,
+    scope: Scope,
+    value: T | null,
+  ) => Record<string, T>;
+}
+
+export const readTurn = (scopes: Scope[]): ReadTurn => {
+  const mine = new Map(
+    scopes.map((scope) => {
+      const at = scopeKey(scope);
+      const next = (issued.get(at) ?? 0) + 1;
+      issued.set(at, next);
+      return [at, next] as const;
+    }),
+  );
+  const newest = (scope: Scope) =>
+    mine.get(scopeKey(scope)) === issued.get(scopeKey(scope));
+  return {
+    newest,
+    record: (cache, scope, value) =>
+      newest(scope) ? recorded(cache, scope, value) : cache,
+  };
+};
+
 /** Each named scope's saved manifest, keyed by scope. A read that fails is
  *  left out rather than recorded as an empty manifest: a place nobody could
  *  read is not a place holding nothing, and the marks tell them apart. */
@@ -92,3 +158,73 @@ export const settingsOf = async (
  *  would leave every place it touched unknown. */
 export const placesOf = (scopes: Scope[]) =>
   Promise.all([manifestsOf(scopes), settingsOf(scopes)]);
+
+/** What every fresh read of a place resets on the page, whichever way the
+ *  read went: no drafts in hand, nothing unsaved, no refusal standing. */
+export const opening = {
+  settingsEdits: [] as SettingsEdit[],
+  dirty: false,
+  manifestDirty: false,
+  stale: false,
+};
+
+/** The scope-keyed caches the marks are drawn from. */
+export interface PlaceCaches {
+  saved: Record<string, Draft>;
+  inventories: Record<string, EditorInventory>;
+  savedSettings: Record<string, ScopeSettings>;
+}
+
+/** What one place's read records: each half under that place's key, and
+ *  gone where that half could not be read. Presence is what says a read
+ *  landed, and a mark off a kept entry answers out of a file nobody can
+ *  see any more. Refused outright where a newer read has already
+ *  answered for the place. */
+export const recordedRead =
+  (
+    pass: ReadTurn,
+    scope: Scope,
+    [manifest, inventory, settings]: Awaited<ReturnType<typeof readPlace>>,
+  ) =>
+  (held: PlaceCaches): PlaceCaches => ({
+    saved: pass.record(held.saved, scope, readDraft(manifest)),
+    inventories: pass.record(
+      held.inventories,
+      scope,
+      inventory.status === "ok" ? inventory.data : null,
+    ),
+    savedSettings: pass.record(
+      held.savedSettings,
+      scope,
+      settings.status === "ok" ? settings.data : null,
+    ),
+  });
+
+/** One pass over several places, folded into what is held. Merged per
+ *  place rather than replacing the record: the turn decides each entry,
+ *  and a startup pass still out when a save re-read one place must not
+ *  put that place's pre-save answer back. */
+export const mergedPlaces =
+  (
+    pass: ReadTurn,
+    scopes: Scope[],
+    [manifests, settings]: Awaited<ReturnType<typeof placesOf>>,
+  ) =>
+  (held: Pick<PlaceCaches, "saved" | "savedSettings">) => ({
+    saved: scopes.reduce(
+      (out, scope) =>
+        pass.record(out, scope, manifests[scopeKey(scope)] ?? null),
+      held.saved,
+    ),
+    savedSettings: scopes.reduce(
+      (out, scope) =>
+        pass.record(out, scope, settings[scopeKey(scope)] ?? null),
+      held.savedSettings,
+    ),
+  });
+
+/** Every place the app knows: the personal scope and each project. */
+export const everyPlace = (projects: string[]): Scope[] => [
+  { scope: "global" },
+  ...projects.map((root) => ({ scope: "project" as const, root })),
+];
