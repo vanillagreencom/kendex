@@ -30,6 +30,34 @@ export interface PackagePlace {
   updatable: boolean;
 }
 
+/** This package's row in one place, or null where the update read never
+ *  spoke for it. */
+const rowFor = (
+  rows: UpdateRow[],
+  kind: ItemKind,
+  name: string,
+  scope: Scope,
+): UpdateRow | null =>
+  rows.find(
+    (one) =>
+      one.kind === kind && one.name === name && sameScope(one.scope, scope),
+  ) ?? null;
+
+/** The commit each place has installed, as one string to watch. Core
+ *  stamps a new install date whenever the source hash moves, so a landed
+ *  update changes this while an unrelated store touch leaves it alone —
+ *  which makes it the one signal that a place's own record is worth
+ *  reading again. */
+export const installedCommits = (
+  rows: UpdateRow[],
+  kind: ItemKind,
+  name: string,
+  scopes: Scope[],
+): string =>
+  scopes
+    .map((scope) => rowFor(rows, kind, name, scope)?.current?.commit ?? "")
+    .join("|");
+
 /** Every place this package sits in, joined to what the update read and
  *  each place's own record say about it. The place list is the scan's, so
  *  a place with no update row and no readable record still gets a card —
@@ -43,11 +71,7 @@ export function packagePlaces(
   standing: UpdatesStanding,
 ): PackagePlace[] {
   return scopes.map((scope) => {
-    const row =
-      rows.find(
-        (one) =>
-          one.kind === kind && one.name === name && sameScope(one.scope, scope),
-      ) ?? null;
+    const row = rowFor(rows, kind, name, scope);
     return {
       scope,
       name: placeName(scope, scopes),

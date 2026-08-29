@@ -1,11 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   commands,
   type ItemKind,
   type PackageMeta_Serialize,
   type Scope,
 } from "@/bindings";
-import { type PackagePlace, packagePlaces } from "@/lib/package-places";
+import {
+  installedCommits,
+  type PackagePlace,
+  packagePlaces,
+} from "@/lib/package-places";
 import { scopeKey } from "@/lib/scope";
 import { useUpdatesStore } from "@/stores/updates";
 
@@ -37,11 +41,22 @@ export function usePackagePlaces(
   const [metas, setMetas] = useState<Metas | null>(null);
   // The scan rebuilds the group on every read, so what is watched is which
   // places those are, not the array they arrived in.
-  const key = scopes.map(scopeKey).join("|");
-  // biome-ignore lint/correctness/useExhaustiveDependencies: which places, not which array
+  const subject = `${kind}|${name}|${scopes.map(scopeKey).join("|")}`;
+  // An update rewrites the install date in the place it landed, and the
+  // date lives only in that place's own record — so the records are read
+  // again when the commits behind them move, and at no other store touch.
+  const commits = installedCommits(rows, kind, name, scopes);
+  const shown = useRef(subject);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: which places and which copies, not which array
   useEffect(() => {
     let cancelled = false;
-    setMetas(null);
+    // Blanked only for a different package or a different set of places.
+    // A re-read after an update replaces the dates under cards that are
+    // already on screen rather than flashing the loading state over them.
+    if (shown.current !== subject) {
+      shown.current = subject;
+      setMetas(null);
+    }
     void Promise.all(
       scopes.map(async (scope) => {
         try {
@@ -65,7 +80,7 @@ export function usePackagePlaces(
     return () => {
       cancelled = true;
     };
-  }, [key, kind, name]);
+  }, [subject, commits]);
 
   return {
     places: packagePlaces(scopes, kind, name, rows, metas ?? {}, {

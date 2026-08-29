@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
+import { act } from "react";
 import {
   afterEach,
   beforeEach,
@@ -14,6 +15,7 @@ import type {
   PackageMeta_Serialize,
   Scope,
   UpdateRow,
+  VersionRef,
 } from "@/bindings";
 import { commands } from "@/bindings";
 import {
@@ -52,14 +54,24 @@ const meta = (installedAt: string | null): PackageMeta_Serialize => ({
   catalog: null,
 });
 
-const row = (scope: Scope, updateAvailable: boolean): UpdateRow => ({
+const at = (commit: string): VersionRef => ({
+  commit,
+  label: null,
+  date: null,
+});
+
+const row = (
+  scope: Scope,
+  updateAvailable: boolean,
+  current: VersionRef | null = null,
+): UpdateRow => ({
   scope,
   kind: "skill",
   name: "gh",
   source: "cat",
   repo: "o/r",
   repoIdentity: "o/r",
-  current: null,
+  current,
   latest: null,
   updateAvailable,
   pinned: false,
@@ -251,6 +263,51 @@ describe("the update a place is waiting for", () => {
     const host = await openTab([VG, HYPR]);
 
     expect(host.textContent).not.toContain(UPDATE_ALL_LABEL);
+  });
+});
+
+// Core stamps a new install date whenever the source hash moves, and that
+// date lives only in each place's own record. A tab that read the records
+// once would keep showing the age of the copy the update replaced.
+describe("the date a place shows after an update lands", () => {
+  const A_DAY_AGO = "2026-08-27T12:00:00Z";
+
+  it("follows the copy, not the read that drew the card", async () => {
+    useUpdatesStore.setState({ rows: [row(VG, true, at("aaa"))] });
+    const host = await openTab([VG]);
+    expect(host.textContent).toContain("Installed 3d ago");
+
+    await click(host, "Update");
+
+    // What a landed update leaves behind: the place is on a new commit and
+    // its record carries the date core stamped when the hash moved.
+    vi.mocked(commands.packageMeta).mockResolvedValue({
+      status: "ok",
+      data: meta(A_DAY_AGO),
+    });
+    await act(async () => {
+      useUpdatesStore.setState({ rows: [row(VG, false, at("bbb"))] });
+    });
+    await settle();
+
+    expect(host.textContent).toContain("Installed 1d ago");
+    expect(host.textContent).not.toContain("Installed 3d ago");
+  });
+
+  // A store touch that leaves the copies where they are must not put a
+  // request behind every unrelated updates change.
+  it("does not re-read the records when the copies have not moved", async () => {
+    useUpdatesStore.setState({ rows: [row(VG, true, at("aaa"))] });
+    const host = await openTab([VG]);
+    const reads = vi.mocked(commands.packageMeta).mock.calls.length;
+
+    await act(async () => {
+      useUpdatesStore.setState({ checking: true });
+    });
+    await settle();
+
+    expect(vi.mocked(commands.packageMeta).mock.calls).toHaveLength(reads);
+    expect(host.textContent).toContain("Installed 3d ago");
   });
 });
 
