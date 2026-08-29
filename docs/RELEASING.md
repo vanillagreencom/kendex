@@ -84,9 +84,9 @@ revisit Intel support then.
   `plugins > updater > pubkey` in `crates/app/tauri.conf.json` and
   `UPDATER_PUBLIC_KEY` in `crates/core/src/update_feed.rs`, held equal by
   `crates/app/tests/tauri_config.rs`. A private key that does not match
-  builds a release the app refuses to install and that `kendex update`
-  refuses to install the desktop app from; the CLI binary half of
-  `kendex update` is unaffected.
+  signs every artifact of that release under a key nothing trusts, so the
+  app refuses to install it and `kendex update` refuses both halves, the
+  desktop app and the kendex command.
 - **macOS signing + notarization** (the seven `APPLE_*` repo secrets:
   certificate p12 + password, signing identity, team id, and the App
   Store Connect API issuer/key-id/key): all seven set, the two mac lanes
