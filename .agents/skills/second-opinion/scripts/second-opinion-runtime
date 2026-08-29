@@ -56,46 +56,52 @@ tree() {
   shift 2
   [[ "$grace" =~ ^[1-9][0-9]*$ ]] || die "grace must be positive"
   [[ $# -gt 0 ]] || die "tree command is missing"
-  local tree_pid="" tree_rc=0 tree_reaped=false cancel_rc="" gate=""
+  local tree_pid="" tree_rc=0 tree_reaped=false cancel_rc="" gate_fd_open=false
   request_cancel() {
     cancel_rc="$1"
-    [[ -z "$tree_pid" ]] || stop_process_group "$tree_pid" "$grace"
+    [[ -z "$tree_pid" ]] || kill -TERM "$tree_pid" 2>/dev/null || true
   }
   stop_and_reap_tree() {
-    [[ -z "$tree_pid" ]] || stop_process_group "$tree_pid" "$grace"
     if [[ -n "$tree_pid" ]] && ! $tree_reaped; then
+      kill -TERM "$tree_pid" 2>/dev/null || true
       wait "$tree_pid" 2>/dev/null || tree_rc=$?
       tree_reaped=true
     fi
   }
   cleanup_tree() {
     stop_and_reap_tree
-    [[ -z "$gate" ]] || rm -rf -- "$gate" || true
+    if $gate_fd_open; then exec 6>&-; gate_fd_open=false; fi
   }
   trap cleanup_tree EXIT
   trap 'request_cancel 143' TERM HUP
   trap 'request_cancel 130' INT
-  gate=$(mktemp -d) || die "cannot create CLI startup gate"
-  set -m
-  (while [[ ! -e "$gate/release" ]]; do sleep 0.01; done; exec "$@") 2>"$stderr_file" &
+  exec 8<&0
+  exec 6> >(exec "$RUNTIME_SELF" tree-child "$grace" "$stderr_file" "$@")
   tree_pid=$!
-  set +m
+  gate_fd_open=true
+  exec 8<&-
   if [[ -n "$cancel_rc" ]]; then
     stop_and_reap_tree
     exit "$cancel_rc"
   fi
-  (umask 077 && set -C && : > "$gate/release") || {
+  printf 'release\n' >&6 || {
     stop_and_reap_tree
     die "cannot release CLI process"
   }
+  exec 6>&-
+  gate_fd_open=false
   if [[ -n "$cancel_rc" ]]; then
     stop_and_reap_tree
     exit "$cancel_rc"
   fi
   wait "$tree_pid" || tree_rc=$?
+  if [[ -n "$cancel_rc" ]]; then
+    tree_reaped=false
+    stop_and_reap_tree
+    exit "$cancel_rc"
+  fi
   tree_reaped=true
   stop_and_reap_tree
-  [[ -z "$cancel_rc" ]] || exit "$cancel_rc"
   exit "$tree_rc"
 }
 create_runtime_dir() {
@@ -119,7 +125,6 @@ supervise() {
   [[ "$owned" == true || "$owned" == false ]] || die "owned must be true or false"
   [[ "$grace" =~ ^[1-9][0-9]*$ ]] || die "grace must be positive"
   validate_runtime_dir "$runtime_dir" "$token"
-
   local worker_pid="" worker_rc=0 worker_wait_rc=0 worker_reaped=false
   local cancel_rc="" cancel_message="" gate="" watchdog_pid="" event=""
   local completion_published=false
@@ -189,7 +194,6 @@ supervise() {
   trap cleanup_supervisor EXIT
   trap 'request_cancel 143' TERM HUP
   trap 'request_cancel 130' INT
-
   gate=$(mktemp -d "$runtime_dir/gate.XXXXXX") || die "cannot create worker startup gate"
   mkfifo "$owner_fifo" "$event_fifo" || die "cannot create supervisor channels"
   exec 6<>"$owner_fifo"
@@ -259,7 +263,6 @@ supervise() {
     || finish_supervisor 1 "Error: detached worker status $worker_rc does not match exit status $worker_wait_rc"
   finish_supervisor "$worker_rc" ""
 }
-
 launch() {
   local script="$1" artifact="$2" runtime_dir="$3" budget="$4" owned="$5" grace="$6"
   local wait_slice="$7"
@@ -300,7 +303,6 @@ launch() {
   printf ' %q' "$RUNTIME_SELF" wait "$artifact" "$runtime_dir" "$deadline" "$token" "$wait_slice"
   printf '\n'
 }
-
 second_opinion_detach_if_needed() {
   local artifact="$OUTPUT_PATH" owned=false attempts=1 budget runtime_dir
   if $DETACHED_WORKER || [[ "$MODE" == "detect" ]] \
@@ -322,7 +324,6 @@ second_opinion_detach_if_needed() {
   exec "$RUNTIME_SELF" launch "$SCRIPT_DIR/second-opinion" "$artifact" "$runtime_dir" \
     "$budget" "$owned" 30 300 "${ORIGINAL_ARGS[@]}"
 }
-
 completion_line() {
   local log="$1" prefix="$2" line="" match matches grep_rc=0
   matches=$(grep -F "$prefix" "$log") || grep_rc=$?
@@ -330,7 +331,6 @@ completion_line() {
   while IFS= read -r match; do line="$match"; done <<< "$matches"
   printf '%s' "$line"
 }
-
 wait_for_run() {
   local artifact="$1" runtime_dir="$2" deadline="$3" token="$4"
   local wait_slice="$5" log="$2/worker.log"
@@ -383,13 +383,13 @@ wait_for_run() {
     sleep 1
   done
 }
-
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   action="${1:-}"
   [[ -n "$action" ]] || die "action required"
   shift
   case "$action" in
     tree) [[ $# -ge 3 ]] || die "tree arguments are incomplete"; tree "$@" ;;
+    tree-child) source "${RUNTIME_SELF%/*}/lib/tree-gate.sh"; second_opinion_tree_child "$@" ;;
     supervise) [[ $# -ge 8 ]] || die "supervise arguments are incomplete"; supervise "$@" ;;
     launch) [[ $# -ge 8 ]] || die "launch arguments are incomplete"; launch "$@" ;;
     wait) [[ $# -eq 5 ]] || die "wait arguments are incomplete"; wait_for_run "$@" ;;

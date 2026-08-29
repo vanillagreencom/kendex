@@ -154,6 +154,11 @@ if [[ "${FAKE_MODE:-success}" == "lane-heartbeat" ]]; then
   lane_heartbeat="$HEARTBEAT_DIR/${0##*/}"
   while :; do printf 'tick\n' >> "$lane_heartbeat"; sleep 0.05; done
 fi
+if [[ "${FAKE_MODE:-success}" == "gate-gone" ]]; then
+  if find "$GATE_TMPDIR" -mindepth 1 -print -quit | grep -q .; then exit 9; fi
+  printf 'answer\n'
+  exit 0
+fi
 if [[ -n "${CONTROL_ENV_CAPTURE:-}" ]]; then
   if [[ -n "${SECOND_OPINION_RUNTIME_DIR:-}${SECOND_OPINION_RUN_TOKEN:-}" ]]; then
     printf 'leaked\n' > "$CONTROL_ENV_CAPTURE"
@@ -608,7 +613,10 @@ FAILURE_TOKEN="$failure_token"
 sleep 0.1
 rm -f -- "$TMP_ROOT/failure-runtime/token"
 wait "$failure_wait_pid" || failure_wait_rc=$?
-[[ $failure_wait_rc -eq 1 ]] || fail "post-release runtime failure did not fail closed"
+if [[ $failure_wait_rc -ne 1 ]]; then
+  sed -n '1,100p' "$TMP_ROOT/failure-wait.stderr" >&2 || true
+  fail "post-release runtime failure returned $failure_wait_rc"
+fi
 failure_before="$(wc -c < "$failure_heartbeat" | tr -d ' ')"
 sleep 0.3
 failure_after="$(wc -c < "$failure_heartbeat" | tr -d ' ')"
@@ -710,11 +718,14 @@ if [[ "$(uname -s)" == "Linux" ]]; then
   cat > "$TMP_ROOT/startup-env" <<'SH'
 set -T
 startup_cancel_in_launch_window() {
-  if [[ "$BASH_COMMAND" == "set +m" && "${STARTUP_CANCEL_SENT:-0}" == 0 ]]; then
-    STARTUP_CANCEL_SENT=1
-    sleep 0.2
-    kill -TERM "$$"
-  fi
+  case "$BASH_COMMAND" in
+    *'exec 6>'*)
+      if [[ "${STARTUP_CANCEL_SENT:-0}" == 0 ]]; then
+        STARTUP_CANCEL_SENT=1
+        kill -TERM "$$"
+      fi
+      ;;
+  esac
 }
 trap startup_cancel_in_launch_window DEBUG
 SH
@@ -737,6 +748,17 @@ SH
 else
   printf 'SKIP: startup-window cancellation control requires Linux\n'
 fi
+
+gate_scratch="$TMP_ROOT/gate-scratch"
+mkdir "$gate_scratch"
+TMPDIR="$gate_scratch" PATH="$PATH" FAKE_MODE=gate-gone GATE_TMPDIR="$gate_scratch" \
+  "$RUNTIME" tree 1 "$TMP_ROOT/gate-gone.stderr" codex \
+  >"$TMP_ROOT/gate-gone.stdout"
+assert_contains "$TMP_ROOT/gate-gone.stdout" "answer" \
+  "CLI starts after its startup gate pathname is deleted"
+[[ -z "$(find "$gate_scratch" -mindepth 1 -print -quit)" ]] \
+  || fail "FD-owned startup gate left scratch state"
+printf 'PASS: FD-owned startup gate survives scratch cleanup\n'
 
 resolved_timeout="$(command -v timeout || command -v gtimeout || true)"
 if [[ -z "$resolved_timeout" ]]; then
