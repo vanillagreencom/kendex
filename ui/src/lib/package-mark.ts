@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import type { UpdateRow } from "@/bindings";
+import type { ScopeSettings, UpdateRow } from "@/bindings";
 import { placeStandings, placesSource } from "@/lib/customized-places";
 import type { ItemGroup } from "@/lib/derive";
 import { groupScopes } from "@/lib/derive";
@@ -19,11 +19,12 @@ export function markFor(
   saved: Record<string, Draft>,
   rows: UpdateRow[],
   updatesLoaded: boolean,
+  settings: Record<string, ScopeSettings>,
   group: ItemGroup,
 ): PlaceMark | null {
   return packageMark(
     placeStandings(
-      placesSource(saved, rows, updatesLoaded),
+      placesSource(saved, rows, updatesLoaded, settings),
       group.kind,
       group.name,
       groupScopes(group),
@@ -41,6 +42,7 @@ export function markFor(
  *  give — right about one place and silent about the rest. */
 export function usePackageMark(group: ItemGroup | null): PlaceMark | null {
   const saved = useEditorStore((s) => s.saved);
+  const settings = useEditorStore((s) => s.savedSettings);
   const loadPlaces = useEditorStore((s) => s.loadPlaces);
   const rows = useUpdatesStore((s) => s.rows);
   const updatesLoaded = useUpdatesStore((s) => s.loaded);
@@ -54,5 +56,5 @@ export function usePackageMark(group: ItemGroup | null): PlaceMark | null {
     if (places.length > 0) void loadPlaces(places);
   }, [places, loadPlaces]);
   if (!group) return null;
-  return markFor(saved, rows, updatesLoaded, group);
+  return markFor(saved, rows, updatesLoaded, settings, group);
 }

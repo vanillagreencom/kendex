@@ -49,7 +49,11 @@ describe("customizedLine", () => {
     frontmatter: [],
   };
 
-  const facts = (edited: boolean, forked: boolean) => ({ edited, forked });
+  const facts = (edited: boolean, forked: boolean, values = false) => ({
+    edited,
+    forked,
+    values,
+  });
 
   it("names a hand edit on its own", () => {
     expect(customizedLine(facts(true, false), nothing)).toBe("Edited by you");
@@ -71,5 +75,14 @@ describe("customizedLine", () => {
     expect(
       customizedLine(facts(false, false), { ...nothing, launch: "x" }),
     ).toBe("Launch instructions");
+  });
+
+  /// A package settings value is a customization of its own: a skill
+  /// nothing in the manifest touches still belongs on the index when
+  /// this place's settings file answers one of its keys off the default.
+  it("names non-default settings values on their own", () => {
+    expect(customizedLine(facts(false, false, true), nothing)).toBe(
+      "Non-default settings",
+    );
   });
 });

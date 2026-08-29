@@ -34,6 +34,7 @@ const row = (over: Partial<CustomizedHere> = {}): CustomizedHere => ({
   name: "gh",
   edited: true,
   forked: false,
+  values: false,
   customization: {
     launch: null,
     additional: null,

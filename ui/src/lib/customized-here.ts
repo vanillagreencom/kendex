@@ -18,6 +18,7 @@ export function useCustomizedHere(
   scope: Scope,
 ): CustomizedHere[] {
   const saved = useEditorStore((s) => s.saved);
+  const settings = useEditorStore((s) => s.savedSettings);
   const rows = useUpdatesStore((s) => s.rows);
   const updatesLoaded = useUpdatesStore((s) => s.loaded);
   return useMemo(
@@ -27,9 +28,10 @@ export function useCustomizedHere(
           manifestsForEditing(saved, draft, scope),
           rows,
           updatesLoaded,
+          settings,
         ),
         scope,
       ),
-    [draft, saved, rows, updatesLoaded, scope],
+    [draft, saved, rows, updatesLoaded, settings, scope],
   );
 }

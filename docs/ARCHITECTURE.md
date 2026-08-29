@@ -249,22 +249,22 @@ lives in one capability table read by core and UI.
   plugin registry a plugin names; an unknown registry is the user's.
   Vendor-owned content is scored by nothing and asked about nowhere: listed
   in the Library, labelled with who ships it, left alone.
-- What you changed about a package is edited on that package's page, under
-  a Customize tab beside Overview — instructions, the skills an agent gets,
-  per-tool settings. The Customize page keeps only what is not about one
-  package (the `all` row, custom hooks, a project's skills folder) plus an
-  index of everything customized there, each row opening its package. Both
-  surfaces edit one draft of one manifest per scope (`stores/editor.ts`;
-  the Customize page reloads only when nothing is unsaved), and
-  `lib/customization.ts` slices that draft per package.
-- A place is customized by settings, a hand edit, or a fork, and
-  `lib/customized-places.ts::placeStandings` is the one answer, over a
-  `PlacesSource` that only `placesSource` builds. Its readers are what
-  `grep -rn placeStandings ui/src` finds, the Customize index
-  (`lib/customized-here.ts`) among them: it reads the open draft for its
-  place and says nothing is customized only once the update read has
-  landed (`lib/updates-read-state.ts`: pending says it is checking, failed
-  that packages may be missing).
+- A package's own page carries its Customize tab beside Overview —
+  instructions, the skills an agent gets, per-tool settings, and a skill's own
+  declared settings. The Customize page keeps what is not about one package
+  (the `all` row, custom hooks) plus an index of what is customized there.
+  Both edit one manifest draft per scope; the package page adds a settings
+  draft, and one Save bar writes both as one transaction (`stores/editor.ts`;
+  it reloads only when nothing is unsaved). `lib/customization.ts` slices that
+  draft, `lib/settings-rows.ts` the settings rows.
+- A place is customized by settings, a settings value off its package default,
+  a hand edit, or a fork, and `lib/customized-places.ts::placeStandings` is
+  the one answer, over a `PlacesSource` only `placesSource` builds. Its
+  readers are what `grep -rn placeStandings ui/src` finds, the Customize index
+  (`lib/customized-here.ts`) among them: it reads the drafts open for its
+  place and calls nothing customized until every read lands
+  (`lib/updates-read-state.ts`: pending is checking, failed is packages may be
+  missing).
 - Hook events have one vocabulary — Claude Code's names, in
   `core/hook.rs::EVENTS`; every other harness's map is keyed by it. The
   picker offers that list, the validator rejects anything outside it, the renderers read it.

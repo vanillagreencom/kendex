@@ -54,6 +54,51 @@ export const SKILLS_NONE_AVAILABLE =
   "No skills to add — your catalogs supply none yet.";
 export const SKILLS_BACK_TO_AUTOMATIC = "Back to automatic";
 export const SETTINGS_SECTION = "Settings";
+
+// A skill's own settings: the keys its template declares, and where this
+// project's file stands on each.
+export const SETTINGS_HELP =
+  "Saved in kendex.settings.toml in the project root. The process environment and .env.local are read first, so a value set in either wins over one set here.";
+export const SETTINGS_RESET = "Reset to default";
+/** How a settings value shows up in the Customize index — a statement
+ *  about the file, never about who wrote it. */
+export const SETTINGS_VALUES_MARK = "Non-default settings";
+export const SETTINGS_TEMPLATE_UNREADABLE =
+  "This skill's settings can't be read here";
+export const SETTINGS_TEMPLATE_INVALID =
+  "This skill's settings template doesn't hold to the authoring contract";
+/** Never "nothing is set": seeding is lenient, so keys from a template the
+ *  strict reader refuses may well be in the file already. */
+export const SETTINGS_TEMPLATE_INVALID_NOTE =
+  "kendex can't list its keys, so they can't be edited here. Values from it may already be in kendex.settings.toml — open that file to see them.";
+
+/** One thing wrong with a template, as its author has to fix it. */
+export const templateFindingLine = (
+  line: number,
+  problem: string,
+  fix: string,
+): string =>
+  line === 0 ? `${problem} — ${fix}` : `Line ${line}: ${problem} — ${fix}`;
+
+/** A fact about the file, not about the reader: a value can differ from
+ *  the default because it was seeded, imported, or written by hand, and
+ *  nothing here knows who put it there. */
+export const settingDiffers = (fallback: string): string =>
+  fallback === ""
+    ? "Differs from the package default, which is empty."
+    : `Differs from the package default: ${fallback}`;
+
+/** A key nothing here can write: the file answers for it in a shape no
+ *  script reads, so the person settles it in the file. */
+export const settingAmbiguous = (
+  key: string,
+  problem: string,
+  lines: number[],
+): string =>
+  `${key} can't be set here — ${problem}: ${
+    lines.length === 1 ? `line ${lines[0]}` : `lines ${lines.join(", ")}`
+  }.`;
+
 export const SAVE_NOTE =
   "Saving writes these changes into every harness that reads them.";
 export const SAVE_FIRST = "Save your changes before switching location.";
@@ -149,12 +194,13 @@ export function customizationSummary(one: ItemCustomization): string {
  *  A fork and a hand edit are each named when they hold, then whatever
  *  settings sit on top; a settings-only row lists just those. */
 export function customizedLine(
-  facts: Pick<CustomizedHere, "edited" | "forked">,
+  facts: Pick<CustomizedHere, "edited" | "forked" | "values">,
   one: ItemCustomization,
 ): string {
   const parts: string[] = [];
   if (facts.forked) parts.push(FORKED_BADGE_LABEL);
   if (facts.edited) parts.push(EDITED_UPDATE_TAG);
+  if (facts.values) parts.push(SETTINGS_VALUES_MARK);
   const settings = customizationSummary(one);
   if (settings) parts.push(settings);
   return parts.join(" · ");

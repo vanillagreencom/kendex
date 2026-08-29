@@ -18,11 +18,12 @@ export function useLibraryStandings(
   groups: ItemGroup[],
 ): (group: ItemGroup) => PlaceStanding[] {
   const saved = useEditorStore((s) => s.saved);
+  const savedSettings = useEditorStore((s) => s.savedSettings);
   const updateRows = useUpdatesStore((s) => s.rows);
   const updatesLoaded = useUpdatesStore((s) => s.loaded);
   const places = useMemo(
-    () => placesSource(saved, updateRows, updatesLoaded),
-    [saved, updateRows, updatesLoaded],
+    () => placesSource(saved, updateRows, updatesLoaded, savedSettings),
+    [saved, updateRows, updatesLoaded, savedSettings],
   );
   const byKey = useMemo(() => {
     const out = new Map<string, PlaceStanding[]>();

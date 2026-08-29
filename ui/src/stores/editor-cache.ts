@@ -1,4 +1,9 @@
-import { commands, type EditorInventory, type Scope } from "@/bindings";
+import {
+  commands,
+  type EditorInventory,
+  type Scope,
+  type ScopeSettings,
+} from "@/bindings";
 import { type Draft, emptyDraft, toDraft } from "@/lib/editor-draft";
 import { scopeKey } from "@/lib/scope";
 
@@ -55,3 +60,26 @@ export const manifestsOf = async (
   }
   return saved;
 };
+
+/** Each named scope's settings read, keyed by scope. Left out the same way
+ *  a manifest is: a place whose read failed is a place nobody can answer
+ *  for, and the settings half of a mark tells that from a place holding
+ *  nothing. Global answers `applies: false` rather than failing, so it is
+ *  recorded like any other. */
+export const settingsOf = async (
+  scopes: Scope[],
+): Promise<Record<string, ScopeSettings>> => {
+  const loaded = await Promise.all(
+    scopes.map((scope) => commands.getScopeSettings(scope)),
+  );
+  const read: Record<string, ScopeSettings> = {};
+  for (const [index, response] of loaded.entries())
+    if (response.status === "ok") read[scopeKey(scopes[index])] = response.data;
+  return read;
+};
+
+/** Both halves of every named place, read together. The marks answer from
+ *  the two records at once, so a pass that filled one and not the other
+ *  would leave every place it touched unknown. */
+export const placesOf = (scopes: Scope[]) =>
+  Promise.all([manifestsOf(scopes), settingsOf(scopes)]);

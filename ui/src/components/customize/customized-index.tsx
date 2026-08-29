@@ -68,7 +68,7 @@ export function CustomizedIndex({
 
   return (
     <div className="flex flex-col divide-y">
-      {items.map(({ kind, name, edited, forked, customization }) => {
+      {items.map(({ kind, name, edited, forked, values, customization }) => {
         const Icon = kindIcon(kind);
         // Installed *here*: a row that opened a page for another scope's
         // copy would show version and files that belong to somewhere else.
@@ -85,7 +85,7 @@ export function CustomizedIndex({
               <p className="truncate text-sm font-medium">{name}</p>
               <p className="truncate text-[13px] text-muted-foreground">
                 {kindLabel(kind)} ·{" "}
-                {customizedLine({ edited, forked }, customization)}
+                {customizedLine({ edited, forked, values }, customization)}
               </p>
             </div>
             {here ? (

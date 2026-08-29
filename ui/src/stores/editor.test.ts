@@ -1,8 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AuditView_Serialize, EditorInventory, Scope } from "@/bindings";
+import type {
+  AuditView_Serialize,
+  EditorInventory,
+  Scope,
+  ScopeSettings,
+} from "@/bindings";
 import { commands } from "@/bindings";
 import { groupItems } from "@/lib/derive";
-import { emptyDraft } from "@/lib/editor-draft";
+import { emptyDraft, setInstruction } from "@/lib/editor-draft";
 import { markFor } from "@/lib/package-mark";
 import { openInventory, useEditorStore } from "./editor";
 
@@ -10,6 +15,7 @@ vi.mock("@/bindings", () => ({
   commands: {
     getManifest: vi.fn(),
     editorInventory: vi.fn(),
+    getScopeSettings: vi.fn(),
     saveCustomize: vi.fn(),
   },
 }));
@@ -29,6 +35,33 @@ const inventory = () => ({
   data: {} as EditorInventory,
 });
 
+const settings = (base: string | null = "s1"): ScopeSettings => ({
+  applies: true,
+  skills: [
+    {
+      skill: "gh",
+      template: {
+        state: "rows",
+        rows: [
+          {
+            key: "GH_MODE",
+            explainer: ["what it does"],
+            default: "enforce",
+            current: { state: "value", value: "enforce", line: 3 },
+          },
+        ],
+      },
+    },
+  ],
+  base,
+});
+
+const edit = {
+  skill: "gh",
+  key: "GH_MODE",
+  value: { kind: "set" as const, value: "advise" },
+};
+
 describe("editor store", () => {
   beforeEach(() => {
     useEditorStore.setState({
@@ -37,7 +70,11 @@ describe("editor store", () => {
       base: null,
       saved: {},
       inventories: {},
+      settings: null,
+      settingsEdits: [],
+      savedSettings: {},
       dirty: false,
+      manifestDirty: false,
       loading: false,
       saving: false,
       error: null,
@@ -45,6 +82,10 @@ describe("editor store", () => {
     });
     vi.clearAllMocks();
     vi.mocked(commands.editorInventory).mockResolvedValue(inventory());
+    vi.mocked(commands.getScopeSettings).mockResolvedValue({
+      status: "ok",
+      data: settings(),
+    });
   });
 
   /// The base is what makes an existing manifest saveable at all: read
@@ -62,12 +103,91 @@ describe("editor store", () => {
       status: "ok",
       data: {} as AuditView_Serialize,
     });
+    useEditorStore
+      .getState()
+      .edit((draft) => setInstruction(draft, "skill-instructions", "gh", "x"));
     await useEditorStore.getState().save();
     expect(commands.saveCustomize).toHaveBeenCalledWith(
       { scope: "global" },
-      { manifest: emptyDraft(), base: "b1" },
+      {
+        manifest: setInstruction(emptyDraft(), "skill-instructions", "gh", "x"),
+        base: "b1",
+      },
       null,
     );
+  });
+
+  /// The manifest is not the settings file: a settings change reconciles
+  /// the scope against the manifest on disk, and sending the copy on
+  /// screen back would rewrite a kendex.toml nobody touched.
+  it("carries no manifest for a save that only changes settings", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1" },
+    });
+    vi.mocked(commands.saveCustomize).mockResolvedValue({
+      status: "ok",
+      data: {} as AuditView_Serialize,
+    });
+    await useEditorStore.getState().load();
+    useEditorStore.getState().editSetting(edit);
+    expect(useEditorStore.getState().dirty).toBe(true);
+
+    await useEditorStore.getState().save();
+    expect(commands.saveCustomize).toHaveBeenCalledWith(
+      { scope: "global" },
+      null,
+      { edits: [edit], base: "s1" },
+    );
+  });
+
+  /// The base travels with the rows it was read beside: sent the base of
+  /// a file these rows did not come from, a save would write over
+  /// somebody else's newer copy instead of being refused.
+  it("presents the settings base its rows were read with", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1" },
+    });
+    vi.mocked(commands.getScopeSettings).mockResolvedValue({
+      status: "ok",
+      data: settings("s2"),
+    });
+    await useEditorStore.getState().load();
+    expect(useEditorStore.getState().settings?.base).toBe("s2");
+    expect(useEditorStore.getState().savedSettings.global?.base).toBe("s2");
+  });
+
+  /// A read nobody could make is said out loud: a Settings section that
+  /// is merely missing looks exactly like a skill that ships none.
+  it("says so when the settings read fails", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1" },
+    });
+    vi.mocked(commands.getScopeSettings).mockResolvedValue({
+      status: "error",
+      error: "permission denied",
+    });
+    await useEditorStore.getState().load();
+    expect(useEditorStore.getState().settings).toBeNull();
+    expect(useEditorStore.getState().error).toBe("permission denied");
+    expect(useEditorStore.getState().savedSettings.global).toBeUndefined();
+  });
+
+  /// Reload is the discard: settings edits are the second draft the one
+  /// Save bar carries, so they go with the manifest draft rather than
+  /// surviving into a save the person thought they had thrown away.
+  it("drops settings edits on a reload", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1" },
+    });
+    await useEditorStore.getState().load();
+    useEditorStore.getState().editSetting(edit);
+    await useEditorStore.getState().load();
+    expect(useEditorStore.getState().settingsEdits).toEqual([]);
+    expect(useEditorStore.getState().dirty).toBe(false);
   });
 
   /// A stale refusal is a choice, not a failure: it must reach the page
@@ -161,19 +281,23 @@ describe("loadPlaces after a read stops working", () => {
       ),
     );
 
+  // Both records come off the store the read filled: loadPlaces reads a
+  // place's manifest and its settings together, and a mark drawn from one
+  // of them alone would answer unknown for every place either way.
+  const mark = () => {
+    const { saved, savedSettings } = useEditorStore.getState();
+    return markFor(saved, [], true, savedSettings, group);
+  };
+
   it("drops the place it can no longer read instead of keeping its last answer", async () => {
     answer(true);
     await useEditorStore.getState().loadPlaces([VG, HYPR]);
-    expect(
-      markFor(useEditorStore.getState().saved, [], true, group)?.label,
-    ).toBe("Customized in vg");
+    expect(mark()?.label).toBe("Customized in vg");
 
     answer(false);
     await useEditorStore.getState().loadPlaces([VG, HYPR]);
     expect(useEditorStore.getState().saved["/work/vg"]).toBeUndefined();
-    expect(
-      markFor(useEditorStore.getState().saved, [], true, group),
-    ).toBeNull();
+    expect(mark()).toBeNull();
   });
 
   it("leaves the places it was not asked about alone", async () => {

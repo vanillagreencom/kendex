@@ -40,6 +40,7 @@ vi.mock("@/bindings", async (importOriginal) => ({
     packageReadme: vi.fn(),
     getManifest: vi.fn(),
     editorInventory: vi.fn(),
+    getScopeSettings: vi.fn(),
     revealPath: vi.fn(),
     openInEditor: vi.fn(),
     libraryProvenance: vi.fn(),
@@ -154,6 +155,12 @@ beforeEach(() => {
   vi.mocked(commands.packageVersions).mockResolvedValue(nothing);
   vi.mocked(commands.packageReadme).mockResolvedValue(nothing);
   vi.mocked(commands.editorInventory).mockResolvedValue(nothing);
+  // Every place read and holding no settings value off a default, so the
+  // manifest is what decides the header's mark.
+  vi.mocked(commands.getScopeSettings).mockResolvedValue({
+    status: "ok",
+    data: { applies: true, skills: [], base: null },
+  });
   vi.mocked(commands.libraryProvenance).mockResolvedValue(nothing);
   vi.mocked(commands.packageDiff).mockResolvedValue(nothing);
   vi.mocked(commands.revealPath).mockResolvedValue({
@@ -169,7 +176,11 @@ beforeEach(() => {
     draft: null,
     base: null,
     saved: {},
+    settings: null,
+    settingsEdits: [],
+    savedSettings: {},
     dirty: false,
+    manifestDirty: false,
   });
   useUpdatesStore.setState({ rows: [], loaded: true });
   useAuditStore.setState({

@@ -1,9 +1,16 @@
 import { create } from "zustand";
-import { commands, type EditorInventory, type Scope } from "@/bindings";
+import {
+  commands,
+  type EditorInventory,
+  type Scope,
+  type ScopeSettings,
+  type SettingsEdit,
+} from "@/bindings";
 import { type Draft, emptyDraft, toDraft } from "@/lib/editor-draft";
 import { sameScope, scopeKey } from "@/lib/scope";
+import { settingsDraft, withEdit } from "@/lib/settings-rows";
 import { useAuditStore } from "./audit";
-import { manifestsOf, recorded } from "./editor-cache";
+import { placesOf, recorded } from "./editor-cache";
 import { useScanStore } from "./scan";
 import { useSettingsStore } from "./settings";
 
@@ -27,7 +34,22 @@ interface EditorState {
    *  which finds nothing for a place that was never read or whose read
    *  failed. */
   inventories: Record<string, EditorInventory>;
+  /** What every installed skill declares at `scope`, and where this
+   *  place's settings file stands on each key. Null where the read has
+   *  not landed or failed — never an empty answer standing in for one. */
+  settings: ScopeSettings | null;
+  /** Settings values changed here and not yet written: the second draft
+   *  the one Save bar carries, alongside the manifest. */
+  settingsEdits: SettingsEdit[];
+  /** Every scope's settings read, keyed by scope — the settings half of
+   *  the same marks `saved` answers the manifest half of. */
+  savedSettings: Record<string, ScopeSettings>;
+  /** Either draft holds unsaved work. */
   dirty: boolean;
+  /** The manifest half alone. A save carries the manifest only when it
+   *  was edited: reconciling a settings change must not rewrite a
+   *  hand-formatted kendex.toml nobody touched. */
+  manifestDirty: boolean;
   loading: boolean;
   saving: boolean;
   error: string | null;
@@ -38,14 +60,17 @@ interface EditorState {
   /** Point the editor at a scope without discarding edits already in hand. */
   openScope: (scope: Scope) => Promise<void>;
   load: () => Promise<void>;
-  /** Read every scope's manifest, for the marks drawn outside the editor. */
+  /** Read every scope's manifest and settings, for the marks drawn
+   *  outside the editor. */
   loadAll: () => Promise<void>;
-  /** Read the manifests of named places only, merged into what is already
-   *  read. A page about one package needs the places that package sits in
+  /** Read named places only, merged into what is already read. A page about one package needs the places that package sits in
    *  and nothing else — asking for every scope would put the machine's
    *  whole project list behind one package's mark. */
   loadPlaces: (scopes: Scope[]) => Promise<void>;
   edit: (change: (draft: Draft) => Draft) => void;
+  /** Set or reset one package setting, replacing any earlier answer for
+   *  the same key of the same skill. */
+  editSetting: (edit: SettingsEdit) => void;
   save: () => Promise<void>;
 }
 
@@ -55,10 +80,12 @@ export const useEditorStore = create<EditorState>((set, get) => {
     set({ loading: true });
     let manifest: Awaited<ReturnType<typeof commands.getManifest>>;
     let inventory: Awaited<ReturnType<typeof commands.editorInventory>>;
+    let settings: Awaited<ReturnType<typeof commands.getScopeSettings>>;
     try {
-      [manifest, inventory] = await Promise.all([
+      [manifest, inventory, settings] = await Promise.all([
         commands.getManifest(scope),
         commands.editorInventory(scope),
+        commands.getScopeSettings(scope),
       ]);
     } finally {
       set({ loading: false });
@@ -67,12 +94,16 @@ export const useEditorStore = create<EditorState>((set, get) => {
       set((state) => ({
         draft: null,
         base: null,
+        settings: null,
+        settingsEdits: [],
         // This place has stopped reading, so what it last said goes with
         // it. Left in place, the mark would keep answering for this
         // package here out of a manifest that can no longer be read.
         saved: recorded(state.saved, scope, null),
         inventories: recorded(state.inventories, scope, null),
+        savedSettings: recorded(state.savedSettings, scope, null),
         dirty: false,
+        manifestDirty: false,
         stale: false,
         error: manifest.error,
       }));
@@ -97,21 +128,36 @@ export const useEditorStore = create<EditorState>((set, get) => {
         scope,
         inventory.status === "ok" ? inventory.data : null,
       ),
+      settings: settings.status === "ok" ? settings.data : null,
+      settingsEdits: [],
+      savedSettings: recorded(
+        state.savedSettings,
+        scope,
+        settings.status === "ok" ? settings.data : null,
+      ),
       dirty: false,
+      manifestDirty: false,
       stale: false,
-      error: inventory.status === "ok" ? null : inventory.error,
+      // A read that failed is said out loud: a settings section that is
+      // simply missing looks like a skill that ships none.
+      error:
+        inventory.status === "error"
+          ? inventory.error
+          : settings.status === "error"
+            ? settings.error
+            : null,
     }));
   };
 
   const write = async (draft: Draft) => {
-    const { scope, base } = get();
+    const { scope, base, manifestDirty, settingsEdits, settings } = get();
     set({ saving: true });
     let response: Awaited<ReturnType<typeof commands.saveCustomize>>;
     try {
       response = await commands.saveCustomize(
         scope,
-        { manifest: draft, base },
-        null,
+        manifestDirty ? { manifest: draft, base } : null,
+        settingsDraft(settingsEdits, settings),
       );
     } finally {
       set({ saving: false });
@@ -143,7 +189,11 @@ export const useEditorStore = create<EditorState>((set, get) => {
     base: null,
     saved: {},
     inventories: {},
+    settings: null,
+    settingsEdits: [],
+    savedSettings: {},
     dirty: false,
+    manifestDirty: false,
     loading: false,
     saving: false,
     error: null,
@@ -154,7 +204,10 @@ export const useEditorStore = create<EditorState>((set, get) => {
         scope,
         draft: null,
         base: null,
+        settings: null,
+        settingsEdits: [],
         dirty: false,
+        manifestDirty: false,
         error: null,
         stale: false,
       });
@@ -179,17 +232,24 @@ export const useEditorStore = create<EditorState>((set, get) => {
         { scope: "global" },
         ...projects.map((root) => ({ scope: "project" as const, root })),
       ];
+      const [saved, savedSettings] = await placesOf(scopes);
       // Replaced, not merged: this is the whole list, so a scope that has
       // gone leaves with it.
-      set({ saved: await manifestsOf(scopes) });
+      set({ saved, savedSettings });
     },
 
     loadPlaces: async (scopes) => {
-      const read = await manifestsOf(scopes);
+      const [manifests, settings] = await placesOf(scopes);
       set((state) => ({
         saved: scopes.reduce(
-          (saved, scope) => recorded(saved, scope, read[scopeKey(scope)]),
+          (saved, scope) =>
+            recorded(saved, scope, manifests[scopeKey(scope)] ?? null),
           state.saved,
+        ),
+        savedSettings: scopes.reduce(
+          (read, scope) =>
+            recorded(read, scope, settings[scopeKey(scope)] ?? null),
+          state.savedSettings,
         ),
       }));
     },
@@ -197,7 +257,14 @@ export const useEditorStore = create<EditorState>((set, get) => {
     edit: (change) => {
       const { draft } = get();
       if (!draft) return;
-      set({ draft: change(draft), dirty: true });
+      set({ draft: change(draft), dirty: true, manifestDirty: true });
+    },
+
+    editSetting: (edit) => {
+      set((state) => ({
+        settingsEdits: withEdit(state.settingsEdits, edit),
+        dirty: true,
+      }));
     },
 
     save: async () => {

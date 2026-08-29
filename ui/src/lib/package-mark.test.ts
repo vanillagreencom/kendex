@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Scope, UpdateRow } from "@/bindings";
+import type { Scope, ScopeSettings, UpdateRow } from "@/bindings";
 import { groupItems } from "@/lib/derive";
 import { markFor } from "./package-mark";
 
@@ -52,12 +52,17 @@ const saved = {
   "/work/hyprtrade": { schema: 1, install: {} },
 };
 
+// Both places read, neither holding a settings value off the default —
+// so the manifest is what decides the mark.
+const stock: ScopeSettings = { applies: true, skills: [], base: "b1" };
+const settings = { "/work/vg": stock, "/work/hyprtrade": stock };
+
 describe("markFor", () => {
   // The page names a place; the mark is about the package. Answering for
   // the place the page happened to open at is what let the Library row and
   // the package's header state two different facts under the same words.
   it("answers for the package, not for the place the page opened at", () => {
-    expect(markFor(saved as never, rows, true, group)?.label).toBe(
+    expect(markFor(saved as never, rows, true, settings, group)?.label).toBe(
       "Customized in vg · 1 of 2 projects",
     );
   });
@@ -67,6 +72,6 @@ describe("markFor", () => {
       "/work/vg": { schema: 1, install: {} },
       "/work/hyprtrade": { schema: 1, install: {} },
     };
-    expect(markFor(untouched as never, rows, true, group)).toBeNull();
+    expect(markFor(untouched as never, rows, true, settings, group)).toBeNull();
   });
 });

@@ -2,6 +2,7 @@ import type { HarnessId, ItemKind, Scope } from "@/bindings";
 import { InstructionBox } from "@/components/customize/instruction-box";
 import { ItemSettings } from "@/components/customize/item-settings";
 import { ItemSkills } from "@/components/customize/item-skills";
+import { SkillSettings } from "@/components/customize/skill-settings";
 import { StaleNote } from "@/components/customize/stale-note";
 import { Pill } from "@/components/pill";
 import { Section } from "@/components/section";
@@ -47,8 +48,21 @@ export function ItemCustomize({
   scopes: Scope[];
   harnesses: HarnessId[];
 }) {
-  const { scope, draft, saved, dirty, error, stale, setScope, load, edit } =
-    useEditorStore();
+  const {
+    scope,
+    draft,
+    saved,
+    savedSettings,
+    settings,
+    settingsEdits,
+    dirty,
+    error,
+    stale,
+    setScope,
+    load,
+    edit,
+    editSetting,
+  } = useEditorStore();
   const inventory = useEditorStore(openInventory);
   const rows = useUpdatesStore((s) => s.rows);
   const updatesLoaded = useUpdatesStore((s) => s.loaded);
@@ -81,6 +95,7 @@ export function ItemCustomize({
         manifestsForEditing(saved, draft, scope),
         rows,
         updatesLoaded,
+        savedSettings,
       ),
       kind,
       name,
@@ -172,6 +187,14 @@ export function ItemCustomize({
           )}
         </div>
       </Section>
+      {kind === "skill" ? (
+        <SkillSettings
+          skill={name}
+          settings={settings}
+          edits={settingsEdits}
+          onEdit={editSetting}
+        />
+      ) : null}
       {kind === "agent" ? (
         <>
           <Section title={SKILLS_SECTION}>
