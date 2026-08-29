@@ -231,7 +231,7 @@ Before any mutation that creates an issue or changes labels:
 
 1. Build the intended operation per finding: `create` and gap issues take the full `create_fields.labels[]`; `agent_mismatch` is `replace_category` on `agent`; `label_cooccurrence` is `add`; a `label_updates[]` entry carries its own mode and category.
 2. For an existing issue, fetch current labels and compute the full final set, preserving unrelated labels — Linear `cache issues get [ISSUE_ID]`, GitHub `gh issue view [N] --repo [OWNER/REPO] --json labels`.
-3. Validate against the § 1.2 inventory and taxonomy per [labels.md](../references/labels.md) § Validation. Any failure there halts before mutation and reports the failing set. A required label missing from the tracker needs explicit user authorization before creation — never auto-create.
+3. Validate against the § 1.2 inventory and taxonomy per [labels.md](../references/labels.md) § Validation. Any failure there halts before mutation and reports the failing set; a label the tracker lacks follows § Creating Labels in the same file.
 4. Pass only the validated final set: Linear `--labels`, GitHub `gh issue create --label` and the github skill's `label-add`/`label-remove`.
 
 ### 7.1 Apply Corrections
