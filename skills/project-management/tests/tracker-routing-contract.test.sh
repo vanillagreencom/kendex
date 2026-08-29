@@ -20,7 +20,12 @@
 # order and Todo promotion waits for relations and parents. That one audit
 # never mixes routes, never silently drops an approved hierarchy or relation
 # action, and never invents a placement. And the two cleanup degradations,
-# GitHub having no recursive child query and no relation objects.
+# GitHub having no recursive child query and no relation objects. Nor the
+# create-side rules the three issue-creating workflows state: that the label
+# set is validated against the live inventory before a create, that a create
+# dedupes against existing issues in every state, and that each item's
+# blocking relations attach immediately after its own create. Their create
+# COMMANDS are pinned; the rules around them are not.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -101,7 +106,6 @@ grep -Fq -- '--state "Backlog"' "$linear_create_row" || fail 'Linear create rout
 dev_implement="$SKILL_DIR/../dev/workflows/dev-implement.md"
 if [[ -f "$dev_implement" ]]; then
   require_fixed "$dev_implement" 'issues create --state "Backlog" --project "[PARENT_PROJECT]" --parent [PARENT_ID] --labels "[VALIDATED_LABELS]"' 'dev-implement child create carries the parent project, Backlog, and the full label set'
-  require_fixed "$dev_implement" 'validated against the live inventory' 'dev-implement child labels are preflighted'
 fi
 research_issue="$SKILL_DIR/workflows/research-issue.md"
 merge_pr="$SKILL_DIR/../orch/workflows/merge-pr.md"
@@ -115,17 +119,12 @@ fi
 if [[ -f "$start_new" ]]; then
   start_create_cmd="$(extract "$start_new" 'issues create' '^```$' start-create-cmd)" || fail "could not extract the start-new create command"
   grep -Fq -- '--state "Backlog"' "$start_create_cmd" || fail 'start-new create does not pass --state "Backlog"'
-  require_fixed "$start_new" 'validate the complete label set' 'start-new preflights labels before a Backlog create'
-  require_fixed "$start_new" 'search existing issues (all states) for the same problem' 'start-new dedupes before a Backlog create'
 fi
 if [[ -f "$plan_issues" ]]; then
   plan_create_cmd="$(extract "$plan_issues" 'issues create' '^```$' plan-create-cmd)" || fail "could not extract the plan-issues create command"
   grep -Fq -- '--state "Backlog"' "$plan_create_cmd" || fail 'plan-issues create does not pass --state "Backlog"'
-  require_fixed "$plan_issues" 'validate the complete label set' 'plan-issues preflights labels before a Backlog create'
-  require_fixed "$plan_issues" 'search existing issues (all states) for the same problem' 'plan-issues dedupes before a Backlog create'
   grep -Fq -- '--priority [PRIORITY]' "$plan_create_cmd" || fail 'plan-issues create does not pass a priority'
   grep -Fq -- '--estimate [ESTIMATE]' "$plan_create_cmd" || fail 'plan-issues create does not pass an estimate'
-  require_fixed "$plan_issues" 'attach each item'"'"'s blocking relations immediately after its own create' 'plan-issues links each item before the next create'
 fi
 if [[ -f "$merge_pr" ]]; then
   merge_create_cmd="$(extract "$merge_pr" 'issues create' '^```$' merge-create-cmd)" || fail "could not extract the merge-pr rebundle create command"

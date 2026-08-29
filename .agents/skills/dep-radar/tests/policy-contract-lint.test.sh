@@ -1,24 +1,18 @@
 #!/usr/bin/env bash
 # Doc-contract lint for the dep-radar operating policy.
 #
-# The policy assigns every surface to one of three tiers. This lint pins those
-# TIER LABELS and the frontmatter, never the clauses that say what each tier
-# holds. review-bots.md: a token pin establishes that a structural element is
-# present, never that a behavioral claim written in prose is true, and prose
-# negates and qualifies around any literal.
+# The skill's value rests on an owner-approved contract: the tiers bias toward
+# upgrading (SDKs, agent tooling, runtime binaries, npm/cargo majors, and
+# bundled-extension fork syncs are auto-with-fixes), the report tier holds
+# exactly three things, and uncertain means attempt-and-report-failures rather
+# than defer. Its safety rails are orthogonal to that bias: one PR per surface,
+# never batch, every surface carries a wired upstream check, owner rules demote
+# only, and every run ends with a dated report. An edit that re-broadens the
+# report tier, reverts uncertain to defer-by-default, promotes report→auto, or
+# batches surfaces drifts the skill off that contract, so each clause is pinned
+# here as a fixed string.
 #
-# So the policy's own content has no lint. Nothing here checks what the
-# auto-with-fixes tier covers or that it fixes fallout in the same per-surface
-# workstream; what the report tier holds or that nothing else is
-# report-by-default; that uncertain means attempt the upgrade and report only
-# what failed; that it is one PR per surface and surfaces are never batched;
-# that every pinned surface carries a wired upstream check and a surface
-# lacking one is an inventory defect the run must fix; that an owner rule
-# demotes and never promotes report→auto; or that every run ends with a dated
-# report. An edit that re-broadens a tier or drops a rail passes this suite.
-#
-# Teeth: every remaining check is re-run against a copy of the doc mutated to
-# violate it.
+# Teeth: every check is re-run against a copy of the doc mutated to violate it.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,15 +28,27 @@ pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 
 # check_contract <file>
-# Prints the names of missing tier labels (empty output = all three present).
+# Prints the names of missing/violated contract clauses (empty output = doc
+# honors the full contract). Each clause is pinned as a fixed string that the
+# canonical SKILL.md carries on a single line, so plain grep -F is exact.
 check_contract() {
   local f="$1" missing=""
-  grep -qF 'AUTO-with-fixes (default):' "$f" \
-    || missing="$missing auto-tier-label"
-  grep -qF 'REPORT (never auto):' "$f" \
-    || missing="$missing report-tier-label"
-  grep -qF 'Uncertain →' "$f" \
-    || missing="$missing uncertain-tier-label"
+  grep -qF 'AUTO-with-fixes (default): security fixes; patch/minor bumps; pinned-binary version+SHA refreshes from OFFICIAL manifests only; SDK, agent-tooling, and runtime-binary bumps and npm/cargo majors, doing the bump AND fixing its fallout (API migrations, re-vendored bundled-extension bridges, tests, CI) in the SAME per-surface workstream; bundled-extension fork updates and local patch rebases when the consuming repo'\''s full test suite gates the sync.' "$f" \
+    || missing="$missing auto-tier-list"
+  grep -qF 'REPORT (never auto): model-weight swaps; changes to durable/recorded data scope; anything an inventory owner-rule explicitly demotes. Nothing else is report-by-default.' "$f" \
+    || missing="$missing report-tier-list"
+  grep -qF 'Uncertain → attempt the upgrade; report only what actually failed, with error output.' "$f" \
+    || missing="$missing uncertain-attempt-upgrade"
+  grep -qF 'Every pinned surface must have a wired upstream check command' "$f" \
+    || missing="$missing upstream-check-required"
+  grep -qF 'Every run ends with a dated report.' "$f" \
+    || missing="$missing dated-report-every-run"
+  grep -qF 'never promote report→auto' "$f" \
+    || missing="$missing demote-only-owner-rule"
+  grep -qiF 'one PR per surface' "$f" \
+    || missing="$missing one-pr-per-surface"
+  grep -qF 'never batch' "$f" \
+    || missing="$missing never-batch"
   printf '%s' "$missing"
 }
 
@@ -98,17 +104,37 @@ fi
 
 # --- Teeth: each violated rule must be caught -------------------------------
 
-expect_caught auto-tier-label \
+expect_caught auto-tier-list \
   "$(mutate no-auto '/AUTO-with-fixes (default): security fixes/d')" \
-  "deleting the AUTO-with-fixes tier is caught"
+  "deleting the AUTO-with-fixes tier list is caught"
 
-expect_caught report-tier-label \
+expect_caught report-tier-list \
   "$(mutate no-report '/REPORT (never auto)/d')" \
-  "deleting the REPORT tier is caught"
+  "deleting the REPORT tier list is caught"
 
-expect_caught uncertain-tier-label \
-  "$(mutate no-uncertain '/Uncertain →/d')" \
-  "deleting the Uncertain tier is caught"
+expect_caught uncertain-attempt-upgrade \
+  "$(mutate uncertain-flip 's/Uncertain → attempt the upgrade.*/Uncertain → report./')" \
+  "reverting uncertain→attempt-the-upgrade back to uncertain→report (defer-by-default) is caught"
+
+expect_caught upstream-check-required \
+  "$(mutate no-upstream-check '/Every pinned surface must have a wired upstream check command/d')" \
+  "deleting the every-surface-needs-an-upstream-check rule is caught"
+
+expect_caught dated-report-every-run \
+  "$(mutate no-dated '/Every run ends with a dated report/d')" \
+  "deleting the every-run dated report rule is caught"
+
+expect_caught demote-only-owner-rule \
+  "$(mutate promote 's/never promote report→auto/may promote report→auto/g')" \
+  "softening the owner-rule to allow report→auto promotion is caught"
+
+expect_caught one-pr-per-surface \
+  "$(mutate batch-run 's/per surface/per run/g')" \
+  "rewording one-PR-per-surface to one-PR-per-run is caught"
+
+expect_caught never-batch \
+  "$(mutate batch-ok 's/never batch/batch freely/g')" \
+  "removing the never-batch rule is caught"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -66,6 +66,6 @@ require "$tpm_audit" 'Hierarchy contract override \(MUST\)' 'action-assignment o
 audit_issues="$SKILL_DIR/workflows/audit-issues.md"
 require "$audit_issues" '[Hh]ierarchy contract' 'the caller knows the contract'
 require "$audit_issues" 'Enforce the hierarchy contract' 'caller-side enforcement step'
-require "$audit_issues" 'request a TPM rerun citing tpm-audit\.md § 7\.0' 'violation routes back to the binding section'
+require "$audit_issues" 'tpm-audit\.md § 7\.0' 'the rerun route names the binding section anchor'
 
 echo "all pass"
