@@ -272,17 +272,17 @@ kendex_load_project_env "$PROJECT_ROOT" || {
   exit 1
 }
 
-# Portability: macOS lacks timeout, try gtimeout fallback
-if ! command -v timeout >/dev/null 2>&1; then
-  if command -v gtimeout >/dev/null 2>&1; then
-    timeout() { gtimeout "$@"; }
-  else
-    # No timeout available — warn once and run without a limit. The shim
-    # drops this script's fixed `--foreground -k 30 SECS` arguments.
-    echo "Warning: no timeout or gtimeout on PATH — external CLI calls will run without a time limit" >&2
-    timeout() { shift 4; "$@"; }
-  fi
+# Portability: macOS lacks timeout, try gtimeout fallback.
+TIMEOUT_CMD="$(command -v timeout || command -v gtimeout || true)"
+if [[ -z "$TIMEOUT_CMD" ]]; then
+  echo "Warning: no timeout or gtimeout on PATH — external CLI calls will run without a time limit" >&2
 fi
+
+run_with_timeout() {
+  local duration="$1"; shift
+  if [[ -z "$TIMEOUT_CMD" ]]; then "$@"; return; fi
+  "$TIMEOUT_CMD" --foreground -k 30 "$duration" "$@"
+}
 
 # --- Defaults -----------------------------------------------------------------
 
@@ -2162,7 +2162,7 @@ run_target_cli() {
   fi
   echo "→ cmd: timeout --foreground -k 30 ${TIMEOUT}s $cmd" >&2
   # shellcheck disable=SC2086
-  (cd -- "$CWD" && timeout --foreground -k 30 "$TIMEOUT" $cmd < "$prompt_file" 2>"$STDERR_TMP") || rc=$?
+  (cd -- "$CWD" && run_with_timeout "$TIMEOUT" $cmd < "$prompt_file" 2>"$STDERR_TMP") || rc=$?
   return "$rc"
 }
 
