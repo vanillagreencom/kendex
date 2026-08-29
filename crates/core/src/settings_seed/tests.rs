@@ -419,12 +419,10 @@ fn a_broken_declaration_before_a_valid_one_never_becomes_the_owner() {
     assert!(!out.contains("Theirs"), "{out}");
 }
 
-/// The third form completeness had not been asked about. TOML 1.0 forbids
-/// a newline inside an inline table, so `MAP = {` is broken where it
-/// stands: nothing carries, and asking only what carries called it
-/// finished and wrote it into the consumer's file. Completeness now comes
-/// off the grammar's own split — a form either may cross a newline or may
-/// not — so every delimited form answers, not the two remembered.
+/// An inline table the file never closes is refused like any other
+/// container the file never closes: the carry runs to the end and nothing
+/// completes it. Completeness comes off the grammar's own split rather
+/// than a rule per form, so this needs no case of its own.
 #[test]
 fn an_inline_table_left_open_is_refused_by_name() {
     for template in [
@@ -454,9 +452,9 @@ fn an_inline_table_left_open_is_refused_by_name() {
     }
 }
 
-/// The other half: an inline table that closes on its line is an ordinary
-/// complete value and seeds like any other. A completeness rule that
-/// refused every brace would be as wrong as one that accepted every brace.
+/// The other half: an inline table that closes is an ordinary complete
+/// value and seeds like any other. A completeness rule that refused every
+/// brace would be as wrong as one that accepted every brace.
 #[test]
 fn an_inline_table_that_closes_seeds_like_any_other_value() {
     for value in [
@@ -582,4 +580,53 @@ fn the_refusal_names_the_key_and_no_particular_delimiter() {
             );
         }
     }
+}
+
+/// An inline table spanning lines is a value like any other under the spec
+/// this workspace parses with. Treated as line-local it was refused, and
+/// worse: the lines holding it read as structure, so `a = 1` beneath
+/// `MAP = {` seeded as a key of its own that the template never declared.
+#[test]
+fn an_inline_table_spanning_lines_is_seeded_whole() {
+    for value in [
+        "{\na = 1\n}",
+        "{ items = [\n  1,\n] }",
+        "{\n  a = { b = 1 },\n}",
+        "{\n  a = \"\"\"\n  text\n  \"\"\",\n}",
+    ] {
+        let template = format!("[env]\n# A map.\nMAP = {value}\n");
+        let entries = extract_env_entries(&template);
+        // One entry, not one per line the value happens to hold.
+        assert_eq!(entry_keys(&entries), ["MAP"], "{value}");
+        assert!(entries[0].complete(), "{value}: {entries:?}");
+        assert_eq!(entries[0].assignment, format!("MAP = {value}"), "{value}");
+
+        let shipped = seeded(&template, "review");
+        assert!(seed_notes(&shipped).is_empty(), "{value}");
+        let (text, added) = merge(None, &shipped).expect("MAP is missing");
+        assert_eq!(added, ["MAP"], "{value}");
+        let want: toml::Table = template.parse().expect("the template parses");
+        let got: toml::Table = text
+            .parse()
+            .unwrap_or_else(|e| panic!("{value}: seeded file must parse: {e}\n{text}"));
+        assert_eq!(got["env"]["MAP"], want["env"]["MAP"], "{value}");
+    }
+}
+
+/// A key beneath a multiline value belongs to the value, and one beneath a
+/// closed one belongs to the file. Both directions, because reading the
+/// first as structure is what invented a declaration.
+#[test]
+fn a_key_under_an_inline_table_belongs_to_whichever_owns_its_line() {
+    let inside = "[env]\n# A map.\nMAP = {\na = 1\n}\n\n# How deep.\nDEPTH = \"2\"\n";
+    assert_eq!(entry_keys(&extract_env_entries(inside)), ["MAP", "DEPTH"]);
+
+    let (text, added) = merge(None, &seeded(inside, "review")).expect("both are missing");
+    assert_eq!(added, ["MAP", "DEPTH"]);
+    let got: toml::Table = text.parse().expect("the seeded file parses");
+    assert!(got["env"]["MAP"].get("a").is_some(), "{text}");
+    assert!(
+        got["env"].get("a").is_none(),
+        "a is MAP's, not the table's: {text}"
+    );
 }

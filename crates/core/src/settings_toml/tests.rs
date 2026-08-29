@@ -322,11 +322,12 @@ fn a_table_header_leaves_nothing_open() {
     }
 }
 
-/// An inline table holds no newline in TOML 1.0, so it carries nothing;
-/// its `=` and `[` reach no decision, because the assignment's `=` is the
-/// first one outside a string and only a line-leading `[` is a table.
+/// An inline table that closes on its own line leaves nothing open, so the
+/// line below it is structure again. What it held reaches no decision: the
+/// assignment's `=` is the first one outside a string, and only a
+/// line-leading `[` is a table.
 #[test]
-fn an_inline_table_carries_nothing_across_a_line() {
+fn a_closed_inline_table_does_not_reach_the_line_below_it() {
     let text = "[env]\nA = { b = [1], c = \"x\" }\nMODE = \"real\"\n";
     assert_eq!(keys(text), vec!["A".to_owned(), "MODE".to_owned()]);
     assert_eq!(
@@ -479,15 +480,8 @@ fn a_form_the_grammar_cannot_continue_says_so_without_carrying() {
             "{quote}: broken, and the line under it is structure again"
         );
     }
-    // An inline table may not hold a newline either, so one still open
-    // where the line ends is broken exactly as the string is.
-    assert_eq!(
-        ends("MAP = {\nMODE = \"real\"\n"),
-        [(false, true), (false, false)],
-        "an inline table cannot be continued by the line under it"
-    );
-    assert_eq!(ends("MAP = { a = { b = 1 }\n"), [(false, true)], "nested");
-
+    // Nothing else can be broken: every other container carries, so a
+    // later line closes it or the carry runs off the end of the file.
     // A value that closes says neither, whatever its form.
     for closed in [
         "TOKEN = \"ok\"\n",
@@ -515,14 +509,37 @@ fn a_form_the_grammar_cannot_continue_says_so_without_carrying() {
         ends("LIST = [\n  1,\n]\n"),
         [(true, false), (true, false), (false, false)]
     );
-    // A brace inside a carried array still has to close on its own line.
+    // An inline table carries by depth like an array, so what is legal
+    // inside one is whatever is legal in any other container.
     assert_eq!(
-        ends("LIST = [\n  { a = 1 },\n]\n"),
-        [(true, false), (true, false), (false, false)]
+        ends("MAP = {\na = 1\n}\n"),
+        [(true, false), (true, false), (false, false)],
+        "the lines under it are the value's, not structure"
     );
     assert_eq!(
-        ends("LIST = [\n  { a = 1,\n]\n"),
-        [(true, false), (true, true), (false, false)],
-        "the array carries; the inline table on that line does not"
+        ends("MAP = { items = [\n  1,\n] }\n"),
+        [(true, false), (true, false), (false, false)],
+        "a multiline array nested in an inline table"
+    );
+    assert_eq!(
+        ends("MAP = { a = { b = 1 }\n"),
+        [(true, false)],
+        "the outer table is still open"
+    );
+    assert_eq!(
+        ends("LIST = [\n  { a = 1 },\n]\n"),
+        [(true, false), (true, false), (false, false)],
+        "and an inline table nested in an array"
+    );
+    // Depth is what answers, so the two nest through each other.
+    assert_eq!(
+        ends("LIST = [\n  { a = [\n    1,\n  ] },\n]\n"),
+        [
+            (true, false),
+            (true, false),
+            (true, false),
+            (true, false),
+            (false, false)
+        ]
     );
 }

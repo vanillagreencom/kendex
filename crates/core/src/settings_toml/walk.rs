@@ -39,13 +39,17 @@ pub(super) struct Carry {
     string: Option<Open>,
     /// How many arrays are open. Counted rather than flagged: arrays nest.
     arrays: usize,
+    /// How many inline tables are open. Counted for the same reason, and
+    /// carried for the same reason: under the spec this workspace parses
+    /// with, an inline table may hold newlines like any other container.
+    tables: usize,
 }
 
 impl Carry {
     /// Whether a line starting here is inside a value rather than being
     /// structure of its own.
     pub(super) fn inside(self) -> bool {
-        self.string.is_some() || self.arrays > 0
+        self.string.is_some() || self.arrays > 0 || self.tables > 0
     }
 }
 
@@ -57,13 +61,14 @@ pub(super) struct Ends {
     /// line is allowed to close.
     pub(super) carry: Carry,
     /// Whether a container the grammar does NOT let cross a newline was
-    /// still open at the end of this line: a single-line string, or an
-    /// inline table. No later line may close either, so the value is
-    /// broken where it stands and nothing about it is pending.
+    /// still open at the end of this line. Only a single-line string can
+    /// be one: every other container carries, so a later line closes it or
+    /// the carry runs to the end of the file, and both are answered by
+    /// [`Carry`].
     ///
     /// The complement of [`Carry`], not its negation. Read closure from
-    /// the absence of a carry alone and `TOKEN = "` and `MAP = {` both
-    /// answer the same as a value that simply ended: closed.
+    /// the absence of a carry alone and `TOKEN = "` answers the same as a
+    /// value that simply ended: closed.
     pub(super) broken: bool,
 }
 
@@ -94,7 +99,8 @@ pub(super) fn top_level_equals(content: &str) -> Option<usize> {
 /// strings the rest of the line opens and closes. A `#` outside a string
 /// ends the line, and a stray `]` or `}` cannot take a depth below zero —
 /// an unbalanced file is not TOML, and underflowing here would read the
-/// whole rest of it as one value.
+/// whole rest of it as one value. A container left open at the end of the
+/// file simply never closes, which is what an unparseable file is.
 ///
 /// Every delimited form in the grammar is opened here and closed here, so
 /// "was anything left open" is answered for all of them at once rather
@@ -116,10 +122,6 @@ pub(super) fn advance(content: &str, carry: Carry) -> Ends {
             }
         }
     }
-    // Inline tables may not hold a newline, so their depth is counted for
-    // this line alone and never joins the carry: one still open where the
-    // line ends can never be closed.
-    let mut tables = 0usize;
     let mut string_broken = false;
     let bytes = content.as_bytes();
     while index < bytes.len() {
@@ -134,11 +136,11 @@ pub(super) fn advance(content: &str, carry: Carry) -> Ends {
                 index += 1;
             }
             b'{' => {
-                tables += 1;
+                carry.tables += 1;
                 index += 1;
             }
             b'}' => {
-                tables = tables.saturating_sub(1);
+                carry.tables = carry.tables.saturating_sub(1);
                 index += 1;
             }
             b'"' | b'\'' => match string_at(content, index) {
@@ -156,7 +158,7 @@ pub(super) fn advance(content: &str, carry: Carry) -> Ends {
     }
     Ends {
         carry,
-        broken: string_broken || tables > 0,
+        broken: string_broken,
     }
 }
 

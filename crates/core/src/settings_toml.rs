@@ -30,35 +30,43 @@
 //!
 //! ## Where every value form can end
 //!
-//! Enumerated from TOML's value grammar rather than added one at a time as
-//! each face of the same defect surfaced: twice now a form nobody had
-//! considered read as finished and was copied into somebody's file. A
-//! value is exactly one of string, integer, float, boolean, one of the
-//! five date-time forms, array, or inline table. Each either has
-//! delimiters or does not, and each delimited one may cross a newline or
-//! may not:
+//! Enumerated from the value grammar of the spec the workspace's `toml`
+//! dependency implements — the root `Cargo.toml` is where that is chosen,
+//! and this table has to be re-read against it whenever it moves. Written
+//! out rather than added a form at a time as each face of the same defect
+//! surfaced: twice a form nobody had considered read as finished and was
+//! copied into somebody's file, and once a form was refused that the
+//! parser accepts. A value is exactly one of string, integer, float,
+//! boolean, one of the five date-time forms, array, or inline table. Each
+//! either has delimiters or does not, and each delimited one may cross a
+//! newline or may not:
 //!
 //! | Form                      | Delimiter | Crosses a newline |
 //! |---------------------------|-----------|-------------------|
 //! | Multi-line basic string   | `"""`     | yes, carried      |
 //! | Multi-line literal string | `'''`     | yes, carried      |
 //! | Array                     | `[` `]`   | yes, carried      |
+//! | Inline table              | `{` `}`   | yes, carried      |
 //! | Single-line string        | `"` `'`   | no, breaks        |
-//! | Inline table              | `{` `}`   | no, breaks        |
 //! | Integer, float, boolean   | none      | cannot be open    |
 //! | The five date-time forms  | none      | cannot be open    |
 //!
-//! Arrays are carried by depth rather than by a flag, because a flag
-//! cannot say how deep and a nested `[` is not a table header. A scalar is
-//! one token holding none of `[`, `]`, `{`, `}`, `"`, `'`, `#` or `=`, so
-//! none can be mistaken for structure, conceal it, or be left open.
+//! Arrays and inline tables are carried by depth rather than by a flag,
+//! because a flag cannot say how deep and a nested `[` is not a table
+//! header. Depth is also why nothing here is a rule per form: an array
+//! inside an inline table, or a table inside an array, closes when its own
+//! delimiter does, like any other. A scalar is one token holding none of
+//! `[`, `]`, `{`, `}`, `"`, `'`, `#` or `=`, so none can be mistaken for
+//! structure, conceal it, or be left open.
 //!
-//! That is the whole of the value grammar, so both sets are closed: three
-//! forms carry, two break where their line ends, and the scalars cannot be
+//! That is the whole of the value grammar, so both sets are closed: four
+//! forms carry, one breaks where its line ends, and the scalars cannot be
 //! open at all. A value is COMPLETE only where the line it ended on left
 //! neither kind open — which is why a row carries the two as separate
-//! facts and neither is the other's negation. A form this table cannot
-//! answer for is a gap to name here, never a silent default of complete.
+//! facts and neither is the other's negation. A container the file never
+//! closes carries to the end and is incomplete there. A form this table
+//! cannot answer for is a gap to name here, never a silent default of
+//! complete.
 //!
 //! Every claim in this table has a control in `tests.rs`; the last three
 //! times this file was wrong, it was wrong in a comment first.
