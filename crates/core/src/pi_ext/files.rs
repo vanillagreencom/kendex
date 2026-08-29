@@ -87,19 +87,44 @@ pub(super) fn package_path(scope_root: &Path, name: &str) -> Result<PathBuf> {
 
 /// Resolve a package-relative path from `package.json`, refusing one that
 /// points outside the package.
+///
+/// The declared string is judged on its own shape, not on what the running
+/// platform makes of it, so one `package.json` is refused identically
+/// wherever it installs. `Path::is_absolute` cannot do that: on Windows
+/// `/etc/passwd` is not absolute, Rust wanting a drive or a UNC prefix
+/// first, and `Path::join` drops the base for it anyway. So a leading `/`
+/// is refused everywhere, and so are the two characters that spell the
+/// Windows escapes: `\`, which is a separator there and hides `..\..` from
+/// `Component::ParentDir` when the string is parsed here, and `:`, which
+/// opens a drive, a device prefix or an alternate data stream. The result
+/// is then built from the segments checked here rather than by joining the
+/// declared string, so nothing unexamined reaches the filesystem.
 pub(super) fn inside(base: &Path, relative: &str, name: &str) -> Result<PathBuf> {
-    let path = Path::new(relative);
-    if path.is_absolute()
-        || path
-            .components()
-            .any(|part| part == std::path::Component::ParentDir)
-    {
-        return Err(CoreError::PiPackage {
-            name: name.to_owned(),
-            message: format!("`{relative}` points outside the package"),
-        });
+    let refuse = || CoreError::PiPackage {
+        name: name.to_owned(),
+        message: format!("`{relative}` does not name a path inside the package"),
+    };
+    if relative.starts_with('/') || relative.contains('\\') || relative.contains(':') {
+        return Err(refuse());
     }
-    Ok(base.join(relative.trim_start_matches("./")))
+    let mut path = base.to_path_buf();
+    let mut named = false;
+    for part in relative.split('/') {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            return Err(refuse());
+        }
+        path.push(part);
+        named = true;
+    }
+    // Nothing but separators and `.` names the package directory itself,
+    // which is not a file a package can declare.
+    if !named {
+        return Err(refuse());
+    }
+    Ok(path)
 }
 
 /// Removal never deletes: the replaced or uninstalled copy moves to the
@@ -154,8 +179,65 @@ mod tests {
             inside(base, "dist/index.js", "p").unwrap(),
             PathBuf::from("/pkg/dist/index.js")
         );
+        // `.` and doubled separators are spelling, not an escape: a run of
+        // separators collapses, so both of these name the same file under the
+        // package and resolve there. The second is where the old code judged
+        // one string and joined another — trimming `./` off the front left a
+        // rooted path that `join` then dropped the base for, landing it on
+        // `/dist/sub/index.js` on Unix as much as on Windows.
+        for spelling in ["dist/./sub//index.js", ".//dist/sub/index.js"] {
+            assert_eq!(
+                inside(base, spelling, "p").unwrap(),
+                PathBuf::from("/pkg/dist/sub/index.js"),
+                "{spelling:?} names a file inside the package"
+            );
+        }
         assert!(inside(base, "../outside.js", "p").is_err());
         assert!(inside(base, "/etc/passwd", "p").is_err());
+    }
+
+    /// Every one of these is an escape on some platform, so `inside` refuses
+    /// it on all of them: the rule reads the declared string, and a package
+    /// author's `package.json` cannot mean one thing on Linux and another on
+    /// Windows. Each case is refused on the platform running this test, which
+    /// is what makes the property testable off Windows at all.
+    #[test]
+    fn escape_spellings_are_refused_on_every_platform() {
+        let base = Path::new("/pkg");
+        for spelling in [
+            // Rooted. `is_absolute` says false on Windows, `join` drops the
+            // base anyway.
+            "/etc/passwd",
+            // Drive-absolute and drive-relative. Neither is absolute to Rust
+            // on Unix, and `C:foo` resolves against the drive's own cwd.
+            "C:\\Windows\\System32\\drivers\\etc\\hosts",
+            "C:/Windows/System32",
+            "C:evil",
+            // UNC share and device namespace.
+            "\\\\server\\share\\evil",
+            "\\\\?\\C:\\evil",
+            // Backslash traversal: `Component::ParentDir` never sees it when
+            // the string is parsed on Unix.
+            "..\\..\\evil",
+            "dist\\..\\..\\evil",
+            // Alternate data stream: a second, hidden write target on the
+            // same name.
+            "cli.js:stream",
+            // Forward-slash traversal, in and past the middle of a path.
+            "../outside.js",
+            "dist/../../outside.js",
+            // Names nothing at all — the package directory or the bin
+            // directory itself, which a caller would then unlink.
+            "",
+            ".",
+            "./",
+            "/",
+        ] {
+            assert!(
+                inside(base, spelling, "p").is_err(),
+                "{spelling:?} should be refused"
+            );
+        }
     }
 
     /// A name a dangling link holds is a name that is taken, and `exists`
