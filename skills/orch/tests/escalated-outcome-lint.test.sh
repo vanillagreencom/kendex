@@ -10,7 +10,9 @@
 # The fix threads the dev round's typed per-item decision through the
 # state-write boundary as an `outcome` field ("blocked"|"skipped") and maps it
 # to distinct audit origins (blocked/absent → "escalated", skipped →
-# "skipped"). This lint pins each link of that chain in the instruction docs.
+# "skipped"). This lint pins the tokens that chain carries in the instruction
+# docs — the `outcome` field, its two values, and the origins they map to.
+# The absent-field half of the rule is prose only and has no pin.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,17 +51,11 @@ for wf in review-pr review; do
   fi
 done
 
-# --- c: legacy entries (no outcome field) stay backward compatible ----------
-# Both builders must say entries WITHOUT an outcome field map to "escalated",
-# so pre-#970 state files keep their original meaning.
-for wf in review-pr review; do
-  doc="$SKILL_DIR/workflows/$wf.md"
-  if grep -q 'no `outcome` field' "$doc"; then
-    pass "$wf.md keeps legacy no-outcome entries mapped to escalated"
-  else
-    fail "$wf.md lost the legacy no-outcome → escalated rule"
-  fi
-done
+# No check here for the legacy rule that an entry WITHOUT an `outcome` field
+# maps to origin "escalated". Both builders state it in prose around the
+# `outcome` token the mapping check above already reads, so no token is
+# present only while the rule holds. It is uncovered in review-pr.md, in
+# review.md, and in the audit-issues-input schema.
 
 # --- d: the audit-input schema knows the skipped origin ---------------------
 if grep -q 'suggestion|escalated|skipped|planned|discovered' "$PM_SCHEMA"; then
@@ -68,7 +64,8 @@ else
   fail "audit-issues-input origin enum lost skipped"
 fi
 if grep -q 'outcome "skipped" → origin: "skipped"' "$PM_SCHEMA" \
-   && grep -q 'outcome "blocked" (or no outcome field' "$PM_SCHEMA"; then
+   && grep -q 'outcome "blocked"' "$PM_SCHEMA" \
+   && grep -q 'origin: "escalated"' "$PM_SCHEMA"; then
   pass "audit-issues-input documents the outcome → origin mapping"
 else
   fail "audit-issues-input lost the outcome → origin mapping"

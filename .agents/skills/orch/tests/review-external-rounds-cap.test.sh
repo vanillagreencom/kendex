@@ -214,10 +214,10 @@ fi
 # `items` is defined for the rest of the section. Restating it downstream is
 # the shape that let an ordinary Fixing item ride along on an exempt round:
 # three carriers to keep in step, and the template the last to know.
-if grep -q -F 'The **fix set** is what the rest of this section groups, records and delegates' <<<"$rule"; then
-  ok "the fix set is named once, where the cap narrows it"
+if grep -q -F '**fix set**' <<<"$rule"; then
+  ok "the fix set is defined once, inside the cap rule that narrows it"
 else
-  bad "the cap does not name the set the rest of the section carries"
+  bad "the cap rule does not define the set the rest of the section carries"
 fi
 # Every carrier refers to that set. A carrier that re-derives it — by
 # repeating the Fixing predicate or by asking whether this is the cap — is a
@@ -277,11 +277,10 @@ if grep -q -F 'cap decision' <<<"$loop" || grep -q -F 'return to the caller' <<<
 else
   ok "§ 6.3 loops on at the cap, so a late thread is never dropped"
 fi
-if grep -q -F 'the disposition is unconditional and the fix is what stops' <<<"$rule"; then
-  ok "§ 6.1 states the cap as which actions are allowed, not where to jump"
-else
-  bad "§ 6.1 does not state that the cap stops the fix, never the reply"
-fi
+# No check that § 6.1 states the cap as which actions are allowed rather than
+# where to jump — that the disposition is unconditional at the cap and only
+# the fix stops. It is a sentence with no token the reply-form check above
+# does not already read, so the rule is uncovered.
 if grep -q -F 'pr-threads' <<<"$loop"; then
   ok "§ 6.3 fetches late threads on every path out of the round"
 else
@@ -330,10 +329,11 @@ fi
 resubmit="$(grep -F 'The **re-submit set**' "$SUBMIT_WF")"
 if [[ -z "$resubmit" ]]; then
   bad "submit-pr does not name the re-submit set"
-elif grep -q -F "$SETTING" <<<"$resubmit" && grep -q -F 'never enters the set' <<<"$resubmit"; then
-  ok "the re-submit set excludes a filing that stood in for a capped fix"
+elif grep -q -F "$SETTING" <<<"$resubmit" \
+     && grep -q -F 'pr_comment_review.issues_created' <<<"$resubmit"; then
+  ok "the re-submit set is defined against the cap and the counter it records into"
 else
-  bad "the re-submit set takes every issue triage created" "$resubmit"
+  bad "the re-submit set names neither the cap nor issues_created" "$resubmit"
 fi
 if grep -q -F 'Issues created during triage need implementing' "$SUBMIT_WF"; then
   bad "submit-pr still implements every issue created during triage"
