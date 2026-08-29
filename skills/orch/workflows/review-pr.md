@@ -138,6 +138,7 @@ Decisions:
 [For each decision whose path failed verification: "- decision index lookup failed for [DECISION_ID]"]
 [If none: "- No linked decisions found."]
 <if re-review cycle>
+Diff-range: [PRE_SHA]...HEAD [a § 4 or § 7 re-entry only, [PRE_SHA] from that section's `pre_delegate_sha` read; `unavailable` when that read was empty; omitted on a § 1 entry]
 Re-review cycle [N]. Already resolved — do NOT re-report the entries listed below, unless you check a Fixed entry against the current diff and the defect is still there: report that one again, copying that entry's location and description verbatim and naming its recorded commit sha in your recommendation, or saying it was recorded then dropped in a rebase when the entry carries no sha, so the stale entry can be superseded. A Fixed entry you did not check, and every Escalated entry, stays suppressed.
 - Fixed: [For each fixed_item: "[LOCATION] | [DESCRIPTION] — fixed in [COMMIT_SHA]"; an entry whose commit is a `dropped:<sha>` marker prints "recorded, then dropped in a rebase" in place of the sha]
 - Escalated: [For each escalated_item: "[LOCATION] | [DESCRIPTION] — [REASON]"]

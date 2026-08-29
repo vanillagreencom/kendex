@@ -6,18 +6,20 @@ Review agents run in parallel, each reviewing the same changes from their own do
 
 The delegation message provides `Worktree`, `Branch`, optional `Diff-range`, `Decisions`, and any re-review context.
 
-With a `Diff-range`:
+With a `Diff-range` naming a range:
 
 ```bash
 git -C [WORKTREE_PATH] diff [DIFF_RANGE]
 ```
 
-Otherwise (two separate commands):
+Otherwise — the line absent, or reading `Diff-range: unavailable` — the pass is the whole branch (two separate commands):
 
 ```bash
 .agents/skills/orch/scripts/resolve-base-branch [WORKTREE_PATH]
 git -C [WORKTREE_PATH] diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD
 ```
+
+`Diff-range: unavailable` beside a re-review block is a delegation that lost the boundary a scoped pass needs. The full-branch read above stands in for it and the pass is declared unscoped: open § 3's artifact `summary` with `unscoped re-review: Diff-range unavailable`, so no reader mistakes it for the focused verification it was delegated as.
 
 ## 2. Review
 
