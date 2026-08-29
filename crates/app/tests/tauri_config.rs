@@ -34,3 +34,23 @@ fn the_app_and_the_cli_pin_one_updater_key() {
         Some(kendex_core::update_feed::UPDATER_PUBLIC_KEY)
     );
 }
+
+/// The plugin needs a configured endpoint, and the install hands it core's
+/// choice on top. The configured one is the release channel, so an install
+/// that ever stopped overriding it falls back to full releases rather than
+/// to whatever a stale edit left here — and a build that is not a release
+/// candidate finds the two already equal.
+#[test]
+fn the_configured_endpoint_is_the_release_channel() {
+    assert_eq!(
+        config()["plugins"]["updater"]["endpoints"][0].as_str(),
+        Some(kendex_core::update_channel::RELEASE_MANIFEST_URL)
+    );
+    assert_eq!(
+        config()["plugins"]["updater"]["endpoints"]
+            .as_array()
+            .map(Vec::len),
+        Some(1),
+        "a second endpoint the install does not choose is one nothing holds to a channel"
+    );
+}

@@ -214,7 +214,33 @@ jobs:
             --argjson platforms "$platforms" \
             '{version: $version, pub_date: $pub_date, platforms: $platforms}' > dist/latest.json
           cat dist/latest.json
+      # A full release lands as a draft to review before publishing makes it
+      # "latest" (docs/RELEASING.md). A pre-release cannot: its assets are
+      # unreachable while it is a draft, so nothing could install it, and
+      # testing the update path end to end is the whole reason a tag like
+      # v1.0.0-rc2 is cut. Publishing it reaches nobody who is not already
+      # on a candidate — GitHub resolves "latest" past every pre-release.
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          draft: true
+          draft: ${{ !contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
+      # And because "latest" skips them, a candidate has no way to reach the
+      # next one. This release is that way: one fixed tag whose two manifests
+      # are overwritten by each new candidate, which is the URL
+      # `update_feed::feed_url_for` sends a candidate to. The manifests name
+      # their downloads by the tag that built them, so what they point at is
+      # this tag's own release, published by the step above.
+      - name: Point the pre-release channel at this tag
+        if: contains(github.ref_name, '-')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHANNEL: prerelease
+        run: |
+          gh release view "$CHANNEL" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 ||
+            gh release create "$CHANNEL" --repo "$GITHUB_REPOSITORY" --prerelease \
+              --title "Pre-release channel" \
+              --notes "The update manifests of the newest kendex pre-release. Nothing here is a download; each manifest names assets on the release it came from."
+          gh release upload "$CHANNEL" dist/latest.json dist/feed.json \
+            --repo "$GITHUB_REPOSITORY" --clobber

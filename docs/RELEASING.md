@@ -30,6 +30,28 @@ Release with:
 
 Review the draft, then publish it. That is the release.
 
+## Pre-releases
+
+A tag whose version carries a SemVer pre-release identifier — `v1.0.0-rc1`
+— runs the same workflow and takes two different turns at the end. It is
+published outright, marked pre-release rather than left as a draft: a
+draft's assets are unreachable, and a candidate nobody can download tests
+nothing. Being marked pre-release is what keeps it to candidates, since
+GitHub resolves `releases/latest` past every one of them.
+
+That same resolution is why a candidate cannot reach the next one through
+`releases/latest`. The publish job therefore also overwrites `latest.json`
+and `feed.json` on a fixed `prerelease` release, and a build whose own
+version is a candidate reads its updates from there
+(`update_feed::feed_url_for`, which the app and `kendex update` both call
+with their baked version). A shipped `1.0.0` is on the release channel and
+is never offered a candidate; nothing on the machine selects this.
+
+The channel keeps whatever the last candidate left on it, so a machine on
+a candidate stays on candidates until it is moved to a full release by
+hand. Cutting candidates for a release means cutting one more when the
+final ships, or reinstalling those machines.
+
 The workflow runs on tag push only, never on pull requests. Every lane
 builds the CLI and the desktop app together; there is no build cache.
 The Intel macOS lane uses `macos-15-intel`, supported until August 2027 —

@@ -13,6 +13,9 @@ use std::fs;
 use std::path::Path;
 use std::sync::OnceLock;
 
+#[path = "../../../test_util.rs"]
+mod test_util;
+
 const TARGET_EXPR: &str = "${{ matrix.target }}";
 
 #[allow(clippy::unwrap_used)]
@@ -609,3 +612,5 @@ fn no_lane_triple_is_hardcoded_into_build_or_staging() {
         }
     }
 }
+
+mod channel;

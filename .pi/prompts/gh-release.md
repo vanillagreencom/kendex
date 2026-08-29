@@ -42,5 +42,7 @@ Added entry; major only when asked).
    bundles, and `feed.json`. Missing asset → fix the workflow, re-tag only
    after deleting the failed draft and tag.
 7. Publish the draft: `gh release edit vX.Y.Z --draft=false`. Confirm
-   `releases/latest/download/feed.json` serves the new version.
+   `releases/latest/download/feed.json` serves the new version. A
+   pre-release tag (`v1.0.0-rc1`) skips this — the workflow publishes it
+   and repoints the `prerelease` channel itself (docs/RELEASING.md).
 8. Report: tag, assets, anything skipped.

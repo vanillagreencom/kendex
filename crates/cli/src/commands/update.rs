@@ -5,18 +5,21 @@ use kendex_core::env::Env;
 use kendex_core::install_channel::{Host, HostProbe, InstallChannel, for_cli};
 use kendex_core::names::shown;
 use kendex_core::process::Hardened;
+use kendex_core::update_channel::feed_url_for;
 use kendex_core::update_feed::{
-    RELEASE_FEED_URL, ReleaseFeed, UPDATER_PUBLIC_KEY, VersionRelation, app_image_signature_url,
-    app_image_url, release_notes_url, verify_signature,
+    ReleaseFeed, UPDATER_PUBLIC_KEY, VersionRelation, app_image_signature_url, app_image_url,
+    release_notes_url, verify_signature,
 };
 
 use super::{CliResult, out, say};
 
-/// The release feed is parsed by core so the CLI and app accept one schema.
-/// `KENDEX_UPDATE_FEED` overrides the URL so compat tests run against a
-/// local fixture instead of the network.
+/// The release feed is parsed by core so the CLI and app accept one schema,
+/// and core picks which feed off the running version so both shells follow
+/// one channel. `KENDEX_UPDATE_FEED` overrides the URL so compat tests run
+/// against a local fixture instead of the network.
 fn feed_url() -> String {
-    std::env::var("KENDEX_UPDATE_FEED").unwrap_or_else(|_| RELEASE_FEED_URL.to_owned())
+    std::env::var("KENDEX_UPDATE_FEED")
+        .unwrap_or_else(|_| feed_url_for(env!("CARGO_PKG_VERSION")).to_owned())
 }
 
 /// The feed keys its assets by the build target, one per lane in

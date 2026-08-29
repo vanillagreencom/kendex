@@ -18,7 +18,9 @@ fn feed_url() -> String {
 fn selected_feed(override_url: Option<String>, debug_build: bool) -> String {
     match (debug_build, override_url) {
         (true, Some(url)) => url,
-        (true, None) | (false, _) => kendex_core::update_feed::RELEASE_FEED_URL.to_owned(),
+        (true, None) | (false, _) => {
+            kendex_core::update_channel::feed_url_for(env!("CARGO_PKG_VERSION")).to_owned()
+        }
     }
 }
 
@@ -111,6 +113,18 @@ fn aim_at_install<T: ReplacementTarget>(target: T, install: &AppInstall) -> T {
     }
 }
 
+/// Where this build installs from, as the plugin wants it. `tauri.conf.json`
+/// names the release channel so the plugin has a configured default, and a
+/// test holds that entry to the same constant; handing the choice over on
+/// every install is what keeps a release candidate on the channel core
+/// already put its notice card on, instead of two files that agree only
+/// while nobody edits one.
+fn manifest_endpoint() -> Result<tauri::Url, String> {
+    let url = kendex_core::update_channel::manifest_url_for(env!("CARGO_PKG_VERSION"));
+    tauri::Url::parse(url)
+        .map_err(|error| format!("the update manifest URL {url} is unusable: {error}"))
+}
+
 /// Replace this install with the latest release and relaunch into it. The
 /// separately signed updater manifest is the delivery path and verifies
 /// itself; the discovery feed never supplies an install URL. A failure
@@ -123,6 +137,8 @@ pub async fn app_update_install(app: tauri::AppHandle) -> Result<(), String> {
     let install = app_install()?;
     kendex_core::install_channel::for_app(&install, &Host).allow_replacement()?;
     let update = aim_at_install(app.updater_builder(), &install)
+        .endpoints(vec![manifest_endpoint()?])
+        .map_err(|error| error.to_string())?
         .build()
         .map_err(|error| error.to_string())?
         .check()
@@ -157,7 +173,27 @@ mod tests {
         assert_eq!(selected_feed(Some(fixture.clone()), true), fixture);
         assert_eq!(
             selected_feed(Some(fixture), false),
-            kendex_core::update_feed::RELEASE_FEED_URL
+            kendex_core::update_channel::feed_url_for(env!("CARGO_PKG_VERSION"))
+        );
+    }
+
+    /// The card's check and the install have to be looking at one release,
+    /// or a candidate is offered an update the installer then cannot find.
+    /// Both read the running version, so this asserts they land on the same
+    /// channel and that the endpoint is a URL the plugin will take.
+    #[test]
+    fn the_notice_and_the_install_read_one_channel() {
+        let version = env!("CARGO_PKG_VERSION");
+        let endpoint = manifest_endpoint().expect("the manifest URL parses");
+        assert_eq!(
+            endpoint.as_str(),
+            kendex_core::update_channel::manifest_url_for(version)
+        );
+        use kendex_core::update_channel::{PRERELEASE_FEED_URL, PRERELEASE_MANIFEST_URL};
+        assert_eq!(
+            selected_feed(None, false) == PRERELEASE_FEED_URL,
+            endpoint.as_str() == PRERELEASE_MANIFEST_URL,
+            "the feed and the manifest are on different channels for {version}"
         );
     }
 
