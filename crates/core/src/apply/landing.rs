@@ -104,22 +104,33 @@ fn respell(root: Option<&Path>, was: &Path, destination: &Path, op: &mut Op) {
     *target = crate::fs::spelling(root, destination, link);
 }
 
-/// Whether this path is still the place the plan landed it on.
+/// Whether this path still reaches the place a record says it reached.
 ///
-/// A landed path's directories are all real, so landing it again returns
-/// it unchanged. Anything else means a directory on the way to it has
-/// become a link since, and the write would reach a place the plan never
-/// named. The window between this answer and the syscall after it is
-/// KEN-813.
-pub(super) fn unmoved(path: &Path) -> Result<()> {
+/// The comparison is against the record, never against a property of the
+/// spelling: whether a path is its own landing says something about how
+/// it was written down, not about whether it has moved. A caller's own
+/// path need not be a landing, and under a temp root reached through a
+/// link — every one on macOS, where `/var` fronts `/private/var` — none
+/// of them is.
+///
+/// The window between this answer and the syscall after it is KEN-813.
+pub(super) fn still_reaches(recorded: &Path, path: &Path) -> Result<()> {
     let now = landing(path);
-    if now != path {
+    if now != recorded {
         return Err(CoreError::TargetMoved {
             path: path.to_path_buf(),
             now,
         });
     }
     Ok(())
+}
+
+/// The same for a path whose record is itself: a plan's targets, which
+/// [`land`] fixed at their landings. A landed path's directories are all
+/// real, so landing it again returns it unchanged, and anything else
+/// means one of them has become a link since.
+pub(super) fn unmoved(path: &Path) -> Result<()> {
+    still_reaches(path, path)
 }
 
 /// [`unmoved`] for every path one op mutates.
@@ -156,14 +167,14 @@ fn landed_within(root: Option<&Path>, outside: Outside, path: &Path) -> Result<P
     Ok(landed)
 }
 
-/// Where a target lands once the directories on the way to it are
+/// Where a path reaches once the directories on the way to it are
 /// followed.
 ///
 /// The target's own name is left as it was. Whether that position is
 /// itself a link is a separate question with answers of its own — a
 /// foreign link is a conflict, a shared tree's link is one kendex wrote —
 /// and resolving it here would take those answers away.
-fn landing(path: &Path) -> PathBuf {
+pub(super) fn landing(path: &Path) -> PathBuf {
     match (path.parent(), path.file_name()) {
         (Some(parent), Some(name)) => resolved_dir(parent).join(name),
         _ => path.to_path_buf(),

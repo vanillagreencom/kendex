@@ -18,6 +18,21 @@ pub struct Journal {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Entry {
     pub path: PathBuf,
+    /// Where `path` reached when this pre-image was taken.
+    ///
+    /// A restore puts bytes back where they came from, and where they came
+    /// from is not a spelling: a directory on the way to them can be
+    /// somebody's link, and can become one afterwards. The journal's paths
+    /// are its caller's own and need not be landings — under a temp root
+    /// reached through a link none of them is — so the place is written
+    /// down rather than inferred from how the path reads.
+    ///
+    /// `None` is a journal from a build that did not write it down. It
+    /// parses so that the restore can refuse it by name; nothing here
+    /// supplies a landing for it, because supplying one would be guessing
+    /// where somebody's bytes came from.
+    #[serde(default)]
+    pub landed: Option<PathBuf>,
     pub state: PreState,
 }
 
@@ -82,6 +97,7 @@ pub fn write(dir: &Path, paths: &[PathBuf]) -> Result<()> {
             PreState::Absent
         };
         entries.push(Entry {
+            landed: Some(super::landing::landing(path)),
             path: path.clone(),
             state,
         });
@@ -198,9 +214,11 @@ fn rollback_where(dir: &Path, restore: impl Fn(&Path) -> bool) -> Result<()> {
     };
     let journal: Journal = match serde_json::from_str(&text) {
         Ok(journal) => journal,
-        // A torn meta can only mean the crash hit before the durable meta
-        // write completed — and mutations only start after it completes, so
-        // the world is untouched and the journal is safe to discard.
+        // A meta that will not parse is a torn one. It is written whole
+        // and durably before any mutation starts, so a partial one proves
+        // the world untouched and the journal safe to discard. A journal
+        // that parses but cannot be acted on is a different thing, whose
+        // mutations did start: that one is refused below, never cleared.
         Err(_) => return clear(dir),
     };
     let store = dir.join("store");
@@ -208,13 +226,20 @@ fn rollback_where(dir: &Path, restore: impl Fn(&Path) -> bool) -> Result<()> {
         if !restore(&entry.path) {
             continue;
         }
-        // A pre-image goes back where it was taken from. The journal holds
-        // the landing an apply recorded, so a path that no longer lands on
-        // itself is reached through a directory somebody has changed since,
-        // and restoring there would put these bytes somewhere they never
-        // came from. Refused, leaving the journal pending for inspection,
-        // the way a restore set that will not parse is.
-        super::landing::unmoved(&entry.path)?;
+        // A pre-image goes back where it came from, and the journal says
+        // where that was. A path reaching somewhere else now is reached
+        // through a directory somebody has changed since, and restoring
+        // there would put these bytes where they never came from. So is a
+        // journal that never wrote the place down: the apply it belongs to
+        // did mutate, and nothing here can say whether these bytes still
+        // have a way back. Both refuse, leaving the journal pending for
+        // inspection, the way a restore set that will not parse does.
+        let Some(landed) = &entry.landed else {
+            return Err(CoreError::UnrecordedLanding {
+                path: entry.path.clone(),
+            });
+        };
+        super::landing::still_reaches(landed, &entry.path)?;
         remove_any(&entry.path)?;
         match &entry.state {
             PreState::Absent => {}

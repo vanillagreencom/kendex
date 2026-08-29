@@ -76,6 +76,9 @@ pub enum CoreError {
     #[error("{path} now lands at {now} — refusing to write where the plan did not")]
     TargetMoved { path: PathBuf, now: PathBuf },
 
+    #[error("{path}: this journal does not say where it reached — refusing to put anything back")]
+    UnrecordedLanding { path: PathBuf },
+
     #[error("'{name}' already installed from {existing} — refusing to rebind to {requested}")]
     SourceCollision {
         name: String,

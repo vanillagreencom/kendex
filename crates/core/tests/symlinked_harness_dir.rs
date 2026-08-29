@@ -566,3 +566,74 @@ fn a_name_that_reads_like_a_slot_is_drawn_as_itself() {
         "the name is drawn as itself: {lines:?}"
     );
 }
+
+/// A restore puts bytes back through a link that was there all along.
+///
+/// The journal's paths are its caller's own and need not be landings —
+/// under a temp root reached through a link, which is every temp root on
+/// macOS, none of them is. Judging one by whether it reads as its own
+/// landing refuses every restore there while nothing has moved at all.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_restore_reaches_through_a_link_that_never_moved() {
+    let f = fixture();
+    let elsewhere = f.project.join("shared");
+    link_agents_dir(&f, &elsewhere);
+    let held = f.project.join(".agents/skills/ship/SKILL.md");
+    put(&held, "the bytes an apply would put back\n");
+
+    // What an apply that died mid-write leaves behind, recorded at the
+    // spelling its caller had.
+    let dir = apply::journal::journal_dir_for(&f.env.journal_dir(), &apply::scope_key(&f.scope));
+    apply::journal::write(&dir, &[held.clone()]).unwrap();
+    fs::write(&held, "half-written\n").unwrap();
+
+    assert!(apply::recover(&f.env, &f.scope).unwrap(), "recovery ran");
+    assert_eq!(
+        fs::read_to_string(elsewhere.join("skills/ship/SKILL.md")).unwrap(),
+        "the bytes an apply would put back\n",
+        "the pre-image is back at the place the link points at"
+    );
+    assert!(!apply::journal::pending(&dir), "the journal is spent");
+}
+
+/// A journal from a build that did not write down where its paths reached.
+///
+/// Its apply mutated — a journal exists because one did — so the world is
+/// not untouched and the record cannot be discarded as a torn write. Where
+/// those bytes came from is the one thing it does not say, and a restore
+/// that supplied an answer would be guessing. It stands, for a person.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_journal_that_never_said_where_its_paths_reached_is_refused() {
+    let f = fixture();
+    let held = f.project.join(".agents/skills/ship/SKILL.md");
+    put(&held, "the bytes an apply would put back\n");
+    let dir = apply::journal::journal_dir_for(&f.env.journal_dir(), &apply::scope_key(&f.scope));
+    apply::journal::write(&dir, &[held.clone()]).unwrap();
+
+    // The shape an older build wrote: every entry, no landing.
+    let meta = dir.join("meta.json");
+    let mut record: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
+    for entry in record["entries"].as_array_mut().unwrap() {
+        entry.as_object_mut().unwrap().remove("landed");
+    }
+    fs::write(&meta, serde_json::to_string_pretty(&record).unwrap()).unwrap();
+    fs::write(&held, "half-written\n").unwrap();
+
+    let refused = apply::recover(&f.env, &f.scope).unwrap_err();
+    assert!(
+        matches!(&refused, CoreError::UnrecordedLanding { path } if *path == held),
+        "{refused}"
+    );
+    assert_eq!(
+        fs::read_to_string(&held).unwrap(),
+        "half-written\n",
+        "nothing was put back over the half-written bytes"
+    );
+    assert!(
+        apply::journal::pending(&dir),
+        "the journal stands, for a person to look at"
+    );
+}
