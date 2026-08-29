@@ -239,15 +239,11 @@ fn source_form(
     };
     let published = std::str::from_utf8(published)
         .map_err(|_| refused("the catalog's file for it is not text".to_owned()))?;
-    let (frontmatter, publisher) = crate::frontmatter::split(published).map_err(refused)?;
+    let (frontmatter, _) = crate::frontmatter::split(published).map_err(refused)?;
     let body = crate::frontmatter::split(edited)
         .map(|(_, body)| body)
         .unwrap_or(edited);
-    Ok(format!(
-        "---\n{frontmatter}---\n\n{}",
-        prose(body, publisher, wrapper)
-    )
-    .into_bytes())
+    Ok(format!("---\n{frontmatter}---\n\n{}", prose(body, wrapper)).into_bytes())
 }
 
 /// What the project and the catalog put around one agent's prose.

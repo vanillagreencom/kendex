@@ -406,3 +406,81 @@ fn a_published_section_standing_where_a_generated_one_did_is_not_taken() {
     assert_eq!(times(&text, "My body."), 1, "{text}");
     assert_eq!(banners(&text), 1, "{text}");
 }
+
+/// Every harness but Claude says an agent's tool references in its own
+/// words, so the catalog's bytes and what those bytes stand as in the
+/// rendering are different text. A published section the rewrite turns
+/// into an exact copy of a generated one is invisible to a count taken
+/// from the source: the count has to be taken from the rendering, or the
+/// publisher's own section goes when the person deletes the generated one.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_published_section_the_rewrite_makes_identical_is_not_taken() {
+    let w = agent_world(
+        "\"gemini\"",
+        "---\nname: rev\ndescription: agent rev\n---\n## Launch Instructions\n\nUse the Read tool.\n\nUpstream body.\n\n## Additional Instructions\n\nUse the Bash tool.\n",
+        "",
+        "[agent-launch-instructions]\nrev = \"Use the read_file tool.\"\n\n[agent-additional-instructions]\nrev = \"Use the run_shell_command tool.\"\n",
+    );
+    let file = rendered(&w, HarnessId::Gemini, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    // The catalog wrote Claude's names, and Gemini's rendering says them
+    // in Gemini's — which is what makes each published section read
+    // exactly like the generated one standing beside it.
+    for line in ["Use the Read tool.", "Use the Bash tool."] {
+        assert_eq!(times(&text, line), 0, "{text}");
+    }
+    for line in [
+        "## Launch Instructions",
+        "Use the read_file tool.",
+        "## Additional Instructions",
+        "Use the run_shell_command tool.",
+    ] {
+        assert_eq!(times(&text, line), 2, "{line} count wrong: {text}");
+    }
+
+    // The person deletes the generated copy at each boundary, keeping the
+    // publisher's.
+    let head = "## Launch Instructions\n\nUse the read_file tool.\n\n";
+    let tail = "\n## Additional Instructions\n\nUse the run_shell_command tool.\n";
+    let edited = text.replacen(head, "", 1);
+    let cut = edited.rfind(tail).unwrap();
+    let edited = format!("{}{}", &edited[..cut], &edited[cut + tail.len()..])
+        .replace("Upstream body.", "My body.");
+    for section in ["## Launch Instructions", "## Additional Instructions"] {
+        assert_eq!(times(&edited, section), 1, "{edited}");
+    }
+    assert_eq!(banners(&edited), 1, "{edited}");
+    fs::write(&file, &edited).unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
+    apply::execute(&w.env, &plan, None).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    for line in [
+        "## Launch Instructions",
+        "Use the read_file tool.",
+        "## Additional Instructions",
+        "Use the run_shell_command tool.",
+        "My body.",
+    ] {
+        assert_eq!(
+            times(&source, line),
+            1,
+            "{line} is the publisher's own prose and the capture took it for the wrapper's: {source}"
+        );
+    }
+
+    let text = fs::read_to_string(&file).unwrap();
+    for line in [
+        "## Launch Instructions",
+        "Use the read_file tool.",
+        "## Additional Instructions",
+        "Use the run_shell_command tool.",
+    ] {
+        assert_eq!(times(&text, line), 2, "{line} count wrong: {text}");
+    }
+    assert_eq!(times(&text, "My body."), 1, "{text}");
+    assert_eq!(banners(&text), 1, "{text}");
+}

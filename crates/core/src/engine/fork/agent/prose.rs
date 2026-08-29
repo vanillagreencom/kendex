@@ -19,17 +19,17 @@ use super::wrapper::Wrapper;
 /// come off and a line of the person's own is never taken for a line of
 /// the wrapper.
 ///
-/// `published` is the prose as the catalog wrote it, and it is the floor.
-/// A generated section may read exactly like one the published prose
-/// opens or closes with, and where the person deleted the generated copy
-/// the publisher's is what stands in its place. Nothing in the text tells
-/// the two apart, so the count does: the wrapper may take a section only
-/// where the body holds more copies of it than the published prose brought.
-pub(super) fn prose(body: &str, published: &str, wrapper: Option<&Wrapper>) -> String {
+/// The publisher's prose, as this harness renders it, is the floor. A
+/// generated section may read exactly like one that prose opens or closes
+/// with, and where the person deleted the generated copy the publisher's
+/// is what stands in its place. Nothing in the text tells the two apart,
+/// so the count does: the wrapper may take a section only where the body
+/// holds more copies of it than the publisher brought.
+pub(super) fn prose(body: &str, wrapper: Option<&Wrapper>) -> String {
     let lines: Vec<&str> = body.lines().collect();
     let mut kept = lines.as_slice();
     if let Some(wrapper) = wrapper {
-        let publisher: Vec<&str> = published.lines().collect();
+        let publisher: Vec<&str> = wrapper.published.lines().collect();
         kept = &kept[taken(kept, &publisher, &said(&wrapper.before, false))..];
         let body_back: Vec<&str> = kept.iter().rev().copied().collect();
         let publisher_back: Vec<&str> = publisher.iter().rev().copied().collect();
