@@ -43,8 +43,8 @@ pub fn is_project(dir: &Path) -> bool {
 /// wins even at the home directory, otherwise the first directory carrying
 /// a harness marker — refusing home itself.
 pub fn project_root_from(start: &Path, home: &Path) -> Option<PathBuf> {
-    let start = start.canonicalize().ok()?;
-    let home = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
+    let start = crate::paths::canonical(start).ok()?;
+    let home = crate::paths::canonical(home).unwrap_or_else(|_| home.to_path_buf());
     let mut current = Some(start.as_path());
     while let Some(dir) = current {
         if dir.join(crate::lock::LOCK_FILE).is_file() {
@@ -61,7 +61,7 @@ pub fn project_root_from(start: &Path, home: &Path) -> Option<PathBuf> {
 /// Walk `root` looking for directories that carry a harness marker.
 /// Results are canonicalized, deduplicated, and sorted.
 pub fn discover_projects(root: &Path) -> Result<Vec<PathBuf>> {
-    let root = root.canonicalize().map_err(|e| CoreError::io(root, e))?;
+    let root = crate::paths::canonical(root).map_err(|e| CoreError::io(root, e))?;
     if !root.is_dir() {
         return Err(CoreError::NotADirectory { path: root });
     }
@@ -160,7 +160,7 @@ fn walk_any(
 
 fn walk(dir: &Path, depth: usize, found: &mut BTreeSet<PathBuf>) {
     if is_project(dir) {
-        if let Ok(canonical) = dir.canonicalize() {
+        if let Ok(canonical) = crate::paths::canonical(dir) {
             found.insert(canonical);
         }
         return;
@@ -206,7 +206,7 @@ mod tests {
         let names: Vec<_> = found
             .iter()
             .map(|p| {
-                p.strip_prefix(root.canonicalize().unwrap())
+                p.strip_prefix(crate::paths::canonical(root).unwrap())
                     .unwrap()
                     .to_path_buf()
             })
@@ -226,7 +226,10 @@ mod tests {
         let found = discover_projects(root).unwrap();
         let names: Vec<_> = found
             .iter()
-            .map(|p| p.strip_prefix(root.canonicalize().unwrap()).unwrap())
+            .map(|p| {
+                p.strip_prefix(crate::paths::canonical(root).unwrap())
+                    .unwrap()
+            })
             .collect();
         assert_eq!(names, [Path::new("c"), Path::new("g")]);
     }
@@ -250,7 +253,10 @@ mod tests {
         fs::create_dir_all(home.join("dev/app/src/nested")).unwrap();
 
         let found = project_root_from(&home.join("dev/app/src/nested"), home).unwrap();
-        assert_eq!(found, home.join("dev/app").canonicalize().unwrap());
+        assert_eq!(
+            found,
+            crate::paths::canonical(&home.join("dev/app")).unwrap()
+        );
 
         // Markers at home itself never make home the project…
         fs::create_dir_all(home.join(".claude")).unwrap();
@@ -260,7 +266,7 @@ mod tests {
         fs::write(home.join(".kendex-lock.json"), "{}").unwrap();
         assert_eq!(
             project_root_from(&home.join("dev"), home).unwrap(),
-            home.canonicalize().unwrap()
+            crate::paths::canonical(home).unwrap()
         );
     }
 
@@ -276,7 +282,10 @@ mod tests {
         let found = discover_projects(root).unwrap();
         let names: Vec<_> = found
             .iter()
-            .map(|p| p.strip_prefix(root.canonicalize().unwrap()).unwrap())
+            .map(|p| {
+                p.strip_prefix(crate::paths::canonical(root).unwrap())
+                    .unwrap()
+            })
             .collect();
         assert_eq!(names, [Path::new("new"), Path::new("newlock")]);
 
@@ -285,7 +294,7 @@ mod tests {
         fs::write(home.join(".kendex-lock.json"), "{}").unwrap();
         assert_eq!(
             project_root_from(&home.join("dev"), home).unwrap(),
-            home.canonicalize().unwrap()
+            crate::paths::canonical(home).unwrap()
         );
     }
 

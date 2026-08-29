@@ -26,6 +26,7 @@ pub mod model;
 pub mod names;
 pub mod package;
 pub mod parallel;
+pub mod paths;
 pub mod pi_ext;
 pub mod process;
 pub mod quality;

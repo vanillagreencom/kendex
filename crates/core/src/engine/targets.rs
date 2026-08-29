@@ -106,7 +106,7 @@ pub(crate) fn hook_target(
             };
             let path = dir.join(format!("{name}.sh"));
             let command = match scope {
-                Scope::Global => format!("bash \"{}\"", path.display()),
+                Scope::Global => format!("bash \"{}\"", crate::paths::slashed(&path)),
                 Scope::Project { .. } => {
                     format!("bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/{name}.sh\"")
                 }
@@ -126,7 +126,7 @@ pub(crate) fn hook_target(
             };
             let path = root.join("hooks").join(format!("{name}.sh"));
             let command = match scope {
-                Scope::Global => format!("bash \"{}\"", path.display()),
+                Scope::Global => format!("bash \"{}\"", crate::paths::slashed(&path)),
                 Scope::Project { .. } => {
                     format!("bash \"$(git rev-parse --show-toplevel)/.codex/hooks/{name}.sh\"")
                 }
@@ -195,7 +195,7 @@ fn pi_hook(env: &Env, scope: &Scope, name: &str) -> HookTarget {
     let root = crate::harness::pi::scope_root(env, scope);
     let path = crate::harness::pi::hook_path(&root, name);
     let command = match scope {
-        Scope::Global => format!("bash \"{}\"", path.display()),
+        Scope::Global => format!("bash \"{}\"", crate::paths::slashed(&path)),
         Scope::Project { .. } => format!(
             "bash \"$(git rev-parse --show-toplevel)/.pi/{}\"",
             crate::harness::pi::hook_rel(name)
@@ -226,7 +226,7 @@ fn dotted_script_hook(
     };
     let path = root.join("hooks").join(format!("{name}.sh"));
     let command = match scope {
-        Scope::Global => format!("bash \"{}\"", path.display()),
+        Scope::Global => format!("bash \"{}\"", crate::paths::slashed(&path)),
         Scope::Project { .. } => {
             format!("bash \"$(git rev-parse --show-toplevel)/{dot}/hooks/{name}.sh\"")
         }
@@ -250,7 +250,10 @@ fn copilot_hook(env: &Env, scope: &Scope, name: &str) -> HookTarget {
             let dir = adapter(HarnessId::Copilot)
                 .default_global_root(env)
                 .join("hooks");
-            let command = format!("bash \"{}\"", dir.join(format!("{name}.sh")).display());
+            let command = format!(
+                "bash \"{}\"",
+                crate::paths::slashed(&dir.join(format!("{name}.sh")))
+            );
             (dir, command)
         }
         Scope::Project { root } => (

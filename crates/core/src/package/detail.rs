@@ -12,6 +12,7 @@ use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::manifest::Manifest;
 use crate::model::{HarnessId, ItemKind, Scope};
+use crate::paths::slashed;
 use crate::source_read::SealedSource;
 
 /// One file inside the package, path relative to the package root with
@@ -142,9 +143,14 @@ fn effective_item_on_disk(
     Ok((sealed, item_path))
 }
 
+/// Whether this package-relative path is the package's own readme: named
+/// README, and at the package root. A readme inside a subdirectory belongs
+/// to that subdirectory, so the depth test is part of the question rather
+/// than a second condition every caller has to remember — and it reads the
+/// `/`-spelled path `crate::paths::slashed` produces, never a native one.
 fn is_readme(path: &str) -> bool {
-    let base = path.rsplit('/').next().unwrap_or(path);
-    base.eq_ignore_ascii_case("README.md") || base.eq_ignore_ascii_case("README")
+    !path.contains('/')
+        && (path.eq_ignore_ascii_case("README.md") || path.eq_ignore_ascii_case("README"))
 }
 
 /// Every file the package ships at its effective revision, sorted by path.
@@ -160,7 +166,7 @@ pub fn package_files(
         for (rel, bytes) in sealed.collect_tree(&item_path, &[])? {
             let path = slashed(&rel);
             files.push(PackageFile {
-                is_readme: is_readme(&path) && !rel.to_string_lossy().contains('/'),
+                is_readme: is_readme(&path),
                 size: bytes.len().min(u32::MAX as usize) as u32,
                 path,
             });
@@ -373,9 +379,18 @@ pub(crate) fn capped(path: &Path, bytes: Vec<u8>) -> ItemSource {
     }
 }
 
-fn slashed(rel: &Path) -> String {
-    rel.components()
-        .map(|c| c.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/")
+#[cfg(test)]
+mod tests {
+    use super::is_readme;
+
+    /// A readme below the package root is that directory's, not the
+    /// package's — and the test is on the whole relative path, so a native
+    /// separator can never let one through as the package's own.
+    #[test]
+    fn only_a_readme_at_the_package_root_is_the_package_readme() {
+        assert!(is_readme("README.md"));
+        assert!(is_readme("readme"));
+        assert!(!is_readme("references/README.md"));
+        assert!(!is_readme("guide.md"));
+    }
 }

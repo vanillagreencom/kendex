@@ -258,6 +258,11 @@ impl DeclaredEffects {
     /// package is `arm`'s question, settled in `resolve_script` for the
     /// program it is about to run; this one is a line to read.
     ///
+    /// Half of the joined path is a native join and half is a `/`-spelled
+    /// literal the package declared, so it goes out through
+    /// `crate::paths::slashed`: a shell reads `\` as an escape, and a
+    /// command a person pastes has to be one a shell runs.
+    ///
     /// Every word goes out through `names::quoted`, the program and each
     /// declared argument alike. This is a command to paste: a checkout at
     /// `~/My Project` would otherwise name a program ending at `My`, and a
@@ -270,11 +275,8 @@ impl DeclaredEffects {
             .map(|script| {
                 let (program, args) = split_script(script);
                 let whole = self.root.join(program);
-                let path = whole
-                    .strip_prefix(repo)
-                    .unwrap_or(whole.as_path())
-                    .display()
-                    .to_string();
+                let path =
+                    crate::paths::slashed(whole.strip_prefix(repo).unwrap_or(whole.as_path()));
                 let command = std::iter::once(crate::names::quoted(&path))
                     .chain(args.into_iter().map(crate::names::quoted))
                     .collect::<Vec<_>>()

@@ -429,10 +429,9 @@ pub(super) fn legacy_registration(entry: &LockEntry, scope: &Scope, root: &Path)
         // tampering.
         _ => {
             let file = pi::hook_file(&entry.name);
+            let script = root.join(LEGACY_DIR).join(&file);
             let command = match scope {
-                Scope::Global => {
-                    format!("bash \"{}\"", root.join(LEGACY_DIR).join(&file).display())
-                }
+                Scope::Global => format!("bash \"{}\"", crate::paths::slashed(&script)),
                 Scope::Project { .. } => {
                     format!("bash \"$(git rev-parse --show-toplevel)/.pi/{LEGACY_DIR}/{file}\"")
                 }

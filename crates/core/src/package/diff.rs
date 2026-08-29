@@ -4,7 +4,6 @@
 //! which live in no repository, so git cannot see them.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -12,6 +11,7 @@ use specta::Type;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::{HarnessId, ItemKind, Scope};
+use crate::paths::slashed;
 use crate::source_read::SealedSource;
 
 /// One side of the comparison.
@@ -253,11 +253,4 @@ fn installed_tree(
         );
     }
     Ok(tree)
-}
-
-fn slashed(rel: &Path) -> String {
-    rel.components()
-        .map(|c| c.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/")
 }

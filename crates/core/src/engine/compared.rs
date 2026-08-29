@@ -105,7 +105,7 @@ pub(super) fn of_tree(root: &Path, files: &[(PathBuf, Vec<u8>)]) -> Option<Compa
     let differing: Vec<String> = differing
         .into_iter()
         .take(SHOWN_DIFFERING)
-        .map(|rel| rel.to_string_lossy().into_owned())
+        .map(|rel| crate::paths::slashed(rel))
         .collect();
     Some(Comparison {
         differing,
