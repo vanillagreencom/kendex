@@ -33,13 +33,12 @@
 //! Enumerated from the value grammar of the spec the workspace's `toml`
 //! dependency implements — the root `Cargo.toml` is where that is chosen,
 //! and this table has to be re-read against it whenever it moves. Written
-//! out rather than added a form at a time as each face of the same defect
-//! surfaced: twice a form nobody had considered read as finished and was
-//! copied into somebody's file, and once a form was refused that the
-//! parser accepts. A value is exactly one of string, integer, float,
-//! boolean, one of the five date-time forms, array, or inline table. Each
-//! either has delimiters or does not, and each delimited one may cross a
-//! newline or may not:
+//! out whole rather than a form at a time: a form left off it reads as
+//! finished and is copied into somebody's file, and one filed in the wrong
+//! column is refused though the parser accepts it. A value is exactly one
+//! of string, integer, float, boolean, one of the five date-time forms,
+//! array, or inline table. Each either has delimiters or does not, and each
+//! delimited one may cross a newline or may not:
 //!
 //! | Form                      | Delimiter | Crosses a newline |
 //! |---------------------------|-----------|-------------------|
@@ -68,8 +67,9 @@
 //! cannot answer for is a gap to name here, never a silent default of
 //! complete.
 //!
-//! Every claim in this table has a control in `tests.rs`; the last three
-//! times this file was wrong, it was wrong in a comment first.
+//! Every claim in this table has a control in `tests.rs`. This file goes
+//! wrong in a comment before it goes wrong in code, so the table is the
+//! thing to re-read against the spec first.
 //!
 //! What a line leaves open is read off it once, apart from the decision
 //! about what the line is, because the two are independent — a line can
@@ -132,14 +132,16 @@ pub struct Row<'a> {
     /// assignment cannot ask the line under it whether the value closed
     /// when the file ends there.
     pub carries: bool,
-    /// Whether this line ends with a container open that the grammar does
-    /// not let a later line close — a single-line string, or an inline
-    /// table. The complement of [`Row::carries`], never its negation: both
-    /// are false for a value that simply ended, and `TOKEN = "` and
-    /// `MAP = {` carry nothing and are not finished either.
+    /// Whether this line ends inside a delimiter no later line may close.
+    /// Only a single-line string can be one: the grammar ends it with its
+    /// line, so nothing below it can finish it. Every other container
+    /// carries instead, and one the file never closes carries to the end
+    /// of the file — [`Row::carries`] is what answers for those.
     ///
-    /// A value is complete only where neither is true of it. Asking
-    /// `carries` alone has now twice called a broken line finished.
+    /// The complement of [`Row::carries`], never its negation: both are
+    /// false for a value that simply ended, and `TOKEN = "` carries
+    /// nothing and is not finished either. A value is complete only where
+    /// neither is true of it.
     pub broken: bool,
 }
 

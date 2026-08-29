@@ -31,8 +31,8 @@ impl Open {
 }
 
 /// What a value has left open across a line boundary — every container
-/// the grammar can carry over one, in one value, so a walk cannot answer
-/// for one and forget the other.
+/// the grammar can carry over one, held together in one value, so a walk
+/// cannot answer for one of them and forget another.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) struct Carry {
     /// The multiline string still open, if any.
