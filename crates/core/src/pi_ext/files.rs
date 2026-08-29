@@ -93,36 +93,42 @@ pub(super) fn package_path(scope_root: &Path, name: &str) -> Result<PathBuf> {
 /// wherever it installs. `Path::is_absolute` cannot do that: on Windows
 /// `/etc/passwd` is not absolute, Rust wanting a drive or a UNC prefix
 /// first, and `Path::join` drops the base for it anyway. So a leading `/`
-/// is refused everywhere, and so are the two characters that spell the
-/// Windows escapes: `\`, which is a separator there and hides `..\..` from
-/// `Component::ParentDir` when the string is parsed here, and `:`, which
-/// opens a drive, a device prefix or an alternate data stream. The result
-/// is then built from the segments checked here rather than by joining the
-/// declared string, so nothing unexamined reaches the filesystem.
+/// is refused here, on the shape of the string.
+///
+/// Every segment then answers to [`crate::names::segment_problem`], which is
+/// where this repository already keeps what a name may be and what Windows
+/// will quietly make of one. That is the judge on purpose: a segment ending
+/// in a dot or a space is trimmed by Windows, so `.. ` arrives as `..` and
+/// no comparison against the literal `..` will ever see it, and the same
+/// holds for the next spelling nobody has thought of. It also refuses the
+/// `\` that is a separator there and the `:` that opens a drive, a device
+/// prefix or an alternate data stream. The result is built from the
+/// segments checked here rather than by joining the declared string, so
+/// nothing unexamined reaches the filesystem.
 pub(super) fn inside(base: &Path, relative: &str, name: &str) -> Result<PathBuf> {
-    let refuse = || CoreError::PiPackage {
+    let refuse = |detail: &str| CoreError::PiPackage {
         name: name.to_owned(),
-        message: format!("`{relative}` does not name a path inside the package"),
+        message: format!("`{relative}` does not name a path inside the package: {detail}"),
     };
-    if relative.starts_with('/') || relative.contains('\\') || relative.contains(':') {
-        return Err(refuse());
+    if relative.starts_with('/') {
+        return Err(refuse("it starts at the root of the drive"));
     }
     let mut path = base.to_path_buf();
     let mut named = false;
     for part in relative.split('/') {
+        // A run of separators collapses and `.` is the directory it sits in;
+        // neither names anything, and neither is a segment to check.
         if part.is_empty() || part == "." {
             continue;
         }
-        if part == ".." {
-            return Err(refuse());
+        if let Some(problem) = crate::names::segment_problem(part) {
+            return Err(refuse(&problem));
         }
         path.push(part);
         named = true;
     }
-    // Nothing but separators and `.` names the package directory itself,
-    // which is not a file a package can declare.
     if !named {
-        return Err(refuse());
+        return Err(refuse("it names the package directory, not a file in it"));
     }
     Ok(path)
 }
@@ -226,6 +232,21 @@ mod tests {
             // Forward-slash traversal, in and past the middle of a path.
             "../outside.js",
             "dist/../../outside.js",
+            // Traversal wearing a trailing dot or space. Windows drops those
+            // from a component on the way to the filesystem, so `.. ` arrives
+            // as `..` while no segment here ever equals `..`. This is why the
+            // segment rule is `names::segment_problem` and not a list of
+            // spellings to compare against: the list is short by one again at
+            // the next spelling, and the trimming rule is not.
+            ".. /victim",
+            ".. /.. /outside",
+            "dist/.. /.. /outside",
+            "... /outside",
+            // The same trimming on an ordinary name: `victim.` and `victim`
+            // are two names here and one file there, so a package could reach
+            // a file kendex believes it did not name.
+            "dist/victim./x",
+            "dist/victim /x",
             // Names nothing at all — the package directory or the bin
             // directory itself, which a caller would then unlink.
             "",
