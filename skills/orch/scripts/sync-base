@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Fetch and fast-forward the local branch selected as this repository's base.
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+usage: sync-base [REPOSITORY]
+
+Resolves the repository's base branch, fetches that branch from origin, and
+fast-forwards the checkout that owns it or the local branch ref. Prints only
+the base branch name on success. A dirty or divergent base fails closed.
+EOF
+}
+
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+[[ $# -le 1 ]] || { usage >&2; exit 2; }
+
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPOSITORY="${1:-.}"
+REPO_ROOT="$(git -C "$REPOSITORY" rev-parse --show-toplevel 2>/dev/null)" \
+  || { echo "sync-base: not inside a git work tree: $REPOSITORY" >&2; exit 1; }
+BASE_BRANCH="$("$SCRIPT_DIR/resolve-base-branch" "$REPO_ROOT")" \
+  || { echo "sync-base: could not resolve the base branch" >&2; exit 1; }
+git check-ref-format --branch "$BASE_BRANCH" >/dev/null 2>&1 \
+  || { echo "sync-base: invalid base branch: $BASE_BRANCH" >&2; exit 1; }
+
+GIT_AUTH="$SCRIPT_DIR/../../github/scripts/git-https-auth"
+[[ -x "$GIT_AUTH" ]] || { echo "sync-base: git auth helper is missing or not executable: $GIT_AUTH" >&2; exit 1; }
+"$GIT_AUTH" -C "$REPO_ROOT" fetch --prune origin \
+  "+refs/heads/$BASE_BRANCH:refs/remotes/origin/$BASE_BRANCH"
+
+BASE_WORKTREE=""
+CURRENT_PATH=""
+while IFS= read -r line; do
+  case "$line" in
+    worktree\ *) CURRENT_PATH="${line#worktree }" ;;
+    "branch refs/heads/$BASE_BRANCH") BASE_WORKTREE="$CURRENT_PATH" ;;
+  esac
+done < <(git -C "$REPO_ROOT" worktree list --porcelain)
+
+if [[ -n "$BASE_WORKTREE" ]]; then
+  git -C "$BASE_WORKTREE" merge --ff-only "origin/$BASE_BRANCH" >&2
+else
+  git -C "$REPO_ROOT" fetch . \
+    "refs/remotes/origin/$BASE_BRANCH:refs/heads/$BASE_BRANCH" >&2
+fi
+git -C "$REPO_ROOT" worktree prune
+printf '%s\n' "$BASE_BRANCH"

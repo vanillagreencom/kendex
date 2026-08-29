@@ -130,14 +130,15 @@ fi
 
 # Post-merge base sync: `merge --ff-only` advances whatever branch the target
 # checkout has on HEAD, so a main checkout sitting on a foreign branch
-# fast-forwards THAT branch, exits 0, and leaves the base where it was. The
-# routing that makes ownership explicit is the whole fix, and it is prose — it
-# has no script to fail loudly when it is dropped.
+# fast-forwards THAT branch, exits 0, and leaves the base where it was.
 merge_workflow="$SKILL_DIR/workflows/merge-pr.md"
-assert_file_contains "$merge_workflow" 'rev-parse --abbrev-ref HEAD' \
-  "merge-pr resolves which checkout owns the base branch before advancing it"
-assert_file_contains "$merge_workflow" 'refs/remotes/origin/[BASE_BRANCH]:refs/heads/[BASE_BRANCH]' \
-  "merge-pr keeps the by-name fetch refspec route for a foreign-HEAD checkout"
+sync_base="$SKILL_DIR/scripts/sync-base"
+assert_file_contains "$merge_workflow" 'scripts/sync-base [MAIN_REPO_ROOT]' \
+  "merge-pr delegates base synchronization to sync-base"
+assert_file_contains "$sync_base" 'worktree list --porcelain' \
+  "sync-base resolves which checkout owns the base branch before advancing it"
+assert_file_contains "$sync_base" 'refs/remotes/origin/$BASE_BRANCH:refs/heads/$BASE_BRANCH' \
+  "sync-base keeps the by-name ref update for an unowned base branch"
 assert_file_contains "$merge_workflow" '| Base sync |' \
   "merge-pr never omits the Base sync row, so a stale base cannot pass unreported"
 

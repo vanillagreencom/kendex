@@ -189,79 +189,23 @@ Use the output as `MAIN_REPO_ROOT`.
 
    a. Read `.parent_id` (`cache issues get [ISSUE]`). Empty → step 3.
    b. Fetch the parent with its bundle. A `(one PR)` title marker keeps it single-PR; without the marker, children or an `agent:multi` label make it a CONTAINER. Not a container → step 3.
-   c. **Serialize per parent before anything else.** Create `[MAIN_REPO_ROOT]/tmp` (git-ignored), then take the lock with `mkdir [MAIN_REPO_ROOT]/tmp/container-close-[PARENT_ID].lock`. A lock older than 60 minutes is a crashed run: remove it and take it fresh. A fresh lock is NOT a skip — retry the `mkdir` up to three times, and only then defer with a § 6 note and continue to step 3. `touch` the lock dir after each command below, and release it (`rmdir`) on EVERY exit path.
-
-      Holding the lock, re-sync and confirm nothing is still open:
+   c. Close the container through the serialized helper:
 
       ```bash
-      [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh cache issues children [PARENT_ID] --recursive --pending
+      [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/container-close [PARENT_ID]
       ```
 
-      Pending children remaining → re-sync and re-list up to three times. Still pending → report it in § 6 — "container [PARENT_ID] stays open ([N] children pending)", or, when `[ISSUE]` itself still reads pending, that this merge's own closure has not propagated and merge-pr should be re-run — then release the lock and continue to step 3.
+      `closed [PARENT_ID]` → record the closure in § 6. If this container has a container parent, re-run the step-2 sync and repeat a-c for that parent.
 
-      Empty → capture the canceled set first:
-
-      ```bash
-      [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh cache issues children [PARENT_ID] --recursive
-      ```
-
-      Record each `canceled` entry as id + original state name in `[MAIN_REPO_ROOT]/tmp/container-canceled-[PARENT_ID]-[PR_NUMBER].lst` with the harness file-write tool, skipping the file when nothing is canceled. Then gate the completion:
-
-      ```bash
-      [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues validate-completion [PARENT_ID] --include-children-of [PARENT_ID] --container
-      ```
-
-      Proceed ONLY on `.all_ok == true`. A non-zero exit emits its diagnostic on stderr instead of the payload — do not parse JSON there, treat it as `all_ok=false`. On either failure: delete the snapshot, release the lock, report the failing `.results[]` entries or the stderr diagnostic in § 6, and stop — do not complete this container and do not climb to its parent.
-
-      d. On `all_ok == true`, check the container's own `.results[]` entry first — `completed` → skip with a § 6 note rather than re-posting a summary. Otherwise write the bundle summary with the harness file-write tool (starting `## Bundle Complete`, one line per child with its PR) and complete:
-
-      ```bash
-      [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues complete [PARENT_ID] --summary-file [SUMMARY_FILE]
-      ```
-
-      A non-zero exit does NOT prove the transition failed. Verify with `sync --reconcile` then `cache issues get [PARENT_ID]`, re-reading up to three times. Completed → continue into the repair and report the error alongside the actual outcome. Not completed → report in § 6, release the lock, and stop.
-
-      e. **Repair the cascade**, on the skip branch too. For every id in the snapshot, `issues bulk-get` in chunks of at most 50, verify each chunk returned one row per requested id, and restore any now reading `completed` back to its recorded state name, deepest entries first:
-
-      ```bash
-      .agents/skills/linear/scripts/linear.sh issues update [CHILD_ID] --state "[ORIGINAL_STATE_NAME]"
-      ```
-
-      Report every restoration in § 6, delete the snapshot, and release the lock. Then climb: if `[PARENT_ID]` has a container parent, re-run the step-2 sync first and repeat a-e for the grandparent.
+      `deferred [CHILD_IDS...]` → record `container [PARENT_ID] stays open (pending: [CHILD_IDS])` in § 6 and continue to step 3. A bare `deferred` means another merge session still owns the close; report that and continue. On a non-zero exit, carry its diagnostic into § 6, do not climb to another parent, and continue to step 3.
 
 3. **Sync the main repo** — always runs after a merge.
 
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/resolve-base-branch [MAIN_REPO_ROOT]
-   ```
-   ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/github/scripts/git-https-auth -C [MAIN_REPO_ROOT] fetch --prune origin "+refs/heads/[BASE_BRANCH]:refs/remotes/origin/[BASE_BRANCH]"
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/sync-base [MAIN_REPO_ROOT]
    ```
 
-   Target `origin` only, with the explicit refspec. Keep every local ref update on plain `git`.
-
-   **Resolve which checkout owns `[BASE_BRANCH]` before advancing it.**
-
-   ```bash
-   git -C [MAIN_REPO_ROOT] rev-parse --abbrev-ref HEAD
-   ```
-
-   | `MAIN_HEAD_BRANCH` | Action |
-   |--------------------|--------|
-   | `[BASE_BRANCH]` | Advance in place: `git -C [MAIN_REPO_ROOT] merge --ff-only "origin/[BASE_BRANCH]"` |
-   | Any other branch, or detached `HEAD` | Advance the local ref by name: `git -C [MAIN_REPO_ROOT] fetch . "refs/remotes/origin/[BASE_BRANCH]:refs/heads/[BASE_BRANCH]"` (REFUSES a non-fast-forward) |
-
-   The by-name update fails when `[BASE_BRANCH]` is checked out in another worktree (`refusing to fetch into branch ... checked out at ...`): locate that worktree with `git -C [MAIN_REPO_ROOT] worktree list` and run `git -C [BASE_WORKTREE] merge --ff-only "origin/[BASE_BRANCH]"` there. Then `git -C [MAIN_REPO_ROOT] worktree prune`.
-
-   **Blocking outcomes.** Each leaves local `[BASE_BRANCH]` behind origin. Never record the sync as done on any of them, and carry the named cause into § 6:
-
-   | Outcome | Report |
-   |---------|--------|
-   | Either ff-merge refuses on uncommitted changes (`Your local changes to the following files would be overwritten by merge`) | **Blocking** — name every file git listed and the checkout it sits in, not an informational note |
-   | Any of the three updates — the in-place ff-merge, the by-name update, or the `[BASE_WORKTREE]` ff-merge — is rejected as non-fast-forward | **Blocking** — local `[BASE_BRANCH]` has diverged; name both shas |
-   | `[BASE_BRANCH]` is checked out in no reachable worktree and the by-name update failed for any other reason | **Blocking** — name the sha `origin/[BASE_BRANCH]` points at and the git error |
-
-   Report the result in § 6 either way: the new sha when it advanced, a WARNING naming the stale local sha, the origin sha, and the cause when it did not.
+   Its stdout is `[BASE_BRANCH]`. On success, read `refs/heads/[BASE_BRANCH]` for `[NEW_SHA]` and report it in § 6. On a non-zero exit, the base remains unsynchronized: carry the helper's diagnostic into the § 6 warning, resolve `[BASE_BRANCH]` with `resolve-base-branch` for cleanup, and never record the sync as done.
 
 4. **Clean up branches and worktrees**, scoped to this PR by default — never enumerate unrelated branches or sibling worktrees.
 
@@ -313,11 +257,12 @@ Use the output as `MAIN_REPO_ROOT`.
 | Branch | [BRANCH_NAME] (deleted / kept) |
 | Worktree | removed / kept — [cause] |
 | Issue Tracker | [ISSUE_ID] → Done (via magic words) |
+| Container | [PARENT_ID] → Done / deferred — [pending ids or cause] |
 | Base sync | local `[BASE_BRANCH]` → [NEW_SHA] |
 
 </output_format>
 
-The `Base sync` row is never omitted. When § 5 step 3 hit a blocking outcome it carries the warning instead of a sha: `⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`. The `Worktree` row reports `removed`, or `kept — [dirty tree | branch not merged | foreign lease]` when the § 5 step 4 rule declined removal (no worktree existed → omit the row). Add a `Review gate` row only when the merge did not proceed on a plain `approved`/`reviewed` verdict — `⚠️ reviewer-down proceed (no reviewer posted; PR_REVIEW_ON_TIMEOUT=proceed)` or `⚠️ forced (user override)`.
+The `Container` row appears only when § 5 step 2 found a container parent. The `Base sync` row is never omitted. When § 5 step 3 hit a blocking outcome it carries the warning instead of a sha: `⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`. The `Worktree` row reports `removed`, or `kept — [dirty tree | branch not merged | foreign lease]` when the § 5 step 4 rule declined removal (no worktree existed → omit the row). Add a `Review gate` row only when the merge did not proceed on a plain `approved`/`reviewed` verdict — `⚠️ reviewer-down proceed (no reviewer posted; PR_REVIEW_ON_TIMEOUT=proceed)` or `⚠️ forced (user override)`.
 
 For `merge-pr all`, add the cross-PR analysis and a merge table:
 

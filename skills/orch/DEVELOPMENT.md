@@ -66,7 +66,10 @@ Reruns re-execute the workflow definition and verifier state pinned at the origi
 
 ## Container close
 
-`merge-pr.md` § 5 step 2's container-close sequence — the per-parent lock, the canceled-child snapshot, validation, completion, and cascade repair — is agent-interpreted prose rather than a helper script. Every step is lock-guarded and fail-closed, and each exit path names its cleanup. Mechanizing it into a tested helper is the intended evolution; grow that helper from this sequence rather than re-deriving it.
+`container-close` owns the per-parent lock, completion gate, canceled-child
+snapshot, completion, and cascade repair. `merge-pr.md` consumes only its
+`closed` or `deferred` result. `sync-base` likewise owns base resolution,
+fetch, checkout ownership, and the fast-forward.
 
 ## Codex app worktree routing
 
