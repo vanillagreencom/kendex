@@ -181,9 +181,11 @@ assert_not_contains() {
   fi
   printf 'PASS: %s\n' "$3"
 }
-assert_workflow_commands_detach() {
+workflow_commands_detach() {
   awk '
+    BEGIN { matches = 0 }
     /scripts\/second-opinion (review|quick|challenge|audit)/ {
+      matches++
       command = $0
       collecting = ($0 ~ /\\$/)
       if (!collecting && command !~ /--foreground/) exit 1
@@ -196,8 +198,15 @@ assert_workflow_commands_detach() {
         collecting = 0
       }
     }
-    END { if (collecting) exit 2 }
-  ' "$1" || fail "$1 has a capped second-opinion command without --foreground"
+    END {
+      if (matches == 0) exit 3
+      if (collecting) exit 2
+    }
+  ' "$1"
+}
+assert_workflow_commands_detach() {
+  workflow_commands_detach "$1" \
+    || fail "$1 has no capped second-opinion command or one lacks --foreground"
 }
 
 mkdir -p "$TMP_ROOT/broken-bin"
@@ -313,6 +322,13 @@ assert_not_contains "$RUNTIME" "process_identity" \
   "runtime has no waiter PID-recovery machinery"
 assert_not_contains "$RUNTIME" "signal_active" \
   "runtime has no waiter process-signaling path"
+assert_not_contains "$RUNTIME" "sleep 0.2" \
+  "supervisor does not poll while the model runs"
+assert_contains "$RUNTIME" 'wait "$worker_pid"' \
+  "supervisor blocks on its owned worker"
+[[ "$(grep -c 'kill -ALRM' "$RUNTIME")" -eq 1 ]] \
+  || fail "supervisor does not have exactly one deadline watchdog signal"
+printf 'PASS: supervisor has one deadline watchdog\n'
 
 mkdir "$TMP_ROOT/race-runtime" "$TMP_ROOT/race-bin"
 printf 'race\n' > "$TMP_ROOT/race-runtime/token"
@@ -358,6 +374,17 @@ assert_contains "${workflow_files[1]}" 'cat < [ARTIFACT_PATH]' \
   "challenge workflow reads the detached artifact"
 assert_contains "${workflow_files[4]}" '2 × `SECOND_OPINION_TIMEOUT` plus 3 minutes' \
   "review-pr keeps a numeric external deadline fallback"
+assert_workflow_commands_detach "$REPO_ROOT/skills/second-opinion/SKILL.md"
+assert_contains "$REPO_ROOT/skills/second-opinion/SKILL.md" \
+  'Pass `--foreground` when the call can outlast the harness foreground cap.' \
+  "skill execution rules require foreground-cap opt-in"
+cat > "$TMP_ROOT/no-command-workflow.md" <<'EOF'
+Execute the exact command printed after `wait:` and read the artifact.
+EOF
+if workflow_commands_detach "$TMP_ROOT/no-command-workflow.md"; then
+  fail "workflow wiring check accepted prose with no launch command"
+fi
+printf 'PASS: workflow wiring check rejects a missing launch command\n'
 printf 'PASS: every shipped workflow detaches and consumes the protocol\n'
 
 artifact="$TMP_ROOT/answer.txt"
@@ -399,6 +426,29 @@ fi
 assert_contains "$TMP_ROOT/wait.stdout" "$artifact" "wait command returns the artifact path"
 assert_contains "$artifact" "answer" "detached worker writes the result"
 
+no_output_stdout="$TMP_ROOT/no-output-launch.stdout"
+PATH="$PATH" SECOND_OPINION_TARGET=codex SECOND_OPINION_CODEX_CMD=codex \
+  "$SECOND_OPINION" quick question --cwd "$TMP_ROOT/work" --timeout 2 \
+    --foreground >"$no_output_stdout"
+no_output_artifact="$(sed -n 's/^artifact: //p' "$no_output_stdout")"
+case "$no_output_artifact" in
+  "$TMP_ROOT/work/tmp/second-opinion/"*) ;;
+  *) fail "no-output quick artifact is outside the owner-only artifact home" ;;
+esac
+no_output_wait_cmd="$(sed -n 's/^wait: //p' "$no_output_stdout")"
+bash -c "$no_output_wait_cmd" >"$TMP_ROOT/no-output-wait.stdout" \
+  2>"$TMP_ROOT/no-output-wait.stderr"
+assert_contains "$no_output_artifact" "answer" \
+  "detached no-output quick writes the model answer"
+if stat -c '%a' "$no_output_artifact" >/dev/null 2>&1; then
+  no_output_mode="$(stat -c '%a' "$no_output_artifact")"
+else
+  no_output_mode="$(stat -f '%Lp' "$no_output_artifact")"
+fi
+[[ "$no_output_mode" == "600" ]] \
+  || fail "detached no-output quick artifact mode is $no_output_mode, expected 600"
+printf 'PASS: detached no-output quick artifact is owner-only\n'
+
 piped_artifact="$TMP_ROOT/piped-answer.txt"
 printf 'piped question\n' | PATH="$PATH" CAPTURE_PROMPT_FILE="$TMP_ROOT/piped.prompt" \
   SECOND_OPINION_TARGET=codex SECOND_OPINION_CODEX_CMD=codex \
@@ -432,7 +482,7 @@ PATH="$PATH" RUNTIME_FOR_WORKER="$RUNTIME" WORKER_STDERR="$TMP_ROOT/failure-tree
   FAKE_CLI_READY_FILE="$failure_ready" FAKE_CLI_PID_FILE="$failure_pid_file" \
   HEARTBEAT_FILE="$failure_heartbeat" \
   "$RUNTIME" launch "$TMP_ROOT/bin/no-timeout-worker" "$TMP_ROOT/failure-answer" \
-    "$TMP_ROOT/failure-runtime" 30 false 3 x >"$TMP_ROOT/failure-launch.stdout"
+    "$TMP_ROOT/failure-runtime" 4 false 3 x >"$TMP_ROOT/failure-launch.stdout"
 failure_wait_cmd="$(sed -n 's/^wait: //p' "$TMP_ROOT/failure-launch.stdout")"
 failure_wait_rc=0
 bash -c "$failure_wait_cmd" >"$TMP_ROOT/failure-wait.stdout" \

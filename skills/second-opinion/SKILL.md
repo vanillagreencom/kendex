@@ -41,8 +41,8 @@ Cross-model second opinion via external AI CLI. Every mode walks the `SECOND_OPI
 - **Pass `--target`** when the user explicitly requests a specific model/CLI (e.g., "use Claude", "ask Codex"). Otherwise omit it — the script selects from the roster and the current session's model. A forced target that runs this session's model is refused; report the refusal, do not work around it.
 - **Do not pass `--timeout`** unless the user explicitly asks for a different value for this specific call — the script reads the default from project config.
 - **Always pass `--cwd`** with the absolute project root path. Never use `--cwd .`.
-- Run `second-opinion …`; it backgrounds itself and prints when to check.
-- For `quick` mode, you can pass the question as an inline argument instead of writing a file: `second-opinion quick "your question here" --cwd /path`
+- Pass `--foreground` when the call can outlast the harness foreground cap. This detaches the run and prints its artifact, deadline, and wait command.
+- For `quick` mode, you can pass the question inline: `.agents/skills/second-opinion/scripts/second-opinion quick "your question here" --cwd /path --foreground`.
 
 ## Session identity
 

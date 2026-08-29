@@ -127,11 +127,31 @@ supervise() {
   [[ "$grace" =~ ^[1-9][0-9]*$ ]] || die "grace must be positive"
   validate_runtime_dir "$runtime_dir" "$token"
 
-  local worker_pid="" worker_rc=0 worker_reaped=false cancel_rc="" gate=""
-  local status_file="$runtime_dir/worker.status" stop_at=$((deadline - grace)) now
+  local worker_pid="" worker_rc=0 worker_wait_rc=0 worker_reaped=false
+  local cancel_rc="" cancel_message="" deadline_completion_race=false
+  local gate="" watchdog_pid=""
+  local status_file="$runtime_dir/worker.status" stop_at=$((deadline - grace))
   request_cancel() {
-    cancel_rc="$1"
+    if [[ "$1" -eq 124 && -f "$status_file" && ! -L "$status_file" ]]; then
+      deadline_completion_race=true
+      return
+    fi
+    if runtime_dir_valid "$runtime_dir" "$token"; then
+      cancel_rc="$1"
+      [[ "$1" -ne 124 ]] \
+        || cancel_message="Error: detached run reached its supervisor deadline $deadline"
+    else
+      cancel_rc=1
+      cancel_message="Error: detached runtime directory or token changed after release"
+    fi
     [[ -z "$worker_pid" ]] || kill -TERM -- "-$worker_pid" 2>/dev/null || true
+  }
+  stop_watchdog() {
+    if [[ -n "$watchdog_pid" ]]; then
+      kill "$watchdog_pid" 2>/dev/null || true
+      wait "$watchdog_pid" 2>/dev/null || true
+      watchdog_pid=""
+    fi
   }
   stop_and_reap_worker() {
     [[ -z "$worker_pid" ]] || stop_process_group "$worker_pid" "$grace"
@@ -141,6 +161,7 @@ supervise() {
     fi
   }
   cleanup_supervisor() {
+    stop_watchdog
     stop_and_reap_worker
     [[ -z "$gate" ]] || rm -rf -- "$gate" || true
   }
@@ -157,6 +178,7 @@ supervise() {
   trap cleanup_supervisor EXIT
   trap 'request_cancel 143' TERM HUP
   trap 'request_cancel 130' INT
+  trap 'request_cancel 124' ALRM
 
   gate=$(mktemp -d "$runtime_dir/gate.XXXXXX") || die "cannot create worker startup gate"
   set -m
@@ -168,7 +190,9 @@ supervise() {
     set +e
     "$script" "${worker_args[@]}"
     rc=$?
-    (umask 077 && set -C && printf '%s\n' "$rc" > "$status_file") || exit 1
+    status_tmp="$status_file.$$"
+    (umask 077 && set -C && printf '%s\n' "$rc" > "$status_tmp") || exit 1
+    mv -f -- "$status_tmp" "$status_file" || exit 1
     exit "$rc"
   ) &
   worker_pid=$!
@@ -178,28 +202,36 @@ supervise() {
     stop_and_reap_worker
     die "cannot release detached worker"
   }
+  (
+    delay=$((stop_at - $(date +%s)))
+    [[ $delay -le 0 ]] || sleep "$delay"
+    kill -ALRM "$$" 2>/dev/null || true
+  ) &
+  watchdog_pid=$!
 
-  while :; do
-    [[ -z "$cancel_rc" ]] || finish_supervisor "$cancel_rc" ""
-    runtime_dir_valid "$runtime_dir" "$token" \
-      || finish_supervisor 1 "Error: detached runtime directory or token changed after release"
-    if [[ -e "$status_file" ]]; then
-      [[ -f "$status_file" && ! -L "$status_file" ]] \
-        || finish_supervisor 1 "Error: detached worker status is unsafe"
-      worker_rc=$(cat < "$status_file") \
-        || finish_supervisor 1 "Error: cannot read detached worker status"
-      [[ "$worker_rc" =~ ^[0-9]+$ && $worker_rc -le 255 ]] \
-        || finish_supervisor 1 "Error: detached worker status is malformed"
-      finish_supervisor "$worker_rc" ""
+  wait "$worker_pid" || worker_wait_rc=$?
+  stop_watchdog
+  if [[ -n "$cancel_rc" ]]; then
+    worker_reaped=false
+  else
+    if $deadline_completion_race; then
+      worker_wait_rc=0
+      wait "$worker_pid" || worker_wait_rc=$?
     fi
-    jobs -r -p | grep -Fx "$worker_pid" >/dev/null \
-      || finish_supervisor 1 "Error: detached worker exited without a completion status"
-    now=$(date +%s)
-    if [[ $now -ge $stop_at ]]; then
-      finish_supervisor 124 "Error: detached run reached its supervisor deadline $deadline"
-    fi
-    sleep 0.2
-  done
+    worker_reaped=true
+  fi
+  [[ -z "$cancel_rc" ]] || finish_supervisor "$cancel_rc" "$cancel_message"
+  runtime_dir_valid "$runtime_dir" "$token" \
+    || finish_supervisor 1 "Error: detached runtime directory or token changed after release"
+  [[ -f "$status_file" && ! -L "$status_file" ]] \
+    || finish_supervisor 1 "Error: detached worker exited without a completion status"
+  worker_rc=$(cat < "$status_file") \
+    || finish_supervisor 1 "Error: cannot read detached worker status"
+  [[ "$worker_rc" =~ ^[0-9]+$ && $worker_rc -le 255 ]] \
+    || finish_supervisor 1 "Error: detached worker status is malformed"
+  [[ "$worker_rc" -eq "$worker_wait_rc" ]] \
+    || finish_supervisor 1 "Error: detached worker status does not match its exit status"
+  finish_supervisor "$worker_rc" ""
 }
 
 launch() {
