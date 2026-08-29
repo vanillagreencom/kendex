@@ -168,11 +168,20 @@ write_comments() {
     local comments_file="$1" scope_issues_file="$2"
     cache_ensure_dir
 
+    # The scope both halves below answer to, derived once. Stating it twice is
+    # what lets them disagree: a write side that ignores the scope the sweep
+    # respects recreates an archived issue's file in the same run that deleted
+    # it, and files an out-of-scope issue nothing will ever clean up.
+    local scope="$CACHE_DIR/.comment_scope"
+    jq -c '[.[].identifier] | unique' "$scope_issues_file" > "$scope"
+
     local written="$CACHE_DIR/.comment_ids"
     # The same connection carries project and initiative comments, which
     # belong to no issue and have no per-issue file to land in.
-    jq -c '[.[] | select(.issue != null)] | group_by(.issue.identifier) | .[]
-           | {id: .[0].issue.identifier, comments: [.[] | del(.issue)]}' \
+    jq -c --slurpfile scope "$scope" '
+        [.[] | select(.issue != null and (.issue.identifier | IN($scope[0][])))]
+        | group_by(.issue.identifier) | .[]
+        | {id: .[0].issue.identifier, comments: [.[] | del(.issue)]}' \
         "$comments_file" | while IFS= read -r line; do
         local issue_id
         issue_id=$(echo "$line" | jq -r '.id')
@@ -180,12 +189,12 @@ write_comments() {
         echo "$issue_id"
     done > "$written"
 
-    comm -23 <(jq -r '.[].identifier' "$scope_issues_file" | LC_ALL=C sort -u) \
+    comm -23 <(jq -r '.[]' "$scope" | LC_ALL=C sort -u) \
              <(LC_ALL=C sort -u "$written") | while IFS= read -r issue_id; do
         rm -f "$CACHE_DIR/comments/$issue_id.json" "$CACHE_DIR/comments/$issue_id.json.lock"
     done
 
-    rm -f "$written"
+    rm -f "$written" "$scope"
 }
 
 sync_projects() {

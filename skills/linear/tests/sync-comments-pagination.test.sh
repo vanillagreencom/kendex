@@ -14,7 +14,9 @@
 #   C. it pages to completion, concatenating every page;
 #   D. it FAILS rather than returning a partial pull, and writes nothing;
 #   E. write_comments groups a flat pull by issue, drops the issue field, and
-#      removes the file of a scoped issue the pull returned nothing for.
+#      removes the file of a scoped issue the pull returned nothing for;
+#   F. it writes only issues in scope, so a comment on an archived issue the
+#      caller already removed does not come straight back as an orphan file.
 #
 # Fully offline: graphql_query is stubbed after sourcing, no network.
 set -euo pipefail
@@ -48,6 +50,20 @@ for token in 'comments(filter:' '$after' 'hasNextPage' 'endCursor' 'issue { iden
     *) bad "comments query" "missing $token" ;;
   esac
 done
+
+# --- the write and the sweep answer to one scope ----------------------------
+
+# Behaviour cannot tell a single derivation from two identical ones, so this
+# is pinned structurally: inside write_comments the caller's issue file is
+# read exactly once, where the scope is built. A second read is a second
+# statement of the scope, and the halves drift from there.
+body="$(awk '/^write_comments\(\) \{/,/^\}/' "$SYNC")"
+[ -n "$body" ] || bad "write_comments" "could not extract the function from sync.sh"
+reads="$(printf '%s\n' "$body" | grep -c 'scope_issues_file')"
+# One is the local declaration, one is the derivation; a third is a re-read.
+[ "$reads" = "2" ] \
+  && ok "the scope is derived from the caller's issue file exactly once" \
+  || bad "scope derived twice" "scope_issues_file appears $reads times in write_comments"
 
 # --- setup: source the script, stub the API ---------------------------------
 
@@ -132,12 +148,15 @@ cat >"$TMP_ROOT/scope.json" <<'JSON'
 [{"identifier":"T-1"},{"identifier":"T-2"},{"identifier":"T-3"}]
 JSON
 # T-3 is in scope with no comments in the pull; its stale file must go. The
-# project comment belongs to no issue and must land nowhere.
+# project comment belongs to no issue and must land nowhere. T-9 is the
+# archived case: the caller removed it from the issue set and deleted its
+# file, and the comments connection still returns it.
 printf '[]' | jq '.' >"$CACHE_DIR/comments/T-3.json"
 cat >"$TMP_ROOT/pull.json" <<'JSON'
 [{"id":"a1","body":"one","issue":{"identifier":"T-1"}},
  {"id":"a2","body":"two","issue":{"identifier":"T-1"}},
  {"id":"b1","body":"three","issue":{"identifier":"T-2"}},
+ {"id":"z1","body":"on an archived issue","issue":{"identifier":"T-9"}},
  {"id":"p1","body":"project note","issue":null}]
 JSON
 
@@ -158,6 +177,22 @@ write_comments "$TMP_ROOT/pull.json" "$TMP_ROOT/scope.json"
 [ -z "$(ls "$CACHE_DIR/comments" | grep -v '^T-')" ] \
   && ok "a comment on no issue lands in no file" \
   || bad "stray file" "$(ls "$CACHE_DIR/comments")"
+
+# --- F. the write answers to the same scope as the sweep --------------------
+
+[ ! -f "$CACHE_DIR/comments/T-9.json" ] \
+  && ok "a comment on an out-of-scope issue writes no file" \
+  || bad "orphan file" "T-9.json came back for an issue the caller removed"
+
+# The delete-then-recreate loop, end to end: the caller drops an archived
+# issue's file, the very next pull still carries that issue, and the delete
+# has to stay deleted.
+printf '[{"id":"z0","body":"stale"}]' >"$CACHE_DIR/comments/T-9.json"
+rm -f "$CACHE_DIR/comments/T-9.json"
+write_comments "$TMP_ROOT/pull.json" "$TMP_ROOT/scope.json"
+[ ! -f "$CACHE_DIR/comments/T-9.json" ] \
+  && ok "a deleted archived issue's file stays deleted across a pull" \
+  || bad "delete undone" "T-9.json was recreated by the write"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
