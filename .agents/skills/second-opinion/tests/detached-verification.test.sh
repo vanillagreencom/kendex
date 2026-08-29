@@ -129,7 +129,7 @@ output=""
 for arg in "$@"; do case "$arg" in --output=*) output="${arg#--output=}" ;; esac; done
 printf 'answer\n' > "$output"
 printf '0\n' > "$SIGNAL_RUNTIME/worker.status"
-sleep 5
+sleep 15
 SH
   chmod +x "$TMP_ROOT/bin/signal-worker"
   mkdir "$TMP_ROOT/signal-runtime"
