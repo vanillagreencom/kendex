@@ -75,7 +75,7 @@ pub(super) fn look(
     if let Some((_, shared)) = &seen.shared {
         let target = shared.target.clone();
         seen.content
-            .retain(|(_, path)| path.canonicalize().is_ok_and(|at| at != target));
+            .retain(|(_, path)| crate::paths::canonical(path).is_ok_and(|at| at != target));
     }
     if let (Some((linked, _)), Some((held, _))) = (seen.shared.as_ref(), seen.content.first()) {
         return Err(copies_differ(name, *linked, *held));

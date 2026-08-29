@@ -37,8 +37,13 @@ pub(super) struct SharedTarget {
 /// journal, and the local source the capture would write into (a managed
 /// tree is already ours, and capturing it under another name would steal
 /// it; capturing the destination would recurse). Everything is compared
-/// canonicalized, so a `..`-laden link cannot dress one side up as the
-/// other. Anything that fails stays what it was: a foreign symlink,
+/// resolved by `crate::paths::canonical`, so a `..`-laden link cannot
+/// dress one side up as the other, and a boundary derived from the scope
+/// root is held against a target spelled the way that root was. That rule
+/// reduces per path, so a root that loses the extended-length prefix can
+/// hold a target long enough to keep it; such a pair reads as outside
+/// every boundary here, and each of these tests refuses on a match, so
+/// the residual admits rather than refuses. Anything that fails stays what it was: a foreign symlink,
 /// reported as a conflict.
 pub(super) fn shared_target(
     env: &Env,
@@ -58,11 +63,11 @@ pub(super) fn shared_target(
     if kind != ItemKind::Skill {
         return Err(refuse());
     }
-    let target = fs::canonicalize(original).map_err(|e| CoreError::io(original, e))?;
+    let target = crate::paths::canonical(original).map_err(|e| CoreError::io(original, e))?;
     if !target.is_dir() || !target.join("SKILL.md").is_file() {
         return Err(refuse());
     }
-    let canon = |path: PathBuf| path.canonicalize().unwrap_or(path);
+    let canon = |path: PathBuf| crate::paths::canonical(&path).unwrap_or(path);
     let mut ours = vec![
         env.rendered_skills_dir(),
         env.trash_dir(),
@@ -87,7 +92,7 @@ pub(super) fn shared_target(
     // in-place home included: a link at `foo` pointing into
     // `.agents/skills/bar` would have adoption move `bar` under the name
     // `foo`, taking a second skill's content with it.
-    let home = local_item.canonicalize();
+    let home = crate::paths::canonical(local_item);
     let is_home = home.as_deref().unwrap_or(local_item) == target;
     if !is_home
         && (local_item.starts_with(&target)
@@ -102,7 +107,7 @@ pub(super) fn shared_target(
         let Some(candidate) = position(env, scope, ItemKind::Skill, name, h) else {
             continue;
         };
-        let Ok(resolved) = fs::canonicalize(&candidate) else {
+        let Ok(resolved) = crate::paths::canonical(&candidate) else {
             continue;
         };
         if resolved != target {
