@@ -387,8 +387,22 @@ PATTERN="$PATTERN"'|\$\{!?([A-Za-z_][A-Za-z0-9_]*(\[([^][]|\[[^]]*\])*\])?|[0-9]
 # fallthrough — and a script that writes those needs no verdict here.
 PATTERN="$PATTERN"'|\|&|&>>|;;?&'
 # --- shared bash32 pattern set: end
-portability_violations="$(grep -rnE "$PATTERN" "$SCRIPTS_DIR" || true)"
-assert_eq "$portability_violations" "" "all shipped GitHub scripts avoid Bash 4-only constructs"
+# grep's status is part of the answer: 0 found, 1 none, anything else is a
+# scan that did not run — and a scan that did not run is not a clean tree.
+# `|| true` swallowed that third case, so a malformed shared pattern or an
+# unreadable scripts/ reported a clean one. The parity suite catches a
+# malformed pattern in THIS repository; an independently installed github
+# skill does not ship that suite, so this carrier fails closed on its own.
+portability_violations=""
+portability_status=0
+portability_violations="$(grep -rnE "$PATTERN" "$SCRIPTS_DIR")" || portability_status=$?
+if [ "$portability_status" -gt 1 ]; then
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  the portability scan over %s could not run (grep exited %s)\n' \
+        "$SCRIPTS_DIR" "$portability_status"
+else
+    assert_eq "$portability_violations" "" "all shipped GitHub scripts avoid Bash 4-only constructs"
+fi
 
 echo
 echo "----"
