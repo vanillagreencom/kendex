@@ -7,6 +7,12 @@
 # commit-message rule this repo has. There is no repo-local commit-msg lane
 # to splice in beside it.
 #
+# Nothing here judges a hook below its delegating line at line 2. A
+# .git/hooks/commit-msg carrying a spliced call to a repo-local
+# tools/commit-msg lane — which this repo does not have — therefore survives
+# this run, which reports the clone armed while every commit in it dies on
+# `No such file or directory`. Delete that hook and run this again.
+#
 # Whether the shims are armed is the installer's verdict to give, not this
 # script's to infer from a file that exists: git may be reading hooks from
 # somewhere else entirely.
@@ -26,10 +32,11 @@ INSTALLER=.agents/skills/growth-guards/scripts/install-git-hooks
 # The installer has already reported, per hook, WHY it did not arm. That report
 # is the only thing that knows which refusal this was, so this points back at
 # it rather than asserting one cause: a symlinked hook, a cleared execute bit
-# and a hooks path git reads elsewhere all reach here, and deleting two hooks
-# is the fix for none of them.
+# and a hooks path git reads elsewhere all reach here, and deleting a hook is
+# the fix for none of them. The report may name one hook of the two, so the
+# hand-delete points at what it named rather than at both paths.
 not_armed() {
-  echo "setup: the guard shims are not armed; the report above names the reason for each hook, and the remedy follows from it. Where the reason is an interpreter the installer will not vouch for: a hook kendex itself wrote comes out with $INSTALLER --uninstall, and one you wrote yourself you delete by hand — .git/hooks/pre-commit AND .git/hooks/commit-msg — and then run this again. Every other reason the report gives is fixed where it says, not by deleting a hook." >&2
+  echo "setup: the guard shims are not armed; the report above names the reason for each hook, and the remedy follows from it. Where the reason is an interpreter the installer will not vouch for: a hook kendex itself wrote comes out with $INSTALLER --uninstall, and one you wrote yourself you delete by hand — only the hook the report named — and then run this again. Every other reason the report gives is fixed where it says, not by deleting a hook." >&2
   exit 1
 }
 

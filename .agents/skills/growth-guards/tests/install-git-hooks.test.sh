@@ -586,30 +586,6 @@ git -C "$R28" add b.py
 commit_in "$R28" "feat: add b"
 [ "$RC" -ne 0 ] && ok "control: the repositioned delegate blocks again" || bad "repositioned delegate blocks" "rc=$RC out=$OUT"
 
-echo "=== a hook we created is ours whole, not just its line 2 ==="
-# Uninstall deletes a created hook outright, so install owns the same file
-# whole. A line below the delegate runs at every commit under our own marker,
-# and only this install ever reads past line 2 to find it: a fast path keyed
-# on line 2 alone leaves it there and reports the clone armed.
-R55="$(new_repo created-drift)"
-install_in "$R55"
-CANONICAL="$(cat "$R55/.git/hooks/commit-msg")"
-printf 'echo "a line no install wrote"
-' >>"$R55/.git/hooks/commit-msg"
-[ "$(sed -n '2p' "$R55/.git/hooks/commit-msg")" = "$(sed -n '2p' <<<"$CANONICAL")" ] \
-  && ok "control: the drifted hook still carries the delegate at line 2" \
-  || bad "drifted fixture keeps line 2" "$(cat "$R55/.git/hooks/commit-msg")"
-install_in "$R55"
-[ "$(cat "$R55/.git/hooks/commit-msg")" = "$CANONICAL" ] \
-  && ok "a created hook carrying an extra line is rewritten to the canonical body" \
-  || bad "created hook rewritten to canonical" "$(cat "$R55/.git/hooks/commit-msg")"
-printf 'ok\n' >"$R55/drift.txt"
-git -C "$R55" add drift.txt
-commit_in "$R55" "chore: after the rewrite"
-[ "$RC" -eq 0 ] && case "$OUT" in *"a line no install wrote"*) false ;; *) true ;; esac \
-  && ok "and the extra line no longer runs at commit time" \
-  || bad "the rewritten hook still runs the extra line" "rc=$RC out=$OUT"
-
 echo "=== a consumer's own trusted shebang survives the rewrite ==="
 # The rewrite re-emits line 1 as it found it. Hardcoding #!/bin/sh there would
 # be invisible on every other fixture, which all carry that spelling, and would

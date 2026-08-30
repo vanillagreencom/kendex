@@ -221,10 +221,11 @@ OUT="$(git -C "$R" commit -m "fixup! $(printf 'x%.0s' $(seq 1 70))" 2>&1)" || RC
 [ "$RC" -eq 0 ] && ok "a long fixup! subject passes — the exemption is the package's whole list" \
   || bad "a long fixup! subject passes — the exemption is the package's whole list" "rc=$RC out=$OUT"
 
-echo "=== hooks the installer will not vouch for name both to delete ==="
+echo "=== hooks the installer will not vouch for are each named ==="
 # It refuses an interpreter it cannot verify rather than rewriting somebody
-# else's hook, so the remedy setup prints has to name every hook in the way,
-# not the first one it tripped over.
+# else's hook. setup's remedy points back at that report rather than naming a
+# cause of its own, so the report has to name every hook in the way and why —
+# the first one it tripped over is not the whole answer.
 new_fixture foreign
 for hook in pre-commit commit-msg; do
   printf '#!/usr/bin/env bash\necho "%s ran"\n' "$hook" >"$HOOKS/$hook"
@@ -232,15 +233,20 @@ for hook in pre-commit commit-msg; do
 done
 RC=0
 OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] \
-  && case "$OUT" in *".git/hooks/pre-commit AND .git/hooks/commit-msg"*) true ;; *) false ;; esac \
-  && ok "setup stops and names both refused hooks, not just pre-commit" \
-  || bad "setup stops and names both refused hooks, not just pre-commit" "rc=$RC out=$OUT"
-# The remedy prints for every refusal, so matching it alone passes on a
-# wrong-cause message. The installer's own reason is asserted separately.
+[ "$RC" -ne 0 ] && ok "setup stops instead of reporting the clone armed" \
+  || bad "setup stops instead of reporting the clone armed" "rc=$RC out=$OUT"
+# Cause and remedy are asserted apart: the remedy prints for every refusal, so
+# matching it alone would pass on a message naming the wrong cause.
+for hook in pre-commit commit-msg; do
+  case "$OUT" in
+    *"hooks/$hook runs under an interpreter that cannot be verified"*)
+      ok "the report names $hook and why it was refused" ;;
+    *) bad "the report names $hook and why it was refused" "out=$OUT" ;;
+  esac
+done
 case "$OUT" in
-  *"cannot be verified"*) ok "and the installer's own reason reaches the operator" ;;
-  *) bad "the installer's reason reaches the operator" "out=$OUT" ;;
+  *"--uninstall"*) ok "and setup's remedy names the way out for a hook kendex wrote" ;;
+  *) bad "setup's remedy names the way out" "out=$OUT" ;;
 esac
 rm -f "$HOOKS/pre-commit"
 RC=0
