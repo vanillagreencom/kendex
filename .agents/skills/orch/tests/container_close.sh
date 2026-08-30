@@ -22,7 +22,9 @@ SANDBOX="$TMP_ROOT/repo"
 mkdir -p "$SANDBOX/skills/orch/scripts" "$SANDBOX/skills/linear/scripts" "$TMP_ROOT/bin"
 cp "$REPO_ROOT/skills/orch/scripts/container-close" "$SANDBOX/skills/orch/scripts/container-close"
 cp "$REPO_ROOT/skills/orch/scripts/git-context" "$SANDBOX/skills/orch/scripts/git-context"
-chmod +x "$SANDBOX/skills/orch/scripts/container-close" "$SANDBOX/skills/orch/scripts/git-context"
+cp "$REPO_ROOT/skills/orch/scripts/container-close-envelope" "$SANDBOX/skills/orch/scripts/container-close-envelope"
+chmod +x "$SANDBOX/skills/orch/scripts/container-close" "$SANDBOX/skills/orch/scripts/git-context" \
+  "$SANDBOX/skills/orch/scripts/container-close-envelope"
 git init -q "$SANDBOX"
 git -C "$SANDBOX" config user.email test@example.com
 git -C "$SANDBOX" config user.name test
@@ -76,7 +78,7 @@ if [[ -n "${CONSTRUCTION_TERM_COUNT:-}" ]]; then
   [[ ! -e "$CONSTRUCTION_TERM_COUNT" ]] || count="$(cat "$CONSTRUCTION_TERM_COUNT")"
   count=$((count + 1))
   printf '%s\n' "$count" > "$CONSTRUCTION_TERM_COUNT"
-  [[ $count -ne 1 ]] || kill -TERM "$PPID"
+  [[ $count -ne "${CONSTRUCTION_TERM_AT:-1}" ]] || kill -TERM "$PPID"
 fi
 exec "$REAL_AWK" "$@"
 SH
@@ -89,6 +91,7 @@ root="$FAKE_LINEAR_ROOT"
 resource="$1"
 action="$2"
 shift 2
+printf '%s:%s\n' "$resource" "$action" >> "$root/linear.calls"
 case "$resource:$action" in
   sync:--reconcile) exit 0 ;;
   cache:issues)
@@ -177,7 +180,11 @@ case "$resource:$action" in
     ;;
   issues:bulk-get)
     ids="$(printf '%s\n' "$@" | jq -Rsc 'split("\n") | map(select(length > 0))')"
-    jq --argjson ids "$ids" '[.[] | select(.id as $id | $ids | index($id))]' "$root/children.json"
+    if [[ -e "$root/bulk-get.incomplete" ]]; then
+      printf '[]\n'
+    else
+      jq --argjson ids "$ids" '[.[] | select(.id as $id | $ids | index($id))]' "$root/children.json"
+    fi
     ;;
   issues:update)
     id="$1"; shift
@@ -230,6 +237,7 @@ reset_state() {
     "$FAKE_LINEAR_ROOT/late.cascade.on.children" \
     "$FAKE_LINEAR_ROOT/fresh.conflict.on.children" "$FAKE_LINEAR_ROOT/update.calls" \
     "$FAKE_LINEAR_ROOT/complete.on.fresh.conflict" "$FAKE_LINEAR_ROOT/update.noop" \
+    "$FAKE_LINEAR_ROOT/bulk-get.incomplete" "$FAKE_LINEAR_ROOT/linear.calls" \
     "$RECOVERY" "$PENDING"
   rm -rf "$FAKE_LINEAR_ROOT/complete.entries"
   mkdir "$FAKE_LINEAR_ROOT/complete.entries"
@@ -237,6 +245,58 @@ reset_state() {
 
 run_close() { (cd "$CALLER_ONE" && "$SCRIPT" "$SANDBOX" PARENT-1); }
 run_linked_close() { (cd "$CALLER_TWO" && "$SCRIPT" "$CALLER_TWO" PARENT-1); }
+write_test_envelope() {
+  local status="$1" target="$2" content="$3" body="$TMP_ROOT/test-envelope-body"
+  printf '%s\n' "$content" > "$body"
+  "$SANDBOX/skills/orch/scripts/container-close-envelope" write "$status" "$body" "$target"
+}
+envelope_body() { sed '1d;$d' "$1"; }
+write_manual_pending() {
+  local status="$1" content="$2" count="$3" digest="$4" body="$TMP_ROOT/manual-envelope-body"
+  printf '%s\n' "$content" > "$body"
+  [[ "$digest" != actual ]] || digest="$(git hash-object --stdin < "$body")"
+  { printf '%s\n' "$status"; cat "$body"; printf 'complete\t%s\t%s\n' "$count" "$digest"; } > "$PENDING"
+  chmod 600 "$PENDING"
+}
+
+for pending_mode in empty invalid_status truncated malformed count_mismatch digest_mismatch; do
+  reset_state
+  mkdir -p "$(dirname "$RECOVERY")"
+  write_test_envelope resolved "$RECOVERY" $'CHILD-2\tCanceled\t0'
+  case "$pending_mode" in
+    empty) : > "$PENDING" ;;
+    invalid_status) write_manual_pending invalid $'CHILD-2\tCanceled\t0\tdurable' 1 actual ;;
+    truncated) printf 'unresolved\nCHILD-2\tCanceled\t0\tdurable\n' > "$PENDING" ;;
+    malformed) write_manual_pending unresolved 'bad-row' 1 actual ;;
+    count_mismatch) write_manual_pending unresolved $'CHILD-2\tCanceled\t0\tdurable' 2 actual ;;
+    digest_mismatch) write_manual_pending unresolved $'CHILD-2\tCanceled\t0\tdurable' 1 deadbeef ;;
+  esac
+  before_active="$(cat "$RECOVERY")"
+  before_pending="$(cat "$PENDING")"
+  rc=0
+  run_close >/dev/null 2>"$TMP_ROOT/pending-$pending_mode.err" || rc=$?
+  [[ $rc -ne 0 ]] && ok "$pending_mode pending envelope fails closed" || fail "$pending_mode pending envelope fails closed"
+  assert_eq "$(cat "$RECOVERY")" "$before_active" "$pending_mode pending envelope leaves active state unchanged"
+  assert_eq "$(cat "$PENDING")" "$before_pending" "$pending_mode pending envelope remains untouched"
+  [[ ! -e "$FAKE_LINEAR_ROOT/linear.calls" ]] && ok "$pending_mode pending envelope fails before Linear access" || fail "$pending_mode pending envelope fails before Linear access"
+done
+
+STATUS_MUTANT="$SANDBOX/skills/orch/scripts/container-close-envelope-mutant"
+assert_eq "$(grep -Fc '[[ "$status" == resolved || "$status" == unresolved ]] ||' "$SANDBOX/skills/orch/scripts/container-close-envelope")" "1" "pending status control finds the live guard"
+awk 'index($0, "[[ \"$status\" == resolved || \"$status\" == unresolved ]] ||") { print "    [[ \"$status\" == \"$status\" ]] || { echo invalid >&2; exit 1; }"; next } { print }' \
+  "$SANDBOX/skills/orch/scripts/container-close-envelope" > "$STATUS_MUTANT"
+chmod +x "$STATUS_MUTANT"
+reset_state
+mkdir -p "$(dirname "$RECOVERY")"
+write_test_envelope resolved "$RECOVERY" $'CHILD-2\tCanceled\t0'
+write_manual_pending invalid $'CHILD-2\tCanceled\t0\tdurable' 1 actual
+cp "$STATUS_MUTANT" "$SANDBOX/skills/orch/scripts/container-close-envelope"
+rc=0
+run_close >/dev/null 2>&1 || rc=$?
+[[ $rc -ne 0 ]] && ok "status tautology reaches the active invalid-status refusal" || fail "status tautology reaches the active invalid-status refusal"
+[[ ! -e "$PENDING" && "$(sed -n '1p' "$RECOVERY")" == invalid ]] && ok "status tautology promotes an invalid pending envelope" || fail "status tautology promotes an invalid pending envelope"
+cp "$REPO_ROOT/skills/orch/scripts/container-close-envelope" "$SANDBOX/skills/orch/scripts/container-close-envelope"
+chmod +x "$SANDBOX/skills/orch/scripts/container-close-envelope"
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Todo","state_type":"unstarted"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
@@ -308,7 +368,7 @@ reset_state
 printf 'Done\n' > "$FAKE_LINEAR_ROOT/parent.state"
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Todo","state_type":"unstarted"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
 mkdir -p "$(dirname "$RECOVERY")"
-printf 'resolved\nCHILD-2\tCanceled\t0\n' > "$RECOVERY"
+write_test_envelope resolved "$RECOVERY" $'CHILD-2\tCanceled\t0'
 rc=0
 run_close >/dev/null 2>"$TMP_ROOT/unexpected-repair.err" || rc=$?
 [[ $rc -ne 0 ]] && ok "unexpected repair state fails closed" || fail "unexpected repair state fails closed"
@@ -320,7 +380,7 @@ assert_contains "$TMP_ROOT/unexpected-repair.err" "reconcile Linear state, then 
 reset_state
 printf 'Done\n' > "$FAKE_LINEAR_ROOT/parent.state"
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Done","state_type":"completed"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
-printf 'resolved\nCHILD-2\tCanceled\t0\n' > "$RECOVERY"
+write_test_envelope resolved "$RECOVERY" $'CHILD-2\tCanceled\t0'
 touch "$FAKE_LINEAR_ROOT/update.noop"
 rc=0
 run_close >/dev/null 2>"$TMP_ROOT/verification-repair.err" || rc=$?
@@ -329,6 +389,20 @@ assert_contains "$TMP_ROOT/verification-repair.err" "recovery conflict for PAREN
 assert_contains "$TMP_ROOT/verification-repair.err" "$RECOVERY" "verification conflict names the recovery record"
 assert_contains "$TMP_ROOT/verification-repair.err" "reconcile Linear state, then remove" "verification conflict gives the remedy"
 [[ -s "$RECOVERY" ]] && ok "verification conflict retains recovery" || fail "verification conflict retains recovery"
+
+reset_state
+printf 'Done\n' > "$FAKE_LINEAR_ROOT/parent.state"
+printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+mkdir -p "$(dirname "$RECOVERY")"
+write_test_envelope resolved "$RECOVERY" $'CHILD-2\tCanceled\t0'
+touch "$FAKE_LINEAR_ROOT/bulk-get.incomplete"
+rc=0
+run_close >/dev/null 2>"$TMP_ROOT/incomplete-lookup.err" || rc=$?
+[[ $rc -ne 0 ]] && ok "incomplete recovery lookup fails closed" || fail "incomplete recovery lookup fails closed"
+assert_contains "$TMP_ROOT/incomplete-lookup.err" "recovery conflict for PARENT-1: recovery lookup was incomplete" "incomplete lookup names its cause"
+assert_contains "$TMP_ROOT/incomplete-lookup.err" "$RECOVERY" "incomplete lookup names the active recovery record"
+assert_contains "$TMP_ROOT/incomplete-lookup.err" "reconcile Linear state, then remove" "incomplete lookup gives the remedy"
+[[ -s "$RECOVERY" ]] && ok "incomplete lookup retains recovery" || fail "incomplete lookup retains recovery"
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
@@ -356,8 +430,8 @@ assert_eq "$(jq -r '.[] | select(.id == "CHILD-2") | .state_type' "$FAKE_LINEAR_
 [[ ! -e "$RECOVERY" ]] && ok "late cascade repair removes the merged recovery" || fail "late cascade repair removes the merged recovery"
 
 LATE_MUTANT="$SANDBOX/skills/orch/scripts/container-close-late-mutant"
-assert_eq "$(grep -Fc '"$ACTIVE_ROWS" "$SNAPSHOT" >> "$recovery_tmp"' "$SCRIPT")" "1" "late-cascade control finds recovery merging"
-awk 'index($0, "\"$ACTIVE_ROWS\" \"$SNAPSHOT\" >> \"$recovery_tmp\"") { print "    " sprintf("%c", 39) " \"$SNAPSHOT\" >> \"$recovery_tmp\" || {"; next } { print }' "$SCRIPT" > "$LATE_MUTANT"
+assert_eq "$(grep -Fc '"$ACTIVE_ROWS" "$SNAPSHOT" > "$PUBLISHED_ROWS"' "$SCRIPT")" "2" "late-cascade control finds both merge producers"
+awk 'index($0, "\"$ACTIVE_ROWS\" \"$SNAPSHOT\" > \"$PUBLISHED_ROWS\"") { seen++; if (seen == 2) { print "    " sprintf("%c", 39) " \"$SNAPSHOT\" > \"$PUBLISHED_ROWS\" || {"; next } } { print }' "$SCRIPT" > "$LATE_MUTANT"
 chmod +x "$LATE_MUTANT"
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
@@ -382,16 +456,17 @@ rm -f "$FAKE_LINEAR_ROOT/fail.complete.before"
 touch "$FAKE_LINEAR_ROOT/fresh.conflict.on.children"
 touch "$FAKE_LINEAR_ROOT/complete.on.fresh.conflict"
 CONSTRUCTION_TERM_COUNT="$TMP_ROOT/construction-term.count"
-export CONSTRUCTION_TERM_COUNT
+export CONSTRUCTION_TERM_COUNT CONSTRUCTION_TERM_AT=5
 rc=0
 run_close >/dev/null 2>"$TMP_ROOT/merge-conflict.err" || rc=$?
-unset CONSTRUCTION_TERM_COUNT
+unset CONSTRUCTION_TERM_COUNT CONSTRUCTION_TERM_AT
 [[ $rc -ne 0 ]] && ok "conflicting durable and fresh recovery rows fail closed" || fail "conflicting durable and fresh recovery rows fail closed"
-assert_eq "$(cat "$TMP_ROOT/construction-term.count")" "2" "termination during construction still builds the unresolved envelope"
+assert_eq "$(cat "$TMP_ROOT/construction-term.count")" "6" "termination during construction still builds the unresolved envelope"
 assert_contains "$TMP_ROOT/merge-conflict.err" "recovery conflict for PARENT-1: durable and fresh rows disagree" "publish conflict names its cause"
 assert_contains "$TMP_ROOT/merge-conflict.err" "$RECOVERY" "publish conflict names the active recovery path"
 assert_contains "$TMP_ROOT/merge-conflict.err" "reconcile Linear state, then remove" "publish conflict gives the reconciliation remedy"
-assert_eq "$(cat "$RECOVERY")" $'unresolved\nCHILD-2\tCanceled\t0\tdurable\nCHILD-2\tCanceled Again\t0\tfresh' "publish conflict atomically activates both tagged alternatives"
+assert_eq "$(sed -n '1p' "$RECOVERY")" "unresolved" "publish conflict activates unresolved status"
+assert_eq "$(envelope_body "$RECOVERY")" $'CHILD-2\tCanceled\t0\tdurable\nCHILD-2\tCanceled Again\t0\tfresh' "publish conflict retains both tagged alternatives"
 assert_eq "$(jq -r '.[] | select(.id == "CHILD-2") | .state_type' "$FAKE_LINEAR_ROOT/children.json")" "completed" "parent completion cascades during conflicting merge"
 
 before_unresolved="$(cat "$RECOVERY")"
@@ -420,13 +495,15 @@ run_close >/dev/null 2>"$TMP_ROOT/publication-failure.err" || rc=$?
 unset RECOVERY_PUBLISH_TARGET MV_SHIM_MODE MV_SHIM_COUNT
 [[ $rc -ne 0 ]] && ok "exhausted rename retries fail closed" || fail "exhausted rename retries fail closed"
 assert_eq "$(cat "$MV_FAILURE_COUNT")" "3" "all atomic publication attempts fail"
-assert_eq "$(cat "$PENDING")" $'unresolved\nCHILD-2\tCanceled\t0\tdurable\nCHILD-2\tCanceled Again\t0\tfresh' "exhausted publication retains the pending alternatives"
-assert_eq "$(cat "$RECOVERY")" $'resolved\nCHILD-2\tCanceled\t0' "failed publication leaves the old active generation intact"
+assert_eq "$(sed -n '1p' "$PENDING")" "unresolved" "exhausted publication retains pending unresolved status"
+assert_eq "$(envelope_body "$PENDING")" $'CHILD-2\tCanceled\t0\tdurable\nCHILD-2\tCanceled Again\t0\tfresh' "exhausted publication retains the pending alternatives"
+assert_eq "$(envelope_body "$RECOVERY")" $'CHILD-2\tCanceled\t0' "failed publication leaves the old active generation intact"
 rc=0
 run_close >/dev/null 2>"$TMP_ROOT/publication-failure-retry.err" || rc=$?
 [[ $rc -ne 0 ]] && ok "completed retry promotes then refuses the pending generation" || fail "completed retry promotes then refuses the pending generation"
 [[ ! -e "$PENDING" ]] && ok "startup consumes the pending generation before active reads" || fail "startup consumes the pending generation before active reads"
-assert_eq "$(cat "$RECOVERY")" $'unresolved\nCHILD-2\tCanceled\t0\tdurable\nCHILD-2\tCanceled Again\t0\tfresh' "startup promotes both pending alternatives atomically"
+assert_eq "$(sed -n '1p' "$RECOVERY")" "unresolved" "startup promotes unresolved status"
+assert_eq "$(envelope_body "$RECOVERY")" $'CHILD-2\tCanceled\t0\tdurable\nCHILD-2\tCanceled Again\t0\tfresh' "startup promotes both pending alternatives atomically"
 assert_eq "$(jq -r '.[] | select(.id == "CHILD-2") | .state_type' "$FAKE_LINEAR_ROOT/children.json")" "completed" "publication-failure retry cannot apply stale recovery"
 [[ ! -e "$FAKE_LINEAR_ROOT/update.calls" ]] && ok "pending promotion performs no stale Linear update" || fail "pending promotion performs no stale Linear update"
 
@@ -436,7 +513,7 @@ touch "$FAKE_LINEAR_ROOT/fail.complete.before"
 rc=0
 run_close >/dev/null 2>"$TMP_ROOT/depth-first.err" || rc=$?
 [[ $rc -ne 0 ]] && ok "depth-order fixture records the ancestor" || fail "depth-order fixture records the ancestor"
-assert_eq "$(cat "$RECOVERY")" $'resolved\nCHILD-2\tCanceled\t0' "resolved envelope persists child depth"
+assert_eq "$(envelope_body "$RECOVERY")" $'CHILD-2\tCanceled\t0' "resolved envelope persists child depth"
 rm -f "$FAKE_LINEAR_ROOT/fail.complete.before"
 jq '. += [{"id":"CHILD-3","title":"descendant","state":"Canceled","state_type":"canceled","depth":1}]' \
   "$FAKE_LINEAR_ROOT/children.json" > "$FAKE_LINEAR_ROOT/children.with-descendant"
@@ -445,8 +522,8 @@ touch "$FAKE_LINEAR_ROOT/interrupt.after.complete"
 rc=0
 run_close >/dev/null 2>"$TMP_ROOT/depth-interrupt.err" || rc=$?
 [[ $rc -ne 0 ]] && ok "depth-order fixture interrupts before repair" || fail "depth-order fixture interrupts before repair"
-assert_eq "$(sed '1d' "$RECOVERY" | cut -f1)" $'CHILD-3\nCHILD-2' "merged recovery sorts descendants before ancestors"
-assert_eq "$(sed '1d' "$RECOVERY" | cut -f3)" $'1\n0' "merged recovery stores descending depth"
+assert_eq "$(envelope_body "$RECOVERY" | cut -f1)" $'CHILD-3\nCHILD-2' "merged recovery sorts descendants before ancestors"
+assert_eq "$(envelope_body "$RECOVERY" | cut -f3)" $'1\n0' "merged recovery stores descending depth"
 rm -f "$FAKE_LINEAR_ROOT/interrupt.after.complete"
 out="$(run_close 2>"$TMP_ROOT/depth-retry.err")"
 assert_eq "$out" "closed PARENT-1" "depth-ordered retry closes the parent"
@@ -470,7 +547,7 @@ touch "$FAKE_LINEAR_ROOT/interrupt.after.complete"
 rc=0
 "$DEPTH_MUTANT" "$SANDBOX" PARENT-1 >/dev/null 2>&1 || rc=$?
 [[ $rc -ne 0 ]] && ok "depth-order mutant interrupts before repair" || fail "depth-order mutant interrupts before repair"
-assert_eq "$(sed '1d' "$RECOVERY" | cut -f1)" $'CHILD-2\nCHILD-3' "depth-order control fails when merged rows keep insertion order"
+assert_eq "$(envelope_body "$RECOVERY" | cut -f1)" $'CHILD-2\nCHILD-3' "depth-order control fails when merged rows keep insertion order"
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
@@ -665,6 +742,12 @@ STATELESS_MUTANT="$SANDBOX/skills/orch/scripts/container-close-stateless-mutant"
 assert_eq "$(grep -Fc '[[ -n "$state" ]] || { echo "container-close: recovery record for $id has no state"' "$SCRIPT")" "1" "stateless control finds the live refusal"
 awk 'index($0, "[[ -n \"$state\" ]] || { echo \"container-close: recovery record for $id has no state\"") { print "    [[ -n \"$state\" ]] || true"; next } { print }' "$SCRIPT" > "$STATELESS_MUTANT"
 chmod +x "$STATELESS_MUTANT"
+STATELESS_ENVELOPE_MUTANT="$SANDBOX/skills/orch/scripts/container-close-envelope-stateless-mutant"
+assert_eq "$(grep -Fc 'NF != 3 || $1 == "" || $2 == "" ||' "$SANDBOX/skills/orch/scripts/container-close-envelope")" "1" "stateless control finds the envelope state refusal"
+awk 'index($0, "NF != 3 || $1 == \"\" || $2 == \"\" ||") { print "      awk -F '\''\\t'\'' '\''NF != 3 || $1 == \"\" || $3 !~ /^[0-9]+$/ { exit 1 }'\'' \"$body\""; next } { print }' \
+  "$SANDBOX/skills/orch/scripts/container-close-envelope" > "$STATELESS_ENVELOPE_MUTANT"
+cp "$STATELESS_ENVELOPE_MUTANT" "$SANDBOX/skills/orch/scripts/container-close-envelope"
+chmod +x "$SANDBOX/skills/orch/scripts/container-close-envelope"
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
 "$STATELESS_MUTANT" "$SANDBOX" PARENT-1 >/dev/null 2>&1

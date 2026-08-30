@@ -79,9 +79,12 @@ owner-only unresolved envelope at the active recovery pathname. Resolved and
 unresolved generations are first built at a stable owner-only pending pathname.
 Termination is masked through construction and atomic publication. Exhausted
 rename retries retain the pending generation; the next locked startup promotes
-or refuses it before reading active recovery. Every reader refuses an unresolved
-active envelope until the operator reconciles and removes it. Exit zero prints
-one `closed [PARENT_ID]` or `deferred [CHILD_IDS...]` line to stdout.
+or refuses it before reading active recovery. Each envelope carries status,
+schema-checked rows, unresolved source tags, and a completion trailer with row
+count and Git digest. Startup validates the whole pending envelope before
+promotion. Every reader refuses an unresolved active envelope until the operator
+reconciles and removes it. Exit zero prints one `closed [PARENT_ID]` or
+`deferred [CHILD_IDS...]` line to stdout.
 A closed result may include recovery diagnostics on stderr; consumers preserve
 them all.
 Any incomplete read, summary, completion, or repair exits nonzero. `sync-base`

@@ -22,8 +22,10 @@ case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LINEAR="$SCRIPT_DIR/../../linear/scripts/linear.sh"
 GIT_CONTEXT="$SCRIPT_DIR/git-context"
+ENVELOPE="$SCRIPT_DIR/container-close-envelope"
 [[ -x "$LINEAR" ]] || { echo "container-close: Linear CLI is missing or not executable: $LINEAR" >&2; exit 1; }
 [[ -x "$GIT_CONTEXT" ]] || { echo "container-close: git-context is missing or not executable: $GIT_CONTEXT" >&2; exit 1; }
+[[ -x "$ENVELOPE" ]] || { echo "container-close: recovery envelope helper is missing or not executable: $ENVELOPE" >&2; exit 1; }
 command -v flock >/dev/null 2>&1 || { echo "container-close: flock is required" >&2; exit 1; }
 command -v gh >/dev/null 2>&1 || { echo "container-close: gh is required to preserve child PR references" >&2; exit 1; }
 
@@ -77,8 +79,8 @@ recovery_conflict() {
 refuse_unresolved() {
   [[ -e "$RECOVERY" || -L "$RECOVERY" ]] || return 0
   local status
-  IFS= read -r status < "$RECOVERY" \
-    || { echo "container-close: recovery envelope is empty for $PARENT_ID: $RECOVERY" >&2; return 1; }
+  status="$("$ENVELOPE" validate "$RECOVERY" "$PUBLISHED_ROWS")" \
+    || { recovery_conflict "active envelope failed validation"; return $?; }
   case "$status" in
     resolved) return 0 ;;
     unresolved) recovery_conflict "unresolved durable and fresh alternatives require operator reconciliation" ;;
@@ -148,7 +150,7 @@ fetch_recovery_rows() {
       || { echo "container-close: canceled-child repair lookup returned invalid JSON for $PARENT_ID" >&2; return 1; }
   fi
   [[ "$(wc -l < "$CURRENT" | tr -d ' ')" -eq ${#ids[@]} ]] \
-    || { echo "container-close: canceled-child repair lookup was incomplete for $PARENT_ID" >&2; return 1; }
+    || { recovery_conflict "recovery lookup was incomplete"; return $?; }
 }
 
 restore_signal_traps() {
@@ -172,25 +174,25 @@ settle_pending() {
   [[ -f "$PENDING_RECOVERY" && ! -L "$PENDING_RECOVERY" && -O "$PENDING_RECOVERY" ]] \
     || { echo "container-close: pending recovery generation is not an owned regular file: $PENDING_RECOVERY" >&2; return 1; }
   local status
-  IFS= read -r status < "$PENDING_RECOVERY" || { recovery_conflict "pending generation is empty" "$PENDING_RECOVERY"; return $?; }
-  [[ "$status" == resolved || "$status" == unresolved ]] \
-    || { recovery_conflict "pending generation has invalid status $status" "$PENDING_RECOVERY"; return $?; }
+  status="$("$ENVELOPE" validate "$PENDING_RECOVERY" "$PUBLISHED_ROWS")" \
+    || { recovery_conflict "pending generation failed validation" "$PENDING_RECOVERY"; return $?; }
   atomic_replace_recovery "$PENDING_RECOVERY" \
     || { recovery_conflict "pending generation could not be promoted" "$PENDING_RECOVERY"; return $?; }
 }
 
 load_resolved_active() {
-  refuse_unresolved || return 1
-  sed '1d' "$RECOVERY" > "$ACTIVE_ROWS" \
-    || { echo "container-close: cannot read resolved recovery envelope for $PARENT_ID" >&2; return 1; }
+  local status
+  status="$("$ENVELOPE" validate "$RECOVERY" "$ACTIVE_ROWS")" \
+    || { recovery_conflict "active envelope failed validation"; return $?; }
+  [[ "$status" == resolved ]] || { recovery_conflict "active envelope is unresolved"; return $?; }
   load_recovery_rows "$ACTIVE_ROWS"
 }
 
 publish_unresolved() {
   trap '' INT TERM HUP
-  if ! printf 'unresolved\n' > "$PENDING_RECOVERY" || ! chmod 600 "$PENDING_RECOVERY" || ! awk -F '\t' 'BEGIN { OFS="\t" }
+  if ! awk -F '\t' 'BEGIN { OFS="\t" }
     { source=(FILENAME == ARGV[1] ? "durable" : "fresh"); print $1, $2, $3, source }
-  ' "$ACTIVE_ROWS" "$SNAPSHOT" >> "$PENDING_RECOVERY" || ! atomic_replace_recovery "$PENDING_RECOVERY"; then
+  ' "$ACTIVE_ROWS" "$SNAPSHOT" > "$PUBLISHED_ROWS" || ! "$ENVELOPE" write unresolved "$PUBLISHED_ROWS" "$PENDING_RECOVERY" || ! atomic_replace_recovery "$PENDING_RECOVERY"; then
     restore_signal_traps
     echo "container-close: cannot publish unresolved recovery alternatives for $PARENT_ID" >&2
     return 1
@@ -210,8 +212,6 @@ publish_recovery() {
   fi
   trap '' INT TERM HUP
   recovery_tmp="$PENDING_RECOVERY"
-  printf 'resolved\n' > "$recovery_tmp" \
-    || { restore_signal_traps; echo "container-close: cannot initialize recovery envelope for $PARENT_ID" >&2; return 1; }
   if [[ -s "$ACTIVE_ROWS" ]]; then
     awk -F '\t' 'BEGIN { OFS="\t" }
       NF != 3 || $1 == "" || $2 == "" || $3 !~ /^[0-9]+$/ { bad=1; exit }
@@ -223,23 +223,20 @@ publish_recovery() {
           if (depths[order[j]] > depths[order[i]]) { swap=order[i]; order[i]=order[j]; order[j]=swap }
         for (i=1; i<=count; i++) print order[i], states[order[i]], depths[order[i]]
       }
-    ' "$ACTIVE_ROWS" "$SNAPSHOT" >> "$recovery_tmp" || {
+    ' "$ACTIVE_ROWS" "$SNAPSHOT" > "$PUBLISHED_ROWS" || {
       rm -f -- "$recovery_tmp"
       publish_unresolved || return 1
       recovery_conflict "durable and fresh rows disagree; alternatives saved"
       return $?
     }
-  elif ! awk '{ print }' "$SNAPSHOT" >> "$recovery_tmp"; then
-    rm -f -- "$recovery_tmp"
+  elif ! awk '{ print }' "$SNAPSHOT" > "$PUBLISHED_ROWS"; then
     restore_signal_traps
     echo "container-close: cannot copy recovery record for $PARENT_ID" >&2
     return 1
   fi
   ids=(); states=(); depths=()
-  sed '1d' "$recovery_tmp" > "$PUBLISHED_ROWS" \
-    || { rm -f -- "$recovery_tmp"; echo "container-close: cannot validate recovery envelope for $PARENT_ID" >&2; return 1; }
   load_recovery_rows "$PUBLISHED_ROWS" || { restore_signal_traps; return 1; }
-  if ! chmod 600 "$recovery_tmp" || ! atomic_replace_recovery "$recovery_tmp"; then
+  if ! "$ENVELOPE" write resolved "$PUBLISHED_ROWS" "$recovery_tmp" || ! atomic_replace_recovery "$recovery_tmp"; then
     restore_signal_traps
     echo "container-close: cannot publish recovery record for $PARENT_ID" >&2
     return 1
