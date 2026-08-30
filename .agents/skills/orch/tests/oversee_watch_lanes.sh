@@ -638,21 +638,31 @@ assert_eq "$(head -1 <<<"$out")" "EVENT idle-after-return gh-2" \
   "an idle prompt on two consecutive passes is the event" "$err"
 assert_contains "$out" "the PR is merged" "the pane tail follows the idle event" "$err"
 
-# Codex's ready prompt reads differently and counts the same. Its composer
-# draws no submit hint at all — only the marker and either the placeholder or
-# an unsent draft — so the marker is what has to carry idleness. The fixture
-# is the capture: the hint this case used to assert on renders nowhere here.
+# Codex's ready prompt reads differently and counts the same. The fixture is
+# the state this event is named for: a lane that finished its turn and is
+# waiting. Codex draws no submit hint at its composer — only the marker and
+# either the placeholder or an unsent draft — so the marker carries idleness,
+# and the hint this case used to assert on renders on none of these screens.
 new_case idle_after_return_codex
 printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
-cat "$CODEX_PANES/codex-composer-idle.txt" > "$STUB_DIR/pane-gh-2.txt"
+cat "$CODEX_PANES/codex-idle-after-turn.txt" > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e4b2"
 out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT idle-after-return gh-2" \
-  "a codex lane at its composer is idle too" "$err"
+  "a codex lane that finished its turn is idle too" "$err"
 assert_not_contains "$(cat "$STUB_DIR/pane-gh-2.txt")" "to submit message" \
   "the real composer carries no submit hint, so the marker alone decides" "$err"
 
-# ...and holding an unsent draft, which has the same shape as a taken turn
+# ...a composer the lane never took a turn at, and one holding an unsent
+# draft, which has the same shape as a turn already taken
+new_case idle_after_return_codex_composer
+printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
+cat "$CODEX_PANES/codex-composer-idle.txt" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e4b2a"
+out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT idle-after-return gh-2" \
+  "a codex lane at a fresh composer is idle too" "$err"
+
 new_case idle_after_return_codex_draft
 printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
 cat "$CODEX_PANES/codex-composer-draft.txt" > "$STUB_DIR/pane-gh-2.txt"
@@ -660,6 +670,26 @@ err="$TMP_ROOT/e4b2b"
 out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT idle-after-return gh-2" \
   "a codex composer holding a draft is idle too" "$err"
+
+# The gate that makes the Codex marker safe to read as an idle prompt. Codex
+# draws its composer BELOW the working indicator, so the marker is on screen
+# for the whole turn and WORKING_RE alone keeps a busy lane out. It matches
+# through `to interrupt`, which is what `• Working (8s • esc to interrupt)`
+# carries; refresh this capture against a Codex that words it differently and
+# this case goes red rather than waking every busy lane.
+new_case idle_after_return_codex_working
+printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
+cat "$CODEX_PANES/codex-working.txt" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e4b2c"
+out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_contains "$(cat "$STUB_DIR/pane-gh-2.txt")" "› Ask Codex to do anything" \
+  "a busy codex screen draws its composer, so the marker cannot decide alone" "$err"
+assert_contains "$(cat "$STUB_DIR/pane-gh-2.txt")" "esc to interrupt" \
+  "the interrupt hint is the alternative carrying the gate, not the token counter" "$err"
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" \
+  "a working codex lane is not idle, its marker notwithstanding" "$err"
+assert_not_contains "$out" "EVENT idle-after-return" \
+  "WORKING_RE is what keeps the codex marker from waking a busy lane" "$err"
 
 # The idle check reads the same liveness answer too
 new_case idle_after_return_wrapped_shell

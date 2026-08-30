@@ -1,0 +1,40 @@
+  repository settings, auto-merge may wait for B to update, trigger another test cycle, or merge B with results that are
+  now stale. Auto-merge automates the final click, but it does not necessarily coordinate competing changes.
+
+  A merge queue creates a candidate based on the branch state that would actually exist when the queued change lands.
+  After A merges, the queue builds and tests B on top of A. B reaches the target branch only if that candidate passes
+  the required checks. If the branch changes again before B lands, the queue may rebuild the candidate and rerun its
+  checks. This gives the repository a stronger guarantee: the system tested the proposed result, not merely the pull
+  request in isolation against yesterday’s branch tip.
+
+  Queues also impose order. Ready pull requests enter a line, although administrators may provide priorities or allow
+  urgent changes to move ahead. Some systems test one entry at a time. Others use speculative execution, preparing later
+  entries while earlier ones are still running. A queue may also batch several pull requests into one candidate to
+  improve throughput. Batching is faster, but a failed batch requires the system to identify which change caused the
+  problem. The exact strategy differs by platform, but the queue owns sequencing. Plain auto-merge generally leaves
+  sequencing to whichever pull request becomes eligible first.
+
+  Failure behavior is another practical difference. If a queued candidate fails, the queue can remove that entry,
+  preserve the healthy entries behind it, and continue processing. The failed pull request returns to its author with
+  evidence tied to the combined branch state. A merge conflict, new commit, dismissed approval, or changed requirement
+  may also remove or rebuild an entry. Auto-merge usually has a narrower response. It keeps waiting until the individual
+  pull request becomes eligible, or disables itself when the pull request changes.
+
+  Neither mechanism replaces continuous integration or branch protection. Reviews and required checks still determine
+  whether a change is ready. The queue adds a controlled validation step between “ready” and “merged.” That step costs
+  time and computing capacity. Flaky tests can stall a queue, long test suites can increase waiting time, and poor queue
+  visibility can frustrate developers. Teams therefore need sensible timeouts, retry policies, priority rules, and clear
+  status reporting.
+
+  Plain auto-merge works well when changes arrive infrequently, checks are fast, and collisions are rare. It removes
+  routine waiting with little operational complexity. A merge queue becomes valuable when many developers merge
+  concurrently or when keeping the target branch green matters more than landing each change at the first possible
+  moment. In short, auto-merge asks, “May this pull request merge now?” A merge queue asks, “Can this pull request
+  safely become the next state of the branch?”
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+› Ask Codex to do anything
+
+  Context 99% left · /var/tmp/claude/claude-1000/-home-method-dev-kendex/19f120b0-90ae-4c87-aefc-59eec757deb9/scratchpa…
