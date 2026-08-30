@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# One-shot detached launcher for queue-wait. It publishes one atomic verdict
+# artifact and exits; no resident watcher or shared polling service is created.
+set -euo pipefail
+
+SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/${BASH_SOURCE[0]##*/}"
+
+die() {
+  echo "queue-wait-runtime: $1" >&2
+  exit 1
+}
+
+safe_artifact_path() {
+  local artifact="$1" parent
+  [[ "$artifact" == /* ]] || die "artifact path must be absolute"
+  [[ "$artifact" != *$'\r'* && "$artifact" != *$'\n'* ]] \
+    || die "artifact path contains CR or LF"
+  parent="${artifact%/*}"
+  [[ -d "$parent" && ! -L "$parent" ]] \
+    || die "artifact directory is missing, unsafe, or a symlink: $parent"
+  [[ ! -e "$artifact" && ! -L "$artifact" ]] \
+    || die "artifact path already exists: $artifact"
+}
+
+publish_error() {
+  local temp="$1" pr="$2" status="$3"
+  jq -n --argjson pr "$pr" --argjson rc "$status" \
+    '{status:"error", pr_number:$pr, verdict:"unknown",
+      error:"detached queue-wait exited without a valid verdict",
+      worker_exit_code:$rc}' > "$temp"
+}
+
+supervise() {
+  local waiter="$1" artifact="$2" runtime_dir="$3"
+  shift 3
+  local pr="${1:-}" temp="$runtime_dir/verdict.tmp" log="$runtime_dir/worker.log"
+  local worker_rc=0 worker_pid="" worker_reaped=false
+
+  stop_worker() {
+    if [[ -n "$worker_pid" ]] && ! $worker_reaped; then
+      kill -TERM -- "-$worker_pid" 2>/dev/null || true
+      wait "$worker_pid" 2>/dev/null || true
+      worker_reaped=true
+    fi
+  }
+  cleanup_supervisor() {
+    stop_worker
+    rm -rf -- "$runtime_dir"
+  }
+  trap cleanup_supervisor EXIT
+  trap 'exit 143' TERM HUP
+  trap 'exit 130' INT
+
+  [[ -x "$waiter" ]] || die "queue-wait is missing or not executable: $waiter"
+  [[ "$pr" =~ ^[1-9][0-9]*$ ]] || die "worker PR number is malformed"
+  safe_artifact_path "$artifact"
+  (umask 077 && set -C && : > "$runtime_dir/ready") \
+    || die "cannot publish worker readiness"
+
+  set -m
+  "$waiter" "$@" > "$temp" 2> "$log" &
+  worker_pid=$!
+  set +m
+  set +e
+  wait "$worker_pid"
+  worker_rc=$?
+  set -e
+  worker_reaped=true
+
+  if ! jq -e --argjson pr "$pr" '
+      type == "object"
+      and .pr_number == $pr
+      and (.status | IN("complete", "timeout", "error"))
+      and (.verdict | IN("merged", "ejected", "disarmed", "dequeued",
+                          "closed", "queued", "not_queued", "unknown"))
+    ' "$temp" >/dev/null 2>&1; then
+    publish_error "$temp" "$pr" "$worker_rc"
+  fi
+
+  chmod 600 "$temp" || die "cannot secure verdict artifact"
+  if ! ln "$temp" "$artifact"; then
+    die "cannot publish verdict without overwriting another file: $artifact"
+  fi
+  trap - EXIT TERM HUP INT
+  rm -rf -- "$runtime_dir"
+}
+
+launch() {
+  local waiter="$1" artifact="$2"
+  shift 2
+  local parent runtime_dir supervisor_pid attempt
+
+  safe_artifact_path "$artifact"
+  parent="${artifact%/*}"
+  runtime_dir=$(mktemp -d "$parent/.queue-wait-runtime.XXXXXX") \
+    || die "cannot create detached runtime directory"
+  chmod 700 "$runtime_dir" || die "cannot secure detached runtime directory"
+
+  "$SELF" supervise "$waiter" "$artifact" "$runtime_dir" "$@" \
+    </dev/null >/dev/null 2>&1 &
+  supervisor_pid=$!
+
+  for ((attempt = 0; attempt < 100; attempt++)); do
+    if [[ -f "$runtime_dir/ready" || -s "$artifact" ]]; then
+      printf 'artifact: %s\n' "$artifact"
+      printf 'watch: detached\n'
+      return 0
+    fi
+    if ! kill -0 "$supervisor_pid" 2>/dev/null; then
+      wait "$supervisor_pid" 2>/dev/null || true
+      rm -rf -- "$runtime_dir"
+      die "detached worker exited during setup"
+    fi
+    sleep 0.05
+  done
+
+  kill "$supervisor_pid" 2>/dev/null || true
+  wait "$supervisor_pid" 2>/dev/null || true
+  rm -rf -- "$runtime_dir"
+  die "detached worker did not finish setup within 5 seconds"
+}
+
+case "${1:-}" in
+  launch)
+    shift
+    [[ $# -ge 5 ]] || die "launch arguments are incomplete"
+    launch "$@"
+    ;;
+  supervise)
+    shift
+    [[ $# -ge 6 ]] || die "supervise arguments are incomplete"
+    supervise "$@"
+    ;;
+  *) die "unknown action: ${1:-}" ;;
+esac

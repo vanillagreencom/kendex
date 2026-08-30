@@ -81,7 +81,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `dev-artifact-check` | Validate a dev round's completion artifact by round id. `--help` + [references/artifact-checks.md](references/artifact-checks.md) |
 | `approval-wait` | Poll the reviewer gate; `--resolve-mode` prints the effective gate mode. `--help` + [references/gates.md](references/gates.md) |
 | `ci-wait` | Block until CI completes on a PR. `--help` + [references/gates.md](references/gates.md) |
-| `queue-wait` | Block until a merge-queue / auto-merge outcome. `--help` + [references/gates.md](references/gates.md) |
+| `queue-wait` | Wait for one merge-queue / auto-merge outcome; `--detach --output PATH` releases the lane and publishes the verdict atomically. `--help` + [references/gates.md](references/gates.md) |
 | `orch-env` | Effective value of a kendex `[env]` setting (process env > `.env.local` > `.kendex/settings.toml` > `kendex.settings.toml` > default) |
 | `spawn-adapter` | Resolve Codex spawn parameters (`spawn`) and the runtime thread budget (`slots`) |
 | `open-terminal` | Terminal handoff; model, effort, and permission flags via `--launch-flags`. `--help` |
@@ -96,6 +96,25 @@ The three waiters exit `3` on hard auth failure — [references/gates.md](refere
 **`workflow-state`.** Run it with no arguments for the action reference. State keys are normalized issue IDs — `issue-N` for GitHub, `PROJ-123` for Linear; `schemas/workflow-state.md`.
 
 **Review-gate modes.** Read the effective gate mode (`approval`, `review`, or `off`) only through `approval-wait --resolve-mode`. [references/gates.md](references/gates.md).
+
+**Detached merge boundary.** At every lane boundary, before routing a new
+command or resuming a workflow, resolve the current issue's workflow state and
+read `.merge_queue_watch`. With `status: "watching"`, a missing artifact means
+the one-shot watch is still running and does not occupy the lane. A present
+artifact must be a regular, valid queue-wait JSON file whose `pr_number`
+matches the record; otherwise stop rather than guess. Verify the live PR head
+still matches the recorded `head_sha` before an open-PR recovery. Then set
+`status` to `"recovering"` or `"finishing"` in the same state before
+resuming the recorded PR. `ejected`, `disarmed`, or `dequeued` resumes the matching recovery row in `merge-pr.md` § 5. `queued` with `cause: stalled` does
+the same; `cause: still_progressing` launches a fresh detached wait without
+re-arming. `merged` resumes `merge-pr.md` § 5 at step 2, using the recorded
+`main_repo_root`, and the lane itself runs every post-merge step through
+cleanup. After merge-pr returns, the lane's outer post-merge flow still owns
+project-specific build, install, and verification. `closed`, `not_queued`, `unknown`, and malformed artifacts follow the
+same fail-closed rows in that table. A `recovering` or `finishing` record is a
+durable resume point: finish that merge-pr path before accepting unrelated
+work. The overseer can wake the lane and confirm its result, but never performs
+those steps for it.
 
 ## Schemas
 
@@ -120,7 +139,7 @@ System dependencies: `jq`; `bash` 3.2; `flock` (util-linux).
 
 ## Runtime Notes
 
-> If you are running in **Codex**: `approval required by policy, but AskForApproval is set to Never` flags the command's SHAPE — never retry it, never wait for approval; rewrite it per [references/codex-runtime.md](references/codex-runtime.md). Polling loops → the orch waiters `.agents/skills/orch/scripts/ci-wait`, `approval-wait`, `queue-wait` — never `github.sh` subcommands. Spawn generated agents through `scripts/spawn-adapter` with `fork_context: false`, then `send_input` a `DELEGATION:`-prefixed `<delegation_format>`.
+> If you are running in **Codex**: `approval required by policy, but AskForApproval is set to Never` flags the command's SHAPE — never retry it, never wait for approval; rewrite it per [references/codex-runtime.md](references/codex-runtime.md). Polling loops → the orch waiters `.agents/skills/orch/scripts/ci-wait`, `approval-wait`, `queue-wait` — never `github.sh` subcommands. Merge-pr uses queue-wait's detached artifact mode; the other waiters remain foreground commands. Spawn generated agents through `scripts/spawn-adapter` with `fork_context: false`, then `send_input` a `DELEGATION:`-prefixed `<delegation_format>`.
 
 > If you are running in **OpenCode**: store the `task_id` returned by `functions.task` in workflow state (`child_sessions[agent].agent_id`, `review_agent_ids[reviewer-name]`) and re-delegate with `functions.task(task_id=<stored_id>)`. Spawn fresh only when no ID is stored, one resume attempt failed, or the task is confirmed dead.
 

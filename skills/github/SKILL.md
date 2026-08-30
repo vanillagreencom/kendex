@@ -114,14 +114,13 @@ parsing stderr:
 | `1`  | BLOCKED | `CLOSED (not merged) PR #N` | PR is closed unmerged; nothing attempted |
 
 Exit `75` is not a resting state: an ejection or a failed protection check
-disarms it silently. The caller that armed it keeps re-running a watcher until
-the PR is `MERGED`
-(`.agents/skills/orch/scripts/queue-wait <N>` or the review-gate reducer
-`GH_REPO=<owner/repo> .agents/skills/review-gate/scripts/pr-watch.sh` — neither
-is durable) and re-arms with `.agents/skills/github/scripts/github.sh pr-merge
-<N> --auto` after repairing what the cause names; verdict routing is in
-README.md § Exit 75 recovery. `await-mergeable` is not that watcher — it
-returns as soon as GitHub computes a merge state.
+disarms it silently. The caller that armed it launches
+`.agents/skills/orch/scripts/queue-wait <N> --detach --output <path>`, records
+that artifact path with the PR and exact head, and re-arms after repairing what
+the verdict names. The one-shot worker writes a durable verdict; it is not a
+watcher daemon. The review-gate reducer can still report fleet attention.
+Verdict routing is in README.md § Exit 75 recovery. `await-mergeable` is not
+that watcher — it returns as soon as GitHub computes a merge state.
 
 A PR that has left `OPEN` is terminal and short-circuits every mode before any
 check, auth, or mutation. `--check` reports it through its `state` field.
