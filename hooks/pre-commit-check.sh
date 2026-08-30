@@ -44,8 +44,12 @@ function setbypass(t) {
 function basename(t) { sub(/^.*\//, "", t); return t }
 function flush_word() { if (HAVEW) { TOK[++NTOK] = W; W = ""; HAVEW = 0 } }
 # split with an empty string is the portable array clear (not `delete TOK`).
-function end_command() {
+function end_command(   m) {
   flush_word()
+  # A live word that is exactly `commit`: the prerequisite the constructs are
+  # asked behind. Read here rather than from judge, which answers about a git
+  # argv; this asks only whether the text spells a commit as a word at all.
+  for (m = 1; m <= NTOK; m++) if (TOK[m] == "commit") CWORD = 1
   if (NTOK > 0) judge()
   split("", TOK); NTOK = 0
 }
@@ -180,11 +184,17 @@ function scan(cmd,   n, i, ch, c2, d, j, start) {
 # Constructs this scanner does not model, named rather than decoded: an alias
 # config key, ANSI-C quoting, a line continuation inside quotes, and a shift
 # operator inside arithmetic, which is not the heredoc this reads it as. Seeing
-# one is the whole rule, and it is asked only of text naming both git and a
-# commit. Each decoder added here invites the next construct, and the answer to
-# text this cannot read is to refuse, not to parse harder.
+# one is the whole rule. Each decoder added here invites the next construct, and
+# the answer to text this cannot read is to refuse, not to parse harder.
+#
+# An alias key defines a commit under another name, so the commit is never a
+# live word and this one carries no commit prerequisite: gating it on the word
+# is disarming it. The other three hide a commit that IS spelled, so they are
+# asked only where some live word is exactly `commit` — quoting joins, so
+# `com<quote><quote>mit` is that word and an anchored grep pattern is not.
 function unmodelled(cmd) {
   if (tolower(cmd) ~ /alias\./) return "an alias config key"
+  if (!CWORD) return ""
   if (index(cmd, "$" SQ) > 0) return "ANSI-C quoting"
   if (QCONT) return "a line continuation inside quotes"
   if (cmd ~ /\(\([^)]*<</) return "a shift inside arithmetic"
@@ -239,11 +249,7 @@ END {
   cmd = jsonstring(rest)
   if (UNREADABLE) { print "unreadable=1"; exit }
   scan(cmd)
-  # A construct is judged only where the text could hold a commit at all, and
-  # both words are read raw because a construct is what the words cannot be
-  # trusted through. Nothing else is this gate to judge, so an ordinary grep
-  # anchored to end-of-line inside quotes passes over a .git path.
-  if (index(cmd, "git") > 0 && index(cmd, "commit") > 0) {
+  if (index(cmd, "git") > 0) {
     u = unmodelled(cmd); if (u != "") { print "unmodelled=" u; exit }
   }
   if (COMMIT) print "commit=1"

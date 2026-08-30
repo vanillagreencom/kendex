@@ -1,19 +1,16 @@
 #!/usr/bin/env bash
-# Tests for the pre-commit-check hook's contract: the command splits into
-# simple commands and only their live words are judged, a quoted word among
-# them; deference to the
-# repository's own armed git pre-commit hook (never a second validation)
-# unless a word in that command sidesteps it; the refusal where nothing is
-# armed; fail-closed when no armed hook exists, and when the payload names a
-# command the hook cannot read. A `-n`, `-c` or `--no-verify` belonging to a
-# heredoc body, another program, or a quoted commit message must pass through
-# without a refusal of its own — a bypass is a word whose WHOLE content is one
-# — and a construct the scanner does not model must leave the words standing.
+# Tests for the pre-commit-check hook's contract: the command splits into simple
+# commands and only their live words are judged, a quoted word among them;
+# deference to the repository's own armed git pre-commit hook (never a second
+# validation) unless a word in that command sidesteps it; the refusal where
+# nothing is armed, and where the payload names a command the hook cannot read.
+# A `-n`, `-c` or `--no-verify` belonging to a heredoc body, another program or
+# a quoted commit message passes without a refusal of its own — a bypass is a
+# word whose WHOLE content is one. A construct the scanner has no rule for
+# leaves the words standing to be judged; the four it names are refused unread.
 #
-# The package script is stubbed inside each fixture repository, where the
-# hook looks for it, so the suite needs no built binary, runs no real chain,
-# and — the property the delegation exists for — never puts a `kendex` on
-# PATH at all.
+# The package script is stubbed inside each fixture repository, so the suite
+# needs no built binary, runs no real chain, and never puts `kendex` on PATH.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -350,11 +347,10 @@ done
 echo
 echo "only live words are judged"
 
-# The three refusals this rule exists to stop, all of them in one day: a `-n`
-# in a heredoc body, a `-c` belonging to another program, and prose naming
-# --no-verify inside a quoted string. The quotes are JSON-escaped because the
-# harness sends them that way, and an unescaped one would end the payload
-# string before the commit.
+# The three refusals this rule exists to stop, all in one day: a `-n` in a
+# heredoc body, a `-c` belonging to another program, and prose naming
+# --no-verify in a quoted string. The quotes are JSON-escaped as the harness
+# sends them; an unescaped one would end the payload before the commit.
 # shellcheck disable=SC2016
 both 'cat <<EOF > tmp/note.md\nrun cat -n on the file\nEOF\ngit commit -m note' 0 2 "a -n in a heredoc body"
 both 'python3 -c \"print(1)\" && git commit -m x' 0 2 "another program's -c"
@@ -463,8 +459,6 @@ both 'PATH+=:/usr/bin git commit -m x' 0 2 "an append assignment with no bypass"
 # A quoted paren inside a substitution desynchronises the scan, and everything
 # after it is guesswork. The fallback runs on an unbalanced command whatever an
 # earlier one looked like — suppressing it there let this bypass through.
-# Double-quoted so the apostrophes inside survive; the $ is escaped so this
-# shell does not run the substitution the hook has to read as text.
 DESYNC="git commit --allow-empty -m x && echo \$(printf ')') && git commit --allow-empty --no-verify -m y"
 both "$DESYNC" 2 2 "a substitution closing on a quoted paren"
 
@@ -491,10 +485,9 @@ both 'git commit -m \"core.hooksPath is not to be touched\"' 0 2 "prose naming t
 echo
 echo "an escaped quote does not close its run"
 
-# A backslash escapes the next character inside a double-quoted or backtick
-# run, so `\"` is not the close. Read as one, everything through the next quote
-# is swallowed and the live command behind it disappears. The flag is assembled
-# because this repository's own hook refuses a command that spells it out.
+# A backslash escapes the next character inside a double-quoted or backtick run,
+# so `\"` is not the close. Read as one, everything through the next quote is
+# swallowed and the live command behind it disappears.
 NV="--no-""verify"
 both "echo \\\"x\\\\\\\" y\\\" && git commit $NV -m \\\"x\\\"" 2 2 "an escaped double quote"
 both 'echo `x\\` y` && git commit '"$NV"' -m `x`' 2 2 "an escaped backtick"
@@ -546,14 +539,27 @@ unmodelled "$ANSIC" "ANSI-C quoting"
 unmodelled 'git commit \"--no-veri\\\nfy\" -m x' "a line continuation inside quotes"
 unmodelled 'x=$(( 1 << 2 )) && git commit -m x' "a shift inside arithmetic"
 
-# The gate reads the raw text, not the words: this hides its subcommand inside
-# the construct, where a gate reading the scanner's verdict would miss it.
-unmodelled "git \$'commit' --allow-empty -m x" "a subcommand inside the construct"
+# Three of the four are asked only where a live word is exactly `commit`, and
+# quoting joins, so this is that word.
+unmodelled "git com''mit \$'--no-verify' -m x" "a quote-split commit word"
 
-# The other half of it, and the KEN-866 regression: a command with no commit in
-# it is never refused for a construct — one of these names git only in a path.
+# The live word, not the word-order verdict: this construct spells the git word,
+# so no argv here is a commit and only the word is left to gate on.
+unmodelled "git status && \$'g''it' commit --no-verify -m x" "a construct spelling the git word"
+
+# The KEN-866 regression: no commit word in the first two, and in the third the
+# word is the pattern `commit$` rather than `commit`.
 both "grep -rn 'foo\$' .git/config" 0 0 "an anchored grep over a .git path"
 both "git log --oneline | grep 'fix\$'" 0 0 "a read-only log piped into an anchored grep"
+both "git log --oneline | grep 'commit\$'" 0 0 "an anchored grep for the word commit"
+
+# Declined on KEN-866, pinned so the decline cannot flip in silence: the one word
+# is `\$commit`, the construct having spelled it rather than split it.
+both "git \$'com''mit' --no-verify -m x" 0 0 "a commit word spelled by the construct"
+
+# The alias key carries no commit prerequisite: it names a commit that is never
+# a live word, so gating it on the word disarms it.
+unmodelled "git -c alias.c='co' co --allow-empty -m x" "an alias key naming no commit"
 
 # The controls. A command with none of these parses as before, and one naming
 # no git at all is not this gate to judge however it is written.
@@ -738,10 +744,10 @@ assert_eq "$rc" "2" "the quoted-path commit is still refused"
 echo
 echo "an unarmed repository is refused, never stood in for"
 
-# Arming is the local act that says a person wants this repository's
-# committed scripts run on their commits, and git clones no hooks — so a
-# fresh checkout has no execution behind it and this hook adds none. The
-# fixtures all carry a script that would announce itself if anything ran it.
+# Arming is the local act that says a person wants this repository's committed
+# scripts run on their commits, and git clones no hooks — so a fresh checkout
+# has no execution behind it and this hook adds none. Every fixture carries a
+# script that would announce itself if anything ran it.
 run_hook "$UNARMED" "$(payload 'git commit -m test')"
 assert_eq "$rc" "2" "an unarmed repository refuses the commit"
 assert_contains "$err" "not armed by kendex" "the refusal says what is wrong"
@@ -752,14 +758,10 @@ run_hook "$DISARMED" "$(payload 'git commit -m test')"
 assert_eq "$rc" "2" "a hook git will not execute is unarmed too"
 assert_eq "$log" "" "and nothing was run beside it"
 
-# The one direction this lane must never fail in. An executable pre-commit
-# at the repository root is what `--git-path hooks` points at when the value
-# is empty, so reading that directory answers about the wrong place — and
-# answers "armed" for a repository whose commits git gates with nothing.
-# Both lanes marked, one of them without the bit git needs. Git skips such
-# a hook in silence, so deferring to its marker stands this lane aside for
-# a gate that does not run. Both lanes are marked deliberately: the missing
-# bit has to be the only thing wrong, or the pin passes on the other lane.
+# The one direction this lane must never fail in. Git skips a hook without the
+# execute bit in silence, so deferring to its marker stands this lane aside for
+# a gate that does not run. Both lanes are marked deliberately: the missing bit
+# has to be the only thing wrong, or the pin passes on the other lane.
 run_hook "$MARKED_NOT_EXEC" "$(payload 'git commit -m test')"
 assert_eq "$rc" "2" "a marked hook without the execute bit is not armed"
 assert_contains "$err" "not armed by kendex" "and the refusal says so"

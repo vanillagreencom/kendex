@@ -333,10 +333,15 @@ describe("pre-commit gate: the bash hook's contract", () => {
 			"cat <<$'EOF'\nbody\nEOF\ngit commit -m x",
 			`git commit "--no-veri\\\nfy" -m x`,
 			"x=$(( 1 << 2 )) && git commit -m x",
-			// The gate is asked of the raw text, not of the words: this one hides
-			// its subcommand inside the construct, so the scanner finds no commit
-			// and only the text does. A gate reading `scan.commit` waves it through.
-			"git $'commit' --allow-empty -m x",
+			// Three of the four are asked only where a live word is exactly
+			// `commit`, and quoting joins, so this is that word.
+			"git com''mit $'--no-verify' -m x",
+			// The live word, not the word-order verdict: this construct spells the
+			// git word, so no argv here is a commit and only the word gates it.
+			"git status && $'g''it' commit --no-verify -m x",
+			// The alias key is the exception, carrying no commit prerequisite: it
+			// names a commit that is never a live word, so the word would disarm it.
+			"git -c alias.c='co' co --allow-empty -m x",
 		]) {
 			for (const repo of [armed, unarmed]) {
 				const { verdict, ran } = await gate(repo, command);
@@ -352,12 +357,14 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		await both("git -c core.pager=cat log", "allow", "allow");
 		expect((await gate(armed, "echo $'hi'")).verdict).toEqual({ kind: "allow" });
 		expect((await gate(armed, "x=$(( 1 << 2 ))")).verdict).toEqual({ kind: "allow" });
-		// The other half of the gate, and the KEN-866 regression: a command with no
-		// commit in it is never refused for carrying a construct. Both of these were
-		// refused — the first because `.git/` names git in a path, the second
-		// because the pipeline opens with a read-only `git log`.
+		// The KEN-866 regression: no commit word in the first two, and in the third
+		// the word is the pattern `commit$` rather than `commit`.
 		await both("grep -rn 'foo$' .git/config", "allow", "allow");
 		await both("git log --oneline | grep 'fix$'", "allow", "allow");
+		await both("git log --oneline | grep 'commit$'", "allow", "allow");
+		// Declined on KEN-866, pinned so the decline cannot flip in silence: this
+		// spells the word rather than splitting it, so the one word is `$commit`.
+		await both("git $'com''mit' --no-verify -m x", "allow", "allow");
 	});
 
 	test("only <<- accepts a tab-indented terminator", async () => {

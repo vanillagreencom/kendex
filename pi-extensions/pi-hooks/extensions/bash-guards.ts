@@ -42,14 +42,17 @@ function setBypass(scan: CommandScan, token: string): void {
  * config key, ANSI-C quoting, a line continuation inside quotes, and a shift
  * operator inside arithmetic, which is not the heredoc this reads it as. Seeing
  * one is the whole rule. Each decoder added here invites the next construct, and
- * the answer to text this cannot read is to refuse, not to parse harder. A
- * construct is judged only where the text could hold a commit at all, and both
- * words are read raw because a construct is what the words cannot be trusted
- * through: `echo $'hi'` and a grep anchored to end-of-line over a `.git` path
- * name no commit and are left alone. */
-function unmodelled(command: string, quotedContinuation: boolean): string | null {
-	if (!command.includes("git") || !command.includes("commit")) return null;
+ * the answer to text this cannot read is to refuse, not to parse harder.
+ *
+ * An alias key defines a commit under another name, so the commit is never a
+ * live word and this one carries no commit prerequisite: gating it on the word
+ * is disarming it. The other three hide a commit that IS spelled, so they are
+ * asked only where some live word is exactly `commit` — quoting joins, so
+ * `com''mit` is that word, while `grep 'commit$'` and `echo $'hi'` are not. */
+function unmodelled(command: string, quotedContinuation: boolean, commitWord: boolean): string | null {
+	if (!command.includes("git")) return null;
 	if (command.toLowerCase().includes("alias.")) return "an alias config key";
+	if (!commitWord) return null;
 	if (command.includes("$'")) return "ANSI-C quoting";
 	if (quotedContinuation) return "a line continuation inside quotes";
 	if (/\(\([^)]*<</.test(command)) return "a shift inside arithmetic";
@@ -109,6 +112,10 @@ export function scanCommand(command: string): CommandScan {
 	const scan: CommandScan = { commit: false, moves: false, bypass: null, unmodelled: null };
 	const n = command.length;
 	let quotedContinuation = false;
+	// A live word that is exactly `commit`: the prerequisite three of the four
+	// constructs are asked behind. Read beside judge, which answers about a git
+	// argv; this asks only whether the text spells a commit as a word at all.
+	let commitWord = false;
 	let tokens: string[] = [];
 	let word = "";
 	let haveWord = false;
@@ -123,6 +130,7 @@ export function scanCommand(command: string): CommandScan {
 	};
 	const endCommand = (): void => {
 		flush();
+		if (tokens.includes("commit")) commitWord = true;
 		if (tokens.length > 0) judge(tokens, scan);
 		tokens = [];
 	};
@@ -267,7 +275,7 @@ export function scanCommand(command: string): CommandScan {
 		}
 	}
 	endCommand();
-	scan.unmodelled = unmodelled(command, quotedContinuation);
+	scan.unmodelled = unmodelled(command, quotedContinuation, commitWord);
 	return scan;
 }
 
