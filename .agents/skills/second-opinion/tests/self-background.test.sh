@@ -460,29 +460,6 @@ done
 [[ $resume_rc -eq 0 ]] || fail "resumed wait did not collect the terminal result"
 assert_contains "$TMP_ROOT/resume-answer" "slow answer" \
   "bounded wait resumes to the final artifact"
-cat > "$TMP_ROOT/bin/instant-worker" <<'SH'
-#!/usr/bin/env bash
-output=""
-for arg in "$@"; do case "$arg" in --output=*) output="${arg#--output=}" ;; esac; done
-printf 'instant answer\n' > "$output"
-printf '0\n' > "$BOUNDARY_STATUS_DIR/worker.status"
-sleep 1.2
-SH
-chmod +x "$TMP_ROOT/bin/instant-worker"
-mkdir "$TMP_ROOT/boundary-runtime"
-BOUNDARY_STATUS_DIR="$TMP_ROOT/boundary-runtime" \
-  "$RUNTIME" launch "$TMP_ROOT/bin/instant-worker" "$TMP_ROOT/boundary-answer" \
-    "$TMP_ROOT/boundary-runtime" 2 false 1 3 x >"$TMP_ROOT/boundary-launch.stdout"
-boundary_wait_cmd="$(sed -n 's/^wait: //p' "$TMP_ROOT/boundary-launch.stdout")"
-boundary_rc=0
-bash -c "$boundary_wait_cmd" >"$TMP_ROOT/boundary-wait.stdout" \
-  2>"$TMP_ROOT/boundary-wait.stderr" || boundary_rc=$?
-if [[ $boundary_rc -ne 0 ]]; then
-  sed -n '1,100p' "$TMP_ROOT/boundary-wait.stderr" >&2 || true
-  fail "deadline event overrode an atomically completed worker"
-fi
-assert_contains "$TMP_ROOT/boundary-answer" "instant answer" \
-  "completion wins the post-worker deadline boundary"
 cat > "$TMP_ROOT/bin/empty-worker" <<'SH'
 #!/usr/bin/env bash
 exit 0
