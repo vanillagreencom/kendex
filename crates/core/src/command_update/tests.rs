@@ -1,14 +1,14 @@
 //! The lookup and the halves it drives, against real files.
 //!
-//! Records are written through `record`'s `_as` seam with the identity
-//! spelled out. None of these cases is about privilege, and the entry
-//! points beside that seam write nothing when the process is root — a
-//! root dev container is one — which would leave the lookups here
-//! answering for a record that was never written.
+//! Records are written through `record`'s own seam with the identity
+//! spelled out. None of these cases is about privilege, and the entries
+//! beside that seam write nothing when the process is root — a root dev
+//! container is one — which would leave the lookups here answering for a
+//! record that was never written.
 
 use super::*;
 use crate::install_channel::Host;
-use record::{record_command_as, record_installed_as};
+use record::{Write, record_as};
 
 mod described;
 
@@ -437,7 +437,7 @@ fn the_command_an_installer_recorded_is_carried_across() {
     }
     let dir = tempfile::tempdir().unwrap();
     let (env, command) = a_kendex_on_this_machine(&dir);
-    record_installed_as(&env, &command, false).unwrap();
+    record_as(&env, Write::Installed(&command), false).unwrap();
     let probed = vec![command.clone()];
 
     let beside = command_beside_app(&Host, &probed, &[], recorded_command(&env).as_ref());
@@ -470,7 +470,7 @@ fn the_command_an_installer_recorded_is_carried_across() {
 fn a_different_file_at_the_recorded_path_is_not_the_recorded_command() {
     let dir = tempfile::tempdir().unwrap();
     let (env, command) = a_kendex_on_this_machine(&dir);
-    record_installed_as(&env, &command, false).unwrap();
+    record_as(&env, Write::Installed(&command), false).unwrap();
     let probed = vec![command.clone()];
 
     // The control: what the same lookup says while the recorded bytes are
@@ -504,13 +504,8 @@ const SOMEONE_ELSES: &[u8] = b"#!/bin/sh\nexec /opt/other/kendex \"$@\"\n";
 fn a_record_of_one_command_does_not_vouch_for_another() {
     let dir = tempfile::tempdir().unwrap();
     let (env, wrapper) = a_kendex_on_this_machine(&dir);
-    record_command_as(
-        &env,
-        Path::new("/home/pat/.local/bin/kendex"),
-        WRAPPER,
-        false,
-    )
-    .unwrap();
+    let theirs = Path::new("/home/pat/.local/bin/kendex");
+    record_as(&env, Write::Command(theirs, WRAPPER), false).unwrap();
 
     assert_eq!(
         command_beside_app(&Host, &[wrapper], &[], recorded_command(&env).as_ref()),

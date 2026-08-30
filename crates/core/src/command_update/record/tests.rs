@@ -2,12 +2,12 @@
 //! The lookup itself lives in the parent; these are the arms that turn on
 //! the record alone, against real files rather than a described machine.
 //!
-//! The writes below go through the `_as` seam with the identity spelled
-//! out, rather than through the entry points that ask this process. None
-//! of these tests is about privilege, and a suite run as root — a root
-//! dev container is one — would otherwise assert against records the
-//! guard refused to write. That the entry points do ask the process is
-//! proved once, in `a_public_write_follows_this_process_uid`.
+//! The writes below go through [`record_as`] with the identity spelled
+//! out, rather than through the entries that ask this process. None of
+//! these tests is about privilege, and a suite run as root — a root dev
+//! container is one — would otherwise assert against records the guard
+//! refused to write. That every entry does ask the process is proved in
+//! `every_public_write_follows_this_process_uid`.
 
 use super::*;
 
@@ -54,7 +54,7 @@ fn a_record_that_is_not_a_path_and_a_digest_is_no_record() {
 
     // The control: the same file, well formed, is read. Without it every
     // assertion above passes for a reader that returns `None` always.
-    record_command_as(&env, Path::new(installed), WRAPPER, false).unwrap();
+    record_as(&env, Write::Command(Path::new(installed), WRAPPER), false).unwrap();
     assert_eq!(
         recorded_command(&env),
         Some(InstalledCommand {
@@ -75,7 +75,7 @@ fn a_first_run_vouches_for_its_own_file_and_no_other() {
     let env = Env::host_rooted(dir.path());
     let ours = dir.path().join("kendex");
     std::fs::write(&ours, b"the binary that ran").unwrap();
-    record_first_run_as(&env, &ours, false).unwrap();
+    record_as(&env, Write::FirstRun(&ours), false).unwrap();
 
     let wrapper = dir.path().join("bin/kendex");
     std::fs::create_dir_all(wrapper.parent().unwrap()).unwrap();
@@ -188,8 +188,8 @@ fn a_run_acting_as_root_writes_no_record() {
     let running = dir.path().join("kendex");
     std::fs::write(&running, WRAPPER).unwrap();
 
-    record_first_run_as(&env, &running, true).unwrap();
-    record_command_as(&env, &running, WRAPPER, true).unwrap();
+    record_as(&env, Write::FirstRun(&running), true).unwrap();
+    record_as(&env, Write::Command(&running, WRAPPER), true).unwrap();
     assert!(
         !file.exists(),
         "{} was written by a root run",
@@ -203,7 +203,7 @@ fn a_run_acting_as_root_writes_no_record() {
 
     // The control. Same home, same file, same bytes, and the only thing
     // that changed is who is making the write.
-    record_first_run_as(&env, &running, false).unwrap();
+    record_as(&env, Write::FirstRun(&running), false).unwrap();
     assert_eq!(
         recorded_command(&env),
         Some(InstalledCommand {
@@ -213,7 +213,7 @@ fn a_run_acting_as_root_writes_no_record() {
         "the bootstrap did not write where the root arm was asked not to"
     );
     let replaced = b"the bytes that replaced it";
-    record_command_as(&env, &running, replaced, false).unwrap();
+    record_as(&env, Write::Command(&running, replaced), false).unwrap();
     assert_eq!(
         recorded_command(&env).unwrap().digest,
         crate::hash::sha256_hex(replaced),
@@ -221,46 +221,67 @@ fn a_run_acting_as_root_writes_no_record() {
     );
 }
 
-/// The guard is wired to this process's own uid and not to a constant.
+/// The guard is wired to this process's own uid and not to a constant,
+/// on every entry that writes a record.
 ///
-/// The one test here that drives a public entry point, and the one that
-/// has to: what the seam above cannot show is that anything reads the uid
-/// at all. So the entry point is called and its answer held against the
-/// uid read independently — from the syscall, not from [`acting_as_root`],
-/// which is the function this is checking the wiring of.
+/// The tests above drive the seam, which is told an identity and so can
+/// say nothing about where the identity came from. These drive the public
+/// entries, and hold each answer against the uid read independently —
+/// from the syscall, not from [`acting_as_root`], which is the function
+/// whose wiring is in question.
 ///
-/// Both directions fall out of that. A build answering `true` always
-/// strands every person on the record they already had, and fails this on
-/// any unprivileged runner, which is every CI job; a build answering
-/// `false` always is the defect this change exists to close, and fails it
-/// under a root runner. Neither uid is skipped and neither passes for
-/// free.
+/// All three, because the seam takes the identity as an argument and an
+/// argument can be a literal. One entry passing its process's answer says
+/// nothing about the next: `record_command` is the write `kendex update`
+/// makes after the bytes land, and a constant there is this defect back
+/// with the bootstrap still covered.
+///
+/// Both directions fall out of the comparison. A build answering `true`
+/// always strands every person on the record they already had, and fails
+/// this on any unprivileged runner, which is every CI job; a build
+/// answering `false` always is the defect this change exists to close, and
+/// fails it under a root runner. Neither uid is skipped and neither passes
+/// for free.
 #[test]
 #[cfg(unix)]
-fn a_public_write_follows_this_process_uid() {
+fn every_public_write_follows_this_process_uid() {
     let privileged = rustix::process::geteuid().is_root();
-    let dir = tempfile::tempdir().unwrap();
-    let env = Env::host_rooted(dir.path());
-    let running = dir.path().join("kendex");
-    std::fs::write(&running, WRAPPER).unwrap();
+    let entries: [(&str, &dyn Fn(&Env, &Path) -> Result<(), String>); 3] = [
+        ("record_command", &|env, path| {
+            record_command(env, path, WRAPPER)
+        }),
+        ("record_first_run", &record_first_run),
+        ("record_installed", &record_installed),
+    ];
 
-    record_first_run(&env, &running).unwrap();
+    // A home of its own for each: a record already there is what
+    // `record_first_run` reads to decide it is not the first, so one home
+    // shared between them would have an earlier entry answering for a
+    // later one.
+    for (entry, write) in entries {
+        let dir = tempfile::tempdir().unwrap();
+        let env = Env::host_rooted(dir.path());
+        let running = dir.path().join("kendex");
+        std::fs::write(&running, WRAPPER).unwrap();
 
-    assert_eq!(
-        recorded_command(&env).map(|record| record.digest),
-        (!privileged).then(|| crate::hash::sha256_hex(WRAPPER)),
-        "the entry point did not follow this process's uid (root: {privileged})"
-    );
+        write(&env, &running).unwrap();
+
+        assert_eq!(
+            recorded_command(&env).map(|record| record.digest),
+            (!privileged).then(|| crate::hash::sha256_hex(WRAPPER)),
+            "{entry} did not follow this process's uid (root: {privileged})"
+        );
+    }
 
     // The control, on a home of its own: the same write told the opposite
-    // identity does the opposite thing. Without it the assertion above
+    // identity does the opposite thing. Without it every assertion above
     // holds for a writer that never writes, and for one that always does.
     let other = tempfile::tempdir().unwrap();
     let env = Env::host_rooted(other.path());
     let running = other.path().join("kendex");
     std::fs::write(&running, WRAPPER).unwrap();
 
-    record_first_run_as(&env, &running, !privileged).unwrap();
+    record_as(&env, Write::FirstRun(&running), !privileged).unwrap();
 
     assert_eq!(
         recorded_command(&env).map(|record| record.digest),

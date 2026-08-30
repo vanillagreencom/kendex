@@ -64,6 +64,46 @@ fn acting_as_root() -> bool {
     false
 }
 
+/// What a run is asking to record. The three entries below differ only in
+/// this value, so [`acting_as_root`] is read in one place: a wrapper that
+/// read it for itself would be a second place to get wrong, and only that
+/// wrapper's own test would ever notice.
+pub(super) enum Write<'a> {
+    /// The path a replacement landed at, and the bytes now there.
+    Command(&'a Path, &'a [u8]),
+    /// The file this process is running from.
+    FirstRun(&'a Path),
+    /// A path whose bytes are still on disk to be read.
+    Installed(&'a Path),
+}
+
+/// Make the write, unless this process is one that may not make it.
+fn record(env: &Env, write: Write<'_>) -> Result<(), String> {
+    record_as(env, write, acting_as_root())
+}
+
+/// The same, told who is making it, so a suite drives either arm whatever
+/// uid it is running under. Every caller outside a test comes through
+/// [`record`], which asks the process.
+///
+/// Guarded here and nowhere below, ahead of every read and every
+/// `create_dir_all`: a root run does nothing at all, rather than part of it
+/// into a tree the invoking account named.
+pub(super) fn record_as(env: &Env, write: Write<'_>, root: bool) -> Result<(), String> {
+    if root {
+        return Ok(());
+    }
+    match write {
+        Write::Command(path, bytes) => write_the_command(env, path, bytes),
+        Write::FirstRun(running) => write_the_first_run(env, running),
+        Write::Installed(path) => {
+            let bytes = std::fs::read(path)
+                .map_err(|error| format!("{} could not be read: {error}", path.display()))?;
+            write_the_command(env, path, &bytes)
+        }
+    }
+}
+
 /// The `kendex` command an installer recorded.
 ///
 /// Absent where nothing has been recorded — an install older than this
@@ -86,23 +126,14 @@ pub fn recorded_command(env: &Env) -> Option<InstalledCommand> {
 /// refuses a command kendex does own rather than replacing one it does not.
 ///
 /// A run acting as root writes nothing and says so with success — see
-/// [`acting_as_root`].
+/// [`record_as`].
 pub fn record_command(env: &Env, path: &Path, bytes: &[u8]) -> Result<(), String> {
-    record_command_as(env, path, bytes, acting_as_root())
+    record(env, Write::Command(path, bytes))
 }
 
-/// The write itself, told who is making it. Split out so a suite can drive
-/// either arm whatever uid it is running under; every caller outside a test
-/// reaches it through [`record_command`], which asks the process.
-pub(super) fn record_command_as(
-    env: &Env,
-    path: &Path,
-    bytes: &[u8],
-    root: bool,
-) -> Result<(), String> {
-    if root {
-        return Ok(());
-    }
+/// The write itself. Reached only through [`record_as`], which has already
+/// established this process may make it.
+fn write_the_command(env: &Env, path: &Path, bytes: &[u8]) -> Result<(), String> {
     let file = env.installed_command_file();
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent)
@@ -182,19 +213,15 @@ fn stage(
 /// direction; `kendex update` rewrites it, because that is the run replacing
 /// the bytes.
 ///
-/// A run acting as root writes nothing here either — see [`acting_as_root`].
+/// A run acting as root writes nothing here either — see [`record_as`].
 pub fn record_first_run(env: &Env, running: &Path) -> Result<(), String> {
-    record_first_run_as(env, running, acting_as_root())
+    record(env, Write::FirstRun(running))
 }
 
-/// The bootstrap itself, told who is making it. Split for the reason
-/// [`record_command_as`] is, and guarded before the directory is made:
-/// `create_dir_all` under a root run is already root writing into a tree
-/// the invoking account named.
-pub(super) fn record_first_run_as(env: &Env, running: &Path, root: bool) -> Result<(), String> {
-    if root {
-        return Ok(());
-    }
+/// The bootstrap itself. Reached only through [`record_as`], which refuses
+/// a root run ahead of the `create_dir_all` below: that call is already
+/// root writing into a tree the invoking account named.
+fn write_the_first_run(env: &Env, running: &Path) -> Result<(), String> {
     let file = env.installed_command_file();
     let Some(parent) = file.parent() else {
         return Err(format!("{} names no directory", file.display()));
@@ -359,20 +386,10 @@ fn stamp(file: &Path, written_at: std::time::SystemTime) -> Result<(), String> {
 /// The same record, taken from a file already on disk — the running
 /// command identifying itself, where the bytes are not in hand.
 ///
-/// A run acting as root writes nothing here either — see
-/// [`acting_as_root`].
+/// A run acting as root writes nothing here either, and does not read the
+/// file to find that out — see [`record_as`].
 pub fn record_installed(env: &Env, path: &Path) -> Result<(), String> {
-    record_installed_as(env, path, acting_as_root())
-}
-
-/// The read and the write, told who is making them. Split for the reason
-/// [`record_command_as`] is. The read happens either way: it is the caller's
-/// own file, and a root arm that skipped it would leave a suite unable to
-/// tell a refused write from a missing fixture.
-pub(super) fn record_installed_as(env: &Env, path: &Path, root: bool) -> Result<(), String> {
-    let bytes = std::fs::read(path)
-        .map_err(|error| format!("{} could not be read: {error}", path.display()))?;
-    record_command_as(env, path, &bytes, root)
+    record(env, Write::Installed(path))
 }
 
 #[cfg(test)]
