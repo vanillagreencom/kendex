@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -308,13 +308,6 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    /// The skill names this manifest declares. What a caller comparing two
-    /// readings of the same file asks: the difference is what a mutation
-    /// declared, which is how `add` knows which skills arrived on its run.
-    pub fn skill_names(&self) -> BTreeSet<String> {
-        self.skills.keys().cloned().collect()
-    }
-
     pub fn declared(&self, kind: crate::model::ItemKind) -> &BTreeMap<String, ItemDecl> {
         static EMPTY: std::sync::LazyLock<BTreeMap<String, ItemDecl>> =
             std::sync::LazyLock::new(BTreeMap::new);

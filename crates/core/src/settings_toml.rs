@@ -1,8 +1,8 @@
 //! One reader for the settings grammar, under every scan over it.
 //!
 //! Three readers walk these files — the strict template check
-//! ([`crate::settings_template`]), seeding and its comment refresh
-//! ([`crate::settings_seed`]), and the consumer-file view
+//! ([`crate::settings_template`]), seeding ([`crate::settings_seed`]),
+//! and the consumer-file view
 //! ([`crate::settings_file`]). Each asks a different question, and all
 //! three used to answer it a line at a time with no memory. A multiline
 //! value carries its content on the lines after the one that opens it, and

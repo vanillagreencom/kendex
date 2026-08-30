@@ -448,7 +448,9 @@ fn a_broken_declaration_before_a_valid_one_never_becomes_the_owner() {
 
     // The selection everyone asks.
     assert_eq!(
-        writable_for(&shipped, "MODE").map(|s| s.owner.as_str()),
+        writable_all(&shipped, "MODE")
+            .next()
+            .map(|s| s.owner.as_str()),
         Some("good")
     );
     assert_eq!(

@@ -83,8 +83,10 @@ pub fn add_seeded(
     let mut manifest = manifest_for_mutation(env, scope)?;
     // Arrival is the manifest gaining a declaration, and it is the one
     // thing that applies a settings template. Committed state, so a clone
-    // carrying no lock re-arrives nothing.
-    let declared = manifest.skill_names();
+    // carrying no lock re-arrives nothing. Read expanded, because a bundle
+    // declaration accounts for its members and their own declarations are
+    // taken away as it does.
+    let declared = crate::engine::expansion::skills_installed(env, scope, &manifest);
     if let Some((name, decl)) = seed {
         manifest.sources.insert(name, decl);
     }
@@ -152,7 +154,8 @@ pub fn add_seeded(
     }
 
     let options = PlanOptions {
-        arriving_skills: &manifest.skill_names() - &declared,
+        arriving_skills: &crate::engine::expansion::skills_installed(env, scope, &manifest)
+            - &declared,
         ..PlanOptions::default()
     };
     let mut report = plan_scope(env, scope, &manifest, &lock, &options)?;

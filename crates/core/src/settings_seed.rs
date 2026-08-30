@@ -94,7 +94,7 @@ impl EnvEntry {
 }
 
 /// One entry as a scope plans it: the template's lines plus the skill that
-/// ships them — the owner every later comment refresh is gated on.
+/// ships them — the skill a note names when two disagree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeededEnv {
     pub entry: EnvEntry,
@@ -264,13 +264,6 @@ pub fn writable_all<'a>(
         .filter(move |seeded| seeded.entry.key == key && seeded.entry.complete())
 }
 
-/// The declaration that speaks for a key: the first one seeding can write
-/// whole. `None` where no installed template spells the key's value out in
-/// full, which is the case [`unterminated_notes`] owns.
-pub fn writable_for<'a>(entries: &'a [SeededEnv], key: &str) -> Option<&'a SeededEnv> {
-    writable_all(entries, key).next()
-}
-
 /// Why this pass may put a key in the consumer's file, which is the whole
 /// of what an install writes there.
 ///
@@ -300,24 +293,6 @@ impl Seeding {
             arriving: arriving.into_iter().collect(),
             edited: edited.into_iter().collect(),
         }
-    }
-
-    /// What one pass over a scope may write. A skill is arriving when the
-    /// lock does not carry it yet: a name already there is one an earlier
-    /// pass installed, so this pass is that skill's refresh and its
-    /// template writes nothing.
-    pub fn for_pass(
-        entries: &[SeededEnv],
-        installed: &std::collections::BTreeSet<String>,
-        edited: impl IntoIterator<Item = String>,
-    ) -> Self {
-        Seeding::new(
-            entries
-                .iter()
-                .map(|seeded| seeded.owner.clone())
-                .filter(|owner| !installed.contains(owner)),
-            edited,
-        )
     }
 
     /// Whether this declaration is one the pass writes. The one statement

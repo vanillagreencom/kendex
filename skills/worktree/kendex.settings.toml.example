@@ -14,7 +14,7 @@ WORKTREE_DEFAULT_BRANCH = ""
 # Where worktrees live; empty = <parent-of-checkout>/.worktrees/<checkout-name>.
 # Never point it inside the repo root — watched build outputs exhaust
 # inotify.
-# WORKTREE_BASE_DIR = "~/dev/.worktrees/myproject"
+WORKTREE_BASE_DIR = ""
 
 # Space-separated paths symlinked into every worktree: list only what git
 # does not carry. An entry does nothing when git carries every path under

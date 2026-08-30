@@ -41,17 +41,14 @@ fn cannot_write(scope: &Scope, file: String, detail: String) -> DriftRow {
 /// What this pass writes into the project's kendex.settings.toml. A skill
 /// arriving here writes the keys its template marks `# required`, and a
 /// save writes the keys it names; a key the file already assigns anywhere
-/// is never touched, and a skill the lock already carries writes nothing at
-/// all. Seeded comment blocks whose template improved are refreshed while
-/// provably unedited, gated by the lock's per-key ledger, which this plan
-/// carries forward on `new_lock`.
+/// is never touched, and a pass that arrives no skill and carries no save
+/// writes nothing at all.
 ///
-/// A person's own edits are the third thing that reaches this file, and
+/// A person's own edits are the other thing that reaches this file, and
 /// they compose here rather than following as a second write: a manifest
-/// save re-plans the scope and may seed or refresh this same file, and a
-/// second write would bind to bytes the first one replaced. Seeds,
-/// refreshes and edits become one `WriteFile` with one precondition, and
-/// the ledger they all move rides out on the one lock this pass writes.
+/// save re-plans the scope and may seed this same file, and a second write
+/// would bind to bytes the first one replaced. Seeds and edits become one
+/// `WriteFile` under one precondition.
 ///
 /// The notes ride out either way: a key several packages give different
 /// defaults, and a required key this file still does not answer, are worth

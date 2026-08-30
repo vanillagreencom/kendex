@@ -264,10 +264,9 @@ pub struct PlanOptions {
     pub manifest_base: Option<crate::base::Base>,
     /// Settings values a person edited, and the base of the settings-file
     /// copy they were read from. A manifest save re-plans the scope and
-    /// may seed or refresh kendex.settings.toml itself, so these are an
-    /// input to that plan rather than a second write after it: one
-    /// `WriteFile` carries the seeds, the comment refreshes and these
-    /// edits together, under one precondition and one lock snapshot.
+    /// may seed kendex.settings.toml itself, so these are an input to that
+    /// plan rather than a second write after it: one `WriteFile` carries
+    /// the seeds and these edits together, under one precondition.
     pub settings_draft: Option<crate::settings_file::SettingsDraft>,
     /// Skills whose settings template this plan applies, by name.
     ///

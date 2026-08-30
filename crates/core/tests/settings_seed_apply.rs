@@ -277,6 +277,104 @@ fn add_arrives_what_the_manifest_gains_and_a_second_add_arrives_nothing() {
     );
 }
 
+/// A bundle declaration is the manifest gaining a declaration that covers
+/// its members, so their templates arrive with it. `subsume` takes the
+/// members' own declarations away as the bundle lands, so the raw skills
+/// map calls every one of them absent — a consumer installing a bundle
+/// carrying `linear` would get it with no `LINEAR_TEAM`, and no later pass
+/// could recover it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_bundle_arrives_the_skills_it_carries() {
+    let f = fixture(true);
+    let catalog = f
+        .project
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("catalog");
+    let member = catalog.join("skills/carried");
+    fs::create_dir_all(&member).unwrap();
+    fs::write(
+        member.join("SKILL.md"),
+        "---\nname: carried\ndescription: comes with the set\n---\nBody.\n",
+    )
+    .unwrap();
+    fs::write(
+        member.join("kendex.settings.toml.example"),
+        "[env]\n# The team it writes to.\nCARRIED_TEAM = \"\" # required\n\n# How deep.\nCARRIED_DEPTH = \"2\"\n",
+    )
+    .unwrap();
+    fs::write(
+        catalog.join("kendex.toml"),
+        "[bundles.kit]\ndescription = \"a set\"\nskills = [\"carried\"]\n",
+    )
+    .unwrap();
+
+    let request = kendex_core::engine::ops::AddRequest {
+        source: Some("cat".to_owned()),
+        bundles: vec!["kit".to_owned()],
+        ..Default::default()
+    };
+    let report = kendex_core::engine::ops::add(&f.env, &f.scope, &request).unwrap();
+    apply::execute(&f.env, &report.plan, None).unwrap();
+
+    let settings = fs::read_to_string(f.project.join("kendex.settings.toml")).unwrap();
+    assert!(settings.contains("CARRIED_TEAM = \"\""), "{settings}");
+    assert!(!settings.contains("CARRIED_DEPTH"), "{settings}");
+    // The manifest declares the bundle and not the member, which is why
+    // reading the skills map alone answered no.
+    let text = fs::read_to_string(f.project.join("kendex.toml")).unwrap();
+    assert!(text.contains("[bundles.kit]"), "{text}");
+    assert!(!text.contains("[skills.carried]"), "{text}");
+}
+
+/// A dependency arrives with whatever pulled it in, for the same reason:
+/// nothing declares it by name and the expansion is where it exists.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_dependency_arrives_with_the_skill_that_needs_it() {
+    let f = fixture(true);
+    let catalog = f
+        .project
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("catalog");
+    for (name, front) in [
+        ("needs", "dependencies:\n  required: [needed]\n"),
+        ("needed", ""),
+    ] {
+        let dir = catalog.join("skills").join(name);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: the {name} skill\n{front}---\nBody.\n"),
+        )
+        .unwrap();
+    }
+    fs::write(
+        catalog.join("skills/needed/kendex.settings.toml.example"),
+        "[env]\n# The lane it runs.\nNEEDED_LANE = \"\" # required\n",
+    )
+    .unwrap();
+
+    let request = kendex_core::engine::ops::AddRequest {
+        source: Some("cat".to_owned()),
+        skills: vec!["needs".to_owned()],
+        ..Default::default()
+    };
+    let report = kendex_core::engine::ops::add(&f.env, &f.scope, &request).unwrap();
+    apply::execute(&f.env, &report.plan, None).unwrap();
+
+    let settings = fs::read_to_string(f.project.join("kendex.settings.toml")).unwrap();
+    assert!(settings.contains("NEEDED_LANE = \"\""), "{settings}");
+    let text = fs::read_to_string(f.project.join("kendex.toml")).unwrap();
+    assert!(!text.contains("[skills.needed]"), "{text}");
+}
+
 /// A required key nothing writes is named on every pass, so a template
 /// that gains one after release reaches the consumer as a note rather than
 /// as a write into their file.

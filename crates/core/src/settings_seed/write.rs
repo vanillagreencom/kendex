@@ -85,8 +85,8 @@ pub fn merge(
         .collect();
     // Each distinct key once, in declaration order, taken from the one
     // declaration that speaks for it. The winner comes from `seeding_for`
-    // rather than being re-derived here, so the bytes written, the ledger
-    // and the notes cannot name three different skills.
+    // rather than being re-derived here, so the bytes written and the skill
+    // a note names cannot be two different answers.
     let mut seen: BTreeSet<&str> = BTreeSet::new();
     let missing: Vec<&SeededEnv> = entries
         .iter()

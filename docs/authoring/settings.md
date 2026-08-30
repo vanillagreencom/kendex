@@ -43,8 +43,7 @@ themselves.
 
 Everything else stays declared and is never written. A key holding the value
 your own code reads when nothing assigns it buys the consumer nothing and
-costs them a line in a tracked file, which comes back on the next run every
-time they delete it.
+costs them a line in a tracked file.
 
 The marker is the template's own word. It is cut off before the assignment is
 written, so a consumer's file never carries it. Write it after the value and
@@ -54,11 +53,16 @@ the key is never written, and it is never reported as unanswered either,
 because nothing downstream knows it was ever marked.
 
 The write happens once, when the skill arrives, and arrival is the consumer's
-`kendex.toml` gaining the declaration. Only `add` does that, so every other
-pass writes nothing: a refresh leaves the file byte-identical, and a key the
-consumer deleted stays deleted, in a fresh clone as much as anywhere. The one
-other thing that inserts a key is a save from the app, which writes the key it
-names so the value has an assignment to land on.
+`kendex.toml` gaining the declaration — read expanded, so a bundle arrives the
+members it carries and a skill arrives the dependencies it pulls in. Only
+`add` does that, so every other pass writes nothing: a refresh leaves the file
+byte-identical, and a key the consumer deleted stays deleted, in a fresh clone
+as much as anywhere. However the manifest gains the declaration counts, so a
+consumer who hand-writes one has already spent the arrival: a later `kendex
+add` of that skill gains nothing and writes nothing, and removing it and
+adding it again is the way back. The one other thing that inserts a key is a
+save from the app, which writes the key it names so the value has an
+assignment to land on.
 
 A marked key nobody has answered is reported instead. So a template that gains
 a marked key after release does not reach an existing consumer as a write into
@@ -77,9 +81,10 @@ it writes the first declaration in package-name order.
 Nothing ever revisits a block already in the consumer's file. Once a key and
 its comment are there, whether an arrival or a save put them there, they are
 the consumer's: a revised template does not follow the revision in, because
-that would be a write on a pass nobody asked to write. Choose the comment you
-ship with a marked key accordingly, since it is the wording a consumer who
-takes it keeps.
+that would be a write on a pass nobody asked to write. Most of what a
+consumer carries got there through the app, since only marked keys arrive, so
+the comment on any key is the wording the consumer who set it keeps. Revising
+one reaches nobody who already has it.
 
 ## The grammar
 

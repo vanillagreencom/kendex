@@ -237,8 +237,8 @@ fn an_edit_rewrites_only_its_value_span_leaving_comments_and_crlf_intact() {
 }
 
 /// One write, not two: the key is missing from the file, so the same plan
-/// seeds it and sets it, and the ledger records the seed so a later
-/// comment refresh still recognises the block as seeding's own.
+/// seeds it and sets it. Most keys reach a consumer's file only this way,
+/// since an arrival writes the marked ones alone.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_save_that_seeds_a_missing_key_and_sets_it_is_one_write() {
