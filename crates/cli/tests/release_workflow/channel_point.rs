@@ -639,6 +639,32 @@ fn a_channel_a_write_did_not_finish_on_stops_the_run() {
     );
 }
 
+/// A run that stops publishes nothing, the channel itself included. Every
+/// refusal here says nothing was written, and a channel this run created on
+/// its way to stopping would make that false — an empty release candidates
+/// read as no update at all, left behind by a run that reported it had
+/// touched nothing. Both refusals that can follow the creation are driven:
+/// a version nothing can order, and a `dist` holding no manifests.
+#[cfg(unix)]
+#[test]
+fn a_run_that_stops_leaves_no_channel_behind() {
+    let unorderable = point_channel(Channel::Absent, "not a version", &[], &[]);
+    let empty = point_channel_staging(Channel::Absent, "1.0.0-rc2", &[], &[], &[]);
+    for run in [unorderable, empty] {
+        assert_ne!(run.code, 0, "{:?}", run.calls);
+        assert!(
+            run.ran("release create").is_none(),
+            "a channel was published by a run that wrote nothing: {:?}",
+            run.calls
+        );
+        assert_eq!(
+            run.after, None,
+            "the channel is there after a run that said it wrote nothing: {:?}",
+            run.calls
+        );
+    }
+}
+
 /// Whether core reads `latest` as ahead of `running` — the same comparison
 /// the running build makes of the channel it is pointed at, and what the
 /// step in the workflow has to arrive at from bash.

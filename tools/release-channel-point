@@ -110,17 +110,16 @@ state=unknown
 why=""
 current=""
 created=""
+absent=""
 if ! tags=$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate --jq '.[].tag_name'); then
   why="this repository's releases could not be listed"
 elif ! grep -qxF "$CHANNEL" <<< "$tags"; then
-  if gh release create "$CHANNEL" --repo "$GITHUB_REPOSITORY" --prerelease \
-       --title "Pre-release channel" \
-       --notes "The update manifests of the newest kendex pre-release. Nothing here is a download; each manifest names assets on the release it came from."; then
-    created=1
-    state=fresh
-  else
-    why="the ${CHANNEL} channel does not exist and could not be created"
-  fi
+  # Noted, not created. Publishing the channel is a write, and no write may
+  # happen before the verdict below authorizes one: every exit between here
+  # and the upload says nothing was written, and a channel this run brought
+  # into being on its way to stopping would make that sentence false.
+  absent=1
+  state=fresh
 elif ! assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${CHANNEL}" --jq '.assets[].name'); then
   why="the ${CHANNEL} channel is published but its assets could not be read"
 elif ! save_manifests; then
@@ -203,6 +202,19 @@ done < <(uploaded)
 if [ "${#publishing[@]}" -eq 0 ]; then
   echo "::error::Nothing was written to the ${CHANNEL} channel: this run was handed no manifests to publish. Re-run the tag."
   exit 1
+fi
+# The write begins here, past the verdict and past the list. A channel that
+# did not exist is published now, and `created` is what lets the restore take
+# it away again — an empty channel left behind is one candidates read as no
+# update at all.
+if [ -n "$absent" ]; then
+  if ! gh release create "$CHANNEL" --repo "$GITHUB_REPOSITORY" --prerelease \
+       --title "Pre-release channel" \
+       --notes "The update manifests of the newest kendex pre-release. Nothing here is a download; each manifest names assets on the release it came from."; then
+    echo "::error::Nothing was written to the ${CHANNEL} channel: it does not exist and could not be created. Re-run the tag."
+    exit 1
+  fi
+  created=1
 fi
 if ! gh release upload "$CHANNEL" "${publishing[@]}" \
      --repo "$GITHUB_REPOSITORY" --clobber; then
