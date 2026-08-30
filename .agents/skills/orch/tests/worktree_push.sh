@@ -222,8 +222,27 @@ after_restack="$($ARTIFACT_CHECK --worktree "$restack_wt" --issue KEN-RESTACK --
 assert_eq "$(jq -r '.reason' <<<"$after_restack")" "valid" \
   "upstream protected addition is outside the remapped round snapshot"
 
-"$ROUND_WRITE" --worktree "$restack_wt" --issue KEN-RESTACK --round-id 2-2 --item 1 divergent >/dev/null
-divergent_recovery="$restack_wt/tmp/dev-round-KEN-RESTACK-2-2.json"
+"$ROUND_WRITE" --worktree "$restack_wt" --issue KEN-RESTACK --round-id 2-2 --item 1 stale >/dev/null
+stale_auth="$restack_wt/.git/kendex/dev-round-authorizations/KEN-RESTACK-2-2.json"
+jq --arg base "$OLD_A" '.base_sha = $base' "$stale_auth" > "$TMP_ROOT/stale-auth.json"
+mv "$TMP_ROOT/stale-auth.json" "$stale_auth"
+rm -f "$restack_wt/tmp/dev-round-KEN-RESTACK-2-2.json"
+STUB_PUSH_STDOUT="rebase-map: $restack_old $restack_base" \
+  run_push "$restack_state" --worktree "$restack_wt" --issue KEN-RESTACK
+assert_eq "$RUN_RC" "0" "stale authorization missing recovery does not block an unrelated map"
+
+"$ROUND_WRITE" --worktree "$restack_wt" --issue KEN-RESTACK --round-id 3-3 --item 1 active >/dev/null
+rm -f "$restack_wt/tmp/dev-round-KEN-RESTACK-3-3.json"
+STUB_PUSH_STDOUT="rebase-map: $restack_head $restack_base" \
+  run_push "$restack_state" --worktree "$restack_wt" --issue KEN-RESTACK
+assert_eq "$RUN_RC" "1" "active authorization missing recovery fails reconciliation closed"
+assert_contains "$(cat "$run_err")" "recovery copy missing or not regular" \
+  "active missing-recovery refusal names the required copy"
+rm -f "$restack_wt/.git/kendex/dev-round-authorizations/KEN-RESTACK-3-3.json" \
+  "$restack_wt/.git/worktree-push-pending-map-KEN-RESTACK.json"
+
+"$ROUND_WRITE" --worktree "$restack_wt" --issue KEN-RESTACK --round-id 4-4 --item 1 divergent >/dev/null
+divergent_recovery="$restack_wt/tmp/dev-round-KEN-RESTACK-4-4.json"
 jq '.adds = ["tools/not-authorized"]' "$divergent_recovery" > "$TMP_ROOT/divergent-recovery.json"
 mv "$TMP_ROOT/divergent-recovery.json" "$divergent_recovery"
 STUB_PUSH_STDOUT="rebase-map: $restack_head $restack_base" \

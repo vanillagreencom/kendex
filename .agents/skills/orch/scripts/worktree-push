@@ -165,6 +165,12 @@ reconcile_round_authorizations() {
 			printf 'worktree-push: round authorization is not a regular file: %s\n' "$auth" >&2
 			return 1
 		}
+		base_sha="$(jq -er 'select((.base_sha? | type) == "string" and .base_sha != "") | .base_sha' "$auth")" || {
+			printf 'worktree-push: authorization has no usable base_sha: %s\n' "$auth" >&2
+			return 1
+		}
+		new_sha="$(jq -r --arg base "$base_sha" '.[$base] // empty' <<<"$map_json")" || return 1
+		[[ -n "$new_sha" ]] || continue
 		round_id="$(jq -r '.round_id // ""' "$auth")" || return 1
 		[[ "$round_id" =~ ^[A-Za-z0-9._-]+$ && "$round_id" != *..* ]] || {
 			printf 'worktree-push: invalid round id in authorization %s\n' "$auth" >&2
@@ -187,9 +193,6 @@ reconcile_round_authorizations() {
 			printf 'worktree-push: authorization and recovery copy diverge for round %s\n' "$round_id" >&2
 			return 1
 		}
-		base_sha="$(jq -r '.base_sha' "$auth")" || return 1
-		new_sha="$(jq -r --arg base "$base_sha" '.[$base] // empty' <<<"$map_json")" || return 1
-		[[ -n "$new_sha" ]] || continue
 		[[ "$new_sha" != "dropped" ]] || {
 			printf 'worktree-push: round %s base %s was dropped; no exact replacement snapshot is known\n' "$round_id" "$base_sha" >&2
 			return 1
