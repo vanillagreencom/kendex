@@ -781,10 +781,10 @@ lives in one capability table read by core and UI.
   read lossily and the replacements reported. A matched token never
   appears in any message, log or record — only a fingerprint.
 - **The file a harness loads is scanned at full weight, fences included.**
-  A fenced `sh` block in a SKILL.md *is* the instruction. One severity less
-  for content that is plainly quoting: a blockquote, and every line of a
-  skill's supporting files (`tests/`, `fixtures/`, `references/`). Secrets
-  never weigh less anywhere.
+  A fenced `sh` block in a SKILL.md *is* the instruction; a switch counts
+  where the line would run it, never inside a quotation, comment or `case`
+  pattern. One severity less for a blockquote and for a skill's supporting
+  files (`tests/`, `fixtures/`, `references/`); secrets never weigh less.
 - **Rule severities are calibrated against real catalogs.** Deobfuscation
   reports only what has no typographic use — invisible and bidirectional
   characters, letters imitating other letters — while normalizing emoji

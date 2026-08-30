@@ -232,6 +232,72 @@ fn safety_bypass_separates_a_switch_that_disables_a_check_from_prose_about_one()
     assert_eq!(severity_of(&prose, "safety-bypass"), Some(Severity::High));
 }
 
+/// A switch counts where the line would hand it to a program and nowhere
+/// else. Each shape here is one a real guard writes: the flag named in
+/// backticks, the message a hook prints, the `case` arm that catches it,
+/// the comment above the check. The control is the last one — a line that
+/// actually runs `git commit` with it — because a reading that stopped
+/// flagging the switch everywhere would pass the other four and leave the
+/// rule saying nothing.
+#[test]
+fn safety_bypass_reads_a_switch_only_where_a_line_would_run_it() {
+    for (shape, files) in [
+        (
+            "named in prose",
+            [("SKILL.md", "The bypass is `git commit --no-verify`.\n")],
+        ),
+        (
+            "printed by a hook",
+            [(
+                "scripts/pre-commit",
+                "echo \"blocked; bypass with 'git commit --no-verify'\"\n",
+            )],
+        ),
+        (
+            "caught by a case arm",
+            [("scripts/pre-commit", "    --no-verify|-n) refuse ;;\n")],
+        ),
+        (
+            "explained by a comment",
+            [(
+                "scripts/pre-commit",
+                "# refuse a commit that passes --no-verify\n",
+            )],
+        ),
+    ] {
+        let result = skill(&files);
+        assert!(
+            !rules_hit(&result).contains(&"safety-bypass"),
+            "{shape}: {:?}",
+            result.findings
+        );
+    }
+
+    let run = skill(&[("SKILL.md", "```sh\ngit commit --no-verify -m done\n```\n")]);
+    assert_eq!(
+        severity_of(&run, "safety-bypass"),
+        Some(Severity::Critical),
+        "{:?}",
+        run.findings
+    );
+}
+
+/// One innocent mention must not cover a use standing beside it: the rule
+/// reads every occurrence on the line, not the first.
+#[test]
+fn safety_bypass_reads_past_a_mention_to_the_use_behind_it() {
+    let result = skill(&[(
+        "scripts/pre-commit",
+        "echo 'never --no-verify'; git commit --no-verify -m done\n",
+    )]);
+    assert_eq!(
+        severity_of(&result, "safety-bypass"),
+        Some(Severity::Critical),
+        "{:?}",
+        result.findings
+    );
+}
+
 /// Flags that ordinary tools carry say nothing on their own. The kendex
 /// `github` skill uses `--force` forty-two times, every one of them about
 /// its own documented override, and `--yes` is in every non-interactive

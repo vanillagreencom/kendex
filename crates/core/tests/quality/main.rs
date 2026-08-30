@@ -7,6 +7,7 @@
 mod test_util;
 
 mod advisory;
+mod corpus;
 mod fixture;
 mod kinds;
 mod reading;

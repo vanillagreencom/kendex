@@ -11,11 +11,13 @@
 
 use std::collections::BTreeSet;
 
+mod line;
 mod normalize;
+
+pub use line::Line;
 pub use normalize::deobfuscate;
 
-use super::phrase::find_phrase;
-use super::{AuditInput, Content, Doc, Prepared, Severity, TreeFile};
+use super::{AuditInput, Content, Doc, Prepared, TreeFile};
 
 /// What deobfuscation had to do to one document. Only the two counts are
 /// reportable: see `changed`.
@@ -65,73 +67,6 @@ impl Normalization {
     }
 }
 
-/// One line of a document, classified.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Line {
-    pub number: usize,
-    pub text: String,
-    /// ASCII-lowercased with whitespace flattened to spaces. Byte offsets
-    /// match `text` exactly, so a match found here locates in the original.
-    pub lower: String,
-    /// This line is quoting something rather than instructing it, so its
-    /// findings cost one severity less — a blockquote, or any line of a
-    /// skill's supporting files. A code fence is not one of these: see
-    /// `lines`.
-    pub describing: bool,
-}
-
-impl Line {
-    /// Where `needle` sits in this line, allowing any run of whitespace
-    /// where the needle has one space.
-    pub fn find(&self, needle: &str) -> Option<usize> {
-        find_phrase(&self.lower, needle)
-    }
-
-    pub fn has(&self, needle: &str) -> bool {
-        self.find(needle).is_some()
-    }
-
-    /// Every offset where `needle` sits in this line. A line that mentions
-    /// a path twice is two chances to match, and taking only the first lets
-    /// one innocent mention hide a guilty one behind it.
-    pub fn occurrences(&self, needle: &str) -> Vec<usize> {
-        let mut found = Vec::new();
-        let mut from = 0;
-        while let Some(at) = find_phrase(&self.lower[from..], needle) {
-            found.push(from + at);
-            from += at + 1;
-        }
-        found
-    }
-
-    /// The character just before `at`, or `None` at the start of the line.
-    pub fn before(&self, at: usize) -> Option<char> {
-        self.lower[..at].chars().next_back()
-    }
-
-    /// The character just after a match of `len` bytes at `at`.
-    pub fn after(&self, at: usize, len: usize) -> Option<char> {
-        self.lower[at + len..].chars().next()
-    }
-
-    /// Mark this line as description rather than instruction.
-    pub fn as_description(self) -> Line {
-        Line {
-            describing: true,
-            ..self
-        }
-    }
-
-    /// What a hit weighs here: one severity less on a line that is
-    /// describing, full weight otherwise.
-    pub fn weigh(&self, base: Severity) -> Severity {
-        match self.describing {
-            true => base.lowered(),
-            false => base,
-        }
-    }
-}
-
 /// Deobfuscate every text this input carries and split it into lines.
 pub fn prepare(input: AuditInput) -> Prepared {
     let mut normalized = Vec::new();
@@ -149,7 +84,7 @@ pub fn prepare(input: AuditInput) -> Prepared {
             docs.push(Doc {
                 location: input.location.clone(),
                 role: super::DocRole::Text,
-                lines: lines(&text),
+                lines: lines(&text, is_markdown(&input.location)),
             });
             Content::Document { text }
         }
@@ -208,10 +143,11 @@ fn tree_docs(
             let location = format!("{root}/{}", crate::paths::slashed(&file.path));
             let supporting = is_supporting(&file.path);
             let text = clean(location.clone(), &text);
+            let split = lines(&text, is_markdown(&location));
             docs.push(Doc {
                 lines: match supporting {
-                    true => lines(&text).into_iter().map(Line::as_description).collect(),
-                    false => lines(&text),
+                    true => split.into_iter().map(Line::as_description).collect(),
+                    false => split,
                 },
                 role: super::DocRole::Text,
                 location,
@@ -271,7 +207,7 @@ fn hook_docs(
     docs.push(Doc {
         location: format!("{root} (command)"),
         role: super::DocRole::Text,
-        lines: lines(&command),
+        lines: lines(&command, false),
     });
     // What the harness stores beside the command, not what it runs: one
     // value per line, one document, for the rules about values.
@@ -280,7 +216,7 @@ fn hook_docs(
         docs.push(Doc {
             location: format!("{root} (entry)"),
             role: super::DocRole::Values,
-            lines: lines(&values),
+            lines: lines(&values, false),
         });
         values
     });
@@ -289,31 +225,47 @@ fn hook_docs(
         docs.push(Doc {
             location: root.to_owned(),
             role: super::DocRole::Text,
-            lines: lines(&body),
+            lines: lines(&body, false),
         });
         body
     });
     (command, values, script)
 }
 
-/// Split into lines, marking the ones that are quoting somebody else.
+/// Split into lines, marking the ones that are quoting somebody else and
+/// the ones that are prose.
 ///
-/// A code fence is deliberately *not* one of those marks. A fenced `sh`
-/// block in a SKILL.md is not an illustration of the instruction, it is the
-/// instruction — it is the shape every real skill writes its commands in,
-/// and exempting it would mean the gate blocks the unnatural spelling of an
-/// attack and waves the natural one through. A blockquote is different: it
-/// is markdown's way of saying "these are someone else's words".
-pub fn lines(text: &str) -> Vec<Line> {
+/// A code fence is deliberately *not* one of the quoting marks. A fenced
+/// `sh` block in a SKILL.md is not an illustration of the instruction, it
+/// is the instruction — it is the shape every real skill writes its
+/// commands in, and exempting it would mean the gate blocks the unnatural
+/// spelling of an attack and waves the natural one through. A blockquote is
+/// different: it is markdown's way of saying "these are someone else's
+/// words".
+///
+/// What a fence does decide is which marks quote *inside* the line, which
+/// is [`Line::prose`]. `markdown` says the document has prose to tell from
+/// blocks at all; a script is a command line from its first byte.
+pub fn lines(text: &str, markdown: bool) -> Vec<Line> {
+    let blocks = markdown.then(|| crate::render::inside_a_block(text));
     text.lines()
         .enumerate()
         .map(|(index, raw)| Line {
             number: index + 1,
             lower: flatten(raw),
             describing: raw.trim_start().starts_with('>'),
+            prose: blocks.as_ref().is_some_and(|blocks| !blocks[index]),
             text: raw.to_owned(),
         })
         .collect()
+}
+
+/// Whether this path's text is markdown, where a code block is marked and
+/// everything outside one is prose. Everything else — a script, a hook's
+/// command, a config file — reads as a command line throughout.
+fn is_markdown(location: &str) -> bool {
+    let lower = location.to_ascii_lowercase();
+    lower.ends_with(".md") || lower.ends_with(".markdown")
 }
 
 /// ASCII-lowercase with every whitespace byte turned into a space. Both

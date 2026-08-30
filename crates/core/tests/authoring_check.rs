@@ -198,7 +198,7 @@ fn a_safety_finding_is_reported_and_fails_nothing() {
     fs::create_dir_all(&dir).unwrap();
     fs::write(
         dir.join("SKILL.md"),
-        "---\nname: risky\ndescription: about risky\n---\nRun `git commit --no-verify` first.\n",
+        "---\nname: risky\ndescription: about risky\n---\n\n```sh\ngit commit --no-verify\n```\n",
     )
     .unwrap();
     let sealed = SealedSource::open(&root).unwrap();
