@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Pins for scripts/todo-ban: both marker shapes fire, prose that quotes or
-# names a marker word does not, excludes need reasons, and a broken scan is
-# a collection error — never a pass. Every green assertion is paired with a
-# control that proves it can fail.
+# names a marker word does not, excludes need reasons, --staged judges the
+# lines the commit ADDS while the default scope judges the whole index, and
+# a broken scan is a collection error — never a pass. Every green assertion
+# is paired with a control that proves it can fail.
 #
 # Marker words are assembled from split tokens throughout so this test
 # file never contains a marker shape itself — the kendex repo runs
@@ -254,6 +255,135 @@ git -C "$R" add tools/growth-guards-todo-excludes
 OUT="$(cd "$R" && GROWTH_GUARDS_TODO_EXCLUDES=tools/growth-guards-todo-excludes "$TB" 2>&1)" && RC=0 || RC=$?
 [ "$RC" -eq 1 ] && ok "control: staging the emptied list re-exposes the marker" \
   || bad "control: staging the emptied list re-exposes the marker" "rc=$RC out=$OUT"
+
+echo "=== --staged judges the lines the commit adds, not the whole index ==="
+new_repo stagedscope
+printf 'fn main() {}\n' >"$R/ok.rs"
+git -C "$R" add -A
+git -C "$R" commit -qm seed
+# Someone else's marker, committed and untouched by the commit under judgement.
+printf '// %s: left in a fixture\n' "$TD" >"$R/fixture.rs"
+git -C "$R" add -A
+git -C "$R" commit -qm fixture
+printf 'fn other() {}\n' >>"$R/ok.rs"
+git -C "$R" add ok.rs
+run_tb --staged
+[ "$RC" -eq 0 ] && case "$OUT" in *"the staged diff adds no work markers"*) true ;; *) false ;; esac \
+  && ok "a commit that adds no marker passes on a repo whose index holds one" \
+  || bad "a commit adding no marker passes" "rc=$RC out=$OUT"
+run_tb
+[ "$RC" -eq 1 ] && case "$OUT" in *"work marker: fixture.rs:1:"*) true ;; *) false ;; esac \
+  && ok "control: the index scan (CI) still refuses that same marker" \
+  || bad "control: the index scan refuses the marker" "rc=$RC out=$OUT"
+
+# The same commit, now adding a marker of its own.
+printf '// %s: added by this commit\n' "$FX" >>"$R/ok.rs"
+git -C "$R" add ok.rs
+run_tb --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"work marker: ok.rs:3:"*) true ;; *) false ;; esac \
+  && ok "a marker the staged diff adds is refused, at the line it lands on" \
+  || bad "a staged marker is refused" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"fixture.rs"*) bad "the untouched fixture must stay out of the commit-scope verdict" "$OUT" ;;
+  *) ok "and the untouched fixture is not in that verdict" ;;
+esac
+
+echo "=== --staged reads the index, not the work tree ==="
+new_repo stagedbytes
+printf 'fn main() {}\n' >"$R/ok.rs"
+git -C "$R" add -A
+git -C "$R" commit -qm seed
+printf '// %s: staged\n' "$TD" >>"$R/ok.rs"
+git -C "$R" add ok.rs
+printf 'fn main() {}\n' >"$R/ok.rs" # the work tree walks it back; the index still carries it
+run_tb --staged
+[ "$RC" -eq 1 ] && ok "staged bytes decide, whatever the work tree says now" \
+  || bad "staged bytes decide" "rc=$RC out=$OUT"
+# Control: staging the walked-back file clears the verdict.
+git -C "$R" add ok.rs
+run_tb --staged
+[ "$RC" -eq 0 ] && ok "control: staging the walked-back file clears it" \
+  || bad "control: staging the walked-back file clears it" "rc=$RC out=$OUT"
+
+echo "=== --staged on a repository's first commit diffs against the empty tree ==="
+new_repo firstcommit
+printf '// %s: in the very first commit\n' "$TD" >"$R/a.rs"
+git -C "$R" add -A
+run_tb --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"work marker: a.rs:1:"*) true ;; *) false ;; esac \
+  && ok "with no HEAD to diff against, the whole staged tree reads as added" \
+  || bad "the first commit is judged" "rc=$RC out=$OUT"
+# Control: the same repository with no marker staged passes rather than
+# erroring on the missing HEAD.
+printf 'fn main() {}\n' >"$R/a.rs"
+git -C "$R" add -A
+run_tb --staged
+[ "$RC" -eq 0 ] && case "$OUT" in *"the staged diff adds no work markers"*) true ;; *) false ;; esac \
+  && ok "control: a clean first commit passes, not exit 2 for want of a HEAD" \
+  || bad "control: a clean first commit passes" "rc=$RC out=$OUT"
+
+echo "=== --staged honours the exclusion list ==="
+new_repo stagedexc
+printf 'fn main() {}\n' >"$R/ok.rs"
+mkdir -p "$R/vendor" "$R/tools"
+git -C "$R" add -A
+git -C "$R" commit -qm seed
+printf '// %s: vendored upstream marker\n' "$TD" >"$R/vendor/lib.rs"
+git -C "$R" add -A
+run_tb --staged
+[ "$RC" -eq 1 ] && ok "control: the staged vendored marker fails without an excludes row" \
+  || bad "control: staged vendored marker fails" "rc=$RC out=$OUT"
+printf 'vendor/*\tvendored third-party code\n' >"$R/tools/todo-ban-excludes"
+git -C "$R" add -A
+run_tb --staged
+[ "$RC" -eq 0 ] && ok "the excludes row silences the staged vendored tree too" \
+  || bad "excludes row silences the staged tree" "rc=$RC out=$OUT"
+
+echo "=== fail-closed: a broken staged scan terminates, never passes ==="
+new_repo stagedfail
+printf 'fn main() {}\n' >"$R/ok.rs"
+git -C "$R" add -A
+git -C "$R" commit -qm seed
+printf 'fn other() {}\n' >>"$R/ok.rs"
+git -C "$R" add ok.rs
+run_tb --staged
+[ "$RC" -eq 0 ] && ok "shim-free control: the fixture passes with the real git" \
+  || bad "shim-free control passes" "rc=$RC out=$OUT"
+
+# One shim per collection step, so each error path is proven on its own: the
+# change-set collection, then the per-file read of the added lines.
+make_diff_shim() { # DIR MATCH — a git whose `diff` fails when MATCH is in argv
+  mkdir -p "$1"
+  cat >"$1/git" <<EOF
+#!/usr/bin/env bash
+saw_diff=0
+saw_match=0
+for a in "\$@"; do
+  [ "\$a" = "diff" ] && saw_diff=1
+  [ "\$a" = "$2" ] && saw_match=1
+done
+if [ "\$saw_diff" = 1 ] && [ "\$saw_match" = 1 ]; then
+  echo "git diff: simulated execution failure" >&2
+  exit 128
+fi
+exec "$REAL_GIT" "\$@"
+EOF
+  chmod +x "$1/git"
+}
+
+make_diff_shim "$TMP/raw-shim" --raw
+OUT="$(cd "$R" && PATH="$TMP/raw-shim:$PATH" "$TB" --staged 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not collect the staged changes"*) true ;; *) false ;; esac \
+  && ok "a failed change-set collection is exit 2, never OK" \
+  || bad "failed change-set collection is exit 2" "rc=$RC out=$OUT"
+case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany a broken collection" "$OUT" ;; *) ok "no OK verdict accompanies the broken collection" ;; esac
+
+make_diff_shim "$TMP/hunk-shim" -U0
+OUT="$(cd "$R" && PATH="$TMP/hunk-shim:$PATH" "$TB" --staged 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not read the staged additions in 'ok.rs'"*) true ;; *) false ;; esac \
+  && ok "a file whose added lines cannot be read is exit 2, naming it" \
+  || bad "unreadable added lines are exit 2" "rc=$RC out=$OUT"
+case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany an unread file" "$OUT" ;; *) ok "no OK verdict accompanies the unread file" ;; esac
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

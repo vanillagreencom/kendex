@@ -2,6 +2,7 @@
 # growth-guards — dispatcher for the check family:
 #
 #   growth-guards [all]           run every check named by GROWTH_GUARDS_CHECKS
+#   growth-guards all --staged    the same batch at commit scope
 #   growth-guards CHECK [ARGS..]  run one check, flags passed through
 #
 # commit-msg reads a message, so it never runs in the batch — the commit-msg
@@ -21,15 +22,22 @@ source "$SCRIPT_DIR/lib/settings.sh"
 
 KNOWN_CHECKS="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose commit-msg"
 BATCH_DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose"
+# The checks the batch hands --staged when it is asked for commit scope.
+# todo-ban is the one lane whose default scope is the whole index, which is
+# a CI subject: at commit it judges what the commit adds. byte-ceiling is
+# already staged by default, and the rest read the index by design.
+STAGED_SCOPED_CHECKS="todo-ban"
 
 usage() {
   cat <<EOF
-usage: growth-guards [all | CHECK [ARGS...]]
+usage: growth-guards [all [--staged] | CHECK [ARGS...]]
 
 Checks: $KNOWN_CHECKS
 
 With no argument (or 'all'), runs every check named by
 GROWTH_GUARDS_CHECKS (default: $BATCH_DEFAULT).
+--staged puts the batch at commit scope: the checks that take it
+($STAGED_SCOPED_CHECKS) judge the staged diff instead of the whole index.
 commit-msg reads a message file/stdin and only runs by name.
 
 Exit codes: 0 clean; 1 violations; 2 usage/config/collection error, or
@@ -37,13 +45,14 @@ any check that could not complete.
 EOF
 }
 
+STAGED=0
 if [ $# -ge 1 ]; then
   case "$1" in
     -h | --help)
       usage
       exit 0
       ;;
-    all) ;;
+    all | --staged) ;;
     *)
       CHECK="$1"
       shift
@@ -55,7 +64,13 @@ if [ $# -ge 1 ]; then
   esac
 fi
 
-[ $# -le 1 ] || gg_config_error "'all' takes no extra arguments; invoke a single check to pass flags"
+if [ "${1-}" = all ]; then shift; fi
+if [ "${1-}" = --staged ]; then
+  STAGED=1
+  shift
+fi
+
+[ $# -eq 0 ] || gg_config_error "'all' takes no arguments beyond --staged; invoke a single check to pass flags"
 
 gg_repo_root_cd
 CHECKS="$(gg_setting GROWTH_GUARDS_CHECKS "$BATCH_DEFAULT")" || exit 2
@@ -76,9 +91,15 @@ done
 had_violations=0
 had_errors=0
 for c in $CHECKS; do
-  echo "=== growth-guards: $c"
+  scope=""
+  if [ "$STAGED" -eq 1 ]; then
+    case " $STAGED_SCOPED_CHECKS " in
+      *" $c "*) scope="--staged" ;;
+    esac
+  fi
+  echo "=== growth-guards: $c${scope:+ $scope}"
   check_status=0
-  "$SCRIPT_DIR/$c" || check_status=$?
+  "$SCRIPT_DIR/$c" ${scope:+"$scope"} || check_status=$?
   case "$check_status" in
     0) ;;
     1) had_violations=1 ;;

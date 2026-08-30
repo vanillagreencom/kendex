@@ -14,6 +14,7 @@ covers internals.
 
 ```bash
 scripts/growth-guards [all]         # batch: every enabled repo check
+scripts/growth-guards all --staged  # the same batch at commit scope
 scripts/growth-guards CHECK [ARGS]  # one check, flags passed through
 scripts/CHECK [ARGS]                # each check is a standalone executable
 ```
@@ -21,11 +22,14 @@ scripts/CHECK [ARGS]                # each check is a standalone executable
 The batch runs `GROWTH_GUARDS_CHECKS` (default
 `todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose`)
 and fails closed: exit 2 if any check could not complete, else 1 on
-violations. `commit-msg` reads a message, so it never runs in the batch.
+violations. `commit-msg` reads a message, so it never runs in the batch. `--staged`
+puts the batch at commit scope: the checks that take it (`todo-ban`) judge
+the staged diff, the rest keep their own default scope.
 Installed scripts live under
 `.agents/skills/growth-guards/scripts/`; wire CI at whichever grain fits
-(`byte-ceiling --base origin/main` gates a PR's additions); the git hooks
-below cover local commits.
+(`byte-ceiling --base origin/main` gates a PR's additions), and run the batch
+there WITHOUT `--staged` — the index-wide `todo-ban` scan is CI's, and it is
+the only lane that sees a marker the commit lane never diffed.
 
 ## Git hooks
 
@@ -49,7 +53,7 @@ pass.
 
 `pre-commit` judges ONE commit snapshot: `size-ratchet --staged` and
 `preflight --staged` when the committing work tree or this install
-carries them (work tree first), the `growth-guards` batch, then the
+carries them (work tree first), `growth-guards all --staged`, then the
 repo-root-relative executable named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL`
 (empty means none). `commit-msg` runs this family's message gate. Both
 shims BLOCK and fail closed — `1` carries the check's remediation text,

@@ -2,9 +2,9 @@
 # pre-commit — the staged-scope guard chain, shaped for the git pre-commit
 # hook (the installed .git/hooks/kendex-guards shim execs it): size-ratchet
 # and preflight when the committing work tree or this install carries those
-# sibling skills, then `growth-guards all`, then the repo-local entry named
-# by GROWTH_GUARDS_PRE_COMMIT_LOCAL. Every lane announces itself, a skipped
-# or unconfigured one included.
+# sibling skills, then `growth-guards all --staged`, then the repo-local
+# entry named by GROWTH_GUARDS_PRE_COMMIT_LOCAL. Every lane announces itself,
+# a skipped or unconfigured one included.
 #
 # Every step runs before the verdict, so one commit attempt reports every
 # blocker. Aggregation fails CLOSED: exit 2 if any step could not complete,
@@ -31,9 +31,9 @@ usage: pre-commit
 
 Runs the staged-scope guard chain: size-ratchet and preflight (each resolved
 from the committing work tree first, then from the install beside this
-skill), the growth-guards batch, then the optional repo-local entry. Takes no
-arguments — git passes none to pre-commit. Wire it through the installed shim:
-`install-git-hooks --repo <root>`.
+skill), the growth-guards batch at commit scope, then the optional repo-local
+entry. Takes no arguments — git passes none to pre-commit. Wire it through
+the installed shim: `install-git-hooks --repo <root>`.
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -194,7 +194,7 @@ fi
 
 BATCH="$SCRIPT_DIR/growth-guards"
 [ -x "$BATCH" ] || gg_config_error "$BATCH is missing or not executable — reinstall the growth-guards skill"
-run_step "growth-guards all" "$BATCH" all
+run_step "growth-guards all --staged" "$BATCH" all --staged
 
 LOCAL_RAW="$(gg_setting GROWTH_GUARDS_PRE_COMMIT_LOCAL "")" || exit 2
 if [ -n "$LOCAL_RAW" ]; then

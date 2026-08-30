@@ -4,9 +4,10 @@
 # execs (linked worktrees share one hooks directory, so that install can live
 # in another checkout whose branch state says nothing about this commit), a
 # genuine double absence is a stated skip naming both probed sides, and the
-# repo-local lane announces itself even when nothing is configured. Every
-# firing pin is paired with the control that proves the fixture, not the
-# chain, would otherwise pass.
+# repo-local lane announces itself even when nothing is configured, and the
+# batch runs at commit scope so a marker the commit does not add belongs to
+# CI, not to this commit. Every firing pin is paired with the control that
+# proves the fixture, not the chain, would otherwise pass.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,6 +17,10 @@ SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 unset GROWTH_GUARDS_CHECKS GROWTH_GUARDS_PRE_COMMIT_LOCAL \
   GROWTH_GUARDS_SETTINGS_FILE GG_TMP GG_SETTINGS_INDEX_OWNED \
   GG_SETTINGS_INDEX_DIR GG_SETTINGS_FROM_INDEX 2>/dev/null || true
+
+# Assembled from split tokens so this file carries no marker shape of its
+# own: the kendex repo runs todo-ban over its own tree, tests included.
+TD="TO""DO"
 
 PASS=0
 FAIL=0
@@ -344,6 +349,24 @@ case "$OUT" in
   *todo-ban*) ok "with the package's own verdict, not an early exit" ;;
   *) bad "the chain did not reach todo-ban" "$OUT" ;;
 esac
+
+echo "=== the batch runs at commit scope: an untouched marker is CI's, not this commit's ==="
+RMARK="$(new_repo marker-scope)"
+printf '// %s: left in a fixture\n' "$TD" >"$RMARK/fixture.rs"
+git -C "$RMARK" add fixture.rs
+git -C "$RMARK" commit -qm 'chore: fixture'
+RC=0
+OUT="$(cd "$RMARK" && "$PC" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "the staged file carries no marker, so the chain passes" \
+  || bad "chain passes over an untouched marker" "rc=$RC out=$OUT"
+# Control: the same repository, with the commit itself adding one.
+printf '// %s: added by this commit\n' "$TD" >>"$RMARK/b.txt"
+git -C "$RMARK" add b.txt
+RC=0
+OUT="$(cd "$RMARK" && "$PC" 2>&1)" || RC=$?
+[ "$RC" -eq 1 ] && case "$OUT" in *"work marker: b.txt"*) true ;; *) false ;; esac \
+  && ok "control: a marker this commit adds blocks it" \
+  || bad "control: a staged marker blocks the commit" "rc=$RC out=$OUT"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

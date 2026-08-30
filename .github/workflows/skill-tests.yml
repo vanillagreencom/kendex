@@ -417,9 +417,9 @@ jobs:
     # Dogfoods the preflight skill on this repo's own PR diffs. PR-time on
     # purpose despite the fast/full split: the whole run is seconds of
     # diff-scoped checks, and its findings (fail-open bash, dead doc
-    # citations, stray work markers, broken JSON/TOML) are exactly the classes
-    # that otherwise surface as bot-review round-trips. Not a required
-    # context; merge-group correctness is owned by the sharded suites.
+    # citations, broken JSON/TOML) are exactly the classes that otherwise
+    # surface as bot-review round-trips. Not a required context; merge-group
+    # correctness is owned by the sharded suites.
     name: Preflight (diff-scoped deterministic checks)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -437,6 +437,10 @@ jobs:
       # + tools/size-ratchet-excludes; reads tracked files at HEAD only.
       - name: size-ratchet (tighten-only file-size gate)
         run: skills/size-ratchet/scripts/size-ratchet
+      # The commit lane runs todo-ban --staged and judges only what a commit
+      # adds, so a marker already in the index is this scan's to refuse.
+      - name: todo-ban (index-wide work-marker scan)
+        run: skills/growth-guards/scripts/todo-ban
 
   cargo-tests:
     name: Cargo (workspace tests)

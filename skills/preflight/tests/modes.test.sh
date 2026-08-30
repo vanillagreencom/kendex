@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Scope pins. Each mode decides which lines the line-scoped lanes may speak
 # about, so a mode that quietly widens or narrows its diff would either fail
-# innocent changes or wave real ones through. Environment failures (bad flag,
+# innocent changes or wave real ones through. docs-cited-paths is the vehicle
+# throughout: one added line, one finding, in a file every mode can reach. Environment failures (bad flag,
 # no repository, unresolvable base) must exit 2 — distinct from a clean run
 # and from a run with findings.
 set -euo pipefail
@@ -31,7 +32,7 @@ seed() { # NAME — fixture in $R: committed baseline, origin/main, feature bran
   git -C "$R" config user.name test
   printf '# Staged\n' >"$R/docs/staged.md"
   printf '# Loose\n' >"$R/docs/loose.md"
-  printf '# Legacy\n\nTODO: ancient and unreferenced.\n' >"$R/docs/legacy.md"
+  printf '# Legacy\n\nSee `docs/gone.md` for background.\n' >"$R/docs/legacy.md"
   git -C "$R" add -A
   git -C "$R" commit -qm init
   git clone -q --bare "$R" "$R.git"
@@ -50,18 +51,18 @@ has() { case "$OUT" in *"$1"*) return 0 ;; esac; return 1; }
 
 echo "=== --staged sees the index, not the worktree ==="
 seed staged
-printf '# Staged\n\nTODO: staged and unreferenced.\n' >"$R/docs/staged.md"
+printf '# Staged\n\nSee `docs/gone.md` for the rest.\n' >"$R/docs/staged.md"
 git -C "$R" add docs/staged.md
-printf '# Loose\n\nTODO: never staged.\n' >"$R/docs/loose.md"
+printf '# Loose\n\nSee `docs/gone.md` too.\n' >"$R/docs/loose.md"
 run_pf --staged
-if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [todo-links]" && ! has "docs/loose.md"; then
-  ok "the staged TODO fires and the unstaged one is out of scope"
+if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]" && ! has "docs/loose.md"; then
+  ok "the staged dead citation fires and the unstaged one is out of scope"
 else
-  bad "the staged TODO fires and the unstaged one is out of scope" "rc=$RC out=$OUT"
+  bad "the staged dead citation fires and the unstaged one is out of scope" "rc=$RC out=$OUT"
 fi
 
 run_pf
-if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [todo-links]" && has "docs/loose.md:3: [todo-links]"; then
+if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]" && has "docs/loose.md:3: [docs-cited-paths]"; then
   ok "the default scope is base-to-worktree, so it sees both"
 else
   bad "the default scope is base-to-worktree, so it sees both" "rc=$RC out=$OUT"
@@ -101,12 +102,12 @@ fi
 
 echo "=== untracked files are new files in the default scope, invisible to --staged ==="
 seed untracked
-printf '# Never added\n\nTODO: untracked and unreferenced.\n' >"$R/docs/never-added.md"
+printf '# Never added\n\nSee `docs/gone.md` here too.\n' >"$R/docs/never-added.md"
 mkdir -p "$R/scratch"
 printf 'scratch/\n' >"$R/.gitignore"
-printf '# Ignored\n\nTODO: ignored and unreferenced.\n' >"$R/scratch/ignored.md"
+printf '# Ignored\n\nSee `docs/gone.md` from an ignored file.\n' >"$R/scratch/ignored.md"
 run_pf
-if [ "$RC" -eq 1 ] && has "docs/never-added.md:3: [todo-links]" && ! has "scratch/ignored.md"; then
+if [ "$RC" -eq 1 ] && has "docs/never-added.md:3: [docs-cited-paths]" && ! has "scratch/ignored.md"; then
   ok "a non-ignored untracked file is in scope; an ignored one is not"
 else
   bad "a non-ignored untracked file is in scope; an ignored one is not" "rc=$RC out=$OUT"
@@ -132,11 +133,11 @@ fi
 
 echo "=== --staged judges staged bytes even when the worktree has moved on ==="
 seed rewound
-printf '# Staged\n\nTODO: staged and unreferenced.\n' >"$R/docs/staged.md"
+printf '# Staged\n\nSee `docs/gone.md` for the rest.\n' >"$R/docs/staged.md"
 git -C "$R" add docs/staged.md
 printf '# Staged\n\nAll clean again.\n' >"$R/docs/staged.md" # worktree only
 run_pf --staged
-if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [todo-links]"; then
+if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
   ok "content comes from the index, so line 3 is the staged line"
 else
   bad "content comes from the index, so line 3 is the staged line" "rc=$RC out=$OUT"
@@ -151,7 +152,7 @@ else
   bad "an untouched branch has nothing in the default scope" "rc=$RC out=$OUT"
 fi
 run_pf --all
-if [ "$RC" -eq 1 ] && has "docs/legacy.md:3: [todo-links]" && has "changed file(s)"; then
+if [ "$RC" -eq 1 ] && has "docs/legacy.md:3: [docs-cited-paths]" && has "changed file(s)"; then
   ok "--all reaches the committed violation the default scope ignores"
 else
   bad "--all reaches the committed violation the default scope ignores" "rc=$RC out=$OUT"
@@ -159,11 +160,11 @@ fi
 
 echo "=== --base picks the comparison point ==="
 seed based
-printf '# Loose\n\nTODO: added in this commit.\n' >"$R/docs/loose.md"
+printf '# Loose\n\nSee `docs/gone.md` from this commit.\n' >"$R/docs/loose.md"
 git -C "$R" add -A
-git -C "$R" commit -qm "add a todo"
+git -C "$R" commit -qm "add a citation"
 run_pf --base main
-if [ "$RC" -eq 1 ] && has "docs/loose.md:3: [todo-links]"; then
+if [ "$RC" -eq 1 ] && has "docs/loose.md:3: [docs-cited-paths]"; then
   ok "--base main sees the commit made on the branch"
 else
   bad "--base main sees the commit made on the branch" "rc=$RC out=$OUT"
@@ -179,7 +180,7 @@ echo "=== --repo runs against a repository the caller is not standing in ==="
 OUT=""
 RC=0
 OUT="$(cd "$TMP" && "$PF" --repo "$R" --base main 2>&1)" || RC=$?
-if [ "$RC" -eq 1 ] && has "docs/loose.md:3: [todo-links]"; then
+if [ "$RC" -eq 1 ] && has "docs/loose.md:3: [docs-cited-paths]"; then
   ok "--repo relocates the run without a cd"
 else
   bad "--repo relocates the run without a cd" "rc=$RC out=$OUT"
@@ -221,10 +222,10 @@ fi
 
 echo "=== the default base walks origin/HEAD, then origin/main, then main ==="
 seed defaulted
-printf '# Loose\n\nTODO: unreferenced.\n' >"$R/docs/loose.md"
+printf '# Loose\n\nSee `docs/gone.md` once more.\n' >"$R/docs/loose.md"
 git -C "$R" add -A
 run_pf
-if [ "$RC" -eq 1 ] && has "docs/loose.md:3: [todo-links]"; then
+if [ "$RC" -eq 1 ] && has "docs/loose.md:3: [docs-cited-paths]"; then
   ok "origin/HEAD names the default branch"
 else
   bad "origin/HEAD names the default branch" "rc=$RC out=$OUT"
@@ -232,7 +233,7 @@ fi
 
 git -C "$R" remote set-head origin --delete >/dev/null
 run_pf
-if [ "$RC" -eq 1 ] && has "docs/loose.md:3: [todo-links]"; then
+if [ "$RC" -eq 1 ] && has "docs/loose.md:3: [docs-cited-paths]"; then
   ok "a repository whose origin/HEAD was never set falls back to origin/main"
 else
   bad "a repository whose origin/HEAD was never set falls back to origin/main" "rc=$RC out=$OUT"
@@ -240,7 +241,7 @@ fi
 
 git -C "$R" update-ref -d refs/remotes/origin/main
 run_pf
-if [ "$RC" -eq 1 ] && has "docs/loose.md:3: [todo-links]"; then
+if [ "$RC" -eq 1 ] && has "docs/loose.md:3: [docs-cited-paths]"; then
   ok "with no remote-tracking refs left, the local main branch is the last fallback"
 else
   bad "with no remote-tracking refs left, the local main branch is the last fallback" "rc=$RC out=$OUT"

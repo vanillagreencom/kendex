@@ -25,7 +25,7 @@ repo-effects:
     - "preflight"
   notes:
     - "An existing pre-commit or commit-msg hook keeps its content and its exit status: one marked line goes in after the shebang and falls through to what was already there. core.hooksPath is never set."
-    - "The chain runs in order: size-ratchet --staged, preflight --staged, the growth-guards batch (todo-ban, byte-ceiling, suppression-ban, conflict-markers, changelog-entries, prose), then the repo-root executable named by GROWTH_GUARDS_PRE_COMMIT_LOCAL. A companion that is not installed is an announced skip, never a silently missing check, and one that is installed but cannot run stops the commit rather than skipping it; the stated skips are preflight on a repository's first commit and a repo-local size-ratchet that rejects --staged."
+    - "The chain runs in order: size-ratchet --staged, preflight --staged, the growth-guards batch at commit scope (todo-ban --staged, byte-ceiling, suppression-ban, conflict-markers, changelog-entries, prose), then the repo-root executable named by GROWTH_GUARDS_PRE_COMMIT_LOCAL. A companion that is not installed is an announced skip, never a silently missing check, and one that is installed but cannot run stops the commit rather than skipping it; the stated skips are preflight on a repository's first commit and a repo-local size-ratchet that rejects --staged."
     - "Both hooks block on any nonzero verdict and fail closed on a guard that could not run. Passing git's no-verify flag bypasses one commit, and skips the message gate with it."
     - "The gate needs no kendex binary once armed: git runs this package's committed scripts, so a machine that never installed kendex still gates commits. Arming does not travel, though — git clones no hooks and this package never sets core.hooksPath — so every clone is armed once, by whoever clones it."
 ---
@@ -38,6 +38,7 @@ Seven checks beside `size-ratchet`, sharing its idiom and exit contract.
 
 ```bash
 .agents/skills/growth-guards/scripts/growth-guards              # batch: every enabled repo check
+.agents/skills/growth-guards/scripts/growth-guards all --staged # the same batch at commit scope
 .agents/skills/growth-guards/scripts/growth-guards todo-ban     # one check by name, flags pass through
 .agents/skills/growth-guards/scripts/install-git-hooks          # arm the git pre-commit/commit-msg shims
 .agents/skills/growth-guards/scripts/install-git-hooks --check  # read-only: are the shims still armed?
@@ -49,7 +50,7 @@ Each check is also invocable as `scripts/CHECK`.
 
 | Check | Verdict |
 |---|---|
-| **todo-ban** | Any work marker (TODO, FIXME, HACK, XXX in comment-marker shapes) in a tracked, non-excluded file fails. No baseline. Prose naming a marker word does not fire. |
+| **todo-ban** | Any work marker (TODO, FIXME, HACK, XXX in comment-marker shapes) in a tracked, non-excluded file fails. No baseline. Prose naming a marker word does not fire. Two scopes: the default reads the whole index (the CI subject); `--staged` judges only the lines the staged diff ADDS, so a marker the commit does not add is CI's finding rather than this commit's, and a repository with no commits yet diffs against the empty tree. |
 | **byte-ceiling** | A tracked file over the ceiling (default 200 KB) fails. `--staged` (default) gates every file the commit adds, modifies or changes the type of; `--base REF` only the files added since merge-base; `--all` sweeps every tracked file. Lockfiles are exempt built-in. |
 | **suppression-ban** | Blanket lint suppressions fail flat: module-wide rust `allow` inner attributes, file-level ruff/flake8 noqa, the bare `eslint-disable` block form, bare or `all` nolint, biome's `biome-ignore-all` / unscoped `biome-ignore-start` / rule-less `biome-ignore lint` and group forms. Bare rust `allow(dead_code)`/`allow(unused*)` attributes are counted per file against a tighten-only baseline; `--update` lowers/removes rows, never adds or raises one. A per-line suppression naming its lint with a stated reason stays legal. |
 | **conflict-markers** | An unresolved merge-conflict marker in a tracked, non-excluded file fails: the open/base/close trio (seven `<`, seven vertical bars, seven `>`) at column 0, each followed by a space or end of line. No baseline. Indented or quoted occurrences and the bare seven-equals separator do not fire. |
@@ -73,8 +74,9 @@ then re-run.
 when the committing work tree or this install carries those skills (the work
 tree's copy wins; a first commit skips preflight with a note; a size-ratchet
 that rejects `--staged` in its first-line parser diagnostic is a stated skip —
-any other failure blocks); the batch over staged content; then the
-repo-root-relative executable named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL`.
+any other failure blocks); `growth-guards all --staged`, which hands `--staged`
+to the checks that take it and leaves the rest at their own default scope; then
+the repo-root-relative executable named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL`.
 `commit-msg` runs the message gate. Both BLOCK on the exit contract, fail
 closed on a guard that could not run; `git commit --no-verify` is the bypass.
 The `kendex guard` verbs invoke this installer: `install`, `uninstall`

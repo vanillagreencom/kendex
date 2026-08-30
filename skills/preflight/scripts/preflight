@@ -3,8 +3,7 @@
 # runner invokes, scratch directories no EXIT trap removes, directories
 # created at literal absolute temp paths, docs citing repo paths that do
 # not exist, source files citing docs that do not exist, edits to a migration
-# a database has already run, work markers with no issue behind them,
-# reviewer-bot attributions in durable prose,
+# a database has already run, reviewer-bot attributions in durable prose,
 # malformed JSON/TOML, workflow run: blocks their shell cannot parse.
 #
 # Precision before coverage: a lane that cannot decide says nothing. The
@@ -37,7 +36,7 @@ non-ignored untracked files; --staged sees only the index.
 
 Lanes: shell-syntax, shellcheck-errors, masked-returns, fail-open,
 unwired-suite, mktemp-trap, hardcoded-temp-path, docs-cited-paths,
-applied-migration-edited, todo-links, reviewer-attribution, data-syntax,
+applied-migration-edited, reviewer-attribution, data-syntax,
 workflow-run-syntax.
 
 Exit codes: 0 clean; 1 findings; 2 usage/environment error.
@@ -556,14 +555,6 @@ TMPPATH_CREATE_RE='(mkdtemp|mkdtempSync|mkdir|mkdirSync|makedirs|create_dir_all)
 TMPPATH_CREATE_RE="$TMPPATH_CREATE_RE"'|(mkdtemp|mkdtempSync)[[:space:]]*\([^)]*["'\''`]/(var/)?tmp["'\''`]'
 TMPPATH_CREATE_RE="$TMPPATH_CREATE_RE"'|(^[[:space:]]*|[;|&(`{][[:space:]]*)mkdir[[:space:]]+-p[[:space:]]+["'\'']?/(var/)?tmp/'
 
-# The marker form only: the word immediately followed by a colon or by an
-# owner in parentheses. Prose that merely uses the word ("TODO hygiene is
-# preflight's job") and scaffolding placeholders ("description: TODO —
-# describe this agent") are not untracked work items, and a gate that fails
-# on them is a gate people route around.
-TODO_RE='(^|[^A-Za-z0-9_])(TODO|FIXME)[(:]'
-ISSUE_RE='(#[0-9]+|[A-Z][A-Z0-9]+-[0-9]+|http)'
-
 # The attribution shape only: a review-fleet bot name coupled to a PR/review
 # reference — a parenthetical credit, a per-bot review credit, a bot review
 # of #N. A bot pass is not a rationale: the credit rots as PRs renumber,
@@ -1056,10 +1047,6 @@ while IFS= read -r f; do
           done <<<"$(md_tokens_of "$content")"
           ;;
       esac
-    fi
-
-    if [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && printf '%s' "$content" | grep -Eq -- "$TODO_RE" && ! printf '%s' "$content" | grep -Eq -- "$ISSUE_RE"; then
-      emit "$f" "$n" todo-links "TODO:/FIXME( marker without an issue reference (#123, ABC-123, or a URL)"
     fi
 
     if [ "$own_rules" = 0 ] && [ "$is_changelog" = 0 ] && [ "$is_testname" = 0 ] && printf '%s' "$content" | LC_ALL=C grep -Eiq -- "$BOT_ATTR_RE"; then

@@ -214,6 +214,16 @@ backtick, a quote, or joined text (documentation quoting the word, a regex
 listing the words, `\n` inside a string literal) matches neither shape.
 Matching is case-sensitive — lowercase uses of the words are prose.
 
+The shapes are the same in both scopes; only the lines they are matched
+against differ. `--staged` collects the change set the way byte-ceiling's
+staged lane does (`--raw`, additions/modifications/type changes, renames at
+exact content), then reads each surviving path's added lines from a
+per-path `-U0` diff — one file per invocation, so no patch header is ever
+parsed for a path and a path git would have had to quote cannot be misread.
+Diff configuration is pinned (`--no-ext-diff`, `--no-textconv`,
+`--no-color`): a textconv filter would otherwise hand the lane content the
+commit does not carry. Binary blobs have no hunks and contribute nothing.
+
 ## byte-ceiling sizing
 
 Sizes are object sizes (`git cat-file -s` of the recorded blob): the bytes

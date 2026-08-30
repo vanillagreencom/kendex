@@ -209,21 +209,6 @@ run_pf
 fires "a shell comment citing a missing doc fails at its line" "scripts/cite.sh:3: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
 fires "a non-shell source comment is judged the same way" "src/main.rs:2: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
 
-echo "=== lane todo-links: a TODO marker with no issue behind it ==="
-seed todo
-printf '# Guide\n\nNothing here yet.\n\nTODO: wire this up.\n' >"$R/docs/guide.md"
-git -C "$R" add -A
-run_pf
-fires "the colon marker form fails" "docs/guide.md:5: [todo-links]"
-
-# Both marker forms carry the same weight: `TODO(owner)` is the same
-# untracked work item as `TODO:`, and FIXME is the same word as TODO.
-printf '# Guide\n\nNothing here yet.\n\nTODO(alice) wire this up.\nFIXME(bob): and this.\n' >"$R/docs/guide.md"
-git -C "$R" add -A
-run_pf
-fires "the owner-in-parentheses form fails too" "docs/guide.md:5: [todo-links]"
-fires "FIXME is judged exactly as TODO is" "docs/guide.md:6: [todo-links]"
-
 echo "=== lane reviewer-attribution: durable prose crediting a transient review pass ==="
 seed attribution
 printf '# Guide\n\nNothing here yet.\n\nClamped in review (qodo PR #431).\nHardened (Copilot review of #212).\nRenamed (CodeRabbit r3402103393).\nQuoted per codex review.\n' >"$R/docs/guide.md"
@@ -405,7 +390,7 @@ fires "renaming one names where it went" "store/migrations/V2__more.sql:0: [appl
 
 echo "=== the verdict line counts findings and changed files ==="
 seed verdict
-printf '# Guide\n\nNothing here yet.\n\nTODO: one.\nTODO: two.\n' >"$R/docs/guide.md"
+printf '# Guide\n\nNothing here yet.\n\nSee `docs/gone.md`.\nAnd `docs/missing.md`.\n' >"$R/docs/guide.md"
 git -C "$R" add -A
 run_pf
 fires "the summary names both counts" "preflight: 2 finding(s) across 1 changed file(s)"

@@ -11,6 +11,16 @@ FIXME, HACK, XXX in comment-marker shapes, no baseline. Prose that quotes or
 names a marker does not fire; matching is case-sensitive. Do the work now or
 track it and delete the marker; vendored trees go in excludes with a reason.
 
+- `--staged` — only the lines the staged diff ADDS (the commit lane). A
+  marker anywhere else in the index belongs to whoever committed it, and
+  blocking every commit in the repository on it is how one fixture stops a
+  whole team. Renames are held to exact content, as byte-ceiling holds
+  them: a pure move adds no line, while a file that moved and changed is
+  read whole. A repository with no commits yet diffs against the empty
+  tree, so the first commit is judged like any other.
+- (default) — every tracked file, read from the index. This is the CI
+  scope, and the only one that sees a marker no commit is touching.
+
 ## byte-ceiling
 
 Tracked files a change puts over the ceiling (default 200 KB, KB = 1024

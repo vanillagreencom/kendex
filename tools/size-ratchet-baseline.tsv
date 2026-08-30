@@ -1,5 +1,5 @@
 .github/workflows/review-gate-writer.yml	662
-.github/workflows/skill-tests.yml	514
+.github/workflows/skill-tests.yml	518
 crates/app/src/app_update.rs	403
 crates/core/src/engine/detach.rs	441
 crates/core/src/engine/pi_hooks_move/migrated.rs	539
@@ -119,7 +119,7 @@ skills/orch/tests/lanes.sh	890
 skills/orch/tests/oversee_watch.sh	814
 skills/orch/tests/queue_wait.sh	920
 skills/orch/workflows/review-pr.md	474
-skills/preflight/scripts/preflight	1188
+skills/preflight/scripts/preflight	1175
 skills/review-gate/scripts/pr-watch.sh	854
 skills/review-gate/scripts/review-predicate-selftest.sh	2514
 skills/review-gate/scripts/review-predicate.sh	1513

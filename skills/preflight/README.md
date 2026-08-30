@@ -5,9 +5,8 @@ mechanically: fail-open bash, new suites no runner invokes, scratch
 directories no EXIT trap removes, directories created at hardcoded absolute
 temp paths, docs citing repo paths that do not exist, source files citing
 docs that do not exist, edits to a migration a database has already run,
-TODO markers with no issue behind them, reviewer-bot
-attributions in durable prose, data files no parser accepts, and workflow
-`run:` blocks their own shell cannot parse.
+reviewer-bot attributions in durable prose, data files no parser accepts,
+and workflow `run:` blocks their own shell cannot parse.
 
 Findings land only on lines a change ADDED, and there is no warnings tier: a
 lane that cannot decide stays quiet, so every finding is worth a hard failure.

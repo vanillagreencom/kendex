@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # todo-ban — flat ban on work markers (TODO, FIXME, HACK, XXX in
-# comment-marker shapes) in tracked files, scanned from the index. No
-# baseline; vendored, generated and asset trees are excluded with a reason.
+# comment-marker shapes) in tracked files. Two scopes: the staged diff at
+# commit (--staged), the whole index everywhere else. No baseline; vendored,
+# generated and asset trees are excluded with a reason.
 #
 # Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 set -euo pipefail
@@ -18,11 +19,15 @@ source "$SCRIPT_DIR/lib/settings.sh"
 
 usage() {
   cat <<'EOF'
-usage: todo-ban [--excludes FILE]
+usage: todo-ban [--staged] [--excludes FILE]
 
 Flat ban on work markers (the words TODO, FIXME, HACK, XXX in
-comment-marker shapes) across all tracked files, scanned from the index.
-Prose that quotes or names a marker word does not fire.
+comment-marker shapes). Prose that quotes or names a marker word does not
+fire.
+
+  (default)   every tracked file, scanned from the index (CI scope)
+  --staged    only the lines the staged diff ADDS (pre-commit scope); a
+              repository with no commits yet diffs against the empty tree
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -34,8 +39,10 @@ EOF
 }
 
 EXCLUDES_OPT=""
+MODE="index"
 while [ $# -gt 0 ]; do
   case "$1" in
+    --staged) MODE="staged" ;;
     --excludes)
       [ $# -ge 2 ] || gg_config_error "--excludes requires a path"
       shift
@@ -64,10 +71,108 @@ gg_tmpdir
 # marker preceded by a backtick, a quote, or joined text matches neither
 # shape. Case-sensitive: lowercase uses of the words are prose.
 MARKER_ERE='(^|[[:space:]])(TODO|FIXME|HACK|XXX)[:(]|(^|[[:space:]])(//|#|;|<!--|/\*)[[:space:]]*(TODO|FIXME|HACK|XXX)([:(]|[[:space:]]|$)'
+REMEDY="do the work now, or move it to the tracker and delete the marker; vendored/generated trees belong in $EXCLUDES_FILE with a reason"
 
-gg_grep_lane "work marker" "$MARKER_ERE" \
-  "do the work now, or move it to the tracker and delete the marker; vendored/generated trees belong in $EXCLUDES_FILE with a reason" \
-  .
+# The base every staged diff is taken against: HEAD, or — on a repository's
+# first commit — the empty tree, which is what that commit adds to. Empty in
+# index scope, where nothing is diffed at all.
+DIFF_BASE=()
+if [ "$MODE" = "staged" ]; then
+  head_status=0
+  git rev-parse --verify --quiet HEAD >/dev/null 2>&1 || head_status=$?
+  case "$head_status" in
+    0) ;;
+    1)
+      # `git hash-object -t tree /dev/null` computes the id and writes
+      # nothing, so it is the right object in a sha256 repository too.
+      empty_tree="$(git hash-object -t tree /dev/null)" \
+        || gg_collection_error "could not compute the empty-tree object id for the first commit's diff base"
+      DIFF_BASE=("$empty_tree")
+      ;;
+    *) gg_collection_error "could not resolve HEAD (git rev-parse exit $head_status); refusing to guess a diff base" ;;
+  esac
+fi
+
+added_lines() { # PATH — one "line<TAB>content" record per line this commit ADDS
+  local f="$1" status=0
+  # Pinned diff configuration: an external differ or a textconv filter would
+  # hand this lane content the commit does not carry, and colour would put
+  # escape sequences in front of the leading '+'. One file per invocation,
+  # named by a literal pathspec, so no patch header is ever parsed for a
+  # path — a path git would have had to quote cannot be misread here.
+  git -c core.quotePath=false diff --cached --no-ext-diff --no-textconv --no-color \
+    -U0 ${DIFF_BASE[@]+"${DIFF_BASE[@]}"} -- ":(literal)$f" \
+    >"$GG_TMP/patch" 2>"$GG_TMP/patch.err" || status=$?
+  if [ "$status" -ne 0 ]; then
+    [ ! -s "$GG_TMP/patch.err" ] || cat -- "$GG_TMP/patch.err" >&2
+    gg_collection_error "could not read the staged additions in '$f' (git diff exit $status)"
+  fi
+  # Line numbers come from the hunk headers ('@@ -a,b +c,d @@'). Only lines
+  # inside a hunk count, so the '+++' file header is never one of them; a
+  # binary file has no hunks and contributes nothing.
+  awk '
+    /^@@/ {
+      h = $3
+      sub(/^\+/, "", h)
+      i = index(h, ",")
+      ln = (i > 0 ? substr(h, 1, i - 1) : h) + 0
+      hunk = 1
+      next
+    }
+    hunk && /^\+/ { print ln "\t" substr($0, 2); ln++; next }
+    hunk && /^ / { ln++; next }
+  ' "$GG_TMP/patch"
+}
+
+staged_lane() { # numbered violations on stdout, counted in GG_VIOLATIONS
+  local meta f dstmode grep_status rec
+  gg_require_merged_index
+  # A, M and T, with rename detection held to EXACT content for the reason
+  # byte-ceiling holds it there: at 100% a pure move pairs as R and is
+  # dropped — it adds no line — while a file that moved AND changed arrives
+  # as an addition and is read whole.
+  git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% \
+    --diff-filter=AMT ${DIFF_BASE[@]+"${DIFF_BASE[@]}"} >"$GG_TMP/raw.z" \
+    || gg_collection_error "could not collect the staged changes (git diff --cached --raw failed)"
+  while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
+    # Record shape: ":srcmode dstmode srcsha dstsha status". Only A, M and T
+    # survive the filter, none of which renames a path, so each carries one.
+    set -- $meta
+    dstmode="$2"
+    case "$dstmode" in
+      120000 | 160000) continue ;; # symlink / submodule gitlink — no lines to read
+    esac
+    gg_is_excluded "$f" && continue
+    added_lines "$f" >"$GG_TMP/added"
+    grep_status=0
+    # -a: a NUL past git's own binary sniff would otherwise make grep answer
+    # with a one-line "binary file matches" summary, which this loop would
+    # read as a violation record with no line number in it.
+    LC_ALL=C grep -aE -- "$MARKER_ERE" "$GG_TMP/added" >"$GG_TMP/hits" || grep_status=$?
+    # 1 is "this file's additions carry no marker"; anything above it is a
+    # scan that did not happen, which must never read as clean.
+    [ "$grep_status" -le 1 ] \
+      || gg_collection_error "could not scan the staged additions in '$f' (grep exit $grep_status)"
+    [ "$grep_status" -eq 0 ] || continue
+    while IFS= read -r rec; do
+      echo "$GG_CHECK FAIL work marker: $f:${rec%%"$GG_TAB"*}:${rec#*"$GG_TAB"}"
+      echo "  remedies: $REMEDY"
+      GG_VIOLATIONS=$((GG_VIOLATIONS + 1))
+    done <"$GG_TMP/hits"
+  done <"$GG_TMP/raw.z"
+}
+
+if [ "$MODE" = "staged" ]; then
+  staged_lane
+  if [ "$GG_VIOLATIONS" -gt 0 ]; then
+    echo "todo-ban: $GG_VIOLATIONS work marker(s) added by the staged diff — excludes $EXCLUDES_FILE"
+    exit 1
+  fi
+  echo "todo-ban: OK — the staged diff adds no work markers"
+  exit 0
+fi
+
+gg_grep_lane "work marker" "$MARKER_ERE" "$REMEDY" .
 
 if [ "$GG_VIOLATIONS" -gt 0 ]; then
   echo "todo-ban: $GG_VIOLATIONS work marker(s) — excludes $EXCLUDES_FILE"

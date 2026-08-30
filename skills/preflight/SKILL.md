@@ -1,7 +1,7 @@
 ---
 name: preflight
 description: "Load to run, tune, or debug preflight."
-summary: "Diff-scoped deterministic pre-review checks: shell parse and shellcheck errors, fail-open bash, unwired test suites, untrapped scratch dirs, dead path citations, edited applied migrations, TODO markers, bot attributions, malformed JSON, TOML, and workflows."
+summary: "Diff-scoped deterministic pre-review checks: shell parse and shellcheck errors, fail-open bash, unwired test suites, untrapped scratch dirs, dead path citations, edited applied migrations, bot attributions, malformed JSON, TOML, and workflows."
 license: MIT
 user-invocable: true
 metadata:
@@ -44,7 +44,6 @@ checkout. The default base is `origin/HEAD`, then `origin/main`, then
 | `hardcoded-temp-path` | An added directory-creating call taking a literal absolute temp path (`/tmp/…`, `/var/tmp/…`) as (part of) its first argument — `mkdtemp`/`mkdir` and their `Sync` variants (JS/TS), `mkdtemp`/`makedirs`/`mkdir` (Python), `create_dir_all` (Rust), and a shell `mkdir -p` at a command position. Not the shape: the literal as a value (config field, fixture string, path nothing creates), a `$TMPDIR`-derived path, or a commented-out call. | built in |
 | `docs-cited-paths` | An added backticked path in a `.md` file, inside a directory the repo really has and the doc's own subtree, that names nothing tracked or on disk. Also the reverse: an added source line citing a `.md` path that names nothing tracked or on disk — URL spans and double-quoted strings are stripped first; data files (JSON/TOML/YAML/lock), test-named files, and installed-artifact subtrees (`.agents/` and the harness dirs' skills/agents/hooks/rules/instructions/packages/kendex trees) are out of scope; the same directory guards apply. | built in |
 | `applied-migration-edited` | A path the MERGE BASE carries, changed, deleted or renamed, matching a configured migrations glob. refinery and Flyway record a checksum over a versioned migration's name and text and refuse to run against a database whose recorded checksum moved; the correction is a new migration, never an edit here. `PREFLIGHT_MIGRATION_GLOBS` replaces the set, default `**/migrations/V*__*.sql` and `**/db/migration/V*__*.sql`, which is those two runners' filename shape under the two directory names they use, Flyway's own being the singular one, and nothing else: a runner recording an applied version without a checksum (golang-migrate, Goose, Alembic, Django) reopens its database after an edit, so naming its files would hard-fail a legitimate change. Every other layout is opt-in, sqlx and Flyway repeatable migrations (`R__*`) included. A leading `**/` matches at any depth and is the only depth crossing, so a `*` never reaches past its own path component. Not the shape: a migration added at a new version, one this branch added and then corrected (the staged scope diffs against HEAD and is qualified against the base for exactly that), and a mode change, which moves no text. `--all` reads every tracked line as added and a repository with no base to read answers nothing, so both stay quiet, as does an empty value. | built in |
-| `todo-links` | An added `TODO:`/`FIXME(` marker — the word immediately followed by `:` or `(` — with no `#N`, `ABC-123`, or URL on the line. Prose that merely uses the word is not a marker. | built in |
 | `reviewer-attribution` | An added line crediting a transient reviewer-bot pass: a fleet bot name (qodo, copilot, coderabbit, codex, devin; `PREFLIGHT_BOT_NAMES` replaces the set) coupled to a PR/review reference — a parenthetical credit, `per <bot> review`, or `<bot> review of #N`. Prose that merely names a bot is not the shape. `CHANGELOG.md` is exempt. | built in |
 | `data-syntax` | A changed `.json` or `.toml` file no parser accepts. | jq, taplo or python3 |
 | `workflow-run-syntax` | A `run:` block in a changed `.github/workflows/*.yml` that its shell cannot parse — `bash -n` for bash, `sh -n` for sh, by name or executable path; `${{ … }}` replaced by a placeholder; other shells skipped, and an undeclared shell counts as bash only on plain `ubuntu-*`/`macos-*` runners. Reported at the offending file line — a folded (`>`) block at its first line; a workflow file that is not valid YAML, at the parser's line; an unterminated `${{`, at its line. | python3 with PyYAML |
@@ -56,7 +55,7 @@ for the lanes that judge whole files; `unwired-suite` is the exception.
 Installed-artifact subtrees (`.agents/` and the harness dirs'
 skills/agents/hooks/rules/instructions/packages/kendex trees) are out of
 scope for `masked-returns`, `fail-open`, `unwired-suite`, `mktemp-trap`,
-`docs-cited-paths`, `todo-links`. `shell-syntax`, `shellcheck-errors`,
+`docs-cited-paths`. `shell-syntax`, `shellcheck-errors`,
 `hardcoded-temp-path`, `reviewer-attribution`, `applied-migration-edited`,
 `data-syntax`, `workflow-run-syntax` stay on there. A `prompts/` or
 `commands/` tree under a harness dir keeps every lane. A lane whose tool

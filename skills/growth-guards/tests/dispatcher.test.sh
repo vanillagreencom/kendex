@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Pins for scripts/growth-guards (the dispatcher): the batch runs exactly
 # the enabled checks and aggregates fail-closed (any incomplete check is
-# exit 2, any violation exit 1), single-check invocation passes flags and
-# exit codes through, and the check-list configuration is validated.
+# exit 2, any violation exit 1), --staged reaches the checks that take it and
+# no others, single-check invocation passes flags and exit codes through, and
+# the check-list configuration is validated.
 #
 # Marker words are assembled from split tokens so this file never contains
 # a marker shape itself.
@@ -121,6 +122,35 @@ run_gg -- all --extra
 run_gg -- --help
 [ "$RC" -eq 0 ] && case "$OUT" in *"usage: growth-guards"*) true ;; *) false ;; esac \
   && ok "--help prints usage at exit 0" || bad "--help prints usage" "rc=$RC out=$OUT"
+
+echo "=== 'all --staged' runs the batch at commit scope ==="
+new_repo stagedbatch
+printf 'fn main() {}\n' >"$R/ok.rs"
+git -C "$R" add -A
+git -C "$R" commit -qm seed
+printf '// %s: committed in a fixture\n' "$TD" >"$R/fixture.rs"
+git -C "$R" add -A
+git -C "$R" commit -qm fixture
+printf 'fn other() {}\n' >>"$R/ok.rs"
+git -C "$R" add ok.rs
+run_gg -- all --staged
+[ "$RC" -eq 0 ] && case "$OUT" in *"growth-guards: todo-ban --staged"*) true ;; *) false ;; esac \
+  && ok "the batch hands todo-ban --staged, so a commit adding no marker passes" \
+  || bad "batch forwards --staged to todo-ban" "rc=$RC out=$OUT"
+run_gg -- --staged
+[ "$RC" -eq 0 ] && ok "'--staged' without 'all' is the same batch" \
+  || bad "'--staged' alone is the same batch" "rc=$RC out=$OUT"
+run_gg
+[ "$RC" -eq 1 ] && case "$OUT" in *"work marker: fixture.rs"*) true ;; *) false ;; esac \
+  && ok "control: the index-wide batch (CI) still refuses the committed marker" \
+  || bad "control: index-wide batch refuses the marker" "rc=$RC out=$OUT"
+
+# A check that takes no --staged is never handed one: it would exit 2 on the
+# unknown argument, and the batch would fail closed on a lane that was fine.
+run_gg GROWTH_GUARDS_CHECKS=conflict-markers -- all --staged
+[ "$RC" -eq 0 ] && case "$OUT" in *"conflict-markers --staged"*) false ;; *) true ;; esac \
+  && ok "a check outside the staged-scoped set runs unflagged" \
+  || bad "unflagged check outside the staged-scoped set" "rc=$RC out=$OUT"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

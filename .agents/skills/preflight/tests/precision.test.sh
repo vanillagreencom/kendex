@@ -40,7 +40,7 @@ seed() { # NAME — fixture in $R: committed baseline, origin/main, feature bran
   printf '# Guide\n' >"$R/docs/guide.md"
   printf '#!/usr/bin/env bash\nset -euo pipefail\necho hook\n' >"$R/hooks/real.sh"
   # Pre-existing violations, committed: untouched lines must stay invisible.
-  printf '# Legacy\n\nTODO: ancient and unreferenced.\n' >"$R/docs/legacy.md"
+  printf '# Legacy\n\nSee `docs/gone.md` for background.\n' >"$R/docs/legacy.md"
   printf '# History\n\nClamped in review (qodo PR #431).\n' >"$R/docs/history.md"
   printf '#!/usr/bin/env bash\necho old\nTMP="$(mktemp -d)"\n' >"$R/scripts/old.sh"
   printf '#!/usr/bin/env bash\nset -euo pipefail\n# See docs/gone.md for background.\necho old\n' >"$R/scripts/pointer.sh"
@@ -504,7 +504,6 @@ fires "the benign temp-path fixture was not clean because nothing ran" "src/crea
 
 echo "=== violations on lines this diff did not touch stay invisible ==="
 seed untouched
-printf '# Legacy\n\nTODO: ancient and unreferenced.\n\nA new paragraph.\n' >"$R/docs/legacy.md"
 printf '# History\n\nClamped in review (qodo PR #431).\n\nMore history.\n' >"$R/docs/history.md"
 printf '#!/usr/bin/env bash\necho old\nTMP="$(mktemp -d)"\necho "$TMP"\n' >"$R/scripts/old.sh"
 printf '#!/usr/bin/env bash\nset -euo pipefail\n# See docs/gone.md for background.\necho old\necho more\n' >"$R/scripts/pointer.sh"
@@ -513,13 +512,11 @@ run_pf
 clean "appending to files whose older lines violate three lanes reports nothing"
 
 echo "=== control: touching those same lines makes them this diff's problem ==="
-printf '# Legacy\n\nTODO: ancient, reworded, still unreferenced.\n\nA new paragraph.\n' >"$R/docs/legacy.md"
 printf '# History\n\nReworked in review (qodo PR #431).\n\nMore history.\n' >"$R/docs/history.md"
 printf '#!/usr/bin/env bash\necho old\nTMP="$(mktemp -d -t x)"\necho "$TMP"\n' >"$R/scripts/old.sh"
 printf '#!/usr/bin/env bash\nset -euo pipefail\n# See docs/gone.md for background, still.\necho old\necho more\n' >"$R/scripts/pointer.sh"
 git -C "$R" add -A
 run_pf
-fires "the reworded TODO line fires" "docs/legacy.md:3: [todo-links]"
 fires "the reworded attribution line fires" "docs/history.md:3: [reviewer-attribution]"
 fires "the reworked mktemp line fires" "scripts/old.sh:3: [fail-open] unchecked mktemp"
 fires "the reworked dead-citation line fires" "scripts/pointer.sh:3: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
