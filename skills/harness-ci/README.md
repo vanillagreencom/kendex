@@ -65,12 +65,12 @@ those trees it committed.
   does not parse the other spellings TOML allows. It counts every line that
   could take part in spelling the value instead — a bare `in-place`, a
   `\u`/`\U`/`\x` escape, a multiline `source` string — and carves every
-  `.agents/skills` path when one goes unaccounted, so an apostrophe-quoted
-  key, a dotted key, an inline table, a nested table, a name wearing
-  whitespace and an escaped name or value all answer `false` rather than a
-  guess. `[agents.<name>]` and `[hooks.<name>]` are unaccounted too, so a
-  repo that adopted an agent or a hook in place stays on that coarse carve
-  and never gets the per-name read.
+  `.agents/skills` path when one goes unaccounted. An apostrophe-quoted key,
+  a dotted key, an inline table, a nested table, a name wearing whitespace,
+  an escaped name and an escaped value all answer `false` that way, and so
+  does `source = "in-place"` under any table but `[skills.<name>]`, the only
+  one that accounts. Every one of those is a hand edit: kendex declares in
+  place for skills alone.
 - **Merge base on `pull_request`** (`base...head`): the base branch moves
   under an open PR, and only the merge base isolates what the PR changed.
 - **Two endpoints on `push` and `merge_group`** (`base head`): a force-push
