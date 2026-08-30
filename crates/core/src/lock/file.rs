@@ -5,6 +5,7 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::error::{CoreError, Result};
 use crate::fs::{atomic_write, read_if_exists};
+use crate::paths::canonical;
 
 use super::{LOCK_FILE, LOCK_VERSION, Lock, Reason};
 
@@ -84,6 +85,80 @@ fn refuse_foreign_paths(path: &Path, lock: &Lock) -> Result<()> {
     }
 }
 
+/// Whether `recorded` and `root` name the same directory.
+///
+/// Canonically at both ends ([`canonical`]), because neither side arrives
+/// holding the one spelling (invariant 17): macOS fronts its temp
+/// directories through `/var -> /private/var`, so a root compared as text
+/// does not equal itself.
+///
+/// A spelling that resolves to nothing is not this project's root. The
+/// root reading a lock is the directory that lock was just read out of, so
+/// it resolves; one that cannot be reached is not the one that can.
+fn same_directory(recorded: &Path, root: &Path) -> bool {
+    matches!(
+        (canonical(recorded), canonical(root)),
+        (Ok(recorded), Ok(root)) if recorded == root
+    )
+}
+
+/// Which project wrote this record, held against the project reading it.
+///
+/// [`refuse_foreign_paths`] establishes containment, and containment is not
+/// ownership: a second checkout nested below this root sits inside it, so
+/// every path a lock carried out of that checkout names is inside too.
+/// Refresh reads those as positions this project owns and takes back the
+/// ones a new render no longer produces — out of the nested tree. Only the
+/// root that wrote the record settles it, so the record says which.
+///
+/// A record naming no project is refused rather than adopted: nothing here
+/// knows who wrote it, and reading it as this project's is exactly the
+/// guess the refusal exists to stop.
+///
+/// The global lock has no single root, so it records none and there is
+/// nothing to hold it to.
+fn refuse_another_project(path: &Path, lock: &Lock) -> Result<()> {
+    let Some(root) = project_root_at(path) else {
+        return Ok(());
+    };
+    let Some(recorded) = lock.root.as_deref() else {
+        return Err(CoreError::LockWithoutProject {
+            path: path.to_path_buf(),
+        });
+    };
+    match same_directory(recorded, root) {
+        true => Ok(()),
+        false => Err(CoreError::LockFromAnotherProject {
+            path: path.to_path_buf(),
+            recorded: recorded.to_path_buf(),
+            root: root.to_path_buf(),
+        }),
+    }
+}
+
+/// Name the project this record is written under, refusing one that
+/// already names another.
+///
+/// Stamped at the write rather than where each record is built: this is the
+/// one call that knows the path being written, which is the same knowledge
+/// the read checks against — two answers to one question is how the two
+/// ends come apart. What a project lock cannot hand out it cannot be made
+/// to hold, so a record naming another root is refused here too.
+///
+/// The root goes down canonical where it resolves and as spelled where it
+/// does not — a first write reaches here before the directory it names
+/// exists. Nothing turns on which: [`same_directory`] resolves both sides.
+fn stamp_project(path: &Path, lock: &mut Lock) -> Result<()> {
+    let Some(root) = project_root_at(path) else {
+        return Ok(());
+    };
+    if lock.root.is_some() {
+        return refuse_another_project(path, lock);
+    }
+    lock.root = Some(canonical(root).unwrap_or_else(|_| root.to_path_buf()));
+    Ok(())
+}
+
 /// What sits at a lock path. A v1 lock keys entries by bare name and carries
 /// a `harnesses` array; v2 keys carry `kind:name:harness` with one `harness`
 /// field. The shapes are incompatible — deserializing v1 text straight into
@@ -157,6 +232,7 @@ pub fn parse_text(path: &Path, text: &str) -> Result<LockFile> {
     })?;
     backfill_requested_reason(&mut lock);
     refuse_foreign_paths(path, &lock)?;
+    refuse_another_project(path, &lock)?;
     Ok(LockFile::Current(lock))
 }
 
@@ -191,7 +267,9 @@ pub fn load(path: &Path) -> Result<Lock> {
 
 pub fn save(path: &Path, lock: &Lock) -> Result<()> {
     refuse_foreign_paths(path, lock)?;
-    let mut text = serde_json::to_string_pretty(lock).map_err(|e| CoreError::JsonParse {
+    let mut lock = lock.clone();
+    stamp_project(path, &mut lock)?;
+    let mut text = serde_json::to_string_pretty(&lock).map_err(|e| CoreError::JsonParse {
         path: path.to_path_buf(),
         message: e.to_string(),
     })?;

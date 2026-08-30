@@ -86,7 +86,10 @@ fn fixture(manifest: impl FnOnce(&std::path::Path) -> String) -> Fixture {
     fs::write(&manifest_path, manifest(&source)).unwrap();
     fs::write(
         project.join(".kendex-lock.json"),
-        "{\n  \"version\": 1,\n  \"entries\": {}\n}\n",
+        format!(
+            "{{\n  \"version\": 1,\n  \"root\": {},\n  \"entries\": {{}}\n}}\n",
+            serde_json::to_string(&project.display().to_string()).unwrap()
+        ),
     )
     .unwrap();
 

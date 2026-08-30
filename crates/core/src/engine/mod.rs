@@ -299,6 +299,7 @@ fn desired_pass<'a>(
 fn fresh_lock(manifest: &Manifest, lock: &Lock, state: &desired::DesiredState) -> Lock {
     Lock {
         version: crate::lock::LOCK_VERSION,
+        root: lock.root.clone(),
         entries: BTreeMap::new(),
         sources: source_revisions(manifest, lock, state),
         bundles: bundle_revisions(manifest, lock, state),

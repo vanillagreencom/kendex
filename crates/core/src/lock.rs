@@ -36,6 +36,20 @@ pub const LOCK_FILE: &str = ".kendex-lock.json";
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
 pub struct Lock {
     pub version: u32,
+    /// The project root this record was written under.
+    ///
+    /// Containment answers whether a claimed path is under the root
+    /// reading the lock; it cannot answer whose record this is, because a
+    /// second checkout nested below that root sits inside it and so does
+    /// every path a lock carried out of it names. This says which root
+    /// wrote the record, and the read holds it against the root reading.
+    ///
+    /// `None` on the global lock, which has no single root — each harness
+    /// owns a directory of its own. `None` on a project lock is a record
+    /// from a build that did not write it down: it parses so the read can
+    /// refuse it by name, never so a project can adopt it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<PathBuf>,
     #[serde(default)]
     pub entries: BTreeMap<String, LockEntry>,
     /// The commit each declared source resolved to, by source name.

@@ -12,6 +12,16 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Output};
 
+/// A lock naming the project it sits in — the record every project lock
+/// carries, without which a read refuses it as nobody's.
+#[allow(clippy::unwrap_used)]
+fn lock_of(proj: &Path, entries: &str) -> String {
+    format!(
+        r#"{{"version":1,"root":{},"entries":{{{entries}}}}}"#,
+        serde_json::to_string(&proj.display().to_string()).unwrap()
+    )
+}
+
 #[allow(clippy::expect_used)]
 fn kendex_in(home: &Path, cwd: &Path, args: &[&str], envs: &[(&str, String)]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
@@ -130,7 +140,10 @@ fn report_dry_run_routes_by_ownership_and_rejects_scope_all() {
     // symlinked, as every installed skill is; delivery is not ownership.
     fs::write(
         proj.join(".kendex-lock.json"),
-        r#"{"version":1,"entries":{"agent:orch:claude":{"name":"orch","kind":"agent","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"copy","installedAt":"2026-01-01T00:00:00Z","sourceHash":"x","enabled":true},"skill:size-ratchet:claude":{"name":"size-ratchet","kind":"skill","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"symlink","installedAt":"2026-01-01T00:00:00Z","sourceHash":"x","enabled":true}}}"#,
+        lock_of(
+            &proj,
+            r#""agent:orch:claude":{"name":"orch","kind":"agent","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"copy","installedAt":"2026-01-01T00:00:00Z","sourceHash":"x","enabled":true},"skill:size-ratchet:claude":{"name":"size-ratchet","kind":"skill","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"symlink","installedAt":"2026-01-01T00:00:00Z","sourceHash":"x","enabled":true}"#,
+        ),
     )
     .unwrap();
 
@@ -284,7 +297,10 @@ fn report_files_through_a_stubbed_gh() {
     let proj = home.join("proj");
     fs::write(
         proj.join(".kendex-lock.json"),
-        r#"{"version":1,"entries":{"hook:guard:claude":{"name":"guard","kind":"hook","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"copy","installedAt":"2026-01-01T00:00:00Z","sourceHash":"x","enabled":true}}}"#,
+        lock_of(
+            &proj,
+            r#""hook:guard:claude":{"name":"guard","kind":"hook","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"copy","installedAt":"2026-01-01T00:00:00Z","sourceHash":"x","enabled":true}"#,
+        ),
     )
     .unwrap();
 

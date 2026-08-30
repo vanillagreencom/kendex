@@ -49,7 +49,10 @@ fn fixture() -> Fixture {
     fs::write(&manifest_path, &original).unwrap();
     fs::write(
         project.join(".kendex-lock.json"),
-        "{\n  \"version\": 1,\n  \"entries\": {}\n}\n",
+        format!(
+            "{{\n  \"version\": 1,\n  \"root\": {},\n  \"entries\": {{}}\n}}\n",
+            serde_json::to_string(&project.display().to_string()).unwrap()
+        ),
     )
     .unwrap();
 

@@ -59,6 +59,20 @@ pub enum CoreError {
     },
 
     #[error(
+        "{path} was written by the project at {recorded}, not the one at {root} — this lock belongs to another checkout; delete it and apply again"
+    )]
+    LockFromAnotherProject {
+        path: PathBuf,
+        recorded: PathBuf,
+        root: PathBuf,
+    },
+
+    #[error(
+        "{path} does not say which project wrote it — refusing to read it as this project's; delete it and apply again"
+    )]
+    LockWithoutProject { path: PathBuf },
+
+    #[error(
         "{path} was written by a newer kendex (format {found}) — update this app before touching it"
     )]
     SchemaTooNew { path: PathBuf, found: i64 },

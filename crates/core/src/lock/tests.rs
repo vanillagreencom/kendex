@@ -51,7 +51,19 @@ fn lock_round_trips_and_missing_file_is_empty() {
         },
     );
     save(&path, &lock).unwrap();
-    assert_eq!(load(&path).unwrap(), lock);
+    let loaded = load(&path).unwrap();
+    assert_eq!(
+        loaded.root,
+        Some(tmp.path().canonicalize().unwrap()),
+        "the write names the project it went down under"
+    );
+    assert_eq!(
+        Lock {
+            root: None,
+            ..loaded
+        },
+        lock
+    );
     assert!(std::fs::read_to_string(&path).unwrap().ends_with('\n'));
 }
 
@@ -63,7 +75,10 @@ fn entries_without_reasons_read_as_requested() {
     let path = tmp.path().join(".kendex-lock.json");
     std::fs::write(
         &path,
-        r#"{"version":2,"entries":{"skill:gh:claude":{"name":"gh","kind":"skill","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"symlink","installedAt":"2026-01-01T00:00:00Z","sourceHash":"abc","enabled":true}}}"#,
+        format!(
+            r#"{{"version":2,"root":{},"entries":{{"skill:gh:claude":{{"name":"gh","kind":"skill","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"symlink","installedAt":"2026-01-01T00:00:00Z","sourceHash":"abc","enabled":true}}}}}}"#,
+            json(tmp.path())
+        ),
     )
     .unwrap();
     let lock = load(&path).unwrap();
@@ -132,24 +147,145 @@ fn a_newer_lock_refuses_to_load() {
 fn an_empty_lock_reads_as_current() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join(".kendex-lock.json");
-    std::fs::write(&path, r#"{"version":1,"entries":{}}"#).unwrap();
+    std::fs::write(
+        &path,
+        format!(
+            r#"{{"version":1,"root":{},"entries":{{}}}}"#,
+            json(tmp.path())
+        ),
+    )
+    .unwrap();
     assert!(matches!(load_file(&path).unwrap(), LockFile::Current(_)));
+}
+
+/// A path as JSON data rather than text spliced into a literal: a
+/// backslash in one is an escape JSON has to be told about.
+fn json(path: &Path) -> String {
+    serde_json::to_string(&path.display().to_string()).unwrap()
 }
 
 /// A record whose `emitted.paths` reach outside the project holding it, as
 /// written by hand under `key` — the shape a lock copied from another
-/// checkout has.
-fn recording(path: &Path, key: &str, emitted: &Path) {
+/// checkout has. `wrote_it` is the project the record names as its own;
+/// `None` writes the field out, which is what the global lock holds.
+fn recording(path: &Path, key: &str, emitted: &Path, wrote_it: Option<&Path>) {
     std::fs::write(
         path,
         format!(
-            r#"{{"version":7,"entries":{{"{key}":{{"name":"gh","kind":"skill","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"symlink","installedAt":"2026-01-01T00:00:00Z","sourceHash":"abc","enabled":true,"emitted":{{"kind":"skill","name":"gh","paths":[{}]}}}}}}}}"#,
+            r#"{{"version":7,{}"entries":{{"{key}":{{"name":"gh","kind":"skill","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"symlink","installedAt":"2026-01-01T00:00:00Z","sourceHash":"abc","enabled":true,"emitted":{{"kind":"skill","name":"gh","paths":[{}]}}}}}}}}"#,
+            wrote_it.map_or(String::new(), |root| format!(
+                r#""root":{},"#,
+                json(root)
+            )),
             // A path is data here, not text spliced into the literal: a
             // backslash in it is an escape JSON has to be told about.
-            serde_json::to_string(&emitted.display().to_string()).unwrap()
+            json(emitted)
         ),
     )
     .unwrap();
+}
+
+/// Containment cannot answer whose record this is: a checkout nested below
+/// this root sits inside it, so every path a lock carried out of that
+/// checkout names passes the boundary. The record says which root wrote it,
+/// and the refusal names both so the reader can see which is which.
+#[test]
+fn a_project_lock_another_project_wrote_is_refused_naming_both() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("here");
+    let nested = root.join("vendor/thing");
+    std::fs::create_dir_all(&nested).unwrap();
+    let path = root.join(LOCK_FILE);
+    recording(
+        &path,
+        "skill:gh:claude",
+        &nested.join(".agents/skills/gh"),
+        Some(&nested),
+    );
+
+    let refused = load(&path).unwrap_err();
+    assert!(
+        matches!(
+            &refused,
+            CoreError::LockFromAnotherProject { recorded, root: reading, .. }
+                if recorded == &nested && reading == &root
+        ),
+        "{refused:?}"
+    );
+}
+
+/// A record naming no project is refused rather than adopted: nothing knows
+/// who wrote it, and reading it as this project's is the guess the refusal
+/// exists to stop.
+#[test]
+fn a_project_lock_naming_no_project_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("here");
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join(LOCK_FILE);
+    recording(
+        &path,
+        "skill:gh:claude",
+        &root.join(".agents/skills/gh"),
+        None,
+    );
+
+    assert!(matches!(
+        load(&path),
+        Err(CoreError::LockWithoutProject { .. })
+    ));
+}
+
+/// A root has one spelling (invariant 17), and neither end holds it: the
+/// record goes down canonical while a caller may name the same directory
+/// through a link — which is the spelling macOS hands every temp path,
+/// `/var` fronting `/private/var`. Compared as text a root does not equal
+/// itself, and every project reached that way loses its own lock.
+#[test]
+#[cfg(unix)]
+fn a_project_lock_read_through_a_linked_spelling_of_its_root_is_still_its_own() {
+    let tmp = tempfile::tempdir().unwrap();
+    let real = tmp.path().join("real");
+    std::fs::create_dir(&real).unwrap();
+    let via = tmp.path().join("via");
+    std::os::unix::fs::symlink(&real, &via).unwrap();
+
+    let lock = Lock {
+        version: LOCK_VERSION,
+        ..Lock::default()
+    };
+    save(&via.join(LOCK_FILE), &lock).unwrap();
+
+    assert_eq!(
+        load(&via.join(LOCK_FILE)).unwrap().root,
+        Some(real.clone()),
+        "the write records the directory, not the way in"
+    );
+    load(&real.join(LOCK_FILE)).expect("its own root, spelled directly");
+    load(&via.join(LOCK_FILE)).expect("its own root, spelled through the link");
+}
+
+/// The write end of the ownership rule: what a project lock cannot hand out
+/// it cannot be made to hold.
+#[test]
+fn a_project_lock_is_never_written_naming_another_project() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("here");
+    let nested = root.join("vendor/thing");
+    std::fs::create_dir_all(&nested).unwrap();
+    let path = root.join(LOCK_FILE);
+
+    let lock = Lock {
+        version: LOCK_VERSION,
+        root: Some(nested),
+        ..Lock::default()
+    };
+
+    assert!(matches!(
+        save(&path, &lock),
+        Err(CoreError::LockFromAnotherProject { .. })
+    ));
+    assert!(!path.exists(), "and nothing is left at the path");
 }
 
 /// A project lock may claim only what sits under its own root: the paths a
@@ -162,7 +298,7 @@ fn a_project_lock_claiming_another_tree_is_refused() {
     std::fs::create_dir(&root).unwrap();
     let path = root.join(LOCK_FILE);
     let elsewhere = tmp.path().join("there/.agents/skills/gh");
-    recording(&path, "skill:gh:claude", &elsewhere);
+    recording(&path, "skill:gh:claude", &elsewhere, Some(&root));
 
     let refused = load(&path).unwrap_err();
     assert!(
@@ -174,7 +310,12 @@ fn a_project_lock_claiming_another_tree_is_refused() {
         "{refused:?}"
     );
 
-    recording(&path, "skill:gh:claude", &root.join(".agents/skills/gh"));
+    recording(
+        &path,
+        "skill:gh:claude",
+        &root.join(".agents/skills/gh"),
+        Some(&root),
+    );
     assert_eq!(load(&path).unwrap().entries.len(), 1, "its own root loads");
 }
 
@@ -233,7 +374,7 @@ fn a_relatively_named_project_lock_still_has_a_boundary() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join(LOCK_FILE);
     let elsewhere = tmp.path().join("there/.agents/skills/gh");
-    recording(&path, "skill:gh:claude", &elsewhere);
+    recording(&path, "skill:gh:claude", &elsewhere, Some(tmp.path()));
     let text = std::fs::read_to_string(&path).unwrap();
 
     assert!(matches!(
@@ -252,6 +393,6 @@ fn the_global_lock_records_paths_outside_its_own_directory() {
     let path = app.join("lock.json");
     // A harness directory, which is nowhere near the app's own.
     let elsewhere = tmp.path().join("home/.claude/skills/gh");
-    recording(&path, "skill:gh:claude", &elsewhere);
+    recording(&path, "skill:gh:claude", &elsewhere, None);
     assert_eq!(load(&path).unwrap().entries.len(), 1);
 }

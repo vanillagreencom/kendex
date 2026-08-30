@@ -5,7 +5,7 @@ crates/core/src/engine/detach.rs	441
 crates/core/src/engine/pi_hooks_move/migrated.rs	539
 crates/core/src/engine/pi_hooks_move/mod.rs	503
 crates/core/src/engine/pi_hooks_move/preflight.rs	765
-crates/core/src/error.rs	495
+crates/core/src/error.rs	509
 crates/core/src/remote/store.rs	405
 crates/core/src/settings_file.rs	408
 docs/ARCHITECTURE.md	801
