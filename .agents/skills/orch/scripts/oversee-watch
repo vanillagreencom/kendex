@@ -19,17 +19,20 @@
 #                 query per item — no listing window to miss) merged at or
 #                 after --since
 #   3. window-gone a listed tmux lane window no longer exists
-#   4. lane-exited a listed lane's window is alive but its pane's current
-#                 command is a bare shell on two consecutive passes — the
-#                 harness under it exited (session limit, crash, quit) and
-#                 the slot is free
-#   5. usage-limit a listed lane whose harness has not exited (its pane's
-#                 current command is not a bare shell) shows the account's
-#                 limit banner — one pass, and the claimed config dir when a
-#                 live lane claim names the window
+#   4. lane-exited a listed lane's window is alive but its pane holds a bare
+#                 shell with NO child process on two consecutive passes — the
+#                 harness under it exited (session limit, crash, quit) and the
+#                 slot is free. A lane resumed by typing the wrapper at an
+#                 interactive prompt keeps the shell as the pane process and
+#                 the harness as its child, so the child is what tells them
+#                 apart
+#   5. usage-limit a listed lane whose harness has not exited shows the
+#                 account's limit banner below the last user turn on its
+#                 screen — one pass, and the claimed config dir when a live
+#                 lane claim names the window
 #   6. question   a listed lane's pane shows a question/selection prompt
 #   7. idle-after-return a listed lane whose harness has not exited sits at
-#                 its input prompt with no work in flight on two consecutive
+#                 its composer with no work in flight on two consecutive
 #                 passes
 #   8. heartbeat  after --max-loops passes with no event
 #
@@ -90,6 +93,15 @@ WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens'
 # A ready input prompt: Claude Code's composer line, Codex's submit hint.
 # Present while working too, so it decides idleness only with WORKING_RE out.
 IDLE_PROMPT_RE='^❯|to submit message'
+# A submitted user message, echoed into the transcript. Claude Code draws it
+# with the SAME `❯` marker as its composer, so a turn is the marker, an ASCII
+# blank, and text: the composer draws `❯` and U+00A0 and never matches, with
+# or without an unsent draft. A selection option (`❯ 1. Yes`) is the harness
+# asking, so USER_TURN_OPTION_RE takes those back out. Both go to awk through
+# `-v`, which processes escapes, so the literal dot is a bracket expression:
+# `\.` would warn on every pass, onto the stderr the overseer reads.
+USER_TURN_RE='^❯[[:blank:]]+[^[:space:]]'
+USER_TURN_OPTION_RE='^❯[[:blank:]]+[0-9]+[.][[:blank:]]'
 
 INTERVAL=240
 MAX_LOOPS=25
@@ -127,26 +139,31 @@ Events, checked in this order every pass:
   EVENT window-gone <lane>   a listed tmux window no longer exists
   EVENT lane-exited <lane>   the window is alive but the pane's current
                              command is a bare shell (bash/zsh/fish/sh/dash,
-                             login spellings too) on two consecutive passes:
-                             the harness under it exited — session limit,
-                             crash, quit — and the lane's slot is free (last
-                             40 non-empty pane lines follow, carrying why)
+                             login spellings too) AND its `#{pane_pid}` has no
+                             child process, on two consecutive passes: the
+                             harness under it exited — session limit, crash,
+                             quit — and the lane's slot is free (last 40
+                             non-empty pane lines follow, carrying why). A
+                             lane resumed by typing the wrapper at a shell
+                             prompt keeps that shell as the pane process, so a
+                             bare shell WITH a child is a live lane
   EVENT usage-limit <lane> [<config-dir>]
-                             the harness has not exited (the pane's current
-                             command is not a bare shell) and the pane shows
-                             the account's limit banner
+                             the harness has not exited and the pane shows the
+                             account's limit banner
                              (`You've hit your … limit`, `/usage-credits`,
-                             `Usage limit reached`, out of credits): the
-                             account is spent and every lane on it follows.
-                             One pass — a banner is terminal for that
-                             account window, not a transient. The config dir
-                             is appended when a live lane claim names this
-                             window (last 40 non-empty pane lines follow)
+                             `Usage limit reached`, out of credits) below the
+                             last user turn on its screen: the account is
+                             spent and every lane on it follows. One pass — a
+                             banner is terminal for that account window — and
+                             only below that turn, so a banner the lane has
+                             since worked past is old news. The config dir is
+                             appended when a live lane claim names this window
+                             (last 40 non-empty pane lines follow)
   EVENT question <lane>      the lane's pane shows a question/selection
                              prompt (last 40 non-empty pane lines follow)
   EVENT idle-after-return <lane>
                              the harness has not exited and its pane sits at
-                             the input prompt (`❯` composer, Codex's submit
+                             the composer (`❯`, Codex's submit
                              hint) with no work in flight (no interrupt hint,
                              no background-shell hint, no streaming token
                              counter) on two consecutive passes: the round is
@@ -396,22 +413,44 @@ is_bare_shell() {
   return 1
 }
 
-# Watch-list positions whose pane held a bare shell on the previous pass.
+# The pane's process has a child. A foreground shell does not mean the lane is
+# over: a lane started by typing the wrapper at an interactive prompt
+# (`hclaude --resume <id>`, the normal way to resume) keeps that shell as the
+# pane process and the harness as its child, so the pane reads `fish` for the
+# lane's whole life. Only a shell with nothing under it is finished. One `ps`
+# per bare-shell lane per pass; no walking of the tree below.
+pane_has_child() {
+  [[ -n "$1" ]] || return 1
+  [[ -n "$(ps -o pid= --ppid "$1" 2>/dev/null)" ]]
+}
+
+# The pane lines strictly below the last user turn — the whole pane when the
+# screen holds none. A banner the lane has since taken another turn past is
+# scrollback, not the account's state now: after a reset the old banner stays
+# on the visible screen, and reporting it every pass buries the live lanes.
+pane_below_last_turn() {
+  awk -v turn="$USER_TURN_RE" -v opt="$USER_TURN_OPTION_RE" '
+    { line[NR] = $0; if ($0 ~ turn && $0 !~ opt) last = NR }
+    END { for (i = last + 1; i <= NR; i++) print line[i] }
+  ' <<<"$1"
+}
+
+# Watch-list positions whose harness read as exited on the previous pass.
 LANE_SHELL_SEEN=""
 # Watch-list positions that sat at an idle harness prompt on the previous pass.
 LANE_IDLE_SEEN=""
 
-# The pass's snapshot of one lane: its pane's current command, and the file
-# holding its pane capture. Every check reads the same observation, keyed on
-# the lane's position in the watch list — a tmux window name can carry any
+# The pass's snapshot of one lane: whether its harness has exited, and the
+# file holding its pane capture. Every check reads the same observation, keyed
+# on the lane's position in the watch list — a tmux window name can carry any
 # character, and two names that differ only outside a filename-safe set would
 # otherwise share one snapshot and classify each other's screens.
-lane_cmd() { awk -F'\t' -v i="$2" '$1 == i { print $2 }' <<<"$1"; }
+lane_state() { awk -F'\t' -v i="$2" '$1 == i { print $2 }' <<<"$1"; }
 lane_pane_file() { printf '%s/pane.%s' "$WORK_DIR" "$1"; }
 
 check_lanes() {
   [[ ${#LANES[@]} -gt 0 ]] || return 0
-  local existing lane pane cmd i cmds="" shell_now="" idle_now="" claims="" claimed pane_key
+  local existing lane pane obs cmd pid state i states="" shell_now="" idle_now="" claims="" claimed pane_key
   existing="$(tmux list-windows -F '#W' 2>&1)" || die "tmux list-windows failed: $existing"
   for lane in "${LANES[@]}"; do
     if ! grep -qxF -- "$lane" <<<"$existing"; then
@@ -420,12 +459,14 @@ check_lanes() {
       exit 0
     fi
   done
-  # One command read and one pane capture per lane per pass: a lane's kind is
-  # decided from a single observation, never from two screens taken apart.
+  # One liveness read and one pane capture per lane per pass: a lane's kind is
+  # decided from a single observation, never from two screens taken apart. The
+  # pid leads the format so a command carrying a space cannot shift the split.
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
-    if ! cmd="$(tmux display-message -p -t "$lane" '#{pane_current_command}' 2>/dev/null)" || [[ -z "$cmd" ]]; then
+    if ! obs="$(tmux display-message -p -t "$lane" '#{pane_pid} #{pane_current_command}' 2>/dev/null)" \
+       || [[ ! "$obs" =~ ^[0-9]+[[:blank:]]+[^[:space:]] ]]; then
       echo "EVENT window-gone $lane"
       pr_watch_context
       exit 0
@@ -435,19 +476,24 @@ check_lanes() {
       pr_watch_context
       exit 0
     fi
-    cmds+="$i"$'\t'"$cmd"$'\n'
+    pid="${obs%%[[:blank:]]*}"
+    cmd="${obs#*[[:blank:]]}"
+    state=live
+    if is_bare_shell "$cmd" && ! pane_has_child "$pid"; then state=exited; fi
+    states+="$i"$'\t'"$state"$'\n'
   done
   # A lane window outlives its harness: open-terminal runs claude/codex inside
   # a shell, so a session that hit its limit, crashed, or quit leaves the
   # shell in the foreground — a window that exists, a pane that matches no
-  # question prompt, and a slot held until someone looks. A bare shell as the
-  # pane's current command IS that lane, finished; the pane tail carries why.
-  # Two consecutive passes: a live harness can hold a shell in the foreground
-  # for one poll, and relaunching a working lane costs more than one interval.
+  # question prompt, and a slot held until someone looks. A bare shell with
+  # nothing running under it IS that lane, finished; the pane tail carries
+  # why. Two consecutive passes: a live harness can hold a childless shell in
+  # the foreground for one poll, and relaunching a working lane costs more
+  # than one interval.
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
-    if is_bare_shell "$(lane_cmd "$cmds" "$i")"; then
+    if [[ "$(lane_state "$states" "$i")" == exited ]]; then
       shell_now+="$i"$'\n'
       if grep -qxF -- "$i" <<<"$LANE_SHELL_SEEN"; then
         echo "EVENT lane-exited $lane"
@@ -464,12 +510,14 @@ check_lanes() {
   # claim is where it is recorded. Before `question` — a limit banner can sit
   # above a stale prompt, and the account is the news. One pass: a banner is
   # terminal for that account window, not a screen a poll can catch mid-draw.
+  # Only below the last user turn: a banner the lane has since worked past is
+  # the screen remembering a spent window that has since reset.
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
-    if is_bare_shell "$(lane_cmd "$cmds" "$i")"; then continue; fi
+    if [[ "$(lane_state "$states" "$i")" == exited ]]; then continue; fi
     pane="$(cat -- "$(lane_pane_file "$i")")"
-    if grep -Eq -- "$USAGE_LIMIT_RE" <<<"$pane"; then
+    if grep -Eq -- "$USAGE_LIMIT_RE" <<<"$(pane_below_last_turn "$pane")"; then
       # The detail is a nicety; a claim store this process cannot read must
       # not take down the event that carries the pane tail.
       claims="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")" || true)"
@@ -494,7 +542,7 @@ check_lanes() {
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
-    if is_bare_shell "$(lane_cmd "$cmds" "$i")"; then continue; fi
+    if [[ "$(lane_state "$states" "$i")" == exited ]]; then continue; fi
     pane="$(cat -- "$(lane_pane_file "$i")")"
     if grep -Eq -- "$QUESTION_RE" <<<"$pane"; then
       echo "EVENT question $lane"
@@ -509,7 +557,7 @@ check_lanes() {
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
-    if is_bare_shell "$(lane_cmd "$cmds" "$i")"; then continue; fi
+    if [[ "$(lane_state "$states" "$i")" == exited ]]; then continue; fi
     pane="$(cat -- "$(lane_pane_file "$i")")"
     if grep -Eq -- "$WORKING_RE" <<<"$pane"; then continue; fi
     if ! grep -Eq -- "$IDLE_PROMPT_RE" <<<"$pane"; then continue; fi
