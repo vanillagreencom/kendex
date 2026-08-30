@@ -339,6 +339,39 @@ run_tb --staged
 [ "$RC" -eq 0 ] && ok "the excludes row silences the staged vendored tree too" \
   || bad "excludes row silences the staged tree" "rc=$RC out=$OUT"
 
+echo "=== a .gitattributes rule cannot hide staged content from the lane ==="
+new_repo stagedattr
+printf 'fn main() {}\n' >"$R/ok.rs"
+git -C "$R" add -A
+git -C "$R" commit -qm seed
+# A committed '-diff' rule makes git call every .rs file binary: the plain
+# staged diff then carries no hunks at all, and the index scan skips the blob
+# unless both are forced to text. That is the shape a whole extension could
+# be hidden behind by committing one attributes line.
+printf '*.rs -diff\n' >"$R/.gitattributes"
+git -C "$R" add -A
+git -C "$R" commit -qm attrs
+printf '// %s: behind an attributes rule\n' "$TD" >>"$R/ok.rs"
+git -C "$R" add ok.rs
+case "$(git -C "$R" diff --cached -- ok.rs)" in
+  *"Binary files"*) ok "fixture: the rule does suppress the unforced staged diff" ;;
+  *) bad "fixture: the rule suppresses the unforced staged diff" "the attributes rule did not take" ;;
+esac
+run_tb --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"work marker: ok.rs:2:"*) true ;; *) false ;; esac \
+  && ok "a marker added under a non-diffable path is refused, at its own line" \
+  || bad "a marker under a non-diffable path is refused" "rc=$RC out=$OUT"
+
+# Control: the same rule still in force, this time over an addition that
+# carries no marker — forcing text reads real content, it does not fail
+# everything it forces through.
+printf 'fn main() {}\nfn clean() {}\n' >"$R/ok.rs"
+git -C "$R" add ok.rs
+run_tb --staged
+[ "$RC" -eq 0 ] && case "$OUT" in *"the staged diff adds no work markers"*) true ;; *) false ;; esac \
+  && ok "a clean addition under the same rule still passes" \
+  || bad "a clean addition under the rule passes" "rc=$RC out=$OUT"
+
 echo "=== a type change emits two diff sections, neither header an added line ==="
 new_repo typechange
 printf 'fn main() {}\n' >"$R/ok.rs"

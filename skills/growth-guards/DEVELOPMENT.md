@@ -223,9 +223,12 @@ names the files whose staged content carries a marker at all, and only
 those paths reach the per-path `-U0` diff that reads their added lines —
 one file per invocation, so no patch header is ever parsed for a path and a
 path git would have had to quote cannot be misread. Diff configuration is
-pinned (`--no-ext-diff`, `--no-textconv`, `--no-color`): a textconv filter
-would otherwise hand the lane content the commit does not carry. Binary
-blobs have no hunks and contribute nothing.
+pinned (`--no-ext-diff`, `--no-textconv`, `--no-color`, `--text`): a textconv
+filter would otherwise hand the lane content the commit does not carry, and
+a committed `.gitattributes` rule marking a path non-diffable would leave
+the diff with no hunks at all. The index scan is forced to text the same way
+(`-a`, never `-I`), so both reads agree on what is scannable and one
+attributes line cannot hide an extension from this lane.
 
 ## byte-ceiling sizing
 

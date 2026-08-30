@@ -76,10 +76,14 @@ added_lines() { # PATH — one "line<TAB>content" record per line this commit AD
   local f="$1" status=0 awk_status=0
   # Pinned diff configuration: an external differ or a textconv filter would
   # hand this lane content the commit does not carry, and colour would put
-  # escape sequences in front of the leading '+'. One file per invocation,
-  # named by a literal pathspec, so no patch header is ever parsed for a
-  # path — a path git would have had to quote cannot be misread here.
-  git -c core.quotePath=false diff --cached --no-ext-diff --no-textconv --no-color \
+  # escape sequences in front of the leading '+'. --text is the same pin
+  # against .gitattributes: a committed '-diff' rule makes git call the path
+  # binary and emit 'Binary files ... differ' with no hunks, so without it a
+  # repository could hide a whole extension from this lane by committing one
+  # attributes line. One file per invocation, named by a literal pathspec,
+  # so no patch header is ever parsed for a path — a path git would have had
+  # to quote cannot be misread here.
+  git -c core.quotePath=false diff --cached --no-ext-diff --no-textconv --no-color --text \
     -U0 -- ":(literal)$f" \
     >"$GG_TMP/patch" 2>"$GG_TMP/patch.err" || status=$?
   if [ "$status" -ne 0 ]; then
@@ -91,7 +95,8 @@ added_lines() { # PATH — one "line<TAB>content" record per line this commit AD
   # it, so a file header is never read as one. A type change emits TWO
   # sections for one path, and without that reset the second section's
   # '+++' line would print as an added line at the first section's
-  # numbering. A binary file has no hunks and contributes nothing.
+  # numbering. --text above means even a blob git calls binary arrives as
+  # hunks, so no path reaches the parser with its content withheld.
   awk '
     /^diff --git / { hunk = 0; next }
     /^@@/ {
@@ -117,8 +122,12 @@ staged_lane() { # numbered violations on stdout, counted in GG_VIOLATIONS
   # names every file whose staged content carries a marker at all, and the
   # per-file diff below is reached only for those, so a commit touching
   # hundreds of clean files spawns nothing per file. It cannot drop a true
-  # positive: a line this commit ADDS is in the index blob this scan reads.
-  LC_ALL=C git grep --cached -lIzE "$MARKER_ERE" >"$GG_TMP/carriers.z" 2>"$GG_TMP/carriers.err" \
+  # positive: a line this commit ADDS is in the index blob this scan reads,
+  # and -a forces every blob to text so the same '-diff' attributes rule the
+  # per-path read is pinned against cannot make this scan skip the file
+  # either. The two must agree on what is scannable — -I here would put the
+  # bypass back in the fast path, where a skipped file reads as clean.
+  LC_ALL=C git grep --cached -alzE "$MARKER_ERE" >"$GG_TMP/carriers.z" 2>"$GG_TMP/carriers.err" \
     || filter_status=$?
   gg_grep_guard "$filter_status" "$GG_TMP/carriers.err" "listing the staged files that carry a work marker"
   carriers_list=()
