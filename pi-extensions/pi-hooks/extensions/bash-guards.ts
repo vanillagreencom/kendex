@@ -105,6 +105,32 @@ export function scanCommand(command: string): CommandScan {
 		if (tokens.length > 0) judge(tokens, scan);
 		tokens = [];
 	};
+	/** Quoting sets a word boundary; it does not stop the word existing, so the
+	 * contents join the word unquoted: `g''it` is git and a quoted --no-verify is
+	 * the flag. Inside a double-quoted or backtick run a backslash escapes the next
+	 * character, so an escaped quote does not close the run; single quotes take no
+	 * escapes. A run that never closes contributes nothing and its opening quote is
+	 * one stray character, which leaves the rest live. */
+	const quoted = (q: string): void => {
+		let start = ++i;
+		let text = "";
+		while (i < n) {
+			if (command[i] === q) {
+				word += text + command.slice(start, i);
+				haveWord = true;
+				i++;
+				return;
+			}
+			if (command[i] === "\\" && q !== "'") {
+				text += command.slice(start, i) + (command[i + 1] ?? "");
+				i += 2;
+				start = i;
+				continue;
+			}
+			i++;
+		}
+		i = start;
+	};
 	/** A heredoc delimiter: quotes and line continuations come out of it, so
 	 * `<<EO\<newline>F` names EOF and the body ends where bash ends it. */
 	const heredoc = (): void => {
@@ -167,17 +193,7 @@ export function scanCommand(command: string): CommandScan {
 				i += 2;
 			}
 		} else if (ch === "'" || ch === '"' || ch === "`") {
-			// Quoting sets a word boundary; it does not stop the word existing. The
-			// contents join it unquoted, so `g''it` is git and a quoted --no-verify is
-			// the flag. A quote that never closes is one stray character, leaving the
-			// rest of the command live rather than swallowing it.
-			const close = command.indexOf(ch, i + 1);
-			if (close < 0) i++;
-			else {
-				word += command.slice(i + 1, close);
-				haveWord = true;
-				i = close + 1;
-			}
+			quoted(ch);
 		} else if (ch === "$" && c2 === "(") {
 			// `$(`, `<(` and `>(` hold their interior in the command enclosing them:
 			// inside one, an operator separates words rather than commands.

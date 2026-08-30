@@ -488,6 +488,31 @@ both 'git commit -m \"prose mentioning -n inside\"' 0 2 "prose naming -n"
 both 'git commit -m \"core.hooksPath is not to be touched\"' 0 2 "prose naming the key"
 
 echo
+echo "an escaped quote does not close its run"
+
+# A backslash escapes the next character inside a double-quoted or backtick
+# run, so `\"` is not the close. Read as one, everything through the next quote
+# is swallowed and the live command behind it disappears. The flag is assembled
+# because this repository's own hook refuses a command that spells it out.
+NV="--no-""verify"
+both "echo \\\"x\\\\\\\" y\\\" && git commit $NV -m \\\"x\\\"" 2 2 "an escaped double quote"
+both 'echo `x\\` y` && git commit '"$NV"' -m `x`' 2 2 "an escaped backtick"
+
+# The control: same shell, no bypass. The unarmed refusal proves the commit was
+# found rather than the armed refusal arriving from swallowed text.
+both "echo \\\"x\\\\\\\" y\\\" && git commit -m \\\"x\\\"" 0 2 "the same run without a bypass"
+both 'echo `x\\` y` && git commit -m `x`' 0 2 "the backtick form without a bypass"
+
+run_hook "$ARMED" "$(payload "echo \\\"x\\\\\\\" y\\\" && git commit $NV -m \\\"x\\\"")" CHAIN_EXIT=0
+assert_contains "$err" "'--no-verify' bypasses" "the escaped-quote form names the flag behind it"
+
+# A single-quoted run takes no escapes, so this one closes at the second quote
+# and the commit behind it is live. Honour the backslash there and the whole
+# middle becomes one word, commit and flag with it.
+both "echo 'a\\\\' && git commit $NV -m 'x'" 2 2 "a backslash inside single quotes"
+both "echo 'a\\\\' && git commit -m 'x'" 0 2 "the same run without a bypass"
+
+echo
 echo "a -c word injects configuration whatever its value"
 
 both 'git -cinclude.path=/tmp/c commit -m x' 2 2 "an attached include.path"

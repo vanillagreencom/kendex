@@ -62,6 +62,25 @@ function jsonstring(s,   fin, body) {
   gsub(/\\u[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]/, " ", body)
   gsub(DQ, "\"", body); return body
 }
+# Quoting sets a word boundary; it does not stop the word existing, so the
+# contents join the word unquoted: `g<quote><quote>it` is git and a quoted
+# --no-verify is the flag. Inside a double-quoted or backtick run a backslash
+# escapes the next character, so an escaped quote does not close the run; single
+# quotes take no escapes. A run that never closes contributes nothing and its
+# opening quote is one stray character, which leaves the rest live.
+function quoted(cmd, i, n, q,   start, ch, w) {
+  start = ++i; w = ""
+  while (i <= n) {
+    ch = substr(cmd, i, 1)
+    if (ch == q) { W = W w substr(cmd, start, i - start); HAVEW = 1; return i + 1 }
+    if (ch == BS && q != SQ) {
+      w = w substr(cmd, start, i - start) substr(cmd, i + 1, 1)
+      i += 2; start = i; continue
+    }
+    i++
+  }
+  return start
+}
 # A heredoc delimiter: quotes and line continuations come out of it, so
 # `<<EO\<newline>F` names EOF and the body it opens terminates where bash ends it.
 function heredoc(cmd, i, n,   ch, q, w) {
@@ -118,15 +137,7 @@ function scan(cmd,   n, i, ch, c2, d, j, start) {
       if (c2 == "\r" && substr(cmd, i + 2, 1) == "\n") { i += 3; continue }
       W = W c2; HAVEW = 1; i += 2; continue
     }
-    # Quoting sets a word boundary; it does not stop the word existing. The
-    # contents join it unquoted, so `g<quote><quote>it` is git and a quoted
-    # --no-verify is the flag. A quote that never closes is one stray character,
-    # which leaves the rest of the command live rather than swallowing it.
-    if (ch == SQ || ch == "\"" || ch == BT) {
-      j = index(substr(cmd, i + 1), ch)
-      if (j == 0) { i++; continue }
-      W = W substr(cmd, i + 1, j - 1); HAVEW = 1; i += j + 1; continue
-    }
+    if (ch == SQ || ch == "\"" || ch == BT) { i = quoted(cmd, i, n, ch); continue }
     # `$(`, `<(` and `>(` hold their interior in the command enclosing them:
     # inside one, an operator separates words rather than commands.
     if (ch == "$" && c2 == "(") { d++; i += 2; continue }

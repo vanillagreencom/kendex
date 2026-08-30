@@ -289,6 +289,31 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		await both('git commit -m "core.hooksPath is not to be touched"', "allow", "refuse");
 	});
 
+	test("an escaped quote does not close its run", async () => {
+		// A backslash escapes the next character inside a double-quoted or backtick
+		// run, so `\\"` is not the close. Read as one, everything through the next
+		// quote is swallowed and the live command behind it disappears. The flag is
+		// assembled because this repository's own hook refuses a command spelling it.
+		const nv = "--no-" + "verify";
+		const escaped = `echo "x\\" y" && git commit `;
+		const backtick = "echo `x\\` y` && git commit ";
+		for (const command of [`${escaped}${nv} -m "x"`, `${backtick}${nv} -m \`x\``]) {
+			await both(command, "refuse", "refuse");
+			const named = await gate(armed, command);
+			if (named.verdict.kind !== "refuse") throw new Error("unreachable");
+			expect(named.verdict.reason).toContain(`'${nv}' bypasses`);
+		}
+		// The control: same shell, no bypass. The unarmed refusal proves the commit
+		// was found rather than the armed refusal arriving from swallowed text.
+		await both(`${escaped}-m "x"`, "allow", "refuse");
+		await both(`${backtick}-m \`x\``, "allow", "refuse");
+		// A single-quoted run takes no escapes, so this one closes at the second
+		// quote and the commit behind it is live. Honour the backslash there and the
+		// whole middle becomes one word, commit and flag with it.
+		await both(`echo 'a\\' && git commit ${nv} -m 'x'`, "refuse", "refuse");
+		await both("echo 'a\\' && git commit -m 'x'", "allow", "refuse");
+	});
+
 	test("a -c word injects configuration whatever its value", async () => {
 		await both("git -cinclude.path=/tmp/c commit -m x", "refuse", "refuse");
 		const named = await gate(armed, "git -cinclude.path=/tmp/c commit -m x");
