@@ -4,7 +4,6 @@
 
 use super::super::Severity;
 use super::super::phrase::find_phrase;
-use crate::render::code_spans;
 
 /// One line of a document, classified.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +24,11 @@ pub struct Line {
     /// an apostrophe in it is punctuation; a command line is the other way
     /// round. Weight is a separate question: see `describing`.
     pub prose: bool,
+    /// This line's inline code spans, as byte ranges into `lower`. Read
+    /// only where `prose` says the marks are markdown's. A span may open
+    /// on one line and close on a later one, so these are read for the
+    /// whole document at once: see [`super::lines`].
+    pub spans: Vec<(usize, usize)>,
 }
 
 impl Line {
@@ -125,20 +129,21 @@ impl Line {
     /// open, and that is the only thing this answers yes to.
     ///
     /// The marks that quote are the line's own. In prose the code spans
-    /// are markdown's, read by [`code_spans`]: a run of backticks closes
-    /// only on a run of its own length, one that never meets its match
-    /// quotes nothing, and `'` and `"` are punctuation throughout. On a
-    /// command line `'` and `"` hold a string, a backtick runs what it
-    /// holds rather than quoting it, and a `#` opens a comment that
+    /// are markdown's, already read into `spans`: a run of backticks
+    /// closes only on a run of its own length, one that never meets its
+    /// match quotes nothing, and `'` and `"` are punctuation throughout.
+    /// On a command line `'` and `"` hold a string, a backtick runs what
+    /// it holds rather than quoting it, and a `#` opens a comment that
     /// reaches the end of the line wherever a word could start.
     pub fn runs_at(&self, at: usize) -> bool {
         if at < self.command_at() {
             return false;
         }
         if self.prose {
-            return !code_spans(&self.lower)
-                .into_iter()
-                .any(|(start, end)| at >= start && at < end);
+            return !self
+                .spans
+                .iter()
+                .any(|(start, end)| at >= *start && at < *end);
         }
         let mut open: Option<char> = None;
         let mut at_a_break = true;

@@ -246,16 +246,29 @@ fn hook_docs(
 /// What a fence does decide is which marks quote *inside* the line, which
 /// is [`Line::prose`]. `markdown` says the document has prose to tell from
 /// blocks at all; a script is a command line from its first byte.
+///
+/// The code spans come from here too, and for the same reason: a run of
+/// backticks may close on a later line, so only something holding the
+/// whole document can say which of them ever meet a match.
 pub fn lines(text: &str, markdown: bool) -> Vec<Line> {
-    let blocks = markdown.then(|| crate::render::inside_a_block(text));
-    text.lines()
+    let raw: Vec<&str> = text.lines().collect();
+    let lower: Vec<String> = raw.iter().map(|line| flatten(line)).collect();
+    let prose = match markdown {
+        true => crate::render::prose_lines(text),
+        false => vec![false; raw.len()],
+    };
+    let spans = crate::render::code_spans_by_line(&lower, &prose);
+    raw.iter()
+        .zip(lower)
+        .zip(spans)
         .enumerate()
-        .map(|(index, raw)| Line {
+        .map(|(index, ((raw, lower), spans))| Line {
             number: index + 1,
-            lower: flatten(raw),
+            lower,
             describing: raw.trim_start().starts_with('>'),
-            prose: blocks.as_ref().is_some_and(|blocks| !blocks[index]),
-            text: raw.to_owned(),
+            prose: prose[index],
+            spans,
+            text: (*raw).to_owned(),
         })
         .collect()
 }

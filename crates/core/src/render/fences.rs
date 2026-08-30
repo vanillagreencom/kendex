@@ -27,11 +27,42 @@ pub fn fence_marker(line: &str) -> Option<(char, usize, bool)> {
 /// Inside a block a blank line is a line of the block's own text; outside
 /// one it separates paragraphs and carries nothing a reader would miss.
 pub fn inside_a_block(text: &str) -> Vec<bool> {
+    stands(text)
+        .into_iter()
+        .map(|stand| stand == Stand::Inside)
+        .collect()
+}
+
+/// Which lines of `text` are prose. Every line [`inside_a_block`] leaves
+/// out except the one an indented block opens on: the four spaces that
+/// opened it are the block's own text, so a `#` there opens a comment the
+/// same as it does one line further down.
+pub fn prose_lines(text: &str) -> Vec<bool> {
+    stands(text)
+        .into_iter()
+        .map(|stand| stand == Stand::Prose)
+        .collect()
+}
+
+/// Where one line stands. The two readings differ over one line and say
+/// so by name: the line an indented block opens on is code the rules
+/// read, and is not a line whose whitespace the fork walk may take for a
+/// block's own.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Stand {
+    Prose,
+    Opens,
+    Inside,
+}
+
+fn stands(text: &str) -> Vec<Stand> {
     let lines: Vec<&str> = text.lines().collect();
-    let mut inside = vec![false; lines.len()];
+    let mut stand = vec![Stand::Prose; lines.len()];
     let mut fence: Option<(char, usize)> = None;
     for (at, line) in lines.iter().enumerate() {
-        inside[at] = fence.is_some();
+        if fence.is_some() {
+            stand[at] = Stand::Inside;
+        }
         match (fence_marker(line), fence) {
             (Some((marker, run, bare)), Some((open, len)))
                 if marker == open && run >= len && bare =>
@@ -48,7 +79,7 @@ pub fn inside_a_block(text: &str) -> Vec<bool> {
     // blocks — and a blank run trailing it belongs to whatever follows.
     let mut opened: Option<usize> = None;
     for (at, line) in lines.iter().enumerate() {
-        if inside[at] {
+        if stand[at] == Stand::Inside {
             opened = None;
             continue;
         }
@@ -57,15 +88,16 @@ pub fn inside_a_block(text: &str) -> Vec<bool> {
         }
         match line.starts_with("    ") || line.starts_with('\t') {
             true => {
-                if let Some(from) = opened {
-                    inside[from + 1..=at].fill(true);
+                match opened {
+                    Some(from) => stand[from + 1..=at].fill(Stand::Inside),
+                    None => stand[at] = Stand::Opens,
                 }
                 opened = Some(at);
             }
             false => opened = None,
         }
     }
-    inside
+    stand
 }
 
 /// Inline code spans of one line, as outer byte ranges. A run of backticks
@@ -100,6 +132,46 @@ pub fn code_spans(line: &str) -> Vec<(usize, usize)> {
             Some((start, end)) if *start == at => *end,
             _ => at + run,
         };
+    }
+    spans
+}
+
+/// The code spans of each of `lines`, as byte ranges local to its own
+/// line. A run of backticks may close on a later line, so the lines are
+/// read together rather than one at a time: a line a span crosses whole is
+/// quoted for its whole length.
+///
+/// The reach is one paragraph — a run of `prose` lines with no blank among
+/// them — not the whole document. A run that meets no match before the
+/// paragraph ends quotes nothing, which is what stops one stray backtick
+/// from reaching forward past every blank line for a partner and quoting
+/// everything in between. Lines that are not prose are left empty: there
+/// the marks are the shell's, not markdown's.
+pub fn code_spans_by_line(lines: &[String], prose: &[bool]) -> Vec<Vec<(usize, usize)>> {
+    let mut spans: Vec<Vec<(usize, usize)>> = vec![Vec::new(); lines.len()];
+    let paragraph = |at: usize| prose[at] && !lines[at].trim().is_empty();
+    let mut from = 0;
+    while from < lines.len() {
+        if !paragraph(from) {
+            from += 1;
+            continue;
+        }
+        let mut to = from;
+        while to + 1 < lines.len() && paragraph(to + 1) {
+            to += 1;
+        }
+        let joined = lines[from..=to].join("\n");
+        for (start, end) in code_spans(&joined) {
+            let mut base = 0;
+            for (offset, line) in lines[from..=to].iter().enumerate() {
+                let last = base + line.len();
+                if start < last && end > base {
+                    spans[from + offset].push((start.max(base) - base, end.min(last) - base));
+                }
+                base = last + 1;
+            }
+        }
+        from = to + 1;
     }
     spans
 }

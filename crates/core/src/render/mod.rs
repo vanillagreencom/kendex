@@ -8,8 +8,9 @@ pub mod vocab;
 
 /// Where a document's code is: which lines stand inside a block, which is
 /// what tells whitespace that is a block's own content from whitespace
-/// that separates prose, and where one line's inline spans are.
-pub(crate) use fences::{code_spans, inside_a_block};
+/// that separates prose, which lines are prose, and where the code spans
+/// of each line are.
+pub(crate) use fences::{code_spans_by_line, inside_a_block, prose_lines};
 
 /// One thing the user should hear about a rendering, with the fix when
 /// there is one — every render lint travels through this shape.

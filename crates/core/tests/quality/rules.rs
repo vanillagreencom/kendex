@@ -333,6 +333,73 @@ fn safety_bypass_leaves_a_backtick_quoted_inside_a_longer_span() {
     );
 }
 
+/// The line an indented block opens on is the block's own text, the same
+/// as the line under it. Reading it as prose made a `#` an ordinary
+/// character on the first line and a comment on the second, so a one-line
+/// block warning against the switch scored Critical where the same words
+/// with a second line under them scored nothing.
+///
+/// The control is the third case: the block's text is still read, and a
+/// line handing the switch to git counts wherever it is indented.
+#[test]
+fn safety_bypass_reads_the_line_an_indented_block_opens_on_as_code() {
+    let one = skill(&[("SKILL.md", "Refuse it:\n\n    # never pass --no-verify\n")]);
+    assert!(
+        !rules_hit(&one).contains(&"safety-bypass"),
+        "{:?}",
+        one.findings
+    );
+
+    let two = skill(&[(
+        "SKILL.md",
+        "Refuse it:\n\n    # never pass --no-verify\n    exit 1\n",
+    )]);
+    assert_eq!(rules_hit(&two), rules_hit(&one), "{:?}", two.findings);
+
+    let run = skill(&[(
+        "SKILL.md",
+        "Never do this:\n\n    git commit --no-verify -m done\n",
+    )]);
+    assert_eq!(
+        severity_of(&run, "safety-bypass"),
+        Some(Severity::Critical),
+        "{:?}",
+        run.findings
+    );
+}
+
+/// A code span closes on a later line of the same paragraph. Read one line
+/// at a time the opener meets no match on its own line and the close meets
+/// none on the next, so the switch quoted between them was reported as one
+/// the line hands to a program.
+///
+/// The control is the second case: the reach is the paragraph, not the
+/// document. A backtick whose partner stands past a blank line quotes
+/// nothing, and the switch beside it still counts.
+#[test]
+fn safety_bypass_leaves_a_switch_quoted_by_a_span_that_crosses_a_newline() {
+    let across = skill(&[(
+        "SKILL.md",
+        "The bypass is `git commit\n--no-verify`, which this never runs.\n",
+    )]);
+    assert!(
+        !rules_hit(&across).contains(&"safety-bypass"),
+        "{:?}",
+        across.findings
+    );
+
+    let apart = skill(&[(
+        "SKILL.md",
+        "The bypass is `git commit\n\n--no-verify` runs it.\n",
+    )]);
+    assert_eq!(
+        severity_of(&apart, "safety-bypass"),
+        Some(Severity::Critical),
+        "{:?}",
+        apart.findings
+    );
+}
+
 /// Switching an item off parks its file under a `.disabled` suffix and
 /// changes nothing about what the file is. A disabled artifact that scored
 /// differently would mean disabling something invented findings in it.
