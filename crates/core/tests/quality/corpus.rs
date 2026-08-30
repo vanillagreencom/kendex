@@ -2,12 +2,13 @@
 //! fixture built to resemble them.
 //!
 //! `growth-guards` exists to stop the switch that skips a commit's checks,
-//! so its README explains that switch, its hook prints a message naming it,
-//! and its tests seed fixture repositories with it; `orch` ships a test
-//! that spells the switch which turns permission prompts off. A hand-made
-//! imitation of those files would keep passing whatever the rule did next.
-//! These read the real trees, so a reading that scores a warning about a
-//! switch as a use of it fails here.
+//! so its README and SKILL.md explain that switch, its hook prints a
+//! message naming it, and its tests seed fixture repositories with it;
+//! `orch` ships a test that spells the switch which turns permission
+//! prompts off. A hand-made imitation of those files would keep passing
+//! whatever the rule did next. These read the real trees, so a reading
+//! that scores a document's mention of a switch as a use of it fails here,
+//! and so does one that stops counting a switch written as code.
 //!
 //! Line numbers are left out on purpose — editing a skill moves them and
 //! says nothing about the rules. What is asserted is the score and every
@@ -66,30 +67,26 @@ fn found(result: &AuditResult) -> Vec<(&str, Severity, &str)> {
         .collect()
 }
 
-/// Eight lines of this skill's tests hand `--dangerously-skip-permissions`
-/// to a stub as the value of a `--launch-flags` argument, or assert that
-/// the captured command line carries it. Every one of them is inside a
-/// quotation, so none of them is the skill turning permission prompts off.
+/// The skill whose whole job is stopping the commit hook-bypass switch
+/// named it three times in documents — twice in its README, once in its
+/// SKILL.md, every one of them inside a code span — and was rated Critical
+/// for each. Those three are gone.
+///
+/// What is left is what the switch is written as code: the two messages
+/// its hooks print, and the three lines of its own tests that hand the
+/// switch to git to seed a fixture repository. A shell string is a switch
+/// written into a file a harness loads, and the rule counts it there.
 #[test]
-fn orch_is_clean_where_it_only_spells_the_permission_switch() {
-    let result = shipped("orch");
-    assert_eq!(found(&result), Vec::new(), "{:#?}", result.findings);
-    assert_eq!(result.safety.score, 100);
-}
-
-/// The skill whose whole job is stopping `git commit --no-verify` said the
-/// switch five times in prose, in a hook's message and in a `case` arm, and
-/// was rated Critical for each. What is left is the three lines of its own
-/// tests that hand the switch to git to seed a fixture repository: those
-/// run it, and a rule that stopped reading them would have nothing left to
-/// say about the switch at all.
-#[test]
-fn growth_guards_is_flagged_only_where_it_runs_the_switch() {
+fn growth_guards_is_flagged_where_the_switch_stands_as_code() {
     let result = shipped("growth-guards");
+    let helper = "skills/growth-guards/scripts/lib/helper-body.sh";
+    let hook = "skills/growth-guards/scripts/pre-commit";
     let ran = "skills/growth-guards/tests/commit-msg.test.sh";
     assert_eq!(
         found(&result),
         vec![
+            ("safety-bypass", Severity::Critical, helper),
+            ("safety-bypass", Severity::Critical, hook),
             ("safety-bypass", Severity::High, ran),
             ("safety-bypass", Severity::High, ran),
             ("safety-bypass", Severity::High, ran),
@@ -97,5 +94,28 @@ fn growth_guards_is_flagged_only_where_it_runs_the_switch() {
         "{:#?}",
         result.findings
     );
-    assert_eq!(result.safety.score, 83);
+    assert_eq!(result.safety.score, 71);
+}
+
+/// Eight lines of this skill's tests spell `--dangerously-skip-permissions`
+/// inside a shell string — the value of a `--launch-flags` argument, or the
+/// command line an assertion expects back. Every one of them is the switch
+/// written as code in a file a harness loads, and the rule counts it there
+/// rather than deciding which program the string reaches.
+///
+/// That is the cost of the reading, pinned to a real tree: eight findings
+/// one severity down for a supporting file. A reading that went quiet on
+/// them would be reading an argument list again, and this is where that
+/// fails.
+#[test]
+fn orch_is_flagged_where_its_tests_spell_the_permission_switch() {
+    let result = shipped("orch");
+    let spells = "skills/orch/tests/open-terminal-claude-handoff.sh";
+    assert_eq!(
+        found(&result),
+        vec![("safety-bypass", Severity::High, spells); 8],
+        "{:#?}",
+        result.findings
+    );
+    assert_eq!(result.safety.score, 78);
 }

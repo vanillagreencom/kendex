@@ -43,10 +43,26 @@ impl Reach {
     }
 }
 
-/// The commands a line runs, read once with the shell's own quoting, and
-/// which of them interprets what it is handed. Both questions are the
-/// same ones the bypass rule asks, so both are read from one place.
-use crate::quality::text::tokens::{self, Command, Reached, interprets};
+/// Interpreters a download can be handed straight to.
+const SHELLS: &[&str] = &["sh", "bash", "zsh", "python"];
+
+/// Whether this program reads what is piped into it and runs it.
+///
+/// A version on the end of the name is the same interpreter: `python3` is
+/// what anybody actually writes, and it is the spelling a substring search
+/// used to catch and a whole-word one stopped catching. Nothing else is
+/// stretched — a name that is not one of these runs whatever it runs, and
+/// saying otherwise would hold back lines nothing interprets.
+fn interprets(program: &str) -> bool {
+    SHELLS.contains(&program)
+        || program.strip_prefix("python").is_some_and(|version| {
+            !version.is_empty() && version.chars().all(|c| c.is_ascii_digit() || c == '.')
+        })
+}
+
+/// The commands a line runs, read once with the shell's own quoting.
+mod tokens;
+use tokens::{Command, Reached};
 
 /// A plain description of what this line fetches and runs, if it does.
 pub(super) fn fetch_and_run(line: &Line) -> Option<Reach> {

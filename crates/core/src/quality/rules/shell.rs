@@ -50,20 +50,13 @@ struct SafetyBypass;
 /// worth. Destructive commands are covered by `dangerous-commands`, which
 /// looks at what is being done rather than which flag turns off a prompt.
 ///
-/// The same calibration settles where on a line a switch counts. Reading
-/// every mention as a use rated the guard skill that exists to stop
-/// `--no-verify` at Critical five times over — for the sentence warning
-/// about it, the message its hook prints, and the `case` arm that catches
-/// it. Every needle goes through [`Line::runs_at`], which answers the one
-/// question the tier is worth: would this line hand the switch to a
-/// program.
-///
-/// A switch is a switch by the time it reaches a program, and the shell
-/// takes the quote marks out on the way. So a switch also counts where
-/// [`Line::hands_over`] says a program is given those characters as its
-/// own argument, or given a command line with them written inside it.
-/// The prose phrases below get no such reading: they are a claim in a
-/// sentence, and a sentence handed to a program is still a sentence.
+/// The same calibration settles where on a line a switch counts. Reading a
+/// document's every mention as a use rated the guard skill that exists to
+/// stop `--no-verify` at Critical for the sentence that warns about it.
+/// A switch a document writes inside a code span is that document naming
+/// the switch; a switch standing as code is a switch, in whatever language
+/// the file is written. Every needle goes through [`Line::counts_at`],
+/// which answers that and nothing else.
 impl AuditRule for SafetyBypass {
     fn id(&self) -> &'static str {
         "safety-bypass"
@@ -71,18 +64,18 @@ impl AuditRule for SafetyBypass {
 
     fn check(&self, prepared: &Prepared) -> Outcome {
         scan_docs(prepared, AUTHORED, |doc, line, findings| {
-            let run = |needle: &str| {
+            let counts = |needle: &str| {
                 line.occurrences(needle)
                     .into_iter()
-                    .any(|at| line.runs_at(at))
+                    .any(|at| line.counts_at(at))
             };
             for (needle, what) in BYPASS {
-                if run(needle) || line.hands_over(needle) {
+                if counts(needle) {
                     findings.push(self.finding(doc, line, needle, what, Severity::Critical));
                 }
             }
             for (needle, what) in BYPASS_PROSE {
-                if run(needle) {
+                if counts(needle) {
                     findings.push(self.finding(doc, line, needle, what, Severity::High));
                 }
             }
@@ -110,6 +103,39 @@ impl SafetyBypass {
                 "leave the check in place and let the user answer for themselves; if this is documenting the flag, describe what it costs"
                     .to_owned(),
         }
+    }
+}
+
+/// The part of this line that is a command, with a shell `case` arm's
+/// pattern list taken off the front: alternatives separated by `|`, ending
+/// at the `)` that opens the arm. Naming `sudo` as one of the tokens a
+/// parser should skip is not running it, and reading it as a command is the
+/// rule mistaking a list of words for an instruction.
+///
+/// This is a deliberate narrowing of what the rule catches, and the price
+/// is stated: a line that is a bare list of single words ending in `)` is
+/// not read as a command, so a command written in exactly that shape is
+/// missed. Every such word is a pattern to match, not a program to run —
+/// `sudo)` runs nothing — and the content that pays for the narrowing is
+/// the class of skills and hooks that parse command lines, which name the
+/// dangerous verbs precisely because they exist to catch them.
+///
+/// Only the pattern half is exempt, so only the pattern half is cut. A
+/// `case` arm whose body follows on the same line still has that body read:
+/// everything from the `)` on comes back as a command like any other.
+fn command_half(line: &str) -> &str {
+    let Some((head, body)) = line.split_once(')') else {
+        return line;
+    };
+    let pattern = head.trim();
+    let is_pattern = !pattern.is_empty()
+        && pattern
+            .split('|')
+            .map(str::trim)
+            .all(|token| !token.is_empty() && token.split_whitespace().count() == 1);
+    match is_pattern {
+        true => body,
+        false => line,
     }
 }
 
@@ -159,10 +185,7 @@ impl AuditRule for DangerousCommands {
                     hit(needle, what);
                 }
             }
-            if line.lower[line.command_at()..]
-                .trim_start()
-                .starts_with("sudo ")
-            {
+            if command_half(&line.lower).trim_start().starts_with("sudo ") {
                 hit("sudo", "runs the rest of the line as root");
             }
         })

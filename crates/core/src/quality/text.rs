@@ -11,14 +11,11 @@
 
 use std::collections::BTreeSet;
 
-mod line;
 mod normalize;
-pub(in crate::quality) mod tokens;
-
-pub use line::{Line, Reading};
 pub use normalize::deobfuscate;
 
-use super::{AuditInput, Content, Doc, Prepared, TreeFile};
+use super::phrase::find_phrase;
+use super::{AuditInput, Content, Doc, Prepared, Severity, TreeFile};
 
 /// What deobfuscation had to do to one document. Only the two counts are
 /// reportable: see `changed`.
@@ -68,6 +65,101 @@ impl Normalization {
     }
 }
 
+/// One line of a document, classified.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Line {
+    pub number: usize,
+    pub text: String,
+    /// ASCII-lowercased with whitespace flattened to spaces. Byte offsets
+    /// match `text` exactly, so a match found here locates in the original.
+    pub lower: String,
+    /// This line is quoting something rather than instructing it, so its
+    /// findings cost one severity less — a blockquote, or any line of a
+    /// skill's supporting files. A code fence is not one of these: see
+    /// `lines`.
+    pub describing: bool,
+    /// This line's inline code spans, as byte ranges into `lower`. Only a
+    /// prose line has any — inside a code block, and in a file that is not
+    /// markdown at all, a backtick is the code's own character. A span may
+    /// open on one line and close on a later one, so these are read for the
+    /// whole document at once: see `lines`.
+    pub spans: Vec<(usize, usize)>,
+}
+
+impl Line {
+    /// Where `needle` sits in this line, allowing any run of whitespace
+    /// where the needle has one space.
+    pub fn find(&self, needle: &str) -> Option<usize> {
+        find_phrase(&self.lower, needle)
+    }
+
+    pub fn has(&self, needle: &str) -> bool {
+        self.find(needle).is_some()
+    }
+
+    /// Every offset where `needle` sits in this line. A line that mentions
+    /// a path twice is two chances to match, and taking only the first lets
+    /// one innocent mention hide a guilty one behind it.
+    pub fn occurrences(&self, needle: &str) -> Vec<usize> {
+        let mut found = Vec::new();
+        let mut from = 0;
+        while let Some(at) = find_phrase(&self.lower[from..], needle) {
+            found.push(from + at);
+            from += at + 1;
+        }
+        found
+    }
+
+    /// The character just before `at`, or `None` at the start of the line.
+    pub fn before(&self, at: usize) -> Option<char> {
+        self.lower[..at].chars().next_back()
+    }
+
+    /// The character just after a match of `len` bytes at `at`.
+    pub fn after(&self, at: usize, len: usize) -> Option<char> {
+        self.lower[at + len..].chars().next()
+    }
+
+    /// Mark this line as description rather than instruction.
+    pub fn as_description(self) -> Line {
+        Line {
+            describing: true,
+            ..self
+        }
+    }
+
+    /// What a hit weighs here: one severity less on a line that is
+    /// describing, full weight otherwise.
+    pub fn weigh(&self, base: Severity) -> Severity {
+        match self.describing {
+            true => base.lowered(),
+            false => base,
+        }
+    }
+
+    /// Whether what stands at `at` counts as code, or is a document naming
+    /// it.
+    ///
+    /// A markdown code span is the one quotation read here. A README
+    /// writing `--no-verify` in backticks is naming the switch; the same
+    /// characters standing in the open are the switch. Everything else
+    /// counts — a `#` comment, a `case` arm's pattern, a string in a
+    /// language this does not parse — because each of those is a switch
+    /// written into a file a harness loads, and no reading of what the
+    /// file would then do with it holds for every shape a file takes.
+    ///
+    /// The spans are markdown's own, already read into `spans`: a run of
+    /// backticks closes only on a run of its own length, one that never
+    /// meets its match quotes nothing, and a run reaches no further than
+    /// the block it opened in.
+    pub fn counts_at(&self, at: usize) -> bool {
+        !self
+            .spans
+            .iter()
+            .any(|(start, end)| at >= *start && at < *end)
+    }
+}
+
 /// Deobfuscate every text this input carries and split it into lines.
 pub fn prepare(input: AuditInput) -> Prepared {
     let mut normalized = Vec::new();
@@ -85,7 +177,7 @@ pub fn prepare(input: AuditInput) -> Prepared {
             docs.push(Doc {
                 location: input.location.clone(),
                 role: super::DocRole::Text,
-                lines: lines(&text, reading(&input.location, &text)),
+                lines: lines(&text, is_markdown(&input.location)),
             });
             Content::Document { text }
         }
@@ -144,7 +236,7 @@ fn tree_docs(
             let location = format!("{root}/{}", crate::paths::slashed(&file.path));
             let supporting = is_supporting(&file.path);
             let text = clean(location.clone(), &text);
-            let split = lines(&text, reading(&location, &text));
+            let split = lines(&text, is_markdown(&location));
             docs.push(Doc {
                 lines: match supporting {
                     true => split.into_iter().map(Line::as_description).collect(),
@@ -208,7 +300,7 @@ fn hook_docs(
     docs.push(Doc {
         location: format!("{root} (command)"),
         role: super::DocRole::Text,
-        lines: lines(&command, Reading::Shell),
+        lines: lines(&command, false),
     });
     // What the harness stores beside the command, not what it runs: one
     // value per line, one document, for the rules about values.
@@ -217,7 +309,7 @@ fn hook_docs(
         docs.push(Doc {
             location: format!("{root} (entry)"),
             role: super::DocRole::Values,
-            lines: lines(&values, Reading::Shell),
+            lines: lines(&values, false),
         });
         values
     });
@@ -226,7 +318,7 @@ fn hook_docs(
         docs.push(Doc {
             location: root.to_owned(),
             role: super::DocRole::Text,
-            lines: lines(&body, reading(root, &body)),
+            lines: lines(&body, false),
         });
         body
     });
@@ -234,7 +326,7 @@ fn hook_docs(
 }
 
 /// Split into lines, marking the ones that are quoting somebody else and
-/// the ones that are prose.
+/// reading the code spans of the ones that are prose.
 ///
 /// A code fence is deliberately *not* one of the quoting marks. A fenced
 /// `sh` block in a SKILL.md is not an illustration of the instruction, it
@@ -244,19 +336,19 @@ fn hook_docs(
 /// different: it is markdown's way of saying "these are someone else's
 /// words".
 ///
-/// What a fence does decide is which marks quote *inside* the line, which
-/// is [`Line::reading`]. A markdown document has prose to tell from blocks
-/// at all; a script is a command line from its first byte.
+/// What a fence does decide is which marks quote *inside* the line. A
+/// markdown document has prose to tell from its blocks at all; every other
+/// file is code from its first byte, and `markdown` says which this is.
 ///
-/// The code spans come from here too, and for the same reason: a run of
+/// The code spans come from here rather than from a line: a run of
 /// backticks may close on a later line, so only something holding the
 /// whole document can say which of them ever meet a match.
-pub fn lines(text: &str, reading: Reading) -> Vec<Line> {
+pub fn lines(text: &str, markdown: bool) -> Vec<Line> {
     let raw: Vec<&str> = text.lines().collect();
     let lower: Vec<String> = raw.iter().map(|line| flatten(line)).collect();
-    let prose = match reading {
-        Reading::Prose => crate::render::prose_lines(text),
-        Reading::Shell | Reading::Opaque => vec![false; raw.len()],
+    let prose = match markdown {
+        true => crate::render::prose_lines(text),
+        false => vec![false; raw.len()],
     };
     let spans = crate::render::code_spans_by_line(&lower, &prose);
     raw.iter()
@@ -267,84 +359,23 @@ pub fn lines(text: &str, reading: Reading) -> Vec<Line> {
             number: index + 1,
             lower,
             describing: raw.trim_start().starts_with('>'),
-            // A markdown document is prose outside its blocks and a
-            // command line inside them; every other document is one
-            // reading throughout.
-            reading: match prose[index] {
-                true => Reading::Prose,
-                false => match reading {
-                    Reading::Prose => Reading::Shell,
-                    other => other,
-                },
-            },
             spans,
             text: (*raw).to_owned(),
         })
         .collect()
 }
 
-/// Shells whose scripts are the command lines this rule reads.
-const SHELLS: &[&str] = &["sh", "bash", "zsh", "dash", "ksh", "ash"];
-
-/// Suffixes that name one of those scripts.
-const SHELL_SUFFIXES: &[&str] = &[".sh", ".bash", ".zsh", ".ksh", ".bats"];
-
-/// Which syntax reads this document.
+/// Whether this document is markdown, the one language whose quotation
+/// these rules read.
 ///
-/// Markdown by its suffix, with the parked suffix taken off first:
-/// `SKILL.md.disabled` is the same markdown as `SKILL.md` and the audit
-/// reads it as one, so judging it by the trailing extension would make
-/// switching an item off turn its code spans back into findings.
-///
-/// Otherwise a shebang settles it, because that line is the file saying
-/// what runs it. Failing that, a shell suffix, and then a name carrying no
-/// suffix at all — a script in a skill's `scripts/` directory is written
-/// without one, and every such file this repository ships is a shell
-/// script.
-///
-/// Everything left is a program in some other language, and this rule does
-/// not read those. A `.rs`, `.py` or `.js` file hands a program its
-/// arguments through a call, not a command line, and a `.json` or `.toml`
-/// file holds strings some other reader gives meaning to. None of that
-/// makes what is written there any less handed over, so none of it is read
-/// as quoted: see [`Reading::Opaque`].
-fn reading(location: &str, text: &str) -> Reading {
+/// The parked suffix comes off first. `SKILL.md.disabled` is the same
+/// markdown as `SKILL.md` and the audit reads it as one, so judging it by
+/// the trailing extension would make switching an item off turn its code
+/// spans back into findings.
+fn is_markdown(location: &str) -> bool {
     let lower = location.to_ascii_lowercase();
     let base = lower.strip_suffix(".disabled").unwrap_or(&lower);
-    if base.ends_with(".md") || base.ends_with(".markdown") {
-        return Reading::Prose;
-    }
-    if let Some(interpreter) = shebang(text) {
-        return match SHELLS.contains(&interpreter.as_str()) {
-            true => Reading::Shell,
-            false => Reading::Opaque,
-        };
-    }
-    let name = base.rsplit('/').next().unwrap_or(base);
-    let shell = SHELL_SUFFIXES.iter().any(|suffix| name.ends_with(suffix)) || !name.contains('.');
-    match shell {
-        true => Reading::Shell,
-        false => Reading::Opaque,
-    }
-}
-
-/// The interpreter a first line names, by its own name rather than the
-/// path it was reached through. `#!/usr/bin/env bash` names it in the word
-/// after `env`, which is how nearly every script this reads is written.
-fn shebang(text: &str) -> Option<String> {
-    let mut words = text
-        .lines()
-        .next()?
-        .strip_prefix("#!")?
-        .split_whitespace()
-        .filter(|word| !word.starts_with('-'));
-    let program = words.next()?;
-    let named = program.rsplit('/').next().unwrap_or(program);
-    let named = match named == "env" {
-        true => words.next().unwrap_or(named),
-        false => named,
-    };
-    Some(named.to_ascii_lowercase())
+    base.ends_with(".md") || base.ends_with(".markdown")
 }
 
 /// ASCII-lowercase with every whitespace byte turned into a space. Both
