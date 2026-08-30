@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
+import { runCargo } from "../extensions/cargo.ts";
 import piHooks from "../extensions/hooks.ts";
 
 const CONFIG_ID = "@vanillagreen/pi-hooks";
@@ -98,6 +99,22 @@ function installToolCallHandler(): ToolCallHandler {
 	return handler;
 }
 
+const PROBE_ARG = "--pi-hooks-reachability-probe";
+
+/**
+ * Prove the fake is the cargo a spawn from this process resolves, then hand the
+ * body an empty log. Without this an empty log means nothing: it reads the same
+ * whether no check ran or the substitution broke. Bun's spawnSync inherits an
+ * environment snapshot rather than the live `process.env`, so the fake sat
+ * unreachable and every assertion below was vacuous until runCargo started
+ * passing an explicit env (KEN-843).
+ */
+function expectFakeCargoReachable(cwd: string, log: string): void {
+	runCargo([PROBE_ARG], cwd, 5000);
+	expect(cargoLog(log)).toBe(`${PROBE_ARG}\n`);
+	writeFileSync(log, "");
+}
+
 async function withFakeCargo<T>(run: (paths: { bin: string; log: string }) => Promise<T>): Promise<T> {
 	const root = mkdtempSync(join(tmpdir(), "pi-hooks-cargo-"));
 	const paths = fakeCargoBin(root);
@@ -107,6 +124,7 @@ async function withFakeCargo<T>(run: (paths: { bin: string; log: string }) => Pr
 	process.env.PATH = `${paths.bin}:${oldPath ?? ""}`;
 	process.env.FAKE_CARGO_LOG = paths.log;
 	try {
+		expectFakeCargoReachable(root, paths.log);
 		return await run(paths);
 	} finally {
 		if (oldPath === undefined) delete process.env.PATH;
@@ -136,8 +154,9 @@ function cargoLog(log: string): string {
 }
 
 describe("pi-hooks pre-commit tool_call", () => {
-	// A fake cargo stays on PATH throughout as the control: the gate defers or
-	// refuses, and never runs a check of its own, so the log must stay empty.
+	// A fake cargo stays on PATH throughout as the control: withFakeCargo proves
+	// it reachable before handing over, and the gate defers or refuses without
+	// running a check of its own, so the log must stay empty.
 	test("defers to an armed repository without running anything", async () => {
 		await withFakeCargo(async ({ log }) => {
 			const project = initRustRepo("pi-hooks-project-");
