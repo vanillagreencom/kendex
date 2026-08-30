@@ -536,4 +536,4 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       - name: cargo test
-        run: cargo test --workspace --exclude kendex-app --locked --no-fail-fast
+        run: cargo test --workspace --locked --no-fail-fast
