@@ -131,6 +131,9 @@ is judged as the document it is.
 A directory name takes both class forms: `*` may match nothing but the
 literal `/` in `*/tests/*` still must be there, so `*/tests/*` covers
 `pkg/tests/x` and never a root-level `tests/x` — that one needs `tests/*`.
+The shipped class and frozen lists carry both forms for every directory
+pattern they name, so a root-level `tests/` — where Rust puts its
+integration tests — is judged and frozen like any other test directory.
 
 Whitespace around an entry and around its `=` is ignored, and an empty entry
 is skipped. A malformed entry — no `=`, an empty pattern, a threshold that is

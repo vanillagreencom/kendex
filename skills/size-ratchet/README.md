@@ -116,7 +116,7 @@ The package ships this list, so a repo that configures nothing still runs it:
 | `*/SKILL.md` | 24k bytes |
 | `*/workflows/*.md` | 40k bytes |
 | every other `*.md` | 64k bytes |
-| `*/tests/*`, `*/test/*`, `*/__tests__/*`, `*/tests.rs`, `*test_util.rs`, `*.test.*`, `*.spec.*` | 800 lines |
+| `tests/*`, `test/*`, `__tests__/*`, `tests.rs` and their `*/` forms, plus `*test_util.rs`, `*.test.*`, `*.spec.*` | 800 lines |
 | everything else | `SIZE_RATCHET_THRESHOLD`, 400 lines |
 
 A repo overrides a class, never the list: its own entries are matched first,
@@ -133,7 +133,8 @@ needs both unset.
 
 A directory name takes **both** forms: `*/tests/*` requires a
 slash-delimited prefix, so a root-level `tests/` needs its own `tests/*`
-entry.
+entry. The shipped list carries both for every directory pattern it names;
+a repo writing its own entries has to do the same.
 
 ## Exclusion list
 

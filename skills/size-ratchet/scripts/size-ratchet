@@ -71,12 +71,21 @@ NL='
 # demand and paged. Markdown entries come first so a README or a doc under a
 # tests/ directory is judged as the document it is. Code keeps lines, which
 # is what every linter caps.
-SHIPPED_CLASSES="AGENTS.md=24k;CLAUDE.md=24k;*/AGENTS.md=24k;*/CLAUDE.md=24k;*/SKILL.md=24k;*/workflows/*.md=40k;*.md=64k;*/tests/*=800;*/test/*=800;*/__tests__/*=800;*/tests.rs=800;*test_util.rs=800;*.test.*=800;*.spec.*=800"
+#
+# Every directory pattern carries BOTH forms, the way AGENTS.md and CLAUDE.md
+# do: `*` may match nothing, but the literal `/` in `*/tests/*` still must be
+# there, so without `tests/*` beside it a root-level tests/ — where Rust puts
+# its integration tests — would take neither the 800-line class nor the
+# freeze, and both statements this list makes about tests would be false for
+# it.
+SHIPPED_CLASSES="AGENTS.md=24k;CLAUDE.md=24k;*/AGENTS.md=24k;*/CLAUDE.md=24k;*/SKILL.md=24k;*/workflows/*.md=40k;*.md=64k;tests/*=800;*/tests/*=800;test/*=800;*/test/*=800;__tests__/*=800;*/__tests__/*=800;tests.rs=800;*/tests.rs=800;*test_util.rs=800;*.test.*=800;*.spec.*=800"
 
 # Rows in these classes never rise. A test splits and a document is cut;
 # neither is ever the fix that needs the added lines, so no declaration on
-# the invocation buys one more. `*.md` covers every markdown class above.
-SHIPPED_FROZEN_CLASSES="*.md;*/tests/*;*/test/*;*/__tests__/*;*/tests.rs;*test_util.rs;*.test.*;*.spec.*"
+# the invocation buys one more. `*.md` covers every markdown class above, and
+# every directory pattern carries both forms for the reason the class list
+# gives.
+SHIPPED_FROZEN_CLASSES="*.md;tests/*;*/tests/*;test/*;*/test/*;__tests__/*;*/__tests__/*;tests.rs;*/tests.rs;*test_util.rs;*.test.*;*.spec.*"
 
 # Exclusions the package applies on top of the repo's list, as
 # `pattern<TAB>reason` rows — the same shape the list itself carries.

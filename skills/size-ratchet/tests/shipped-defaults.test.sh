@@ -167,6 +167,47 @@ run 'SIZE_RATCHET_DEFAULT_CLASSES=*/tests/*=800;*/test/*=800;*.md=64k'
   && ok "control: with the test entries first the same file fails at 800 lines" \
   || bad "control: the inverted order fails the same file" "rc=$RC out=$OUT"
 
+echo "=== a root-level test directory is judged and frozen like any other ==="
+# `*/tests/*` needs its literal slash, so the shipped list carries the root
+# form beside it. Without that, the standard home of Rust integration tests
+# would take neither the 800-line class nor the freeze, and both statements
+# the list makes about tests would be false for it.
+new_repo root-tests
+mklines tests/root.rs 500
+mklines test/legacy.rs 500
+mklines __tests__/spec.rs 500
+mklines tests.rs 500
+git -C "$R" add -A
+run
+[ "$RC" -eq 0 ] \
+  && ok "root-level tests/, test/, __tests__/ and tests.rs all sit under their 800 class" \
+  || bad "a root-level test path takes the test class" "rc=$RC out=$OUT"
+# The control: the same four files under a list carrying only the `*/` forms
+# are offenders at the 400 default, so the root patterns are what spared them.
+run 'SIZE_RATCHET_DEFAULT_CLASSES=*.md=64k;*/tests/*=800;*/test/*=800;*/__tests__/*=800;*/tests.rs=800'
+[ "$RC" -eq 1 ] && has "tests/root.rs — 500 lines > threshold 400 (default)" \
+  && has "tests.rs — 500 lines > threshold 400 (default)" \
+  && ok "control: with only the '*/' forms the same files are offenders at 400" \
+  || bad "control: the '*/' forms alone miss a root-level test path" "rc=$RC out=$OUT"
+# And frozen: a root-level test row refuses a raise, declared or not.
+new_repo root-tests-frozen
+mklines tests/root.rs 900
+mkdir -p "$R/tools"
+printf 'tests/root.rs\t900\n' >"$R/$BASE"
+git -C "$R" add -A
+git -C "$R" commit -q -m seed
+mklines tests/root.rs 1000
+printf 'tests/root.rs\t1000\n' >"$R/$BASE"
+git -C "$R" add -A
+run RATCHET_RAISE=1
+[ "$RC" -eq 1 ] && has "frozen baseline row raised: tests/root.rs — row 900 -> 1000 lines" \
+  && ok "a root-level test row refuses the raise the declaration carries elsewhere" \
+  || bad "a root-level test row is frozen" "rc=$RC out=$OUT"
+# The control that the FROZEN list is what refused it.
+run RATCHET_RAISE=1 SIZE_RATCHET_FROZEN_CLASSES=
+[ "$RC" -eq 0 ] && ok "control: with the frozen list emptied the same declared raise passes" \
+  || bad "control: an empty frozen list allows the declared raise" "rc=$RC out=$OUT"
+
 echo "=== a row's unit suffix is exactly one trailing b, or the row is malformed ==="
 # Every consumer of a row strips ONE trailing b, so a row the validator lets
 # through with two would be read as the bare number by all of them.
