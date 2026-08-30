@@ -78,7 +78,7 @@ fn add_skill(f: &Fixture, name: &str, body: &str) {
 #[allow(clippy::unwrap_used)]
 fn apply_now(f: &Fixture) {
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 }
 
 /// Nothing left to do and nothing needing a human: an empty plan with no

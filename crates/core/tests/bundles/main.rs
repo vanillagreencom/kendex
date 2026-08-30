@@ -106,7 +106,7 @@ pub fn catalog_bundles(source: &Path, table: &str) {
 #[allow(clippy::unwrap_used)]
 pub fn apply_now(f: &Fixture) {
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]
@@ -125,7 +125,7 @@ pub fn manifest_of(f: &Fixture) -> kendex_core::manifest::Manifest {
 #[allow(clippy::unwrap_used)]
 pub fn remove(f: &Fixture, name: &str, sweep: bool) -> EngineReport {
     let report = ops::remove(&f.env, &f.scope, &[name.to_owned()], None, sweep).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     report
 }
 
@@ -301,7 +301,7 @@ fn a_member_removed_from_a_bundle_stays_removed() {
     assert!(manifest_of(&f).is_suppressed(ItemKind::Skill, "docs"));
 
     let report = kendex_core::engine::plan_refresh(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(
         !installed(&f, ItemKind::Skill, "docs"),
         "refresh restored it"
@@ -309,7 +309,7 @@ fn a_member_removed_from_a_bundle_stays_removed() {
 
     fs::remove_file(lock_path(&f.env, &f.scope)).unwrap();
     let report = kendex_core::engine::plan_refresh(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(
         !installed(&f, ItemKind::Skill, "docs"),
         "a lost record restored it"
@@ -334,7 +334,7 @@ fn a_member_removed_from_a_bundle_stays_removed() {
         ..ops::AddRequest::default()
     };
     let report = ops::add(&f.env, &f.scope, &request).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(installed(&f, ItemKind::Skill, "docs"));
 }
 

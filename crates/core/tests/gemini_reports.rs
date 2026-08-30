@@ -84,7 +84,7 @@ fn fixture(declarations: &str) -> Fixture {
 #[allow(clippy::unwrap_used)]
 fn apply_now(f: &Fixture) -> EngineReport {
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     report
 }
 
@@ -110,7 +110,7 @@ fn an_event_gemini_does_not_have_is_reported_never_faked() {
         "{:?}",
         report.notes
     );
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(!f.project.join(".gemini/hooks").exists());
 }
 
@@ -231,7 +231,7 @@ fn a_project_declaration_leaves_the_machine_wide_record_exactly_as_it_was() {
     // Removing the declaration takes the project's entry out and still
     // leaves the machine's own switch where the user set it.
     let removal = ops::remove(&f.env, &f.scope, &["gh".to_owned()], None, false).unwrap();
-    apply::execute(&f.env, &removal.plan, None).unwrap();
+    apply::execute(&f.env, &removal.plan).unwrap();
     assert!(json(&settings(&f))["mcpServers"].get("gh").is_none());
     assert_eq!(fs::read_to_string(&record).unwrap(), held_off);
 }

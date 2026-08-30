@@ -60,7 +60,7 @@ fn fixture() -> Fixture {
 #[allow(clippy::unwrap_used)]
 fn apply_now(f: &Fixture) {
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 }
 
 /// Take the hook's declaration out of the manifest: nothing asks for it
@@ -109,7 +109,7 @@ fn the_sweep_proves_an_anchored_hook_before_taking_it() {
 
         undeclare(&f);
         let report = sweep(&f);
-        apply::execute(&f.env, &report.plan, None).unwrap();
+        apply::execute(&f.env, &report.plan).unwrap();
 
         match state {
             "edited" => {
@@ -170,7 +170,7 @@ fn the_sweep_takes_a_hook_whose_record_has_no_anchor() {
         "an anchor-less record is not an edit: {:?}",
         report.drift
     );
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 
     assert!(!script.exists(), "the sweep takes the script");
     let after = fs::read_to_string(f.project.join(".claude/settings.json")).unwrap();

@@ -65,7 +65,7 @@ fn fixture(enabled: bool) -> Fixture {
 #[allow(clippy::unwrap_used)]
 fn apply_now(f: &Fixture) {
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 }
 
 #[test]
@@ -244,7 +244,7 @@ fn a_skill_with_findings_installs_and_seeds_like_any_other() {
             .any(|row| row.name == "hostile" && !row.advisory.findings.is_empty()),
         "the hostile skill is scored, and the findings ride on the plan"
     );
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     let settings = fs::read_to_string(f.project.join("kendex.settings.toml")).unwrap();
     assert!(settings.contains("REVIEWERS"), "the clean skill seeds");
     assert!(
@@ -282,7 +282,7 @@ fn a_skill_installed_on_no_harness_seeds_nothing() {
             .map(|op| &op.description)
             .collect::<Vec<_>>()
     );
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(!f.project.join("kendex.settings.toml").exists());
 }
 
@@ -316,7 +316,7 @@ fn an_adoption_only_ledger_change_is_written_to_the_lock() {
             .map(|op| &op.description)
             .collect::<Vec<_>>()
     );
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     let lock = kendex_core::lock::load(&lock_path).unwrap();
     assert_eq!(
         lock.settings_seeds

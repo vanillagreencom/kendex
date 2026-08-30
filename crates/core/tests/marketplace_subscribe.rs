@@ -86,7 +86,7 @@ fn a_full_url_reference_declares_a_remote_not_a_path() {
         "https://gitlab.example.com/team/catalog.git",
     )
     .unwrap();
-    apply::execute(&env, &report.plan, None).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
     let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
     assert!(
         manifest.contains("repo = \"https://gitlab.example.com/team/catalog.git\""),
@@ -109,7 +109,7 @@ fn a_skills_sh_url_subscribes_the_repo_and_names_the_package_lead() {
     assert_eq!(subscribed.reference, "vercel-labs/agent-skills");
     assert_eq!(subscribed.lead.as_deref(), Some("react-best-practices"));
     assert_eq!(subscribed.name, "agent-skills");
-    apply::execute(&env, &subscribed.report.plan, None).unwrap();
+    apply::execute(&env, &subscribed.report.plan).unwrap();
     let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
     assert!(
         manifest.contains("repo = \"vercel-labs/agent-skills\""),
@@ -148,7 +148,7 @@ fn a_tree_url_subscribes_the_whole_repo_and_surfaces_the_path() {
         "{:?}",
         subscribed.report.notes
     );
-    apply::execute(&env, &subscribed.report.plan, None).unwrap();
+    apply::execute(&env, &subscribed.report.plan).unwrap();
     let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
     assert!(manifest.contains("repo = \"o/r\""), "{manifest}");
     assert!(manifest.contains("rev = \"feat/x\""), "{manifest}");
@@ -203,7 +203,7 @@ fn an_offline_tree_url_is_refused_before_any_write() {
 fn a_repo_already_subscribed_under_another_alias_is_refused_naming_it() {
     let (_tmp, env, scope, project) = fixture();
     let report = source_ops::add_source(&env, &scope, "first", "o/r").unwrap();
-    apply::execute(&env, &report.plan, None).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
     let before = fs::read_to_string(project.join("kendex.toml")).unwrap();
 
     for spelling in [
@@ -235,7 +235,7 @@ fn subscribing_a_project_from_a_personal_subscription_mutates_only_the_project()
     let report = source_ops::subscribe(&env, &Scope::Global, "team/tools@v2", Some("mkt"))
         .unwrap()
         .report;
-    apply::execute(&env, &report.plan, None).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
     let personal_path = kendex_core::manifest::manifest_path(&env, &Scope::Global);
     let personal_before = fs::read(&personal_path).unwrap();
 
@@ -252,7 +252,7 @@ fn subscribing_a_project_from_a_personal_subscription_mutates_only_the_project()
     assert!(line.contains("'mkt'"), "{line}");
     assert!(line.contains("team/tools @ v2"), "{line}");
     assert!(line.contains("kendex.toml"), "{line}");
-    apply::execute(&env, &report.plan, None).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
 
     let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
     assert!(manifest.contains("[sources.mkt]"), "{manifest}");
@@ -312,7 +312,7 @@ fn a_default_add_lands_on_the_subscription_with_the_default_repo() {
     .unwrap();
 
     let report = add_gh(&env, &scope).unwrap();
-    apply::execute(&env, &report.plan, None).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
     let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
     assert!(manifest.contains("[skills.gh]"), "{manifest}");
     assert!(manifest.contains("source = \"market\""), "{manifest}");
@@ -336,7 +336,7 @@ fn two_default_repo_subscriptions_prefer_the_seeded_name() {
     .unwrap();
 
     let report = add_all(&env, &scope).unwrap();
-    apply::execute(&env, &report.plan, None).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
     let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
     assert!(manifest.contains("source = \"kendex\""), "{manifest}");
 }
@@ -392,7 +392,7 @@ fn no_default_subscription_is_a_typed_error_never_a_guess() {
     // The same scope's bare name finds its one subscription by searching —
     // no default needed, no download, no guess.
     let report = add_gh(&env, &scope).unwrap();
-    apply::execute(&env, &report.plan, None).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
     let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
     assert!(manifest.contains("source = \"other\""), "{manifest}");
 }

@@ -129,7 +129,7 @@ fn the_refusal_says_which_files_are_in_the_way() {
     );
 
     // And nothing is planned for it — the files stay exactly as they are.
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert!(
         fs::read_to_string(dir.join("SKILL.md"))
             .unwrap()
@@ -153,7 +153,7 @@ fn taking_over_installs_what_was_declared_and_keeps_the_old_files() {
         "the take-over resolves the refusal: {:?}",
         report.drift
     );
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(
         fs::read_to_string(dir.join("SKILL.md"))
@@ -223,7 +223,7 @@ fn a_link_kendex_did_not_create_is_never_taken_over() {
         row.detail
     );
     assert!(!row.cause.unwrap().can_replace(), "{row:?}");
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert!(
         fs::read_to_string(elsewhere.join("SKILL.md"))
             .unwrap()
@@ -268,7 +268,7 @@ fn a_link_at_a_folder_adoption_would_refuse_is_still_a_dead_stop() {
 fn an_installation_kendex_wrote_is_never_called_a_stranger() {
     let w = world();
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(audit(&w.env, &w.scope).unwrap().drift.is_empty());
     fs::write(
@@ -316,7 +316,7 @@ fn a_refusal_at_the_link_leaves_the_tree_untouched() {
         "nothing is planned for a refused item: {:?}",
         report.plan.ops
     );
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert_eq!(
         fs::read_to_string(canonical.join("SKILL.md")).unwrap(),
         "the tool that came before"
@@ -337,7 +337,7 @@ fn a_blocked_declaration_leaves_no_tree_nothing_recorded() {
 
     let report = audit(&w.env, &w.scope).unwrap();
     assert_eq!(deploy_row(&report.drift).state, DriftState::Conflict);
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert!(
         !w.home.join("app/.agents/skills/deploy").exists(),
         "a refused item wrote its canonical tree anyway"
@@ -353,7 +353,7 @@ fn a_blocked_declaration_leaves_no_tree_nothing_recorded() {
 fn an_edit_under_one_tool_holds_when_another_tool_is_declared_over_it() {
     let w = linking_world();
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     let canonical = w.home.join("app/.agents/skills/deploy/SKILL.md");
     fs::write(
@@ -371,7 +371,7 @@ fn an_edit_under_one_tool_holds_when_another_tool_is_declared_over_it() {
         Some(DriftCause::LocalEdit),
         "an edit is an edit whichever tool is asking: {row:?}"
     );
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert!(
         fs::read_to_string(&canonical).unwrap().contains("Mine."),
         "the take-over trashed an edit the edit gate protects"
@@ -413,7 +413,7 @@ fn the_refusal_names_every_position_a_take_over_empties() {
     );
 
     let report = plan_apply(&w.env, &w.scope, &take_over()).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     // What the row promised is what ran: both directories recoverable, and
     // the declaration installed over each position.
     let saved = trash_text(&w.env.trash_dir());

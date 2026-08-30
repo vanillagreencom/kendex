@@ -41,7 +41,7 @@ pub fn run(
     for op in &move_plan.ops {
         say(&format!("  - {}", shown(&op.line())));
     }
-    kendex_core::apply::execute(env, &move_plan, None)?;
+    kendex_core::apply::execute(env, &move_plan)?;
 
     // Second transaction renders the managed replacement — with its score
     // beside the write, like every other write path.

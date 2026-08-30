@@ -186,6 +186,42 @@ fn own_and_unmanaged_content_import_without_a_licence_question() {
     assert!(target.join("skills/stray/SKILL.md").exists());
 }
 
+/// Every refusal is decided before the first byte is written, so a
+/// second selection that cannot land takes the first one with it. Without
+/// that the import is half-done and there is nothing to say which half.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_refusal_on_a_later_selection_writes_nothing_for_the_earlier_one() {
+    let (tmp, env, scope) = seeded();
+    let scopes = [scope];
+    let target = target(&env, &tmp, "mine-partial");
+    // The second selection's destination is occupied by other bytes.
+    skill(
+        &target.join("skills"),
+        "stray",
+        "different bytes already here",
+    );
+    let candidates = inventory(&env, &scopes).unwrap();
+    let selections = [
+        selection(find(&candidates, "mine"), false),
+        selection(find(&candidates, "stray"), false),
+    ];
+
+    let refused = apply(&env, &scopes, &target, &selections);
+    let message = refused.unwrap_err().to_string();
+    assert!(message.contains("different bytes"), "{message}");
+    assert!(
+        !target.join("skills/mine").exists(),
+        "the selection before the refusal must not have been written"
+    );
+    assert!(
+        fs::read_to_string(target.join("skills/stray/SKILL.md"))
+            .unwrap()
+            .contains("different bytes already here"),
+        "the occupied destination is untouched"
+    );
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_destination_holding_different_bytes_is_a_refusal_naming_it() {

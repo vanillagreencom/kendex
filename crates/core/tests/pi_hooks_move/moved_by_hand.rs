@@ -141,7 +141,7 @@ fn a_new_registration_moved_to_another_event_is_never_doubled() {
         "the row says what registering again would do: {}",
         row.detail
     );
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     assert_eq!(
         fs::read_to_string(w.dot().join("kendex/hooks.json")).unwrap(),
@@ -292,7 +292,7 @@ fn a_completed_hook_still_holds_over_a_registration_moved_at_the_new_path() {
             "{beside}: {}",
             row.detail
         );
-        kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+        kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
         assert_eq!(
             fs::read_to_string(&registry).unwrap(),
@@ -335,7 +335,7 @@ fn an_entry_from_before_the_record_still_holds_over_a_moved_registration() {
         "unknown stays unknown, and what is unknown holds: {:?}",
         report.drift
     );
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
     assert_eq!(
         fs::read_to_string(&registry).unwrap(),
         moved,

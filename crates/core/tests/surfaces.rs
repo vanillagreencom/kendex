@@ -45,7 +45,7 @@ fn codex_and_pi_share_one_project_variant_and_claude_links_while_equal() {
         root: project.clone(),
     };
     let report = audit(&env, &scope).unwrap();
-    apply::execute(&env, &report.plan, None).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
 
     // Codex and Pi read the same physical tree — one variant, no links.
     let shared = project.join(".agents/skills/gh");
@@ -114,7 +114,7 @@ fn a_large_skill_is_one_tree_every_surface_links_to() {
         "nothing to warn about: {:?}",
         report.warnings
     );
-    apply::execute(&env, &report.plan, None).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
 
     let shared = project.join(".agents/skills/big");
     assert_eq!(fs::read_to_string(shared.join("SKILL.md")).unwrap(), body);

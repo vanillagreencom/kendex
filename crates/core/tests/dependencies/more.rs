@@ -33,13 +33,13 @@ fn an_optional_dependency_installs_only_once_it_is_chosen() {
             .iter()
             .any(|c| c.name == "linear" && c.direction == SetDirection::Add)
     );
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(installed(&f, "linear"));
 
     // The choice survives a refresh, and the item it brought in is recorded
     // as required, never as something the user asked for.
     let report = plan_refresh(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(installed(&f, "linear"));
     assert!(
         !lock_of(&f).entries["skill:linear:claude"]
@@ -57,7 +57,7 @@ fn a_dependency_held_back_from_a_tool_warns_the_item_that_needs_it() {
         "[skills.dev]\nsource = \"cat\"\nharnesses = [\"claude\", \"codex\"]\n\n[skills.github]\nsource = \"cat\"\nharnesses = [\"claude\"]\n",
     );
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 
     let lock = lock_of(&f);
     assert!(lock.entries.contains_key("skill:dev:codex"));
@@ -83,7 +83,7 @@ fn a_file_changed_after_the_preview_aborts_its_removal() {
 
     let report = ops::remove(&f.env, &f.scope, &["dev".to_owned()], None, true).unwrap();
     fs::write(&skill_md, "edited after the preview\n").unwrap();
-    let error = apply::execute(&f.env, &report.plan, None).unwrap_err();
+    let error = apply::execute(&f.env, &report.plan).unwrap_err();
     assert!(
         matches!(error, kendex_core::error::CoreError::RolledBack { .. }),
         "{error:?}"
@@ -119,14 +119,14 @@ fn refresh_previews_what_upstream_added_and_took_away() {
     assert_eq!(added.set_changes[0].name, "worktree");
     assert_eq!(added.set_changes[0].direction, SetDirection::Add);
     assert!(added.set_changes[0].reason.contains("required by"));
-    apply::execute(&f.env, &added.plan, None).unwrap();
+    apply::execute(&f.env, &added.plan).unwrap();
 
     skill(&f.source, "dev", "dependencies:\n  required: [github]\n");
     let dropped = plan_refresh(&f.env, &f.scope).unwrap();
     assert_eq!(dropped.set_changes.len(), 1);
     assert_eq!(dropped.set_changes[0].name, "worktree");
     assert_eq!(dropped.set_changes[0].direction, SetDirection::Remove);
-    apply::execute(&f.env, &dropped.plan, None).unwrap();
+    apply::execute(&f.env, &dropped.plan).unwrap();
     assert!(!installed(&f, "worktree"));
     assert!(installed(&f, "dev") && installed(&f, "github"));
 }
@@ -161,7 +161,7 @@ fn a_removal_made_while_the_catalog_is_offline_is_not_undone_by_its_return() {
 
     fs::rename(&offline, &f.source).unwrap();
     let report = plan_refresh(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(
         !installed(&f, "github"),
         "the catalog's return brought it back"
@@ -189,7 +189,7 @@ fn a_removal_is_written_down_with_the_record_deleted() {
     assert!(manifest_of(&f).is_suppressed(ItemKind::Skill, "github"));
 
     let report = plan_refresh(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(
         !lock_of(&f).entries.contains_key("skill:github:claude"),
         "a refresh took it back on"
@@ -208,7 +208,7 @@ fn a_declared_skill_installs_and_reports_nothing_missing_when_it_is_also_kept_re
         "[skills.dev]\nsource = \"cat\"\n\n[skills.github]\nsource = \"cat\"\n\n[suppressed]\nskill = [\"github\"]\n",
     );
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 
     assert!(installed(&f, "github"));
     assert!(
@@ -289,6 +289,6 @@ fn an_unreadable_catalog_never_sweeps_a_dependency() {
     fs::rename(&f.source, f.source.with_extension("moved")).unwrap();
     let report = plan_refresh(&f.env, &f.scope).unwrap();
     assert!(report.set_changes.is_empty(), "{:?}", report.set_changes);
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(installed(&f, "github") && installed(&f, "dev"));
 }

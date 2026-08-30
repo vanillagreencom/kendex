@@ -75,7 +75,7 @@ fn fixture(declarations: &str) -> Fixture {
 #[allow(clippy::unwrap_used)]
 fn apply_now(f: &Fixture) {
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]
@@ -105,7 +105,7 @@ fn required_by(source: &str, name: &str) -> Reason {
 #[allow(clippy::unwrap_used)]
 fn remove(f: &Fixture, name: &str, sweep: bool) -> kendex_core::engine::EngineReport {
     let report = ops::remove(&f.env, &f.scope, &[name.to_owned()], None, sweep).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     report
 }
 
@@ -200,12 +200,12 @@ fn a_suppressed_dependency_survives_refresh_and_lock_loss() {
     assert!(!installed(&f, "github"));
 
     let report = plan_refresh(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(!installed(&f, "github"), "refresh brought it back");
 
     fs::remove_file(lock_path(&f.env, &f.scope)).unwrap();
     let report = plan_refresh(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(!installed(&f, "github"), "a lost record brought it back");
     assert!(installed(&f, "dev"));
     assert!(
@@ -228,7 +228,7 @@ fn removing_the_last_dependent_offers_to_sweep_what_it_needed() {
     let kept = ops::remove(&f.env, &f.scope, &["dev".to_owned()], None, false).unwrap();
     assert_eq!(kept.sweepable.len(), 1);
     assert_eq!(kept.sweepable[0].name, "github");
-    apply::execute(&f.env, &kept.plan, None).unwrap();
+    apply::execute(&f.env, &kept.plan).unwrap();
     assert!(installed(&f, "github"), "swept without being asked");
 
     let f = fixture("[skills.dev]\nsource = \"cat\"\n");
@@ -259,7 +259,7 @@ fn a_dependency_the_catalog_lacks_is_a_finding() {
         .expect("the missing dependency is reported");
     assert_eq!(warning.name, "dev");
     assert!(warning.remediation.as_ref().unwrap().contains("nowhere"));
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(installed(&f, "dev"), "a missing dependency blocked a skill");
 }
 
@@ -273,7 +273,7 @@ fn skills_that_require_each_other_install_and_are_reported() {
     skill(&f.source, "github", "dependencies:\n  required: [dev]\n");
 
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(installed(&f, "dev") && installed(&f, "github"));
     assert!(
         report
@@ -295,7 +295,7 @@ fn a_skill_that_requires_itself_is_named() {
     skill(&f.source, "dev", "dependencies:\n  required: [dev]\n");
 
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(installed(&f, "dev"));
     assert!(
         report

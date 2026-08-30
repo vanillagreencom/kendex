@@ -81,13 +81,13 @@ pub fn fixture(declarations: &str) -> Fixture {
 #[allow(clippy::unwrap_used)]
 pub fn apply_now(f: &Fixture) {
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]
 fn toggle(f: &Fixture, name: &str, enabled: bool) {
     let report = ops::toggle(&f.env, &f.scope, &[name.to_owned()], None, enabled).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]
@@ -216,7 +216,7 @@ fn an_event_codex_cannot_run_is_reported_never_faked() {
         "{:?}",
         report.notes
     );
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(!f.project.join(".codex").exists());
 }
 
@@ -242,7 +242,7 @@ fn mcp_declare_apply_remove_keeps_the_servers_we_never_declared() {
     assert!(is_clean(&f));
 
     let report = ops::remove(&f.env, &f.scope, &["gh".to_owned()], None, false).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     let after = json(&file);
     assert!(after["mcpServers"].get("gh").is_none());
     assert_eq!(after["mcpServers"]["other"]["command"], "x");
@@ -280,7 +280,7 @@ fn two_mcp_servers_install_into_one_settings_file_in_one_apply() {
         false,
     )
     .unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     let after = json(&file);
     assert!(after["mcpServers"].is_null() || after["mcpServers"].get("gh").is_none());
     assert!(is_clean(&f));
@@ -328,7 +328,7 @@ fn a_command_is_a_plain_file_that_toggles_by_rename() {
     assert!(is_clean(&f));
 
     let report = ops::remove(&f.env, &f.scope, &["ship".to_owned()], None, false).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(!parked.exists() && !file.exists());
 }
 
@@ -351,7 +351,7 @@ fn a_plugin_toggle_writes_only_its_own_settings_key() {
     assert!(is_clean(&f));
 
     let report = ops::remove(&f.env, &f.scope, &["fmt@main".to_owned()], None, false).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     let removed = json(&settings(&f));
     assert!(removed.get("enabledPlugins").is_none());
     assert_eq!(removed["model"], "opus");

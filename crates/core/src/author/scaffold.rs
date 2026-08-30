@@ -91,9 +91,8 @@ pub fn plan(request: &CreateRequest) -> Result<Vec<(String, String)>> {
 /// committed. Refuses a folder that already exists — creating never merges.
 ///
 /// Everything that can refuse is asked first (the plan, the destination,
-/// the registry file), then the tree is built in a sibling staging
-/// directory and renamed into place — a failure part-way leaves the
-/// destination absent, never half a marketplace.
+/// the registry file); a failure part-way through the build, or a registry
+/// that refuses after all, takes the folder back with it.
 pub fn create(env: &Env, request: &CreateRequest) -> Result<MineRow> {
     let files = plan(request)?;
     if request.dir.exists() {
@@ -105,36 +104,21 @@ pub fn create(env: &Env, request: &CreateRequest) -> Result<MineRow> {
         });
     }
     super::registry::can_register(env, &request.dir)?;
-    let (Some(parent), Some(leaf)) = (request.dir.parent(), request.dir.file_name()) else {
-        return Err(CoreError::Authoring {
-            message: format!("{} is not a creatable folder path", request.dir.display()),
-        });
-    };
-    let staging = parent.join(format!(".{}.kendex-new", leaf.to_string_lossy()));
-    if staging.exists() {
-        // A previous crashed create; wholly ours to clear.
-        std::fs::remove_dir_all(&staging).map_err(|e| CoreError::io(&staging, e))?;
-    }
-    let built = build_in(&staging, &files).and_then(|()| {
-        std::fs::rename(&staging, &request.dir).map_err(|e| CoreError::io(&request.dir, e))
-    });
-    if let Err(error) = built {
-        let _ = std::fs::remove_dir_all(&staging);
-        return Err(error);
-    }
-    if let Err(error) = super::registry::register(env, &request.dir) {
+    if let Err(error) = build_in(&request.dir, &files).and_then(|()| {
         // The folder was wholly created by this call — a registry that
         // refused after all takes it back with it.
+        super::registry::register(env, &request.dir)
+    }) {
         let _ = std::fs::remove_dir_all(&request.dir);
         return Err(error);
     }
     super::status::status(&request.dir)
 }
 
-fn build_in(staging: &Path, files: &[(String, String)]) -> Result<()> {
-    std::fs::create_dir_all(staging).map_err(|e| CoreError::io(staging, e))?;
+fn build_in(dir: &Path, files: &[(String, String)]) -> Result<()> {
+    std::fs::create_dir_all(dir).map_err(|e| CoreError::io(dir, e))?;
     for (rel, bytes) in files {
-        let path = staging.join(rel);
+        let path = dir.join(rel);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
         }
@@ -142,7 +126,7 @@ fn build_in(staging: &Path, files: &[(String, String)]) -> Result<()> {
     }
     // git init failing (no git on the machine) costs the init, not the
     // folder: the row reports repository:false and the person decides.
-    let _ = Hardened::git_in(staging, &["init", "--quiet"])
+    let _ = Hardened::git_in(dir, &["init", "--quiet"])
         .timeout(std::time::Duration::from_secs(10))
         .run();
     Ok(())

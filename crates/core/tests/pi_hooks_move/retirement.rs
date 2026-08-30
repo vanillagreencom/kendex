@@ -15,7 +15,7 @@ use super::{World, about, apply, forget_rendered_hash, notes, regressed, undecla
 #[allow(clippy::unwrap_used)]
 fn apply_with(w: &World, options: &PlanOptions) {
     let report = plan_apply(&w.env, &w.scope(), options).unwrap();
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 }
 
 /// What `kendex refresh` runs.
@@ -363,7 +363,7 @@ fn an_anchorless_record_holds_the_sweep_at_the_new_path() {
     undeclare(&w);
 
     let report = plan_apply(&w.env, &w.scope(), &reconcile()).unwrap();
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(
         report

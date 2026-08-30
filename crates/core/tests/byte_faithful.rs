@@ -117,7 +117,7 @@ fn a_refused_apply_leaves_every_surface_byte_identical() {
     // after planning must abort the whole apply.
     fs::create_dir_all(f.project.join(".claude/agents")).unwrap();
     fs::write(f.project.join(".claude/agents/rust.md"), "squatter").unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap_err();
+    apply::execute(&f.env, &report.plan).unwrap_err();
 
     assert_eq!(
         fs::read(f.project.join("kendex.toml")).unwrap(),
@@ -137,7 +137,7 @@ fn a_refused_apply_leaves_every_surface_byte_identical() {
 fn an_unreadable_artifact_reports_uncompared_not_ok() {
     let f = fixture();
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     let installed = f.project.join(".claude/agents/rust.md");
     fs::set_permissions(&installed, fs::Permissions::from_mode(0o000)).unwrap();
 
@@ -182,7 +182,7 @@ fn a_written_tree_keeps_shebang_files_executable() {
     // then holds it to.
     let plan =
         kendex_core::apply::Plan::landed(kendex_core::model::Scope::Global, vec![op]).unwrap();
-    kendex_core::apply::execute(&env, &plan, None).unwrap();
+    kendex_core::apply::execute(&env, &plan).unwrap();
     let script = std::fs::metadata(root.join("scripts/run")).unwrap();
     assert!(
         script.permissions().mode() & 0o100 != 0,

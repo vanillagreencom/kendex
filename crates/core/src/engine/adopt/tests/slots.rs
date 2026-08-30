@@ -42,7 +42,7 @@ fn a_plain_skill_over_the_namespaced_one_stored_there_refuses() {
         &[HarnessId::Claude],
     )
     .unwrap();
-    crate::apply::execute(&env, &plan, None).unwrap();
+    crate::apply::execute(&env, &plan).unwrap();
 
     fs::create_dir_all(held.join("data-science")).unwrap();
     fs::write(held.join("data-science/SKILL.md"), "the plain one").unwrap();
@@ -98,7 +98,7 @@ fn a_plain_skill_over_the_namespaced_one_stored_there_refuses() {
         &[HarnessId::Claude],
     )
     .unwrap();
-    crate::apply::execute(&env, &plan, None).unwrap();
+    crate::apply::execute(&env, &plan).unwrap();
     assert!(root.join("skills/handmade/SKILL.md").is_file());
 }
 
@@ -129,7 +129,7 @@ fn a_plain_skill_over_a_differently_cased_namespaced_one_refuses() {
         &[HarnessId::Claude],
     )
     .unwrap();
-    crate::apply::execute(&env, &plan, None).unwrap();
+    crate::apply::execute(&env, &plan).unwrap();
 
     fs::create_dir_all(held.join("data-science")).unwrap();
     fs::write(held.join("data-science/SKILL.md"), "the plain one").unwrap();
@@ -188,7 +188,7 @@ fn a_plain_skill_over_a_slot_whose_listing_fails_refuses() {
         &[HarnessId::Claude],
     )
     .unwrap();
-    crate::apply::execute(&env, &plan, None).unwrap();
+    crate::apply::execute(&env, &plan).unwrap();
 
     let root = crate::source::local_source_root(&env, &scope);
     fs::write(root.join("kendex.toml"), "schema = 6\n").unwrap();
@@ -372,7 +372,7 @@ fn a_plain_skill_over_a_slot_holding_nothing_of_its_own_lands() {
             &[HarnessId::Claude],
         )
         .unwrap();
-        crate::apply::execute(&env, &plan, None).unwrap();
+        crate::apply::execute(&env, &plan).unwrap();
     }
 
     assert_eq!(
@@ -467,7 +467,7 @@ fn a_plain_skill_over_an_earlier_copy_of_itself_lands() {
         &[HarnessId::Claude],
     )
     .unwrap();
-    crate::apply::execute(&env, &plan, None).unwrap();
+    crate::apply::execute(&env, &plan).unwrap();
 
     assert_eq!(
         fs::read_to_string(stored.join("SKILL.md")).unwrap(),

@@ -251,7 +251,7 @@ pub fn confirm_and_apply(
 /// package, is executed on its own.
 pub fn apply_report(env: &Env, report: &EngineReport) -> Result<usize, Box<dyn std::error::Error>> {
     super::repo_effects::undo(&report.plan.scope, report)?;
-    Ok(kendex_core::apply::execute(env, &report.plan, None)?.applied)
+    Ok(kendex_core::apply::execute(env, &report.plan)?.applied)
 }
 
 /// The answer every verb needs before it writes, asked one way. `--yes`

@@ -36,7 +36,7 @@ fn forking_beside_carries_the_projects_denies_without_taking_them() {
         None,
     )
     .unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let copy = fs::read_to_string(rendered(&w, HarnessId::Claude, "rev-mine")).unwrap();
@@ -88,7 +88,7 @@ fn forking_beside_keeps_a_deny_the_catalog_never_configured() {
         None,
     )
     .unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let manifest = manifest_of(&w);
@@ -128,11 +128,11 @@ fn renaming_an_agent_fork_carries_its_denies_and_instructions() {
     );
     edit_body(&rendered(&w, HarnessId::Claude, "rev"));
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let plan = fork::rename_fork(&w.env, &w.scope, ItemKind::Agent, "rev", "my-rev").unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let text = fs::read_to_string(rendered(&w, HarnessId::Claude, "my-rev")).unwrap();
@@ -210,7 +210,7 @@ fn renaming_an_agent_carries_the_skill_assignment_it_read_through_the_base_row()
         HarnessId::Claude,
     )
     .unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
     assert!(
         !manifest_of(&w).agent_skills.contains_key("reviewer-rust"),
@@ -226,7 +226,7 @@ fn renaming_an_agent_carries_the_skill_assignment_it_read_through_the_base_row()
         "reviewer-mine",
     )
     .unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let settled = manifest_of(&w);
@@ -284,7 +284,7 @@ fn an_agent_scoped_hook_reaches_the_copy_and_follows_a_rename() {
         None,
     )
     .unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
     assert!(
         guarded("rev-mine"),
@@ -294,7 +294,7 @@ fn an_agent_scoped_hook_reaches_the_copy_and_follows_a_rename() {
 
     let plan =
         fork::rename_fork(&w.env, &w.scope, ItemKind::Agent, "rev-mine", "rev-ours").unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
     assert!(guarded("rev-ours"), "the hook follows the rename");
     let recorded = manifest_text(&w);
@@ -352,10 +352,10 @@ fn renaming_an_agent_named_for_a_role_leaves_the_roles_hook_alone() {
         HarnessId::Claude,
     )
     .unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
     let plan = fork::rename_fork(&w.env, &w.scope, ItemKind::Agent, "engineer", "my-eng").unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     assert!(
@@ -408,7 +408,7 @@ fn forking_a_skill_beside_leaves_a_same_named_agents_settings_alone() {
         None,
     )
     .unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
 
     let recorded = manifest_text(&w);
     assert!(
@@ -512,7 +512,7 @@ fn forking_beside_refuses_a_name_that_reads_the_base_agents_skill_row() {
         None,
     )
     .unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
     assert!(
         rendered(&w, HarnessId::Claude, "reviewer-mine").exists(),
@@ -557,7 +557,7 @@ fn forking_beside_takes_a_name_that_reads_the_source_agents_own_skill_row() {
         None,
     )
     .unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let settled = manifest_of(&w);
@@ -613,7 +613,7 @@ fn a_population_name_is_refused_where_a_hook_gates_the_agent_by_name() {
     assert!(!captured(&w, "all").exists(), "nothing was written");
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
     let refused =
         fork::rename_fork(&w.env, &w.scope, ItemKind::Agent, "rev", "engineer").unwrap_err();
@@ -649,11 +649,11 @@ fn a_population_name_is_free_where_no_hook_gates_the_agent() {
     );
     edit_body(&rendered(&w, HarnessId::Claude, "rev"));
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let plan = fork::rename_fork(&w.env, &w.scope, ItemKind::Agent, "rev", "engineer").unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
     assert!(
         rendered(&w, HarnessId::Claude, "engineer").exists(),
@@ -696,10 +696,10 @@ fn renaming_an_agent_named_all_leaves_the_shared_instructions_alone() {
 
     edit_body(&rendered(&w, HarnessId::Claude, "all"));
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "all", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
     let plan = fork::rename_fork(&w.env, &w.scope, ItemKind::Agent, "all", "mine").unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let settled = manifest_of(&w);

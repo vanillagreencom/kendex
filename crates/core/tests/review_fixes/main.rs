@@ -79,7 +79,7 @@ fn project(w: &World) -> Scope {
 #[allow(clippy::unwrap_used)]
 fn apply_now(w: &World, scope: &Scope) {
     let report = audit(&w.env, scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]
@@ -112,7 +112,7 @@ fn a_symlinked_disabled_sibling_is_a_conflict_not_a_write_target() {
 
     let report = audit(&w.env, &scope).unwrap();
     assert!(has(&report, "rust", DriftState::Conflict));
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert_eq!(fs::read_to_string(&victim).unwrap(), "precious");
     assert!(agents.join("rust.md.disabled").is_symlink());
@@ -126,14 +126,14 @@ fn a_file_recreated_between_plan_and_apply_aborts_the_rename() {
     declare(&w, &scope, "[agents.rust]\nsource = \"cat\"\n");
     apply_now(&w, &scope);
     let report = ops::toggle(&w.env, &scope, &["rust".to_owned()], None, false).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     // Re-enable is planned while the enabled name is free.
     let report = ops::toggle(&w.env, &scope, &["rust".to_owned()], None, true).unwrap();
     let agent = w.home.join("dev/app/.claude/agents/rust.md");
     put(&agent, "raced in");
 
-    let error = apply::execute(&w.env, &report.plan, None).unwrap_err();
+    let error = apply::execute(&w.env, &report.plan).unwrap_err();
     assert!(matches!(error, CoreError::RolledBack { .. }));
     assert_eq!(fs::read_to_string(&agent).unwrap(), "raced in");
     assert!(
@@ -164,9 +164,9 @@ fn a_stale_plan_cannot_revert_a_newer_manifest() {
     )
     .unwrap();
     let removal = ops::remove(&w.env, &scope, &["gh".to_owned()], None, false).unwrap();
-    apply::execute(&w.env, &removal.plan, None).unwrap();
+    apply::execute(&w.env, &removal.plan).unwrap();
 
-    let error = apply::execute(&w.env, &stale.plan, None).unwrap_err();
+    let error = apply::execute(&w.env, &stale.plan).unwrap_err();
     assert!(matches!(error, CoreError::RolledBack { .. }));
     assert!(!loaded_manifest(&w, &scope).skills.contains_key("gh"));
     assert!(
@@ -199,9 +199,25 @@ fn rollback_removes_directories_the_apply_created() {
     let scope = project(&w);
     declare(&w, &scope, "[skills.gh]\nsource = \"cat\"\n");
 
-    let report = audit(&w.env, &scope).unwrap();
-    let last = report.plan.ops.len() - 1;
-    let error = apply::execute(&w.env, &report.plan, Some(last)).unwrap_err();
+    let mut plan = audit(&w.env, &scope).unwrap().plan;
+    // A last op that refuses: it binds to nothing being at the manifest's
+    // path, and the manifest is there.
+    let manifest = w.home.join("dev/app/kendex.toml");
+    assert!(manifest.is_file(), "the refusal needs a file to trip over");
+    let last = plan.ops.len();
+    plan.insert(
+        last,
+        apply::PlannedOp {
+            description: "refuse".into(),
+            op: apply::Op::WriteFile {
+                path: manifest,
+                bytes: b"never written".to_vec(),
+                pre: apply::Pre::Absent,
+            },
+        },
+    )
+    .unwrap();
+    let error = apply::execute(&w.env, &plan).unwrap_err();
 
     assert!(matches!(error, CoreError::RolledBack { .. }));
     // Empty skeletons are what harness and project detection read as
@@ -277,7 +293,7 @@ fn narrowing_harnesses_orphans_the_stranded_installation() {
         },
     )
     .unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(!codex_link.is_symlink() && !codex_link.exists());
     assert!(w.home.join(".claude/skills/gh").is_symlink());
@@ -326,7 +342,7 @@ fn a_disabled_declaration_still_conflicts_with_an_unmanaged_enabled_file() {
 
     let report = audit(&w.env, &scope).unwrap();
     assert!(has(&report, "rust", DriftState::Conflict));
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     // The harness keeps loading the handmade file, so kendex may not report
     // the agent as cleanly disabled beside it.
@@ -352,7 +368,7 @@ fn unmanaged_suppression_is_per_harness() {
     assert!(report.drift.iter().any(|row| {
         row.name == "gh" && row.harness == HarnessId::Codex && row.state == DriftState::Unmanaged
     }));
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert_eq!(
         fs::read_to_string(&handmade).unwrap(),
         "---\nname: gh\n---\nhandmade\n"
@@ -398,7 +414,7 @@ fn a_directory_at_a_file_target_is_a_conflict_not_a_retry_loop() {
     // Nothing is planned against an occupied target, so the whole scope no
     // longer rolls back on every apply.
     assert!(report.plan.is_empty());
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 }
 
 mod agent_skills;

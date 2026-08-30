@@ -95,7 +95,7 @@ pub fn manifest_of(f: &Fixture) -> kendex_core::manifest::Manifest {
 #[allow(clippy::unwrap_used)]
 pub fn add_and_apply(f: &Fixture, request: &ops::AddRequest) -> kendex_core::engine::EngineReport {
     let report = ops::add(&f.env, &f.scope, request).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     report
 }
 
@@ -159,7 +159,7 @@ fn hook_command_and_mcp_server_round_trip_through_add_and_remove() {
         false,
     )
     .unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 
     let manifest = manifest_of(&f);
     assert!(manifest.hooks.is_empty() && manifest.commands.is_empty());

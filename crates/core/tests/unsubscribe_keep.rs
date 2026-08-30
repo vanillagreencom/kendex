@@ -80,7 +80,7 @@ fn world_at(
 #[allow(clippy::unwrap_used)]
 fn apply_now(env: &Env, scope: &Scope) {
     let report = kendex_core::engine::audit(env, scope).unwrap();
-    apply::execute(env, &report.plan, None).unwrap();
+    apply::execute(env, &report.plan).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]
@@ -116,7 +116,7 @@ fn keeping_an_agent_carries_the_catalogs_mapping_tables() {
     apply_now(&env, &scope);
 
     let plan = kendex_core::engine::detach::source(&env, &scope, "cat").unwrap();
-    apply::execute(&env, &plan, None).unwrap();
+    apply::execute(&env, &plan).unwrap();
 
     let manifest = manifest_of(&env, &scope);
     assert_eq!(
@@ -136,7 +136,7 @@ fn keeping_an_agent_carries_the_catalogs_mapping_tables() {
     let resync =
         kendex_core::engine::plan_apply(&env, &scope, &kendex_core::engine::PlanOptions::default())
             .unwrap();
-    apply::execute(&env, &resync.plan, None).unwrap();
+    apply::execute(&env, &resync.plan).unwrap();
     let settled = kendex_core::engine::audit(&env, &scope).unwrap();
     assert!(
         settled.plan.is_empty(),

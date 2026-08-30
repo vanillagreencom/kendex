@@ -81,7 +81,7 @@ fn fixture() -> Fixture {
 #[allow(clippy::unwrap_used)]
 fn apply_now(f: &Fixture) {
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]
@@ -137,7 +137,7 @@ fn invariant_1_generated_artifacts_regenerate_but_never_over_an_edit() {
         "{:?}",
         report.drift
     );
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert_eq!(fs::read_to_string(agent_file(&f)).unwrap(), "hand edit");
 
     // Discarding the edits is the explicit act that restores regeneration.
@@ -154,7 +154,7 @@ fn invariant_1_generated_artifacts_regenerate_but_never_over_an_edit() {
         },
     )
     .unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 
     assert!(
         fs::read_to_string(agent_file(&f))
@@ -245,7 +245,7 @@ fn invariant_4_provenance_is_durable() {
         },
     )
     .unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 
     // Same name from a different source: hard error naming the original.
     let other = f.project.join("other-catalog");
@@ -287,7 +287,7 @@ fn invariant_5_toggle_is_lossless_rename() {
     let enabled_agent = fs::read_to_string(agent_file(&f)).unwrap();
 
     let report = ops::toggle(&f.env, &f.scope, &["rust".into(), "gh".into()], None, false).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(!agent_file(&f).exists());
     assert!(f.project.join(".claude/agents/rust.md.disabled").is_file());
     assert!(canonical_skill(&f).join("SKILL.md.disabled").is_file());
@@ -296,7 +296,7 @@ fn invariant_5_toggle_is_lossless_rename() {
     assert_eq!(drift_states(&f), vec![]);
 
     let report = ops::toggle(&f.env, &f.scope, &["rust".into(), "gh".into()], None, true).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert_eq!(fs::read_to_string(agent_file(&f)).unwrap(), enabled_agent);
     assert!(canonical_skill(&f).join("SKILL.md").is_file());
 }
@@ -311,7 +311,7 @@ fn invariant_6_never_touch_the_unowned() {
     fs::create_dir_all(&stray).unwrap();
     fs::write(stray.join("SKILL.md"), "mine").unwrap();
     let report = ops::remove(&f.env, &f.scope, &["gh".into()], None, false).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert_eq!(fs::read_to_string(stray.join("SKILL.md")).unwrap(), "mine");
     assert!(!f.project.join(".claude/skills/gh").is_symlink());
 
@@ -333,7 +333,7 @@ fn invariant_6_never_touch_the_unowned() {
         },
     )
     .unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     let drift = audit(&f.env, &f.scope).unwrap();
     assert!(drift.drift.iter().any(|r| r.state == DriftState::Conflict));
     assert_eq!(
@@ -342,17 +342,21 @@ fn invariant_6_never_touch_the_unowned() {
     );
 }
 
+/// A refusal at every position in the plan, each one rolling the ops
+/// before it back. The refusal is real — an op bound to nothing being at
+/// a path that already holds the manifest — so what this exercises is the
+/// rollback the product runs, at every boundary it can stop at.
 #[test]
 fn invariant_7_applies_are_transactional() {
     let f = fixture();
     let before = hash::hash_tree(&f.project).unwrap();
-    let report = audit(&f.env, &f.scope).unwrap();
-    let op_count = report.plan.ops.len();
+    let op_count = audit(&f.env, &f.scope).unwrap().plan.ops.len();
     assert!(op_count >= 3);
 
-    for boundary in 0..op_count {
-        let report = audit(&f.env, &f.scope).unwrap();
-        let error = apply::execute(&f.env, &report.plan, Some(boundary)).unwrap_err();
+    for boundary in 0..=op_count {
+        let mut plan = audit(&f.env, &f.scope).unwrap().plan;
+        plan.insert(boundary, refuses(&f)).unwrap();
+        let error = apply::execute(&f.env, &plan).unwrap_err();
         assert!(matches!(error, CoreError::RolledBack { .. }));
         assert_eq!(
             hash::hash_tree(&f.project).unwrap(),
@@ -362,6 +366,22 @@ fn invariant_7_applies_are_transactional() {
     }
     apply_now(&f);
     assert_eq!(drift_states(&f), vec![]);
+}
+
+/// An op that cannot run: it binds to nothing being at the manifest's
+/// path, and the manifest is there.
+#[allow(clippy::unwrap_used)]
+fn refuses(f: &Fixture) -> apply::PlannedOp {
+    let path = f.project.join("kendex.toml");
+    assert!(path.is_file(), "the refusal needs a file to trip over");
+    apply::PlannedOp {
+        description: "refuse".into(),
+        op: apply::Op::WriteFile {
+            path,
+            bytes: b"never written".to_vec(),
+            pre: apply::Pre::Absent,
+        },
+    }
 }
 
 #[test]
@@ -377,7 +397,7 @@ fn invariant_8_one_writer_per_scope() {
     let _guard = holder.try_write().unwrap();
 
     let report = audit(&f.env, &f.scope).unwrap();
-    let error = apply::execute(&f.env, &report.plan, None).unwrap_err();
+    let error = apply::execute(&f.env, &report.plan).unwrap_err();
     assert!(matches!(error, CoreError::ScopeBusy { .. }));
 }
 
@@ -405,7 +425,7 @@ fn plan_revalidates_before_each_mutation() {
     // The world changes between plan and apply.
     fs::create_dir_all(f.project.join(".claude/agents")).unwrap();
     fs::write(agent_file(&f), "raced in").unwrap();
-    let error = apply::execute(&f.env, &report.plan, None).unwrap_err();
+    let error = apply::execute(&f.env, &report.plan).unwrap_err();
     assert!(matches!(error, CoreError::RolledBack { .. }));
     assert_eq!(fs::read_to_string(agent_file(&f)).unwrap(), "raced in");
 }

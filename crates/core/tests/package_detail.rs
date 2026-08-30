@@ -103,7 +103,7 @@ fn install(w: &World) -> String {
     let loaded = manifest::load_for_mutation(&path).unwrap().unwrap();
     remote::sync_sources(&w.env, &loaded).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     commit
 }
 
@@ -279,7 +279,7 @@ fn meta_names_the_version_the_link_and_the_fork() {
         kendex_core::model::HarnessId::Claude,
     )
     .unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     let meta = detail::package_meta(&w.env, &w.scope, ItemKind::Skill, "gh").unwrap();
     assert_eq!(meta.source, "local");
     let fork = meta.fork.unwrap();

@@ -69,7 +69,7 @@ fn the_drift_hook_installs_as_a_declared_item_and_is_idempotent() {
 
     let plan = drift::hook::install_plan(&w.env, &w.scope).unwrap();
     assert!(!plan.is_empty());
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
 
     // Declared like any other hook, from the local source.
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
@@ -94,7 +94,7 @@ fn the_drift_hook_installs_as_a_declared_item_and_is_idempotent() {
 
     // The ordinary refresh renders it.
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
     assert!(
         report.drift.is_empty(),

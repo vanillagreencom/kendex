@@ -39,7 +39,7 @@ fn fixture(plugins: &str) -> Fixture {
 #[allow(clippy::unwrap_used)]
 fn apply_now(f: &Fixture) -> kendex_core::engine::EngineReport {
     let report = audit(&f.env, &Scope::Global).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     report
 }
 

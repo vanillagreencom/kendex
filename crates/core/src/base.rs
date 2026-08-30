@@ -65,7 +65,7 @@ impl Base {
     pub fn plain_pre(&self) -> Pre {
         match &self.0 {
             Some(hash) => Pre::PlainHashIs { hash: hash.clone() },
-            None => Pre::PlainAbsent,
+            None => Pre::Absent,
         }
     }
 

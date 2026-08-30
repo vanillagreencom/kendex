@@ -21,9 +21,9 @@ fn fork_keeps_the_name_pauses_updates_and_survives_refresh() {
     )
     .unwrap();
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     // The fork's bytes live in the local source and render under the name.
     assert!(
@@ -87,7 +87,7 @@ fn an_edited_install_deleted_after_planning_fails_the_fork() {
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
     fs::remove_dir_all(w.home.join("app/.agents/skills/gh")).unwrap();
 
-    assert!(apply::execute(&w.env, &plan, None).is_err());
+    assert!(apply::execute(&w.env, &plan).is_err());
     assert!(
         !w.home.join("app/.kendex-local/skills/gh").exists(),
         "no fork made of bytes the disk no longer has"
@@ -108,12 +108,12 @@ fn rename_fork_moves_the_declaration_and_refuses_depended_on_names() {
     )
     .unwrap();
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     let plan = fork::rename_fork(&w.env, &w.scope, ItemKind::Skill, "gh", "my-gh").unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     let text = fs::read_to_string(manifest::manifest_path(&w.env, &w.scope)).unwrap();
     assert!(text.contains("[skills.my-gh]"), "{text}");
     assert!(text.contains("[forks.skill.my-gh]"));
@@ -141,7 +141,7 @@ fn rename_fork_moves_the_declaration_and_refuses_depended_on_names() {
         "the renamed fork is refused at the next apply: {:?}",
         report.drift
     );
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     let installed = fs::read_to_string(w.home.join("app/.agents/skills/my-gh/SKILL.md")).unwrap();
     assert!(installed.contains("name: my-gh"), "{installed}");
 }
@@ -166,12 +166,12 @@ fn renaming_an_agent_fork_leaves_it_answering_to_its_new_name() {
     )
     .unwrap();
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     let plan = fork::rename_fork(&w.env, &w.scope, ItemKind::Agent, "rev", "my-rev").unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     let source = fs::read_to_string(w.home.join("app/.kendex-local/agents/my-rev.md")).unwrap();
     assert!(source.contains("name: my-rev"), "{source}");
     assert!(source.contains("My review."), "{source}");
@@ -185,7 +185,7 @@ fn renaming_an_agent_fork_leaves_it_answering_to_its_new_name() {
         "the renamed agent fork is refused at the next apply: {:?}",
         report.drift
     );
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     let installed = fs::read_to_string(w.home.join("app/.claude/agents/my-rev.md")).unwrap();
     assert!(installed.contains("name: my-rev"), "{installed}");
 }
@@ -207,7 +207,7 @@ fn a_fork_whose_file_cannot_carry_the_name_refuses_the_rename() {
     )
     .unwrap();
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
 
     let source = w.home.join("app/.kendex-local/skills/gh/SKILL.md");
     fs::write(&source, "---\nname: gh\nname: gh\n---\nMine.\n").unwrap();
@@ -249,7 +249,7 @@ fn a_fork_reached_through_a_link_refuses_the_rename() {
     )
     .unwrap();
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
 
     // The fork's slot becomes a link to a tree outside the scope.
     let outside = w.home.join("outside/gh");
@@ -301,15 +301,15 @@ fn a_fork_edited_after_the_rename_was_planned_refuses_the_move() {
     )
     .unwrap();
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     let plan = fork::rename_fork(&w.env, &w.scope, ItemKind::Skill, "gh", "my-gh").unwrap();
     let source = w.home.join("app/.kendex-local/skills/gh/SKILL.md");
     fs::write(&source, "edited after planning").unwrap();
 
-    let error = apply::execute(&w.env, &plan, None).unwrap_err();
+    let error = apply::execute(&w.env, &plan).unwrap_err();
     assert!(
         matches!(&error, CoreError::RolledBack { cause, .. }
             if matches!(**cause, CoreError::PlanStale { .. })),
@@ -340,15 +340,15 @@ fn a_fork_holding_a_dangling_link_still_renames() {
     )
     .unwrap();
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     let source = w.home.join("app/.kendex-local/skills/gh");
     std::os::unix::fs::symlink("nowhere", source.join("notes")).unwrap();
 
     let plan = fork::rename_fork(&w.env, &w.scope, ItemKind::Skill, "gh", "my-gh").unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     let moved = w.home.join("app/.kendex-local/skills/my-gh/notes");
     assert!(moved.is_symlink(), "{moved:?}");
     assert!(!source.exists());
@@ -472,7 +472,7 @@ fn forking_the_users_own_content_is_refused() {
     )
     .unwrap();
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     let err = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap_err();
     assert!(
         matches!(&err, CoreError::AlreadyOwn { name, origin } if name == "gh" && origin == "local"),

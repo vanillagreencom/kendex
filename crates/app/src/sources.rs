@@ -36,7 +36,7 @@ fn run_and_list(
     env: &Env,
     report: kendex_core::engine::EngineReport,
 ) -> Result<Vec<SourceRow>, String> {
-    apply::execute(env, &report.plan, None).map_err(|e| e.to_string())?;
+    apply::execute(env, &report.plan).map_err(|e| e.to_string())?;
     sources_overview()
 }
 
@@ -121,7 +121,7 @@ pub fn install_bundle(
         ..AddRequest::default()
     };
     let report = engine_ops::add(env, scope, &request).map_err(|e| e.to_string())?;
-    apply::execute(env, &report.plan, None).map_err(|e| e.to_string())?;
+    apply::execute(env, &report.plan).map_err(|e| e.to_string())?;
     let repo_effects = kendex_core::repo_effects::offers_for(env, scope, &report.repo_effects)
         .map_err(|e| e.to_string())?;
     Ok(BundleInstalled {

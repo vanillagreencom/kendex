@@ -89,7 +89,7 @@ fn a_removal_carries_the_effects_of_what_it_takes_away() {
         "an install has nothing leaving: {:?}",
         install.repo_effects_leaving
     );
-    apply::execute(&f.env, &install.plan, None).unwrap();
+    apply::execute(&f.env, &install.plan).unwrap();
 
     let quiet = ops::remove(&f.env, &f.scope, &["quiet".to_owned()], None, false).unwrap();
     assert!(
@@ -122,7 +122,7 @@ fn a_removal_carries_the_effects_of_what_it_takes_away() {
     );
 
     // Once the plan has executed there is nothing left to leave.
-    apply::execute(&f.env, &removal.plan, None).unwrap();
+    apply::execute(&f.env, &removal.plan).unwrap();
     let after = audit(&f.env, &f.scope).unwrap();
     assert!(
         after.repo_effects_leaving.is_empty(),
@@ -145,7 +145,7 @@ fn a_removal_carries_the_effects_of_what_it_takes_away() {
 fn a_declaration_that_will_not_read_stops_the_removal() {
     let f = fixture();
     let install = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &install.plan, None).unwrap();
+    apply::execute(&f.env, &install.plan).unwrap();
 
     let tree = f.project.join(".agents/skills/armer");
     let hooks = f.project.join(".git/hooks");

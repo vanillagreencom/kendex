@@ -42,13 +42,13 @@ pub fn install_drift_hook(scope: kendex_core::model::Scope) -> Result<bool, Stri
         .map_err(|e| e.to_string())?
         .plan;
     let plan = kendex_core::drift::hook::install_plan(&env, &scope).map_err(|e| e.to_string())?;
-    kendex_core::apply::execute(&env, &plan, None).map_err(|e| e.to_string())?;
+    kendex_core::apply::execute(&env, &plan).map_err(|e| e.to_string())?;
     if !pending.is_empty() {
         return Ok(false);
     }
     let report =
         kendex_core::engine::plan_apply(&env, &scope, &options).map_err(|e| e.to_string())?;
-    kendex_core::apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
+    kendex_core::apply::execute(&env, &report.plan).map_err(|e| e.to_string())?;
     Ok(true)
 }
 

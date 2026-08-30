@@ -79,7 +79,7 @@ fn a_place_of_followers_comes_current_in_one_pass() {
         1,
         "three rows are one reconcile and one record, not three of each"
     );
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     for name in ["a", "b", "c"] {
         assert!(installed_body(&w, name).contains(&format!("{name} version two.")));
@@ -130,7 +130,7 @@ fn a_hold_move_and_a_follow_travel_in_one_plan() {
     )
     .unwrap();
     assert_eq!(lock_writes(&report), 1);
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(installed_body(&w, "pinned").contains("pinned version two."));
     assert!(installed_body(&w, "free").contains("free version two."));
@@ -263,7 +263,7 @@ fn a_batch_over_declared_members_leaves_the_sets_membership_alone() {
     fetch_mirrors(&w);
 
     let report = package::update_many(&w.env, &w.scope, &[follows("a"), follows("b")]).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(installed_body(&w, "a").contains("a version two."));
     assert!(installed_body(&w, "b").contains("b version two."));
@@ -338,7 +338,7 @@ fn a_derived_target_frees_its_set_even_beside_a_declared_one() {
     // and the other target does not move.
     let report =
         package::update_many(&w.env, &w.scope, &[follows("solo"), follows("member")]).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(installed_body(&w, "solo").contains("solo version two."));
     assert!(

@@ -97,7 +97,7 @@ fn fixture(harnesses: &str, declarations: &str) -> Fixture {
 #[allow(clippy::unwrap_used)]
 fn apply_now(f: &Fixture) -> kendex_core::engine::EngineReport {
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     report
 }
 
@@ -264,7 +264,7 @@ fn two_names_that_would_share_one_file_install_neither() {
         assert!(reason.contains("data-science/eda"), "{reason}");
         assert!(reason.contains("data-science__eda"), "{reason}");
     }
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(!f.project.join(".claude/skills/data-science__eda").exists());
 }
 
@@ -336,7 +336,7 @@ fn adding_everything_a_catalog_offers_writes_names_that_load_again() {
         ..ops::AddRequest::default()
     };
     let report = ops::add(&f.env, &f.scope, &request).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 
     // The manifest is written and read back by kendex itself: a key with a
     // `/` in it has to survive that round trip, quotes and all.
@@ -372,7 +372,7 @@ fn a_registry_that_reaches_outside_costs_only_its_own_source() {
         "{:?}",
         report.notes
     );
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     read(&f, ".claude/skills/gh/SKILL.md");
     assert!(!f.project.join(".claude/skills/data-science__eda").exists());
 }

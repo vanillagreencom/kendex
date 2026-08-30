@@ -165,7 +165,7 @@ pub fn apply_scope(env: &Env, scope: &Scope, remove_orphans: bool) -> Result<Aud
         ..PlanOptions::default()
     };
     let report = engine::plan_apply(env, scope, &options).map_err(|e| e.to_string())?;
-    apply::execute(env, &report.plan, None).map_err(|e| e.to_string())?;
+    apply::execute(env, &report.plan).map_err(|e| e.to_string())?;
     Ok(view(env, scope))
 }
 
@@ -189,9 +189,9 @@ pub fn adopt_item(
     // kept only the first tool, leaving the rest with files nothing manages.
     let move_plan =
         engine::adopt::adopt(&env, &scope, kind, &name, &harnesses).map_err(|e| e.to_string())?;
-    apply::execute(&env, &move_plan, None).map_err(|e| e.to_string())?;
+    apply::execute(&env, &move_plan).map_err(|e| e.to_string())?;
     let report = engine::audit(&env, &scope).map_err(|e| e.to_string())?;
-    apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
+    apply::execute(&env, &report.plan).map_err(|e| e.to_string())?;
     Ok(view(&env, &scope))
 }
 
@@ -223,7 +223,7 @@ pub fn replace_unmanaged(
         },
     )
     .map_err(|e| e.to_string())?;
-    apply::execute(env, &report.plan, None).map_err(|e| e.to_string())?;
+    apply::execute(env, &report.plan).map_err(|e| e.to_string())?;
     Ok(view(env, scope))
 }
 
@@ -254,7 +254,7 @@ pub fn toggle_item(
         enabled,
     )
     .map_err(|e| e.to_string())?;
-    apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
+    apply::execute(&env, &report.plan).map_err(|e| e.to_string())?;
     Ok(view(&env, &scope))
 }
 
@@ -267,6 +267,6 @@ pub fn remove_item(scope: Scope, kind: ItemKind, name: String) -> Result<AuditVi
     // not see is exactly the surprise the preview step exists to stop.
     let report = ops::remove(&env, &scope, std::slice::from_ref(&name), Some(kind), false)
         .map_err(|e| e.to_string())?;
-    apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
+    apply::execute(&env, &report.plan).map_err(|e| e.to_string())?;
     Ok(view(&env, &scope))
 }

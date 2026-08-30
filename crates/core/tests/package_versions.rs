@@ -108,7 +108,7 @@ fn sync_and_apply(w: &World) {
         .unwrap();
     remote::sync_sources(&w.env, &loaded).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 }
 
 #[test]
@@ -225,7 +225,7 @@ fn a_held_package_still_reports_its_update_and_holds_on_disk() {
         .unwrap();
     remote::sync_sources(&w.env, &loaded).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     let rows = updates::updates(&w.env, &w.scope).unwrap().rows;
     let gh = rows.iter().find(|row| row.name == "gh").unwrap();

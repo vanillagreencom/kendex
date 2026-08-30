@@ -41,7 +41,7 @@ fn a_critical_finding_is_reported_and_installs_anyway() {
         .unwrap();
     assert_eq!(clean.advisory.safety.score, 100);
 
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(installed(&f, "hostile"), "advisory means it installs");
     assert!(installed(&f, "clean"));
 }
@@ -53,7 +53,7 @@ fn a_critical_finding_is_reported_and_installs_anyway() {
 fn the_audit_reports_every_installed_row() {
     let f = fixture();
     let report = plan(&f);
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 
     let rows = kendex_core::engine::observed_rows(&f.env, &f.scope).unwrap();
     let hostile = rows.iter().find(|row| row.name == "hostile").unwrap();

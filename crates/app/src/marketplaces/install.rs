@@ -172,7 +172,7 @@ pub fn install(
         _ => engine_ops::add(env, &target, &request),
     }
     .map_err(|e| e.to_string())?;
-    apply::execute(env, &report.plan, None).map_err(|e| e.to_string())?;
+    apply::execute(env, &report.plan).map_err(|e| e.to_string())?;
     // After the write, because the script an effect runs is the one this
     // install just put on disk.
     let repo_effects = kendex_core::repo_effects::offers_for(env, &target, &report.repo_effects)

@@ -8,7 +8,6 @@ mod common;
 pub mod journal;
 mod landing;
 mod op;
-mod plain;
 mod plan;
 mod pre;
 mod transaction;
@@ -90,13 +89,11 @@ pub struct ApplyOutcome {
 }
 
 /// Execute a plan transactionally. If recovery runs first, the plan
-/// predates it and preconditions do the talking. `fail_after` is
-/// test-only fault injection: simulate a crash after N ops to exercise
-/// every boundary.
-pub fn execute(env: &Env, plan: &Plan, fail_after: Option<usize>) -> Result<ApplyOutcome> {
+/// predates it and preconditions do the talking.
+pub fn execute(env: &Env, plan: &Plan) -> Result<ApplyOutcome> {
     let _guard = lock_scope(env, &plan.scope)?;
     let recovered_first = recover(env, &plan.scope)?;
-    let applied = run_journaled(env, &plan.ops, &scope_key(&plan.scope), fail_after)?;
+    let applied = run_journaled(env, &plan.ops, &scope_key(&plan.scope))?;
     // The scope just changed; a drift snapshot describing the old state
     // would send the next session chasing drift that no longer exists.
     // Invalidation is the cheap honest move: the check reads "not yet

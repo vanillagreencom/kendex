@@ -324,7 +324,7 @@ fn a_conflict_with_no_exit_of_its_own_still_reaches_the_page() {
         &kendex_core::engine::PlanOptions::default(),
     )
     .unwrap();
-    kendex_core::apply::execute(&f.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&f.env, &report.plan).unwrap();
     let elsewhere = f.project.parent().unwrap().join("second");
     fs::create_dir_all(elsewhere.join("skills/deploy")).unwrap();
     fs::write(

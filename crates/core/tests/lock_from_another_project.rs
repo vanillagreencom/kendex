@@ -114,7 +114,7 @@ fn a_lock_carried_from_another_checkout_is_refused_and_that_checkout_stands() {
     let installed = home.join("dev/app");
     declare(&installed, &catalog);
     let report = audit(&env, &project(&installed)).unwrap();
-    kendex_core::apply::execute(&env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&env, &report.plan).unwrap();
 
     // A second checkout of the same project, seeded with the first one's
     // lock — which is how a linked worktree gets one.
@@ -144,7 +144,7 @@ fn a_lock_carried_from_another_checkout_is_refused_and_that_checkout_stands() {
     // carry out whatever it planned.
     let refused = match plan_apply(&env, &project(&elsewhere), &refresh()) {
         Ok(report) => {
-            kendex_core::apply::execute(&env, &report.plan, None).unwrap();
+            kendex_core::apply::execute(&env, &report.plan).unwrap();
             None
         }
         Err(error) => Some(error),
@@ -185,7 +185,7 @@ fn a_lock_naming_its_own_project_refreshes() {
     let root = home.join("dev/app");
     declare(&root, &catalog);
     let report = audit(&env, &project(&root)).unwrap();
-    kendex_core::apply::execute(&env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&env, &report.plan).unwrap();
 
     let again = plan_apply(&env, &project(&root), &refresh()).unwrap();
     assert!(
@@ -225,7 +225,7 @@ fn a_lock_walking_back_out_of_its_project_is_refused_and_the_tree_it_points_at_s
     let installed = home.join("dev/app");
     declare(&installed, &catalog);
     let report = audit(&env, &project(&installed)).unwrap();
-    kendex_core::apply::execute(&env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&env, &report.plan).unwrap();
 
     // A project of its own, whose record claims the other one's positions
     // by walking out of this one.
@@ -258,7 +258,7 @@ fn a_lock_walking_back_out_of_its_project_is_refused_and_the_tree_it_points_at_s
 
     let refused = match plan_apply(&env, &project(&elsewhere), &refresh()) {
         Ok(report) => {
-            kendex_core::apply::execute(&env, &report.plan, None).unwrap();
+            kendex_core::apply::execute(&env, &report.plan).unwrap();
             None
         }
         Err(error) => Some(error),
@@ -303,14 +303,14 @@ fn a_lock_from_a_checkout_nested_inside_the_project_is_refused_and_that_checkout
     let outer = home.join("dev/app");
     declare(&outer, &catalog);
     let report = audit(&env, &project(&outer)).unwrap();
-    kendex_core::apply::execute(&env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&env, &report.plan).unwrap();
 
     // A checkout of its own, living under the first one — a vendored
     // repository, or a worktree somebody put inside the tree it came from.
     let nested = outer.join("vendor/thing");
     declare(&nested, &catalog);
     let report = audit(&env, &project(&nested)).unwrap();
-    kendex_core::apply::execute(&env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&env, &report.plan).unwrap();
 
     // Its lock, carried up to the project holding it. Every path it names
     // starts with the outer root, so containment waves all of them through.
@@ -334,7 +334,7 @@ fn a_lock_from_a_checkout_nested_inside_the_project_is_refused_and_that_checkout
 
     let refused = match plan_apply(&env, &project(&outer), &refresh()) {
         Ok(report) => {
-            kendex_core::apply::execute(&env, &report.plan, None).unwrap();
+            kendex_core::apply::execute(&env, &report.plan).unwrap();
             None
         }
         Err(error) => Some(error),

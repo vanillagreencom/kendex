@@ -37,7 +37,7 @@ fn updating_one_follower_leaves_its_siblings_at_their_commits() {
     fetch_mirrors(&w);
 
     let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "a").unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(installed_body(&w, "a").contains("a version two."));
     assert!(
@@ -54,7 +54,7 @@ fn updating_one_follower_leaves_its_siblings_at_their_commits() {
     // The whole-scope control: refresh is unchanged and brings the
     // sibling current.
     let report = plan_refresh(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert!(installed_body(&w, "b").contains("b version two."));
     assert_eq!(locked_commit(&w, "b"), second);
 }
@@ -88,7 +88,7 @@ fn moving_a_hold_leaves_the_scopes_followers_at_their_commits() {
         &PlanOptions::for_packages([(ItemKind::Skill, "a".to_owned())]),
     )
     .unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(installed_body(&w, "a").contains("a version two."));
     assert!(
@@ -167,7 +167,7 @@ fn a_surgical_schema_upgrade_writes_no_synthetic_hold() {
         matches!(manifest_op(&report), apply::Op::WriteFile { .. }),
         "the upgrade is a surgical edit; a full serialize means the plan could not reproduce it"
     );
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     let text = manifest_text(&w);
     assert!(
@@ -217,7 +217,7 @@ fn a_schema_upgrade_fallback_writes_no_synthetic_hold() {
         matches!(manifest_op(&report), apply::Op::WriteManifest { .. }),
         "this schema line cannot be rewritten in place, so the plan serializes"
     );
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
@@ -266,7 +266,7 @@ fn a_manifest_the_pass_updated_writes_no_synthetic_hold() {
         matches!(manifest_op(&report), apply::Op::WriteManifest { .. }),
         "the merged skill list is a full manifest write"
     );
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
@@ -318,7 +318,7 @@ fn a_hold_move_scoped_by_for_package_leaves_the_siblings_alone() {
         &PlanOptions::for_package(ItemKind::Skill, "a"),
     )
     .unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(installed_body(&w, "a").contains("a version two."));
     assert!(
@@ -422,7 +422,7 @@ fn discarding_one_packages_edits_moves_that_package_alone() {
         &PlanOptions::for_package_discarding_edits(ItemKind::Skill, "a"),
     )
     .unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(
         installed_body(&w, "a").contains("a version two."),

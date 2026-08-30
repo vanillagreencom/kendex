@@ -139,14 +139,14 @@ fn save(f: &Fixture, edits: Vec<SettingsEdit>, base: Base) -> Result<(), CoreErr
         ..PlanOptions::default()
     };
     let report = plan_scope(&f.env, &f.scope, &manifest, &lock, &options)?;
-    apply::execute(&f.env, &report.plan, None)?;
+    apply::execute(&f.env, &report.plan)?;
     Ok(())
 }
 
 #[allow(clippy::unwrap_used)]
 fn install(f: &Fixture) {
     let report = kendex_core::engine::audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]
@@ -245,7 +245,7 @@ fn a_save_that_seeds_a_missing_key_and_sets_it_is_one_write() {
     assert_eq!(writes.len(), 1, "{writes:?}");
     assert!(writes[0].contains("seed REVIEWERS, DEPTH"), "{writes:?}");
     assert!(writes[0].contains("set DEPTH"), "{writes:?}");
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 
     let written = fs::read_to_string(settings_path(&f)).unwrap();
     assert!(written.contains("DEPTH = \"7\""), "{written}");
@@ -301,7 +301,7 @@ fn a_manifest_and_a_settings_edit_land_as_one_transaction() {
         ..PlanOptions::default()
     };
     let report = plan_scope(&f.env, &f.scope, &edited, &lock, &options).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 
     assert!(
         fs::read_to_string(settings_path(&f))
@@ -556,7 +556,7 @@ fn a_settings_file_swapped_for_a_link_between_plan_and_apply_refuses() {
     fs::remove_file(settings_path(&f)).unwrap();
     std::os::unix::fs::symlink(&outside, settings_path(&f)).unwrap();
 
-    let refused = apply::execute(&f.env, &report.plan, None).unwrap_err();
+    let refused = apply::execute(&f.env, &report.plan).unwrap_err();
     assert!(stale_at(&refused, &settings_path(&f)), "{refused:?}");
     assert_eq!(fs::read_to_string(&outside).unwrap(), kept);
 }
@@ -616,7 +616,7 @@ fn an_env_declared_as_an_array_of_tables_stops_the_write_and_says_why() {
             .any(|op| op.line().contains("kendex.settings.toml")),
         "nothing may be written into a file with nowhere to write"
     );
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert_eq!(fs::read_to_string(settings_path(&f)).unwrap(), file);
 
     let refused = save(&f, vec![set("REVIEWERS", "arch")], base_now(&f)).unwrap_err();

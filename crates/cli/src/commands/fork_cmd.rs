@@ -46,7 +46,7 @@ pub fn run(env: &Env, args: ForkArgs) -> CliResult {
     for op in &plan.ops {
         say(&format!("  - {}", shown(&op.line())));
     }
-    kendex_core::apply::execute(env, &plan, None)?;
+    kendex_core::apply::execute(env, &plan)?;
 
     // Second transaction renders the fork (or the renamed fork) in place.
     // A rename leaves the old name's artifacts and lock entries behind as

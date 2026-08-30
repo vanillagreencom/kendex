@@ -118,7 +118,7 @@ fn keeping_the_declaration_drops_the_planners_own_manifest_save() {
         "{:?}",
         report.plan.ops
     );
-    super::apply::execute(&w.env, &report.plan, None).unwrap();
+    super::apply::execute(&w.env, &report.plan).unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), before);
     assert!(before.contains("[skills.gh]"));
     assert!(!w.home.join("dev/app/.claude/skills/gh").exists());
@@ -167,7 +167,7 @@ fn keeping_the_declaration_leaves_a_reviewers_skill_list_alone() {
     let entry_before = entry(&w);
 
     let report = super::ops::uninstall(&w.env, &scope, &["rust".to_owned()]).unwrap();
-    super::apply::execute(&w.env, &report.plan, None).unwrap();
+    super::apply::execute(&w.env, &report.plan).unwrap();
     assert!(!w.home.join("dev/app/.claude/agents/rust.md").exists());
     assert_eq!(fs::read_to_string(&reviewer).unwrap(), rendered_before);
     assert_eq!(entry(&w), entry_before);

@@ -30,7 +30,7 @@ fn deleting_the_banner_alone_still_takes_the_generated_sections_off() {
     fs::write(&file, &edited).unwrap();
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     // Each section is counted by its heading and by a line only that
@@ -90,7 +90,7 @@ fn a_section_the_fork_writes_again_comes_off_whole() {
     edit_body(&file);
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let source = fs::read_to_string(captured(&w, "rev")).unwrap();
@@ -171,7 +171,7 @@ fn a_heading_inside_instruction_text_is_not_a_generated_section() {
     fs::write(&file, &edited).unwrap();
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let source = fs::read_to_string(captured(&w, "rev")).unwrap();
@@ -244,7 +244,7 @@ fn prose_borrowing_the_wrappers_words_at_either_end_is_kept() {
     fs::write(&file, &edited).unwrap();
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let source = fs::read_to_string(captured(&w, "rev")).unwrap();
@@ -308,7 +308,7 @@ fn an_edited_generated_section_is_kept_and_the_canonical_one_written_beside_it()
     fs::write(&file, &edited).unwrap();
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let source = fs::read_to_string(captured(&w, "rev")).unwrap();
@@ -376,7 +376,7 @@ fn a_published_section_standing_where_a_generated_one_did_is_not_taken() {
     fs::write(&file, &edited).unwrap();
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let source = fs::read_to_string(captured(&w, "rev")).unwrap();
@@ -454,7 +454,7 @@ fn a_published_section_the_rewrite_makes_identical_is_not_taken() {
     fs::write(&file, &edited).unwrap();
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let source = fs::read_to_string(captured(&w, "rev")).unwrap();
@@ -508,7 +508,7 @@ fn a_banner_line_the_body_spells_as_an_example_is_kept() {
     edit_body(&file);
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let source = fs::read_to_string(captured(&w, "rev")).unwrap();
@@ -559,7 +559,7 @@ fn whitespace_a_person_edits_inside_a_generated_code_block_is_their_edit() {
     fs::write(&file, &edited).unwrap();
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let source = fs::read_to_string(captured(&w, "rev")).unwrap();
@@ -632,7 +632,7 @@ fn deleting_one_of_several_hooks_still_takes_the_sections_before_them_off() {
     fs::write(&file, &edited).unwrap();
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let source = fs::read_to_string(captured(&w, "rev")).unwrap();
@@ -688,7 +688,7 @@ fn whitespace_a_person_edits_inside_an_indented_block_is_their_edit() {
     fs::write(&file, &edited).unwrap();
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let source = fs::read_to_string(captured(&w, "rev")).unwrap();

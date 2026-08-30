@@ -190,7 +190,7 @@ fn a_link_at_the_position_is_never_answered_with_a_take_over() {
 fn bytes_that_already_match_are_never_prescribed_a_replacement() {
     let w = world();
     let planned = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &planned.plan, None).unwrap();
+    apply::execute(&w.env, &planned.plan).unwrap();
     // The record gone, the rendered files staying: nothing is installed as
     // far as kendex knows, and everything is already in place.
     fs::remove_file(kendex_core::lock::lock_path(&w.env, &w.scope)).unwrap();
@@ -229,7 +229,7 @@ fn a_tool_without_its_copy_is_read_on_its_own() {
         "[skills.deploy]\nsource = \"cat\"\n",
     );
     let planned = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &planned.plan, None).unwrap();
+    apply::execute(&w.env, &planned.plan).unwrap();
     assert_eq!(report(&w), "", "what was asked for is installed");
 
     // A second tool added to the list later, with the tool that came before

@@ -58,7 +58,7 @@ fn updating_a_bundle_member_moves_its_bundle_and_no_one_else() {
     // The member has no declaration of its own — the bundle is what
     // carries its revision, so updating the member moves the bundle.
     let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "m1").unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(installed_body(&w, "m1").contains("m1 version two."));
     assert!(
@@ -132,7 +132,7 @@ fn updating_a_declared_package_a_set_also_carries_moves_it_alone() {
         "the declaration and the set's hold are both this pass's reading, not a conflict the person made: {:?}",
         report.warnings
     );
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(installed_body(&w, "a").contains("a version two."));
     assert!(
@@ -173,7 +173,7 @@ fn moving_the_rest_of_the_set_afterwards_leaves_the_declared_member_put() {
     );
 
     let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "a").unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     // `b` has no declaration of its own, so the set is what carries its
     // revision and moving it moves the set.
@@ -183,7 +183,7 @@ fn moving_the_rest_of_the_set_afterwards_leaves_the_declared_member_put() {
         "the declared member is read off its own declaration, not pinned through the set twice: {:?}",
         report.warnings
     );
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(installed_body(&w, "b").contains("b version two."));
     assert!(installed_body(&w, "a").contains("a version two."));
@@ -219,7 +219,7 @@ fn a_hold_the_person_wrote_against_their_set_still_conflicts() {
         "two revisions the person pinned must still conflict: {:?}",
         report.drift
     );
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(
         installed_body(&w, "a").contains("a version one."),
@@ -269,7 +269,7 @@ fn updating_a_package_a_set_reaches_through_a_parent_still_moves_it() {
         "the set owns what requires the package, not the package: {:?}",
         report.warnings
     );
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(
         installed_body(&w, "a").contains("a version two."),
@@ -293,7 +293,7 @@ fn a_member_that_moved_alone_no_longer_says_where_its_set_is() {
     );
 
     let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "a").unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     write_skill(&w.upstream, "b", "", "b version three.");
     write_skill(&w.upstream, "solo", "", "solo version three.");
@@ -301,7 +301,7 @@ fn a_member_that_moved_alone_no_longer_says_where_its_set_is() {
     fetch_mirrors(&w);
 
     let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "solo").unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(installed_body(&w, "solo").contains("solo version three."));
     assert!(
@@ -345,7 +345,7 @@ fn a_hand_pinned_set_conflicts_with_a_member_this_pass_pinned() {
         "the declaration follows the source, which is what it has to say: {}",
         rev_conflict_message(&report, "a")
     );
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(
         installed_body(&w, "solo").contains("solo version two."),
@@ -428,7 +428,7 @@ fn a_set_whose_members_are_all_declared_stays_where_it_is() {
     fetch_mirrors(&w);
 
     let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "solo").unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(installed_body(&w, "solo").contains("solo version two."));
     assert_eq!(locked_commit(&w, "solo"), second);
@@ -487,7 +487,7 @@ fn updating_a_member_of_an_all_declared_set_leaves_the_set_where_it_is() {
     fetch_mirrors(&w);
 
     let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "a").unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(
         installed_body(&w, "a").contains("a version two."),
@@ -535,7 +535,7 @@ fn a_set_whose_members_split_across_commits_still_holds() {
     let second = commit(&w.upstream, "two");
     fetch_mirrors(&w);
     let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "a").unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert_eq!(
         locked_commit(&w, "a"),
         second,
@@ -555,7 +555,7 @@ fn a_set_whose_members_split_across_commits_still_holds() {
     fetch_mirrors(&w);
 
     let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "b").unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(
         !w.home.join("app/.agents/skills/c").exists(),
@@ -609,7 +609,7 @@ fn updating_a_package_its_set_also_owns_through_a_parent_still_moves_it() {
         "the set owns what requires the package as well as carrying it: {:?}",
         report.warnings
     );
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(
         installed_body(&w, "a").contains("a version two."),
@@ -662,7 +662,7 @@ fn a_lock_that_records_no_set_commit_reads_the_members_instead() {
     fetch_mirrors(&w);
 
     let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "a").unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(installed_body(&w, "a").contains("a version two."));
     assert_eq!(locked_commit(&w, "a"), second);
@@ -708,7 +708,7 @@ fn a_lock_behind_the_current_version_is_rewritten() {
     save_lock(&path, &lock).unwrap();
 
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert_eq!(
         load_lock(&path).unwrap().version,

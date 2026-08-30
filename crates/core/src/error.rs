@@ -87,12 +87,6 @@ pub enum CoreError {
         root: PathBuf,
     },
 
-    #[error("{path} now lands at {now} — refusing to write where the plan did not")]
-    TargetMoved { path: PathBuf, now: PathBuf },
-
-    #[error("{path}: this journal does not say where it reached — refusing to put anything back")]
-    UnrecordedLanding { path: PathBuf },
-
     #[error("'{name}' already installed from {existing} — refusing to rebind to {requested}")]
     SourceCollision {
         name: String,
@@ -409,11 +403,6 @@ pub enum CoreError {
     #[error("source '{source_name}' offers no bundle called '{name}'")]
     NoSuchBundle { name: String, source_name: String },
 
-    /// Test-only fault injection stopped the apply. Never reached in a
-    /// real run: `fail_after` is how the rollback boundaries are exercised.
-    #[error("injected fault")]
-    Injected,
-
     /// Nothing was left behind, and `cause` is the failure that stopped it
     /// — kept whole rather than flattened into `reason`, because what a
     /// caller does about a rollback depends on why: a precondition that
@@ -423,19 +412,6 @@ pub enum CoreError {
     RolledBack {
         reason: String,
         cause: Box<CoreError>,
-    },
-
-    /// A filtered rollback stopped midway and its filter never reached
-    /// disk: the journal is pending, and the recovery that clears it
-    /// restores every snapshot, external bytes included. Both failures
-    /// are kept — the restore is what stopped, the persist is why
-    /// recovery will not run the same restore.
-    #[error(
-        "rollback stopped: {restore}; its restore set was not saved ({persist}), so recovery will restore every journaled path"
-    )]
-    RestoreSetLost {
-        restore: Box<CoreError>,
-        persist: Box<CoreError>,
     },
 
     #[error("{path}: structured edit failed: {message}")]

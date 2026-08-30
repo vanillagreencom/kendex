@@ -44,7 +44,7 @@ fn the_line_about_a_retirement_is_read_before_the_retirement() {
         "because at this point the hook is still exactly where it was"
     );
 
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
     assert!(!w.dot().join("hooks").exists(), "and then it is not");
 }
 

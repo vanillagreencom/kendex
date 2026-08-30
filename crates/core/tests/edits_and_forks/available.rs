@@ -47,7 +47,7 @@ fn a_skill_only_a_pin_carries_is_not_called_unavailable() {
     edit_body(&file);
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let text = fs::read_to_string(&file).unwrap();
@@ -275,7 +275,7 @@ fn a_pinned_skills_dependency_is_offered_at_the_pinned_revision() {
     edit_body(&file);
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let text = fs::read_to_string(&file).unwrap();
@@ -319,7 +319,7 @@ fn a_skill_a_source_only_offers_answers_the_assignment_it_makes() {
     edit_body(&file);
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let text = fs::read_to_string(&file).unwrap();

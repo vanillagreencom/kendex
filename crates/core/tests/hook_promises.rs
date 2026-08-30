@@ -140,7 +140,7 @@ fn a_matcher_that_cannot_be_translated_installs_as_written_and_is_named() {
         report.warnings
     );
 
-    kendex_core::apply::execute(&f.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&f.env, &report.plan).unwrap();
     let Scope::Project { root } = &f.scope else {
         panic!("the fixture is a project");
     };

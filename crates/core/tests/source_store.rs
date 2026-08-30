@@ -121,7 +121,7 @@ fn install(w: &World, scope: &Scope) {
     let loaded = loaded(w, scope);
     remote::sync_sources(&w.env, &loaded).unwrap();
     let report = audit(&w.env, scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]
@@ -223,7 +223,7 @@ fn repointing_a_source_never_serves_the_old_repository() {
         "the rebind should name both repositories: {:?}",
         report.drift
     );
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert!(rendered(&w, &scope).contains("Upstream v1."));
 }
 
@@ -283,7 +283,7 @@ fn a_busy_cache_costs_only_its_own_source() {
         "the healthy source must still plan: {:?}",
         report.drift
     );
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert!(w.home.join("app").join(".agents/skills/local-gh").is_dir());
 
     // The neighbour finishes, and the busy source resolves again.
@@ -326,7 +326,7 @@ fn a_moved_tag_is_previewed_before_it_is_followed() {
     );
     assert!(rendered(&w, &scope).contains("Upstream v1."));
 
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert!(rendered(&w, &scope).contains("Upstream v2."));
     assert!(audit(&w.env, &scope).unwrap().plan.is_empty());
 }

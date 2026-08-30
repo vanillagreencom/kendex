@@ -73,7 +73,7 @@ fn installing_into_a_project_is_atomic_with_its_subscription() {
     let report = source_ops::subscribe(&env, &Scope::Global, "team/tools", Some("mkt"))
         .unwrap()
         .report;
-    apply::execute(&env, &report.plan, None).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
     remote::sync(&env, "team/tools", None).unwrap();
     let project_path = project.join("kendex.toml");
 
@@ -102,7 +102,7 @@ fn installing_into_a_project_is_atomic_with_its_subscription() {
         },
     )
     .unwrap();
-    apply::execute(&env, &report.plan, None).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
     let manifest = fs::read_to_string(&project_path).unwrap();
     assert!(manifest.contains("[sources.mkt]"), "{manifest}");
     assert!(manifest.contains("[skills.gh]"), "{manifest}");

@@ -52,7 +52,7 @@ pub fn execute_common<T>(
     let _common_guard = lock_key(env, &key)?;
     let recovered_first = recover_key(env, &key)?;
     let (ops, extra) = build()?;
-    let applied = run_journaled(env, &ops, &key, None)?;
+    let applied = run_journaled(env, &ops, &key)?;
     Ok((
         ApplyOutcome {
             applied,

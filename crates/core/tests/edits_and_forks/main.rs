@@ -176,7 +176,7 @@ fn sync_and_apply(w: &World) {
         .unwrap();
     remote::sync_sources(&w.env, &loaded).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 }
 
 fn skill_file(w: &World) -> PathBuf {
@@ -222,7 +222,7 @@ fn a_local_edit_survives_refresh_and_reads_as_local_edit() {
     let row = report.drift.iter().find(|row| row.name == "gh").unwrap();
     assert_eq!(row.state, DriftState::Conflict);
     assert_eq!(row.cause, Some(DriftCause::LocalEdit));
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert_eq!(
         fs::read_to_string(skill_file(&w)).unwrap(),
         "my edited version",
@@ -250,7 +250,7 @@ fn edited_and_moved_upstream_reads_as_both_and_discard_is_explicit() {
     let report = audit(&w.env, &w.scope).unwrap();
     let row = report.drift.iter().find(|row| row.name == "gh").unwrap();
     assert_eq!(row.cause, Some(DriftCause::Both), "{row:?}");
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert_eq!(
         fs::read_to_string(skill_file(&w)).unwrap(),
         "my edited version"
@@ -272,7 +272,7 @@ fn edited_and_moved_upstream_reads_as_both_and_discard_is_explicit() {
         },
     )
     .unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert!(fs::read_to_string(skill_file(&w)).unwrap().contains("Two."));
     assert!(audit(&w.env, &w.scope).unwrap().drift.is_empty());
 }
@@ -311,7 +311,7 @@ fn discarding_one_packages_edits_leaves_another_packages_edits_held() {
         },
     )
     .unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(fs::read_to_string(&gh).unwrap().contains("Upstream gh."));
     assert_eq!(
@@ -375,7 +375,7 @@ fn discarding_a_skills_edits_leaves_a_same_named_agents_edits_held() {
         },
     )
     .unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(fs::read_to_string(&skill).unwrap().contains("Skill rev."));
     assert_eq!(
@@ -424,7 +424,7 @@ fn a_deleted_install_is_missing_not_an_edit() {
     let report = audit(&w.env, &w.scope).unwrap();
     let row = report.drift.iter().find(|row| row.name == "gh").unwrap();
     assert_eq!(row.state, DriftState::Missing, "{row:?}");
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert!(skill_file(&w).is_file(), "a missing install is restored");
 }
 
@@ -466,7 +466,7 @@ fn an_automatic_sweep_never_takes_edited_bytes() {
         .unwrap();
     remote::sync_sources(&w.env, &loaded).unwrap();
     let report = kendex_core::engine::plan_refresh(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert_eq!(
         fs::read_to_string(w.home.join("app/.agents/skills/helper/SKILL.md")).unwrap(),
         "my notes live here now",
@@ -530,7 +530,7 @@ fn edit_body(path: &std::path::Path) {
 #[allow(clippy::unwrap_used)]
 fn resettle(w: &World) {
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 }
 
 fn deny_line(text: &str, key: &str) -> String {

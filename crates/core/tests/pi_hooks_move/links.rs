@@ -181,7 +181,7 @@ fn a_link_inside_the_reserved_directory_is_never_read_through() {
 
     let report = audit(&w.env, &w.scope()).unwrap();
     let said = report.notes.clone();
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
     fs::set_permissions(&outside, fs::Permissions::from_mode(0o755)).unwrap();
 
     assert!(
@@ -218,7 +218,7 @@ fn a_claimed_copy_that_became_a_link_before_the_apply_is_not_taken() {
     fs::remove_file(&script).unwrap();
     symlink(&theirs, &script).unwrap();
 
-    let ran = kendex_core::apply::execute(&w.env, &report.plan, None);
+    let ran = kendex_core::apply::execute(&w.env, &report.plan);
     assert!(
         ran.is_err(),
         "the apply aborts on a path that is no longer what was proven"

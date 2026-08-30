@@ -141,7 +141,7 @@ fn a_mappable_event_renders_the_registry_in_pi_listener_names() {
     declare_hook(&w, "PreToolUse");
 
     let report = audit(&w.env, &scope(&w)).unwrap();
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     let script = w.project.join(".pi/kendex/hooks/guard.sh");
     assert!(
@@ -187,7 +187,7 @@ fn an_unmappable_event_installs_nothing_on_pi() {
         "{:?}",
         report.notes
     );
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
     assert!(
         !w.project.join(".pi/kendex/hooks/guard.sh").exists(),
         "no stale advisory artifact for an event pi cannot fire"
@@ -226,7 +226,7 @@ fn nothing_lands_in_the_directory_names_pi_reserved() {
     declare_hook(&w, "PreToolUse");
 
     let report = audit(&w.env, &scope(&w)).unwrap();
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(
         !w.project.join(".pi/hooks").exists(),

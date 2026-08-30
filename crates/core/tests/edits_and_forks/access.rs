@@ -63,7 +63,7 @@ fn forked_world(project: &str) -> World {
     );
     edit_body(&rendered(&w, HarnessId::Claude, "rev"));
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
     w
 }
@@ -218,7 +218,7 @@ fn a_catalog_default_that_retires_a_generated_deny_does_not_refuse_the_fork() {
         None,
     )
     .unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     assert_eq!(
@@ -389,7 +389,7 @@ fn forking_a_local_package_beside_itself_still_runs_with_no_revision_anywhere() 
         None,
     )
     .unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
     for (harness, tool) in NAME_KEYED {
         assert_eq!(
@@ -408,7 +408,7 @@ fn forking_a_local_package_beside_itself_still_runs_with_no_revision_anywhere() 
 fn a_rename_that_widens_nothing_still_moves_the_fork() {
     let w = forked_world("");
     let plan = fork::rename_fork(&w.env, &w.scope, ItemKind::Agent, "rev", "my-rev").unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
     for (harness, tool) in NAME_KEYED {
         assert!(

@@ -191,30 +191,13 @@ fn collect(path: &Path, rel: &Path, depth: usize, found: &mut Walked) -> bool {
 /// through. A handle's own metadata is no substitute: it reports whatever
 /// the name resolved to.
 fn read_bounded(path: &Path) -> Option<Vec<u8>> {
-    let file = open_no_follow(path)?;
+    let file = crate::fs::open_read_no_follow(path).ok()?;
     let mut bytes = Vec::new();
     file.take(MAX_BYTES + 1).read_to_end(&mut bytes).ok()?;
     match u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_BYTES {
         true => None,
         false => Some(bytes),
     }
-}
-
-#[cfg(unix)]
-fn open_no_follow(path: &Path) -> Option<std::fs::File> {
-    use rustix::fs::{Mode, OFlags};
-    rustix::fs::open(path, OFlags::RDONLY | OFlags::NOFOLLOW, Mode::empty())
-        .ok()
-        .map(std::fs::File::from)
-}
-
-/// Elsewhere the open resolves the name as the platform does. The check
-/// above still refuses a link it can see; what is left is the window
-/// between the two calls, and closing it needs a platform flag this build
-/// does not reach for.
-#[cfg(not(unix))]
-fn open_no_follow(path: &Path) -> Option<std::fs::File> {
-    std::fs::File::open(path).ok()
 }
 
 #[cfg(test)]

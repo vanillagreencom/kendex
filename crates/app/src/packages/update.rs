@@ -120,7 +120,7 @@ fn settle_package(
     report: &engine::EngineReport,
 ) -> Result<PackageUpdate, String> {
     let one = package_outcome(report, kind, name);
-    apply::execute(env, &report.plan, None).map_err(|e| e.to_string())?;
+    apply::execute(env, &report.plan).map_err(|e| e.to_string())?;
     Ok(PackageUpdate {
         view: view(env, scope),
         held_back: one.held_back,
@@ -171,7 +171,7 @@ pub fn package_update_many(
         .iter()
         .map(|target| package_outcome(&report, target.kind, &target.name))
         .collect();
-    apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
+    apply::execute(&env, &report.plan).map_err(|e| e.to_string())?;
     Ok(PackagesUpdate {
         view: view(&env, &scope),
         packages,

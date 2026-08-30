@@ -139,25 +139,14 @@ impl Op {
     pub(super) fn run(&self, env: &Env) -> Result<()> {
         match self {
             Op::WriteFile { path, bytes, pre } => {
-                // A precondition that names the file's kind is checked and
-                // written through one handle; every other one keeps the
-                // ordinary check-then-write, because `HashIs` deliberately
-                // follows a link a person set up themselves.
-                match super::plain::open(path, pre)? {
-                    Some(plain) => plain.write(path, bytes),
-                    None => {
-                        pre.check(path)?;
-                        super::plain::ensure_parent(path)?;
-                        fs::write(path, bytes).map_err(|e| CoreError::io(path, e))
-                    }
-                }
+                pre.check(path)?;
+                ensure_parent(path)?;
+                fs::write(path, bytes).map_err(|e| CoreError::io(path, e))
             }
             Op::WriteTree { root, files, pre } => write_tree(root, files, pre),
             Op::Symlink { link, target, pre } => {
                 pre.check(link)?;
-                if let Some(parent) = link.parent() {
-                    fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
-                }
+                ensure_parent(link)?;
                 if link.is_symlink() {
                     fs::remove_file(link).map_err(|e| CoreError::io(link, e))?;
                 }
@@ -176,9 +165,7 @@ impl Op {
                 // way every other writing op creates its parent, and after
                 // both preconditions, so a stale plan never leaves a
                 // directory behind.
-                if let Some(parent) = to.parent() {
-                    fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
-                }
+                ensure_parent(to)?;
                 fs::rename(from, to).map_err(|e| CoreError::io(from, e))
             }
             Op::Trash {
@@ -187,20 +174,11 @@ impl Op {
                 absent_is_done,
             } => trash(env, path, pre, *absent_is_done),
             Op::EditFile { path, edits, pre } => {
-                // The same one-handle rule, and here it covers the read
-                // too: an edit that read the name a second time could
-                // apply its edits to somebody else's file.
-                let plain = super::plain::open(path, pre)?;
-                let current = match &plain {
-                    // Strictly, as `read_if_exists` reads: a lossy decode
-                    // would put U+FFFD where somebody's bytes were and
-                    // write the replacement back over them.
-                    Some(plain) => plain.text(path)?,
-                    None => {
-                        pre.check(path)?;
-                        crate::fs::read_if_exists(path)?.unwrap_or_default()
-                    }
-                };
+                pre.check(path)?;
+                // Strictly, as `read_if_exists` reads: a lossy decode
+                // would put U+FFFD where somebody's bytes were and write
+                // the replacement back over them.
+                let current = crate::fs::read_if_exists(path)?.unwrap_or_default();
                 let mut updated = current.clone();
                 for edit in edits {
                     updated = edit
@@ -210,16 +188,13 @@ impl Op {
                             message,
                         })?;
                 }
+                // Nothing made for a write that does not happen: an edit
+                // that changes nothing leaves the place as it found it.
                 if updated == current {
                     return Ok(());
                 }
-                match plain {
-                    Some(plain) => plain.write(path, updated.as_bytes()),
-                    None => {
-                        super::plain::ensure_parent(path)?;
-                        fs::write(path, updated).map_err(|e| CoreError::io(path, e))
-                    }
-                }
+                ensure_parent(path)?;
+                fs::write(path, updated).map_err(|e| CoreError::io(path, e))
             }
             Op::WriteLock { path, lock, pre } => {
                 pre.check(path)?;
@@ -235,9 +210,7 @@ impl Op {
             }
             Op::WriteExecutable { path, bytes, pre } => {
                 pre.check(path)?;
-                if let Some(parent) = path.parent() {
-                    fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
-                }
+                ensure_parent(path)?;
                 fs::write(path, bytes).map_err(|e| CoreError::io(path, e))?;
                 executable_bit(path)
             }
@@ -248,6 +221,14 @@ impl Op {
                 value,
             } => git_config_swap(file, key, expected.as_deref(), value.as_deref()),
         }
+    }
+}
+
+/// The directory a write lands in, made if it is not there.
+fn ensure_parent(path: &Path) -> Result<()> {
+    match path.parent() {
+        Some(parent) => fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e)),
+        None => Ok(()),
     }
 }
 
@@ -293,9 +274,7 @@ fn write_tree(root: &Path, files: &[(PathBuf, Vec<u8>)], pre: &Pre) -> Result<()
     crate::fs::remove_any(root)?;
     for (rel, bytes) in files {
         let dest = root.join(rel);
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
-        }
+        ensure_parent(&dest)?;
         fs::write(&dest, bytes).map_err(|e| CoreError::io(&dest, e))?;
         // A tree carries bytes, not modes; a script that opens with a
         // shebang was written to be run, and a skill's helper that lands

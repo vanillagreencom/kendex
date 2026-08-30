@@ -78,7 +78,7 @@ fn a_bundle_member_whose_catalog_is_offline_keeps_its_old_copy() {
         "the hold has to be said, not silent: {:?}",
         report.notes
     );
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(
         w.dot().join("hooks/guard.sh").is_file(),

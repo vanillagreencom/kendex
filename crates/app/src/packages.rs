@@ -93,13 +93,13 @@ pub fn package_fork_beside(
     )
     .map_err(|e| refused(e.to_string()))?;
     // A plan that fails to apply rolls back: nothing recorded, a refusal.
-    apply::execute(&env, &plan, None).map_err(|e| refused(e.to_string()))?;
+    apply::execute(&env, &plan).map_err(|e| refused(e.to_string()))?;
     render_scope(&env, &scope).map_err(|message| ForkBesideError::Recorded { message })
 }
 
 /// Apply one plan, then render the scope it changed.
 fn settle(env: &Env, scope: &Scope, plan: &apply::Plan) -> Result<AuditView, String> {
-    apply::execute(env, plan, None).map_err(|e| e.to_string())?;
+    apply::execute(env, plan).map_err(|e| e.to_string())?;
     render_scope(env, scope)
 }
 
@@ -107,7 +107,7 @@ fn settle(env: &Env, scope: &Scope, plan: &apply::Plan) -> Result<AuditView, Str
 /// standing that leaves.
 fn render_scope(env: &Env, scope: &Scope) -> Result<AuditView, String> {
     let report = engine::audit(env, scope).map_err(|e| e.to_string())?;
-    apply::execute(env, &report.plan, None).map_err(|e| e.to_string())?;
+    apply::execute(env, &report.plan).map_err(|e| e.to_string())?;
     Ok(view(env, scope))
 }
 
@@ -122,7 +122,7 @@ pub fn fork_rename(
     let env = env()?;
     let plan = engine::fork::rename_fork(&env, &scope, kind, &old_name, &new_name)
         .map_err(|e| e.to_string())?;
-    apply::execute(&env, &plan, None).map_err(|e| e.to_string())?;
+    apply::execute(&env, &plan).map_err(|e| e.to_string())?;
     // The old name's artifacts come off disk with the rename — the user
     // asked for this by name, which is what an explicit removal is.
     let report = kendex_core::engine::plan_scope(
@@ -140,7 +140,7 @@ pub fn fork_rename(
         },
     )
     .map_err(|e| e.to_string())?;
-    apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
+    apply::execute(&env, &report.plan).map_err(|e| e.to_string())?;
     Ok(view(&env, &scope))
 }
 
@@ -171,7 +171,7 @@ pub fn apply_discard_edits(
             &engine::PlanOptions::for_package_discarding_edits(kind, &name),
         )
         .map_err(|e| e.to_string())?;
-        apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
+        apply::execute(&env, &report.plan).map_err(|e| e.to_string())?;
         return Ok(view(&env, &scope));
     }
     let manifest = manifest::load_for_mutation(&manifest::manifest_path(&env, &scope))
@@ -187,7 +187,7 @@ pub fn apply_discard_edits(
         &engine::PlanOptions::for_package_discarding_edits(kind, name),
     )
     .map_err(|e| e.to_string())?;
-    apply::execute(&env, &report.plan, None).map_err(|e| e.to_string())?;
+    apply::execute(&env, &report.plan).map_err(|e| e.to_string())?;
     Ok(view(&env, &scope))
 }
 

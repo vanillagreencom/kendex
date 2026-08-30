@@ -84,7 +84,7 @@ fn deploy_row(rows: &[DriftRow]) -> &DriftRow {
 fn a_copy_install_never_owns_the_shared_tree() {
     let w = with_method("copy");
     let report = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     // The second tool reads the shared tree, and somebody's files are there.
     fs::write(
@@ -120,7 +120,7 @@ fn a_copy_install_never_owns_the_shared_tree() {
         ..PlanOptions::default()
     };
     let report = plan_apply(&w.env, &w.scope, &discard).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert!(
         fs::read_to_string(stranger.join("SKILL.md"))
             .unwrap()
@@ -140,7 +140,7 @@ fn a_copy_install_never_owns_the_shared_tree() {
 fn changing_how_a_skill_installs_never_claims_the_new_position() {
     let w = with_method("copy");
     let report = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     declare_for(&w, "[\"claude\"]");
     let stranger = w.home.join("app/.agents/skills/deploy");
@@ -163,7 +163,7 @@ fn changing_how_a_skill_installs_never_claims_the_new_position() {
         ..PlanOptions::default()
     };
     let report = plan_apply(&w.env, &w.scope, &discard).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert!(
         fs::read_to_string(stranger.join("SKILL.md"))
             .unwrap()
@@ -235,7 +235,7 @@ fn a_switched_off_install_is_still_ours_to_update() {
     };
     let apply_now = || {
         let report = plan_apply(&env, &scope, &PlanOptions::default()).unwrap();
-        apply::execute(&env, &report.plan, None).unwrap();
+        apply::execute(&env, &report.plan).unwrap();
     };
 
     declare("");
@@ -281,7 +281,7 @@ fn deploy_row_named<'a>(rows: &'a [DriftRow], name: &str) -> &'a DriftRow {
 fn what_kendex_already_looks_after_is_never_adopted() {
     let w = with_method("copy");
     let report = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     let installed = w.home.join("app/.claude/skills/deploy/SKILL.md");
     assert!(installed.is_file(), "the fixture never installed anything");
 
@@ -363,7 +363,7 @@ fn a_link_pointing_at_an_installation_is_never_captured() {
     let w = with_method("copy");
     declare_for(&w, "[\"claude\", \"codex\"]");
     let report = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     // A second declaration whose position is a link into the first's copy.
     let installed = w.home.join("app/.agents/skills/deploy");

@@ -59,7 +59,7 @@ fn fixture() -> Fixture {
 #[allow(clippy::unwrap_used)]
 fn apply_now(f: &Fixture) {
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 }
 
 /// The person moves the registration kendex wrote to another event, and
@@ -110,7 +110,7 @@ fn a_moved_registration_comes_out_with_the_script_it_names() {
                 .unwrap()
             }
         };
-        apply::execute(&f.env, &report.plan, None).unwrap();
+        apply::execute(&f.env, &report.plan).unwrap();
 
         assert!(!script.exists(), "{asked}: the script goes");
         let after = fs::read_to_string(&settings).unwrap();
@@ -302,7 +302,7 @@ fn removing_a_command_bodied_hook_leaves_their_own_matcher_alone() {
         },
     )
     .unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 
     let value: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();

@@ -36,7 +36,7 @@ fn an_unreadable_reserved_directory_retires_nothing() {
             report.notes
         );
     }
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(dir.is_dir(), "nothing under it was retired");
     assert!(
@@ -124,7 +124,7 @@ fn discarding_edits_does_not_cover_a_file_that_cannot_be_read() {
         },
     )
     .unwrap();
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(
         !w.dot().join("kendex/hooks/guard.sh").exists(),

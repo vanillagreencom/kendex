@@ -82,7 +82,7 @@ pub fn marketplace_unsubscribe(
             .map_err(|e| e.to_string())?
             .plan
     };
-    apply::execute(&env, &plan, None).map_err(|e| e.to_string())?;
+    apply::execute(&env, &plan).map_err(|e| e.to_string())?;
     if keep {
         // Keeping moved the catalog's mapping tables into the manifest, so
         // the install records are re-synced here — otherwise every kept
@@ -93,7 +93,7 @@ pub fn marketplace_unsubscribe(
             &kendex_core::engine::PlanOptions::default(),
         )
         .map_err(|e| e.to_string())?;
-        apply::execute(&env, &resync.plan, None).map_err(|e| e.to_string())?;
+        apply::execute(&env, &resync.plan).map_err(|e| e.to_string())?;
     }
     Ok(())
 }

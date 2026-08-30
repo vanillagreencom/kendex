@@ -53,7 +53,7 @@ fn write_catalog(dir: &Path, body: &str) {
 #[allow(clippy::unwrap_used)]
 fn apply_scope(w: &World, scope: &Scope) {
     let report = audit(&w.env, scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 }
 
 /// The #1313 class: two scopes install the same package name from two
@@ -228,7 +228,7 @@ fn add_writes_nothing_before_validation_and_confirmation() {
     assert!(!w.project.join(".agents").exists());
 
     // Confirmation is the execute; only then does state move.
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert!(
         fs::read_to_string(w.project.join("kendex.toml"))
             .unwrap()

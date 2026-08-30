@@ -29,7 +29,7 @@ fn starter_catalog(f: &Fixture, name: &str) -> PathBuf {
 #[allow(clippy::unwrap_used)]
 fn apply_now(f: &Fixture) {
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 }
 
 /// Every way a member is the user's own — not just its harness list — keeps its

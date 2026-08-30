@@ -33,17 +33,12 @@ pub enum Pre {
     /// the other end. `hash_tree` follows links, so bytes alone cannot
     /// tell the two apart; the type is half of what ownership was proven
     /// from, so it is half of what the op binds to.
+    ///
+    /// Its absent half is [`Pre::Absent`], which already refuses a link
+    /// arriving where nothing was.
     PlainHashIs {
         hash: String,
     },
-    /// Nothing is here, and nothing may arrive. The other half of
-    /// `PlainHashIs`: a write binding to one of these two is proving the
-    /// path IS the file rather than a link to one, and the pair spells
-    /// "this exact plain file, or nothing at all". Kept apart from
-    /// [`Pre::Absent`], which several ops bind while meaning only "first
-    /// write" — one of them goes on to create a symlink, and the stricter
-    /// reading would be wrong for it.
-    PlainAbsent,
     SymlinkTo {
         target: PathBuf,
     },
@@ -78,7 +73,7 @@ impl Pre {
             }),
             // Nothing of the kind is here, and the write binds to that: a
             // link arriving where nothing was fails it too.
-            _ => Ok(Pre::PlainAbsent),
+            _ => Ok(Pre::Absent),
         }
     }
 
@@ -102,15 +97,11 @@ impl Pre {
     /// Whether this precondition binds to there being nothing, rather
     /// than to content.
     ///
-    /// Asked, never matched. "Nothing is here" is spelled two ways —
-    /// [`Pre::Absent`], and the [`Pre::PlainAbsent`] that also refuses a
-    /// link arriving — and a caller matching one variant silently stops
-    /// seeing the other the day a second spelling appears. That is
-    /// exactly what happened when `PlainAbsent` was added: a caller
-    /// reading `Absent` alone stopped skipping the file that was not
-    /// there and read it instead.
+    /// Asked, never matched: a caller matching the variant itself stops
+    /// seeing the question the day a second spelling of "nothing is here"
+    /// appears.
     pub fn binds_nothing(&self) -> bool {
-        matches!(self, Pre::Absent | Pre::PlainAbsent)
+        matches!(self, Pre::Absent)
     }
 
     /// [`Pre::check`] for tests outside the apply module — the same
@@ -124,7 +115,7 @@ impl Pre {
     pub(super) fn check(&self, path: &Path) -> Result<()> {
         let ok = match self {
             Pre::Any => true,
-            Pre::Absent | Pre::PlainAbsent => !path.exists() && !path.is_symlink(),
+            Pre::Absent => !path.exists() && !path.is_symlink(),
             Pre::HashIs { hash } => {
                 path.exists() && hash_tree(path).map(|h| h == *hash).unwrap_or(false)
             }

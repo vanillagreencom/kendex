@@ -81,7 +81,7 @@ fn fixture(harnesses: &str, declarations: &str) -> Fixture {
 #[allow(clippy::unwrap_used)]
 fn apply_now(f: &Fixture) -> EngineReport {
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     report
 }
 
@@ -103,7 +103,7 @@ fn an_event_copilot_does_not_have_is_reported_never_faked() {
         "{:?}",
         report.notes
     );
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(!f.project.join(".github/hooks").exists());
 }
 

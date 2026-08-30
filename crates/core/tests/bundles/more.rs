@@ -42,7 +42,7 @@ fn an_upstream_member_removal_previews_before_anything_uninstalls() {
         "planning a refresh uninstalled something"
     );
 
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(!installed(&f, ItemKind::Skill, "docs"));
     assert!(installed(&f, ItemKind::Skill, "dev"));
 }
@@ -161,7 +161,7 @@ fn a_member_the_catalog_lacks_is_a_finding_naming_it() {
     assert!(finding.message.contains("starter"));
     assert!(finding.remediation.as_ref().unwrap().contains("deploy"));
 
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(installed(&f, ItemKind::Skill, "dev"), "the set was blocked");
     assert!(!installed(&f, ItemKind::Skill, "deploy"));
 }
@@ -189,7 +189,7 @@ fn a_member_whose_name_a_shell_would_expand_is_refused() {
         report.warnings.iter().any(|w| w.name == hostile),
         "the member is reported"
     );
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(installed(&f, ItemKind::Skill, "docs"));
     assert!(!f.project.join(".claude/hooks").exists());
     let settings = f.project.join(".claude/settings.json");
@@ -221,7 +221,7 @@ fn a_bundle_the_catalog_does_not_offer_is_reported() {
 fn add_declares_the_set_and_refuses_a_name_no_catalog_offers() {
     let f = fixture("");
     let report = ops::add(&f.env, &f.scope, &request("starter")).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 
     let manifest = manifest_of(&f);
     assert_eq!(manifest.bundles["starter"].source, "cat");
@@ -303,7 +303,7 @@ fn members_that_fold_onto_one_file_install_neither() {
         .expect("the two members that land on one file are reported");
     assert!(clash.detail.contains("Deploy"), "{}", clash.detail);
 
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(!installed(&f, ItemKind::Skill, "deploy"));
     assert!(!installed(&f, ItemKind::Skill, "Deploy"));
 }

@@ -96,7 +96,7 @@ fn both_halves_in_place_complete_the_move() {
 
     let report = audit(&w.env, &w.scope()).unwrap();
     assert!(report.notes.is_empty(), "{:?}", report.notes);
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(!w.dot().join("hooks").exists());
     assert!(!w.dot().join("hooks.json").exists());
@@ -123,7 +123,7 @@ fn discarding_edits_finishes_the_move_in_one_pass() {
         fs::write(&edited, "#!/bin/sh\n# mine\nexit 0\n").unwrap();
 
         let report = plan_apply(&w.env, &w.scope(), &options).unwrap();
-        kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+        kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
         assert!(!w.dot().join("hooks").exists(), "the move finished");
         assert!(!w.dot().join("hooks.json").exists());
@@ -215,7 +215,7 @@ fn a_directory_where_the_script_was_is_never_taken() {
             "{asked}: the person is told what is in the way: {:?}",
             report.notes
         );
-        kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+        kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
         assert_eq!(
             fs::read_to_string(theirs.join("notes.md")).unwrap(),

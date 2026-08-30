@@ -222,9 +222,9 @@ fn fork_beside_and_rename_refuse_names_that_fold_onto_a_neighbour() {
 
     // The same rule guards a rename.
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     let renamed = fork::rename_fork(&w.env, &w.scope, ItemKind::Skill, "gh", "DOCS").unwrap_err();
     collides(renamed);
     let linked =
@@ -341,7 +341,7 @@ fn fork_beside_refuses_a_name_nesting_inside_another_package() {
 
     // The rename path is guarded by the same rule.
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     let renamed =
         fork::rename_fork(&w.env, &w.scope, ItemKind::Skill, "gh", "plugin/gh").unwrap_err();
     assert!(
@@ -372,7 +372,7 @@ fn fork_beside_lands_a_namespaced_name_in_a_plain_namespace_directory() {
         None,
     )
     .unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
 
     let own = fs::read_to_string(
         w.home

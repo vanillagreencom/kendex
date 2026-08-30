@@ -71,7 +71,7 @@ fn declare(f: &Fixture, harnesses: &str) {
 #[allow(clippy::unwrap_used)]
 fn apply_now(f: &Fixture) {
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]
@@ -168,7 +168,7 @@ fn an_orphaned_install_comes_off_by_the_paths_it_recorded() {
         },
     )
     .unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 
     assert!(
         !old.is_symlink(),
@@ -205,7 +205,7 @@ fn a_held_install_keeps_the_link_it_recorded() {
         "the edit holds the install: {:?}",
         report.drift
     );
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 
     assert!(
         old.is_symlink(),

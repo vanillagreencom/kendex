@@ -65,7 +65,7 @@ fn fixture(declarations: &str) -> Fixture {
 #[allow(clippy::unwrap_used)]
 fn apply_now(f: &Fixture) {
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]
@@ -147,7 +147,7 @@ fn a_record_that_names_no_registration_leaves_their_duplicate_alone() {
         "their duplicate is not kendex's to wonder about: {:?}",
         report.drift
     );
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 
     assert_eq!(
         groups(&f),
@@ -217,7 +217,7 @@ fn an_empty_matcher_registers_once_and_stays_once() {
         "and nothing left to do: {:?}",
         second.plan.ops
     );
-    apply::execute(&f.env, &second.plan, None).unwrap();
+    apply::execute(&f.env, &second.plan).unwrap();
     assert_eq!(settings(&f), first, "so the file does not grow");
 }
 
@@ -282,7 +282,7 @@ fn a_record_that_names_no_registration_leaves_a_moved_entry_alone() {
         "the moved entry is not kendex's to wonder about: {:?}",
         report.drift
     );
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 
     assert_eq!(
         groups(&f),
@@ -333,7 +333,7 @@ fn an_exact_duplicate_of_the_recorded_entry_does_not_wedge_the_refresh() {
         "an exact duplicate is not a wedge: {:?}",
         report.drift
     );
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert_eq!(
         settings(&f)["hooks"]["PreToolUse"][0]["hooks"]
             .as_array()
@@ -377,7 +377,7 @@ fn a_recorded_entry_moved_by_hand_does_not_hold_the_hook() {
         "what they moved is theirs, not a conflict: {:?}",
         report.drift
     );
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 
     assert_eq!(
         groups(&f),

@@ -112,7 +112,7 @@ fn sync_and_apply(w: &World) {
         .unwrap();
     remote::sync_sources(&w.env, &loaded).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]

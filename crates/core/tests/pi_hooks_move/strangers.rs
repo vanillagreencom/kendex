@@ -113,7 +113,7 @@ fn a_global_registry_kendex_never_wrote_to_is_left_alone() {
     // Twice: the first apply is what writes the lock the move reads.
     for _ in 0..2 {
         let report = audit(&w.env, &Scope::Global).unwrap();
-        kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+        kendex_core::apply::execute(&w.env, &report.plan).unwrap();
     }
 
     assert!(agent.join("hooks/theirs.sh").is_file());
@@ -142,7 +142,7 @@ fn a_reserved_directory_kendex_never_wrote_to_is_left_alone() {
 
     let report = audit(&w.env, &w.scope()).unwrap();
     assert!(report.notes.is_empty(), "{:?}", report.notes);
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(w.dot().join("hooks/theirs.sh").is_file());
     assert!(
@@ -243,7 +243,7 @@ fn a_jsonc_registry_kendex_has_nothing_in_is_left_alone() {
 
     let report = audit(&w.env, &w.scope()).unwrap();
     assert!(report.notes.is_empty(), "{:?}", report.notes);
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     assert_eq!(fs::read_to_string(&registry).unwrap(), theirs);
 }
@@ -307,7 +307,7 @@ fn a_directory_that_changed_since_the_preview_is_not_taken() {
     let report = audit(&w.env, &w.scope()).unwrap();
     fs::write(w.dot().join("hooks/appeared.sh"), "#!/bin/sh\n").unwrap();
 
-    let outcome = kendex_core::apply::execute(&w.env, &report.plan, None);
+    let outcome = kendex_core::apply::execute(&w.env, &report.plan);
 
     assert!(outcome.is_err(), "a stale plan must not take the directory");
     assert!(w.dot().join("hooks/appeared.sh").is_file());

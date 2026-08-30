@@ -217,7 +217,7 @@ pub fn marketplace_subscribe(
     let env = env()?;
     let subscribed = source_ops::subscribe(&env, &scope, &reference, name.as_deref())
         .map_err(|e| e.to_string())?;
-    apply::execute(&env, &subscribed.report.plan, None).map_err(|e| e.to_string())?;
+    apply::execute(&env, &subscribed.report.plan).map_err(|e| e.to_string())?;
     let mut notes = subscribed.report.notes;
     // Fetch so counts and browsing land right away; a failure costs the
     // counts, never the subscription — the CLI verb behaves the same.

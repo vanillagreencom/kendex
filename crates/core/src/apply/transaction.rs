@@ -5,20 +5,13 @@
 
 use std::path::PathBuf;
 
-use super::{PlannedOp, journal, landing};
+use super::{PlannedOp, journal};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 
 /// Execute ops under a lock the caller already holds for `key` and after
-/// it recovered. Returns how many ops ran. `fail_after` is test-only
-/// fault injection: simulate a crash after N ops to exercise every
-/// boundary.
-pub(super) fn run_journaled(
-    env: &Env,
-    ops: &[PlannedOp],
-    key: &str,
-    fail_after: Option<usize>,
-) -> Result<usize> {
+/// it recovered. Returns how many ops ran.
+pub(super) fn run_journaled(env: &Env, ops: &[PlannedOp], key: &str) -> Result<usize> {
     // Nothing to do leaves nothing behind: an empty journal would read as
     // an interrupted apply to the next recovery pass.
     if ops.is_empty() {
@@ -26,29 +19,11 @@ pub(super) fn run_journaled(
     }
     let journal_dir = journal::journal_dir_for(&env.journal_dir(), key);
     let mut touched: Vec<PathBuf> = ops.iter().flat_map(|p| p.op.touched()).collect();
-    // Before the pre-images, so a path already moved never has somebody
-    // else's bytes copied into this journal on its behalf. It settles
-    // nothing for the ops themselves: each is asked again in the loop.
-    touched.iter().try_for_each(|path| landing::unmoved(path))?;
     touched.extend(created_dir_roots(&touched));
     journal::write(&journal_dir, &touched)?;
 
     for (index, planned) in ops.iter().enumerate() {
-        if fail_after == Some(index) {
-            // The injected fault lands before the op runs, so it mutated
-            // nothing — same restore set as a precondition refusal.
-            let error = CoreError::Injected;
-            journal::rollback_mutated(&journal_dir, &mutated_before_failure(ops, index, &error))?;
-            return Err(CoreError::RolledBack {
-                reason: format!("injected fault before '{}'", planned.line()),
-                cause: Box::new(error),
-            });
-        }
-        // Asked here rather than once before the loop: an op ahead of
-        // this one can create the link this one's path would then be
-        // reached through, and a check that ran before either of them saw
-        // a parent that did not exist yet.
-        if let Err(error) = landing::op_unmoved(&planned.op).and_then(|()| planned.op.run(env)) {
+        if let Err(error) = planned.op.run(env) {
             journal::rollback_mutated(&journal_dir, &mutated_before_failure(ops, index, &error))?;
             return Err(CoreError::RolledBack {
                 reason: format!("'{}' failed: {error}", planned.line()),
@@ -63,7 +38,6 @@ pub(super) fn run_journaled(
 /// The paths this transaction mutated by the time op `index` failed with
 /// `error` — the restore set for the in-process rollback. Every op checks
 /// its precondition before touching anything, so a `PlanStale` failure
-/// (and the test-only injected fault, which fires before the op runs)
 /// means op `index` mutated nothing: restoring its paths anyway would put
 /// the journal's snapshot over the very bytes the refusal protected, when
 /// a writer outside the transaction landed them after the journal was
@@ -71,12 +45,7 @@ pub(super) fn run_journaled(
 /// paths are restored too.
 fn mutated_before_failure(ops: &[PlannedOp], index: usize, error: &CoreError) -> Vec<PathBuf> {
     let ran = match error {
-        // A target that moved is refused before the op is handed the
-        // path, so op `index` mutated nothing, the same as a stale
-        // precondition.
-        CoreError::PlanStale { .. } | CoreError::TargetMoved { .. } | CoreError::Injected => {
-            &ops[..index]
-        }
+        CoreError::PlanStale { .. } => &ops[..index],
         _ => &ops[..=index],
     };
     ran.iter().flat_map(|p| p.op.touched()).collect()
@@ -136,10 +105,6 @@ mod tests {
         let refused = CoreError::PlanStale { path: b.clone() };
         assert_eq!(
             mutated_before_failure(&ops, 1, &refused),
-            std::slice::from_ref(&a)
-        );
-        assert_eq!(
-            mutated_before_failure(&ops, 1, &CoreError::Injected),
             std::slice::from_ref(&a)
         );
 

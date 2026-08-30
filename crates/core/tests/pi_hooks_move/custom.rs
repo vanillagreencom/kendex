@@ -48,7 +48,7 @@ fn world() -> World {
 #[allow(clippy::unwrap_used)]
 fn apply(env: &Env, scope: &Scope) {
     let report = audit(env, scope).unwrap();
-    kendex_core::apply::execute(env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(env, &report.plan).unwrap();
 }
 
 /// The registry an earlier kendex wrote: the same document, at the name

@@ -50,9 +50,9 @@ fn fork_beside_keeps_the_edit_under_a_new_name_and_lands_the_source_under_the_ol
         Some(&two),
     )
     .unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     // The fork's bytes live in the local source under the new name and say
     // that name; they render there too.
@@ -128,7 +128,7 @@ fn fork_beside_refuses_before_writing_when_the_target_cannot_be_proven() {
 
     // A branch name resolves to the full commit the manifest records.
     let plan = beside(Some("main")).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     let three = head_commit(&w.upstream);
     let text = manifest_text(&w);
     assert!(
@@ -231,9 +231,9 @@ fn fork_beside_without_a_rev_keeps_the_hold_and_records_the_commit() {
         None,
     )
     .unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     let text = manifest_text(&w);
     assert!(
@@ -282,9 +282,9 @@ fn fork_beside_keeps_an_edited_agent_under_the_new_name() {
         None,
     )
     .unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     let own = fs::read_to_string(w.home.join("app/.kendex-local/agents/rev-edited.md")).unwrap();
     assert!(
@@ -337,7 +337,7 @@ fn fork_beside_records_the_captured_harness_own_commit() {
         None,
     )
     .unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     let record = manifest_text(&w);
     let record = record.split("[forks.skill.gh-edited]").nth(1).unwrap();
     assert!(
@@ -399,7 +399,7 @@ fn fork_beside_renames_the_copy_by_its_name_span() {
             None,
         )
         .unwrap();
-        apply::execute(&w.env, &plan, None).unwrap();
+        apply::execute(&w.env, &plan).unwrap();
         let own =
             fs::read_to_string(w.home.join("app/.kendex-local/skills/gh-edited/SKILL.md")).unwrap();
         assert_eq!(own, want);

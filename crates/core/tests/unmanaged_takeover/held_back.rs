@@ -81,7 +81,7 @@ fn a_dead_stop_on_one_item_holds_only_that_item_back() {
     dead_stop_second_place(&w);
 
     let report = plan_apply(&w.env, &w.scope, &take_over()).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(
         fs::read_to_string(w.home.join("app/.claude/skills/lint/SKILL.md"))
@@ -138,7 +138,7 @@ fn a_held_item_s_empty_place_is_still_installed() {
     fs::write(lint.join("SKILL.md"), "the tool that came before").unwrap();
 
     let report = plan_apply(&w.env, &w.scope, &take_over()).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(
         fs::read_to_string(w.home.join("app/.opencode/skills/deploy/SKILL.md"))
@@ -193,7 +193,7 @@ fn a_linked_item_s_take_over_still_counts_as_settled() {
     std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
 
     let report = plan_apply(&w.env, &w.scope, &take_over()).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(
         fs::read_to_string(w.home.join("app/.agents/skills/lint/SKILL.md"))

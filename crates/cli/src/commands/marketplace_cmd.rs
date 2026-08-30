@@ -186,7 +186,7 @@ fn run_unsubscribe(
         // A bare plan: keeping moves tables, and takes no package away.
         (_, true) => {
             let plan = detach::source(env, &scope, name)?;
-            kendex_core::apply::execute(env, &plan, None)?;
+            kendex_core::apply::execute(env, &plan)?;
         }
         (true, _) => {
             let report = detach::remove(env, &scope, name, discard_edits)?;

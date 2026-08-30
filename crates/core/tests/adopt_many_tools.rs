@@ -46,7 +46,7 @@ fn every_tool_the_item_sits_at_is_kept_in_one_pass() {
         &[HarnessId::Claude, HarnessId::Codex],
     )
     .unwrap();
-    kendex_core::apply::execute(&env, &plan, None).unwrap();
+    kendex_core::apply::execute(&env, &plan).unwrap();
 
     // The tool-owned position is cleared, and the shared tree holds the one
     // real directory the move put there. Asserted before the follow-up
@@ -59,7 +59,7 @@ fn every_tool_the_item_sits_at_is_kept_in_one_pass() {
     assert!(project.join(".agents/skills/handmade/SKILL.md").is_file());
 
     let report = audit(&env, &scope).unwrap();
-    kendex_core::apply::execute(&env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&env, &report.plan).unwrap();
     for dir in [".claude/skills/handmade", ".agents/skills/handmade"] {
         let installed = fs::read_to_string(project.join(dir).join("SKILL.md")).unwrap_or_default();
         assert!(
@@ -109,7 +109,7 @@ fn one_folder_read_through_a_link_is_not_two_different_copies() {
         &[HarnessId::Claude, HarnessId::Codex],
     )
     .unwrap();
-    kendex_core::apply::execute(&env, &plan, None).unwrap();
+    kendex_core::apply::execute(&env, &plan).unwrap();
     assert!(
         fs::read_to_string(project.join(".agents/skills/handmade/SKILL.md"))
             .unwrap()
@@ -117,7 +117,7 @@ fn one_folder_read_through_a_link_is_not_two_different_copies() {
     );
 
     let report = audit(&env, &scope).unwrap();
-    kendex_core::apply::execute(&env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&env, &report.plan).unwrap();
     for at in [".claude/skills/handmade", ".agents/skills/handmade"] {
         assert!(
             fs::read_to_string(project.join(at).join("SKILL.md"))
@@ -163,7 +163,7 @@ fn a_harness_list_already_there_is_extended_not_replaced() {
         &[HarnessId::Opencode],
     )
     .unwrap();
-    kendex_core::apply::execute(&env, &plan, None).unwrap();
+    kendex_core::apply::execute(&env, &plan).unwrap();
 
     let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
     let declared = manifest.split("[skills.handmade]").nth(1).unwrap_or("");
@@ -268,7 +268,7 @@ fn the_tool_holding_a_shared_folder_stays_declared() {
         &[HarnessId::Codex],
     )
     .unwrap();
-    kendex_core::apply::execute(&env, &plan, None).unwrap();
+    kendex_core::apply::execute(&env, &plan).unwrap();
 
     let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
     let declared = manifest.split("[skills.handmade]").nth(1).unwrap_or("");

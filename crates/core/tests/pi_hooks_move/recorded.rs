@@ -69,7 +69,7 @@ fn a_finished_move_is_recorded_and_never_re_opened() {
             },
         )
         .unwrap();
-        kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+        kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
         assert_eq!(
             fs::read_to_string(w.dot().join("hooks/guard.sh")).unwrap(),
@@ -113,7 +113,7 @@ fn a_fresh_install_has_left_the_reserved_name_too() {
         },
     )
     .unwrap();
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     assert_eq!(
         fs::read_to_string(w.dot().join("hooks/guard.sh")).unwrap(),
@@ -157,7 +157,7 @@ fn a_catalog_moving_the_event_after_the_move_is_not_a_hand_moved_entry() {
         report.drift
     );
     assert!(report.notes.is_empty(), "{:?}", report.notes);
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     let after = fs::read_to_string(&registry).unwrap();
     assert!(

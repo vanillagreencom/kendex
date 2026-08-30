@@ -137,7 +137,7 @@ fn a_settings_edit_rides_into_the_manifest_and_a_description_edit_does_not() {
     .unwrap();
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let recorded = manifest_text(&w);
@@ -180,7 +180,7 @@ fn a_deleted_setting_is_carried_where_it_can_be_and_refused_where_it_cannot() {
         .collect();
     fs::write(&file, &without_effort).unwrap();
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
     let settled = fs::read_to_string(&file).unwrap();
     assert!(
@@ -248,7 +248,7 @@ fn a_narrowed_pi_delegation_list_survives_the_fork() {
     .unwrap();
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Pi).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let settled = fs::read_to_string(&file).unwrap();
@@ -286,7 +286,7 @@ fn a_deleted_pi_delegation_list_survives_the_fork() {
     fs::write(&file, &without).unwrap();
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Pi).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let settled = fs::read_to_string(&file).unwrap();
@@ -438,7 +438,7 @@ fn a_rendering_replaced_with_prose_still_forks() {
     fs::write(&file, "My own notes, and nothing the harness reads.\n").unwrap();
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let settled = fs::read_to_string(&file).unwrap();

@@ -124,7 +124,7 @@ fn a_file_where_a_tree_goes_is_taken_over_too() {
     );
 
     let report = plan_apply(&w.env, &w.scope, &take_over()).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert!(
         fs::read_to_string(position.join("SKILL.md"))
             .unwrap()
@@ -153,7 +153,7 @@ fn a_directory_where_a_file_goes_is_taken_over_too() {
     );
 
     let report = plan_apply(&w.env, &w.scope, &take_over()).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert!(
         fs::read_to_string(&position).unwrap().contains("Upstream."),
         "the file lands where the folder was"
@@ -182,7 +182,7 @@ fn one_tree_shared_by_two_tools_is_moved_aside_once() {
         .filter(|op| op.line().starts_with("Move the files already at"))
         .count();
     assert_eq!(moves, 1, "{:?}", report.plan.ops);
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert!(
         fs::read_to_string(canonical.join("SKILL.md"))
             .unwrap()

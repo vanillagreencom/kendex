@@ -45,7 +45,7 @@ fn the_line_names_the_tool_it_is_about() {
         "[skills.deploy]\nsource = \"cat\"\n",
     );
     let planned = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &planned.plan, None).unwrap();
+    apply::execute(&w.env, &planned.plan).unwrap();
     declare(
         &w,
         "copy",
@@ -80,7 +80,7 @@ fn the_line_names_the_tool_it_is_about() {
 fn a_skill_that_changed_how_it_installs_is_reported_by_the_check_too() {
     let w = world();
     let first = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
-    apply::execute(&w.env, &first.plan, None).unwrap();
+    apply::execute(&w.env, &first.plan).unwrap();
 
     declare(
         &w,

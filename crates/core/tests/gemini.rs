@@ -85,20 +85,20 @@ fn fixture(declarations: &str) -> Fixture {
 #[allow(clippy::unwrap_used)]
 fn apply_now(f: &Fixture) -> EngineReport {
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     report
 }
 
 #[allow(clippy::unwrap_used)]
 fn toggle(f: &Fixture, name: &str, enabled: bool) {
     let report = ops::toggle(&f.env, &f.scope, &[name.to_owned()], None, enabled).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]
 fn remove(f: &Fixture, name: &str) {
     let report = ops::remove(&f.env, &f.scope, &[name.to_owned()], None, false).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]
@@ -299,7 +299,7 @@ fn a_project_scope_server_says_so_instead_of_switching_off() {
         "{:?}",
         report.notes
     );
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(!settings(&f).exists());
 }
 
@@ -322,7 +322,7 @@ fn a_global_server_switches_off_in_the_file_gemini_keeps_that_state_in() {
     let global = Scope::Global;
     let apply_global = || {
         let report = audit(&f.env, &global).unwrap();
-        apply::execute(&f.env, &report.plan, None).unwrap();
+        apply::execute(&f.env, &report.plan).unwrap();
     };
 
     declare(true);
@@ -351,6 +351,6 @@ fn a_global_server_switches_off_in_the_file_gemini_keeps_that_state_in() {
     );
 
     let report = ops::remove(&f.env, &global, &["gh".to_owned()], None, false).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(json(&settings)["mcpServers"].get("gh").is_none());
 }

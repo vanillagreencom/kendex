@@ -230,7 +230,7 @@ fn write_customize(
     // The bound preconditions refuse a file that moved between the checks
     // above and the write itself, and that refusal is the same answer the
     // checks give — so it reaches the editor as the same choice.
-    apply::execute(env, &report.plan, None).map_err(|error| match stale_at(&error, &targets) {
+    apply::execute(env, &report.plan).map_err(|error| match stale_at(&error, &targets) {
         true => WriteRefused::Stale,
         false => WriteRefused::Failed {
             message: error.to_string(),

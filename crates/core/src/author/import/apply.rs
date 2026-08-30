@@ -1,7 +1,5 @@
 //! The copy itself: previewed selections into an authored catalog, with
-//! every refusal decided before the first byte is written, the whole
-//! output staged inside the target, and each package moved into place by
-//! one rename after the last stage write succeeded.
+//! every refusal decided before the first byte is written.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -14,9 +12,9 @@ use super::{Bytes, CandidateGroup, ImportOutcome, ImportSelection, ResolvedSelec
 
 /// Apply the wizard's selections to `target` — a folder registered under
 /// Mine, canonicalized, never a symlink. The inventory is re-resolved so
-/// every hash is revalidated; all refusals are found before anything is
-/// written, the files are staged under the target, and each package
-/// arrives by rename. A refused apply writes nothing.
+/// every hash is revalidated, and every refusal — an unusable name, a
+/// destination already holding other bytes, a licence with no basis — is
+/// found before the first byte is written.
 pub fn apply(
     env: &Env,
     scopes: &[Scope],
@@ -74,14 +72,7 @@ pub fn apply(
         written: Vec::new(),
         already_present: Vec::new(),
     };
-    let staging = target.join(".kendex-import-staging");
-    if staging.exists() {
-        std::fs::remove_dir_all(&staging).map_err(|e| CoreError::io(&staging, e))?;
-    }
-    let staged = stage(&target, &staging, &resolved, selections, &mut outcome);
-    let landed = staged.and_then(|staged| land(&target, staged, &mut outcome));
-    let _ = std::fs::remove_dir_all(&staging);
-    landed?;
+    write_all(&target, &resolved, selections, &mut outcome)?;
     Ok(outcome)
 }
 
@@ -194,24 +185,20 @@ fn destination(target: &Path, kind: ItemKind, name: &str) -> PathBuf {
     }
 }
 
-/// One staged package ready to land: where it is now, where it goes.
-struct StagedWrite {
-    from: PathBuf,
-    to: PathBuf,
-    label: String,
-}
-
-/// Write every selection under the staging dir. Already-present exact
-/// bytes are noted and skipped; a destination holding different bytes, or
-/// a case-folding sibling, refuses here — before anything lands.
-fn stage(
+/// Write every selection at its destination.
+///
+/// Two passes, so a refusal reaches nothing: the first decides every one
+/// this copy can make — a destination already holding other bytes, a
+/// case-folding sibling, a notice file whose bytes differ — and notes the
+/// exact copies that are already there; the second writes.
+fn write_all(
     target: &Path,
-    staging: &Path,
     resolved: &[(usize, ResolvedSelection, PathBuf)],
     selections: &[ImportSelection],
     outcome: &mut ImportOutcome,
-) -> Result<Vec<StagedWrite>> {
-    let mut staged = Vec::new();
+) -> Result<()> {
+    let mut writes: Vec<(PathBuf, &[u8])> = Vec::new();
+    let mut written: Vec<String> = Vec::new();
     for (at, answer, dest) in resolved {
         let selection = &selections[*at];
         let label = rel_name(target, dest);
@@ -232,49 +219,32 @@ fn stage(
             }
             continue;
         }
-        let from = staging.join(format!("{at}")).join(
-            dest.file_name()
-                .map(|leaf| leaf.to_os_string())
-                .unwrap_or_default(),
-        );
         match &answer.bytes {
-            Bytes::File(bytes) => {
-                if let Some(parent) = from.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
-                }
-                std::fs::write(&from, bytes).map_err(|e| CoreError::io(&from, e))?;
-                executable_if_script(&from, bytes)?;
-            }
+            Bytes::File(bytes) => writes.push((dest.clone(), bytes)),
             Bytes::Tree(files) => {
                 for (rel, bytes) in files {
-                    let file = from.join(rel);
-                    if let Some(parent) = file.parent() {
-                        std::fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
-                    }
-                    std::fs::write(&file, bytes).map_err(|e| CoreError::io(&file, e))?;
-                    executable_if_script(&file, bytes)?;
+                    writes.push((dest.join(rel), bytes));
                 }
             }
         }
-        staged.push(StagedWrite {
-            from,
-            to: dest.clone(),
-            label,
-        });
-        stage_notices(target, staging, answer, outcome, &mut staged)?;
+        written.push(label);
+        plan_notices(target, answer, &mut writes, &mut written)?;
     }
-    Ok(staged)
+    for (dest, bytes) in &writes {
+        put(dest, bytes)?;
+    }
+    outcome.written.extend(written);
+    Ok(())
 }
 
 /// Licence and attribution files of a licensed origin land under
 /// `NOTICES/<source>/`, written once; existing identical bytes are left
 /// alone, different bytes refuse.
-fn stage_notices(
+fn plan_notices<'a>(
     target: &Path,
-    staging: &Path,
-    answer: &ResolvedSelection,
-    outcome: &mut ImportOutcome,
-    staged: &mut Vec<StagedWrite>,
+    answer: &'a ResolvedSelection,
+    writes: &mut Vec<(PathBuf, &'a [u8])>,
+    written: &mut Vec<String>,
 ) -> Result<()> {
     let Some((source, _, _)) = answer.group.licensed_source() else {
         return Ok(());
@@ -282,7 +252,7 @@ fn stage_notices(
     for (name, bytes) in &answer.notices {
         let dest = target.join("NOTICES").join(source).join(name);
         let label = rel_name(target, &dest);
-        if staged.iter().any(|write| write.to == dest) {
+        if written.contains(&label) {
             continue;
         }
         if dest.symlink_metadata().is_ok() {
@@ -294,44 +264,20 @@ fn stage_notices(
             }
             continue;
         }
-        let from = staging.join("notices").join(source).join(name);
-        if let Some(parent) = from.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
-        }
-        std::fs::write(&from, bytes).map_err(|e| CoreError::io(&from, e))?;
-        outcome.written.push(label.clone());
-        staged.push(StagedWrite {
-            from,
-            to: dest,
-            label,
-        });
+        writes.push((dest, bytes));
+        written.push(label);
     }
     Ok(())
 }
 
-/// Move every staged package into place. Each destination is re-verified
-/// as still absent right before its rename, so bytes that appeared during
-/// staging refuse instead of being replaced.
-fn land(target: &Path, staged: Vec<StagedWrite>, outcome: &mut ImportOutcome) -> Result<()> {
-    let _ = target;
-    for write in staged {
-        if write.to.symlink_metadata().is_ok() {
-            return Err(CoreError::Authoring {
-                message: format!(
-                    "{} appeared while the import was being prepared — nothing more was written",
-                    write.to.display()
-                ),
-            });
-        }
-        if let Some(parent) = write.to.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
-        }
-        std::fs::rename(&write.from, &write.to).map_err(|e| CoreError::io(&write.to, e))?;
-        if !outcome.written.contains(&write.label) {
-            outcome.written.push(write.label);
-        }
+/// One file at its destination, the directory above it made, and the
+/// executable bit kept where the bytes open with a shebang.
+fn put(dest: &Path, bytes: &[u8]) -> Result<()> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
     }
-    Ok(())
+    std::fs::write(dest, bytes).map_err(|e| CoreError::io(dest, e))?;
+    executable_if_script(dest, bytes)
 }
 
 /// A sibling whose name folds to the destination's spelling occupies it on

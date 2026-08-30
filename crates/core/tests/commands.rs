@@ -79,13 +79,13 @@ fn add_skill(f: &Fixture, name: &str, body: &str) {
 #[allow(clippy::unwrap_used)]
 fn apply_now(f: &Fixture) {
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]
 fn toggle(f: &Fixture, name: &str, enabled: bool) {
     let report = ops::toggle(&f.env, &f.scope, &[name.to_owned()], None, enabled).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]
@@ -163,7 +163,7 @@ fn a_command_installs_as_a_skill_at_global_scope_too() {
     .unwrap();
 
     let report = audit(&f.env, &Scope::Global).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 
     let skill = f.env.home.join(".codex/skills/ship/SKILL.md");
     assert!(
@@ -194,7 +194,7 @@ fn a_skill_of_the_same_name_keeps_it_and_the_command_is_renamed() {
         "{:?}",
         report.warnings
     );
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 
     let skills = f.project.join(".agents/skills");
     assert!(
@@ -261,7 +261,7 @@ fn removing_a_command_takes_the_generated_skill_with_it() {
     assert!(tree.is_dir());
 
     let report = ops::remove(&f.env, &f.scope, &["ship".to_owned()], None, false).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(!tree.exists(), "the emitted tree is what comes off disk");
     assert!(is_clean(&f));
 }
@@ -275,7 +275,7 @@ fn harnesses_that_only_read_commands_get_nothing_written() {
     );
     let report = audit(&f.env, &f.scope).unwrap();
     assert!(report.plan.ops.is_empty(), "{:?}", report.plan.ops);
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 
     for dir in [".opencode", ".cursor", ".agents"] {
         assert!(!f.project.join(dir).exists(), "{dir} was written to");

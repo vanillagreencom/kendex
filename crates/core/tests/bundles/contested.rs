@@ -38,7 +38,7 @@ fn a_member_removed_while_the_catalog_is_offline_stays_removed() {
 
     fs::rename(&offline, &f.source).unwrap();
     let report = plan_refresh(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(
         !installed(&f, ItemKind::Skill, "docs"),
         "the catalog's return brought it back"
@@ -55,7 +55,7 @@ fn a_declared_member_is_not_held_back_by_a_recorded_removal() {
         "[bundles.starter]\nsource = \"cat\"\n\n[skills.docs]\nsource = \"cat\"\n\n[suppressed]\nskill = [\"docs\"]\n",
     );
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 
     assert!(installed(&f, ItemKind::Skill, "docs"));
     assert!(
@@ -88,7 +88,7 @@ fn a_member_two_sets_carry_installs_on_and_names_what_they_disagree_about() {
     );
 
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 
     assert!(
         f.project.join(".claude/skills/github/SKILL.md").exists(),

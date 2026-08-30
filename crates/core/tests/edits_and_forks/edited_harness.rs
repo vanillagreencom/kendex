@@ -118,7 +118,7 @@ fn discarding_edits_can_move_a_hold_in_the_same_apply() {
         },
     )
     .unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert!(fs::read_to_string(skill_file(&w)).unwrap().contains("Two."));
     assert!(audit(&w.env, &w.scope).unwrap().drift.is_empty());
 }

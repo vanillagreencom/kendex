@@ -63,7 +63,7 @@ fn a_name_opencode_cannot_load_blocks_there_while_claude_still_installs() {
         report.drift
     );
 
-    apply::execute(&env, &report.plan, None).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
     // OpenCode reads the shared tree, so a name it cannot load keeps the
     // shared tree empty — writing it there would put the rejected file
     // exactly where OpenCode looks. Claude Code, whose loader accepts the

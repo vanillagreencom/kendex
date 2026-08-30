@@ -144,6 +144,6 @@ fn a_link_at_the_new_registry_does_not_bring_the_old_one_back() {
         "{:?}",
         report.drift
     );
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
     assert_eq!(fs::read_to_string(&theirs).unwrap(), before);
 }

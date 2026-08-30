@@ -52,7 +52,7 @@ fn global(body: &str) -> Global {
 #[allow(clippy::unwrap_used)]
 fn apply(g: &Global) {
     let report = audit(&g.env, &Scope::Global).unwrap();
-    kendex_core::apply::execute(&g.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&g.env, &report.plan).unwrap();
 }
 
 /// The layout an earlier kendex wrote at the global scope: the script

@@ -89,7 +89,7 @@ fn keeping_a_pinned_item_leaves_the_scope_plannable() {
         &[HarnessId::Claude],
     )
     .unwrap();
-    apply::execute(&env, &plan, None).unwrap();
+    apply::execute(&env, &plan).unwrap();
 
     let written = fs::read_to_string(manifest::manifest_path(&env, &scope)).unwrap();
     assert!(

@@ -66,7 +66,7 @@ fn fixture() -> Fixture {
 fn a_refused_rendering_is_a_conflict_and_removes_the_wide_artifact() {
     let f = fixture();
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     let pi_agent = f.project.join(".pi/agents/rust.md");
     assert!(pi_agent.is_file());
 
@@ -85,7 +85,7 @@ fn a_refused_rendering_is_a_conflict_and_removes_the_wide_artifact() {
     assert!(conflict.detail.contains("widen"));
     assert!(conflict.detail.contains("trash"));
 
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert!(
         !pi_agent.exists(),
         "the wide pi rendering must come off disk"

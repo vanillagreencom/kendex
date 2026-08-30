@@ -36,7 +36,7 @@ fn adopting_a_handmade_skill_moves_merges_and_round_trips() {
         &[HarnessId::Claude],
     )
     .unwrap();
-    crate::apply::execute(&env, &plan, None).unwrap();
+    crate::apply::execute(&env, &plan).unwrap();
 
     // The real directory moved into the shared tree — the content of
     // record, not a copy of it — and nothing was left where it was.
@@ -46,7 +46,7 @@ fn adopting_a_handmade_skill_moves_merges_and_round_trips() {
 
     // Follow-up apply renders the managed replacement, drift-clean.
     let report = audit(&env, &scope).unwrap();
-    crate::apply::execute(&env, &report.plan, None).unwrap();
+    crate::apply::execute(&env, &report.plan).unwrap();
     let link = project.join(".claude/skills/handmade");
     assert!(link.is_symlink());
     let rendered = fs::read_to_string(project.join(".agents/skills/handmade/SKILL.md")).unwrap();
@@ -80,7 +80,7 @@ fn an_earlier_copy_at_the_home_goes_to_the_trash_not_under_the_new_one() {
         &[HarnessId::Claude],
     )
     .unwrap();
-    crate::apply::execute(&env, &plan, None).unwrap();
+    crate::apply::execute(&env, &plan).unwrap();
 
     assert_eq!(
         fs::read_to_string(earlier.join("SKILL.md")).unwrap(),
@@ -123,7 +123,7 @@ fn adoption_binds_only_the_harnesses_that_had_the_item() {
         &[HarnessId::Claude],
     )
     .unwrap();
-    crate::apply::execute(&env, &plan, None).unwrap();
+    crate::apply::execute(&env, &plan).unwrap();
 
     let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
     assert!(manifest.contains("[skills.handmade]"));
@@ -133,7 +133,7 @@ fn adoption_binds_only_the_harnesses_that_had_the_item() {
     );
 
     let report = audit(&env, &scope).unwrap();
-    crate::apply::execute(&env, &report.plan, None).unwrap();
+    crate::apply::execute(&env, &report.plan).unwrap();
     assert!(project.join(".claude/skills/handmade").is_symlink());
     assert!(!project.join(".opencode/skills/handmade").exists());
 }
@@ -326,7 +326,7 @@ fn a_plain_agent_and_a_namespaced_agent_both_adopt() {
             "{name} should be offered"
         );
         let plan = adopt(&env, &scope, ItemKind::Agent, name, &[HarnessId::Claude]).unwrap();
-        crate::apply::execute(&env, &plan, None).unwrap();
+        crate::apply::execute(&env, &plan).unwrap();
     }
 
     let local = project.join(".kendex-local/agents");

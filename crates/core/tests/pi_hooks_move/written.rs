@@ -60,7 +60,7 @@ fn a_live_old_registration_is_not_a_finished_move() {
         "and it is reported: {:?}",
         report.drift
     );
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     assert_eq!(
         fs::read_to_string(w.dot().join("hooks/guard.sh")).unwrap(),
@@ -120,7 +120,7 @@ fn a_first_install_beside_somebody_elses_files_is_finished() {
         },
     )
     .unwrap();
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     assert_eq!(
         fs::read_to_string(w.dot().join("hooks/guard.sh")).unwrap(),
@@ -159,7 +159,7 @@ fn a_disabled_hook_finishes_without_a_registration_to_stand_on() {
         report.notes
     );
     assert!(report.drift.is_empty(), "{:?}", report.drift);
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
     assert_eq!(
         fs::read_to_string(w.dot().join("hooks/guard.sh")).unwrap(),
         "#!/bin/sh\n# theirs\n"
@@ -187,7 +187,7 @@ fn a_hook_nothing_declares_keeps_the_completion_it_earned() {
         },
     )
     .unwrap();
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
     assert!(
         !w.dot().join("hooks").exists(),
         "the copy nothing asks for is retired"
@@ -216,7 +216,7 @@ fn a_hook_nothing_declares_keeps_the_completion_it_earned() {
         },
     )
     .unwrap();
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
     assert_eq!(
         fs::read_to_string(w.dot().join("hooks/guard.sh")).unwrap(),
         theirs
@@ -288,7 +288,7 @@ fn a_moved_new_registration_holds_even_with_the_old_layout_gone() {
         "and say what registering again would do: {}",
         row.detail
     );
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     assert_eq!(
         fs::read_to_string(&registry).unwrap(),

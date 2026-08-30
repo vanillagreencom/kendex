@@ -44,7 +44,7 @@ fn a_registration_the_edit_cannot_reach_at_the_new_path_holds() {
         "and say what refreshing would do: {}",
         row.detail
     );
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     assert_eq!(
         fs::read_to_string(&registry).unwrap(),
@@ -95,7 +95,7 @@ fn a_registration_the_edit_cannot_reach_keeps_its_script_through_a_removal() {
         "the person is told which shape is in the way: {:?}",
         report.drift
     );
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(
         script.is_file(),
@@ -149,7 +149,7 @@ fn naming_a_hook_does_not_reach_an_entry_the_edit_steps_over() {
         "the person is told which shape is in the way: {:?}",
         report.drift
     );
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(script.is_file(), "the script stays with what runs it");
     assert_eq!(fs::read_to_string(&registry).unwrap(), theirs);
@@ -179,7 +179,7 @@ fn a_linked_new_registry_is_never_written_through() {
         "and name what is in the way: {}",
         row.detail
     );
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     assert_eq!(
         fs::read_to_string(&theirs).unwrap(),
@@ -219,7 +219,7 @@ fn a_linked_new_registry_holds_the_first_install_too() {
         "nothing is planned against it: {:?}",
         report.plan.ops
     );
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     assert_eq!(
         fs::read_to_string(&theirs).unwrap(),
@@ -256,7 +256,7 @@ fn a_registry_that_became_a_link_after_planning_is_not_written_through() {
     fs::remove_file(&registry).unwrap();
     std::os::unix::fs::symlink(&theirs, &registry).unwrap();
 
-    let ran = kendex_core::apply::execute(&w.env, &report.plan, None);
+    let ran = kendex_core::apply::execute(&w.env, &report.plan);
     assert!(
         ran.is_err(),
         "the apply aborts on a path that is no longer what was proven"

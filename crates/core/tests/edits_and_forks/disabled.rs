@@ -35,7 +35,7 @@ fn an_edit_made_while_disabled_survives_being_re_enabled() {
     )
     .unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     let disabled = w.home.join("app/.claude/agents/rev.md.disabled");
     assert!(disabled.is_file(), "disabled agent keeps its bytes");
     fs::write(&disabled, "my edited disabled agent").unwrap();
@@ -54,7 +54,7 @@ fn an_edit_made_while_disabled_survives_being_re_enabled() {
         Some(DriftCause::LocalEdit),
         "an edit made while off is still an edit: {row:?}"
     );
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     let enabled = w.home.join("app/.claude/agents/rev.md");
     let content = fs::read_to_string(&enabled)
         .or_else(|_| fs::read_to_string(&disabled))
@@ -95,7 +95,7 @@ fn an_edit_landing_after_the_enable_was_planned_refuses_the_toggle() {
     )
     .unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     let disabled = w.home.join("app/.claude/agents/rev.md.disabled");
     assert!(disabled.is_file());
 
@@ -112,7 +112,7 @@ fn an_edit_landing_after_the_enable_was_planned_refuses_the_toggle() {
     );
     fs::write(&disabled, "edited after planning").unwrap();
 
-    let error = apply::execute(&w.env, &report.plan, None).unwrap_err();
+    let error = apply::execute(&w.env, &report.plan).unwrap_err();
     assert!(
         matches!(&error, CoreError::RolledBack { cause, .. }
             if matches!(**cause, CoreError::PlanStale { .. })),
@@ -201,7 +201,7 @@ fn a_disabled_skills_edit_forks_in_source_form() {
     assert_eq!(row.forkable_harness, Some(HarnessId::Claude));
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     let local = w.home.join("app/.kendex-local/skills/gh");
     assert!(
         local.join("SKILL.md").is_file(),
@@ -209,7 +209,7 @@ fn a_disabled_skills_edit_forks_in_source_form() {
     );
     assert!(!local.join("SKILL.md.disabled").exists());
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert!(audit(&w.env, &w.scope).unwrap().drift.is_empty());
     assert!(
         fs::read_to_string(&disabled).unwrap().contains("My edit."),
@@ -290,7 +290,7 @@ fn fork_beside_ignores_the_enabled_path_for_a_disabled_agent() {
     fs::write(&stray, "not in the way").unwrap();
 
     let plan = beside_rev_edited(&w).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     let own = fs::read_to_string(w.home.join("app/.kendex-local/agents/rev-edited.md")).unwrap();
     assert!(
         own.contains("name: rev-edited") && own.contains("My agent."),

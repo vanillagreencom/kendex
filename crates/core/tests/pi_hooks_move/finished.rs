@@ -21,7 +21,7 @@ fn a_directory_appearing_after_the_move_says_nothing() {
 
     let report = audit(&w.env, &w.scope()).unwrap();
     assert!(report.notes.is_empty(), "{:?}", report.notes);
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
     assert!(w.dot().join("hooks/theirs.sh").is_file());
 }
 
@@ -40,7 +40,7 @@ fn an_empty_directory_recreated_after_the_move_survives() {
     for pass in 1..=2 {
         let report = audit(&w.env, &w.scope()).unwrap();
         assert!(report.notes.is_empty(), "pass {pass}: {:?}", report.notes);
-        kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+        kendex_core::apply::execute(&w.env, &report.plan).unwrap();
         assert!(
             w.dot().join("hooks").is_dir(),
             "pass {pass}: the directory is the person's"

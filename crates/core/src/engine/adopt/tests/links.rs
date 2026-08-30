@@ -46,7 +46,7 @@ fn a_shared_skill_folder_adopts_the_target_and_keeps_every_tool_reading() {
         &[HarnessId::Claude],
     )
     .unwrap();
-    crate::apply::execute(&env, &plan, None).unwrap();
+    crate::apply::execute(&env, &plan).unwrap();
 
     // The folder moved into the shared tree and every link that read it was
     // cleared, so nothing is left pointing at where it used to be.
@@ -58,7 +58,7 @@ fn a_shared_skill_folder_adopts_the_target_and_keeps_every_tool_reading() {
 
     // The follow-up apply restores the sharing from kendex's copy.
     let report = crate::engine::audit(&env, &scope).unwrap();
-    crate::apply::execute(&env, &report.plan, None).unwrap();
+    crate::apply::execute(&env, &report.plan).unwrap();
     let through_claude =
         fs::read_to_string(project.join(".claude/skills/browser/SKILL.md")).unwrap();
     assert!(through_claude.contains("Shared content."));
@@ -164,7 +164,7 @@ fn a_target_that_changed_after_planning_fails_the_apply() {
     .unwrap();
     fs::write(shared.join("SKILL.md"), "changed under the plan").unwrap();
 
-    assert!(crate::apply::execute(&env, &plan, None).is_err());
+    assert!(crate::apply::execute(&env, &plan).is_err());
     assert!(
         shared.join("SKILL.md").is_file(),
         "the folder stays where it was"
@@ -292,7 +292,7 @@ fn a_namespaced_skill_is_adopted_at_its_rendered_position() {
         &[HarnessId::Claude],
     )
     .unwrap();
-    crate::apply::execute(&env, &plan, None).unwrap();
+    crate::apply::execute(&env, &plan).unwrap();
 
     // A namespaced name keeps the capture: the shared tree would store it
     // under a flattened leaf the name cannot be looked up by, so it is not
@@ -309,7 +309,7 @@ fn a_namespaced_skill_is_adopted_at_its_rendered_position() {
     // The follow-up apply puts it back where the tool reads it, and the
     // scope is drift-clean.
     let report = audit(&env, &scope).unwrap();
-    crate::apply::execute(&env, &report.plan, None).unwrap();
+    crate::apply::execute(&env, &report.plan).unwrap();
     assert!(rendered.exists(), "the tool reads it at its rendered name");
     assert!(!project.join(".claude/skills/data-science").exists());
     let after = audit(&env, &scope).unwrap();
@@ -379,10 +379,10 @@ fn a_link_at_this_items_own_home_is_adopted() {
         &[HarnessId::Claude],
     )
     .unwrap();
-    crate::apply::execute(&env, &plan, None).unwrap();
+    crate::apply::execute(&env, &plan).unwrap();
     assert!(home.join("SKILL.md").is_file());
     let report = audit(&env, &scope).unwrap();
-    crate::apply::execute(&env, &report.plan, None).unwrap();
+    crate::apply::execute(&env, &report.plan).unwrap();
     assert!(project.join(".claude/skills/handmade").is_symlink());
     assert_eq!(audit(&env, &scope).unwrap().drift, vec![]);
 }

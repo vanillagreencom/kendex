@@ -135,7 +135,7 @@ fn sync_and_apply(w: &World) {
         .unwrap();
     remote::sync_sources(&w.env, &loaded).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]
@@ -196,7 +196,7 @@ fn set_rev_normalizes_a_tag_to_its_commit() {
     sync_and_apply(&w);
 
     let report = package::set_rev(&w.env, &w.scope, ItemKind::Skill, "gh", Some("v1")).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     let text = fs::read_to_string(manifest::manifest_path(&w.env, &w.scope)).unwrap();
     assert!(
@@ -278,7 +278,7 @@ fn hold_at_install_writes_the_resolved_commit_as_rev() {
         ..Default::default()
     };
     let report = kendex_core::engine::ops::add(&w.env, &w.scope, &request).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     let text = fs::read_to_string(manifest::manifest_path(&w.env, &w.scope)).unwrap();
     assert!(
@@ -385,7 +385,7 @@ fn two_parents_pinning_different_revs_of_one_dependency_change_nothing() {
         ),
     );
     let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
     assert!(installed_body(&w, "helper").contains("Helper one."));
 }
 

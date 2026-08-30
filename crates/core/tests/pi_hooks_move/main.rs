@@ -114,7 +114,7 @@ fn world_without_hooks() -> World {
 #[allow(clippy::unwrap_used)]
 fn apply(w: &World) {
     let report = audit(&w.env, &w.scope()).unwrap();
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]

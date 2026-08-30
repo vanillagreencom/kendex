@@ -39,7 +39,7 @@ fn a_reference_can_carry_the_revision_it_reads() {
         ("here", "../my@catalog"),
     ] {
         let report = add_source(&env, &scope, name, reference).unwrap();
-        crate::apply::execute(&env, &report.plan, None).unwrap();
+        crate::apply::execute(&env, &report.plan).unwrap();
     }
     let manifest = load_current(&env, &scope).unwrap().unwrap();
 
@@ -64,9 +64,9 @@ fn removal_is_blocked_while_referenced_then_allowed() {
     assert!(error.to_string().contains("disable the source"));
 
     let report = crate::engine::ops::remove(&env, &scope, &["gh".to_owned()], None, false).unwrap();
-    crate::apply::execute(&env, &report.plan, None).unwrap();
+    crate::apply::execute(&env, &report.plan).unwrap();
     let report = remove_source(&env, &scope, "cat").unwrap();
-    crate::apply::execute(&env, &report.plan, None).unwrap();
+    crate::apply::execute(&env, &report.plan).unwrap();
     assert!(list_sources(&env, &scope).unwrap().is_empty());
 }
 
@@ -74,7 +74,7 @@ fn removal_is_blocked_while_referenced_then_allowed() {
 fn disable_deactivates_without_drift_and_reenable_restores() {
     let (_tmp, env, scope) = fixture();
     let report = crate::engine::audit(&env, &scope).unwrap();
-    crate::apply::execute(&env, &report.plan, None).unwrap();
+    crate::apply::execute(&env, &report.plan).unwrap();
     let link = match &scope {
         Scope::Project { root } => root.join(".claude/skills/gh"),
         Scope::Global => unreachable!("fixture scope is a project"),
@@ -82,7 +82,7 @@ fn disable_deactivates_without_drift_and_reenable_restores() {
     assert!(link.is_symlink());
 
     let report = toggle_source(&env, &scope, "cat", false).unwrap();
-    crate::apply::execute(&env, &report.plan, None).unwrap();
+    crate::apply::execute(&env, &report.plan).unwrap();
     // Declared but inactive: the artifact stays (nothing to render it
     // away against), and audit reports no drift for it.
     let after = crate::engine::audit(&env, &scope).unwrap();
@@ -90,7 +90,7 @@ fn disable_deactivates_without_drift_and_reenable_restores() {
     assert!(!after.drift.iter().any(|r| r.name == "gh"));
 
     let report = toggle_source(&env, &scope, "cat", true).unwrap();
-    crate::apply::execute(&env, &report.plan, None).unwrap();
+    crate::apply::execute(&env, &report.plan).unwrap();
     let clean = crate::engine::audit(&env, &scope).unwrap();
     assert_eq!(clean.drift, vec![]);
     assert!(link.is_symlink());

@@ -31,7 +31,7 @@ fn forking_a_claude_agent_keeps_its_denies_its_allowlist_and_one_banner() {
     edit_body(&file);
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let source = fs::read_to_string(captured(&w, "rev")).unwrap();
@@ -68,7 +68,7 @@ fn forking_a_gemini_agent_keeps_its_allowlist_and_the_other_tools_denies() {
     edit_body(&file);
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let text = fs::read_to_string(&file).unwrap();
@@ -103,7 +103,7 @@ fn forking_a_pi_agent_keeps_its_deny_list_and_one_banner() {
     edit_body(&file);
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Pi).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let text = fs::read_to_string(&file).unwrap();
@@ -129,7 +129,7 @@ fn an_ordinary_agent_still_forks() {
     );
     edit_body(&rendered(&w, HarnessId::Claude, "rev"));
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
     assert!(
         fs::read_to_string(rendered(&w, HarnessId::Claude, "rev"))
@@ -177,7 +177,7 @@ fn the_generated_sections_are_written_once_after_a_fork() {
     edit_body(&file);
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     // Every generated section is keyed by the agent's name and travels
@@ -257,7 +257,7 @@ fn a_fork_refuses_when_the_scope_loses_the_source_its_skill_came_from() {
     edit_body(&file);
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
     let text = fs::read_to_string(&file).unwrap();
     assert_eq!(times(&text, "## Required Skills"), 1, "{text}");
@@ -316,7 +316,7 @@ fn a_fork_refuses_without_blaming_a_source_that_never_supplied_the_skill() {
     edit_body(&file);
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     // The supplying source goes. `cat` stays, enabled, and never held it.
@@ -360,7 +360,7 @@ fn a_fork_keeps_a_skill_adopted_in_place() {
     edit_body(&file);
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let text = fs::read_to_string(&file).unwrap();
@@ -517,7 +517,7 @@ fn an_indented_first_line_keeps_its_indentation() {
     .unwrap();
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan, None).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
     let source = fs::read_to_string(captured(&w, "rev")).unwrap();

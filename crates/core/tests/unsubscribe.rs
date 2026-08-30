@@ -52,7 +52,7 @@ fn world(
 #[allow(clippy::unwrap_used)]
 fn apply_now(env: &Env, scope: &Scope) {
     let report = kendex_core::engine::audit(env, scope).unwrap();
-    apply::execute(env, &report.plan, None).unwrap();
+    apply::execute(env, &report.plan).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]
@@ -102,7 +102,7 @@ fn removing_a_source_takes_its_closure_including_derived_deps() {
 
     // Remove uninstalls the whole closure and drops the source.
     let report = detach::remove(&env, &scope, "cat", false).unwrap();
-    apply::execute(&env, &report.plan, None).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
     assert!(!scope_skill(&scope, "gh").exists());
     assert!(!scope_skill(&scope, "common").exists());
     assert!(!manifest_of(&env, &scope).sources.contains_key("cat"));
@@ -143,7 +143,7 @@ fn keeping_a_sources_packages_detaches_them_to_local() {
     assert!(scope_skill(&scope, "gh").exists());
 
     let plan = detach::source(&env, &scope, "cat").unwrap();
-    apply::execute(&env, &plan, None).unwrap();
+    apply::execute(&env, &plan).unwrap();
 
     let manifest = manifest_of(&env, &scope);
     assert!(!manifest.sources.contains_key("cat"), "source removed");
@@ -157,7 +157,7 @@ fn keeping_a_sources_packages_detaches_them_to_local() {
     assert!(local.join("skills/gh/SKILL.md").exists(), "copied to local");
     // A re-plan is clean and the skill is still installed.
     let after = kendex_core::engine::audit(&env, &scope).unwrap();
-    apply::execute(&env, &after.plan, None).unwrap();
+    apply::execute(&env, &after.plan).unwrap();
     assert!(
         scope_skill(&scope, "gh").exists(),
         "still installed from local"
@@ -263,7 +263,7 @@ fn a_member_another_bundle_carries_survives_removal() {
     );
 
     let report = detach::remove(&env, &scope, "cat", false).unwrap();
-    apply::execute(&env, &report.plan, None).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
     assert!(!scope_skill(&scope, "gh").exists(), "gh removed with cat");
     assert!(scope_skill(&scope, "shared").exists(), "shared stays");
 }
@@ -284,7 +284,7 @@ fn a_nested_name_round_trips_through_detach() {
     apply_now(&env, &scope);
 
     let plan = detach::source(&env, &scope, "cat").unwrap();
-    apply::execute(&env, &plan, None).unwrap();
+    apply::execute(&env, &plan).unwrap();
 
     let manifest = manifest_of(&env, &scope);
     assert_eq!(manifest.skills["plugin/item"].source, "local");
@@ -304,7 +304,7 @@ fn a_nested_name_round_trips_through_detach() {
         "the detached nested name reads back without conflict: {:?}",
         after.drift
     );
-    apply::execute(&env, &after.plan, None).unwrap();
+    apply::execute(&env, &after.plan).unwrap();
 }
 
 /// Keeping both a parent skill and a nested one under it does not write the
@@ -329,7 +329,7 @@ fn keeping_a_parent_and_a_nested_skill_does_not_clash() {
     apply_now(&env, &scope);
 
     let plan = detach::source(&env, &scope, "cat").unwrap();
-    apply::execute(&env, &plan, None).unwrap();
+    apply::execute(&env, &plan).unwrap();
 
     let local = kendex_core::source::local_source_root(&env, &scope);
     assert!(local.join("skills/plugin/SKILL.md").exists());
@@ -353,6 +353,6 @@ fn removing_an_empty_subscription_drops_it() {
     let (_tmp, env, scope, catalog) = world("", "");
     skill(&catalog, "gh", "body");
     let report = source_ops::remove_source(&env, &scope, "cat").unwrap();
-    apply::execute(&env, &report.plan, None).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
     assert!(!manifest_of(&env, &scope).sources.contains_key("cat"));
 }

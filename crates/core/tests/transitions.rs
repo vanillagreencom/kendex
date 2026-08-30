@@ -32,7 +32,7 @@ fn long_description() -> String {
 #[allow(clippy::unwrap_used)]
 fn apply_now(env: &Env, scope: &Scope) {
     let report = audit(env, scope).unwrap();
-    apply::execute(env, &report.plan, None).unwrap();
+    apply::execute(env, &report.plan).unwrap();
 }
 
 fn trashes(report: &kendex_core::engine::EngineReport, path: &Path) -> usize {
@@ -104,7 +104,7 @@ fn two_tools_refusing_one_shared_tree_still_applies() {
     let report = audit(&w.env, &scope).unwrap();
     let shared = project.join(".agents/skills/big");
     assert_eq!(trashes(&report, &shared), 1, "{:?}", report.plan.ops);
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     // The conflict is still reported, for both tools that share the tree.
     let after = audit(&w.env, &scope).unwrap();
@@ -125,7 +125,7 @@ fn two_tools_refusing_one_shared_tree_still_applies() {
         long_description()
     );
     assert!(!shared.exists());
-    apply::execute(&w.env, &after.plan, None).unwrap();
+    apply::execute(&w.env, &after.plan).unwrap();
 }
 
 /// Globally each tool links to one rendered tree. A refusal takes away the
@@ -148,7 +148,7 @@ fn a_refusal_keeps_the_tree_another_tool_still_reads() {
     put(&w.source.join("skills/big/SKILL.md"), &long_description());
     let report = audit(&w.env, &scope).unwrap();
     assert_eq!(trashes(&report, &rendered), 0, "{:?}", report.plan.ops);
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(!codex.exists() && !codex.is_symlink());
     assert_eq!(fs::read_link(&claude).unwrap(), rendered);
@@ -179,7 +179,7 @@ fn two_tools_sharing_one_link_position_still_applies() {
 
     let scope = Scope::Global;
     let report = audit(&env, &scope).unwrap();
-    apply::execute(&env, &report.plan, None).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
 
     let link = shared_root.join("skills/big");
     assert_eq!(

@@ -130,7 +130,7 @@ fn a_hook_with_no_replacement_this_pass_keeps_its_old_copy() {
         "{:?}",
         report.notes
     );
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(
         w.dot().join("hooks/guard.sh").is_file(),
