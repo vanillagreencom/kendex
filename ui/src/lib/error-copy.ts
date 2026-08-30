@@ -3,10 +3,14 @@
 // carry this denser, failure-specific prose too.
 import type { ProblemKind } from "@/stores/problems";
 
-// A v1 lock does not land here — it degrades with a note instead. This kind
-// means the lock or manifest is truly unreadable, not merely old.
+// Nothing converts a file from another version of kendex, so "old" and
+// "damaged" reach these kinds together: a lock this build cannot read is
+// lock-corrupt either way, and a manifest an older kendex wrote is
+// manifest-outdated. The two are kept apart because the remedies differ —
+// a lock is a cache to throw away, a manifest is what the person wrote.
 export const PROBLEM_HEADLINES: Record<ProblemKind, string> = {
   "lock-corrupt": "A kendex file in this project can't be read",
+  "manifest-outdated": "This project's manifest comes from an older version",
   "schema-too-new": "This project's kendex files come from a newer version",
   "manifest-invalid": "This project's manifest has a problem",
   other: "Something went wrong in this project",
@@ -16,7 +20,11 @@ export const PROBLEM_HEADLINES: Record<ProblemKind, string> = {
 export const PROBLEM_STEPS: Record<ProblemKind, string[]> = {
   "lock-corrupt": [
     "Rescan to retry",
-    "If it keeps failing, the file's contents are damaged — move it aside and apply again to write a fresh one",
+    "If it keeps failing, the file is damaged or from an older version of kendex — move it aside and apply again to write a fresh one",
+  ],
+  "manifest-outdated": [
+    "Move the project's kendex.toml aside — nothing converts it, and kendex leaves it exactly as you wrote it",
+    "Declare what you want again and apply; the file you moved is there to copy from",
   ],
   "schema-too-new": [
     "Update kendex to the latest version",

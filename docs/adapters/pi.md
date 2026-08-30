@@ -58,9 +58,19 @@ the name alone, and `tools/` when it holds entries beyond Pi's own `fd`/`rg`
 binaries and dotfiles. kendex keeps both scripts and registry one level
 down, under `kendex/` (`harness::pi::HOOK_HOME`), and writes nothing to
 `tools/` at either scope — an extension's `bin` entries link into the
-scope's `bin/`. Nothing reads or writes a `hooks.json` beside the root: one
-a prior kendex left there is inert, and `kendex remove` plus `kendex add`
-is what takes it away.
+scope's `bin/`.
+
+Beside the root, kendex does nothing at all. `engine::targets::pi_hook`
+names only `<root>/kendex/hooks.json`, `engine::owned::hook_owned` derives
+only `<root>/kendex/hooks/<name>.sh`, and `harness::pi::hook_surfaces`
+lists only the first — so a `hooks.json` or `hooks/` an older kendex left
+beside the root is read by nothing, written by nothing, scanned by
+nothing, listed by nothing and removed by nothing, `kendex remove`
+included. A refresh renders the hook under `kendex/` and stops there; what
+is beside the root stays exactly where it is, and both entries keep firing
+for as long as Pi loads them. Deleting them is the person's, by hand:
+`<root>/hooks.json` and the `<root>/hooks/` directory both, and the
+directory first — it is the one Pi warns about on the name alone.
 
 Enforcement is read live (`pi_ext::carrier::enforcement`): with the carrier
 registered in either scope's settings the hook is enforced; with no carrier

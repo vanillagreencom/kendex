@@ -153,8 +153,7 @@ fn plan_scope_once(
     )?;
 
     // Notes about the scope rather than about any one item: what the
-    // settings seed found, what the reserved-name move did, what the git
-    // posture changed.
+    // settings seed found, what the git posture changed.
     let mut scope_notes =
         plan_settings_seed(scope, &state, options, &mut new_lock, &mut ops, &mut drift)?;
 
@@ -274,8 +273,10 @@ fn fresh_lock(manifest: &Manifest, lock: &Lock, state: &desired::DesiredState) -
     }
 }
 
-/// Read-only audit for a scope. A legacy or absent manifest still reports
-/// unmanaged items; nothing is planned that would touch a legacy file.
+/// Read-only audit for a scope. A scope with no manifest still reports
+/// unmanaged items; one whose manifest or lock this build cannot read is
+/// refused at the door, so this answers for it with the refusal rather
+/// than with an empty report.
 pub fn audit(env: &Env, scope: &Scope) -> Result<EngineReport> {
     plan_apply(env, scope, &PlanOptions::default())
 }

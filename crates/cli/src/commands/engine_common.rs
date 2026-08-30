@@ -21,8 +21,8 @@ pub fn parse_harnesses(values: &[String]) -> Result<Vec<HarnessId>, String> {
 }
 
 /// What the plan declined to do, in its own words. A note is the only
-/// channel some passes have — the reserved-name move says here which file
-/// it left alone and why — so a verb that prints nothing else about the
+/// channel some passes have — the settings seed and the git posture say
+/// here what they found — so a verb that prints nothing else about the
 /// plan still prints these.
 pub fn print_notes(report: &EngineReport) {
     for line in &report.notes {

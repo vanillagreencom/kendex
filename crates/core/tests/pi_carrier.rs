@@ -318,3 +318,67 @@ fn a_command_registered_twice_holds_rather_than_adding_a_third() {
         "nothing is written beside entries the record cannot tell apart"
     );
 }
+
+/// A scope carrying the layout an older kendex wrote: script and registry
+/// beside the root, nothing under `kendex/`. Everything here reads or
+/// writes one level down, so the files beside the root are outside every
+/// path this build takes — including removal's. They stay exactly as they
+/// are, the refresh renders the hook under `kendex/` on its own, and the
+/// pass after it changes nothing.
+///
+/// Said plainly because `docs/adapters/pi.md` says it: what is beside the
+/// root is the person's to delete by hand. `kendex remove` does not take
+/// it, and nothing in this build does.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_older_layout_beside_the_root_is_left_exactly_where_it_is() {
+    let w = world();
+    register_carrier(&w.project.join(".pi"));
+    declare_hook(&w, "PreToolUse");
+    let report = audit(&w.env, &scope(&w)).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+
+    // Put the installation back where an older kendex kept it: script and
+    // registry beside the root, with kendex's own segment gone.
+    let home = w.project.join(".pi/kendex");
+    let beside_script = w.project.join(".pi/hooks/guard.sh");
+    let beside_registry = w.project.join(".pi/hooks.json");
+    fs::create_dir_all(beside_script.parent().unwrap()).unwrap();
+    fs::rename(home.join("hooks/guard.sh"), &beside_script).unwrap();
+    fs::rename(home.join("hooks.json"), &beside_registry).unwrap();
+    fs::remove_dir_all(&home).unwrap();
+    let left_script = fs::read_to_string(&beside_script).unwrap();
+    let left_registry = fs::read_to_string(&beside_registry).unwrap();
+
+    // The refresh renders the hook under `kendex/` and stops there.
+    let report = audit(&w.env, &scope(&w)).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    assert!(home.join("hooks/guard.sh").is_file());
+    assert!(
+        fs::read_to_string(home.join("hooks.json"))
+            .unwrap()
+            .contains("guard.sh")
+    );
+
+    // And the pass after it settles.
+    let settled = audit(&w.env, &scope(&w)).unwrap();
+    assert!(settled.plan.ops.is_empty(), "{:?}", settled.plan.ops);
+
+    // Nothing touched what is beside the root — not the refresh, and not
+    // a removal, which derives its paths the same way.
+    let removal = kendex_core::engine::ops::remove(
+        &w.env,
+        &scope(&w),
+        std::slice::from_ref(&"guard".to_owned()),
+        None,
+        false,
+    )
+    .unwrap();
+    kendex_core::apply::execute(&w.env, &removal.plan, None).unwrap();
+    assert!(
+        !home.join("hooks/guard.sh").exists(),
+        "removal takes what this build wrote"
+    );
+    assert_eq!(fs::read_to_string(&beside_script).unwrap(), left_script);
+    assert_eq!(fs::read_to_string(&beside_registry).unwrap(), left_registry);
+}

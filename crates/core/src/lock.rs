@@ -24,7 +24,14 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// files as this project's and write the record back with nothing left to
 /// catch it. A bump is what stops an older build reading a newer record
 /// and dropping what it did not understand on its next write.
-pub const LOCK_VERSION: u32 = 8;
+///
+/// Version 9 is this shape without the record a pi hook's move out of the
+/// directory pi reserved once left behind. Dropping a field bumps for the
+/// same reason adding one does, and for a sharper one here: the build that
+/// still looks for that record would find it absent, read the default as
+/// "this install never left the reserved name", and go looking under a
+/// directory the person now owns. Against version 9 it refuses instead.
+pub const LOCK_VERSION: u32 = 9;
 
 /// The lock file a project scope carries. The global lock is `lock.json`
 /// under the app's own directory ([`Env::global_lock_file`]).

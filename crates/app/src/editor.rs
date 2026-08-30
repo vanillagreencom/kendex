@@ -147,8 +147,11 @@ pub fn custom_hook_deliveries(
 }
 
 /// Every agent's recorded upstream assignment in one scope. A read-only
-/// lookup, so a scope with no lock yet answers "nothing recorded" rather
-/// than taking the editor's inventory down with it.
+/// lookup, so a scope with no lock — and one whose lock this build cannot
+/// read — answers "nothing recorded" rather than taking the editor's whole
+/// inventory down with it. What that record would have said is an
+/// annotation on the rows; the rows themselves come from the manifest and
+/// the catalogs, and the scope's own page says the lock is unreadable.
 ///
 /// Both answers come off one pass over the lock's agent entries. Presence
 /// in each is its own question: an agent lands in `automatic` only with a
@@ -159,11 +162,11 @@ fn agent_skill_facts(
     scope: &Scope,
     manifest: Option<&manifest::Manifest>,
 ) -> Result<AgentSkillFacts, String> {
-    let lock = match kendex_core::lock::load_file(&kendex_core::lock::lock_path(env, scope))
-        .map_err(|e| e.to_string())?
-    {
-        kendex_core::lock::LockFile::Current(lock) => lock,
-        kendex_core::lock::LockFile::Absent => return Ok(AgentSkillFacts::default()),
+    let lock = match kendex_core::lock::load_file(&kendex_core::lock::lock_path(env, scope)) {
+        Ok(kendex_core::lock::LockFile::Current(lock)) => lock,
+        Ok(kendex_core::lock::LockFile::Absent) | Err(_) => {
+            return Ok(AgentSkillFacts::default());
+        }
     };
     let mut facts = AgentSkillFacts::default();
     for entry in lock.entries.into_values() {
@@ -328,16 +331,34 @@ mod tests {
         assert!(!automatic.contains_key("scout"));
     }
 
+    /// No lock, and a lock this build cannot read, answer the same way:
+    /// nothing recorded. The record is an annotation on rows that come
+    /// from the manifest and the catalogs, so failing here would take the
+    /// editor's whole inventory down over a cache.
     #[test]
     #[allow(clippy::unwrap_used)]
-    fn answers_with_nothing_where_the_scope_has_no_lock() {
-        let tmp = tempfile::tempdir().unwrap();
-        let env = Env::fake(tmp.path(), FakeOs::Linux);
-        let root = tmp.path().join("dev/app");
-        std::fs::create_dir_all(&root).unwrap();
-        let scope = Scope::Project { root };
-        let facts = agent_skill_facts(&env, &scope, None).unwrap();
-        assert!(facts.automatic.is_empty() && facts.declared.is_empty());
+    fn answers_with_nothing_where_the_lock_cannot_be_read() {
+        for lock in [None, Some(r#"{"version":1,"entries":{}}"#)] {
+            let tmp = tempfile::tempdir().unwrap();
+            let env = Env::fake(tmp.path(), FakeOs::Linux);
+            let root = tmp.path().join("dev/app");
+            std::fs::create_dir_all(&root).unwrap();
+            if let Some(text) = lock {
+                std::fs::write(root.join(".kendex-lock.json"), text).unwrap();
+            }
+            let scope = Scope::Project { root: root.clone() };
+            let facts = agent_skill_facts(&env, &scope, None).unwrap();
+            assert!(
+                facts.automatic.is_empty() && facts.declared.is_empty(),
+                "{lock:?}"
+            );
+            // The refusal is still the scope's own to report; only this
+            // lookup declines to carry it.
+            assert_eq!(
+                kendex_core::lock::load_file(&kendex_core::lock::lock_path(&env, &scope)).is_err(),
+                lock.is_some()
+            );
+        }
     }
 
     // The UI is told which entry each agent reads and where it lives, so

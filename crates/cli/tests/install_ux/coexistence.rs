@@ -109,3 +109,42 @@ fn removing_an_item_leaves_the_project_as_it_was() {
         );
     }
 }
+
+/// A scope whose lock this build cannot read is skipped and named, never
+/// aborted on: `remove` walks every scope the filter names, and one
+/// unreadable file must not leave the rest untouched with nothing saying
+/// so. The app's audit answers the same class the same way.
+#[test]
+fn a_scope_whose_lock_cannot_be_read_is_skipped_and_named() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    world.run(&["add", "cat", "--skill", "deploy", "-y"]);
+
+    // The record an older kendex left: this build reads no such version.
+    let lock = world.at(".kendex-lock.json");
+    let current = kendex_core::lock::LOCK_VERSION;
+    let older = read(&lock).replace(
+        &format!("\"version\": {current}"),
+        &format!("\"version\": {}", current - 1),
+    );
+    assert_ne!(
+        older,
+        read(&lock),
+        "the version line must be the one rewritten"
+    );
+    crate::write(&lock, &older);
+
+    let out = world.try_run(&["remove", "deploy"]);
+    let said = crate::said(&out);
+    assert!(out.status.success(), "the run must not abort: {said}");
+    assert!(said.contains("skipped"), "and must say it skipped: {said}");
+    assert!(
+        said.contains("install fresh"),
+        "naming why, in the words the refusal uses: {said}"
+    );
+    assert_eq!(
+        read(&lock),
+        older,
+        "the file it could not read is left alone"
+    );
+}

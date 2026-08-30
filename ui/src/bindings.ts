@@ -2494,10 +2494,18 @@ export type ScopeError = {
  */
 export type ScopeErrorKind = 
 /**
- *  The lock exists but isn't readable as JSON, or as this build's lock
- *  shape — damaged, not merely old.
+ *  The lock is not readable as this build's lock: damaged JSON, or a
+ *  record an older kendex wrote. Nothing converts either, and the way
+ *  out is the same — move it aside and apply again.
  */
 "lock-corrupt" | 
+/**
+ *  The manifest was written by an older kendex: it parses, but not
+ *  into a shape this build reads, and nothing converts it. Kept
+ *  apart from a damaged lock because the file is intact and the
+ *  person's own — moving it aside loses what they wrote in it.
+ */
+"manifest-outdated" | 
 /**  The manifest or lock was written by a newer kendex than this one. */
 "schema-too-new" | 
 /**  The manifest parses but fails validation. */

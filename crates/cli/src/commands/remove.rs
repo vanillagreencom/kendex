@@ -42,8 +42,19 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
         };
         let report = match planned {
             Ok(report) => report,
-            // A scope without a v2 manifest has nothing of ours to remove.
-            Err(CoreError::LegacyManifest { .. }) => continue,
+            // A scope whose files this build cannot read has nothing of
+            // ours to remove that this run could account for. It is
+            // skipped and named — the app's audit takes the same posture
+            // on the same class, and aborting here would leave every
+            // scope after it untouched with nothing saying so.
+            Err(error @ (CoreError::LegacyManifest { .. } | CoreError::LockCorrupt { .. })) => {
+                warn(&format!(
+                    "skipped {}: {}",
+                    scope_label(&scope),
+                    shown(&error.to_string())
+                ));
+                continue;
+            }
             Err(error) => return Err(error.into()),
         };
         let report = match mode {

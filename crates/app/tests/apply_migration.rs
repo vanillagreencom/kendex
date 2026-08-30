@@ -93,6 +93,11 @@ fn an_older_manifest_is_refused_and_left_byte_identical() {
 
     let before = view(&f.env, &f.scope);
     let error = before.error.expect("an older manifest is a scope error");
+    assert!(
+        matches!(error.kind, ScopeErrorKind::ManifestOutdated),
+        "its own kind, so the page can say what to do with a file that is
+         intact and the person's own"
+    );
     assert!(error.message.contains("schema 5"), "{}", error.message);
     assert!(error.message.contains("install fresh"), "{}", error.message);
     assert!(before.plan.is_empty(), "{:?}", before.plan);

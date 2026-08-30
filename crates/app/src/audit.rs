@@ -15,9 +15,15 @@ fn env() -> Result<Env, String> {
 #[derive(Serialize, Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum ScopeErrorKind {
-    /// The lock exists but isn't readable as JSON, or as this build's lock
-    /// shape — damaged, not merely old.
+    /// The lock is not readable as this build's lock: damaged JSON, or a
+    /// record an older kendex wrote. Nothing converts either, and the way
+    /// out is the same — move it aside and apply again.
     LockCorrupt,
+    /// The manifest was written by an older kendex: it parses, but not
+    /// into a shape this build reads, and nothing converts it. Kept
+    /// apart from a damaged lock because the file is intact and the
+    /// person's own — moving it aside loses what they wrote in it.
+    ManifestOutdated,
     /// The manifest or lock was written by a newer kendex than this one.
     SchemaTooNew,
     /// The manifest parses but fails validation.
@@ -69,6 +75,7 @@ impl From<&CoreError> for ScopeError {
     fn from(error: &CoreError) -> Self {
         let kind = match error {
             CoreError::LockCorrupt { .. } => ScopeErrorKind::LockCorrupt,
+            CoreError::LegacyManifest { .. } => ScopeErrorKind::ManifestOutdated,
             CoreError::SchemaTooNew { .. } => ScopeErrorKind::SchemaTooNew,
             CoreError::ManifestInvalid { .. } => ScopeErrorKind::ManifestInvalid,
             _ => ScopeErrorKind::Other,
