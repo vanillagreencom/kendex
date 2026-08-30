@@ -6,6 +6,14 @@
 /// tildes. `bare` — nothing but whitespace after the run — is what makes a
 /// line eligible to close a fence rather than open one.
 ///
+/// A backtick fence's info string may hold no backtick. Markdown reads
+/// ``` ``` aa ``` ``` as a paragraph carrying a code span, not as a block
+/// that swallows everything under it, and a reader that opens a fence
+/// there loses the spans of every line the paragraph really holds. The
+/// limit is the marker's own: a tilde fence's info string may hold
+/// backticks and tildes alike, so this is asked of one marker rather than
+/// of info strings in general.
+///
 /// Indent is not a limit. Markdown allows three spaces at the top level, but
 /// a block nested inside a list item starts four in, and that is the common
 /// shape in a real skill: a scanner that stops at three reads the block as
@@ -14,7 +22,11 @@ pub fn fence_marker(line: &str) -> Option<(char, usize, bool)> {
     let rest = line.trim_start();
     let marker = rest.chars().next().filter(|c| matches!(c, '`' | '~'))?;
     let run = rest.chars().take_while(|c| *c == marker).count();
-    (run >= 3).then(|| (marker, run, rest[run..].trim().is_empty()))
+    let info = &rest[run..];
+    if marker == '`' && info.contains('`') {
+        return None;
+    }
+    (run >= 3).then(|| (marker, run, info.trim().is_empty()))
 }
 
 /// Whether the byte at `at` is one a backslash made literal. Backslashes

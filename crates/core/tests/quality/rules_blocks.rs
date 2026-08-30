@@ -534,3 +534,65 @@ fn safety_bypass_reads_a_declaration_the_same_in_either_case() {
         upper.findings
     );
 }
+
+/// A backtick fence's info string may hold no backtick. Markdown reads such
+/// a line as a paragraph carrying a code span, so opening a fence there
+/// swallowed the lines under it, threw away the spans they held, and
+/// reported the switch one of them quoted as a switch standing in the open.
+///
+/// The control is the second case: an ordinary info string opens the fence
+/// it always did, and what the fence holds is code at full weight.
+#[test]
+fn safety_bypass_opens_no_fence_where_an_info_string_holds_a_backtick() {
+    let info = skill(&[(
+        "SKILL.md",
+        "> ``` bad`x` info\n> The bypass is `git commit --no-verify`, never run it.\n",
+    )]);
+    assert!(
+        !rules_hit(&info).contains(&"safety-bypass"),
+        "{:?}",
+        info.findings
+    );
+
+    let ordinary = skill(&[("SKILL.md", "```sh\ngit commit --no-verify\n```\n")]);
+    assert_eq!(
+        severity_of(&ordinary, "safety-bypass"),
+        Some(Severity::Critical),
+        "{:?}",
+        ordinary.findings
+    );
+}
+
+/// The limit belongs to the backtick, not to info strings. A tilde fence's
+/// info string may hold backticks and tildes alike, so it opens the block it
+/// always opened and the switch inside stands as code — which is what a
+/// reader that refused every backtick in an info string would lose.
+#[test]
+fn safety_bypass_opens_a_tilde_fence_whose_info_string_holds_a_backtick() {
+    let tilde = skill(&[("SKILL.md", "~~~ aa ``` ~~~\ngit commit --no-verify\n~~~\n")]);
+    assert_eq!(
+        severity_of(&tilde, "safety-bypass"),
+        Some(Severity::Critical),
+        "{:?}",
+        tilde.findings
+    );
+}
+
+/// A closing fence carries no info string, so a marker with words behind it
+/// is a line of the block's own text and the block runs on. Accepting it as
+/// a close would end the block early and hand the lines below it back to
+/// markdown, where a pair of backticks quotes the switch and the finding
+/// goes quiet.
+#[test]
+fn safety_bypass_keeps_a_fence_open_past_a_marker_carrying_words() {
+    let carried = skill(&[(
+        "SKILL.md",
+        "```\n``` aaa\nThe bypass is `git commit --no-verify`, never run it.\n",
+    )]);
+    assert_eq!(
+        severity_of(&carried, "safety-bypass"),
+        Some(Severity::Critical),
+        "{:?}",
+        carried.findings
+    );
+}
