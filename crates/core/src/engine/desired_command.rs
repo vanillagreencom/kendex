@@ -120,10 +120,9 @@ fn as_skill(
     };
     let body = String::from_utf8_lossy(bytes);
     let tree = dir.join(&name);
-    // Through the same value a skill's tree travels in, so the file names
-    // and anything that points into them can only ever move together —
-    // there is nothing of the project's in a command's rendering today, and
-    // this is not a thing to remember if that changes.
+    // Through the same value a skill's tree travels in: the rename to
+    // SKILL.md.disabled is Rendered's, and a command's tree takes it from
+    // there rather than spelling it again.
     let mut rendered = crate::render::skill::Rendered::new(vec![(
         PathBuf::from("SKILL.md"),
         crate::render::command::codex_skill(&name, &body, ctx.name).into_bytes(),

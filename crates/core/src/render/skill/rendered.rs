@@ -1,6 +1,9 @@
-//! A rendered skill tree, and the two renames that move content in one.
+//! A rendered skill tree and the two renames that operate on it: the name
+//! a skill installs under, and the `.disabled` spelling a switched-off one
+//! keeps its content under.
 //!
-//! Split out of `skill.rs` to keep that file under its line cap.
+//! Kept apart from `skill.rs`, which renders the bytes. Whatever holds a
+//! tree after that is asking one of these two questions, and both are here.
 
 use std::path::PathBuf;
 

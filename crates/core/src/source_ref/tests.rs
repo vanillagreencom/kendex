@@ -184,17 +184,25 @@ fn repo_identity_folds_git_suffix_and_case() {
     );
 }
 
-/// A host that is not GitHub keeps its case, because `Team/catalog` and
-/// `team/catalog` can be two repositories there — the same distinction the
-/// mirror store draws. Only a GitHub reference folds.
+/// Scheme and host fold; on a host that is not GitHub the path keeps its
+/// case, because `Team/catalog` and `team/catalog` can be two repositories
+/// there — the same distinction the mirror store draws.
 #[test]
-fn repo_identity_keeps_case_off_github() {
+fn repo_identity_keeps_path_case_off_github() {
+    assert_eq!(
+        repo_identity("HTTPS://GitLab.com/team/catalog"),
+        repo_identity("https://gitlab.com/team/catalog")
+    );
     assert_ne!(
         repo_identity("https://git.example/Team/catalog"),
         repo_identity("https://git.example/team/catalog")
     );
     assert_ne!(
         repo_identity("git@git.example:Team/catalog.git"),
+        repo_identity("git@git.example:team/catalog")
+    );
+    assert_eq!(
+        repo_identity("Git@Git.Example:team/catalog.git"),
         repo_identity("git@git.example:team/catalog")
     );
     assert_eq!(
