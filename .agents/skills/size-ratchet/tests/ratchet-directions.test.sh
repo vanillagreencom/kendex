@@ -440,6 +440,58 @@ RAISE=1 run_frozen --staged
 [ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten: tools/a.tsv -> tools/b.tsv"*) true ;; *) false ;; esac \
   && ok "the staged lane refuses the same move" \
   || bad "the staged lane refuses the same move" "rc=$RC out=$OUT"
+# Rows at the destination are not proof they were the baseline HEAD used. A
+# b.tsv that already existed carries its own, and comparing against those is
+# how a raise reads as grandfathered while HEAD's real row said 15.
+new_repo relocpreexisting
+mkdir -p "$R/tools"
+mkfile x.test.txt 15
+printf 'x.test.txt\t15\n' >"$R/tools/a.tsv"
+printf 'x.test.txt\t20\n' >"$R/tools/b.tsv"
+settings_baseline tools/a.tsv
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: the baseline at tools/a.tsv, a tools/b.tsv already beside it"
+mkfile x.test.txt 20
+rm -f "$R/tools/a.tsv"
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+RAISE=1 run_frozen --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten: tools/a.tsv -> tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "a destination that already carried rows is still a move, not a grandfathered row" \
+  || bad "a destination that already carried rows is still a move" "rc=$RC out=$OUT"
+# Emptying the old baseline in place is the same move, and reports as a
+# modification rather than a removal.
+new_repo relocemptied
+mkdir -p "$R/tools"
+mkfile y.test.txt 15
+printf 'y.test.txt\t15\n' >"$R/tools/a.tsv"
+settings_baseline tools/a.tsv
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: the baseline at tools/a.tsv"
+mkfile y.test.txt 20
+: >"$R/tools/a.tsv"
+printf 'y.test.txt\t20\n' >"$R/tools/b.tsv"
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+RAISE=1 run_frozen --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten: tools/a.tsv -> tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "emptying the old baseline in place is a move, not a modification to ignore" \
+  || bad "emptying the old baseline in place is a move" "rc=$RC out=$OUT"
+# …and the predicate that keeps the wider list honest: a row-shaped file whose
+# numbers move is still a row set, so an ordinary edit of one is not a move.
+new_repo rowshapededit
+mkdir -p "$R/tools"
+mkfile e.test.txt 15
+printf 'e.test.txt\t15\n' >"$R/$BASE"
+printf 'counts/thing\t3\n' >"$R/data.tsv"
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: a baseline, and a row-shaped file that is not one"
+printf 'counts/thing\t4\n' >"$R/data.tsv"
+git -C "$R" add -A
+run_frozen
+[ "$RC" -eq 0 ] && ok "control: editing a row-shaped file leaves a row set, so it is no move" \
+  || bad "control: editing a row-shaped file is no move" "rc=$RC out=$OUT"
+
 # git spells a non-ASCII path C-quoted by default, so a listing read as text
 # hands the probe `"tools/\303\251.tsv"` and the moved baseline reads as absent.
 new_repo relocquoted

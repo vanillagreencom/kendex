@@ -1450,21 +1450,30 @@ read_head_baseline() {
 # implementation of someone else's contract in step with it. A move is refused
 # instead, and the rows travel in a commit that changes nothing else.
 #
-# The discriminator is what the change does to the OLD file: a path HEAD
-# carried a row set at, which the judged snapshot no longer carries. It cannot
-# misfire on the three bootstraps. An unborn HEAD has no paths to remove. A
-# baseline this change introduces leaves HEAD carrying no row set anywhere, so
-# there is none to remove. A placeholder committed empty is AT the configured
-# path and is filled rather than removed, and holds no rows to recognize even
-# if it were. What the check does see is one bound worth stating: a change that
-# points the setting elsewhere while leaving the old file tracked, rows and
-# all, removes nothing and is not a move it can name.
+# The discriminator is what the change does to the OLD file: HEAD's blob there
+# was a row set, and the judged snapshot's is not. That is stricter than "this
+# path changed" and it is what keeps an ordinary edit out — a row-shaped file
+# whose numbers move is still a row set, so it never reports. Only a file that
+# STOPPED being one does: deleted, emptied, or replaced with something that is
+# not rows.
+#
+# It cannot misfire on the three bootstraps. An unborn HEAD has no changed
+# paths at all. A baseline this change introduces leaves HEAD carrying no row
+# set anywhere, so no changed path has one to lose. A placeholder committed
+# empty holds no rows at HEAD to recognize, and is at the configured path,
+# which this scan skips. One bound is worth stating: a change that points the
+# setting elsewhere while leaving the old file tracked with its rows loses no
+# row set, and is not a move this can name.
+#
+# The scan runs whether or not HEAD carries rows at the configured path. Rows
+# there do not establish they were the baseline HEAD used — a destination that
+# already existed carries its own, and comparing against those is how a raise
+# reads as grandfathered while HEAD's real row said something else.
 #
 # A pure move passes. The rows that arrive are byte for byte the rows that
 # left, so no row rose across it; anything else about them is the next
 # commit's business.
 baseline_moved() { # CANDIDATE-BASELINE — violations on stdout
-  [ -z "$HEAD_BASELINE" ] || return 0
   local p head_status=0 diff_status=0
   git rev-parse --verify --quiet HEAD >/dev/null 2>&1 || head_status=$?
   case "$head_status" in
@@ -1479,16 +1488,20 @@ baseline_moved() { # CANDIDATE-BASELINE — violations on stdout
   # baseline would read as absent. It also terminates each path with a NUL,
   # which is the one byte a path cannot contain — a newline can, so the read
   # below splits on NUL rather than translating NULs into newlines.
+  # Every changed path, not only the deleted ones: emptying the old baseline in
+  # place, or writing something else over it, is the same move and reports as a
+  # modification. The predicate below is what keeps the wider list honest.
   if [ "$STAGED" -eq 1 ]; then
-    git diff --cached --no-renames -z --name-only --diff-filter=D HEAD >"$TMP/removed.paths" || diff_status=$?
+    git diff --cached --no-renames -z --name-only HEAD >"$TMP/removed.paths" || diff_status=$?
   else
-    git diff --no-renames -z --name-only --diff-filter=D HEAD >"$TMP/removed.paths" || diff_status=$?
+    git diff --no-renames -z --name-only HEAD >"$TMP/removed.paths" || diff_status=$?
   fi
-  [ "$diff_status" -eq 0 ] || collection_error "could not list what this change removes (git diff exit $diff_status) — refusing to treat a moved baseline as absent"
+  [ "$diff_status" -eq 0 ] || collection_error "could not list what this change touches (git diff exit $diff_status) — refusing to treat a moved baseline as absent"
   while IFS= read -r -d '' p || [ -n "$p" ]; do
     [ -n "$p" ] || continue
     [ "$p" != "$BASELINE_FILE" ] || continue
     head_rows_removed "$p" || continue
+    snapshot_rows_at "$p" && continue
     cmp -s -- "$TMP/removed.head" "$1" && continue
     # "-" placeholders, never empty fields: report() reads these rows with
     # tab-IFS, and whitespace IFS collapses consecutive tabs.
@@ -1496,21 +1509,39 @@ baseline_moved() { # CANDIDATE-BASELINE — violations on stdout
   done <"$TMP/removed.paths"
 }
 
-# Whether HEAD's blob at PATH was a baseline. The row shape is the only
-# question — sorting and duplicates are the governing copy's business, and a
-# file that fails them is still the row set this change carried away.
-head_rows_removed() { # PATH — 0 when HEAD held a row set there, at $TMP/removed.head
+# Whether FILE holds a row set. The row shape is the only question — sorting
+# and duplicates are the governing copy's business, and a file that fails them
+# is still the row set this change carried away.
+blob_is_row_set() { # FILE
   local status=0
+  [ "$(count_nonempty_lines "$1")" -gt 0 ] || return 1
+  grep -qEv -- "$BASELINE_ROW_RE" "$1" || status=$?
+  case "$status" in
+    0) return 1 ;; # a line that is not a row
+    1) return 0 ;;
+    *) collection_error "could not read $1 to tell whether it holds baseline rows (grep exit $status)" ;;
+  esac
+}
+
+head_rows_removed() { # PATH — 0 when HEAD held a row set there, at $TMP/removed.head
   read_head_file_mode "$1"
   case "$HEAD_FILE_MODE" in 100*) ;; *) return 1 ;; esac
   git show "HEAD:$1" >"$TMP/removed.head" || collection_error "could not read $1 from HEAD to tell whether it was the baseline this change moved"
-  [ "$(count_nonempty_lines "$TMP/removed.head")" -gt 0 ] || return 1
-  grep -qEv -- "$BASELINE_ROW_RE" "$TMP/removed.head" || status=$?
-  case "$status" in
-    0) return 1 ;; # a line that is not a row: whatever left, it was not a baseline
-    1) return 0 ;;
-    *) collection_error "could not read $1 from HEAD to tell whether it was the baseline this change moved (grep exit $status)" ;;
-  esac
+  blob_is_row_set "$TMP/removed.head"
+}
+
+# The judged snapshot's copy, from the same side the enumeration above read:
+# the index under --staged, the worktree otherwise.
+snapshot_rows_at() { # PATH — 0 when the snapshot still holds a row set there
+  if [ "$STAGED" -eq 1 ]; then
+    read_index_file_mode "$1"
+    case "$INDEX_FILE_MODE" in 100*) ;; *) return 1 ;; esac
+    git show ":$1" >"$TMP/removed.now" || collection_error "could not read the staged copy of $1 to tell whether it still holds baseline rows"
+  else
+    [ -f "$1" ] || return 1
+    cp -- "$1" "$TMP/removed.now" || collection_error "could not copy $1 to tell whether it still holds baseline rows"
+  fi
+  blob_is_row_set "$TMP/removed.now"
 }
 
 # A change that moves a class from lines to bytes (or back) leaves HEAD's rows
