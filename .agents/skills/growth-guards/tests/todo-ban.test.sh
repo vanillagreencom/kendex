@@ -362,15 +362,53 @@ run_tb --staged
   && ok "a marker added under a non-diffable path is refused, at its own line" \
   || bad "a marker under a non-diffable path is refused" "rc=$RC out=$OUT"
 
-# Control: the same rule still in force, this time over an addition that
-# carries no marker — forcing text reads real content, it does not fail
-# everything it forces through.
-printf 'fn main() {}\nfn clean() {}\n' >"$R/ok.rs"
+# Control: the same rule still in force, over an addition that carries no
+# marker — forcing text reads real content, it does not fail everything it
+# forces through. Committing the marker first is what makes this arm reach
+# that read: the index blob goes on carrying a marker, so the pre-filter
+# lists the path and the --text diff really runs over it, and the verdict
+# is decided by the one line THIS commit adds.
+git -C "$R" commit -qm "the marker, now committed"
+printf 'fn clean() {}\n' >>"$R/ok.rs"
 git -C "$R" add ok.rs
+case "$(git -C "$R" diff --cached -- ok.rs)" in
+  *"Binary files"*) ok "fixture: the rule still suppresses the unforced staged diff" ;;
+  *) bad "fixture: the rule still suppresses the unforced staged diff" "the attributes rule lapsed" ;;
+esac
 run_tb --staged
 [ "$RC" -eq 0 ] && case "$OUT" in *"the staged diff adds no work markers"*) true ;; *) false ;; esac \
-  && ok "a clean addition under the same rule still passes" \
+  && ok "a clean addition to a marker-carrying file under the same rule passes" \
   || bad "a clean addition under the rule passes" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"ok.rs"*) bad "the committed marker was attributed to the commit that only added a clean line" "$OUT" ;;
+  *) ok "and the marker it already carried stays out of this commit's verdict" ;;
+esac
+
+echo "=== content decides what is scanned, never an attribute ==="
+new_repo binaryblob
+printf 'fn main() {}\n' >"$R/ok.rs"
+git -C "$R" add -A
+git -C "$R" commit -qm seed
+# A real asset whose bytes happen to spell a marker. The pre-filter forces
+# every blob to text, so this path IS listed; what keeps it out of the
+# verdict is the content sniff — a NUL in the first block, git's own test —
+# and nothing about how the path is named or attributed. Without the sniff
+# the raw bytes reach awk and the commit is blocked by a garbled record.
+printf '\211PNG\r\n\032\n\000\000 %s: in the pixels\n' "$TD" >"$R/asset.png"
+git -C "$R" add asset.png
+run_tb --staged
+[ "$RC" -eq 0 ] && case "$OUT" in *"the staged diff adds no work markers"*) true ;; *) false ;; esac \
+  && ok "a genuinely binary blob whose bytes spell a marker does not fire" \
+  || bad "a binary blob does not fire" "rc=$RC out=$OUT"
+
+# The must-fail control: the same bytes with the NULs taken out are a text
+# file, and a text file is read whatever it is called.
+printf '\211PNG\r\n\032\n %s: in the pixels\n' "$TD" >"$R/asset.png"
+git -C "$R" add asset.png
+run_tb --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"work marker: asset.png:"*) true ;; *) false ;; esac \
+  && ok "control: the same bytes without a NUL are text, and fire" \
+  || bad "control: the NUL-free bytes fire" "rc=$RC out=$OUT"
 
 echo "=== a type change emits two diff sections, neither header an added line ==="
 new_repo typechange
@@ -386,20 +424,27 @@ rm -- "$R/a $TD: x.md"
 printf 'fn clean() {}\n' >"$R/a $TD: x.md"
 git -C "$R" add -A
 run_tb --staged
-[ "$RC" -eq 0 ] && ok "a type change to a clean regular file passes" \
+# The pre-filter matches CONTENT, never path names, so a clean file at a
+# path shaped like a marker is never listed and the run ends before the
+# parser. That is the whole of what this arm pins; the parser is the pair
+# below.
+[ "$RC" -eq 0 ] \
+  && ok "a type change to a clean regular file passes: a marker shape in the PATH is not content" \
   || bad "a clean type change passes" "rc=$RC out=$OUT"
-case "$OUT" in *":0:"*) bad "a file header was reported as an added line" "$OUT" ;; *) ok "and nothing is reported at line 0" ;; esac
 
-# The same type change carrying a real marker: this one has content the
-# index scan names, so it is the case that reaches the hunk parser, and only
-# the line the file actually carries may be named.
-printf '// %s: added with the regular file\n' "$FX" >"$R/a $TD: x.md"
+# The same type change, its new regular file carrying a marker on one line
+# and clean content on the next. This is the arm that reaches the parser:
+# the path is listed, both diff sections are read, and only the line the
+# file actually carries may be named — not the creation section's header,
+# and not the clean line beside it.
+printf '// %s: added with the regular file\nfn clean() {}\n' "$FX" >"$R/a $TD: x.md"
 git -C "$R" add -A
 run_tb --staged
 [ "$RC" -eq 1 ] && case "$OUT" in *"x.md:1:"*) true ;; *) false ;; esac \
-  && ok "control: a marker in the new regular file fires at its own line" \
-  || bad "control: the marker in the new regular file fires" "rc=$RC out=$OUT"
-case "$OUT" in *":0:"*) bad "the creation section's header rode along as line 0" "$OUT" ;; *) ok "and the section header is still not a record" ;; esac
+  && ok "a marker in the new regular file fires at its own line" \
+  || bad "the marker in the new regular file fires" "rc=$RC out=$OUT"
+case "$OUT" in *":0:"*) bad "the creation section's header rode along as line 0" "$OUT" ;; *) ok "and the section header is not a record" ;; esac
+case "$OUT" in *"x.md:2:"*) bad "the clean line beside the marker was judged a marker" "$OUT" ;; *) ok "and the clean line beside it is judged on its own" ;; esac
 
 echo "=== rename detection is held to EXACT content ==="
 new_repo renamed
@@ -523,6 +568,79 @@ OUT="$(cd "$R" && PATH="$AWK_SHIM:$PATH" "$TB" --staged 2>&1)" && RC=0 || RC=$?
   || bad "a failed hunk parser is exit 2" "rc=$RC out=$OUT"
 case "$OUT" in *"work marker:"*) bad "a scan that never ran may not produce a violation" "$OUT" ;; *) ok "and no violation verdict comes with it" ;; esac
 case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany a broken parse" "$OUT" ;; *) ok "no OK verdict accompanies the broken parse" ;; esac
+
+echo "=== fail-closed: the staged pre-filter is guarded like the index scan ==="
+# The staged lane runs a git grep of its own — the carriers pre-filter — and
+# it is the lane's newest fail-open path: an empty carriers list filters
+# every staged path out and the lane prints OK at exit 0. Both arms the
+# index lane already has are repeated here in --staged form, each over a
+# fixture that stages a marker so neither can be clean by construction.
+new_repo stagedgrepfail
+printf 'fn main() {}\n' >"$R/ok.rs"
+git -C "$R" add -A
+git -C "$R" commit -qm seed
+printf '// %s: staged for the pre-filter to find\n' "$HK" >>"$R/ok.rs"
+git -C "$R" add ok.rs
+run_tb --staged
+[ "$RC" -eq 1 ] && ok "shim-free control: the staged marker fires with the real git" \
+  || bad "shim-free control fires" "rc=$RC out=$OUT"
+
+OUT="$(cd "$R" && PATH="$GIT_SHIM:$PATH" "$TB" --staged 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 2 ] \
+  && case "$OUT" in *"git grep failed listing the staged files that carry a work marker"*) true ;; *) false ;; esac \
+  && ok "a git grep execution failure in the staged pre-filter is exit 2, never OK" \
+  || bad "a broken staged pre-filter is exit 2" "rc=$RC out=$OUT"
+case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany a broken staged pre-filter" "$OUT" ;; *) ok "no OK verdict accompanies the broken staged pre-filter" ;; esac
+
+# The other arm: the scan runs and reports on stderr instead. git spends no
+# error status on a blob it cannot read, so the `error:` line is the only
+# thing separating that from a clean scan.
+new_repo stagedunreadable
+printf 'fn main() {}\n' >"$R/ok.rs"
+git -C "$R" add -A
+git -C "$R" commit -qm seed
+printf '// %s: staged over a blob about to vanish\n' "$TD" >>"$R/ok.rs"
+git -C "$R" add ok.rs
+run_tb --staged
+[ "$RC" -eq 1 ] && ok "control: the staged marker trips while its blob is readable" \
+  || bad "control: readable staged blob trips" "rc=$RC out=$OUT"
+OID="$(git -C "$R" rev-parse :ok.rs)"
+[ -f "$R/.git/objects/${OID:0:2}/${OID:2}" ] \
+  || bad "fixture: the staged blob is not a loose object at the expected path" "$OID"
+rm -f -- "$R/.git/objects/${OID:0:2}/${OID:2}"
+run_tb --staged
+[ "$RC" -eq 2 ] && case "$OUT" in *"error: "*"unable to read"*) true ;; *) false ;; esac \
+  && ok "a vanished staged blob is exit 2 carrying git's own error line" \
+  || bad "a vanished staged blob is exit 2 with git's error line" "rc=$RC out=$OUT"
+case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany an unread staged blob" "$OUT" ;; *) ok "no OK verdict accompanies the unread staged blob" ;; esac
+
+# The content sniff reads the blob itself, so it answers for its own
+# failure: a cat-file that cannot run is a collection error, never a file
+# skipped as unscannable and folded into a clean verdict.
+new_repo sniffail
+printf 'fn main() {}\n' >"$R/ok.rs"
+git -C "$R" add -A
+git -C "$R" commit -qm seed
+printf '// %s: staged for the sniff to read\n' "$TD" >>"$R/ok.rs"
+git -C "$R" add ok.rs
+CATFILE_SHIM="$TMP/catfile-shim"
+mkdir -p "$CATFILE_SHIM"
+cat >"$CATFILE_SHIM/git" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [ "\$a" = "cat-file" ]; then
+    echo "git cat-file: simulated execution failure" >&2
+    exit 128
+  fi
+done
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$CATFILE_SHIM/git"
+OUT="$(cd "$R" && PATH="$CATFILE_SHIM:$PATH" "$TB" --staged 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not read the staged blob"*) true ;; *) false ;; esac \
+  && ok "a content sniff that cannot read the blob is exit 2, never OK" \
+  || bad "a broken content sniff is exit 2" "rc=$RC out=$OUT"
+case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany a broken content sniff" "$OUT" ;; *) ok "no OK verdict accompanies the broken content sniff" ;; esac
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

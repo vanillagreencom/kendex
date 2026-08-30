@@ -113,7 +113,7 @@ jobs:
       # The queue-side half of the work-marker gate: the preflight job runs
       # only on pull_request, so without this a merge group never scans the
       # index it is about to merge. The commit lane judges only what a commit
-      # adds, which leaves every marker already in the index to this scan.
+      # adds; this scan takes the rest, in every blob git reads as text.
       - name: todo-ban (index-wide work-marker scan)
         if: matrix.shard == 'shell'
         run: skills/growth-guards/scripts/todo-ban
@@ -446,7 +446,7 @@ jobs:
       - name: size-ratchet (tighten-only file-size gate)
         run: skills/size-ratchet/scripts/size-ratchet
       # The commit lane runs todo-ban --staged and judges only what a commit
-      # adds, so a marker already in the index is this scan's to refuse.
+      # adds; a marker already in a blob git reads as text is this scan's.
       - name: todo-ban (index-wide work-marker scan)
         run: skills/growth-guards/scripts/todo-ban
 

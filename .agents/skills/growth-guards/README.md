@@ -13,8 +13,8 @@ covers internals.
 ## Invocation
 
 ```bash
-scripts/growth-guards [all]         # batch: every enabled repo check
-scripts/growth-guards all --staged  # the same batch at commit scope
+scripts/growth-guards [all]           # batch: every enabled repo check
+scripts/growth-guards [all] --staged  # the same batch at commit scope
 scripts/growth-guards CHECK [ARGS]  # one check, flags passed through
 scripts/CHECK [ARGS]                # each check is a standalone executable
 ```

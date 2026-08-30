@@ -2,7 +2,7 @@
 # growth-guards — dispatcher for the check family:
 #
 #   growth-guards [all]           run every check named by GROWTH_GUARDS_CHECKS
-#   growth-guards all --staged    the same batch at commit scope
+#   growth-guards [all] --staged  the same batch at commit scope
 #   growth-guards CHECK [ARGS..]  run one check, flags passed through
 #
 # commit-msg reads a message, so it never runs in the batch — the commit-msg

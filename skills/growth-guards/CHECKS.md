@@ -10,8 +10,9 @@ Flat ban on work markers in first-party tracked files — the words TODO,
 FIXME, HACK, XXX in comment-marker shapes, no baseline. Prose that quotes or
 names a marker does not fire; matching is case-sensitive. Do the work now or
 track it and delete the marker; vendored trees go in excludes with a reason.
-A marker preceded by a quote or a bracket is out of scope in every lane —
-that exemption is what lets prose and code quote the words.
+A marker IMMEDIATELY preceded by a backtick, a quote, or joined text is out
+of scope in every lane — that adjacency is what lets prose and code quote
+the words. A space between them exempts nothing.
 
 - `--staged` — only the lines the staged diff ADDS (the commit lane). A
   marker anywhere else in the index belongs to whoever committed it, and
@@ -19,9 +20,14 @@ that exemption is what lets prose and code quote the words.
   whole team. Renames are held to exact content, as byte-ceiling holds
   them: a pure move adds no line, while a file that moved and changed is
   read whole. `git diff --cached` supplies the base, so a repository with
-  no commits yet judges its first commit like any other.
+  no commits yet judges its first commit like any other. Content decides
+  what it reads and an attribute never does: an attributes rule cannot hide
+  a path from it, while a blob whose first block carries a NUL is skipped
+  as the asset it is.
 - (default) — every tracked file, read from the index. This is the CI
-  scope, and the only one that sees a marker no commit is touching.
+  scope, and the only one that sees a marker no commit is touching. It
+  reads the blobs git calls text, so a `-diff` rule or a NUL byte puts a
+  file outside it; closing that gap is KEN-844.
 
 ## byte-ceiling
 

@@ -209,26 +209,46 @@ at nothing. A marker word counts only in marker shapes:
 - the bare word directly after a comment leader (only whitespace between),
   followed by whitespace or end of line.
 
-Comment leaders: `//`, `#`, `;`, `/*`, `<!--`. A marker preceded by a
-backtick, a quote, or joined text (documentation quoting the word, a regex
-listing the words, `\n` inside a string literal) matches neither shape.
+Comment leaders: `//`, `#`, `;`, `/*`, `<!--`. A marker IMMEDIATELY preceded
+by a backtick, a quote, or joined text (documentation quoting the word, a
+regex listing the words, `\n` inside a string literal) matches neither
+shape; a space between them exempts nothing.
 Matching is case-sensitive — lowercase uses of the words are prose.
 
 The shapes are the same in both scopes; only the lines they are matched
 against differ. `--staged` collects the change set the way byte-ceiling's
 staged lane does (`--raw`, additions/modifications/type changes, renames at
 exact content), dropping symlinks and submodule gitlinks by destination
-mode because they carry no lines to read. One flat `git grep --cached` then
-names the files whose staged content carries a marker at all, and only
-those paths reach the per-path `-U0` diff that reads their added lines —
-one file per invocation, so no patch header is ever parsed for a path and a
-path git would have had to quote cannot be misread. Diff configuration is
-pinned (`--no-ext-diff`, `--no-textconv`, `--no-color`, `--text`): a textconv
-filter would otherwise hand the lane content the commit does not carry, and
-a committed `.gitattributes` rule marking a path non-diffable would leave
-the diff with no hunks at all. The index scan is forced to text the same way
-(`-a`, never `-I`), so both reads agree on what is scannable and one
-attributes line cannot hide an extension from this lane.
+mode because they carry no lines to read. A `git grep --cached` over THOSE
+PATHS then names the ones whose staged content carries a marker at all,
+chunked so a large change set stays inside ARG_MAX. Scoping the scan is
+what keeps the cost proportional to the commit and keeps a blob the commit
+never touched — corrupt, or not yet fetched into a blobless clone — out of
+the verdict. Only the named paths reach the per-path `-U0` diff that reads
+their added lines, one file per invocation, so no patch header is ever
+parsed for a path and a path git would have had to quote cannot be misread.
+Membership in that list is a `case` over a newline-delimited set, not a loop
+per staged path: the loop cost O(staged x carriers) and overtook the code it
+replaced on a marker-dense tree, and Bash 3.2 has no associative array.
+
+**Content decides what is scannable. An attribute never does.** That rule
+settles both halves of the commit lane. Diff configuration is pinned
+(`--no-ext-diff`, `--no-textconv`, `--no-color`, `--text`): a textconv filter
+would otherwise hand the lane content the commit does not carry, and a
+committed `.gitattributes` rule marking a path non-diffable would leave the
+diff with no hunks at all. The pre-filter carries no `-I` for the same
+reason — with it, one attributes line would hide a whole extension from the
+fast path, where a skipped file reads as clean. What forcing text lets
+through is then judged on content: each named path's index blob is sniffed
+for a NUL in its first block, git's own test, and a genuinely binary blob is
+skipped rather than decoded. So a text file under a `-diff` rule is still
+read, while an asset whose bytes happen to spell a marker cannot block a
+commit with a record of raw bytes. Sniffing only the named paths keeps that
+at one `cat-file` per marker-carrying file, not one per staged file.
+
+The index-wide lane makes no such promise. It runs `git grep -I`, so a blob
+git calls binary — including one a `-diff` rule makes it call binary — is
+outside its scan. Closing that half is KEN-844.
 
 ## byte-ceiling sizing
 
