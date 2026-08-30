@@ -206,16 +206,17 @@ a first `--seed`, a baseline this change introduces) has nothing to compare,
 so the raise gate alone is skipped — every other verdict still judges the
 snapshot and can fail it — and the verdict line says the added and raised
 checks did not run, because "no reference" must never read as "checked and
-clean". A commit that MOVES the
-baseline is not such a HEAD. The rows are followed to the path HEAD's own
-settings named, resolved through the same chain over a scratch tree holding
-HEAD's view of every source that chain consults, so a relocation cannot land
-the raise an unjudged gate would have carried. The script header lists what
-that tree must hold for each source kind, and a source it cannot reproduce
-refuses rather than reading as "HEAD has no rows", which is the state the
-lookup exists to stop reaching without judgement. None of the three
-no-baseline cases can misfire on it, because each leaves HEAD naming either
-the path the run already read or one HEAD carries no rows at. A row whose
+clean". Which file HEAD's
+baseline WAS is asked before the rows in it, on every run. That file is the
+one HEAD's own settings named, resolved through the same chain over a scratch
+tree holding HEAD's view of every source that chain consults, so a commit that
+MOVES the baseline cannot land the raise an unjudged gate would have carried,
+and a stale row set sitting at the destination is not mistaken for HEAD's own.
+The script header lists what that tree must hold for each source kind, and a
+source it cannot reproduce refuses rather than reading as "HEAD has no rows",
+which is the state this exists to stop reaching without judgement. None of the
+three no-baseline cases can misfire on it, because each leaves HEAD naming
+either the path the run already read or one HEAD carries no rows at. A row whose
 file is at or under its threshold is reported as stale instead, so one root
 cause reads as one verdict. A class that changes its UNIT does not escape:
 HEAD's row is re-expressed in the unit the class counts now, measured from

@@ -1440,12 +1440,14 @@ read_head_rows_at() { # PATH — fills HEAD_BASELINE, "" when HEAD carries none 
 
 # --- where HEAD's own configuration put the baseline -------------------------
 # Resolved through the SAME sr_setting chain this run used, over a scratch tree
-# holding HEAD's view of every source that chain consults. The tree is the
-# whole answer: a source it does not reproduce faithfully makes the HEAD-side
-# resolution equal the run's own for a reason that is not HEAD's configuration,
-# and "HEAD has no rows" is then reached without judgement, which is the defect
-# itself. So each source kind is reproduced or the run refuses; nothing falls
-# through. What the tree must hold, by the route sr_setting reaches the source:
+# holding HEAD's view of every source that chain consults, and resolved on
+# EVERY run, because which file HEAD's baseline was is the first question and
+# the rows in it the second. The tree is the whole answer: a source it does not
+# reproduce faithfully makes the HEAD-side resolution equal the run's own for a
+# reason that is not HEAD's configuration, and "HEAD has no rows" is then
+# reached without judgement, which is the defect itself. So each source kind is
+# reproduced or the run refuses; nothing falls through. What the tree must
+# hold, by the route sr_setting reaches the source:
 #
 #   set in the environment      nothing. One process answers both sides.
 #   SIZE_RATCHET_SETTINGS_FILE=/dev/null
@@ -1463,11 +1465,12 @@ read_head_rows_at() { # PATH — fills HEAD_BASELINE, "" when HEAD carries none 
 #   a symlink at HEAD           HEAD's blob at the end of the chain, resolved
 #                               through HEAD, staged at the link's spelling.
 #                               sr_setting reads bytes, so a regular file
-#                               there reads identically.
-#   anything else at HEAD       a refusal. A chain that leaves the repository,
-#                               loops, or ends on a directory or a gitlink is
-#                               not reproducible, and neither is an absolute
-#                               link target.
+#                               there reads identically. A chain leaving the
+#                               repository ends on an unversioned file and
+#                               takes the out-of-repository row above.
+#   anything else at HEAD       a refusal. A chain longer than HEAD_LINK_MAX,
+#                               or one ending on a directory or a gitlink, is
+#                               a configuration no tree can stand in for.
 #
 # --baseline is skipped outright: a flag is the operator pointing this run at a
 # file, never a commit relocating anything.
@@ -1510,12 +1513,24 @@ stage_head_blob() { # PATH DEST — HEAD's file content at PATH, chain followed
         [ "$hops" -le "$HEAD_LINK_MAX" ] || collection_error "the settings source '$1' is a symlink chain longer than $HEAD_LINK_MAX hops at HEAD — refusing to judge added and raised rows against a configuration it cannot follow"
         git show "HEAD:$path" >"$TMP/head.link" || collection_error "could not read the symlink '$path' from HEAD to follow the settings source it points at"
         target="$(cat -- "$TMP/head.link")" || collection_error "could not read the target of the symlink '$path' at HEAD"
-        case "$target" in /*) collection_error "the settings source '$1' resolves through an absolute symlink at HEAD, which the scratch tree cannot reproduce — refusing to judge added and raised rows against a configuration it cannot read" ;; esac
+        # A chain that leaves the repository ends on an unversioned file, which
+        # both sides read the same way, so it is copied from where it is rather
+        # than refused. The link is resolved from the repository root, which is
+        # this run's working directory.
+        case "$target" in
+          /*)
+            [ ! -f "$target" ] || cp -- "$target" "$dest" || collection_error "could not stage the out-of-repository file '$target' that the settings source '$1' points at"
+            return 0
+            ;;
+        esac
         dir="${path%/*}"
         [ "$dir" != "$path" ] || dir=""
         path="$(sr_settings_normalize_path "${dir:+$dir/}$target")"
         case "$path" in
-          "" | ".." | "../"*) collection_error "the settings source '$1' resolves outside the repository at HEAD, which the scratch tree cannot reproduce — refusing to judge added and raised rows against a configuration it cannot read" ;;
+          "" | ".." | "../"*)
+            [ ! -f "$path" ] || cp -- "$path" "$dest" || collection_error "could not stage the out-of-repository file '$path' that the settings source '$1' points at"
+            return 0
+            ;;
         esac
         ;;
       *) collection_error "the settings source '$1' is not a regular file at HEAD (mode $HEAD_FILE_MODE) — refusing to judge added and raised rows against a configuration it cannot read" ;;
@@ -1580,23 +1595,24 @@ read_head_settings_baseline() { # — "" when HEAD names no usable path
   case "$HEAD_SETTINGS_BASELINE" in /* | -*) HEAD_SETTINGS_BASELINE="" ;; esac
 }
 
+# WHICH PATH first, then the rows at it. Reading the configured path and
+# keeping whatever rows it holds accepts a file HEAD's own configuration never
+# read: a repository carrying a stale b.tsv at 20 while its settings named
+# a.tsv at 15 had the 20 taken for grandfathered, and the raise to 20 was never
+# judged. HEAD's effective baseline is the file HEAD's settings pointed at, and
+# no rows there is HEAD having no reference — not a reason to read another
+# file. The three bootstraps are unaffected: each leaves HEAD naming the path
+# this run resolved, or one HEAD carries no rows at.
 read_head_baseline() {
   HEAD_BASELINE_FROM=""
-  read_head_rows_at "$BASELINE_FILE"
-  [ -z "$HEAD_BASELINE" ] || return 0
-  # No rows at the configured path is either of two things, and they must not
-  # be answered alike: HEAD had no row set anywhere (the three bootstraps),
-  # or this change MOVES the path and HEAD's rows sit at the old one, where
-  # skipping the judgment would carry a raise — a frozen one included — past
-  # a gate that never ran. HEAD's own settings say which, and they cannot
-  # misfire on a bootstrap: each of the three leaves HEAD naming the same
-  # path this run resolved, or a path HEAD carries no rows at, so the rows
-  # stay empty and the verdict says so exactly as before.
+  local path="$BASELINE_FILE"
   read_head_settings_baseline
-  [ -n "$HEAD_SETTINGS_BASELINE" ] || return 0
-  [ "$HEAD_SETTINGS_BASELINE" != "$BASELINE_FILE" ] || return 0
-  read_head_rows_at "$HEAD_SETTINGS_BASELINE"
-  [ -z "$HEAD_BASELINE" ] || HEAD_BASELINE_FROM="$HEAD_SETTINGS_BASELINE"
+  if [ -n "$HEAD_SETTINGS_BASELINE" ] && [ "$HEAD_SETTINGS_BASELINE" != "$BASELINE_FILE" ]; then
+    path="$HEAD_SETTINGS_BASELINE"
+    HEAD_BASELINE_FROM="$path"
+  fi
+  read_head_rows_at "$path"
+  [ -n "$HEAD_BASELINE" ] || HEAD_BASELINE_FROM=""
 }
 
 # A change that moves a class from lines to bytes (or back) leaves HEAD's rows

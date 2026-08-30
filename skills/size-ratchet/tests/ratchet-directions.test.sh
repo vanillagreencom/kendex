@@ -519,23 +519,62 @@ run_frozen
   && ok "control: an untracked settings file is the invocation's, on both sides" \
   || bad "control: an untracked settings file is the invocation's" "rc=$RC out=$OUT"
 
-# What the tree cannot reproduce refuses rather than falling through to the
-# empty answer, which is the state this whole lookup exists to stop reaching
-# without judgement.
+# A chain that leaves the repository ends on a file no commit can carry, so it
+# is copied from where it is: both sides read it, and refusing would fail a
+# supported install shape on every run. Omitting it instead sends the lookup to
+# the built-in default, where this fixture has no rows and the raise below
+# would pass unjudged.
 printf '[env]\nSIZE_RATCHET_BASELINE = "tools/b.tsv"\n' >"$TMP/outside.settings.toml"
 new_repo settingsescape
 mkdir -p "$R/tools"
 mkfile q.test.txt 15
-printf 'q.test.txt\t15\n' >"$R/tools/a.tsv"
+printf 'q.test.txt\t15\n' >"$R/tools/b.tsv"
 ln -s ../outside.settings.toml "$R/kendex.settings.toml"
 git -C "$R" add -A
-git -C "$R" commit -q -m "seed: a settings symlink leaving the repository"
+git -C "$R" commit -q -m "seed: the baseline path named through a symlink out of the repository"
 mkfile q.test.txt 20
-relocate q.test.txt 20
-run_frozen
-[ "$RC" -eq 2 ] && case "$OUT" in *"resolves outside the repository at HEAD"*) true ;; *) false ;; esac \
-  && ok "a settings symlink leaving the repository at HEAD is a loud exit 2" \
-  || bad "a settings symlink leaving the repository at HEAD is exit 2" "rc=$RC out=$OUT"
+printf 'q.test.txt\t20\n' >"$R/tools/b.tsv"
+git -C "$R" add -A
+RAISE=1 run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"frozen baseline row raised: q.test.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
+  && ok "a settings symlink leaving the repository is followed to the file it names" \
+  || bad "a settings symlink leaving the repository is followed" "rc=$RC out=$OUT"
+
+echo "=== which file HEAD's baseline WAS is asked before the rows in it ==="
+# Reading the configured path and keeping whatever rows it holds accepts a file
+# HEAD's configuration never read. A stale destination carrying the raised
+# number reads as grandfathered, and the raise to it is never judged.
+new_repo stalendestination
+mkdir -p "$R/tools"
+mkfile x.test.txt 15
+printf 'x.test.txt\t15\n' >"$R/tools/a.tsv"
+printf 'x.test.txt\t20\n' >"$R/tools/b.tsv"
+settings_baseline tools/a.tsv
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: rows at tools/a.tsv, a stale tools/b.tsv beside them"
+mkfile x.test.txt 20
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+RAISE=1 run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"frozen baseline row raised: x.test.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
+  && ok "a stale row set at the destination is not HEAD's baseline, and the raise is refused" \
+  || bad "a stale row set at the destination is not HEAD's baseline" "rc=$RC out=$OUT"
+# The control that the destination's rows are not simply ignored: HEAD's
+# settings naming the SAME path is the ordinary case, and its rows judge.
+new_repo samepath
+mkdir -p "$R/tools"
+mkfile x.test.txt 15
+printf 'x.test.txt\t15\n' >"$R/tools/b.tsv"
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: rows at the path the settings name"
+mkfile x.test.txt 20
+printf 'x.test.txt\t20\n' >"$R/tools/b.tsv"
+git -C "$R" add -A
+RAISE=1 run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"frozen baseline row raised: x.test.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
+  && ok "control: rows at the path HEAD's settings name are the ones that judge" \
+  || bad "control: rows at the path HEAD's settings name judge" "rc=$RC out=$OUT"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

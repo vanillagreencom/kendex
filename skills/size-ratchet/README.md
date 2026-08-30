@@ -73,12 +73,13 @@ raises is that threshold routed around.
 - **A first row** for a path HEAD's baseline carries none for is a
   **bootstrap**, not a raise, and the declaration admits it in every class,
   frozen included. A renamed path is such a path, so a rename bootstraps.
-- **A commit that moves the baseline** — a changed `SIZE_RATCHET_BASELINE` —
-  is judged against HEAD's rows at the path HEAD's own settings named, so a
-  relocation carries no row past this check. Every source that resolution
-  reads comes from HEAD when git tracks it and from the invocation when it
-  does not; one the lookup cannot reproduce is a loud refusal, never a silent
-  "no rows". `--baseline` is the operator's override and skips the lookup.
+- **HEAD's baseline is the file HEAD's own settings named**, asked before the
+  rows in it, so a changed `SIZE_RATCHET_BASELINE` carries no row past this
+  check and a stale row set at the new path is not read as HEAD's. Every
+  source that resolution reads comes from HEAD when git tracks it and from the
+  invocation when it does not; one the lookup cannot reproduce is a loud
+  refusal, never a silent "no rows". `--baseline` is the operator's override
+  and skips the lookup.
 - A repo whose HEAD carries no baseline rows yet is bootstrapping, and the
   gate says so on its verdict line rather than reporting a clean raise check.
 
