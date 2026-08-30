@@ -70,3 +70,8 @@ printf x |&<in
 printf x |&/bin/cat
 printf x |&'cat'
 case x in x) printf \|;& y) :;; esac
+coproc(echo hi)
+coproc cat
+x && coproc reader
+builtin mapfile -t lanes < f
+command readarray -t lanes < f

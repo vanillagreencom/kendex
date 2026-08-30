@@ -41,7 +41,13 @@ SCRIPTS_DIR="$(cd "$TEST_DIR/../scripts" && pwd)"
 # transformations (${x@Q}), globstar, `wait -n` and `test -v` are outside it
 # on purpose; each is its own construct rather than another spelling of one
 # below, and adding one means adding its probe and its control with it.
-PATTERN='mapfile|readarray'
+# The Bash 4 builtins and the coproc keyword. A name is delimited by the
+# characters an identifier cannot hold, so this rule is complete and is
+# stated from the grammar rather than from spellings: `coproc(echo hi)` and
+# `coproc FOO` are the keyword, `coprocess=1` and `remapfile` are not. That
+# is the difference from the operators below, where the grammar gives no
+# usable boundary and none is attempted.
+PATTERN='(^|[^[:alnum:]_])(mapfile|readarray|coproc)([^[:alnum:]_]|$)'
 # declare/typeset/local/readonly carrying a Bash 4 attribute anywhere in the
 # options: A (associative), g (global), n (nameref), l and u (the
 # declare-family spelling of case conversion). Bash accepts the attributes in
@@ -59,7 +65,6 @@ PATTERN="$PATTERN"'|(^|[^$])\{[A-Za-z_][A-Za-z0-9_]*\}[<>]'
 # since a line carrying one is broken under every bash and no correct 3.2
 # source holds one, so taking the whole list reddens nothing legal.
 PATTERN="$PATTERN"'|\$\{!?([A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?|[0-9]+|[-#?$!@*])(,,?|\^\^?)'
-PATTERN="$PATTERN"'|(^|[^[:alnum:]_])coproc([[:blank:]]|$)'
 # The pipe-with-stderr, the append-both redirection, and the two case
 # terminators, matched plainly. There is no boundary anchor here, and that is
 # a decision rather than an omission.

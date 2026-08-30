@@ -29,3 +29,8 @@ code="${?}"
 count="${#}"
 trimmed="${path#-}"
 defaulted=${x:-#}
+coprocess=1
+mycoproc=1
+remapfile x
+mapfiles=2
+my_mapfile_helper() { :; }
