@@ -418,10 +418,10 @@ set -e
 for workflow in dev-fix review-pr-comments; do
   workflow_file="$REPO_ROOT/skills/orch/workflows/$workflow.md"
   round_block="$(fenced_block_with "$workflow_file" "dev-round-write --worktree")"
-  delegation="$(delegation_block "$workflow_file" "Adds: [REPO_RELATIVE_PATH]")"
+  delegation="$(delegation_block "$workflow_file" "Adds: [REPO_RELATIVE_PATHS_JSON_ARRAY]")"
   assert_text_matches "$round_block" '^[[:space:]]*\.agents/.+dev-round-write .+--adds-file ' "$workflow live command passes an additions data file"
   assert_text_not_matches "$round_block" '(^|[[:space:]])--add([[:space:]]|$)' "$workflow live command carries no repository path argument"
-  assert_text_matches "$delegation" '^[[:space:]]*\[If the round may add files: "Adds: \[REPO_RELATIVE_PATH\]' "$workflow live delegation carries the optional Adds line"
+  assert_text_matches "$delegation" '^[[:space:]]*\[If the round may add files: "Adds: \[REPO_RELATIVE_PATHS_JSON_ARRAY\]' "$workflow live delegation carries the JSON Adds line"
 done
 
 scope_docs=(
@@ -446,6 +446,19 @@ scope_mutant_text="$(<"$scope_mutant")"
 assert_text_not_matches "$scope_mutant_text" '^[[:space:]]*[^<[:space:]].*schemas/dev-round\.md.*Protected additions' \
   "scope reference control rejects an HTML-comment decoy"
 
+adds_contract_docs=(
+  "$REPO_ROOT/skills/dev/workflows/dev-fix.md"
+  "$REPO_ROOT/skills/orch/workflows/dev-fix.md"
+  "$REPO_ROOT/skills/orch/workflows/review-pr-comments.md"
+)
+for adds_doc in "${adds_contract_docs[@]}"; do
+  adds_text="$(<"$adds_doc")"
+  assert_text_matches "$adds_text" 'Adds: \["tools/one path\.sh"\]' \
+    "$(basename "$adds_doc") preserves one JSON path containing a space"
+  assert_text_matches "$adds_text" 'Adds: \["tools/one path\.sh","skills/x/scripts/check;safe"\]' \
+    "$(basename "$adds_doc") preserves multiple JSON paths and shell metacharacters"
+done
+
 workflow_rid=40
 for workflow in dev-fix review-pr-comments; do
   round_token="$workflow_rid-$workflow_rid"
@@ -469,9 +482,9 @@ assert_text_not_matches "$mutant_round_block" '^[[:space:]]*\.agents/.+dev-round
 delegation_mutant="$TMP_ROOT/dev-fix-delegation-mutant.md"
 cp "$REPO_ROOT/skills/orch/workflows/dev-fix.md" "$delegation_mutant"
 sed -i.bak '/^   \[If the round may add files: "Adds:/ s/^/   <!-- /; /^   <!-- .*Adds:/ s/$/ -->/' "$delegation_mutant"
-printf '\nAdds: [REPO_RELATIVE_PATH] prose decoy\n' >> "$delegation_mutant"
-mutant_delegation="$(delegation_block "$delegation_mutant" "Adds: [REPO_RELATIVE_PATH]")"
-assert_text_not_matches "$mutant_delegation" '^[[:space:]]*\[If the round may add files: "Adds: \[REPO_RELATIVE_PATH\]' "workflow control rejects an inert delegation line plus prose decoy"
+printf '\nAdds: [REPO_RELATIVE_PATHS_JSON_ARRAY] prose decoy\n' >> "$delegation_mutant"
+mutant_delegation="$(delegation_block "$delegation_mutant" "Adds: [REPO_RELATIVE_PATHS_JSON_ARRAY]")"
+assert_text_not_matches "$mutant_delegation" '^[[:space:]]*\[If the round may add files: "Adds: \[REPO_RELATIVE_PATHS_JSON_ARRAY\]' "workflow control rejects an inert delegation line plus prose decoy"
 
 inert_workflow="$TMP_ROOT/inert-workflow.md"
 cp "$REPO_ROOT/skills/orch/workflows/dev-fix.md" "$inert_workflow"

@@ -191,7 +191,7 @@ printf '%s' "$valid_analysis" | jq -c '.round_id="OTHER-1"' > "$artifact"
 assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "invalid" "analysis with internal round_id mismatch reports reason=invalid"
 # An analysis artifact can never satisfy a delegated item set.
 printf '%s' "$valid_analysis" > "$artifact"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R" --expect-items 1,2)" "incomplete" "analysis cannot satisfy --expect-items → incomplete"
+assert_eq "$(reason --file "$artifact" --expect-items 1,2)" "incomplete" "analysis cannot satisfy file-mode --expect-items → incomplete"
 
 # --- gate ordering: invalid (scalars/round) beats incomplete (items) ---
 printf '%s' "$valid_fix" | jq -c 'del(.commit) | .items=[]' > "$artifact"
@@ -199,18 +199,18 @@ assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "i
 
 # --- --expect-items: exact set coverage for fix rounds ---
 printf '%s' "$valid_fix" > "$artifact"   # items n = [1,2]
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R" --expect-items 1,2)" "valid" "expect 1,2 exact match → valid"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R" --expect-items 2,1)" "valid" "expect 2,1 order-independent → valid"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R" --expect-items 1,2,3)" "incomplete" "expect 1,2,3 with 3 missing → incomplete"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R" --expect-items 1)" "incomplete" "expect 1 with extra 2 present → incomplete"
+assert_eq "$(reason --file "$artifact" --expect-items 1,2)" "valid" "file-mode expect 1,2 exact match → valid"
+assert_eq "$(reason --file "$artifact" --expect-items 2,1)" "valid" "file-mode expect 2,1 order-independent → valid"
+assert_eq "$(reason --file "$artifact" --expect-items 1,2,3)" "incomplete" "file-mode expect 1,2,3 with 3 missing → incomplete"
+assert_eq "$(reason --file "$artifact" --expect-items 1)" "incomplete" "file-mode expect 1 with extra 2 present → incomplete"
 # duplicate item number in the artifact must not satisfy a distinct expected set
 printf '%s' "$valid_fix" | jq -c '.items=[{"n":1,"decision":"Applied","reasoning":"a"},{"n":1,"decision":"Skipped","reasoning":"b"}]' > "$artifact"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R" --expect-items 1,2)" "incomplete" "duplicate item n=1 does not cover {1,2} → incomplete"
+assert_eq "$(reason --file "$artifact" --expect-items 1,2)" "incomplete" "file-mode duplicate item n=1 does not cover {1,2} → incomplete"
 # expect-items applies its own enum/reasoning rules even when the item set matches exactly
 printf '%s' "$valid_fix" | jq -c '.items=[{"n":1,"decision":"Applied","reasoning":""},{"n":2,"decision":"Skipped","reasoning":"b"}]' > "$artifact"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R" --expect-items 1,2)" "incomplete" "expect-items rejects empty reasoning → incomplete"
+assert_eq "$(reason --file "$artifact" --expect-items 1,2)" "incomplete" "file-mode expect-items rejects empty reasoning → incomplete"
 printf '%s' "$valid_fix" | jq -c '.items=[{"n":1,"decision":"Nope","reasoning":"a"},{"n":2,"decision":"Skipped","reasoning":"b"}]' > "$artifact"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R" --expect-items 1,2)" "incomplete" "expect-items rejects out-of-enum decision (set matches) → incomplete"
+assert_eq "$(reason --file "$artifact" --expect-items 1,2)" "incomplete" "file-mode expect-items rejects out-of-enum decision → incomplete"
 printf '%s' "$valid_fix" > "$artifact"   # restore
 
 # --- --file mode: explicit path validation ---
@@ -255,8 +255,8 @@ assert_eq "$?" "2" "round mode with path-unsafe --issue (slash) exits 2"
 assert_eq "$?" "2" "round mode with path-traversal --issue (..) exits 2"
 "$CHECK" --worktree "$worktree" --issue "$issue" --round-id ".." >/dev/null 2>&1
 assert_eq "$?" "2" "round mode with path-traversal --round-id (..) exits 2"
-"$CHECK" --worktree "$worktree" --issue "$issue" --round-id "$R" --expect-items "1,x" >/dev/null 2>&1
-assert_eq "$?" "2" "round mode with malformed --expect-items exits 2"
+"$CHECK" --file "$artifact" --expect-items "1,x" >/dev/null 2>&1
+assert_eq "$?" "2" "file mode with malformed --expect-items exits 2"
 "$CHECK" --worktree "$TMP_ROOT/does-not-exist" --issue "$issue" --round-id "$R" >/dev/null 2>&1
 assert_eq "$?" "2" "round mode with nonexistent worktree exits 2"
 "$CHECK" --file >/dev/null 2>&1
@@ -279,7 +279,7 @@ rt_impl="$("$WRITE" --worktree "$rt_wt" --kind implement --issue issue-9 --round
 assert_eq "$([[ -f "$rt_impl" ]] && echo yes)" "yes" "writer produced the round-scoped implement artifact"
 assert_eq "$(reason --worktree "$rt_wt" --issue issue-9 --round-id 5-6)" "valid" "writer implement output round-trips as valid"
 "$WRITE" --worktree "$rt_wt" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit c --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
-assert_eq "$(reason --worktree "$rt_wt" --issue issue-9 --round-id 7-8 --expect-items 1,2)" "valid" "writer fix output round-trips with matching --expect-items"
+assert_eq "$(reason --file "$rt_wt/tmp/dev-return-issue-9-7-8.json" --expect-items 1,2)" "valid" "writer fix output round-trips through file-mode --expect-items"
 printf 'Recommend: re-scope; seam moved in refactor.\n' > "$rt_wt/analysis.md"
 "$WRITE" --worktree "$rt_wt" --kind analysis --issue issue-9 --round-id 9-10 --branch b --summary-file "$rt_wt/analysis.md" --no-summary >/dev/null
 assert_eq "$(reason --worktree "$rt_wt" --issue issue-9 --round-id 9-10)" "valid" "writer analysis output round-trips as valid (kendex#952)"
@@ -347,18 +347,19 @@ set -e
 # even when the shapes coincide (control first: the inline form still fires it).
 "$WRITE" --worktree "$rr_wt" --kind fix --issue issue-9 --round-id 16-16 --branch b --commit "$rr_head" \
   --validate pass --item 1 Applied a --item 2 Applied b --item 3 Applied c >/dev/null
-hint_inline="$("$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 16-16 --expect-items 3 2>/dev/null | jq -r '.hint' || true)"
+hint_inline="$("$CHECK" --file "$rr_wt/tmp/dev-return-issue-9-16-16.json" --expect-items 3 2>/dev/null | jq -r '.hint' || true)"
 assert_eq "$([[ "$hint_inline" != "null" ]] && echo fires)" "fires" \
-  "control: inline --expect-items 3 against items 1..3 fires the count-vs-set hint"
+  "control: file-mode --expect-items 3 against items 1..3 fires the count-vs-set hint"
 "$ROUND_WRITE" --worktree "$rr_wt" --issue issue-9 --round-id 16-16 --item 3 "only item three" >/dev/null
 hint_round="$("$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 16-16 --expect-items-from-round 2>/dev/null | jq -r '.hint' || true)"
 assert_eq "$hint_round" "null" "--expect-items-from-round never emits the count-vs-set hint (reason stays incomplete)"
 reason_round="$("$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 16-16 --expect-items-from-round 2>/dev/null | jq -r '.reason' || true)"
 assert_eq "$reason_round" "incomplete" "from-round set mismatch still reports incomplete"
 set +e
-# one expected-set source only
-"$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 7-8 --expect-items 1,2 --expect-items-from-round >/dev/null 2>&1
-assert_eq "$?" "2" "--expect-items and --expect-items-from-round together exit 2"
+# The weaker item-list flag cannot accept a round-mode artifact that the bound
+# authorization path accepts.
+"$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 7-8 --expect-items 1,2 >/dev/null 2>&1
+assert_eq "$?" "2" "round mode rejects --expect-items authorization bypass"
 # --file mode has no worktree/issue/round to resolve a record from
 "$CHECK" --file "$rr_wt/tmp/dev-return-issue-9-7-8.json" --expect-items-from-round >/dev/null 2>&1
 assert_eq "$?" "2" "--file mode rejects --expect-items-from-round"
@@ -685,6 +686,7 @@ assert_contains_str "$check_help" "commit_unresolvable" "--help documents the co
 assert_contains_str "$check_help" "unapproved_additions" "--help documents the additions gate"
 assert_contains_str "$check_help" "comparison_failed" "--help documents Git comparison failures"
 assert_contains_str "$check_help" "classifier_failed" "--help documents classifier failures"
+assert_contains_str "$check_help" "--expect-items (--file mode only)" "--help confines the weaker item-list flag to file mode"
 assert_contains_str "$check_help" "incomplete" "--help documents the incomplete reason"
 artifact_checks_ref="$REPO_ROOT/skills/orch/references/artifact-checks.md"
 assert_file_contains "$artifact_checks_ref" "--help" "artifact-checks reference routes to the help contracts"

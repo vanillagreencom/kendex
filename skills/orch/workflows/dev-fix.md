@@ -92,7 +92,7 @@ Cancel ends the workflow; a selection goes to § 2.
 
    Decide whether this fix round may add protected files. [`../schemas/dev-round.md` § Protected additions](../schemas/dev-round.md#protected-additions) is the sole scope definition. The default is none.
 
-   When the list is non-empty, write `[WORKTREE_PATH]/tmp/dev-round-adds-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of exact repository-relative paths. Pass only that data-file path to the writer:
+   When the list is non-empty, write `[WORKTREE_PATH]/tmp/dev-round-adds-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of exact repository-relative paths. Render the same array after `Adds:` in the delegation, preserving JSON string boundaries, including `Adds: ["tools/one path.sh"]` and `Adds: ["tools/one path.sh","skills/x/scripts/check;safe"]`. Pass only the data-file path to the writer:
 
    ```bash
    .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json [--adds-file [WORKTREE_PATH]/tmp/dev-round-adds-[DEV_ROUND_ID].json]
@@ -114,7 +114,7 @@ Cancel ends the workflow; a selection goes to § 2.
    Round ID: [DEV_ROUND_ID]
    Artifact Key: [ISSUE_ID]
    QA: [QA_AGENT]
-   [If the round may add files: "Adds: [REPO_RELATIVE_PATH] [REPO_RELATIVE_PATH]..."]
+   [If the round may add files: "Adds: [REPO_RELATIVE_PATHS_JSON_ARRAY]"]
 
    Decisions:
    [For each verified decision: "- [DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
