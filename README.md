@@ -1,8 +1,15 @@
 # kendex
 
-One place to manage AI coding-tool customizations across Claude Code,
-Codex, OpenCode, Cursor, Pi, Gemini CLI, and GitHub Copilot, personally
-and per-project.
+One place to manage AI coding-tool customizations, personally and
+per-project.
+
+<img src="docs/img/harness-claude.png" alt="Claude Code" height="20">
+<img src="docs/img/harness-codex.png" alt="Codex" height="20">
+<img src="docs/img/harness-opencode.png" alt="OpenCode" height="20">
+<img src="docs/img/harness-cursor.png" alt="Cursor" height="20">
+<img src="docs/img/harness-pi.png" alt="Pi" height="20">
+<img src="docs/img/harness-gemini.png" alt="Gemini CLI" height="20">
+<img src="docs/img/harness-copilot.png" alt="GitHub Copilot" height="20">
 
 Manages agents, skills, hooks, commands, MCP servers, plugins, and Pi
 extensions. Desktop app and CLI over one engine, with a community at
@@ -34,7 +41,7 @@ Here for the packages? Browse the
 |---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
 | Agents | ● | ● | ● | ● | ● | ● | ● |
 | Skills | ● | ● | ● | ● | ● | ● | ● |
-| Hooks | ● | ● | ● | ● | — | ● | ● |
+| Hooks | ● | ● | ● | ● | —§ | ● | ● |
 | Commands | ● | ○ | ○ | ○ | ○ | ● | — |
 | MCP servers | ● | ○ | ○ | ○ | — | ●‡ | ● |
 | Plugins | ◐ | ○ | ○ | ○ | — | ○ | ◐ |
@@ -50,6 +57,7 @@ Notes:
 - †Copilot reads Claude Code's skills; one file stays one installation, listed under the tool it belongs to.
 - ‡Gemini records MCP server state in one machine-wide file, so a project can declare a server but not switch it off there.
 - ‡Gemini extensions install globally and switch on through an undocumented file, so they stay read-only.
+- §Pi has no hooks of its own to write to. The same behaviour ships as the `pi-hooks` Pi extension, which kendex installs and manages like any other.
 
 ## Install
 
@@ -75,32 +83,7 @@ For the CLI on its own: `brew install vanillagreencom/kendex/kendex-cli`,
 command on macOS. Every install option is on
 [kendex.ai/download](https://kendex.ai/download).
 
-Build from source (Rust and Node required):
-
-```sh
-cargo build --release -p kendex-cli               # the `kendex` CLI
-npm ci --prefix ui
-cd crates/app && ../../ui/node_modules/.bin/tauri dev   # the desktop app
-```
-
-A debug build keeps its own home under the platform data directory
-(`kendex-dev`) instead of yours, so a branch cannot leave records your
-installed kendex will not read. Your global skills and agents are not
-visible to it, and nothing it writes reaches them.
-
-The boundary is the home, not the whole machine. Three things stay outside
-it: a repository you point a debug build at is the real one, so
-`--scope project` reads and writes it as usual; a harness folder you set to
-an explicit absolute path is used as written; and programs kendex runs for
-you, `npm` among them, still see your real home. To dogfood a build against
-your real setup, say so:
-
-```sh
-KENDEX_REAL_HOME=1 cargo run -p kendex-cli --bin kendex -- list
-```
-
-Only `1` opts out — the hatch permits writes to a real machine, so a value
-nobody could read as consent leaves the sandbox on.
+Working on kendex itself: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## How it works
 
@@ -149,27 +132,14 @@ kendex adopt skill handmade                             # manage an existing ite
 kendex apply --plan                                     # preview the full reconcile
 ```
 
-Coming from v1: nothing is migrated, and no importer arrives — install
-kendex fresh and retire the old artifacts by hand. Old-name files are not
-read at all: delete `vstack.toml`, `.vstack-lock.json`, `.vstack-local/`
-and `vstack.settings.toml`, and declare what you want again in a fresh
-`kendex.toml`. A file that is v1 in shape under a current name — a
-`kendex.toml` with no `schema` key, a `.kendex-lock.json` keyed by bare
-name — is refused by every command that would write there, so it has to
-go first. Then remove the `vstack-hooks` directory. A `kendex-hooks`
-directory is from an earlier kendex 5.x, not from v1 — remove it the same
-way. Either leaves a `core.hooksPath` pointing at it, which has to be
-unset before the new hooks can arm: `git config --unset core.hooksPath`,
-then `kendex guard install`.
+## What you can count on
 
-## Engine rules
-
-1. Generated artifacts are always overwritable; intent lives only in `kendex.toml`.
-2. Nothing you set is clobbered, and nothing you removed is silently re-added.
-3. Unmanaged files are reported, not touched. Foreign symlinks are conflicts, not targets.
-4. An item's recorded source is durable; a name collision across sources is a hard error naming the original.
-5. Enable/disable is a lossless rename or a structured config edit that preserves every unrelated key.
-6. One writer per scope; concurrent applies get a "busy" error, never an interleaved write.
+- Delete anything kendex generated and the next apply builds it back. What you asked for is written down in `kendex.toml` and nowhere else.
+- Nothing you set is overwritten, and nothing you removed comes back on its own.
+- A file kendex did not create is reported to you, never written. A link pointing somewhere kendex does not own stops the apply instead of being written through.
+- Every installed item remembers the source it came from. Two sources offering one name stop the apply and name the one that got there first.
+- Switching an item off keeps it whole, so switching it back on gets you what you had. Every unrelated setting in that file stays as you left it.
+- Two applies to the same place never interleave. Start one while another is running there and it tells you kendex is busy.
 
 ## CLI surface
 
