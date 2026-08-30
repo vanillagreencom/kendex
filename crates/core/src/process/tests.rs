@@ -215,6 +215,12 @@ fn errors_name_the_call_the_caller_asked_for_not_the_pinning() {
 /// A cached repository whose own config points its working tree at a
 /// sibling directory. Un-pinned, `git reset --hard` here overwrites the
 /// sibling's files with the repository's; pinned, it cannot see them.
+///
+/// `reset --hard` writes a working tree, so the host's line-ending
+/// configuration reaches it — this is not the call that settles that, and
+/// widening the settings to cover it would put them back on every
+/// inspection. The fixture answers for its own line endings instead, which
+/// is what a test about containment should be holding constant.
 #[test]
 fn a_hostile_core_worktree_cannot_reach_outside_the_cache() {
     let tmp = tempfile::tempdir().unwrap();
@@ -225,6 +231,7 @@ fn a_hostile_core_worktree_cannot_reach_outside_the_cache() {
     fs::write(cache.join("skills/gh/SKILL.md"), "from the catalog\n").unwrap();
     for args in [
         vec!["init", "--quiet", "-b", "main"],
+        vec!["config", "core.autocrlf", "false"],
         vec!["add", "."],
         vec![
             "-c",

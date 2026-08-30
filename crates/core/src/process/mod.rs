@@ -62,6 +62,13 @@ const PINNED: &[&str] = &["protocol.ext.allow=never"];
 /// Settled on top of [`PINNED`], for the one call that writes catalog
 /// content this machine then reads.
 ///
+/// The rule is what the operation does, not which constructor it came
+/// through: git converts as it writes a working tree, so an operation that
+/// writes one is what needs this and nothing else does. `git_into` is
+/// where the only such operation kendex runs lives, `checkout-index` out
+/// of the mirror. A later call that writes a working tree owes them too,
+/// wherever it is built.
+///
 /// What the host's git is configured to do to line endings must not decide
 /// what a catalog checks out. Both settings tell git to rewrite them as it
 /// writes a working tree, and Git for Windows' installer puts
