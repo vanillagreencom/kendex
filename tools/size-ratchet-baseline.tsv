@@ -64,7 +64,7 @@ skills/decider/scripts/decisions	484
 skills/deep-research/scripts/deep-research	529
 skills/github/scripts/commands/pr-merge.sh	713
 skills/github/scripts/git-diff-summary	961
-skills/github/scripts/lib/gh-auth.sh	494
+skills/github/scripts/lib/gh-auth.sh	475
 skills/github/scripts/lib/github-api.sh	897
 skills/github/scripts/lib/verify-lib.sh	415
 skills/github/tests/git-diff-summary-cfg-test-declaration.test.sh	2128

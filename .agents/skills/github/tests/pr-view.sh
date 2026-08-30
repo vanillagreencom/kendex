@@ -157,6 +157,35 @@ run_pr_view_passthrough() {
        pr-view 42 --web extra-position)
 }
 
+run_pr_view_no_pr_passthrough() {
+  local calls_file="$1"
+  (cd "$TMP_ROOT/repo" \
+    && PATH="$TMP_ROOT/bin:$PATH" \
+       STUB_GH_CALLS="$calls_file" \
+       env -u GH_TOKEN -u GITHUB_TOKEN "$GITHUB_SH" -C "$TMP_ROOT/repo" \
+       pr-view --repo owner/repo --json number,state)
+}
+
+run_pr_view_json_help_value() {
+  local calls_file="$1"
+  (cd "$TMP_ROOT/repo" \
+    && PATH="$TMP_ROOT/bin:$PATH" \
+       STUB_GH_CALLS="$calls_file" \
+       env -u GH_TOKEN -u GITHUB_TOKEN "$GITHUB_SH" -C "$TMP_ROOT/repo" \
+       pr-view --json --help)
+}
+
+without_timeout_utility() {
+  command() {
+    if [[ "${1:-}" == "-v" && "${2:-}" == "timeout" ]]; then
+      return 1
+    fi
+    builtin command "$@"
+  }
+  export -f command
+  "$@"
+}
+
 assert_not_contains() {
   local haystack="$1" needle="$2" name="$3"
   if grep -qF -- "$needle" <<<"$haystack"; then
@@ -187,6 +216,16 @@ set -e
 assert_eq "$rc" "124" "auth preflight timeout exits 124" "$stderr"
 assert_eq "$(jq -r .status <<<"$output")" "auth_timeout" "auth timeout emits structured status" "$stderr"
 
+stderr="$TMP_ROOT/auth-timeout-no-utility.err"
+set +e
+output=$(without_timeout_utility run_pr_view \
+  STUB_AUTH_SLEEP=1 KENDEX_GITHUB_AUTH_TIMEOUT=1 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "124" "auth timeout works without the timeout utility" "$stderr"
+assert_eq "$(jq -r .status <<<"$output")" "auth_timeout" \
+  "no-utility auth timeout emits structured status" "$stderr"
+
 stderr="$TMP_ROOT/api-user-auth-timeout.err"
 set +e
 output=$(run_pr_view GH_TOKEN=ghs_VALIDBOT123 STUB_API_USER_SLEEP=1 KENDEX_GITHUB_AUTH_TIMEOUT=1 2>"$stderr")
@@ -210,6 +249,16 @@ rc=$?
 set -e
 assert_eq "$rc" "124" "gh pr view timeout exits 124" "$stderr"
 assert_eq "$(jq -r .status <<<"$output")" "gh_timeout" "gh timeout emits structured status" "$stderr"
+
+stderr="$TMP_ROOT/pr-view-timeout-no-utility.err"
+set +e
+output=$(without_timeout_utility run_pr_view \
+  STUB_PR_MODE=hang KENDEX_GITHUB_PR_VIEW_TIMEOUT=1 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "124" "gh pr view timeout works without the timeout utility" "$stderr"
+assert_eq "$(jq -r .status <<<"$output")" "gh_timeout" \
+  "no-utility gh timeout emits structured status" "$stderr"
 
 rm -f "$TMP_ROOT/op.calls"
 stderr="$TMP_ROOT/inherited-gh-token-op.err"
@@ -251,6 +300,16 @@ set -e
 assert_eq "$rc" "3" "token resolution timeout exits auth code" "$stderr"
 assert_eq "$(jq -r .status <<<"$output")" "token_resolution_timeout" "token timeout emits structured status" "$stderr"
 
+stderr="$TMP_ROOT/op-timeout-no-utility.err"
+set +e
+output=$(without_timeout_utility run_pr_view \
+  STUB_AUTH_OK=0 STUB_OP_MODE=slow KENDEX_GITHUB_OP_TIMEOUT=1 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "3" "op timeout works without the timeout utility" "$stderr"
+assert_eq "$(jq -r .status <<<"$output")" "token_resolution_timeout" \
+  "no-utility op timeout emits structured status" "$stderr"
+
 rm -f "$TMP_ROOT/repo/.env.local"
 
 stderr="$TMP_ROOT/success.err"
@@ -271,6 +330,28 @@ set -e
 assert_eq "$rc" "0" "pr-view accepts passthrough arguments" "$stderr"
 assert_contains "$(cat "$calls")" "pr view 42 --web extra-position" \
   "pr-view forwards unknown flags and extra positionals"
+
+calls="$TMP_ROOT/pr-view-no-pr-passthrough.calls"
+: >"$calls"
+stderr="$TMP_ROOT/pr-view-no-pr-passthrough.err"
+set +e
+output=$(run_pr_view_no_pr_passthrough "$calls" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "pr-view accepts option values without a PR number" "$stderr"
+assert_contains "$(cat "$calls")" "pr view --repo owner/repo --json number,state" \
+  "pr-view preserves no-PR option-value order"
+
+calls="$TMP_ROOT/pr-view-json-help-value.calls"
+: >"$calls"
+stderr="$TMP_ROOT/pr-view-json-help-value.err"
+set +e
+output=$(run_pr_view_json_help_value "$calls" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "pr-view accepts a help-shaped JSON field value" "$stderr"
+assert_contains "$(cat "$calls")" "pr view --json --help" \
+  "pr-view keeps the JSON field value with its option"
 
 echo
 echo "=== github.sh pr-view --format rejection ==="

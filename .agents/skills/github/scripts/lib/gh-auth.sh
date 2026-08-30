@@ -9,25 +9,10 @@ kendex_github_is_resolved_token() {
   [[ "$token" =~ ^gh[pours]_ ]] || [[ "$token" =~ ^github_pat_ ]]
 }
 
-kendex_github_run_bounded() {
-  local seconds="$1"
-  shift
-
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "${seconds}s" "$@"
-  else
-    "$@"
-  fi
-}
-
-kendex_github_run_bounded_capture() {
-  local seconds="$1"
-  local stdout_file="$2"
-  local stderr_file="$3"
-  shift 3
-
-  kendex_github_run_bounded "$seconds" "$@" >"$stdout_file" 2>"$stderr_file"
-}
+_GH_AUTH_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bounded.sh
+source "$_GH_AUTH_LIB_DIR/bounded.sh"
+unset _GH_AUTH_LIB_DIR
 
 kendex_github_has_env_token() {
   [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]
@@ -90,11 +75,7 @@ kendex_github_resolve_op_reference_to_var() {
     return 1
   fi
 
-  if command -v timeout >/dev/null 2>&1; then
-    op_output=$(timeout "${op_timeout}s" op read "$ref" 2>&1) || op_status=$?
-  else
-    op_output=$(op read "$ref" 2>&1) || op_status=$?
-  fi
+  op_output=$(kendex_github_run_bounded "$op_timeout" op read "$ref" 2>&1) || op_status=$?
 
   if [[ "$op_status" -eq 0 && -n "$op_output" ]]; then
     printf -v "$out_var" '%s' "$op_output"

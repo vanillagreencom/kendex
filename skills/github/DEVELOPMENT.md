@@ -8,6 +8,7 @@
 - `scripts/git-diff-summary` — Standalone changed-file domain/scope and risk-flag summary helper
 - `scripts/lib/github-api.sh` — Shared auth, GraphQL, REST, and error handling
 - `scripts/lib/gh-auth.sh` — Token resolution and keyring fallback
+- `scripts/lib/bounded.sh` — Portable wall-clock bound for GitHub subprocesses
 - `scripts/lib/kendex-env.sh` — Project settings / `.env.local` loader
 - `scripts/lib/ci-run-correlation.sh` — Check-rollup run scoping, shared with orch `ci-wait`
 - `scripts/lib/verify-lib.sh` — Merge simulation and build/test detection for `pr-cross-check --verify`

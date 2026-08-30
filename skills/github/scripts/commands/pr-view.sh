@@ -87,18 +87,20 @@ EOF
 }
 
 main() {
-    local pr_num=""
-    local json_fields=""
-    local -a extra_args=()
+    local -a cmd=(gh pr view)
 
     while [ $# -gt 0 ]; do
         case "$1" in
             --json)
-                json_fields="$2"
-                shift 2
+                cmd+=("$1")
+                shift
+                if [ $# -gt 0 ]; then
+                    cmd+=("$1")
+                    shift
+                fi
                 ;;
             --json=*)
-                json_fields="${1#--json=}"
+                cmd+=("$1")
                 shift
                 ;;
             --help|-h)
@@ -112,25 +114,12 @@ main() {
                     2
                 exit 2
                 ;;
-            -*)
-                extra_args+=("$1")
-                shift
-                ;;
             *)
-                if [ -z "$pr_num" ]; then
-                    pr_num="$1"
-                else
-                    extra_args+=("$1")
-                fi
+                cmd+=("$1")
                 shift
                 ;;
         esac
     done
-
-    local -a cmd=(gh pr view)
-    [ -n "$pr_num" ] && cmd+=("$pr_num")
-    [ -n "$json_fields" ] && cmd+=(--json "$json_fields")
-    [ ${#extra_args[@]} -gt 0 ] && cmd+=("${extra_args[@]}")
 
     local auth_out auth_err pr_out pr_err
     PR_VIEW_TMP_DIR="$(mktemp -d)"
