@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
-use crate::fs::{copy_file_durable, copy_tree_durable, make_symlink, remove_any, sync_dir};
+use crate::fs::{
+    copy_file_durable, copy_tree_durable, make_symlink, remove_any, sync_dir, sync_dir_durable,
+};
 
 /// Pre-images of everything an apply is about to touch. Restore is
 /// idempotent, so a crash mid-rollback recovers by rolling back again.
@@ -132,9 +134,9 @@ fn rollback_where(dir: &Path, restore: impl Fn(&Path) -> bool) -> Result<()> {
         Ok(journal) => journal,
         // A meta that will not parse is a torn one. It is written whole
         // and durably before any mutation starts, so a partial one proves
-        // the world untouched and the journal safe to discard. A journal
-        // that parses but cannot be acted on is a different thing, whose
-        // mutations did start: that one is refused below, never cleared.
+        // the world untouched and the journal safe to discard. One that
+        // parses is acted on, and a failure part-way through the restore
+        // returns before the `clear` below, leaving it pending.
         Err(_) => return clear(dir),
     };
     let store = dir.join("store");
@@ -174,7 +176,25 @@ fn rollback_where(dir: &Path, restore: impl Fn(&Path) -> bool) -> Result<()> {
     clear(dir)
 }
 
+/// Spend a journal: meta.json first, on its own and made durable, then
+/// the sweep.
+///
+/// meta.json is the whole of what makes a journal pending, and this runs
+/// on the success path of every apply. `remove_dir_all` is neither atomic
+/// nor ordered, and it can simply fail — an unlinkable child, a handle
+/// somebody holds — so a sweep that went first could leave meta standing
+/// over a half-taken store. The next recovery pass would read that as an
+/// interrupted apply and roll back a completed one, deleting each path
+/// before it found the pre-image gone. With meta down first, what is left
+/// is a leftover directory the next pass sweeps. A sync that fails stops
+/// here: the sweep may not run while meta's removal is only in memory.
 pub fn clear(dir: &Path) -> Result<()> {
+    let meta = dir.join("meta.json");
+    match fs::remove_file(&meta) {
+        Ok(()) => sync_dir_durable(dir)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(CoreError::io(&meta, e)),
+    }
     if dir.exists() {
         fs::remove_dir_all(dir).map_err(|e| CoreError::io(dir, e))?;
     }

@@ -186,6 +186,80 @@ fn own_and_unmanaged_content_import_without_a_licence_question() {
     assert!(target.join("skills/stray/SKILL.md").exists());
 }
 
+/// A write that stops part-way leaves bytes behind, and the copy is not
+/// a transaction. The error has to name them: the next attempt reads
+/// them as somebody else's and tells the person to remove a file they
+/// never put there.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_write_that_stops_part_way_names_what_reached_the_folder() {
+    let (tmp, env, scope) = seeded();
+    let scopes = [scope];
+    let target = target(&env, &tmp, "mine-interrupted");
+    // A regular file where the second selection's tree needs a
+    // directory. Nothing sits at the destination itself, so this is not a
+    // refusal pass one can make; the write is what meets it.
+    fs::create_dir_all(target.join("skills")).unwrap();
+    fs::write(target.join("skills/blocked"), "not a directory").unwrap();
+
+    let candidates = inventory(&env, &scopes).unwrap();
+    let mut second = selection(find(&candidates, "stray"), false);
+    second.destination = "blocked/here".to_owned();
+    let selections = [selection(find(&candidates, "mine"), false), second];
+
+    let message = apply(&env, &scopes, &target, &selections)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        message.contains("skills/mine"),
+        "the error names what landed: {message}"
+    );
+    assert!(
+        message.contains("Remove them before importing again"),
+        "{message}"
+    );
+    assert!(
+        target.join("skills/mine/SKILL.md").is_file(),
+        "those bytes really are on disk"
+    );
+}
+
+/// Two legal destination names whose trees meet. `mine` carries a
+/// `nested/` of its own and `stray` is destined for `mine/nested`, so
+/// both write `skills/mine/nested/SKILL.md`. Decided by the writing order
+/// the second would replace the first's bytes and the outcome would
+/// report both as copied.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn two_selections_claiming_one_destination_refuse_and_write_nothing() {
+    let (tmp, env, scope) = seeded();
+    let Scope::Project { root } = &scope else {
+        unreachable!()
+    };
+    // A subdirectory inside the skill the first selection copies whole.
+    skill(
+        &root
+            .join(crate::source::LOCAL_SOURCE_DIR)
+            .join("skills/mine"),
+        "nested",
+        "the parent tree's copy",
+    );
+    let scopes = [scope.clone()];
+    let target = target(&env, &tmp, "mine-overlap");
+    let candidates = inventory(&env, &scopes).unwrap();
+    let mut under = selection(find(&candidates, "stray"), false);
+    under.destination = "mine/nested".to_owned();
+    let selections = [selection(find(&candidates, "mine"), false), under];
+
+    let refused = apply(&env, &scopes, &target, &selections);
+    let message = refused.unwrap_err().to_string();
+    assert!(message.contains("both write"), "{message}");
+    assert!(
+        !target.join("skills").exists(),
+        "a refused apply writes nothing at all"
+    );
+}
+
 /// Every refusal is decided before the first byte is written, so a
 /// second selection that cannot land takes the first one with it. Without
 /// that the import is half-done and there is nothing to say which half.

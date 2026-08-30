@@ -28,8 +28,8 @@ fn plan(scope: Scope, ops: Vec<PlannedOp>) -> Plan {
 }
 
 /// A refusal part-way through takes the ops before it back with it: the
-/// first op's bytes are restored and the chain the second one needed is
-/// never left behind.
+/// first op's bytes are restored, and the bytes the refusal protected are
+/// left exactly as the outside writer left them.
 #[test]
 fn a_refusal_part_way_through_rolls_back_what_ran_before_it() {
     let tmp = tempfile::tempdir().unwrap();

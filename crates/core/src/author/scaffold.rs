@@ -90,29 +90,83 @@ pub fn plan(request: &CreateRequest) -> Result<Vec<(String, String)>> {
 /// A folder kendex just made is kendex's to initialise; nothing is
 /// committed. Refuses a folder that already exists — creating never merges.
 ///
-/// Everything that can refuse is asked first (the plan, the destination,
-/// the registry file); a failure part-way through the build, or a registry
-/// that refuses after all, takes the folder back with it.
+/// Everything that can refuse is asked first (the shape of the path, the
+/// destination, the registry file). A failure after that removes the
+/// folder where it can, and says so in the error where it cannot.
 pub fn create(env: &Env, request: &CreateRequest) -> Result<MineRow> {
     let files = plan(request)?;
-    if request.dir.exists() {
-        return Err(CoreError::Authoring {
-            message: format!(
-                "{} already exists — use \"an existing folder\" to register it instead",
-                request.dir.display()
-            ),
-        });
-    }
-    super::registry::can_register(env, &request.dir)?;
-    if let Err(error) = build_in(&request.dir, &files).and_then(|()| {
+    let dir = creatable(&request.dir)?;
+    super::registry::can_register(env, &dir)?;
+    if let Err(error) = build_in(&dir, &files).and_then(|()| {
         // The folder was wholly created by this call — a registry that
         // refused after all takes it back with it.
-        super::registry::register(env, &request.dir)
+        super::registry::register(env, &dir)
     }) {
-        let _ = std::fs::remove_dir_all(&request.dir);
-        return Err(error);
+        return Err(unmade(&dir, error));
     }
-    super::status::status(&request.dir)
+    super::status::status(&dir)
+}
+
+/// Take back the folder this call made, and say so when it cannot: the
+/// half-built folder stands, and the next attempt would meet the "already
+/// exists" refusal with nothing said about where it came from.
+fn unmade(dir: &Path, error: CoreError) -> CoreError {
+    match std::fs::remove_dir_all(dir) {
+        Ok(()) => error,
+        Err(gone) if gone.kind() == std::io::ErrorKind::NotFound => error,
+        Err(_) => CoreError::Authoring {
+            message: format!(
+                "{error}. {} was left behind — delete it before trying again",
+                dir.display()
+            ),
+        },
+    }
+}
+
+/// The folder this request creates, proven to be one a create may make.
+///
+/// The answer is the parent's real place joined with the folder's own
+/// name, so nothing after this works from the caller's spelling. That
+/// spelling need not name a folder at all — `nope/..` has no last
+/// component — and handing it to the failure path's `remove_dir_all`
+/// would take the directory the command was run in.
+///
+/// Presence is asked of the name itself, never of what it reaches: a link
+/// whose target is gone answers `exists` with false, and building "into"
+/// one would write through it, or delete somebody's link on the way out.
+fn creatable(dir: &Path) -> Result<PathBuf> {
+    let (Some(parent), Some(leaf)) = (dir.parent(), dir.file_name()) else {
+        return Err(CoreError::Authoring {
+            message: format!("{} is not a creatable folder path", dir.display()),
+        });
+    };
+    match dir.symlink_metadata() {
+        Ok(_) => {
+            return Err(CoreError::Authoring {
+                message: format!(
+                    "{} already exists — use \"an existing folder\" to register it instead",
+                    dir.display()
+                ),
+            });
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        // Something is there that this cannot even look at. Creating over
+        // it is not on, and calling it absent would put it on the failure
+        // path's removal list.
+        Err(error) => return Err(CoreError::io(dir, error)),
+    }
+    // A bare name has an empty parent, which is the working directory.
+    let parent = match parent.as_os_str().is_empty() {
+        true => Path::new("."),
+        false => parent,
+    };
+    let real = parent.canonicalize().map_err(|_| CoreError::Authoring {
+        message: format!(
+            "{} is not a folder that exists — make it first, or create the marketplace somewhere else",
+            parent.display()
+        ),
+    })?;
+    Ok(real.join(leaf))
 }
 
 fn build_in(dir: &Path, files: &[(String, String)]) -> Result<()> {

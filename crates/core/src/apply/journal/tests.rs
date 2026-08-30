@@ -47,6 +47,58 @@ fn a_journal_without_meta_is_not_pending_and_is_swept() {
     assert_eq!(fs::read_to_string(&a).unwrap(), "a1");
 }
 
+/// `clear` takes meta.json down before the sweep, so a sweep that cannot
+/// finish leaves a leftover rather than a pending journal.
+///
+/// It runs on the success path of every apply. A pending journal there
+/// means the next recovery pass rolls a completed apply back: it removes
+/// each path before restoring, and the pre-image it would put back went
+/// with the half-taken store.
+///
+/// Pinned with a journal directory that takes an unlink and refuses to be
+/// opened, which is what separates the two orders rather than testing
+/// them both. `remove_dir_all` opens the directory before it removes
+/// anything, so it fails having taken nothing, meta.json included; the
+/// unlink ahead of it needs no read and goes through.
+#[cfg(unix)]
+#[test]
+fn clear_takes_meta_down_before_the_sweep() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let tmp = tempfile::tempdir().unwrap();
+    let a = tmp.path().join("work/a.md");
+    fs::create_dir_all(a.parent().unwrap()).unwrap();
+    fs::write(&a, "a0").unwrap();
+    let journal_dir = tmp.path().join("journal/global");
+    write(&journal_dir, std::slice::from_ref(&a)).unwrap();
+    // The apply ran: the file holds what it wrote, and its pre-image sits
+    // in the journal's store.
+    fs::write(&a, "applied").unwrap();
+
+    fs::set_permissions(&journal_dir, fs::Permissions::from_mode(0o300)).unwrap();
+    let unlock = || fs::set_permissions(&journal_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    if fs::File::open(&journal_dir).is_ok() {
+        // Permissions do not bind this user (root): the sweep cannot be
+        // made to fail here, so the order cannot be observed.
+        unlock();
+        return;
+    }
+
+    let error = clear(&journal_dir).unwrap_err();
+    assert!(matches!(error, CoreError::Io { .. }), "{error:?}");
+    assert!(!journal_dir.join("meta.json").exists());
+    assert!(!pending(&journal_dir), "a spent journal is not pending");
+
+    // What a later recovery pass makes of what is left: nothing to roll
+    // back, so the completed apply stands.
+    let _ = rollback(&journal_dir);
+    assert_eq!(
+        fs::read_to_string(&a).unwrap(),
+        "applied",
+        "the completed apply was not rolled back"
+    );
+    unlock();
+}
+
 /// A directory holding a link back into itself journals and restores:
 /// the snapshot copies the link as a link, and syncing the copy treats it
 /// as a leaf instead of walking the same directory through it again.

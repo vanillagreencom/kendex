@@ -158,6 +158,91 @@ fn create_writes_the_plan_registers_and_checks_clean() {
     assert!(again.to_string().contains("already exists"), "{again}");
 }
 
+/// `nope/..` names no folder of its own. Left unrefused it is a create
+/// into the directory the command was run in, and the failure path's
+/// removal then takes that directory with it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_path_whose_last_component_is_not_a_name_refuses_and_writes_nothing() {
+    let (tmp, env) = fake();
+    let work = tmp.path().join("work");
+    fs::create_dir_all(work.join("sub")).unwrap();
+    fs::write(work.join("keep.txt"), "somebody's file").unwrap();
+    fs::write(work.join("sub/also.txt"), "and another").unwrap();
+
+    let refused = author::create(&env, &request(&work.join("nope/.."), License::Mit)).unwrap_err();
+    assert!(
+        refused.to_string().contains("not a creatable folder path"),
+        "{refused}"
+    );
+    assert_eq!(
+        fs::read_to_string(work.join("keep.txt")).unwrap(),
+        "somebody's file"
+    );
+    assert_eq!(
+        fs::read_to_string(work.join("sub/also.txt")).unwrap(),
+        "and another"
+    );
+    assert!(!work.join("kendex.toml").exists(), "nothing was scaffolded");
+    assert!(
+        author::list(&env).unwrap().is_empty(),
+        "nothing was registered"
+    );
+}
+
+/// A link whose target is gone answers `exists` with false. Creating into
+/// it would write through it, and the failure path would delete it.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_dangling_link_at_the_destination_refuses_and_survives() {
+    let (tmp, env) = fake();
+    let dir = tmp.path().join("made");
+    std::os::unix::fs::symlink(tmp.path().join("absent"), &dir).unwrap();
+
+    let refused = author::create(&env, &request(&dir, License::Mit)).unwrap_err();
+    assert!(refused.to_string().contains("already exists"), "{refused}");
+    assert!(dir.is_symlink(), "the link somebody made is still there");
+    assert!(
+        !tmp.path().join("absent").exists(),
+        "nothing was written through it"
+    );
+}
+
+/// A registry that refuses after the build removes the folder this call
+/// made, and nothing else. The folder is named through a path that walks
+/// back out of itself, which is the spelling `remove_dir_all` must never
+/// be handed.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_registry_refusal_after_the_build_removes_only_the_folder_it_made() {
+    let (tmp, env) = fake();
+    let work = tmp.path().join("work");
+    fs::create_dir_all(&work).unwrap();
+    fs::write(work.join("keep.txt"), "somebody's file").unwrap();
+
+    // The row this create would add is already under Mine, so `register`
+    // refuses once `build_in` has written.
+    let made = work.join("made");
+    fs::create_dir_all(&made).unwrap();
+    author::register(&env, &made).unwrap();
+    fs::remove_dir_all(&made).unwrap();
+
+    let spelled = work.join("sub/../made");
+    fs::create_dir_all(work.join("sub")).unwrap();
+    let refused = author::create(&env, &request(&spelled, License::Mit)).unwrap_err();
+    assert!(
+        refused.to_string().contains("already under Mine"),
+        "{refused}"
+    );
+    assert!(!made.exists(), "the folder this call made is gone");
+    assert_eq!(
+        fs::read_to_string(work.join("keep.txt")).unwrap(),
+        "somebody's file"
+    );
+    assert!(work.join("sub").is_dir(), "nothing else was removed");
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_name_no_harness_accepts_refuses_before_any_write() {
