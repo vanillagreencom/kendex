@@ -12,7 +12,7 @@ Repo-specific rules:
 - An entry is a file, never a `CHANGELOG.md` line: write `changelog.d/<section>/<name>.md` holding the list item it becomes, per `changelog.d/README.md`. `tools/changelog-collate` folds them in at release.
 - The harness render under `.agents/` is committed and no check compares it to its source, so a change under `skills/` lands its rendered copy in the same commit — copy the changed file across and `cmp` the pair.
 - `ui/` installs with `npm ci --prefix ui`, in the main checkout only. A linked worktree links that install and never writes through the link.
-- Some required checks run only in the merge queue, so a green PR does not prove them; `.github/workflows/skill-tests.yml` declares the events each job answers to. A change under a surface whose job is merge-queue-only runs that suite locally before the PR.
+- Some required checks run only in the merge queue, so a green PR does not prove them; the fast/full split in `.github/workflows/skill-tests.yml`'s header comment says which jobs and shards those are. A change under a surface whose job or shard is merge-queue-only runs that suite locally before the PR.
 
 `tools/guard` enforces the rest — read the script; it is the list. It is the last lane of the package's commit chain, named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL`; `tools/setup` arms that chain in a fresh clone and wires `tools/commit-msg` beside it. That lane holds the two rules only a commit message can carry: the subject caps at 72 characters, and a change under `crates/` or `ui/` ships a changelog fragment or says `[no-changelog]` in the subject.
 

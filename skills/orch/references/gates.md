@@ -28,10 +28,10 @@ Per-verdict routing lives in the workflows (`submit-pr.md` § 4, `merge-pr.md` �
 A wait is a running waiter, never a session sitting at its prompt. CI is not
 what an open PR waits on: a reviewer posts on its own schedule, often after
 the checks are green, and a session that stopped to watch CI sees neither the
-thread nor the gate. Each waiter above reads the three states that decide the
-PR together — GitHub's merge state, the gate status with its description, and
-the unresolved thread count — so the answer arrives as a verdict rather than
-as a poll a session has to remember to run.
+thread nor the gate. Three states decide an open PR — GitHub's merge state,
+the gate status with its description, and the unresolved thread count — and
+none of them stands in for another. Which waiter answers which is the table
+above; what each one reads is its `--help`.
 
 ## Waiter auth ladder
 
