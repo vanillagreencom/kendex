@@ -263,7 +263,8 @@ pub fn published(env: &Env, key: &str, commit: &str) -> Option<PathBuf> {
 
 /// Materialize a commit and publish it atomically. The checkout is built in
 /// a staging sibling and renamed into place, so an interrupted or failed
-/// checkout leaves no partial directory anyone could read.
+/// publish leaves no directory anyone could read: not a partial one, and
+/// not the one it was replacing.
 pub fn publish(env: &Env, key: &str, mirror: &Path, commit: &str) -> Result<PathBuf> {
     let dir = checkout_dir(env, key, commit);
     let parent = dir.parent().unwrap_or(&dir).to_path_buf();
@@ -272,23 +273,30 @@ pub fn publish(env: &Env, key: &str, mirror: &Path, commit: &str) -> Result<Path
     if staging.exists() {
         fs::remove_dir_all(&staging).map_err(|e| CoreError::io(&staging, e))?;
     }
-    let result = check_out(&staging, mirror, commit).and_then(|()| {
-        // The receipt lands first: a reader that sees the directory always
-        // finds the receipt that vouches for it. A receipt with no
-        // directory is inert — nothing reads one without the other.
-        atomic_write(
-            &receipt_path(env, key, commit),
-            &format!("{RECEIPT_RULES}\n{}\n", tree_signature(&staging)?),
-        )
-    });
-    if let Err(error) = result {
-        let _ = fs::remove_dir_all(&staging);
-        return Err(error);
-    }
     let replaced = parent.join(format!(".replaced-{}", std::process::id()));
     let _ = fs::remove_dir_all(&replaced);
-    if dir.exists() {
-        fs::rename(&dir, &replaced).map_err(|e| CoreError::io(&dir, e))?;
+    // Two trees of one commit can share a signature, so the order is what
+    // keeps a receipt from vouching for the directory it replaces: the old
+    // directory leaves view, the receipt lands, the new directory lands. A
+    // reader that sees a directory always finds the receipt for it, and in
+    // between sees none, which reads as a miss.
+    let result = check_out(&staging, mirror, commit)
+        .and_then(|()| tree_signature(&staging))
+        .and_then(|signature| {
+            if dir.exists() {
+                fs::rename(&dir, &replaced).map_err(|e| CoreError::io(&dir, e))?;
+            }
+            atomic_write(
+                &receipt_path(env, key, commit),
+                &format!("{RECEIPT_RULES}\n{signature}\n"),
+            )
+        });
+    if let Err(error) = result {
+        let _ = fs::remove_dir_all(&staging);
+        // What was here is out of view under a receipt that may name the
+        // tree that never landed, so it goes too: the mirror rebuilds it.
+        let _ = fs::remove_dir_all(&replaced);
+        return Err(error);
     }
     fs::rename(&staging, &dir).map_err(|e| CoreError::io(&dir, e))?;
     let _ = fs::remove_dir_all(&replaced);

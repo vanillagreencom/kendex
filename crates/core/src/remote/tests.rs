@@ -259,6 +259,28 @@ fn a_checkout_published_before_the_rules_were_recorded_is_rebuilt() {
     assert!(store::published(&f.env, &key, &published.commit).is_some());
 }
 
+/// Two trees of one commit can share a signature, so a receipt visible
+/// while the old directory is still in place would vouch for the directory
+/// about to be moved out from under a reader. The order is observable at
+/// the step between: a receipt write that cannot land finds the old
+/// checkout already gone rather than still being served.
+#[test]
+fn the_old_checkout_leaves_view_before_the_receipt_names_the_new_one() {
+    let f = fixture();
+    let first = sync(&f.env, REPO, None).unwrap();
+    let key = key_for(&f.env);
+    let mirror = store::mirror_dir(&f.env, &key);
+
+    // Nothing renames a file onto a directory, so the receipt write fails
+    // at exactly the step after the old checkout is moved aside.
+    let receipt = store::receipt_path(&f.env, &key, &first.commit);
+    fs::remove_file(&receipt).unwrap();
+    fs::create_dir(&receipt).unwrap();
+
+    assert!(store::publish(&f.env, &key, &mirror, &first.commit).is_err());
+    assert!(!first.root.exists(), "the old checkout was still in view");
+}
+
 /// A checkout that fails half way leaves nothing readable behind: the
 /// directory only ever appears complete, by rename.
 #[test]
