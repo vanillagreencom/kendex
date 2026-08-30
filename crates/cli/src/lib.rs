@@ -202,6 +202,13 @@ enum Command {
 /// would do anywhere — and only the second one belongs in a repository's CI.
 #[allow(clippy::too_many_arguments)]
 pub fn main() -> ExitCode {
+    // Ahead of the parse. `--version` and `--help` are answered by clap and
+    // never reach dispatch, and they are what a person runs when the app's
+    // card has just told them their command is behind — which is exactly
+    // the install this record is missing from.
+    if let Ok(env) = Env::detect() {
+        bootstrap_the_command_record(&env);
+    }
     let cli = Cli::parse();
     // The machine check's whole contract is its exit code: 1 means "drift,
     // report on stdout". A failure before the check could run — settings
@@ -253,9 +260,15 @@ pub fn main() -> ExitCode {
 /// match. Any run of this binary settles it, because the path a process is
 /// running from is the one thing no search by name can establish.
 ///
-/// Nothing is said when it fails. This is opportunistic and every verb
-/// pays for it; the command that needs the record is `kendex update`, and
-/// that one records the binary itself and reports when it cannot.
+/// Run before the arguments are parsed, because clap answers `--version`
+/// and `--help` itself and exits without reaching dispatch. Those are the
+/// two a person reaches for when the app's card says their command is
+/// behind, so a bootstrap that skipped them would miss the run most likely
+/// to be the first one.
+///
+/// Nothing is said when it fails. This is opportunistic and every run pays
+/// for it; the command that needs the record is `kendex update`, and that
+/// one records the binary itself and reports when it cannot.
 fn bootstrap_the_command_record(env: &Env) {
     let Ok(running) = std::env::current_exe() else {
         return;
@@ -278,7 +291,6 @@ fn bare_add(
 
 fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let env = Env::detect()?;
-    bootstrap_the_command_record(&env);
     let Some(command) = cli.command else {
         return bare_add(&env, cli.source, cli.add_flags);
     };

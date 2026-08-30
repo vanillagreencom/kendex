@@ -67,15 +67,57 @@ pub fn record_command(env: &Env, path: &Path, bytes: &[u8]) -> Result<(), String
 /// owners have no reason to run update rather than any other verb. So every
 /// verb writes the first one.
 ///
-/// Only the first. A record already here is repointed by the run that
-/// replaces the bytes it names and by nothing else: a second kendex on the
-/// machine would otherwise take the record off the one a person installed
-/// merely by being run once, and the app would then carry the copy nobody
-/// uses and leave the one they do.
+/// Only the first, and first is the filesystem's answer rather than this
+/// function's: a record already here is repointed by the run that replaces
+/// the bytes it names and by nothing else. A second kendex on the machine
+/// would otherwise take the record off the one a person installed merely by
+/// being run once, and the app would then carry the copy nobody uses and
+/// leave the one they do.
+///
+/// A record already present but unreadable stays as it is. `recorded_command`
+/// reads it as no record and the app refuses the command, which is the safe
+/// direction; `kendex update` rewrites it, because that is the run replacing
+/// the bytes.
 pub fn record_first_run(env: &Env, running: &Path) -> Result<(), String> {
-    match recorded_command(env) {
-        Some(_) => Ok(()),
-        None => record_installed(env, running),
+    let file = env.installed_command_file();
+    let Some(parent) = file.parent() else {
+        return Err(format!("{} names no directory", file.display()));
+    };
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("{} could not be created: {error}", parent.display()))?;
+    let bytes = std::fs::read(running)
+        .map_err(|error| format!("{} could not be read: {error}", running.display()))?;
+    // Named for this writer and no other. The process id alone is not one:
+    // two threads of one process share it, and the pair would then stage
+    // over each other and link a file the other was still writing.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let staged = parent.join(format!(
+        "installed-command.{}.{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::write(
+        &staged,
+        format!(
+            "{}\n{}\n",
+            running.display(),
+            crate::hash::sha256_hex(&bytes)
+        ),
+    )
+    .map_err(|error| format!("{} could not be written: {error}", staged.display()))?;
+    // Linked rather than written in place, so first is decided by the
+    // filesystem and not by two reads that both answered "nothing here
+    // yet". `link` fails when the name is taken, which is the whole test:
+    // two copies starting together cannot both believe they are the first
+    // and leave the record naming whichever finished last. The staged file
+    // carries its whole content before the name exists, so no reader ever
+    // sees a record half written.
+    let first = std::fs::hard_link(&staged, &file);
+    let _ = std::fs::remove_file(&staged);
+    match first {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(format!("{} could not be written: {error}", file.display())),
     }
 }
 
