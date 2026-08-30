@@ -21,6 +21,12 @@
 #   4. a blip is still not routed, shortened gap or not
 #   5. the count is still the whole rule: a candidate that cannot reach it
 #      even shortened is reported beside the timeout, never as a verdict
+#   6. the squeeze allowance is per candidate verdict, so a transition
+#      arriving after an earlier candidate spent it is still confirmed
+#      (KEN-886)
+#   7. a transition whose owed polls fit the budget exactly is squeezed
+#      anyway, because a gap landing ON the deadline is a poll never made
+#      (KEN-886)
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -71,7 +77,9 @@ ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
 #   $STUB_SEQ_DIR/queue-<n>.json   queue-membership GraphQL body
 # `<prefix>-last.json` serves every poll past the last numbered fixture, and
 # review-thread reads answer with an empty set so the late-findings guard
-# stays quiet.
+# stays quiet. `STUB_QUEUE_DELAY` makes the queue read itself cost that many
+# seconds, the production condition under which a confirmation count can be
+# larger than the remaining budget can hold however short the gaps are made.
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
@@ -126,6 +134,7 @@ case "${1:-}" in
         echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}'
         exit 0
       fi
+      [[ -n "${STUB_QUEUE_DELAY:-}" ]] && sleep "$STUB_QUEUE_DELAY"
       _emit_fixture queue "$(_next graphql)"
     fi
     if [[ "${2:-}" == "user" ]]; then echo "test-user"; exit 0; fi
@@ -158,6 +167,7 @@ write_fixture() { # <prefix> <n|last> <json>
 }
 
 pr_open_mergeable='{"state":"OPEN","mergedAt":null,"mergeable":"MERGEABLE"}'
+pr_open_conflicting='{"state":"OPEN","mergedAt":null,"mergeable":"CONFLICTING"}'
 
 q_in_queue='{"data":{"repository":{"pullRequest":{"id":"PR_node1","isInMergeQueue":true,"mergeQueueEntry":{"state":"QUEUED"},"autoMergeRequest":{"enabledAt":"2026-07-24T09:00:00Z"}}}}}'
 q_out='{"data":{"repository":{"pullRequest":{"id":"PR_node1","isInMergeQueue":false,"mergeQueueEntry":null,"autoMergeRequest":null}}}}'
@@ -248,21 +258,64 @@ assert_eq "$(jq -r .unconfirmed_verdict <<<"$out")" "null" \
 # the candidate cannot reach its count. It is not handed back wearing a
 # confirmed verdict's name — that is the routing the count exists to prevent
 # — and it is not lost either: unconfirmed_verdict carries it beside the
-# timeout.
+# timeout. A shortened gap can be zero, so it is the poll's own cost that
+# makes the count unreachable: STUB_QUEUE_DELAY buys each read a second, as
+# a real merge-queue read does, and nine polls do not fit in four.
 new_case ejected_unreachable_count
 write_fixture state last "$pr_open_mergeable"
 write_fixture queue 1 "$q_in_queue"
 write_fixture queue last "$q_out"
 err="$TMP_ROOT/e4"
-out="$(run_queue_wait QUEUE_WAIT_CONFIRM_POLLS=9 -- 1 1 3 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+out="$(run_queue_wait QUEUE_WAIT_CONFIRM_POLLS=9 STUB_QUEUE_DELAY=1 -- 1 1 4 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(jq -r .verdict <<<"$out")" "queued" \
   "a candidate that cannot reach its count carries no confirmed verdict" "$err"
 assert_eq "$(jq -r .status <<<"$out")" "timeout" \
   "that exit is a timeout" "$err"
 assert_eq "$(jq -r .unconfirmed_verdict <<<"$out")" "ejected" \
   "the standing reading is reported beside the verdict, never dropped" "$err"
-assert_le "$(jq -r .elapsed_seconds <<<"$out")" "3" \
+assert_le "$(jq -r .elapsed_seconds <<<"$out")" "4" \
   "an unreachable count does not spin the poll loop past the budget" "$err"
+
+# --- 6. the squeeze allowance is per candidate verdict (KEN-886) ----------
+# A conflicting reading stands first and spends the run's one squeeze, then
+# the poll after it reads the PR out of the queue. That second candidate is a
+# TRANSITION: cut off here it is re-observed by nobody, and merge-pr re-arms
+# a PR the queue threw out. Budgeted per run, the ejection gets no shortened
+# gap and the deadline takes it; budgeted per candidate verdict, it gets the
+# allowance its own confirmation owes.
+new_case later_candidate_after_spent_budget
+write_fixture state 1 "$pr_open_mergeable"
+write_fixture state 2 "$pr_open_conflicting"
+write_fixture state last "$pr_open_mergeable"
+write_fixture queue 1 "$q_in_queue"
+write_fixture queue 2 "$q_in_queue"
+write_fixture queue last "$q_out"
+err="$TMP_ROOT/e5"
+out="$(run_queue_wait -- 1 3 5 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(jq -r .verdict <<<"$out")" "ejected" \
+  "an ejection after a spent candidate is still confirmed" "$err"
+assert_eq "$(jq -r .cause <<<"$out")" "merge_group_failed" \
+  "it carries its own cause, not the earlier candidate's" "$err"
+assert_le "$(jq -r .elapsed_seconds <<<"$out")" "5" \
+  "the second confirmation still finishes inside the budget" "$err"
+
+# --- 7. owed polls that fit the budget exactly (KEN-886) ------------------
+# The loop runs while elapsed < max_wait, so polls owed at exactly the
+# remaining budget land the last one ON the deadline, where it is never made.
+# Three confirmations at a one-second interval, first seen within two seconds
+# of it, meet that equality on a step and the count is never reached.
+new_case owed_polls_fit_exactly
+write_fixture state last "$pr_open_mergeable"
+write_fixture queue 1 "$q_in_queue"
+write_fixture queue last "$q_out"
+err="$TMP_ROOT/e6"
+out="$(run_queue_wait QUEUE_WAIT_CONFIRM_POLLS=3 -- 1 1 3 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(jq -r .verdict <<<"$out")" "ejected" \
+  "a transition owed exactly the remaining budget is squeezed, not cut" "$err"
+assert_eq "$(jq -r .status <<<"$out")" "complete" \
+  "that exit is a complete verdict, not a timeout" "$err"
+assert_le "$(jq -r .elapsed_seconds <<<"$out")" "3" \
+  "squeezing at the boundary does not overrun max_wait" "$err"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

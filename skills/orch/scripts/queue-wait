@@ -103,11 +103,11 @@ nothing and is reported as "still queued", named in unconfirmed_verdict so
 the reading is not lost. So that the deadline does not simply CUT a
 confirmation short, the polls a standing candidate still needs are moved
 INSIDE the budget — the gap before each shrinks to fit, at most
-QUEUE_WAIT_CONFIRM_POLLS - 1 times per run, and max_wait stays the upper
-bound it is documented as. ejected and disarmed are transitions, observed
-once as queued-then-out or armed-then-unarmed, and a re-run starts with
-those priors false: an ejection cut off by the deadline is re-observed by
-nobody, where conflicting is read from mergeable every poll and a re-run
+QUEUE_WAIT_CONFIRM_POLLS - 1 times per candidate verdict, and max_wait stays
+the upper bound it is documented as. ejected and disarmed are transitions,
+observed once as queued-then-out or armed-then-unarmed, and a re-run starts
+with those priors false: an ejection cut off by the deadline is re-observed
+by nobody, where conflicting is read from mergeable every poll and a re-run
 sees it again. While a candidate is waiting for its confirmation
 the failed-check probe is skipped too, so one probe observation cannot
 overtake a standing conflict and route it to a CI cycle. A poll that routes
@@ -874,6 +874,7 @@ note_candidate() {
     candidate_verdict="$verdict"
     candidate_cause="$cause"
     candidate_count=1
+    confirm_squeezes=0
   fi
 }
 
@@ -887,17 +888,16 @@ clear_candidate() {
 # while a candidate still owes confirmation polls the remaining budget cannot
 # fit at that interval, so the confirmation finishes INSIDE the budget instead
 # of being cut off by it. ejected and disarmed are TRANSITIONS — was_in_queue
-# then out, was_queued then unarmed — and a re-run of this script starts with
-# those priors false, so a candidate the deadline cuts off is re-observed by
-# no one: the caller re-runs, reads not_queued, and merge-pr re-arms a PR the
-# queue already threw out. conflicting is read from mergeable on every poll
-# and survives a re-run, which is why only these two are lost.
+# then out, was_queued then unarmed — and a re-run starts with those priors
+# false, so a candidate the deadline cuts off is re-observed by no one: the
+# caller re-runs, reads not_queued, and merge-pr re-arms a PR the queue threw
+# out. conflicting is read from mergeable every poll and survives a re-run.
 #
 # Bounded twice over: never past the deadline, and at most CONFIRM_POLLS - 1
-# shortened gaps per run, so a candidate flapping in the last seconds cannot
-# spin the poll loop. A shortened gap is a weaker blip filter than a full
-# interval — two reads seconds apart rather than minutes — and it is still
-# two independent reads, against losing the observation entirely.
+# shortened gaps per candidate verdict — the polls that verdict owes — so a
+# flapping candidate cannot spin the poll loop, while a transition arriving
+# after an earlier one still has the squeezes that one spent. A shortened gap
+# is a weaker blip filter than a full interval, and still two reads.
 poll_gap="$POLL_INTERVAL"
 confirm_squeezes=0
 MAX_CONFIRM_SQUEEZES=$((CONFIRM_POLLS - 1))
@@ -912,10 +912,10 @@ set_next_poll_gap() {
   update_elapsed
   remaining=$((MAX_WAIT - elapsed))
   [ "$remaining" -gt 0 ] || return 0
-  [ $((need * POLL_INTERVAL)) -gt "$remaining" ] || return 0
+  [ $((need * POLL_INTERVAL)) -ge "$remaining" ] || return 0
   confirm_squeezes=$((confirm_squeezes + 1))
-  # One slot more than the polls owed: the last gap must not land exactly on
-  # the deadline, or the loop ends with the poll it was shortened for unmade.
+  # Fitting is strict (-ge above) and the divisor is one slot more than the
+  # polls owed: a gap landing ON the deadline leaves that poll unmade.
   poll_gap=$((remaining / (need + 1)))
 }
 

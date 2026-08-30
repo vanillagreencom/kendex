@@ -84,6 +84,8 @@ ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
 # stays quiet; no case here exercises it. `gh pr checks` and the Actions-run
 # read belong to the real ci-wait the failed-check probe delegates to:
 # STUB_PR_CHECKS_MODE=failure is what lets that probe reach a verdict at all.
+# STUB_QUEUE_DELAY makes the queue read itself cost that many seconds, the
+# production condition under which a confirmation count outlasts the budget.
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
@@ -138,6 +140,7 @@ case "${1:-}" in
         echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}'
         exit 0
       fi
+      [[ -n "${STUB_QUEUE_DELAY:-}" ]] && sleep "$STUB_QUEUE_DELAY"
       _emit_fixture queue "$(_next graphql)"
     fi
     if [[ "${2:-}" == "user" ]]; then echo "test-user"; exit 0; fi
@@ -239,12 +242,15 @@ assert_eq "$(jq -r .verdict <<<"$out")" "queued" "a one-poll CONFLICTING blip is
 # standing. Handing that back as `conflicting` gives a single unconfirmed
 # observation the name a confirmed one carries, and a caller routing on
 # verdict cannot tell them apart. The reading is not lost either: it is
-# reported beside the still-queued verdict rather than as one.
+# reported beside the still-queued verdict rather than as one. A gap
+# shortened to fit the budget can be zero, so it is the poll's own cost that
+# puts the count out of reach: STUB_QUEUE_DELAY buys each read a second, as a
+# real merge-queue read does, and nine polls do not fit in four.
 new_case conflicting_unconfirmed_at_deadline
 write_fixture state last "$(pr_state OPEN CONFLICTING)"
 write_fixture queue last "$q_in_queue"
 err="$TMP_ROOT/e2b"
-out="$(run_queue_wait QUEUE_WAIT_CONFIRM_POLLS=9 -- 1 1 3 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+out="$(run_queue_wait QUEUE_WAIT_CONFIRM_POLLS=9 STUB_QUEUE_DELAY=1 -- 1 1 4 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(jq -r .verdict <<<"$out")" "queued" \
   "an unconfirmed candidate does not carry a confirmed verdict's name at the deadline" "$err"
 assert_eq "$(jq -r .status <<<"$out")" "timeout" \
