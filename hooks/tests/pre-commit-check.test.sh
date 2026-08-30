@@ -6,196 +6,14 @@
 # nothing is armed, and where the payload names a command the hook cannot read.
 # A `-n`, `-c` or `--no-verify` belonging to a heredoc body, another program or
 # a quoted commit message passes without a refusal of its own — a bypass is a
-# word whose WHOLE content is one. A construct the scanner has no rule for
-# leaves the words standing to be judged; the four it names are refused unread.
+# word whose WHOLE content is one.
 #
-# The package script is stubbed inside each fixture repository, so the suite
-# needs no built binary, runs no real chain, and never puts `kendex` on PATH.
+# The constructs half of the contract is hooks/tests/pre-commit-constructs.test.sh.
 set -euo pipefail
 
-TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# HOOK_UNDER_TEST runs these assertions against a must-fail mutant of the hook.
-HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/pre-commit-check.sh}"
+# shellcheck source=lib/pre-commit-harness.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pre-commit-harness.sh"
 
-# The marker the growth-guards installer ends its delegating line with, and
-# the only thing that makes a hook file ours as far as this lane is
-# concerned. Assembled so this file is not itself mistaken for a shim.
-GG_MARK="# kendex-""guards-hook"
-
-PASS=0
-FAIL=0
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
-
-ERR_FILE="$TMP_ROOT/stderr"
-# Anything a fixture's own script writes when something runs it. Nothing
-# should ever run one: this hook defers or refuses, and never stands in.
-RAN_LOG="$TMP_ROOT/ran.log"
-
-# A PATH holding the tools the hook needs and nothing named kendex. Every
-# run uses it: no lane of this hook may depend on the binary any more.
-NO_KENDEX_BIN="$TMP_ROOT/no-kendex-bin"
-mkdir -p "$NO_KENDEX_BIN"
-for tool in git grep awk tr sed head bash cat env printf; do
-  target="$(command -v "$tool" 2>/dev/null)" && ln -sf "$target" "$NO_KENDEX_BIN/$tool"
-done
-
-# Run the hook from inside a directory with a raw JSON payload on stdin.
-# Extra env assignments come as VAR=value args. Captures stderr in $err and
-# the exit code in $rc; truncates the shim log before each run.
-run_hook() {
-  local dir="$1" payload="$2"
-  shift 2
-  set +e
-  (cd "$dir" && env PATH="$NO_KENDEX_BIN" "$@" \
-    bash "$HOOK" <<<"$payload") >/dev/null 2>"$ERR_FILE"
-  rc=$?
-  set -e
-  err="$(cat "$ERR_FILE")"
-  log="$(cat "$RAN_LOG" 2>/dev/null || true)"
-}
-
-payload() {
-  printf '{"tool_input":{"command":"%s"}}' "$1"
-}
-
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
-
-assert_contains() {
-  local got="$1" needle="$2" name="$3"
-  if [[ "$got" == *"$needle"* ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected to contain: %s\n        got:      %s\n' "$name" "$needle" "$got"
-  fi
-}
-
-assert_not_contains() {
-  local got="$1" needle="$2" name="$3"
-  if [[ "$got" != *"$needle"* ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected NOT to contain: %s\n        got:      %s\n' "$name" "$needle" "$got"
-  fi
-}
-
-# Judge one form in both fixtures at once. The ARMED expectation says whether
-# the words carry a bypass; the UNARMED one is the control proving the
-# commit was found at all, since a form the hook never sees passes there too.
-both() {
-  local form="$1" want_armed="$2" want_unarmed="$3" name="$4"
-  run_hook "$ARMED" "$(payload "$form")" CHAIN_EXIT=1
-  assert_eq "$rc" "$want_armed" "armed: $name"
-  if [[ "$want_armed" == 2 ]]; then
-    assert_contains "$err" "bypasses this repository's armed git hooks" "armed refusal names a bypass: $name"
-  else
-    assert_not_contains "$err" "bypasses" "armed: nothing read as a bypass: $name"
-  fi
-  assert_eq "$log" "" "armed: nothing of the repository's ran: $name"
-  run_hook "$UNARMED" "$(payload "$form")" CHAIN_EXIT=1
-  assert_eq "$rc" "$want_unarmed" "unarmed: $name"
-  if [[ "$want_unarmed" == 2 ]]; then
-    assert_contains "$err" "not armed by kendex" "unarmed refusal names the arming: $name"
-  fi
-  assert_eq "$log" "" "unarmed: nothing of the repository's ran: $name"
-}
-
-# --- Fixtures ----------------------------------------------------------------
-UNARMED="$TMP_ROOT/unarmed"
-mkdir -p "$UNARMED"
-git -C "$UNARMED" init -q
-
-ARMED="$TMP_ROOT/armed"
-mkdir -p "$ARMED"
-git -C "$ARMED" init -q
-for lane in pre-commit commit-msg; do
-  printf '#!/bin/sh\nexit 0 %s\n' "$GG_MARK" >"$ARMED/.git/hooks/$lane"
-  chmod +x "$ARMED/.git/hooks/$lane"
-done
-
-ARMED_BY_PATH="$TMP_ROOT/armed-by-path"
-mkdir -p "$ARMED_BY_PATH" "$TMP_ROOT/custom-hooks"
-git -C "$ARMED_BY_PATH" init -q
-for lane in pre-commit commit-msg; do
-  printf '#!/bin/sh\nexit 0 %s\n' "$GG_MARK" >"$TMP_ROOT/custom-hooks/$lane"
-  chmod +x "$TMP_ROOT/custom-hooks/$lane"
-done
-git -C "$ARMED_BY_PATH" config core.hooksPath "$TMP_ROOT/custom-hooks"
-
-# A hook file git will not run: present, execute bit off. Git skips it
-# silently, so it must not count as armed.
-DISARMED="$TMP_ROOT/disarmed"
-mkdir -p "$DISARMED"
-git -C "$DISARMED" init -q
-printf '#!/bin/sh\nexit 0 %s\n' "$GG_MARK" >"$DISARMED/.git/hooks/pre-commit"
-chmod -x "$DISARMED/.git/hooks/pre-commit"
-
-DISARMED_BY_PATH="$TMP_ROOT/disarmed-by-path"
-mkdir -p "$DISARMED_BY_PATH" "$TMP_ROOT/disarmed-hooks"
-git -C "$DISARMED_BY_PATH" init -q
-printf '#!/bin/sh\nexit 0 %s\n' "$GG_MARK" >"$TMP_ROOT/disarmed-hooks/pre-commit"
-chmod -x "$TMP_ROOT/disarmed-hooks/pre-commit"
-git -C "$DISARMED_BY_PATH" config core.hooksPath "$TMP_ROOT/disarmed-hooks"
-
-# core.hooksPath set and EMPTY switches hooks off, and git's answer about it
-# misleads: `rev-parse --git-path hooks` reports `./`, so the directory
-# resolves to the repository root. This fixture puts an executable
-# `pre-commit` exactly there — the trap — while git runs nothing at all.
-HOOKS_OFF="$TMP_ROOT/hooks-off"
-mkdir -p "$HOOKS_OFF"
-git -C "$HOOKS_OFF" init -q
-git -C "$HOOKS_OFF" config core.hooksPath ""
-printf '#!/bin/sh\nexit 0\n' >"$HOOKS_OFF/pre-commit"
-chmod +x "$HOOKS_OFF/pre-commit"
-
-# One lane armed and not the other. Deferring here would hand the commit to
-# a gate that checks content and accepts any message, and would waive the one
-# thing this hook can still do about it.
-HALF_ARMED="$TMP_ROOT/half-armed"
-mkdir -p "$HALF_ARMED"
-git -C "$HALF_ARMED" init -q
-printf '#!/bin/sh\nexit 0 %s\n' "$GG_MARK" >"$HALF_ARMED/.git/hooks/pre-commit"
-chmod +x "$HALF_ARMED/.git/hooks/pre-commit"
-
-# Marked on both lanes, and one of them is a file git will not execute.
-MARKED_NOT_EXEC="$TMP_ROOT/marked-not-exec"
-mkdir -p "$MARKED_NOT_EXEC"
-git -C "$MARKED_NOT_EXEC" init -q
-for lane in pre-commit commit-msg; do
-  printf '#!/bin/sh\nexit 0 %s\n' "$GG_MARK" >"$MARKED_NOT_EXEC/.git/hooks/$lane"
-  chmod +x "$MARKED_NOT_EXEC/.git/hooks/$lane"
-done
-chmod -x "$MARKED_NOT_EXEC/.git/hooks/pre-commit"
-
-NOT_A_REPO="$TMP_ROOT/plain"
-mkdir -p "$NOT_A_REPO"
-
-# Every fixture carries a package whose script would announce itself if
-# anything ran it. Nothing may: this hook defers to an armed hook or
-# refuses, and never runs a repository's own scripts on its behalf.
-for fixture in "$UNARMED" "$ARMED" "$ARMED_BY_PATH" "$DISARMED" "$DISARMED_BY_PATH" "$HOOKS_OFF" "$HALF_ARMED" "$MARKED_NOT_EXEC"; do
-  scripts="$fixture/.agents/skills/growth-guards/scripts"
-  mkdir -p "$scripts"
-  {
-    echo "#!/usr/bin/env bash"
-    echo "echo 'the repository script ran' >>\"$RAN_LOG\""
-    echo "exit \${CHAIN_EXIT:-0}"
-  } >"$scripts/pre-commit"
-  chmod +x "$scripts/pre-commit"
-done
 
 echo "detection"
 
@@ -446,26 +264,6 @@ both 'nice git commit -m x' 0 2 "an unwrapped-option prefix still defers"
 both 'sudo -u dev git config core.hooksPath /dev/null && git commit -m x' 2 2 "a wrapped hooksPath write"
 
 echo
-echo "a construct the scanner does not model is not waved through"
-
-# Every gap in a hand-written scanner is a fail-open, so a command word this
-# lane left shell in takes the word-order rule rather than a guess: an append
-# assignment is no assignment to the tokenizer, and a dynamic file descriptor
-# stays a word ahead of its redirection.
-both 'PATH+=:/usr/bin git commit --no-verify -m x' 2 2 "an append assignment"
-both '{fd}>out git commit --no-verify -m x' 2 2 "a dynamic file descriptor"
-both 'PATH+=:/usr/bin git commit -m x' 0 2 "an append assignment with no bypass"
-
-# A quoted paren inside a substitution desynchronises the scan, and everything
-# after it is guesswork. The fallback runs on an unbalanced command whatever an
-# earlier one looked like — suppressing it there let this bypass through.
-DESYNC="git commit --allow-empty -m x && echo \$(printf ')') && git commit --allow-empty --no-verify -m y"
-both "$DESYNC" 2 2 "a substitution closing on a quoted paren"
-
-run_hook "$ARMED" "$(payload "$DESYNC")" CHAIN_EXIT=0
-assert_contains "$err" "'--no-verify' bypasses" "the desynchronised command names the flag it saw"
-
-echo
 echo "a quoted word is a live word"
 
 # Quoting sets a word boundary; it does not stop the word existing. The quotes
@@ -488,7 +286,6 @@ echo "an escaped quote does not close its run"
 # A backslash escapes the next character inside a double-quoted or backtick run,
 # so `\"` is not the close. Read as one, everything through the next quote is
 # swallowed and the live command behind it disappears.
-NV="--no-""verify"
 both "echo \\\"x\\\\\\\" y\\\" && git commit $NV -m \\\"x\\\"" 2 2 "an escaped double quote"
 both 'echo `x\\` y` && git commit '"$NV"' -m `x`' 2 2 "an escaped backtick"
 
@@ -512,63 +309,6 @@ echo "a -c word injects configuration whatever its value"
 both 'git -cinclude.path=/tmp/c commit -m x' 2 2 "an attached include.path"
 run_hook "$ARMED" "$(payload 'git -cinclude.path=/tmp/c commit -m x')" CHAIN_EXIT=0
 assert_contains "$err" "'-cinclude.path=/tmp/c' bypasses" "the attached value is named"
-
-echo
-echo "a construct this hook does not model is refused on sight"
-
-# Each of these hides text from the scanner, and each decode added to read one
-# invites the next construct. So the construct itself is the answer: a command
-# naming git that carries one is refused in either fixture, without parsing.
-# The refusals do not name a bypass — nothing was parsed to find one.
-unmodelled() {
-  local form="$1" name="$2"
-  for fixture in "$ARMED" "$UNARMED"; do
-    run_hook "$fixture" "$(payload "$form")" CHAIN_EXIT=0
-    assert_eq "$rc" "2" "refused on sight: $name"
-    assert_contains "$err" "does not model" "the refusal names the construct: $name"
-    assert_eq "$log" "" "nothing of the repository's ran: $name"
-  done
-}
-
-# Double-quoted so the apostrophes survive; the $ is escaped so this shell does
-# not expand it before the hook reads it as text.
-ANSIC="cat <<\$'EOF'\\nbody\\nEOF\\ngit commit -m x"
-unmodelled "git -c alias.c='commit $NV' c --allow-empty -m x" "an alias key defining a commit"
-unmodelled "git config alias.c 'commit $NV' && git c --allow-empty -m x" "a persisted alias key"
-unmodelled "$ANSIC" "ANSI-C quoting"
-unmodelled 'git commit \"--no-veri\\\nfy\" -m x' "a line continuation inside quotes"
-unmodelled 'x=$(( 1 << 2 )) && git commit -m x' "a shift inside arithmetic"
-
-# Three of the four are asked only where a live word is exactly `commit`, and
-# quoting joins, so this is that word.
-unmodelled "git com''mit \$'--no-verify' -m x" "a quote-split commit word"
-
-# The live word, not the word-order verdict: this construct spells the git word,
-# so no argv here is a commit and only the word is left to gate on.
-unmodelled "git status && \$'g''it' commit --no-verify -m x" "a construct spelling the git word"
-
-# The KEN-866 regression: no commit word in the first two, and in the third the
-# word is the pattern `commit$` rather than `commit`.
-both "grep -rn 'foo\$' .git/config" 0 0 "an anchored grep over a .git path"
-both "git log --oneline | grep 'fix\$'" 0 0 "a read-only log piped into an anchored grep"
-both "git log --oneline | grep 'commit\$'" 0 0 "an anchored grep for the word commit"
-
-# Declined on KEN-866, pinned so the decline cannot flip in silence: the one word
-# is `\$commit`, the construct having spelled it rather than split it.
-both "git \$'com''mit' --no-verify -m x" 0 0 "a commit word spelled by the construct"
-
-# The alias key carries no commit prerequisite: it names a commit that is never
-# a live word, so gating it on the word disarms it.
-unmodelled "git -c alias.c='co' co --allow-empty -m x" "an alias key naming no commit"
-
-# The controls. A command with none of these parses as before, and one naming
-# no git at all is not this gate to judge however it is written.
-both 'git commit -m x' 0 2 "an ordinary commit carries no trigger"
-both 'git -c core.pager=cat log' 0 0 "a benign -c on a non-commit"
-run_hook "$ARMED" "$(payload 'echo $'hi'')" CHAIN_EXIT=0
-assert_eq "$rc" "0" "ANSI-C quoting without git is left alone"
-run_hook "$ARMED" "$(payload 'x=$(( 1 << 2 ))')" CHAIN_EXIT=0
-assert_eq "$rc" "0" "arithmetic without git is left alone"
 
 echo
 echo "a payload escape that spells a word is unreadable"
@@ -610,30 +350,6 @@ assert_contains "$err" "'--no-verify' bypasses" "the touching-hash form names th
 # The control: a hash that is its own word still opens a comment.
 # shellcheck disable=SC2016
 both 'echo $(true) # x && git commit '"$NV"' -m x' 0 0 "a hash standing as its own word"
-
-echo
-echo "a construct the scanner never heard of leaves the words standing"
-
-# Each of these desynchronised the argv parser that stood here, and each is
-# closed by the rule reading live words instead: `coproc` is named nowhere.
-# Double-quoted so the apostrophes survive; the $ is escaped so this shell does
-# not run the substitution the hook has to read as text.
-PAREN="echo \$(printf '(') && git commit --no-verify -m x"
-both "$PAREN" 2 2 "a quoted paren inside a substitution"
-# shellcheck disable=SC2016
-both 'git >$(printf /dev/null) commit --no-verify -m x' 2 2 "a substitution as a redirection target"
-both 'coproc git commit --no-verify -m x' 2 2 "a keyword this lane does not know"
-# shellcheck disable=SC2016
-both 'git -C $(cd /t && pwd) commit --no-verify -m x' 2 2 "an operator inside a substitution"
-both 'git &>out commit --no-verify -m x' 2 2 "an &> before the subcommand"
-both 'commit git' 0 0 "commit before git is not a commit"
-
-# A heredoc that never terminates would otherwise swallow every command after
-# it; the body is left live instead. The joined delimiter is the control: there
-# the body IS skipped, so the words in it are not flags.
-both 'cat <<EOF\ngit commit --no-verify -m x' 2 2 "an unterminated heredoc"
-HEREDOC_PROSE='cat <<EO\\\nF > n.md\ngit commit --no-verify is banned here\nEOF\ngit commit -m x'
-both "$HEREDOC_PROSE" 0 2 "prose in a body behind a joined delimiter"
 
 echo
 echo "a redirection is redirection wherever it stands"
@@ -795,6 +511,4 @@ assert_eq "$log" "" "and this hook ran nothing of its own beside it"
 run_hook "$ARMED" "$(payload 'git commit --no-verify -m test')"
 assert_eq "$rc" "2" "bypassing the armed hook is refused with or without a binary"
 
-echo
-printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
-[[ "$FAIL" -eq 0 ]]
+finish

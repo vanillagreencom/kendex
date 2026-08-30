@@ -333,15 +333,19 @@ describe("pre-commit gate: the bash hook's contract", () => {
 			"cat <<$'EOF'\nbody\nEOF\ngit commit -m x",
 			`git commit "--no-veri\\\nfy" -m x`,
 			"x=$(( 1 << 2 )) && git commit -m x",
-			// Three of the four are asked only where a live word is exactly
-			// `commit`, and quoting joins, so this is that word.
+			// The prerequisite is read off the command with its quote characters
+			// removed, so a spelling the shell assembles reads as its letters. Each
+			// of these is the word once the quotes come out, and one also spells git.
 			"git com''mit $'--no-verify' -m x",
-			// The live word, not the word-order verdict: this construct spells the
-			// git word, so no argv here is a commit and only the word gates it.
+			"git $'com''mit' --no-verify -m x",
 			"git status && $'g''it' commit --no-verify -m x",
-			// The alias key is the exception, carrying no commit prerequisite: it
-			// names a commit that is never a live word, so the word would disarm it.
+			// The alias key keeps the bare git prerequisite: it defines the commit
+			// under another name, so no normalizing brings the word back.
 			"git -c alias.c='co' co --allow-empty -m x",
+			// Accepted on KEN-866 and pinned so it cannot flip in silence: the
+			// pattern supplies the word, and no text test tells it from the
+			// subcommand.
+			"git log --oneline | grep 'commit$'",
 		]) {
 			for (const repo of [armed, unarmed]) {
 				const { verdict, ran } = await gate(repo, command);
@@ -357,14 +361,13 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		await both("git -c core.pager=cat log", "allow", "allow");
 		expect((await gate(armed, "echo $'hi'")).verdict).toEqual({ kind: "allow" });
 		expect((await gate(armed, "x=$(( 1 << 2 ))")).verdict).toEqual({ kind: "allow" });
-		// The KEN-866 regression: no commit word in the first two, and in the third
-		// the word is the pattern `commit$` rather than `commit`.
+		// The KEN-866 regression. Removing quote characters joins fragments and
+		// moves nothing else, so a pattern anchored to end-of-line names no commit.
 		await both("grep -rn 'foo$' .git/config", "allow", "allow");
 		await both("git log --oneline | grep 'fix$'", "allow", "allow");
-		await both("git log --oneline | grep 'commit$'", "allow", "allow");
-		// Declined on KEN-866, pinned so the decline cannot flip in silence: this
-		// spells the word rather than splitting it, so the one word is `$commit`.
-		await both("git $'com''mit' --no-verify -m x", "allow", "allow");
+		await both("git status --short | grep 'M$'", "allow", "allow");
+		await both("git log --grep='fix$' | head", "allow", "allow");
+		await both('git log --grep="foo\\\nbar"', "allow", "allow");
 	});
 
 	test("only <<- accepts a tab-indented terminator", async () => {

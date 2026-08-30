@@ -44,12 +44,8 @@ function setbypass(t) {
 function basename(t) { sub(/^.*\//, "", t); return t }
 function flush_word() { if (HAVEW) { TOK[++NTOK] = W; W = ""; HAVEW = 0 } }
 # split with an empty string is the portable array clear (not `delete TOK`).
-function end_command(   m) {
+function end_command() {
   flush_word()
-  # A live word that is exactly `commit`: the prerequisite the constructs are
-  # asked behind. Read here rather than from judge, which answers about a git
-  # argv; this asks only whether the text spells a commit as a word at all.
-  for (m = 1; m <= NTOK; m++) if (TOK[m] == "commit") CWORD = 1
   if (NTOK > 0) judge()
   split("", TOK); NTOK = 0
 }
@@ -187,19 +183,22 @@ function scan(cmd,   n, i, ch, c2, d, j, start) {
 # one is the whole rule. Each decoder added here invites the next construct, and
 # the answer to text this cannot read is to refuse, not to parse harder.
 #
-# An alias key defines a commit under another name, so the commit is never a
-# live word and this one carries no commit prerequisite: gating it on the word
-# is disarming it. The other three hide a commit that IS spelled, so they are
-# asked only where some live word is exactly `commit` — quoting joins, so
-# `com<quote><quote>mit` is that word and an anchored grep pattern is not.
-function unmodelled(cmd) {
+# They are asked of the NORMALIZED command — quote characters removed — so a
+# spelling the shell assembles reads as its letters and `com<q><q>mit` holds
+# the word. One text test over text this cannot parse, rather than a parse.
+# An alias key is the exception and keeps the bare git prerequisite: it defines
+# the commit under another name, so the word can be absent altogether.
+function unmodelled(cmd, norm) {
   if (tolower(cmd) ~ /alias\./) return "an alias config key"
-  if (!CWORD) return ""
+  if (index(norm, "commit") == 0) return ""
   if (index(cmd, "$" SQ) > 0) return "ANSI-C quoting"
   if (QCONT) return "a line continuation inside quotes"
   if (cmd ~ /\(\([^)]*<</) return "a shift inside arithmetic"
   return ""
 }
+# Quote characters carry no letters of their own, so removing them joins the
+# fragments a word was split into and leaves everything else where it was.
+function normalize(t) { gsub(SQ, "", t); gsub(/"/, "", t); return t }
 # The rule over the live words of one command.
 function judge(   m, t, g, c, p, ch) {
   g = 0; c = 0
@@ -249,8 +248,11 @@ END {
   cmd = jsonstring(rest)
   if (UNREADABLE) { print "unreadable=1"; exit }
   scan(cmd)
-  if (index(cmd, "git") > 0) {
-    u = unmodelled(cmd); if (u != "") { print "unmodelled=" u; exit }
+  # Both words are read off the normalized command, so a git or a commit the
+  # shell would assemble out of quoted fragments counts as one.
+  norm = normalize(cmd)
+  if (index(norm, "git") > 0) {
+    u = unmodelled(cmd, norm); if (u != "") { print "unmodelled=" u; exit }
   }
   if (COMMIT) print "commit=1"
   if (MOVES) print "moves=1"
