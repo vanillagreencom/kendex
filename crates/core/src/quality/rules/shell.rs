@@ -57,6 +57,13 @@ struct SafetyBypass;
 /// it. Every needle goes through [`Line::runs_at`], which answers the one
 /// question the tier is worth: would this line hand the switch to a
 /// program.
+///
+/// A switch is a switch by the time it reaches a program, and the shell
+/// takes the quote marks out on the way. So a switch also counts where
+/// [`Line::hands_over`] says a program is given those characters as its
+/// own argument, or given a command line with them written inside it.
+/// The prose phrases below get no such reading: they are a claim in a
+/// sentence, and a sentence handed to a program is still a sentence.
 impl AuditRule for SafetyBypass {
     fn id(&self) -> &'static str {
         "safety-bypass"
@@ -70,7 +77,7 @@ impl AuditRule for SafetyBypass {
                     .any(|at| line.runs_at(at))
             };
             for (needle, what) in BYPASS {
-                if run(needle) {
+                if run(needle) || line.hands_over(needle) {
                     findings.push(self.finding(doc, line, needle, what, Severity::Critical));
                 }
             }

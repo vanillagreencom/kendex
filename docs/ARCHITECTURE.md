@@ -782,9 +782,9 @@ lives in one capability table read by core and UI.
   appears in any message, log or record — only a fingerprint.
 - **The file a harness loads is scanned at full weight, fences included.**
   A fenced `sh` block in a SKILL.md *is* the instruction; a switch counts
-  where the line would run it, never inside a quotation, comment or `case`
-  pattern. One severity less for a blockquote and for a skill's supporting
-  files (`tests/`, `fixtures/`, `references/`); secrets never weigh less.
+  where the line hands it to a program, quote marks and all, never in a
+  comment, a `case` pattern or a code span. One severity less for a
+  blockquote and for a skill's supporting files (`tests/`, `fixtures/`, `references/`); secrets never weigh less.
 - **Rule severities are calibrated against real catalogs.** Deobfuscation
   reports only what has no typographic use — invisible and bidirectional
   characters, letters imitating other letters — while normalizing emoji

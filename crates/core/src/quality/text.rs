@@ -13,6 +13,7 @@ use std::collections::BTreeSet;
 
 mod line;
 mod normalize;
+pub(in crate::quality) mod tokens;
 
 pub use line::Line;
 pub use normalize::deobfuscate;

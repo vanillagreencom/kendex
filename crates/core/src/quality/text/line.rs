@@ -4,6 +4,7 @@
 
 use super::super::Severity;
 use super::super::phrase::find_phrase;
+use super::tokens;
 
 /// One line of a document, classified.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,6 +117,52 @@ impl Line {
             true => head.len() + 1,
             false => 0,
         }
+    }
+
+    /// Whether this line hands `needle` to a program even though a quote
+    /// mark stands in front of it.
+    ///
+    /// The shell takes its quote marks out before it builds the argument
+    /// list, so `git commit "--no-verify"` gives git exactly what the
+    /// unquoted spelling does. [`Line::runs_at`] cannot see that: it
+    /// reads a position, and every position inside a quotation looks the
+    /// same from there. This reads the line as the shell does and asks
+    /// what each program is actually given.
+    ///
+    /// Two shapes count. A word that *is* the needle is that program's
+    /// own argument, whatever the program turns out to be — a name
+    /// nobody listed is not evidence that it ignores what it is handed,
+    /// so an unrecognised program counts. A word a program will run as a
+    /// command line counts by what is written inside it, which is how a
+    /// switch reaches git through an `eval`, a `sh -c` or an `ssh`.
+    ///
+    /// What does not count is a needle standing inside a longer word that
+    /// nothing will read as a command. `echo "use --no-verify"` hands one
+    /// argument to `echo` and that argument is a sentence; the switch in
+    /// it turns off no check, here or anywhere the sentence is printed.
+    ///
+    /// Each word is weighed at its own first character through
+    /// `runs_at`, so a comment and a `case` arm's pattern list are still
+    /// the dead text they were: this widens what a live word can be, not
+    /// where a word is live.
+    pub fn hands_over(&self, needle: &str) -> bool {
+        if self.prose {
+            return false;
+        }
+        tokens::commands(&self.lower).iter().any(|command| {
+            let interpreted = command.runs_a_command_string();
+            command
+                .arguments()
+                .iter()
+                .filter(|word| self.runs_at(word.at.start))
+                .any(|word| match interpreted {
+                    true => tokens::commands(&word.text)
+                        .iter()
+                        .flat_map(|inner| inner.words.iter())
+                        .any(|inner| inner.text == needle),
+                    false => word.text == needle,
+                })
+        })
     }
 
     /// Whether this line would hand what sits at `at` to a program, or

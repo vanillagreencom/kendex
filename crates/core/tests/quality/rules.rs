@@ -400,6 +400,87 @@ fn safety_bypass_leaves_a_switch_quoted_by_a_span_that_crosses_a_newline() {
     );
 }
 
+/// The shell takes its quote marks out before it builds the argument
+/// list, so a quoted switch reaches the program exactly as a bare one
+/// does. Reading a position rather than an argument scored this line
+/// clean while the switch was being handed straight to git.
+///
+/// Three must-fail halves, and they are what keeps the reading honest.
+/// The same quote marks around a sentence hand `echo` a sentence, and a
+/// sentence turns off no check. A comment is still dead text however its
+/// words are quoted. And a markdown code span is markdown's quotation,
+/// not the shell's, so a command written into prose is still prose.
+#[test]
+fn safety_bypass_reads_a_switch_a_program_is_handed_inside_quotes() {
+    let handed = skill(&[("scripts/pre-commit", "git commit -m done \"--no-verify\"\n")]);
+    assert_eq!(
+        severity_of(&handed, "safety-bypass"),
+        Some(Severity::Critical),
+        "{:?}",
+        handed.findings
+    );
+
+    let said = skill(&[("scripts/pre-commit", "echo \"use --no-verify to skip\"\n")]);
+    assert!(
+        !rules_hit(&said).contains(&"safety-bypass"),
+        "{:?}",
+        said.findings
+    );
+
+    let commented = skill(&[(
+        "scripts/pre-commit",
+        "# never write git commit \"--no-verify\"\n",
+    )]);
+    assert!(
+        !rules_hit(&commented).contains(&"safety-bypass"),
+        "{:?}",
+        commented.findings
+    );
+
+    let in_a_span = skill(&[(
+        "SKILL.md",
+        "The shape is `git commit \"--no-verify\"` in a doc.\n",
+    )]);
+    assert!(
+        !rules_hit(&in_a_span).contains(&"safety-bypass"),
+        "{:?}",
+        in_a_span.findings
+    );
+}
+
+/// An interpreter is handed a command line rather than an operand, so
+/// what stands inside the quotes is what the inner shell runs. Three ways
+/// to reach one, and every one of them hands git the same switch.
+///
+/// The must-fail half is the fourth case: a program that is not an
+/// interpreter is handed a sentence, and the words inside it stay words.
+#[test]
+fn safety_bypass_reads_a_switch_inside_a_command_string() {
+    for reached in [
+        "eval \"git commit --no-verify -m done\"\n",
+        "sh -c \"git commit --no-verify -m done\"\n",
+        "ssh build.example \"git commit --no-verify -m done\"\n",
+    ] {
+        let result = skill(&[("scripts/pre-commit", reached)]);
+        assert_eq!(
+            severity_of(&result, "safety-bypass"),
+            Some(Severity::Critical),
+            "{reached}: {:?}",
+            result.findings
+        );
+    }
+
+    let printed = skill(&[(
+        "scripts/pre-commit",
+        "printf '%s\\n' \"git commit --no-verify -m done\"\n",
+    )]);
+    assert!(
+        !rules_hit(&printed).contains(&"safety-bypass"),
+        "{:?}",
+        printed.findings
+    );
+}
+
 /// A heading is a block of its own, so a run of backticks left open at the
 /// end of one does not reach the paragraph under it. Joining the two into
 /// a single run paired those stray backticks, and the switch standing
