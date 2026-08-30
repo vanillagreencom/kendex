@@ -30,17 +30,22 @@ Pi executes nothing per hook itself: the `pi-hooks` carrier extension runs
 them, and hook content rides in the registry kendex renders beside it —
 `kendex/hooks/<name>.sh` plus `kendex/hooks.json`, keyed by Pi's own
 listener names (`pi_listener`: tool call, tool result, turn end, session
-start). An event outside that map installs nothing on Pi, said as a note.
-On a bash tool call the carrier spawns the rendered `block-bare-cd`,
+start). An event outside that map installs nothing on Pi, said as a note. On
+a bash tool call the carrier spawns the rendered `block-bare-cd`,
 `block-repo-copy` and `pre-commit-check` scripts in that order with the
-payload Claude Code sends a `PreToolUse` hook, and stops at the first exit
-2, whose stderr is the refusal the agent reads. So the three run the same
-bytes under Claude, Codex and Pi. It resolves the project the way the rest
-of the adapter does, from the nearest ancestor carrying a marker, and the
-global root from `PI_CODING_AGENT_DIR`; a project script runs only where Pi
-reports the workspace trusted, since spawning it executes what the project
-ships. A script the carrier finds at neither scope is a hook this project
-has not installed, and nothing runs.
+payload Claude Code sends a `PreToolUse` hook, and stops at the first
+nonzero status. Exit 2 is the refusal, and its stderr is what the agent
+reads. Every other nonzero status blocks as well, under a reason the carrier
+writes itself: a script exiting 1, a spawn that failed, and a run past the
+60s budget are all a guard that reached no verdict, and a guard that did not
+run does not stand aside. Only exit 0 reaches the next script, and stderr
+written beside it is an advisory for the person rather than the agent. So
+the three run the same bytes under Claude, Codex and Pi. It resolves the
+project the way the rest of the adapter does, from the nearest ancestor
+carrying a marker, and the global root from `PI_CODING_AGENT_DIR`; a project
+script runs only where Pi reports the workspace trusted, since spawning it
+executes what the project ships. A script the carrier finds at neither scope
+is a hook this project has not installed, and nothing runs.
 
 **The reserved names.** Pi warns on two directory names directly beside a
 root it loads and halts an interactive start until a keypress: `hooks/` on
