@@ -370,7 +370,7 @@ pub(crate) fn capped(path: &Path, bytes: Vec<u8>) -> ItemSource {
         at
     };
     ItemSource {
-        path: path.display().to_string(),
+        path: crate::paths::slashed(path),
         content: String::from_utf8_lossy(&bytes[..taken]).into_owned(),
         truncated: bytes.len() > taken,
     }

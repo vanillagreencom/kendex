@@ -6,6 +6,10 @@
 //! to the link's own parent; anywhere else (a project link into the app's
 //! own folder, a global install) there is nothing shared to be relative to
 //! and the absolute path is the only spelling that reaches.
+//!
+//! Whichever text it holds, that text is read against the link's own
+//! parent and never against a working directory — for where it leads, and
+//! on Windows for which kind of link to make at all.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -50,6 +54,23 @@ pub(crate) fn resolved(link: &Path, points_to: &Path) -> Option<PathBuf> {
         return Some(points_to.to_path_buf());
     }
     normalize(&link.parent()?.join(points_to))
+}
+
+/// Whether the text `link` is about to hold leads to a directory.
+///
+/// Windows records which kind a link is when it is made, and a file link
+/// pointing at a directory does not resolve at all — `exists()` on it is
+/// false and every read through it fails. The text is relative to the
+/// link's own parent, never to this process's working directory, so the
+/// question has to be asked of the resolved path: asking `target.is_dir()`
+/// asks about `<cwd>/../../.agents/skills/x`, which is somebody else's
+/// tree or nothing.
+///
+/// Unix links carry no kind, so only Windows asks — and the test suite,
+/// which is how the rule is proven on a host that never calls it.
+#[cfg(any(windows, test))]
+pub(crate) fn leads_to_dir(link: &Path, target: &Path) -> bool {
+    resolved(link, target).is_some_and(|at| at.is_dir())
 }
 
 fn has_parent_ref(path: &Path) -> bool {
@@ -163,5 +184,31 @@ mod tests {
             Some(p("/w/proj/.agents/skills/deploy")),
         );
         assert_eq!(resolved(&link, &p("/abs/x")), Some(p("/abs/x")));
+    }
+
+    /// The kind a Windows link is made with, asked of the link's own
+    /// parent. Against the `target.is_dir()` this replaced, the first of
+    /// these is red: that call reads the same text against the working
+    /// directory, where it names nothing, so every relative link to a
+    /// shared tree was made as a file link and did not resolve.
+    #[test]
+    fn a_relative_link_is_judged_from_its_own_parent() -> std::io::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let project = tmp.path().join("app");
+        std::fs::create_dir_all(project.join(".agents/skills/deploy"))?;
+        std::fs::create_dir_all(project.join(".claude/skills"))?;
+        std::fs::write(project.join(".agents/skills/deploy/SKILL.md"), "x")?;
+        let link = project.join(".claude/skills/deploy");
+
+        assert!(leads_to_dir(&link, &p("../../.agents/skills/deploy")));
+        assert!(leads_to_dir(&link, &project.join(".agents/skills/deploy")));
+        // A file, and a target that leads nowhere at all: neither is a
+        // directory link, and the second must not guess that it is.
+        assert!(!leads_to_dir(
+            &link,
+            &p("../../.agents/skills/deploy/SKILL.md")
+        ));
+        assert!(!leads_to_dir(&link, &p("../../.agents/skills/absent")));
+        Ok(())
     }
 }

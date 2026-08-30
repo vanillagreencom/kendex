@@ -115,6 +115,8 @@ impl Severity {
 /// invisible to every rule, which is a pass nobody earned.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreeFile {
+    /// Relative to the tree's root, and `/`-spelled wherever it becomes
+    /// text: the links it is compared against are written that way.
     pub path: PathBuf,
     pub bytes: usize,
     pub text: Option<String>,
@@ -255,7 +257,8 @@ pub struct AuditInput {
     pub kind: ItemKind,
     pub name: String,
     pub harness: Option<HarnessId>,
-    /// The artifact's path, or the config file holding the entry.
+    /// The artifact's path, or the config file holding the entry, `/`-spelled
+    /// so a finding from the plan and one from disk name the same place.
     pub location: String,
     pub content: Content,
 }

@@ -33,7 +33,7 @@ fn adapter_skill_roots(project: &Path, env: &Env) -> BTreeSet<String> {
             let relative = dir
                 .strip_prefix(project)
                 .expect("a project surface is under the project root");
-            roots.insert(relative.to_string_lossy().into_owned());
+            roots.insert(kendex_core::paths::slashed(relative));
         }
     }
     roots

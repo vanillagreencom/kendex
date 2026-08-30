@@ -81,7 +81,7 @@ pub(super) fn unmanaged_rows(
             harness: item.harness,
             scope: scope.clone(),
             state: DriftState::Unmanaged,
-            detail: item.path.display().to_string(),
+            detail: crate::paths::slashed(&item.path),
             cause: None,
             compared: None,
             also_in_the_way: Vec::new(),

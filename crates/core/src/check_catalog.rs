@@ -284,11 +284,7 @@ pub fn check_item(
     path: &Path,
 ) -> Result<CheckedItem> {
     let content = content(sealed, kind, path)?;
-    let file = path
-        .strip_prefix(sealed.root())
-        .unwrap_or(path)
-        .display()
-        .to_string();
+    let file = crate::paths::slashed(path.strip_prefix(sealed.root()).unwrap_or(path));
     let mut structural = structural(kind, name, &file, &content);
     structural.extend(settings::findings(sealed, kind, name, &file, path)?);
     // The safety half of the authoring check: the same rules an install

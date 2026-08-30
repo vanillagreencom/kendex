@@ -243,7 +243,7 @@ pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Res
         return match crate::paths::canonical(&joined) {
             Ok(root) if root.is_dir() => Ok(SourceState::Ready(ResolvedSource {
                 name: name.to_owned(),
-                provenance: root.display().to_string(),
+                provenance: crate::paths::slashed(&root),
                 root,
                 commit: None,
             })),

@@ -62,7 +62,7 @@ pub(crate) fn read_capped(path: &Path) -> Result<ItemSource> {
     let bytes = std::fs::read(path).map_err(|e| CoreError::io(path, e))?;
     let taken = char_boundary(&bytes, bytes.len().min(MAX_SOURCE_BYTES));
     Ok(ItemSource {
-        path: path.display().to_string(),
+        path: crate::paths::slashed(path),
         content: String::from_utf8_lossy(&bytes[..taken]).into_owned(),
         truncated: bytes.len() > taken,
     })

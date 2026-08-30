@@ -205,7 +205,7 @@ fn tree_docs(
             let Some(text) = file.text else {
                 return TreeFile { text: None, ..file };
             };
-            let location = format!("{root}/{}", file.path.display());
+            let location = format!("{root}/{}", crate::paths::slashed(&file.path));
             let supporting = is_supporting(&file.path);
             let text = clean(location.clone(), &text);
             docs.push(Doc {

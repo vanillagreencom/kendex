@@ -118,7 +118,7 @@ impl Scope {
     pub fn label(&self) -> String {
         match self {
             Scope::Global => "global".to_owned(),
-            Scope::Project { root } => root.display().to_string(),
+            Scope::Project { root } => crate::paths::slashed(root),
         }
     }
 

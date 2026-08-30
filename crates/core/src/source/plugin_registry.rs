@@ -32,6 +32,9 @@ pub const PLUGIN_MANIFEST: &str = ".claude-plugin/plugin.json";
 /// Something wrong with a catalog, said in the catalog author's terms.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
 pub struct CatalogFinding {
+    /// Where in the catalog, repository-relative and `/`-spelled — the
+    /// catalog author reads it beside the `/`-spelled roots the search
+    /// table names, and it is one string on every host.
     pub location: String,
     pub problem: String,
     pub fix: String,
@@ -199,7 +202,7 @@ fn read_entry(sealed: &SealedSource, index: usize, entry: &Value, registry: &mut
             at,
             format!(
                 "`{}` is not a directory in this catalog",
-                names::shown(&dir.display().to_string())
+                names::shown(&crate::paths::slashed(&dir))
             ),
             "point the entry at a directory that exists, or drop the entry",
         ));

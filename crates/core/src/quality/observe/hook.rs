@@ -38,7 +38,7 @@ pub(super) fn read_hook(item: &ObservedItem) -> Content {
         return Content::Hook {
             event: String::new(),
             matcher: None,
-            command: item.path.display().to_string(),
+            command: crate::paths::slashed(&item.path),
             values: None,
             script: Some(text),
         };

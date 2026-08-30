@@ -125,11 +125,7 @@ fn shown_text(text: &str) -> String {
 }
 
 fn file_row(rel: &Path, len: usize) -> PackageFile {
-    let path = rel
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/");
+    let path = crate::paths::slashed(rel);
     PackageFile {
         is_readme: !path.contains('/') && path.eq_ignore_ascii_case("README.md"),
         size: len.min(u32::MAX as usize) as u32,

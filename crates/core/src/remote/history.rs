@@ -51,7 +51,10 @@ fn stdout_capped(git: Hardened) -> Result<String> {
 
 /// A subtree path as a pathspec git will not interpret.
 fn literal(rel: &Path) -> String {
-    format!(":(literal){}", rel.display())
+    // Slashed: git matches a pathspec against index paths, and those are
+    // `/`-spelled on every platform. A `\` here matches no path at all,
+    // and an empty log reads as "nothing changed".
+    format!(":(literal){}", crate::paths::slashed(rel))
 }
 
 /// A commit subject as something safe to show: control characters become

@@ -145,7 +145,7 @@ impl Walk<'_> {
             };
             let Some(name) = name.to_str() else {
                 self.discovery.findings.push(CatalogFinding::new(
-                    rel.display().to_string(),
+                    crate::paths::slashed(rel),
                     format!(
                         "`{}` is not a UTF-8 name, which no harness can load",
                         names::shown(&name.to_string_lossy())
@@ -178,7 +178,7 @@ impl Walk<'_> {
                 .all(|c| matches!(c, std::path::Component::Normal(_)))
         {
             self.discovery.findings.push(CatalogFinding::new(
-                names::shown(&rel.display().to_string()),
+                names::shown(&crate::paths::slashed(rel)),
                 "this path leads out of the repository".to_owned(),
                 "keep every skill in a plain directory under a recognized root",
             ));
@@ -200,7 +200,7 @@ impl Walk<'_> {
         if !self.taken_rels.insert(rel.to_path_buf()) {
             return Ok(());
         }
-        let location = rel.display().to_string();
+        let location = crate::paths::slashed(rel);
         if let Some(problem) = names::segment_problem(name) {
             self.discovery.findings.push(CatalogFinding::new(
                 location,
@@ -385,7 +385,7 @@ mod tests {
                 let Surface::SubdirPerItem { dir, .. } = surface else {
                     continue;
                 };
-                let dir = dir.to_string_lossy().into_owned();
+                let dir = crate::paths::slashed(&dir);
                 assert!(
                     SKILL_ROOTS.contains(&dir.as_str()),
                     "{} reads project skills from {dir}, which the search table misses",

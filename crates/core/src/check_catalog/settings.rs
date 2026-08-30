@@ -36,10 +36,7 @@ pub(super) fn findings(
     // A one-skill catalog IS the catalog root, so the item's own path is
     // empty and joining with a separator would spell an absolute
     // `/kendex.settings.toml.example`. Path::join knows the difference.
-    let at = Path::new(file)
-        .join(template)
-        .to_string_lossy()
-        .into_owned();
+    let at = crate::paths::slashed(&Path::new(file).join(template));
     Ok(crate::settings_template::read(&text)
         .findings
         .into_iter()

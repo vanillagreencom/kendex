@@ -102,7 +102,7 @@ pub fn status(path: &Path) -> Result<MineRow> {
     let tally = report.tally();
     let meta = config.marketplace.clone().unwrap_or_default();
     Ok(MineRow {
-        path: path.display().to_string(),
+        path: crate::paths::slashed(path),
         name: meta.name.unwrap_or(leaf),
         description: meta.description,
         license: meta.license,

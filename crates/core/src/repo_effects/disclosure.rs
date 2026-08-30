@@ -165,7 +165,7 @@ pub fn offers(scope: &Scope, effects: &[DeclaredEffects], installed: &BTreeSet<S
                     // `<root>/.git`, and this flag is a claim about who
                     // else sees the file.
                     shared: git_dir.is_some_and(|dir| target.starts_with(dir)),
-                    path: shown(&target.display().to_string()),
+                    path: shown(&crate::paths::slashed(&target)),
                 }
             })
             .collect();

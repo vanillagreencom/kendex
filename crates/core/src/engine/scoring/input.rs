@@ -10,7 +10,7 @@ use super::super::desired::{Artifact, Desired};
 pub(super) fn input_for(item: &Desired) -> AuditInput {
     let (location, content) = match &item.artifact {
         Artifact::File { path, bytes } => (
-            path.display().to_string(),
+            crate::paths::slashed(path),
             Content::Document {
                 text: String::from_utf8_lossy(bytes).into_owned(),
             },
@@ -20,7 +20,7 @@ pub(super) fn input_for(item: &Desired) -> AuditInput {
         Artifact::Tree {
             canonical, files, ..
         } => (
-            canonical.display().to_string(),
+            crate::paths::slashed(canonical),
             crate::quality::observe::tree_content_from_bytes(files),
         ),
         Artifact::Registration { script, edits } => registration(item, script.as_ref(), edits),
@@ -42,8 +42,8 @@ fn registration(
     edits: &[(std::path::PathBuf, ConfigEdit)],
 ) -> (String, Content) {
     let location = script
-        .map(|(path, _)| path.display().to_string())
-        .or_else(|| edits.first().map(|(path, _)| path.display().to_string()))
+        .map(|(path, _)| crate::paths::slashed(path))
+        .or_else(|| edits.first().map(|(path, _)| crate::paths::slashed(path)))
         .unwrap_or_else(|| item.name.clone());
     let content = match item.kind {
         ItemKind::McpServer => match mcp_entry(edits) {

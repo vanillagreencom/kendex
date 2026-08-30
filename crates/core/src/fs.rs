@@ -332,10 +332,11 @@ pub(crate) fn make_symlink(target: &Path, link: &Path) -> Result<()> {
 
 #[cfg(windows)]
 pub(crate) fn make_symlink(target: &Path, link: &Path) -> Result<()> {
-    if target.is_dir() {
-        std::os::windows::fs::symlink_dir(target, link).map_err(|e| CoreError::io(link, e))
-    } else {
-        std::os::windows::fs::symlink_file(target, link).map_err(|e| CoreError::io(link, e))
+    match links::leads_to_dir(link, target) {
+        true => std::os::windows::fs::symlink_dir(target, link).map_err(|e| CoreError::io(link, e)),
+        false => {
+            std::os::windows::fs::symlink_file(target, link).map_err(|e| CoreError::io(link, e))
+        }
     }
 }
 

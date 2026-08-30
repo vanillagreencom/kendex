@@ -180,7 +180,7 @@ fn group(
     entry: &PluginEntry,
     findings: &mut Vec<CatalogFinding>,
 ) -> Result<CatalogGroup> {
-    let at = entry.dir.display().to_string();
+    let at = crate::paths::slashed(&entry.dir);
     check_manifest(sealed, entry, &at, findings)?;
     let mut members = Vec::new();
     for kind in [ItemKind::Agent, ItemKind::Command, ItemKind::Skill] {

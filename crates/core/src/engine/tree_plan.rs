@@ -140,7 +140,7 @@ pub(super) fn plan_tree(
 fn unowned_link(link: Option<&Path>, owned: &BTreeSet<PathBuf>) -> Option<String> {
     let link = link?;
     (!link.is_symlink() && link.exists() && !owned.contains(link))
-        .then(|| link.display().to_string())
+        .then(|| crate::paths::slashed(link))
 }
 
 /// Carry another in-the-way position on a refusal that already names one.

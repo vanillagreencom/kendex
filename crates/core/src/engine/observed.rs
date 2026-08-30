@@ -33,7 +33,7 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
             name: item.name.clone(),
             harness: item.harness,
             scope: item.scope.clone(),
-            location: item.path.display().to_string(),
+            location: crate::paths::slashed(&item.path),
             advisory: result,
         })
         .collect())

@@ -281,7 +281,7 @@ fn coherence(body: &str, files: &[TreeFile], anti: &mut Vec<AntiPattern>) -> u32
         .filter(|target| {
             !files
                 .iter()
-                .any(|file| file.path.to_string_lossy().as_ref() == target.as_str())
+                .any(|file| crate::paths::slashed(&file.path) == target.as_str())
         })
         .collect();
     if broken.is_empty() {

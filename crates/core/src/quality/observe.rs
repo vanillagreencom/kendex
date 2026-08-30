@@ -51,7 +51,7 @@ pub fn tree_content_from_bytes(files: &[(PathBuf, Vec<u8>)]) -> Content {
 
 /// What this observation carries, read as an audit input.
 pub fn input_for(item: &ObservedItem) -> AuditInput {
-    let location = item.path.display().to_string();
+    let location = crate::paths::slashed(&item.path);
     let content = match item.kind {
         ItemKind::Skill => read_tree(&item.path),
         ItemKind::Agent | ItemKind::Command | ItemKind::PiExtension => read_document(&item.path),
@@ -272,7 +272,7 @@ fn read_plugin(path: &Path) -> Content {
         git_origin: root
             .join(".git")
             .exists()
-            .then(|| root.display().to_string()),
+            .then(|| crate::paths::slashed(root)),
         scripts: files
             .into_iter()
             .filter(|file| is_source(&file.path))

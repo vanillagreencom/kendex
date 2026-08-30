@@ -207,7 +207,7 @@ pub(super) fn read_positions(
     if let Some((_, at)) = positions.iter().find(|(_, at)| both_spellings(kind, at)) {
         return Err(CoreError::TogglesDiffer {
             name: name.to_owned(),
-            detail: crate::names::shown(&at.display().to_string()),
+            detail: crate::names::shown(&crate::paths::slashed(at)),
         });
     }
 

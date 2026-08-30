@@ -135,7 +135,7 @@ use eval::Eval;
 pub(crate) fn scope_key(scope: &Scope) -> String {
     match scope.canonical() {
         Scope::Global => "global".to_owned(),
-        Scope::Project { root } => root.display().to_string(),
+        Scope::Project { root } => crate::paths::slashed(&root),
     }
 }
 

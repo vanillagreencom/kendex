@@ -375,9 +375,10 @@ fn executable_if_script(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// What the outcome calls one written file: its path under the import
+/// target, in the one spelling kendex publishes a path in. Callers read
+/// these back against catalog paths, which are `/`-spelled wherever they
+/// are written down.
 fn rel_name(target: &Path, dest: &Path) -> String {
-    dest.strip_prefix(target)
-        .unwrap_or(dest)
-        .display()
-        .to_string()
+    crate::paths::slashed(dest.strip_prefix(target).unwrap_or(dest))
 }

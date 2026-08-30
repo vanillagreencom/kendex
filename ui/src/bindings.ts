@@ -748,6 +748,11 @@ export type Catalog = { by: "subscription"; scope: Scope; source: string } |
 
 /**  Something wrong with a catalog, said in the catalog author's terms. */
 export type CatalogFinding = {
+	/**
+	 *  Where in the catalog, repository-relative and `/`-spelled — the
+	 *  catalog author reads it beside the `/`-spelled roots the search
+	 *  table names, and it is one string on every host.
+	 */
 	location: string,
 	problem: string,
 	fix: string,

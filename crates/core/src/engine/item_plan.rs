@@ -216,7 +216,7 @@ pub(super) enum Planned {
 pub(super) fn unmanaged(cause: DriftCause, path: &std::path::Path) -> Planned {
     Planned::Unmanaged {
         cause,
-        detail: path.display().to_string(),
+        detail: crate::paths::slashed(path),
         compared: None,
         also: Vec::new(),
     }
@@ -234,7 +234,7 @@ pub(super) fn unmanaged_compared(
 ) -> Planned {
     Planned::Unmanaged {
         cause,
-        detail: path.display().to_string(),
+        detail: crate::paths::slashed(path),
         compared,
         also: Vec::new(),
     }

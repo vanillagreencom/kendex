@@ -248,7 +248,7 @@ fn local_item_path(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Resu
 pub(super) fn already_managed(name: &str, path: &Path) -> CoreError {
     CoreError::AlreadyManaged {
         name: name.to_owned(),
-        path: crate::names::shown(&path.display().to_string()),
+        path: crate::names::shown(&crate::paths::slashed(path)),
     }
 }
 

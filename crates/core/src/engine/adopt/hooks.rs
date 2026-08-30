@@ -218,7 +218,7 @@ fn script_move(scope: &Scope, command: &str, ops: &mut Vec<PlannedOp>) -> Result
     if home.exists() {
         return Err(CoreError::AlreadyManaged {
             name: file.to_string_lossy().into_owned(),
-            path: crate::names::shown(&home.display().to_string()),
+            path: crate::names::shown(&crate::paths::slashed(&home)),
         });
     }
     ops.push(PlannedOp {

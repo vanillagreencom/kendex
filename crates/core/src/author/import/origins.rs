@@ -42,6 +42,9 @@ pub(super) fn unmanaged_paths(
 /// installed copy of a marketplace package differs from the marketplace's
 /// own bytes. Empty for rows import cannot carry (config-entry kinds have
 /// no file of their own to copy).
+/// The `String` is where the bytes were read from, said the way kendex
+/// says a path: [`crate::paths::slashed`], because callers match on it
+/// (`.agents/skills/…`) and a `\` there matches nothing.
 type OriginRead = (CandidateGroup, Option<Bytes>, String, Option<PathBuf>);
 
 pub(super) fn origins_of(
@@ -92,7 +95,7 @@ pub(super) fn origins_of(
             vec![(
                 CandidateGroup::Unmanaged,
                 Some(bytes),
-                path.display().to_string(),
+                crate::paths::slashed(path),
                 Some(path.clone()),
             )]
         }
@@ -173,7 +176,7 @@ pub(super) fn marketplace_origins(
                 license,
             },
             Some(edited),
-            installed.display().to_string(),
+            crate::paths::slashed(installed),
             Some(installed.clone()),
         ));
     }
@@ -189,7 +192,7 @@ pub(super) fn catalog_bytes(
     let config = crate::source::source_config_for(&sealed, provenance).ok()?;
     let path = crate::source::find_item(&sealed, &config, row.kind, &row.name)?;
     let bytes = read_bytes(&sealed, row.kind, &path)?;
-    let location = root.join(rel(&sealed, &path)).display().to_string();
+    let location = crate::paths::slashed(&root.join(rel_path(&sealed, &path)));
     Some((Some(bytes), location, path))
 }
 
@@ -208,11 +211,18 @@ pub(super) fn read_bytes(sealed: &SealedSource, kind: ItemKind, path: &Path) -> 
     }
 }
 
+/// Where `path` sits inside the catalog, as text a caller can match: an
+/// origin's location is read back against catalog paths, and those are
+/// `/`-spelled wherever they are written down.
 pub(super) fn rel(sealed: &SealedSource, path: &Path) -> String {
-    path.strip_prefix(sealed.root())
-        .unwrap_or(path)
-        .display()
-        .to_string()
+    crate::paths::slashed(rel_path(sealed, path))
+}
+
+/// The same as a path, for a caller that has more to join on before the
+/// spelling is settled — spelling a path in two halves leaves the seam in
+/// whichever spelling the platform joined with.
+fn rel_path<'a>(sealed: &SealedSource, path: &'a Path) -> &'a Path {
+    path.strip_prefix(sealed.root()).unwrap_or(path)
 }
 
 pub(super) fn scope_manifest(env: &Env, scope: &Scope) -> Manifest {
