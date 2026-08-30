@@ -4,7 +4,7 @@
 # event: PreToolUse
 # matcher: Bash
 # description: On a git commit, defer to the working directory's armed git hooks — both pre-commit and commit-msg, marked and executable (kendex guard install arms them). Otherwise the commit is refused naming that command: arming is the local act that says a person wants this repository's committed scripts run on their commits, and this hook never runs them on their behalf. Where one is armed, a command that sidesteps it with git's no-verify flag, -n, or a core.hooksPath override is refused: git would skip the commit-msg hook too, and nothing here can check the message. The command is split into simple commands and only its live words are judged: heredoc bodies and comment tails are text, a quoted word is a live word whose text is its unquoted content, and a `git` word with a later `commit` word is the commit. Whole words decide, so a quoted --no-verify is the flag while a commit message naming it is one long word of prose. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
-# safety: Refuses a commit from a working directory with no armed git pre-commit hook rather than running that repository's own scripts to check it, and refuses a commit whose live words include one that bypasses an armed hook (no-verify, -n) or injects git configuration that could (-c, --config-env, a GIT_CONFIG_* assignment, a core.hooksPath key); it models no argv, and a construct it cannot read at all — an alias key, ANSI-C quoting, a shift inside arithmetic, a \\u escape in the payload — is refused on sight where the text names a commit at all, rather than parsed harder, and an alias key carried inline (-c alias.x=...) is refused on the git word alone, since it renames the subcommand of that invocation; it models no argv, so a construct it does not recognise leaves the words standing and is judged rather than passing unjudged, and its blind spot is the other way round: text a shell would run but this drops, inside quotes or a heredoc body, and a commit aimed at another repository is that repository's armed hook's to gate.
+# safety: Refuses a commit from a working directory with no armed git pre-commit hook rather than running that repository's own scripts to check it, and refuses a commit whose live words include one that bypasses an armed hook (no-verify, -n) or injects git configuration that could (-c, --config-env, a GIT_CONFIG_* assignment, a core.hooksPath key); it models no argv, and a construct it cannot read at all — an alias key, ANSI-C quoting, a shift inside arithmetic, a \\u escape in the payload — is refused on sight where the command carries a commit, in its quote-stripped text or in a live word, rather than parsed harder, and an alias key carried inline (-c alias.x=...) is refused on the git word alone, since it renames the subcommand of that invocation; it models no argv, so a construct it does not recognise leaves the words standing and is judged rather than passing unjudged, and its blind spot is the other way round: text a shell would run but this drops, inside quotes or a heredoc body, and a commit aimed at another repository is that repository's armed hook's to gate.
 # timeout: 60
 # ---
 
@@ -43,21 +43,29 @@ function setbypass(t) {
 }
 function basename(t) { sub(/^.*\//, "", t); return t }
 function flush_word() { if (HAVEW) { TOK[++NTOK] = W; W = ""; HAVEW = 0 } }
+# Two things the live words of a command say that its text cannot, both read
+# here because the shell assembles a word out of quoted fragments and across a
+# line continuation, and the same text in a heredoc body or a comment tail is no
+# word at all.
+#
 # An alias key carried with its value renames the subcommand of the invocation
-# it is passed to. It is read off the live words, never the text they were
-# written as: the shell assembles a word out of quoted fragments and across a
-# line continuation, so `ali<q><q>as.c=commit` and a key split over two lines
-# are both that key, and the same text in a heredoc body or a comment tail is
-# no word at all.
-function alias_inline(   m, hasgit) {
-  for (m = 1; m <= NTOK; m++) if (basename(TOK[m]) == "git") hasgit = 1
-  if (!hasgit) return
-  for (m = 1; m <= NTOK; m++) if (tolower(TOK[m]) ~ /alias\.[^= \t\n\r]*=/) ALIASINLINE = 1
+# it is passed to, so `ali<q><q>as.c=commit` and a key split over two lines are
+# both that key. And a word carrying the commit is the second arm of the
+# construct prerequisite: a word, not the word, because this asks whether a
+# commit could be in here at all, not which word is the subcommand.
+function live_words(   m, t, hasgit, haskey) {
+  for (m = 1; m <= NTOK; m++) {
+    t = TOK[m]
+    if (index(t, "commit") > 0) COMMITWORD = 1
+    if (basename(t) == "git") hasgit = 1
+    if (tolower(t) ~ /alias\.[^= \t\n\r]*=/) haskey = 1
+  }
+  if (hasgit && haskey) ALIASINLINE = 1
 }
 # split with an empty string is the portable array clear (not `delete TOK`).
 function end_command() {
   flush_word()
-  if (NTOK > 0) { alias_inline(); judge() }
+  if (NTOK > 0) { live_words(); judge() }
   split("", TOK); NTOK = 0
 }
 # Decode the JSON string opening at s[1]. BS, the decoded backslash, stays the
@@ -197,20 +205,25 @@ function scan(cmd,   n, i, ch, c2, d, j, start) {
 # added here invites the next construct, and the answer to text this cannot read
 # is to refuse, not to parse harder.
 #
-# They are asked of the NORMALIZED command — quote characters removed — so a
-# spelling the shell assembles reads as its letters and `com<q><q>mit` holds
-# the word. One text test over text this cannot parse, rather than a parse.
+# They are asked behind one prerequisite, and it takes either answer to where
+# the commit is. The NORMALIZED command — quote characters removed — is one:
+# these constructs hide the subcommand from the scanner, so a heredoc delimiter
+# and an arithmetic shift leave no word to read and the text is all there is. A
+# live word carrying it is the other: the shell assembles a word out of an
+# escape or a line continuation, and no text held that spelling. Either arm
+# alone was measured short — the first misses what the shell assembles, the
+# second misses what the constructs hide — so the prerequisite is their union.
 #
 # An alias key carried inline is the exception and keeps the bare git
 # prerequisite: `-c alias.x=...` renames the subcommand of this very invocation,
-# so the commit word can be absent altogether. That one is read off the live
-# words rather than the text, because the shell assembles the key. A key written
-# to the config instead takes effect on later commands, which arrive as their own
+# so the commit can be absent altogether. That one is read off the live words
+# rather than the text, because the shell assembles the key. A key written to
+# the config instead takes effect on later commands, which arrive as their own
 # payloads; here it is text like any other and takes the commit prerequisite, so
 # writing an ordinary shorthand is the write it reads as.
 function unmodelled(cmd, norm) {
   if (ALIASINLINE) return "an alias config key"
-  if (index(norm, "commit") == 0) return ""
+  if (index(norm, "commit") == 0 && !COMMITWORD) return ""
   if (tolower(cmd) ~ /alias\./) return "an alias config key"
   if (index(cmd, "$" SQ) > 0) return "ANSI-C quoting"
   if (cmd ~ /\(\([^)]*<</) return "a shift inside arithmetic"

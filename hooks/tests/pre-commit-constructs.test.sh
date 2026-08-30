@@ -42,6 +42,20 @@ unmodelled "git config alias.c 'commit $NV' && git c --allow-empty -m x" "a pers
 unmodelled "$ANSIC" "ANSI-C quoting"
 unmodelled 'x=$(( 1 << 2 )) && git commit -m x' "a shift inside arithmetic"
 
+# The prerequisite takes either answer to where the commit is, and each of these
+# has only one of them.
+#
+# The first two have only the assembled word: the alias value spells the commit
+# out of an escape and across a continuation, so no text of the command ever
+# holds it. The third has only the text: the scanner reads the shift as a
+# heredoc opener, and the body it then skips swallows the commit line bash does
+# run, so no live word holds it either. Behind a real heredoc that same body is
+# the control — there bash runs nothing in it, and it passes.
+unmodelled 'git config alias.c \"com\\\nmit -n\" && git c --allow-empty -m x' "a commit assembled in an alias value"
+unmodelled 'git config alias.c com\\mit && git c '"$NV"' -m x' "a commit escaped in an alias value"
+unmodelled 'x=$(( 1 << EOF ))\ngit commit '"$NV"' -m x\nEOF\ngit status' "a shift whose body swallows the commit"
+both 'cat <<EOF\ngit commit '"$NV"' -m x\nEOF\ngit status' 0 0 "the same body behind a real heredoc"
+
 # The prerequisite is read off the command with its quote characters removed, so
 # a spelling the shell assembles reads as its letters. Both of these are the
 # word once the quotes come out, and one of them also spells the git word.

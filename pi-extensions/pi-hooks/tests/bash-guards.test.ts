@@ -357,6 +357,16 @@ describe("pre-commit gate: the bash hook's contract", () => {
 			`git config alias.c 'commit ${nv}' && git c --allow-empty -m x`,
 			"cat <<$'EOF'\nbody\nEOF\ngit commit -m x",
 			"x=$(( 1 << 2 )) && git commit -m x",
+			// The prerequisite takes either answer to where the commit is, and each of
+			// these has only one of them. The first two have only the assembled word:
+			// the alias value spells the commit out of an escape and across a
+			// continuation, so no text of the command ever holds it. The third has
+			// only the text: the scanner reads the shift as a heredoc opener, and the
+			// body it then skips swallows the commit line bash does run, so no live
+			// word holds it either.
+			`git config alias.c "com\\\nmit -n" && git c --allow-empty -m x`,
+			`git config alias.c com\\mit && git c ${nv} -m x`,
+			`x=$(( 1 << EOF ))\ngit commit ${nv} -m x\nEOF\ngit status`,
 			// The prerequisite is read off the command with its quote characters
 			// removed, so a spelling the shell assembles reads as its letters. Each
 			// of these is the word once the quotes come out, and one also spells git.
@@ -409,6 +419,9 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		await both("git config alias.st status", "allow", "allow");
 		await both("git config alias.c 'status' && git c", "allow", "allow");
 		await both("cat <<EOF\ngit -c alias.c=co co\nEOF\ngit status", "allow", "allow");
+		// Behind a real heredoc that same body is the control: bash runs nothing in
+		// it, so the commit the text holds is text and this passes.
+		await both(`cat <<EOF\ngit commit ${nv} -m x\nEOF\ngit status`, "allow", "allow");
 		await both('git commit "a\\\nb"', "allow", "refuse");
 		await both('git commit -m "line one\nline two"', "allow", "refuse");
 		const joined = await gate(armed, `git commit "--no-veri\\\nfy" -m x`);
