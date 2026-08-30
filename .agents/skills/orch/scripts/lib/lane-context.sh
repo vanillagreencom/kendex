@@ -85,16 +85,24 @@ lane_context_emit() {
     }'
 }
 
-# Read one context figure from a captured screen on stdin. Prints
-# `<harness>\t<used percent>`; exits 1 when the screen carries neither shape.
+# Read one context figure from a captured screen on stdin. $1 is the pane's
+# foreground process, and it decides which shape is offered: `codex` the codex
+# shape alone, a claude wrapper spelling or `agent-confine` the claude shape
+# alone. Anything else — `pi`, or an empty name for a pane that has left the
+# enumeration — is offered both, because a reader with no rule for a harness
+# has nothing better than the shapes themselves. Prints
+# `<harness>\t<used percent>`; exits 1 when the shape offered found nothing.
 #
 # The codex shape is offered the FINAL NON-EMPTY line and no other. The
 # claude shape is offered every line and its LAST match wins; no window is
 # taken off the bottom, because the footer under a claude status line is one
 # row per running agent and has no bound, so any count would lose exactly the
-# busiest lanes. A final line that carries the codex shape settles the
-# reading, out of range included: falling through to a claude match higher up
-# would be the search the position rule exists to refuse.
+# busiest lanes. Where both are offered, a final line carrying the codex shape
+# settles the reading, out of range included: falling through to a claude
+# match higher up would be the search the position rule exists to refuse. On a
+# codex pane there is no falling through at all — the claude shape is never
+# offered, so a screen that does not end in a codex status line is
+# could-not-tell however much of this fleet's transcript sits above it.
 #
 # Matching is done on a lowercased copy of each line: a model name is a word,
 # and the harness spells it differently in different places. The claude
@@ -127,10 +135,15 @@ lane_context_emit() {
 # context figure and is dropped rather than reported, whichever shape carried
 # it.
 lane_context_parse() {
-  local out
-  out="$(awk '
+  local out shape="both"
+  case "${1:-}" in
+    codex) shape="codex" ;;
+    *claude | agent-confine) shape="claude" ;;
+  esac
+  out="$(awk -v shape="$shape" '
     {
       if ($0 ~ /[^ \t]/) last = $0
+      if (shape == "codex") next
       low = tolower($0)
       if (match(low, /^[ \t]*[^ \t()]+([ \t]+\([^)]*\))?[ \t]+(opus|sonnet|haiku|fable)[ \t]+[0-9]+(\.[0-9]+)?([ \t]*\([^)]*\))?[ \t]+[0-9]+%[ \t]+\([^) \t]+\)([ \t]+\/[^ \t]*)*[ \t]*$/)) {
         s = substr(low, RSTART, RLENGTH)
@@ -141,7 +154,7 @@ lane_context_parse() {
       }
     }
     END {
-      low = tolower(last)
+      low = (shape == "claude") ? "" : tolower(last)
       if (match(low, /^[^a-z0-9]*context:?[ \t]+[0-9]+%[ \t]+(left|used)([ \t]+(·|[|])[ \t]+[^ \t].*)?[ \t]*$/)) {
         codex_line = 1
         s = substr(low, RSTART, RLENGTH)
@@ -171,7 +184,9 @@ lane_context_parse() {
 # against an unrelated local pane and emitted as ok. So the claim's server is
 # compared against this one, enumerated once, before anything is captured.
 # The same enumeration carries each pane's foreground process, which is what
-# says whether a harness is still drawing the screen about to be read.
+# says whether a harness is still drawing the screen about to be read — and
+# WHICH harness, which is how the reader knows the shape to look for without
+# guessing it from a screen that quotes both all day.
 lane_context_collect() {
   local claims="$1" alias_fn="$2" cfg lane server pane screen parsed
   local this_server detail cmd pane_cmds p_pid p_pane p_cmd
@@ -215,9 +230,14 @@ lane_context_collect() {
           "unreadable" "the pane could not be captured; it is gone from this server"
         continue
       fi
-      if ! parsed="$(lane_context_parse <<<"$screen")"; then
+      if ! parsed="$(lane_context_parse "$cmd" <<<"$screen")"; then
+        case "$cmd" in
+          codex) detail="the screen does not end in a codex status line; whatever moved it — a dialog over the footer, a redraw caught mid-frame — is covering the figure" ;;
+          *claude | agent-confine) detail="the screen carries no claude status line" ;;
+          *) detail="the screen carries neither harness's context figure" ;;
+        esac
         lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" "" "" \
-          "no_status_line" "the screen carries neither harness's context figure"
+          "no_status_line" "$detail"
         continue
       fi
       lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" \

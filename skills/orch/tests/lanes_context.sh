@@ -13,9 +13,12 @@
 # different places. Codex draws it LAST, so the codex reading comes from the
 # final non-empty line and from no other. Claude draws a row per running
 # agent BELOW its status line, so its footer has no bound and its reading is
-# the bottom-most whole-line match. Case 1's screen is a real
-# `tmux capture-pane`; the other claude screens are built from real status
-# lines. Cases hold each half shut, one per mutation:
+# the bottom-most whole-line match. WHICH rule a pane gets comes from the
+# pane's own foreground process, never from what is on the screen: this fleet
+# pastes both harnesses' screens into both harnesses' terminals all day, and
+# the panes here carry a process per case for that reason. Case 1's screen is
+# a real `tmux capture-pane`; the other claude screens are built from real
+# status lines. Cases hold each half shut, one per mutation:
 #   case 1  an orchestrating lane's real footer, whose final line is an agent
 #           row — dies the moment the claude reading is taken by position
 #           too, or any bottom window narrower than the footer is taken off
@@ -32,6 +35,12 @@
 #   case 24 a configured status item that is not a working directory — dies
 #           the moment the codex shape judges what follows the separator,
 #           because no shape separates a configured item from a sentence
+#   case 26 a codex pane on a dialog with a claude status line in its
+#           transcript — dies the moment a codex pane can reach the claude
+#           shape, which is the one way the fail-closed rule was bypassed
+#   case 27 a claude pane quoting a codex status line on its final row —
+#           dies the moment the harness is inferred from the screen instead
+#           of taken from the pane
 #   case 13 a pane that exited to its shell — dies if the liveness evidence
 #           is dropped, which is the only thing a window ever stood in for
 #
@@ -43,9 +52,9 @@
 #   3. the bottom-most claude reading wins over one repainted past
 #   4. a screen with neither shape is no_status_line, never 0
 #   5. a pane that cannot be captured is unreadable, never 0
-#   6. a percentage over 100 is not a context figure, in either shape, and a
-#      codex line carrying one settles the reading rather than falling
-#      through to a claude match higher up
+#   6. a percentage over 100 is not a context figure, in either shape, and on
+#      a pane offered both shapes a codex line carrying one settles the
+#      reading rather than falling through to a claude match higher up
 #   7. the table names the direction it reports, in its header and its rows
 #   8. an empty fleet says so; an unreadable claim store refuses
 #   9. the account column names the lane the pane runs under
@@ -74,6 +83,9 @@
 #  24. the configured status items `[tui].status_line` draws are accepted,
 #      one item or several, none of them a working directory
 #  25. every committed codex capture parses to the figure on its screen
+#  26. a codex pane that does not end in a codex status line carries no
+#      reading, whatever its transcript holds, and says what it could not read
+#  27. a claude pane is read by the claude shape however its screen ends
 #
 # errexit is on: every case here either succeeds or is guarded, so an
 # unexpected non-zero is a broken fixture, not a finding to print past.
@@ -199,8 +211,12 @@ echo "=== lanes context ==="
 
 # Foreground process per pane. %9 is the one that exited to its shell.
 {
-  for n in 1 2 3 4 5 10 13 14 15 16 21; do printf '%s %%%s claude\n' "$LIVE_PID" "$n"; done
-  for n in 6 7 8 19 20 22 23; do printf '%s %%%s codex\n' "$LIVE_PID" "$n"; done
+  for n in 1 3 4 5 10 13 14 15 16 21 26; do printf '%s %%%s claude\n' "$LIVE_PID" "$n"; done
+  for n in 2 6 7 8 19 20 22 23 24 25; do printf '%s %%%s codex\n' "$LIVE_PID" "$n"; done
+  # 6, both-shapes arm. `pi` is a harness this reader measures and has no
+  # shape rule for, so both are offered and the fall-through guard is
+  # reachable — the only place it still is.
+  printf '%s %%27 pi\n' "$LIVE_PID"
   printf '%s %%9 fish\n' "$LIVE_PID"
   # tmux reports a login shell with the leading dash it was started with.
   printf '%s %%11 -bash\n' "$LIVE_PID"
@@ -235,6 +251,10 @@ write_claim twentyone "%20" "$H/.codex"  "ken-121"
 write_claim twentytwo   "%21" "$H/.claude" "ken-122"
 write_claim twentythree "%22" "$H/.codex"  "ken-123"
 write_claim twentyfour  "%23" "$H/.codex"  "ken-124"
+write_claim twentyfive  "%24" "$H/.codex"  "ken-125"
+write_claim twentysix   "%25" "$H/.codex"  "ken-126"
+write_claim twentyseven "%26" "$H/.claude" "ken-127"
+write_claim twentyeight "%27" "$H/.codex"  "ken-128"
 # The foreign lane's pane NUMBER exists here too, on a screen that parses
 # cleanly: %1 is ken-101's, reading 35.
 write_claim_on "$FOREIGN_PID" foreign "%1" "$H/.claude" "ken-110"
@@ -275,11 +295,7 @@ screen 4 'plain shell output with no harness status line'
 screen 6 '  Codex is working
   Context 40% used'
 screen 7 '  Context 86% left · Opus 5 41%'
-# 6, codex arm. The claude status line above is what a fall-through would
-# find: a codex line the reader cannot use is a refusal, not a reason to go
-# looking further up the screen.
-screen 8 '  kendex (🌳 ken-108) Opus 5 35% (brad@drovr.dev)     /rc
-  Context 140% left'
+screen 8 '  Context 140% left'
 screen 9 '  kendex (🌳 ken-109) Opus 5 41% (brad@drovr.dev)     /rc
   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
 $ git status
@@ -359,6 +375,36 @@ screen 21 '  kendex (🌳 ken-122) Opus 5 41% (brad@drovr.dev)     /rc
 # an unmeasured lane, which the overseer never compacts.
 screen 22 '  Context 100% left · gpt-5.6-sol default'
 screen 23 '  Context 78% left · gpt-5.6-sol default · ken-885 · kendex · 0.151.0'
+# 26. A codex pane with a dialog over its footer, and a claude status line in
+# the transcript above — this fleet pastes both harnesses' screens into both
+# harnesses' terminals, so that line is ordinary here. %24 has a real codex
+# status line above the dialog and %25 has none, and the two must agree: the
+# dialog is covering whatever the lane is showing now, so neither is a
+# reading. Falling through to the claude shape answers with the wrong harness
+# AND the wrong number, and finding the covered status line by searching past
+# the dialog answers with a figure the lane has moved on from.
+screen 24 '  Codex is working
+  kendex (🌳 ken-125) Opus 5 35% (brad@drovr.dev)     /rc
+  Context 86% left
+  Press enter to continue'
+screen 25 '  Codex is working
+  kendex (🌳 ken-126) Opus 5 35% (brad@drovr.dev)     /rc
+  Press enter to continue'
+# 27. The same confusion the other way round. A claude pane whose final row
+# quotes a codex status line is still a claude lane, and reading it as codex
+# reports 14 used for a lane that is 41 used. Which harness a pane runs is the
+# caller's to say; the screen cannot be asked.
+screen 26 '  kendex (🌳 ken-127) Opus 5 41% (brad@drovr.dev)     /rc
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+● A codex lane prints:
+  Context 86% left'
+# 6, both-shapes arm. A pane running a harness with no shape rule is offered
+# both, and there the codex line on the final row still settles the reading:
+# out of range, it is a refusal, not a reason to take the claude status line
+# above it. That fall-through is unreachable on a codex pane, where the claude
+# shape is never offered at all.
+screen 27 '  kendex (🌳 ken-128) Opus 5 35% (brad@drovr.dev)     /rc
+  Context 140% left'
 
 OUT="$(run_ctx --json)"
 
@@ -405,12 +451,15 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-107") | .harness' <<<"$OUT")" "code
   "the context item at the line's opening is what names the harness"
 
 # 6 (codex arm). Over 100 is not a context figure in either shape: unguarded,
-# the conversion turns 140 left into -40 used. The claude status line sitting
-# above it is what a fall-through would report instead — 35, from a line the
-# screen does not end on — so the codex line settles the reading either way.
+# the conversion turns 140 left into -40 used. %27 is the same line on a pane
+# whose harness has no shape rule, where both shapes ARE offered: the claude
+# status line above it is what a fall-through would report instead, 35, from a
+# line the screen does not end on.
 assert_eq "$(jq -r '.[] | select(.lane=="ken-108") | .status' <<<"$OUT")" "no_status_line" \
   "a codex percentage over 100 is not read as a context figure"
 assert_eq "$(jq -r '.[] | select(.lane=="ken-108") | .context_used_pct' <<<"$OUT")" "null" \
+  "an out-of-range codex reading carries no number"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-128") | .context_used_pct' <<<"$OUT")" "null" \
   "an out-of-range codex line refuses rather than falling through to a match above it"
 
 # 13. The pane exited to its shell. Its last render is still on the screen and
@@ -521,6 +570,33 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-124") | .context_used_pct' <<<"$OUT
 assert_eq "$(jq -r '.[] | select(.lane=="ken-124") | .status' <<<"$OUT")" "ok" \
   "several items behind the separator are not a reason to refuse the lane"
 
+# 26. THE fail-closed rule, held shut against the one thing that bypassed it:
+# a claude-shaped line in a codex pane's transcript. The claude shape is not
+# offered on a codex pane at all, so both screens refuse — the one whose
+# status line the dialog covers and the one that has none. Bottom-most
+# recovered the covered line and answered 14; the claude fallback answered
+# claude 35. Neither is what the lane is showing.
+assert_eq "$(jq -r '.[] | select(.lane=="ken-125") | .status' <<<"$OUT")" "no_status_line" \
+  "a dialog over a codex footer is could-not-tell, not the status line it covers"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-125") | .context_used_pct' <<<"$OUT")" "null" \
+  "a claude-shaped line in a codex pane's transcript is not a reading"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-125") | .harness' <<<"$OUT")" "null" \
+  "and it does not put the wrong harness in the report either"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-126") | .status' <<<"$OUT")" "no_status_line" \
+  "the same pane with no codex status line at all answers the same way"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-126") | .context_used_pct' <<<"$OUT")" "null" \
+  "the two halves agree rather than differing by what sits above the dialog"
+assert_contains "$(jq -r '.[] | select(.lane=="ken-125") | .detail' <<<"$OUT")" "does not end in a codex status line" \
+  "the refusal names what it could not read, not a missing figure of either shape"
+
+# 27. And the same confusion in the other direction. A codex status line
+# quoted in a claude pane's transcript is not this lane's reading, whatever
+# row it lands on.
+assert_eq "$(jq -r '.[] | select(.lane=="ken-127") | .context_used_pct' <<<"$OUT")" "41" \
+  "a codex status line quoted on a claude pane does not take the lane's reading"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-127") | .harness' <<<"$OUT")" "claude" \
+  "the pane's own harness is what names the reading"
+
 # 25. Every committed codex capture, parsed as it stands. These are real
 # `tmux capture-pane` output from Codex 0.151.0 (KEN-863), and they are the
 # evidence the position rule rests on: in all four that carry a status line
@@ -531,7 +607,7 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-124") | .status' <<<"$OUT")" "ok" \
 FIXTURES="$TEST_DIR/fixtures/oversee-watch"
 
 parse_fixture() { # <capture file name>
-  "$BASH" -c 'source "$1"; lane_context_parse <"$2"' _ \
+  "$BASH" -c 'source "$1"; lane_context_parse codex <"$2"' _ \
     "$SCRIPTS_DIR/lib/lane-context.sh" "$FIXTURES/$1" || printf 'none\n'
 }
 
@@ -565,6 +641,8 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-104") | .status' <<<"$OUT")" "no_st
   "a screen with neither shape is no_status_line"
 assert_eq "$(jq -r '.[] | select(.lane=="ken-104") | .context_used_pct' <<<"$OUT")" "null" \
   "a lane with no status line carries no number"
+assert_contains "$(jq -r '.[] | select(.lane=="ken-104") | .detail' <<<"$OUT")" "no claude status line" \
+  "the refusal names the shape that pane was read for, not both shapes"
 
 write_claim five "%5" "$H/.claude" "ken-105"
 UNREAD="$(run_ctx --json)"
