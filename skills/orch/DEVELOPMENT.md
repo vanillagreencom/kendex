@@ -67,27 +67,16 @@ Reruns re-execute the workflow definition and verifier state pinned at the origi
 ## Container close
 
 `container-close` derives the shared main checkout, waits up to 120 seconds for
-the per-parent lock, and owns the completion gate, canceled-child recovery
-record, completion summary, and cascade repair. Recovery rows store child id,
-state, and depth; publication sorts deepest-first. Only confirmed parent
-completion authorizes repair;
-an open parent validates matching recovery, retains it, and atomically merges it
-with the next snapshot. Every recovery conflict names the durable record path.
-Reconcile the Linear states, then remove that record only when no cascade repair
-remains. A durable-versus-fresh conflict stores both tagged alternatives in an
-owner-only unresolved envelope at the active recovery pathname. Resolved and
-unresolved generations are first built at a stable owner-only pending pathname.
-Termination is masked through construction and atomic publication. Exhausted
-rename retries retain the pending generation; the next locked startup promotes
-or refuses it before reading active recovery. Each envelope carries status,
-schema-checked rows, unresolved source tags, and a completion trailer with row
-count and Git digest. Startup validates the whole pending envelope before
-promotion. Every reader refuses an unresolved active envelope until the operator
-reconciles and removes it. Exit zero prints one `closed [PARENT_ID]` or
-`deferred [CHILD_IDS...]` line to stdout.
-A closed result may include recovery diagnostics on stderr; consumers preserve
-them all.
-Any incomplete read, summary, completion, or repair exits nonzero. `sync-base`
+the per-parent lock, and owns the completion gate and bundle summary. Pending or
+canceled descendants return `deferred [CHILD_IDS...]` before parent mutation;
+the helper never infers that a later child completion came from a parent
+cascade. Completion validation must provide Boolean `all_ok`, exactly one typed
+parent result, and Boolean `has_summary`. A retry with validated summary evidence
+calls `issues complete` without summary flags so it does not post the bundle
+comment twice. Exit zero prints one `closed [PARENT_ID]` or deferred line to
+stdout. A closed result may include completion diagnostics on stderr; consumers
+preserve them all. Any incomplete read, summary, or completion exits nonzero.
+`sync-base`
 likewise owns base resolution, fetch, checkout ownership, and the fast-forward.
 It preserves unrelated untracked paths and refuses incoming collisions with
 untracked paths, including ignored ones. The fast-forward itself uses Git's

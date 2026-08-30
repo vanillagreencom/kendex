@@ -8,11 +8,10 @@ usage: container-close <REPOSITORY_CHECKOUT> <PARENT_ID>
 
 Derives the shared main repository and serializes closure per Linear container.
 Prints `closed <PARENT_ID>` when the container is Done, including an idempotent
-repeat.
-Prints `deferred` followed by pending child ids when closure must wait. A bare
-`deferred` means the 120-second lock wait expired. Operational and validation
-failures exit 1. A successful `closed` result may carry recovery diagnostics on
-stderr; callers must preserve every one.
+repeat. Prints `deferred` followed by pending or canceled child ids when closure
+must wait. A bare `deferred` means the 120-second lock wait expired. Operational
+and validation failures exit 1. A successful `closed` result may carry completion
+diagnostics on stderr; callers must preserve every one.
 EOF
 }
 
@@ -22,12 +21,9 @@ case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LINEAR="$SCRIPT_DIR/../../linear/scripts/linear.sh"
 GIT_CONTEXT="$SCRIPT_DIR/git-context"
-ENVELOPE="$SCRIPT_DIR/container-close-envelope"
 [[ -x "$LINEAR" ]] || { echo "container-close: Linear CLI is missing or not executable: $LINEAR" >&2; exit 1; }
 [[ -x "$GIT_CONTEXT" ]] || { echo "container-close: git-context is missing or not executable: $GIT_CONTEXT" >&2; exit 1; }
-[[ -x "$ENVELOPE" ]] || { echo "container-close: recovery envelope helper is missing or not executable: $ENVELOPE" >&2; exit 1; }
 command -v flock >/dev/null 2>&1 || { echo "container-close: flock is required" >&2; exit 1; }
-command -v gh >/dev/null 2>&1 || { echo "container-close: gh is required to preserve child PR references" >&2; exit 1; }
 
 REPOSITORY_CHECKOUT="$(cd -- "$1" 2>/dev/null && pwd -P)" \
   || { echo "container-close: repository checkout is not a directory: $1" >&2; exit 1; }
@@ -49,264 +45,29 @@ LOCK_WAIT_SECONDS=120
 LOCK_CONFLICT_RC=75
 LOCK_RC=0
 flock -E "$LOCK_CONFLICT_RC" -w "$LOCK_WAIT_SECONDS" 9 || LOCK_RC=$?
-if [[ $LOCK_RC -eq $LOCK_CONFLICT_RC ]]; then
-  printf 'deferred\n'
-  exit 0
-fi
+if [[ $LOCK_RC -eq $LOCK_CONFLICT_RC ]]; then printf 'deferred\n'; exit 0; fi
 [[ $LOCK_RC -eq 0 ]] \
   || { echo "container-close: cannot acquire lock for $PARENT_ID: flock exited $LOCK_RC" >&2; exit 1; }
-
-RECOVERY_DIR="$MAIN_REPO_ROOT/tmp/container-close-recovery"
-if [[ -L "$RECOVERY_DIR" || ( -e "$RECOVERY_DIR" && ! -d "$RECOVERY_DIR" ) ]]; then
-  echo "container-close: recovery path is not a directory: $RECOVERY_DIR" >&2
-  exit 1
-fi
-mkdir -p "$RECOVERY_DIR"
-[[ -O "$RECOVERY_DIR" ]] \
-  || { echo "container-close: recovery directory is not owned by this user: $RECOVERY_DIR" >&2; exit 1; }
-chmod 700 "$RECOVERY_DIR"
-RECOVERY="$RECOVERY_DIR/$PARENT_ID.tsv"
-if [[ -L "$RECOVERY" || ( -e "$RECOVERY" && ( ! -f "$RECOVERY" || ! -O "$RECOVERY" ) ) ]]; then
-  echo "container-close: recovery record is not an owned regular file: $RECOVERY" >&2
-  exit 1
-fi
-PENDING_RECOVERY="$RECOVERY_DIR/$PARENT_ID.pending.tsv"
-if [[ -L "$PENDING_RECOVERY" || ( -e "$PENDING_RECOVERY" && ( ! -f "$PENDING_RECOVERY" || ! -O "$PENDING_RECOVERY" ) ) ]]; then
-  echo "container-close: pending recovery generation is not an owned regular file: $PENDING_RECOVERY" >&2
-  exit 1
-fi
-recovery_conflict() {
-  local record="${2:-$RECOVERY}"
-  echo "container-close: recovery conflict for $PARENT_ID: $1; reconcile Linear state, then remove $record only if no cascade repair remains" >&2
-  return 1
-}
-
-refuse_unresolved() {
-  [[ -e "$RECOVERY" || -L "$RECOVERY" ]] || return 0
-  local status
-  status="$("$ENVELOPE" validate "$RECOVERY" "$PUBLISHED_ROWS")" \
-    || { recovery_conflict "active envelope failed validation"; return $?; }
-  case "$status" in
-    resolved) return 0 ;;
-    unresolved) recovery_conflict "unresolved durable and fresh alternatives require operator reconciliation" ;;
-    *) echo "container-close: recovery envelope has invalid status $status: $RECOVERY" >&2; return 1 ;;
-  esac
-}
 
 RUN_DIR="$(mktemp -d "$MAIN_REPO_ROOT/tmp/container-close-$PARENT_ID.XXXXXX")" \
   || { echo "container-close: cannot create private run directory" >&2; exit 1; }
 chmod 700 "$RUN_DIR"
-SNAPSHOT="$RUN_DIR/canceled.tsv"
-CURRENT="$RUN_DIR/current.jsonl"
 SUMMARY="$RUN_DIR/summary.md"
 CHILD_ROWS="$RUN_DIR/children.tsv"
-ACTIVE_ROWS="$RUN_DIR/active.tsv"
-PUBLISHED_ROWS="$RUN_DIR/published.tsv"
-
-cleanup() {
-  rm -f -- "$SNAPSHOT" "$CURRENT" "$SUMMARY" "$CHILD_ROWS" "$ACTIVE_ROWS" "$PUBLISHED_ROWS"
-  rmdir -- "$RUN_DIR" 2>/dev/null || true
-}
+cleanup() { rm -f -- "$SUMMARY" "$CHILD_ROWS"; rmdir -- "$RUN_DIR" 2>/dev/null || true; }
 trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM HUP
 
 sync_linear() { "$LINEAR" sync --reconcile >/dev/null; }
 parent_json() { "$LINEAR" cache issues get "$PARENT_ID"; }
-
-load_recovery_rows() {
-  local source="$1" line id rest state depth
-  ids=()
-  states=()
-  depths=()
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    id="${line%%$'\t'*}"
-    rest="${line#*$'\t'}"
-    [[ "$rest" != "$line" && "$rest" == *$'\t'* ]] || rest+=$'\t'
-    state="${rest%%$'\t'*}"
-    depth="${rest#*$'\t'}"
-    [[ -n "$id" ]] || { echo "container-close: recovery record has a row without a child id for $PARENT_ID" >&2; return 1; }
-    [[ -n "$state" ]] || { echo "container-close: recovery record for $id has no state" >&2; return 1; }
-    [[ "$depth" =~ ^[0-9]+$ ]] \
-      || { echo "container-close: recovery record for $id has invalid depth: $depth" >&2; return 1; }
-    ids+=("$id")
-    states+=("$state")
-    depths+=("$depth")
-  done < "$source"
+print_deferred() {
+  printf 'deferred'
+  while IFS= read -r id; do [[ -z "$id" ]] || printf ' %s' "$id"; done <<<"$1"
+  printf '\n'
 }
-
-fetch_recovery_rows() {
-  local id batch=() batch_json
-  : > "$CURRENT"
-  for id in ${ids[@]+"${ids[@]}"}; do
-    batch+=("$id")
-    if [[ ${#batch[@]} -eq 50 ]]; then
-      batch_json="$("$LINEAR" issues bulk-get ${batch[@]+"${batch[@]}"})" \
-        || { echo "container-close: canceled-child repair lookup failed for $PARENT_ID" >&2; return 1; }
-      jq -c '.[]' <<<"$batch_json" >> "$CURRENT" \
-        || { echo "container-close: canceled-child repair lookup returned invalid JSON for $PARENT_ID" >&2; return 1; }
-      batch=()
-    fi
-  done
-  if [[ ${#batch[@]} -gt 0 ]]; then
-    batch_json="$("$LINEAR" issues bulk-get ${batch[@]+"${batch[@]}"})" \
-      || { echo "container-close: canceled-child repair lookup failed for $PARENT_ID" >&2; return 1; }
-    jq -c '.[]' <<<"$batch_json" >> "$CURRENT" \
-      || { echo "container-close: canceled-child repair lookup returned invalid JSON for $PARENT_ID" >&2; return 1; }
-  fi
-  [[ "$(wc -l < "$CURRENT" | tr -d ' ')" -eq ${#ids[@]} ]] \
-    || { recovery_conflict "recovery lookup was incomplete"; return $?; }
-}
-
-restore_signal_traps() {
-  trap 'exit 130' INT
-  trap 'exit 143' TERM HUP
-}
-
-atomic_replace_recovery() {
-  local source="$1" _attempt
-  for _attempt in 1 2 3; do
-    if mv -f "$source" "$RECOVERY"; then
-      return 0
-    fi
-  done
-  echo "container-close: cannot atomically publish recovery envelope for $PARENT_ID" >&2
-  return 1
-}
-
-settle_pending() {
-  [[ -e "$PENDING_RECOVERY" || -L "$PENDING_RECOVERY" ]] || return 0
-  [[ -f "$PENDING_RECOVERY" && ! -L "$PENDING_RECOVERY" && -O "$PENDING_RECOVERY" ]] \
-    || { echo "container-close: pending recovery generation is not an owned regular file: $PENDING_RECOVERY" >&2; return 1; }
-  local status
-  status="$("$ENVELOPE" validate "$PENDING_RECOVERY" "$PUBLISHED_ROWS")" \
-    || { recovery_conflict "pending generation failed validation" "$PENDING_RECOVERY"; return $?; }
-  atomic_replace_recovery "$PENDING_RECOVERY" \
-    || { recovery_conflict "pending generation could not be promoted" "$PENDING_RECOVERY"; return $?; }
-}
-
-load_resolved_active() {
-  local status
-  status="$("$ENVELOPE" validate "$RECOVERY" "$ACTIVE_ROWS")" \
-    || { recovery_conflict "active envelope failed validation"; return $?; }
-  [[ "$status" == resolved ]] || { recovery_conflict "active envelope is unresolved"; return $?; }
-  load_recovery_rows "$ACTIVE_ROWS"
-}
-
-publish_unresolved() {
-  trap '' INT TERM HUP
-  if ! awk -F '\t' 'BEGIN { OFS="\t" }
-    { source=(FILENAME == ARGV[1] ? "durable" : "fresh"); print $1, $2, $3, source }
-  ' "$ACTIVE_ROWS" "$SNAPSHOT" > "$PUBLISHED_ROWS" || ! "$ENVELOPE" write unresolved "$PUBLISHED_ROWS" "$PENDING_RECOVERY" || ! atomic_replace_recovery "$PENDING_RECOVERY"; then
-    restore_signal_traps
-    echo "container-close: cannot publish unresolved recovery alternatives for $PARENT_ID" >&2
-    return 1
-  fi
-  restore_signal_traps
-}
-
-publish_recovery() {
-  [[ -s "$SNAPSHOT" || -s "$RECOVERY" ]] || return 0
-  local recovery_tmp
-  ids=(); states=(); depths=()
-  load_recovery_rows "$SNAPSHOT" || return 1
-  if [[ -e "$RECOVERY" || -L "$RECOVERY" ]]; then
-    [[ -f "$RECOVERY" && ! -L "$RECOVERY" && -O "$RECOVERY" ]] \
-      || { echo "container-close: recovery record is not an owned regular file: $RECOVERY" >&2; return 1; }
-    load_resolved_active || return 1
-  fi
-  trap '' INT TERM HUP
-  recovery_tmp="$PENDING_RECOVERY"
-  if [[ -s "$ACTIVE_ROWS" ]]; then
-    awk -F '\t' 'BEGIN { OFS="\t" }
-      NF != 3 || $1 == "" || $2 == "" || $3 !~ /^[0-9]+$/ { bad=1; exit }
-      !($1 in states) { states[$1]=$2; depths[$1]=$3; order[++count]=$1; next }
-      states[$1] != $2 || depths[$1] != $3 { bad=1; exit }
-      END {
-        if (bad) exit 2
-        for (i=1; i<=count; i++) for (j=i+1; j<=count; j++)
-          if (depths[order[j]] > depths[order[i]]) { swap=order[i]; order[i]=order[j]; order[j]=swap }
-        for (i=1; i<=count; i++) print order[i], states[order[i]], depths[order[i]]
-      }
-    ' "$ACTIVE_ROWS" "$SNAPSHOT" > "$PUBLISHED_ROWS" || {
-      rm -f -- "$recovery_tmp"
-      publish_unresolved || return 1
-      recovery_conflict "durable and fresh rows disagree; alternatives saved"
-      return $?
-    }
-  elif ! awk '{ print }' "$SNAPSHOT" > "$PUBLISHED_ROWS"; then
-    restore_signal_traps
-    echo "container-close: cannot copy recovery record for $PARENT_ID" >&2
-    return 1
-  fi
-  ids=(); states=(); depths=()
-  load_recovery_rows "$PUBLISHED_ROWS" || { restore_signal_traps; return 1; }
-  if ! "$ENVELOPE" write resolved "$PUBLISHED_ROWS" "$recovery_tmp" || ! atomic_replace_recovery "$recovery_tmp"; then
-    restore_signal_traps
-    echo "container-close: cannot publish recovery record for $PARENT_ID" >&2
-    return 1
-  fi
-  restore_signal_traps
-}
-
-repair_canceled() {
-  refuse_unresolved || return 1
-  [[ -e "$RECOVERY" || -L "$RECOVERY" ]] || return 0
-  [[ -f "$RECOVERY" && ! -L "$RECOVERY" && -O "$RECOVERY" ]] \
-    || { echo "container-close: recovery record is not an owned regular file: $RECOVERY" >&2; return 1; }
-  local ids=() states=() depths=() id state current_state current_type index matches
-  load_resolved_active || return 1
-  [[ ${#ids[@]} -gt 0 ]] || { echo "container-close: recovery record is empty for $PARENT_ID" >&2; return 1; }
-  fetch_recovery_rows || return 1
-  for ((index=0; index<${#ids[@]}; index++)); do
-    id="${ids[$index]}"; state="${states[$index]}"
-    matches="$(jq -r --arg id "$id" 'select(.id == $id) | .id' "$CURRENT" | wc -l | tr -d ' ')" \
-      || { echo "container-close: canceled-child repair could not inspect $id" >&2; return 1; }
-    [[ "$matches" -eq 1 ]] || { echo "container-close: canceled-child repair did not return exactly one row for $id" >&2; return 1; }
-    current_state="$(jq -r --arg id "$id" 'select(.id == $id) | .state // ""' "$CURRENT")" \
-      || { echo "container-close: canceled-child repair could not read the state for $id" >&2; return 1; }
-    [[ "$current_state" == "$state" ]] && continue
-    current_type="$(jq -r --arg id "$id" 'select(.id == $id) | .state_type // ""' "$CURRENT")" \
-      || { echo "container-close: canceled-child repair could not read the state type for $id" >&2; return 1; }
-    [[ "$current_type" == "completed" ]] \
-      || { recovery_conflict "repair found child $id in unexpected state $current_state"; return $?; }
-    "$LINEAR" issues update "$id" --state "$state" >/dev/null \
-      || { echo "container-close: could not restore $id to $state" >&2; return 1; }
-    printf 'container-close: restored %s to %s\n' "$id" "$state" >&2
-  done
-  fetch_recovery_rows || return 1
-  for ((index=0; index<${#ids[@]}; index++)); do
-    id="${ids[$index]}"; state="${states[$index]}"
-    matches="$(jq -r --arg id "$id" --arg state "$state" \
-      'select(.id == $id and .state == $state) | .id' "$CURRENT" | wc -l | tr -d ' ')" \
-      || { echo "container-close: canceled-child repair could not verify $id" >&2; return 1; }
-    [[ "$matches" -eq 1 ]] || { recovery_conflict "repair could not verify child $id at $state"; return $?; }
-  done
-  rm -f -- "$RECOVERY" || { echo "container-close: cannot remove verified recovery record for $PARENT_ID" >&2; return 1; }
-}
-
-check_open_recovery() {
-  [[ -e "$RECOVERY" || -L "$RECOVERY" ]] || return 0
-  [[ -f "$RECOVERY" && ! -L "$RECOVERY" && -O "$RECOVERY" ]] \
-    || { echo "container-close: recovery record is not an owned regular file: $RECOVERY" >&2; return 1; }
-  local ids=() states=() depths=() id state current_state index
-  load_resolved_active || return 1
-  [[ ${#ids[@]} -gt 0 ]] || { echo "container-close: recovery record is empty for $PARENT_ID" >&2; return 1; }
-  fetch_recovery_rows || return 1
-  for ((index=0; index<${#ids[@]}; index++)); do
-    id="${ids[$index]}"; state="${states[$index]}"
-    current_state="$(jq -r --arg id "$id" 'select(.id == $id) | .state // ""' "$CURRENT")" \
-      || { echo "container-close: open-parent recovery could not read the state for $id" >&2; return 1; }
-    [[ "$current_state" == "$state" ]] \
-      || {
-        recovery_conflict "parent is open and child $id moved from $state to $current_state"
-        return $?
-      }
-  done
-}
-
 child_pr() {
   local child_id="$1" rows number
+  command -v gh >/dev/null 2>&1 \
+    || { echo "container-close: gh is required to preserve child PR references" >&2; return 1; }
   rows="$(cd -- "$MAIN_REPO_ROOT" && env -u GH_REPO -u GITHUB_REPOSITORY \
     gh pr list --state merged --search "$child_id" --limit 100 \
       --json number,headRefName,mergedAt,isCrossRepository)" \
@@ -321,16 +82,11 @@ child_pr() {
   [[ -n "$number" ]] && printf '#%s\n' "$number" || printf 'unavailable\n'
 }
 
-settle_pending
 sync_linear || { echo "container-close: Linear sync failed for $PARENT_ID" >&2; exit 1; }
 PARENT="$(parent_json)" || { echo "container-close: cannot read parent $PARENT_ID" >&2; exit 1; }
 PARENT_TYPE="$(jq -r '.state_type // ""' <<<"$PARENT")" \
   || { echo "container-close: parent response is invalid for $PARENT_ID" >&2; exit 1; }
-refuse_unresolved
-if [[ "$PARENT_TYPE" == "completed" ]]; then
-  repair_canceled; printf 'closed %s\n' "$PARENT_ID"; exit 0
-fi
-check_open_recovery
+if [[ "$PARENT_TYPE" == "completed" ]]; then printf 'closed %s\n' "$PARENT_ID"; exit 0; fi
 
 PENDING=""
 for _attempt in 1 2 3; do
@@ -339,51 +95,53 @@ for _attempt in 1 2 3; do
   [[ -z "$PENDING" ]] && break
   [[ $_attempt -eq 3 ]] || sync_linear || { echo "container-close: Linear sync failed for $PARENT_ID" >&2; exit 1; }
 done
-if [[ -n "$PENDING" ]]; then
-  printf 'deferred'
-  while IFS= read -r id; do [[ -z "$id" ]] || printf ' %s' "$id"; done <<<"$PENDING"
-  printf '\n'; exit 0
-fi
+if [[ -n "$PENDING" ]]; then print_deferred "$PENDING"; exit 0; fi
 
 CHILDREN="$("$LINEAR" cache issues children "$PARENT_ID" --recursive)" \
   || { echo "container-close: cannot read children for $PARENT_ID" >&2; exit 1; }
-jq -r '[.[] | select(.state_type == "canceled")] | sort_by(.depth) | reverse[] | [.id, .state, .depth] | @tsv' \
-  <<<"$CHILDREN" > "$SNAPSHOT" || { echo "container-close: child response is invalid for $PARENT_ID" >&2; exit 1; }
-ids=(); states=(); depths=(); load_recovery_rows "$SNAPSHOT"
+jq -e 'type == "array" and all(.[]; (.id | type) == "string" and (.id | length) > 0 and
+  (.title | type) == "string" and (.state_type | type) == "string")' <<<"$CHILDREN" >/dev/null \
+  || { echo "container-close: child response is invalid for $PARENT_ID" >&2; exit 1; }
+CANCELED="$(jq -r '.[] | select(.state_type == "canceled") | .id' <<<"$CHILDREN")" \
+  || { echo "container-close: cannot read canceled children for $PARENT_ID" >&2; exit 1; }
+if [[ -n "$CANCELED" ]]; then print_deferred "$CANCELED"; exit 0; fi
+
 VALIDATION="$("$LINEAR" issues validate-completion "$PARENT_ID" --include-children-of "$PARENT_ID" --container)" \
   || { echo "container-close: completion validation failed for $PARENT_ID" >&2; exit 1; }
 jq -e --arg id "$PARENT_ID" '(.results | if type == "array" then [.[] | select(.id == $id)] else [] end) as $parent |
-  (.all_ok | type) == "boolean" and (.results | type) == "array" and ($parent | length) == 1 and ($parent[0].state_type | type) == "string" and ($parent[0].state_type | length) > 0' <<<"$VALIDATION" >/dev/null \
-  || { echo "container-close: completion validation returned invalid results for $PARENT_ID" >&2; exit 1; }
-ALL_OK="$(jq -r '.all_ok // false' <<<"$VALIDATION")" \
+  (.all_ok | type) == "boolean" and (.results | type) == "array" and ($parent | length) == 1 and
+  ($parent[0].state_type | type) == "string" and ($parent[0].state_type | length) > 0 and ($parent[0].has_summary | type) == "boolean"' \
+  <<<"$VALIDATION" >/dev/null || { echo "container-close: completion validation returned invalid results for $PARENT_ID" >&2; exit 1; }
+ALL_OK="$(jq -r '.all_ok' <<<"$VALIDATION")" \
   || { echo "container-close: completion validation returned invalid JSON for $PARENT_ID" >&2; exit 1; }
 if [[ "$ALL_OK" != "true" ]]; then
   jq -c '.results[] | select(.ok != true)' <<<"$VALIDATION" >&2 \
     || { echo "container-close: completion validation returned invalid results for $PARENT_ID" >&2; exit 1; }
-  echo "container-close: completion validation refused $PARENT_ID" >&2; exit 1
+  echo "container-close: completion validation refused $PARENT_ID" >&2
+  exit 1
 fi
-VALIDATED_PARENT_TYPE="$(jq -r --arg id "$PARENT_ID" \
-  '.results[] | select(.id == $id) | .state_type // ""' <<<"$VALIDATION")" \
-  || { echo "container-close: completion validation returned invalid results for $PARENT_ID" >&2; exit 1; }
-if [[ "$VALIDATED_PARENT_TYPE" == "completed" ]]; then publish_recovery; repair_canceled; printf 'closed %s\n' "$PARENT_ID"; exit 0; fi
+VALIDATED_PARENT_TYPE="$(jq -r --arg id "$PARENT_ID" '.results[] | select(.id == $id) | .state_type' <<<"$VALIDATION")" \
+  || { echo "container-close: completion validation returned invalid parent state for $PARENT_ID" >&2; exit 1; }
+HAS_SUMMARY="$(jq -r --arg id "$PARENT_ID" '.results[] | select(.id == $id) | .has_summary' <<<"$VALIDATION")" \
+  || { echo "container-close: completion validation returned invalid summary evidence for $PARENT_ID" >&2; exit 1; }
+if [[ "$VALIDATED_PARENT_TYPE" == "completed" ]]; then printf 'closed %s\n' "$PARENT_ID"; exit 0; fi
 
-jq -r '.[] | [.id, .title, .state_type] | @tsv' <<<"$CHILDREN" > "$CHILD_ROWS" \
-  || { echo "container-close: cannot build child summary rows for $PARENT_ID" >&2; exit 1; }
-printf '## Bundle Complete\n\n' > "$SUMMARY"
-while IFS=$'\t' read -r id title state_type; do
-  case "$state_type" in
-    completed) MARKER="✓" ;;
-    canceled) MARKER="canceled" ;;
-    *) echo "container-close: child $id has unexpected summary state: $state_type" >&2; exit 1 ;;
-  esac
-  PR_REFERENCE="$(child_pr "$id")" || exit 1
-  printf -- '- %s %s %s — PR %s\n' "$id" "$MARKER" "$title" "$PR_REFERENCE" >> "$SUMMARY"
-done < "$CHILD_ROWS"
-publish_recovery
-check_open_recovery
+COMPLETE_ARGS=("$PARENT_ID")
+if [[ "$HAS_SUMMARY" == "false" ]]; then
+  jq -r '.[] | [.id, .title, .state_type] | @tsv' <<<"$CHILDREN" > "$CHILD_ROWS" \
+    || { echo "container-close: cannot build child summary rows for $PARENT_ID" >&2; exit 1; }
+  printf '## Bundle Complete\n\n' > "$SUMMARY"
+  while IFS=$'\t' read -r id title state_type; do
+    [[ "$state_type" == "completed" ]] \
+      || { echo "container-close: child $id has unexpected summary state: $state_type" >&2; exit 1; }
+    PR_REFERENCE="$(child_pr "$id")" || exit 1
+    printf -- '- %s ✓ %s — PR %s\n' "$id" "$title" "$PR_REFERENCE" >> "$SUMMARY"
+  done < "$CHILD_ROWS"
+  COMPLETE_ARGS+=(--summary-file "$SUMMARY")
+fi
 
 COMPLETE_RC=0
-"$LINEAR" issues complete "$PARENT_ID" --summary-file "$SUMMARY" >/dev/null || COMPLETE_RC=$?
+"$LINEAR" issues complete ${COMPLETE_ARGS[@]+"${COMPLETE_ARGS[@]}"} >/dev/null || COMPLETE_RC=$?
 if [[ $COMPLETE_RC -ne 0 ]]; then
   for _attempt in 1 2 3; do
     sync_linear || { echo "container-close: Linear sync failed after completion failure for $PARENT_ID" >&2; exit 1; }
@@ -395,5 +153,4 @@ if [[ $COMPLETE_RC -ne 0 ]]; then
   [[ "$PARENT_TYPE" == "completed" ]] || { echo "container-close: completion failed for $PARENT_ID" >&2; exit 1; }
   echo "container-close: completion command failed after $PARENT_ID reached Done" >&2
 fi
-repair_canceled
 printf 'closed %s\n' "$PARENT_ID"
