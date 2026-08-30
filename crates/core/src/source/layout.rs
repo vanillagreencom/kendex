@@ -141,8 +141,8 @@ pub(super) fn stored_in_slot(
     let Some(occupant) = occupant else {
         return Ok(None);
     };
-    // Text, so `paths::slashed` spells it — the rule every other path the
-    // adopt refusals name goes through.
+    // Text, not a path handed back to the operating system, so
+    // `paths::slashed` spells it rather than the platform's separator.
     let occupant = sealed.relative(&occupant).unwrap_or(&occupant);
     Ok(Some(crate::names::shown(&crate::paths::slashed(occupant))))
 }
