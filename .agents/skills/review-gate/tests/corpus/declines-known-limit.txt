@@ -1,0 +1,24 @@
+# Replies the subtraction does NOT catch, pinned so the boundary is read
+# rather than rediscovered.
+#
+# The subtraction is vocabulary, so it ends where the residue stops being
+# words and becomes NAMES. "lifecycle 104/104 and the full tools/guard pass"
+# leaves the suite's own name behind, and no word list reaches an identifier.
+#
+# Widening past this needs a rule about what prose counts as a mechanism.
+# That is ruled out of scope: do not attempt it, and do not move these lines
+# into declines-unreasoned.txt to force the issue. If one of these ever does
+# get caught, the suite says so, and the line moves with a fixture explaining
+# what reached it.
+#
+# Lines starting with # are comments. Blank lines are skipped.
+
+Declined: frozen at a1fa74dca; lifecycle 104/104 and the tools/guard run at this head.
+Declined: frozen at a1fa74dca; pr-merge 103/103 and the full tools/guard pass at this head.
+Declined: frozen at a1fa74dca; workflow 16/16 and the full tools/guard pass at this head.
+Declined: frozen at a1fa74dca; cleanup controls pass within lifecycle 104/104 and the full tools/guard passes.
+Declined: frozen at a1fa74dca; the missing-waiter and post-arm launcher controls pass within lifecycle 104/104.
+# The same boundary from the other side: a label written out as a sentence is
+# prose, and prose is where the vocabulary stops. "flagged separately" is
+# caught; the same promise spelled as a sentence is not.
+Declined: I will file it separately once this lands.

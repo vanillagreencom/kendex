@@ -1,0 +1,40 @@
+# Replies that MUST pass the review gate: a decline that names the passing
+# state or the false premise.
+#
+# This half is what stops the other half from being satisfied by a rule that
+# just fails every decline. Every widening of the word list has to leave all
+# of these standing, so pair a new label here with the same label used inside
+# a real reason whenever you add one.
+#
+# Lines starting with # are comments. Blank lines are skipped.
+
+# --- the shape the doctrine asks for --------------------------------------
+Declined: the caller already guards the empty case, so the branch you name cannot run.
+Declined: the premise is wrong — resolve_base_branch returns the remote name, not the local ref.
+Declined: that argument never reaches argv; the wrapper consumes it.
+Declined — the caller already guards the empty case, so that branch cannot run.
+
+# --- a label BESIDE a mechanism is untouched ------------------------------
+# This is what makes the test subtraction rather than a keyword ban: only a
+# reply that is NOTHING but labels reduces to empty.
+Declined: pre-existing, and the loader validates the value before this path reads it.
+Declined: out of scope, and the guard you name refuses that shape one lane earlier.
+Declined: the suite passes and the reproduction hits a branch the parser rejects before it.
+Declined: won't fix, because the shape you name is refused by the loader one lane earlier.
+Declined: a false positive — the arm you quote runs only when the lock is already held.
+Declined: the caller is tracked by the loader before the branch you name can run.
+Declined: the tracker id in that path is validated by the loader, so the shape cannot reach it.
+
+# --- from #1837 and #1873, real declines that must keep working -----------
+Declined: this refuses today rather than letting anything through. Measured on the committed tree, the armed fixture exits 2 and the unarmed run exits 2.
+Declined — this is not a regression, and the premise that the closing commit's guard should have caught it does not make it one.
+Declined — the mechanism is real and the form is adversary-only.
+Declined: pre-existing and unchanged by this diff, and the remedy it names is a valid route rather than a dead end.
+Declined: the label is accurate as written. The premise that the seed-time classification falsifies it does not hold.
+
+# --- from #1860: a freeze that concedes the mechanism ----------------------
+# The same wrapper as the reply that shipped the defects, and it says
+# something about the finding, so widening the freeze vocabulary must not
+# reach it.
+Declined under this PR's freeze. You are right about the mechanism, and it fails in the safe direction.
+Declined under this PR's freeze. Real, and it costs a diagnostic rather than a verdict.

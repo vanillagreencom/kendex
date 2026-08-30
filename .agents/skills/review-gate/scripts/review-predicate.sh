@@ -73,16 +73,17 @@ track-word. `untracked-claim` is that reply claiming tracking and naming no
 issue. `unreasoned-decline` is that reply declining and naming no mechanism:
 the reason is empty, or is nothing but non-reason tokens and filler. The
 tokens are the labels and the freeze procedure that answer a finding without
-disproving it, plus bare shas and bare numbers; `reason_left` below is the
-list, derived from the declines that shipped KEN-884 through KEN-889 in the
-inflections they were written in, not guessed. A token INSIDE a real reason
-is untouched, because the test is subtraction: strip the tokens and the
-filler, and only a reply that was nothing else reduces to empty. "Declined:
-pre-existing" is rejected; "Declined: pre-existing, and the loader validates
-it before this path runs" is not. Being vocabulary, the subtraction ends
-where the residue stops being words and becomes NAMES — the suite or test a
-bare count belongs to. That edge is pinned as a KNOWN LIMIT in the term's
-test rather than left to be rediscovered.
+disproving it, plus bare shas and bare numbers. A token INSIDE a real reason
+is untouched, because the test is subtraction: only a reply that was nothing
+else reduces to empty. Being vocabulary, it ends where the residue becomes
+NAMES — the suite a bare count belongs to, or a label spelled as a sentence.
+
+THE CORPUS IS THE CONTRACT, NOT THIS LIST. tests/corpus/ holds what the gate
+must catch, what it must pass, and that KNOWN LIMIT. Add a label by writing
+the reply THERE first, as a person types it, then widen `reason_left` until
+the suite is green. Write the punctuated spelling: normalization turns it to
+spaces first, so "won't fix" arrives as "won t fix" and an entry spelled
+`wont ?fix` never meets it. That shipped.
 
 A DECLINE IS READ BY ITS SHAPE, NOT BY THE COLON. A reply opening with the
 word declines, so "Declined, out of scope" fails exactly as the punctuated
@@ -1376,14 +1377,13 @@ if [ "$THREADS_MODE" = "enforce" ]; then
 # the only thing it may mean: widening it there would let "Declined under the
 # cap, tracked separately" clear a tracking claim naming no issue, which
 # loosens a merge gate. `declined` is wider, matching any reply opening with
-# the word, because dropping the colon does not stop a reply being a decline
-# and the replies the second term exists to catch were written that way.
+# the word, because the replies the second term exists to catch had no colon.
 #
 # A decline is a disposition only when it says what it disproves, so the
 # second reduction subtracts. `reason_left` strips the reply form, the
 # non-reason tokens and the words carrying no content alone; a reply whose
-# reason strips to nothing names no mechanism and is counted, which is what
-# leaves a token INSIDE a real reason harmless.
+# reason strips to nothing is counted, which is what leaves a token INSIDE a
+# real reason harmless. Widen this list from tests/corpus/, never alone.
 t_threads_page_jq='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|declined:)"; "i");
   def declined: test("^\\s*declined\\b"; "i");
   def tracking: test("(?i)\\btrack(ed|ing|s)?\\b");
@@ -1394,7 +1394,7 @@ t_threads_page_jq='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|decli
     sub("(?i)^\\s*declined\\b"; "")
     | ascii_downcase
     | gsub("[^a-z0-9]+"; " ")
-    | gsub("\\b(frozen|freezes?|freezing|cap|capped|round [0-9]+|round|rounds|tests?|suites?|pass|passes|passed|passing|green|count|out of scope|scope|pre existing|preexisting|existing|flagged separately|flagged|separately|as discussed|discussed|noted|wont ?fix|by design|design|not applicable|n a|no change|nothing to do|later|known|intentional|deliberate|works as intended|as intended|intended|owners?|instruction(s|ed)?|previous|pushe[sd]?|push|last|head|disposition(ed|s)?|findings?|fix(es|ed)?|track(s|ed|ing|er)?|filed|filing|logged)\\b"; " ")
+    | gsub("\\b(frozen|freezes?|freezing|cap|capped|round [0-9]+|round|rounds|tests?|suites?|pass|passes|passed|passing|green|count|out of scope|scope|pre existing|preexisting|existing|flagged separately|flagged|separately|as discussed|discussed|noted|won ?t ?fix|false positives?|by design|design|not applicable|n a|no change|nothing to do|later|known|intentional|deliberate|works as intended|as intended|intended|owners?|instruction(s|ed)?|previous|pushe[sd]?|push|last|head|disposition(ed|s)?|findings?|fix(es|ed)?|track(s|ed|ing|er)?|filed|filing|logged)\\b"; " ")
     | gsub("\\b[0-9a-f]{7,40}\\b"; " ")
     | gsub("\\b[0-9]+\\b"; " ")
     | gsub("\\b(a|an|the|this|that|these|those|it|its|is|are|was|were|be|been|for|in|on|at|to|of|and|or|but|so|we|i|you|your|pr|prs|here|now|all|full|whole|entire|complete|still|already|yes|no|not|do|does|did|has|have|had|under|per|within|as|after|rather|than|every|set|s|t)\\b"; " ")

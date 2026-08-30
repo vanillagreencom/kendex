@@ -4,15 +4,16 @@
 # non-bot reply is a `Declined:` that names no mechanism — an empty reason, or
 # nothing but non-reason tokens and filler.
 #
-# The declines that shipped KEN-884..KEN-889 are the fixtures at the top. Each
-# is paired with the real reason that must NOT be counted, because the test is
-# subtraction: a label BESIDE a mechanism is untouched, and a check that
-# rejected both would fail every honest decline on every PR.
+# The fixtures are tests/corpus/, not literals in here, and adding a label
+# starts there — see the sweep below. The declines that shipped KEN-884..
+# KEN-889 head that file. Each label is paired with the real reason that must
+# NOT be counted, because the test is subtraction: a label BESIDE a mechanism
+# is untouched, and a check rejecting both would fail every honest decline.
 #
 # Both punctuations are exercised. The replies under audit were written
 # without the colon, so a term that read only the punctuated form would pass
-# every one of them; the section below pins the unpunctuated shape, and the
-# second probe at the bottom is what proves that reading is this change's.
+# every one of them; the probes at the bottom prove that reading is a choice
+# this change made rather than something the fixtures happen to satisfy.
 #
 # The must-fail probes are at the bottom, each in the order the Done-when asks
 # for: the verdict fires on a content-free decline first, then the same jq with
@@ -57,91 +58,61 @@ check() { # check WANT LABEL BODY
   fi
 }
 
-echo "=== the replies that shipped the defects ==="
+CORPUS="$SCRIPT_DIR/corpus"
 
-check counted "a bare Declined: with nothing after it" \
-  'Declined:'
-check counted "Declined: with only whitespace" \
-  'Declined:    '
-check counted "Declined: frozen at a1fa74dca; 104/104 pass" \
-  'Declined: frozen at a1fa74dca; 104/104 pass'
-check counted "a decline that is only a test count" \
-  'Declined: tests pass.'
-check counted "Declined: out of scope for this PR" \
-  'Declined: out of scope for this PR'
-check counted "Declined: pre-existing" \
-  'Declined: pre-existing.'
-check counted "Declined: at the cap" \
-  'Declined: at the cap.'
-check counted "Declined: round 4" \
-  'Declined: round 4.'
-check counted "a disposition substituted for a filing" \
-  'Declined: flagged separately'
-check counted "Declined: by design" \
-  'Declined: by design'
-check counted "Declined: works as intended" \
-  'Declined: works as intended'
-check counted "a decline that is only a sha" \
-  'Declined: a1fa74dca'
-# The reply this issue exists to catch, quoted from #1860, pinned verbatim.
-# It shipped KEN-884..KEN-889, and it went uncaught through a first draft of
-# this term because the token list carried `frozen` and not `freeze`.
-check counted "THE MOTIVATING REPLY: a freeze plus a filing that never happened" \
-  "Declined under this PR's freeze, flagged separately"
-check counted "the same reply with nothing trailing it" \
-  "Declined under this PR's freeze."
-# #1847: the freeze restated as procedure. Who ordered the freeze and which
-# push was the last says nothing about whether the finding reproduces.
-check counted "a freeze attributed to the owner and nothing more" \
-  "Declined: frozen at 39db56854, per the owner's instruction."
-check counted "the same, spelled out at length" \
-  'Declined: frozen at 39db56854 — the owner set the previous push as this PR'"'"'s last.'
-# The seam between the two terms, which this reply used to slip through: the
-# colon makes it a canonical disposition, so untracked-claim skips it, and
-# `tracked` was a word this subtraction did not strip, so it read as a
-# reason. Neither term counted it. The tracking words are non-reason tokens
-# here for that reason; untracked-claim still owns the unpunctuated form.
-check counted "a promise to track that names no issue and no mechanism" \
-  'Declined: tracked separately'
-check counted "the same promise in the other inflection" \
-  'Declined: tracking separately'
-check counted "a filing promised and not made" \
-  'Declined: filed separately'
+# THE CORPUS IS THE CONTRACT. Every fixture below is a line in one of three
+# files, not a literal in this script, because the subtraction is a word list
+# and a word list maintained by review rounds is always one label behind.
+# Three rounds of this issue each landed one missing label. Adding the next
+# one starts by writing the reply in tests/corpus/declines-unreasoned.txt the
+# way a person types it; this suite goes red until the list in
+# review-predicate.sh covers it.
+#
+# Both directions run, and the must-pass half is what stops the must-catch
+# half being satisfied by a rule that fails every decline.
+sweep() { # sweep FILE counted|clean|limit
+  local file="$1" want="$2" line n=0 caught
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|'#'*) continue ;; esac
+    n=$((n + 1))
+    caught=$(caught_by_either "$line")
+    case "$want" in
+      counted)
+        [ "$caught" = yes ] && ok "counted: $line" || bad "counted: $line" "$(page_of "$line")" ;;
+      clean)
+        [ "$caught" = no ] && ok "passes: $line" || bad "passes: $line" "$(page_of "$line")" ;;
+      limit)
+        # Pinned as NOT caught. If one ever is, that is a real change: move
+        # the line and say what reached it. Never widen past this boundary.
+        [ "$caught" = no ] && ok "known limit, still out of reach: $line" \
+          || bad "known limit is now caught — move the line and explain what reached it" "$line" ;;
+    esac
+  done < "$file"
+  [ "$n" -gt 0 ] || bad "corpus file read nothing" "$file"
+  echo "  ($n replies from ${file##*/})"
+}
 
-echo "=== the real reasons that must pass ==="
+page_of() { page "$(thread true "$(human "$1")")"; }
 
-check clean "a decline naming the passing state" \
-  'Declined: the caller already guards the empty case, so the branch you name cannot run.'
-check clean "a decline naming the false premise" \
-  'Declined: the premise is wrong — resolve_base_branch returns the remote name, not the local ref.'
-check clean "a label BESIDE a mechanism is untouched" \
-  'Declined: pre-existing, and the loader validates the value before this path reads it.'
-check clean "out of scope beside a mechanism" \
-  'Declined: out of scope, and the guard you name refuses that shape one lane earlier.'
-check clean "a test count beside a mechanism" \
-  'Declined: the suite passes and the reproduction hits a branch the parser rejects before it.'
-check clean "a short but real reason" \
-  'Declined: that argument never reaches argv; the wrapper consumes it.'
-# From #1860, and the control that keeps the freeze vocabulary honest: the
-# same wrapper as the motivating reply, and it concedes a mechanism, so
-# widening the vocabulary must not reach it.
-check clean "a freeze that does concede the mechanism" \
-  "Declined under this PR's freeze. You are right about the mechanism, and it fails in the safe direction."
-# The control for the tracking words: a reason that happens to use one is
-# still a reason, because the subtraction leaves everything around it.
-check clean "a mechanism that uses the word tracked" \
-  'Declined: the caller is tracked by the loader before the branch you name can run.'
+# A reply is caught when EITHER thread term counts it. Read both, because the
+# two terms divide this space between them and a reply can fall in the seam:
+# "Declined: tracked separately" was a canonical disposition to one and a
+# stated reason to the other, so neither counted it.
+caught_by_either() {
+  local r _u untracked unreasoned _rest
+  r=$(page_of "$1")
+  read -r _u untracked unreasoned _rest <<<"$r"
+  if [ "$untracked" != 0 ] || [ "$unreasoned" != 0 ]; then echo yes; else echo no; fi
+}
 
-# The boundary, pinned deliberately. The subtraction is vocabulary, so it
-# ends where the residue stops being words and becomes NAMES — the suite,
-# lane or test the count belongs to. `lifecycle` and `tools/guard` below are
-# identifiers, and no word list reaches an identifier. This case is not a bug
-# in the term; it is the term's stated scope, and it is here so the next
-# author sees the edge instead of rediscovering it. Widening past it needs a
-# rule about what prose counts as a mechanism, which word subtraction cannot
-# decide.
-check clean "KNOWN LIMIT: a count whose residue is a suite name is not reached" \
-  'Declined: frozen at a1fa74dca; lifecycle 104/104 and the tools/guard run at this head.'
+echo "=== the corpus: declines that name no mechanism must be caught ==="
+sweep "$CORPUS/declines-unreasoned.txt" counted
+
+echo "=== the corpus: declines that name one must pass ==="
+sweep "$CORPUS/declines-reasoned.txt" clean
+
+echo "=== the corpus: the boundary, pinned ==="
+sweep "$CORPUS/declines-known-limit.txt" limit
 
 echo "=== the colon is not what makes it a decline ==="
 
@@ -149,8 +120,6 @@ check counted "a no-colon decline with nothing after the word" \
   'Declined.'
 check counted "a no-colon decline that is only a label" \
   'Declined, out of scope.'
-check counted "a no-colon decline that is only a test count" \
-  'Declined — tests pass'
 check clean "a no-colon decline naming the passing state" \
   'Declined — the caller already guards the empty case, so that branch cannot run.'
 
