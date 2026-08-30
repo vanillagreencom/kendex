@@ -96,13 +96,18 @@ function substitution(cmd, i, n,   opener, closer, depth, ch, start) {
   W = W substr(cmd, start, i - start); HAVEW = 1
   return i
 }
-# A redirection ends the word and contributes nothing to the argv: IO number,
-# operator and target word are all consumed, so `git >/dev/null commit` reads
-# `commit`. `<<`/`<<-` name a heredoc: the target word is its delimiter.
+# A redirection ends the word and contributes nothing to the argv: descriptor,
+# operator and target are all consumed, so `git >/dev/null commit` reads
+# `commit`. `<<` names a heredoc: its target is the delimiter, and a line
+# continuation inside that is removed, so `<<EO\<newline>F` names EOF.
 function redirect(cmd, i, n,   ch, q, w, hd) {
-  # An IO number touches its operator, so it is the word being built now.
-  if (HAVEW && W ~ /^[0-9]+$/) { W = ""; HAVEW = 0 }
+  # An IO number or a {name} descriptor touches its operator, so it is the word
+  # being built now and belongs to the redirection, wherever one stands.
+  if (HAVEW && (W ~ /^[0-9]+$/ || W ~ /^\{[A-Za-z_][A-Za-z0-9_]*\}$/)) { W = ""; HAVEW = 0 }
   flush_word()
+  # `<(...)` and `>(...)` are one redirection target: substitution() takes the
+  # whole thing, and none of it reaches the argv.
+  if (substr(cmd, i, 2) == "<(" || substr(cmd, i, 2) == ">(") { i = substitution(cmd, i, n); W = ""; HAVEW = 0; return i }
   hd = 0
   if (substr(cmd, i, 3) == "<<<") i += 3
   else if (substr(cmd, i, 2) == "<<") {
@@ -121,6 +126,7 @@ function redirect(cmd, i, n,   ch, q, w, hd) {
       while (i <= n && substr(cmd, i, 1) != q) { w = w substr(cmd, i, 1); i++ }
       i++; continue
     }
+    if (ch == BS && (substr(cmd, i + 1, 1) == "\n" || substr(cmd, i + 1, 2) == "\r\n")) { i += (substr(cmd, i + 1, 1) == "\r") ? 3 : 2; continue }
     if (ch == BS) { w = w substr(cmd, i + 1, 1); i += 2; continue }
     w = w ch; i++
   }
@@ -326,8 +332,8 @@ while IFS= read -r line; do
     moves=1) MOVES=1 ;;
     bypass=*) BYPASS="${line#bypass=}" ;;
     nocommand=1) exit 0 ;;
-    # A payload that names a command this lane cannot read is refused, never
-    # waved through: where no git hook is armed, this lane is the check.
+    # A payload naming a command this lane cannot read is refused, never waved
+    # through: where no git hook is armed, this lane is the check.
     unreadable=1)
       echo "pre-commit-check: could not read the command out of the hook payload" >&2
       exit 2
@@ -337,10 +343,10 @@ done <<<"$ANALYSIS"
 
 [ -n "$COMMIT" ] || exit 0
 
-# Repository-moving words (-C, --git-dir, --work-tree in the git argv, a `cd`
-# command, a GIT_DIR or GIT_WORK_TREE assignment) mean the commit may land
-# elsewhere. This lane never follows them, so where it cannot defer it names
-# the directory it judged and leaves the target to the target's own hook.
+# Repository-moving words (-C, --git-dir, --work-tree in the git argv, a `cd`,
+# a GIT_DIR or GIT_WORK_TREE assignment) mean the commit may land elsewhere.
+# This lane never follows them: where it cannot defer it names the directory it
+# judged and leaves the target to the target's own hook.
 elsewhere_notice() {
   [ -z "$MOVES" ] && return 0
   echo "pre-commit-check: the command moves repositories (-C, --git-dir, --work-tree, cd, GIT_DIR, or GIT_WORK_TREE); this hook judged $PWD only — the target repository is gated by its own armed git pre-commit hook, if any (kendex guard install there)" >&2
@@ -351,15 +357,14 @@ HOOKS_DIR=$(git rev-parse --git-path hooks 2>/dev/null) || {
   exit 0
 }
 # Armed is our marker in both hook files, in the directory git reads with
-# nothing redirecting it, in files git will actually run — the execute bit is
-# git's rule, and git skips a hook without one silently, so a marker in a file
-# git ignores stands this lane aside for nothing at all.
+# nothing redirecting it, in files git will actually run — git skips a hook
+# without the execute bit silently, so a marker in a file it ignores would
+# stand this lane aside for nothing at all.
 #
-# A `core.hooksPath` set to anything at all is not armed: every finer
-# question about the value — is it empty, does it spell this repository's own
-# directory, does the file it names reach our scripts — is another way to
-# answer "armed" about a repository that is not, and this lane would rather
-# check a commit twice than wave one through.
+# A `core.hooksPath` set to anything at all is not armed: every finer question
+# about the value — is it empty, does it spell this repository's own directory,
+# does the file it names reach our scripts — is another way to answer "armed"
+# about one that is not, and this lane would rather check a commit twice.
 #
 # Exit 1 is git for "not set" and the only status meaning unredirected. Git
 # prints nothing when it fails either (a broken config exits 128), so the
@@ -373,8 +378,7 @@ if [ "$HOOKS_PATH_STATUS" -eq 1 ] \
   && grep -qF -- "$MARKER" "$HOOKS_DIR/commit-msg" 2>/dev/null; then
   ARMED=1
 fi
-# An armed hook means git itself gates the commit, so running the chain here
-# would validate everything twice; an argv that sidesteps it is refused.
+# An armed hook means git gates the commit; an argv sidestepping it is refused.
 if [ -n "$ARMED" ]; then
   [ -n "$BYPASS" ] || exit 0
   echo "pre-commit-check: '$BYPASS' bypasses this repository's armed git hooks or injects configuration that could, and the commit-msg gate cannot be checked from here — commit without bypassing hooks or passing git configuration; git runs the installed pre-commit and commit-msg hooks itself" >&2
@@ -389,8 +393,7 @@ elsewhere_notice
 # instead, and the refusal names the command that fixes it.
 #
 # One message, because the flat rule has one failure: not armed. Which of an
-# empty core.hooksPath, a redirect, a foreign hook or half a pair it was is
-# the taxonomy that kept answering "armed" wrongly; `kendex guard check` asks
-# the package, which does know.
+# empty core.hooksPath, a redirect, a foreign hook or half a pair it was is the
+# taxonomy that kept answering wrongly; `kendex guard check` does know.
 echo "pre-commit-check: this repository's git hooks are not armed by kendex in $PWD, so nothing checks this commit — run 'kendex guard install' (this hook does not run a repository's own scripts on its behalf), 'kendex guard check' says what the package makes of it, or remove this hook" >&2
 exit 2

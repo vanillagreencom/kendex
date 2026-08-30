@@ -468,6 +468,35 @@ run_hook "$ARMED" "$(payload "$DESYNC")" CHAIN_EXIT=0
 assert_contains "$err" "'--no-verify' bypasses" "the desynchronised command names the flag it saw"
 
 echo
+echo "a redirection is redirection wherever it stands"
+
+# A line continuation inside the delimiter is removed, so this heredoc ends at
+# EOF; recorded literally it never terminates and swallows the commit whole.
+HEREDOC_JOINED='cat <<EO\\\nF > n.md\nbody\nEOF\ngit commit --no-verify -m x'
+both "$HEREDOC_JOINED" 2 2 "a line continuation inside a heredoc delimiter"
+run_hook "$ARMED" "$(payload "$HEREDOC_JOINED")" CHAIN_EXIT=0
+assert_contains "$err" "'--no-verify' bypasses" "the joined delimiter names the flag behind the body"
+
+# Between the command word and its subcommand is a legal place for one, and a
+# process substitution is one target rather than argv words.
+both 'git {fd}>out commit --no-verify -m x' 2 2 "a named descriptor before the subcommand"
+both 'git < <(printf x) commit --no-verify -m x' 2 2 "a process substitution before the subcommand"
+run_hook "$ARMED" "$(payload 'git {fd}>out commit --no-verify -m x')" CHAIN_EXIT=0
+assert_contains "$err" "'--no-verify' bypasses" "the descriptor form names the flag it saw"
+run_hook "$ARMED" "$(payload 'git < <(printf x) commit --no-verify -m x')" CHAIN_EXIT=0
+assert_contains "$err" "'--no-verify' bypasses" "the process-substitution form names the flag it saw"
+
+echo
+echo "forms this lane refuses rather than models"
+
+# Declined on KEN-833 as over-refusals, not defects: the trade this lane makes
+# is that an unmodelled command is refused. Pinned so a later change cannot
+# turn one of them into a commit that passes.
+both 'GIT_CONFIG_COUNT=1 python3 -c pass && git commit -m x' 2 2 "an assignment in front of another program"
+both 'git commit -Snone -m x' 2 2 "a cluster whose attached value contains n"
+both 'git commit --m --no-verify' 2 2 "an abbreviated --message"
+
+echo
 echo "a git global option owns its value"
 
 both 'git -ccore.hooksPath=/dev/null commit -m x' 2 2 "an attached -c injection"

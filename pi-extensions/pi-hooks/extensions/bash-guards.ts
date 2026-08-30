@@ -4,8 +4,8 @@ import { resolve } from "node:path";
 import { runCommandAsync } from "./process.js";
 
 /** A command that is exactly `cd` or `cd <target>` with no operator scoping the
- * change (no `&&`, `||`, `|`, `;`, parens, backticks, `$(...)`, newlines): it
- * moves Pi's CWD for every later tool call. Mirrors `hooks/block-bare-cd.sh`. */
+ * change (no `&&`, `|`, `;`, parens, backticks, `$(...)`, newlines): it moves
+ * Pi's CWD for every later call. Mirrors `hooks/block-bare-cd.sh`. */
 const BARE_CD = /^cd(\s+[^&|;()`$\n]+)?$/;
 export function isBareCd(command: string): boolean {
 	return BARE_CD.test(command.trim());
@@ -13,7 +13,7 @@ export function isBareCd(command: string): boolean {
 
 /** The marker the growth-guards installer ends every hook line it writes with. */
 const MARKER = "# kendex-guards-hook";
-/** How long a git probe may run before the gate calls the repository unmeasured. */
+/** How long a git probe may run before the repository counts as unmeasured. */
 const GIT_BUDGET_MS = 5000;
 /** Shell control operators that end one simple command and start the next. */
 const SEPARATORS = new Set([";", "&", "|", "(", ")", "\n", "\r"]);
@@ -21,11 +21,11 @@ const SEPARATORS = new Set([";", "&", "|", "(", ")", "\n", "\r"]);
 const GIT_GLOBAL_VALUE = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--exec-path", "--config-env", "--attr-source"]);
 /** Words that stand in front of a command without being it. */
 const TRANSPARENT = new Set("if then else elif fi while until do done ! time command exec eval nohup sudo doas env nice ionice timeout stdbuf setsid xargs export declare typeset local readonly".split(" "));
-/** `git commit` long options taking the next word as their value. */
+/** `git commit` long options taking the next word as value. */
 const COMMIT_VALUE = new Set("--author --date --message --file --template --cleanup --reuse-message --reedit-message --fixup --squash --pathspec-from-file --trailer".split(" "));
 /** `git commit` short options whose value is the next word. */
 const SHORT_VALUE = "mFcCt";
-/** A word that can be a command name; anything else is shell this scanner left in. */
+/** A word that can be a command name; anything else is shell left in. */
 const COMMAND_WORD = /^[A-Za-z0-9_./-]+$/;
 
 /** What the scan found across every `git` argv: whether one is a commit, whether
@@ -59,10 +59,9 @@ function judge(tokens: string[], scan: CommandScan): void {
 		} else break;
 	}
 	if (k >= tokens.length) return;
-	// Two ways a command stops being modelled, and neither gets a guess: a
-	// command word with shell still in it (`PATH+=x`, `{fd}`, `$(...)`), and a
-	// wrapper whose options hide the command word — `sudo -u git` names an
-	// ordinary account, so that `git` is an operand. Both take word-order.
+	// Two ways a command stops being modelled, and neither gets a guess: a command
+	// word with shell in it (`PATH+=x`, `$(...)`), and a wrapper hiding it —
+	// `sudo -u git` names an account. Both take word-order.
 	const base = basename(tokens[k]);
 	if (!COMMAND_WORD.test(tokens[k]) || (base !== "git" && prefixed)) {
 		fallback(tokens.join(" "), scan);
@@ -73,9 +72,9 @@ function judge(tokens: string[], scan: CommandScan): void {
 		return;
 	}
 	// Global options run to the first word that is not one. One taking a separate
-	// value owns it, so the -c in `git -C -c commit` is the -C path and not a
-	// flag; -c and -C also take an attached value. They inject config only as
-	// GLOBAL options: after the subcommand `git commit -c` is --reedit-message.
+	// value owns it, so the -c in `git -C -c commit` is the -C path, not a flag;
+	// -c and -C take an attached value too. They inject config only as GLOBAL
+	// options: after the subcommand `git commit -c` is --reedit-message.
 	let j = k + 1;
 	let inject = "";
 	let moves = false;
@@ -86,8 +85,7 @@ function judge(tokens: string[], scan: CommandScan): void {
 		j += GIT_GLOBAL_VALUE.has(t) ? 2 : 1;
 	}
 	const subcommand = j < tokens.length ? tokens[j] : "";
-	// A core.hooksPath line disarms the hook before the commit reaches it, and a
-	// read is refused with the write.
+	// A core.hooksPath line disarms the hook, and a read is refused with the write.
 	if (subcommand === "config") {
 		for (let m = j + 1; m < tokens.length; m++) if (tokens[m].toLowerCase().includes("hookspath")) setBypass(scan, tokens[m]);
 		return;
@@ -105,8 +103,8 @@ function judge(tokens: string[], scan: CommandScan): void {
 			if (/^--no-veri/.test(t)) return setBypass(scan, t);
 			if (COMMIT_VALUE.has(t)) m++;
 		} else if (t.startsWith("-")) {
-			// A cluster reads left to right: at the first value-taking option the rest
-			// of the token is that value, so `-mnote` is a message, `-nm note` refuses.
+			// A cluster reads left to right: from the first value-taking option the
+			// rest of the token is its value, so `-mnote` is a message.
 			for (let p = 1; p < t.length; p++) {
 				if (SHORT_VALUE.includes(t[p])) {
 					if (p === t.length - 1) m++;
@@ -119,7 +117,7 @@ function judge(tokens: string[], scan: CommandScan): void {
 }
 
 /** The rule this parser replaced, kept for every input it cannot model. Over-
- * refusal is the trade, and a bypass counts only where the command names git. */
+ * refusal is the trade; a bypass counts only where the command names git. */
 function fallback(command: string, scan: CommandScan): void {
 	const words = ` ${command} `.replace(/[^a-zA-Z0-9_=-]+/g, " ");
 	const git = words.indexOf(" git ");
@@ -133,19 +131,14 @@ function fallback(command: string, scan: CommandScan): void {
 	if (flag) setBypass(scan, flag[1]);
 }
 
-/**
- * Split a bash command into simple commands and judge each `git` argv. One
+/** Split a bash command into simple commands and judge each `git` argv. One
  * left-to-right pass: quotes hold a word together, control operators end a
- * simple command, and a heredoc body is skipped whole because it is not shell.
- * Text outside a git argv — a heredoc body, a comment, a redirection target,
- * another program's arguments, an operand after `--`, a value — is not a flag.
- * It fails closed where it can: a command it cannot model — quoting that never
- * closes, a command word with shell left in it (`PATH+=x`, `{fd}`, `$(...)`),
- * or a wrapper hiding the command word (`sudo -u dev`) — takes the word-order
- * rule, which may over-refuse. `sh -c '...'`, git aliases and an unlisted
- * wrapper stay invisible: git's hooks are the control.
- * Linear in the command's length. Mirrors `hooks/pre-commit-check.sh`.
- */
+ * simple command, a heredoc body is skipped whole. Text outside a git argv —
+ * that body, a comment, a redirection target, another program's arguments, an
+ * operand after `--`, a value — is not a flag. A command it cannot model —
+ * quoting that never closes, a command word with shell left in it, a wrapper
+ * hiding that word — takes the word-order rule, which may over-refuse; `sh -c`,
+ * git aliases and unlisted wrappers stay invisible. Mirrors the bash hook. */
 export function scanCommand(command: string): CommandScan {
 	const scan: CommandScan = { commit: false, moves: false, bypass: null };
 	const n = command.length;
@@ -166,7 +159,7 @@ export function scanCommand(command: string): CommandScan {
 		if (tokens.length > 0) judge(tokens, scan);
 		tokens = [];
 	};
-	/** A single-quoted or backtick run: no escapes inside either. */
+	/** A single-quoted or backtick run: no escapes inside. */
 	const quoted = (q: string): void => {
 		const start = ++i;
 		while (i < n && command[i] !== q) i++;
@@ -213,15 +206,24 @@ export function scanCommand(command: string): CommandScan {
 		word += command.slice(start, i);
 		haveWord = true;
 	};
-	/** A redirection ends the word and contributes nothing to the argv: IO number
-	 * (the word being built now), operator and target are all consumed, so `git
-	 * >/dev/null commit` reads `commit`. `<<` names a heredoc: target is delimiter. */
+	/** A redirection ends the word and contributes nothing to the argv: descriptor,
+	 * operator and target are consumed, so `git >/dev/null commit` reads `commit`.
+	 * `<<` names a heredoc: its target is the delimiter, continuations joined. */
 	const redirect = (): void => {
-		if (haveWord && /^[0-9]+$/.test(word)) {
+		// An IO number or {name} descriptor touches its operator: it is the word
+		// being built now, and it belongs to the redirection wherever one stands.
+		if (haveWord && /^([0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})$/.test(word)) {
 			word = "";
 			haveWord = false;
 		}
 		flush();
+		if (command.startsWith("<(", i) || command.startsWith(">(", i)) {
+			// `<(...)`/`>(...)` is one target: substitution() takes it whole.
+			substitution();
+			word = "";
+			haveWord = false;
+			return;
+		}
 		let heredoc = false;
 		let dash = false;
 		if (command.startsWith("<<<", i)) i += 3;
@@ -241,6 +243,8 @@ export function scanCommand(command: string): CommandScan {
 				i++;
 				while (i < n && command[i] !== ch) target += command[i++];
 				i++;
+			} else if (ch === "\\" && (command[i + 1] === "\n" || command.startsWith("\r\n", i + 1))) {
+				i += command[i + 1] === "\r" ? 3 : 2; // a line continuation: `<<EO\<newline>F` names EOF
 			} else if (ch === "\\") {
 				target += command[i + 1] ?? "";
 				i += 2;
@@ -251,7 +255,7 @@ export function scanCommand(command: string): CommandScan {
 		}
 		if (heredoc && target) heredocs.push({ delim: target, dash });
 	};
-	/** Skip each heredoc body opened on the line just ended, terminator included. */
+	/** Skip each heredoc body opened on the line just ended, terminator too. */
 	const heredocBodies = (): void => {
 		i++;
 		for (const h of heredocs) {
@@ -325,7 +329,6 @@ export function scanCommand(command: string): CommandScan {
 export type PreCommitVerdict =
 	/** Not a commit, or nothing here gates it; a notice is for the UI, never the agent. */
 	| { kind: "allow"; notice?: string }
-	/** The tool call is blocked with this reason. */
 	| { kind: "refuse"; reason: string };
 
 function executableFile(path: string): boolean {
@@ -345,12 +348,10 @@ function carriesMarker(path: string): boolean {
 	}
 }
 
-/**
- * Armed is the marker in both hook files, in the directory git reads with
+/** Armed is the marker in both hook files, in the directory git reads with
  * nothing redirecting it, in files git will actually run. `core.hooksPath` set
  * to anything is not armed. Exit 1 from `git config --get` is git for "not set"
- * and the only answer meaning unredirected; anything else is unmeasured.
- */
+ * and the only answer meaning unredirected; anything else is unmeasured. */
 async function hooksArmed(hooksDir: string, cwd: string): Promise<boolean> {
 	const hooksPath = await runCommandAsync("git", ["config", "--get", "core.hooksPath"], cwd, GIT_BUDGET_MS);
 	if (hooksPath.timedOut || hooksPath.exitCode !== 1) return false;
@@ -361,8 +362,7 @@ async function hooksArmed(hooksDir: string, cwd: string): Promise<boolean> {
 	return true;
 }
 
-/**
- * Pre-commit gate: the Pi port of `hooks/pre-commit-check.sh`, same contract.
+/** Pre-commit gate: the Pi port of `hooks/pre-commit-check.sh`, same contract.
  * On a git commit, defer to the working directory's armed git hooks — both
  * pre-commit and commit-msg, marked and executable (`kendex guard install`
  * arms them). Where one is armed, a git argv that sidesteps it is refused: git
@@ -370,8 +370,7 @@ async function hooksArmed(hooksDir: string, cwd: string): Promise<boolean> {
  * the commit is refused naming that command: arming is the local act that asks
  * for those scripts, and this gate never runs them on its behalf. It gates the
  * working directory only, never following `-C`, `cd`, `--git-dir` or
- * `--work-tree`, and names the directory it judged where it cannot defer.
- */
+ * `--work-tree`, and names the directory it judged where it cannot defer. */
 export async function preCommitGate(command: string, cwd: string): Promise<PreCommitVerdict> {
 	const scan = scanCommand(command);
 	if (!scan.commit) return { kind: "allow" };

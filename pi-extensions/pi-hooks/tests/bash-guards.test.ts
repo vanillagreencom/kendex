@@ -347,6 +347,30 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		expect(named.verdict.reason).toContain("'--no-verify' bypasses");
 	});
 
+	test("a redirection is redirection wherever it stands", async () => {
+		// A line continuation inside the delimiter is removed, so this heredoc ends
+		// at EOF; recorded literally it never terminates and swallows the commit.
+		const joined = "cat <<EO\\\nF > n.md\nbody\nEOF\ngit commit --no-verify -m x";
+		await both(joined, "refuse", "refuse");
+		// Between the command word and its subcommand is a legal place for one, and
+		// a process substitution is one target rather than argv words.
+		for (const command of [joined, "git {fd}>out commit --no-verify -m x", "git < <(printf x) commit --no-verify -m x"]) {
+			await both(command, "refuse", "refuse");
+			const named = await gate(armed, command);
+			if (named.verdict.kind !== "refuse") throw new Error("unreachable");
+			expect(named.verdict.reason).toContain("'--no-verify' bypasses");
+		}
+	});
+
+	test("forms this lane refuses rather than models", async () => {
+		// Declined on KEN-833 as over-refusals, not defects: the trade this lane
+		// makes is that an unmodelled command is refused. Pinned so a later change
+		// cannot turn one of them into a commit that passes.
+		await both("GIT_CONFIG_COUNT=1 python3 -c pass && git commit -m x", "refuse", "refuse");
+		await both("git commit -Snone -m x", "refuse", "refuse");
+		await both("git commit --m --no-verify", "refuse", "refuse");
+	});
+
 	test("a git global option owns its value", async () => {
 		await both("git -ccore.hooksPath=/dev/null commit -m x", "refuse", "refuse");
 		await both("git -C /tmp -c user.name=x commit -m y", "refuse", "refuse");
