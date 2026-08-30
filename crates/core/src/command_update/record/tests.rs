@@ -48,3 +48,40 @@ fn a_record_that_is_not_a_path_and_a_digest_is_no_record() {
         })
     );
 }
+
+/// The bootstrap widens who has a record, never what a record vouches for.
+/// A first run names the file it ran from and nothing else, so the wrapper
+/// case stays exactly where KEN-444 left it: a second `kendex` on `PATH`
+/// that this install never put there is still not ours to replace.
+#[test]
+#[cfg(unix)]
+fn a_first_run_vouches_for_its_own_file_and_no_other() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = Env::host_rooted(dir.path());
+    let ours = dir.path().join("kendex");
+    std::fs::write(&ours, b"the binary that ran").unwrap();
+    record_first_run(&env, &ours).unwrap();
+
+    let wrapper = dir.path().join("bin/kendex");
+    std::fs::create_dir_all(wrapper.parent().unwrap()).unwrap();
+    std::fs::write(&wrapper, WRAPPER).unwrap();
+    // Executable, or the search passes over it and the refusal below would
+    // be a file that was never a candidate rather than one turned away.
+    std::fs::set_permissions(
+        &wrapper,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    assert_eq!(
+        crate::command_update::command_beside_app(
+            &crate::install_channel::Host,
+            &[wrapper],
+            &[],
+            recorded_command(&env).as_ref(),
+        ),
+        crate::command_update::CommandBeside::NotOurs(
+            crate::install_channel::InstallChannel::Unknown
+        ),
+        "a file the first run did not name was adopted"
+    );
+}

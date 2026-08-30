@@ -58,6 +58,27 @@ pub fn record_command(env: &Env, path: &Path, bytes: &[u8]) -> Result<(), String
         .map_err(|error| format!("{} could not be written: {error}", file.display()))
 }
 
+/// Record the running command where nothing has been recorded yet.
+///
+/// What no lookup by name can establish is that a file is kendex's; a
+/// process running from that file establishes it by being there. `kendex
+/// update` has recorded itself since this record existed, but the installs
+/// this is for were made before there was a record to write, and their
+/// owners have no reason to run update rather than any other verb. So every
+/// verb writes the first one.
+///
+/// Only the first. A record already here is repointed by the run that
+/// replaces the bytes it names and by nothing else: a second kendex on the
+/// machine would otherwise take the record off the one a person installed
+/// merely by being run once, and the app would then carry the copy nobody
+/// uses and leave the one they do.
+pub fn record_first_run(env: &Env, running: &Path) -> Result<(), String> {
+    match recorded_command(env) {
+        Some(_) => Ok(()),
+        None => record_installed(env, running),
+    }
+}
+
 /// The same record, taken from a file already on disk — the running
 /// command identifying itself, where the bytes are not in hand.
 pub fn record_installed(env: &Env, path: &Path) -> Result<(), String> {

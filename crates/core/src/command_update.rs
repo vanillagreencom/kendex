@@ -40,7 +40,9 @@ mod notice;
 mod record;
 
 pub use notice::CommandNotice;
-pub use record::{InstalledCommand, record_command, record_installed, recorded_command};
+pub use record::{
+    InstalledCommand, record_command, record_first_run, record_installed, recorded_command,
+};
 
 /// What `install.sh` installs the command as. Windows has no command
 /// beside the app — the installer carries the app alone — so the name

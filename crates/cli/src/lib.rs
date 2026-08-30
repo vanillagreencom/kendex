@@ -8,7 +8,9 @@ mod ui;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use kendex_core::command_update::record_first_run;
 use kendex_core::env::Env;
+use kendex_core::install_channel::{Host, HostProbe};
 
 use commands::project::ProjectCommand;
 use flags::{AddFlags, ReportFlags};
@@ -242,6 +244,25 @@ pub fn main() -> ExitCode {
     }
 }
 
+/// Tell the desktop app which file the `kendex` command is, once, from
+/// whichever verb a person happens to run first.
+///
+/// An install made before this record existed has none, so the app finds a
+/// command it cannot prove is kendex's, updates alone, and never gains a
+/// record of its own — the app writes one only where it already had one to
+/// match. Any run of this binary settles it, because the path a process is
+/// running from is the one thing no search by name can establish.
+///
+/// Nothing is said when it fails. This is opportunistic and every verb
+/// pays for it; the command that needs the record is `kendex update`, and
+/// that one records the binary itself and reports when it cannot.
+fn bootstrap_the_command_record(env: &Env) {
+    let Ok(running) = std::env::current_exe() else {
+        return;
+    };
+    let _ = record_first_run(env, &Host.resolve(&running));
+}
+
 /// The bare form: `kendex <source> [flags]` maps to `add`.
 fn bare_add(
     env: &Env,
@@ -257,6 +278,7 @@ fn bare_add(
 
 fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let env = Env::detect()?;
+    bootstrap_the_command_record(&env);
     let Some(command) = cli.command else {
         return bare_add(&env, cli.source, cli.add_flags);
     };
