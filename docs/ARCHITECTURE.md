@@ -521,9 +521,11 @@ lives in one capability table read by core and UI.
   the package page. Commit ids stay behind the table's `…` menu. Muting a
   package's update notifications is a machine-local settings entry. Reuse
   is verified against a publish receipt outside the checkout: a full
-  content hash of the tree. Pre-2.0 clones are read where the new layout
-  has nothing yet, never deleted. The store keeps one tree per resolved
-  commit; nothing prunes it; deleting the cache is the only cleanup.
+  content hash of the tree and the rules that materialized it, so a
+  checkout an older kendex wrote is rebuilt rather than reused. Pre-2.0
+  clones are read where the new layout has nothing yet, never deleted.
+  The store keeps one tree per resolved commit; nothing prunes it;
+  deleting the cache is the only cleanup.
 - **A subscription reference is parsed, never guessed; one repository
   subscribes once per scope.** Two validators in `core/source_ref.rs`: the
   typed one (Subscribe dialog, `marketplace subscribe`, `source add`,

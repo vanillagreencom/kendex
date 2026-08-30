@@ -69,7 +69,7 @@ pub fn checkout_dir(env: &Env, key: &str, commit: &str) -> PathBuf {
     env.source_cache_dir().join(COMMITS).join(key).join(commit)
 }
 
-fn receipt_path(env: &Env, key: &str, commit: &str) -> PathBuf {
+pub(super) fn receipt_path(env: &Env, key: &str, commit: &str) -> PathBuf {
     env.source_cache_dir()
         .join(COMMITS)
         .join(key)
@@ -241,15 +241,24 @@ pub fn has_commit(mirror: &Path, commit: &str) -> bool {
         .is_ok_and(|output| output.status.success())
 }
 
-/// A published checkout, if the cache holds this commit unmodified. A
-/// mismatch is not an error: the caller re-materializes from the mirror.
+/// The materialization rules a receipt vouches for, beside the signature.
+/// A signature alone says the bytes are the ones that were written, never
+/// that they are the ones `check_out` writes now. The number rises
+/// whenever `check_out` changes what it writes for a commit.
+const RECEIPT_RULES: &str = "kendex-checkout 1";
+
+/// A published checkout, if the cache holds this commit unmodified under
+/// today's materialization rules. A mismatch is not an error, an
+/// unreadable or unrecognized receipt included: the caller re-materializes
+/// from the mirror.
 pub fn published(env: &Env, key: &str, commit: &str) -> Option<PathBuf> {
     let dir = checkout_dir(env, key, commit);
     if !dir.is_dir() {
         return None;
     }
     let recorded = fs::read_to_string(receipt_path(env, key, commit)).ok()?;
-    (recorded.trim() == tree_signature(&dir).ok()?).then_some(dir)
+    let (rules, signature) = recorded.split_once('\n')?;
+    (rules == RECEIPT_RULES && signature.trim() == tree_signature(&dir).ok()?).then_some(dir)
 }
 
 /// Materialize a commit and publish it atomically. The checkout is built in
@@ -267,7 +276,10 @@ pub fn publish(env: &Env, key: &str, mirror: &Path, commit: &str) -> Result<Path
         // The receipt lands first: a reader that sees the directory always
         // finds the receipt that vouches for it. A receipt with no
         // directory is inert — nothing reads one without the other.
-        atomic_write(&receipt_path(env, key, commit), &tree_signature(&staging)?)
+        atomic_write(
+            &receipt_path(env, key, commit),
+            &format!("{RECEIPT_RULES}\n{}\n", tree_signature(&staging)?),
+        )
     });
     if let Err(error) = result {
         let _ = fs::remove_dir_all(&staging);

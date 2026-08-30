@@ -236,6 +236,29 @@ fn a_tampered_checkout_is_detected_and_rebuilt() {
     assert!(body(&repaired.root).contains("v1"));
 }
 
+/// A checkout an older kendex published is self-consistent with whatever it
+/// wrote, so matching its own signature proves nothing about the rules that
+/// wrote it. Its receipt is the bare signature, the form before those rules
+/// were recorded, and it is rebuilt rather than served.
+#[test]
+fn a_checkout_published_before_the_rules_were_recorded_is_rebuilt() {
+    let f = fixture();
+    let published = sync(&f.env, REPO, None).unwrap();
+    let key = key_for(&f.env);
+    fs::write(
+        store::receipt_path(&f.env, &key, &published.commit),
+        store::tree_signature(&published.root).unwrap(),
+    )
+    .unwrap();
+
+    assert!(store::published(&f.env, &key, &published.commit).is_none());
+
+    let repaired = cached(&f.env, REPO, None).unwrap().unwrap();
+    assert_eq!(repaired.root, published.root);
+    assert!(body(&repaired.root).contains("v1"));
+    assert!(store::published(&f.env, &key, &published.commit).is_some());
+}
+
 /// A checkout that fails half way leaves nothing readable behind: the
 /// directory only ever appears complete, by rename.
 #[test]
