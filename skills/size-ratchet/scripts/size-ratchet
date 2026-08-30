@@ -1474,13 +1474,18 @@ baseline_moved() { # CANDIDATE-BASELINE — violations on stdout
   esac
   # --no-renames, because a `git mv` of the baseline is exactly the move this
   # looks for and rename detection would report it as one path, not a removal.
+  # -z, because core.quotePath spells a non-ASCII path C-quoted by default:
+  # `"tools/\303\251.tsv"` never matches a literal probe, and the removed
+  # baseline would read as absent. It also terminates each path with a NUL,
+  # which is the one byte a path cannot contain — a newline can, so the read
+  # below splits on NUL rather than translating NULs into newlines.
   if [ "$STAGED" -eq 1 ]; then
-    git diff --cached --no-renames --name-only --diff-filter=D HEAD >"$TMP/removed.tsv" || diff_status=$?
+    git diff --cached --no-renames -z --name-only --diff-filter=D HEAD >"$TMP/removed.paths" || diff_status=$?
   else
-    git diff --no-renames --name-only --diff-filter=D HEAD >"$TMP/removed.tsv" || diff_status=$?
+    git diff --no-renames -z --name-only --diff-filter=D HEAD >"$TMP/removed.paths" || diff_status=$?
   fi
   [ "$diff_status" -eq 0 ] || collection_error "could not list what this change removes (git diff exit $diff_status) — refusing to treat a moved baseline as absent"
-  while IFS= read -r p || [ -n "$p" ]; do
+  while IFS= read -r -d '' p || [ -n "$p" ]; do
     [ -n "$p" ] || continue
     [ "$p" != "$BASELINE_FILE" ] || continue
     head_rows_removed "$p" || continue
@@ -1488,7 +1493,7 @@ baseline_moved() { # CANDIDATE-BASELINE — violations on stdout
     # "-" placeholders, never empty fields: report() reads these rows with
     # tab-IFS, and whitespace IFS collapses consecutive tabs.
     printf '%s\t%s\t%s\t%s\n' "MOVED" "$p" "-" "-"
-  done <"$TMP/removed.tsv"
+  done <"$TMP/removed.paths"
 }
 
 # Whether HEAD's blob at PATH was a baseline. The row shape is the only

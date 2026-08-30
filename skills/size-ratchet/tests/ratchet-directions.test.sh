@@ -440,6 +440,44 @@ RAISE=1 run_frozen --staged
 [ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten: tools/a.tsv -> tools/b.tsv"*) true ;; *) false ;; esac \
   && ok "the staged lane refuses the same move" \
   || bad "the staged lane refuses the same move" "rc=$RC out=$OUT"
+# git spells a non-ASCII path C-quoted by default, so a listing read as text
+# hands the probe `"tools/\303\251.tsv"` and the moved baseline reads as absent.
+new_repo relocquoted
+mkdir -p "$R/tools"
+mkfile x.test.txt 15
+printf 'x.test.txt\t15\n' >"$R/tools/é.tsv"
+settings_baseline "tools/é.tsv"
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: a baseline at a path git would quote"
+mkfile x.test.txt 20
+printf 'x.test.txt\t20\n' >"$R/tools/b.tsv"
+rm -f "$R/tools/é.tsv"
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+RAISE=1 run_frozen --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten: tools/é.tsv -> tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "a baseline at a path git quotes is still seen leaving" \
+  || bad "a baseline at a path git quotes is seen leaving" "rc=$RC out=$OUT"
+# The sharper shape: a path may hold a NEWLINE, which is what a listing split on
+# newlines — or one translating NULs into them — turns into two paths that HEAD
+# carries no row set at. Only NUL delimits a path safely.
+new_repo relocnewline
+mkdir -p "$R/tools"
+mkfile x.test.txt 15
+NLPATH="$(printf 'tools/a\nb.tsv')"
+printf 'x.test.txt\t15\n' >"$R/$NLPATH"
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: a row set at a path holding a newline"
+mkfile x.test.txt 20
+printf 'x.test.txt\t20\n' >"$R/tools/b.tsv"
+rm -f "$R/$NLPATH"
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+RAISE=1 run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten"*"-> tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "a baseline at a path holding a newline is still seen leaving" \
+  || bad "a baseline at a path holding a newline is seen leaving" "rc=$RC out=$OUT"
+
 # A removed file that is not a row set is not a moved baseline: the check reads
 # the row shape, so an ordinary deletion beside a first baseline stays a
 # bootstrap.
