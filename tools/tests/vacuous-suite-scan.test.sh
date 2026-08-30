@@ -131,7 +131,39 @@ else
 fi
 has "the contradicting suite is named" "CONTRADICTION liar.test.sh"
 has "the reason is the absence one, not the harness one" \
-  "failed against a blanked product, which holds nothing for it to find"
+  "declares absence-subject but failed against a blanked product"
+has "and it names the found-it reading" \
+  "it found what it forbids in a product holding nothing"
+
+echo "=== the absence reason names the refusal reading as well ==="
+# The other way a declared absence lint fails blanked: it did not find the
+# forbidden thing, it REFUSED TO RUN, because a fail-closed anchor saw the
+# emptied product. From outside the suite the two are one exit status, so the
+# reason names both rather than asserting the one it cannot check.
+S="$(new_skill refusedscan)"
+add_detecting "$S"
+cat >"$S/tests/refused.test.sh" <<'SUITE'
+#!/usr/bin/env bash
+# vacuous-suite-scan: absence-subject
+set -euo pipefail
+p="$(dirname "${BASH_SOURCE[0]}")/../scripts/thing.sh"
+if ! grep -q SHIPPED-MARKER "$p"; then
+  echo "the product is empty; this lint read nothing" >&2
+  exit 1
+fi
+if grep -q FORBIDDEN "$p"; then
+  echo "forbidden token in a shipped script" >&2
+  exit 1
+fi
+SUITE
+scan "$S"
+if [ "$RC" -ne 0 ]; then
+  ok "a declared absence suite that refuses the blanked run is reported"
+else
+  bad "a declared absence suite that refuses the blanked run is reported" "rc=0 out=$OUT"
+fi
+has "and the reason names the refusal reading" \
+  "a fail-closed check refused to run over the emptied product"
 
 echo "=== harness-subject keeps its own reason ==="
 S="$(new_skill harnesslie)"
@@ -164,7 +196,11 @@ else
   bad "a skill of only absence assertions is not a passing scan" "rc=0 out=$OUT"
 fi
 has "and it says nothing was measured" "no suite was measured"
-has "naming absence-subject among the reasons" "absence-subject"
+# The needle is text only the refusal carries. `absence-subject` on its own
+# proves nothing: the tally line above the refusal prints it as a column
+# label, so that needle matched whatever the refusal happened to say.
+has "naming absence-subject among the reasons" \
+  "all harness-subject or absence-subject"
 
 echo "=== a malformed declaration ends the run ==="
 S="$(new_skill twosubjects)"
@@ -198,6 +234,63 @@ else
 fi
 has "and the refusal lists the ones that exist" \
   "known: harness-subject, absence-subject"
+
+echo "=== a malformed declaration is read even on a suite that cannot run ==="
+# A header defect is settled by reading the header, so it must not depend on
+# the suite surviving the pristine run. The cases above all put the bad header
+# on a suite that runs; this one puts it on a suite that fails in the copy and
+# is set aside as unrunnable before any comparison.
+S="$(new_skill unrunnabletypo)"
+add_detecting "$S"
+cat >"$S/tests/brokentypo.test.sh" <<'SUITE'
+#!/usr/bin/env bash
+# vacuous-suite-scan: absense-subject
+set -euo pipefail
+echo "this suite cannot run from a copy" >&2
+exit 1
+SUITE
+scan "$S"
+if [ "$RC" -ne 0 ]; then
+  ok "the typo is refused though its suite never reached the comparison"
+else
+  bad "the typo is refused though its suite never reached the comparison" "rc=0 out=$OUT"
+fi
+has "and the refusal names the unknown subject" \
+  "declares an unknown vacuous-suite-scan subject: absense-subject"
+# The refusal comes before staging, so no tally line was printed for the skill.
+lacks "and nothing was classified first" "unrunnable-in-copy"
+
+echo "=== a declaration below the header window is not read ==="
+# suite_subject reads the first 20 lines. A declaration written past that is
+# not a category the scan honours, and the suite falls back to vacuous.
+S="$(new_skill deepdecl)"
+add_detecting "$S"
+{
+  printf '#!/usr/bin/env bash\n'
+  # Lines 2 through 20, putting the declaration on line 21 — one past the
+  # window, which is the edge the bound is worth pinning at.
+  i=0
+  while [ "$i" -lt 19 ]; do
+    printf '# padding\n'
+    i=$((i + 1))
+  done
+  printf '# vacuous-suite-scan: absence-subject\n'
+  cat <<'SUITE'
+set -euo pipefail
+if grep -q FORBIDDEN "$(dirname "${BASH_SOURCE[0]}")/../scripts/thing.sh"; then
+  echo "forbidden token in a shipped script" >&2
+  exit 1
+fi
+SUITE
+} >"$S/tests/deep.test.sh"
+if [ "$(sed -n '21p' "$S/tests/deep.test.sh")" != "# vacuous-suite-scan: absence-subject" ]; then
+  bad "the fixture puts its declaration on line 21" "$(sed -n '18,23p' "$S/tests/deep.test.sh")"
+else
+  ok "the fixture puts its declaration on line 21"
+fi
+scan "$S" --list
+has "a declaration past line 20 is not read" "vacuous          deep.test.sh"
+lacks "and it is not credited to absence-subject" "absence-subject  deep.test.sh"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

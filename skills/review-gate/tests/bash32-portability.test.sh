@@ -39,6 +39,19 @@ if [ "${#sh_files[@]}" -eq 0 ]; then
   echo "FAIL: no shell files found under $SCRIPTS_DIR or $TEST_DIR" >&2
   exit 1
 fi
+# And the two directories are counted apart. tests/ always holds this file, so
+# the check above is satisfied by an empty scripts/ — and an absent forbidden
+# construct means nothing when there was nothing shipped to look in.
+script_files=0
+for f in ${sh_files[@]+"${sh_files[@]}"}; do
+  case "$f" in
+  "$SCRIPTS_DIR"/*) script_files=$((script_files + 1)) ;;
+  esac
+done
+if [ "$script_files" -eq 0 ]; then
+  echo "FAIL: no shell file found under $SCRIPTS_DIR, so this lint read no shipped script" >&2
+  exit 1
+fi
 
 nl='
 '
@@ -51,7 +64,15 @@ for f in ${sh_files[@]+"${sh_files[@]}"}; do
   # `--` before the operands: a path beginning with `-` is parsed as options
   # otherwise. It goes to grep and `bash -n`, which accept it, and NOT to
   # dirname/basename, which reject it on BSD (see the pattern above).
-  hits="$(grep -nE -- "$PATTERN" "$f" || true)"
+  # grep's status is part of the answer: 0 found, 1 none, anything else is a
+  # scan that did not run — and a scan that did not run is not a clean file.
+  hits=""
+  scan_status=0
+  hits="$(grep -nE -- "$PATTERN" "$f")" || scan_status=$?
+  if [ "$scan_status" -gt 1 ]; then
+    echo "FAIL: the portability scan over $f could not run (grep exited $scan_status)" >&2
+    exit 1
+  fi
   if [ -n "$hits" ]; then
     violations="$violations$(printf '%s\n' "$hits" | sed "s|^|$f:|")$nl"
   fi

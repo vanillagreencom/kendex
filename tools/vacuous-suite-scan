@@ -39,6 +39,8 @@
 #
 # A suite declares at most one subject. Two declarations are a malformed
 # header rather than a category to resolve by precedence, and they end the run.
+# Every header is read before any suite is staged, so an unknown or doubled
+# declaration ends the run whether or not its suite can run from a copy.
 #
 # What is left under vacuous after those two categories is not always a suite
 # to fix. A suite whose subject does not travel with the skill — a document
@@ -198,17 +200,32 @@ suite_subject() {
 
 # Why a declared subject is contradicted by a failing blanked run. The two
 # subjects are unmeasurable for opposite reasons, so the disproof differs.
+#
+# The absence reason names BOTH readings rather than picking one, because from
+# outside the suite they are indistinguishable: a blanked run that exits
+# nonzero either found what the suite forbids in a product holding nothing, or
+# refused to run at all because a fail-closed check saw the emptied product.
+# Telling them apart would mean re-running the suite against a copy carrying
+# the forbidden thing, and the scan does not know what that thing is for an
+# arbitrary suite — it blanks product files, it does not author violations. A
+# reason that names one cause it cannot verify is the wrong-cause diagnostic
+# this tool exists to refuse; naming both is what it can actually say.
+#
+# A subject with no arm ends the run: an operator reading CONTRADICTION with a
+# blank cause learns nothing, and a subject added to suite_subject's allowlist
+# and forgotten here is exactly how that happens.
 contradiction_reason() {
     case "$1" in
     harness-subject) printf 'declares harness-subject but breaking product code reached it' ;;
-    absence-subject) printf 'declares absence-subject but failed against a blanked product, which holds nothing for it to find' ;;
+    absence-subject) printf 'declares absence-subject but failed against a blanked product: either it found what it forbids in a product holding nothing, or a fail-closed check refused to run over the emptied product' ;;
+    *) die "no contradiction reason for the subject '$1'; a subject suite_subject accepts must have an arm here" ;;
     esac
 }
 
 scan_skill() {
     local skill_dir="$1"
-    local name tmp pristine blanked suite subject measured=0
-    local -a suites=() vacuous=() unrunnable=() red=() harness=() absence=() contradicting=()
+    local name tmp pristine blanked suite subject reason measured=0 i=0
+    local -a suites=() subjects=() vacuous=() unrunnable=() red=() harness=() absence=() contradicting=()
 
     name="$(basename "$skill_dir")"
     [[ -d "$skill_dir/tests" ]] || die "$skill_dir has no tests directory"
@@ -221,6 +238,16 @@ scan_skill() {
         die "$skill_dir/tests holds no shell suites"
     fi
 
+    # Every declaration is read and judged BEFORE anything is staged or run. A
+    # header defect is a defect in text, settled by reading it, so it must not
+    # depend on the suite reaching the comparison: a suite that fails its
+    # pristine run is set aside as unrunnable, and validating inside that loop
+    # left every such suite's declaration unread. It also means a typo fails in
+    # the first second rather than after minutes of staging and running.
+    for suite in "${suites[@]}"; do
+        subjects+=("$(suite_subject "$skill_dir/tests/$suite")")
+    done
+
     tmp="$(mktemp -d)"
     SCAN_TMP="$tmp"
     trap 'rm -rf -- "${SCAN_TMP:?}"' EXIT
@@ -232,11 +259,12 @@ scan_skill() {
     git -C "$tmp/blanked" init -q -b main
 
     for suite in "${suites[@]}"; do
+        subject="${subjects[$i]}"
+        i=$((i + 1))
         if ! run_suite "$pristine/tests/$suite"; then
             unrunnable+=("$suite")
             continue
         fi
-        subject="$(suite_subject "$skill_dir/tests/$suite")"
         if run_suite "$blanked/tests/$suite"; then
             case "$subject" in
             harness-subject) harness+=("$suite") ;;
@@ -281,8 +309,13 @@ scan_skill() {
     printf '%-20s %3d suites  %3d vacuous  %3d harness-subject  %3d absence-subject  %3d detecting  %3d unrunnable-in-copy\n' \
         "$name" "${#suites[@]}" "${#vacuous[@]}" "${#harness[@]}" "${#absence[@]}" "${#red[@]}" "${#unrunnable[@]}"
 
+    # The reason is resolved into a variable first, not inlined into printf's
+    # arguments: a die inside a command substitution there ends only the
+    # subshell, printf still succeeds, and the run would carry on past a
+    # refusal. As an assignment it is errexit's to act on.
     for suite in ${contradicting[@]+"${contradicting[@]}"}; do
-        printf '    CONTRADICTION %s %s\n' "${suite#* }" "$(contradiction_reason "${suite%% *}")"
+        reason="$(contradiction_reason "${suite%% *}")"
+        printf '    CONTRADICTION %s %s\n' "${suite#* }" "$reason"
     done
 
     if [[ "$LIST_NAMES" -eq 1 ]]; then

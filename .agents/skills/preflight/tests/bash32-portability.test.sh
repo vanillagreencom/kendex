@@ -13,7 +13,15 @@ PATTERN='mapfile|readarray|declare -A|declare -gA|local -A'
 PATTERN="$PATTERN"'|(^|[^$])\{[A-Za-z_][A-Za-z0-9_]*\}[<>]'
 PATTERN="$PATTERN"'|\$\{[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?(,,|\^\^)'
 
-violations="$(grep -rnE "$PATTERN" "$SCRIPTS_DIR" || true)"
+# grep's status is part of the answer: 0 found, 1 none, anything else is a
+# scan that did not run — and a scan that did not run is not a clean tree.
+violations=""
+scan_status=0
+violations="$(grep -rnE "$PATTERN" "$SCRIPTS_DIR")" || scan_status=$?
+if [ "$scan_status" -gt 1 ]; then
+  echo "the portability scan over $SCRIPTS_DIR could not run (grep exited $scan_status)" >&2
+  exit 1
+fi
 if [ -n "$violations" ]; then
   echo "Bash 4+ constructs found in preflight scripts (must run under Bash 3.2):" >&2
   printf '%s\n' "$violations" >&2
@@ -21,12 +29,21 @@ if [ -n "$violations" ]; then
 fi
 
 fail=0
+checked=0
 for f in "$SCRIPTS_DIR"/*; do
+  [ -f "$f" ] || continue
+  checked=$((checked + 1))
   if ! bash -n "$f"; then
     echo "FAIL: bash -n $f"
     fail=1
   fi
 done
+# An absent forbidden construct means nothing when there was nothing to look
+# in: an empty scripts/ scans clean and syntax-checks clean.
+if [ "$checked" -eq 0 ]; then
+  echo "FAIL: no shipped script found under $SCRIPTS_DIR, so this lint read nothing" >&2
+  exit 1
+fi
 [ "$fail" -eq 0 ] || exit 1
 
 echo "pass: bash32-portability"

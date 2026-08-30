@@ -10,11 +10,31 @@ SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 PASS=0
 FAIL=0
 
+# An absent forbidden construct means nothing when there was nothing to look
+# in: an empty scripts/ scans clean under every pattern below.
+if [ -z "$(find "$SKILL_DIR/scripts" -type f)" ]; then
+  echo "FAIL: no shipped script found under $SKILL_DIR/scripts, so this lint read nothing" >&2
+  exit 1
+fi
+
 check_absent() {
-  local pattern="$1" label="$2"
-  if grep -rnE "$pattern" "$SKILL_DIR/scripts" 2>/dev/null | grep -v '^Binary'; then
+  local pattern="$1" label="$2" hits="" status=0
+  # grep's status is part of the answer: 0 found, 1 none, anything else is a
+  # scan that did not run — and a scan that did not run is not a clean tree.
+  # `2>/dev/null` used to hide that third case, and the pipeline's status came
+  # from the `grep -v` at its end, so an unreadable tree printed PASS.
+  hits="$(grep -rnE "$pattern" "$SKILL_DIR/scripts")" || status=$?
+  if [ "$status" -gt 1 ]; then
+    FAIL=$((FAIL + 1))
+    printf 'FAIL: %s — the scan over %s could not run (grep exited %s)\n' \
+      "$label" "$SKILL_DIR/scripts" "$status" >&2
+    return 0
+  fi
+  hits="$(printf '%s' "$hits" | grep -v '^Binary' || true)"
+  if [ -n "$hits" ]; then
     FAIL=$((FAIL + 1))
     printf 'FAIL: %s\n' "$label" >&2
+    printf '%s\n' "$hits" >&2
   else
     PASS=$((PASS + 1))
     printf 'PASS: %s\n' "$label"
