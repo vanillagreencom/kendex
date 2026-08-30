@@ -28,7 +28,10 @@
 #   4b. idle-after-return: a harness at its composer with nothing in flight
 #       on two consecutive passes (either harness's prompt, and under a
 #       wrapped shell); one pass alone, a working indicator alongside the
-#       prompt, and an idle pass followed by a working one are not events
+#       prompt, and an idle pass followed by a working one are not events; a
+#       working indicator above the last user turn is scrollback and still
+#       fires, while one below that turn does not, and a user turn's marker
+#       above that boundary is not the composer the lane sits at
 set -euo pipefail
 
 # shellcheck source=lib/oversee-watch-harness.sh
@@ -743,6 +746,53 @@ out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" \
   "an idle pass followed by a working one is not the event" "$err"
 assert_not_contains "$out" "EVENT idle-after-return" "a non-consecutive idle reading never fires" "$err"
+
+# Scrollback never goes away, so a working indicator the lane has since taken
+# a turn past would suppress this event for good — the debounce cannot help,
+# the line is not transient. Only the slice below the last user turn is work
+# in flight now.
+new_case idle_after_return_working_above_turn
+{
+  printf '⏺ Thinking (esc to interrupt)\n'
+  printf '❯ actually stop there and write it up\n'
+  printf '⏺ Done: the PR is merged and the worktree is gone.\n'
+  printf '\xe2\x9d\xaf\xc2\xa0\n'
+  printf '  bypass permissions on\n'
+} > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e4b8"
+out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "an interrupt hint in scrollback exits 0" "$err"
+assert_eq "$(head -1 <<<"$out")" "EVENT idle-after-return gh-2" \
+  "an interrupt hint above the last user turn is scrollback, not work in flight" "$err"
+
+# ...and its must-fail control: the same hint BELOW the last user turn is a
+# lane really working, so the slice can never pass by muting the check
+new_case idle_after_return_working_below_turn
+{
+  printf '❯ go ahead and refactor it\n'
+  printf '⏺ Thinking (esc to interrupt)\n'
+  printf '\xe2\x9d\xaf\xc2\xa0\n'
+} > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e4b9"
+out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" \
+  "an interrupt hint below the last user turn still means busy" "$err"
+assert_not_contains "$out" "EVENT idle-after-return" "the slice does not mute the working check" "$err"
+
+# The prompt half of the same rule: a submitted user turn opens with the same
+# marker the composer does, so read off the whole pane a lane that is nowhere
+# near its composer satisfies the idle prompt off scrollback alone.
+new_case idle_after_return_prompt_above_turn
+{
+  printf '❯ run the suite\n'
+  printf '⏺ Bash(cargo test)\n'
+  printf '  ⎿ Compiling kendex v5.0.0\n'
+} > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e4b10"
+out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" \
+  "a scrollback user turn is not the composer the lane is sitting at" "$err"
+assert_not_contains "$out" "EVENT idle-after-return" "a marker above the last user turn never reads as idle" "$err"
 
 # A pane keeps its last screen after the harness exits, so a stale prompt
 # under a bare shell is not a question anyone can answer — and firing it every

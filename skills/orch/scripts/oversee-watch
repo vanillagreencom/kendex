@@ -29,14 +29,14 @@
 #                 all is not an answer: that lane stays watched, noted once on
 #                 stderr
 #   5. usage-limit a listed lane whose harness has not exited shows the
-#                 account's limit banner below the last user turn on its
-#                 screen — one pass, and the claimed config dir when a live
-#                 lane claim names the window
-#   6. question   a question/selection prompt below the last user turn
-#   7. idle-after-return a listed lane whose harness has not exited sits at
-#                 its composer with no work in flight on two consecutive
-#                 passes
+#                 account's limit banner on its screen — one pass, and the
+#                 claimed config dir when a live lane claim names the window
+#   6. question   a question/selection prompt
+#   7. idle-after-return a listed lane whose harness has not exited sits at its
+#                 composer with no work in flight on two consecutive passes
 #   8. heartbeat  after --max-loops passes with no event
+# Every pane check reads only the lines below the last user turn, 5-7 and any
+# added later: above it is scrollback the lane has already worked past.
 #
 # Output on the first event: `EVENT <kind> ...` on stdout — one line, except
 # `merged`, which prints one `EVENT merged` line per merged item so the
@@ -82,7 +82,7 @@ PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}
 PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 
 # Every pane predicate lives here, one line each, matched with `grep -E`
-# against the whole pane capture.
+# against pane_below_last_turn's slice — never the whole capture.
 # A dialog waiting on an answer: the selected numbered row, drawn with each
 # harness's marker, and Claude Code's question and key hints.
 QUESTION_RE='(❯|›) [0-9]+\. |Do you want to|Enter to select|Esc to cancel'
@@ -618,8 +618,8 @@ check_lanes() {
     i=$((i + 1))
     if [[ "$(lane_state "$states" "$i")" == exited ]]; then continue; fi
     pane="$(cat -- "$(lane_pane_file "$i")")"
-    if grep -Eq -- "$WORKING_RE" <<<"$pane"; then continue; fi
-    if ! grep -Eq -- "$IDLE_PROMPT_RE" <<<"$pane"; then continue; fi
+    if grep -Eq -- "$WORKING_RE" <<<"$(pane_below_last_turn "$pane")"; then continue; fi
+    if ! grep -Eq -- "$IDLE_PROMPT_RE" <<<"$(pane_below_last_turn "$pane")"; then continue; fi
     idle_now+="$i"$'\n'
     if grep -qxF -- "$i" <<<"$LANE_IDLE_SEEN"; then
       echo "EVENT idle-after-return $lane"
