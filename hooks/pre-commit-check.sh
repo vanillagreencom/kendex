@@ -3,8 +3,8 @@
 # name: pre-commit-check
 # event: PreToolUse
 # matcher: Bash
-# description: On a git commit, defer to the working directory's armed git hooks — both pre-commit and commit-msg, marked and executable (kendex guard install arms them). Otherwise the commit is refused naming that command: arming is the local act that says a person wants this repository's committed scripts run on their commits, and this hook never runs them on their behalf. Where one is armed, a command that sidesteps it with git's no-verify flag, -n, or a core.hooksPath override is refused: git would skip the commit-msg hook too, and nothing here can check the message. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
-# safety: Refuses a commit from a working directory with no armed git pre-commit hook rather than running that repository's own scripts to check it, and refuses a command that bypasses an armed hook (no-verify, -n) or injects git configuration that could (any -c, --config-env, or GIT_CONFIG_* word — core.hooksPath and include.path among them); a commit aimed at another repository is that repository's armed hook's to gate.
+# description: On a git commit, defer to the working directory's armed git hooks — both pre-commit and commit-msg, marked and executable (kendex guard install arms them). Otherwise the commit is refused naming that command: arming is the local act that says a person wants this repository's committed scripts run on their commits, and this hook never runs them on their behalf. Where one is armed, a command that sidesteps it with git's no-verify flag, -n, or a core.hooksPath override is refused: git would skip the commit-msg hook too, and nothing here can check the message. The command is split into simple commands and only the argv of a `git` invocation is judged, so a heredoc body, a quoted commit message, or another program's -n or -c is not a git flag. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
+# safety: Refuses a commit from a working directory with no armed git pre-commit hook rather than running that repository's own scripts to check it, and refuses a git commit argv that bypasses an armed hook (no-verify, -n) or injects git configuration that could (a global -c or --config-env option, a GIT_CONFIG_* assignment, a git config write of core.hooksPath); a commit aimed at another repository is that repository's armed hook's to gate.
 # timeout: 60
 # ---
 
@@ -16,57 +16,244 @@ MARKER="# kendex-guards-hook"
 
 INPUT=$(cat)
 
-# Word-order detection, no shell parsing: the authoritative check is the
-# repository's own git pre-commit hook, which git runs in the right repo
-# whatever the command's quoting, substitutions, or directory hops. This
-# lane only decides whether the commit is deferred or refused, so a miss
-# here skips a refusal, never a check — and `git log --grep=commit` merely pays for a
-# guard run it did not need.
+# What this lane judges, and what it deliberately does not.
 #
-# The payload is JSON, where a string never spans lines: joining the
-# payload first reads a key and value that arrived on separate lines.
-JOINED=$(printf '%s' "$INPUT" | tr -d '\n\r')
-COMMAND=$(printf '%s' "$JOINED" \
-  | grep -oE '"command"[[:space:]]*:[[:space:]]*"(\\.|[^"\\])*"' | head -1) || COMMAND=""
-# A payload that names a command this lane cannot read is refused, never
-# waved through: where no git hook is armed, this lane is the check.
-if [ -z "$COMMAND" ]; then
-  printf '%s' "$JOINED" | grep -q '"command"[[:space:]]*:' || exit 0
-  echo "pre-commit-check: could not read the command out of the hook payload" >&2
+# The command is split on shell control operators into simple commands, and
+# a simple command is judged only where its command word is `git`. Inside a
+# git argv the subcommand decides: `commit` is the gate's business, `config`
+# is watched for a core.hooksPath write, everything else is left alone. Text
+# that is not in a git argv — a heredoc body, another program's arguments, a
+# quoted commit message — is not a flag here, which is the whole reason for
+# the split: `cat -n` in a heredoc, `python3 -c`, and prose naming
+# --no-verify were all refused as bypasses by the word-soup rule this
+# replaces.
+#
+# The limits are the price of not running a shell. `sh -c '...'` and git
+# aliases hide a commit from this lane entirely, and a `$(...)` stays one
+# word rather than being looked into. This hook guards habit, not an
+# adversary: git's own hooks are the control, and they run in the right
+# repository whatever the command's quoting or directory hops. A miss here
+# skips a refusal, never a check.
+#
+# The payload is JSON, where a string never spans lines, so the analysis
+# reads the whole input and finds the first `"command"` key in it.
+if ! ANALYSIS=$(printf '%s' "$INPUT" | awk '
+function setbypass(t) {
+  if (BYPASS != "") return
+  gsub(/[\n\r\t]/, " ", t)
+  BYPASS = (length(t) > 60) ? substr(t, 1, 60) : t
+}
+
+# Decode one JSON string, starting at its opening quote. CLOSED stays 0 for
+# a string that never ends, which is a payload this lane cannot read.
+function decode(s,   n, i, ch, e, out) {
+  n = length(s); i = 2; out = ""
+  while (i <= n) {
+    ch = substr(s, i, 1)
+    if (ch == "\\") {
+      e = substr(s, i + 1, 1)
+      if (e == "n") out = out "\n"
+      else if (e == "t") out = out "\t"
+      else if (e == "r") out = out "\r"
+      else if (e == "u") { out = out " "; i += 4 }
+      else if (e == "b" || e == "f") out = out " "
+      else out = out e
+      i += 2
+    } else if (ch == "\"") { CLOSED = 1; return out }
+    else { out = out ch; i++ }
+  }
+  return out
+}
+
+function flush_word() {
+  if (HAVEW) { TOK[++NTOK] = W; W = ""; HAVEW = 0 }
+}
+
+function end_command() {
+  flush_word()
+  if (NTOK > 0) judge()
+  # split with an empty string is the portable array clear: `delete TOK`
+  # is not in every awk this hook is rendered into.
+  split("", TOK)
+  NTOK = 0
+}
+
+# Consume a $(...) or ${...} whole, so its operators never split a command
+# and its contents never read as words of their own.
+function substitution(cmd, i, n,   opener, closer, depth, ch) {
+  opener = substr(cmd, i + 1, 1)
+  closer = (opener == "(") ? ")" : "}"
+  depth = 0
+  W = W "$"
+  i++
+  while (i <= n) {
+    ch = substr(cmd, i, 1)
+    W = W ch
+    if (ch == opener) depth++
+    else if (ch == closer) { depth--; if (depth == 0) return i + 1 }
+    i++
+  }
+  return i
+}
+
+# One left-to-right pass: quotes hold a word together, control operators end
+# a simple command, and every simple command is judged as it closes.
+function scan(cmd,   n, i, ch, c2) {
+  n = length(cmd); i = 1; W = ""; HAVEW = 0; NTOK = 0
+  while (i <= n) {
+    ch = substr(cmd, i, 1)
+    if (ch == "\\") { W = W substr(cmd, i + 1, 1); HAVEW = 1; i += 2; continue }
+    if (ch == SQ) {
+      i++
+      while (i <= n && substr(cmd, i, 1) != SQ) { W = W substr(cmd, i, 1); i++ }
+      i++; HAVEW = 1; continue
+    }
+    if (ch == "\"") {
+      i++
+      while (i <= n) {
+        c2 = substr(cmd, i, 1)
+        if (c2 == "\\") { W = W substr(cmd, i + 1, 1); i += 2; continue }
+        if (c2 == "\"") { i++; break }
+        W = W c2; i++
+      }
+      HAVEW = 1; continue
+    }
+    if (ch == BT) {
+      i++
+      while (i <= n && substr(cmd, i, 1) != BT) { W = W substr(cmd, i, 1); i++ }
+      i++; HAVEW = 1; continue
+    }
+    if (ch == "$" && (substr(cmd, i + 1, 1) == "(" || substr(cmd, i + 1, 1) == "{")) {
+      i = substitution(cmd, i, n); HAVEW = 1; continue
+    }
+    if (ch == " " || ch == "\t") { flush_word(); i++; continue }
+    if (index(SEPARATORS, ch) > 0) { end_command(); i++; continue }
+    # A redirection operator ends the word; its target reads as one more
+    # argument, which no rule below matches.
+    if (ch == "<" || ch == ">") { flush_word(); i++; continue }
+    W = W ch; HAVEW = 1; i++
+  }
+  end_command()
+}
+
+# Judge one simple command: leading assignments, then transparent prefixes
+# (`if`, `sudo`, `env`, …), then the command word.
+function judge(   k, base, j, gstart, gend, subcmd, m, t) {
+  k = 1
+  while (k <= NTOK) {
+    t = TOK[k]
+    if (t ~ /^[A-Za-z_][A-Za-z0-9_]*=/) {
+      # Configuration injected through the environment reaches git wherever
+      # the assignment stands, so it is judged as a word of its own.
+      if (t ~ /^GIT_CONFIG_/) setbypass(t)
+      if (t ~ /^GIT_DIR=/ || t ~ /^GIT_WORK_TREE=/) MOVES = 1
+      k++; continue
+    }
+    if (t in TRANSPARENT) { k++; continue }
+    break
+  }
+  if (k > NTOK) return
+  base = TOK[k]
+  sub(/^.*\//, "", base)
+  if (base != "git") { if (base == "cd") MOVES = 1; return }
+
+  # Global options run until the first word that is not one; a global option
+  # taking a separate value carries that value with it.
+  j = k + 1
+  gstart = j
+  subcmd = ""
+  while (j <= NTOK) {
+    t = TOK[j]
+    if (substr(t, 1, 1) != "-") { subcmd = t; break }
+    if (t in GIT_GLOBAL_VALUE) { j += 2; continue }
+    j++
+  }
+  gend = j - 1
+
+  if (subcmd == "config") {
+    # A core.hooksPath line disarms the hook before the commit reaches it.
+    # A read on the same line is refused with the write: the key is matched
+    # wherever it stands after `config`, in any case.
+    for (m = j + 1; m <= NTOK; m++) if (tolower(TOK[m]) ~ /hookspath/) setbypass(TOK[m])
+    return
+  }
+  if (subcmd != "commit") return
+  COMMIT = 1
+
+  # -c and --config-env are configuration only as GLOBAL options. After the
+  # subcommand, `git commit -c` is --reedit-message and injects nothing.
+  for (m = gstart; m <= gend; m++) {
+    t = TOK[m]
+    if (t == "-c" || t ~ /^--config-env/) setbypass(t)
+    if (t == "-C" || t ~ /^--git-dir/ || t ~ /^--work-tree/) MOVES = 1
+  }
+  # git allows any unique prefix of --no-verify, and -n alone or inside a
+  # short-flag cluster is the same flag. It skips the commit-msg hook too,
+  # whose gate is not knowable here, so nothing can stand in for it.
+  for (m = j + 1; m <= NTOK; m++) {
+    t = TOK[m]
+    if (t ~ /^--no-veri/ || t ~ /^-[A-Za-z]*n[A-Za-z]*$/) setbypass(t)
+  }
+}
+
+BEGIN {
+  SQ = sprintf("%c", 39)
+  BT = sprintf("%c", 96)
+  SEPARATORS = ";&|(){}" "\n" "\r"
+  split("-C -c --git-dir --work-tree --namespace --super-prefix --exec-path --config-env --attr-source", A, " ")
+  for (i in A) GIT_GLOBAL_VALUE[A[i]] = 1
+  split("if then else elif fi while until do done ! time command exec nohup sudo env", B, " ")
+  for (i in B) TRANSPARENT[B[i]] = 1
+}
+
+{ raw = raw $0 "\n" }
+
+END {
+  if (match(raw, /"command"[[:space:]]*:[[:space:]]*/) == 0) { print "nocommand=1"; exit }
+  rest = substr(raw, RSTART + RLENGTH)
+  if (substr(rest, 1, 1) != "\"") { print "unreadable=1"; exit }
+  cmd = decode(rest)
+  if (!CLOSED) { print "unreadable=1"; exit }
+  scan(cmd)
+  if (COMMIT) print "commit=1"
+  if (MOVES) print "moves=1"
+  if (COMMIT && BYPASS != "") print "bypass=" BYPASS
+}
+'); then
+  echo "pre-commit-check: could not analyse the command (awk failed)" >&2
   exit 2
 fi
-# JSON's whitespace escapes separate words too: `cargo fmt\ngit commit`
-# is two commands, not one word `ngit`.
-WORDS=" $(printf '%s' "$COMMAND" | sed 's/\\[ntr]/ /g' | tr -c 'a-zA-Z0-9_=-' ' ') "
-printf '%s' "$WORDS" | grep -qE ' git( .*)? commit ' || exit 0
 
-# Repository-moving words (-C, --git-dir, --work-tree, cd, a GIT_DIR or
-# GIT_WORK_TREE assignment) mean the commit may land elsewhere. This lane never follows them — git does, where the
-# target has an armed hook — so where it cannot defer it says which
-# directory it judged, and that the target's own hook is the target's gate.
+COMMIT=""
 MOVES=""
-printf '%s' "$WORDS" | grep -qE ' (cd|-C|--git-dir[^ ]*|--work-tree[^ ]*|GIT_DIR[^ ]*|GIT_WORK_TREE[^ ]*) ' && MOVES=1
+BYPASS=""
+while IFS= read -r line; do
+  case "$line" in
+    commit=1) COMMIT=1 ;;
+    moves=1) MOVES=1 ;;
+    bypass=*) BYPASS="${line#bypass=}" ;;
+    nocommand=1) exit 0 ;;
+    # A payload that names a command this lane cannot read is refused, never
+    # waved through: where no git hook is armed, this lane is the check.
+    unreadable=1)
+      echo "pre-commit-check: could not read the command out of the hook payload" >&2
+      exit 2
+      ;;
+  esac
+done <<<"$ANALYSIS"
+
+[ -n "$COMMIT" ] || exit 0
+
+# Repository-moving words (-C, --git-dir, --work-tree in the git argv, a `cd`
+# command, a GIT_DIR or GIT_WORK_TREE assignment) mean the commit may land
+# elsewhere. This lane never follows them — git does, where the target has an
+# armed hook — so where it cannot defer it says which directory it judged,
+# and that the target's own hook is the target's gate.
 elsewhere_notice() {
   [ -z "$MOVES" ] && return 0
   echo "pre-commit-check: the command moves repositories (-C, --git-dir, --work-tree, cd, GIT_DIR, or GIT_WORK_TREE); this hook judged $PWD only — the target repository is gated by its own armed git pre-commit hook, if any (kendex guard install there)" >&2
 }
 
-# An armed hook means git itself will gate the commit; running the chain
-# here too would validate everything twice. A command that sidesteps it
-# is refused, not covered: git's no-verify flag — spelled out or cut to
-# any unique prefix, as git allows, or `-n` alone or inside a short-flag
-# cluster — tells git to skip the commit-msg hook as well, and the
-# message is not knowable here, so nothing could stand in; and any
-# configuration injected on the command line — a `-c` word, a
-# `--config-env` word, a `GIT_CONFIG_*` assignment — can point git at
-# hooks this lane did not inspect, by `core.hooksPath` directly or by an
-# `include.path` that loads it, so the whole class is refused rather
-# than one spelling of it — and so is a `git config` write of
-# core.hooksPath in the same command, which disarms the hook before the
-# commit reaches it (the key is matched in any case, whatever options
-# stand between `config` and it). One of
-# those words from some other command on the line costs a refusal to
-# reword, never an unchecked commit.
 HOOKS_DIR=$(git rev-parse --git-path hooks 2>/dev/null) || {
   elsewhere_notice
   exit 0
@@ -103,11 +290,12 @@ if [ "$HOOKS_PATH_STATUS" -eq 1 ] \
   && grep -qF -- "$MARKER" "$HOOKS_DIR/commit-msg" 2>/dev/null; then
   ARMED=1
 fi
+# An armed hook means git itself will gate the commit; running the chain here
+# too would validate everything twice. A command whose git argv sidesteps it
+# is refused, not covered.
 if [ -n "$ARMED" ]; then
-  BYPASS=$(printf '%s' "$WORDS" | grep -oE ' (--no-veri[a-z]*|-[a-zA-Z]*n[a-zA-Z]*|-c|--config-env[^ ]*|GIT_CONFIG_[^ ]*) ' | head -1) \
-    || BYPASS=$(printf '%s' "$WORDS" | grep -oiE ' config .* hookspath ' | head -1) \
-    || exit 0
-  echo "pre-commit-check: '$(printf '%s' "$BYPASS" | sed 's/^ *//; s/ *$//')' bypasses this repository's armed git hooks or injects configuration that could, and the commit-msg gate cannot be checked from here — commit without bypassing hooks or passing git configuration; git runs the installed pre-commit and commit-msg hooks itself" >&2
+  [ -n "$BYPASS" ] || exit 0
+  echo "pre-commit-check: '$BYPASS' bypasses this repository's armed git hooks or injects configuration that could, and the commit-msg gate cannot be checked from here — commit without bypassing hooks or passing git configuration; git runs the installed pre-commit and commit-msg hooks itself" >&2
   exit 2
 fi
 elsewhere_notice

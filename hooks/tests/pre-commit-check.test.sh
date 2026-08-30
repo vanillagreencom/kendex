@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Tests for the pre-commit-check hook's contract: word-order detection of a
-# git commit with no shell parsing; deference to the repository's own armed
-# git pre-commit hook (never a second validation) unless the command
-# sidesteps it; the growth-guards package's own pre-commit script as the
-# refusal where nothing is armed; fail-closed when neither an armed
-# hook nor that package exists, and when the payload names a command the
-# hook cannot read. Shell forms the old parser refused — `$(…)`, backticks,
-# `cd "$dir"`, unexpanded variables — must pass through without a refusal of
-# their own.
+# Tests for the pre-commit-check hook's contract: the command splits into
+# simple commands and only a `git` invocation's argv is judged; deference to
+# the repository's own armed git pre-commit hook (never a second validation)
+# unless that argv sidesteps it; the refusal where nothing is armed;
+# fail-closed when no armed hook exists, and when the payload names a command
+# the hook cannot read. Shell forms the hook does not run — `$(…)`,
+# backticks, `cd "$dir"`, unexpanded variables — must pass through without a
+# refusal of their own, and so must a `-n`, `-c` or `--no-verify` belonging to
+# a heredoc body, another program, or a quoted commit message.
 #
 # The package script is stubbed inside each fixture repository, where the
 # hook looks for it, so the suite needs no built binary, runs no real chain,
@@ -37,7 +37,7 @@ RAN_LOG="$TMP_ROOT/ran.log"
 # run uses it: no lane of this hook may depend on the binary any more.
 NO_KENDEX_BIN="$TMP_ROOT/no-kendex-bin"
 mkdir -p "$NO_KENDEX_BIN"
-for tool in git grep tr sed head bash cat env printf; do
+for tool in git grep awk tr sed head bash cat env printf; do
   target="$(command -v "$tool" 2>/dev/null)" && ln -sf "$target" "$NO_KENDEX_BIN/$tool"
 done
 
@@ -194,18 +194,22 @@ run_hook "$UNARMED" "$(payload 'git -C /somewhere/else commit -m test')" CHAIN_E
 assert_eq "$rc" "2" "git and commit separated by options are still a commit"
 
 echo
-echo "JSON whitespace escapes separate words"
+echo "JSON newline escapes end a command"
 
 # Single quotes on purpose: the payload carries the two characters \n, as
 # JSON encodes a newline in a multi-line command.
 for form in \
   'cargo fmt\ngit commit -m x' \
-  'cd sub\tgit commit -m x' \
   'cargo fmt\r\ngit commit -m x'; do
   run_hook "$UNARMED" "$(payload "$form")" CHAIN_EXIT=1
-  assert_eq "$rc" "2" "the commit after an escape is still refused: $form"
+  assert_eq "$rc" "2" "the commit on the next line is still refused: $form"
   assert_eq "$log" "" "nothing was run for: $form"
 done
+
+# A tab is word whitespace to the shell, never a command separator: that
+# payload is one `cd` with five arguments, and no commit for this lane to gate.
+run_hook "$UNARMED" "$(payload 'cd sub\tgit commit -m x')" CHAIN_EXIT=1
+assert_eq "$rc" "0" "a tab makes arguments of git commit, not a command"
 
 echo
 echo "unreadable payload"
@@ -318,6 +322,54 @@ for form in \
   run_hook "$ARMED" "$(payload "$form")" CHAIN_EXIT=1
   assert_eq "$rc" "0" "no refusal for: $form"
   assert_not_contains "$err" "cannot enter" "no cannot-enter refusal for: $form"
+done
+
+echo
+echo "only a git argv is judged"
+
+# The three refusals this rule exists to stop, all of them in one day: a `-n`
+# in a heredoc body, a `-c` belonging to another program, and prose naming
+# --no-verify inside a quoted string are text, not flags of the commit. The
+# quotes are JSON-escaped because the harness sends them that way, and an
+# unescaped one would end the payload string before the commit.
+# shellcheck disable=SC2016
+for form in \
+  'cat <<EOF > tmp/note.md\nrun cat -n on the file\nEOF\ngit commit -m note' \
+  'python3 -c \"print(1)\" && git commit -m x' \
+  'git commit -m \"explain why --no-verify is banned\"' \
+  'gh pr comment 7 --body \"we never pass --no-verify\" && git commit -m x' \
+  'git commit -c HEAD --reset-author'; do
+  run_hook "$ARMED" "$(payload "$form")" CHAIN_EXIT=1
+  assert_eq "$rc" "0" "not a bypass: $form"
+  assert_not_contains "$err" "bypasses" "no bypass refusal for: $form"
+done
+
+# The same forms with the flag moved into the commit's own argv. Without
+# these the block above would pass on a hook that saw no commit at all.
+# shellcheck disable=SC2016
+for form in \
+  'cat <<EOF > tmp/note.md\nrun cat -n on the file\nEOF\ngit commit -n -m note' \
+  'python3 -c \"print(1)\" && git commit --no-verify -m x' \
+  'git commit -m \"explain why --no-verify is banned\" --no-verify' \
+  'gh pr comment 7 --body \"we never pass --no-verify\" && git -c core.hooksPath=/dev/null commit -m x'; do
+  run_hook "$ARMED" "$(payload "$form")" CHAIN_EXIT=1
+  assert_eq "$rc" "2" "still refused: $form"
+  assert_contains "$err" "bypasses this repository's armed git hooks" "named as a bypass: $form"
+done
+
+# The passing block must be reached through a commit the hook did see: an
+# unarmed repository refuses each of those forms for being unarmed, which it
+# can only do having found the commit.
+# shellcheck disable=SC2016
+for form in \
+  'cat <<EOF > tmp/note.md\nrun cat -n on the file\nEOF\ngit commit -m note' \
+  'python3 -c \"print(1)\" && git commit -m x' \
+  'git commit -m \"explain why --no-verify is banned\"' \
+  'gh pr comment 7 --body \"we never pass --no-verify\" && git commit -m x' \
+  'git commit -c HEAD --reset-author'; do
+  run_hook "$UNARMED" "$(payload "$form")" CHAIN_EXIT=1
+  assert_eq "$rc" "2" "the commit was found: $form"
+  assert_contains "$err" "not armed by kendex" "and refused for the unarmed repository: $form"
 done
 
 # The JSON-escaped quoted-path form: quotes arrive as \" in the payload.

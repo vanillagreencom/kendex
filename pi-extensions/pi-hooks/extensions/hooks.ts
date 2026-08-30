@@ -3,10 +3,9 @@ import { isAbsolute, resolve } from "node:path";
 
 import { isBareCd, preCommitGate } from "./bash-guards.js";
 import { refusalReason, repoCopyRefusal } from "./repo-copy-guard.js";
-import { invalidateClippyCache } from "./cargo.js";
 import { getBool, getNumber, readConfig, recordProjectTrust } from "./config.js";
 import { deliverDrift, runDriftCheck } from "./drift-check.js";
-import { clippyIssuesForFile, workspaceClippyErrors } from "./lint-hooks.js";
+import { workspaceClippyErrors } from "./lint-hooks.js";
 
 const INSTALL_SYMBOL = Symbol.for("kendex.pi-hooks.installed");
 
@@ -27,7 +26,6 @@ export default function piHooks(pi: ExtensionAPI): void {
 
 	pi.on("turn_start", () => {
 		turn = freshTurnState();
-		invalidateClippyCache();
 	});
 
 	// Pi port of hooks/session-drift-check.sh. Fresh starts only: a resumed
@@ -102,22 +100,10 @@ export default function piHooks(pi: ExtensionAPI): void {
 		const filePath = typeof rawPath === "string" ? rawPath : "";
 		if (!filePath.endsWith(".rs")) return undefined;
 
-		// The working tree changed; drop any cached clippy result from before
-		// this edit so the next clippy call reflects the new source state.
-		invalidateClippyCache();
-
-		const absolute = isAbsolute(filePath) ? filePath : resolve(ctx.cwd, filePath);
-		turn.rustFilesTouched.add(absolute);
-
-		if (!getBool(cfg, "postEditLint")) return undefined;
-
-		const timeoutMs = getNumber(cfg, "clippyTimeoutMs");
-		const issues = clippyIssuesForFile(ctx.cwd, absolute, timeoutMs);
-		if (issues.length === 0) return undefined;
-
-		const note = `Clippy found ${issues.length} issue(s) in ${filePath}:\n\n${issues.join("\n\n")}`;
-		const content = [...(event.content ?? []), { type: "text" as const, text: note }];
-		return { content };
+		// Recorded for the end-of-turn check, which is the only lane that runs
+		// clippy. A .rs write costs nothing here.
+		turn.rustFilesTouched.add(isAbsolute(filePath) ? filePath : resolve(ctx.cwd, filePath));
+		return undefined;
 	});
 
 	pi.on("turn_end", async (_event, ctx: ExtensionContext) => {
@@ -127,11 +113,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 		if (!getBool(cfg, "taskCompletedCheck")) return undefined;
 		if (turn.rustFilesTouched.size === 0) return undefined;
 
-		const timeoutMs = getNumber(cfg, "clippyTimeoutMs");
-		// `workspaceClippyErrors` reuses the per-turn clippy cache, so this is
-		// free when post-edit-lint already ran and the cache hasn't been
-		// invalidated since the last edit.
-		const issues = workspaceClippyErrors(ctx.cwd, timeoutMs);
+		const issues = workspaceClippyErrors(ctx.cwd, getNumber(cfg, "clippyTimeoutMs"));
 		if (issues.length > 0 && ctx.hasUI) {
 			const preview = issues.slice(0, 5).join("\n");
 			ctx.ui.notify(

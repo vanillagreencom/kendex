@@ -5,12 +5,13 @@ name: Skill Tests
 # gating here is what lets consuming repos drop tracked vendoring: quality is
 # proven at the source, not re-proven per consumer.
 #
-# THE FAST/FULL SPLIT: the heavy suite shards and the Linux cargo job skip
-# on PR pushes — a PR bills few heavy runner-minutes through every round of
-# bot review, while the pending "Review gate" status is what actually blocks
+# THE FAST/FULL SPLIT: the node and review-gate shards and the Linux cargo job
+# skip on PR pushes — a PR bills few heavy runner-minutes through every round
+# of bot review, while the pending "Review gate" status is what actually blocks
 # merge. The full battery runs once per merged result: in the merge queue
 # before the merge, and again on the push to main as the post-merge record.
-# The cross-platform cargo lanes are the exceptions; each says why.
+# The shell shard and the cross-platform cargo lanes are the exceptions;
+# each says why.
 # The review gate never conditions
 # CI (it answers review-only; see the review-gate skill) — there is no gate
 # job here and nothing reads the predicate.
@@ -45,9 +46,9 @@ jobs:
       fail-fast: false
       matrix:
         shard: [review-gate, shell, node]
-    # Skipped on PRs (the fast/full split); the merge group proves the
-    # merge and the main push records the merged result.
-    if: github.event_name == 'merge_group' || github.event_name == 'push'
+    # The shell shard runs on PRs too: minutes of bash, and a hang or a loose
+    # ratchet row in it ejected three PRs from the queue with no red check.
+    if: github.event_name != 'pull_request' || matrix.shard == 'shell'
     runs-on: ${{ vars.CI_RUNNER_4V || 'ubuntu-latest' }}
     timeout-minutes: 25
     steps:

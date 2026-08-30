@@ -26,7 +26,6 @@ function writePiConfig(project: string): void {
 					[CONFIG_ID]: {
 						enabled: true,
 						preCommitCheck: true,
-						postEditLint: false,
 						taskCompletedCheck: false,
 						clippyTimeoutMs: 3000,
 					},

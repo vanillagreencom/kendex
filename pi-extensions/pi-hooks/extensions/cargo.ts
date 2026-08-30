@@ -46,27 +46,11 @@ export function findCargoWorkspaceRoot(cwd: string, timeoutMs: number): string |
 }
 
 /**
- * Per-turn cache for the most recent workspace clippy run. Both `post-edit-lint`
- * and `task-completed-check` need the same `cargo clippy --workspace
- * --all-targets -- -D warnings` output; without caching they double-run.
- *
- * Callers `invalidate()` whenever the working tree changes (i.e. after every
- * edit/write tool result) so a stale result isn't reused once the source has
- * moved. `runWorkspaceClippy` reuses the cached output if it's still valid.
+ * The end-of-turn check is the only caller, and it runs at most once per turn,
+ * so there is nothing for a cache to save and no stale result to invalidate.
  */
-let cachedClippy: { root: string; result: CargoResult } | null = null;
-
-export function invalidateClippyCache(): void {
-	cachedClippy = null;
-}
-
 export function runWorkspaceClippy(root: string, timeoutMs: number): CargoResult {
-	if (cachedClippy && cachedClippy.root === root) {
-		return cachedClippy.result;
-	}
-	const result = runCargo(["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"], root, timeoutMs);
-	cachedClippy = { root, result };
-	return result;
+	return runCargo(["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"], root, timeoutMs);
 }
 
 export function filterLinesContaining(output: string, needle: string, limit = 10): string[] {

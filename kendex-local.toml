@@ -367,15 +367,6 @@ harnesses = [
 ]
 enabled = true
 
-[hooks.post-edit-lint]
-source = "."
-harnesses = [
-    "claude",
-    "codex",
-    "pi",
-]
-enabled = true
-
 [hooks.pre-commit-check]
 source = "."
 harnesses = [

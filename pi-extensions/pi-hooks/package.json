@@ -53,19 +53,10 @@
         {
           "key": "preCommitCheck",
           "label": "Pre-commit gate",
-          "description": "On a bash command containing `git commit` in word order, defer to the working directory's git hooks when kendex armed them (`kendex guard install`: pre-commit and commit-msg both executable and marked, `core.hooksPath` unset), so git validates the commit exactly once. Refuse a command that sidesteps an armed hook (`--no-verify`, `-n`, `-c`, `--config-env`, `GIT_CONFIG_*`, a `git config` line naming `core.hooksPath`). Refuse a commit in a repository nothing armed, naming `kendex guard install`; this gate never runs a check of its own. Gates the working directory only: a commit aimed at another repository is that repository's own hook's to gate. Mirrors hooks/pre-commit-check.sh.",
+          "description": "On a bash command whose `git` argv names `commit`, defer to the working directory's git hooks when kendex armed them (`kendex guard install`: pre-commit and commit-msg both executable and marked, `core.hooksPath` unset), so git validates the commit exactly once. Refuse a git argv that sidesteps an armed hook (`--no-verify`, `-n`, a global `-c` or `--config-env`, a `GIT_CONFIG_*` assignment, a `git config` line naming `core.hooksPath`); a `-n` or `--no-verify` in a heredoc body, another program's arguments, or a quoted commit message is text, not a flag. Refuse a commit in a repository nothing armed, naming `kendex guard install`; this gate never runs a check of its own. Gates the working directory only: a commit aimed at another repository is that repository's own hook's to gate. Mirrors hooks/pre-commit-check.sh.",
           "type": "boolean",
           "default": true,
           "category": "Bash",
-          "apply": "live"
-        },
-        {
-          "key": "postEditLint",
-          "label": "Post-edit clippy",
-          "description": "After every edit/write of a .rs file, run `cargo clippy --workspace --all-targets -- -D warnings` and append any issues that mention the edited file to the tool result. Advisory only \u2014 does not undo the edit. Cost: full workspace clippy on every Rust edit.",
-          "type": "boolean",
-          "default": true,
-          "category": "Rust",
           "apply": "live"
         },
         {
@@ -98,7 +89,7 @@
         {
           "key": "clippyTimeoutMs",
           "label": "Clippy timeout",
-          "description": "Maximum milliseconds any single cargo clippy invocation is allowed to run. Post-edit and end-of-turn clippy timeouts are abandoned so the tool/turn can continue. Matches the `timeout: 30` declared in hooks/post-edit-lint.sh. Raise for slow workspaces.",
+          "description": "Maximum milliseconds the end-of-turn cargo clippy run is allowed to take before it is abandoned so the turn can continue. Raise for slow workspaces.",
           "type": "number",
           "default": 30000,
           "category": "Rust",

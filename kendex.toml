@@ -65,7 +65,6 @@ members = [
   "hook/block-bare-cd",
   "hook/block-repo-copy",
   "hook/block-unsafe-rm",
-  "hook/post-edit-lint",
   "hook/pre-commit-check",
   "hook/session-drift-check",
   "hook/task-completed-check",

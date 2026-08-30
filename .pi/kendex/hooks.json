@@ -19,18 +19,6 @@
           }
         ]
       }
-    ],
-    "tool_result": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$(git rev-parse --show-toplevel)/.pi/kendex/hooks/post-edit-lint.sh\"",
-            "timeout": 30
-          }
-        ]
-      }
     ]
   }
 }

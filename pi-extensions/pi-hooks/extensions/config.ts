@@ -8,17 +8,14 @@ export const CONFIG_ID = "@vanillagreen/pi-hooks";
 export type kendexConfig = Record<string, unknown>;
 
 /**
- * Conservative defaults. All hooks enabled. The 30s clippy budget matches the
- * `timeout: 30` declared in `hooks/post-edit-lint.sh` so behavior stays
- * consistent across harnesses; per-call clippy must be considered "slow" but
- * not unbounded.
+ * Conservative defaults. All hooks enabled. The 30s clippy budget keeps the
+ * end-of-turn run slow but not unbounded.
  */
 export const DEFAULTS = {
 	enabled: true,
 	blockBareCd: true,
 	blockRepoCopy: true,
 	preCommitCheck: true,
-	postEditLint: true,
 	taskCompletedCheck: true,
 	sessionDriftCheck: true,
 	clippyTimeoutMs: 30000,
