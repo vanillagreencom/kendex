@@ -291,14 +291,20 @@ assert_eq "$(reason --worktree "$rt_wt" --issue issue-9 --round-id 9-10)" "valid
 ROUND_WRITE="$REPO_ROOT/skills/orch/scripts/dev-round-write"
 rr_wt="$TMP_ROOT/rr"
 mkdir -p "$rr_wt"
+git -C "$rr_wt" init -q -b main
+git -C "$rr_wt" config user.email test@example.com
+git -C "$rr_wt" config user.name Test
+git -C "$rr_wt" config commit.gpgsign false
+git -C "$rr_wt" commit -q --allow-empty -m base
+rr_head="$(git -C "$rr_wt" rev-parse HEAD)"
 "$ROUND_WRITE" --worktree "$rr_wt" --issue issue-9 --round-id 7-8 \
   --item 1 "fix nil deref" --item 2 "cover expiry" >/dev/null
-"$WRITE" --worktree "$rr_wt" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit c \
+"$WRITE" --worktree "$rr_wt" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit "$rr_head" \
   --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
 assert_eq "$(reason --worktree "$rr_wt" --issue issue-9 --round-id 7-8 --expect-items-from-round)" "valid" \
   "artifact covering the persisted round set → valid (writers round-trip)"
 # an artifact missing a delegated item must fail exactly as with explicit numbers
-"$WRITE" --worktree "$rr_wt" --kind fix --issue issue-9 --round-id 8-9 --branch b --commit c \
+"$WRITE" --worktree "$rr_wt" --kind fix --issue issue-9 --round-id 8-9 --branch b --commit "$rr_head" \
   --validate pass --item 1 Applied a >/dev/null
 "$ROUND_WRITE" --worktree "$rr_wt" --issue issue-9 --round-id 8-9 \
   --item 1 "fix nil deref" --item 2 "cover expiry" >/dev/null
@@ -310,12 +316,12 @@ set +e
 "$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 9-9 --expect-items-from-round >/dev/null 2>&1
 assert_eq "$?" "2" "--expect-items-from-round with no round record exits 2"
 # a round record whose internal token differs is not THIS round's record
-jq -n '{schema_version:1,round_id:"OTHER-1",issue:"issue-9",items:[{n:1,text:"t"}]}' \
+jq -n --arg base "$rr_head" '{schema_version:2,round_id:"OTHER-1",issue:"issue-9",base_sha:$base,adds:[],items:[{n:1,text:"t"}]}' \
   > "$rr_wt/tmp/dev-round-issue-9-10-10.json"
 "$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 10-10 --expect-items-from-round >/dev/null 2>&1
 assert_eq "$?" "2" "--expect-items-from-round with mismatched internal round_id exits 2"
 # a malformed round record (empty/ill-typed items) proves nothing about the set
-jq -n '{schema_version:1,round_id:"11-11",issue:"issue-9",items:[]}' \
+jq -n --arg base "$rr_head" '{schema_version:2,round_id:"11-11",issue:"issue-9",base_sha:$base,adds:[],items:[]}' \
   > "$rr_wt/tmp/dev-round-issue-9-11-11.json"
 "$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 11-11 --expect-items-from-round >/dev/null 2>&1
 assert_eq "$?" "2" "--expect-items-from-round with an empty round-record item set exits 2"
@@ -323,15 +329,15 @@ assert_eq "$?" "2" "--expect-items-from-round with an empty round-record item se
 printf 'not json' > "$rr_wt/tmp/dev-round-issue-9-12-12.json"
 "$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 12-12 --expect-items-from-round >/dev/null 2>&1
 assert_eq "$?" "2" "--expect-items-from-round with an unparseable round record exits 2"
-jq -n '{schema_version:1,round_id:"13-13",issue:"issue-OTHER",items:[{n:1,text:"t"}]}' \
+jq -n --arg base "$rr_head" '{schema_version:2,round_id:"13-13",issue:"issue-OTHER",base_sha:$base,adds:[],items:[{n:1,text:"t"}]}' \
   > "$rr_wt/tmp/dev-round-issue-9-13-13.json"
 "$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 13-13 --expect-items-from-round >/dev/null 2>&1
 assert_eq "$?" "2" "--expect-items-from-round with a mismatched internal issue exits 2"
-jq -n '{round_id:"14-14",issue:"issue-9",items:[{n:1,text:"t"}]}' \
+jq -n --arg base "$rr_head" '{round_id:"14-14",issue:"issue-9",base_sha:$base,adds:[],items:[{n:1,text:"t"}]}' \
   > "$rr_wt/tmp/dev-round-issue-9-14-14.json"
 "$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 14-14 --expect-items-from-round >/dev/null 2>&1
 assert_eq "$?" "2" "--expect-items-from-round with a record missing schema_version exits 2"
-jq -n '{schema_version:1,round_id:"15-15",issue:"issue-9",items:[{n:1,text:""}]}' \
+jq -n --arg base "$rr_head" '{schema_version:2,round_id:"15-15",issue:"issue-9",base_sha:$base,adds:[],items:[{n:1,text:""}]}' \
   > "$rr_wt/tmp/dev-round-issue-9-15-15.json"
 "$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 15-15 --expect-items-from-round >/dev/null 2>&1
 assert_eq "$?" "2" "--expect-items-from-round with an empty item text exits 2"
@@ -339,7 +345,7 @@ set -e
 # the count-vs-set hint diagnoses a TYPED --expect-items count; a set read from
 # the round record cannot be that misuse, so from-round must not emit the hint
 # even when the shapes coincide (control first: the inline form still fires it).
-"$WRITE" --worktree "$rr_wt" --kind fix --issue issue-9 --round-id 16-16 --branch b --commit c \
+"$WRITE" --worktree "$rr_wt" --kind fix --issue issue-9 --round-id 16-16 --branch b --commit "$rr_head" \
   --validate pass --item 1 Applied a --item 2 Applied b --item 3 Applied c >/dev/null
 hint_inline="$("$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 16-16 --expect-items 3 2>/dev/null | jq -r '.hint' || true)"
 assert_eq "$([[ "$hint_inline" != "null" ]] && echo fires)" "fires" \
@@ -357,6 +363,66 @@ assert_eq "$?" "2" "--expect-items and --expect-items-from-round together exit 2
 "$CHECK" --file "$rr_wt/tmp/dev-return-issue-9-7-8.json" --expect-items-from-round >/dev/null 2>&1
 assert_eq "$?" "2" "--file mode rejects --expect-items-from-round"
 set -e
+
+# --- KEN-826: a fix round cannot add unlisted machinery ---
+adds_wt="$TMP_ROOT/adds"
+mkdir -p "$adds_wt"
+git -C "$adds_wt" init -q -b main
+git -C "$adds_wt" config user.email test@example.com
+git -C "$adds_wt" config user.name Test
+git -C "$adds_wt" config commit.gpgsign false
+git -C "$adds_wt" commit -q --allow-empty -m base
+
+"$ROUND_WRITE" --worktree "$adds_wt" --issue issue-826 --round-id 1-1 --item 1 "fix finding" >/dev/null
+mkdir -p "$adds_wt/crates/new-parser" "$adds_wt/skills/orch/scripts" "$adds_wt/tools" "$adds_wt/ui/src/test"
+printf 'crate\n' > "$adds_wt/crates/new-parser/lib.rs"
+printf 'script\n' > "$adds_wt/skills/orch/scripts/new-check"
+printf 'tool\n' > "$adds_wt/tools/new-tool"
+newline_path=$'tools/new\nline'
+printf 'odd path\n' > "$adds_wt/$newline_path"
+printf 'helper\n' > "$adds_wt/ui/src/test/round-helper.ts"
+git -C "$adds_wt" add crates/new-parser/lib.rs skills/orch/scripts/new-check tools/new-tool "$newline_path" ui/src/test/round-helper.ts
+git -C "$adds_wt" commit -q -m additions
+adds_head="$(git -C "$adds_wt" rev-parse HEAD)"
+"$WRITE" --worktree "$adds_wt" --kind fix --issue issue-826 --round-id 1-1 --branch b --commit "$adds_head" \
+  --validate pass --item 1 Applied done >/dev/null
+set +e
+adds_out="$("$CHECK" --worktree "$adds_wt" --issue issue-826 --round-id 1-1 --expect-items-from-round 2>/dev/null)"
+adds_rc=$?
+set -e
+assert_eq "$adds_rc" "1" "an unlisted sensitive addition refuses acceptance"
+assert_eq "$(jq -r '.reason' <<<"$adds_out")" "unapproved_additions" "the refusal has a distinct reason"
+assert_eq "$(jq -c '.files' <<<"$adds_out")" \
+  '["crates/new-parser/lib.rs","skills/orch/scripts/new-check","tools/new\nline","tools/new-tool","ui/src/test/round-helper.ts"]' \
+  "the refusal names every unlisted addition"
+
+"$ROUND_WRITE" --worktree "$adds_wt" --issue issue-826 --round-id 2-2 --item 1 "fix finding" \
+  --add crates/allowed/lib.rs --add skills/orch/scripts/allowed-check \
+  --add tools/allowed-tool --add ui/src/test/allowed-helper.ts >/dev/null
+mkdir -p "$adds_wt/crates/allowed"
+printf 'crate\n' > "$adds_wt/crates/allowed/lib.rs"
+printf 'script\n' > "$adds_wt/skills/orch/scripts/allowed-check"
+printf 'tool\n' > "$adds_wt/tools/allowed-tool"
+printf 'helper\n' > "$adds_wt/ui/src/test/allowed-helper.ts"
+git -C "$adds_wt" add crates/allowed/lib.rs skills/orch/scripts/allowed-check tools/allowed-tool ui/src/test/allowed-helper.ts
+git -C "$adds_wt" commit -q -m allowed-additions
+allowed_head="$(git -C "$adds_wt" rev-parse HEAD)"
+"$WRITE" --worktree "$adds_wt" --kind fix --issue issue-826 --round-id 2-2 --branch b --commit "$allowed_head" \
+  --validate pass --item 1 Applied done >/dev/null
+assert_eq "$(reason --worktree "$adds_wt" --issue issue-826 --round-id 2-2 --expect-items-from-round)" "valid" \
+  "each addition named by the round is accepted"
+
+printf 'move me\n' > "$adds_wt/ordinary.txt"
+git -C "$adds_wt" add ordinary.txt
+git -C "$adds_wt" commit -q -m pre-move
+"$ROUND_WRITE" --worktree "$adds_wt" --issue issue-826 --round-id 3-3 --item 1 "move existing file" >/dev/null
+git -C "$adds_wt" mv ordinary.txt tools/moved.txt
+git -C "$adds_wt" commit -q -m move
+move_head="$(git -C "$adds_wt" rev-parse HEAD)"
+"$WRITE" --worktree "$adds_wt" --kind fix --issue issue-826 --round-id 3-3 --branch b --commit "$move_head" \
+  --validate pass --item 1 Applied done >/dev/null
+assert_eq "$(reason --worktree "$adds_wt" --issue issue-826 --round-id 3-3 --expect-items-from-round)" "valid" \
+  "a moved file is not treated as an addition"
 
 # --- kendex#994: the recorded commit must name a real object in the worktree's repo ---
 # Case 1 (hyprtrade CC-1006): a dev agent hand-reconstructed a full SHA from the
@@ -473,6 +539,8 @@ assert_file_contains "$orch_dev_fix" "$WATCHDOG_STAMP" "orch dev-fix still stamp
 assert_file_contains "$orch_dev_fix" "$ROUND_STAMP" "orch dev-fix mints dev_round_id before delegation"
 assert_file_contains "$orch_dev_fix" "$ROUND_CHECK_EXPECT" "orch dev-fix accepts via round-mode dev-artifact-check WITH --expect-items-from-round in one command"
 assert_file_contains "$orch_dev_fix" "$ROUND_ITEMS_PERSIST" "orch dev-fix persists the delegated item set at stamp time (kendex#1230)"
+assert_file_contains "$orch_dev_fix" "Adds: [REPO_RELATIVE_PATH]" "orch dev-fix delegation carries the optional Adds line"
+assert_file_contains "$orch_dev_fix" "--add [REPO_RELATIVE_PATH]" "orch dev-fix records each allowed path in the round record"
 assert_file_contains "$orch_dev_fix" "Round ID: [DEV_ROUND_ID]" "orch dev-fix delegation carries the Round ID line"
 assert_file_contains "$orch_dev_fix" "$ARTIFACT_KEY_LINE" "orch dev-fix delegation carries the Artifact Key line"
 
@@ -481,6 +549,8 @@ assert_file_contains "$review_pr_comments" "$WATCHDOG_STAMP" "review-pr-comments
 assert_file_contains "$review_pr_comments" "$ROUND_STAMP" "review-pr-comments § 6.1 mints dev_round_id before delegation"
 assert_file_contains "$review_pr_comments" "$ROUND_CHECK_EXPECT" "review-pr-comments accepts via round-mode dev-artifact-check WITH --expect-items-from-round in one command"
 assert_file_contains "$review_pr_comments" "$ROUND_ITEMS_PERSIST" "review-pr-comments persists each group's delegated item set at stamp time (kendex#1230)"
+assert_file_contains "$review_pr_comments" "Adds: [REPO_RELATIVE_PATH]" "review-pr-comments delegation carries the optional Adds line"
+assert_file_contains "$review_pr_comments" "--add [REPO_RELATIVE_PATH]" "review-pr-comments records each allowed path in the round record"
 assert_file_contains "$review_pr_comments" "Round ID: [DEV_ROUND_ID]" "review-pr-comments delegation carries the Round ID line"
 assert_file_contains "$review_pr_comments" "$ARTIFACT_KEY_LINE" "review-pr-comments delegation carries the Artifact Key line"
 
@@ -563,6 +633,7 @@ assert_contains_str() {
 }
 assert_contains_str "$check_help" "Gates ordered:" "--help documents the gate ordering"
 assert_contains_str "$check_help" "commit_unresolvable" "--help documents the commit gate"
+assert_contains_str "$check_help" "unapproved_additions" "--help documents the additions gate"
 assert_contains_str "$check_help" "incomplete" "--help documents the incomplete reason"
 artifact_checks_ref="$REPO_ROOT/skills/orch/references/artifact-checks.md"
 assert_file_contains "$artifact_checks_ref" "--help" "artifact-checks reference routes to the help contracts"
@@ -577,6 +648,8 @@ assert_file_contains "$state_schema" "dev_round_id" "workflow-state schema docum
 dev_round_schema="$REPO_ROOT/skills/orch/schemas/dev-round.md"
 assert_file_contains "$dev_round_schema" "dev-round-write" "dev-round schema references the writer"
 assert_file_contains "$dev_round_schema" "round_id" "dev-round schema documents round_id identity"
+assert_file_contains "$dev_round_schema" "base_sha" "dev-round schema documents the fix round base"
+assert_file_contains "$dev_round_schema" "adds" "dev-round schema documents allowed additions"
 assert_file_contains "$dev_round_schema" "--expect-items-from-round" "dev-round schema documents the check-side reader"
 
 # --- kendex#884: the note has to reach the orchestrator, not just the file ---

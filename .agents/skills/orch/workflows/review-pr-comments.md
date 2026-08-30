@@ -221,10 +221,10 @@ Read the round budget first. The cap governs what may be pushed, so it decides b
 
 `worktree-claim` exit 75 aborts the delegation — another session holds this worktree, and its stderr names the holder; exit 1 is an unverifiable guard, which stops the workflow and is reported. Its printed token is the delegation's `Worktree Lease:` line.
 
-Persist this group's slice of the `fix set`: write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool — a JSON array of `{"n": [N], "text": "[ITEM_TEXT]"}`, `[ITEM_TEXT]` being that item's formatted block from the delegation verbatim — then:
+Persist this group's slice of the `fix set`: write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]"}`. `[ITEM_TEXT]` is that item's formatted block from the delegation verbatim. Decide whether this fix round may add files under `crates/`, `skills/*/scripts/`, `tools/`, or a test-helper path. The default is none. When a file is required, append one `--add [REPO_RELATIVE_PATH]` per exact path:
 
 ```bash
-.agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json
+.agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json [--add [REPO_RELATIVE_PATH]]...
 ```
 
 ⚠ Fill placeholders only ([Format Tags Are Literal](../SKILL.md#format-tags-are-literal)). `Recommendation:` is the technical fix; the agent owns its own process.
@@ -239,6 +239,7 @@ Worktree: [WORKTREE_PATH]
 Worktree Lease: [WORKTREE_LEASE]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
+[If the round may add files: "Adds: [REPO_RELATIVE_PATH] [REPO_RELATIVE_PATH]..."]
 
 Review items:
 [For each item in the fix set:]

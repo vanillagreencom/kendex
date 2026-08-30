@@ -29,6 +29,8 @@ GitHub: `gh issue view [N] --repo [OWNER/REPO] --json number,title,body,comments
 
 Evaluate each item in `Review items:` independently.
 
+An optional `Adds:` line is the complete list of new files this round may add under `crates/`, `skills/*/scripts/`, `tools/`, and test-helper paths. With no line, add none in those locations. If the fix needs another file, report that requirement instead of creating it; the orchestrator must authorize the exact path in a fresh round.
+
 - **Apply** when the item relates to the parent issue and adds no new risk. Unrelated changes become separate issues.
 - **Skip** when the pattern conflicts with the existing architecture, would break other functionality, or violates your defined rules and conventions. Before applying anything, search the decisions governing the affected area — `.agents/skills/decider/scripts/decisions search "[RELEVANT_KEYWORDS]"`, and `.agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]` for those linked to the issue — and read the full file for any match. An item contradicting an active decision is skipped citing it, e.g. "Skipped — contradicts D010".
 - **Decline** an item that cannot affect real usage, with one line of reasoning, and do not file it. Disposition rules are orch's [references/finding-disposition.md](../../orch/references/finding-disposition.md).

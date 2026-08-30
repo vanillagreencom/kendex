@@ -44,6 +44,12 @@ echo "=== dev-round-write ==="
 
 worktree="$TMP_ROOT/wt"
 mkdir -p "$worktree"
+git -C "$worktree" init -q -b main
+git -C "$worktree" config user.email test@example.com
+git -C "$worktree" config user.name Test
+git -C "$worktree" config commit.gpgsign false
+git -C "$worktree" commit -q --allow-empty -m base
+base_sha="$(git -C "$worktree" rev-parse HEAD)"
 RID="1750000000-77"
 
 # --- valid: two-item round record ---
@@ -54,13 +60,16 @@ ITEM2='#2 | test-review | tests/auth.rs
 Description: "no coverage for expired token"
 Recommendation: "add expiry regression test"'
 out="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id "$RID" \
-  --item 1 "$ITEM1" --item 2 "$ITEM2")"
+  --item 1 "$ITEM1" --item 2 "$ITEM2" \
+  --add crates/parser/src/lib.rs --add skills/orch/scripts/new-check)"
 assert_eq "$out" "$worktree/tmp/dev-round-issue-1230-$RID.json" "prints the round-scoped record path"
 assert_eq "$([[ -f "$out" ]] && echo yes)" "yes" "wrote the file"
-assert_eq "$(jq -r '.schema_version' "$out")" "1" ".schema_version is 1"
+assert_eq "$(jq -r '.schema_version' "$out")" "2" ".schema_version is 2"
 assert_eq "$(jq -r '.schema_version | type' "$out")" "number" ".schema_version is a JSON number"
 assert_eq "$(jq -r '.round_id' "$out")" "$RID" ".round_id matches --round-id (internal token binding)"
 assert_eq "$(jq -r '.issue' "$out")" "issue-1230" ".issue is the normalized state key"
+assert_eq "$(jq -r '.base_sha' "$out")" "$base_sha" ".base_sha records HEAD at delegation"
+assert_eq "$(jq -c '.adds' "$out")" '["crates/parser/src/lib.rs","skills/orch/scripts/new-check"]' ".adds records each allowed new path"
 assert_eq "$(jq -r '.items | length' "$out")" "2" ".items carries one entry per --item"
 assert_eq "$(jq -r '.items[0].n' "$out")" "1" "first item keeps its delegated number"
 assert_eq "$(jq -r '.items[0].n | type' "$out")" "number" ".items[].n is a JSON number"
@@ -72,7 +81,8 @@ assert_eq "$(jq -r '.items[1].text' "$out")" "$ITEM2" ".items[].text preserves t
 # rewrite the authoritative delegated set (e.g. a retry with a partial list) —
 # refused: a changed delegation needs a NEW round id.
 out_rerun="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id "$RID" \
-  --item 1 "$ITEM1" --item 2 "$ITEM2")"
+  --item 1 "$ITEM1" --item 2 "$ITEM2" \
+  --add crates/parser/src/lib.rs --add skills/orch/scripts/new-check)"
 assert_eq "$out_rerun" "$out" "identical re-invocation is idempotent (exit 0, same path)"
 assert_eq "$(jq -c '[.items[].n]' "$out")" "[1,2]" "identical re-invocation leaves the record unchanged"
 assert_exit2 "a different item set under the same round id exits 2 (immutable round)" \
@@ -134,6 +144,9 @@ assert_exit2 "no --item exits 2 (an empty delegated set is not a fix round)" \
 assert_exit2 "missing --worktree exits 2" --issue i --round-id 1-1 --item 1 t
 assert_exit2 "nonexistent --worktree exits 2" \
   --worktree "$TMP_ROOT/nope" --issue i --round-id 1-1 --item 1 t
+mkdir -p "$TMP_ROOT/no-head"
+assert_exit2 "worktree with no HEAD commit exits 2" \
+  --worktree "$TMP_ROOT/no-head" --issue i --round-id 1-1 --item 1 t
 assert_exit2 "missing --issue exits 2" --worktree "$worktree" --round-id 1-1 --item 1 t
 assert_exit2 "missing --round-id exits 2" --worktree "$worktree" --issue i --item 1 t
 assert_exit2 "path-unsafe --issue (slash) exits 2" \
@@ -158,6 +171,12 @@ assert_exit2 "duplicate --issue exits 2 (no silent last-wins)" \
   --worktree "$worktree" --issue i --issue j --round-id 1-1 --item 1 t
 assert_exit2 "unknown argument exits 2" \
   --worktree "$worktree" --issue i --round-id 1-1 --item 1 t --bogus
+assert_exit2 "absolute --add path exits 2" \
+  --worktree "$worktree" --issue i --round-id 1-1 --item 1 t --add /tools/new
+assert_exit2 "traversing --add path exits 2" \
+  --worktree "$worktree" --issue i --round-id 1-1 --item 1 t --add tools/../new
+assert_exit2 "duplicate --add path exits 2" \
+  --worktree "$worktree" --issue i --round-id 1-1 --item 1 t --add tools/new --add tools/new
 
 set +e
 "$WRITE" -h >/dev/null 2>&1

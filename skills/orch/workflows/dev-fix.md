@@ -88,10 +88,10 @@ Cancel ends the workflow; a selection goes to § 2.
 
    `worktree-claim` exit 75 aborts the delegation (another session holds this worktree; stderr names the holder); exit 1 stops the workflow and is reported. Its printed token is the delegation's `Worktree Lease:` line.
 
-   Then persist the delegated item set on disk. Write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool — a JSON array of `{"n": [N], "text": "[ITEM_TEXT]"}`, one per delegated item, `[ITEM_TEXT]` being that item's formatted block verbatim — then:
+   Then persist the delegated item set on disk. Write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]"}`, one per delegated item. `[ITEM_TEXT]` is that item's formatted block verbatim. Decide whether this fix round may add files under `crates/`, `skills/*/scripts/`, `tools/`, or a test-helper path. The default is none. When a file is required, append one `--add [REPO_RELATIVE_PATH]` per exact path:
 
    ```bash
-   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json
+   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json [--add [REPO_RELATIVE_PATH]]...
    ```
 
    `--issue` takes the normalized workflow-state key — the value the delegation's `Artifact Key:` line carries. Only when every item's text is plain (no backticks or quotes) may you pass `--item [N] '[ITEM_TEXT]'` pairs inline in one command instead.
@@ -110,6 +110,7 @@ Cancel ends the workflow; a selection goes to § 2.
    Round ID: [DEV_ROUND_ID]
    Artifact Key: [ISSUE_ID]
    QA: [QA_AGENT]
+   [If the round may add files: "Adds: [REPO_RELATIVE_PATH] [REPO_RELATIVE_PATH]..."]
 
    Decisions:
    [For each verified decision: "- [DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
@@ -148,7 +149,7 @@ Cancel ends the workflow; a selection goes to § 2.
    | `accept` | fail | The artifact claims done but the worktree is dirty or the commit is missing. Re-read git ONCE after a brief pause, then re-delegate only the missing step: commit, or revert leftover work. |
    | `wait` | pass | Do NOT re-run the fix and do NOT accept on git alone. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write --kind fix … --round-id [DEV_ROUND_ID]` with one `--item` per review item; if the delegation is gone from your context, your item set is on disk at `tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID].json`) and re-report your item decisions; do NOT re-run the fix."* Accept only when a valid artifact for THIS round appears. |
    | `wait` | fail | **Not done.** Wait to the deadline, then escalate per [SKILL.md § Round Closure](../SKILL.md#round-closure). |
-| `retry` | any | An artifact for THIS round exists but fails a gate — the check's `reason` names it. A failing `validate` re-delegates fixing the validation; an identity/schema failure gets the report-only tail-rewrite nudge. Never accept, and never treat it as absent. |
+| `retry` | any | An artifact for THIS round exists but fails a gate. The check's `reason` names it. `unapproved_additions` also returns every refused path in `files`; start a fresh round that names each deliberate path in `Adds:`, or order the files cut. A failing `validate` re-delegates fixing the validation; an identity/schema failure gets the report-only tail-rewrite nudge. Never accept, and never treat it as absent. |
 
    **Analysis rounds** run Check A without an expected-set flag, and B expects no new commit and a clean worktree. On accept, read the `summary` recommendation and decide the next step: delegate the actual fixes as a fresh round, or close and re-scope with reasoning.
 

@@ -92,15 +92,19 @@ delegated item set, instead of a number list typed from the orchestrator's
 context. The record's internal .round_id must equal RID and its items[] must
 be a non-empty array of numeric .n; a missing, mismatched, or malformed record
 means the expected set cannot be established, so the check refuses to run
-(exit 2) rather than silently degrading to the weaker fallback gate.
+(exit 2) rather than silently degrading to the weaker fallback gate. The same
+record supplies base_sha and adds[] for the fix-round additions gate.
 
 Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,
-              reason: "valid"|"missing"|"invalid"|"commit_unresolvable"|"incomplete",
+              reason: "valid"|"missing"|"invalid"|"commit_unresolvable"|
+                      "unapproved_additions"|"incomplete",
               warning: "commit_unreachable"|null,
-              hint: usage diagnosis (count-vs-set --expect-items misuse)|null}
+              hint: usage diagnosis (count-vs-set --expect-items misuse)|null,
+              files: [repo-relative paths]}
 
 Gates ordered: missing → (round_id mismatch → invalid) → scalars → invalid →
-commit object → commit_unresolvable → items → incomplete → valid.
+commit object → commit_unresolvable → additions → unapproved_additions →
+items → incomplete → valid.
 
 Exit status reflects artifact validity only: a valid artifact whose recorded
 validation is failing exits 0 with verdict "retry". Acceptance keys on the
@@ -121,6 +125,11 @@ reason meanings when ok=false:
               (kendex#994) — e.g. a hand-reconstructed SHA with a fabricated
               tail. Round mode only, and only when the worktree is a git repo;
               --file mode has no repo to check against and skips this gate.
+  unapproved_additions
+              a fix round added a file in crates/, tools/, skills/*/scripts/,
+              or a test-helper path since the round record's base_sha without
+              naming that exact file in the record's adds array. The files
+              field names every refused path. Renames and moves do not count.
   incomplete  items[] fails the applicable rule — exact-set (with --expect-items)
               or non-empty-well-formed (kind fix OR bundled==true). kind implement
               without bundled keeps allowing items: []. kind analysis is
@@ -161,7 +170,7 @@ check_id_token() {
 # one that was never recorded (kendex#884). Both are null when the artifact is
 # missing or unparseable.
 emit() {
-  local ok="$1" path="$2" reason="$3" warning="${4:-}" hint="${5:-}" validate=null validate_note=null
+  local ok="$1" path="$2" reason="$3" warning="${4:-}" hint="${5:-}" files="${6:-[]}" validate=null validate_note=null
   if [[ -n "$path" && -f "$path" ]]; then
     validate="$(jq -c 'if (.validate? | type) == "string" then .validate else null end' "$path" 2>/dev/null || printf 'null')"
     validate_note="$(jq -c 'if (.validate_note? | type) == "string" then .validate_note else null end' "$path" 2>/dev/null || printf 'null')"
@@ -183,10 +192,11 @@ emit() {
   fi
   jq -n --argjson ok "$ok" --arg path "$path" --arg reason "$reason" --arg warning "$warning" \
     --arg hint "$hint" --arg verdict "$verdict" \
-    --argjson validate "${validate:-null}" --argjson validate_note "${validate_note:-null}" \
+    --argjson files "$files" --argjson validate "${validate:-null}" --argjson validate_note "${validate_note:-null}" \
     '{ok: $ok, verdict: $verdict, path: (if $path == "" then null else $path end), reason: $reason,
       warning: (if $warning == "" then null else $warning end),
       hint: (if $hint == "" then null else $hint end),
+      files: $files,
       validate: $validate, validate_note: $validate_note}'
 }
 
@@ -274,6 +284,35 @@ analysis_incomplete() {
   ' "$1" >/dev/null 2>&1
 }
 
+unapproved_additions() {
+  local repo="$1" round_record="$2" base_sha path diff_pid
+  local additions=()
+  base_sha="$(jq -r '.base_sha' "$round_record")"
+  exec 3< <(git -C "$repo" diff --find-renames --diff-filter=A --name-only -z "$base_sha...HEAD")
+  diff_pid=$!
+  while IFS= read -r -d '' path <&3; do
+    case "$path" in
+      crates/*|tools/*|skills/*/scripts/*|*/src/test/*|*/test/lib/*|*/tests/lib/*|\
+      */test/helper/*|*/tests/helper/*|*/test/helpers/*|*/tests/helpers/*|\
+      */test/support/*|*/tests/support/*|*/test/util/*|*/tests/util/*|\
+      */test/utils/*|*/tests/utils/*|*test-helper*|*test_helper*|*test-util*|*test_util*)
+        if ! jq -e --arg path "$path" '.adds | index($path) != null' "$round_record" >/dev/null; then
+          additions+=("$path")
+        fi
+        ;;
+    esac
+  done
+  exec 3<&-
+  if ! wait "$diff_pid"; then
+    die "could not list files added since round base $base_sha in $repo"
+  fi
+  if (( ${#additions[@]} > 0 )); then
+    jq -n '$ARGS.positional' --args "${additions[@]}"
+  else
+    printf '[]\n'
+  fi
+}
+
 # Shared gate: existence → (round_id match, when expected) → required scalars
 # (invalid) → commit object (commit_unresolvable, kendex#994) → items/summary
 # (incomplete) → valid. Emits {ok, path, reason, warning}, returns 0 iff valid.
@@ -283,7 +322,7 @@ analysis_incomplete() {
 # a git repo — production worktrees always are, and a check that cannot run
 # proves nothing either way.
 validate_artifact() {
-  local file="$1" want_round="$2" expect_items="$3" repo="${4:-}" warning=""
+  local file="$1" want_round="$2" expect_items="$3" repo="${4:-}" round_record="${5:-}" warning=""
   if [[ ! -f "$file" ]]; then
     emit false "" "missing"
     return 1
@@ -314,6 +353,16 @@ validate_artifact() {
     if ! git -C "$repo" merge-base --is-ancestor "$commit" HEAD >/dev/null 2>&1; then
       warning="commit_unreachable"
       printf '%s: artifact commit %s resolves but is not an ancestor of HEAD in %s (orphaned by a rebase?)\n' "$PROG" "$commit" "$repo" >&2
+    fi
+  fi
+  if [[ -n "$round_record" ]]; then
+    local refused_additions
+    refused_additions="$(unapproved_additions "$repo" "$round_record")"
+    if [[ "$refused_additions" != "[]" ]]; then
+      printf '%s: fix round added files absent from its Adds line: %s\n' \
+        "$PROG" "$(jq -r 'join(", ")' <<<"$refused_additions")" >&2
+      emit false "$file" "unapproved_additions" "" "" "$refused_additions"
+      return 1
     fi
   fi
   if [[ -n "$expect_items" ]]; then
@@ -367,6 +416,7 @@ file=""
 want_round=""
 expect_items=""
 expect_from_round=false
+round_record=""
 repo=""
 wait_secs=0
 interval=5
@@ -431,8 +481,15 @@ elif [[ "${1:-}" == --* ]]; then
     # not have written (wrong issue, missing schema_version, ill-typed or
     # empty items/text) is no source of truth for the expected set.
     jq -e --arg issue "$issue" '
-      ((.schema_version? | type) == "number")
+      (.schema_version? == 2)
       and ((.issue? | type) == "string") and (.issue == $issue)
+      and ((.base_sha? | type) == "string") and (.base_sha != "")
+      and ((.adds? | type) == "array")
+      and all(.adds[];
+            (type == "string") and (. != "") and (startswith("/") | not)
+            and (contains("\n") | not) and (contains("\r") | not)
+            and (split("/") | all(. != "" and . != "." and . != "..")))
+      and ((.adds | length) == (.adds | unique | length))
       and ((.items? | type) == "array") and ((.items | length) > 0)
       and all(.items[];
             (type == "object")
@@ -441,7 +498,9 @@ elif [[ "${1:-}" == --* ]]; then
             and ((.text | gsub("[[:space:]]"; "")) != ""))
       and (([.items[].n] | length) == ([.items[].n] | unique | length))
     ' "$round_record" >/dev/null 2>&1 \
-      || die "round record $round_record fails the dev-round schema (schema_version number, issue '$issue', non-empty items[] of unique integer n + non-empty text) — see skills/orch/schemas/dev-round.md"
+      || die "round record $round_record fails the dev-round schema (schema_version 2, issue '$issue', base_sha, unique repository-relative adds[], non-empty items[] of unique integer n + non-empty text) — see skills/orch/schemas/dev-round.md"
+    [[ "$(git -C "$worktree" cat-file -t "$(jq -r '.base_sha' "$round_record")" 2>/dev/null)" == "commit" ]] \
+      || die "round record $round_record base_sha does not name a commit in $worktree"
     expect_items="$(jq -r '[.items[].n | tostring] | join(",")' "$round_record")"
   fi
 else
@@ -466,7 +525,7 @@ if (( wait_secs > 0 )); then
   deadline=$(( $(date +%s) + wait_secs ))
   while :; do
     rc=0
-    out="$(validate_artifact "$file" "$want_round" "$expect_items" "$repo")" || rc=$?
+    out="$(validate_artifact "$file" "$want_round" "$expect_items" "$repo" "$round_record")" || rc=$?
     verdict="$(jq -r '.verdict // "wait"' <<<"$out" 2>/dev/null || printf 'wait')"
     if [[ "$verdict" != "wait" ]] || (( $(date +%s) >= deadline )); then
       printf '%s\n' "$out"
@@ -479,4 +538,4 @@ if (( wait_secs > 0 )); then
     sleep "$sleep_for"
   done
 fi
-if validate_artifact "$file" "$want_round" "$expect_items" "$repo"; then exit 0; else exit 1; fi
+if validate_artifact "$file" "$want_round" "$expect_items" "$repo" "$round_record"; then exit 0; else exit 1; fi

@@ -25,7 +25,8 @@
 #
 # Usage:
 #   dev-round-write --worktree PATH --issue ID --round-id RID \
-#     (--item N TEXT [--item N TEXT]... | --items-file JSON_PATH)
+#     (--item N TEXT [--item N TEXT]... | --items-file JSON_PATH) \
+#     [--add REPO_RELATIVE_PATH]...
 #
 # One --item per delegated review item: N is the item's delegated number (the
 # `#[N]` in the formatted items — a set, so duplicates are rejected; canonical
@@ -45,11 +46,16 @@
 # round id (`workflow-state new-round-id`), which is the round-token
 # discipline: one token, one delegation, one item set.
 #
+# Each --add records a file the orchestrator authorized this fix round to add.
+# The writer records HEAD as the comparison base used at acceptance.
+#
 # Record schema — canonical source of truth: skills/orch/schemas/dev-round.md
 #   {
-#     "schema_version": 1,                  // required, number
+#     "schema_version": 2,                  // required, number
 #     "round_id": "[ROUND_ID]",             // required, matches the filename token
 #     "issue": "[ISSUE_ID]",                // required, normalized state key
+#     "base_sha": "[HEAD_AT_DELEGATION]",    // required, full commit id
+#     "adds": ["tools/allowed-file"],        // required, [] means none allowed
 #     "items": [{"n": 1, "text": "…"}]      // required, >=1 entry
 #   }
 #
@@ -76,7 +82,8 @@ usage() {
   cat <<'EOF'
 Usage:
   dev-round-write --worktree PATH --issue ID --round-id RID \
-    (--item N TEXT [--item N TEXT]... | --items-file JSON_PATH)
+    (--item N TEXT [--item N TEXT]... | --items-file JSON_PATH) \
+    [--add REPO_RELATIVE_PATH]...
 
 Persists the round's delegated item set to PATH/tmp/dev-round-ID-RID.json
 (atomically) and prints its absolute path. One --item per delegated review
@@ -92,6 +99,10 @@ success; different content under the same round id exits 2 — a changed
 delegation needs a NEW round id. The record is read back by
 dev-artifact-check --expect-items-from-round, by a respawned dev agent
 recovering its items, and by the tail-reconciliation nudge.
+Each --add names one repository-relative file the fix round may add. Omit it to
+allow none. Absolute, traversing, empty, and duplicate paths are rejected. The
+record captures the worktree's current HEAD as base_sha; a worktree with no
+resolvable HEAD is rejected.
 --issue / --round-id must match
 ^[A-Za-z0-9._-]+$ with no '..'. Canonical schema:
 skills/orch/schemas/dev-round.md.
@@ -102,7 +113,7 @@ EOF
 # legitimate prose that merely begins with '--'.
 is_own_flag() {
   case "$1" in
-    --worktree|--issue|--round-id|--item|--items-file|-h|--help) return 0 ;;
+    --worktree|--issue|--round-id|--item|--items-file|--add|-h|--help) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -128,13 +139,26 @@ check_id_token() {
     || die "$1 '$2' must match ${ID_GRAMMAR} with no '..' (path-safe: no '/' or whitespace)"
 }
 
+check_add_path() {
+  local path="$1"
+  [[ -n "$path" ]] || die "--add requires a non-empty repository-relative path"
+  [[ "$path" != /* && "$path" != *$'\n'* && "$path" != *$'\r'* ]] \
+    || die "--add path '$path' must be a single-line repository-relative path"
+  [[ "$path" != "." && "$path" != ".." && "$path" != ./* && "$path" != */./* \
+     && "$path" != */. && "$path" != ../* && "$path" != */../* && "$path" != */.. \
+     && "$path" != *//* ]] \
+    || die "--add path '$path' must not contain '.', '..', or empty path components"
+}
+
 worktree=""
 issue=""
 round_id=""
 items_file=""
 item_n=()
 item_text=()
+adds=()
 seen_n=" "
+seen_adds=$'\n'
 worktree_given=false
 issue_given=false
 round_id_given=false
@@ -146,6 +170,16 @@ while (( $# > 0 )); do
     --issue)    need "$1" $# "${2:-}"; no_dup "$1" "$issue_given";    issue_given=true;    issue="$2"; shift 2 ;;
     --round-id) need "$1" $# "${2:-}"; no_dup "$1" "$round_id_given"; round_id_given=true; round_id="$2"; shift 2 ;;
     --items-file) need "$1" $# "${2:-}"; no_dup "$1" "$items_file_given"; items_file_given=true; items_file="$2"; shift 2 ;;
+    --add)
+      need "$1" $# "${2:-}"
+      check_add_path "$2"
+      case "$seen_adds" in
+        *$'\n'"$2"$'\n'*) die "duplicate --add path '$2': each allowed addition is named once" ;;
+      esac
+      adds+=("$2")
+      seen_adds="$seen_adds$2"$'\n'
+      shift 2
+      ;;
     --item)
       # Consumes exactly 2 args: N TEXT.
       if (( $# < 3 )); then
@@ -181,6 +215,8 @@ done
 [[ -d "$worktree" ]] || die "--worktree path '$worktree' is not a directory"
 check_id_token --issue "$issue"
 check_id_token --round-id "$round_id"
+base_sha="$(git -C "$worktree" rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" \
+  || die "worktree '$worktree' has no resolvable HEAD commit to record as the round base"
 
 # --- Exactly one item source: inline --item xor --items-file ---
 if [[ "$items_file_given" == "true" ]] && (( ${#item_n[@]} > 0 )); then
@@ -219,6 +255,12 @@ else
   )"
 fi
 
+if (( ${#adds[@]} > 0 )); then
+  adds_json="$(jq -n '$ARGS.positional' --args "${adds[@]}")"
+else
+  adds_json='[]'
+fi
+
 # --- Compute the absolute, round-scoped out path ---
 mkdir -p "$worktree/tmp"
 out_dir="$(cd "$worktree/tmp" && pwd)"
@@ -229,14 +271,18 @@ tmp="$(mktemp "$out_dir/.dev-round-$issue.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT
 
 jq -n \
-  --argjson schema_version 1 \
+  --argjson schema_version 2 \
   --arg round_id "$round_id" \
   --arg issue "$issue" \
+  --arg base_sha "$base_sha" \
+  --argjson adds "$adds_json" \
   --argjson items "$items_json" \
   '{
      schema_version: $schema_version,
      round_id: $round_id,
      issue: $issue,
+     base_sha: $base_sha,
+     adds: $adds,
      items: $items
    }' > "$tmp"
 
