@@ -55,7 +55,7 @@
 #     "round_id": "[ROUND_ID]",             // required, matches the filename token
 #     "issue": "[ISSUE_ID]",                // required, normalized state key
 #     "base_sha": "[HEAD_AT_DELEGATION]",    // required, full commit id
-#     "adds": ["tools/allowed-file"],        // required, [] means none allowed
+#     "adds": ["tools/allowed-file"],        // required, protected additions
 #     "items": [{"n": 1, "text": "…"}]      // required, >=1 entry
 #   }
 #

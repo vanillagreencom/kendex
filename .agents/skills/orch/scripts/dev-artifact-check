@@ -308,10 +308,10 @@ is_protected_addition() {
     test-util/*|test-utils/*|test_util/*|test_utils/*|\
     */test-helper/*|*/test-helpers/*|*/test_helper/*|*/test_helpers/*|\
     */test-util/*|*/test-utils/*|*/test_util/*|*/test_utils/*|\
-    test/lib/*|tests/lib/*|test/support/*|tests/support/*|\
-    test/util/*|tests/util/*|test/utils/*|tests/utils/*|\
-    */test/lib/*|*/tests/lib/*|*/test/support/*|*/tests/support/*|\
-    */test/util/*|*/tests/util/*|*/test/utils/*|*/tests/utils/*)
+    test/lib/*|tests/lib/*|__tests__/lib/*|test/support/*|tests/support/*|__tests__/support/*|\
+    test/util/*|tests/util/*|__tests__/util/*|test/utils/*|tests/utils/*|__tests__/utils/*|\
+    */test/lib/*|*/tests/lib/*|*/__tests__/lib/*|*/test/support/*|*/tests/support/*|*/__tests__/support/*|\
+    */test/util/*|*/tests/util/*|*/__tests__/util/*|*/test/utils/*|*/tests/utils/*|*/__tests__/utils/*)
       return 0
       ;;
   esac
@@ -319,7 +319,7 @@ is_protected_addition() {
   while [[ "$basename" == .* ]]; do basename="${basename#.}"; done
   stem="${basename%%.*}"
   case "$path" in
-    test/*|tests/*|*/test/*|*/tests/*)
+    test/*|tests/*|__tests__/*|*/test/*|*/tests/*|*/__tests__/*)
       case "$stem" in
         *helper*|*test-util*|*test_util*) return 0 ;;
       esac

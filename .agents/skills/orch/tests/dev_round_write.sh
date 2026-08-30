@@ -331,7 +331,7 @@ assert_eq "$([[ -f "$linked_auth" && ! -e "$linked_wt/.git/kendex/dev-round-auth
   "yes" "linked worktree authorization lives in the common repository"
 mkdir -p "$linked_wt/existing" "$linked_wt/adversarial/name_test-helper_more" \
   "$linked_wt/adversarial/name_test_helper_more" "$linked_wt/adversarial/name_test-util_more" \
-  "$linked_wt/adversarial/name_test_util_more" "$linked_wt/tests"
+  "$linked_wt/adversarial/name_test_util_more" "$linked_wt/tests" "$linked_wt/__tests__"
 printf 'helper\n' > "$linked_wt/existing/workflow_helpers.sh"
 printf 'dot helper\n' > "$linked_wt/.workflow_helpers.sh"
 printf 'suffix helper\n' > "$linked_wt/adversarial/prefixhelperSuffix.rs"
@@ -340,10 +340,11 @@ printf 'path substring\n' > "$linked_wt/adversarial/name_test_helper_more/file.r
 printf 'path substring\n' > "$linked_wt/adversarial/name_test-util_more/file.rs"
 printf 'path substring\n' > "$linked_wt/adversarial/name_test_util_more/file.rs"
 printf 'test helper\n' > "$linked_wt/tests/workflow_helpers.sh"
+printf 'js test helper\n' > "$linked_wt/__tests__/workflow_helpers.sh"
 git -C "$linked_wt" add existing/workflow_helpers.sh .workflow_helpers.sh \
   adversarial/prefixhelperSuffix.rs adversarial/name_test-helper_more/file.rs \
   adversarial/name_test_helper_more/file.rs adversarial/name_test-util_more/file.rs \
-  adversarial/name_test_util_more/file.rs tests/workflow_helpers.sh
+  adversarial/name_test_util_more/file.rs tests/workflow_helpers.sh __tests__/workflow_helpers.sh
 git -C "$linked_wt" commit -q -m helpers
 linked_head="$(git -C "$linked_wt" rev-parse HEAD)"
 "$RETURN_WRITE" --worktree "$linked_wt" --kind fix --issue issue-826 --round-id 30-30 \
@@ -355,7 +356,7 @@ set -e
 assert_eq "$linked_rc" "1" "linked worktree helper additions refuse acceptance"
 assert_eq "$(jq -r '.reason' <<<"$linked_out")" "unapproved_additions" "public checker routes helper suffixes through the additions gate"
 assert_eq "$(jq -c '.files' <<<"$linked_out")" \
-  '["adversarial/name_test-helper_more/file.rs","adversarial/name_test-util_more/file.rs","adversarial/name_test_helper_more/file.rs","adversarial/name_test_util_more/file.rs","tests/workflow_helpers.sh"]' \
+  '["__tests__/workflow_helpers.sh","adversarial/name_test-helper_more/file.rs","adversarial/name_test-util_more/file.rs","adversarial/name_test_helper_more/file.rs","adversarial/name_test_util_more/file.rs","tests/workflow_helpers.sh"]' \
   "public checker reports explicit substrings and test-context helper suffixes"
 
 inert_classifier="$TMP_ROOT/inert-classifier"
@@ -434,7 +435,7 @@ for scope_doc in "${scope_docs[@]}"; do
   scope_text="$(<"$scope_doc")"
   assert_text_matches "$scope_text" '^[[:space:]]*[^<[:space:]].*schemas/dev-round\.md.*Protected additions' \
     "$(basename "$scope_doc") points at the canonical protected-additions scope"
-  assert_text_not_matches "$scope_text" 'Protected additions are|files? (the )?fix round may add|files? this round may add|Omit it to allow none|files the orchestrator authorized.*add' \
+  assert_text_not_matches "$scope_text" 'Protected additions are|files? (the )?fix round may add|files? this round may add|Omit it to allow none|none allowed|files the orchestrator authorized.*add' \
     "$(basename "$scope_doc") makes no repository-wide additions claim"
 done
 
