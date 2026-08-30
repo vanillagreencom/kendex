@@ -59,14 +59,15 @@ pub(super) fn stored_in_slot(
     kind: ItemKind,
     slot: &std::path::Path,
 ) -> Result<Option<String>> {
-    let held = match sealed.is_dir(slot) {
-        true => slot.to_path_buf(),
-        // Nothing is stored inside an absent directory, and nothing is
-        // stored inside a file — which is what every other kind's slot is.
-        false => match crate::names::folding_sibling(slot) {
-            Some(sibling) if sealed.is_dir(&sibling) => sibling,
-            _ => return Ok(None),
-        },
+    // The disk's spelling of the slot, never the caller's: on a folding
+    // volume the slot names the stored directory while spelling it some
+    // other way, and every path this returns is a path a person is being
+    // sent to look at. Nothing is stored inside an absent directory, and
+    // nothing is stored inside a file — which is what every other kind's
+    // slot is.
+    let held = match crate::names::stored_spelling(slot) {
+        Some(held) if sealed.is_dir(&held) => held,
+        _ => return Ok(None),
     };
     // Being the plain item makes the slot replaceable, not empty. Its own
     // `SKILL.md` and supporting files belong to the item the capture is

@@ -243,6 +243,32 @@ pub fn fold(name: &str) -> String {
         .join("/")
 }
 
+/// `target` spelled the way its parent stores it — the exact name when the
+/// parent holds it, a [`folding_sibling`] otherwise, `None` when neither.
+/// A folding volume hands one directory back under every spelling of its
+/// name, so a path built from a caller's spelling can name a real directory
+/// the disk stores under some other string, and a person sent to look at
+/// the caller's spelling will not find it there.
+pub fn stored_spelling(target: &std::path::Path) -> Option<std::path::PathBuf> {
+    let parent = target.parent()?;
+    let leaf = target.file_name()?.to_str()?;
+    let folded = fold(leaf);
+    let mut folding = None;
+    for entry in std::fs::read_dir(parent).ok()?.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if name == leaf {
+            return Some(target.to_path_buf());
+        }
+        if folding.is_none() && fold(name) == folded {
+            folding = Some(parent.join(name));
+        }
+    }
+    folding
+}
+
 /// An entry beside `target` whose name folds to the target's leaf without
 /// being that exact leaf — the neighbour a case- or composition-folding
 /// filesystem would hand the same file to. The one reading of "does a
@@ -331,6 +357,28 @@ mod tests {
     fn a_single_segment_may_not_hold_a_separator() {
         assert!(segment_problem("tools/guard").is_some());
         assert!(item_problem("tools/guard").is_none());
+    }
+
+    /// The step a folding volume turns on: `Data-Science` is what the disk
+    /// holds, so that is what a person asking for `data-science` is told,
+    /// whatever spelling reached the directory.
+    #[test]
+    fn a_slot_is_spelled_the_way_its_parent_stores_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let parent = tmp.path();
+        let asked = parent.join("data-science");
+        std::fs::create_dir(parent.join("Data-Science")).unwrap();
+        assert_eq!(stored_spelling(&asked), Some(parent.join("Data-Science")));
+        assert_eq!(stored_spelling(&parent.join("handmade")), None);
+
+        // A volume keeping the two names apart stores an exact entry, and
+        // that is the name a write lands on; one that folds them has the
+        // single directory it was created under. The parent answers both.
+        let stored = match std::fs::create_dir(&asked) {
+            Ok(()) => "data-science",
+            Err(_) => "Data-Science",
+        };
+        assert_eq!(stored_spelling(&asked), Some(parent.join(stored)));
     }
 
     /// A catalog's text reaches a terminal. Control characters are shown as
