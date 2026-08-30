@@ -34,3 +34,21 @@ mycoproc=1
 remapfile x
 mapfiles=2
 my_mapfile_helper() { :; }
+coproc=1
+mapfile=2
+readarray=3
+coproc-wrapper arg
+my-mapfile -t a
+x=coproc
+x=mapfile
+PATH=$PATH:/opt/coproc
+echo coproc_helper
+run --coproc x
+a[coproc]=1
+my-declare -A x
+x-local -A y
+sub.declare -A z
+run --local -A x
+declare=1
+local=2
+v="${arr[x[0]]}"

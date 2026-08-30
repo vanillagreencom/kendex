@@ -61,20 +61,32 @@ check_absent() {
 # transformations (${x@Q}), globstar, `wait -n` and `test -v` are outside it
 # on purpose; each is its own construct rather than another spelling of one
 # below, and adding one means adding its probe and its control with it.
-# The Bash 4 builtins and the coproc keyword. A name is delimited by the
-# characters an identifier cannot hold, so this rule is complete and is
-# stated from the grammar rather than from spellings: `coproc(echo hi)` and
-# `coproc FOO` are the keyword, `coprocess=1` and `remapfile` are not. That
-# is the difference from the operators below, where the grammar gives no
+# The Bash 4 builtins and the coproc keyword, bounded by the shell's word
+# delimiters on both sides: blank, tab, `|`, `&`, `;`, `(`, `)`, `<`, `>`,
+# backquote, and the line ends. That is the whole rule and it comes from the
+# grammar, not from spellings.
+#
+# The bound is the WORD, not the identifier. `coproc=1` is an assignment
+# token, `coproc-wrapper` a command name, `x=coproc` a value and
+# `run --local` an option: in each the shell reads one word and none of them
+# is the keyword, though every one of them ends an identifier. Bounding on
+# the identifier flagged all four, which is the failure that matters most
+# here — a portability suite that reddens correct Bash 3.2 source is one the
+# first person it blocks turns off. The catches are unaffected:
+# `coproc(echo hi)`, `coproc FOO`, `x && coproc reader`, `run;coproc cat`.
+#
+# This is the difference from the operators below, where the grammar gives no
 # usable boundary and none is attempted.
-PATTERN='(^|[^[:alnum:]_])(mapfile|readarray|coproc)([^[:alnum:]_]|$)'
+PATTERN='(^|[[:blank:]|&;()<>`])(mapfile|readarray|coproc)([[:blank:]|&;()<>]|$)'
 # declare/typeset/local/readonly carrying a Bash 4 attribute anywhere in the
 # options: A (associative), g (global), n (nameref), l and u (the
 # declare-family spelling of case conversion). Bash accepts the attributes in
 # one cluster or in separate option words, and it accepts them in any order,
 # so -A, -rA, -Ar and -r -A are one declaration written four ways and all
-# four are caught.
-PATTERN="$PATTERN"'|(^|[^[:alnum:]_])(declare|typeset|local|readonly)[[:blank:]]+([-+][[:alnum:]]+[[:blank:]]+)*[-+][[:alnum:]]*[Aglnu]'
+# four are caught. The command word takes the same word boundary as the names
+# above, for the same reason: `my-declare -A x` and `run --local -A x` are
+# legal Bash 3.2 and an identifier boundary flagged both.
+PATTERN="$PATTERN"'|(^|[[:blank:]|&;()<>`])(declare|typeset|local|readonly)[[:blank:]]+([-+][[:alnum:]]+[[:blank:]]+)*[-+][[:alnum:]]*[Aglnu]'
 # Automatic FD allocation: exec {fd}< , {fd}> , {fd}>>
 PATTERN="$PATTERN"'|(^|[^$])\{[A-Za-z_][A-Za-z0-9_]*\}[<>]'
 # Case conversion, one character or every one, either direction. The
@@ -84,7 +96,10 @@ PATTERN="$PATTERN"'|(^|[^$])\{[A-Za-z_][A-Za-z0-9_]*\}[<>]'
 # "bad substitution" instead of converting; they are matched all the same,
 # since a line carrying one is broken under every bash and no correct 3.2
 # source holds one, so taking the whole list reddens nothing legal.
-PATTERN="$PATTERN"'|\$\{!?([A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?|[0-9]+|[-#?$!@*])(,,?|\^\^?)'
+# A subscript may hold one level of nesting, which is what indexing an array
+# with another array's element needs: ${arr[x[0]]^}. Deeper than that is a
+# stated limit below, not an oversight.
+PATTERN="$PATTERN"'|\$\{!?([A-Za-z_][A-Za-z0-9_]*(\[([^][]|\[[^]]*\])*\])?|[0-9]+|[-#?$!@*])(,,?|\^\^?)'
 # The pipe-with-stderr, the append-both redirection, and the two case
 # terminators, matched plainly. There is no boundary anchor here, and that is
 # a decision rather than an omission.
@@ -115,6 +130,10 @@ PATTERN="$PATTERN"'|\$\{!?([A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?|[0-9]+|[-#?$!@*])(
 #   - an operator inside a regex literal, a string or a comment is flagged.
 #     That is the accepted cost of matching operators plainly, and the fix is
 #     to respell the line the way preflight's bracket expressions now are.
+#   - a subscript nested more than one level, or one whose inner expansion
+#     carries a literal `]`, as in ${arr[${x%]}]^}. Balancing brackets is
+#     beyond a regular expression, so the depth is bounded and declared
+#     rather than guessed at.
 #   - a construct assembled at runtime: eval, a command held in a variable, a
 #     heredoc piped to bash. The text never appears, so nothing reads it.
 #   - a declaration split over a backslash continuation, which a

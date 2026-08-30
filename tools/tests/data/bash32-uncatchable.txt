@@ -1,2 +1,3 @@
 local \
 eval "$assembled_declaration"
+v="${arr[${x%]}]^}"

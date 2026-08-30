@@ -91,3 +91,11 @@ star="${arr[*],,}"
 run;coproc cat
 (coproc reader)
 cmd &>>log
+v="${arr[x[0]]^}"
+$(coproc cat)
+x | coproc cat
+coproc cat &
+if coproc cat; then :; fi
+x && declare -A cache
+run;local -A cache
+(declare -A cache)
