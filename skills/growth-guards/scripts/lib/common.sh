@@ -19,10 +19,11 @@ set -euo pipefail
 # with the source unfound, rather than quietly resolving somewhere else.
 # shellcheck source=paths.sh
 source "$(dirname -- "${BASH_SOURCE[0]}")/paths.sh"
-# The configured-path-list concept, whole: the glob list, the walk, and what
-# a lane may measure at a matched path. Its helpers call back into this file,
-# which is why it is sourced here rather than by each lane — resolution is at
-# call time, so the order of the two is free.
+# The glob-list concept, whole: the configured list, the excludes list, the
+# matcher both answer through, the walk, and what a lane may measure at a
+# matched path. Its helpers call back into this file, which is why it is
+# sourced here rather than by each lane — resolution is at call time, so the
+# order of the two is free.
 # not-a-path: same bootstrap as above; the idiom it loads is not available yet.
 # shellcheck source=configured-paths.sh
 source "$(dirname -- "${BASH_SOURCE[0]}")/configured-paths.sh"
@@ -197,58 +198,6 @@ gg_resolve_path() { # FLAG-VALUE KEY DEFAULT LABEL — normalized path on stdout
   gg_config_path "$raw" "$4"
 }
 
-# --- exclusion list: pattern<TAB>reason, reason mandatory --------------------
-GG_EXCLUDE_PATTERNS=()
-
-# The scans read the INDEX, so policy files come from the index too: staged
-# edits to one govern staged scans, and a sparse checkout that omits the
-# tracked file from disk still applies it. A path staged for DELETION governs
-# as ABSENT — the commit carries no such file — which is not the same as a
-# never-tracked path, where the worktree copy is all there is.
-#
-# Each probe reserves one status for its one expected answer and routes every
-# other status through gg_collection_error. A probe git could not answer must
-# not fall through to the worktree copy: that judges the commit against looser
-# policy than the index carries, and says nothing while doing it.
-gg_policy_content() { # FILE — content on stdout; 1 = the commit has no such file
-  local file="$1" status=0 head_status=0 tree_status=0 entry=""
-  # :(literal) — a path spelling a glob (`*`, `?`, `[`) must match itself in
-  # the index, never whatever the glob happens to reach.
-  git ls-files --error-unmatch -- ":(literal)$file" >/dev/null 2>&1 || status=$?
-  case "$status" in
-    0)
-      # `:0:`, never a bare `:$file`: git reads a leading `0:` through `3:` in
-      # the path as the stage selector, so a policy file named `0:excludes`
-      # would resolve to whatever blob sits at `excludes`.
-      git show ":0:$file" || gg_collection_error "could not read the staged copy of $(gg_shown "$file")"
-      return 0
-      ;;
-    1) ;;
-    *) gg_collection_error "could not query the index for $(gg_shown "$file") (git ls-files exit $status); refusing to treat it as untracked" ;;
-  esac
-  # ls-tree, never `cat-file -e`: with rev:path syntax git answers "no such
-  # path in HEAD" with the same 128 an operational failure returns, so only
-  # ls-tree (exit 0, empty output for an absent path) tells the two apart.
-  # An unborn HEAD carries nothing by definition — rev-parse reserves exit 1.
-  git rev-parse --verify --quiet HEAD >/dev/null 2>&1 || head_status=$?
-  case "$head_status" in
-    0)
-      entry="$(git ls-tree HEAD -- ":(literal)$file" 2>/dev/null)" || tree_status=$?
-      [ "$tree_status" -eq 0 ] \
-        || gg_collection_error "could not probe HEAD for $(gg_shown "$file") (git ls-tree exit $tree_status); refusing to treat it as untracked"
-      # Tracked in HEAD, absent from the index: staged for deletion.
-      if [ -n "$entry" ]; then return 1; fi
-      ;;
-    1) ;;
-    *) gg_collection_error "could not resolve HEAD while reading $(gg_shown "$file") (git rev-parse exit $head_status); refusing to treat it as untracked" ;;
-  esac
-  if [ -f "$file" ]; then
-    cat -- "$file" || gg_collection_error "could not read $(gg_shown "$file")"
-    return 0
-  fi
-  return 1
-}
-
 # Replace DEST with SRC's bytes through a rename inside DEST's own directory.
 # A direct redirect onto DEST, or a rename that crosses a filesystem (where mv
 # degrades to copy-then-unlink), leaves DEST TRUNCATED behind an interrupt —
@@ -274,44 +223,6 @@ gg_install_file() { # SRC DEST LABEL
     gg_collection_error "could not replace $label at $(gg_shown "$dest") — inspect the file before trusting it"
   fi
   GG_INSTALL_TMP=""
-}
-
-# Shell glob matched against the full repo-relative path (`*` crosses `/`);
-# blank lines and `#` comments are ignored; a pattern without a reason is a
-# config error. A missing file is an empty list.
-gg_load_excludes() { # FILE — fills GG_EXCLUDE_PATTERNS
-  local file="$1" line lineno pat reason content status=0
-  GG_EXCLUDE_PATTERNS=()
-  # The read runs in a command substitution, so a gg_collection_error inside
-  # it dies in that SUBSHELL and arrives here as a status. Only status 1 is
-  # the answer "the commit has no such file" (an empty list); anything else
-  # is the failed measurement that already named itself on stderr, and
-  # reading it as an empty list would let the gate run on no policy at all.
-  content="$(gg_policy_content "$file")" || status=$?
-  case "$status" in
-    0) ;;
-    1) return 0 ;;
-    *) gg_collection_error "refusing to run on an unread exclusion list: $(gg_shown "$file") (exit $status, cause above)" ;;
-  esac
-  lineno=0
-  while IFS= read -r line || [ -n "$line" ]; do
-    lineno=$((lineno + 1))
-    case "$line" in
-      "" | "#"*) continue ;;
-    esac
-    pat="${line%%"$GG_TAB"*}"
-    reason="${line#*"$GG_TAB"}"
-    if [ "$pat" = "$line" ] || [ -z "$pat" ] || [ -z "$reason" ]; then
-      gg_config_error "$(gg_shown "$file"):$lineno: expected 'pattern<TAB>reason' (every exclusion carries its justification)"
-    fi
-    GG_EXCLUDE_PATTERNS+=("$pat")
-  done <<<"$content"
-}
-
-gg_is_excluded() { # PATH — 0 when some exclusion glob matches the full path
-  # The loaded list, matched by the one spelling above. Guarded expansion: an
-  # empty array is an unbound variable under Bash 3.2 with set -u.
-  gg_path_matches "$1" ${GG_EXCLUDE_PATTERNS[@]+"${GG_EXCLUDE_PATTERNS[@]}"}
 }
 
 # `git grep --cached` SKIPS an unmerged index entry entirely: it spends no
