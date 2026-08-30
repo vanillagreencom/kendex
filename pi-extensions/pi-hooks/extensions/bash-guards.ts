@@ -22,12 +22,14 @@ const BREAK = new Set([" ", "\t", "\\", "'", '"', "`", "$", "<", ">", "#", ...SE
 /** `git commit` short options whose value is attached or the next word. */
 const SHORT_VALUE = "mFcCt";
 
-/** What the scan found across every `git` argv: whether one is a commit, whether
- * it may land elsewhere, and the first word bypassing a hook or injecting config. */
+/** What the scan found across the live words of one bash command: whether they
+ * name a commit, whether it may land elsewhere, the first word bypassing a hook
+ * or injecting config, and any construct this scanner does not model. */
 export interface CommandScan {
 	commit: boolean;
 	moves: boolean;
 	bypass: string | null;
+	unmodelled: string | null;
 }
 const basename = (token: string): string => token.replace(/^.*\//, "");
 function setBypass(scan: CommandScan, token: string): void {
@@ -36,72 +38,50 @@ function setBypass(scan: CommandScan, token: string): void {
 	scan.bypass = flat.length > 60 ? flat.slice(0, 60) : flat;
 }
 
-/** A word that skips the hooks or injects configuration, or "" for anything
- * else. Only where the WHOLE word is one, which is what keeps a quoted commit
- * message out of it: a message naming --no-verify is one word of prose, not the
- * flag. Any `-c<value>` injects configuration whatever the value: an included
- * file can set core.hooksPath. A cluster reads left to right, so from the first
- * value-taking option the rest of the word is its value and `-mnote` is a
- * message. */
-function bypassWord(t: string): string {
-	if (/[ \t\n\r]/.test(t)) return "";
-	if (/^--no-veri/.test(t) || /^-c/.test(t) || t.startsWith("--config-env")) return t;
-	if (!/^-[A-Za-z]/.test(t)) return "";
-	for (let p = 1; p < t.length; p++) {
-		if (SHORT_VALUE.includes(t[p])) return "";
-		if (t[p] === "n") return t;
-	}
-	return "";
-}
-/** What an alias body says, kept under its name: the bypass it carries, for the
- * bodies that commit. Bookkeeping over words already read, not an expansion.
- * Cleared per scan, so an alias defined in one command reaches only the rest of
- * that command — the bash hook is one process per command and lives the same. */
-const aliasCommits = new Map<string, string>();
-function aliasDefinition(name: string, body: string): void {
-	let commits = false;
-	let bypass = "";
-	for (const part of body.split(/[ \t\n\r]+/)) {
-		if (part === "commit") commits = true;
-		if (!bypass) bypass = bypassWord(part);
-	}
-	if (commits) aliasCommits.set(name, bypass);
+/** Constructs this scanner does not model, named rather than decoded: an alias
+ * config key, ANSI-C quoting, a line continuation inside quotes, and a shift
+ * operator inside arithmetic, which is not the heredoc this reads it as. Seeing
+ * one is the whole rule. Each decoder added here invites the next construct, and
+ * the answer to text this cannot read is to refuse, not to parse harder. Only a
+ * command naming git is this gate to judge, so `echo $'hi'` is left alone. */
+function unmodelled(command: string, quotedContinuation: boolean): string | null {
+	if (!command.includes("git")) return null;
+	if (command.toLowerCase().includes("alias.")) return "an alias config key";
+	if (command.includes("$'")) return "ANSI-C quoting";
+	if (quotedContinuation) return "a line continuation inside quotes";
+	if (/\(\([^)]*<</.test(command)) return "a shift inside arithmetic";
+	return null;
 }
 
 /** The rule over the live words of one command. */
 function judge(tokens: string[], scan: CommandScan): void {
 	let git = false;
 	let commit = false;
-	let alias = false;
-	let invoked = "";
-	for (const [m, t] of tokens.entries()) {
+	for (const t of tokens) {
 		if (t === "-C" || t === "cd" || t.startsWith("--git-dir") || t.startsWith("--work-tree") || t.startsWith("GIT_DIR=") || t.startsWith("GIT_WORK_TREE=")) scan.moves = true;
 		// Configuration reaches git from anywhere: an assignment, an export, a
 		// config write in an earlier command. A bypass prints only beside a commit.
 		if (!/[ \t\n\r]/.test(t) && (t.startsWith("GIT_CONFIG_") || t.toLowerCase().includes("hookspath"))) setBypass(scan, t);
-		// An alias is any subcommand this gate cannot read, so a git command line
-		// that defines one counts as a commit; the name and body are kept so a later
-		// invocation of that name commits too, whatever command wrote it.
-		const at = t.toLowerCase().indexOf("alias.");
-		if (at >= 0) {
-			alias = true;
-			const rest = t.slice(at + 6);
-			const eq = rest.indexOf("=");
-			if (eq >= 0) aliasDefinition(rest.slice(0, eq), rest.slice(eq + 1));
-			else if (rest) aliasDefinition(rest, tokens[m + 1] ?? "");
-		} else if (!invoked && aliasCommits.has(t)) invoked = t;
 		if (!git) git = basename(t) === "git";
 		else if (t === "commit") commit = true;
 	}
-	if (!git || (!commit && !alias && !invoked)) return;
+	if (!git || !commit) return;
 	scan.commit = true;
 	for (const t of tokens) {
-		const word = bypassWord(t);
-		if (word) return setBypass(scan, word);
+		// A word is a bypass only where the WHOLE word is one, which is what keeps a
+		// quoted commit message out of it: `git commit -m "why --no-verify is banned"`
+		// is one word of prose, not the flag. Any `-c<value>` injects configuration,
+		// whatever the value: an included file can set core.hooksPath.
+		if (/[ \t\n\r]/.test(t)) continue;
+		if (/^--no-veri/.test(t) || /^-c/.test(t) || t.startsWith("--config-env")) return setBypass(scan, t);
+		if (!/^-[A-Za-z]/.test(t)) continue;
+		// A cluster reads left to right: from the first value-taking option the rest
+		// of the word is its value, so `-mnote` is a message and `-nm` is not.
+		for (let p = 1; p < t.length; p++) {
+			if (SHORT_VALUE.includes(t[p])) break;
+			if (t[p] === "n") return setBypass(scan, t);
+		}
 	}
-	// Nothing in this argv skips the hooks, but the alias it invokes may.
-	const carried = aliasCommits.get(invoked);
-	if (carried) setBypass(scan, carried);
 }
 
 /**
@@ -123,9 +103,9 @@ function judge(tokens: string[], scan: CommandScan): void {
  * hooks remain the control. Mirrors `hooks/pre-commit-check.sh`.
  */
 export function scanCommand(command: string): CommandScan {
-	const scan: CommandScan = { commit: false, moves: false, bypass: null };
-	aliasCommits.clear();
+	const scan: CommandScan = { commit: false, moves: false, bypass: null, unmodelled: null };
 	const n = command.length;
+	let quotedContinuation = false;
 	let tokens: string[] = [];
 	let word = "";
 	let haveWord = false;
@@ -160,12 +140,9 @@ export function scanCommand(command: string): CommandScan {
 				return;
 			}
 			if (command[i] === "\\" && q !== "'") {
-				// A line continuation is removed inside quotes too, so a flag broken
-				// across lines reaches git whole and is judged whole.
-				text += command.slice(start, i);
-				const joined = command[i + 1] === "\n" || command.startsWith("\r\n", i + 1);
-				if (!joined) text += command[i + 1] ?? "";
-				i += command[i + 1] === "\r" ? 3 : 2;
+				if (command[i + 1] === "\n") quotedContinuation = true;
+				text += command.slice(start, i) + (command[i + 1] ?? "");
+				i += 2;
 				start = i;
 				continue;
 			}
@@ -181,10 +158,7 @@ export function scanCommand(command: string): CommandScan {
 		while (i < n) {
 			const ch = command[i];
 			if (ch === " " || ch === "\t" || ch === "<" || ch === ">" || SEPARATORS.has(ch)) break;
-			// `$` before a quote is ANSI-C or locale quoting: `<<$'EOF'` names EOF,
-			// and kept raw the body never terminates.
-			if (ch === "$" && (command[i + 1] === "'" || command[i + 1] === '"')) i++;
-			else if (ch === "'" || ch === '"') {
+			if (ch === "'" || ch === '"') {
 				i++;
 				while (i < n && command[i] !== ch) delim += command[i++];
 				i++;
@@ -290,6 +264,7 @@ export function scanCommand(command: string): CommandScan {
 		}
 	}
 	endCommand();
+	scan.unmodelled = unmodelled(command, quotedContinuation);
 	return scan;
 }
 
@@ -332,7 +307,7 @@ async function hooksArmed(hooksDir: string, cwd: string): Promise<boolean> {
 /** Pre-commit gate: the Pi port of `hooks/pre-commit-check.sh`, same contract.
  * On a git commit, defer to the working directory's armed git hooks — both
  * pre-commit and commit-msg, marked and executable (`kendex guard install`
- * arms them). Where one is armed, a git argv that sidesteps it is refused: git
+ * arms them). Where one is armed, a word that sidesteps it is refused: git
  * would skip commit-msg too, and nothing here can check the message. Otherwise
  * the commit is refused naming that command: arming is the local act that asks
  * for those scripts, and this gate never runs them on its behalf. It gates the
@@ -340,6 +315,11 @@ async function hooksArmed(hooksDir: string, cwd: string): Promise<boolean> {
  * `--work-tree`, and names the directory it judged where it cannot defer. */
 export async function preCommitGate(command: string, cwd: string): Promise<PreCommitVerdict> {
 	const scan = scanCommand(command);
+	// A construct this gate does not model can hide a commit or the flag that
+	// skips its hooks, so it is refused rather than parsed harder.
+	if (scan.unmodelled) {
+		return { kind: "refuse", reason: `pi-hooks pre-commit: this command carries ${scan.unmodelled}, which this gate does not model, so it cannot tell whether the commit in it skips the repository's git hooks. Write the command without that construct.` };
+	}
 	if (!scan.commit) return { kind: "allow" };
 
 	const elsewhere = scan.moves

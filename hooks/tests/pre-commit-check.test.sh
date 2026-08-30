@@ -95,7 +95,7 @@ assert_not_contains() {
 }
 
 # Judge one form in both fixtures at once. The ARMED expectation says whether
-# the git argv carries a bypass; the UNARMED one is the control proving the
+# the words carry a bypass; the UNARMED one is the control proving the
 # commit was found at all, since a form the hook never sees passes there too.
 both() {
   local form="$1" want_armed="$2" want_unarmed="$3" name="$4"
@@ -114,10 +114,6 @@ both() {
   fi
   assert_eq "$log" "" "unarmed: nothing of the repository's ran: $name"
 }
-
-# The bypass flag, assembled: this repository's own hook refuses a command
-# that spells it out, and this file is committed like any other.
-NV="--no-""verify"
 
 # --- Fixtures ----------------------------------------------------------------
 UNARMED="$TMP_ROOT/unarmed"
@@ -351,7 +347,7 @@ for form in \
 done
 
 echo
-echo "only a git argv is judged"
+echo "only live words are judged"
 
 # The three refusals this rule exists to stop, all of them in one day: a `-n`
 # in a heredoc body, a `-c` belonging to another program, and prose naming
@@ -419,7 +415,7 @@ both 'git commit -m a{b} --no-verify' 2 2 "a brace is expansion, not a command b
 both '{ git commit --no-verify -m x; }' 2 2 "a brace group still holds a commit"
 
 echo
-echo "a command prefix does not hide the git argv"
+echo "a command prefix does not hide the git word"
 
 # main's word-order rule caught every one of these without reading a prefix at
 # all, so a prefix this lane cannot resolve must not read as not-a-git-command.
@@ -492,31 +488,13 @@ both 'git commit -m \"prose mentioning -n inside\"' 0 2 "prose naming -n"
 both 'git commit -m \"core.hooksPath is not to be touched\"' 0 2 "prose naming the key"
 
 echo
-echo "a quoted line continuation is removed, and \$<quote> names its delimiter"
-
-# bash removes a backslash-newline inside double quotes, so the flag reaches
-# git whole; appended, our word carried a newline and the whole-word test
-# skipped it. And `<<$<quote>EOF<quote>` names EOF: kept raw as $EOF the body
-# never terminates and its quote swallows the commit behind it.
-both 'git commit \"--no-veri\\\nfy\" -m x' 2 2 "a flag broken across lines inside quotes"
-# Double-quoted so the apostrophes survive; the $ is escaped so this shell does
-# not expand it before the hook reads it as text.
-ANSIC="cat <<\$'EOF'\\n\\\"\\nEOF\\ngit commit $NV -m \\\"x\\\""
-both "$ANSIC" 2 2 "an ANSI-C quoted delimiter"
-
-# The controls: a continuation inside an ordinary message is not a bypass, and
-# a quoted delimiter still ends its heredoc with the body inert.
-both 'git commit -m \"a\\\nb\"' 0 2 "a continuation inside a message"
-SQDELIM="cat <<'EOF'\\ngit commit $NV here\\nEOF\\ngit commit -m x"
-both "$SQDELIM" 0 2 "a single-quoted delimiter"
-
-echo
 echo "an escaped quote does not close its run"
 
 # A backslash escapes the next character inside a double-quoted or backtick
 # run, so `\"` is not the close. Read as one, everything through the next quote
 # is swallowed and the live command behind it disappears. The flag is assembled
 # because this repository's own hook refuses a command that spells it out.
+NV="--no-""verify"
 both "echo \\\"x\\\\\\\" y\\\" && git commit $NV -m \\\"x\\\"" 2 2 "an escaped double quote"
 both 'echo `x\\` y` && git commit '"$NV"' -m `x`' 2 2 "an escaped backtick"
 
@@ -542,32 +520,55 @@ run_hook "$ARMED" "$(payload 'git -cinclude.path=/tmp/c commit -m x')" CHAIN_EXI
 assert_contains "$err" "'-cinclude.path=/tmp/c' bypasses" "the attached value is named"
 
 echo
-echo "a command line that defines an alias is a commit"
+echo "a construct this hook does not model is refused on sight"
 
-# `-c alias.c=<commit>` puts the commit inside one quoted word, so no live
-# `commit` word exists and nothing concluded a commit was happening. Defining
-# an alias is the tell: the subcommand is whatever the alias says.
-both "git -c alias.c='commit $NV' c --allow-empty -m x" 2 2 "an alias defining a commit"
-run_hook "$ARMED" "$(payload "git -c alias.c='commit $NV' c --allow-empty -m x")" CHAIN_EXIT=0
-assert_contains "$err" "'-c' bypasses" "the alias form names the injection that carried it"
+# Each of these hides text from the scanner, and each decode added to read one
+# invites the next construct. So the construct itself is the answer: a command
+# naming git that carries one is refused in either fixture, without parsing.
+# The refusals do not name a bypass — nothing was parsed to find one.
+unmodelled() {
+  local form="$1" name="$2"
+  for fixture in "$ARMED" "$UNARMED"; do
+    run_hook "$fixture" "$(payload "$form")" CHAIN_EXIT=0
+    assert_eq "$rc" "2" "refused on sight: $name"
+    assert_contains "$err" "does not model" "the refusal names the construct: $name"
+    assert_eq "$log" "" "nothing of the repository's ran: $name"
+  done
+}
 
-# The narrower of the two rules was taken, so an ordinary -c keeps working; the
-# price is that writing an alias reads as a commit. Both pinned here.
+# Double-quoted so the apostrophes survive; the $ is escaped so this shell does
+# not expand it before the hook reads it as text.
+ANSIC="cat <<\$'EOF'\\nbody\\nEOF\\ngit commit -m x"
+unmodelled "git -c alias.c='commit $NV' c --allow-empty -m x" "an alias key defining a commit"
+unmodelled "git config alias.c 'commit $NV' && git c --allow-empty -m x" "a persisted alias key"
+unmodelled "$ANSIC" "ANSI-C quoting"
+unmodelled 'git commit \"--no-veri\\\nfy\" -m x' "a line continuation inside quotes"
+unmodelled 'x=$(( 1 << 2 )) && git commit -m x' "a shift inside arithmetic"
+
+# The controls. A command with none of these parses as before, and one naming
+# no git at all is not this gate to judge however it is written.
+both 'git commit -m x' 0 2 "an ordinary commit carries no trigger"
 both 'git -c core.pager=cat log' 0 0 "a benign -c on a non-commit"
-both "git config alias.c 'commit $NV'" 0 2 "writing an alias reads as a commit"
+run_hook "$ARMED" "$(payload 'echo $'hi'')" CHAIN_EXIT=0
+assert_eq "$rc" "0" "ANSI-C quoting without git is left alone"
+run_hook "$ARMED" "$(payload 'x=$(( 1 << 2 ))')" CHAIN_EXIT=0
+assert_eq "$rc" "0" "arithmetic without git is left alone"
 
 echo
-echo "an alias outlives the command that defined it"
+echo "a payload escape that spells a word is unreadable"
 
-# A persisted alias is used by a later command that names neither `commit` nor
-# `alias.`, so nothing in it refuses on its own. The name and what its body
-# said are kept, and the later invocation carries the body's bypass.
-both "git config alias.c 'commit $NV' && git c --allow-empty -m x" 2 2 "a persisted alias that commits"
-run_hook "$ARMED" "$(payload "git config alias.c 'commit $NV' && git c --allow-empty -m x")" CHAIN_EXIT=0
-assert_contains "$err" "'--no-verify' bypasses" "the invocation names the flag the alias body carried"
+# A \\u escape can spell `git`, or the flag. Decoding it is one more thing to
+# get wrong, so the payload takes the same fail-closed path a truncated one does.
+run_hook "$ARMED" '{"tool_input":{"command":"\u0067it commit -m x"}}' CHAIN_EXIT=0
+assert_eq "$rc" "2" "a \\u escape in the command is refused"
+assert_contains "$err" "could not read the command" "and takes the unreadable path"
+assert_eq "$log" "" "nothing of the repository's ran for the escaped payload"
 
-# The control: an alias whose body names no commit is not a commit when used.
-both "git config alias.c 'status' && git c" 0 2 "a persisted alias that does not commit"
+# The control: an escaped backslash before a u is a literal backslash, not an
+# escape, and the command behind it is read as usual.
+run_hook "$UNARMED" '{"tool_input":{"command":"echo a\\u0067 && git commit -m x"}}' CHAIN_EXIT=0
+assert_eq "$rc" "2" "a literal backslash-u is still parsed"
+assert_contains "$err" "not armed by kendex" "and reaches the ordinary refusal"
 
 echo
 echo "only <<- accepts a tab-indented terminator"
@@ -658,7 +659,7 @@ run_hook "$ARMED" "$(payload 'git -ccore.hooksPath=/dev/null commit -m x')" CHAI
 assert_contains "$err" "'-ccore.hooksPath=/dev/null' bypasses" "the attached form names the injection"
 
 echo
-echo "quoting and redirection hold the argv together"
+echo "quoting and redirection hold the words together"
 
 # shellcheck disable=SC2016
 both 'git commit>/dev/null -n -m x' 2 2 "a redirection ends the word before it"

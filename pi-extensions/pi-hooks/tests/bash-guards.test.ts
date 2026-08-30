@@ -179,7 +179,7 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		expect(u.ran).toBe("");
 	}
 
-	test("detection reads a git argv, not the whole command", () => {
+	test("detection reads live words, not the whole command", () => {
 		const commit = (c: string): boolean => scanCommand(c).commit;
 		expect(commit("ls -la")).toBe(false);
 		expect(commit("git commit -m test")).toBe(true);
@@ -204,7 +204,7 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		await both("g''it commit -m x", "allow", "refuse");
 	});
 
-	test("only a git argv is judged", async () => {
+	test("only live words are judged", async () => {
 		// The three refusals this rule exists to stop, all of them in one day: a
 		// `-n` in a heredoc body, a `-c` belonging to another program, and prose
 		// naming --no-verify inside a quoted string.
@@ -321,53 +321,33 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		expect(named.verdict.reason).toContain("'-cinclude.path=/tmp/c' bypasses");
 	});
 
-	test("a command line that defines an alias is a commit", async () => {
-		// `-c alias.c=<commit>` puts the commit inside one quoted word, so no live
-		// `commit` word exists and nothing concluded a commit was happening.
+	test("a construct this gate does not model is refused on sight", async () => {
+		// Each of these hides text from the scanner, and each decode added to read
+		// one invites the next construct. So the construct itself is the answer: a
+		// command naming git that carries one is refused in either fixture, without
+		// parsing. The refusals name no bypass — nothing was parsed to find one.
 		const nv = "--no-" + "verify";
-		const aliased = `git -c alias.c='commit ${nv}' c --allow-empty -m x`;
-		await both(aliased, "refuse", "refuse");
-		const named = await gate(armed, aliased);
-		if (named.verdict.kind !== "refuse") throw new Error("unreachable");
-		expect(named.verdict.reason).toContain("'-c' bypasses");
-		// The narrower of the two rules was taken, so an ordinary -c keeps working;
-		// the price is that writing an alias reads as a commit. Both pinned here.
-		await both("git -c core.pager=cat log", "allow", "allow");
-		await both(`git config alias.c 'commit ${nv}'`, "allow", "refuse");
-	});
-
-	test("an alias outlives the command that defined it", async () => {
-		// A persisted alias is used by a later command that names neither `commit`
-		// nor `alias.`, so nothing in it refuses on its own. The name and what its
-		// body said are kept, and the invocation carries the body's bypass.
-		const nv = "--no-" + "verify";
-		const persisted = `git config alias.c 'commit ${nv}' && git c --allow-empty -m x`;
-		await both(persisted, "refuse", "refuse");
-		const named = await gate(armed, persisted);
-		if (named.verdict.kind !== "refuse") throw new Error("unreachable");
-		expect(named.verdict.reason).toContain(`'${nv}' bypasses`);
-		// The control: a body naming no commit is not a commit when the alias runs,
-		// and the record does not outlive the command string it was written in.
-		await both("git config alias.c 'status' && git c", "allow", "refuse");
-		expect(scanCommand("git c --allow-empty -m x").commit).toBe(false);
-	});
-
-	test("a quoted line continuation is removed, and $' names its delimiter", async () => {
-		// bash removes a backslash-newline inside double quotes, so the flag reaches
-		// git whole; appended, our word carried a newline and the whole-word test
-		// skipped it. And `<<$'EOF'` names EOF: kept raw as $EOF the body never
-		// terminates and its quote swallows the commit behind it.
-		const nv = "--no-" + "verify";
-		for (const command of [`git commit "--no-veri\\\nfy" -m x`, `cat <<$'EOF'\n"\nEOF\ngit commit ${nv} -m "x"`]) {
-			await both(command, "refuse", "refuse");
-			const named = await gate(armed, command);
-			if (named.verdict.kind !== "refuse") throw new Error("unreachable");
-			expect(named.verdict.reason).toContain(`'${nv}' bypasses`);
+		for (const command of [
+			`git -c alias.c='commit ${nv}' c --allow-empty -m x`,
+			`git config alias.c 'commit ${nv}' && git c --allow-empty -m x`,
+			"cat <<$'EOF'\nbody\nEOF\ngit commit -m x",
+			`git commit "--no-veri\\\nfy" -m x`,
+			"x=$(( 1 << 2 )) && git commit -m x",
+		]) {
+			for (const repo of [armed, unarmed]) {
+				const { verdict, ran } = await gate(repo, command);
+				expect([command, verdict.kind]).toEqual([command, "refuse"]);
+				if (verdict.kind !== "refuse") throw new Error("unreachable");
+				expect(verdict.reason).toContain("does not model");
+				expect(ran).toBe("");
+			}
 		}
-		// The controls: a continuation inside an ordinary message is not a bypass,
-		// and a quoted delimiter still ends its heredoc with the body inert.
-		await both('git commit -m "a\\\nb"', "allow", "refuse");
-		await both(`cat <<'EOF'\ngit commit ${nv} here\nEOF\ngit commit -m x`, "allow", "refuse");
+		// The controls. A command with none of these parses as before, and one
+		// naming no git at all is not this gate to judge however it is written.
+		await both("git commit -m x", "allow", "refuse");
+		await both("git -c core.pager=cat log", "allow", "allow");
+		expect((await gate(armed, "echo $'hi'")).verdict).toEqual({ kind: "allow" });
+		expect((await gate(armed, "x=$(( 1 << 2 ))")).verdict).toEqual({ kind: "allow" });
 	});
 
 	test("only <<- accepts a tab-indented terminator", async () => {
@@ -438,7 +418,7 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		expect(cluster.verdict.reason).toContain("'-nm' bypasses");
 	});
 
-	test("a command prefix does not hide the git argv", async () => {
+	test("a command prefix does not hide the git word", async () => {
 		// The bash hook's word-order predecessor caught every one of these without
 		// reading a prefix at all, so a prefix this gate cannot resolve must not
 		// read as not-a-git-command.
@@ -537,7 +517,7 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		await both("echo don't && git commit -m x", "allow", "refuse");
 	});
 
-	test("quoting and redirection hold the argv together", async () => {
+	test("quoting and redirection hold the words together", async () => {
 		await both("git commit>/dev/null -n -m x", "refuse", "refuse");
 		await both("git -C `echo ; pwd` commit --no-verify -m x", "refuse", "refuse");
 
@@ -564,7 +544,7 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		const body = "the quick brown fox jumps over the lazy dog; it's a note line\n".repeat(8000);
 		const heredoc = `cat > note.md <<'EOF'\n${body}EOF\ngit commit -m note`;
 		const heredocStarted = performance.now();
-		expect(scanCommand(heredoc)).toEqual({ commit: true, moves: false, bypass: null });
+		expect(scanCommand(heredoc)).toEqual({ commit: true, moves: false, bypass: null, unmodelled: null });
 		expect(performance.now() - heredocStarted).toBeLessThan(250);
 
 		const command = " git x".repeat(20000);

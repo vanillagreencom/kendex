@@ -4,7 +4,7 @@
 # event: PreToolUse
 # matcher: Bash
 # description: On a git commit, defer to the working directory's armed git hooks — both pre-commit and commit-msg, marked and executable (kendex guard install arms them). Otherwise the commit is refused naming that command: arming is the local act that says a person wants this repository's committed scripts run on their commits, and this hook never runs them on their behalf. Where one is armed, a command that sidesteps it with git's no-verify flag, -n, or a core.hooksPath override is refused: git would skip the commit-msg hook too, and nothing here can check the message. The command is split into simple commands and only its live words are judged: heredoc bodies and comment tails are text, a quoted word is a live word whose text is its unquoted content, and a `git` word with a later `commit` word is the commit. Whole words decide, so a quoted --no-verify is the flag while a commit message naming it is one long word of prose. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
-# safety: Refuses a commit from a working directory with no armed git pre-commit hook rather than running that repository's own scripts to check it, and refuses a commit whose live words include one that bypasses an armed hook (no-verify, -n) or injects git configuration that could (-c, --config-env, a GIT_CONFIG_* assignment, a core.hooksPath key, an alias definition); it models no argv, so a construct it does not recognise leaves the words standing and is judged rather than passing unjudged, and its blind spot is the other way round: text a shell would run but this drops, inside quotes or a heredoc body, and a commit aimed at another repository is that repository's armed hook's to gate.
+# safety: Refuses a commit from a working directory with no armed git pre-commit hook rather than running that repository's own scripts to check it, and refuses a commit whose live words include one that bypasses an armed hook (no-verify, -n) or injects git configuration that could (-c, --config-env, a GIT_CONFIG_* assignment, a core.hooksPath key); it models no argv, and a construct it cannot read at all — an alias key, ANSI-C quoting, a line continuation inside quotes, a shift inside arithmetic, a \\u escape in the payload — is refused on sight rather than parsed harder; it models no argv, so a construct it does not recognise leaves the words standing and is judged rather than passing unjudged, and its blind spot is the other way round: text a shell would run but this drops, inside quotes or a heredoc body, and a commit aimed at another repository is that repository's armed hook's to gate.
 # timeout: 60
 # ---
 
@@ -59,7 +59,9 @@ function jsonstring(s,   fin, body) {
   body = substr(s, 2, fin - 1)
   gsub(/\\n/, "\n", body); gsub(/\\t/, "\t", body); gsub(/\\r/, "\r", body)
   gsub(/\\\//, "/", body); gsub(/\\[bf]/, " ", body)
-  gsub(/\\u[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]/, " ", body)
+  # A \u escape can spell any word, `git` and --no-verify included. Decoding it
+  # is one more thing to get wrong, so its presence makes the payload unreadable.
+  if (body ~ /\\u/) { UNREADABLE = 1; return "" }
   gsub(DQ, "\"", body); return body
 }
 # Quoting sets a word boundary; it does not stop the word existing, so the
@@ -74,11 +76,8 @@ function quoted(cmd, i, n, q,   start, ch, w) {
     ch = substr(cmd, i, 1)
     if (ch == q) { W = W w substr(cmd, start, i - start); HAVEW = 1; return i + 1 }
     if (ch == BS && q != SQ) {
-      w = w substr(cmd, start, i - start)
-      if (substr(cmd, i + 1, 2) == "\r\n") { i += 3; start = i; continue }
-      # A line continuation is removed inside quotes too, so a flag broken
-      # across lines reaches git whole and is judged whole.
-      if (substr(cmd, i + 1, 1) != "\n") w = w substr(cmd, i + 1, 1)
+      if (substr(cmd, i + 1, 1) == "\n") QCONT = 1
+      w = w substr(cmd, start, i - start) substr(cmd, i + 1, 1)
       i += 2; start = i; continue
     }
     i++
@@ -93,9 +92,6 @@ function heredoc(cmd, i, n,   ch, q, w) {
   while (i <= n) {
     ch = substr(cmd, i, 1)
     if (ch == " " || ch == "\t" || ch == "<" || ch == ">" || index(SEP, ch) > 0) break
-    # `$` before a quote is ANSI-C or locale quoting: `<<$<quote>EOF<quote>`
-    # names EOF, and kept raw the body never terminates.
-    if (ch == "$" && (substr(cmd, i + 1, 1) == SQ || substr(cmd, i + 1, 1) == "\"")) { i++; continue }
     if (ch == SQ || ch == "\"") {
       q = ch; i++
       while (i <= n && substr(cmd, i, 1) != q) { w = w substr(cmd, i, 1); i++ }
@@ -181,64 +177,49 @@ function scan(cmd,   n, i, ch, c2, d, j, start) {
   }
   end_command()
 }
-# A word that skips the hooks or injects configuration, or "" for anything else.
-# Only where the WHOLE word is one, which is what keeps a quoted commit message
-# out of it: a message naming --no-verify is one word of prose, not the flag.
-# Any `-c<value>` injects configuration whatever the value: an included file can
-# set core.hooksPath. A cluster reads left to right, so from the first
-# value-taking option the rest of the word is its value and `-mnote` is a message.
-function bypassword(t,   p, ch) {
-  if (t ~ /[ \t\n\r]/) return ""
-  if (t ~ /^--no-veri/ || t ~ /^-c/ || t ~ /^--config-env/) return t
-  if (t !~ /^-[A-Za-z]/) return ""
-  for (p = 2; p <= length(t); p++) {
-    ch = substr(t, p, 1)
-    if (index(SHORT_VALUE, ch) > 0) return ""
-    if (ch == "n") return t
-  }
+# Constructs this scanner does not model, named rather than decoded: an alias
+# config key, ANSI-C quoting, a line continuation inside quotes, and a shift
+# operator inside arithmetic, which is not the heredoc this reads it as. Seeing
+# one is the whole rule. Each decoder added here invites the next construct, and
+# the answer to text this cannot read is to refuse, not to parse harder.
+function unmodelled(cmd) {
+  if (tolower(cmd) ~ /alias\./) return "an alias config key"
+  if (index(cmd, "$" SQ) > 0) return "ANSI-C quoting"
+  if (QCONT) return "a line continuation inside quotes"
+  if (cmd ~ /\(\([^)]*<</) return "a shift inside arithmetic"
   return ""
 }
-# What an alias body says, kept under its name: whether it commits, and the
-# bypass it carries. Bookkeeping over words already read, not an expansion.
-function aliasdef(nm, body,   k, cnt, part, w) {
-  cnt = split(body, part, /[ \t\n\r]+/)
-  for (k = 1; k <= cnt; k++) {
-    if (part[k] == "commit") ALIASC[nm] = 1
-    w = bypassword(part[k])
-    if (w != "" && ALIASB[nm] == "") ALIASB[nm] = w
-  }
-}
 # The rule over the live words of one command.
-function judge(   m, t, g, c, a, inv, rest, eq, nm) {
-  g = 0; c = 0; a = 0; inv = ""
+function judge(   m, t, g, c, p, ch) {
+  g = 0; c = 0
   for (m = 1; m <= NTOK; m++) {
     t = TOK[m]
     if (t == "-C" || t == "cd" || t ~ /^--git-dir/ || t ~ /^--work-tree/ || t ~ /^GIT_DIR=/ || t ~ /^GIT_WORK_TREE=/) MOVES = 1
     # Configuration reaches git from anywhere: an assignment, an export, a
     # config write in an earlier command. A bypass prints only beside a commit.
     if (t !~ /[ \t\n\r]/ && (t ~ /^GIT_CONFIG_/ || tolower(t) ~ /hookspath/)) setbypass(t)
-    # An alias is any subcommand this gate cannot read, so a git command line
-    # that defines one counts as a commit; the name and body are kept so a later
-    # invocation of that name commits too, whatever command wrote it.
-    if (tolower(t) ~ /alias\./) {
-      a = 1
-      rest = substr(t, index(tolower(t), "alias.") + 6)
-      eq = index(rest, "=")
-      if (eq > 0) { nm = substr(rest, 1, eq - 1); aliasdef(nm, substr(rest, eq + 1)) }
-      else if (rest != "") aliasdef(rest, TOK[m + 1])
-    }
-    else if (inv == "" && (t in ALIASC)) inv = t
     if (g == 0) { if (basename(t) == "git") g = m }
     else if (c == 0 && t == "commit") c = m
   }
-  if (g == 0 || (c == 0 && a == 0 && inv == "")) return
+  if (g == 0 || c == 0) return
   COMMIT = 1
   for (m = 1; m <= NTOK; m++) {
-    t = bypassword(TOK[m])
-    if (t != "") { setbypass(t); return }
+    t = TOK[m]
+    # A word is a bypass only where the WHOLE word is one, which is what keeps a
+    # quoted commit message out of it: `git commit -m "why --no-verify is
+    # banned"` is one word of prose, not the flag. Any `-c<value>` injects
+    # configuration, whatever the value: an included file can set core.hooksPath.
+    if (t ~ /[ \t\n\r]/) continue
+    if (t ~ /^--no-veri/ || t ~ /^-c/ || t ~ /^--config-env/) { setbypass(t); return }
+    if (t !~ /^-[A-Za-z]/) continue
+    # A cluster reads left to right: from the first value-taking option the rest
+    # of the word is its value, so `-mnote` is a message and `-nm` is not.
+    for (p = 2; p <= length(t); p++) {
+      ch = substr(t, p, 1)
+      if (index(SHORT_VALUE, ch) > 0) break
+      if (ch == "n") { setbypass(t); return }
+    }
   }
-  # Nothing in this argv skips the hooks, but the alias it invokes may.
-  if (inv != "" && ALIASB[inv] != "") setbypass(ALIASB[inv])
 }
 BEGIN {
   SQ = sprintf("%c", 39); BT = sprintf("%c", 96)
@@ -257,6 +238,9 @@ END {
   cmd = jsonstring(rest)
   if (UNREADABLE) { print "unreadable=1"; exit }
   scan(cmd)
+  # A command naming no git is not this gate to judge, so an ordinary
+  # `echo $<quote>hi<quote>` is left alone.
+  if (index(cmd, "git") > 0) { u = unmodelled(cmd); if (u != "") { print "unmodelled=" u; exit } }
   if (COMMIT) print "commit=1"
   if (MOVES) print "moves=1"
   if (COMMIT && BYPASS != "") print "bypass=" BYPASS
@@ -275,6 +259,12 @@ while IFS= read -r line; do
     moves=1) MOVES=1 ;;
     bypass=*) BYPASS="${line#bypass=}" ;;
     nocommand=1) exit 0 ;;
+    # A construct this hook does not model can hide a commit or the flag that
+    # skips its hooks, so it is refused rather than parsed harder.
+    unmodelled=*)
+      echo "pre-commit-check: this command carries ${line#unmodelled=}, which this hook does not model, so it cannot tell whether the commit in it skips the repository's git hooks — write the command without that construct" >&2
+      exit 2
+      ;;
     # A payload naming a command this lane cannot read is refused, never waved
     # through: where no git hook is armed, this lane is the check.
     unreadable=1)
