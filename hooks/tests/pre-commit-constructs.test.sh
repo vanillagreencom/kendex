@@ -51,7 +51,13 @@ unmodelled "git status && \$'g''it' commit --no-verify -m x" "a construct spelli
 
 # An alias key carried inline keeps the bare git prerequisite: it renames the
 # subcommand of this very invocation, so no normalizing brings the word back.
+# It is read off the live words, so a key the shell assembles across a line
+# continuation is that key however the text was written, and the same text in a
+# heredoc body is no word at all.
 unmodelled "git -c alias.c='co' co --allow-empty -m x" "an inline alias key naming no commit"
+unmodelled 'git -c alias.c\\\n=com\\\nmit c '"$NV"' -m x' "a key split across a continuation"
+unmodelled 'git -c \"ali\\\nas.c=com\\\nmit -n\" c --allow-empty -m x' "a key split inside quotes"
+both 'cat <<EOF\ngit -c alias.c=co co\nEOF\ngit status' 0 0 "an alias key in a heredoc body"
 
 # The KEN-870 regression. A trigger fires where the construct can change what
 # the command runs, not wherever its text appears. A key written to the config

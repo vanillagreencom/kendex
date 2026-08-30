@@ -32,6 +32,17 @@ export interface CommandScan {
 	unmodelled: string | null;
 }
 const basename = (token: string): string => token.replace(/^.*\//, "");
+/** An alias key carried with its value renames the subcommand of the invocation
+ * it is passed to. It is read off the live words, never the text they were
+ * written as: the shell assembles a word out of quoted fragments and across a
+ * line continuation, so `ali''as.c=commit` and a key split over two lines are
+ * both that key, and the same text in a heredoc body or a comment tail is no
+ * word at all. */
+const INLINE_ALIAS = /alias\.[^= \t\n\r]*=/;
+function aliasCarriedInline(tokens: string[]): boolean {
+	if (!tokens.some((t) => basename(t) === "git")) return false;
+	return tokens.some((t) => INLINE_ALIAS.test(t.toLowerCase()));
+}
 function setBypass(scan: CommandScan, token: string): void {
 	if (scan.bypass !== null) return;
 	const flat = token.replace(/[\n\r\t]+/g, " ");
@@ -50,16 +61,17 @@ function setBypass(scan: CommandScan, token: string): void {
  *
  * An alias key carried inline is the exception and keeps the bare git
  * prerequisite: `-c alias.x=...` renames the subcommand of this very
- * invocation, so the commit word can be absent altogether. A key written to the
- * config instead takes effect on later commands, which arrive as their own
- * payloads; here it is text like any other and takes the commit prerequisite,
- * so writing an ordinary shorthand is the write it reads as. */
-function unmodelled(command: string, norm: string): string | null {
+ * invocation, so the commit word can be absent altogether. That one is read off
+ * the live words rather than the text, because the shell assembles the key. A
+ * key written to the config instead takes effect on later commands, which
+ * arrive as their own payloads; here it is text like any other and takes the
+ * commit prerequisite, so writing an ordinary shorthand is the write it reads
+ * as. */
+function unmodelled(command: string, aliasInline: boolean, norm: string): string | null {
 	if (!norm.includes("git")) return null;
-	const lower = command.toLowerCase();
-	if (/alias\.[^= \t\n\r]*=/.test(lower)) return "an alias config key";
+	if (aliasInline) return "an alias config key";
 	if (!norm.includes("commit")) return null;
-	if (lower.includes("alias.")) return "an alias config key";
+	if (command.toLowerCase().includes("alias.")) return "an alias config key";
 	if (command.includes("$'")) return "ANSI-C quoting";
 	if (/\(\([^)]*<</.test(command)) return "a shift inside arithmetic";
 	return null;
@@ -120,6 +132,7 @@ function judge(tokens: string[], scan: CommandScan): void {
 export function scanCommand(command: string): CommandScan {
 	const scan: CommandScan = { commit: false, moves: false, bypass: null, unmodelled: null };
 	const n = command.length;
+	let aliasInline = false;
 	let tokens: string[] = [];
 	let word = "";
 	let haveWord = false;
@@ -134,7 +147,10 @@ export function scanCommand(command: string): CommandScan {
 	};
 	const endCommand = (): void => {
 		flush();
-		if (tokens.length > 0) judge(tokens, scan);
+		if (tokens.length > 0) {
+			if (aliasCarriedInline(tokens)) aliasInline = true;
+			judge(tokens, scan);
+		}
 		tokens = [];
 	};
 	/** Quoting sets a word boundary; it does not stop the word existing, so the
@@ -280,7 +296,7 @@ export function scanCommand(command: string): CommandScan {
 		}
 	}
 	endCommand();
-	scan.unmodelled = unmodelled(command, normalize(command));
+	scan.unmodelled = unmodelled(command, aliasInline, normalize(command));
 	return scan;
 }
 

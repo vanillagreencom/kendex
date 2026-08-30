@@ -365,8 +365,12 @@ describe("pre-commit gate: the bash hook's contract", () => {
 			"git status && $'g''it' commit --no-verify -m x",
 			// An alias key carried inline keeps the bare git prerequisite: it
 			// renames the subcommand of this very invocation, so no normalizing
-			// brings the word back.
+			// brings the word back. It is read off the live words, so a key the
+			// shell assembles across a line continuation is that key however the
+			// text was written.
 			"git -c alias.c='co' co --allow-empty -m x",
+			`git -c alias.c\\\n=com\\\nmit c ${nv} -m x`,
+			`git -c "ali\\\nas.c=com\\\nmit -n" c --allow-empty -m x`,
 			// Accepted on KEN-866 and pinned so it cannot flip in silence: the
 			// pattern supplies the word, and no text test tells it from the
 			// subcommand.
@@ -404,6 +408,7 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		// either side of it is prose.
 		await both("git config alias.st status", "allow", "allow");
 		await both("git config alias.c 'status' && git c", "allow", "allow");
+		await both("cat <<EOF\ngit -c alias.c=co co\nEOF\ngit status", "allow", "allow");
 		await both('git commit "a\\\nb"', "allow", "refuse");
 		await both('git commit -m "line one\nline two"', "allow", "refuse");
 		const joined = await gate(armed, `git commit "--no-veri\\\nfy" -m x`);

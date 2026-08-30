@@ -43,10 +43,21 @@ function setbypass(t) {
 }
 function basename(t) { sub(/^.*\//, "", t); return t }
 function flush_word() { if (HAVEW) { TOK[++NTOK] = W; W = ""; HAVEW = 0 } }
+# An alias key carried with its value renames the subcommand of the invocation
+# it is passed to. It is read off the live words, never the text they were
+# written as: the shell assembles a word out of quoted fragments and across a
+# line continuation, so `ali<q><q>as.c=commit` and a key split over two lines
+# are both that key, and the same text in a heredoc body or a comment tail is
+# no word at all.
+function alias_inline(   m, hasgit) {
+  for (m = 1; m <= NTOK; m++) if (basename(TOK[m]) == "git") hasgit = 1
+  if (!hasgit) return
+  for (m = 1; m <= NTOK; m++) if (tolower(TOK[m]) ~ /alias\.[^= \t\n\r]*=/) ALIASINLINE = 1
+}
 # split with an empty string is the portable array clear (not `delete TOK`).
 function end_command() {
   flush_word()
-  if (NTOK > 0) judge()
+  if (NTOK > 0) { alias_inline(); judge() }
   split("", TOK); NTOK = 0
 }
 # Decode the JSON string opening at s[1]. BS, the decoded backslash, stays the
@@ -192,15 +203,15 @@ function scan(cmd,   n, i, ch, c2, d, j, start) {
 #
 # An alias key carried inline is the exception and keeps the bare git
 # prerequisite: `-c alias.x=...` renames the subcommand of this very invocation,
-# so the commit word can be absent altogether. A key written to the config
-# instead takes effect on later commands, which arrive as their own payloads;
-# here it is text like any other and takes the commit prerequisite, so writing
-# an ordinary shorthand is the write it reads as.
-function unmodelled(cmd, norm,   lc) {
-  lc = tolower(cmd)
-  if (lc ~ /alias\.[^= \t\n\r]*=/) return "an alias config key"
+# so the commit word can be absent altogether. That one is read off the live
+# words rather than the text, because the shell assembles the key. A key written
+# to the config instead takes effect on later commands, which arrive as their own
+# payloads; here it is text like any other and takes the commit prerequisite, so
+# writing an ordinary shorthand is the write it reads as.
+function unmodelled(cmd, norm) {
+  if (ALIASINLINE) return "an alias config key"
   if (index(norm, "commit") == 0) return ""
-  if (lc ~ /alias\./) return "an alias config key"
+  if (tolower(cmd) ~ /alias\./) return "an alias config key"
   if (index(cmd, "$" SQ) > 0) return "ANSI-C quoting"
   if (cmd ~ /\(\([^)]*<</) return "a shift inside arithmetic"
   return ""
