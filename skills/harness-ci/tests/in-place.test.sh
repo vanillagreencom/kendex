@@ -96,8 +96,16 @@ assert_verdict "a CRLF manifest still carves" false --repo "$crlf" --event push 
 
 # A legal spelling the reader does not name degrades to the coarse carve:
 # an in-place line it could not tie to a name makes every skill path
-# project source rather than a guessed name set.
-for unnamed in whole-table dotted-key inline-table dotted-escape multiline-table; do
+# project source rather than a guessed name set. The header shapes are the
+# two the TOML serializer writes, so a name wearing an apostrophe, a space
+# outside the quotes, or an escape is not a name here; the value shapes
+# are the one kendex writes, so a value that decodes to in-place without
+# any line spelling it counts as a mention and cannot be accounted.
+for unnamed in whole-table dotted-key inline-table dotted-escape multiline-table \
+  nested-table apostrophe-name apostrophe-name-space trailing-space leading-space \
+  padded-name quoted-trailing-space spaced-table escaped-name \
+  malformed-quoted-name header-comment \
+  escaped-value hex-escaped-value split-value quoted-key-split-value; do
   coarse="$(new_repo "coarse-$unnamed")"
   case "$unnamed" in
     whole-table) printf 'schema = 6\nskills = { mine = { source = "in-place" } }\n' ;;
@@ -106,6 +114,24 @@ for unnamed in whole-table dotted-key inline-table dotted-escape multiline-table
     dotted-escape) printf 'schema = 6\nskills."mi\\u006Ee" = { source = "in-place" }\n' ;;
     # A TOML 1.1 multiline inline table puts the value on its own line.
     multiline-table) printf 'schema = 6\n[skills]\nmine = {\n"x.y" = true, source = "in-place",\n}\n' ;;
+    # A bare dotted header is skills to a to b, not a skill named a.b.
+    nested-table) printf 'schema = 6\n[skills.a.b]\nsource = "in-place"\n' ;;
+    apostrophe-name) printf "schema = 6\n[skills.'mine']\nsource = \"in-place\"\n" ;;
+    apostrophe-name-space) printf "schema = 6\n[skills.'ship it']\nsource = \"in-place\"\n" ;;
+    trailing-space) printf 'schema = 6\n[skills.mine ]\nsource = "in-place"\n' ;;
+    leading-space) printf 'schema = 6\n[skills. mine]\nsource = "in-place"\n' ;;
+    padded-name) printf 'schema = 6\n[skills. mine ]\nsource = "in-place"\n' ;;
+    quoted-trailing-space) printf 'schema = 6\n[skills."mine" ]\nsource = "in-place"\n' ;;
+    spaced-table) printf 'schema = 6\n[ skills.mine ]\nsource = "in-place"\n' ;;
+    escaped-name) printf 'schema = 6\n[skills."mi\\u006Ee"]\nsource = "in-place"\n' ;;
+    malformed-quoted-name) printf 'schema = 6\n[skills."a"b"]\nsource = "in-place"\n' ;;
+    header-comment) printf 'schema = 6\n[skills.mine] # kept here\nsource = "in-place"\n' ;;
+    # A value no line spells: the escape and the splice both decode to
+    # in-place, so each counts as a mention the name rule cannot account.
+    escaped-value) printf 'schema = 6\n[skills.mine]\nsource = "in\\u002Dplace"\n' ;;
+    hex-escaped-value) printf 'schema = 6\n[skills.mine]\nsource = "in-\\x70lace"\n' ;;
+    split-value) printf 'schema = 6\n[skills.mine]\nsource = """in\\\n-place"""\n' ;;
+    quoted-key-split-value) printf 'schema = 6\n[skills.mine]\n"source" = """in-\\\nplace"""\n' ;;
   esac >"$coarse/kendex.toml"
   commit_paths "$coarse" "baseline" README.md
   coarsebase="$(git -C "$coarse" rev-parse HEAD)"
@@ -117,6 +143,19 @@ for unnamed in whole-table dotted-key inline-table dotted-escape multiline-table
   assert_verdict "the coarse carve covers every skill path ($unnamed)" false --repo "$coarse" --event push --base "$coarsebase" --head HEAD
 done
 
+# A quoted key delimits the name, so one holding a `]` still reads as that
+# one name and carves nothing else.
+bracket="$(new_repo bracket-name)"
+printf 'schema = 6\n[skills."a]b"]\nsource = "in-place"\n' >"$bracket/kendex.toml"
+commit_paths "$bracket" "baseline" README.md
+bracketbase="$(git -C "$bracket" rev-parse HEAD)"
+commit_paths "$bracket" "edit" ".agents/skills/a]b/SKILL.md"
+assert_verdict "a quoted name holding a bracket carves" false --repo "$bracket" --event push --base "$bracketbase" --head HEAD
+git -C "$bracket" checkout -q -B "case" "$bracketbase"
+git -C "$bracket" clean -qfd -e kendex.toml
+commit_paths "$bracket" "sibling" .agents/skills/other/SKILL.md
+assert_verdict "a sibling beside the bracket name stays render" true --repo "$bracket" --event push --base "$bracketbase" --head HEAD
+
 # An in-place declaration under another table is not a skill name: the
 # header ends the one in scope, so the line goes unaccounted and every
 # skill path carves rather than inheriting the last skill's name.
@@ -126,15 +165,6 @@ commit_paths "$foreign" "baseline" README.md
 foreignbase="$(git -C "$foreign" rev-parse HEAD)"
 commit_paths "$foreign" "edit" .agents/skills/other/SKILL.md
 assert_verdict "an in-place agent carves every skill path" false --repo "$foreign" --event push --base "$foreignbase" --head HEAD
-
-# A section-header name the reader cannot decode carves instead of
-# resolving to a guessed name.
-esc="$(new_repo escaped-header)"
-printf 'schema = 6\n[skills."mi\\u006Ee"]\nsource = "in-place"\n' >"$esc/kendex.toml"
-commit_paths "$esc" "baseline" README.md
-escbase="$(git -C "$esc" rev-parse HEAD)"
-commit_paths "$esc" "edit" .agents/skills/mine/SKILL.md
-assert_verdict "an escaped header name carves" false --repo "$esc" --event push --base "$escbase" --head HEAD
 
 # The manifests come from the selected head tree, not the checkout: a head
 # that declares the skill carves even when the checkout sits on a commit

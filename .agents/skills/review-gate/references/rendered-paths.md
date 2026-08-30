@@ -68,12 +68,13 @@ jq -r '.entries[] | select(.emitted != null) | .emitted.paths[]' .kendex-lock.js
 
 That awk reads top-level `[skills.<name>]` tables in `kendex.toml` and
 nothing else. It does not see a `[skills]` table holding inline entries,
-dotted keys, or `kendex-local.toml`, which a source catalog keeps its own
-install state in. A repo wanting a mechanical answer over those has a worked
-precedent in the harness-ci skill's `harness-only` script, § `manifest_carves`:
-it reads both manifests from the head tree and fails closed, carving every
-skill path when a manifest will not read or says `in-place` on a line it
-cannot tie to a name. Do not build a second one here.
+dotted or quoted keys, an indented declaration, or `kendex-local.toml`, which
+a source catalog keeps its own install state in. A repo wanting a mechanical
+answer over those has a worked precedent in the harness-ci skill's
+`harness-only` script, § `manifest_carves`: it reads both manifests from the
+head tree and fails closed, carving every skill path when a manifest will not
+read or says `in-place` on a line it cannot tie to a name. Do not build a
+second one here.
 
 What backstops the gap is the section's own authority: an in-place skill's
 content tree at `.agents/skills/<name>` is bytes kendex reads and never

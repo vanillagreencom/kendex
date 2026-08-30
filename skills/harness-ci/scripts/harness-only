@@ -175,32 +175,37 @@ manifest_carves() { # IN-TREE PATH -> carve lines for one manifest, "*" on a fai
   [ -n "$manifest_entry" ] || return 0
   case "$manifest_entry" in 120000*) echo "*"; return 0 ;; esac
   manifest_content="$(git_repo show "$head:$1" 2>/dev/null)" || { echo "*"; return 0; }
-  # kendex writes one manifest shape — a `[skills.<name>]` header, quoted
-  # only where the name needs it, then `source = "in-place"` — and that is
-  # the shape read here. Everything else a manifest can legally spell is a
-  # hand edit, so the reader does not parse it: it counts the lines saying
-  # `in-place` and carves every skill path when one goes unaccounted. That
-  # covers a dotted key, an inline table, a nested table, an indecipherable
-  # name. It does not cover a value the line never spells — a \u escape, a
-  # string split across lines — which no kendex install writes.
-  printf '%s\n' "$manifest_content" | awk '
+  # kendex writes one manifest shape — a `[skills.<name>]` header holding a
+  # bare key or a plain double-quoted one, exactly as the TOML serializer
+  # spells it, then `source = "in-place"` — and that is the shape read here.
+  # The reader does not parse the other spellings TOML allows. It counts
+  # every line that could take part in spelling the value — a bare
+  # `in-place`, a \u/\U/\x escape, a multiline `source` string — and carves
+  # every skill path when one goes unaccounted. So an apostrophe-quoted
+  # key, a dotted key, an inline table, a nested table, a name wearing
+  # whitespace, an escaped name and an escaped value all answer false.
+  # Over-matching is the safe direction: no legal TOML spelling of the
+  # value can answer harness_only=true wrongly, and the exotic ones cost
+  # lanes that run.
+  printf '%s\n' "$manifest_content" | awk -v q="'" '
+    BEGIN { mlsrc = "[\"" q "]?source[\"" q "]?[ \t]*=[ \t]*(\"\"\"|" q q q ")" }
     {
       line = $0
       sub(/\r$/, "", line)
       sub(/^[ \t]+/, "", line)
-      if (line ~ /in-place/) mentions += 1
+      if (line ~ /in-place/ || line ~ /\\[uUx]/ || line ~ mlsrc) mentions += 1
     }
-    line ~ /^\[skills\.[^]]+\][ \t]*(#.*)?$/ {
+    line ~ /^\[skills\.[A-Za-z0-9_-]+\]$/ || line ~ /^\[skills\."[^"\\]*"\]$/ {
       name = line
       sub(/^\[skills\./, "", name)
-      sub(/\][ \t]*(#.*)?$/, "", name)
-      if (name ~ /^".*"$/) { name = substr(name, 2, length(name) - 2) }
+      sub(/\]$/, "", name)
+      if (name ~ /^"/) { name = substr(name, 2, length(name) - 2) }
       next
     }
     line ~ /^\[/ { name = ""; next }
     name != "" && line ~ /^source[ \t]*=[ \t]*"in-place"[ \t]*(#.*)?$/ {
       accounted += 1
-      if (name ~ /\\/) { print "*" } else { print name }
+      print name
     }
     END { if (mentions > accounted) print "*" }
   ' 2>/dev/null || echo "*"

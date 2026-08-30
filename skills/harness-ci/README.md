@@ -60,14 +60,17 @@ those trees it committed.
   nothing else — the deletion of `src/app.ts` would go unjudged. With the
   flag, both paths are listed and the diff answers `false`.
 - **The in-place read**: the manifests come from the selected head tree, and
-  the reader knows the one shape kendex writes — a `[skills.<name>]` header,
-  quoted only where the name needs it, then `source = "in-place"`. It does not
-  parse the other spellings TOML allows. It counts the lines saying
-  `in-place` instead, and carves every `.agents/skills` path when one goes
-  unaccounted, so a dotted key, an inline table or an undecodable name
-  answers `false` rather than a guess. A value the line never spells — a
-  `\u` escape, a string split across lines — is past what it sees, and no
-  kendex install writes one.
+  the reader knows the one shape kendex writes — a `[skills.<name>]` header
+  holding a bare or plain double-quoted key, then `source = "in-place"`. It
+  does not parse the other spellings TOML allows. It counts every line that
+  could take part in spelling the value instead — a bare `in-place`, a
+  `\u`/`\U`/`\x` escape, a multiline `source` string — and carves every
+  `.agents/skills` path when one goes unaccounted, so an apostrophe-quoted
+  key, a dotted key, an inline table, a nested table, a name wearing
+  whitespace and an escaped name or value all answer `false` rather than a
+  guess. `[agents.<name>]` and `[hooks.<name>]` are unaccounted too, so a
+  repo that adopted an agent or a hook in place stays on that coarse carve
+  and never gets the per-name read.
 - **Merge base on `pull_request`** (`base...head`): the base branch moves
   under an open PR, and only the merge base isolates what the PR changed.
 - **Two endpoints on `push` and `merge_group`** (`base head`): a force-push
