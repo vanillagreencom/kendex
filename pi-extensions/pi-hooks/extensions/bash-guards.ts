@@ -6,8 +6,7 @@ import { runCommandAsync } from "./process.js";
 /**
  * A command that is exactly `cd` or `cd <target>` with no operator scoping the
  * change (no `&&`, `||`, `|`, `;`, parens, backticks, `$(...)`, newlines): it
- * moves Pi's CWD for every later tool call, and a bare `cd` goes to $HOME.
- * Mirrors `hooks/block-bare-cd.sh`.
+ * moves Pi's CWD for every later tool call. Mirrors `hooks/block-bare-cd.sh`.
  */
 const BARE_CD = /^cd(\s+[^&|;()`$\n]+)?$/;
 export function isBareCd(command: string): boolean {
@@ -24,16 +23,14 @@ const SEPARATORS = new Set([";", "&", "|", "(", ")", "\n", "\r"]);
 const GIT_GLOBAL_VALUE = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--exec-path", "--config-env", "--attr-source"]);
 /** Words that stand in front of a command without being it. */
 const TRANSPARENT = new Set("if then else elif fi while until do done ! time command exec eval nohup sudo doas env nice ionice timeout stdbuf setsid xargs export declare typeset local readonly".split(" "));
-/** `git commit` long options whose value is the next word. */
+/** `git commit` long options taking the next word as their value. */
 const COMMIT_VALUE = new Set("--author --date --message --file --template --cleanup --reuse-message --reedit-message --fixup --squash --pathspec-from-file --trailer".split(" "));
 /** `git commit` short options whose value is the next word. */
 const SHORT_VALUE = "mFcCt";
 
-/**
- * What the scan found across every `git` argv in one bash command: whether one
- * is a commit, whether it may land in another repository (`-C`, `cd`,
- * `GIT_DIR`), and the first word bypassing an armed hook or injecting config.
- */
+/** What the scan found across every `git` argv in one bash command: whether one
+ * is a commit, whether it may land elsewhere (`-C`, `cd`, `GIT_DIR`), and the
+ * first word bypassing an armed hook or injecting config. */
 export interface CommandScan {
 	commit: boolean;
 	moves: boolean;
@@ -46,10 +43,8 @@ function setBypass(scan: CommandScan, token: string): void {
 	scan.bypass = flat.length > 60 ? flat.slice(0, 60) : flat;
 }
 
-/**
- * Judge one simple command: leading assignments, then transparent prefixes
- * (`if`, `sudo`, `env`, `timeout`, …), then the command word.
- */
+/** Judge one simple command: leading assignments, then transparent prefixes
+ * (`if`, `sudo`, `env`, `timeout`, …), then the command word. */
 function judge(tokens: string[], scan: CommandScan): void {
 	let k = 0;
 	let prefixed = false;
@@ -67,12 +62,14 @@ function judge(tokens: string[], scan: CommandScan): void {
 	}
 	if (k >= tokens.length) return;
 	// A wrapper whose options this gate cannot read (`sudo -u dev`, `timeout 30`)
-	// is not a reason to call this not-a-git-command: look behind it instead.
+	// hides its command word, and no rule here tells an operand from a command:
+	// `sudo -u git` names an ordinary account. So the command stops being
+	// modelled and takes the word-order rule, which may over-refuse.
 	if (basename(tokens[k]) !== "git") {
 		if (basename(tokens[k]) === "cd") scan.moves = true;
 		if (!prefixed) return;
-		while (k < tokens.length && basename(tokens[k]) !== "git") k++;
-		if (k >= tokens.length) return;
+		fallback(tokens.join(" "), scan);
+		return;
 	}
 	// Global options run to the first word that is not one, values included.
 	let j = k + 1;
@@ -118,11 +115,17 @@ function judge(tokens: string[], scan: CommandScan): void {
 	}
 }
 
-/** The rule this parser replaced, kept for a command whose quoting never closes. */
+/** The rule this parser replaced, kept for the inputs it cannot model: quoting
+ * that never closes, and a wrapper hiding its command word. Over-refusal is the
+ * trade, and a bypass counts only where the command names git. */
 function fallback(command: string, scan: CommandScan): void {
 	const words = ` ${command} `.replace(/[^a-zA-Z0-9_=-]+/g, " ");
 	const git = words.indexOf(" git ");
-	if (git < 0 || words.indexOf(" commit ", git + 4) < 0) return;
+	if (git < 0) return;
+	// A core.hooksPath line disarms the hook whether or not this command commits.
+	const key = / [a-zA-Z0-9_=-]*hookspath[^ ]* /i.exec(words);
+	if (key) setBypass(scan, key[0].trim());
+	if (words.indexOf(" commit ", git + 4) < 0) return;
 	scan.commit = true;
 	const flag = / (--no-veri[a-z]*|-[a-zA-Z]*n[a-zA-Z]*|-c|--config-env[^ ]*|GIT_CONFIG_[^ ]*) /.exec(words);
 	if (flag) setBypass(scan, flag[1]);
@@ -134,13 +137,12 @@ function fallback(command: string, scan: CommandScan): void {
  * simple command, and a heredoc body is skipped whole because it is not shell.
  * Text outside a git argv — a heredoc body, a comment, a redirection target,
  * another program's arguments, an operand after `--`, an option's value — is
- * not a flag, which is the whole reason for the split.
- * It fails closed where it can: an unreadable wrapper (`sudo -u dev`, `timeout
- * 30`) does not hide the git word, and quoting that never closes falls back to
- * the word-order rule. `sh -c '...'`, git aliases, an unlisted wrapper and the
- * inside of a `$(...)` stay invisible: git's hooks are the control.
- * Linear in the command's length: ordinary characters are counted, not copied.
- * Mirrors `hooks/pre-commit-check.sh`.
+ * not a flag: the whole reason for the split.
+ * It fails closed where it can: a command it cannot model — quoting that never
+ * closes, or a wrapper whose options hide the command word (`sudo -u dev`) —
+ * takes the word-order rule, which may over-refuse. `sh -c '...'`, git aliases,
+ * an unlisted wrapper and a `$(...)` stay invisible: git's hooks are control.
+ * Linear in the command's length. Mirrors `hooks/pre-commit-check.sh`.
  */
 export function scanCommand(command: string): CommandScan {
 	const scan: CommandScan = { commit: false, moves: false, bypass: null };
@@ -171,7 +173,7 @@ export function scanCommand(command: string): CommandScan {
 		if (i >= n) unbalanced = true;
 		i++;
 	};
-	/** A backslash escapes the next character, unless it is a newline: line joining. */
+	/** A backslash escapes the next character, newline aside: line joining. */
 	const dquoted = (): void => {
 		let start = ++i;
 		haveWord = true;
@@ -211,9 +213,9 @@ export function scanCommand(command: string): CommandScan {
 	};
 	/** A redirection ends the word and contributes nothing to the argv: IO
 	 * number, operator and target word are all consumed, so `git >/dev/null
-	 * commit` reads `commit`. `<<`/`<<-` name a heredoc: target is its delimiter. */
+	 * commit` reads `commit`. `<<`/`<<-` name a heredoc: target is its delimiter.
+	 * An IO number touches its operator, so it is the word being built now. */
 	const redirect = (): void => {
-		// An IO number touches its operator, so it is the word being built now.
 		if (haveWord && /^[0-9]+$/.test(word)) {
 			word = "";
 			haveWord = false;
@@ -295,8 +297,7 @@ export function scanCommand(command: string): CommandScan {
 			// A # begins a comment at word start only; mid-word it is `-m x#y`.
 			while (i < n && command[i] !== "\n") i++;
 		} else if ((ch === "{" || ch === "}") && !haveWord && (i + 1 >= n || command[i + 1] === " " || command[i + 1] === "\t" || SEPARATORS.has(command[i + 1]))) {
-			// A brace is a keyword only as a whole word; inside one it is expansion,
-			// so `git commit -m a{b} --no-verify` is one commit argv.
+			// A brace is a keyword only as a whole word: `-m a{b}` is expansion.
 			endCommand();
 			i++;
 		} else if (ch === "<" || ch === ">") redirect();
@@ -347,7 +348,7 @@ function carriesMarker(path: string): boolean {
  * Armed is the marker in both hook files, in the directory git reads with
  * nothing redirecting it, in files git will actually run. `core.hooksPath` set
  * to anything at all is not armed. Exit 1 from `git config --get` is git for
- * "not set" and the only answer meaning unredirected; any other failure is a
+ * "not set" and the only answer meaning unredirected; anything else is a
  * repository nobody measured, which is not armed either.
  */
 async function hooksArmed(hooksDir: string, cwd: string): Promise<boolean> {
@@ -367,9 +368,9 @@ async function hooksArmed(hooksDir: string, cwd: string): Promise<boolean> {
  * arms them). Where one is armed, a git argv that sidesteps it is refused: git
  * would skip commit-msg too, and nothing here can check the message. Otherwise
  * the commit is refused naming that command: arming is the local act that asks
- * for those scripts, and this gate never runs them on a repository's behalf.
- * It gates the working directory only, never following `-C`, `cd`, `--git-dir`
- * or `--work-tree`, and names the directory it judged where it cannot defer.
+ * for those scripts, and this gate never runs them on a repository's behalf. It
+ * gates the working directory only, never following `-C`, `cd`, `--git-dir` or
+ * `--work-tree`, and names the directory it judged where it cannot defer.
  */
 export async function preCommitGate(command: string, cwd: string): Promise<PreCommitVerdict> {
 	const scan = scanCommand(command);

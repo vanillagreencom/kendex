@@ -307,6 +307,23 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		await both("echo git commit --no-verify", "allow", "allow");
 	});
 
+	test("a wrapper option's operand is not a command word", async () => {
+		// `git` is an ordinary account name (gitolite, Gitea), and reading the
+		// operand as the command word left the bypass behind it unjudged. Such a
+		// command takes the word-order rule instead.
+		for (const command of ["sudo -u git git commit --no-verify -m x", "env -u git git commit --no-verify -m x"]) {
+			await both(command, "refuse", "refuse");
+			const named = await gate(armed, command);
+			if (named.verdict.kind !== "refuse") throw new Error("unreachable");
+			expect(named.verdict.reason).toContain("'--no-verify' bypasses");
+		}
+		// The direction the fallback has to keep: an ordinary wrapped commit still
+		// defers, and only a bypass word in it refuses.
+		await both("timeout 30 git commit -m x", "allow", "refuse");
+		await both("nice git commit -m x", "allow", "refuse");
+		await both("sudo -u dev git config core.hooksPath /dev/null && git commit -m x", "refuse", "refuse");
+	});
+
 	test("a command whose quoting never closes is judged, not skipped", async () => {
 		// The parser cannot tokenize this, so the word-order rule it replaced
 		// stands in rather than the commit passing unjudged.

@@ -425,6 +425,23 @@ both 'stdbuf -o0 git commit -n -m x' 2 2 "stdbuf with its own option"
 both '/usr/bin/git commit --no-verify -m x' 2 2 "an absolute git path"
 both 'echo git commit --no-verify' 0 0 "a word outside any argv is still text"
 
+# A wrapper option's operand is not a command word: `git` is an ordinary
+# account name (gitolite, Gitea), and reading it as the command left the
+# bypass behind it unjudged. Such a command takes the word-order rule.
+both 'sudo -u git git commit --no-verify -m x' 2 2 "an operand spelled git"
+both 'env -u git git commit --no-verify -m x' 2 2 "env unsetting a variable named git"
+
+run_hook "$ARMED" "$(payload 'sudo -u git git commit --no-verify -m x')" CHAIN_EXIT=0
+assert_contains "$err" "'--no-verify' bypasses" "the operand form names the flag it saw"
+run_hook "$ARMED" "$(payload 'env -u git git commit --no-verify -m x')" CHAIN_EXIT=0
+assert_contains "$err" "'--no-verify' bypasses" "the env form names the flag it saw"
+
+# The direction the fallback has to keep: an ordinary wrapped commit still
+# defers, and only a bypass word in it refuses.
+both 'timeout 30 git commit -m x' 0 2 "a wrapped plain commit still defers"
+both 'nice git commit -m x' 0 2 "an unwrapped-option prefix still defers"
+both 'sudo -u dev git config core.hooksPath /dev/null && git commit -m x' 2 2 "a wrapped hooksPath write"
+
 echo
 echo "quoting and redirection hold the argv together"
 

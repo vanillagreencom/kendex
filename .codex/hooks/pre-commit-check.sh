@@ -4,7 +4,7 @@
 # event: PreToolUse
 # matcher: Bash
 # description: On a git commit, defer to the working directory's armed git hooks — both pre-commit and commit-msg, marked and executable (kendex guard install arms them). Otherwise the commit is refused naming that command: arming is the local act that says a person wants this repository's committed scripts run on their commits, and this hook never runs them on their behalf. Where one is armed, a command that sidesteps it with git's no-verify flag, -n, or a core.hooksPath override is refused: git would skip the commit-msg hook too, and nothing here can check the message. The command is split into simple commands and only the argv of a `git` invocation is judged, with heredoc bodies, comments, redirection targets, operands after --, and option values all read as text rather than flags. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
-# safety: Refuses a commit from a working directory with no armed git pre-commit hook rather than running that repository's own scripts to check it, and refuses a git commit argv that bypasses an armed hook (no-verify, -n) or injects git configuration that could (a global -c or --config-env option, a GIT_CONFIG_* assignment, a git config write of core.hooksPath); a command it cannot tokenize falls back to word-order matching rather than passing unjudged, and a commit aimed at another repository is that repository's armed hook's to gate.
+# safety: Refuses a commit from a working directory with no armed git pre-commit hook rather than running that repository's own scripts to check it, and refuses a git commit argv that bypasses an armed hook (no-verify, -n) or injects git configuration that could (a global -c or --config-env option, a GIT_CONFIG_* assignment, a git config write of core.hooksPath); a command it cannot model — quoting that never closes, or a wrapper whose options hide the command word — falls back to word-order matching rather than passing unjudged, and a commit aimed at another repository is that repository's armed hook's to gate.
 # timeout: 60
 # ---
 
@@ -22,11 +22,11 @@ INPUT=$(cat)
 # comments, redirection targets, operands after `--` and option values are
 # text, not flags.
 #
-# It fails closed where it can: a wrapper whose options it cannot read (`sudo
-# -u dev`, `timeout 30`) does not hide the git word behind it, and a command
-# whose quoting never closes falls back to the word-order rule. `sh -c '...'`,
-# git aliases, a wrapper outside the transparent list and the inside of a
-# `$(...)` stay invisible: this guards habit, and git's hooks are the control.
+# It fails closed where it can: a command it cannot model — quoting that never
+# closes, or a wrapper whose options hide the command word (`sudo -u dev`,
+# `timeout 30`) — takes the word-order rule instead, which may over-refuse.
+# `sh -c '...'`, git aliases, a wrapper outside the transparent list and the
+# inside of a `$(...)` stay invisible: git's hooks are the control.
 #
 # The payload is JSON, whose strings never span lines, so the analysis reads
 # the whole input and takes the first `"command"` key. Decoding and tokenizing
@@ -65,8 +65,7 @@ function quoted(cmd, i, n, q,   start) {
   if (i > n) { UNBALANCED = 1; return i }
   return i + 1
 }
-# A double-quoted run: a backslash escapes the next character, unless that is a
-# newline, which is line joining.
+# A double-quoted run: a backslash escapes the next character, newline aside.
 function dquoted(cmd, i, n,   start, ch, c2) {
   i++; HAVEW = 1; start = i
   while (i <= n) {
@@ -96,13 +95,11 @@ function substitution(cmd, i, n,   opener, closer, depth, ch, start) {
   W = W substr(cmd, start, i - start); HAVEW = 1
   return i
 }
-# A redirection ends the word and contributes nothing to the argv: the IO
-# number, the operator and the target word are all consumed, so `git
-# >/dev/null commit` reads `commit` as the subcommand. `<<`/`<<-` name a
-# heredoc, whose target is the delimiter; its body is skipped at the newline.
+# A redirection ends the word and contributes nothing to the argv: IO number,
+# operator and target word are all consumed, so `git >/dev/null commit` reads
+# `commit`. `<<`/`<<-` name a heredoc: the target word is its delimiter.
 function redirect(cmd, i, n,   ch, q, w, hd) {
-  # An IO number touches its operator, so it is the word being built right
-  # now, and it belongs to the redirection rather than to the argv.
+  # An IO number touches its operator, so it is the word being built now.
   if (HAVEW && W ~ /^[0-9]+$/) { W = ""; HAVEW = 0 }
   flush_word()
   hd = 0
@@ -146,8 +143,8 @@ function heredoc_bodies(cmd, i, n,   h, ls, line) {
   NHD = 0; return i
 }
 
-# One left-to-right pass. Ordinary characters are counted, not appended, and a
-# run reaches the word with one substr, so a long word costs one copy.
+# One left-to-right pass: a run of ordinary characters reaches the word with
+# one substr, so a long word costs one copy rather than one per character.
 function scan(cmd,   n, i, ch, c2, start) {
   n = length(cmd); i = 1; W = ""; HAVEW = 0; NTOK = 0; NHD = 0
   while (i <= n) {
@@ -183,8 +180,7 @@ function scan(cmd,   n, i, ch, c2, start) {
       while (i <= n && substr(cmd, i, 1) != "\n") i++
       continue
     }
-    # A brace is a keyword only as a whole word; inside one it is expansion,
-    # so `git commit -m a{b} --no-verify` is one commit argv.
+    # A brace is a keyword only as a whole word: `-m a{b}` is expansion.
     if (ch == "{" || ch == "}") {
       c2 = substr(cmd, i + 1, 1)
       if (!HAVEW && (i == n || c2 == " " || c2 == "\t" || index(SEP, c2) > 0)) {
@@ -221,12 +217,16 @@ function judge(   k, base, j, gstart, gend, subcmd, m, t, prefixed, p, c) {
   if (k > NTOK) return
   base = basename(TOK[k])
   # A wrapper whose options this lane cannot read (`sudo -u dev`, `timeout 30`)
-  # is not a reason to call this not-a-git-command: look behind it instead.
+  # hides its command word, and no rule here tells an operand from a command:
+  # `sudo -u git` names an ordinary account. So the command stops being
+  # modelled and takes the word-order rule, which may over-refuse.
   if (base != "git") {
     if (base == "cd") MOVES = 1
     if (!prefixed) return
-    while (k <= NTOK && basename(TOK[k]) != "git") k++
-    if (k > NTOK) return
+    t = TOK[1]
+    for (m = 2; m <= NTOK; m++) t = t " " TOK[m]
+    fallback(t)
+    return
   }
   # Global options run until the first word that is not one; a global option
   # taking a separate value carries that value with it.
@@ -274,18 +274,19 @@ function judge(   k, base, j, gstart, gend, subcmd, m, t, prefixed, p, c) {
     }
   }
 }
-# The rule this parser replaced, kept for the one input it cannot tokenize: a
-# command whose quoting never closes. Over-refusing it is the trade here.
-function fallback(cmd,   words, g, b) {
+# The rule this parser replaced, kept for the inputs it cannot model: quoting
+# that never closes, and a wrapper hiding its command word. Over-refusal is the
+# trade, and a bypass counts only where the command names git.
+function fallback(cmd,   words, g) {
   words = " " cmd " "
   gsub(/[^a-zA-Z0-9_=-]+/, " ", words)
   g = index(words, " git ")
-  if (g == 0 || index(substr(words, g + 4), " commit ") == 0) return
+  if (g == 0) return
+  # A core.hooksPath line disarms the hook whether or not this command commits.
+  if (match(tolower(words), / [a-z0-9_=-]*hookspath[^ ]* /)) setbypass(substr(words, RSTART + 1, RLENGTH - 2))
+  if (index(substr(words, g + 4), " commit ") == 0) return
   COMMIT = 1
-  if (match(words, / (--no-veri[a-z]*|-[a-zA-Z]*n[a-zA-Z]*|-c|--config-env[^ ]*|GIT_CONFIG_[^ ]*) /)) {
-    b = substr(words, RSTART + 1, RLENGTH - 2)
-    setbypass(b)
-  }
+  if (match(words, / (--no-veri[a-z]*|-[a-zA-Z]*n[a-zA-Z]*|-c|--config-env[^ ]*|GIT_CONFIG_[^ ]*) /)) setbypass(substr(words, RSTART + 1, RLENGTH - 2))
 }
 BEGIN {
   SQ = sprintf("%c", 39); BT = sprintf("%c", 96)
