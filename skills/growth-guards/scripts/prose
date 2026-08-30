@@ -10,9 +10,8 @@
 # reference doc, a changelog and a design record keep their history intact.
 # GROWTH_GUARDS_PROSE_PATHS replaces the path list.
 #
-# Content comes from the index, like every scan in this family. A symlink at
-# a configured path is read through to its target, so a scoped name cannot
-# become a hole; a submodule gitlink and binary content are named as
+# Content comes from the index, like every scan in this family. A symlink, a
+# submodule gitlink and binary content at a configured path are named as
 # unmeasured rather than folded into the clean count. Matching is
 # case-insensitive: the banned strings are words, and a sentence-initial
 # capital is the same word.
@@ -51,9 +50,8 @@ A history reference in agent-loaded markdown fails: a calendar date
 (20YY-MM-DD), a three- or four-digit issue number after '#', or a word
 naming a past state. Matching is case-insensitive and reads index content.
 Only the configured paths are scanned; a reference doc, a changelog and a
-design record are out of scope by not being named. A symlink at a configured
-path is read through to its target; a submodule gitlink and binary content
-are named as unmeasured.
+design record are out of scope by not being named. A symlink, a submodule
+gitlink and binary content at a configured path are named as unmeasured.
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -113,9 +111,8 @@ gg_tmpdir
 # `git grep --cached` SKIPS a symlink index entry outright, never reading
 # through it, and drops a gitlink and a binary blob the same way: with no
 # status and no stderr, so the lane would otherwise print a clean verdict
-# over content it never read.
-# A symlink here is resolved to its target and the target scanned in its
-# place, so a scoped name cannot be turned into a hole.
+# over content it never read. Each of the three is named as unmeasured here
+# and kept out of the scanned count instead.
 MATCHED_SPECS=()
 matched=0
 add_spec() { # PATH BLOBFILE — one measurable path for the scan below
@@ -123,21 +120,19 @@ add_spec() { # PATH BLOBFILE — one measurable path for the scan below
   matched=$((matched + 1))
 }
 
-gg_walk_configured_paths markdown file resolve add_spec
+gg_walk_configured_paths markdown file add_spec
 skipped="$GG_WALK_SKIPPED"
-deferred="$GG_WALK_DEFERRED"
 
 UNMEASURED=""
 [ "$skipped" -eq 0 ] || UNMEASURED="; $skipped matched path(s) not measured"
-[ "$deferred" -eq 0 ] || UNMEASURED="$UNMEASURED; $deferred scoped link(s) covered by another record"
 
 if [ "$matched" -eq 0 ]; then
   # The "nothing matched" line belongs to ONE state: the configured globs
   # named no tracked path at all. A path that matched and was skipped is
-  # reported as skipped, and one that matched and was deferred is counted —
-  # printing this line over either would send its reader to widen a glob that
-  # was already right, which is the wrong verdict dressed as advice.
-  if [ "$skipped" -eq 0 ] && [ "$deferred" -eq 0 ]; then
+  # reported as skipped, and printing this line over it would send its reader
+  # to widen a glob that was already right — the wrong verdict dressed as
+  # advice.
+  if [ "$skipped" -eq 0 ]; then
     echo "prose: OK — no tracked file matches GROWTH_GUARDS_PROSE_PATHS ($GG_PATH_GLOBS_SHOWN)"
   else
     echo "prose: OK — nothing measurable to scan$UNMEASURED"

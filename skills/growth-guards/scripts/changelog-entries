@@ -201,7 +201,7 @@ measure_entries() { # PATH BLOBFILE
   done <"$GG_TMP/report"
 }
 
-gg_walk_configured_paths "changelog text" changelog skip measure_entries
+gg_walk_configured_paths "changelog text" changelog measure_entries
 skipped="$GG_WALK_SKIPPED"
 
 UNMEASURED=""
