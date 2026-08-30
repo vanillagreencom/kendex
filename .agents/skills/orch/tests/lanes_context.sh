@@ -9,14 +9,16 @@
 # the overseer to compact the emptiest lane in the fleet, so the direction is
 # what these cases pin.
 #
-# Where the status line SITS is pinned too, and by property rather than by
-# count. Case 1's screen is a real `tmux capture-pane`; the other claude
-# screens are built from real status lines. The footer under a status line
-# grows by a row per running agent, so no line count reaches an
-# orchestrating lane's. Four cases hold that shut, each against a different
-# mutation:
-#   case 1  an orchestrating lane's real footer — dies the moment any bottom
-#           window narrower than it is taken off the screen
+# Where the status line SITS is pinned too, and the two harnesses put it in
+# different places. Codex draws it LAST, so the codex reading comes from the
+# final non-empty line and from no other. Claude draws a row per running
+# agent BELOW its status line, so its footer has no bound and its reading is
+# the bottom-most whole-line match. Case 1's screen is a real
+# `tmux capture-pane`; the other claude screens are built from real status
+# lines. Cases hold each half shut, one per mutation:
+#   case 1  an orchestrating lane's real footer, whose final line is an agent
+#           row — dies the moment the claude reading is taken by position
+#           too, or any bottom window narrower than the footer is taken off
 #   case 14 a session with no percentage yet, under prose that names a model
 #           and one — dies if the claude shape is loosened back to accepting
 #           words between the model name and the percentage
@@ -24,31 +26,34 @@
 #           dies if a reading is a FRAGMENT of the status line rather than
 #           the whole line, because bottom-most then hands the sentence the
 #           verdict over the real line above it
-#   case 22 the same sentence in the CODEX shape, which carries its fragment
-#           in ordinary prose about compaction — dies the moment the codex
-#           branch is loosened back to matching anywhere in a line
-#   case 24 the same sentence two words long — dies the moment the codex
-#           trailing item is admitted by token COUNT rather than by shape,
-#           which is how `compact now` passed for a status item
+#   case 22 a codex screen whose final line is not a status line, with a real
+#           one above it — dies the moment the codex reading goes back to
+#           searching the screen instead of reading the line it ends on
+#   case 24 a configured status item that is not a working directory — dies
+#           the moment the codex shape judges what follows the separator,
+#           because no shape separates a configured item from a sentence
 #   case 13 a pane that exited to its shell — dies if the liveness evidence
 #           is dropped, which is the only thing a window ever stood in for
 #
 # Covered:
 #   1. the claude shape reports its number as used, wherever the footer puts
 #      the status line
-#   2. the codex shape is converted, not reported raw
-#   3. the bottom-most reading wins over one repainted past
+#   2. the codex shape is converted, not reported raw, and is read off the
+#      line the screen ends on, blank rows below it and all
+#   3. the bottom-most claude reading wins over one repainted past
 #   4. a screen with neither shape is no_status_line, never 0
 #   5. a pane that cannot be captured is unreadable, never 0
-#   6. a percentage over 100 is not a context figure, in either shape
+#   6. a percentage over 100 is not a context figure, in either shape, and a
+#      codex line carrying one settles the reading rather than falling
+#      through to a claude match higher up
 #   7. the table names the direction it reports, in its header and its rows
 #   8. an empty fleet says so; an unreadable claim store refuses
 #   9. the account column names the lane the pane runs under
 #  10. a claim on ANOTHER tmux server is unreadable, never a local pane's
 #      number under its name
 #  11. codex's other status item, `Context 40% used`, is taken as it stands
-#  12. a claude status item behind the codex separator is not a codex
-#      status line; the codex status item carries a path and nothing else
+#  12. whatever follows the codex separator is taken as it comes, a claude
+#      status item included; the shape reads no further than the separator
 #  13. a pane that has exited to its shell is not measured from what it left
 #  14. a model and a percentage in prose is not a status line
 #  15. an unenumerable tmux server refuses every claim, not just foreign ones
@@ -63,10 +68,11 @@
 #      refused, and the refusal names the process it found
 #  21. the per-account wrapper spellings the fleet launches through are
 #      harnesses, and their panes are measured
-#  22. a codex context fragment in prose is not a status line, alone or
-#      below a real one
+#  22. a codex screen whose final line is not a status line carries no
+#      reading, and the real status line above it is not searched out
 #  23. the table still carries every row where `column` is not installed
-#  24. two words behind the codex separator are prose, not a status item
+#  24. the configured status items `[tui].status_line` draws are accepted,
+#      one item or several, none of them a working directory
 #  25. every committed codex capture parses to the figure on its screen
 #
 # errexit is on: every case here either succeeds or is guarded, so an
@@ -251,8 +257,13 @@ screen 1 '  ⎿  Tip: Use /clear to start fresh when switching topics and free u
   ◯ dev-ken835  Follow workflow: .agents/skills/dev/workflows/dev-...   7m 45s · ↓ 937.0k tokens
   ◯ dev-ken-845  Follow workflow: .agents/skills/dev/workflo… 8m 45s · ↓ 364.8k tokens
   ◯ dev-ken-844-c  Follow workflow: .agents/skills/dev/workflo… 4m 2s · ↓ 75.8k tokens'
+# 2. The codex status line is the last NON-EMPTY row: a real capture carries
+# blank rows under it, and a rule that read the last row outright would find
+# one of those and report nothing.
 screen 2 '  Codex is working
-  Context 86% left'
+  Context 86% left
+
+'
 # A repaint after a compaction leaves the previous render on the screen.
 screen 3 '  kendex (🌳 ken-103) Opus 5 92% (brad@drovr.dev)     /rc
   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
@@ -264,7 +275,11 @@ screen 4 'plain shell output with no harness status line'
 screen 6 '  Codex is working
   Context 40% used'
 screen 7 '  Context 86% left · Opus 5 41%'
-screen 8 '  Context 140% left'
+# 6, codex arm. The claude status line above is what a fall-through would
+# find: a codex line the reader cannot use is a refusal, not a reason to go
+# looking further up the screen.
+screen 8 '  kendex (🌳 ken-108) Opus 5 35% (brad@drovr.dev)     /rc
+  Context 140% left'
 screen 9 '  kendex (🌳 ken-109) Opus 5 41% (brad@drovr.dev)     /rc
   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
 $ git status
@@ -314,36 +329,36 @@ screen 17 '  kendex (🌳 ken-118) Opus 5 66% (brad@drovr.dev)     /rc
   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents'
 screen 18 '  kendex (🌳 ken-119) Opus 5 27% (brad@drovr.dev)     /rc
   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents'
-# 22. The codex sibling of 18 and 19. The compaction rule is written about
-# in the terminal it governs, so `Context <N>% used` turns up in ordinary
-# transcript prose — and a fragment match hands that sentence the verdict
-# over the real status line above it, exactly as the claude fragment did.
-# %19 puts the sentence BELOW a real codex status line; %20 gives it a
-# screen of its own.
+# 22. THE fail-closed case. A codex screen whose final line is not a status
+# line carries no reading, and the real status line above it is not searched
+# out: a screen that does not end in its status line is a screen the reader
+# cannot vouch for — caught mid-redraw, or with a dialog over the footer —
+# and reporting the last figure it can find there is reporting a number from
+# before whatever moved the line. %19 puts a real status line above a line
+# that is not one; %20 gives that line a screen of its own.
 screen 19 '  Codex is working
   Context 86% left
 ● Documentation: Context 60% used means compact now'
 screen 20 '● Documentation: Context 60% used means compact now'
-# 22, trailing half. The other end of the same fragment. Prose can put the
+# 18, trailing half. The other end of the same fragment. Prose can put the
 # sentence AFTER the status shape as easily as before it, and then the
-# status-shaped PREFIX matches while the sentence it sits in never has to. Both
-# screens put that line BELOW a real status line, which is where bottom-most
-# hands it the verdict.
+# status-shaped PREFIX matches while the sentence it sits in never has to.
+# The claude reading is the bottom-most match, so this screen puts that line
+# below a real status line, which is where bottom-most would hand it the
+# verdict. There is no codex sibling any more: a codex screen is read at the
+# line it ends on, so what a sentence there is shaped like never comes up.
 screen 21 '  kendex (🌳 ken-122) Opus 5 41% (brad@drovr.dev)     /rc
   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
 /fake Opus 5 99% (work) is an example'
-screen 22 '  Context 86% left
-● Context 77% used means compact now
-● Context 77% used · and that is an example'
-# 24. The reproduction from KEN-885, and the shortest sentence of the class:
-# two words behind the separator. A trailing item admitted by token COUNT
-# takes `compact now` for a status item, and bottom-most then reports 60 used
-# for a lane that is 14 used — the overseer compacts the emptiest lane in the
-# fleet and skips the full one. Codex puts its working directory behind that
-# separator, so the item is matched by that shape and a sentence of any
-# length fails it.
-screen 23 'Context 86% left
-Context 60% used · compact now'
+# 24. `[tui].status_line` is a real config key, and the items it draws behind
+# the separator are not all working directories. %22 carries the one the
+# committed captures do not: a model with its reasoning effort, two bare
+# words. %23 carries four items at once — model, git branch, project name,
+# codex version — because the key takes a list. A shape that judges what
+# follows the separator refuses one or both of these, and a refused lane is
+# an unmeasured lane, which the overseer never compacts.
+screen 22 '  Context 100% left · gpt-5.6-sol default'
+screen 23 '  Context 78% left · gpt-5.6-sol default · ken-885 · kendex · 0.151.0'
 
 OUT="$(run_ctx --json)"
 
@@ -358,9 +373,12 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-101") | .status' <<<"$OUT")" "ok" \
 
 # 2. THE conversion. `Context 86% left` is a nearly EMPTY context; reported
 # raw it is the fullest lane in the fleet and the overseer compacts the wrong
-# one.
+# one. The screen ends in blank rows, as a real capture does, so this also
+# holds the codex reading to the last NON-EMPTY line.
 assert_eq "$(jq -r '.[] | select(.lane=="ken-102") | .context_used_pct' <<<"$OUT")" "14" \
   "the codex status line is converted from remaining to used"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-102") | .status' <<<"$OUT")" "ok" \
+  "blank rows below the status line do not cost the lane its reading"
 assert_eq "$(jq -r '.[] | select(.lane=="ken-102") | .harness' <<<"$OUT")" "codex" \
   "the codex shape names the codex harness"
 
@@ -377,22 +395,23 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-106") | .context_used_pct' <<<"$OUT
 assert_eq "$(jq -r '.[] | select(.lane=="ken-106") | .harness' <<<"$OUT")" "codex" \
   "the codex used shape names the codex harness"
 
-# 12. `Opus 5 41%` is a claude status item, and behind the codex separator it
-# is not a status line of either harness: codex draws its working directory
-# there and nothing else, and the claude shape needs an account parenthetical
-# this line has none of. A trailing item admitted by token count took it for a
-# codex reading, which is the same allowance `compact now` walked through.
-assert_eq "$(jq -r '.[] | select(.lane=="ken-107") | .status' <<<"$OUT")" "no_status_line" \
-  "a claude status item behind the codex separator is not a codex status line"
-assert_eq "$(jq -r '.[] | select(.lane=="ken-107") | .context_used_pct' <<<"$OUT")" "null" \
-  "that lane carries no number, not the one that shape carried"
+# 12. The shape reads no further than the separator, so what sits past it is
+# taken as it comes — here a claude status item, which no codex config draws
+# and which the reader therefore has no business judging. The line still opens
+# with the codex context item, and that is what the reading is taken from.
+assert_eq "$(jq -r '.[] | select(.lane=="ken-107") | .context_used_pct' <<<"$OUT")" "14" \
+  "whatever follows the codex separator is taken as it comes"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-107") | .harness' <<<"$OUT")" "codex" \
+  "the context item at the line's opening is what names the harness"
 
 # 6 (codex arm). Over 100 is not a context figure in either shape: unguarded,
-# the conversion turns 140 left into -40 used.
+# the conversion turns 140 left into -40 used. The claude status line sitting
+# above it is what a fall-through would report instead — 35, from a line the
+# screen does not end on — so the codex line settles the reading either way.
 assert_eq "$(jq -r '.[] | select(.lane=="ken-108") | .status' <<<"$OUT")" "no_status_line" \
   "a codex percentage over 100 is not read as a context figure"
 assert_eq "$(jq -r '.[] | select(.lane=="ken-108") | .context_used_pct' <<<"$OUT")" "null" \
-  "an out-of-range codex reading carries no number"
+  "an out-of-range codex line refuses rather than falling through to a match above it"
 
 # 13. The pane exited to its shell. Its last render is still on the screen and
 # is not a measurement of anything: what refuses it is the foreground process
@@ -467,39 +486,48 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-119") | .context_used_pct' <<<"$OUT
 assert_eq "$(jq -r '.[] | select(.lane=="ken-119") | .status' <<<"$OUT")" "ok" \
   "that lane is ok, not a refusal"
 
-# 22. A codex reading is the whole line too. Below a real status line the
-# sentence wins on bottom-most and the lane reports 60 used for a lane that
-# is 14 used; on a screen of its own it is a reading invented out of prose.
-assert_eq "$(jq -r '.[] | select(.lane=="ken-120") | .context_used_pct' <<<"$OUT")" "14" \
-  "codex prose below a status line does not outrank the status line above it"
+# 22. THE fail-closed case. %19 ends in a line that is not a status line and
+# carries a real one above it: the reading is refused rather than searched
+# out, because a screen that does not end in its status line is one the reader
+# cannot vouch for. %20 is the same line with nothing above it. Both are
+# no_status_line, and the moment the codex reading goes back to searching the
+# screen, %19 reports 14 from a line the screen has moved past.
+assert_eq "$(jq -r '.[] | select(.lane=="ken-120") | .status' <<<"$OUT")" "no_status_line" \
+  "a codex screen not ending in a status line carries no reading"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-120") | .context_used_pct' <<<"$OUT")" "null" \
+  "the status line above it is not searched out"
 assert_eq "$(jq -r '.[] | select(.lane=="ken-121") | .status' <<<"$OUT")" "no_status_line" \
   "a screen whose only context percentage sits in codex prose carries no reading"
 assert_eq "$(jq -r '.[] | select(.lane=="ken-121") | .context_used_pct' <<<"$OUT")" "null" \
   "that lane carries no number, not the sentence's"
 
-# 22, trailing half. A status-shaped PREFIX with prose after it. The claude
-# line ends in its account and claude's own right-hand hint; the codex line
-# ends in its context item or a working directory behind a separator. Neither
-# end admits a sentence, so the real status line above keeps the verdict.
+# 18, trailing half. A status-shaped PREFIX with prose after it. The claude
+# line ends in its account and claude's own right-hand hint, and admits no
+# sentence past either, so the real status line above keeps the verdict.
 assert_eq "$(jq -r '.[] | select(.lane=="ken-122") | .context_used_pct' <<<"$OUT")" "41" \
   "claude prose after a status-shaped prefix does not outrank the status line above it"
-assert_eq "$(jq -r '.[] | select(.lane=="ken-123") | .context_used_pct' <<<"$OUT")" "14" \
-  "codex prose after a status-shaped prefix does not outrank the status line above it"
 
-# 24. The reproduction from KEN-885. Two words behind the separator is the
-# shortest sentence of this class and the one a token count cannot refuse:
-# the lane has 14 used and the report called it 60, so the overseer compacted
-# the emptiest lane in the fleet and left the full one running.
-assert_eq "$(jq -r '.[] | select(.lane=="ken-124") | .context_used_pct' <<<"$OUT")" "14" \
-  "two words behind the codex separator are prose, not a status item"
-assert_eq "$(jq -r '.[] | select(.lane=="ken-124") | .harness' <<<"$OUT")" "codex" \
-  "the real status line above keeps the verdict, and the harness with it"
+# 24. The configured status items. `gpt-5.6-sol default` is two bare words
+# and so is `compact now`, so no shape tells them apart — and a shape that
+# refuses the one it has not seen leaves that lane unmeasured, which is the
+# lane the overseer then never compacts. Position is what refuses prose, so
+# these are accepted: one item, and the four a list config draws.
+assert_eq "$(jq -r '.[] | select(.lane=="ken-123") | .context_used_pct' <<<"$OUT")" "0" \
+  "a model with its reasoning effort is a status item, not a sentence"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-123") | .harness' <<<"$OUT")" "codex" \
+  "that lane is measured rather than left out of the report"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-124") | .context_used_pct' <<<"$OUT")" "22" \
+  "a status line carrying four configured items is read like any other"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-124") | .status' <<<"$OUT")" "ok" \
+  "several items behind the separator are not a reason to refuse the lane"
 
 # 25. Every committed codex capture, parsed as it stands. These are real
-# `tmux capture-pane` output from Codex 0.151.0 (KEN-863), so what the reader
-# anchors to is what the harness draws: `Context <N>% left`, a separator, and
-# the session's working directory, ellipsised where the width ran out. A
-# capture whose screen carries no status line is a refusal, never a zero.
+# `tmux capture-pane` output from Codex 0.151.0 (KEN-863), and they are the
+# evidence the position rule rests on: in all four that carry a status line
+# it is the last non-empty row, blank rows below it and nothing else. The
+# other two end in a dialog drawn over the footer, and a reader that searched
+# the screen would report the figure that dialog is covering. A capture whose
+# screen carries no status line is a refusal, never a zero.
 FIXTURES="$TEST_DIR/fixtures/oversee-watch"
 
 parse_fixture() { # <capture file name>
