@@ -81,7 +81,8 @@ gg_repo_root_cd
 PATHS_RAW="$(gg_setting GROWTH_GUARDS_PROSE_PATHS "$PATHS_DEFAULT")" || exit 2
 
 # The path list, its validation and its matcher are the family's, shared with
-# the sibling lane scoped the same way: lib/common.sh § configured path globs.
+# the sibling lane scoped the same way: lib/configured-paths.sh § configured
+# path globs.
 gg_load_path_globs "$PATHS_RAW" prose GROWTH_GUARDS_PROSE_PATHS || exit 2
 
 # History, and only history. The word list is the drift this catches in
@@ -107,11 +108,12 @@ gg_tmpdir
 # EVERY tracked file to git, so a lane that passed it through would scan the
 # whole repository the moment its configuration matched nothing.
 #
-# The walk itself is the family's — lib/common.sh § one walk over the
-# configured paths — and it is what classifies each blob. `git grep --cached`
-# SKIPS a symlink index entry outright, never reading through it, and drops a
-# gitlink and a binary blob the same way: with no status and no stderr, so
-# the lane would otherwise print a clean verdict over content it never read.
+# The walk itself is the family's — lib/configured-paths.sh § one walk over
+# the configured paths — and it is what classifies each blob.
+# `git grep --cached` SKIPS a symlink index entry outright, never reading
+# through it, and drops a gitlink and a binary blob the same way: with no
+# status and no stderr, so the lane would otherwise print a clean verdict
+# over content it never read.
 # A symlink here is resolved to its target and the target scanned in its
 # place, so a scoped name cannot be turned into a hole.
 MATCHED_SPECS=()
@@ -123,15 +125,19 @@ add_spec() { # PATH BLOBFILE — one measurable path for the scan below
 
 gg_walk_configured_paths markdown file resolve add_spec
 skipped="$GG_WALK_SKIPPED"
+deferred="$GG_WALK_DEFERRED"
 
 UNMEASURED=""
 [ "$skipped" -eq 0 ] || UNMEASURED="; $skipped matched path(s) not measured"
+[ "$deferred" -eq 0 ] || UNMEASURED="$UNMEASURED; $deferred scoped link(s) covered by another record"
 
 if [ "$matched" -eq 0 ]; then
-  # Only when NOTHING was scanned: a path that matched and was skipped is
-  # reported as skipped above, and telling its reader that no file matched
-  # would send them to widen a glob that was already right.
-  if [ "$skipped" -eq 0 ]; then
+  # The "nothing matched" line belongs to ONE state: the configured globs
+  # named no tracked path at all. A path that matched and was skipped is
+  # reported as skipped, and one that matched and was deferred is counted —
+  # printing this line over either would send its reader to widen a glob that
+  # was already right, which is the wrong verdict dressed as advice.
+  if [ "$skipped" -eq 0 ] && [ "$deferred" -eq 0 ]; then
     echo "prose: OK — no tracked file matches GROWTH_GUARDS_PROSE_PATHS ($GG_PATH_GLOBS_SHOWN)"
   else
     echo "prose: OK — nothing measurable to scan$UNMEASURED"

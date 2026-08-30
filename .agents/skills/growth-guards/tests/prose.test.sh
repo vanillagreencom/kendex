@@ -201,6 +201,22 @@ case "$OUT" in
   *"not measured"*) bad "a resolved symlink is not an unmeasured path" "$OUT" ;;
   *) ok "no unmeasured line accompanies a resolved symlink" ;;
 esac
+# The violation names a path the configured globs do not; without the link
+# beside it the reader has no way back to what put it in scope.
+case "$OUT" in
+  *"read notes/target.md for the symlink skills/dev/SKILL.md"*)
+    ok "the run names the scoped link beside the target it pulled in" ;;
+  *) bad "resolved target names its link" "$OUT" ;;
+esac
+# The same pairing on a line the walk prints about the target itself.
+printf 'lead\000Seeded 2026-08-12.\n' >"$R/notes/target.md"
+git -C "$R" add -A
+run_prose
+[ "$RC" -eq 0 ] && case "$OUT" in *"not measured: notes/target.md, the target of the symlink skills/dev/SKILL.md"*) true ;; *) false ;; esac \
+  && ok "an unmeasurable resolved target is named with the link that pulled it in" \
+  || bad "unmeasurable resolved target names its link" "rc=$RC out=$OUT"
+printf 'Seeded 2026-08-12.\n' >"$R/notes/target.md"
+git -C "$R" add -A
 
 # A symlink to a file the scan ALREADY covers under its own name adds
 # nothing: no second report of the same hit, and no noise line either. This
@@ -223,6 +239,55 @@ run_prose
 [ "$RC" -eq 0 ] && case "$OUT" in *"no history references in 1 scanned file(s)"*) true ;; *) false ;; esac \
   && ok "control: with the target clean the pair counts as the one file it is" \
   || bad "control: in-scope symlink pair counts once" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"1 scoped link(s) covered by another record"*) ok "the deferral is counted in the verdict, not silent" ;;
+  *) bad "the deferral is counted in the verdict" "$OUT" ;;
+esac
+
+# A link into the configured scope is deferred only once its target is known
+# to be a tracked regular blob. Reached before those probes, the deferral
+# swallows them: nothing is scanned, nothing is counted, and the lane exits 0
+# over a scoped path it never read.
+echo "=== a deferral never runs ahead of the refusals it would swallow ==="
+new_repo linkinscope-untracked
+put keep.md 'clean'
+printf 'Seeded 2026-08-12, closed by #228.\n' >"$R/CLAUDE.md"
+printf '/CLAUDE.md\n' >"$R/.gitignore"
+mkdir -p "$R/.claude"
+ln -s ../CLAUDE.md "$R/.claude/CLAUDE.md"
+git -C "$R" add -A
+[ -z "$(git -C "$R" ls-files -- CLAUDE.md)" ] \
+  && ok "fixture: the in-scope target is untracked while the link to it is tracked" \
+  || bad "fixture: in-scope target untracked" "$(git -C "$R" ls-files)"
+run_prose
+[ "$RC" -eq 2 ] && case "$OUT" in *"does not track"*) true ;; *) false ;; esac \
+  && ok "a link to an UNTRACKED in-scope target is exit 2, the same refusal an out-of-scope one gets" \
+  || bad "untracked in-scope target is exit 2" "rc=$RC out=$OUT"
+case "$OUT" in *"no tracked file matches"*) bad "a path that matched must never be reported as no match" "$OUT" ;; *) ok "no 'nothing matched' line over a path that matched" ;; esac
+case "$OUT" in *"prose: OK"*) bad "no OK verdict may accompany an unread scoped path" "$OUT" ;; *) ok "no OK verdict accompanies the unread scoped path" ;; esac
+
+new_repo linkself
+put keep.md 'clean'
+git -C "$R" rm -q --cached keep.md >/dev/null 2>&1 || true
+git -C "$R" add -A
+ln -s SKILL.md "$R/SKILL.md"
+git -C "$R" add -A
+run_prose
+[ "$RC" -eq 2 ] && case "$OUT" in *"points at itself"*) true ;; *) false ;; esac \
+  && ok "a self-link is exit 2, not a deferral to its own record" \
+  || bad "self-link is exit 2" "rc=$RC out=$OUT"
+case "$OUT" in *"no tracked file matches"*) bad "a self-link must not report as no match" "$OUT" ;; *) ok "no 'nothing matched' line over the self-link" ;; esac
+
+new_repo linkmutual
+mkdir -p "$R/a" "$R/b"
+ln -s ../b/SKILL.md "$R/a/SKILL.md"
+ln -s ../a/SKILL.md "$R/b/SKILL.md"
+git -C "$R" add -A
+run_prose
+[ "$RC" -eq 2 ] && case "$OUT" in *"itself a symlink"*) true ;; *) false ;; esac \
+  && ok "two scoped links pointing at each other are exit 2, not a pair of deferrals that read nothing" \
+  || bad "mutual links are exit 2" "rc=$RC out=$OUT"
+case "$OUT" in *"no tracked file matches"*) bad "a closed cycle must not report as no match" "$OUT" ;; *) ok "no 'nothing matched' line over the cycle" ;; esac
 
 # A target the walk cannot reach is a collection error, never a skip.
 new_repo linkbroken
@@ -241,6 +306,19 @@ run_prose
   && ok "a symlink to an untracked path is exit 2" \
   || bad "untracked symlink target is exit 2" "rc=$RC out=$OUT"
 case "$OUT" in *"prose: OK"*) bad "no OK verdict may accompany an unreachable target" "$OUT" ;; *) ok "no OK verdict accompanies the unreachable target" ;; esac
+# A link to a link: the second link's path would land in the scan set, and
+# `git grep --cached` skips a symlink entry with no status and no stderr, so
+# it would be counted as scanned and never read.
+new_repo linkchain
+put notes/body.md 'Seeded 2026-08-12.'
+ln -s notes/body.md "$R/inner.md"
+ln -s inner.md "$R/AGENTS.md"
+git -C "$R" add -A
+run_prose
+[ "$RC" -eq 2 ] && case "$OUT" in *"itself a symlink"*) true ;; *) false ;; esac \
+  && ok "a link whose target is itself a link is exit 2, naming the chain" \
+  || bad "link chain is exit 2" "rc=$RC out=$OUT"
+case "$OUT" in *"prose: OK"*) bad "no OK verdict may accompany a link chain" "$OUT" ;; *) ok "no OK verdict accompanies the link chain" ;; esac
 
 # A gitlink at a scoped path: mode 160000 carries a commit id, not markdown.
 new_repo gitlink

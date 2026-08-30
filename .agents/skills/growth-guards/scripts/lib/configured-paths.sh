@@ -64,12 +64,12 @@ gg_matches_path_glob() { # PATH — 0 when some configured glob matches the full
 # it can NAME the path as unmeasured, rather than counting an unread blob into
 # a clean total.
 GG_BINARY_SAMPLE=8000
-gg_blob_is_binary() { # FILE LABEL — 0 when a NUL falls in the leading bytes
+gg_blob_is_binary() { # FILE DESC — 0 when a NUL falls in the leading bytes
   local total stripped
   total="$(head -c "$GG_BINARY_SAMPLE" -- "$1" | wc -c)" \
-    || gg_collection_error "could not sample $(gg_shown "$2") to classify its content"
+    || gg_collection_error "could not sample $2 to classify its content"
   stripped="$(head -c "$GG_BINARY_SAMPLE" -- "$1" | LC_ALL=C tr -d '\000' | wc -c)" \
-    || gg_collection_error "could not sample $(gg_shown "$2") to classify its content"
+    || gg_collection_error "could not sample $2 to classify its content"
   [ "$((total))" -ne "$((stripped))" ]
 }
 
@@ -86,19 +86,30 @@ gg_blob_is_binary() { # FILE LABEL — 0 when a NUL falls in the leading bytes
 # the caller's own shell, as `ON_FILE PATH BLOBFILE`, so it may set the
 # caller's counters.
 GG_WALK_SKIPPED=0
+# Scoped paths whose content another record already covers: a link to a file
+# in the configured scope, or a second link to a body the first one queued.
+# Counted rather than silent, so a lane can tell "nothing matched the globs"
+# from "everything that matched is covered elsewhere" — and so a future gap
+# between gg_resolve_link_target's refusals and its deferral cannot pass for
+# the former.
+GG_WALK_DEFERRED=0
 GG_WALK_TARGET=""
 GG_WALK_TARGET_SHA=""
 GG_WALK_LINK_TARGETS=()
 
-gg_note_skip() { # PATH REASON — a matched path this scan cannot measure
-  echo "${GG_CHECK:-growth-guards}: not measured: $(gg_shown "$1") — $2"
+# DESC is already rendered by the caller, which is what lets a resolved
+# symlink name both halves: the path the configured globs matched and the
+# target read in its place. A reader given only the target cannot get back to
+# the scoped path that pulled it in.
+gg_note_skip() { # DESC REASON — a matched path this scan cannot measure
+  echo "${GG_CHECK:-growth-guards}: not measured: $1 — $2"
   GG_WALK_SKIPPED=$((GG_WALK_SKIPPED + 1))
 }
 
-gg_read_blob() { # SHA PATH NOUN — the blob's bytes into $GG_TMP/blob
+gg_read_blob() { # SHA DESC NOUN — the blob's bytes into $GG_TMP/blob
   git cat-file blob "$1" >"$GG_TMP/blob" 2>"$GG_TMP/blob.err" \
     || { [ ! -s "$GG_TMP/blob.err" ] || cat -- "$GG_TMP/blob.err" >&2
-      gg_collection_error "cannot read blob $1 for $(gg_shown "$2") — refusing to skip an unread $3"; }
+      gg_collection_error "cannot read blob $1 for $2 — refusing to skip an unread $3"; }
 }
 
 # A tracked symlink's blob holds its TARGET PATH, and `git grep --cached`
@@ -106,11 +117,13 @@ gg_read_blob() { # SHA PATH NOUN — the blob's bytes into $GG_TMP/blob
 # target is what keeps a scoped name from becoming a hole: a SKILL.md that is
 # a link to an unscanned body would otherwise carry anything at all.
 #
-# A target already inside the configured scope is left to its own record — it
-# is scanned under its own name, so resolving it here would report every hit
-# twice. A target this walk cannot reach — absolute, escaping the repository,
-# untracked, or itself a link or a gitlink — is a collection error: content
-# the lane was pointed at and cannot read is not content it may skip.
+# A target this walk cannot reach — absolute, escaping the repository,
+# untracked, the link itself, or itself a link or a gitlink — is a collection
+# error: content the lane was pointed at and cannot read is not content it
+# may skip. Only what survives every one of those is deferred: a target
+# already inside the configured scope is left to its own record, since it is
+# scanned under its own name and resolving it here would report every hit
+# twice.
 gg_resolve_link_target() { # LINKPATH LINKSHA — 0 with GG_WALK_TARGET(_SHA) set;
                            # 1 when the target needs no scan of its own here
   local link="$1" sha="$2" target dir cand norm entry status=0 t
@@ -127,11 +140,12 @@ gg_resolve_link_target() { # LINKPATH LINKSHA — 0 with GG_WALK_TARGET(_SHA) se
   cand="${dir:+$dir/}$target"
   norm="$(gg_normalize_rel_path "$cand")" \
     || gg_collection_error "the symlink $(gg_shown "$link") points outside the repository (target $(gg_shown "$target"))"
-  # In scope under its own name: its own record measures it.
-  gg_matches_path_glob "$norm" && return 1
-  for t in ${GG_WALK_LINK_TARGETS[@]+"${GG_WALK_LINK_TARGETS[@]}"}; do
-    if [ "$t" = "$norm" ]; then return 1; fi
-  done
+  # Every refusal below runs BEFORE the deferral. A deferral says "another
+  # record measures this", so it must be reached only once that record is
+  # known to exist and to be a regular blob; reached earlier it swallows the
+  # refusals whole and the lane exits 0 having read nothing for a scoped path.
+  [ "$norm" != "$link" ] \
+    || gg_collection_error "the symlink $(gg_shown "$link") points at itself"
   # `ls-files -s` exits 0 whether or not the path matches, so a nonzero status
   # is a failing invocation and empty output is the "not in the index" answer.
   entry="$(git ls-files -s -- ":(literal)$norm")" || status=$?
@@ -139,10 +153,29 @@ gg_resolve_link_target() { # LINKPATH LINKSHA — 0 with GG_WALK_TARGET(_SHA) se
     || gg_collection_error "could not look up $(gg_shown "$norm"), the target of the symlink $(gg_shown "$link") (git ls-files exit $status)"
   [ -n "$entry" ] \
     || gg_collection_error "the symlink $(gg_shown "$link") points at $(gg_shown "$norm"), which this commit does not track"
+  # A link to a link is refused wherever the target sits, in the configured
+  # scope or outside it. Deferring one instead is what closes a cycle: two
+  # scoped links pointing at each other each defer to the other, and neither
+  # is ever read. One level is the rule, and refusing here is what makes every
+  # deferral below provably sound — the record deferred to is a regular blob,
+  # so it scans something.
   case "${entry%% *}" in
     120000) gg_collection_error "the symlink $(gg_shown "$link") points at $(gg_shown "$norm"), itself a symlink; this walk reads one level" ;;
     160000) gg_collection_error "the symlink $(gg_shown "$link") points at $(gg_shown "$norm"), a submodule gitlink" ;;
   esac
+  # In scope under its own name: its own record measures it, and resolving it
+  # again would report every hit twice.
+  if gg_matches_path_glob "$norm"; then
+    GG_WALK_DEFERRED=$((GG_WALK_DEFERRED + 1))
+    return 1
+  fi
+  # A second link to a body already queued by the first: one read covers both.
+  for t in ${GG_WALK_LINK_TARGETS[@]+"${GG_WALK_LINK_TARGETS[@]}"}; do
+    if [ "$t" = "$norm" ]; then
+      GG_WALK_DEFERRED=$((GG_WALK_DEFERRED + 1))
+      return 1
+    fi
+  done
   GG_WALK_LINK_TARGETS+=("$norm")
   GG_WALK_TARGET="$norm"
   entry="${entry#* }"
@@ -151,7 +184,7 @@ gg_resolve_link_target() { # LINKPATH LINKSHA — 0 with GG_WALK_TARGET(_SHA) se
 }
 
 gg_walk_configured_paths() { # NOUN UNREAD-NOUN LINKS ON_FILE
-  local noun="$1" unread="$2" links="$3" on_file="$4" rec f mode rest sha
+  local noun="$1" unread="$2" links="$3" on_file="$4" rec f mode rest sha via desc
   case "$links" in
     # skip    — name the link as unmeasured; the lane measures files.
     # resolve — measure the target in the link's place.
@@ -159,6 +192,7 @@ gg_walk_configured_paths() { # NOUN UNREAD-NOUN LINKS ON_FILE
     *) gg_config_error "gg_walk_configured_paths: unknown symlink policy '$links'" ;;
   esac
   GG_WALK_SKIPPED=0
+  GG_WALK_DEFERRED=0
   GG_WALK_LINK_TARGETS=()
   # `ls-files -s` emits one record per STAGE for an unmerged path, so the walk
   # would read rival blobs as separate files.
@@ -171,24 +205,31 @@ gg_walk_configured_paths() { # NOUN UNREAD-NOUN LINKS ON_FILE
     mode="${rec%% *}"
     rest="${rec#* }"
     sha="${rest%% *}"
+    via=""
     case "$mode" in
       120000)
         if [ "$links" = "skip" ]; then
-          gg_note_skip "$f" "tracked as a symlink, not $noun"
+          gg_note_skip "$(gg_shown "$f")" "tracked as a symlink, not $noun"
           continue
         fi
         gg_resolve_link_target "$f" "$sha" || continue
+        # The scoped path stays: it is the only way back from a target that
+        # the configured globs do not name to the link that pulled it in.
+        via="$f"
         f="$GG_WALK_TARGET"
         sha="$GG_WALK_TARGET_SHA"
+        echo "${GG_CHECK:-growth-guards}: read $(gg_shown "$f") for the symlink $(gg_shown "$via")"
         ;;
       160000)
-        gg_note_skip "$f" "tracked as a submodule gitlink, not $noun"
+        gg_note_skip "$(gg_shown "$f")" "tracked as a submodule gitlink, not $noun"
         continue
         ;;
     esac
-    gg_read_blob "$sha" "$f" "$unread"
-    if gg_blob_is_binary "$GG_TMP/blob" "$f"; then
-      gg_note_skip "$f" "binary content, not $noun"
+    desc="$(gg_shown "$f")"
+    [ -z "$via" ] || desc="$desc, the target of the symlink $(gg_shown "$via")"
+    gg_read_blob "$sha" "$desc" "$unread"
+    if gg_blob_is_binary "$GG_TMP/blob" "$desc"; then
+      gg_note_skip "$desc" "binary content, not $noun"
       continue
     fi
     "$on_file" "$f" "$GG_TMP/blob"

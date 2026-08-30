@@ -141,14 +141,27 @@ and no stderr — a symlink entry, a submodule gitlink, and a blob it calls
 binary — so the walk classifies every matched record itself before the scan.
 
 A **symlink** is read through: its blob holds the target path, which is
-resolved against the link's directory and scanned in the link's place, so a
-scoped name pointed at an unscanned body is not a hole. A target already in
-the configured scope is left to its own record — it is scanned under its own
-name, and resolving it again would report every hit twice — so the common
-`.claude/CLAUDE.md` → `../AGENTS.md` shape costs nothing and says nothing. A
-target that is absolute, escapes the repository, is untracked, or is itself
-a link or a gitlink is a collection error: content the lane was pointed at
-and cannot reach is not content it may skip.
+resolved against the link's directory and scanned in the link's place, and
+both paths are named wherever the run reports on the target — the scoped
+path is the only way back from a body the globs do not name. So a scoped
+name pointed at an unscanned body is not a hole.
+
+Every refusal runs before any deferral. A target that is absolute, escapes
+the repository, is untracked, points at the link itself, or is itself a link
+or a gitlink is a collection error — content the lane was pointed at and
+cannot reach is not content it may skip, and one level is the rule wherever
+the target sits. Refusing a link to a link is also what keeps a cycle from
+reading as agreement: two scoped links pointing at each other would each
+defer to the other, and neither would ever be read.
+
+What is left is deferred, and counted. A target already in the configured
+scope is scanned under its own name — resolving it again would report every
+hit twice — so the common `.claude/CLAUDE.md` → `../AGENTS.md` shape costs
+one line of tally and no duplicate; a second link to a body the first one
+queued is the same. The tally is what separates "the globs named no tracked
+path" from "everything they named is covered elsewhere", so the clean
+`no tracked file matches` verdict is printed only when nothing was deferred
+and nothing skipped.
 
 A **gitlink**, and a blob carrying a **NUL byte** in its leading bytes, are
 named as unmeasured and counted apart from the clean total, the way

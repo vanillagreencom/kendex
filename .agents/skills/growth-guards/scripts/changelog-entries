@@ -89,7 +89,8 @@ gg_positive_int "$CAP" "GROWTH_GUARDS_CHANGELOG_CAP"
 PATHS_RAW="$(gg_setting GROWTH_GUARDS_CHANGELOG_PATHS "CHANGELOG.md")" || exit 2
 
 # The path list, its validation and its matcher are the family's, shared with
-# the sibling lane scoped the same way: lib/common.sh § configured path globs.
+# the sibling lane scoped the same way: lib/configured-paths.sh § configured
+# path globs.
 gg_load_path_globs "$PATHS_RAW" changelog GROWTH_GUARDS_CHANGELOG_PATHS || exit 2
 
 # Violation rows as "V<TAB>line<TAB>characters<TAB>first line", then one
@@ -174,9 +175,9 @@ violations=0
 
 # The walk over the configured paths — the records, the glob match, and the
 # shapes at a configured path that are not changelog text — is the family's:
-# lib/common.sh § one walk over the configured paths. A symlink is named as
-# unmeasured rather than followed; this lane measures the file at the path it
-# was pointed at.
+# lib/configured-paths.sh § one walk over the configured paths. A symlink is
+# named as unmeasured rather than followed; this lane measures the file at
+# the path it was pointed at.
 measure_entries() { # PATH BLOBFILE
   local f="$1" blob="$2" status=0 kind a b c
   checked=$((checked + 1))
