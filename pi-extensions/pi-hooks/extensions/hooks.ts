@@ -1,13 +1,69 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 
-import { isBareCd, preCommitGate } from "./bash-guards.js";
-import { refusalReason, repoCopyRefusal } from "./repo-copy-guard.js";
 import { getBool, getNumber, readConfig, recordProjectTrust } from "./config.js";
 import { deliverDrift, runDriftCheck } from "./drift-check.js";
 import { workspaceClippyOutcome } from "./lint-hooks.js";
+import { runCommandAsync } from "./process.js";
 
 const INSTALL_SYMBOL = Symbol.for("kendex.pi-hooks.installed");
+
+/** How long a rendered hook may run before the command counts as unjudged. The
+ * bash hooks declare `timeout: 60` in their own frontmatter. */
+const HOOK_BUDGET_MS = 60_000;
+
+/** Where kendex renders a Pi hook, project scope first (docs/adapters/pi.md).
+ * A name neither scope holds is a hook this project has not installed. */
+function renderedHook(name: string, cwd: string): string | undefined {
+	for (const root of [resolve(cwd, ".pi", "kendex"), resolve(homedir(), ".pi", "agent", "kendex")]) {
+		const script = resolve(root, "hooks", `${name}.sh`);
+		if (existsSync(script)) return script;
+	}
+	return undefined;
+}
+
+/** A `tool_call` verdict: `undefined` allows, `block` refuses with a reason. */
+type Verdict = { block: true; reason: string } | undefined;
+
+/**
+ * Run one rendered kendex hook on a bash command and map its exit status.
+ *
+ * The scripts under `.pi/kendex/hooks/` are the hooks — the same bytes Claude
+ * Code and Codex run — and this spawns them with the payload Claude Code sends
+ * a PreToolUse hook. Exit 2 is the refusal, and its stderr is the reason. That
+ * removes the second implementation these guards used to carry in TypeScript.
+ * Two scanners, each documented as a copy of the other, are two policies the
+ * moment one of them changes.
+ *
+ * A hook writes an advisory to stderr and still exits 0 (`pre-commit-check`
+ * does this for a commit aimed at another repository); that reaches the person
+ * through the UI, never the agent. Any other non-zero status means the guard
+ * did not reach a verdict, and a guard that did not run does not stand aside:
+ * the command is refused, as the scripts themselves do when they cannot read
+ * their input.
+ */
+async function runRenderedHook(name: string, command: string, ctx: ExtensionContext): Promise<Verdict> {
+	const script = renderedHook(name, ctx.cwd);
+	if (!script) return undefined;
+
+	const payload = JSON.stringify({ tool_name: "Bash", tool_input: { command } });
+	const result = await runCommandAsync("bash", [script], ctx.cwd, HOOK_BUDGET_MS, payload);
+	const stderr = result.stderr.trim();
+
+	if (result.exitCode === 2) return { block: true, reason: stderr || `${name} refused this command.` };
+	if (result.exitCode !== 0) {
+		return {
+			block: true,
+			reason: result.timedOut
+				? `pi-hooks: ${name} timed out after ${HOOK_BUDGET_MS}ms in ${ctx.cwd}, so this command was not judged; a guard that did not run does not stand aside.`
+				: `pi-hooks: ${name} exited ${result.exitCode} without judging this command${stderr ? `: ${stderr}` : "."}`,
+		};
+	}
+	if (stderr && ctx.hasUI) ctx.ui.notify(stderr, "info");
+	return undefined;
+}
 
 interface TurnState {
 	rustFilesTouched: Set<string>;
@@ -60,29 +116,16 @@ export default function piHooks(pi: ExtensionAPI): void {
 			: "";
 		if (!command) return undefined;
 
-		if (getBool(cfg, "blockBareCd") && isBareCd(command)) {
-			return {
-				block: true,
-				reason:
-					"Bare 'cd' changes working directory permanently across tool calls. Use a subshell instead: (cd /path && command)",
-			};
-		}
-
-		if (getBool(cfg, "blockRepoCopy")) {
-			const refusal = repoCopyRefusal(command, ctx.cwd);
-			if (refusal) {
-				return { block: true, reason: refusalReason(command, refusal) };
-			}
-		}
-
-		if (getBool(cfg, "preCommitCheck")) {
-			const verdict = await preCommitGate(command, ctx.cwd);
-			if (verdict.kind === "refuse") {
-				return { block: true, reason: verdict.reason };
-			}
-			// The bash hook writes this to stderr, which the harness shows the
-			// person and not the agent; Pi's equivalent is the UI notice.
-			if (verdict.notice && ctx.hasUI) ctx.ui.notify(verdict.notice, "info");
+		// Each guard is the rendered script kendex delivered, run in order and
+		// keyed by the setting that arms it.
+		for (const [setting, name] of [
+			["blockBareCd", "block-bare-cd"],
+			["blockRepoCopy", "block-repo-copy"],
+			["preCommitCheck", "pre-commit-check"],
+		] as const) {
+			if (!getBool(cfg, setting)) continue;
+			const verdict = await runRenderedHook(name, command, ctx);
+			if (verdict) return verdict;
 		}
 
 		return undefined;

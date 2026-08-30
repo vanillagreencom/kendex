@@ -20,8 +20,12 @@ function appendChunk(chunks: Buffer[], chunk: Buffer | string, totalBytes: { val
  * Spawn `command args` in `cwd` with a hard timeout, collecting bounded
  * stdout/stderr. Never rejects: a spawn failure (ENOENT included) settles as
  * `exitCode: -1` with the error text in `stderr`.
+ *
+ * `stdin` is written to the child and the pipe closed. Omitted, the child gets
+ * no stdin at all, which is what every probe here wants; a hook script reading
+ * its payload from stdin wants the string.
  */
-export function runCommandAsync(command: string, args: string[], cwd: string, timeoutMs: number): Promise<CommandResult> {
+export function runCommandAsync(command: string, args: string[], cwd: string, timeoutMs: number, stdin?: string): Promise<CommandResult> {
 	return new Promise((resolve) => {
 		const stdout: Buffer[] = [];
 		const stderr: Buffer[] = [];
@@ -46,7 +50,7 @@ export function runCommandAsync(command: string, args: string[], cwd: string, ti
 				// here as it is under Node. It is the guarantee a test planting a
 				// binary rests on, not a runtime default.
 				env: process.env,
-				stdio: ["ignore", "pipe", "pipe"],
+				stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
 			});
 		} catch (error) {
 			resolve({ exitCode: -1, stdout: "", stderr: String(error), timedOut });
@@ -96,6 +100,14 @@ export function runCommandAsync(command: string, args: string[], cwd: string, ti
 			}, 1000);
 			killChild("SIGTERM");
 		}, Math.max(1, timeoutMs));
+
+		if (stdin !== undefined) {
+			// A child that exits before reading its payload breaks the pipe, which
+			// arrives here as EPIPE on a stream nobody is listening to and would
+			// take the process down. The exit status is the answer either way.
+			child.stdin?.on("error", () => {});
+			child.stdin?.end(stdin);
+		}
 
 		child.stdout?.on("data", (chunk) => appendChunk(stdout, chunk, stdoutBytes, maxBuffer));
 		child.stderr?.on("data", (chunk) => appendChunk(stderr, chunk, stderrBytes, maxBuffer));

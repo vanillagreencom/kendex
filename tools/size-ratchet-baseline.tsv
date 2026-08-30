@@ -38,7 +38,6 @@ pi-extensions/pi-codex-minimal-tools/src/provider-shim.ts	2032
 pi-extensions/pi-codex-minimal-tools/src/providers/openai-responses-shared.ts	831
 pi-extensions/pi-extension-manager/extensions/manager/manager-ui.ts	470
 pi-extensions/pi-extension-manager/extensions/manager/quick-settings-ui.ts	443
-pi-extensions/pi-hooks/extensions/repo-copy-guard.ts	460
 pi-extensions/pi-output-policy/extensions/output-policy.ts	840
 pi-extensions/pi-output-policy/tests/output-policy.test.ts	881
 pi-extensions/pi-prompt-stash/extensions/prompt-stash.ts	613

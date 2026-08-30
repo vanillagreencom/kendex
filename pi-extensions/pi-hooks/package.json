@@ -1,7 +1,7 @@
 {
   "name": "@vanillagreen/pi-hooks",
-  "version": "0.7.0",
-  "description": "First-class Pi port of the kendex safety hooks: bare-cd blocking, pre-commit gate deferring to armed git hooks, end-of-turn lint, session-start kendex drift report. Per-hook toggles via pi-extension-manager.",
+  "version": "0.8.0",
+  "description": "The carrier that runs kendex's safety hooks under Pi: it spawns the rendered bash guards (bare-cd, repo-copy-into-scratch, pre-commit gate) and adds end-of-turn lint and a session-start kendex drift report. Per-hook toggles via pi-extension-manager.",
   "license": "MIT",
   "keywords": [
     "pi-package",
@@ -35,7 +35,7 @@
         {
           "key": "blockBareCd",
           "label": "Block bare cd",
-          "description": "Block bash commands consisting of a bare `cd /path` (no subshell, no `&&` chain). A bare cd permanently changes the agent's working directory across tool calls, which leaks state between unrelated tools. Use `(cd /path && command)` instead.",
+          "description": "Run the rendered hooks/block-bare-cd.sh on every bash tool call. It blocks a command consisting of a bare `cd /path` or a bare `cd` (no subshell, no `&&` chain), which permanently changes the agent's working directory across tool calls and leaks state between unrelated tools. Use `(cd /path && command)` instead.",
           "type": "boolean",
           "default": true,
           "category": "Bash",
@@ -44,7 +44,7 @@
         {
           "key": "blockRepoCopy",
           "label": "Block repo copy into scratch",
-          "description": "Refuse a recursive copy (`cp -r`/`-R`/`-a`, recursive or archive `rsync`, `git clone` of a local path, `tar` create-to-extract pipe) when the source carries repository history or a build tree AND the destination resolves under a temp/scratch root (`/tmp`, `/var/tmp`, `$TMPDIR`, `$CLAUDE_CODE_TMPDIR`, a `mktemp -d`, or any path containing `scratchpad`). Temp roots are commonly RAM-backed tmpfs, where such a copy fills the filesystem and every process writing there fails with ENOSPC. Both halves of the predicate are required, so an expensive tree copied elsewhere and an ordinary directory copied into scratch both pass. Mirrors hooks/block-repo-copy.sh.",
+          "description": "Run the rendered hooks/block-repo-copy.sh on every bash tool call. It refuses a recursive copy (`cp -r`/`-R`/`-a`, recursive or archive `rsync`, `git clone` of a local path, `tar` create-to-extract pipe) when the source carries repository history or a build tree AND the destination resolves under a temp/scratch root (`/tmp`, `/var/tmp`, `$TMPDIR`, `$CLAUDE_CODE_TMPDIR`, a `mktemp -d`, or any path containing `scratchpad`). Temp roots are commonly RAM-backed tmpfs, where such a copy fills the filesystem and every process writing there fails with ENOSPC. Both halves of the predicate are required, so an expensive tree copied elsewhere and an ordinary directory copied into scratch both pass.",
           "type": "boolean",
           "default": true,
           "category": "Bash",
@@ -53,7 +53,7 @@
         {
           "key": "preCommitCheck",
           "label": "Pre-commit gate",
-          "description": "On a bash command whose live words name a git commit, defer to the working directory's git hooks when kendex armed them (`kendex guard install`: pre-commit and commit-msg both executable and marked, `core.hooksPath` unset), so git validates the commit exactly once. Refuse a commit whose live words include one that sidesteps an armed hook (`--no-verify`, `-n`, `-c`, `--config-env`, a `GIT_CONFIG_*` assignment, a `core.hooksPath` key); a heredoc body and a comment tail are text and a quoted word is a live word whose text is its unquoted content; a bypass is a word whose WHOLE content is one, so `git commit \"--no-verify\"` refuses while `cat -n` in a heredoc and a commit message naming `--no-verify` pass. It models no argv, so a construct it does not recognise leaves the words standing and is judged; whole words decide, so `-mnote` is a message. Constructs it cannot read are the exception, refused unread rather than parsed where the command names git and carries a commit, either in its text with the quote characters removed or in a live word, so a spelling the shell assembles counts and an anchored grep for something else passes; an alias config key carried inline (`-c alias.x=...`) needs only the git, since it renames the subcommand of that invocation, while one written to the config is judged behind the commit word like any other text. Its blind spot is the other way round: text a shell would run but this drops, inside quotes (`sh -c '…'`) or a heredoc body. Refuse a commit in a repository nothing armed, naming `kendex guard install`; this gate never runs a check of its own. Gates the working directory only: a commit aimed at another repository is that repository's own hook's to gate. Mirrors hooks/pre-commit-check.sh.",
+          "description": "Run the rendered hooks/pre-commit-check.sh on every bash tool call. On a command whose whitespace-separated words hold a `git` word and a later `commit` word, it defers to the working directory's git hooks when kendex armed them (`kendex guard install`: pre-commit and commit-msg both executable and marked, `core.hooksPath` unset), so git validates the commit exactly once. It refuses a commit carrying a word that would skip those hooks — the no-verify flag, a short cluster holding its letter, or a word carrying a `core.hooksPath` key (an attached -c value, the value after a bare -c, a --config-env, a `git config` argument, a `GIT_CONFIG_*` assignment) — since git would skip commit-msg too, and a commit in a repository nothing armed, naming `kendex guard install`. It never runs a check of its own. It reads no shell, so one of those words written inside a commit message, a heredoc body or a comment tail is refused as the flag and the refusal names the rewrite, while one the shell would assemble out of quoted fragments is not seen at all; git's armed hooks are the control either way. Gates the working directory only: a commit aimed at another repository is that repository's own hook's to gate.",
           "type": "boolean",
           "default": true,
           "category": "Bash",
@@ -62,7 +62,7 @@
         {
           "key": "taskCompletedCheck",
           "label": "End-of-turn clippy",
-          "description": "At turn end, if any .rs files were touched during the turn, run a final `cargo clippy --workspace --all-targets -- -D warnings` and steer the result to the agent, so a headless session reads it in the turn that follows; an interactive session also gets a UI notification. Every failing turn reports, an unchanged failure included; a turn that touched no .rs file runs no clippy and reports nothing. A run that established nothing \u2014 no workspace root, a timeout, a clippy failure printing no error line \u2014 says so rather than passing as clean. Pi has no equivalent of Claude Code's `TaskCompleted` block semantics, so this is advisory.",
+          "description": "At turn end, if any .rs files were touched during the turn, run a final `cargo clippy --workspace --all-targets -- -D warnings` and steer the result to the agent, so a headless session reads it in the turn that follows; an interactive session also gets a UI notification. Every failing turn reports, an unchanged failure included; a turn that touched no .rs file runs no clippy and reports nothing. A run that established nothing — no workspace root, a timeout, a clippy failure printing no error line — says so rather than passing as clean. Pi has no equivalent of Claude Code's `TaskCompleted` block semantics, so this is advisory.",
           "type": "boolean",
           "default": true,
           "category": "Rust",
@@ -71,7 +71,7 @@
         {
           "key": "sessionDriftCheck",
           "label": "Session-start drift report",
-          "description": "On a fresh session start (startup, new, fork \u2014 not resume or reload), run `kendex check --quiet` in the background and hand the agent the drift report: outdated items (`kendex refresh`), items removed upstream (`kendex remove <name>`), unreachable sources, and packages not yet evaluated against their sources (a background refresh settles them). Silent when the install is current; one line when no kendex binary is on PATH, and one line naming the reason if the check itself fails unexpectedly. Never blocks startup. Informational only \u2014 never installs or removes anything and never touches the project's git; kendex's own source caches under ~/.kendex/cache may be fetched at most once per TTL. Mirrors hooks/session-drift-check.sh.",
+          "description": "On a fresh session start (startup, new, fork — not resume or reload), run `kendex check --quiet` in the background and hand the agent the drift report: outdated items (`kendex refresh`), items removed upstream (`kendex remove <name>`), unreachable sources, and packages not yet evaluated against their sources (a background refresh settles them). Silent when the install is current; one line when no kendex binary is on PATH, and one line naming the reason if the check itself fails unexpectedly. Never blocks startup. Informational only — never installs or removes anything and never touches the project's git; kendex's own source caches under ~/.kendex/cache may be fetched at most once per TTL. Mirrors hooks/session-drift-check.sh.",
           "type": "boolean",
           "default": true,
           "category": "Session",

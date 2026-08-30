@@ -81,8 +81,9 @@ this skill's.
 are armed — this package's marker in `pre-commit` and `commit-msg`, both
 executable — it steps aside and lets git run the gate. Half-armed is not
 armed: with `commit-msg` missing, git takes any message. The hook does the
-one thing a git hook cannot, refusing a live word that would sidestep an
-armed hook (`--no-verify`, the short flag, injected git configuration), and where
+one thing a git hook cannot, refusing a word that would sidestep an armed
+hook (the no-verify flag, a short cluster holding its letter, or a
+`core.hooksPath` key), and where
 nothing is armed it refuses the commit and names `kendex guard install`. It
 gates its own working directory and no other, and runs no script of the
 repository's on anyone's behalf.

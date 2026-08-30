@@ -396,15 +396,16 @@ lives in one capability table read by core and UI.
   and a measurement that fails is exit 2 rather than a silent pass. Which
   repository a commit targets is git's question, answered where the target
   has an armed hook: the `pre-commit-check` PreToolUse hook reads a commit
-  out of a command's live words, defers where both git hooks of its own working
-  directory carry the marker and run, and refuses the commit otherwise rather
-  than running the repository's own scripts on its behalf: arming is the
-  local act that asks for that, and a clone carries no hooks. Sidestepping an armed one (`--no-verify`, `-n`) or injecting git
-  config (`-c`, `--config-env`, `GIT_CONFIG_*`, a `core.hooksPath` key) is
-  refused: git skips commit-msg too, unjudgeable here. It models no argv: a
-  heredoc body and a comment tail are text, a quoted word is a live word, and a
-  bypass is a whole word. It gates its working directory only, naming the one it
-  judged where it cannot defer; an unreadable payload is a refusal, as is unarmed.
+  out of a command's whitespace-separated words, defers where both git hooks of
+  its own working directory carry the marker and run, and refuses the commit
+  otherwise rather than running the repository's own scripts on its behalf:
+  arming is the local act that asks for that, and a clone carries no hooks.
+  Sidestepping an armed one is refused, whether by the no-verify flag, a cluster
+  holding its letter, or a word carrying a `core.hooksPath` key: git skips
+  commit-msg too, unjudgeable here. It reads no shell, so a bypass in a message,
+  a heredoc or a comment reads as one and a bypass the shell assembles does not.
+  It gates its working directory only, naming the one it judged where it cannot
+  defer; an unreadable payload is a refusal, as is unarmed.
 - **kendex carries no migration machinery.** Breaking changes are a
   changelog entry and a fresh install, never compatibility code: a path
   kept for a population nobody measured is machinery that has to be
