@@ -260,14 +260,23 @@ GH_ISSUE_PATTERN = "ken-[0-9]+"
 LINEAR_FORMAT = "safe"
 ORCH_STATE_DIR = "tmp"
 
-# File-size ratchet classes this repo sets for itself, matched before the
-# shipped list. ui/ TypeScript is held to 250, tighter than the shipped
-# default, because a component that long has stopped being one component.
-# The two test entries lead only to keep the shipped test class reaching ui/
-# test files: this list is matched first, so without them `ui/*.ts` — whose
-# `*` crosses `/` — would take every ui test file at 250, and tests are a
-# frozen class, so none of those rows could ever rise.
-SIZE_RATCHET_CLASSES = "*.test.*=800;*.spec.*=800;ui/*.ts=250;ui/*.tsx=250"
+# File-size ratchet classes this repo sets for itself. ui/ TypeScript is held
+# to 250 lines — tighter than the 400-line base threshold it would otherwise
+# fall through to, the shipped list naming no TypeScript class — because a
+# component that long has stopped being one component.
+#
+# Every entry is scoped to ui/, and the test entries lead, for one reason:
+# this list is matched before the shipped one and its globs cross `/`, so a
+# repo class shadows every shipped class whose paths it also matches, and
+# each shadowed class has to be re-led at the same scope. `ui/*.ts` alone
+# takes ui/ test files at 250 — the ones named for a test and the ones that
+# are one by directory alike — while the freeze still reaches them, and a
+# frozen row can never rise. Scoping every entry to ui/ is the other half:
+# an unscoped `*.test.*` would also lead the shipped markdown classes, and a
+# test-named markdown file would take a line count in place of its byte
+# ceiling. Both directory forms are spelled out for the shipped list's own
+# reason: `*` may match nothing, but the literal `/` must still be there.
+SIZE_RATCHET_CLASSES = "ui/*.test.*=800;ui/*.spec.*=800;ui/test/*=800;ui/*/test/*=800;ui/tests/*=800;ui/*/tests/*=800;ui/__tests__/*=800;ui/*/__tests__/*=800;ui/*.ts=250;ui/*.tsx=250"
 
 # ── Worktrees ────────────────────────────────────────────────────────────
 # What a fresh issue worktree gets from this checkout: only paths git does
