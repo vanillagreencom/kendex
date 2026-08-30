@@ -614,14 +614,11 @@ grep -q x -- "$D" || true
 f
 EOF
 printf '#!/usr/bin/env bash\nset -euo pipefail\necho vendored\n' >"$R/.agents/skills/foo/tests/foo.test.sh"
-# Upstream work markers ride along in vendored source; they are upstream's
-# backlog, not this repo's.
-printf '# Notes\n\nTODO: upstream backlog, no local issue.\n' >"$R/.agents/skills/foo/NOTES.md"
 # kendex's own render dir under .pi is a managed mirror like the rest.
 mkdir -p "$R/.pi/kendex/hooks"
 printf '#!/usr/bin/env bash\nD="$(mktemp -d)"\necho hook\n' >"$R/.pi/kendex/hooks/guard.sh"
 run_pf
-clean "a vendored skill's strict mode, scratch cleanup, masked returns, suite wiring and work markers are upstream's to fix"
+clean "a vendored skill's strict mode, scratch cleanup, masked returns and suite wiring are upstream's to fix"
 
 echo "=== control: the same bytes this repo authors itself still fail ==="
 cp "$R/.agents/skills/foo/scripts/run" "$R/scripts/run.sh"

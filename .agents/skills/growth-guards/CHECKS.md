@@ -10,14 +10,16 @@ Flat ban on work markers in first-party tracked files — the words TODO,
 FIXME, HACK, XXX in comment-marker shapes, no baseline. Prose that quotes or
 names a marker does not fire; matching is case-sensitive. Do the work now or
 track it and delete the marker; vendored trees go in excludes with a reason.
+A marker preceded by a quote or a bracket is out of scope in every lane —
+that exemption is what lets prose and code quote the words.
 
 - `--staged` — only the lines the staged diff ADDS (the commit lane). A
   marker anywhere else in the index belongs to whoever committed it, and
   blocking every commit in the repository on it is how one fixture stops a
   whole team. Renames are held to exact content, as byte-ceiling holds
   them: a pure move adds no line, while a file that moved and changed is
-  read whole. A repository with no commits yet diffs against the empty
-  tree, so the first commit is judged like any other.
+  read whole. `git diff --cached` supplies the base, so a repository with
+  no commits yet judges its first commit like any other.
 - (default) — every tracked file, read from the index. This is the CI
   scope, and the only one that sees a marker no commit is touching.
 

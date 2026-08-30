@@ -30,7 +30,7 @@ STAGED_SCOPED_CHECKS="todo-ban"
 
 usage() {
   cat <<EOF
-usage: growth-guards [all [--staged] | CHECK [ARGS...]]
+usage: growth-guards [all] [--staged] | CHECK [ARGS...]
 
 Checks: $KNOWN_CHECKS
 

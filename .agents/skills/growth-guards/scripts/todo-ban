@@ -26,8 +26,7 @@ comment-marker shapes). Prose that quotes or names a marker word does not
 fire.
 
   (default)   every tracked file, scanned from the index (CI scope)
-  --staged    only the lines the staged diff ADDS (pre-commit scope); a
-              repository with no commits yet diffs against the empty tree
+  --staged    only the lines the staged diff ADDS (pre-commit scope)
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -73,44 +72,28 @@ gg_tmpdir
 MARKER_ERE='(^|[[:space:]])(TODO|FIXME|HACK|XXX)[:(]|(^|[[:space:]])(//|#|;|<!--|/\*)[[:space:]]*(TODO|FIXME|HACK|XXX)([:(]|[[:space:]]|$)'
 REMEDY="do the work now, or move it to the tracker and delete the marker; vendored/generated trees belong in $EXCLUDES_FILE with a reason"
 
-# The base every staged diff is taken against: HEAD, or — on a repository's
-# first commit — the empty tree, which is what that commit adds to. Empty in
-# index scope, where nothing is diffed at all.
-DIFF_BASE=()
-if [ "$MODE" = "staged" ]; then
-  head_status=0
-  git rev-parse --verify --quiet HEAD >/dev/null 2>&1 || head_status=$?
-  case "$head_status" in
-    0) ;;
-    1)
-      # `git hash-object -t tree /dev/null` computes the id and writes
-      # nothing, so it is the right object in a sha256 repository too.
-      empty_tree="$(git hash-object -t tree /dev/null)" \
-        || gg_collection_error "could not compute the empty-tree object id for the first commit's diff base"
-      DIFF_BASE=("$empty_tree")
-      ;;
-    *) gg_collection_error "could not resolve HEAD (git rev-parse exit $head_status); refusing to guess a diff base" ;;
-  esac
-fi
-
 added_lines() { # PATH — one "line<TAB>content" record per line this commit ADDS
-  local f="$1" status=0
+  local f="$1" status=0 awk_status=0
   # Pinned diff configuration: an external differ or a textconv filter would
   # hand this lane content the commit does not carry, and colour would put
   # escape sequences in front of the leading '+'. One file per invocation,
   # named by a literal pathspec, so no patch header is ever parsed for a
   # path — a path git would have had to quote cannot be misread here.
   git -c core.quotePath=false diff --cached --no-ext-diff --no-textconv --no-color \
-    -U0 ${DIFF_BASE[@]+"${DIFF_BASE[@]}"} -- ":(literal)$f" \
+    -U0 -- ":(literal)$f" \
     >"$GG_TMP/patch" 2>"$GG_TMP/patch.err" || status=$?
   if [ "$status" -ne 0 ]; then
     [ ! -s "$GG_TMP/patch.err" ] || cat -- "$GG_TMP/patch.err" >&2
     gg_collection_error "could not read the staged additions in '$f' (git diff exit $status)"
   fi
-  # Line numbers come from the hunk headers ('@@ -a,b +c,d @@'). Only lines
-  # inside a hunk count, so the '+++' file header is never one of them; a
-  # binary file has no hunks and contributes nothing.
+  # Line numbers come from the hunk headers ('@@ -a,b +c,d @@'), and only
+  # lines inside a hunk count — every 'diff --git' closes the hunk before
+  # it, so a file header is never read as one. A type change emits TWO
+  # sections for one path, and without that reset the second section's
+  # '+++' line would print as an added line at the first section's
+  # numbering. A binary file has no hunks and contributes nothing.
   awk '
+    /^diff --git / { hunk = 0; next }
     /^@@/ {
       h = $3
       sub(/^\+/, "", h)
@@ -121,18 +104,31 @@ added_lines() { # PATH — one "line<TAB>content" record per line this commit AD
     }
     hunk && /^\+/ { print ln "\t" substr($0, 2); ln++; next }
     hunk && /^ / { ln++; next }
-  ' "$GG_TMP/patch"
+  ' "$GG_TMP/patch" || awk_status=$?
+  [ "$awk_status" -eq 0 ] \
+    || gg_collection_error "could not parse the staged additions in '$f' (awk exit $awk_status)"
 }
 
 staged_lane() { # numbered violations on stdout, counted in GG_VIOLATIONS
-  local meta f dstmode grep_status rec
+  local meta f dstmode grep_status rec carrier carries filter_status=0
+  local -a carriers_list
   gg_require_merged_index
+  # List, then detail — the shape gg_grep_lane uses. One flat index scan
+  # names every file whose staged content carries a marker at all, and the
+  # per-file diff below is reached only for those, so a commit touching
+  # hundreds of clean files spawns nothing per file. It cannot drop a true
+  # positive: a line this commit ADDS is in the index blob this scan reads.
+  LC_ALL=C git grep --cached -lIzE "$MARKER_ERE" >"$GG_TMP/carriers.z" 2>"$GG_TMP/carriers.err" \
+    || filter_status=$?
+  gg_grep_guard "$filter_status" "$GG_TMP/carriers.err" "listing the staged files that carry a work marker"
+  carriers_list=()
+  while IFS= read -r -d '' carrier; do carriers_list+=("$carrier"); done <"$GG_TMP/carriers.z"
   # A, M and T, with rename detection held to EXACT content for the reason
   # byte-ceiling holds it there: at 100% a pure move pairs as R and is
   # dropped — it adds no line — while a file that moved AND changed arrives
   # as an addition and is read whole.
   git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% \
-    --diff-filter=AMT ${DIFF_BASE[@]+"${DIFF_BASE[@]}"} >"$GG_TMP/raw.z" \
+    --diff-filter=AMT >"$GG_TMP/raw.z" \
     || gg_collection_error "could not collect the staged changes (git diff --cached --raw failed)"
   while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
     # Record shape: ":srcmode dstmode srcsha dstsha status". Only A, M and T
@@ -143,6 +139,15 @@ staged_lane() { # numbered violations on stdout, counted in GG_VIOLATIONS
       120000 | 160000) continue ;; # symlink / submodule gitlink — no lines to read
     esac
     gg_is_excluded "$f" && continue
+    # Only a path the index scan named can have an added line that matches.
+    carries=0
+    for carrier in ${carriers_list[@]+"${carriers_list[@]}"}; do
+      if [ "$carrier" = "$f" ]; then
+        carries=1
+        break
+      fi
+    done
+    [ "$carries" -eq 1 ] || continue
     added_lines "$f" >"$GG_TMP/added"
     grep_status=0
     # -a: a NUL past git's own binary sniff would otherwise make grep answer

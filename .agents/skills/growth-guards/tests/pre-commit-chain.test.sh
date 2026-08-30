@@ -355,6 +355,10 @@ RMARK="$(new_repo marker-scope)"
 printf '// %s: left in a fixture\n' "$TD" >"$RMARK/fixture.rs"
 git -C "$RMARK" add fixture.rs
 git -C "$RMARK" commit -qm 'chore: fixture'
+# A staged file of its own, so the pass is the chain judging content rather
+# than an empty diff finding nothing to judge.
+printf 'fn main() {}\n' >"$RMARK/clean.rs"
+git -C "$RMARK" add clean.rs
 RC=0
 OUT="$(cd "$RMARK" && "$PC" 2>&1)" || RC=$?
 [ "$RC" -eq 0 ] && ok "the staged file carries no marker, so the chain passes" \

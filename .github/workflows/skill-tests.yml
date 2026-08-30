@@ -110,6 +110,14 @@ jobs:
         if: matrix.shard == 'shell'
         run: skills/size-ratchet/scripts/size-ratchet
 
+      # The queue-side half of the work-marker gate: the preflight job runs
+      # only on pull_request, so without this a merge group never scans the
+      # index it is about to merge. The commit lane judges only what a commit
+      # adds, which leaves every marker already in the index to this scan.
+      - name: todo-ban (index-wide work-marker scan)
+        if: matrix.shard == 'shell'
+        run: skills/growth-guards/scripts/todo-ban
+
       # Every skill must route problem reports through `kendex report`. The
       # ownership guard is a backstop for issues that bypassed it, so a skill
       # carrying only a `bugs:` URL sends agents to hand-file in this repo

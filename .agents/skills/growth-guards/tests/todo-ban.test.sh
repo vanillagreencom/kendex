@@ -339,6 +339,71 @@ run_tb --staged
 [ "$RC" -eq 0 ] && ok "the excludes row silences the staged vendored tree too" \
   || bad "excludes row silences the staged tree" "rc=$RC out=$OUT"
 
+echo "=== a type change emits two diff sections, neither header an added line ==="
+new_repo typechange
+printf 'fn main() {}\n' >"$R/ok.rs"
+# The path itself carries a marker shape, so a '+++ b/<path>' header read as
+# content fires. A symlink-to-file change emits a deletion section and a
+# creation section for the one path, and the creation section's header sits
+# between them at the deletion hunk's numbering.
+ln -s ok.rs "$R/a $TD: x.md"
+git -C "$R" add -A
+git -C "$R" commit -qm seed
+rm -- "$R/a $TD: x.md"
+printf 'fn clean() {}\n' >"$R/a $TD: x.md"
+git -C "$R" add -A
+run_tb --staged
+[ "$RC" -eq 0 ] && ok "a type change to a clean regular file passes" \
+  || bad "a clean type change passes" "rc=$RC out=$OUT"
+case "$OUT" in *":0:"*) bad "a file header was reported as an added line" "$OUT" ;; *) ok "and nothing is reported at line 0" ;; esac
+
+# The same type change carrying a real marker: this one has content the
+# index scan names, so it is the case that reaches the hunk parser, and only
+# the line the file actually carries may be named.
+printf '// %s: added with the regular file\n' "$FX" >"$R/a $TD: x.md"
+git -C "$R" add -A
+run_tb --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"x.md:1:"*) true ;; *) false ;; esac \
+  && ok "control: a marker in the new regular file fires at its own line" \
+  || bad "control: the marker in the new regular file fires" "rc=$RC out=$OUT"
+case "$OUT" in *":0:"*) bad "the creation section's header rode along as line 0" "$OUT" ;; *) ok "and the section header is still not a record" ;; esac
+
+echo "=== rename detection is held to EXACT content ==="
+new_repo renamed
+i=1
+: >"$R/old.rs"
+while [ "$i" -le 40 ]; do
+  printf 'fn f%s() {}\n' "$i" >>"$R/old.rs"
+  i=$((i + 1))
+done
+git -C "$R" add -A
+git -C "$R" commit -qm seed
+# Moved AND edited: at 100% it does not pair, so it arrives as an addition
+# and is read whole. At any lower threshold it pairs as R, is dropped by
+# --diff-filter=AMT, and the marker below is never judged.
+git -C "$R" mv old.rs new.rs
+printf '// %s: added in the move\n' "$TD" >>"$R/new.rs"
+git -C "$R" add new.rs
+run_tb --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"work marker: new.rs:41:"*) true ;; *) false ;; esac \
+  && ok "a file that moved and gained a marker is read whole, at its new path" \
+  || bad "a moved-and-edited file is read whole" "rc=$RC out=$OUT"
+
+# The counterpart the same threshold buys: a pure move adds no line, so a
+# marker someone else committed does not become this commit's.
+new_repo renamepure
+printf '// %s: committed long ago\n' "$TD" >"$R/legacy.rs"
+git -C "$R" add -A
+git -C "$R" commit -qm seed
+git -C "$R" mv legacy.rs moved.rs
+run_tb --staged
+[ "$RC" -eq 0 ] && ok "a pure move of a committed marker adds no line, so it passes" \
+  || bad "a pure move passes" "rc=$RC out=$OUT"
+run_tb
+[ "$RC" -eq 1 ] && case "$OUT" in *"work marker: moved.rs:1:"*) true ;; *) false ;; esac \
+  && ok "control: the index scan still refuses that marker at its new path" \
+  || bad "control: the index scan refuses the moved marker" "rc=$RC out=$OUT"
+
 echo "=== fail-closed: a broken staged scan terminates, never passes ==="
 new_repo stagedfail
 printf 'fn main() {}\n' >"$R/ok.rs"
@@ -378,12 +443,53 @@ OUT="$(cd "$R" && PATH="$TMP/raw-shim:$PATH" "$TB" --staged 2>&1)" && RC=0 || RC
   || bad "failed change-set collection is exit 2" "rc=$RC out=$OUT"
 case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany a broken collection" "$OUT" ;; *) ok "no OK verdict accompanies the broken collection" ;; esac
 
+# The per-file read is reached only for a path the index scan named, so this
+# case stages a marker to give the shim a file to fail on.
+printf '// %s: staged for the per-file read\n' "$TD" >>"$R/ok.rs"
+git -C "$R" add ok.rs
 make_diff_shim "$TMP/hunk-shim" -U0
 OUT="$(cd "$R" && PATH="$TMP/hunk-shim:$PATH" "$TB" --staged 2>&1)" && RC=0 || RC=$?
 [ "$RC" -eq 2 ] && case "$OUT" in *"could not read the staged additions in 'ok.rs'"*) true ;; *) false ;; esac \
   && ok "a file whose added lines cannot be read is exit 2, naming it" \
   || bad "unreadable added lines are exit 2" "rc=$RC out=$OUT"
 case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany an unread file" "$OUT" ;; *) ok "no OK verdict accompanies the unread file" ;; esac
+
+echo "=== fail-closed: a hunk parser that cannot run is a collection error ==="
+new_repo hunkparse
+printf 'fn main() {}\n' >"$R/ok.rs"
+git -C "$R" add -A
+git -C "$R" commit -qm seed
+printf '// %s: staged for the parser to read\n' "$TD" >>"$R/ok.rs"
+git -C "$R" add ok.rs
+run_tb --staged
+[ "$RC" -eq 1 ] && ok "shim-free control: the staged marker fires with the real awk" \
+  || bad "shim-free control fires" "rc=$RC out=$OUT"
+
+# The shim exits 1 on purpose: 1 is this family's "violations", so a parser
+# status read as the lane's own would fold a measurement that never ran into
+# a violation verdict, with no line saying so.
+REAL_AWK="$(command -v awk)"
+AWK_SHIM="$TMP/awk-shim"
+mkdir -p "$AWK_SHIM"
+cat >"$AWK_SHIM/awk" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  case "\$a" in
+    *hunk*)
+      echo "awk: simulated hunk-parser failure" >&2
+      exit 1
+      ;;
+  esac
+done
+exec "$REAL_AWK" "\$@"
+EOF
+chmod +x "$AWK_SHIM/awk"
+OUT="$(cd "$R" && PATH="$AWK_SHIM:$PATH" "$TB" --staged 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not parse the staged additions in 'ok.rs'"*) true ;; *) false ;; esac \
+  && ok "a hunk parser that fails is exit 2, naming the file" \
+  || bad "a failed hunk parser is exit 2" "rc=$RC out=$OUT"
+case "$OUT" in *"work marker:"*) bad "a scan that never ran may not produce a violation" "$OUT" ;; *) ok "and no violation verdict comes with it" ;; esac
+case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany a broken parse" "$OUT" ;; *) ok "no OK verdict accompanies the broken parse" ;; esac
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

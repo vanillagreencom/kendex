@@ -217,12 +217,15 @@ Matching is case-sensitive — lowercase uses of the words are prose.
 The shapes are the same in both scopes; only the lines they are matched
 against differ. `--staged` collects the change set the way byte-ceiling's
 staged lane does (`--raw`, additions/modifications/type changes, renames at
-exact content), then reads each surviving path's added lines from a
-per-path `-U0` diff — one file per invocation, so no patch header is ever
-parsed for a path and a path git would have had to quote cannot be misread.
-Diff configuration is pinned (`--no-ext-diff`, `--no-textconv`,
-`--no-color`): a textconv filter would otherwise hand the lane content the
-commit does not carry. Binary blobs have no hunks and contribute nothing.
+exact content), dropping symlinks and submodule gitlinks by destination
+mode because they carry no lines to read. One flat `git grep --cached` then
+names the files whose staged content carries a marker at all, and only
+those paths reach the per-path `-U0` diff that reads their added lines —
+one file per invocation, so no patch header is ever parsed for a path and a
+path git would have had to quote cannot be misread. Diff configuration is
+pinned (`--no-ext-diff`, `--no-textconv`, `--no-color`): a textconv filter
+would otherwise hand the lane content the commit does not carry. Binary
+blobs have no hunks and contribute nothing.
 
 ## byte-ceiling sizing
 
