@@ -549,10 +549,11 @@ out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT question gh-2" \
   "a wrapped lane's question is still the event" "$err"
 
-# Codex on a dialog. It marks the row it has selected with `›`, not `❯`,
-# and closes the screen with its own enter hint, so nothing Claude Code draws
-# reaches these two screens: before KEN-863 both fell through every predicate
-# and the pass said nothing about the lane.
+# Codex on a dialog. It marks the row it has selected with `›`, not `❯`, and
+# words its key hints its own way, so nothing Claude Code draws reaches these
+# two screens: before KEN-863 both fell through every predicate and the pass
+# said nothing about the lane. The marker is the whole signature — these two
+# cases are what proves a Codex enter hint would be redundant.
 new_case question_codex_dialog_trust
 printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
 cat "$CODEX_PANES/codex-dialog-trust.txt" > "$STUB_DIR/pane-gh-2.txt"
