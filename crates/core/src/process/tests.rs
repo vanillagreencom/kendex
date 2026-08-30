@@ -184,6 +184,94 @@ fn a_host_attributes_file_does_not_reach_the_content_kendex_reads() {
     );
 }
 
+/// `GIT_ATTR_SOURCE` names a treeish to read `.gitattributes` from instead
+/// of the tree in hand, so a host exporting one that says `* text eol=crlf`
+/// converts a checkout past every setting there is. It is scrubbed from
+/// every git call rather than answered on the materialising one, because
+/// what it does is redirect git's input: on a read it would have `status`
+/// judge a working tree against some other commit's rules, and only
+/// scrubbing everywhere prevents that.
+///
+/// Two halves, and they prove different things. That the variable really
+/// does convert is shown end to end, by handing it to the child on purpose.
+/// That it never gets there is a named assertion on the command, which is
+/// the same shape the rest of `GIT_REDIRECTS` is held to — and it has to
+/// name the variable rather than loop over the list, or removing the entry
+/// would take the check with it.
+#[test]
+fn an_attribute_source_from_the_environment_reaches_no_git_call() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    let into = tmp.path().join("into");
+    fs::create_dir_all(&repo).unwrap();
+    fs::create_dir_all(&into).unwrap();
+    asking_repository(&repo, None, &["config", "core.autocrlf", "false"]);
+
+    // A second tree holding nothing but the rule, so the attributes come
+    // from somewhere other than the commit being written out.
+    fs::remove_file(repo.join("SKILL.md")).unwrap();
+    fs::write(repo.join(".gitattributes"), "* text eol=crlf\n").unwrap();
+    for args in [
+        vec!["checkout", "--quiet", "-b", "attrs"],
+        vec!["add", "-A"],
+        vec![
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "--quiet",
+            "-m",
+            "attrs",
+        ],
+    ] {
+        let run = Hardened::git(&args, Some(&repo)).run().unwrap();
+        assert!(run.status.success(), "git {args:?}");
+    }
+
+    let git_dir = repo.join(".git");
+    let materialise = |source: Option<&str>| {
+        assert!(
+            Hardened::git_bare(&git_dir, &["read-tree", "main"])
+                .run()
+                .unwrap()
+                .status
+                .success()
+        );
+        let mut call = Hardened::git_into(&git_dir, &into, &["checkout-index", "--all", "--force"]);
+        if let Some(source) = source {
+            call = call.env("GIT_ATTR_SOURCE", source);
+        }
+        assert!(call.run().unwrap().status.success());
+        fs::read_to_string(into.join("SKILL.md")).unwrap()
+    };
+
+    // The threat is real: handed the variable, git reads the other tree's
+    // rule and converts. This is what the scrub exists to stop.
+    assert_eq!(materialise(Some("attrs")), "one\r\ntwo\r\n");
+    assert_eq!(materialise(None), "one\ntwo\n");
+
+    // And it never arrives on its own: an exported one is dropped from
+    // every call, the write and the reads alike.
+    for hardened in [
+        Hardened::git(&["status"], None),
+        Hardened::git_in(Path::new("/nowhere"), &["status"]),
+        Hardened::git_bare(Path::new("/nowhere/.git"), &["for-each-ref"]),
+        Hardened::git_into(
+            Path::new("/nowhere/.git"),
+            Path::new("/nowhere/into"),
+            &["checkout-index", "--all"],
+        ),
+    ] {
+        assert_eq!(
+            child_env(&hardened).get(OsStr::new("GIT_ATTR_SOURCE")),
+            Some(&None),
+            "{} keeps an inherited attribute source",
+            hardened.label()
+        );
+    }
+}
+
 /// The settings go no further than that. A call that inspects a repository
 /// somebody owns asks what that repository thinks, and its own line-ending
 /// rule is part of the answer.

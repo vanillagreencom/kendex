@@ -41,6 +41,16 @@ const GROUP_GRACE: Duration = Duration::from_millis(100);
 /// Environment that points git at a different repository than the caller
 /// named — inherited from whatever launched the app, including another
 /// harness mid-operation.
+///
+/// `GIT_ATTR_SOURCE` is here rather than beside the materialising settings
+/// because redirecting git's input is the whole of what it does, which is
+/// what this list is: it names a treeish to read `.gitattributes` from
+/// instead of the tree in hand, so it is neither the repository's answer
+/// nor the user's configuration but a redirect the ambient environment
+/// supplies. On the write it would convert a checkout past every setting
+/// below; on a read it would have `status` judge a working tree against
+/// some other commit's rules. The second is the worse of the two and only
+/// scrubbing everywhere prevents it.
 const GIT_REDIRECTS: &[&str] = &[
     "GIT_DIR",
     "GIT_WORK_TREE",
@@ -49,6 +59,7 @@ const GIT_REDIRECTS: &[&str] = &[
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_COMMON_DIR",
     "GIT_NAMESPACE",
+    "GIT_ATTR_SOURCE",
 ];
 
 /// Configuration every git call settles on its own command line, where no
