@@ -244,10 +244,56 @@ for hook in pre-commit commit-msg; do
     *) bad "the report names $hook and why it was refused" "out=$OUT" ;;
   esac
 done
-case "$OUT" in
-  *"--uninstall"*) ok "and setup's remedy names the way out for a hook kendex wrote" ;;
-  *) bad "setup's remedy names the way out" "out=$OUT" ;;
-esac
+
+echo "=== following the printed remedy through arms the clone ==="
+# The remedy is keyed on what a hook still HOLDS, not on who wrote it, and
+# only walking it end to end proves that: --uninstall reports success over a
+# hook this installer created that carries a lane of the consumer's, and
+# leaves the file exactly where it was. A message keyed on authorship stops
+# there and sends the operator round the same refusal with nothing to try.
+new_fixture remedy
+(cd "$R" && ./tools/setup >/dev/null 2>&1)
+# The shipped case: a hook this installer wrote, its shebang swapped for one
+# the installer will not vouch for, with a lane of the consumer's below it.
+{
+  printf '#!/usr/bin/env bash\n'
+  tail -n +2 "$HOOKS/commit-msg"
+  printf 'echo "my own lane"\n'
+} >"$HOOKS/commit-msg.new"
+mv "$HOOKS/commit-msg.new" "$HOOKS/commit-msg"
+chmod +x "$HOOKS/commit-msg"
+RC=0
+OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
+[ "$RC" -ne 0 ] && case "$OUT" in *"--uninstall"*) true ;; *) false ;; esac \
+  && ok "control: setup refuses that clone and prints the remedy" \
+  || bad "control: setup refuses that clone and prints the remedy" "rc=$RC out=$OUT"
+# Step one, exactly as the message spells it.
+(cd "$R" && ./.agents/skills/growth-guards/scripts/install-git-hooks --uninstall >/dev/null 2>&1) || true
+[ -e "$HOOKS/commit-msg" ] && grep -qF 'my own lane' "$HOOKS/commit-msg" \
+  && ok "--uninstall leaves a hook still holding the consumer's lane" \
+  || bad "--uninstall leaves that hook" "$(cat "$HOOKS/commit-msg" 2>&1)"
+RC=0
+OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
+[ "$RC" -ne 0 ] \
+  && ok "must-fail: step one alone does not clear the refusal" \
+  || bad "must-fail: step one alone does not clear the refusal" "rc=$RC out=$OUT"
+# Step two, which the message keys on that hook still being there.
+rm -f "$HOOKS/commit-msg"
+RC=0
+OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && case "$OUT" in *"hooks armed"*) true ;; *) false ;; esac \
+  && ok "and the remedy walked through leaves the clone armed" \
+  || bad "the remedy walked through arms the clone" "rc=$RC out=$OUT"
+{ grep -qF "$SENTINEL" "$HOOKS/commit-msg" && grep -qF "$SENTINEL" "$HOOKS/pre-commit"; } \
+  && ok "with both shims back in place" \
+  || bad "both shims back in place" "$(ls -1 "$HOOKS" 2>&1)"
+
+echo "=== the refused clone, hook by hook, resolves one at a time ==="
+new_fixture foreign2
+for hook in pre-commit commit-msg; do
+  printf '#!/usr/bin/env bash\necho "%s ran"\n' "$hook" >"$HOOKS/$hook"
+  chmod +x "$HOOKS/$hook"
+done
 rm -f "$HOOKS/pre-commit"
 RC=0
 OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?

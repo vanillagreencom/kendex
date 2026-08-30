@@ -35,8 +35,14 @@ INSTALLER=.agents/skills/growth-guards/scripts/install-git-hooks
 # and a hooks path git reads elsewhere all reach here, and deleting a hook is
 # the fix for none of them. The report may name one hook of the two, so the
 # hand-delete points at what it named rather than at both paths.
+#
+# The two steps are keyed on what the hook still HOLDS, not on who wrote it.
+# --uninstall drops a hook file only when kendex's own lines were all of it;
+# over one carrying a lane of the consumer's it strips our lines, reports
+# success and leaves the rest. Keyed on authorship, the message would send
+# somebody who ran it round the same refusal with nothing left to try.
 not_armed() {
-  echo "setup: the guard shims are not armed; the report above names the reason for each hook, and the remedy follows from it. Where the reason is an interpreter the installer will not vouch for: a hook kendex itself wrote comes out with $INSTALLER --uninstall, and one you wrote yourself you delete by hand — only the hook the report named — and then run this again. Every other reason the report gives is fixed where it says, not by deleting a hook." >&2
+  echo "setup: the guard shims are not armed; the report above names the reason for each hook, and the remedy follows from it. Where the reason is an interpreter the installer will not vouch for: $INSTALLER --uninstall takes out a hook holding nothing but kendex's own lines, and a hook still there after that run holds lines of your own — delete that one by hand, only the hook the report named — then run this again. Every other reason the report gives is fixed where it says, not by deleting a hook." >&2
   exit 1
 }
 
