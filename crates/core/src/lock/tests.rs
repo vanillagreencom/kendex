@@ -54,7 +54,7 @@ fn lock_round_trips_and_missing_file_is_empty() {
     let loaded = load(&path).unwrap();
     assert_eq!(
         loaded.root,
-        Some(tmp.path().canonicalize().unwrap()),
+        Some(crate::paths::canonical(tmp.path()).unwrap()),
         "the write names the project it went down under"
     );
     assert_eq!(
@@ -272,7 +272,7 @@ fn a_project_lock_read_through_a_linked_spelling_of_its_root_is_still_its_own() 
 
     assert_eq!(
         load(&via.join(LOCK_FILE)).unwrap().root,
-        Some(real.clone()),
+        Some(crate::paths::canonical(&real).unwrap()),
         "the write records the directory, not the way in"
     );
     load(&real.join(LOCK_FILE)).expect("its own root, spelled directly");
