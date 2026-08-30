@@ -12,13 +12,17 @@
 # delegated path cannot.
 #
 # All three conditions are load-bearing, and the command one is the reason
-# this lint was rewritten. Matching the label and the placeholder alone is
-# fail-open: replacing the opening of a real check with `Worktree Check:
-# trust the path.` left the whole suite green, because the rest of the line
-# still carried its placeholder. Matching `pwd` ANYWHERE on the line is the
-# same hole one step further in — that mutation still said "re-run `pwd`" in
-# its remedy clause. What has to hold is that the first executable step is
-# the command, so the check is asserted by position, not by mention.
+# this lint was rewritten twice. Matching the label and the placeholder
+# alone is fail-open: replacing the opening of a real check with `Worktree
+# Check: trust the path.` left the whole suite green, because the rest of
+# the line still carried its placeholder. Matching `pwd` ANYWHERE on the
+# line is the same hole one step further in — that mutation still said
+# "re-run `pwd`" in its remedy clause. Matching the FIRST backticked span
+# wherever it falls is that hole a third time: a check opening with prose
+# and offering `pwd` later still passes, because the first span found is a
+# later one. So the match is anchored to the start of the line: what has to
+# hold is that the first executable step IS the command, asserted by
+# position rather than by mention.
 #
 # This lint is the answer to the recurrence, not to the individual sites: a
 # new delegation block that carries `Worktree:` without a working check
@@ -45,11 +49,12 @@ fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 # scan_worktree_precondition <file>
 # Emits one "file:line: ..." line per defect. Inside a <delegation_format>
 # block, a `Worktree: [TOKEN]` line must be followed on the very next line by
-# a `Worktree Check:` line that (a) opens with `pwd` as its first backticked
-# span, so the agent's first executable step is the command that reports
-# where the shell actually is, and (b) contains `[TOKEN]` — the same
-# placeholder, so a filled delegation compares against its own path and not
-# another site's. Lines outside a delegation block are never scanned.
+# a `Worktree Check:` line that (a) BEGINS with a backticked `pwd` — the
+# match is anchored, so nothing may precede the code span and the agent's
+# first executable step is the command that reports where the shell
+# actually is — and (b) contains `[TOKEN]`, the same placeholder, so a
+# filled delegation compares against its own path and not another site's.
+# Lines outside a delegation block are never scanned.
 scan_worktree_precondition() {
   awk -v f="$1" '
     /^[[:space:]]*<delegation_format>[[:space:]]*$/ { indel = 1; pending = 0; next }
@@ -65,7 +70,7 @@ scan_worktree_precondition() {
           rest = $0
           sub(/^[[:space:]]*Worktree Check:[[:space:]]*/, "", rest)
           cmd = ""
-          if (match(rest, /`[^`]*`/)) cmd = substr(rest, RSTART + 1, RLENGTH - 2)
+          if (match(rest, /^`[^`]*`/)) cmd = substr(rest, RSTART + 1, RLENGTH - 2)
           if (cmd != "pwd") {
             printf "%s:%d: Worktree Check does not open with a backticked pwd (first command: %s)\n", f, NR, (cmd == "" ? "none" : cmd)
           }
@@ -162,12 +167,23 @@ fi
 # independently: the opening command replaced by prose, everything after it
 # left intact. The line still carries its placeholder AND still says `pwd` in
 # the remedy clause, so both a placeholder check and an anywhere-on-the-line
-# `pwd` check pass it. Only asserting the FIRST backticked span catches it.
-MUTANT='Worktree: [WORKTREE_PATH]\nWorktree Check: trust the path. It must print [WORKTREE_PATH]; a bare `git status` answers about the wrong tree. Any other path — `cd [WORKTREE_PATH]`, re-run `pwd`, and report where it started.'
+# `pwd` check pass it. Only asserting the line's OPENING span catches it.
+MUTANT='Worktree: [WORKTREE_PATH]\nWorktree Check: trust the path. It must print [WORKTREE_PATH]; a bare `git status` answers about the wrong tree. Any other path — `cd "[WORKTREE_PATH]"`, re-run `pwd`, and report where it started.'
 if [ -n "$(scan_worktree_precondition "$(probe mutant "$MUTANT")" )" ]; then
   pass "lint flags a check whose leading command was replaced by prose"
 else
   fail "lint MISSED the reported fail-open (a check that runs nothing)"
+fi
+
+# b.10 — THE ROUND-THREE FAIL-OPEN. Prose in front, a backticked `pwd`
+# behind it: the first backticked span on the line IS `pwd`, so an unanchored
+# match accepts a check that demotes the command to optional. Only anchoring
+# to the start of the line rejects it.
+DEMOTED='Worktree: [WORKTREE_PATH]\nWorktree Check: trust the path; optional check: `pwd` must print [WORKTREE_PATH].'
+if [ -n "$(scan_worktree_precondition "$(probe demoted "$DEMOTED")" )" ]; then
+  pass "lint flags a check whose pwd sits behind leading prose"
+else
+  fail "lint MISSED a backticked pwd demoted behind prose"
 fi
 
 # b.8 — a check opening with the WRONG command is flagged. `pwd` has to be

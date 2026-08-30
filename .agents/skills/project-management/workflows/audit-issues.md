@@ -146,11 +146,11 @@ Follow workflow: .agents/skills/project-management/workflows/tpm-audit.md
 
 Arguments: --project "[PROJECT_NAME]" | --team | --issues [FILE_PATH]
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, where a bare `git status` or `tools/guard` answers confidently about the wrong tree. Any other path — `cd [WORKTREE_PATH]`, re-run `pwd`, and report where it started.
+Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, where a bare `git status` or `tools/guard` answers confidently about the wrong tree. Any other path — `cd "[WORKTREE_PATH]"`, re-run `pwd`, and report where it started.
 Tracker: [TRACKER] [OWNER/REPO]
 </delegation_format>
 
-Omit `Worktree:` and its `Worktree Check:` together for the main repo, and `[OWNER/REPO]` when `TRACKER=linear`.
+`Worktree:` and its `Worktree Check:` always ship together, main repo included — fill both with the main checkout's absolute path, which the delegate proves against exactly as it would a worktree's. Omit `[OWNER/REPO]` when `TRACKER=linear`.
 
 ### 4.2 Collect and Validate
 
