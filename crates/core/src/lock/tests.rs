@@ -125,20 +125,34 @@ fn unparseable_json_is_reported_as_corrupt() {
 }
 
 /// A lock a future kendex wrote refuses to load rather than being
-/// silently misread or corrupted by an older build.
+/// silently misread or corrupted by an older build. That refusal is what
+/// every bump buys, so it is held at exactly one version above this
+/// build's — the version the next bump hands to the build before it — and
+/// against a record this project could otherwise adopt, leaving the
+/// version as the only thing refusing it.
 #[test]
 fn a_newer_lock_refuses_to_load() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join(".kendex-lock.json");
-    std::fs::write(&path, r#"{"version":99,"entries":{}}"#).unwrap();
-    assert!(matches!(
-        load_file(&path),
-        Err(CoreError::SchemaTooNew { found: 99, .. })
-    ));
-    assert!(matches!(
-        load(&path),
-        Err(CoreError::SchemaTooNew { found: 99, .. })
-    ));
+    let ahead = i64::from(LOCK_VERSION) + 1;
+    std::fs::write(
+        &path,
+        format!(
+            r#"{{"version":{ahead},"root":{},"entries":{{}}}}"#,
+            json(tmp.path())
+        ),
+    )
+    .unwrap();
+    let refused = load_file(&path).unwrap_err();
+    assert!(
+        matches!(refused, CoreError::SchemaTooNew { found, .. } if found == ahead),
+        "{refused}"
+    );
+    let refused = load(&path).unwrap_err();
+    assert!(
+        matches!(refused, CoreError::SchemaTooNew { found, .. } if found == ahead),
+        "{refused}"
+    );
 }
 
 /// An empty `entries` map is indistinguishable between v1 and v2 — it
@@ -172,7 +186,7 @@ fn recording(path: &Path, key: &str, emitted: &Path, wrote_it: Option<&Path>) {
     std::fs::write(
         path,
         format!(
-            r#"{{"version":7,{}"entries":{{"{key}":{{"name":"gh","kind":"skill","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"symlink","installedAt":"2026-01-01T00:00:00Z","sourceHash":"abc","enabled":true,"emitted":{{"kind":"skill","name":"gh","paths":[{}]}}}}}}}}"#,
+            r#"{{"version":{LOCK_VERSION},{}"entries":{{"{key}":{{"name":"gh","kind":"skill","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"symlink","installedAt":"2026-01-01T00:00:00Z","sourceHash":"abc","enabled":true,"emitted":{{"kind":"skill","name":"gh","paths":[{}]}}}}}}}}"#,
             wrote_it.map_or(String::new(), |root| format!(
                 r#""root":{},"#,
                 json(root)
