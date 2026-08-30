@@ -108,19 +108,18 @@ parsing stderr:
 |------|---------|-------------|------|
 | `0`  | MERGED | `MERGED PR #N` | Merge completed immediately |
 | `0`  | MERGED | `ALREADY MERGED PR #N <mergedAt>` | PR was merged before the call; nothing attempted |
-| `75` | MERGE PENDING (volatile) | `QUEUED IN MERGE QUEUE PR #N` | A required GitHub merge queue has an active entry — an ejection disarms it silently; keep watching until MERGED |
-| `75` | MERGE PENDING (volatile) | `AUTO-MERGE ENABLED PR #N` | Classic auto-merge is armed until protection clears — a protection failure disarms it silently; keep watching until MERGED |
+| `75` | MERGE PENDING (volatile) | `QUEUED IN MERGE QUEUE PR #N` | A required GitHub merge queue has an active entry — launch the prepared durable lifecycle before returning |
+| `75` | MERGE PENDING (volatile) | `AUTO-MERGE ENABLED PR #N` | Classic auto-merge is armed until protection clears — launch the prepared durable lifecycle before returning |
 | `1`  | BLOCKED | `BLOCKED PR #N` | Nothing merged, queued, or armed |
 | `1`  | BLOCKED | `CLOSED (not merged) PR #N` | PR is closed unmerged; nothing attempted |
 
 Exit `75` is not a resting state: an ejection or a failed protection check
 disarms it silently. The caller prepares and launches
 `.agents/skills/orch/scripts/merge-queue-watch`, which binds the repository,
-PR, expected head, and watch generation before arming. Its one-shot worker
-writes a durable verdict and claims one recovery action. The review-gate
-reducer can still report fleet attention.
-Verdict routing is in README.md § Exit 75 recovery. `await-mergeable` is not
-that watcher — it returns as soon as GitHub computes a merge state.
+PR, expected head, and watch generation before arming. Its one-shot worker writes a durable verdict and claims one recovery action. The review-gate reducer can still report fleet attention.
+Verdict routing is in README.md § Exit 75 recovery; re-arm only through
+`.agents/skills/github/scripts/github.sh pr-merge <N> --auto` after that route.
+`await-mergeable` is not that watcher — it returns as soon as GitHub computes a merge state.
 
 A PR that has left `OPEN` is terminal and short-circuits every mode before any
 check, auth, or mutation. `--check` reports it through its `state` field.

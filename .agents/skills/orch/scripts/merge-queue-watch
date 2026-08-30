@@ -245,7 +245,7 @@ claim() {
 consume() {
   parse_root_issue "$@"
   WATCH_ID=$(state_value .watch_id)
-  local status artifact pid deadline now token body live live_state observed expected verdict result cause action diag error_text exit_code diag_path
+  local status artifact pid deadline now token body live live_state observed expected verdict result cause action diag error_text exit_code diag_path unconfirmed
   status=$(state_value .status)
   case "$status" in claimed|failed|abandoned|awaiting_lane_postmerge|cleanup_pending|cleanup_complete|complete) consume_report; return ;; esac
   artifact=$(state_value .artifact_path); now=$(date +%s); deadline=$(state_value '.deadline // 0')
@@ -265,20 +265,21 @@ consume() {
   if ! jq -e --arg watch "$WATCH_ID" --arg repo "$(state_value .repository)" --arg head "$(state_value .head_sha)" --argjson pr "$(state_value .pr_number)" '
       type=="object" and .schema_version==1 and .watch_id==$watch and .repository==$repo and
       .pr_number==$pr and .expected_head==$head and (.observed_head|type=="string") and
-      (.status|IN("complete","timeout","error")) and (.verdict|IN("merged","ejected","disarmed","dequeued","closed","queued","not_queued","unknown"))' "$artifact" >/dev/null; then
+      (.status|IN("complete","timeout","error")) and (.verdict|IN("merged","conflicting","ejected","disarmed","dequeued","closed","queued","not_queued","unknown"))' "$artifact" >/dev/null; then
     fail_state malformed_artifact "verdict artifact is malformed or belongs to another watch"
     json_report; return
   fi
   result=$(jq -r .status "$artifact"); verdict=$(jq -r .verdict "$artifact"); cause=$(jq -r '.cause // ""' "$artifact")
   error_text=$(jq -r '.error // ""' "$artifact"); exit_code=$(jq -r '.worker_exit_code // empty' "$artifact"); diag_path=$(jq -r '.diagnostic_path // ""' "$artifact")
+  unconfirmed=$(jq -r '.unconfirmed_verdict // ""' "$artifact")
   diag="$(state_value .runtime_dir)/consume-diagnostic.$$"
   (umask 077; set -C; : > "$diag") || die "cannot create diagnostic binding"
   body=$(live_pr) || body='{"headRefOid":"","state":"UNKNOWN"}'
   live=$(jq -r '.headRefOid // ""' <<<"$body"); live_state=$(jq -r '.state // ""' <<<"$body")
   observed=$(jq -r .observed_head "$artifact"); expected=$(state_value .head_sha)
-  jq -n --arg cause "${cause:-$verdict}" --arg error "$error_text" --arg exit "$exit_code" --arg path "$diag_path" \
+  jq -n --arg cause "${cause:-$verdict}" --arg error "$error_text" --arg exit "$exit_code" --arg path "$diag_path" --arg unconfirmed "$unconfirmed" \
     --arg expected "$expected" --arg observed "$observed" --arg live "$live" --arg state "$live_state" \
-    '{cause:$cause,error:(if $error=="" then null else $error end),worker_exit_code:(if $exit=="" then null else ($exit|tonumber) end),
+    '{cause:$cause,error:(if $error=="" then null else $error end),unconfirmed_verdict:(if $unconfirmed=="" then null else $unconfirmed end),worker_exit_code:(if $exit=="" then null else ($exit|tonumber) end),
       diagnostic_path:$path,head_verification:{expected:$expected,artifact_observed:$observed,live:$live,live_state:$state}}' > "$diag"
   if [[ "$result" == error && "$verdict:$cause" == dequeued:late_findings_dequeue_failed ]]; then
     claim manual_dequeue "$verdict" "$cause" "$diag"; rm -f -- "$diag"; return
@@ -290,10 +291,10 @@ consume() {
   if [[ "$live" != "$expected" || ( -n "$observed" && "$observed" != "$expected" ) ]]; then
     claim failed "$verdict" head_mismatch "$diag"; rm -f -- "$diag"; return
   fi
-  case "$verdict:$live_state" in merged:MERGED|closed:CLOSED|unknown:*|ejected:OPEN|disarmed:OPEN|dequeued:OPEN|queued:OPEN|not_queued:OPEN) ;; *)
+  case "$verdict:$live_state" in merged:MERGED|closed:CLOSED|unknown:*|conflicting:OPEN|ejected:OPEN|disarmed:OPEN|dequeued:OPEN|queued:OPEN|not_queued:OPEN) ;; *)
     claim failed "$verdict" live_state_mismatch "$diag"; rm -f -- "$diag"; return ;; esac
   case "$verdict:$cause" in
-    merged:*) action=postmerge ;; ejected:*|disarmed:*|queued:stalled) action=recovery ;;
+    merged:*) action=postmerge ;; conflicting:*) action=restack ;; ejected:*|disarmed:*|queued:stalled) action=recovery ;;
     dequeued:*) action=triage ;; queued:still_progressing) action=rewatch ;;
     not_queued:*) action=rearm ;; closed:*) action=abandoned ;; *) action=failed ;;
   esac

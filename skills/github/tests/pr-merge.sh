@@ -290,7 +290,7 @@ assert_eq "$status" "75" "active mergeQueueEntry is success-pending"
 assert_contains "$out" "QUEUED IN MERGE QUEUE PR #123" "merge-queue outcome is explicit"
 assert_contains "$out" "queueState=QUEUED" "merge-queue state is preserved"
 assert_contains "$out" "VOLATILE" "queued exit 75 states the state is volatile"
-assert_contains "$out" ".agents/skills/orch/scripts/queue-wait 123" "queued exit 75 names the ejection watcher by runnable path"
+assert_contains "$out" ".agents/skills/orch/scripts/merge-queue-watch once" "queued exit 75 names the durable lifecycle by installed path"
 assert_contains "$out" ".agents/skills/github/scripts/github.sh pr-merge 123 --auto" "queued exit 75 names the re-arm by runnable path"
 
 set +e
@@ -305,7 +305,7 @@ set -e
 assert_eq "$status" "75" "classic auto-merge remains success-pending"
 assert_contains "$out" "AUTO-MERGE ENABLED PR #123" "classic auto-merge outcome is distinct"
 assert_contains "$out" "VOLATILE" "auto-merge exit 75 states the state is volatile"
-assert_contains "$out" ".agents/skills/orch/scripts/queue-wait 123" "auto-merge exit 75 names the ejection watcher by runnable path"
+assert_contains "$out" ".agents/skills/orch/scripts/merge-queue-watch once" "auto-merge exit 75 names the durable lifecycle by installed path"
 
 set +e
 out=$(STUB_CHECKS="$checks" \

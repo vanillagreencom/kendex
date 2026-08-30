@@ -32,6 +32,7 @@ audit() {
   done
   for line in \
     '| `postmerge` | Step 2 |' \
+    '| `restack`, `resume_restack` | Run or resume the guarded Restack cycle below |' \
     '| `recovery` | Recovery cycle below, using the persisted gate mode and recovery count |' \
     '| `triage` | Late-findings triage below |' \
     '| `manual_dequeue` | Confirm dequeue or disarm before late-findings triage |' \
@@ -62,6 +63,9 @@ if grep -Fq '`cleanup_pending` when resuming an interrupted cleanup claim' "$LAN
   grep -Fq 'safety-preserving `kept` dispositions are complete' "$LANE"; then ok "lane resumes cleanup and acknowledges kept worktrees"; else bad "lane cleanup resume or kept acknowledgment doctrine"; fi
 if grep -Fq 'workflows/lane-postmerge.md' "$ORCH/workflows/start-worktree.md" && \
   grep -Fq 'workflows/lane-postmerge.md' "$ORCH/workflows/submit-pr.md"; then ok "managed callers run the lane acknowledgment workflow"; else bad "managed continuation wiring"; fi
+if grep -Fq '`workflows/merge-pr-restack.md`' "$MERGE" && \
+  grep -Fq 'auto-merge first' "$ORCH/workflows/merge-pr-restack.md" && \
+  grep -Fq 'dequeuePullRequest' "$ORCH/workflows/merge-pr-restack.md"; then ok "conflicts route through guarded disarm-then-dequeue restack"; else bad "guarded restack workflow wiring"; fi
 
 cp "$MERGE" "$TMP/noop.md"
 count=$(grep -Fc '.agents/skills/orch/scripts/merge-queue-watch consume --root [MAIN_REPO_ROOT] --issue [STATE_KEY]' "$TMP/noop.md")
@@ -96,6 +100,11 @@ cp "$LANE" "$TMP/resume.md"
 sed -i.bak 's/`cleanup_pending` when resuming an interrupted cleanup claim/`cleanup_complete` only/' "$TMP/resume.md"
 rm -f "$TMP/resume.md.bak"
 if grep -Fq '`cleanup_pending` when resuming an interrupted cleanup claim' "$TMP/resume.md"; then bad "cleanup resume mutant survived"; else ok "cleanup resume mutant is killed"; fi
+
+cp "$MERGE" "$TMP/restack.md"
+sed -i.bak 's/| `restack`, `resume_restack` |/| `restack-disabled` |/' "$TMP/restack.md"
+rm -f "$TMP/restack.md.bak"
+if audit "$TMP/restack.md"; then bad "restack action mutant survived"; else ok "restack action mutant is killed"; fi
 
 printf 'merge-queue-workflow: %d pass, %d fail\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

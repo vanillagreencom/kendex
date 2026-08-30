@@ -80,11 +80,10 @@ beside this one):
 - `GH_REPO=<owner/repo> .agents/skills/review-gate/scripts/pr-watch.sh` is one
   pass that prints `disarmed … (re-arm)` lines.
 
-Route the verdict: re-arm on `ejected`, `disarmed` and `not_queued` — after repairing what the cause names (a
-`merge_group_failed`/`check_failed` cause is a CI repair first, else the same
-head ejects again); `dequeued` means late review findings — triage them first;
-`closed` and `unknown` are terminal. Re-arm with
-`.agents/skills/github/scripts/github.sh pr-merge <N> --auto`.
+`queue-wait --help` § Verdicts owns the growing producer set. The durable
+lifecycle maps each accepted verdict to the action table in
+`.agents/skills/orch/workflows/merge-pr.md` § 5 step 1. An unrecognized verdict
+fails closed and is never re-armed. Repair what the `cause` names first.
 
 Where branch protection *is* enabled, the opposite problem appears: after a
 rebase or force-push an outdated thread can become unreachable in the UI —

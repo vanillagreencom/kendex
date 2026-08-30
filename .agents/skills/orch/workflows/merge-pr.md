@@ -77,11 +77,10 @@ Bot-specific signals — emoji reactions, sticky-comment prose, checklist text �
 .agents/skills/github/scripts/github.sh bot-token
 ```
 
-Use the extracted issue as `[ISSUE]`. Set `[STATE_KEY]` to `[ISSUE]` when it is
-nonempty; otherwise use `pr-[PR_NUMBER]`. The repository-local `pr-N` key is
-stable across retries and cannot collide with the normalized `issue-N` GitHub
-issue key. Use the worktree commands only when `[ISSUE]` is nonempty. When no
-issue worktree exists, set `[WORKTREE_PATH]` to `[MAIN_REPO_ROOT]` and
+Use the extracted issue as `[ISSUE]`. Set `[STATE_KEY]` to `[ISSUE]` when nonempty;
+otherwise use `pr-[PR_NUMBER]`. This repository-local key cannot collide with
+normalized GitHub key `issue-N`. Use worktree commands only with an `[ISSUE]`.
+When no issue worktree exists, set `[WORKTREE_PATH]` to `[MAIN_REPO_ROOT]` and
 `[CLEANUP_WORKTREE]=false`. Read the PR branch, then initialize workflow state;
 the command is idempotent for managed sessions and creates it for standalone
 `merge-pr`:
@@ -146,9 +145,8 @@ Use the output as `MAIN_REPO_ROOT`.
 
 1. **Merge**, before any cleanup:
 
-   Resolve the repository, gate mode, and exact head, then prepare the lifecycle
-   before any immediate or queued merge attempt. `[RECOVERY_COUNT]` is `0` on
-   the first attempt and the latest consume result thereafter.
+   Resolve the repository, gate mode, and exact head, then prepare the lifecycle before
+   any merge attempt. `[RECOVERY_COUNT]` is `0` initially and the latest consume result thereafter.
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh repo view --json nameWithOwner --jq .nameWithOwner
@@ -174,8 +172,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Exit `1` BLOCKED → run `[MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]` and route on its `cause:` line: `ci_pending` — or `none` when the merge output names a base branch requiring merges through a queue — → re-run the prepared head with `--auto`. Any other cause terminalizes the prepared lifecycle with `--cause merge_blocked`, surfaces the detail, and returns to § 3.2.
 
-   The prepare result supplies `[WATCH_ID]`, `[PREPARED_HEAD]`, and the absolute
-   artifact and diagnostic paths. Arm only that head:
+   The prepare result supplies `[WATCH_ID]`, `[PREPARED_HEAD]`, and absolute artifact and diagnostic paths. Arm only that head:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] --auto --expected-head [PREPARED_HEAD]
@@ -194,8 +191,7 @@ Use the output as `MAIN_REPO_ROOT`.
    .agents/skills/orch/scripts/merge-queue-watch direct-merged --root [MAIN_REPO_ROOT] --issue [STATE_KEY] --watch-id [WATCH_ID]
    ```
 
-   Launch terminalizes its own setup failures. When the exact-head arm fails,
-   record that terminal cause before handback:
+   Launch terminalizes setup failures. When exact-head arming fails, record that terminal cause before handback:
 
    ```bash
    .agents/skills/orch/scripts/merge-queue-watch fail --root [MAIN_REPO_ROOT] --issue [STATE_KEY] --watch-id [WATCH_ID] --cause arm_failed
@@ -213,6 +209,7 @@ Use the output as `MAIN_REPO_ROOT`.
    | `pending` | Return; the detached supervisor is live and within its deadline |
    | `postmerge` | Step 2 |
    | `resume_postmerge` | Resume the already-claimed step 2 path after interruption |
+   | `restack`, `resume_restack` | Run or resume the guarded Restack cycle below |
    | `recovery` | Recovery cycle below, using the persisted gate mode and recovery count |
    | `resume_recovery` | Resume the persisted recovery cycle; do not increment or delegate a new cycle |
    | `triage` | Late-findings triage below |
@@ -242,9 +239,13 @@ Use the output as `MAIN_REPO_ROOT`.
 
    3. Return to step 1's prepare, exact-head arm, and launch sequence.
 
+   **Restack cycle** — the base, not CI, is the blocker. Follow
+   `workflows/merge-pr-restack.md`, then return to step 1's prepare, exact-head
+   arm, and launch sequence. Never route a conflict into ci-fix.
+
    **Late-findings triage** — the findings, not CI, are the blocker:
 
-   1. On `cause: late_findings_dequeue_failed` first confirm the dequeue by hand (GraphQL `dequeuePullRequest` — its `id` input takes the PR node id) or disable auto-merge; the PR must be out of the queue before triage pushes.
+   1. On `cause: late_findings_dequeue_failed`, first apply the disarm-then-dequeue order and PR-node-id lookup from `merge-pr-restack.md`; the PR must be out of the queue before triage pushes.
    2. `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 5 step 1` with managed context — every new thread replied to and resolved.
    3. Triage may have pushed a new head. Return to step 1's prepare, exact-head arm, and launch sequence.
 

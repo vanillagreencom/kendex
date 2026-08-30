@@ -57,6 +57,7 @@ while [[ ! -f "$WATCH_RELEASE" ]]; do sleep 0.05; done
 mode=$(cat < "$WATCH_MODE")
 case "$mode" in
   merged) printf '{"status":"complete","verdict":"merged"}\n' ;;
+  conflicting) printf '{"status":"complete","verdict":"conflicting","cause":"base_conflict"}\n'; exit 1 ;;
   ejected) printf '{"status":"complete","verdict":"ejected","cause":"merge_group_failed"}\n'; exit 1 ;;
   disarmed) printf '{"status":"complete","verdict":"disarmed","cause":"auto_merge_cleared"}\n'; exit 1 ;;
   dequeued) printf '{"status":"complete","verdict":"dequeued","cause":"late_findings"}\n'; exit 1 ;;
@@ -192,6 +193,7 @@ result=$(CI_FIX_MAX_CYCLES=1 "$SCRIPTS/merge-queue-watch" consume --root "$MAIN"
 eq "$(jq -r .status <<<"$result")" failed "recovery cap terminalizes state"
 
 verdict_case disarmed recovery
+verdict_case conflicting restack
 verdict_case dequeued triage
 verdict_case dequeue_failed manual_dequeue
 verdict_case stalled recovery

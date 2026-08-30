@@ -70,7 +70,7 @@ merge_queue_supervise() {
   if [[ "$event" == deadline && ! -f "$runtime/worker.status" ]]; then stop_worker; worker_pid=""; publish_unknown supervisor_deadline 124; trap - EXIT TERM HUP INT; return 0; fi
   wait "$worker_pid" || worker_rc=$?; worker_pid=""
   if ! jq -e 'type=="object" and (.status|IN("complete","timeout","error")) and
-      (.verdict|IN("merged","ejected","disarmed","dequeued","closed","queued","not_queued","unknown"))' "$temp" >/dev/null 2>&1; then
+      (.verdict|IN("merged","conflicting","ejected","disarmed","dequeued","closed","queued","not_queued","unknown"))' "$temp" >/dev/null 2>&1; then
     publish_unknown worker_output_invalid "$worker_rc"; trap - EXIT TERM HUP INT; return 0
   fi
   jq --arg repo "$repo" --argjson pr "$pr" --arg head "$head" --arg watch "$watch_id" --arg log "$log" \

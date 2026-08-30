@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Exit 75 (queued / auto-merge armed) is volatile: an ejection disarms it
 # silently. The script says so on every 75 exit and the SKILL.md outcome table
-# names the watcher a caller must keep running; these pins keep the two from
+# names the durable lifecycle a caller must launch; these pins keep the two from
 # drifting apart.
 set -euo pipefail
 
@@ -44,8 +44,8 @@ assert_count "$script_src" '^[[:space:]]*volatile_note "\$pr_num"$' 2 \
   "both exit-75 paths emit the volatility note"
 assert_matches "$script_src" 'VOLATILE.*an ejection or a failed protection check disarms it silently' \
   "the note states an ejection or a failed protection check disarms silently"
-assert_matches "$script_src" '\.agents/skills/orch/scripts/queue-wait \$pr_num' \
-  "the note names queue-wait by its runnable path"
+assert_matches "$script_src" '\.agents/skills/orch/scripts/merge-queue-watch' \
+  "the note names the durable lifecycle by its installed path"
 assert_matches "$script_src" 'reducer="GH_REPO=\$repo \.agents/skills/review-gate/scripts/pr-watch\.sh' \
   "the note names the pr-watch reducer by its runnable path, with the GH_REPO it requires"
 assert_matches "$script_src" 'with GH_REPO set to the repository \(not resolvable locally here\)' \
@@ -67,14 +67,14 @@ fi
 table=$(sed -n '/^### PR Merge Outcomes$/,/^### /p' "$SKILL_MD")
 assert_count "$table" '^\| `75` \| MERGE PENDING \(volatile\)' 2 \
   "both 75 rows of the outcomes table are marked volatile"
-assert_matches "$table" 'keep watching until MERGED' \
-  "the 75 rows say the caller keeps watching until MERGED"
-assert_matches "$table" '— neither' \
-  "the outcomes section states no watcher is durable"
-assert_matches "$script_src" 're-running until MERGED' \
-  "the note says to re-run the watcher until MERGED"
-assert_matches "$table" 'queue-wait <N>' \
-  "the outcomes section names queue-wait as the required follow-up"
+assert_matches "$table" 'launch the prepared durable lifecycle before returning' \
+  "the 75 rows require the prepared lifecycle before return"
+assert_matches "$table" 'one-shot worker writes a durable verdict' \
+  "the outcomes section states the lifecycle durability boundary"
+assert_matches "$script_src" 'Launch the prepared .*merge-queue-watch once' \
+  "the note says to launch one durable lifecycle generation"
+assert_matches "$table" 'merge-queue-watch' \
+  "the outcomes section names merge-queue-watch as the required follow-up"
 assert_matches "$(tr '\n' ' ' <<<"$table")" 'github\.sh pr-merge <N> --auto' \
   "the outcomes section names the re-arm by its installed entry point"
 assert_matches "$table" 'README\.md § Exit 75 recovery' \
@@ -82,24 +82,18 @@ assert_matches "$table" 'README\.md § Exit 75 recovery' \
 readme_src=$(sed -n '/^## Exit 75 recovery$/,/^## /p' "$REPO_ROOT/skills/github/README.md")
 assert_matches "$readme_src" 'exits 75 when the PR is queued or auto-merge is armed' \
   "README states the volatile 75 contract"
-# The verdict set grows, so the README points at the tables that carry it
-# instead of restating them: routing in the workflow, semantics in the
-# script's --help. Neither pointer is total — queue-wait's JSON contract
-# carries verdicts emit_error raises, `unknown` among them — so the refusal
-# covering a verdict the table has no row for is pinned in both copies an
-# operator reads.
+# The verdict set grows, so queue-wait owns its meanings and the lifecycle
+# maps them to merge-pr's action table instead of either document restating it.
 assert_matches "$readme_src" 'merge-pr\.md` § 5 step 1' \
-  "README routes verdicts by the workflow table rather than restating them"
-assert_matches "$readme_src" 'queue-wait --help` § Verdicts is where' \
+  "README routes lifecycle actions by the workflow table rather than restating verdicts"
+assert_matches "$readme_src" 'queue-wait --help` § Verdicts owns' \
   "README keeps queue-wait --help as the reference for what a verdict means"
-assert_matches "$readme_src" '^A verdict with no row there is never re-armed: surface it and hand it back\.$' \
-  "README refuses to re-arm a verdict the routing table does not route"
-assert_matches "$readme_src" 'is a CI repair first' \
-  "README requires the CI repair before re-arming an ejected head"
-assert_matches "$script_src" 'route every verdict by orch merge-pr\.md § 5 step 1' \
-  "the script's own note routes by the same table the README names"
-assert_matches "$script_src" 'a verdict with no row there is never re-armed: surface it and hand it back' \
-  "the script's own note carries the same refusal, for an operator with no orch skill in front of them"
+assert_matches "$readme_src" 'An unrecognized verdict' \
+  "README refuses to re-arm a verdict the lifecycle does not recognize"
+assert_matches "$script_src" 'route its claimed action by orch merge-pr\.md § 5 step 1' \
+  "the script's own note routes by the same action table the README names"
+assert_matches "$script_src" 'never re-arm an unrecognized verdict' \
+  "the script's own note carries the same refusal"
 assert_matches "$script_src" 'repair what the cause names before re-arming' \
   "the script's own note requires the repair before a re-arm, as the README does"
 
@@ -110,17 +104,15 @@ queue_wait_src=$(cat "$REPO_ROOT/skills/orch/scripts/queue-wait")
 assert_matches "$queue_wait_src" "^Verdicts \(the semantics behind merge-pr § 5 step 1's routing table\):\$" \
   "queue-wait --help still carries the § Verdicts heading the README names"
 merge_pr_src=$(cat "$REPO_ROOT/skills/orch/workflows/merge-pr.md")
-assert_matches "$merge_pr_src" '^   \| `verdict` \| Meaning \| Action \|$' \
-  "merge-pr § 5 step 1 still carries the routing table the README routes to"
-assert_matches "$merge_pr_src" '^   \| `conflicting` \|.*\| Restack cycle below \|$' \
-  "that table routes the conflicting verdict, as a row and not as prose"
-# Beside it, so a later verdict addition cannot reopen the hole this closed:
-# the table must route the error verdict queue-wait already emits, and must
-# state the rule for one it does not yet have a row for.
-assert_matches "$merge_pr_src" '^   \| `unknown` \|.*\| Surface and hand back\..*Never re-arm' \
-  "that table routes the unknown verdict to surface-and-hand-back, not to a re-arm"
-assert_matches "$merge_pr_src" '^   A verdict with no row above is never re-armed: surface it and hand it back\.$' \
-  "the table states the rule for a verdict it has no row for"
+assert_matches "$merge_pr_src" '^   \| `action` \| Route \|$' \
+  "merge-pr § 5 step 1 still carries the action table the README routes to"
+assert_matches "$merge_pr_src" '^   \| `restack`, `resume_restack` \| Run or resume the guarded Restack cycle below \|$' \
+  "that table routes the conflicting lifecycle action to the restack cycle"
+watch_src=$(cat "$REPO_ROOT/skills/orch/scripts/merge-queue-watch")
+assert_matches "$watch_src" 'conflicting:\*\) action=restack' \
+  "the lifecycle maps the conflicting producer verdict to that restack action"
+assert_matches "$watch_src" 'malformed_artifact' \
+  "an artifact outside the accepted verdict set fails closed"
 assert_matches "$table" 'await-mergeable` is not that' \
   "the outcomes section states await-mergeable is not the ejection watcher"
 
