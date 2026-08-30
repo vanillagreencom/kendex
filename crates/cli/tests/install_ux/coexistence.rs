@@ -110,10 +110,11 @@ fn removing_an_item_leaves_the_project_as_it_was() {
     }
 }
 
-/// A scope whose lock this build cannot read is skipped and named, never
-/// aborted on: `remove` walks every scope the filter names, and one
-/// unreadable file must not leave the rest untouched with nothing saying
-/// so. The app's audit answers the same class the same way.
+/// A scope whose lock this build cannot read is skipped and named, and the
+/// run still fails. Skipped, so `remove` visits every scope the filter
+/// names rather than leaving the rest untouched with nothing saying so;
+/// failed, because exit 0 with the item still installed says the removal
+/// happened. `refresh` walks its scopes the same way.
 #[test]
 fn a_scope_whose_lock_cannot_be_read_is_skipped_and_named() {
     let world = World::new(&["claude"]);
@@ -136,15 +137,33 @@ fn a_scope_whose_lock_cannot_be_read_is_skipped_and_named() {
 
     let out = world.try_run(&["remove", "deploy"]);
     let said = crate::said(&out);
-    assert!(out.status.success(), "the run must not abort: {said}");
-    assert!(said.contains("skipped"), "and must say it skipped: {said}");
+    assert!(
+        !out.status.success(),
+        "a removal that did not happen must not exit 0: {said}"
+    );
+    assert!(
+        said.contains("skipped"),
+        "the scope is named as skipped: {said}"
+    );
     assert!(
         said.contains("install fresh"),
         "naming why, in the words the refusal uses: {said}"
+    );
+    assert!(
+        said.contains("could not read 1 scope"),
+        "and the run closes on what it could not do: {said}"
+    );
+    assert!(
+        !said.contains("Nothing removed"),
+        "which is not the same as there being nothing to remove: {said}"
     );
     assert_eq!(
         read(&lock),
         older,
         "the file it could not read is left alone"
+    );
+    assert!(
+        world.at(".claude/skills/deploy").exists(),
+        "and the item it could not account for is still installed"
     );
 }

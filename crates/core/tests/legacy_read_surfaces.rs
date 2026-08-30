@@ -1,0 +1,248 @@
+//! Reads that only annotate rows never blank the surface over one scope.
+//!
+//! `CoreError::is_unreadable_record` names one class — a lock or manifest
+//! another version of kendex wrote, or one damaged past parsing. Every
+//! observation read absorbs exactly that class to empty and propagates
+//! everything else. It matters because this build reads only the format it
+//! writes: after an upgrade, every record a released kendex left is in
+//! that class, so a read that failed on one would blank the Library table,
+//! the Browse page and the marketplace page on first launch.
+#![cfg(unix)]
+
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::{rooted, source_path};
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use kendex_core::env::{Env, FakeOs};
+use kendex_core::error::CoreError;
+use kendex_core::model::{ItemKind, Scope};
+use kendex_core::registry::collections::{Collection, CollectionMember};
+use kendex_core::source::browse::{self, Catalog, InstallState};
+
+struct World {
+    _tmp: tempfile::TempDir,
+    env: Env,
+    project: PathBuf,
+    scope: Scope,
+}
+
+/// A project declaring one skill from a path catalog, installed, so both
+/// records exist and carry something worth losing.
+#[allow(clippy::unwrap_used)]
+fn world() -> World {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let project = home.join("dev/app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+
+    let catalog = home.join("catalog");
+    fs::create_dir_all(catalog.join("skills/gh")).unwrap();
+    fs::write(
+        catalog.join("skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: work with github\n---\nBody.\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        format!(
+            "schema = {}\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            kendex_core::manifest::MANIFEST_SCHEMA,
+            source_path(&catalog)
+        ),
+    )
+    .unwrap();
+
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    let report = kendex_core::engine::audit(&env, &scope).unwrap();
+    kendex_core::apply::execute(&env, &report.plan, None).unwrap();
+
+    World {
+        env,
+        project,
+        scope,
+        _tmp: tmp,
+    }
+}
+
+impl World {
+    fn lock(&self) -> PathBuf {
+        self.project.join(".kendex-lock.json")
+    }
+
+    fn manifest(&self) -> PathBuf {
+        self.project.join("kendex.toml")
+    }
+
+    /// The record a released kendex left: this build's shape, one version
+    /// back. Written as text, since `save` stamps the version it writes.
+    #[allow(clippy::unwrap_used)]
+    fn age_the_lock(&self) {
+        let current = kendex_core::lock::LOCK_VERSION;
+        let text = fs::read_to_string(self.lock()).unwrap();
+        let older = text.replace(
+            &format!("\"version\": {current}"),
+            &format!("\"version\": {}", current - 1),
+        );
+        assert_ne!(older, text, "the version line must be the one rewritten");
+        fs::write(self.lock(), older).unwrap();
+        assert_unreadable(&kendex_core::lock::load_file(&self.lock()));
+    }
+
+    #[allow(clippy::unwrap_used)]
+    fn age_the_manifest(&self) {
+        let current = kendex_core::manifest::MANIFEST_SCHEMA;
+        let text = fs::read_to_string(self.manifest()).unwrap();
+        let older = text.replace(
+            &format!("schema = {current}"),
+            &format!("schema = {}", current - 1),
+        );
+        assert_ne!(older, text, "the schema line must be the one rewritten");
+        fs::write(self.manifest(), older).unwrap();
+        assert_unreadable(&kendex_core::manifest::load(&self.manifest()));
+    }
+}
+
+/// The fixture is only worth anything if the file it wrote really is in
+/// the class every assertion below turns on.
+#[allow(clippy::unwrap_used)]
+fn assert_unreadable<T>(read: &Result<T, CoreError>) {
+    let error = read.as_ref().err().expect("the aged file must refuse");
+    assert!(error.is_unreadable_record(), "{error}");
+}
+
+/// The Library table's From column. Every row it can still account for
+/// stands; the aged scope contributes none of its own instead of taking
+/// the whole table down.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_library_table_survives_an_aged_lock_and_an_aged_manifest() {
+    for age in ["lock", "manifest"] {
+        let w = world();
+        let installed = kendex_core::library::provenance(&w.env, &[w.scope.clone()]).unwrap();
+        assert!(
+            installed.iter().any(|row| row.name == "gh"),
+            "the fixture must give the table a row to lose: {installed:?}"
+        );
+
+        match age {
+            "lock" => w.age_the_lock(),
+            _ => w.age_the_manifest(),
+        }
+
+        let rows = kendex_core::library::provenance(&w.env, &[w.scope.clone()])
+            .unwrap_or_else(|error| panic!("{age}: {error}"));
+        // What is on disk is still observed, so the row is there — as
+        // unmanaged with the lock gone, since the record is what said who
+        // installed it.
+        assert!(rows.iter().any(|row| row.name == "gh"), "{age}: {rows:?}");
+    }
+}
+
+/// The Browse page's installed-state join. It reads the scope's records to
+/// mark which packages are already installed; an aged lock marks none, and
+/// the catalog's packages still list.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_browse_page_survives_an_aged_lock() {
+    let w = world();
+    let catalog = Catalog::Subscription {
+        scope: w.scope.clone(),
+        source: "cat".to_owned(),
+    };
+    let before = browse::packages(&w.env, &catalog).unwrap();
+    assert!(
+        before
+            .iter()
+            .any(|package| package.name == "gh" && package.state == InstallState::Installed),
+        "the fixture must show gh installed first: {before:?}"
+    );
+
+    w.age_the_lock();
+
+    let after = browse::packages(&w.env, &catalog).expect("browsing must not fail on the record");
+    let gh = after
+        .iter()
+        .find(|package| package.name == "gh")
+        .unwrap_or_else(|| panic!("the catalog's packages still list: {after:?}"));
+    assert_eq!(
+        gh.state,
+        InstallState::Available,
+        "with no record this build can read, nothing is marked installed"
+    );
+}
+
+/// The marketplace page's reuse-or-subscribe read. An aged manifest
+/// subscribes to nothing this build can name, so every member is planned
+/// fresh rather than the page failing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn collection_steps_survive_an_aged_manifest() {
+    let w = world();
+    let collection = Collection {
+        id: "kit".to_owned(),
+        name: "kit".to_owned(),
+        members: vec![CollectionMember {
+            repo: "owner/other".to_owned(),
+            kind: ItemKind::Skill,
+            name: "deploy".to_owned(),
+            commit: Some("0".repeat(40)),
+        }],
+    };
+    w.age_the_manifest();
+
+    let steps = kendex_core::source_ops::collection_steps(&w.env, &w.scope, &collection)
+        .expect("the steps must be planned, not refused");
+    assert_eq!(steps.len(), 1, "{steps:?}");
+    assert_eq!(steps[0].skills, ["deploy"], "{steps:?}");
+}
+
+/// The rule itself, at both readers. Only the one class is absorbed: a
+/// record another project wrote is a refusal this scope must not swallow,
+/// because reading it as "nothing recorded" is how a lock carried in with
+/// a copied checkout would come to look like a fresh scope.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn observation_absorbs_the_one_class_and_nothing_else() {
+    let w = world();
+    w.age_the_lock();
+    assert!(
+        kendex_core::lock::observed(&w.lock())
+            .unwrap()
+            .entries
+            .is_empty(),
+        "an aged lock observes as empty"
+    );
+    w.age_the_manifest();
+    assert_eq!(
+        kendex_core::manifest::observed(&w.manifest()).unwrap(),
+        kendex_core::manifest::Manifest::default(),
+        "an aged manifest observes as empty"
+    );
+
+    // A lock at this build's own version, naming another project as its
+    // author. Not this class, and not absorbed.
+    let elsewhere = another_projects_lock(&w.project);
+    fs::write(w.lock(), elsewhere).unwrap();
+    let error = kendex_core::lock::observed(&w.lock()).unwrap_err();
+    assert!(!error.is_unreadable_record(), "{error}");
+    assert!(
+        matches!(error, CoreError::LockFromAnotherProject { .. }),
+        "{error}"
+    );
+}
+
+/// A well-formed lock at the current version whose `root` names somewhere
+/// else — the shape a checkout copied from another machine carries.
+fn another_projects_lock(project: &Path) -> String {
+    format!(
+        r#"{{"version":{},"root":"{}","entries":{{}}}}"#,
+        kendex_core::lock::LOCK_VERSION,
+        project.join("elsewhere").display()
+    )
+}

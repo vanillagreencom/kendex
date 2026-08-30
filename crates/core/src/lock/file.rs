@@ -231,6 +231,20 @@ pub fn load(path: &Path) -> Result<Lock> {
     }
 }
 
+/// The scope's lock for a read that only annotates rows — the counterpart
+/// of [`crate::manifest::observed`], absorbing the same class for the same
+/// reason. The record says where an installation came from; a scope whose
+/// record this build cannot read answers for none of its own, and takes
+/// no other scope's rows down with it.
+pub fn observed(path: &Path) -> Result<Lock> {
+    match load_file(path) {
+        Ok(LockFile::Current(lock)) => Ok(lock),
+        Ok(LockFile::Absent) => Ok(Lock::default()),
+        Err(error) if error.is_unreadable_record() => Ok(Lock::default()),
+        Err(error) => Err(error),
+    }
+}
+
 pub fn save(path: &Path, lock: &Lock) -> Result<()> {
     refuse_foreign_paths(path, lock)?;
     let mut lock = lock.clone();

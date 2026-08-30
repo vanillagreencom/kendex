@@ -298,9 +298,9 @@ pub fn plan_refresh(env: &Env, scope: &Scope) -> Result<EngineReport> {
 
 /// Plan what disk needs to match declaration, from the manifest as it sits
 /// on disk. This is the loader the audit view AND the confirmed apply both
-/// use — planning an apply from a mutation-normalized manifest would drop
-/// the schema-upgrade op the preview promised, leaving a v0.1 manifest
-/// beside a current lock forever.
+/// use: a mutation-normalized copy already looks current, so planning from
+/// one would slip a file past the floor that the audit and every other
+/// read refuse.
 pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<EngineReport> {
     let scope = &scope.canonical();
     let manifest_file = manifest::load(&manifest::manifest_path(env, scope))?;

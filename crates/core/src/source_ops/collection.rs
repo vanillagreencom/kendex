@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::manifest::{Manifest, ManifestFile};
+use crate::manifest::Manifest;
 use crate::model::{ItemKind, Scope};
 use crate::registry::collections::Collection;
 
@@ -44,10 +44,10 @@ pub fn collection_steps(
     scope: &Scope,
     collection: &Collection,
 ) -> Result<Vec<CollectionStep>> {
-    let manifest = match crate::manifest::load(&crate::manifest::manifest_path(env, scope))? {
-        ManifestFile::Current(manifest) => *manifest,
-        _ => Manifest::default(),
-    };
+    // What the scope already subscribes to, for the reuse-or-subscribe
+    // decision below. A manifest this build cannot read subscribes to
+    // nothing it can name, so every member is planned fresh.
+    let manifest = crate::manifest::observed(&crate::manifest::manifest_path(env, scope))?;
     let mut by_repo: BTreeMap<String, CollectionStep> = BTreeMap::new();
     for member in &collection.members {
         let identity = crate::source_ref::repo_identity(&member.repo);

@@ -54,8 +54,9 @@ pub(super) fn plan_manifest_write(
         return Ok(());
     };
     let path = crate::manifest::manifest_path(env, scope);
-    let mut written = update.clone();
-    written.schema = crate::manifest::MANIFEST_SCHEMA;
+    // The schema is not set here: `manifest::save` stamps it, and one
+    // place deciding it is the whole point of stamping at the write.
+    let written = update.clone();
     ops.push(PlannedOp {
         description: "Add new catalog skills to kendex.toml".into(),
         op: Op::WriteManifest {

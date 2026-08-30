@@ -102,10 +102,15 @@ fn refresh_reads_each_installs_own_recorded_source_across_scopes() {
     assert!(project_body.contains("B, revised."), "{project_body}");
 }
 
-/// The #1308 class over kendex.toml: the file a write leaves behind ends
-/// in exactly one terminator, and every pass after it leaves the bytes
-/// alone. A repair that ran on every pass is how the file grew a blank
-/// line per apply.
+/// The half of the #1308 class kendex.toml still keeps: the file a write
+/// leaves behind ends in exactly one terminator, and every pass after it
+/// leaves the bytes alone. A repair that ran on every pass is how the file
+/// grew a blank line per apply.
+///
+/// Not byte-faithfulness. Every write of this file serializes the manifest
+/// whole (`Op::WriteManifest`), so a comment beside a declaration does not
+/// survive one — invariant 10 records that exception, and a fixture with a
+/// comment in it would fail here rather than test anything.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_manifest_write_ends_in_one_terminator_and_settles() {

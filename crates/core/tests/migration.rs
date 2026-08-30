@@ -12,7 +12,7 @@ use test_util::source_path;
 use std::fs;
 
 use kendex_core::apply;
-use kendex_core::engine::audit;
+use kendex_core::engine::{audit, ops};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::error::CoreError;
 use kendex_core::lock::{load as load_lock, lock_path};
@@ -119,21 +119,53 @@ fn a_newer_schema_refuses_to_load() {
     assert_eq!(fs::read_to_string(&f.manifest_path).unwrap(), f.original);
 }
 
-/// The schema this build does read installs, and an apply interrupted at
-/// any op boundary rolls the whole scope back — manifest byte-identical,
-/// nothing installed, no record left behind (invariant 7).
+/// An apply interrupted at any op boundary rolls the whole scope back:
+/// manifest byte-identical, nothing installed, no record left behind
+/// (invariant 7).
 ///
-/// The op that stops it is a real refusal: a write bound to nothing being
-/// at the manifest's path, which is occupied by the manifest itself. So
+/// Planned through `add` rather than `audit`, because `add` is what puts
+/// the declaration in the file. A plan over an already-declared skill
+/// writes no manifest op at all, and the byte-identity assertion would
+/// then hold whatever the rollback did.
+///
+/// The op that stops the apply is a real refusal: a write bound to
+/// nothing being at the manifest's path, which the manifest occupies. So
 /// the rollback under test is the one the product runs.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_interrupted_apply_rolls_the_whole_scope_back() {
     let f = fixture(&MANIFEST_SCHEMA.to_string());
-    let boundaries = audit(&f.env, &f.scope).unwrap().plan.ops.len();
+    // Undeclared, so adding it is a manifest write.
+    let undeclared = f
+        .original
+        .split_once("\n[skills.gh]")
+        .map(|(kept, _)| format!("{kept}\n"))
+        .unwrap();
+    fs::write(&f.manifest_path, &undeclared).unwrap();
+
+    let report = ops::add(
+        &f.env,
+        &f.scope,
+        &ops::AddRequest {
+            source: Some("cat".into()),
+            skills: vec!["gh".into()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        report
+            .plan
+            .ops
+            .iter()
+            .any(|op| matches!(op.op, apply::Op::WriteManifest { .. })),
+        "the plan must carry the manifest write the rollback has to undo: {:?}",
+        report.plan.ops
+    );
+    let boundaries = report.plan.ops.len();
     assert!(boundaries > 1, "the plan must have boundaries to stop at");
     for boundary in 0..=boundaries {
-        let mut plan = audit(&f.env, &f.scope).unwrap().plan;
+        let mut plan = report.plan.clone();
         plan.insert(
             boundary,
             apply::PlannedOp {
@@ -148,16 +180,24 @@ fn an_interrupted_apply_rolls_the_whole_scope_back() {
         .unwrap();
         let error = apply::execute(&f.env, &plan).unwrap_err();
         assert!(matches!(error, CoreError::RolledBack { .. }), "{error}");
-        assert_eq!(fs::read_to_string(&f.manifest_path).unwrap(), f.original);
+        assert_eq!(
+            fs::read_to_string(&f.manifest_path).unwrap(),
+            undeclared,
+            "at boundary {boundary}"
+        );
         assert!(!f.scope_lock().exists(), "at boundary {boundary}");
         assert!(!f.installed_skill().exists(), "at boundary {boundary}");
     }
 
     // And the uninterrupted apply does land, so the loop above was
     // stopping a plan that had something to do.
-    let report = audit(&f.env, &f.scope).unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
     assert!(f.installed_skill().exists());
+    assert!(
+        fs::read_to_string(&f.manifest_path)
+            .unwrap()
+            .contains("[skills.gh]")
+    );
     let lock = load_lock(&lock_path(&f.env, &f.scope)).unwrap();
     assert_eq!(lock.version, kendex_core::lock::LOCK_VERSION);
     assert!(lock.entries.contains_key("skill:gh:claude"));

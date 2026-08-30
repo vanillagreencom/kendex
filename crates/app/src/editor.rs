@@ -146,12 +146,15 @@ pub fn custom_hook_deliveries(
         .collect())
 }
 
-/// Every agent's recorded upstream assignment in one scope. A read-only
-/// lookup, so a scope with no lock — and one whose lock this build cannot
-/// read — answers "nothing recorded" rather than taking the editor's whole
-/// inventory down with it. What that record would have said is an
-/// annotation on the rows; the rows themselves come from the manifest and
-/// the catalogs, and the scope's own page says the lock is unreadable.
+/// Every agent's recorded upstream assignment in one scope. A read that
+/// only annotates rows, so it goes through [`kendex_core::lock::observed`]
+/// like every other one: a scope with no lock, and one whose lock this
+/// build cannot read, both answer "nothing recorded" rather than taking
+/// the editor's whole inventory down. The rows themselves come from the
+/// manifest and the catalogs, and the scope's own page says the lock is
+/// unreadable. Everything else still fails — an IO error, or a record
+/// another project wrote, is not a file this build merely declines to
+/// convert, and reading one as "nothing recorded" would hide it.
 ///
 /// Both answers come off one pass over the lock's agent entries. Presence
 /// in each is its own question: an agent lands in `automatic` only with a
@@ -162,12 +165,8 @@ fn agent_skill_facts(
     scope: &Scope,
     manifest: Option<&manifest::Manifest>,
 ) -> Result<AgentSkillFacts, String> {
-    let lock = match kendex_core::lock::load_file(&kendex_core::lock::lock_path(env, scope)) {
-        Ok(kendex_core::lock::LockFile::Current(lock)) => lock,
-        Ok(kendex_core::lock::LockFile::Absent) | Err(_) => {
-            return Ok(AgentSkillFacts::default());
-        }
-    };
+    let lock = kendex_core::lock::observed(&kendex_core::lock::lock_path(env, scope))
+        .map_err(|e| e.to_string())?;
     let mut facts = AgentSkillFacts::default();
     for entry in lock.entries.into_values() {
         if entry.kind != ItemKind::Agent {

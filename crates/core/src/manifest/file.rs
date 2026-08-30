@@ -105,7 +105,32 @@ pub fn parse_text(path: &Path, text: &str) -> Result<ManifestFile> {
     Ok(ManifestFile::Current(Box::new(manifest)))
 }
 
+/// The scope's manifest for a read that only annotates rows: what the
+/// file declares, or nothing where there is no file and nothing this
+/// build can read. A browse, a library table or a marketplace page shows
+/// what is installed and marks which of it this scope declares; a scope
+/// whose manifest came from another version of kendex marks nothing, and
+/// blanking every other scope's rows over it is the failure this exists
+/// to stop. Everything else still propagates — the refusal absorbed here
+/// is exactly [`CoreError::is_unreadable_record`], never an IO error.
+pub fn observed(path: &Path) -> Result<Manifest> {
+    match load(path) {
+        Ok(ManifestFile::Current(manifest)) => Ok(*manifest),
+        Ok(ManifestFile::Absent) => Ok(Manifest::default()),
+        Err(error) if error.is_unreadable_record() => Ok(Manifest::default()),
+        Err(error) => Err(error),
+    }
+}
+
 pub fn save(path: &Path, manifest: &Manifest) -> Result<()> {
+    // Stamped at the write, the way the lock stamps its version: the
+    // schema is a fact about the build doing the writing, and two places
+    // deciding it is how a writer comes to put down something its own
+    // reader refuses.
+    let manifest = &Manifest {
+        schema: MANIFEST_SCHEMA,
+        ..manifest.clone()
+    };
     let text = toml::to_string_pretty(manifest).map_err(|e| CoreError::TomlParse {
         path: path.to_path_buf(),
         message: e.to_string(),

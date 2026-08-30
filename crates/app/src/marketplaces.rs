@@ -8,7 +8,7 @@
 use kendex_core::apply;
 use kendex_core::env::Env;
 use kendex_core::library::{self, ProvenanceRow};
-use kendex_core::manifest::{Manifest, ManifestFile, manifest_path};
+use kendex_core::manifest::{Manifest, manifest_path};
 use kendex_core::model::{ItemKind, Scope};
 use kendex_core::source::browse::{
     self, AvailablePackage, BundleDetail, Catalog, CatalogSummary, PackagePreview, PackageSafety,
@@ -37,13 +37,11 @@ fn all_scopes(env: &Env) -> Result<Vec<Scope>, String> {
     Ok(scopes)
 }
 
-/// The scope's manifest for reading. Browsing observes: an old-generation
-/// manifest reads as empty rather than blocking the page.
+/// The scope's manifest for reading. Browsing observes: a manifest this
+/// build cannot read answers for none of its own rows rather than blanking
+/// the page.
 fn manifest_for_reading(env: &Env, scope: &Scope) -> Result<Manifest, String> {
-    match kendex_core::manifest::load(&manifest_path(env, scope)).map_err(|e| e.to_string())? {
-        ManifestFile::Current(manifest) => Ok(*manifest),
-        _ => Ok(Manifest::default()),
-    }
+    kendex_core::manifest::observed(&manifest_path(env, scope)).map_err(|e| e.to_string())
 }
 
 /// One subscription's catalog opened for reading, or the error that says

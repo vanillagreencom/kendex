@@ -134,9 +134,9 @@ lives in one capability table read by core and UI.
    a repository it did not create. Work that must produce a commit runs
    in a disposable clone.
 10. Writes are byte-faithful: a file kendex edits round-trips
-    byte-identically except for the intended edit, trailing newline
-    included, and a file it cannot read is refused rather than rewritten.
-    Change detection compares exact bytes.
+    byte-identically but for the intended edit, newline included, and one
+    it cannot read is refused, never rewritten. kendex.toml is the
+    exception, serialized whole. Change detection compares exact bytes.
 11. Validation precedes mutation. Every input check for an operation runs
     before its first durable write, and a rejected operation leaves
     manifest, lock, and install tree byte-identical. Every rendering is
@@ -369,8 +369,8 @@ lives in one capability table read by core and UI.
   whose namespace it sits in; a cross-read (Copilot reading Claude Code's
   skills and settings) is an input to effective state, never a second
   installation.
-- Fresh manifest schema, no importer and no compat shims: a v1 manifest or
-  lock is refused, moved aside by hand, and the install starts fresh.
+- Fresh manifest schema, no importer and no compat shims: a manifest or
+  lock from any other version is refused, moved aside by hand, install fresh.
 - **One spelling per artifact.** A scope is `kendex.toml`,
   `.kendex-lock.json`, `.kendex-local/`, `kendex.settings.toml`; env vars
   are `KENDEX_*`; managed-block markers, report tags and the opencode
@@ -425,16 +425,18 @@ lives in one capability table read by core and UI.
   its own hooks directory included — whoever set it undoes it, and
   the changelog says which artifacts an old install left behind.
 - **A registration is reconciled, not added to.** What a hook registered
-  is recorded (`engine::item_record`); a catalog moving it to another
-  event retires the recorded entry where the document still has it,
-  applies what is rendered, records that. A first install retires nothing,
-  and neither does an answer short of certainty: an entry moved,
-  duplicated, or unnamed by the record is the person's to keep, and the
-  pass registers under the identity it renders beside it
-  (`engine::item_record::retire_previous`). Removal reads the same record;
-  an editor rewrites only what its own registration names; an entry no
-  edit of kendex's can reach is neither reconciled nor retired — proven by
-  applying and reading back.
+  is recorded (`engine::item_record`); a catalog moving it to another event
+  retires the recorded entry where the document still has it, applies what
+  is rendered, records that. A first install retires nothing, and neither
+  does an answer short of certainty: an entry moved, duplicated, or
+  unnamed by the record is the person's to keep, and the pass registers
+  under the identity it renders beside it
+  (`engine::item_record::retire_previous`). Pi holds instead: its registry
+  is kendex's own file, so an entry there the record cannot place is a
+  question the hook waits on. Removal reads the same record; an editor
+  rewrites only its own registration; an entry no edit of kendex's can
+  reach is neither reconciled nor retired — proven by applying and reading
+  back.
 - **Pi hooks are enforced through the carrier.** The `pi-hooks` extension
   package hosts native listeners; hook content rides in the registry
   kendex renders beside them (`kendex/hooks/<name>.sh` plus

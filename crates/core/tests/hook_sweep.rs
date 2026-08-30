@@ -204,6 +204,15 @@ fn the_sweep_takes_a_hook_whose_record_has_no_anchor() {
         apply_now(&f);
         let script = harness.script(&f.project);
         assert!(script.is_file(), "{}", script.display());
+        // Read before the sweep, so the path below is proven to be the one
+        // the registration is really in: unwrapping a wrong path to an
+        // empty string would pass the after-check on nothing at all.
+        let registry = harness.registry(&f.project);
+        assert!(
+            fs::read_to_string(&registry).unwrap().contains("guard.sh"),
+            "{}",
+            registry.display()
+        );
 
         // The lock as an older kendex left it: the entry, minus the fields
         // later versions anchor ownership with.
@@ -234,7 +243,7 @@ fn the_sweep_takes_a_hook_whose_record_has_no_anchor() {
             "the sweep takes the script: {}",
             script.display()
         );
-        let after = fs::read_to_string(harness.registry(&f.project)).unwrap_or_default();
+        let after = fs::read_to_string(&registry).unwrap();
         assert!(
             !after.contains("guard.sh"),
             "and nothing is left registered to run it: {after}"

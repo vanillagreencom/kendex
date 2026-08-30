@@ -8,7 +8,7 @@ use crate::model::HarnessId;
 mod file;
 mod validate;
 pub use file::{
-    ManifestFile, is_source_catalog, load, load_for_mutation, manifest_path, parse_text,
+    ManifestFile, is_source_catalog, load, load_for_mutation, manifest_path, observed, parse_text,
     read_for_mutation, seed,
 };
 // Crate-only: the apply op is `save`'s one sanctioned caller — it checks
