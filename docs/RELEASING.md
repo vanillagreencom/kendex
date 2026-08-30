@@ -176,8 +176,10 @@ The same declaration also stands the record scope's comparison down, which
 matters when the guard or the commit runs while the collated entries are
 still under `## [Unreleased]` — renaming that heading first leaves nothing
 gained, so that half is usually already satisfied. It bypasses the comparison
-alone: a record that is a symlink, binary, or not valid UTF-8 is refused
-either way.
+alone, and is read at one point so that stays true: a record that is a
+symlink, binary or not valid UTF-8, one carrying an unclosed fence or a
+second `## [Unreleased]`, one staging that heading away, and one deleted
+outright are all refused either way.
 
 ## Version bumps
 

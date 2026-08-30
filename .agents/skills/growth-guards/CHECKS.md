@@ -186,20 +186,27 @@ the heading and opens a fresh empty one, which is not this.
 A record git tracks in HEAD and not in the index is a DELETION, and it is a
 violation too. Absent from the index is otherwise indistinguishable from a
 repository that has no record yet, and read as that it would ship the
-consumer changelog's removal as a clean run. Retire the scope by emptying
+consumer changelog's removal as a clean run. The collator's declaration does
+not excuse it either: a collation renames a replacement over the record and
+never removes it. Retire the scope by emptying
 `GROWTH_GUARDS_CHANGELOG_RECORD`, not by deleting the file.
 
 The COMPARISON runs only when HEAD already carries the record: a repository
 writing its first one is not hand-editing a collated file.
 `GROWTH_GUARDS_CHANGELOG_COLLATE=1` in the environment declares the
 collator's own write, the way `RATCHET_RAISE=1` declares a baseline — and it
-bypasses that comparison and nothing else. What the record IS, a real file
-holding measurable text, is judged whenever git carries one: the declaration
-is exported exactly while a collation is running, so a type check it switched
-off would be off at the moment the record is about to be rewritten, and the
-collator's own rename would turn a symlink into a regular file. A path in
-both scopes is a config error — they judge by opposite rules. Each of the
-four ways the comparison stands down — no record configured, the collator's
+bypasses that comparison and nothing else. It is read at ONE point, the
+verdict on the lines the index gained, so every other rule in this scope runs
+whether or not it is set and a rule added later cannot opt itself inside it.
+The declaration is exported exactly while a collation is running, which is
+the moment the record is about to be rewritten: a check it switched off would
+be off precisely then. So the type and text rules still judge, an unclosed
+fence and a second heading are still exit 2, staging the heading away is
+still refused — a release renames it and opens a fresh empty one, so it keeps
+a heading to fold into — and deleting the record is still refused, because a
+collation renames a replacement over it and never removes it. A path in both
+scopes is a config error: they judge by opposite rules. Each of the four ways
+the comparison stands down — no record configured, the collator's
 declaration, a record git does not track, a record HEAD does not carry yet —
 names itself in the verdict, so a gate somebody disarmed never reads as a
 repository that has no record.

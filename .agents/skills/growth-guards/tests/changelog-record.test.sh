@@ -536,11 +536,14 @@ run_ce
 [ "$RC" -eq 1 ] && case "$OUT" in *"CHANGELOG.md is tracked in HEAD and staged away"*) true ;; *) false ;; esac \
   && ok "renaming the record away is the same refusal" \
   || bad "renaming the record away is the same refusal" "rc=$RC out=$OUT"
-# The release write is declared, and the declaration covers this too.
+# The declaration does not reach this refusal. A collation renames a
+# replacement over the record and never removes it, so no release owes the
+# deletion an exemption, and one that claimed it would ship the consumer
+# changelog's removal under the release commit's own declaration.
 run_ce_env 'GROWTH_GUARDS_CHANGELOG_COLLATE=1'
-[ "$RC" -eq 0 ] && case "$OUT" in *"removal NOT judged"*"GROWTH_GUARDS_CHANGELOG_COLLATE=1"*) true ;; *) false ;; esac \
-  && ok "a declared collation may write the removal, and says so" \
-  || bad "a declared collation may write the removal, and says so" "rc=$RC out=$OUT"
+[ "$RC" -eq 1 ] && case "$OUT" in *"is tracked in HEAD and staged away"*) true ;; *) false ;; esac \
+  && ok "a declared collation may not write the removal either" \
+  || bad "a declared collation may not write the removal either" "rc=$RC out=$OUT"
 # The control that matters: a repository that never carried one still stands
 # down cleanly, which is the case this refusal must not swallow.
 git -C "$R" reset -q --hard HEAD
@@ -550,6 +553,69 @@ run_ce
 [ "$RC" -eq 0 ] && case "$OUT" in *"no record to judge"*"is not tracked"*) true ;; *) false ;; esac \
   && ok "control: a repository that never had a record stands down" \
   || bad "control: a repository that never had a record stands down" "rc=$RC out=$OUT"
+
+echo "=== the declaration bypasses the comparison and nothing else ==="
+# Read in one place and permitting one thing. Every other rule in this scope
+# is as true during a release as outside one, so each is pinned as still
+# running with the declaration set — a rule added later is outside it by
+# construction, and these are what would catch it being opted back in.
+new_repo recorddeclared
+printf -- '- A fragment.\n' | frag fixed ken-1.md
+printf '# Changelog\n\n## [Unreleased]\n\n- One line.\n' >"$R/CHANGELOG.md"
+stage
+git -C "$R" commit -qm base
+# THE one thing it permits: lines the collation folded in.
+printf '# Changelog\n\n## [Unreleased]\n\n- One line.\n- A folded entry.\n' >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"gained lines under [Unreleased]"*) true ;; *) false ;; esac \
+  && ok "control: undeclared, the gained line is refused" \
+  || bad "control: undeclared, the gained line is refused" "rc=$RC out=$OUT"
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_COLLATE=1'
+[ "$RC" -eq 0 ] && case "$OUT" in *"NOT compared"*"GROWTH_GUARDS_CHANGELOG_COLLATE=1"*) true ;; *) false ;; esac \
+  && ok "declared, the same gained line is the write it declares" \
+  || bad "declared, the same gained line is the write it declares" "rc=$RC out=$OUT"
+# And every other rule, with the declaration set. A symlink record first.
+git -C "$R" reset -q --hard HEAD
+ln -sf /etc/hostname "$R/link.md"
+git -C "$R" rm -q --cached CHANGELOG.md
+git -C "$R" mv link.md CHANGELOG.md 2>/dev/null || { rm -f "$R/CHANGELOG.md"; ln -sf /etc/hostname "$R/CHANGELOG.md"; git -C "$R" add -A; }
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_COLLATE=1'
+[ "$RC" -eq 2 ] && case "$OUT" in *"tracked as a symlink or gitlink"*) true ;; *) false ;; esac \
+  && ok "declared, a record staged as a symlink is still exit 2" \
+  || bad "declared, a record staged as a symlink is still exit 2" "rc=$RC out=$OUT"
+# An unclosed fence, which leaves the section unlocatable.
+git -C "$R" reset -q --hard HEAD
+printf '# Changelog\n\n```\n\n## [Unreleased]\n\n- One line.\n' >"$R/CHANGELOG.md"
+stage
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_COLLATE=1'
+[ "$RC" -eq 2 ] && case "$OUT" in *"leaves a code fence unclosed"*) true ;; *) false ;; esac \
+  && ok "declared, an unterminated fence is still exit 2" \
+  || bad "declared, an unterminated fence is still exit 2" "rc=$RC out=$OUT"
+# A second canonical heading, which leaves the section undecided.
+git -C "$R" reset -q --hard HEAD
+printf '# Changelog\n\n## [Unreleased]\n\n- One line.\n\n## [Unreleased]\n' >"$R/CHANGELOG.md"
+stage
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_COLLATE=1'
+[ "$RC" -eq 2 ] && case "$OUT" in *"more than one '## [Unreleased]' heading"*) true ;; *) false ;; esac \
+  && ok "declared, a second heading is still exit 2" \
+  || bad "declared, a second heading is still exit 2" "rc=$RC out=$OUT"
+# The heading staged away, which leaves a later collation nowhere to fold.
+git -C "$R" reset -q --hard HEAD
+printf '# Log\n' >"$R/CHANGELOG.md"
+stage
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_COLLATE=1'
+[ "$RC" -eq 1 ] && case "$OUT" in *"stages away the '## [Unreleased]' heading"*) true ;; *) false ;; esac \
+  && ok "declared, staging the heading away is still refused" \
+  || bad "declared, staging the heading away is still refused" "rc=$RC out=$OUT"
+# The release flow itself, which is what the declaration is FOR: the heading
+# renamed to a version and a fresh empty one opened, with the entries folded.
+git -C "$R" reset -q --hard HEAD
+printf '# Changelog\n\n## [Unreleased]\n\n## [1.0.0] - 2026-01-01\n\n- One line.\n- A folded entry.\n' >"$R/CHANGELOG.md"
+stage
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_COLLATE=1'
+[ "$RC" -eq 0 ] && ok "control: the release write the declaration is for still passes" \
+  || bad "control: the release write the declaration is for still passes" "rc=$RC out=$OUT"
 
 echo "=== staging the heading away is a refusal, not an unchanged section ==="
 # An EMPTY section and a MISSING one both parse to nothing, so the comparison
