@@ -211,16 +211,33 @@ fn a_write_that_stops_part_way_names_what_reached_the_folder() {
         .unwrap_err()
         .to_string();
     assert!(
+        message.contains("skills/blocked/here"),
+        "the error names the destination that failed: {message}"
+    );
+    assert!(
         message.contains("skills/mine"),
-        "the error names what landed: {message}"
+        "and what landed before it: {message}"
     );
     assert!(
         message.contains("Remove them before importing again"),
         "{message}"
     );
+    // What the copy leaves, pinned rather than assumed: the selections
+    // before the failure are on disk, the one that failed is not, and
+    // nothing was rolled back. Restoring per-package atomicity would need
+    // the staging directory this issue removes.
     assert!(
         target.join("skills/mine/SKILL.md").is_file(),
-        "those bytes really are on disk"
+        "the earlier selection really is on disk"
+    );
+    assert!(
+        !target.join("skills/blocked/here").exists(),
+        "the selection that failed wrote nothing"
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("skills/blocked")).unwrap(),
+        "not a directory",
+        "and what was in the way is untouched"
     );
 }
 
