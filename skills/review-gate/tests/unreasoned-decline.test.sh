@@ -14,14 +14,14 @@
 # every one of them; the section below pins the unpunctuated shape, and the
 # second probe at the bottom is what proves that reading is this change's.
 #
-# The must-fail probe is at the bottom, in the order the Done-when asks for:
-# the new verdict fires on a content-free decline first, then the same jq with
-# the term reverted lets it through.
+# The must-fail probes are at the bottom, each in the order the Done-when asks
+# for: the verdict fires on a content-free decline first, then the same jq with
+# one piece of the rule removed lets it through, so the catch belongs to that
+# piece and not to the fixture.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PRED="$SCRIPT_DIR/../scripts/review-predicate.sh"
-WRITER="$SCRIPT_DIR/../scripts/review-writer.sh"
 WATCH="$SCRIPT_DIR/../scripts/pr-watch.sh"
+PRED="$SCRIPT_DIR/../scripts/review-predicate.sh"
 PASS=0 FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ok    $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  FAIL  $1"; echo "        got: $2"; }
@@ -96,6 +96,17 @@ check counted "a freeze attributed to the owner and nothing more" \
   "Declined: frozen at 39db56854, per the owner's instruction."
 check counted "the same, spelled out at length" \
   'Declined: frozen at 39db56854 — the owner set the previous push as this PR'"'"'s last.'
+# The seam between the two terms, which this reply used to slip through: the
+# colon makes it a canonical disposition, so untracked-claim skips it, and
+# `tracked` was a word this subtraction did not strip, so it read as a
+# reason. Neither term counted it. The tracking words are non-reason tokens
+# here for that reason; untracked-claim still owns the unpunctuated form.
+check counted "a promise to track that names no issue and no mechanism" \
+  'Declined: tracked separately'
+check counted "the same promise in the other inflection" \
+  'Declined: tracking separately'
+check counted "a filing promised and not made" \
+  'Declined: filed separately'
 
 echo "=== the real reasons that must pass ==="
 
@@ -116,6 +127,10 @@ check clean "a short but real reason" \
 # widening the vocabulary must not reach it.
 check clean "a freeze that does concede the mechanism" \
   "Declined under this PR's freeze. You are right about the mechanism, and it fails in the safe direction."
+# The control for the tracking words: a reason that happens to use one is
+# still a reason, because the subtraction leaves everything around it.
+check clean "a mechanism that uses the word tracked" \
+  'Declined: the caller is tracked by the loader before the branch you name can run.'
 
 # The boundary, pinned deliberately. The subtraction is vocabulary, so it
 # ends where the residue stops being words and becomes NAMES — the suite,
@@ -170,16 +185,19 @@ out=$(page "$(thread false "$(human 'looking')")")
 case "$out" in "1 0 0 "*) ok "unresolved counting unchanged";; *) bad "unresolved counting unchanged" "$out";; esac
 
 echo "=== the verdict reaches its consumers ==="
-
-grep -q 'unreasoned-decline)    desired="failure"' "$WRITER" \
-  && ok "writer maps unreasoned-decline to failure" \
-  || bad "writer maps unreasoned-decline to failure" "mapping line missing"
-grep -q 'unreasoned-decline' "$WATCH" \
-  && ok "pr-watch accepts and surfaces the verdict" \
-  || bad "pr-watch accepts and surfaces the verdict" "not referenced"
-grep -q 'verdict=unreasoned-decline detail=' "$PRED" \
-  && ok "the predicate emits the verdict with a detail line" \
-  || bad "the predicate emits the verdict with a detail line" "no verdict line"
+# The writer's mapping is RUN, not grepped: review-writer.test.sh w8/w8b
+# drive this verdict through the writer and assert the failure post and the
+# remedy text. A presence grep stood here until KEN-890's second review
+# round and passed on a branch nothing executed.
+#
+# pr-watch's arm is the one consumer still checked by presence. Its
+# behavioural rows belong in pr-watch.test.sh beside every other verdict,
+# but that file sits on a frozen size-ratchet row (class */tests/*, which
+# never rises) and the guard's remedy is to split the suite first. The rows
+# are written and their breaks proven; they land with that split.
+grep -q 'unreasoned-decline)' "$WATCH" \
+  && ok "STOPGAP: pr-watch carries the arm (behavioural rows blocked on a suite split)" \
+  || bad "STOPGAP: pr-watch carries the arm (behavioural rows blocked on a suite split)" "not referenced"
 
 echo
 echo "--- must-fail probe: the term, reverted ---"

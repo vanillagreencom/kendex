@@ -21,6 +21,10 @@
 #   w6.  approved, currently pending         -> posts success
 #   w7.  approved, currently failure         -> posts success (a dismissed
 #                                               objection reopens the gate)
+#   w8.  unreasoned-decline                  -> posts failure, remedy in the
+#                                               description
+#   w8b. unreasoned-decline over a NEWER     -> posts failure directly
+#        success entry
 # Write discipline (VST-65 ordering guard, success posts only):
 #   w10. guard re-read shows a non-success   -> defers (exit 0, no POST)
 #        entry at/after evaluated_at
@@ -236,6 +240,8 @@ AWAITING="verdict=awaiting detail=$AWAITING_DETAIL"
 APPROVED="verdict=approved detail=reviewed at head with no unresolved threads"
 CR="verdict=changes-requested detail=standing review changes requested (persists across pushes until re-approval or dismissal)"
 THREADS="verdict=threads-open detail=2 unresolved review thread(s)"
+UNREASONED_DETAIL="1 decline(s) name no mechanism — state the passing state or the false premise the finding is wrong about"
+UNREASONED="verdict=unreasoned-decline detail=$UNREASONED_DETAIL"
 
 # created_at anchors: OLD predates every stub run's start (RUN_START =
 # 2020-06-01) and every evaluation instant; LATE lands after RUN_START but
@@ -274,6 +280,21 @@ assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "w3: no rerun on changes-requeste
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$THREADS" STUB_GATE_HISTORY='[]') || rc=$?
 assert_eq "$rc" "0" "w4: threads-open exits 0"
 assert_contains "$(cat "$POST_LOG")" "state=pending" "w4: threads-open posts pending"
+
+# w8: a decline naming no mechanism is a failure, not a pending — the gate
+# must go red rather than wait for something to converge. Driven through
+# the writer, because the mapping line alone reads the same whether the
+# verdict is spelled right or not.
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$UNREASONED" STUB_GATE_HISTORY='[]') || rc=$?
+assert_eq "$rc" "0" "w8: unreasoned-decline exits 0"
+assert_contains "$(cat "$POST_LOG")" "state=failure" "w8: unreasoned-decline posts failure"
+assert_contains "$(cat "$POST_LOG")" "$UNREASONED_DETAIL" "w8: the remedy reaches the status description"
+
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$UNREASONED" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success","description":"ok","created_at":"'"$FUTURE"'"}]') || rc=$?
+assert_eq "$rc" "0" "w8b: unreasoned-decline over a newer success exits 0"
+assert_contains "$(cat "$POST_LOG")" "state=failure" "w8b: posts failure over it — a downward post never defers"
+assert_not_contains "$out" "deferring" "w8b: no deferral on the downward path"
 
 echo "=== approved converges to success ==="
 
