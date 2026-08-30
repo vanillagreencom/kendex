@@ -61,13 +61,10 @@ gg_record_head_comparable() { # 0 when HEAD's copy is one this scope can compare
   # gitlink and a tree have no blob at all, and a symlink's blob is a path,
   # so none of them is a document to parse. Reading the sha before asking
   # this is what made two of them exit rather than answer.
-  case "$RECORD_HEAD_MODE" in
-    100644 | 100755) ;;
-    *)
-      GG_HEAD_WHY="is not a regular file in HEAD's copy (mode $(gg_shown "$RECORD_HEAD_MODE"))"
-      return 1
-      ;;
-  esac
+  if ! gg_mode_is_regular "$RECORD_HEAD_MODE"; then
+    GG_HEAD_WHY="is not a regular file in HEAD's copy (mode $(gg_shown "$RECORD_HEAD_MODE"))"
+    return 1
+  fi
   if ! gg_changelog_blob "$RECORD_HEAD_SHA" "$RECORD" soft; then
     GG_HEAD_WHY="is not changelog text in HEAD's copy"
     return 1

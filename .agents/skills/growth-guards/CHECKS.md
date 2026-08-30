@@ -342,7 +342,10 @@ scope changelog-entries judges, resolved by the same library — or carry
 `[no-changelog]` in the header. Deleting a fragment is not writing one, so
 evidence is a path that comes out of the commit carrying content it did not
 carry at that path before: a blob where there was none, a blob that changed,
-or the destination of a rename. What that path became is changelog-entries'
+a path whose TYPE became a regular file (a symlink replaced by a file holding
+the link target's own bytes is one blob on both sides and a document where
+there was none), or the destination of a rename. A mode and a sha together
+are what identify a record; either alone lets a transition through. What that path became is changelog-entries'
 judgement, running beside this one.
 
 The staged list comes from `--raw`, the spelling `todo-ban` and

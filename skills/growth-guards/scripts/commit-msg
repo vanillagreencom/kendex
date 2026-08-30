@@ -214,6 +214,33 @@ if [ -n "$REQUIRED" ]; then
     >"$GG_TMP/raw.z" \
     || gg_collection_error "could not read the staged file list — the changelog rule could not run"
 
+  # What "written" MEANS, over the record's full identity. A sha is not that
+  # identity — a mode and a sha together are — and each time only half of it
+  # was read, a transition slipped through: a chmod is where the sha is equal
+  # and the type did not change, and a symlink replaced by a regular file
+  # holding the link target's own bytes is where the sha is equal and the
+  # type did. One predicate over both modes and both shas, so the next
+  # transition shape is answered here rather than by another arm beside it.
+  #
+  #   no blob after the commit    no — the path is gone, and deleting a
+  #                               fragment is not writing one
+  #   the blob changed            yes — the ordinary case, an addition
+  #                               included, since an addition has no old blob
+  #   the blob is the same, and
+  #     it became a regular file  yes — that path holds a document now where
+  #                               it held a link or a gitlink before, which
+  #                               is content it did not carry here
+  #     it did not               no — only permission bits moved
+  record_gained() { # SRCMODE SRCSHA DSTMODE DSTSHA — 0 when the path gained content
+    case "$4" in
+      *[!0]*) ;;
+      *) return 1 ;;
+    esac
+    [ "$2" = "$4" ] || return 0
+    gg_mode_is_regular "$3" || return 1
+    ! gg_mode_is_regular "$1"
+  }
+
   # TOUCHED is every path the record names, both sides of a rename included:
   # the source loses its content and the destination gains it, and a file
   # moved OUT of a required path is a change to that path.
@@ -249,6 +276,8 @@ if [ -n "$REQUIRED" ]; then
     set -- $meta
     [ "$#" -eq 5 ] \
       || gg_collection_error "the staged file list carried a record of $# field(s), not five: $(gg_shown "$meta") — the changelog rule could not run"
+    srcmode="${1#:}"
+    dstmode="$2"
     srcsha="$3"
     dstsha="$4"
     status="$5"
@@ -265,12 +294,8 @@ if [ -n "$REQUIRED" ]; then
         ;;
     esac
     printf '%s\0' "$src" >>"$GG_TMP/staged.z"
-    # A sha of nothing but zeros is git saying there is no blob on that side,
-    # whatever the hash algorithm's length. No blob after the commit is a path
-    # that is gone; the same blob on both sides is a path whose content stayed.
-    case "$dstsha" in
-      *[!0]*) [ "$srcsha" = "$dstsha" ] || printf '%s\0' "$src" >>"$GG_TMP/written.z" ;;
-    esac
+    ! record_gained "$srcmode" "$srcsha" "$dstmode" "$dstsha" \
+      || printf '%s\0' "$src" >>"$GG_TMP/written.z"
   done <"$GG_TMP/raw.z"
 
   touched=""

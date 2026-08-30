@@ -190,6 +190,18 @@ gg_scrubbed() { # VALUE — the value on one line, controls replaced
   printf '%s' "$1" | LC_ALL=C awk '{ gsub(/[\001-\010\013-\037\177]/, "?"); printf "%s%s", sep, $0; sep = "?" }'
 }
 
+# What a git tree mode IS, asked by what a file is rather than by a list of
+# what it is not: 100644 and 100755 are a regular file, and 120000, 160000
+# and 040000 are a symlink, a gitlink and a tree. A mode nobody has thought
+# about yet answers no, which is the safe direction for every caller here —
+# each of them is deciding whether there is a document to read at that path.
+gg_mode_is_regular() { # MODE — 0 when the entry is an ordinary file
+  case "$1" in
+    100644 | 100755) return 0 ;;
+  esac
+  return 1
+}
+
 # One resolution order for every configured path: an explicit flag wins, then
 # the setting, then the built-in default — validated and normalized either way.
 gg_resolve_path() { # FLAG-VALUE KEY DEFAULT LABEL — normalized path on stdout
