@@ -3,15 +3,14 @@
 # name: pre-commit-check
 # event: PreToolUse
 # matcher: Bash
-# description: On a git commit, defer to the working directory's armed git hooks — both pre-commit and commit-msg, marked and executable (kendex guard install arms them). Otherwise the commit is refused naming that command: arming is the local act that says a person wants this repository's committed scripts run on their commits, and this hook never runs them on their behalf. Where one is armed, a command that sidesteps it with git's no-verify flag, -n, or a core.hooksPath override is refused: git would skip the commit-msg hook too, and nothing here can check the message. The command is split into simple commands and only the argv of a `git` invocation is judged, with heredoc bodies, comments, operands after --, and option values all read as text rather than flags. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
+# description: On a git commit, defer to the working directory's armed git hooks — both pre-commit and commit-msg, marked and executable (kendex guard install arms them). Otherwise the commit is refused naming that command: arming is the local act that says a person wants this repository's committed scripts run on their commits, and this hook never runs them on their behalf. Where one is armed, a command that sidesteps it with git's no-verify flag, -n, or a core.hooksPath override is refused: git would skip the commit-msg hook too, and nothing here can check the message. The command is split into simple commands and only the argv of a `git` invocation is judged, with heredoc bodies, comments, redirection targets, operands after --, and option values all read as text rather than flags. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
 # safety: Refuses a commit from a working directory with no armed git pre-commit hook rather than running that repository's own scripts to check it, and refuses a git commit argv that bypasses an armed hook (no-verify, -n) or injects git configuration that could (a global -c or --config-env option, a GIT_CONFIG_* assignment, a git config write of core.hooksPath); a command it cannot tokenize falls back to word-order matching rather than passing unjudged, and a commit aimed at another repository is that repository's armed hook's to gate.
 # timeout: 60
 # ---
 
 set -euo pipefail
 
-# The one thing this hook reads out of a hook file: the marker the
-# growth-guards installer ends every line it writes with.
+# The marker the growth-guards installer ends every hook line it writes with.
 MARKER="# kendex-guards-hook"
 
 INPUT=$(cat)
@@ -20,9 +19,8 @@ INPUT=$(cat)
 # a simple command whose command word is `git` is judged. Inside that argv the
 # subcommand decides: `commit` is this gate's business, `config` is watched for
 # a core.hooksPath write, everything else is left alone. Heredoc bodies,
-# comments, operands after `--` and option values are text — `cat -n` in a
-# heredoc, `python3 -c` and prose naming --no-verify were all refused as
-# bypasses by the word-soup rule this replaces.
+# comments, redirection targets, operands after `--` and option values are
+# text, not flags.
 #
 # It fails closed where it can: a wrapper whose options it cannot read (`sudo
 # -u dev`, `timeout 30`) does not hide the git word behind it, and a command
@@ -31,9 +29,8 @@ INPUT=$(cat)
 # `$(...)` stay invisible: this guards habit, and git's hooks are the control.
 #
 # The payload is JSON, whose strings never span lines, so the analysis reads
-# the whole input and takes the first `"command"` key. Decoding uses
-# whole-string substitutions and tokenizing copies each run once: mawk, the
-# default awk on Debian and Ubuntu, copies an accumulator on every append.
+# the whole input and takes the first `"command"` key. Decoding and tokenizing
+# copy each run once: mawk copies an accumulator on every append.
 if ! ANALYSIS=$(printf '%s' "$INPUT" | awk '
 function setbypass(t) {
   if (BYPASS != "") return
@@ -99,15 +96,23 @@ function substitution(cmd, i, n,   opener, closer, depth, ch, start) {
   W = W substr(cmd, start, i - start); HAVEW = 1
   return i
 }
-# A redirection ends the word. `<<`/`<<-` name a heredoc: the delimiter is
-# recorded here, the body skipped at the newline.
-function redirect(cmd, i, n,   ch, q, w) {
+# A redirection ends the word and contributes nothing to the argv: the IO
+# number, the operator and the target word are all consumed, so `git
+# >/dev/null commit` reads `commit` as the subcommand. `<<`/`<<-` name a
+# heredoc, whose target is the delimiter; its body is skipped at the newline.
+function redirect(cmd, i, n,   ch, q, w, hd) {
+  # An IO number touches its operator, so it is the word being built right
+  # now, and it belongs to the redirection rather than to the argv.
+  if (HAVEW && W ~ /^[0-9]+$/) { W = ""; HAVEW = 0 }
   flush_word()
-  if (substr(cmd, i, 3) == "<<<") return i + 3
-  if (substr(cmd, i, 2) == ">&" || substr(cmd, i, 2) == "<&") return i + 2
-  if (substr(cmd, i, 2) != "<<") return i + 1
-  i += 2; HDTAB[NHD + 1] = 0
-  if (substr(cmd, i, 1) == "-") { HDTAB[NHD + 1] = 1; i++ }
+  hd = 0
+  if (substr(cmd, i, 3) == "<<<") i += 3
+  else if (substr(cmd, i, 2) == "<<") {
+    hd = 1; i += 2; HDTAB[NHD + 1] = 0
+    if (substr(cmd, i, 1) == "-") { HDTAB[NHD + 1] = 1; i++ }
+  }
+  else if (substr(cmd, i, 2) == ">>" || substr(cmd, i, 2) == ">&" || substr(cmd, i, 2) == "<&" || substr(cmd, i, 2) == ">|") i += 2
+  else i++
   while (i <= n && (substr(cmd, i, 1) == " " || substr(cmd, i, 1) == "\t")) i++
   w = ""
   while (i <= n) {
@@ -121,7 +126,7 @@ function redirect(cmd, i, n,   ch, q, w) {
     if (ch == BS) { w = w substr(cmd, i + 1, 1); i += 2; continue }
     w = w ch; i++
   }
-  if (w != "") { NHD++; HD[NHD] = w }
+  if (hd && w != "") { NHD++; HD[NHD] = w }
   return i
 }
 # Skip each heredoc body opened on the line just ended, terminator included.
@@ -188,7 +193,9 @@ function scan(cmd,   n, i, ch, c2, start) {
       W = W ch; HAVEW = 1; i++; continue
     }
     if (ch == "<" || ch == ">") { i = redirect(cmd, i, n); continue }
-    if (ch == "&" && substr(cmd, i + 1, 1) == ">") { flush_word(); i += 2; continue }
+    # `&>` takes no IO number, so the word before it is an argument: flush it
+    # here, and redirect() sees nothing of its own to drop.
+    if (ch == "&" && substr(cmd, i + 1, 1) == ">") { flush_word(); i = redirect(cmd, i + 1, n); continue }
     end_command()
     if (ch == "\n") i = heredoc_bodies(cmd, i, n)
     else i++
@@ -198,7 +205,7 @@ function scan(cmd,   n, i, ch, c2, start) {
 
 # Judge one simple command: leading assignments, then transparent prefixes
 # (`if`, `sudo`, `env`, `timeout`, …), then the command word.
-function judge(   k, base, j, gstart, gend, subcmd, m, t, prefixed) {
+function judge(   k, base, j, gstart, gend, subcmd, m, t, prefixed, p, c) {
   k = 1; prefixed = 0
   while (k <= NTOK) {
     t = TOK[k]
@@ -246,9 +253,8 @@ function judge(   k, base, j, gstart, gend, subcmd, m, t, prefixed) {
     if (t == "-c" || t ~ /^--config-env/) setbypass(t)
     if (t == "-C" || t ~ /^--git-dir/ || t ~ /^--work-tree/) MOVES = 1
   }
-  # git allows any unique prefix of --no-verify, and -n alone or in a cluster is
-  # the same flag; it skips commit-msg too, whose gate is unknowable here. git
-  # option boundaries hold: `--` ends them, and an option value is not a flag.
+  # git allows any unique prefix of --no-verify, and -n alone or in a cluster
+  # is the same flag; `--` ends the options, and an option value is not a flag.
   for (m = j + 1; m <= NTOK; m++) {
     t = TOK[m]
     if (t == "--") return
@@ -258,8 +264,14 @@ function judge(   k, base, j, gstart, gend, subcmd, m, t, prefixed) {
       continue
     }
     if (substr(t, 1, 1) != "-") continue
-    if (t ~ /^-[A-Za-z]*n[A-Za-z]*$/) { setbypass(t); return }
-    if (index(SHORT_VALUE, substr(t, length(t), 1)) > 0) m++
+    # A cluster reads left to right: at the first value-taking option the rest
+    # of the token is that value, and only one ending the token takes the next
+    # token, so `-mnote` is a message while `-nm note` still refuses.
+    for (p = 2; p <= length(t); p++) {
+      c = substr(t, p, 1)
+      if (index(SHORT_VALUE, c) > 0) { if (p == length(t)) m++; break }
+      if (c == "n") { setbypass(t); return }
+    }
   }
 }
 # The rule this parser replaced, kept for the one input it cannot tokenize: a
@@ -329,9 +341,8 @@ done <<<"$ANALYSIS"
 
 # Repository-moving words (-C, --git-dir, --work-tree in the git argv, a `cd`
 # command, a GIT_DIR or GIT_WORK_TREE assignment) mean the commit may land
-# elsewhere. This lane never follows them — git does, where the target has an
-# armed hook — so where it cannot defer it says which directory it judged,
-# and that the target's own hook is the target's gate.
+# elsewhere. This lane never follows them, so where it cannot defer it names
+# the directory it judged and leaves the target to the target's own hook.
 elsewhere_notice() {
   [ -z "$MOVES" ] && return 0
   echo "pre-commit-check: the command moves repositories (-C, --git-dir, --work-tree, cd, GIT_DIR, or GIT_WORK_TREE); this hook judged $PWD only — the target repository is gated by its own armed git pre-commit hook, if any (kendex guard install there)" >&2
@@ -342,28 +353,19 @@ HOOKS_DIR=$(git rev-parse --git-path hooks 2>/dev/null) || {
   exit 0
 }
 # Armed is our marker in both hook files, in the directory git reads with
-# nothing redirecting it, in files git will actually run. That is the whole
-# test.
+# nothing redirecting it, in files git will actually run — the execute bit is
+# git's rule, and git skips a hook without one silently, so a marker in a file
+# git ignores stands this lane aside for nothing at all.
 #
-# The execute bit is git's rule about hook files, not this package's about
-# their contents: git skips a hook without one, silently, so deferring to a
-# marker in a file git ignores stands this lane aside for nothing at all.
+# A `core.hooksPath` set to anything at all is not armed: every finer
+# question about the value — is it empty, does it spell this repository's own
+# directory, does the file it names reach our scripts — is another way to
+# answer "armed" about a repository that is not, and this lane would rather
+# check a commit twice than wave one through.
 #
-# It used to be a taxonomy: is the value empty, does it name this
-# repository's own directory under another spelling, does the file look
-# executable, does its content parse as something that reaches our scripts.
-# Every one of those questions was another way to answer "armed" about a
-# repository that was not, and several of them did. So: the marker, or not
-# armed. A `core.hooksPath` set to anything at all is not armed, because
-# deciding otherwise is the taxonomy that kept being wrong — and this lane
-# would rather check a commit twice than wave one through.
-# Exit 1 is git for "not set", and it is the only answer that means
-# unredirected. A git that failed for any other reason — a broken config
-# exits 128 — prints nothing either, so testing the OUTPUT read a
-# repository nobody could measure as one with hooks where this lane
-# expects them. Status decides, and anything unmeasured is not armed,
-# which refuses the commit rather than standing aside for a gate that was
-# never established.
+# Exit 1 is git for "not set" and the only status meaning unredirected. Git
+# prints nothing when it fails either (a broken config exits 128), so the
+# status decides and anything unmeasured is not armed.
 HOOKS_PATH_STATUS=0
 git config --get core.hooksPath >/dev/null 2>&1 || HOOKS_PATH_STATUS=$?
 ARMED=""
@@ -373,9 +375,8 @@ if [ "$HOOKS_PATH_STATUS" -eq 1 ] \
   && grep -qF -- "$MARKER" "$HOOKS_DIR/commit-msg" 2>/dev/null; then
   ARMED=1
 fi
-# An armed hook means git itself will gate the commit; running the chain here
-# too would validate everything twice. A command whose git argv sidesteps it
-# is refused, not covered.
+# An armed hook means git itself gates the commit, so running the chain here
+# would validate everything twice; an argv that sidesteps it is refused.
 if [ -n "$ARMED" ]; then
   [ -n "$BYPASS" ] || exit 0
   echo "pre-commit-check: '$BYPASS' bypasses this repository's armed git hooks or injects configuration that could, and the commit-msg gate cannot be checked from here — commit without bypassing hooks or passing git configuration; git runs the installed pre-commit and commit-msg hooks itself" >&2
@@ -383,18 +384,15 @@ if [ -n "$ARMED" ]; then
 fi
 elsewhere_notice
 
-# Nothing here carries our marker, and this lane does not stand in.
+# Nothing here carries our marker, and this lane does not stand in. Arming is
+# the one act that says a person wants this repository's committed scripts run
+# on their commits, and it is local: git clones no hooks, so running one here
+# would put execution behind a checkout nobody armed. The commit is refused
+# instead, and the refusal names the command that fixes it.
 #
-# Arming is the one act that says a person wants this repository's committed
-# scripts to run on their commits, and it is local: git clones no hooks, so
-# a fresh checkout of anything has no execution behind it. A fallback that
-# ran the repository's own script would put that execution back — on the
-# first commit an agent attempts, out of a checkout nobody armed. So the
-# commit is refused, and the refusal names the command that fixes it.
-#
-# One message, because the flat rule has one failure: not armed. Working out
-# WHY — an empty core.hooksPath, a redirect, a foreign hook, half a pair —
-# is the taxonomy that kept answering "armed" about repositories that were
-# not. `kendex guard check` asks the package, which does know.
+# One message, because the flat rule has one failure: not armed. Which of an
+# empty core.hooksPath, a redirect, a foreign hook or half a pair it was is
+# the taxonomy that kept answering "armed" wrongly; `kendex guard check` asks
+# the package, which does know.
 echo "pre-commit-check: this repository's git hooks are not armed by kendex in $PWD, so nothing checks this commit — run 'kendex guard install' (this hook does not run a repository's own scripts on its behalf), 'kendex guard check' says what the package makes of it, or remove this hook" >&2
 exit 2

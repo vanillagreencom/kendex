@@ -432,6 +432,36 @@ echo "quoting and redirection hold the argv together"
 both 'git commit>/dev/null -n -m x' 2 2 "a redirection ends the word before it"
 both 'git -C `echo ; pwd` commit --no-verify -m x' 2 2 "a backtick holds a separator inside one word"
 
+# A redirection contributes nothing to the argv, target included: leave the
+# target behind and /dev/null reads as the subcommand, so the bypass behind it
+# is never judged at all.
+both 'git >/dev/null commit --no-verify -m x' 2 2 "a redirection before the subcommand"
+both 'git 2>/dev/null commit --no-verify -m x' 2 2 "an IO number before the operator"
+both 'git commit -m x >/dev/null' 0 2 "a redirection after a plain commit"
+
+echo
+echo "a short-option cluster is read left to right"
+
+# The cluster used to be judged by its last character: -mnote was refused for
+# the n in the message, and -mfixc swallowed the real --no-verify as its value.
+both 'git commit -mnote' 0 2 "an attached message containing n"
+both 'git commit -mfixc --no-verify' 2 2 "a cluster ending in a value-taking letter"
+both 'git commit -nm msg' 2 2 "-n before the value-taking letter"
+
+run_hook "$ARMED" "$(payload 'git commit -mfixc --no-verify')" CHAIN_EXIT=0
+assert_contains "$err" "'--no-verify' bypasses" "the attached value is not the flag behind it"
+
+run_hook "$ARMED" "$(payload 'git commit -nm msg')" CHAIN_EXIT=0
+assert_contains "$err" "'-nm' bypasses" "the refusal names the cluster carrying -n"
+
+echo
+echo "quoting inside the command word is still the command word"
+
+# Pi's port answered this from the raw string, where `g''it` carries no `git`
+# at all and the bypass behind it passed an armed gate. Both read shell.
+both "g''it commit --no-verify -m x" 2 2 "quotes inside the git word"
+both "g''it commit -m x" 0 2 "the same word with no bypass"
+
 echo
 echo "a command whose quoting never closes is judged, not skipped"
 

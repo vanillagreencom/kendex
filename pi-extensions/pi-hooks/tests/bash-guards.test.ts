@@ -194,8 +194,14 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		expect(commit("git status && echo commit")).toBe(false);
 		expect(commit("git log --grep=commit")).toBe(false);
 		expect(commit("commit git")).toBe(false);
-		// A command naming no git at all leaves before the scan runs.
-		expect(scanCommand("cd /tmp && rm -rf build")).toEqual({ commit: false, moves: false, bypass: null });
+	});
+
+	test("quoting inside the command word is still the command word", async () => {
+		// This gate used to answer from the raw string, where `g''it` carries no
+		// `git` at all and the bypass behind it passed an armed repository. The
+		// bash hook reads shell here, and so does this one.
+		await both("g''it commit --no-verify -m x", "refuse", "refuse");
+		await both("g''it commit -m x", "allow", "refuse");
 	});
 
 	test("only a git argv is judged", async () => {
@@ -263,6 +269,23 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		await both("{ git commit --no-verify -m x; }", "refuse", "refuse");
 	});
 
+	test("a short-option cluster is read left to right", async () => {
+		// The cluster used to be judged by its last character: -mnote was refused
+		// for the n in the message, and -mfixc swallowed the real --no-verify as
+		// its value.
+		await both("git commit -mnote", "allow", "refuse");
+		await both("git commit -mfixc --no-verify", "refuse", "refuse");
+		await both("git commit -nm msg", "refuse", "refuse");
+
+		const attached = await gate(armed, "git commit -mfixc --no-verify");
+		if (attached.verdict.kind !== "refuse") throw new Error("unreachable");
+		expect(attached.verdict.reason).toContain("'--no-verify' bypasses");
+
+		const cluster = await gate(armed, "git commit -nm msg");
+		if (cluster.verdict.kind !== "refuse") throw new Error("unreachable");
+		expect(cluster.verdict.reason).toContain("'-nm' bypasses");
+	});
+
 	test("a command prefix does not hide the git argv", async () => {
 		// The bash hook's word-order predecessor caught every one of these without
 		// reading a prefix at all, so a prefix this gate cannot resolve must not
@@ -294,6 +317,13 @@ describe("pre-commit gate: the bash hook's contract", () => {
 	test("quoting and redirection hold the argv together", async () => {
 		await both("git commit>/dev/null -n -m x", "refuse", "refuse");
 		await both("git -C `echo ; pwd` commit --no-verify -m x", "refuse", "refuse");
+
+		// A redirection contributes nothing to the argv, target included: leave
+		// the target behind and /dev/null reads as the subcommand, so the bypass
+		// behind it is never judged at all.
+		await both("git >/dev/null commit --no-verify -m x", "refuse", "refuse");
+		await both("git 2>/dev/null commit --no-verify -m x", "refuse", "refuse");
+		await both("git commit -m x >/dev/null", "allow", "refuse");
 
 		for (const command of ["GIT_DIR=/elsewhere/.git git commit -m x", "GIT_WORK_TREE=/elsewhere git commit -m x"]) {
 			const scan = scanCommand(command);
