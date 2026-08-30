@@ -10,11 +10,41 @@ _kendex_github_restore_trap() {
   fi
 }
 
+_kendex_github_bounded_group_members() {
+  local group="$1" leader="$2"
+  ps -eo pid=,pgid= 2>/dev/null | awk -v group="$group" -v leader="$leader" '
+    $2 == group && $1 != leader { print $1 }
+  '
+}
+
 _kendex_github_stop_bounded_group() {
-  local signal="$1" target="$2" pid="$3" grace=0
+  local signal="$1" target="$2" pid="$3" grace=0 group="" members="" member scan_failed=0
   [ -n "$target" ] || return 0
-  kill -s "$signal" -- "$target" 2>/dev/null || true
-  while kill -0 -- "$target" 2>/dev/null && [ "$grace" -lt 10 ]; do
+
+  case "$target" in -*) group="${target#-}" ;; esac
+  if [ -n "$group" ]; then
+    while [ "$grace" -lt 10 ]; do
+      if ! members="$(_kendex_github_bounded_group_members "$group" "$pid")"; then
+        scan_failed=1
+        break
+      fi
+      [ -n "$members" ] || break
+      while IFS= read -r member; do
+        [ -z "$member" ] || kill -s "$signal" "$member" 2>/dev/null || true
+      done <<<"$members"
+      sleep 0.1
+      grace=$((grace + 1))
+    done
+  fi
+
+  if [ "$scan_failed" -eq 1 ]; then
+    kill -s "$signal" -- "$target" 2>/dev/null || true
+  elif [ -n "$pid" ]; then
+    kill -s "$signal" "$pid" 2>/dev/null || true
+  fi
+
+  grace=0
+  while [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ "$grace" -lt 10 ]; do
     sleep 0.1
     grace=$((grace + 1))
   done

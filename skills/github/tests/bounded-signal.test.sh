@@ -3,6 +3,35 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOUNDED="$(cd "$TEST_DIR/.." && pwd)/scripts/lib/bounded.sh"
+SELF="$TEST_DIR/$(basename "${BASH_SOURCE[0]}")"
+
+if [[ "${KENDEX_BOUNDED_NONREAPING_PID1:-0}" != "1" ]] \
+  && command -v unshare >/dev/null 2>&1 \
+  && command -v python3 >/dev/null 2>&1 \
+  && unshare --user --map-root-user --pid --fork --mount-proc true 2>/dev/null; then
+  exec unshare --user --map-root-user --pid --fork --mount-proc \
+    python3 -c '
+import glob, os, subprocess, sys, time
+env = os.environ.copy()
+env["KENDEX_BOUNDED_NONREAPING_PID1"] = "1"
+run = subprocess.run(["bash", sys.argv[1]], env=env)
+time.sleep(0.1)
+zombies = []
+for path in glob.glob("/proc/[0-9]*/stat"):
+    try:
+        fields = open(path).read().split()
+        if fields[2] == "Z" and fields[3] == "1":
+            zombies.append((fields[0], fields[1], fields[4]))
+    except (IndexError, OSError):
+        pass
+if zombies:
+    print("FAIL  non-reaping PID 1 adopted zombies: %r" % (zombies,))
+    sys.exit(1)
+print("ok    non-reaping PID 1 adopted no zombies")
+sys.exit(run.returncode)
+' "$SELF"
+fi
+
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
