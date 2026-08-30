@@ -471,9 +471,11 @@ fragment fixed ken-1.md '- A fragment.
 '
 printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n- Released.\n' | record_is
 run_collate
-[ "$RC" -eq 2 ] && case "$OUT" in *"no '## [Unreleased]' heading"*) true ;; *) false ;; esac \
-  && ok "a CHANGELOG with no [Unreleased] exits 2" \
-  || bad "a CHANGELOG with no [Unreleased] exits 2" "rc=$RC out=$OUT"
+# The judge's refusal now, carried out as exit 1: the record's shape is one
+# rule, judged where every other rule about the record is.
+[ "$RC" -eq 1 ] && case "$OUT" in *"carries no '## [Unreleased]' heading"*) true ;; *) false ;; esac \
+  && ok "a CHANGELOG with no [Unreleased] is the judge's refusal" \
+  || bad "a CHANGELOG with no [Unreleased] is the judge's refusal" "rc=$RC out=$OUT"
 untouched && ok "CHANGELOG.md is untouched by that refusal" \
   || bad "CHANGELOG.md is untouched by that refusal" "it changed"
 no_leftover && ok "no replacement file is left behind" \
@@ -513,9 +515,9 @@ fragment fixed ken-1.md '- A fragment.
 '
 printf '# Changelog\n\n## [Unreleased] archive\n\n- Released.\n' | record_is
 run_collate
-[ "$RC" -eq 2 ] && case "$OUT" in *"no '## [Unreleased]' heading"*) true ;; *) false ;; esac \
-  && ok "a heading that only begins with [Unreleased] exits 2" \
-  || bad "a heading that only begins with [Unreleased] exits 2" "rc=$RC out=$OUT"
+[ "$RC" -eq 1 ] && case "$OUT" in *"carries no '## [Unreleased]' heading"*) true ;; *) false ;; esac \
+  && ok "a heading that only begins with [Unreleased] is refused too" \
+  || bad "a heading that only begins with [Unreleased] is refused too" "rc=$RC out=$OUT"
 untouched && ok "CHANGELOG.md is untouched by that refusal" \
   || bad "CHANGELOG.md is untouched by that refusal" "it changed"
 [ -f "$R/changelog.d/fixed/ken-1.md" ] && ok "and the fragment it would have consumed is still there" \
@@ -526,9 +528,9 @@ fragment fixed ken-1.md '- A fragment.
 '
 printf '# Changelog\n\n## [Unreleased]\n\n### Notes\n\n- Not a section.\n' | record_is
 run_collate
-[ "$RC" -eq 2 ] && case "$OUT" in *"names 'Notes' under [Unreleased]"*) true ;; *) false ;; esac \
-  && ok "a heading that is no Keep a Changelog section exits 2, naming it" \
-  || bad "a heading that is no Keep a Changelog section exits 2, naming it" "rc=$RC out=$OUT"
+[ "$RC" -eq 1 ] && case "$OUT" in *"names 'Notes' under [Unreleased]"*) true ;; *) false ;; esac \
+  && ok "an unsupported section heading is the judge's refusal, naming it" \
+  || bad "an unsupported section heading is the judge's refusal, naming it" "rc=$RC out=$OUT"
 untouched && ok "CHANGELOG.md is untouched by that refusal too" \
   || bad "CHANGELOG.md is untouched by that refusal too" "it changed"
 

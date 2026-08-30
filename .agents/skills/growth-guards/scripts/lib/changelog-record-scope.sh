@@ -52,6 +52,58 @@ gg_collation_declared() { # 0 when this run is the release commit's own write
   [ "${GROWTH_GUARDS_CHANGELOG_COLLATE:-}" = "1" ]
 }
 
+# The record's own STRUCTURE, judged where every other rule about the record
+# is judged. It is one file's shape: the section is there, it is there once,
+# the fences close, and the level-3 headings inside it name sections this
+# family has somewhere to put. tools/changelog-collate needs exactly these
+# answers to split the file, and used to take them by asking the grammar
+# again itself — a second opinion that agreed until it did not. It reads the
+# accepted bounds off --list now, so this is the only place they are decided.
+#
+# The accepted records land in $GG_TMP/bounds.z, NUL-terminated, in the
+# grammar's own spelling: `record-unreleased<TAB>LINE`,
+# `record-section<TAB>LINE<TAB>NAME` lowercased, `record-end<TAB>LINE`. A file
+# and not a variable, because a shell variable cannot hold the NUL that
+# separates them. Returns nonzero when the record is refused, so the caller
+# stops rather than comparing a document it has already rejected.
+gg_record_structure() { # 0 when the staged record's shape is one a release can fold into
+  local rc=0 kind a b low
+  : >"$GG_TMP/bounds.z"
+  LC_ALL=C awk -v emit=bounds "$GG_UNRELEASED_AWK" <"$GG_TMP/record.index" >"$GG_TMP/bounds" || rc=$?
+  case "$rc" in
+    0) : ;;
+    3) gg_collection_error "$(gg_shown "$RECORD") leaves a code fence unclosed — the [Unreleased] section cannot be located; close the fence" ;;
+    4) gg_collection_error "$(gg_shown "$RECORD") carries more than one '## [Unreleased]' heading — which one is the section cannot be decided; keep one" ;;
+    5)
+      # No section at all. A release folds every fragment into this heading
+      # and deletes the files they came from, so a record without one is a
+      # release that cannot run, caught here rather than at the tag.
+      refuse "$RECORD" "carries no '## [Unreleased]' heading" \
+        "open one — a release folds the fragments into it and has nowhere to put them otherwise"
+      return 1
+      ;;
+    *) gg_collection_error "$(gg_shown "$RECORD") could not be read (awk exit $rc) — the [Unreleased] section cannot be located" ;;
+  esac
+  while IFS="$GG_TAB" read -r kind a b; do
+    case "$kind" in
+      unreleased | end) ;;
+      section)
+        low="$(printf '%s' "$b" | tr '[:upper:]' '[:lower:]')"
+        # Heading TEXT, so it may hold anything a line holds.
+        if ! gg_is_section "$low"; then
+          refuse "$RECORD" "names '$(gg_scrubbed "$b")' under [Unreleased], which is not a Keep a Changelog section" \
+            "section one of: $GG_SECTIONS"
+          return 1
+        fi
+        b="$low"
+        ;;
+      *) gg_collection_error "the changelog grammar emitted a boundary this judge does not understand: $(gg_shown "$kind")" ;;
+    esac
+    printf 'record-%s\t%s%s\0' "$kind" "$a" "${b:+$(printf '\t%s' "$b")}" >>"$GG_TMP/bounds.z"
+  done <"$GG_TMP/bounds"
+  return 0
+}
+
 gg_changelog_record_scope() { # fills RECORD_NOTE; counts violations
   # Judged only when HEAD already carries the record: a repository writing its
   # first CHANGELOG.md is not hand-editing a collated one, and every line of it
@@ -90,6 +142,8 @@ gg_changelog_record_scope() { # fills RECORD_NOTE; counts violations
     cat -- "$GG_TMP/blob" >"$GG_TMP/record.index" \
       || gg_collection_error "could not take the staged copy of $(gg_shown "$RECORD")"
 
+    gg_record_structure || return 0
+
     gg_record_head_probe
     if [ -z "$RECORD_HEAD_ENTRY" ]; then
       RECORD_NOTE="; no record to compare — HEAD carries no $(gg_shown "$RECORD") yet"
@@ -100,52 +154,22 @@ gg_changelog_record_scope() { # fills RECORD_NOTE; counts violations
         || gg_collection_error "$(gg_shown "$RECORD") holds binary content in HEAD's copy — the collated record is not changelog text"
       cat -- "$GG_TMP/blob" >"$GG_TMP/record.head" \
         || gg_collection_error "could not take HEAD's copy of $(gg_shown "$RECORD")"
-      # An EMPTY section and a MISSING one both parse to nothing, so the
-      # comparison alone calls a commit that stages the heading away a record
-      # nobody touched. The parser tells them apart; this remembers which
-      # copy had one, because only the pair says whether the section was
-      # REMOVED or was never there.
-      index_heading=1
-      head_heading=1
+      # Content, because the structure of both copies is already settled:
+      # gg_record_structure judged the staged one, and HEAD's was judged by
+      # the run that accepted it. What is left to read is the lines.
       for side in index head; do
         ur_status=0
         LC_ALL=C awk "$GG_UNRELEASED_AWK" <"$GG_TMP/record.$side" >"$GG_TMP/ur.$side" || ur_status=$?
-        # Exit 3 is the parser saying a fence never closed, so it cannot say
-        # where the section starts or stops. Reporting the record unchanged
-        # over a document it could not read is the silent pass this family
-        # refuses.
-        [ "$ur_status" -ne 3 ] \
-          || gg_collection_error "$(gg_shown "$RECORD") leaves a code fence unclosed in its $side copy — the [Unreleased] section cannot be located; close the fence"
-        # Exit 4 is the parser saying the document has two of the heading, so
-        # which one is the section is undecided. Both copies are read here, so
-        # this refuses the commit that INTRODUCES the second one and every
-        # commit after it until one goes.
-        [ "$ur_status" -ne 4 ] \
-          || gg_collection_error "$(gg_shown "$RECORD") carries more than one '## [Unreleased]' heading in its $side copy — which one is the section cannot be decided; keep one"
-        # Exit 5 is the parser saying this copy carries no canonical heading
-        # at all. On its own that is a document, not a fault — a record whose
-        # section has not been opened yet parses this way — so it is recorded
-        # and judged below against the other copy.
-        if [ "$ur_status" -eq 5 ]; then
-          ur_status=0
-          case "$side" in
-            index) index_heading=0 ;;
-            head) head_heading=0 ;;
-          esac
-        fi
+        # Exit 5 is a copy with no canonical heading, which is an empty
+        # section's worth of lines. The staged copy cannot be one — it was
+        # refused above — so this is HEAD's, from before the section existed.
+        [ "$ur_status" -ne 5 ] || ur_status=0
         [ "$ur_status" -eq 0 ] \
           || gg_collection_error "could not read the [Unreleased] section of the $side copy of $(gg_shown "$RECORD") (awk exit $ur_status)"
         LC_ALL=C sort -o "$GG_TMP/ur.$side" "$GG_TMP/ur.$side" \
           || gg_collection_error "could not order the [Unreleased] lines of the $side copy of $(gg_shown "$RECORD")"
       done
-      if [ "$head_heading" -eq 1 ] && [ "$index_heading" -eq 0 ]; then
-        # The section HEAD carries would be gone, and the release that folds
-        # fragments in has nowhere to fold them. The comparison below cannot
-        # see this: with no section staged there is nothing to have gained.
-        # A release keeps a heading to fold into, so this holds during one too.
-        refuse "$RECORD" "stages away the '## [Unreleased]' heading HEAD carries" \
-          "keep it, or rename it to a released version and open a fresh empty one, which is what a release does"
-      elif gg_collation_declared; then
+      if gg_collation_declared; then
         # THE one thing the declaration permits, at the one place it is read.
         # Everything above ran whether or not it is set, which is the property
         # that keeps a rule added later out of here.

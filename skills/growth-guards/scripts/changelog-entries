@@ -91,11 +91,13 @@ than being an entry.
 --list judges, and on a clean verdict writes to standard output, every human
 line going to standard error, one NUL-terminated record per line of business:
 "fragment<TAB>SECTION<TAB>PATH" for each accepted fragment and, when that
-scope is on, "record<TAB>PATH" for the collated record. NUL, so a path
-carrying a newline survives. That output is what the collator folds in and
-what it guards against an unstaged edit, so one grammar decides which paths
-are fragments, which section each is in, and which paths the whole judgement
-covers.
+scope is on, "record<TAB>PATH" for the collated record followed by its
+accepted shape — "record-unreleased<TAB>LINE", "record-section<TAB>LINE<TAB>NAME"
+for each level-3 heading inside the section, and "record-end<TAB>LINE" for the
+first line past it. NUL, so a path carrying a newline survives. That output is
+what the collator folds in and what it guards against an unstaged edit, so one
+grammar decides which paths are fragments, which section each is in, which
+paths the whole judgement covers, and where in the record the entries go.
 
 Tracked content is read from the index; text that is not valid UTF-8 is a
 collection error. Paths matching no tracked file are a clean pass.
@@ -289,7 +291,13 @@ fi
 # caller guards the same paths this run judged.
 if [ "$LIST" -eq 1 ]; then
   cat -- "$GG_TMP/list.z" >&3
-  [ -z "$RECORD" ] || printf 'record\t%s\0' "$RECORD" >&3
+  if [ -n "$RECORD" ]; then
+    printf 'record\t%s\0' "$RECORD" >&3
+    # Where the entries go, decided once by the run that accepted the record.
+    # A caller that re-derived them would be a second grammar over the same
+    # file, which is the split this scope exists to close.
+    [ ! -s "$GG_TMP/bounds.z" ] || cat -- "$GG_TMP/bounds.z" >&3
+  fi
 fi
 if [ "$checked" -eq 0 ]; then
   echo "changelog-entries: OK — no tracked file matches GROWTH_GUARDS_CHANGELOG_PATHS ($PATTERNS_SHOWN)$RECORD_NOTE"

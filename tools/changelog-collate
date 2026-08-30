@@ -99,6 +99,9 @@ esac
 for pair in $SECTIONS; do : >"$TMP/sel.${pair%%:*}"; done
 count=0
 RECORD=""
+start=0
+end=0
+: >"$TMP/secline"
 guarded=()
 while IFS= read -r -d '' rec; do
   kind=${rec%%$'\t'*}
@@ -107,6 +110,20 @@ while IFS= read -r -d '' rec; do
     record)
       RECORD="$rest"
       guarded+=(":(literal)$rest")
+      continue
+      ;;
+    # The record's accepted shape, decided by the judge that just accepted it.
+    # Line numbers into the file the guard below holds equal to the index.
+    record-unreleased)
+      start="$rest"
+      continue
+      ;;
+    record-end)
+      end="$rest"
+      continue
+      ;;
+    record-section)
+      printf '%s\t%s\n' "${rest%%"$TAB"*}" "${rest#*"$TAB"}" >>"$TMP/secline"
       continue
       ;;
     fragment) : ;;
@@ -191,41 +208,13 @@ done
 : >"$TMP/post"
 
 # Where the section begins, which level-3 headings it holds and where it ends
-# are the grammar's answers, as line numbers. Asking it rather than searching
-# the file again is what keeps the collation and the judge pointed at the
-# same heading: a fenced example of `## [Unreleased]` is not one to either.
-rc=0
-LC_ALL=C awk -v emit=bounds "$GG_UNRELEASED_AWK" <"$RECORD" >"$TMP/bounds" || rc=$?
-case "$rc" in
-  0) : ;;
-  3) die "$(gg_shown "$RECORD") leaves a code fence unclosed — the [Unreleased] section cannot be located; close the fence" ;;
-  # Which heading is the section decides where these fragments are published
-  # and they are deleted straight after, so an undecided answer stops the run.
-  4) die "$(gg_shown "$RECORD") carries more than one '## [Unreleased]' heading — which one is the section cannot be decided; keep one" ;;
-  # The grammar's own answer, not a second look at what it emitted: there is
-  # no section to fold into, and these fragments would be deleted after.
-  5) die "$(gg_shown "$RECORD") has no '## [Unreleased]' heading — the collation could not run" ;;
-  *) die "$(gg_shown "$RECORD") could not be read (awk exit $rc) — the collation could not run" ;;
-esac
-
-start=0
-end=0
-: >"$TMP/secline"
-while IFS="$TAB" read -r kind a b; do
-  case "$kind" in
-    unreleased) start="$a" ;;
-    end) end="$a" ;;
-    section)
-      low="$(printf '%s' "$b" | tr '[:upper:]' '[:lower:]')"
-      # Heading TEXT, so it may hold anything a line holds, spaces included.
-      if ! gg_is_section "$low"; then
-        die "$(gg_shown "$RECORD") names '$(gg_scrubbed "$b")' under [Unreleased], which is not a Keep a Changelog section — the collation could not run"
-      fi
-      printf '%s\t%s\n' "$a" "$low" >>"$TMP/secline"
-      ;;
-    *) die "the changelog grammar emitted a boundary this collation does not understand: $(gg_shown "$kind")" ;;
-  esac
-done <"$TMP/bounds"
+# came off the judge's stream above, as line numbers. It is the judge that
+# says a record has a section, has one of them, and names only headings this
+# family can write under — so a record refused there never reaches here, and
+# there is no second opinion to drift from the first. What is left is to
+# split the file at numbers somebody else decided.
+[ "$start" -gt 0 ] \
+  || die "$JUDGE accepted $(gg_shown "$RECORD") without saying where its [Unreleased] section begins — the collation could not run"
 
 # Split at those numbers: the part above the heading, that section's lead and
 # per-section bodies, and the released versions below it. A body keeps one

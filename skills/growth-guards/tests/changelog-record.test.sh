@@ -156,7 +156,8 @@ git -C "$R" commit -qm base
 printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n```\n## [Unreleased]\n```\n\n- A released entry.\n- A line that would be gained if the fence counted.\n' >"$R/CHANGELOG.md"
 stage
 run_ce
-[ "$RC" -eq 0 ] && ok "a fenced mention of the heading opens no [Unreleased] section" \
+[ "$RC" -eq 1 ] && case "$OUT" in *"carries no '## [Unreleased]' heading"*) true ;; *) false ;; esac \
+  && ok "a fenced mention of the heading opens no [Unreleased] section" \
   || bad "a fenced mention of the heading opens no [Unreleased] section" "rc=$RC out=$OUT"
 # The control: the same line under a real heading is refused, so the pass
 # above is the fence and not a rule that stopped looking.
@@ -179,7 +180,8 @@ run_ce
 printf '# Changelog\n\n## [Unreleased] archive\n\n- A gained line.\n\n## [1.0.0] - 2026-01-01\n\n- A released entry.\n' >"$R/CHANGELOG.md"
 stage
 run_ce
-[ "$RC" -eq 0 ] && ok "a heading that merely begins with [Unreleased] opens no section" \
+[ "$RC" -eq 1 ] && case "$OUT" in *"carries no '## [Unreleased]' heading"*) true ;; *) false ;; esac \
+  && ok "a heading that merely begins with [Unreleased] opens no section" \
   || bad "a heading that merely begins with [Unreleased] opens no section" "rc=$RC out=$OUT"
 # The control: the exact heading, differing only in case, does open it.
 printf '# Changelog\n\n## [UNRELEASED]\n\n- A gained line.\n\n## [1.0.0] - 2026-01-01\n\n- A released entry.\n' >"$R/CHANGELOG.md"
@@ -192,7 +194,8 @@ run_ce
 printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n    ## [Unreleased]\n\n- A released entry.\n- Not gained.\n' >"$R/CHANGELOG.md"
 stage
 run_ce
-[ "$RC" -eq 0 ] && ok "four leading spaces open no heading" \
+[ "$RC" -eq 1 ] && case "$OUT" in *"carries no '## [Unreleased]' heading"*) true ;; *) false ;; esac \
+  && ok "four leading spaces open no heading" \
   || bad "four leading spaces open no heading" "rc=$RC out=$OUT"
 # A level-3 heading inside the section does not close it.
 printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- A gained line under a sub-heading.\n\n## [1.0.0] - 2026-01-01\n\n- A released entry.\n' >"$R/CHANGELOG.md"
@@ -605,7 +608,7 @@ git -C "$R" reset -q --hard HEAD
 printf '# Log\n' >"$R/CHANGELOG.md"
 stage
 run_ce_env 'GROWTH_GUARDS_CHANGELOG_COLLATE=1'
-[ "$RC" -eq 1 ] && case "$OUT" in *"stages away the '## [Unreleased]' heading"*) true ;; *) false ;; esac \
+[ "$RC" -eq 1 ] && case "$OUT" in *"carries no '## [Unreleased]' heading"*) true ;; *) false ;; esac \
   && ok "declared, staging the heading away is still refused" \
   || bad "declared, staging the heading away is still refused" "rc=$RC out=$OUT"
 # The release flow itself, which is what the declaration is FOR: the heading
@@ -632,7 +635,7 @@ run_ce
 printf '# Log\n' >"$R/CHANGELOG.md"
 stage
 run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"stages away the '## [Unreleased]' heading"*) true ;; *) false ;; esac \
+[ "$RC" -eq 1 ] && case "$OUT" in *"carries no '## [Unreleased]' heading"*) true ;; *) false ;; esac \
   && ok "staging the heading away is refused, naming what went" \
   || bad "staging the heading away is refused, naming what went" "rc=$RC out=$OUT"
 case "$OUT" in *"unchanged under [Unreleased]"*) bad "no run calls that record unchanged" "$OUT" ;;
@@ -644,17 +647,41 @@ stage
 run_ce
 [ "$RC" -eq 0 ] && ok "control: renaming it and opening a fresh empty one passes" \
   || bad "control: renaming it and opening a fresh empty one passes" "rc=$RC out=$OUT"
-# And a record whose section was never opened is not a removal either.
+# A record that NEVER opened the section is the same refusal, not a lesser
+# one: a release folds every fragment into that heading and deletes the files
+# they came from, so there is nowhere to put them either way. The collator
+# used to be the only thing that said so, at the tag.
 new_repo recordnoheading
 printf -- '- A fragment.\n' | frag fixed ken-1.md
 printf '# Log\n\n- Nothing calls itself unreleased.\n' >"$R/CHANGELOG.md"
 stage
 git -C "$R" commit -qm base
-printf '# Log\n\n- Nothing calls itself unreleased.\n- Nor this.\n' >"$R/CHANGELOG.md"
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"carries no '## [Unreleased]' heading"*) true ;; *) false ;; esac \
+  && ok "a record that never opened a section is refused at commit time" \
+  || bad "a record that never opened a section is refused at commit time" "rc=$RC out=$OUT"
+# The control: opening one is all it takes.
+printf '# Log\n\n## [Unreleased]\n\n- Nothing calls itself unreleased.\n' >"$R/CHANGELOG.md"
+stage
+git -C "$R" commit -qm "chore: open the section"
+run_ce
+[ "$RC" -eq 0 ] && ok "control: opening the section is all it takes" \
+  || bad "control: opening the section is all it takes" "rc=$RC out=$OUT"
+# A level-3 heading inside the section that names no section is refused here
+# too, which is the other half the collator used to catch alone.
+printf '# Log\n\n## [Unreleased]\n\n### Notes\n\n- Not a section.\n' >"$R/CHANGELOG.md"
 stage
 run_ce
-[ "$RC" -eq 0 ] && ok "control: a record that never opened a section is no removal" \
-  || bad "control: a record that never opened a section is no removal" "rc=$RC out=$OUT"
+[ "$RC" -eq 1 ] && case "$OUT" in *"names 'Notes' under [Unreleased]"*"not a Keep a Changelog section"*) true ;; *) false ;; esac \
+  && ok "an unsupported section heading is refused at commit time" \
+  || bad "an unsupported section heading is refused at commit time" "rc=$RC out=$OUT"
+# The control: the same shape under a real section heading passes.
+printf '# Log\n\n## [Unreleased]\n\n### Fixed\n\n- A real section.\n' >"$R/CHANGELOG.md"
+stage
+git -C "$R" commit -qm "chore: carry a real section"
+run_ce
+[ "$RC" -eq 0 ] && ok "control: a real section heading passes" \
+  || bad "control: a real section heading passes" "rc=$RC out=$OUT"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -450,7 +450,13 @@ case "$LIST" in *"fragment${TAB}fixed${TAB}changelog.d/fixed/ken-1.md"*) ok "and
 case "$LIST" in *"record${TAB}CHANGELOG.md"*) ok "the record is named too" ;;
   *) bad "the record is named too" "$LIST" ;; esac
 case "$LIST" in *README*) bad "the README is not listed as a fragment" "$LIST" ;; *) ok "the README is not listed as a fragment" ;; esac
-[ "$(printf '%s\n' "$LIST" | grep -c .)" -eq 3 ] && ok "nothing else is listed" \
+# The record's accepted shape goes with it, so the collator splits at numbers
+# this run decided rather than reading the file for them a second time.
+case "$LIST" in *"record-unreleased${TAB}"*) ok "where the record's section begins is listed" ;;
+  *) bad "where the record's section begins is listed" "$LIST" ;; esac
+case "$LIST" in *"record-end${TAB}"*) ok "and where it ends" ;;
+  *) bad "and where it ends" "$LIST" ;; esac
+[ "$(printf '%s\n' "$LIST" | grep -c .)" -eq 5 ] && ok "nothing else is listed" \
   || bad "nothing else is listed" "$LIST"
 OFFLIST="$(cd "$R" && GROWTH_GUARDS_CHANGELOG_RECORD= "$CE" --list 2>/dev/null | tr '\0' '\n')"
 case "$OFFLIST" in

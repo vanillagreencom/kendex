@@ -140,12 +140,16 @@ switch the check off is to drop it from `GROWTH_GUARDS_CHECKS`.
 `--list` judges, and on a clean verdict writes to standard output — every
 human line going to standard error — one NUL-terminated record per line of
 business: `fragment<TAB>SECTION<TAB>PATH` for each accepted fragment, and
-`record<TAB>PATH` for the collated record when that scope is on. A refused
-run lists nothing. NUL, so a path carrying a newline survives the read. That
-output is the whole answer to "which paths are fragments, which section each
-is in, and which paths this judgement covers", so a collator folds in exactly
-what this check accepted and guards exactly what it measured, rather than
-deriving either a second time.
+when the record scope is on, `record<TAB>PATH` for the collated record
+followed by the shape this run accepted it in —
+`record-unreleased<TAB>LINE`, one `record-section<TAB>LINE<TAB>NAME` per
+level-3 heading inside the section, and `record-end<TAB>LINE` for the first
+line past it. A refused run lists nothing. NUL, so a path carrying a newline
+survives the read. That output is the whole answer to "which paths are
+fragments, which section each is in, which paths this judgement covers, and
+where in the record the entries go", so a collator folds in exactly what this
+check accepted, guards exactly what it measured, and splits at the numbers it
+was given, rather than deriving any of it a second time.
 
 ### The record
 
@@ -182,6 +186,14 @@ a violation. An empty section and a missing one both parse to nothing, so
 the comparison alone reports the record unchanged and the malformed state
 lands, with a later collation left nowhere to fold into. A release renames
 the heading and opens a fresh empty one, which is not this.
+
+A record with no `## [Unreleased]` heading at all is a violation, whether the
+commit staged that heading away or the file never carried one. A release
+folds every fragment into that heading and deletes the files they came from,
+so there is nowhere to put them either way, and the level-3 headings inside
+the section must name sections too. Those are the record's SHAPE, judged
+here because a release that cannot run should stop at the commit that made it
+so rather than at the tag.
 
 A record git tracks in HEAD and not in the index is a DELETION, and it is a
 violation too. Absent from the index is otherwise indistinguishable from a
