@@ -773,6 +773,7 @@ MERGE_WORKFLOW="$REPO_ROOT/skills/orch/workflows/merge-pr.md"
 grep -Fq 'scripts/container-close [MAIN_REPO_ROOT] [PARENT_ID]' "$MERGE_WORKFLOW" && ok "merge-pr passes the shared main root" || fail "merge-pr passes the shared main root"
 grep -Fq 'with every stderr diagnostic from the helper' "$MERGE_WORKFLOW" && ok "merge-pr preserves every closed diagnostic" || fail "merge-pr preserves every closed diagnostic"
 grep -Fq '120-second lock wait expired' "$MERGE_WORKFLOW" && ok "merge-pr documents the production lock timeout" || fail "merge-pr documents the production lock timeout"
+grep -Fq 'closure for [ISSUE] has not propagated; rerun merge-pr' "$MERGE_WORKFLOW" && ok "merge-pr reruns when current issue remains pending" || fail "merge-pr reruns when current issue remains pending"
 
 printf 'container-close: %d pass, %d fail\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
