@@ -40,10 +40,10 @@ fn item_dir(sealed: &SealedSource, kind: ItemKind, dir: &std::path::Path) -> boo
     kind == ItemKind::Skill && sealed.is_file(&dir.join("SKILL.md"))
 }
 
-/// What the local source already stores in a plain name's slot, named as
-/// the path it sits at — or nothing, when the slot is free for the capture:
-/// the directory is absent, or it is that plain item itself and writing
-/// there replaces it.
+/// What the local source already stores in a plain name's slot that the
+/// capture would take with it, named as the path it sits at — or nothing,
+/// when the slot is free for the capture: the directory is absent, or it
+/// holds only the plain item the capture replaces.
 ///
 /// The disk answers this, never a catalog listing. A listing says what a
 /// source OFFERS, and every rule it is drawn through — an unusable catalog
@@ -68,16 +68,24 @@ pub(super) fn stored_in_slot(
             _ => return Ok(None),
         },
     };
-    if item_dir(sealed, kind, &held) {
-        return Ok(None);
-    }
+    // Being the plain item makes the slot replaceable, not empty. Its own
+    // `SKILL.md` and supporting files belong to the item the capture is
+    // written over, so they are not occupants — but a namespaced item
+    // stored under the same directory is a second item, and the write
+    // takes it too. Which children are items is `item_dir`'s to say, the
+    // same judge `flat_skills` lists them by.
+    let replaceable = item_dir(sealed, kind, &held);
     // A read that could not be made is not an empty directory: reading one
     // as the other is how a guard deletes what it exists to protect.
-    let Some(first) = sealed.list_dir(&held)?.into_iter().next() else {
+    let occupant = sealed
+        .list_dir(&held)?
+        .into_iter()
+        .find(|entry| !replaceable || item_dir(sealed, kind, entry));
+    let Some(occupant) = occupant else {
         return Ok(None);
     };
-    let held = sealed.relative(&first).unwrap_or(&first);
-    Ok(Some(crate::names::shown(&held.display().to_string())))
+    let occupant = sealed.relative(&occupant).unwrap_or(&occupant);
+    Ok(Some(crate::names::shown(&occupant.display().to_string())))
 }
 
 pub(super) fn agent_stems(sealed: &SealedSource, dir: &str) -> Result<Vec<String>> {
