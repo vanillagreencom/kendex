@@ -234,7 +234,7 @@ gg_settings_source() { # FILE — the path to actually read; nonzero + ::error o
     # values, which for a key naming a check to run means the check runs
     # nowhere while the chain still reports OK.
     tmp="$copy.$$.part"
-    if ! git show ":$file" >"$tmp" 2>/dev/null; then
+    if ! git show ":0:$file" >"$tmp" 2>/dev/null; then
       rm -f -- "$tmp"
       echo "::error::$file: could not read the staged copy while resolving a setting" >&2
       return 1

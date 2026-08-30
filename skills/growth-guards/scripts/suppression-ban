@@ -235,7 +235,7 @@ if [ "$MODE" = "update" ] && [ -f "$BASELINE_FILE" ]; then
 elif baseline_in_index; then
   # No worktree copy to rewrite — what --update needs to know.
   [ -f "$BASELINE_FILE" ] || BASELINE_FROM_INDEX=1
-  git show ":$BASELINE_FILE" >"$GG_TMP/baseline.tsv" || gg_config_error "failed to read tracked baseline from the index: $BASELINE_FILE"
+  git show ":0:$BASELINE_FILE" >"$GG_TMP/baseline.tsv" || gg_config_error "failed to read tracked baseline from the index: $BASELINE_FILE"
   validate_baseline "$GG_TMP/baseline.tsv" "$BASELINE_FILE (index copy)"
 elif baseline_in_head; then
   # Staged for deletion: the commit freezes nothing.

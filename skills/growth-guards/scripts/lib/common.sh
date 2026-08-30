@@ -174,7 +174,10 @@ gg_policy_content() { # FILE — content on stdout; 1 = the commit has no such f
   git ls-files --error-unmatch -- ":(literal)$file" >/dev/null 2>&1 || status=$?
   case "$status" in
     0)
-      git show ":$file" || gg_collection_error "could not read the staged copy of $file"
+      # `:0:`, never a bare `:$file`: git reads a leading `0:` through `3:` in
+      # the path as the stage selector, so a policy file named `0:excludes`
+      # would resolve to whatever blob sits at `excludes`.
+      git show ":0:$file" || gg_collection_error "could not read the staged copy of $file"
       return 0
       ;;
     1) ;;

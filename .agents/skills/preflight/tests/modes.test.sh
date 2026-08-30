@@ -405,6 +405,49 @@ else
   bad "--base holds the same line against the forged header" "rc=$RC out=$OUT"
 fi
 
+# The index revspec carries its stage: `:0:PATH`, never a bare `:PATH`. Under
+# the bare form git reads a leading `0:` through `3:` in the path AS the stage
+# selector, so `0:asset` asks for the blob at `asset` instead. That lookup
+# either lands on another file's bytes or fails outright, and a failure drops
+# the path out of the binary exclusion, where --text hands its raw content to
+# the patch parser and the forged header above goes live again.
+#
+# The victim is dot-named on purpose. git orders the patch by path, and the
+# record split truncates a file's collected lines only when its path is
+# reopened after another one, so the forging file has to come SECOND.
+seed stage-prefixed-path
+printf '%s' "$CITE" >"$R/.top.md"
+printf 'PNG\000\n++ b/.top.md\n+junk\n' >"$R/0:asset"
+git -C "$R" add -- .top.md '0:asset'
+run_pf --staged
+if [ "$RC" -eq 1 ] && has ".top.md:3: [docs-cited-paths]"; then
+  ok "a path named for a stage selector cannot forge a header over another file's record"
+else
+  bad "a path named for a stage selector cannot forge a header over another file's record" "rc=$RC out=$OUT"
+fi
+printf 'PNG\000\n+junk\n' >"$R/0:asset"
+git -C "$R" add -- '0:asset'
+run_pf --staged
+if [ "$RC" -eq 1 ] && has ".top.md:3: [docs-cited-paths]"; then
+  ok "control: the same fixture without the injected header line reports the same finding"
+else
+  bad "control: the same fixture without the injected header line reports the same finding" "rc=$RC out=$OUT"
+fi
+
+# The other half of the bare form: a sibling sits at the shortened path, the
+# lookup succeeds, and the binary verdict is taken over bytes belonging to a
+# different file.
+seed stage-prefixed-sibling
+printf '%s' "$CITE" >"$R/0:doc.md"
+printf 'PNG\000binary\n' >"$R/doc.md"
+git -C "$R" add -- '0:doc.md' doc.md
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "0:doc.md:3: [docs-cited-paths]"; then
+  ok "a stage-prefixed path is judged on its own bytes, not on its shortened sibling's"
+else
+  bad "a stage-prefixed path is judged on its own bytes, not on its shortened sibling's" "rc=$RC out=$OUT"
+fi
+
 echo "=== content the run cannot read fails loudly, never a clean verdict ==="
 
 # A read that FAILS is not a verdict of "no lines". The path is already inside

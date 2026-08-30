@@ -95,7 +95,13 @@ content_of() { # IDX PATH -> inspectable content path on stdout; nonzero if unav
     # edits would put the diff line numbers and the content out of sync.
     out="$TMP/blob.$1"
     if [ ! -f "$out" ]; then
-      git show ":$2" >"$out.part" 2>/dev/null || { rm -f "$out.part"; return 1; }
+      # The stage is spelled out. Under the bare `:PATH` form git reads a
+      # leading `0:` through `3:` in the path AS the stage selector, so
+      # `0:asset` resolves to the blob at `asset`: another file's bytes
+      # deciding this path's verdict, or no blob at all, which drops the path
+      # out of the binary exclusion and hands its raw bytes to the patch
+      # parser. `:0:` consumes the selector, and the whole remainder is path.
+      git show ":0:$2" >"$out.part" 2>/dev/null || { rm -f "$out.part"; return 1; }
       mv -- "$out.part" "$out" || return 1
     fi
     printf '%s' "$out"
