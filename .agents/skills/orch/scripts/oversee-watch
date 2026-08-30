@@ -595,15 +595,15 @@ check_lanes() {
       exit 0
     fi
   done
-  # A pane keeps its last screen after the harness exits, so a stale prompt
-  # under a bare shell is not a question anyone can answer — and reporting it
-  # every pass would starve the lane-exited its second pass earns.
+  # A pane keeps its last screen, so neither a stale prompt under a bare shell
+  # nor a dialog answered passes ago is a live question, and reporting either
+  # starves the events below it: lane-exited's second pass, idle-after-return.
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
     if [[ "$(lane_state "$states" "$i")" == exited ]]; then continue; fi
     pane="$(cat -- "$(lane_pane_file "$i")")"
-    if grep -Eq -- "$QUESTION_RE" <<<"$pane"; then
+    if grep -Eq -- "$QUESTION_RE" <<<"$(pane_below_last_turn "$pane")"; then
       echo "EVENT question $lane"
       pane_tail "$pane"
       pr_watch_context

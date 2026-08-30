@@ -21,7 +21,9 @@
 #       instead; and a banner above a later user turn is scrollback, while
 #       one below that turn still fires
 #   4.  a lane pane showing a question prompt (pane tail follows), under a
-#       wrapped shell too
+#       wrapped shell too; a selection list above the last user turn is one
+#       the lane already answered and never fires, while one below that turn
+#       still does
 #   4b. idle-after-return: a harness at its composer with nothing in flight
 #       on two consecutive passes (either harness's prompt, and under a
 #       wrapped shell); one pass alone, a working indicator alongside the
@@ -539,6 +541,42 @@ out="$(run_watch -- --max-loops 1 'a+b' 'a:b' 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "colliding lane names exit 0" "$err"
 assert_eq "$(head -1 <<<"$out")" "EVENT question a+b" \
   "lanes whose names flatten to one slug keep separate pane snapshots" "$err"
+
+# A dialog the lane already answered stays on the screen. Only the slice below
+# the last user turn is a question still waiting: read off the whole pane, an
+# answered list re-fires every pass and masks the event the lane is really at.
+new_case question_answered_dialog_above_turn
+{
+  printf '⏺ I found two ways to do this.\n'
+  printf 'Do you want to proceed?\n'
+  printf '   ❯ 1. Yes\n     2. No\n'
+  printf '❯ go with the first one\n'
+  printf '⏺ Done: the PR is merged and the worktree is gone.\n'
+  printf '\xe2\x9d\xaf\xc2\xa0\n'
+  printf '  bypass permissions on\n'
+} > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e4a4"
+out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "an answered dialog exits 0" "$err"
+assert_not_contains "$out" "EVENT question" \
+  "a selection list above the last user turn is answered, not waiting" "$err"
+assert_eq "$(head -1 <<<"$out")" "EVENT idle-after-return gh-2" \
+  "the lane reaches the idle event the answered list was masking" "$err"
+
+# ...and its must-fail control: the same list BELOW the last user turn is a
+# question nobody has answered, so the slice can never pass by muting the check
+new_case question_live_dialog_below_turn
+{
+  printf '❯ go ahead and refactor it\n'
+  printf '⏺ I found two ways to do this.\n'
+  printf 'Do you want to proceed?\n'
+  printf '   ❯ 1. Yes\n     2. No\n'
+} > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e4a5"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT question gh-2" \
+  "a selection list below the last user turn is still the event" "$err"
+assert_contains "$out" "   ❯ 1. Yes" "the pane tail follows the event line" "$err"
 
 # --- 4b. idle-after-return: the round is over and nobody is driving ---------
 new_case idle_after_return
