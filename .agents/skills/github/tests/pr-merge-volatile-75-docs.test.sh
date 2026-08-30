@@ -7,8 +7,8 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
-SKILL_MD="$REPO_ROOT/skills/github/SKILL.md"
 PR_MERGE="$REPO_ROOT/skills/github/scripts/commands/pr-merge.sh"
+GITHUB_SH="$REPO_ROOT/skills/github/scripts/github.sh"
 
 PASS=0
 FAIL=0
@@ -36,7 +36,7 @@ assert_count() { # GOT PATTERN EXPECTED NAME
   fi
 }
 
-echo "=== pr-merge exit 75 is documented as volatile, in the script and the SKILL ==="
+echo "=== pr-merge exit 75 contract matches script and help ==="
 
 script_src=$(cat "$PR_MERGE")
 # Both 75 exits route through the one note (queued and classic auto-merge).

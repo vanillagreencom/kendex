@@ -73,6 +73,58 @@ Output Formats:
   pr-data and pr-threads take --format=safe|raw only and reject unknown
   flags.
 
+Configuration:
+  Project files load in this order, from lowest to highest precedence:
+    kendex.settings.toml [env]
+    .kendex/settings.toml [env]
+    .env.local
+  Values exported by the parent process override every project file. A .env
+  file is never read.
+
+  GH_TOKEN / GITHUB_TOKEN
+      Pre-resolved user token. Falls back to gh keyring auth.
+  GH_BOT_TOKEN
+      Bot token. Falls back to GH_TOKEN, GITHUB_TOKEN, then gh keyring auth.
+  GH_BOT_USERNAME
+      Username used for review and comment filtering. Default: review-bot[bot]
+  GH_ISSUE_PATTERN
+      Branch issue-id regex. Default: [A-Z]+-[0-9]+
+  GH_VERIFY_CMD
+      Command used by pr-cross-check --verify. Default: auto-detect.
+  KENDEX_GITHUB_OP_TIMEOUT
+      Seconds allowed for op read. Default: 10.
+  KENDEX_GITHUB_AUTH_TIMEOUT
+      Seconds allowed for GitHub auth preflight. Default: 10.
+  KENDEX_GITHUB_PR_VIEW_TIMEOUT
+      Seconds allowed for gh pr view in pr-view. Default: 30.
+  KENDEX_GITHUB_GIT_HTTPS_FALLBACK
+      git-https-auth mode: auto, never, or always. Default: auto.
+
+Token selection:
+  Tokens may be literal ghp_*, gho_*, ghu_*, ghs_*, ghr_*, or github_pat_*
+  values, or op://vault/item/field references. The router selects one token
+  before resolving any 1Password reference. It first checks resolved values
+  in GH_TOKEN, GH_BOT_TOKEN, GITHUB_TOKEN order, then checks op:// references
+  in the same order. Only that selection is passed to op read.
+
+  A resolved selection is exported as GH_TOKEN and GITHUB_TOKEN is removed.
+  If an op:// selection cannot resolve, GH_TOKEN and GITHUB_TOKEN are removed
+  so gh may use keyring auth. A selected GH_BOT_TOKEN keeps its bot identity
+  and does not fall back to a different keyring identity after auth failure.
+
+Auth preflight:
+  When GH_TOKEN or GITHUB_TOKEN is selected, gh api user is authoritative.
+  gh auth status is authoritative only when no environment token is selected.
+  A failed non-bot environment token is removed only when keyring auth passes.
+
+Errors and retries:
+  Most commands write {"error": "message"} JSON to stderr and exit 1.
+  pr-view --json writes its structured failure object to stdout; run
+  'github.sh pr-view --help' for its status values and exit codes.
+  API rate limits and retryable request failures get at most 3 attempts with
+  exponential backoff. An unreadable thread list, comment list, or CI log is
+  an error, never an empty result.
+
 Examples:
   # Get PR data with all threads and comments
   ./github.sh pr-data 23
