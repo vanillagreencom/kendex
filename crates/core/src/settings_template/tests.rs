@@ -155,6 +155,12 @@ fn the_required_marker_rides_with_the_value_and_nothing_else_may() {
 /// inside a sentence before they ever see one after a value. Unflagged it
 /// is silent twice over — the key is never written, and it is never
 /// reported as unanswered either, because nothing knows it was marked.
+///
+/// Pinned here rather than as a corpus row, like every other rule only a
+/// template has. The loaders read a comment line cleanly whatever it says,
+/// so a row for this would assert the reader and the loaders disagree,
+/// which is what the corpus is for refusing. Adding one fails
+/// `the_reader_flags_exactly_what_the_loaders_cannot_read`.
 #[test]
 fn a_marker_on_its_own_comment_line_is_located() {
     assert_eq!(
