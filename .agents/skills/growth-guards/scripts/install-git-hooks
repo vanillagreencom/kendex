@@ -307,12 +307,8 @@ install_hook() { # HOOK
     return 0
   fi
   # The SAME predicate --check applies, so an install cannot report success
-  # that the next `kendex check` calls unverifiable. A hook THIS INSTALLER
-  # WROTE is ours to correct rather than refuse: older versions emitted
-  # `#!/usr/bin/env bash`, and refusing there would strand a working install
-  # reporting NOT installed forever. Its shebang is rewritten below.
-  if ! gg_trusted_interpreter "$(head -n 1 "$path")" \
-    && ! grep -qxF -- "$CREATED_MARKER" "$path" 2>/dev/null; then
+  # that the next `kendex check` calls unverifiable.
+  if ! gg_trusted_interpreter "$(head -n 1 "$path")"; then
     hook_warn "$(gg_shown "$path") runs under an interpreter that cannot be verified ($(gg_shown "$(head -n 1 "$path")")); not modifying it — the $hook guard is NOT installed. Use a #! naming a shell in /bin or /usr/bin directly."
     return 0
   fi
@@ -320,10 +316,7 @@ install_hook() { # HOOK
   # after the shebang. Content alone is not enough: a line that was commented
   # out, truncated, left by an older version, or moved below hook content that
   # exits is not an install, and each is rewritten rather than trusted.
-  # The delegate being current is not enough when the SHEBANG is stale: the
-  # fast path would return before the rewrite that corrects it, leaving a
-  # working install reporting unverifiable forever.
-  if [ "$(sed -n '2p' "$path")" = "$line" ] && gg_trusted_interpreter "$(head -n 1 "$path")"; then
+  if [ "$(sed -n '2p' "$path")" = "$line" ]; then
     ensure_hook_executable "$hook" "$path"
     return 0
   fi
@@ -364,16 +357,10 @@ install_hook() { # HOOK
   }
   # The shebang is re-emitted TERMINATED even when the original file ended at
   # it, or the delegate would run onto the interpreter line. A shebang cannot
-  # contain a newline, so the command substitution is lossless.
-  # A file this installer created carries OUR shebang, so an untrusted one is
-  # a stale spelling from an older version and is corrected here. A file the
-  # consumer wrote keeps its own — it reached this point only by being
-  # trusted already.
+  # contain a newline, so the command substitution is lossless. It is kept as
+  # written: the file reached this point only by being trusted already.
   local shebang=""
   shebang="$(head -n 1 "$path")"
-  if [ "$created" -eq 1 ] && ! gg_trusted_interpreter "$shebang"; then
-    shebang="#!/bin/sh"
-  fi
   if ! cp -p -- "$path" "$tmp" 2>/dev/null || ! {
     printf '%s\n' "$shebang"
     printf '%s\n' "$line"

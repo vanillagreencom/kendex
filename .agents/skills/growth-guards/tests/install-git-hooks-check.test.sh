@@ -75,44 +75,6 @@ else
   ok "unreadable hooks dir wording skipped (running as root)"
 fi
 
-echo "=== install corrects a stale shebang in a hook IT wrote ==="
-# Older versions of this installer emitted `#!/usr/bin/env bash`. Refusing
-# there strands a working install reporting NOT installed forever, so a file
-# carrying the created-marker is corrected rather than refused.
-R44="$(new_repo installstaleshebang)"
-install_in "$R44"
-# Exactly the drovr shape: the file this installer wrote, with only its
-# shebang reverted to what an older version emitted.
-{
-  printf '#!/usr/bin/env bash\n'
-  tail -n +2 "$R44/.git/hooks/pre-commit"
-} >"$TMP/stale" && mv "$TMP/stale" "$R44/.git/hooks/pre-commit"
-chmod +x "$R44/.git/hooks/pre-commit"
-grep -qF -- "kendex_gg_h" "$R44/.git/hooks/pre-commit" \
-  && ok "the fixture really carries the guard line under the stale shebang" \
-  || bad "stale fixture carries the guard line" "$(sed -n '2p' "$R44/.git/hooks/pre-commit")"
-check_in "$R44"
-[ "$RC" -eq 2 ] && ok "and it reads as unverifiable before the fix" \
-  || bad "stale fixture unverifiable first" "rc=$RC out=$OUT"
-install_in "$R44"
-[ "$(head -n 1 "$R44/.git/hooks/pre-commit")" = "#!/bin/sh" ] \
-  && ok "a hook this installer wrote has its stale shebang corrected" \
-  || bad "stale shebang corrected" "line1=$(head -n 1 "$R44/.git/hooks/pre-commit")"
-check_in "$R44"
-[ "$RC" -eq 0 ] && ok "and it checks armed afterwards" \
-  || bad "corrected hook checks armed" "rc=$RC out=$OUT"
-
-# Control: a hook the CONSUMER wrote is still refused and left untouched.
-printf '#!/usr/bin/env bash\necho mine\n' >"$R44/.git/hooks/commit-msg"
-chmod +x "$R44/.git/hooks/commit-msg"
-install_in "$R44"
-[ "$(sed -n '2p' "$R44/.git/hooks/commit-msg")" = "echo mine" ] \
-  && ok "control: a consumer's own hook is refused, not rewritten" \
-  || bad "consumer hook untouched" "line2=$(sed -n '2p' "$R44/.git/hooks/commit-msg")"
-[ "$(head -n 1 "$R44/.git/hooks/commit-msg")" = "#!/usr/bin/env bash" ] \
-  && ok "and its shebang is left alone" \
-  || bad "consumer shebang untouched" "line1=$(head -n 1 "$R44/.git/hooks/commit-msg")"
-
 echo "=== install refuses what --check could not vouch for ==="
 # Installing under a shebang the check calls unverifiable would report a
 # successful install that the very next `kendex check` contradicts.
@@ -131,6 +93,32 @@ esac
 check_in "$R43"
 [ "$RC" -ne 0 ] && ok "and --check agrees rather than contradicting the install" \
   || bad "check agrees with install" "rc=$RC out=$OUT"
+
+# The same refusal for a hook THIS INSTALLER wrote: ownership buys no licence
+# to rewrite the interpreter someone since chose. An install that reported
+# success here would be one `kendex check` calls unverifiable.
+R44="$(new_repo installstaleshebang)"
+install_in "$R44"
+{
+  printf '#!/usr/local/bin/bash\n'
+  tail -n +2 "$R44/.git/hooks/pre-commit"
+} >"$TMP/reshebanged" && mv "$TMP/reshebanged" "$R44/.git/hooks/pre-commit"
+chmod +x "$R44/.git/hooks/pre-commit"
+grep -qF -- "kendex_gg_h" "$R44/.git/hooks/pre-commit" \
+  && ok "control: the fixture is our own shim under an untrusted interpreter" \
+  || bad "fixture carries the guard line" "$(sed -n '2p' "$R44/.git/hooks/pre-commit")"
+BEFORE44="$(cat "$R44/.git/hooks/pre-commit")"
+install_in "$R44"
+case "$OUT" in
+  *"cannot be verified"*) ok "install refuses a shim of ours under an untrusted interpreter" ;;
+  *) bad "install refuses our own untrusted shim" "out=$OUT" ;;
+esac
+[ "$(cat "$R44/.git/hooks/pre-commit")" = "$BEFORE44" ] \
+  && ok "and leaves it byte for byte, shebang included" \
+  || bad "our untrusted shim was rewritten" "$(cat "$R44/.git/hooks/pre-commit")"
+check_in "$R44"
+[ "$RC" -ne 0 ] && ok "and --check agrees it is not armed" \
+  || bad "check agrees on our untrusted shim" "rc=$RC out=$OUT"
 
 echo "=== a shim carrying the guard line elsewhere is unverifiable, not ungated ==="
 # --check writes nothing, so it does not get to assume the shim in front of

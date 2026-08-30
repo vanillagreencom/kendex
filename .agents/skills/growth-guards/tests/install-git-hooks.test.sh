@@ -27,6 +27,22 @@ grep -qF "installed_scripts='$R/.agents/skills/growth-guards/scripts'" "$R/.git/
   && ok "the helper names the scripts directory it was installed from" || bad "helper names its scripts dir"
 grep -qF 'kendex-guards' "$R/.git/hooks/pre-commit" && ok "pre-commit carries the marked delegating line" \
   || bad "pre-commit carries the marked line"
+# On a fresh repo the installer writes the shims itself, so each is exactly
+# what it emits and nothing more: the current shebang, the delegate at line 2,
+# the created marker. Anything else here is a hook the installer inherited,
+# and it emits no shebang but this one — an install that reported success
+# under another would be one `--check` calls unverifiable.
+for f in pre-commit commit-msg; do
+  [ "$(head -n 1 "$R/.git/hooks/$f")" = "#!/bin/sh" ] \
+    && ok "$f carries the current shebang" \
+    || bad "$f carries the current shebang" "line1=$(head -n 1 "$R/.git/hooks/$f")"
+  [ "$(sed -n '3p' "$R/.git/hooks/$f")" = "# kendex-guards-hook created this file" ] \
+    && ok "$f records that the installer created it" \
+    || bad "$f records that the installer created it" "line3=$(sed -n '3p' "$R/.git/hooks/$f")"
+  [ "$(wc -l <"$R/.git/hooks/$f")" -eq 3 ] \
+    && ok "$f holds those three lines and nothing else" \
+    || bad "$f holds those three lines and nothing else" "$(cat "$R/.git/hooks/$f")"
+done
 [ -z "$(git -C "$R" config --get core.hooksPath || true)" ] && ok "core.hooksPath is left unset" \
   || bad "core.hooksPath is left unset"
 
@@ -490,38 +506,11 @@ OUT="$("$R21M/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$R
 
 echo "=== a hook that only quotes a marker is not ours ==="
 # The ownership question and the shape question fail in opposite directions,
-# and these are the ownership one. Every site that asks whether a file is
-# ours asks it the same way — the marker CLOSING a line, or the created
-# marker as a line whole — so a consumer hook that mentions either in a
-# sentence is somebody else's file at every one of them.
-QUOTE_CREATED="# kendex-guards-hook created this file"
+# and this is the ownership one: ours is the marker CLOSING a line, so a
+# consumer hook that mentions it in a sentence is somebody else's file.
 QUOTE_SENTINEL="# kendex-guards-hook"
 
-# Install refuses a hook it cannot verify unless THIS installer wrote it.
-# A consumer hook under an interpreter we do not vouch for, mentioning the
-# created marker mid-sentence, is not ours — and rewriting its shebang, as
-# a substring read would, changes which interpreter someone else's hook
-# runs under.
-R52="$(new_repo quoter-shebang)"
-FOREIGN="$R52/.git/hooks/pre-commit"
-# A shell shebang the checker will not vouch for: an interpreter outside
-# /bin and /usr/bin, which is what reaches the created-marker question.
-printf '#!/usr/local/bin/bash\n# not %s, just talking about it\nexit 0\n' \
-  "$QUOTE_CREATED" >"$FOREIGN"
-chmod +x "$FOREIGN"
-BEFORE="$(cat "$FOREIGN")"
-install_in "$R52"
-[ "$(head -n 1 "$FOREIGN")" = "#!/usr/local/bin/bash" ] \
-  && ok "install leaves the shebang of a hook that only quotes the created marker" \
-  || bad "the quoting hook's shebang was rewritten" "$(cat "$FOREIGN")"
-[ "$(cat "$FOREIGN")" = "$BEFORE" ] && ok "and the file is byte for byte what it was" \
-  || bad "the quoting hook was edited" "$(cat "$FOREIGN")"
-case "$OUT" in
-  *"cannot be verified"*) ok "and the install says the guard is NOT installed there" ;;
-  *) bad "install did not announce the refusal" "$OUT" ;;
-esac
-
-# The symlink branch asks the same question of a target it must not edit.
+# The symlink branch asks that question of a target it must not edit.
 R53="$(new_repo quoter-symlink)"
 install_in "$R53"
 printf '#!/bin/sh\n# ours end in %s, this one does not\necho mine\n' \

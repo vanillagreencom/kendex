@@ -68,7 +68,7 @@ skills/github/scripts/lib/gh-auth.sh	494
 skills/github/scripts/lib/github-api.sh	897
 skills/github/scripts/lib/verify-lib.sh	415
 skills/github/tests/git-diff-summary-cfg-test-declaration.test.sh	2128
-skills/growth-guards/scripts/install-git-hooks	548
+skills/growth-guards/scripts/install-git-hooks	535
 skills/growth-guards/scripts/lib/settings.sh	467
 skills/iced-rs/examples/changelog/src/changelog.rs	418
 skills/iced-rs/examples/color_palette/src/main.rs	479
@@ -92,7 +92,7 @@ skills/linear/scripts/commands/initiatives.sh	492
 skills/linear/scripts/commands/issues.sh	3376
 skills/linear/scripts/commands/projects.sh	1364
 skills/linear/scripts/commands/session-status.sh	430
-skills/linear/scripts/commands/sync.sh	918
+skills/linear/scripts/commands/sync.sh	882
 skills/linear/scripts/lib/attachments.sh	527
 skills/linear/scripts/lib/cache.sh	618
 skills/linear/scripts/lib/common.sh	780

@@ -7,100 +7,27 @@
 # commit-message rule this repo has. There is no repo-local commit-msg lane
 # to splice in beside it.
 #
-# A clone armed before that consolidation carries a spliced call to
-# tools/commit-msg, which no longer exists, so every commit there fails
-# closed. This run takes that line back out — hooks live in the shared
-# .git of the checkout and all its work trees, so one run repairs them all.
-#
 # Whether the shims are armed is the installer's verdict to give, not this
 # script's to infer from a file that exists: git may be reading hooks from
 # somewhere else entirely.
 set -euo pipefail
 
-# Every probe here answers a question this repair acts on, so each one is
-# read for whether it RAN before it is read for what it said. A `$(...)` that
-# failed hands back an empty string, which spells a plausible answer at each
-# of these sites — a change of directory that stays put, a hooks path of
-# `/hooks/commit-msg` that no clone has — and the run goes on to report
-# `hooks armed` over a repair it never made.
+# The first probe of all, and it is read for whether it RAN before it is read
+# for what it said. A `$(...)` that failed hands back an empty string, which
+# spells a plausible answer here — a change of directory that stays put — and
+# the run would go on to arm hooks in whatever clone it happened to be in.
 ROOT=""
 ROOT="$(git rev-parse --show-toplevel)" \
   || { echo "setup: not inside a git work tree — the guards could not be armed" >&2; exit 1; }
 cd "$ROOT" || { echo "setup: could not enter $ROOT — the guards could not be armed" >&2; exit 1; }
 
 INSTALLER=.agents/skills/growth-guards/scripts/install-git-hooks
-# The line older clones carry, matched whole so nothing else is touched.
-STALE_LANE='"$(git rev-parse --show-toplevel)/tools/commit-msg" "$@" || exit $?'
 
 not_armed() {
-  echo "setup: the guard shims are not armed (the report above says why). A clone armed by the old tools/setup carries hooks the installer will not rewrite, because it refuses an interpreter it cannot verify: delete .git/hooks/pre-commit AND .git/hooks/commit-msg, then run this again." >&2
+  echo "setup: the guard shims are not armed (the report above says why). Where a hook already at .git/hooks runs under an interpreter the installer will not vouch for, it refuses rather than rewrite it: delete .git/hooks/pre-commit AND .git/hooks/commit-msg, then run this again." >&2
   exit 1
 }
 
 "$INSTALLER" || not_armed
 "$INSTALLER" --check || not_armed
-
-# Drop the retired lane, byte for byte, and leave a hook that never had it
-# untouched. The bytes after it are the hook's own, final newline included.
-#
-# The replacement is built beside the hook and renamed into place. Writing
-# back over the live file would truncate a script git executes on every
-# commit, in the .git every work tree of this checkout shares, and an
-# interrupt or a full disk between the truncate and the last write would
-# leave a partial one there.
-drop_stale_lane() { # HOOK-FILE
-  local hook="$1" tmp="" body="" found=0
-  local ends_nl=1 last="" tail_status=0
-  [ -f "$hook" ] || return 0
-  # grep spends 1 on "not found" and 2 on "could not read it". Reading the
-  # second as the first is this repair concluding there is nothing to do from
-  # a probe that never ran, and then reporting the clone armed.
-  grep -Fxq -- "$STALE_LANE" "$hook" || found=$?
-  case "$found" in
-    0) ;;
-    1) return 0 ;;
-    *)
-      echo "setup: could not read $hook to look for the retired tools/commit-msg lane (grep exit $found) — the hook is unchanged and may still call it" >&2
-      exit 1
-      ;;
-  esac
-  # The same rule as the grep above, one probe further on: tail spends its
-  # status on whether it could READ the hook, and `[ -n "$(...)" ]` throws
-  # that away. An unreadable hook would look like one ending in a newline,
-  # and this repair would rewrite it and report the clone armed.
-  last="$(tail -c 1 -- "$hook")" || tail_status=$?
-  if [ "$tail_status" -ne 0 ]; then
-    echo "setup: could not read the last byte of $hook (tail exit $tail_status) — the hook is unchanged and may still call the retired tools/commit-msg lane" >&2
-    exit 1
-  fi
-  [ -n "$last" ] && ends_nl=0
-  tmp="$(mktemp -- "$hook.tmp.XXXXXX")"
-  # cp -p first, for the mode git needs on a hook; the redirect below then
-  # replaces the content it just copied. chmod --reference is not portable.
-  cp -p -- "$hook" "$tmp" || {
-    rm -f -- "$tmp"
-    echo "setup: could not take $hook's mode — the hook is unchanged" >&2
-    exit 1
-  }
-  awk -v lane="$STALE_LANE" '$0 == lane { next } { print }' "$hook" >"$tmp" || {
-    rm -f -- "$tmp"
-    echo "setup: $hook could not be rewritten to drop the retired tools/commit-msg lane" >&2
-    exit 1
-  }
-  if [ "$ends_nl" -eq 0 ]; then
-    body="$(cat -- "$tmp")"
-    printf '%s' "$body" >"$tmp"
-  fi
-  mv -- "$tmp" "$hook" || {
-    rm -f -- "$tmp"
-    echo "setup: could not replace $hook — inspect it before trusting it" >&2
-    exit 1
-  }
-  echo "setup: dropped the retired tools/commit-msg lane from $hook"
-}
-
-COMMON_DIR=""
-COMMON_DIR="$(git rev-parse --git-common-dir)" \
-  || { echo "setup: could not locate the shared .git directory — the hooks were not inspected" >&2; exit 1; }
-drop_stale_lane "$COMMON_DIR/hooks/commit-msg"
 echo "hooks armed"

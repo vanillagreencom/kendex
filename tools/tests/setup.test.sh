@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Pins what tools/setup arms: the growth-guards installer writes both shims
-# and nothing is spliced in beside them, a clone armed by the older setup has
-# its call to the deleted tools/commit-msg taken back out, and then it commits
-# through the armed hooks in both directions — the package's header, subject
-# and changelog verdicts have to be reachable from a real commit, or the chain
-# is wired to nothing. The refusing direction runs first in every pair.
+# Pins what tools/setup arms: the growth-guards installer writes both shims,
+# nothing is spliced in beside them, and the clone then commits through the
+# armed hooks in both directions — the package's header, subject and changelog
+# verdicts have to be reachable from a real commit, or the chain is wired to
+# nothing. The refusing direction runs first in every pair.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -45,8 +44,6 @@ new_fixture() { # NAME — a clone-shaped repo carrying the package and these to
 
 new_fixture repo
 SENTINEL="# kendex-guards-hook"
-# The line clones armed before the consolidation carry.
-STALE_LANE='"$(git rev-parse --show-toplevel)/tools/commit-msg" "$@" || exit $?'
 
 echo "=== a fresh clone is not armed until setup runs ==="
 { [ ! -e "$HOOKS/pre-commit" ] && [ ! -e "$HOOKS/commit-msg" ]; } \
@@ -224,145 +221,21 @@ OUT="$(git -C "$R" commit -m "fixup! $(printf 'x%.0s' $(seq 1 70))" 2>&1)" || RC
 [ "$RC" -eq 0 ] && ok "a long fixup! subject passes — the exemption is the package's whole list" \
   || bad "a long fixup! subject passes — the exemption is the package's whole list" "rc=$RC out=$OUT"
 
-echo "=== a clone armed by the older setup loses its call to the deleted lane ==="
-new_fixture stale
-(cd "$R" && ./tools/setup >/dev/null 2>&1)
-# Put the retired line back where the older setup spliced it, plus a body of
-# the consumer's own below it, written with no final newline.
-awk -v sentinel="$SENTINEL" -v lane="$STALE_LANE" \
-  '{ print } index($0, sentinel) && !placed { print lane; placed = 1 }' \
-  "$HOOKS/commit-msg" >"$HOOKS/commit-msg.new"
-printf 'echo "consumer hook ran"' >>"$HOOKS/commit-msg.new"
-cat "$HOOKS/commit-msg.new" >"$HOOKS/commit-msg"
-rm -f "$HOOKS/commit-msg.new"
-grep -qxF "$STALE_LANE" "$HOOKS/commit-msg" \
-  && ok "control: the fixture really carries the retired lane" \
-  || bad "control: the fixture really carries the retired lane" "$(cat "$HOOKS/commit-msg")"
-RC=0
-OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
-[ "$RC" -eq 0 ] && case "$OUT" in *"dropped the retired tools/commit-msg lane"*) true ;; *) false ;; esac \
-  && ok "setup says it dropped the retired lane" \
-  || bad "setup says it dropped the retired lane" "rc=$RC out=$OUT"
-grep -qF "tools/commit-msg" "$HOOKS/commit-msg" \
-  && bad "the retired lane is gone" "$(cat "$HOOKS/commit-msg")" \
-  || ok "the retired lane is gone"
-[ "$(tail -1 "$HOOKS/commit-msg")" = 'echo "consumer hook ran"' ] \
-  && ok "the consumer's own body is left alone" \
-  || bad "the consumer's own body is left alone" "$(cat "$HOOKS/commit-msg")"
-[ -n "$(tail -c 1 "$HOOKS/commit-msg")" ] \
-  && ok "the missing final newline is preserved" \
-  || bad "the missing final newline is preserved" "the rewrite added one"
-git -C "$R" add -A
-RC=0
-OUT="$(git -C "$R" commit -m "chore: fixture" 2>&1)" || RC=$?
-[ "$RC" -eq 0 ] && case "$OUT" in *"consumer hook ran"*) true ;; *) false ;; esac \
-  && ok "the repaired hook commits, and still hands back to the consumer's body" \
-  || bad "the repaired hook commits, and still hands back to the consumer's body" "rc=$RC out=$OUT"
-RC=0
-OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
-[ "$RC" -eq 0 ] && case "$OUT" in *"dropped the retired"*) false ;; *) true ;; esac \
-  && ok "a hook that never had the lane is not rewritten" \
-  || bad "a hook that never had the lane is not rewritten" "rc=$RC out=$OUT"
-
-[ -x "$HOOKS/commit-msg" ] \
-  && ok "the repaired hook keeps the execute bit git needs" \
-  || bad "the repaired hook keeps the execute bit git needs" "$(ls -l "$HOOKS/commit-msg")"
-# A probe the repair cannot complete must stop the run, not report the clone
-# armed while the hook still calls a script that is gone. grep spends 1 on
-# "not found" and 2 on "could not read it"; a shim ahead of PATH is what
-# separates the two branches, since the installer that runs first would refuse
-# a hook the filesystem really had made unreadable.
-awk -v sentinel="$SENTINEL" -v lane="$STALE_LANE" \
-  '{ print } index($0, sentinel) && !placed { print lane; placed = 1 }' \
-  "$HOOKS/commit-msg" >"$HOOKS/commit-msg.new"
-cat "$HOOKS/commit-msg.new" >"$HOOKS/commit-msg"
-rm -f "$HOOKS/commit-msg.new"
-GREP_SHIM="$TMP/grep-shim"
-mkdir -p "$GREP_SHIM"
-{
-  printf '#!/usr/bin/env bash\n'
-  printf 'if [ "${1:-}" = "-Fxq" ]; then\n'
-  printf '  echo "grep: simulated read failure" >&2\n'
-  printf '  exit 2\n'
-  printf 'fi\n'
-  printf 'exec %s "$@"\n' "$(command -v grep)"
-} >"$GREP_SHIM/grep"
-chmod +x "$GREP_SHIM/grep"
-RC=0
-OUT="$(cd "$R" && PATH="$GREP_SHIM:$PATH" ./tools/setup 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"hooks armed"*) false ;; *"grep exit 2"*) true ;; *) false ;; esac \
-  && ok "a probe that could not run stops setup instead of reporting the clone armed" \
-  || bad "a probe that could not run stops setup" "rc=$RC out=$OUT"
-grep -qxF "$STALE_LANE" "$HOOKS/commit-msg" \
-  && ok "control: that hook really did still carry the retired lane" \
-  || bad "control: that hook really did still carry the retired lane" "$(cat "$HOOKS/commit-msg")"
-# The next probe down the same repair, and the same rule: tail spends its
-# status on whether it could READ the hook, and a discarded status would make
-# an unreadable hook look like one ending in a newline. The lane is still in
-# the hook here, so the run reaches tail at all.
-TAIL_SHIM="$TMP/tail-shim"
-mkdir -p "$TAIL_SHIM"
-{
-  printf '#!/usr/bin/env bash\n'
-  printf 'if [ "${1:-}" = "-c" ]; then\n'
-  printf '  echo "tail: simulated read failure" >&2\n'
-  printf '  exit 1\n'
-  printf 'fi\n'
-  printf 'exec %s "$@"\n' "$(command -v tail)"
-} >"$TAIL_SHIM/tail"
-chmod +x "$TAIL_SHIM/tail"
-RC=0
-OUT="$(cd "$R" && PATH="$TAIL_SHIM:$PATH" ./tools/setup 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"hooks armed"*) false ;; *"tail exit 1"*) true ;; *) false ;; esac \
-  && ok "a final-byte probe that could not run stops setup too" \
-  || bad "a final-byte probe that could not run stops setup too" "rc=$RC out=$OUT"
-grep -qxF "$STALE_LANE" "$HOOKS/commit-msg" \
-  && ok "control: that hook is unchanged, retired lane and all" \
-  || bad "control: that hook is unchanged, retired lane and all" "$(cat "$HOOKS/commit-msg")"
-
-# The hooks path itself is a probe. Failed, it hands back an empty string,
-# `/hooks/commit-msg` is a file no clone has, and the repair would find
-# nothing to do and report the clone armed. The shim fails only the bare
-# `rev-parse --git-common-dir` this script runs: every call the installer
-# makes carries -C, so the verdict it gives first is its own.
-GIT_SHIM="$TMP/git-shim"
-mkdir -p "$GIT_SHIM"
-{
-  printf '#!/usr/bin/env bash\n'
-  printf 'if [ "${1:-}" = "rev-parse" ] && [ "${2:-}" = "--git-common-dir" ]; then\n'
-  printf '  echo "git: simulated failure" >&2\n'
-  printf '  exit 128\n'
-  printf 'fi\n'
-  printf 'exec %s "$@"\n' "$(command -v git)"
-} >"$GIT_SHIM/git"
-chmod +x "$GIT_SHIM/git"
-RC=0
-OUT="$(cd "$R" && PATH="$GIT_SHIM:$PATH" ./tools/setup 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"hooks armed"*) false ;; *"could not locate the shared .git directory"*) true ;; *) false ;; esac \
-  && ok "a hooks path that could not be resolved stops setup" \
-  || bad "a hooks path that could not be resolved stops setup" "rc=$RC out=$OUT"
-grep -qxF "$STALE_LANE" "$HOOKS/commit-msg" \
-  && ok "control: that hook is unchanged there too" \
-  || bad "control: that hook is unchanged there too" "$(cat "$HOOKS/commit-msg")"
-
-RC=0
-OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
-[ "$RC" -eq 0 ] && ok "with a working probe the same hook is repaired" \
-  || bad "with a working probe the same hook is repaired" "rc=$RC out=$OUT"
-
-echo "=== a clone armed by the old setup names both hooks to delete ==="
-new_fixture legacy
-for pair in pre-commit:guard commit-msg:commit-msg; do
-  printf '#!/usr/bin/env bash\nexec "$(git rev-parse --show-toplevel)/tools/%s" "$@"\n' \
-    "${pair##*:}" >"$HOOKS/${pair%%:*}"
-  chmod +x "$HOOKS/${pair%%:*}"
+echo "=== hooks the installer will not vouch for name both to delete ==="
+# It refuses an interpreter it cannot verify rather than rewriting somebody
+# else's hook, so the remedy setup prints has to name every hook in the way,
+# not the first one it tripped over.
+new_fixture foreign
+for hook in pre-commit commit-msg; do
+  printf '#!/usr/bin/env bash\necho "%s ran"\n' "$hook" >"$HOOKS/$hook"
+  chmod +x "$HOOKS/$hook"
 done
 RC=0
 OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
 [ "$RC" -ne 0 ] \
   && case "$OUT" in *".git/hooks/pre-commit AND .git/hooks/commit-msg"*) true ;; *) false ;; esac \
-  && ok "setup stops and names both legacy hooks, not just pre-commit" \
-  || bad "setup stops and names both legacy hooks, not just pre-commit" "rc=$RC out=$OUT"
+  && ok "setup stops and names both refused hooks, not just pre-commit" \
+  || bad "setup stops and names both refused hooks, not just pre-commit" "rc=$RC out=$OUT"
 rm -f "$HOOKS/pre-commit"
 RC=0
 OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
@@ -382,18 +255,14 @@ cp -R "$R/.agents/skills/growth-guards" "$E/.agents/skills/growth-guards"
 cp "$TOOLS/setup" "$E/tools/"
 git -C "$E" init -q
 git -C "$E" config core.hooksPath "$E/other-hooks"
-# A leftover file at the path the installer writes, which git no longer reads,
-# carrying the retired lane.
-mkdir -p "$E/.git/hooks"
-printf '#!/bin/sh\n%s\n' "$STALE_LANE" >"$E/.git/hooks/commit-msg"
 RC=0
 OUT="$(cd "$E" && ./tools/setup 2>&1)" || RC=$?
 [ "$RC" -ne 0 ] && case "$OUT" in *"not armed"*) true ;; *) false ;; esac \
   && ok "a configured hooks path stops setup instead of wiring a hook git ignores" \
   || bad "a configured hooks path stops setup instead of wiring a hook git ignores" "rc=$RC out=$OUT"
-grep -qxF "$STALE_LANE" "$E/.git/hooks/commit-msg" \
-  && ok "the stale hook is left alone — the repair runs only past the installer's verdict" \
-  || bad "the stale hook is left alone" "$(cat "$E/.git/hooks/commit-msg")"
+[ ! -e "$E/.git/hooks/pre-commit" ] && [ ! -e "$E/.git/hooks/commit-msg" ] \
+  && ok "and writes no shim at the path git has stopped reading" \
+  || bad "setup wrote a shim git ignores" "$(ls -1 "$E/.git/hooks" 2>&1)"
 
 echo "=== setup outside a work tree says so, rather than working somewhere else ==="
 # The first probe of all. Unread, its empty answer is a change of directory

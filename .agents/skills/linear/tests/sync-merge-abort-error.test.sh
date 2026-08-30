@@ -31,10 +31,9 @@ make_env() {
   printf '%s' "$existing" > "$root/.cache/linear/issues.json"
   echo '[]' > "$root/.cache/linear/projects.json"
 
-  # Comment files the abort must leave alone. meta.json carries no
-  # comments_source, which is the legacy state and the wider blast radius: an
-  # unmarked cache refetches every comment and scopes the write to the whole
-  # issue set, so a write that ran before the merge would sweep these.
+  # Comment files the abort must leave alone: a comment write that ran before
+  # the merge could reject would rewrite them while the command reports the
+  # cache unchanged.
   printf '[{"id":"c1","body":"kept"}]' > "$root/.cache/linear/comments/PROJ-1.json"
   printf '[{"id":"c3","body":"kept too"}]' > "$root/.cache/linear/comments/PROJ-3.json"
   # Old synced_at forces an issues delta; fresh reconciled_at skips reconcile
@@ -45,10 +44,6 @@ make_env() {
 
   local delta_nodes="$delta_node"
   [[ -n "$extra_node" ]] && delta_nodes="$delta_node,$extra_node"
-  # "none" is the empty delta: nothing changed since synced_at. It is the
-  # ordinary state of a machine that syncs regularly, and the upgrade case a
-  # rebuild carried by the delta would never reach.
-  [[ "$delta_id" == "none" ]] && delta_nodes=""
 
   cat >"$root/bin/curl" <<SH
 #!/usr/bin/env bash
@@ -146,84 +141,31 @@ assert_eq "the healthy merge applied the delta update" \
   "$(jq -r '[.[] | select(.id == "id-1")] | first | .title' "$OK_ROOT/.cache/linear/issues.json")" "updated"
 assert_ne "a successful sync advances synced_at" \
   "$(jq -r '.synced_at' "$OK_ROOT/.cache/linear/meta.json")" "$OLD_SYNC"
-# The marker is what stops the next incremental sync refetching every comment,
-# and what stops --if-stale skipping the sync that would write it.
-assert_eq "a successful sync records how the comment cache was built" \
-  "$(jq -r '.comments_source // empty' "$OK_ROOT/.cache/linear/meta.json")" "paginated"
-# PROJ-3 is not in the delta. A cache with no marker holds first-page-only
-# threads for exactly the issues a delta never revisits, so an unmarked sync
-# refetches every comment and scopes the write to the whole issue set. Scoped
-# to the delta instead, PROJ-3 would keep its seeded file forever.
-assert_eq "an unmarked cache refetches comments for an issue outside the delta" \
-  "$(jq -r '.[0].id' "$OK_ROOT/.cache/linear/comments/PROJ-3.json")" "c3-new"
 # PROJ-9 is created BY this delta, so it is absent from the issue set until the
 # merge lands. Scope the write from a pre-merge issues.json and its comments are
-# filtered out, the marker is stamped anyway, and no later delta revisits an
-# issue that never changes again — the permanent empty thread this whole change
-# exists to remove, reintroduced for exactly the newly created issue.
+# filtered out, and no later delta revisits an issue that never changes again —
+# a permanently empty thread for exactly the newly created issue.
 assert_eq "comments for an issue created by this delta are kept" \
   "$(jq -r '.[0].id' "$OK_ROOT/.cache/linear/comments/PROJ-9.json" 2>/dev/null)" "c9"
-
-# --- freshness must not skip the sync that would mark the cache ------------------
-# OK_ROOT is now both fresh and marked, so a read-only caller skips. Strip the
-# marker and the same call has to run: a cache whose comments are legacy is not
-# usable however recently it was synced, and skipping here is how a machine
-# keeps first-page threads indefinitely.
-marked_rc=0
-run_sync_if_stale "$OK_ROOT" >/dev/null 2>"$TMP_BASE/stale-marked" || marked_rc=$?
-assert_eq "--if-stale on a fresh, marked cache exits zero" "$marked_rc" 0
-assert "--if-stale skips a fresh, marked cache" \
-  grep -q "Cache fresh" "$TMP_BASE/stale-marked"
-
-jq 'del(.comments_source)' "$OK_ROOT/.cache/linear/meta.json" > "$TMP_BASE/meta-unmarked"
-mv "$TMP_BASE/meta-unmarked" "$OK_ROOT/.cache/linear/meta.json"
-unmarked_rc=0
-run_sync_if_stale "$OK_ROOT" >/dev/null 2>"$TMP_BASE/stale-unmarked" || unmarked_rc=$?
-assert_eq "--if-stale on an unmarked cache exits zero" "$unmarked_rc" 0
-assert_not "--if-stale re-syncs an unmarked cache rather than leaving legacy comments" \
-  grep -q "Cache fresh" "$TMP_BASE/stale-unmarked"
-assert_eq "the forced sync marks the cache" \
-  "$(jq -r '.comments_source // empty' "$OK_ROOT/.cache/linear/meta.json")" "paginated"
-
-# --- upgrade case: an unmarked cache with an EMPTY delta -------------------------
-# The legacy threads belong to issues that have not changed, so the delta that
-# would carry a rebuild is empty precisely when the rebuild is needed. The
-# rebuild is a precondition of syncing, not part of the delta, so it runs here.
-EMPTY_ROOT="$TMP_BASE/empty"
-make_env "$EMPTY_ROOT" \
-  '[{"id":"id-1","identifier":"PROJ-1","title":"a"},{"id":"id-3","identifier":"PROJ-3","title":"c"}]' \
-  "none"
-
-rc=0
-run_sync "$EMPTY_ROOT" >/dev/null 2>"$TMP_BASE/empty-err" || rc=$?
-assert_eq "sync succeeds on an unmarked cache with an empty delta" \
-  $rc 0
-assert_eq "an empty delta still rebuilds the legacy comment cache" \
-  "$(jq -r '.[0].id' "$EMPTY_ROOT/.cache/linear/comments/PROJ-3.json" 2>/dev/null)" "c3-new"
-assert_not "the rebuild owns the whole issue set, so PROJ-1 keeps no file the pull did not carry" \
-  test -f "$EMPTY_ROOT/.cache/linear/comments/PROJ-1.json"
-assert_eq "the rebuild marks the cache" \
-  "$(jq -r '.comments_source // empty' "$EMPTY_ROOT/.cache/linear/meta.json")" "paginated"
-
-# --- steady state: a MARKED cache takes the delta path only ---------------------
-# Every case above starts unmarked, where the rebuild owns the whole issue set
-# and would mask a wrong delta scope. This is the path every sync after the
-# upgrade takes: no rebuild, and the write scoped to the delta alone.
-MARKED_ROOT="$TMP_BASE/marked"
-make_env "$MARKED_ROOT" \
-  '[{"id":"id-1","identifier":"PROJ-1","title":"a"},{"id":"id-3","identifier":"PROJ-3","title":"c"}]' \
-  "id-1"
-jq '. + {comments_source: "paginated"}' "$MARKED_ROOT/.cache/linear/meta.json" > "$TMP_BASE/marked-meta"
-mv "$TMP_BASE/marked-meta" "$MARKED_ROOT/.cache/linear/meta.json"
-
-rc=0
-run_sync "$MARKED_ROOT" >/dev/null 2>"$TMP_BASE/marked-err" || rc=$?
-assert_eq "sync succeeds on a marked cache" \
-  $rc 0
-assert_not "a marked cache is not rebuilt" \
-  grep -q "comment cache rebuilt" "$TMP_BASE/marked-err"
 # PROJ-3 is outside this delta. The pull carries a comment for it, and only a
 # write scoped past the delta would let that land.
 assert_eq "the delta write stays inside its own scope" \
-  "$(jq -r '.[0].id' "$MARKED_ROOT/.cache/linear/comments/PROJ-3.json" 2>/dev/null)" "c3"
+  "$(jq -r '.[0].id' "$OK_ROOT/.cache/linear/comments/PROJ-3.json" 2>/dev/null)" "c3"
+
+# --- freshness: a fresh cache skips the sync entirely ---------------------------
+fresh_rc=0
+run_sync_if_stale "$OK_ROOT" >/dev/null 2>"$TMP_BASE/stale-fresh" || fresh_rc=$?
+assert_eq "--if-stale on a fresh cache exits zero" "$fresh_rc" 0
+assert "--if-stale skips a fresh cache" \
+  grep -q "Cache fresh" "$TMP_BASE/stale-fresh"
+
+# Must-fail control for the skip above: the same call on a cache older than the
+# window has to run rather than report it fresh.
+jq --arg s "$OLD_SYNC" '.synced_at = $s' "$OK_ROOT/.cache/linear/meta.json" > "$TMP_BASE/meta-stale"
+mv "$TMP_BASE/meta-stale" "$OK_ROOT/.cache/linear/meta.json"
+stale_rc=0
+run_sync_if_stale "$OK_ROOT" >/dev/null 2>"$TMP_BASE/stale-old" || stale_rc=$?
+assert_eq "--if-stale on a stale cache exits zero" "$stale_rc" 0
+assert_not "--if-stale re-syncs a cache older than the window" \
+  grep -q "Cache fresh" "$TMP_BASE/stale-old"
 

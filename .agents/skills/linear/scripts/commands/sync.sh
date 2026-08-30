@@ -172,18 +172,6 @@ sync_comments() {
     echo "$all_nodes"
 }
 
-# A comment cache built before the paginated fetch holds first pages passed off
-# as whole threads. The cache is regenerable state, so it is discarded and
-# refetched rather than repaired: no conversion, no reader for the old shape.
-# meta.json carries the marker, and its absence forces one full comment pull
-# before any incremental sync is allowed to run.
-COMMENTS_SOURCE="paginated"
-
-comments_cache_is_current() {
-    [[ -f "$CACHE_DIR/meta.json" ]] || return 1
-    [[ "$(jq -r '.comments_source // empty' "$CACHE_DIR/meta.json")" == "$COMMENTS_SOURCE" ]]
-}
-
 # Rewrite the per-issue comment files from a complete comment pull. Every
 # issue in the pull's scope is rewritten or removed, so an issue whose last
 # comment was deleted loses its file instead of keeping a stale one.
@@ -654,7 +642,7 @@ main() {
     fi
 
     # Check if sync needed when --if-stale specified
-    if [[ -n "$if_stale" ]] && cache_is_fresh "$if_stale" && comments_cache_is_current; then
+    if [[ -n "$if_stale" ]] && cache_is_fresh "$if_stale"; then
         echo "Cache fresh (< ${if_stale}m), skipped" >&2
         if [[ "$show_stats" == true ]]; then
             cache_status
@@ -819,25 +807,6 @@ main() {
         sync_cycles > "$CACHE_DIR/cycles.json.tmp" && mv "$CACHE_DIR/cycles.json.tmp" "$CACHE_DIR/cycles.json"
         sync_initiatives > "$CACHE_DIR/initiatives.json.tmp" && mv "$CACHE_DIR/initiatives.json.tmp" "$CACHE_DIR/initiatives.json"
         sync_labels > "$CACHE_DIR/labels.json.tmp" && mv "$CACHE_DIR/labels.json.tmp" "$CACHE_DIR/labels.json"
-
-        # A comment cache built before the paginated fetch is rebuilt whole,
-        # as a precondition of the sync completing rather than as part of the
-        # delta. The legacy threads belong to issues that have not changed, so
-        # an empty delta is both the common upgrade case and the one a
-        # delta-borne rebuild would never reach. It runs last so that a merge
-        # that aborts above leaves the comment cache untouched, and it owns the
-        # whole post-merge issue set, which leaves no subset for a newly
-        # created issue's comments to fall out of.
-        if ! comments_cache_is_current; then
-            if ! sync_comments "{}" > "$CACHE_DIR/.comments.json"; then
-                rm -f "$CACHE_DIR/.comments.json"
-                cache_unlock
-                return 1
-            fi
-            write_comments "$CACHE_DIR/.comments.json" "$CACHE_DIR/issues.json"
-            rm -f "$CACHE_DIR/.comments.json"
-            summary_parts+=("comment cache rebuilt")
-        fi
     fi
 
     # Download file attachments/images from issue descriptions and comments
@@ -872,9 +841,6 @@ main() {
         reconciled_at=$(jq -r '.reconciled_at // empty' "$CACHE_DIR/meta.json" 2>/dev/null || echo "")
     fi
 
-    # Reaching here means the comment cache was built by the paginated fetch:
-    # a full sync pulls every comment, and an incremental sync either found the
-    # marker already set or rebuilt above, failing the sync if it could not.
     jq -n \
         --arg ts "$(date -Iseconds)" \
         --arg reconciled "${reconciled_at:-}" \
@@ -883,11 +849,9 @@ main() {
         --argjson cycles "$cycle_count" \
         --argjson initiatives "$initiative_count" \
         --argjson elapsed "$elapsed" \
-        --arg comments_source "$COMMENTS_SOURCE" \
         '{
             synced_at: $ts,
             reconciled_at: (if $reconciled != "" then $reconciled else null end),
-            comments_source: $comments_source,
             elapsed_seconds: $elapsed,
             stats: {issues: $issues, projects: $projects, cycles: $cycles, initiatives: $initiatives}
         }' \
