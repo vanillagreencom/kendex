@@ -18,7 +18,8 @@ mkdir -p "$MAIN" "$BIN" "$SCRIPTS/lib"
 git -C "$MAIN" init -q
 git -C "$MAIN" config user.email test@example.com
 git -C "$MAIN" config user.name Test
-touch "$MAIN/seed"; git -C "$MAIN" add seed; git -C "$MAIN" commit -qm seed
+touch "$MAIN/seed"; printf 'tmp/\n' > "$MAIN/.gitignore"
+git -C "$MAIN" add seed .gitignore; git -C "$MAIN" commit -qm seed
 git -C "$MAIN" branch watch-test
 git -C "$MAIN" worktree add -q "$WT" watch-test
 ln -s "$(cd "$ORCH/.." && pwd)/github" "$TMP/github"
@@ -27,8 +28,11 @@ mkdir -p "$MAIN/.agents/skills/worktree/scripts"
 cat > "$MAIN/.agents/skills/worktree/scripts/worktree" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "$1" == path ]]; then printf '%s\n' "$WATCH_WORKTREE"; exit 0; fi
 [[ "$1" == remove && "$2" == KEN-829 ]]
+if [[ -f "$WATCH_CLEANUP_PAUSE.enabled" ]]; then touch "$WATCH_CLEANUP_PAUSE.entered"; while [[ ! -f "$WATCH_CLEANUP_PAUSE.release" ]]; do sleep 0.05; done; fi
 [[ ! -f "$WATCH_CLEANUP_FAIL" ]] || { echo 'cleanup refused' >&2; exit 9; }
+if [[ -f "$WATCH_CLEANUP_INTERRUPT" ]]; then rm -f "$WATCH_CLEANUP_INTERRUPT"; kill -KILL "$PPID"; exit 137; fi
 git -C "$WATCH_MAIN" worktree remove --force "$WATCH_WORKTREE"
 EOF
 chmod +x "$MAIN/.agents/skills/worktree/scripts/worktree"
@@ -44,6 +48,11 @@ printf '%s\n' "$HEAD_A" > "$HEAD_FILE"
 cat > "$SCRIPTS/queue-wait" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+[[ "$PWD" == "$WATCH_MAIN" ]] || { printf '{"status":"error","verdict":"unknown","error":"wrong cwd"}\n'; exit 3; }
+[[ -f .env.local ]] || { printf '{"status":"error","verdict":"unknown","error":"main env missing"}\n'; exit 3; }
+source .env.local
+[[ "$GH_BOT_TOKEN" == ghp_project && "$GH_REPO" == owner/repo ]] || { printf '{"status":"error","verdict":"unknown","error":"detached auth scope missing"}\n'; exit 3; }
+printf '%s\n' "$PWD|$GH_REPO|$GH_BOT_TOKEN" >> "$WATCH_WORKER_LOG"
 while [[ ! -f "$WATCH_RELEASE" ]]; do sleep 0.05; done
 mode=$(cat < "$WATCH_MODE")
 case "$mode" in
@@ -66,6 +75,7 @@ cat > "$BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-} ${2:-}" == "pr view" ]]; then
+  [[ "${GH_REPO:-}" == owner/repo ]] || { echo "wrong repo: ${GH_REPO:-unset}" >&2; exit 1; }
   [[ "${GH_TOKEN:-}" == ghp_project ]] || { echo 'no shared project token' >&2; exit 1; }
   printf '%s\n' "${GH_TOKEN:-none}" >> "$WATCH_AUTH_LOG"
   if [[ -f "$WATCH_GH_PAUSE.enabled" ]]; then touch "$WATCH_GH_PAUSE.entered"; while [[ ! -f "$WATCH_GH_PAUSE.release" ]]; do sleep 0.05; done; fi
@@ -94,7 +104,8 @@ EOF
 chmod +x "$BIN/setsid"
 fi
 export PATH="$BIN:$PATH" WATCH_MODE="$MODE" WATCH_RELEASE="$RELEASE" WATCH_HEAD_FILE="$HEAD_FILE" WATCH_MAIN="$MAIN" WATCH_WORKTREE="$WT"
-export WATCH_GH_PAUSE="$TMP/gh-pause" WATCH_SETUP_GATE="$TMP/setup-gate" WATCH_REAL_SETSID="$REAL_SETSID" WATCH_CLEANUP_FAIL="$TMP/cleanup-fail" WATCH_AUTH_LOG="$TMP/auth.log"
+export WATCH_GH_PAUSE="$TMP/gh-pause" WATCH_SETUP_GATE="$TMP/setup-gate" WATCH_REAL_SETSID="$REAL_SETSID" WATCH_CLEANUP_FAIL="$TMP/cleanup-fail" WATCH_CLEANUP_INTERRUPT="$TMP/cleanup-interrupt"
+export WATCH_CLEANUP_PAUSE="$TMP/cleanup-pause" WATCH_AUTH_LOG="$TMP/auth.log" WATCH_WORKER_LOG="$TMP/worker.log" GH_REPO=wrong/repository GITHUB_REPOSITORY=wrong/repository
 unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN
 init_out=$("$SCRIPTS/merge-queue-watch" init --worktree "$WT" --issue KEN-829 --branch watch-test)
 eq "$(jq -r .exists <<<"$init_out")" true "standalone init creates workflow state"
@@ -133,6 +144,7 @@ eq "$(jq -r .head_sha <<<"$prep")" "$HEAD_A" "prepare records exact head before 
 pointer=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch)
 eq "$(jq -r .watch_id <<<"$pointer")" "$watch" "workflow state points at exact watch"
 launch_bounded "$watch"
+grep -Fxq "$MAIN|owner/repo|ghp_project" "$WATCH_WORKER_LOG" && ok "detached waiter enters persisted main repo with its project auth and repo scope" || bad "detached waiter lost main repo auth or scope"
 if [[ ! -e "$artifact" ]]; then ok "no verdict exists before worker release"; else bad "partial verdict appeared"; fi
 supervisor=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .supervisor_pid)
 if kill -0 "$supervisor" 2>/dev/null; then ok "supervisor survives the launch command boundary"; else bad "supervisor died at command boundary"; fi
@@ -288,18 +300,55 @@ prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
 "$SCRIPTS/merge-queue-watch" direct-merged --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
 "$SCRIPTS/merge-queue-watch" merge-pr-complete --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
 touch "$WATCH_CLEANUP_FAIL"
-set +e; "$SCRIPTS/merge-queue-watch" cleanup --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null 2>"$TMP/cleanup.err"; cleanup_rc=$?; set -e
+touch "$WATCH_CLEANUP_PAUSE.enabled"
+"$SCRIPTS/merge-queue-watch" cleanup --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null 2>"$TMP/cleanup.err" & cleanup_pid=$!
+wait_exists "$WATCH_CLEANUP_PAUSE.entered" || bad "cleanup owner did not reach helper"
+set +e; "$SCRIPTS/merge-queue-watch" cleanup --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null 2>"$TMP/cleanup-race.err"; cleanup_race_rc=$?; set -e
+[[ "$cleanup_race_rc" -ne 0 ]] && ok "concurrent cleanup refuses the live owner" || bad "concurrent cleanup stole the live claim"
+touch "$WATCH_CLEANUP_PAUSE.release"
+set +e; wait "$cleanup_pid"; cleanup_rc=$?; set -e
 if [[ "$cleanup_rc" -ne 0 ]]; then ok "cleanup failure returns nonzero"; else bad "cleanup failure exited zero"; fi
 eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .cleanup.status)" failed "cleanup failure remains resumable for failed acknowledgment"
 "$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue KEN-829 --watch-id "$watch" --result fail --diagnostic-file "$TMP/cleanup.err" >/dev/null
-rm -f "$WATCH_CLEANUP_FAIL"
+rm -f "$WATCH_CLEANUP_FAIL" "$WATCH_CLEANUP_PAUSE.enabled" "$WATCH_CLEANUP_PAUSE.entered" "$WATCH_CLEANUP_PAUSE.release"
 
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
 "$SCRIPTS/merge-queue-watch" direct-merged --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
 "$SCRIPTS/merge-queue-watch" merge-pr-complete --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
+(git -C "$WT" switch -qc foreign-cleanup)
+"$SCRIPTS/merge-queue-watch" cleanup --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
+state=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .cleanup.disposition <<<"$state")" kept "cleanup keeps a worktree whose branch changed"
+[[ -d "$WT" ]] && ok "foreign-branch worktree remains present" || bad "foreign-branch worktree was removed"
+"$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue KEN-829 --watch-id "$watch" --result pass >/dev/null
+git -C "$WT" switch -q watch-test
+git -C "$MAIN" branch -D foreign-cleanup >/dev/null
+
+prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
+"$SCRIPTS/merge-queue-watch" direct-merged --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
+"$SCRIPTS/merge-queue-watch" merge-pr-complete --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
+touch "$WT/uncommitted"
+"$SCRIPTS/merge-queue-watch" cleanup --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
+state=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .cleanup.disposition <<<"$state")" kept "cleanup keeps a worktree that became dirty"
+[[ -f "$WT/uncommitted" ]] && ok "dirty worktree data survives cleanup" || bad "dirty worktree data was removed"
+"$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue KEN-829 --watch-id "$watch" --result pass >/dev/null
+rm -f "$WT/uncommitted"
+
+prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
+"$SCRIPTS/merge-queue-watch" direct-merged --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
+"$SCRIPTS/merge-queue-watch" merge-pr-complete --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
+touch "$WATCH_CLEANUP_INTERRUPT"
+set +e; "$SCRIPTS/merge-queue-watch" cleanup --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null 2>&1; interrupted_rc=$?; set -e
+[[ "$interrupted_rc" -ne 0 ]] && ok "interrupted cleanup exits before completion" || bad "interrupted cleanup reported success"
+state=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .status <<<"$state")" cleanup_pending "interruption leaves a durable cleanup claim"
+replay=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .action <<<"$replay")" resume_cleanup "cleanup_pending routes to an explicit resume"
 (cd "$WT" && "$SCRIPTS/merge-queue-watch" cleanup --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null)
-if [[ ! -d "$WT" ]]; then ok "cleanup safely removes the lane's original cwd"; else bad "cleanup left the issue worktree"; fi
-eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" cleanup_complete "cleanup completes before final acknowledgment"
+eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .cleanup.resume_count)" 1 "resumed cleanup records its takeover"
+if [[ ! -d "$WT" ]]; then ok "resumed cleanup safely removes the lane's original cwd"; else bad "resumed cleanup left the issue worktree"; fi
+eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" cleanup_complete "resumed cleanup completes before final acknowledgment"
 replay=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .action <<<"$replay")" acknowledge "cleanup completion resumes only acknowledgment"
 "$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue KEN-829 --watch-id "$watch" --result pass >/dev/null
@@ -307,13 +356,14 @@ eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -
 replay=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .action <<<"$replay")" complete "completed lifecycle consumes as no-op"
 
-"$SCRIPTS/merge-queue-watch" init --worktree "$MAIN" --issue KEN-829 --branch watch-test >/dev/null
-prep=$("$SCRIPTS/merge-queue-watch" prepare --worktree "$MAIN" --issue KEN-829 --repo owner/repo --pr 42 --head "$HEAD_A" --root "$MAIN" --gate-mode off --recovery-count 0 --cleanup-worktree false)
+"$SCRIPTS/merge-queue-watch" init --worktree "$MAIN" --issue pr-42 --branch master >/dev/null
+prep=$("$SCRIPTS/merge-queue-watch" prepare --worktree "$MAIN" --issue pr-42 --repo owner/repo --pr 42 --head "$HEAD_A" --root "$MAIN" --gate-mode off --recovery-count 0 --cleanup-worktree false)
 watch=$(jq -r .watch_id <<<"$prep")
-"$SCRIPTS/merge-queue-watch" direct-merged --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
-"$SCRIPTS/merge-queue-watch" merge-pr-complete --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
-"$SCRIPTS/merge-queue-watch" cleanup --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
-"$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue KEN-829 --watch-id "$watch" --result pass >/dev/null
+eq "$(jq -r .issue_id <<<"$prep")" pr-42 "issue-less standalone lifecycle uses the stable PR fallback key"
+"$SCRIPTS/merge-queue-watch" direct-merged --root "$MAIN" --issue pr-42 --watch-id "$watch" >/dev/null
+"$SCRIPTS/merge-queue-watch" merge-pr-complete --root "$MAIN" --issue pr-42 --watch-id "$watch" >/dev/null
+"$SCRIPTS/merge-queue-watch" cleanup --root "$MAIN" --issue pr-42 --watch-id "$watch" >/dev/null
+"$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue pr-42 --watch-id "$watch" --result pass >/dev/null
 if [[ -d "$MAIN/.git" ]]; then ok "standalone lifecycle never treats main as issue worktree"; else bad "standalone cleanup removed main repository"; fi
 
 printf 'merge-queue-watch: %d pass, %d fail\n' "$PASS" "$FAIL"

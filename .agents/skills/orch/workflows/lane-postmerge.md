@@ -3,7 +3,8 @@
 This is the managed continuation after merge-pr. Skip when merge-pr returned an
 armed or nonmerged result.
 
-1. Read the durable lifecycle. Continue only for `awaiting_lane_postmerge`:
+1. Read the durable lifecycle. Continue for `awaiting_lane_postmerge`, or for
+   `cleanup_pending` when resuming an interrupted cleanup claim:
 
    ```bash
    .agents/skills/orch/scripts/merge-queue-watch inspect --root [MAIN_REPO_ROOT] --issue [STATE_KEY]
@@ -14,14 +15,20 @@ armed or nonmerged result.
    one.
 
 3. On success, remove the issue worktree through the lifecycle owner. The
-   command enters `[MAIN_REPO_ROOT]` before calling its absolute worktree helper,
-   so removing the lane's original cwd cannot break the transition:
+   command revalidates repository, branch, path, and cleanliness immediately
+   before removal. A dirty, detached, foreign-branch, or re-pointed worktree is
+   kept and reported as a successful `kept` cleanup disposition. An interrupted
+   `cleanup_pending` owner can run the same command again; a concurrent owner is
+   refused. The command enters `[MAIN_REPO_ROOT]` before calling its absolute
+   worktree helper, so removing the lane's original cwd cannot break the
+   transition:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/merge-queue-watch cleanup --root [MAIN_REPO_ROOT] --issue [STATE_KEY] --watch-id [WATCH_ID]
    ```
 
-4. Acknowledge lane completion only after cleanup reports `cleanup_complete`:
+4. Acknowledge lane completion only after cleanup reports `cleanup_complete`.
+   Both `removed` and safety-preserving `kept` dispositions are complete:
 
    ```bash
    .agents/skills/orch/scripts/merge-queue-watch acknowledge --root [MAIN_REPO_ROOT] --issue [STATE_KEY] --watch-id [WATCH_ID] --result pass

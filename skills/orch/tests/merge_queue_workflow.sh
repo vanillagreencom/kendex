@@ -55,8 +55,11 @@ audit_lane() {
 echo "=== merge queue workflow command ownership ==="
 if audit "$MERGE"; then ok "live prepare, exact-head arm, launch, consume, and completion commands are executable and ordered"; else bad "workflow command chain"; fi
 if grep -Fq '.agents/skills/orch/scripts/merge-queue-watch init --worktree [WORKTREE_PATH] --issue [STATE_KEY] --branch [PR_BRANCH]' "$MERGE" && \
-  grep -Fq '`MERGED` → set `[ALREADY_MERGED]=true`' "$MERGE"; then ok "standalone and already-merged routes initialize lifecycle state"; else bad "standalone or already-merged lifecycle route"; fi
+  grep -Fq 'otherwise use `pr-[PR_NUMBER]`' "$MERGE" && \
+  grep -Fq '`MERGED` → set `[ALREADY_MERGED]=true`' "$MERGE"; then ok "standalone and already-merged routes initialize a collision-safe lifecycle state"; else bad "standalone or already-merged lifecycle route"; fi
 if audit_lane "$LANE"; then ok "lane cleanup precedes final acknowledgment"; else bad "lane cleanup and acknowledgment chain"; fi
+if grep -Fq '`cleanup_pending` when resuming an interrupted cleanup claim' "$LANE" && \
+  grep -Fq 'safety-preserving `kept` dispositions are complete' "$LANE"; then ok "lane resumes cleanup and acknowledges kept worktrees"; else bad "lane cleanup resume or kept acknowledgment doctrine"; fi
 if grep -Fq 'workflows/lane-postmerge.md' "$ORCH/workflows/start-worktree.md" && \
   grep -Fq 'workflows/lane-postmerge.md' "$ORCH/workflows/submit-pr.md"; then ok "managed callers run the lane acknowledgment workflow"; else bad "managed continuation wiring"; fi
 
@@ -83,6 +86,16 @@ cp "$MERGE" "$TMP/poststep.md"
 sed -i.bak 's|^   \[MAIN_REPO_ROOT\]/.agents/skills/linear/scripts/linear.sh issues complete|   true # [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues complete|' "$TMP/poststep.md"
 rm -f "$TMP/poststep.md.bak"
 if audit "$TMP/poststep.md"; then bad "poststep no-op survived"; else ok "poststep true-comment mutant is killed"; fi
+
+cp "$MERGE" "$TMP/fallback.md"
+sed -i.bak 's/otherwise use `pr-\[PR_NUMBER\]`/otherwise leave it empty/' "$TMP/fallback.md"
+rm -f "$TMP/fallback.md.bak"
+if grep -Fq 'otherwise use `pr-[PR_NUMBER]`' "$TMP/fallback.md"; then bad "empty state-key mutant survived"; else ok "empty state-key mutant is killed"; fi
+
+cp "$LANE" "$TMP/resume.md"
+sed -i.bak 's/`cleanup_pending` when resuming an interrupted cleanup claim/`cleanup_complete` only/' "$TMP/resume.md"
+rm -f "$TMP/resume.md.bak"
+if grep -Fq '`cleanup_pending` when resuming an interrupted cleanup claim' "$TMP/resume.md"; then bad "cleanup resume mutant survived"; else ok "cleanup resume mutant is killed"; fi
 
 printf 'merge-queue-workflow: %d pass, %d fail\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

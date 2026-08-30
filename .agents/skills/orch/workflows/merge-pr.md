@@ -77,8 +77,11 @@ Bot-specific signals â€” emoji reactions, sticky-comment prose, checklist text â
 .agents/skills/github/scripts/github.sh bot-token
 ```
 
-Use the outputs as `[STATE_KEY]`, `[CLEANUP_WORKTREE]`, and `[WORKTREE_PATH]`.
-When no issue worktree exists, set `[WORKTREE_PATH]` to `[MAIN_REPO_ROOT]` and
+Use the extracted issue as `[ISSUE]`. Set `[STATE_KEY]` to `[ISSUE]` when it is
+nonempty; otherwise use `pr-[PR_NUMBER]`. The repository-local `pr-N` key is
+stable across retries and cannot collide with the normalized `issue-N` GitHub
+issue key. Use the worktree commands only when `[ISSUE]` is nonempty. When no
+issue worktree exists, set `[WORKTREE_PATH]` to `[MAIN_REPO_ROOT]` and
 `[CLEANUP_WORKTREE]=false`. Read the PR branch, then initialize workflow state;
 the command is idempotent for managed sessions and creates it for standalone
 `merge-pr`:

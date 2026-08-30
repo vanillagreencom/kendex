@@ -2,14 +2,16 @@
 
 merge_queue_supervise() {
   local state_file="$1" watch_id="$2" waiter="$3" poll="$4" max_wait="$5"
-  local repo pr head artifact log runtime deadline temp output worker_pid="" worker_rc=0 event=""
+  local repo pr head main_root artifact log runtime deadline temp output worker_pid="" worker_rc=0 event=""
   local event_fifo owner_fifo watchdog_pid="" published=false
   repo=$(jq -r .repository "$state_file"); pr=$(jq -r .pr_number "$state_file")
   head=$(jq -r .head_sha "$state_file"); artifact=$(jq -r .artifact_path "$state_file")
+  main_root=$(jq -r .main_repo_root "$state_file")
   log=$(jq -r .log_path "$state_file"); runtime=$(jq -r .runtime_dir "$state_file")
   deadline=$(jq -r .deadline "$state_file"); temp="$runtime/worker.json"; output="$runtime/artifact.tmp"
   event_fifo="$runtime/events"; owner_fifo="$runtime/deadline-owner"
   [[ -d "$runtime" && ! -L "$runtime" && "$(cat < "$runtime/token")" == "$watch_id" ]] || return 1
+  [[ -d "$main_root" ]] || return 1
 
   stop_worker() {
     local i
@@ -54,7 +56,9 @@ merge_queue_supervise() {
   (
     exec 7>"$event_fifo"
     set +e
-    GH_REPO="$repo" "$waiter" "$pr" "$poll" "$max_wait" --json > "$temp" 2>> "$log"
+    cd "$main_root" || exit 1
+    env -u GH_REPO -u GITHUB_REPOSITORY GH_REPO="$repo" \
+      "$waiter" "$pr" "$poll" "$max_wait" --json > "$temp" 2>> "$log"
     rc=$?; printf '%s\n' "$rc" > "$runtime/worker.status"; printf 'worker\n' >&7; exit "$rc"
   ) & worker_pid=$!
   set +m
