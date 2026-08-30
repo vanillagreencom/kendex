@@ -249,9 +249,9 @@ has "skills/x/SKILL.md" && bad "control: SKILL.md passes under the shipped class
   || ok "control: without the override the 10000-byte SKILL.md is under 24k and passes"
 
 echo "=== a repo class scoped to a directory does not shadow a frozen class ==="
-# `*` crosses `/`, so `ui/*.ts` reaches the test files under ui/ too. They are
-# frozen, so a 250-line ceiling on them would demand a split the class the
-# package ships already sized at 800.
+# `*` crosses `/`, so `ui/*.ts` reaches the test files under ui/ too, and an
+# entry written for components would retitle the class the package ships for
+# them. The rule these arms pin: README.md "Path classes".
 new_repo shadow
 mklines ui/src/App.ts 300
 mklines ui/src/App.test.ts 500
@@ -357,18 +357,30 @@ if [ "$RC" -eq 0 ] && has "classes ui/*.ts=400 (yielded on frozen paths)"; then
 else
   bad "a partly yielded entry says so on the verdict line" "rc=$RC out=$OUT"
 fi
-# The control: an entry that yields nowhere carries no annotation at all.
+# An entry that matched nothing at all governs nothing too — a typo'd or stale
+# pattern is the likeliest way to get there, and a run confirming it as the
+# mapping in force is the one that hides it.
+run 'SIZE_RATCHET_CLASSES=uii/*.ts=1'
+if [ "$RC" -eq 0 ] && has "classes uii/*.ts=1 (governed nothing: matched no counted path)"; then
+  ok "an entry no counted path matches is reported as governing nothing"
+else
+  bad "a never-matched entry says so on the verdict line" "rc=$RC out=$OUT"
+fi
+# The control: an entry that yields nowhere and governs its paths carries no
+# annotation at all, so the annotations above are not on every entry.
 run 'SIZE_RATCHET_CLASSES=ui/*.ts=400' SIZE_RATCHET_FROZEN_CLASSES=
-if [ "$RC" -eq 1 ] && has "classes ui/*.ts=400," && ! has "yielded"; then
+if [ "$RC" -eq 1 ] && has "classes ui/*.ts=400," && ! has "governed nothing" && ! has "yielded"; then
   ok "control: with nothing frozen the same entry is reported plain"
 else
   bad "control: an unyielded entry carries no annotation" "rc=$RC out=$OUT"
 fi
 
-echo "=== a NEW offender is offered the bootstrap, frozen class included ==="
-# NEW fires when a path is over its threshold with NO baseline row, so there is
-# no row for the freeze to refuse. The freeze speaks to raising an EXISTING
-# row, which is the GROW and RAISED case.
+echo "=== the remedy follows HEAD's baseline, not the verdict label ==="
+# One predicate decides every size remedy: whether HEAD's baseline carries the
+# path. A path HEAD does not carry has no row to raise, so the declaration
+# admits a first one in every class; a path HEAD carries is a raise, which a
+# frozen class refuses. The NEW label appears on both sides of that line, so
+# reading the label instead misdirects in one direction or the other.
 new_repo bootstrap
 mklines src/a.test.ts 900
 mklines src/big.ts 500
@@ -400,6 +412,39 @@ fi
 run RATCHET_RAISE=1
 [ "$RC" -eq 0 ] && ok "control: and the declaration carries that first row in a frozen class" \
   || bad "control: the bootstrap is admitted in a frozen class" "rc=$RC out=$OUT"
+
+# The other direction, same NEW label: HEAD carries the row, the change deletes
+# it and the file grows. Bootstrapping is impossible here — restoring the row
+# at the new size is the raise a frozen class refuses — so the remedy is the
+# split, and the arm above is its control.
+new_repo remedy-head
+mkbytes docs/guide.md 30000
+mkdir -p "$R/tools"
+printf 'docs/guide.md	30000b
+' >"$R/$BASE"
+git -C "$R" add -A
+git -C "$R" commit -q -m row
+mkbytes docs/guide.md 70000
+: >"$R/$BASE"
+git -C "$R" add -A
+run
+if [ "$RC" -eq 1 ] && has "new offender: docs/guide.md — 70000 bytes > threshold 65536 (class *.md)" \
+  && has "remedy: split at a concept seam (a frozen class never raises an existing row)"; then
+  ok "a NEW verdict for a path HEAD's baseline carries is offered the split, not a bootstrap"
+else
+  bad "the deleted-row NEW verdict names the raise it cannot have" "rc=$RC out=$OUT"
+fi
+# And the route the bootstrap wording would have sent its author down is the
+# one the gate refuses, which is why that wording must not appear here.
+printf 'docs/guide.md	70000b
+' >"$R/$BASE"
+git -C "$R" add -A
+run RATCHET_RAISE=1
+if [ "$RC" -eq 1 ] && has "frozen baseline row raised: docs/guide.md — row 30000 -> 70000 bytes"; then
+  ok "control: restoring that row and declaring it is refused, so the bootstrap remedy would misdirect"
+else
+  bad "control: the declared raise of the restored row is refused" "rc=$RC out=$OUT"
+fi
 
 echo "=== the package excludes CHANGELOG*.md by default ==="
 new_repo changelog

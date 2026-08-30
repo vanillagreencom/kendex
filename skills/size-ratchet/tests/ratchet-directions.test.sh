@@ -88,6 +88,8 @@ case "$OUT" in *"$BOOT"*) ok "and is offered the bootstrap: no row exists yet, s
 # alone. That is the case the freeze speaks to, and the only one.
 mkdir -p "$R/tools"
 printf 'x.test.txt\t11\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+git -C "$R" commit -q -m row
 mkfile x.test.txt 15
 git -C "$R" add -A
 run_frozen
@@ -104,6 +106,9 @@ mkfile big.txt 15
 mkdir -p "$R/tools"
 printf 'big.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv"
 git -C "$R" add -A
+# HEAD carries the row from here on, so a growth verdict below is a RAISE the
+# remedy speaks to rather than a first row nothing has frozen yet.
+git -C "$R" commit -q -m row
 run_sr
 [ "$RC" -eq 0 ] && ok "baselined offender at exactly its row passes" || bad "baselined offender at exactly its row passes" "rc=$RC out=$OUT"
 

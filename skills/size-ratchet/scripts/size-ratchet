@@ -38,10 +38,9 @@
 # SIZE_RATCHET_CLASSES (a repo's own overrides) then
 # SIZE_RATCHET_DEFAULT_CLASSES (the list this package ships), else
 # SIZE_RATCHET_THRESHOLD. Class patterns are the excludes file's globs and
-# run through the same matcher. One inversion: on a frozen path that the
-# shipped list also classifies, a repo entry decides only if it restates that
-# list's own pattern, so a directory-scoped class cannot silently retitle the
-# shipped classes covering paths it never named.
+# run through the same matcher. Frozen paths carry the one inversion to that
+# order: README.md "Path classes" states the rule, path_threshold implements
+# it, and neither is paraphrased anywhere else.
 #
 # A class threshold carries its UNIT: `pattern=400` is 400 lines,
 # `pattern=24k` is 24*1024 bytes. Lines are newline counts (`wc -l`), bytes
@@ -132,21 +131,19 @@ kendex.settings.toml [env] > default):
   SIZE_RATCHET_THRESHOLD   line threshold for a path in no class (default 400)
   SIZE_RATCHET_CLASSES     this repo's OVERRIDES: `pattern=threshold`
                            entries separated by `;`, excludes-file glob
-                           semantics, matched BEFORE the shipped list —
-                           except on a frozen path that the shipped list also
-                           classifies, where only an entry restating that
-                           list's own pattern decides   (default none)
+                           semantics, matched BEFORE the shipped list, with
+                           one inversion on frozen paths (README.md, "Path
+                           classes")   (default none)
   SIZE_RATCHET_DEFAULT_CLASSES
                            the class list this package ships, same syntax;
                            set it empty to drop the shipped list alone —
                            SIZE_RATCHET_CLASSES still matches first, so
                            single-threshold behavior needs both empty
   SIZE_RATCHET_FROZEN_CLASSES
-                           `;`-separated globs with two duties: their rows
-                           may never rise, whatever RATCHET_RAISE says, and
-                           their paths keep the shipped class that names
-                           them rather than a repo entry's
-                           (default: markdown and tests)
+                           `;`-separated globs whose rows may never rise,
+                           whatever RATCHET_RAISE says; they also decide
+                           where the class inversion applies (README.md,
+                           "Path classes")   (default: markdown and tests)
   SIZE_RATCHET_BASELINE    baseline path            (default tools/size-ratchet-baseline.tsv)
   SIZE_RATCHET_EXCLUDES    exclusion-list path      (default tools/size-ratchet-excludes)
 Flags override both for the path settings.
@@ -363,9 +360,8 @@ parse_classes() { # SETTING-NAME VALUE — appends entries
 }
 
 # A repo's own entries are matched FIRST, so it overrides a class without
-# restating the list; the shipped list decides everything it leaves alone. On
-# a frozen path that the shipped list also classifies, that order inverts —
-# path_threshold says why.
+# restating the list; the shipped list decides everything it leaves alone.
+# Frozen paths invert that order — path_threshold is the rule.
 CLASSES="$(sr_setting SIZE_RATCHET_CLASSES "")" || exit 2
 parse_classes SIZE_RATCHET_CLASSES "$CLASSES"
 REPO_CLASS_COUNT="$CLASS_COUNT"
@@ -653,24 +649,22 @@ is_excluded() { # PATH — 0 when some exclusion glob matches the full path
 # report() re-runs it to name the threshold that judged the path — including
 # for a baseline row whose file left the tracked set.
 #
-# A repo entry is matched first, EXCEPT on a frozen path that the shipped list
-# also classifies. `*` crosses `/`, so a repo class scoped to a directory
-# (`ui/*.ts=250`) also matches paths the repo never named — every test file
-# under it, and under a broader pattern every document too — and silently
-# retitles the shipped class that named them, the counting UNIT included: a
-# `docs/*=250` meant for code judges a byte class in lines. The rule runs in
-# both directions, a looser repo entry as much as a tighter one, because what
-# it protects is the shipped class naming the path, not any one number. Such
-# an entry is skipped and the shipped class decides. A repo meaning to move a
-# frozen class restates that class's own pattern, and that entry still wins;
-# where nothing else matched, the skipped entry stands, because the base
-# threshold is a number nobody wrote for that path.
+# A repo entry is matched first, EXCEPT on a frozen path. `*` crosses `/`, so
+# a repo class scoped to a directory (`ui/*.ts=250`) also matches paths the
+# repo never named, and silently retitles the shipped class that named them,
+# the counting UNIT included: a `docs/*=250` meant for code judges a byte
+# class in lines. That is what the skip below prevents, and it prevents it in
+# both directions, because what it protects is the shipped class naming the
+# path rather than any one number. The rule and its two exits are stated once,
+# in README.md "Path classes"; each exit is a branch below.
 path_threshold() { # PATH
   local i=0 frozen="" shadowed="" skipped="" hit="" s
   # Indexed iteration bounded by CLASS_COUNT: a whole-array expansion on an
   # empty array is an unbound variable under Bash 3.2 with set -u.
   while [ "$i" -lt "$CLASS_COUNT" ]; do
     if glob_match "$1" "${CLASS_PATTERNS[$i]}"; then
+      # Exit one: an entry restating a shipped pattern is the repo naming the
+      # class it means to move, so it is no shadow and is never skipped.
       if [ "$i" -lt "$REPO_CLASS_COUNT" ] && [ "${CLASS_RESTATED[$i]:-0}" != "1" ]; then
         # The freeze list is a second glob sweep, so it is asked once per path
         # and only for a repo entry that actually matched.
@@ -689,8 +683,9 @@ path_threshold() { # PATH
     fi
     i=$((i + 1))
   done
-  # Where the shipped list names no class for the frozen path, the first entry
-  # the skip passed over stands after all.
+  # Exit two: where the shipped list names no class for the frozen path, the
+  # first entry the skip passed over stands after all — the base threshold is
+  # a number nobody wrote for that path.
   [ -n "$hit" ] || hit="$shadowed"
   # An entry the skip passed over LOST this path, unless that fallback just
   # handed the same path back to it. The verdict line reports both.
@@ -1002,10 +997,10 @@ LC_ALL=C sort -- "$TMP/counts.classed" >"$TMP/counts.tsv" || collection_error "c
 # The verdict line reports the mapping the run actually USED, which is why it
 # is built here and not at parse time: the pass above put every tracked path
 # through the resolver, so each repo entry now knows whether it decided a path
-# or yielded one to a frozen class. An entry that yielded and decided nothing
-# governs nothing, and a run that printed it as the mapping in force would
-# advertise a threshold no file was ever judged against — a clean run saying
-# something false. The raw setting's spacing and empty entries stay out: they
+# or yielded one to a frozen class. An entry that decided none governs
+# nothing, and a run that printed it as the mapping in force would advertise a
+# threshold no file was ever judged against — a clean run saying something
+# false. The raw setting's spacing and empty entries stay out: they
 # read as behavior the matcher never sees. The shipped list is a count, not a
 # transcript — it is the same everywhere, and the per-file diagnostics already
 # name the class that decided each path.
@@ -1013,12 +1008,18 @@ CLASSES_NOTE=""
 sr_ni=0
 while [ "$sr_ni" -lt "$REPO_CLASS_COUNT" ]; do
   sr_entry="${CLASS_PATTERNS[$sr_ni]}=${CLASS_RAW[$sr_ni]}"
-  if [ "${CLASS_YIELDED[$sr_ni]:-0}" = "1" ]; then
-    if [ "${CLASS_DECIDED[$sr_ni]:-0}" = "1" ]; then
-      sr_entry="$sr_entry (yielded on frozen paths)"
-    else
+  # DECIDED is the predicate, so the bare rendering is unreachable for an
+  # entry that governed nothing however it got there — yielded away, or a
+  # typo'd or stale pattern that matched no counted path at all. YIELDED only
+  # supplies the reason.
+  if [ "${CLASS_DECIDED[$sr_ni]:-0}" != "1" ]; then
+    if [ "${CLASS_YIELDED[$sr_ni]:-0}" = "1" ]; then
       sr_entry="$sr_entry (governed nothing: yielded on every path it matched)"
+    else
+      sr_entry="$sr_entry (governed nothing: matched no counted path)"
     fi
+  elif [ "${CLASS_YIELDED[$sr_ni]:-0}" = "1" ]; then
+    sr_entry="$sr_entry (yielded on frozen paths)"
   fi
   CLASSES_NOTE="${CLASSES_NOTE:+$CLASSES_NOTE;}$sr_entry"
   sr_ni=$((sr_ni + 1))
@@ -1068,8 +1069,24 @@ evaluate() { # BASELINE-TSV — violations on stdout, one per line, tab-separate
   ' "$1" "$TMP/counts.tsv"
 }
 
+# Does HEAD's baseline carry a row for this path? One predicate decides every
+# size remedy, so no verdict label can be paired with the wrong one: a path
+# HEAD does not carry has no row to raise, so the declaration admits a first
+# one in every class, frozen included; a path HEAD carries is a RAISE, which a
+# frozen class refuses whatever the declaration says. Reading the label instead
+# misdirects in both directions — a genuine bootstrap told no declaration helps,
+# and a deleted row told to bootstrap a row HEAD still carries.
+head_carries_row() { # PATH
+  [ -n "$HEAD_BASELINE" ] || return 1
+  local p n
+  while IFS="$TAB" read -r p n || [ -n "$p" ]; do
+    if [ "$p" = "$1" ]; then return 0; fi
+  done <"$HEAD_BASELINE"
+  return 1
+}
+
 report() { # VIOLATIONS-FILE — human diagnostics on stdout
-  local kind path n b raw why rem boot unit
+  local kind path n b raw why remedy unit
   while IFS="$TAB" read -r kind path n raw; do
     path_threshold "$path"; if [ -n "$PC" ]; then why="class $PC"; else why="default"; fi
     unit="$(unit_noun "$PU")s"
@@ -1077,26 +1094,21 @@ report() { # VIOLATIONS-FILE — human diagnostics on stdout
     # the row's `b` suffix comes off — except in the wrong-unit verdict,
     # where the suffix IS the finding.
     b="$(row_value "$raw")"
-    # `rem` speaks to a row that already exists: GROW and RAISED, where a
-    # frozen class refuses the raise. NEW and ADDED have no such row — the
-    # file carries none at all — so both get `boot`, the bootstrap the
-    # declaration admits in every class, frozen included. Handing either one
-    # `rem` would tell its author no declaration helps at the one moment one
-    # would have carried the run.
-    if is_frozen "$path"; then
-      rem="split at a concept seam (a frozen class never raises an existing row)"
+    if ! head_carries_row "$path"; then
+      remedy="split at a concept seam, or declare the row with RATCHET_RAISE=1 — a first row for a path HEAD's baseline does not carry is a bootstrap, admitted in every class"
+    elif is_frozen "$path"; then
+      remedy="split at a concept seam (a frozen class never raises an existing row)"
     else
-      rem="split at a concept seam (RATCHET_RAISE=1 raises the row only when the added lines are the fix with no seam, or fragments of one concept are merged back into one file)"
+      remedy="split at a concept seam (RATCHET_RAISE=1 raises the row only when the added lines are the fix with no seam, or fragments of one concept are merged back into one file)"
     fi
-    boot="split at a concept seam, or declare the row with RATCHET_RAISE=1 — a first row for a path HEAD's baseline does not carry is a bootstrap, admitted in every class"
     case "$kind" in
       NEW)
         echo "size-ratchet FAIL new offender: $path — $n $unit > threshold $PT ($why), no baseline row"
-        echo "  remedy: $boot"
+        echo "  remedy: $remedy"
         ;;
       GROW)
         echo "size-ratchet FAIL baselined file grew: $path — $n $unit > baseline $b (threshold $PT, $why)"
-        echo "  remedy: $rem"
+        echo "  remedy: $remedy"
         ;;
       LOOSE)
         echo "size-ratchet FAIL baseline looser than reality: $path — baseline $b > actual $n $unit, still over threshold $PT ($why); the ratchet only moves down"
@@ -1116,15 +1128,15 @@ report() { # VIOLATIONS-FILE — human diagnostics on stdout
         ;;
       ADDED)
         echo "size-ratchet FAIL baseline row added: $path — a first row, at $n $unit (threshold $PT, $why); HEAD's baseline carries no row for it"
-        echo "  remedy: $boot"
+        echo "  remedy: $remedy"
         ;;
       RAISED)
         echo "size-ratchet FAIL baseline row raised: $path — row $b -> $n $unit, threshold $PT ($why)"
-        echo "  remedy: $rem"
+        echo "  remedy: $remedy"
         ;;
       FROZEN)
         echo "size-ratchet FAIL frozen baseline row raised: $path — row $b -> $n $unit, threshold $PT ($why); a frozen class refuses a raise whatever RATCHET_RAISE says"
-        echo "  remedy: split at a concept seam (a frozen class never raises an existing row)"
+        echo "  remedy: $remedy"
         ;;
       MOVED)
         echo "size-ratchet FAIL baseline moved and rewritten: $path -> $BASELINE_FILE — HEAD's rows left $path, and the rows arriving at $BASELINE_FILE are not them; across a move nothing compares them, so a raise would land unjudged"
