@@ -39,15 +39,23 @@ waiter: ci-wait owns check state and approval-wait owns the review gate.
                  review threads while queued)
 
 Each poll reads both signals the merge-pr routing table consumes:
-`gh pr view <PR> --json state,mergedAt` plus the GraphQL isInMergeQueue /
-mergeQueueEntry { state position headCommit { oid } } / autoMergeRequest
-fields (gh pr view exposes no queue-membership field), and — when the
-entry exposes its head commit — one paginated REST check-runs read on that
-commit for the progress signal. `gh pr view --json mergeable` is never
-polled: it stays UNKNOWN after a merge and would loop forever.
+`gh pr view <PR> --json state,mergedAt,mergeable` plus the GraphQL
+isInMergeQueue / mergeQueueEntry { state position headCommit { oid } } /
+autoMergeRequest fields (gh pr view exposes no queue-membership field),
+and — when the entry exposes its head commit — one paginated REST
+check-runs read on that commit for the progress signal. `mergeable` routes
+exactly one verdict and decides nothing else: CONFLICTING is the
+conflicting verdict, and every other value routes nothing — UNKNOWN
+included, which is what it reads while GitHub recomputes and what it
+settles at after a merge. `state` is read first in the same call, so a
+merged PR exits on MERGED before mergeable is consulted at all.
 
 Verdicts (the merge-pr § 5 step 1 routing table):
   merged      state == "MERGED". The only exit-0 verdict.
+  conflicting mergeable == "CONFLICTING": the head conflicts with the base.
+              The queue rejects it and an armed auto-merge sits forever, so
+              this outranks ejected and disarmed — the fix is a restack, not
+              a CI cycle.
   ejected     an earlier poll saw the PR IN the merge queue, and it is now
               out (isInMergeQueue false, mergeQueueEntry null) while still
               OPEN: the merge-group run failed and GitHub removed it.
@@ -126,8 +134,9 @@ ever fabricating a dequeue or a quiet.
 JSON output (always when --json):
   {
     "status": "complete" | "timeout" | "error",
-    "verdict": "merged" | "ejected" | "disarmed" | "dequeued" | "closed"
-               | "queued" | "not_queued" | "unknown",
+    "verdict": "merged" | "conflicting" | "ejected" | "disarmed"
+               | "dequeued" | "closed" | "queued" | "not_queued"
+               | "unknown",
     "elapsed_seconds": <int>,
     "polls": <int>,
     "pr_state": <string>,          # OPEN | MERGED | CLOSED | "" (never read)
@@ -138,7 +147,8 @@ JSON output (always when --json):
     "was_queued": <bool>,          # ANY poll saw queued OR armed
     "was_in_merge_queue": <bool>,  # ANY poll saw actual queue membership
     "progressing": <bool|null>,    # see Progress signal above
-    "cause": <string>,             # only when known: merge_group_failed |
+    "cause": <string>,             # only when known: base_conflict |
+                                   # merge_group_failed |
                                    # check_failed | auto_merge_cleared |
                                    # never_armed | closed_without_merge |
                                    # late_findings |
@@ -172,8 +182,8 @@ Environment (orch-env ladder: parent env > .env.local > .kendex/settings.toml /
 
 Exit codes:
   0  merged
-  1  ejected, disarmed, dequeued, closed, still-queued at the deadline,
-     never armed, or a non-auth error
+  1  conflicting, ejected, disarmed, dequeued, closed, still-queued at
+     the deadline, never armed, or a non-auth error
   2  usage error: missing PR#, unknown flag, or non-integer argument
      (matches ci-wait)
   3  GitHub auth/CLI error (matches ci-wait and approval-wait)
@@ -272,6 +282,9 @@ polls=0
 last_poll_time=""
 last_pr_state=""
 last_merged_at=""
+# GitHub's own merge verdict. Read for exactly one routing decision — the
+# conflicting verdict — never as evidence a merge did or did not land.
+last_mergeable=""
 last_in_queue="false"
 last_queue_state=""
 last_auto_merge="false"
@@ -396,6 +409,9 @@ emit_result() {
   case "$verdict" in
     merged)
       echo "Merge queue: merged (PR #$PR_NUM${last_merged_at:+ at $last_merged_at})"
+      ;;
+    conflicting)
+      echo "Merge queue: conflicting — PR #$PR_NUM conflicts with its base after ${elapsed}s (GitHub reports mergeable CONFLICTING). No merge fires until the branch is restacked: restack, push, and re-arm."
       ;;
     ejected)
       echo "Merge queue: ejected — PR #$PR_NUM left the merge queue after ${elapsed}s without merging; the merge-group run failed. Fix CI and re-arm."
@@ -850,7 +866,7 @@ while [ "$polls" -eq 0 ] || [ "$elapsed" -lt "$MAX_WAIT" ]; do
   # --- Signal 1: PR state. Read first, so a merge that landed between polls
   # is reported as merged even if the queue view has not caught up yet. ---
   set +e
-  view_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json state,mergedAt 2>"$GH_ERR_FILE")
+  view_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json state,mergedAt,mergeable 2>"$GH_ERR_FILE")
   view_status=$?
   set -e
   if [ "$view_status" -ne 0 ] || ! jq -e '.state? // empty' >/dev/null 2>&1 <<<"$view_json"; then
@@ -865,6 +881,7 @@ while [ "$polls" -eq 0 ] || [ "$elapsed" -lt "$MAX_WAIT" ]; do
   fi
   last_pr_state=$(jq -r '.state // ""' <<<"$view_json")
   last_merged_at=$(jq -r '.mergedAt // ""' <<<"$view_json")
+  last_mergeable=$(jq -r '.mergeable // ""' <<<"$view_json")
 
   case "$last_pr_state" in
     MERGED)
@@ -945,7 +962,12 @@ while [ "$polls" -eq 0 ] || [ "$elapsed" -lt "$MAX_WAIT" ]; do
   fi
 
   # --- Route (merge-pr § 5 step 1 table) ---
-  if [[ "$was_in_queue" == "true" && "$in_queue_now" == false ]]; then
+  if [[ "$last_mergeable" == "CONFLICTING" ]]; then
+    # A conflicting head merges through nothing: the queue rejects it and an
+    # armed auto-merge sits until someone looks. Ahead of ejection and
+    # disarm, whose recovery is a CI cycle for a failure CI never had.
+    note_candidate "conflicting" "base_conflict"
+  elif [[ "$was_in_queue" == "true" && "$in_queue_now" == false ]]; then
     # Left the merge queue while still OPEN: the merge-group run failed and
     # GitHub removed this PR. True regardless of autoMergeRequest, which
     # GitHub may leave set on an ejected PR.

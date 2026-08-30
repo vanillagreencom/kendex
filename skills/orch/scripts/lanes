@@ -17,6 +17,7 @@
 # Usage:
 #   lanes list [--harness claude|codex|all] [--refresh] [--json]
 #   lanes pick [--harness claude|codex] [--max-pct N] [--json]
+#   lanes context [--json]
 #
 #   list  Print every lane found, measured, with its live claim count. Table
 #         by default, --json for the structured record.
@@ -25,6 +26,11 @@
 #         --max-pct, the one with the fewest launches already in flight,
 #         headroom breaking the tie. Exit 3 when no lane is under --max-pct,
 #         so a caller can fail closed rather than launch into a wall.
+#   context  Print each LIVE WORK LANE's context use, read from its pane
+#         status line and nothing else: Claude prints `Opus 5 41%` (the
+#         percentage USED), Codex prints `Context 86% left` (the percentage
+#         REMAINING). Both are reported as CONTEXT_USED_PCT — the share
+#         CONSUMED. The lanes are the live claims below, one per pane.
 #
 # Options:
 #   --harness NAME   claude, codex, or all (default: all for list, claude for pick)
@@ -89,6 +95,8 @@ kendex_load_project_env "$PROJECT_ROOT" || {
 }
 # shellcheck source=lib/lane-claims.sh
 source "$SCRIPT_DIR/lib/lane-claims.sh"
+# shellcheck source=lib/lane-context.sh
+source "$SCRIPT_DIR/lib/lane-context.sh"
 # The lib carries the strict mode its other callers run under. This one is
 # deliberately errexit-free — one unreadable lane must not fail the whole
 # inventory — so restore that posture at the seam.
@@ -552,5 +560,14 @@ case "$SUB" in
 		[[ "$HARNESS" =~ ^(claude|codex)$ ]] || die "pick --harness must be claude or codex"
 		cmd_pick "$HARNESS" "$MAX_PCT" "$AS_JSON" "$ALLOW_REFRESH"
 		;;
-	*) die "unknown subcommand: $SUB (expected list or pick)" ;;
+	context)
+		load_lane_claims
+		# An unreadable claim store is not an empty fleet: reporting no lanes
+		# would read as "every lane has room", which is the answer that sends
+		# a lane into its wall.
+		[[ "$LANE_CLAIMS_RC" -eq 0 ]] || die "in-flight lane claims could not be read; refusing to report context (fix the claims directory, or set OVERSEE_WATCH_STATE_DIR)"
+		out="$(lane_context_collect "$LANE_CLAIMS_LIVE" lane_alias_for)"
+		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else lane_context_render <<<"$out"; fi
+		;;
+	*) die "unknown subcommand: $SUB (expected list, pick, or context)" ;;
 esac

@@ -71,6 +71,18 @@ handled under these rules:
   through a lane as its own item — the overseer still implements nothing.
   Deterministic beats prose where it stays simple; complex or brittle
   machinery is worse than either.
+- **Compact a lane before it runs out.** Every tick reads each live lane's
+  context use:
+
+  ```bash
+  .agents/skills/orch/scripts/lanes context
+  ```
+
+  A lane past ~50 `CONTEXT_USED_PCT` is compacted at its next safe point — an
+  idle prompt, or the gap between review rounds, never mid-round — with a
+  focus note naming its item, its open PRs and their thread state, what
+  remains in its queue, and the standing rulings it works under. A lane
+  compacted without that note re-derives every one of them.
 - **Decide without the user.** SKILL.md's ask gates stand unchanged — scope
   expansion, recorded decisions, and merge autonomy still ask. Any other
   reversible call takes the option that costs nothing, recorded in the fleet

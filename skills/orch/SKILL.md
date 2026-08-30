@@ -85,7 +85,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `orch-env` | Effective value of a kendex `[env]` setting (process env > `.env.local` > `.kendex/settings.toml` > `kendex.settings.toml` > default) |
 | `spawn-adapter` | Resolve Codex spawn parameters (`spawn`) and the runtime thread budget (`slots`) |
 | `open-terminal` | Terminal handoff; model, effort, and permission flags via `--launch-flags`. `--help` |
-| `lanes` | Enumerate harness auth lanes; `pick` prints the launch env prefix for the least-loaded qualifying lane, exit 3 when none qualifies. `--help` |
+| `lanes` | Enumerate harness auth lanes; `pick` prints the launch env prefix for the least-loaded qualifying lane, exit 3 when none qualifies; `context` reports each live lane's context use, read from its pane status line. `--help` |
 | `reconcile-work-items` | Read-only tracker sweep (parked containers, items stale past `RECONCILE_STALE_HOURS`, Done items with unchecked boxes). Exit 1 on findings |
 | `oversee-watch` | Block until the fleet needs the overseer, then print one `EVENT` line. `--help` |
 

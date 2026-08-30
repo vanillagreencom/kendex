@@ -102,10 +102,10 @@ skills/orch/scripts/approval-wait	1189
 skills/orch/scripts/ci-wait	669
 skills/orch/scripts/dev-artifact-check	482
 skills/orch/scripts/dev-return-write	430
-skills/orch/scripts/lanes	556
+skills/orch/scripts/lanes	573
 skills/orch/scripts/open-terminal	639
 skills/orch/scripts/oversee-watch	654
-skills/orch/scripts/queue-wait	1027
+skills/orch/scripts/queue-wait	1049
 skills/orch/scripts/review-artifact-check	413
 skills/orch/scripts/workflow-state	546
 skills/orch/tests/approval_wait.sh	1585
