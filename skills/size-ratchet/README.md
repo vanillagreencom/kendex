@@ -29,9 +29,11 @@ even then. Markdown is measured in bytes and code in lines. Flags and exit codes
   everything else in lines.
 - **Threshold**: `SIZE_RATCHET_CLASSES` first, then the shipped
   `SIZE_RATCHET_DEFAULT_CLASSES`, then `SIZE_RATCHET_THRESHOLD` (default
-  `400` lines) — see [Path classes](#path-classes). On a frozen path the
-  shipped class wins instead. Every file resolves to exactly one threshold,
-  and every other semantic runs per file against it.
+  `400` lines) — see [Path classes](#path-classes), which carries the one
+  inversion: on a frozen path that the shipped list also classifies, the
+  shipped class wins unless the repo entry restates its pattern. Every file
+  resolves to exactly one threshold, and every other semantic runs per file
+  against it.
 - **FAIL** (exit 1) on any of:
   1. **New offender** — a file over its threshold with no baseline row.
   2. **Growth** — a baselined file whose actual size exceeds its row.
@@ -67,7 +69,10 @@ raises is that threshold routed around.
 - **Frozen classes** (`SIZE_RATCHET_FROZEN_CLASSES`, default every markdown
   class and every test class) refuse a **raise of an existing row** outright,
   whatever the run carries. A test splits and a document is cut; neither is
-  ever the fix that needs the added lines.
+  ever the fix that needs the added lines. The setting has a second duty in
+  [Path classes](#path-classes): its paths keep the shipped class that names
+  them rather than a repo entry's, so adding a glob here to lock rows also
+  stops a repo class retitling those paths.
 - **Every other added or raised row** needs `RATCHET_RAISE=1` on the
   invocation. No commit message is read — a pre-commit hook cannot see one —
   so the reason belongs in the commit body, where review reads it.
@@ -135,21 +140,29 @@ SIZE_RATCHET_CLASSES = "*/SKILL.md=32k"
 ```
 
 **A repo entry never shadows a frozen class.** `*` crosses `/`, so
-`ui/*.ts=250` also matches the test files under `ui/`; they are frozen, and a
-frozen row never rises, so a tighter number there would demand a split the
-shipped class already sized. Such an entry is skipped and the shipped class
-that names the path decides — no consumer restates a shipped threshold to
-scope a narrower policy to one directory:
+`ui/*.ts=250` also matches the test files under `ui/`, and a broader
+`docs/*=250` reaches documents too. Those paths already have a shipped class
+naming them, and the repo never named them: the entry retitles that class
+silently, the counting UNIT included, so a `docs/*=250` written for code
+judges a byte class in lines. Such an entry is skipped and the shipped class
+decides. The rule holds in both directions, a looser repo entry as much as a
+tighter one, so no consumer restates a shipped threshold to scope a narrower
+policy to one directory:
 
 ```toml
 [env]
-SIZE_RATCHET_CLASSES = "ui/*.ts=250;ui/*.tsx=250"  # ui/ tests stay at 800
+SIZE_RATCHET_CLASSES = "ui/*.ts=250;ui/*.tsx=250"  # ui/ test files stay at 800
 ```
 
 To move a frozen class deliberately, restate that class's own pattern, as
 the `*/SKILL.md` example above does: an entry naming a pattern the shipped
 list carries still wins. Where the shipped list names no class for a frozen
 path, the repo entry stands.
+
+The verdict line says what each entry governed: an entry that yielded
+somewhere reads `ui/*.ts=250 (yielded on frozen paths)`, and one that
+yielded on every path it matched reads `(governed nothing: yielded on every
+path it matched)`.
 
 `SIZE_RATCHET_DEFAULT_CLASSES = ""` drops the shipped list; the repo's own
 `SIZE_RATCHET_CLASSES` still matches first, so single-threshold behavior
@@ -186,9 +199,9 @@ src/gen/*.rs	generated bindings
 | Key | Default | Meaning |
 |---|---|---|
 | `SIZE_RATCHET_THRESHOLD` | `400` | Line threshold for paths matching no class. |
-| `SIZE_RATCHET_CLASSES` | *(none)* | This repo's overrides, `pattern=threshold` separated by `;`, matched before the shipped list — except on a frozen path, where only an entry restating a shipped pattern decides. |
+| `SIZE_RATCHET_CLASSES` | *(none)* | This repo's overrides, `pattern=threshold` separated by `;`, matched before the shipped list — except on a frozen path that the shipped list also classifies, where only an entry restating that class's own pattern decides. |
 | `SIZE_RATCHET_DEFAULT_CLASSES` | *(the shipped list)* | The class list the package ships; empty runs with no classes. |
-| `SIZE_RATCHET_FROZEN_CLASSES` | *(markdown and tests)* | `;`-separated globs whose rows may never rise. |
+| `SIZE_RATCHET_FROZEN_CLASSES` | *(markdown and tests)* | `;`-separated globs with two duties: their rows may never rise, and their paths keep the shipped class that names them rather than a repo entry's. |
 | `SIZE_RATCHET_BASELINE` | `tools/size-ratchet-baseline.tsv` | Baseline path. |
 | `SIZE_RATCHET_EXCLUDES` | `tools/size-ratchet-excludes` | Exclusion-list path. |
 

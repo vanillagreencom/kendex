@@ -284,14 +284,122 @@ if [ "$RC" -eq 1 ] && has "docs/guide.md — 300 lines > threshold 250 (class do
 else
   bad "control: markdown shadow" "rc=$RC out=$OUT"
 fi
+# Restating the shipped class's own pattern is how a repo names the class it
+# means to move, and that entry decides the frozen path.
+run 'SIZE_RATCHET_CLASSES=ui/*.ts=250;*.test.*=100'
+if [ "$RC" -eq 1 ] && has "ui/src/App.test.ts — 500 lines > threshold 100 (class *.test.*)"; then
+  ok "an entry restating a shipped pattern wins on a frozen path"
+else
+  bad "restating a shipped pattern wins" "rc=$RC out=$OUT"
+fi
+
 # A frozen path the shipped list names no class for still takes the repo's
-# entry: the base threshold is a number nobody wrote for it.
-run 'SIZE_RATCHET_CLASSES=ui/*.ts=250' SIZE_RATCHET_DEFAULT_CLASSES=
+# entry: the base threshold is a number nobody wrote for it. The shipped list
+# is non-empty and simply names nothing under ui/, which is the shape a
+# consumer meets; the emptied-list arm below is the degenerate one.
+run 'SIZE_RATCHET_CLASSES=ui/*.ts=250' 'SIZE_RATCHET_DEFAULT_CLASSES=*.rs=100'
 if [ "$RC" -eq 1 ] && has "ui/src/App.test.ts — 500 lines > threshold 250 (class ui/*.ts)"; then
   ok "with no shipped class to hand the frozen path to, the repo entry still decides it"
 else
   bad "skipped entry stands where the shipped list claims nothing" "rc=$RC out=$OUT"
 fi
+run 'SIZE_RATCHET_CLASSES=ui/*.ts=250' SIZE_RATCHET_DEFAULT_CLASSES=
+if [ "$RC" -eq 1 ] && has "ui/src/App.test.ts — 500 lines > threshold 250 (class ui/*.ts)"; then
+  ok "and the same holds with the shipped list dropped entirely"
+else
+  bad "skipped entry stands with an empty shipped list" "rc=$RC out=$OUT"
+fi
+# Two entries reach the frozen path and both are skipped. The FIRST is the one
+# that stands, the way first-match-wins decides every other path.
+run 'SIZE_RATCHET_CLASSES=ui/*.ts=250;ui/*=900' SIZE_RATCHET_DEFAULT_CLASSES=
+if [ "$RC" -eq 1 ] && has "ui/src/App.test.ts — 500 lines > threshold 250 (class ui/*.ts)" \
+  && ! has "class ui/*)"; then
+  ok "the first skipped entry stands, not the last"
+else
+  bad "the fallback keeps first-match-wins" "rc=$RC out=$OUT"
+fi
+
+# The rule protects the shipped class that NAMES the path, not any one number,
+# so it runs in both directions: a looser repo entry is skipped too.
+new_repo shadowloose
+mklines ui/src/Wide.test.ts 900
+git -C "$R" add -A
+run 'SIZE_RATCHET_CLASSES=ui/*=2000'
+if [ "$RC" -eq 1 ] && has "ui/src/Wide.test.ts — 900 lines > threshold 800 (class *.test.*)"; then
+  ok "a LOOSER repo entry is skipped too — the shipped 800 judges the ui test file"
+else
+  bad "the skip is direction-agnostic" "rc=$RC out=$OUT"
+fi
+# The control: the same entry governs the same directory where nothing is
+# frozen, so the fixture really is within its reach at 2000.
+run 'SIZE_RATCHET_CLASSES=ui/*=2000' SIZE_RATCHET_FROZEN_CLASSES=
+[ "$RC" -eq 0 ] && ok "control: unfrozen, that entry does take the 900-line file at 2000" \
+  || bad "control: the looser entry reaches the fixture" "rc=$RC out=$OUT"
+
+echo "=== the verdict line reports what each repo entry actually governed ==="
+# A yielded entry that still governs its own paths is named as such; one that
+# yielded on every path it matched governed nothing, and a run that printed it
+# as the mapping in force would advertise a threshold nothing was judged
+# against — a clean run saying something false.
+new_repo shadownote
+mklines ui/src/App.ts 300
+mklines ui/src/App.test.ts 500
+git -C "$R" add -A
+run 'SIZE_RATCHET_CLASSES=ui/src/*.test.ts=100'
+if [ "$RC" -eq 0 ] && has "classes ui/src/*.test.ts=100 (governed nothing: yielded on every path it matched)"; then
+  ok "an entry every one of whose paths is frozen is reported as governing nothing"
+else
+  bad "a wholly yielded entry says so on the verdict line" "rc=$RC out=$OUT"
+fi
+run 'SIZE_RATCHET_CLASSES=ui/*.ts=400'
+if [ "$RC" -eq 0 ] && has "classes ui/*.ts=400 (yielded on frozen paths)"; then
+  ok "an entry that governs some paths and yields others is reported as yielding"
+else
+  bad "a partly yielded entry says so on the verdict line" "rc=$RC out=$OUT"
+fi
+# The control: an entry that yields nowhere carries no annotation at all.
+run 'SIZE_RATCHET_CLASSES=ui/*.ts=400' SIZE_RATCHET_FROZEN_CLASSES=
+if [ "$RC" -eq 1 ] && has "classes ui/*.ts=400," && ! has "yielded"; then
+  ok "control: with nothing frozen the same entry is reported plain"
+else
+  bad "control: an unyielded entry carries no annotation" "rc=$RC out=$OUT"
+fi
+
+echo "=== a NEW offender is offered the bootstrap, frozen class included ==="
+# NEW fires when a path is over its threshold with NO baseline row, so there is
+# no row for the freeze to refuse. The freeze speaks to raising an EXISTING
+# row, which is the GROW and RAISED case.
+new_repo bootstrap
+mklines src/a.test.ts 900
+mklines src/big.ts 500
+mkdir -p "$R/tools"
+printf 'src/big.ts	500
+' >"$R/$BASE"
+git -C "$R" add -A
+git -C "$R" commit -q -m seed
+run
+if [ "$RC" -eq 1 ] && has "new offender: src/a.test.ts — 900 lines > threshold 800 (class *.test.*)" \
+  && has "remedy: split at a concept seam, or declare the row with RATCHET_RAISE=1"; then
+  ok "a frozen new offender is offered the bootstrap, not a remedy the freeze forbids"
+else
+  bad "NEW on a frozen path names the bootstrap" "rc=$RC out=$OUT"
+fi
+# The control: writing that row turns the same path into the ADDED verdict,
+# which names the same remedy, and the declaration then carries the run.
+printf 'src/a.test.ts	900
+src/big.ts	500
+' >"$R/$BASE"
+git -C "$R" add -A
+run
+if [ "$RC" -eq 1 ] && has "baseline row added: src/a.test.ts" \
+  && has "remedy: split at a concept seam, or declare the row with RATCHET_RAISE=1"; then
+  ok "control: the ADDED verdict for the same path names the same remedy"
+else
+  bad "control: ADDED names the bootstrap" "rc=$RC out=$OUT"
+fi
+run RATCHET_RAISE=1
+[ "$RC" -eq 0 ] && ok "control: and the declaration carries that first row in a frozen class" \
+  || bad "control: the bootstrap is admitted in a frozen class" "rc=$RC out=$OUT"
 
 echo "=== the package excludes CHANGELOG*.md by default ==="
 new_repo changelog

@@ -24,6 +24,9 @@ ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
 REMEDY="split at a concept seam (RATCHET_RAISE=1 raises the row only when the added lines are the fix with no seam, or fragments of one concept are merged back into one file)"
+# The remedy for a verdict whose path carries NO row yet. Both such verdicts
+# take it, frozen or not: the declaration admits a first row in every class.
+BOOT="split at a concept seam, or declare the row with RATCHET_RAISE=1 — a first row for a path HEAD's baseline does not carry is a bootstrap, admitted in every class"
 
 new_repo() { # NAME — fresh fixture repo in $R
   R="$TMP/$1"
@@ -70,9 +73,9 @@ run_sr
 [ "$RC" -eq 1 ] && case "$OUT" in *"new offender: big.txt — 11 lines > threshold 10"*) true ;; *) false ;; esac \
   && ok "one line over the threshold fails as a new offender, naming file/count/threshold" \
   || bad "one line over the threshold fails as a new offender" "rc=$RC out=$OUT"
-case "$OUT" in *"$REMEDY"*) ok "new-offender diagnostic carries the remedy verbatim" ;; *) bad "new-offender diagnostic carries the remedy verbatim" "$OUT" ;; esac
+case "$OUT" in *"$BOOT"*) ok "new-offender diagnostic carries the bootstrap remedy verbatim" ;; *) bad "new-offender diagnostic carries the bootstrap remedy verbatim" "$OUT" ;; esac
 
-echo "=== a frozen-class offender gets the split remedy alone ==="
+echo "=== the freeze refuses a raise of an EXISTING row, and a new offender has none ==="
 new_repo testoff
 mkfile x.test.txt 11
 git -C "$R" add -A
@@ -80,10 +83,20 @@ run_frozen
 [ "$RC" -eq 1 ] && case "$OUT" in *"new offender: x.test.txt"*) true ;; *) false ;; esac \
   && ok "a frozen path over the threshold is still a new offender" \
   || bad "a frozen path over the threshold is still a new offender" "rc=$RC out=$OUT"
-case "$OUT" in *RATCHET_RAISE*) bad "a frozen offender is never offered a raise" "$OUT" ;; *) ok "a frozen offender is never offered a raise" ;; esac
-# The control: the same file outside the frozen list is offered the raise.
-run_sr
-case "$OUT" in *RATCHET_RAISE*) ok "control: an unfrozen offender is offered the declaration" ;; *) bad "control: an unfrozen offender is offered the declaration" "$OUT" ;; esac
+case "$OUT" in *"$BOOT"*) ok "and is offered the bootstrap: no row exists yet, so the freeze has none to refuse" ;; *) bad "a frozen new offender is offered the bootstrap" "$OUT" ;; esac
+# The control: once the row EXISTS, the same frozen path is offered the split
+# alone. That is the case the freeze speaks to, and the only one.
+mkdir -p "$R/tools"
+printf 'x.test.txt\t11\n' >"$R/tools/size-ratchet-baseline.tsv"
+mkfile x.test.txt 15
+git -C "$R" add -A
+run_frozen
+if [ "$RC" -eq 1 ] && case "$OUT" in *"baselined file grew: x.test.txt"*) true ;; *) false ;; esac \
+  && case "$OUT" in *RATCHET_RAISE*) false ;; *) true ;; esac; then
+  ok "control: a frozen path whose row exists is never offered a raise"
+else
+  bad "control: a frozen row refuses the raise" "rc=$RC out=$OUT"
+fi
 
 echo "=== a baseline row at the current count freezes the offender ==="
 new_repo frozen
