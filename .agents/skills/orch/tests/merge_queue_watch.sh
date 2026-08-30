@@ -12,6 +12,7 @@ bad() { FAIL=$((FAIL+1)); printf '  FAIL  %s\n' "$1"; }
 eq() { if [[ "$1" == "$2" ]]; then ok "$3"; else bad "$3 (expected $2, got $1)"; fi; }
 wait_file() { local i; for ((i=0;i<100;i++)); do [[ -s "$1" ]] && return 0; sleep 0.05; done; return 1; }
 wait_exists() { local i; for ((i=0;i<100;i++)); do [[ -e "$1" ]] && return 0; sleep 0.05; done; return 1; }
+wait_state() { local i; for ((i=0;i<200;i++)); do [[ "$(jq -r .status "$1")" == "$2" ]] && return 0; sleep 0.05; done; return 1; }
 inode() { stat -c %i "$1" 2>/dev/null || stat -f %i "$1"; }
 
 MAIN="$TMP/main" WT="$TMP/worktree" BIN="$TMP/bin" SCRIPTS="$TMP/orch/scripts"
@@ -19,6 +20,7 @@ REAL_SETSID=$(command -v setsid || true)
 REAL_CHMOD=$(command -v chmod)
 REAL_FLOCK=$(command -v flock)
 REAL_PS=$(command -v ps)
+REAL_MKFIFO=$(command -v mkfifo)
 mkdir -p "$MAIN" "$BIN" "$SCRIPTS/lib"
 git -C "$MAIN" init -q
 git -C "$MAIN" config user.email test@example.com
@@ -59,6 +61,8 @@ set -euo pipefail
 source .env.local
 [[ "$GH_BOT_TOKEN" == ghp_project && "$GH_REPO" == owner/repo ]] || { printf '{"status":"error","verdict":"unknown","error":"detached auth scope missing"}\n'; exit 3; }
 printf '%s\n' "$PWD|$GH_REPO|$GH_BOT_TOKEN" >> "$WATCH_WORKER_LOG"
+printf '%s\n' "$$" > "$WATCH_WORKER_PID"
+printf '%s\n' "${MERGE_QUEUE_SUPERVISOR_TOKEN:-unset}" > "$WATCH_WORKER_TOKEN"
 while [[ ! -f "$WATCH_RELEASE" ]]; do sleep 0.05; done
 mode=$(cat < "$WATCH_MODE")
 case "$mode" in
@@ -143,14 +147,27 @@ if [[ "${MERGE_QUEUE_FORCE_PS_IDENTITY:-0}" == 1 ]]; then printf '%s\n' "$*" >> 
 if [[ -f "$WATCH_SUPERVISOR_PID_GATE.enabled" ]]; then
   calls=0; [[ ! -f "$WATCH_SUPERVISOR_PID_GATE.calls" ]] || calls=$(cat < "$WATCH_SUPERVISOR_PID_GATE.calls")
   calls=$((calls+1)); printf '%s\n' "$calls" > "$WATCH_SUPERVISOR_PID_GATE.calls"
+  if [[ "$calls" -eq 1 && -n "${WATCH_SUPERVISOR_PID_GATE_STATE:-}" ]]; then
+    jq -r .status "$WATCH_SUPERVISOR_PID_GATE_STATE" > "$WATCH_SUPERVISOR_PID_GATE.observed-status"
+  fi
   [[ "$calls" -lt 2 ]] || touch "$WATCH_SUPERVISOR_PID_GATE.release"
 fi
 exec "$WATCH_REAL_PS" "$@"
 EOF
 chmod +x "$BIN/ps"
+cat > "$BIN/mkfifo" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -f "$WATCH_REGISTRATION_GATE.enabled" && "$*" == *"/events"* ]]; then
+  touch "$WATCH_REGISTRATION_GATE.entered"
+  while [[ ! -f "$WATCH_REGISTRATION_GATE.release" ]]; do sleep 0.05; done
+fi
+exec "$WATCH_REAL_MKFIFO" "$@"
+EOF
+chmod +x "$BIN/mkfifo"
 export PATH="$BIN:$PATH" WATCH_MODE="$MODE" WATCH_RELEASE="$RELEASE" WATCH_HEAD_FILE="$HEAD_FILE" WATCH_MAIN="$MAIN" WATCH_WORKTREE="$WT"
 export WATCH_GH_PAUSE="$TMP/gh-pause" WATCH_SETUP_GATE="$TMP/setup-gate" WATCH_REAL_SETSID="$REAL_SETSID" WATCH_CLEANUP_FAIL="$TMP/cleanup-fail" WATCH_CLEANUP_INTERRUPT="$TMP/cleanup-interrupt"
-export WATCH_SETSID_FAIL="$TMP/setsid-fail" WATCH_SETSID_DELAY="$TMP/setsid-delay" WATCH_CLEANUP_PAUSE="$TMP/cleanup-pause" WATCH_AUTH_LOG="$TMP/auth.log" WATCH_WORKER_LOG="$TMP/worker.log" WATCH_REAL_CHMOD="$REAL_CHMOD" WATCH_REAL_FLOCK="$REAL_FLOCK" WATCH_FAIL_FLOCK_GATE="$TMP/fail-flock-gate" WATCH_REAL_PS="$REAL_PS" WATCH_PS_LOG="$TMP/ps.log" WATCH_SUPERVISOR_PID_GATE="$TMP/supervisor-pid-gate" GH_REPO=wrong/repository GITHUB_REPOSITORY=wrong/repository
+export WATCH_SETSID_FAIL="$TMP/setsid-fail" WATCH_SETSID_DELAY="$TMP/setsid-delay" WATCH_CLEANUP_PAUSE="$TMP/cleanup-pause" WATCH_AUTH_LOG="$TMP/auth.log" WATCH_WORKER_LOG="$TMP/worker.log" WATCH_WORKER_PID="$TMP/worker.pid" WATCH_WORKER_TOKEN="$TMP/worker.token" WATCH_REAL_CHMOD="$REAL_CHMOD" WATCH_REAL_FLOCK="$REAL_FLOCK" WATCH_FAIL_FLOCK_GATE="$TMP/fail-flock-gate" WATCH_REAL_PS="$REAL_PS" WATCH_PS_LOG="$TMP/ps.log" WATCH_SUPERVISOR_PID_GATE="$TMP/supervisor-pid-gate" WATCH_REAL_MKFIFO="$REAL_MKFIFO" WATCH_REGISTRATION_GATE="$TMP/registration-gate" GH_REPO=wrong/repository GITHUB_REPOSITORY=wrong/repository
 touch "$WATCH_PS_LOG"
 unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN
 init_out=$("$SCRIPTS/merge-queue-watch" init --worktree "$WT" --issue KEN-829 --branch watch-test)
@@ -393,17 +410,21 @@ eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -
 "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
 
 prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
-rm -f -- "$WATCH_SUPERVISOR_PID_GATE.entered" "$WATCH_SUPERVISOR_PID_GATE.release" "$WATCH_SUPERVISOR_PID_GATE.calls"
+state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
+rm -f -- "$WATCH_SUPERVISOR_PID_GATE.entered" "$WATCH_SUPERVISOR_PID_GATE.release" "$WATCH_SUPERVISOR_PID_GATE.calls" "$WATCH_SUPERVISOR_PID_GATE.observed-status"
 touch "$WATCH_SUPERVISOR_PID_GATE.enabled"
+export WATCH_SUPERVISOR_PID_GATE_STATE="$state_path"
 export MERGE_QUEUE_FORCE_PS_IDENTITY=1
 set +e
 "$SCRIPTS/merge-queue-watch" launch --root "$MAIN" --issue KEN-829 --watch-id "$watch" --poll 1 --max-wait 10 >/dev/null 2>&1
 setup_rc=$?
 set -e
 unset MERGE_QUEUE_FORCE_PS_IDENTITY
+unset WATCH_SUPERVISOR_PID_GATE_STATE
 wait_exists "$WATCH_SUPERVISOR_PID_GATE.entered" && ok "supervisor setup entered the explicit delay gate" || bad "supervisor setup bypassed the explicit delay gate"
 wait_exists "$WATCH_SUPERVISOR_PID_GATE.release" && ok "teardown released the delayed supervisor" || bad "teardown never released the delayed supervisor"
-rm -f -- "$WATCH_SUPERVISOR_PID_GATE.enabled" "$WATCH_SUPERVISOR_PID_GATE.entered" "$WATCH_SUPERVISOR_PID_GATE.release" "$WATCH_SUPERVISOR_PID_GATE.calls"
+eq "$(cat < "$WATCH_SUPERVISOR_PID_GATE.observed-status")" launch_failed "launch failure claims state before supervisor teardown"
+rm -f -- "$WATCH_SUPERVISOR_PID_GATE.enabled" "$WATCH_SUPERVISOR_PID_GATE.entered" "$WATCH_SUPERVISOR_PID_GATE.release" "$WATCH_SUPERVISOR_PID_GATE.calls" "$WATCH_SUPERVISOR_PID_GATE.observed-status"
 if [[ "$setup_rc" -ne 0 ]]; then ok "supervisor failure before ready exits nonzero"; else bad "supervisor failure before ready exited zero"; fi
 eq "$(jq -r .verdict "$artifact")" unknown "dead supervisor publishes its setup failure"
 old_inode=$(inode "$artifact")
@@ -570,6 +591,82 @@ kill -0 "$changed_identity_pid" 2>/dev/null && ok "teardown stops when the PID c
 unset MERGE_QUEUE_FORCE_PS_IDENTITY
 kill "$changed_identity_pid" 2>/dev/null || true; wait "$changed_identity_pid" 2>/dev/null || true
 touch "$RELEASE"
+
+prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep")
+launch_bounded "$watch"
+state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
+worker_pid=$(cat < "$WATCH_WORKER_PID")
+eq "$(cat < "$WATCH_WORKER_TOKEN")" unset "queue-wait worker does not inherit supervisor identity"
+jq --argjson pid "$worker_pid" '.supervisor_pid=$pid' "$state_path" > "$TMP/worker-pid-state.json"
+chmod 600 "$TMP/worker-pid-state.json"; mv "$TMP/worker-pid-state.json" "$state_path"
+export MERGE_QUEUE_FORCE_PS_IDENTITY=1
+"$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
+kill -0 "$worker_pid" 2>/dev/null && ok "reused worker PID cannot identify as supervisor" || bad "supervisor teardown signaled queue-wait descendant"
+unset MERGE_QUEUE_FORCE_PS_IDENTITY
+touch "$RELEASE"
+
+prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep")
+launch_bounded "$watch"
+state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
+identity=$(jq -r .supervisor_token "$state_path")
+env "MERGE_QUEUE_SUPERVISOR_TOKEN=$identity" bash -c 'while :; do sleep 1; done' "$SCRIPTS/queue-wait" 42 1 10 --json & wrong_command_pid=$!
+jq --argjson pid "$wrong_command_pid" '.supervisor_pid=$pid' "$state_path" > "$TMP/wrong-command-state.json"
+chmod 600 "$TMP/wrong-command-state.json"; mv "$TMP/wrong-command-state.json" "$state_path"
+export MERGE_QUEUE_FORCE_PS_IDENTITY=1
+"$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
+kill -0 "$wrong_command_pid" 2>/dev/null && ok "ps fallback requires supervisor command identity" || bad "ps fallback accepted non-supervisor command"
+unset MERGE_QUEUE_FORCE_PS_IDENTITY
+kill "$wrong_command_pid" 2>/dev/null || true; wait "$wrong_command_pid" 2>/dev/null || true
+touch "$RELEASE"
+
+prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep")
+state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
+registration_runtime=$(jq -r .runtime_dir "$state_path"); worker_count=$(wc -l < "$WATCH_WORKER_LOG")
+rm -f -- "$WATCH_REGISTRATION_GATE.entered" "$WATCH_REGISTRATION_GATE.release"
+touch "$WATCH_REGISTRATION_GATE.enabled"
+"$SCRIPTS/merge-queue-watch" launch --root "$MAIN" --issue KEN-829 --watch-id "$watch" --poll 1 --max-wait 10 >"$TMP/registration-launch.out" 2>"$TMP/registration-launch.err" & registration_launch_pid=$!
+wait_exists "$WATCH_REGISTRATION_GATE.entered" || bad "supervisor did not pause before PID registration"
+wait_state "$state_path" launch_failed || bad "launch failure did not claim before PID registration"
+touch "$WATCH_REGISTRATION_GATE.release"
+set +e; wait "$registration_launch_pid"; registration_launch_rc=$?; set -e
+[[ "$registration_launch_rc" -ne 0 ]] && ok "post-check registration remains a launch failure" || bad "post-check registration revived launch"
+sleep 0.3
+eq "$(wc -l < "$WATCH_WORKER_LOG")" "$worker_count" "supervisor rechecks state after PID publication"
+registration_pid=$(cat < "$registration_runtime/supervisor.pid")
+if ! kill -0 "$registration_pid" 2>/dev/null; then ok "late-registering supervisor exits before deadline"; else bad "late-registering supervisor survived its failed generation"; fi
+touch "$RELEASE"
+"$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
+rm -f -- "$WATCH_REGISTRATION_GATE.enabled" "$WATCH_REGISTRATION_GATE.entered" "$WATCH_REGISTRATION_GATE.release"
+
+prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep")
+launch_bounded "$watch"
+state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
+legacy_supervisor=$(jq -r .supervisor_pid "$state_path")
+jq 'del(.watch_dir,.runtime_root,.launch_attempt,.launch_attempt_id,.supervisor_token)' "$state_path" > "$TMP/legacy-watching.json"
+chmod 600 "$TMP/legacy-watching.json"; mv "$TMP/legacy-watching.json" "$state_path"
+result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .action <<<"$result")" pending "legacy watching state remains active"
+kill -0 "$legacy_supervisor" 2>/dev/null && ok "legacy watching supervisor is preserved" || bad "legacy watching supervisor was terminated"
+"$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
+touch "$RELEASE"
+
+prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep")
+state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
+legacy_runtime=$(jq -r .runtime_dir "$state_path")
+printf '%s\n' "$watch" > "$legacy_runtime/token"
+jq '.status="launch_failed"|.action="launch"|del(.watch_dir,.runtime_root,.launch_attempt,.launch_attempt_id,.supervisor_token)' "$state_path" > "$TMP/legacy-launch-failed.json"
+chmod 600 "$TMP/legacy-launch-failed.json"; mv "$TMP/legacy-launch-failed.json" "$state_path"
+launch_bounded "$watch"
+legacy_retry_state=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .status <<<"$legacy_retry_state")" watching "legacy launch failure retries on a migrated generation"
+[[ "$(jq -r .runtime_dir <<<"$legacy_retry_state")" != "$legacy_runtime" ]] && ok "legacy retry receives an isolated runtime" || bad "legacy retry reused legacy runtime"
+if [[ "$(jq -r .status <<<"$legacy_retry_state")" == watching ]]; then
+  legacy_retry_artifact=$(jq -r .artifact_path <<<"$legacy_retry_state")
+  touch "$RELEASE"; wait_file "$legacy_retry_artifact" || bad "legacy retry verdict missing"
+  result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
+  eq "$(jq -r .action <<<"$result")" recovery "legacy retry verdict is consumable"
+fi
+"$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
 
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
 "$SCRIPTS/merge-queue-watch" direct-merged --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null

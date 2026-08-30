@@ -26,7 +26,7 @@ merge_queue_supervise() {
     (flock -w 10 9 || exit 1
       jq -e --arg watch "$watch_id" --arg attempt "$attempt_id" --arg runtime "$runtime" --arg artifact "$artifact" --arg token "$process_token" '
         .watch_id==$watch and .launch_attempt_id==$attempt and .runtime_dir==$runtime and .artifact_path==$artifact and
-        .supervisor_token==$token and (.status|IN("launching","watching"))' "$state_file" >/dev/null || exit 1
+        .supervisor_token==$token and (.status|IN("launching","watching","launch_failed"))' "$state_file" >/dev/null || exit 1
       ln "$output" "$artifact"
     ) 9>"$state_file.lock"
   }
@@ -71,12 +71,13 @@ merge_queue_supervise() {
     [[ $(date +%s) -lt "$deadline" ]] || printf 'deadline\n' > "$event_fifo"
   ) & watchdog_pid=$!
   printf '%s\n' "$$" > "$runtime/supervisor.pid"; chmod 600 "$runtime/supervisor.pid"
+  attempt_is_current || return 1
   set -m
   (
     exec 7>"$event_fifo"
     set +e
     cd "$main_root" || exit 1
-    env -u GH_REPO -u GITHUB_REPOSITORY GH_REPO="$repo" \
+    env -u GH_REPO -u GITHUB_REPOSITORY -u MERGE_QUEUE_SUPERVISOR_TOKEN GH_REPO="$repo" \
       "$waiter" "$pr" "$poll" "$max_wait" --json > "$temp" 2>> "$log"
     rc=$?; printf '%s\n' "$rc" > "$runtime/worker.status"; printf 'worker\n' >&7; exit "$rc"
   ) & worker_pid=$!
