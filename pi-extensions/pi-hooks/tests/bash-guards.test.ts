@@ -321,6 +321,35 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		expect(named.verdict.reason).toContain("'-cinclude.path=/tmp/c' bypasses");
 	});
 
+	test("a command line that defines an alias is a commit", async () => {
+		// `-c alias.c=<commit>` puts the commit inside one quoted word, so no live
+		// `commit` word exists and nothing concluded a commit was happening.
+		const nv = "--no-" + "verify";
+		const aliased = `git -c alias.c='commit ${nv}' c --allow-empty -m x`;
+		await both(aliased, "refuse", "refuse");
+		const named = await gate(armed, aliased);
+		if (named.verdict.kind !== "refuse") throw new Error("unreachable");
+		expect(named.verdict.reason).toContain("'-c' bypasses");
+		// The narrower of the two rules was taken, so an ordinary -c keeps working;
+		// the price is that writing an alias reads as a commit. Both pinned here.
+		await both("git -c core.pager=cat log", "allow", "allow");
+		await both(`git config alias.c 'commit ${nv}'`, "allow", "refuse");
+	});
+
+	test("only <<- accepts a tab-indented terminator", async () => {
+		// Strip tabs from every terminator and a tab-indented EOF ends a plain
+		// heredoc early, leaving the body live: one quote in it swallowed the
+		// commit behind it.
+		const nv = "--no-" + "verify";
+		const early = `cat <<EOF\n\tEOF\n"\nEOF\ngit commit ${nv} -m "x"`;
+		await both(early, "refuse", "refuse");
+		const named = await gate(armed, early);
+		if (named.verdict.kind !== "refuse") throw new Error("unreachable");
+		expect(named.verdict.reason).toContain(`'${nv}' bypasses`);
+		// The control: under <<- it does terminate, and the body stays inert.
+		await both(`cat <<-EOF\n\tgit commit ${nv} here\n\tEOF\ngit commit -m x`, "allow", "refuse");
+	});
+
 	test("a construct the scanner never heard of leaves the words standing", async () => {
 		// Each of these desynchronised the argv parser that stood here, and each is
 		// closed by the rule reading live words instead: `coproc` is named nowhere.

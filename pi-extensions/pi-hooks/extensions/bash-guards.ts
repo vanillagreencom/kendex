@@ -40,15 +40,20 @@ function setBypass(scan: CommandScan, token: string): void {
 function judge(tokens: string[], scan: CommandScan): void {
 	let git = false;
 	let commit = false;
+	let alias = false;
 	for (const t of tokens) {
 		if (t === "-C" || t === "cd" || t.startsWith("--git-dir") || t.startsWith("--work-tree") || t.startsWith("GIT_DIR=") || t.startsWith("GIT_WORK_TREE=")) scan.moves = true;
 		// Configuration reaches git from anywhere: an assignment, an export, a
 		// config write in an earlier command. A bypass prints only beside a commit.
 		if (!/[ \t\n\r]/.test(t) && (t.startsWith("GIT_CONFIG_") || t.toLowerCase().includes("hookspath"))) setBypass(scan, t);
+		// An alias is any subcommand this gate cannot read: `-c alias.c=<commit>` puts
+		// the commit inside one word, so a git command line that defines one counts as
+		// a commit and the -c that carried it counts as the injection.
+		if (t.toLowerCase().includes("alias.")) alias = true;
 		if (!git) git = basename(t) === "git";
 		else if (t === "commit") commit = true;
 	}
-	if (!git || !commit) return;
+	if (!git || (!commit && !alias)) return;
 	scan.commit = true;
 	for (const t of tokens) {
 		// A word is a bypass only where the WHOLE word is one, which is what keeps a
@@ -91,7 +96,7 @@ export function scanCommand(command: string): CommandScan {
 	let tokens: string[] = [];
 	let word = "";
 	let haveWord = false;
-	let heredocs: string[] = [];
+	let heredocs: { delim: string; dash: boolean }[] = [];
 	let depth = 0;
 	let i = 0;
 	const flush = (): void => {
@@ -133,7 +138,7 @@ export function scanCommand(command: string): CommandScan {
 	};
 	/** A heredoc delimiter: quotes and line continuations come out of it, so
 	 * `<<EO\<newline>F` names EOF and the body ends where bash ends it. */
-	const heredoc = (): void => {
+	const heredoc = (dash: boolean): void => {
 		while (i < n && (command[i] === " " || command[i] === "\t")) i++;
 		let delim = "";
 		while (i < n) {
@@ -152,19 +157,21 @@ export function scanCommand(command: string): CommandScan {
 				i++;
 			}
 		}
-		if (delim) heredocs.push(delim);
+		if (delim) heredocs.push({ delim, dash });
 	};
 	/** Skip each body opened on the line just ended, terminator included. One that
 	 * never terminates is left live rather than swallowing the rest. */
 	const heredocBodies = (): void => {
 		const start = ++i;
-		for (const delim of heredocs) {
+		for (const h of heredocs) {
 			while (i < n) {
 				const from = i;
 				while (i < n && command[i] !== "\n") i++;
-				const line = command.slice(from, i).replace(/\r$/, "").replace(/^\t+/, "");
+				// bash accepts a tab-indented terminator for `<<-` only.
+				let line = command.slice(from, i).replace(/\r$/, "");
+				if (h.dash) line = line.replace(/^\t+/, "");
 				if (i < n) i++;
-				if (line === delim) break;
+				if (line === h.delim) break;
 			}
 			if (i >= n) i = start;
 		}
@@ -210,8 +217,9 @@ export function scanCommand(command: string): CommandScan {
 		} else if (ch === "<" && c2 === "<") {
 			flush();
 			i += 2;
-			if (command[i] === "-") i++;
-			heredoc();
+			const dash = command[i] === "-";
+			if (dash) i++;
+			heredoc(dash);
 		} else if (ch === "<" || ch === ">") {
 			// A redirection operator ends a word and nothing else: the target that
 			// follows is one more word, and `git >x commit` is still a commit.

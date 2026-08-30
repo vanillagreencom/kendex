@@ -100,7 +100,7 @@ function heredoc(cmd, i, n,   ch, q, w) {
     }
     w = w ch; i++
   }
-  if (w != "") { NHD++; HD[NHD] = w }
+  if (w != "") { NHD++; HD[NHD] = w; HDT[NHD] = HDASH }
   return i
 }
 # Skip each body opened on the line just ended, terminator included. One that
@@ -113,7 +113,9 @@ function heredoc_bodies(cmd, i, n,   h, ls, line, start) {
       while (i <= n && substr(cmd, i, 1) != "\n") i++
       line = substr(cmd, ls, i - ls)
       if (i <= n) i++
-      sub(/\r$/, "", line); sub(/^\t+/, "", line)
+      sub(/\r$/, "", line)
+      # bash accepts a tab-indented terminator for `<<-` only.
+      if (HDT[h]) sub(/^\t+/, "", line)
       if (line == HD[h]) break
     }
     if (i > n) { NHD = 0; return start }
@@ -144,8 +146,8 @@ function scan(cmd,   n, i, ch, c2, d, j, start) {
     if ((ch == "<" || ch == ">") && c2 == "(") { flush_word(); d++; i += 2; continue }
     if (ch == "$") { W = W ch; HAVEW = 1; i++; continue }
     if (ch == "<" && c2 == "<") {
-      flush_word(); i += 2
-      if (substr(cmd, i, 1) == "-") i++
+      flush_word(); i += 2; HDASH = 0
+      if (substr(cmd, i, 1) == "-") { HDASH = 1; i++ }
       i = heredoc(cmd, i, n); continue
     }
     # A redirection operator ends a word and nothing else: the target that
@@ -171,18 +173,22 @@ function scan(cmd,   n, i, ch, c2, d, j, start) {
   end_command()
 }
 # The rule over the live words of one command.
-function judge(   m, t, g, c, p, ch) {
-  g = 0; c = 0
+function judge(   m, t, g, c, a, p, ch) {
+  g = 0; c = 0; a = 0
   for (m = 1; m <= NTOK; m++) {
     t = TOK[m]
     if (t == "-C" || t == "cd" || t ~ /^--git-dir/ || t ~ /^--work-tree/ || t ~ /^GIT_DIR=/ || t ~ /^GIT_WORK_TREE=/) MOVES = 1
     # Configuration reaches git from anywhere: an assignment, an export, a
     # config write in an earlier command. A bypass prints only beside a commit.
     if (t !~ /[ \t\n\r]/ && (t ~ /^GIT_CONFIG_/ || tolower(t) ~ /hookspath/)) setbypass(t)
+    # An alias is any subcommand this gate cannot read: `-c alias.c=<commit>`
+    # puts the commit inside one word, so a git command line that defines one
+    # counts as a commit and the -c that carried it counts as the injection.
+    if (tolower(t) ~ /alias\./) a = 1
     if (g == 0) { if (basename(t) == "git") g = m }
     else if (c == 0 && t == "commit") c = m
   }
-  if (g == 0 || c == 0) return
+  if (g == 0 || (c == 0 && a == 0)) return
   COMMIT = 1
   for (m = 1; m <= NTOK; m++) {
     t = TOK[m]

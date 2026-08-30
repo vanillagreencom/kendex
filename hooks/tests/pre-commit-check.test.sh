@@ -520,6 +520,30 @@ run_hook "$ARMED" "$(payload 'git -cinclude.path=/tmp/c commit -m x')" CHAIN_EXI
 assert_contains "$err" "'-cinclude.path=/tmp/c' bypasses" "the attached value is named"
 
 echo
+echo "a command line that defines an alias is a commit"
+
+# `-c alias.c=<commit>` puts the commit inside one quoted word, so no live
+# `commit` word exists and nothing concluded a commit was happening. Defining
+# an alias is the tell: the subcommand is whatever the alias says.
+both "git -c alias.c='commit $NV' c --allow-empty -m x" 2 2 "an alias defining a commit"
+run_hook "$ARMED" "$(payload "git -c alias.c='commit $NV' c --allow-empty -m x")" CHAIN_EXIT=0
+assert_contains "$err" "'-c' bypasses" "the alias form names the injection that carried it"
+
+# The narrower of the two rules was taken, so an ordinary -c keeps working; the
+# price is that writing an alias reads as a commit. Both pinned here.
+both 'git -c core.pager=cat log' 0 0 "a benign -c on a non-commit"
+both "git config alias.c 'commit $NV'" 0 2 "writing an alias reads as a commit"
+
+echo
+echo "only <<- accepts a tab-indented terminator"
+
+# Strip tabs from every terminator and a tab-indented EOF ends a plain heredoc
+# early, leaving the body live: one quote in it swallowed the commit behind it.
+both 'cat <<EOF\n\tEOF\n\"\nEOF\ngit commit '"$NV"' -m \"x\"' 2 2 "a tab-indented EOF under <<"
+# The control: under <<- it does terminate, and the body stays inert.
+both 'cat <<-EOF\n\tgit commit '"$NV"' here\n\tEOF\ngit commit -m x' 0 2 "a tab-indented EOF under <<-"
+
+echo
 echo "a construct the scanner never heard of leaves the words standing"
 
 # Each of these desynchronised the argv parser that stood here, and each is
