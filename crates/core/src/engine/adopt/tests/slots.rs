@@ -376,3 +376,52 @@ fn a_plain_skill_over_itself_beside_a_namespaced_one_refuses() {
     );
     assert!(trash_is_empty(&env));
 }
+
+/// The occupancy read is a read, and the other way it fails. A POSIX
+/// directory can be searchable and writable without being listable — mode
+/// 0311, or an ACL — so the slot and the skill nested in it stay reachable
+/// while the scan of the parent returns nothing. Reading that nothing as an
+/// empty parent reports the occupied slot free, and the capture hashes and
+/// trashes what is in it.
+#[cfg(unix)]
+#[test]
+fn a_plain_skill_whose_parent_will_not_enumerate_refuses() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let stored = store_local_skill(&env, "data-science/eda", "the namespaced one");
+    let root = crate::source::local_source_root(&env, &Scope::Global);
+    fs::write(root.join("kendex.toml"), "schema = 6\n").unwrap();
+    let kind_dir = root.join("skills");
+    fs::set_permissions(&kind_dir, fs::Permissions::from_mode(0o311)).unwrap();
+    // Root reads any directory whatever its mode, so there the denial under
+    // test does not exist and the adoption is the ordinary refusal.
+    let denied = fs::read_dir(&kind_dir).is_err();
+
+    let held = home.join(".claude/skills/data-science");
+    fs::create_dir_all(&held).unwrap();
+    fs::write(held.join("SKILL.md"), "the plain one").unwrap();
+    let refused = adopt(
+        &env,
+        &Scope::Global,
+        ItemKind::Skill,
+        "data-science",
+        &[HarnessId::Claude],
+    )
+    .unwrap_err();
+    fs::set_permissions(&kind_dir, fs::Permissions::from_mode(0o755)).unwrap();
+
+    match denied {
+        true => assert!(matches!(refused, CoreError::Io { .. }), "{refused:?}"),
+        false => assert!(
+            refused.to_string().contains("data-science/eda"),
+            "{refused}"
+        ),
+    }
+    assert_eq!(
+        fs::read_to_string(stored.join("SKILL.md")).unwrap(),
+        "the namespaced one"
+    );
+    assert!(trash_is_empty(&env));
+}

@@ -164,14 +164,17 @@ impl SealedSource {
 
     /// Entries of a directory, bounded and sorted. Symlinked entries are
     /// listed too — reading through one is what fails, loudly.
+    ///
+    /// A directory that will not enumerate is an error, whole or per entry.
+    /// A caller deciding whether a write would land on stored content must
+    /// not get a refused read spelled as an empty directory; a caller that
+    /// only draws rows decides for itself what an unreadable directory
+    /// costs it.
     pub fn list_dir(&self, dir: &Path) -> Result<Vec<PathBuf>> {
         self.contained(dir)?;
         let mut entries: Vec<PathBuf> = Vec::new();
-        for entry in fs::read_dir(dir)
-            .map_err(|e| CoreError::io(dir, e))?
-            .flatten()
-        {
-            entries.push(entry.path());
+        for entry in fs::read_dir(dir).map_err(|e| CoreError::io(dir, e))? {
+            entries.push(entry.map_err(|e| CoreError::io(dir, e))?.path());
             // The bound holds while collecting — a million-entry directory
             // must not get a million-entry allocation first. A directory of
             // exactly the limit is within it; the entry after that is not.

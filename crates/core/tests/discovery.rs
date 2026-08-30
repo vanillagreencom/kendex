@@ -389,3 +389,90 @@ fn the_about_report_counts_skills_per_root() {
     // The version travels with the table into the safety-cache key.
     let _versioned: u32 = DISCOVERY_VERSION;
 }
+
+/// A listing says what a source offers, and one sibling it cannot read
+/// must not take the readable items with it. `skills/locked` is searchable
+/// but not listable — POSIX mode 0311, or an ACL — and `skills/gh` beside
+/// it is still offered, still resolved, and still counted. The agent arm
+/// answers the same way: `agents/locked` costs nothing but its own rows.
+///
+/// This is the listing's answer, not the disk's. What a write would land on
+/// top of is read through `SealedSource::list_dir`, where a refused read is
+/// an error rather than an empty directory.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_unreadable_sibling_costs_only_its_own_rows() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_tmp, root) = repo();
+    skill(&root, "skills/gh", "gh");
+    skill(&root, "skills/locked/hidden", "hidden");
+    fs::create_dir_all(root.join("agents")).unwrap();
+    fs::write(root.join("agents/rust.md"), "---\nname: rust\n---\nx\n").unwrap();
+    fs::create_dir_all(root.join("agents/locked")).unwrap();
+    fs::write(
+        root.join("kendex.toml"),
+        "[catalog]\nskills = [\"skills\"]\nagents = [\"agents\"]\n",
+    )
+    .unwrap();
+    let locked = [root.join("skills/locked"), root.join("agents/locked")];
+    for dir in &locked {
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o311)).unwrap();
+    }
+    // Root reads any directory whatever its mode, so there the denial under
+    // test does not exist and the nested skill is offered as well.
+    let denied = fs::read_dir(&locked[0]).is_err();
+
+    let (sealed, config) = read(&root);
+    let skills = list_items(&sealed, &config, ItemKind::Skill);
+    let agents = list_items(&sealed, &config, ItemKind::Agent);
+    let counted = |name: &str, kind: ItemKind| {
+        about(&sealed, &config)
+            .found
+            .iter()
+            .find(|row| row.root == name && row.kind == kind)
+            .map(|row| row.count)
+    };
+    let skill_rows = counted("skills", ItemKind::Skill);
+    let agent_rows = counted("agents", ItemKind::Agent);
+    for dir in &locked {
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    assert!(skills.contains(&"gh".to_owned()), "{skills:?}");
+    assert_eq!(agents, ["rust"]);
+    assert_eq!(
+        find_item(&sealed, &config, ItemKind::Skill, "gh"),
+        Some(sealed.root().join("skills/gh"))
+    );
+    assert_eq!(agent_rows, Some(1));
+    match denied {
+        true => {
+            assert_eq!(skills, ["gh"]);
+            assert_eq!(skill_rows, Some(1));
+        }
+        false => {
+            assert_eq!(skills, ["gh", "locked/hidden"]);
+            assert_eq!(skill_rows, Some(2));
+        }
+    }
+}
+
+/// The half that must fail: a kind directory the catalog does not have is
+/// an empty listing, not a refusal. Reading every absent directory as an
+/// unreadable one would refuse the first add into a fresh source.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_kind_directory_that_is_not_there_lists_as_empty() {
+    let (_tmp, root) = repo();
+    skill(&root, "skills/gh", "gh");
+    fs::write(
+        root.join("kendex.toml"),
+        "[catalog]\nskills = [\"skills\"]\nagents = [\"agents\"]\n",
+    )
+    .unwrap();
+    let (sealed, config) = read(&root);
+    assert!(!root.join("agents").exists());
+    assert_eq!(list_items(&sealed, &config, ItemKind::Skill), ["gh"]);
+    assert!(list_items(&sealed, &config, ItemKind::Agent).is_empty());
+}

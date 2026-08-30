@@ -26,7 +26,7 @@ pub(super) fn fixed_kind_dir(kind: ItemKind) -> (&'static str, &'static str) {
 
 /// The skills one explicit catalog dir holds — a directory carrying `SKILL.md`,
 /// at the top level (`gh`) or one segment down (`plugin/item`).
-pub(super) fn flat_skills(sealed: &SealedSource, dir: &str) -> Result<Vec<String>> {
+pub(super) fn flat_skills(sealed: &SealedSource, dir: &str) -> Vec<String> {
     let is_skill = |path: &std::path::Path| item_dir(sealed, ItemKind::Skill, path);
     nested_names(sealed, dir, &is_skill, |path| {
         path.file_name()?.to_str().map(str::to_owned)
@@ -65,7 +65,7 @@ pub(super) fn stored_in_slot(
     // sent to look at. Nothing is stored inside an absent directory, and
     // nothing is stored inside a file — which is what every other kind's
     // slot is.
-    let held = match crate::names::stored_spelling(slot) {
+    let held = match crate::names::stored_spelling(slot)? {
         Some(held) if sealed.is_dir(&held) => held,
         _ => return Ok(None),
     };
@@ -89,13 +89,13 @@ pub(super) fn stored_in_slot(
     Ok(Some(crate::names::shown(&occupant.display().to_string())))
 }
 
-pub(super) fn agent_stems(sealed: &SealedSource, dir: &str) -> Result<Vec<String>> {
+pub(super) fn agent_stems(sealed: &SealedSource, dir: &str) -> Vec<String> {
     file_stems(sealed, dir, "md")
 }
 
 /// The item names one kind dir holds — every file with the kind's extension,
 /// by stem, at the top level or one segment down.
-fn file_stems(sealed: &SealedSource, dir: &str, ext: &str) -> Result<Vec<String>> {
+fn file_stems(sealed: &SealedSource, dir: &str, ext: &str) -> Vec<String> {
     let is_item =
         |path: &std::path::Path| path.extension().is_some_and(|e| e == ext) && sealed.is_file(path);
     nested_names(sealed, dir, &is_item, |path| {
@@ -104,7 +104,7 @@ fn file_stems(sealed: &SealedSource, dir: &str, ext: &str) -> Result<Vec<String>
 }
 
 /// The item names a fixed kind dir holds, by file stem.
-pub(super) fn ext_stems(sealed: &SealedSource, dir: &str, ext: &str) -> Result<Vec<String>> {
+pub(super) fn ext_stems(sealed: &SealedSource, dir: &str, ext: &str) -> Vec<String> {
     file_stems(sealed, dir, ext)
 }
 
@@ -115,23 +115,23 @@ pub(super) fn ext_stems(sealed: &SealedSource, dir: &str, ext: &str) -> Result<V
 /// dead rows and, for a deceptive name, one whose shown spelling is not the
 /// name that lands on disk.
 ///
-/// A directory that will not list is an error, never an empty listing:
-/// what an unreadable directory costs is the calling surface's to decide,
-/// and a listing that answers "nothing" has taken that decision for it.
+/// A directory this cannot read draws no rows for that directory, and the
+/// rest of the listing still draws: a listing says what a source offers,
+/// and one unreadable sibling must not take the readable items of the same
+/// kind out of `add --all` and out of place resolution. Nothing deciding
+/// what a write would destroy asks this — that reads the disk, through
+/// `SealedSource::list_dir`, where a refused read is an error.
 fn nested_names(
     sealed: &SealedSource,
     dir: &str,
     is_item: &dyn Fn(&std::path::Path) -> bool,
     leaf: impl Fn(&std::path::Path) -> Option<String>,
-) -> Result<Vec<String>> {
-    // A kind dir the catalog does not have holds nothing, which is an
-    // answer. One that is there and will not list is not.
-    let dir = sealed.root().join(dir);
-    if !dir.is_dir() {
-        return Ok(Vec::new());
-    }
+) -> Vec<String> {
+    let Ok(entries) = sealed.list_dir(&sealed.root().join(dir)) else {
+        return Vec::new();
+    };
     let mut names = Vec::new();
-    for entry in sealed.list_dir(&dir)? {
+    for entry in entries {
         if is_item(&entry)
             && let Some(name) = leaf(&entry)
         {
@@ -143,8 +143,9 @@ fn nested_names(
             // suites and fixtures, the same vocabulary a skill tree marks
             // as supporting — files there are about the items, not items.
             && !matches!(parent, "tests" | "test" | "fixtures" | "testdata")
+            && let Ok(children) = sealed.list_dir(&entry)
         {
-            for child in sealed.list_dir(&entry)? {
+            for child in children {
                 if is_item(&child)
                     && let Some(leaf) = leaf(&child)
                 {
@@ -156,5 +157,5 @@ fn nested_names(
     names.retain(|name| crate::names::item_problem(name).is_none());
     names.sort();
     names.dedup();
-    Ok(names)
+    names
 }
