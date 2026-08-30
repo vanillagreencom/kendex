@@ -331,7 +331,7 @@ assert_eq "$([[ -f "$linked_auth" && ! -e "$linked_wt/.git/kendex/dev-round-auth
   "yes" "linked worktree authorization lives in the common repository"
 mkdir -p "$linked_wt/existing" "$linked_wt/adversarial/name_test-helper_more" \
   "$linked_wt/adversarial/name_test_helper_more" "$linked_wt/adversarial/name_test-util_more" \
-  "$linked_wt/adversarial/name_test_util_more"
+  "$linked_wt/adversarial/name_test_util_more" "$linked_wt/tests"
 printf 'helper\n' > "$linked_wt/existing/workflow_helpers.sh"
 printf 'dot helper\n' > "$linked_wt/.workflow_helpers.sh"
 printf 'suffix helper\n' > "$linked_wt/adversarial/prefixhelperSuffix.rs"
@@ -339,10 +339,11 @@ printf 'path substring\n' > "$linked_wt/adversarial/name_test-helper_more/file.r
 printf 'path substring\n' > "$linked_wt/adversarial/name_test_helper_more/file.rs"
 printf 'path substring\n' > "$linked_wt/adversarial/name_test-util_more/file.rs"
 printf 'path substring\n' > "$linked_wt/adversarial/name_test_util_more/file.rs"
+printf 'test helper\n' > "$linked_wt/tests/workflow_helpers.sh"
 git -C "$linked_wt" add existing/workflow_helpers.sh .workflow_helpers.sh \
   adversarial/prefixhelperSuffix.rs adversarial/name_test-helper_more/file.rs \
   adversarial/name_test_helper_more/file.rs adversarial/name_test-util_more/file.rs \
-  adversarial/name_test_util_more/file.rs
+  adversarial/name_test_util_more/file.rs tests/workflow_helpers.sh
 git -C "$linked_wt" commit -q -m helpers
 linked_head="$(git -C "$linked_wt" rev-parse HEAD)"
 "$RETURN_WRITE" --worktree "$linked_wt" --kind fix --issue issue-826 --round-id 30-30 \
@@ -354,8 +355,8 @@ set -e
 assert_eq "$linked_rc" "1" "linked worktree helper additions refuse acceptance"
 assert_eq "$(jq -r '.reason' <<<"$linked_out")" "unapproved_additions" "public checker routes helper suffixes through the additions gate"
 assert_eq "$(jq -c '.files' <<<"$linked_out")" \
-  '[".workflow_helpers.sh","adversarial/name_test-helper_more/file.rs","adversarial/name_test-util_more/file.rs","adversarial/name_test_helper_more/file.rs","adversarial/name_test_util_more/file.rs","adversarial/prefixhelperSuffix.rs","existing/workflow_helpers.sh"]' \
-  "public checker reports substring, suffix, and dotfile helper shapes"
+  '["adversarial/name_test-helper_more/file.rs","adversarial/name_test-util_more/file.rs","adversarial/name_test_helper_more/file.rs","adversarial/name_test_util_more/file.rs","tests/workflow_helpers.sh"]' \
+  "public checker reports explicit substrings and test-context helper suffixes"
 
 inert_classifier="$TMP_ROOT/inert-classifier"
 cp "$CHECK" "$inert_classifier"
@@ -363,11 +364,15 @@ sed -i.bak '/^is_protected_addition()/,/^}/ s/return 0/return 1/' "$inert_classi
 chmod +x "$inert_classifier"
 set +e
 inert_out="$("$inert_classifier" --worktree "$linked_wt" --issue issue-826 --round-id 30-30 --expect-items-from-round 2>/dev/null)"
+inert_rc=$?
 set -e
-if [[ "$(jq -r '.reason' <<<"$inert_out")" == "unapproved_additions" ]]; then
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "public checker control kills an inert classifier"
-else
+if [[ "$inert_rc" == "0" ]] && jq -e '
+  .ok == true and .verdict == "accept" and .reason == "valid" and .files == []
+' <<<"$inert_out" >/dev/null 2>&1; then
   PASS=$((PASS + 1)); printf '  ok    %s\n' "public checker control kills an inert classifier"
+else
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        rc=%s output=%s\n' \
+    "public checker control kills an inert classifier" "$inert_rc" "$inert_out"
 fi
 
 failed_classifier="$TMP_ROOT/failed-classifier"
@@ -382,6 +387,21 @@ assert_eq "$failed_rc" "1" "invalid classifier output fails acceptance"
 assert_eq "$(jq -r '.ok' <<<"$failed_out")" "false" "classifier failure reports ok false"
 assert_eq "$(jq -r '.verdict' <<<"$failed_out")" "retry" "classifier failure routes to retry"
 assert_eq "$(jq -r '.reason' <<<"$failed_out")" "classifier_failed" "classifier failure has a positive routing verdict"
+
+"$WRITE" --worktree "$linked_wt" --issue issue-826 --round-id 32-32 --item 1 product >/dev/null
+mkdir -p "$linked_wt/docs" "$linked_wt/src"
+printf 'docs helper\n' > "$linked_wt/docs/render_helpers.md"
+printf 'capital helper\n' > "$linked_wt/src/ProductHelper.rs"
+printf 'dotted helper\n' > "$linked_wt/src/render.helper.ts"
+printf 'dotfile helper\n' > "$linked_wt/.workflow_helpers.md"
+git -C "$linked_wt" add docs/render_helpers.md src/ProductHelper.rs src/render.helper.ts .workflow_helpers.md
+git -C "$linked_wt" commit -q -m product-helpers
+product_head="$(git -C "$linked_wt" rev-parse HEAD)"
+"$RETURN_WRITE" --worktree "$linked_wt" --kind fix --issue issue-826 --round-id 32-32 \
+  --branch linked --commit "$product_head" --validate pass --item 1 Applied done >/dev/null
+product_out="$("$CHECK" --worktree "$linked_wt" --issue issue-826 --round-id 32-32 --expect-items-from-round)"
+assert_eq "$(jq -r '.reason' <<<"$product_out")" "valid" \
+  "product and documentation helper basenames remain outside the protected scope"
 
 "$WRITE" --worktree "$linked_wt" --issue issue-826 --round-id 31-31 --item 1 symlink >/dev/null
 symlink_auth="$linked_main/.git/kendex/dev-round-authorizations/issue-826-31-31.json"
@@ -407,15 +427,23 @@ scope_docs=(
   "$REPO_ROOT/skills/dev/workflows/dev-fix.md"
   "$REPO_ROOT/skills/orch/workflows/dev-fix.md"
   "$REPO_ROOT/skills/orch/workflows/review-pr-comments.md"
+  "$WRITE"
   "$CHECK"
 )
 for scope_doc in "${scope_docs[@]}"; do
   scope_text="$(<"$scope_doc")"
-  assert_text_matches "$scope_text" 'schemas/dev-round\.md.*Protected additions' \
+  assert_text_matches "$scope_text" '^[[:space:]]*[^<[:space:]].*schemas/dev-round\.md.*Protected additions' \
     "$(basename "$scope_doc") points at the canonical protected-additions scope"
-  assert_text_not_matches "$scope_text" 'Protected additions are|files? (the )?fix round may add|files? this round may add' \
+  assert_text_not_matches "$scope_text" 'Protected additions are|files? (the )?fix round may add|files? this round may add|Omit it to allow none|files the orchestrator authorized.*add' \
     "$(basename "$scope_doc") makes no repository-wide additions claim"
 done
+
+scope_mutant="$TMP_ROOT/scope-comment-mutant.md"
+cp "$REPO_ROOT/skills/orch/workflows/dev-fix.md" "$scope_mutant"
+sed -i.bak '/schemas\/dev-round.md.*Protected additions/ s/^/<!-- /; /<!-- .*Protected additions/ s/$/ -->/' "$scope_mutant"
+scope_mutant_text="$(<"$scope_mutant")"
+assert_text_not_matches "$scope_mutant_text" '^[[:space:]]*[^<[:space:]].*schemas/dev-round\.md.*Protected additions' \
+  "scope reference control rejects an HTML-comment decoy"
 
 workflow_rid=40
 for workflow in dev-fix review-pr-comments; do

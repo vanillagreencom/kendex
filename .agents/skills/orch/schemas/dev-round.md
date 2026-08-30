@@ -60,6 +60,6 @@ Protected additions are:
 - directories named `helper`, `helpers`, `test-helper`, `test-helpers`, `test_helper`, `test_helpers`, `test-util`, `test-utils`, `test_util`, or `test_utils`;
 - `lib`, `support`, `util`, or `utils` below `test/` or `tests/`;
 - repository-relative paths containing `test-helper`, `test_helper`, `test-util`, or `test_util`;
-- files whose basename before the first extension contains `helper`, `test-util`, or `test_util`, including suffix forms and dotfiles.
+- files below `test/` or `tests/` whose basename before the first extension contains lowercase `helper`, `test-util`, or `test_util`, including suffix forms and dotfiles.
 
 `unapproved_additions` returns every refused protected path in `files`.

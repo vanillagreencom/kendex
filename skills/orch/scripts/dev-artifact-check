@@ -318,8 +318,12 @@ is_protected_addition() {
   basename="${path##*/}"
   while [[ "$basename" == .* ]]; do basename="${basename#.}"; done
   stem="${basename%%.*}"
-  case "$stem" in
-    *helper*|*test-util*|*test_util*) return 0 ;;
+  case "$path" in
+    test/*|tests/*|*/test/*|*/tests/*)
+      case "$stem" in
+        *helper*|*test-util*|*test_util*) return 0 ;;
+      esac
+      ;;
   esac
   return 1
 }

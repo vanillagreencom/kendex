@@ -46,8 +46,8 @@
 # round id (`workflow-state new-round-id`), which is the round-token
 # discipline: one token, one delegation, one item set.
 #
-# --adds-file carries the files the orchestrator authorized this fix round to
-# add. The writer records HEAD as the comparison base used at acceptance.
+# Protected-addition scope: skills/orch/schemas/dev-round.md § Protected additions.
+# The writer records HEAD as the comparison base used at acceptance.
 #
 # Record schema — canonical source of truth: skills/orch/schemas/dev-round.md
 #   {
@@ -99,9 +99,9 @@ success; different content under the same round id exits 2 — a changed
 delegation needs a NEW round id. The record is read back by
 dev-artifact-check --expect-items-from-round, by a respawned dev agent
 recovering its items, and by the tail-reconciliation nudge.
---adds-file is a JSON array of protected additions the fix round may make.
-Omit it to allow none in that scope. Absolute, traversing, empty-component, multiline, and
-duplicate paths are rejected. Paths stay in the file channel, never argv. The
+Protected-addition scope: skills/orch/schemas/dev-round.md § Protected additions.
+--adds-file carries authorized protected paths as a JSON array. Absolute,
+traversing, empty-component, multiline, and duplicate paths are rejected. Paths stay in the file channel, never argv. The
 record captures the worktree's current HEAD as base_sha; a worktree with no
 resolvable HEAD is rejected.
 Both record halves must already exist or both be absent. A missing half is
