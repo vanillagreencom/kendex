@@ -261,10 +261,34 @@ assert_eq "$(compute_sticky_verdict_from_body "Recommendation: no approval")" "c
 # unit tests do not otherwise execute, against Bash 4-only syntax.
 echo
 echo "=== Bash 3.2 portability ==="
-BASH32_PATTERN='mapfile|readarray|declare -[a-zA-Z]*A|local -[a-zA-Z]*A'
-BASH32_PATTERN="$BASH32_PATTERN"'|(^|[^$])\{[A-Za-z_][A-Za-z0-9_]*\}[<>]'
-BASH32_PATTERN="$BASH32_PATTERN"'|\$\{[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?(,,|\^\^)'
-portability_violations="$(grep -rnE "$BASH32_PATTERN" "$SCRIPTS_DIR" \
+# --- shared bash32 pattern set: begin
+# Every suite that scans for Bash 4 syntax carries this block verbatim.
+# tools/tests/bash32-pattern-parity.test.sh holds the copies byte-identical
+# and proves the set's teeth once, against the text these files ship. There
+# is no file they could source instead: skills install independently, so a
+# judge living inside one skill is absent from every install that skips it.
+#
+# What a text scan cannot decide: whether a script RUNS under Bash 3.2.
+# Nothing here does — CI is Linux on Bash 5, and the `bash -n` pass is that
+# same shell, so it parses Bash 4 without complaint. A construct assembled at
+# runtime — eval, a command held in a variable, a heredoc piped to bash — is
+# text this scan does not read as code. A clean scan says the source carries
+# no construct named below. It says nothing further.
+PATTERN='mapfile|readarray'
+# declare/typeset/local/readonly whose flag cluster holds A (associative),
+# g (global) or n (nameref): -A, -rA, -Ag, -g, -n.
+PATTERN="$PATTERN"'|(^|[^[:alnum:]_])(declare|typeset|local|readonly)[[:blank:]]+-[[:alnum:]]*[Agn]'
+# Automatic FD allocation: exec {fd}< , {fd}> , {fd}>>
+PATTERN="$PATTERN"'|(^|[^$])\{[A-Za-z_][A-Za-z0-9_]*\}[<>]'
+# Case conversion, one character (${x^}) or every one (${x^^}), either way.
+PATTERN="$PATTERN"'|\$\{[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?(,,?|\^\^?)'
+PATTERN="$PATTERN"'|(^|[^[:alnum:]_])coproc([[:blank:]]|$)'
+# |&, &>>, and the ;& / ;;& case terminators. Anchored on the operator's
+# neighbours, so a bracket expression in a script's own regex — [;|&(] — is
+# not read as a pipe.
+PATTERN="$PATTERN"'|(^|[[:blank:]]|[[:alnum:]_)}])\|&|&>>|;;?&([[:blank:]]|$)'
+# --- shared bash32 pattern set: end
+portability_violations="$(grep -rnE "$PATTERN" "$SCRIPTS_DIR" \
     | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
 assert_eq "$portability_violations" "" "all shipped GitHub scripts avoid Bash 4-only constructs"
 

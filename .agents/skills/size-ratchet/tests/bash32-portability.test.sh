@@ -9,9 +9,33 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/../scripts" && pwd)"
 
-PATTERN='mapfile|readarray|declare -A|declare -gA|local -A'
+# --- shared bash32 pattern set: begin
+# Every suite that scans for Bash 4 syntax carries this block verbatim.
+# tools/tests/bash32-pattern-parity.test.sh holds the copies byte-identical
+# and proves the set's teeth once, against the text these files ship. There
+# is no file they could source instead: skills install independently, so a
+# judge living inside one skill is absent from every install that skips it.
+#
+# What a text scan cannot decide: whether a script RUNS under Bash 3.2.
+# Nothing here does — CI is Linux on Bash 5, and the `bash -n` pass is that
+# same shell, so it parses Bash 4 without complaint. A construct assembled at
+# runtime — eval, a command held in a variable, a heredoc piped to bash — is
+# text this scan does not read as code. A clean scan says the source carries
+# no construct named below. It says nothing further.
+PATTERN='mapfile|readarray'
+# declare/typeset/local/readonly whose flag cluster holds A (associative),
+# g (global) or n (nameref): -A, -rA, -Ag, -g, -n.
+PATTERN="$PATTERN"'|(^|[^[:alnum:]_])(declare|typeset|local|readonly)[[:blank:]]+-[[:alnum:]]*[Agn]'
+# Automatic FD allocation: exec {fd}< , {fd}> , {fd}>>
 PATTERN="$PATTERN"'|(^|[^$])\{[A-Za-z_][A-Za-z0-9_]*\}[<>]'
-PATTERN="$PATTERN"'|\$\{[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?(,,|\^\^)'
+# Case conversion, one character (${x^}) or every one (${x^^}), either way.
+PATTERN="$PATTERN"'|\$\{[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?(,,?|\^\^?)'
+PATTERN="$PATTERN"'|(^|[^[:alnum:]_])coproc([[:blank:]]|$)'
+# |&, &>>, and the ;& / ;;& case terminators. Anchored on the operator's
+# neighbours, so a bracket expression in a script's own regex — [;|&(] — is
+# not read as a pipe.
+PATTERN="$PATTERN"'|(^|[[:blank:]]|[[:alnum:]_)}])\|&|&>>|;;?&([[:blank:]]|$)'
+# --- shared bash32 pattern set: end
 
 # grep's status is part of the answer: 0 found, 1 none, anything else is a
 # scan that did not run — and a scan that did not run is not a clean tree.

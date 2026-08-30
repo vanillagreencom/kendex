@@ -2,6 +2,11 @@
 # Regression test for #557: the Linear CLI has an explicit Bash 4+ contract.
 # Under Bash 3 this delegates to the full hierarchy regression, which proves
 # the clear preflight diagnostic and that no API request is attempted.
+#
+# The name it shares with the other bash32-portability suites is the whole of
+# what it shares. Those forbid Bash 4 syntax; this one asserts linear.sh
+# demands it. So it must never take the shared bash32 pattern set those suites
+# carry, and tools/tests/bash32-pattern-parity.test.sh reds if it ever does.
 
 set -euo pipefail
 
