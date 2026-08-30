@@ -4,28 +4,29 @@ merge_queue_supervise() {
   local state_file="$1" watch_id="$2" attempt_id="$3" runtime="$4" artifact="$5" deadline="$6"
   local waiter="$7" poll="$8" max_wait="$9"
   local repo pr head main_root log temp output worker_pid="" worker_rc=0 event=""
-  local event_fifo owner_fifo watchdog_pid="" published=false
+  local event_fifo owner_fifo watchdog_pid="" published=false process_token="${MERGE_QUEUE_SUPERVISOR_TOKEN:-}"
   repo=$(jq -r .repository "$state_file"); pr=$(jq -r .pr_number "$state_file")
   head=$(jq -r .head_sha "$state_file")
   main_root=$(jq -r .main_repo_root "$state_file")
   log=$(jq -r .log_path "$state_file"); temp="$runtime/worker.json"; output="$runtime/artifact.tmp"
   event_fifo="$runtime/events"; owner_fifo="$runtime/deadline-owner"
-  [[ -d "$runtime" && ! -L "$runtime" && "$(cat < "$runtime/token")" == "$attempt_id" ]] || return 1
+  [[ "$process_token" =~ ^[A-Za-z0-9._-]+$ && -d "$runtime" && ! -L "$runtime" && \
+     "$(cat < "$runtime/token")" == "$attempt_id" ]] || return 1
   [[ -d "$main_root" ]] || return 1
 
   attempt_is_current() {
     (flock -s -w 10 9 || exit 1
-      jq -e --arg watch "$watch_id" --arg attempt "$attempt_id" --arg runtime "$runtime" --arg artifact "$artifact" '
+      jq -e --arg watch "$watch_id" --arg attempt "$attempt_id" --arg runtime "$runtime" --arg artifact "$artifact" --arg token "$process_token" '
         .watch_id==$watch and .launch_attempt_id==$attempt and .runtime_dir==$runtime and .artifact_path==$artifact and
-        (.status|IN("launching","watching"))' "$state_file" >/dev/null
+        .supervisor_token==$token and (.status|IN("launching","watching"))' "$state_file" >/dev/null
     ) 9>"$state_file.lock"
   }
   publish_output() {
     chmod 600 "$output" || return 1
     (flock -w 10 9 || exit 1
-      jq -e --arg watch "$watch_id" --arg attempt "$attempt_id" --arg runtime "$runtime" --arg artifact "$artifact" '
+      jq -e --arg watch "$watch_id" --arg attempt "$attempt_id" --arg runtime "$runtime" --arg artifact "$artifact" --arg token "$process_token" '
         .watch_id==$watch and .launch_attempt_id==$attempt and .runtime_dir==$runtime and .artifact_path==$artifact and
-        (.status|IN("launching","watching"))' "$state_file" >/dev/null || exit 1
+        .supervisor_token==$token and (.status|IN("launching","watching"))' "$state_file" >/dev/null || exit 1
       ln "$output" "$artifact"
     ) 9>"$state_file.lock"
   }

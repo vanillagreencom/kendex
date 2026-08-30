@@ -102,7 +102,7 @@ skills/orch/scripts/ci-wait	669
 skills/orch/scripts/dev-artifact-check	482
 skills/orch/scripts/dev-return-write	430
 skills/orch/scripts/lanes	575
-skills/orch/scripts/merge-queue-watch	477
+skills/orch/scripts/merge-queue-watch	495
 skills/orch/scripts/open-terminal	639
 skills/orch/scripts/oversee-watch	654
 skills/orch/scripts/queue-wait	1127

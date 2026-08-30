@@ -3,8 +3,9 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORCH="$(cd "$TEST_DIR/.." && pwd)"
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+TMP_ROOT="$(mktemp -d)"; TMP="$TMP_ROOT/watch path"
+mkdir "$TMP"
+trap 'rm -rf "$TMP_ROOT"' EXIT
 PASS=0 FAIL=0
 ok() { PASS=$((PASS+1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL+1)); printf '  FAIL  %s\n' "$1"; }
@@ -308,7 +309,7 @@ fi
 
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
 state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
-jq --arg attempt "$watch-attempt-1" '.launch_attempt=1|.launch_attempt_id=$attempt|.status="launching"|.setup_deadline=0|.deadline=((now|floor)+600)' "$state_path" > "$TMP/orphan.json"
+jq --arg attempt "$watch-attempt-1" --arg token "$watch-attempt-1-test" '.launch_attempt=1|.launch_attempt_id=$attempt|.supervisor_token=$token|.status="launching"|.setup_deadline=0|.deadline=((now|floor)+600)' "$state_path" > "$TMP/orphan.json"
 chmod 600 "$TMP/orphan.json"; mv "$TMP/orphan.json" "$state_path"
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .action <<<"$result")" resume_launch "orphaned launching state wakes into launch recovery"
@@ -500,6 +501,46 @@ chmod 600 "$TMP/similar-attempt-state.json"; mv "$TMP/similar-attempt-state.json
 "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
 kill -0 "$similar_attempt_pid" 2>/dev/null && ok "attempt identity compares argv fields exactly" || bad "attempt-1 matched and signaled attempt-10"
 kill "$similar_attempt_pid" 2>/dev/null || true; wait "$similar_attempt_pid" 2>/dev/null || true
+touch "$RELEASE"
+
+prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep")
+launch_bounded "$watch"
+state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
+fallback_supervisor=$(jq -r .supervisor_pid "$state_path")
+export MERGE_QUEUE_FORCE_PS_IDENTITY=1
+"$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
+if ! kill -0 "$fallback_supervisor" 2>/dev/null; then ok "ps environment identity supports repository paths with spaces"; else bad "ps fallback rejected a valid supervisor under a whitespace path"; fi
+unset MERGE_QUEUE_FORCE_PS_IDENTITY
+touch "$RELEASE"
+
+prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep")
+launch_bounded "$watch"
+state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
+attempt=$(jq -r .launch_attempt_id "$state_path"); runtime=$(jq -r .runtime_dir "$state_path"); artifact=$(jq -r .artifact_path "$state_path"); identity=$(jq -r .supervisor_token "$state_path")
+env "MERGE_QUEUE_SUPERVISOR_TOKEN=${identity}0" bash -c 'while :; do sleep 1; done' "$SCRIPTS/merge-queue-watch" __supervise "$state_path" "$watch" "$attempt" "$runtime" "$artifact" 999 "$SCRIPTS/queue-wait" 1 10 & similar_identity_pid=$!
+jq --argjson pid "$similar_identity_pid" '.supervisor_pid=$pid' "$state_path" > "$TMP/similar-identity-state.json"
+chmod 600 "$TMP/similar-identity-state.json"; mv "$TMP/similar-identity-state.json" "$state_path"
+export MERGE_QUEUE_FORCE_PS_IDENTITY=1
+"$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
+kill -0 "$similar_identity_pid" 2>/dev/null && ok "ps environment identity rejects a similar generation" || bad "ps fallback matched a similar generation token"
+unset MERGE_QUEUE_FORCE_PS_IDENTITY
+kill "$similar_identity_pid" 2>/dev/null || true; wait "$similar_identity_pid" 2>/dev/null || true
+touch "$RELEASE"
+
+prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep")
+launch_bounded "$watch"
+state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
+attempt=$(jq -r .launch_attempt_id "$state_path"); runtime=$(jq -r .runtime_dir "$state_path"); artifact=$(jq -r .artifact_path "$state_path"); identity=$(jq -r .supervisor_token "$state_path")
+identity_changed="$TMP/identity-changed"
+env "WATCH_IDENTITY_CHANGED=$identity_changed" "MERGE_QUEUE_SUPERVISOR_TOKEN=$identity" bash -c 'trap '\''touch "$WATCH_IDENTITY_CHANGED"; exec env -u MERGE_QUEUE_SUPERVISOR_TOKEN sleep 30'\'' TERM; while :; do sleep 1; done' "$SCRIPTS/merge-queue-watch" __supervise "$state_path" "$watch" "$attempt" "$runtime" "$artifact" 999 "$SCRIPTS/queue-wait" 1 10 & changed_identity_pid=$!
+jq --argjson pid "$changed_identity_pid" '.supervisor_pid=$pid' "$state_path" > "$TMP/changed-identity-state.json"
+chmod 600 "$TMP/changed-identity-state.json"; mv "$TMP/changed-identity-state.json" "$state_path"
+export MERGE_QUEUE_FORCE_PS_IDENTITY=1
+"$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
+wait_exists "$identity_changed" && ok "teardown sent TERM to the captured identity" || bad "teardown never signaled the captured identity"
+kill -0 "$changed_identity_pid" 2>/dev/null && ok "teardown stops when the PID changes identity" || bad "teardown escalated KILL after identity changed"
+unset MERGE_QUEUE_FORCE_PS_IDENTITY
+kill "$changed_identity_pid" 2>/dev/null || true; wait "$changed_identity_pid" 2>/dev/null || true
 touch "$RELEASE"
 
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
