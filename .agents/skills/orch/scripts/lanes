@@ -481,7 +481,7 @@ render_table() {
 		         (if .headroom_pct == null then "-" else (.headroom_pct | tostring) + "%" end),
 		         (if .claims == null then "?" else .claims end)
 		       ] | @tsv)
-	' | column -t -s "$(printf '\t')"
+	' | lane_context_columns
 }
 
 # `pick` fails closed. Exit 3 when nothing qualifies, so a caller can tell

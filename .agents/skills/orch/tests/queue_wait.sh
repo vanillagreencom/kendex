@@ -387,9 +387,9 @@ assert_eq "$(jq -r .was_queued <<<"$out")" "true" "ejected records WAS_QUEUED" "
 assert_eq "$(jq -r .was_in_merge_queue <<<"$out")" "true" "ejected records queue membership" "$err"
 assert_eq "$(jq -r .cause <<<"$out")" "merge_group_failed" "ejected cause" "$err"
 
-# 3b. a single out-of-queue blip does not eject on its own: with the
-# confirmation raised past the poll budget the wait keeps running and the
-# deadline still reports the candidate, never a silent "queued".
+# 3b. a single out-of-queue blip does not eject on its own: seeing the PR
+# back in the queue clears the candidate, and a candidate that never reached
+# the confirmation count carries no verdict's name, the deadline included.
 new_case ejected_single_blip
 write_fixture state last "$pr_open"
 write_fixture queue 1 "$q_in_queue"

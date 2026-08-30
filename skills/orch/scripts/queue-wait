@@ -70,7 +70,9 @@ Verdicts (the semantics behind merge-pr § 5 step 1's routing table):
   queued      poll bound reached with the PR still queued/armed. Reported
               as status "timeout": the merge stays armed and fires on its
               own, so this is NOT a failure of the merge — and never a
-              success either. Carries cause still_progressing or stalled.
+              success either. Carries cause still_progressing or stalled,
+              and unconfirmed_verdict when the last poll held a candidate
+              that never reached the confirmation count.
               Never re-arm a still_progressing merge.
   not_queued  no poll ever observed the PR queued or armed, and the arming
               grace expired. The merge was never armed; nothing will fire.
@@ -95,9 +97,14 @@ terminating the wait, so one blip cannot start a spurious recovery cycle; a
 verdict added later is confirmed only if it is routed through note_candidate
 too. Every other exit is one observation: merged, closed, dequeued, the
 check_failed disarm (ci-wait's, reported under the same `disarmed` name),
-and not_queued. A candidate STANDING AT THE LAST POLL outranks "still
-queued" — a poll that routes nothing clears it, so an earlier candidate
-already contradicted does not decide the deadline.
+and not_queued. The count is the whole rule and the deadline is not an
+exception to it: a candidate that never reaches the count terminates
+nothing and is reported as "still queued", named in unconfirmed_verdict so
+the reading is not lost. While a candidate is waiting for its confirmation
+the failed-check probe is skipped too, so one probe observation cannot
+overtake a standing conflict and route it to a CI cycle. A poll that routes
+nothing clears the candidate, so an earlier reading already contradicted is
+not reported at all.
 
 Failed-required-check probe (--no-check-probe to disable): detection of
 the failed-required-check disarm cause is delegated to
@@ -159,6 +166,10 @@ JSON output (always when --json):
                                    # late_findings |
                                    # late_findings_dequeue_failed |
                                    # still_progressing | stalled (queued)
+    "unconfirmed_verdict": <string>, # only at a timeout: the candidate the
+                                   # last poll held, which never reached
+                                   # QUEUE_WAIT_CONFIRM_POLLS and so routes
+                                   # nothing
     "unresolved_count": <int>,     # only once the guard has read threads
     "last_poll_age_seconds": <int>, # only once a poll has completed
     "transient_api_errors": <int>, # only when > 0
@@ -181,7 +192,8 @@ Environment (orch-env ladder: parent env > .env.local > .kendex/settings.toml /
                 fires instead of burning the budget on a never-armed merge.
   QUEUE_WAIT_CONFIRM_POLLS  consecutive polls that must agree before a
                 candidate verdict (conflicting, ejected, auto-merge-cleared
-                disarm) terminates the wait (default 2); it gates no other.
+                disarm) terminates the wait (default 2), at the deadline
+                included; it gates no other verdict.
   QUEUE_WAIT_PROBE_INTERVAL minimum seconds between delegated ci-wait
                 probes and between late-findings guard probes, each on its
                 own clock (default 120).
@@ -361,9 +373,15 @@ progressing_value() {
 emit_result() {
   local status="$1" verdict="$2" error_msg="${3:-}"
   update_elapsed
-  local poll_age="" progressing
+  local poll_age="" progressing unconfirmed=""
   [ -n "$last_poll_time" ] && poll_age=$(( $(date +%s) - last_poll_time ))
   progressing="$(progressing_value)"
+  # A candidate the last poll still held but that never reached the
+  # confirmation count. It routes nothing — that is the count's job — but a
+  # timeout that saw a conflict, an ejection or a disarm coming is not the
+  # same timeout as one that saw nothing, so the reading is reported rather
+  # than dropped.
+  [ "$status" = "timeout" ] && unconfirmed="${candidate_verdict:-}"
   # The still-queued verdict carries its progress cause; every other verdict
   # keeps its own cause untouched.
   if [ "$verdict" = "queued" ]; then
@@ -388,6 +406,7 @@ emit_result() {
       --argjson was_in_queue "$was_in_queue" \
       --argjson progressing "$progressing" \
       --arg cause "$last_cause" \
+      --arg unconfirmed "$unconfirmed" \
       --arg unresolved "$last_unresolved_count" \
       --argjson transient "$transient_api_errors" \
       --arg poll_age "$poll_age" \
@@ -406,6 +425,7 @@ emit_result() {
         was_in_merge_queue: $was_in_queue,
         progressing: $progressing
       } + (if $cause == "" then {} else {cause: $cause} end)
+        + (if $unconfirmed == "" then {} else {unconfirmed_verdict: $unconfirmed} end)
         + (if $unresolved == "" then {} else {unresolved_count: ($unresolved|tonumber)} end)
         + (if $transient > 0 then {transient_api_errors: $transient} else {} end)
         + (if $poll_age == "" then {} else {last_poll_age_seconds: ($poll_age|tonumber)} end)
@@ -1006,7 +1026,14 @@ while [ "$polls" -eq 0 ] || [ "$elapsed" -lt "$MAX_WAIT" ]; do
     # never report its failure, so consult ci-wait for the failed-required-
     # check disarm cause. Rate-limited, and skipped entirely for a PR sitting
     # in the queue (ejection covers that repo shape).
-    if $CHECK_PROBE && [[ "$in_queue_now" == false && "$last_auto_merge" == "true" ]]; then
+    # A candidate awaiting its confirmation outranks the probe. The routing
+    # above is an if/elif chain, so it ranks conflicting over ejected and
+    # disarm and nothing else: the probe sits outside it and emits `disarmed`
+    # on ONE observation, which a conflicting PR — armed, not enqueued —
+    # satisfies from its first poll. Unguarded, the conflict routes to a CI
+    # cycle for a failure CI never had, before it was ever confirmed.
+    if $CHECK_PROBE && [[ -z "$candidate_verdict" ]] \
+       && [[ "$in_queue_now" == false && "$last_auto_merge" == "true" ]]; then
       update_elapsed
       if [ "$last_probe_at" -eq 0 ] || [ $((elapsed - last_probe_at)) -ge "$PROBE_INTERVAL" ]; then
         last_probe_at="$elapsed"
@@ -1032,14 +1059,12 @@ while [ "$polls" -eq 0 ] || [ "$elapsed" -lt "$MAX_WAIT" ]; do
   sleep_within_budget "$POLL_INTERVAL"
 done
 
-# Deadline reached. A candidate still standing at the last poll outranks
-# "still queued" — an unconfirmed real conflict, ejection or disarm must not
-# be reported as a merge that is still on its way.
-if [[ -n "$candidate_verdict" ]]; then
-  last_cause="$candidate_cause"
-  emit_result "complete" "$candidate_verdict"
-  exit 1
-fi
+# Deadline reached. The confirmation count is the whole rule and the deadline
+# is not an exception to it: a candidate that never reached the count is one
+# observation, and handing it back here would give it the name a confirmed
+# verdict carries, which is the routing the count exists to prevent. It is
+# not lost either — emit_result names it in unconfirmed_verdict beside the
+# timeout, so the caller sees the reading without routing on it.
 if [[ "$was_queued" == "false" ]]; then
   last_cause="never_armed"
   emit_result "timeout" "not_queued"

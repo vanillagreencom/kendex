@@ -24,6 +24,9 @@
 #           dies if a reading is a FRAGMENT of the status line rather than
 #           the whole line, because bottom-most then hands the sentence the
 #           verdict over the real line above it
+#   case 22 the same sentence in the CODEX shape, which carries its fragment
+#           in ordinary prose about compaction — dies the moment the codex
+#           branch is loosened back to matching anywhere in a line
 #   case 13 a pane that exited to its shell — dies if the liveness evidence
 #           is dropped, which is the only thing a window ever stood in for
 #
@@ -56,6 +59,9 @@
 #      refused, and the refusal names the process it found
 #  21. the per-account wrapper spellings the fleet launches through are
 #      harnesses, and their panes are measured
+#  22. a codex context fragment in prose is not a status line, alone or
+#      below a real one
+#  23. the table still carries every row where `column` is not installed
 #
 # errexit is on: every case here either succeeds or is guarded, so an
 # unexpected non-zero is a broken fixture, not a finding to print past.
@@ -182,7 +188,7 @@ echo "=== lanes context ==="
 # Foreground process per pane. %9 is the one that exited to its shell.
 {
   for n in 1 2 3 4 5 10 13 14 15 16; do printf '%s %%%s claude\n' "$LIVE_PID" "$n"; done
-  for n in 6 7 8; do printf '%s %%%s codex\n' "$LIVE_PID" "$n"; done
+  for n in 6 7 8 19 20; do printf '%s %%%s codex\n' "$LIVE_PID" "$n"; done
   printf '%s %%9 fish\n' "$LIVE_PID"
   # tmux reports a login shell with the leading dash it was started with.
   printf '%s %%11 -bash\n' "$LIVE_PID"
@@ -212,6 +218,8 @@ write_claim sixteen   "%15" "$H/.claude" "ken-116"
 write_claim seventeen "%16" "$H/.claude" "ken-117"
 write_claim eighteen  "%17" "$H/.claude" "ken-118"
 write_claim nineteen  "%18" "$H/.claude" "ken-119"
+write_claim twenty    "%19" "$H/.codex"  "ken-120"
+write_claim twentyone "%20" "$H/.codex"  "ken-121"
 # The foreign lane's pane NUMBER exists here too, on a screen that parses
 # cleanly: %1 is ken-101's, reading 35.
 write_claim_on "$FOREIGN_PID" foreign "%1" "$H/.claude" "ken-110"
@@ -297,6 +305,16 @@ screen 17 '  kendex (🌳 ken-118) Opus 5 66% (brad@drovr.dev)     /rc
   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents'
 screen 18 '  kendex (🌳 ken-119) Opus 5 27% (brad@drovr.dev)     /rc
   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents'
+# 22. The codex sibling of 18 and 19. The compaction rule is written about
+# in the terminal it governs, so `Context <N>% used` turns up in ordinary
+# transcript prose — and a fragment match hands that sentence the verdict
+# over the real status line above it, exactly as the claude fragment did.
+# %19 puts the sentence BELOW a real codex status line; %20 gives it a
+# screen of its own.
+screen 19 '  Codex is working
+  Context 86% left
+● Documentation: Context 60% used means compact now'
+screen 20 '● Documentation: Context 60% used means compact now'
 
 OUT="$(run_ctx --json)"
 
@@ -418,6 +436,16 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-119") | .context_used_pct' <<<"$OUT
 assert_eq "$(jq -r '.[] | select(.lane=="ken-119") | .status' <<<"$OUT")" "ok" \
   "that lane is ok, not a refusal"
 
+# 22. A codex reading is the whole line too. Below a real status line the
+# sentence wins on bottom-most and the lane reports 60 used for a lane that
+# is 14 used; on a screen of its own it is a reading invented out of prose.
+assert_eq "$(jq -r '.[] | select(.lane=="ken-120") | .context_used_pct' <<<"$OUT")" "14" \
+  "codex prose below a status line does not outrank the status line above it"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-121") | .status' <<<"$OUT")" "no_status_line" \
+  "a screen whose only context percentage sits in codex prose carries no reading"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-121") | .context_used_pct' <<<"$OUT")" "null" \
+  "that lane carries no number, not the sentence's"
+
 # 10. `capture-pane -t %N` answers from THIS server only, and pane ids restart
 # at %0 on each one. ken-110 claims %1 on another server; %1 here is ken-101's
 # pane, reading 35. Measured against it, the foreign lane reports 35 as its
@@ -477,6 +505,29 @@ assert_line "$TABLE" \
 assert_contains "$TABLE" "CONSUMED" "the table legend states which direction it reports"
 assert_contains "$TABLE" "LEFT or what is USED" \
   "the legend names both codex spellings, and which one is converted"
+
+# 23. `column` is util-linux, not one of orch's declared dependencies (jq,
+# bash 3.2, flock), and installations that satisfy those ship without it.
+# Piping the table into a missing command loses every row under errexit, and
+# a fleet report with no lanes reads as a fleet with nothing to compact. The
+# render is driven directly here: PATH holds only what the render itself
+# needs, so the absence is real rather than stubbed.
+NOCOL="$TMP_ROOT/nocol"; mkdir -p "$NOCOL"
+for b in jq awk cat; do ln -s "$(command -v "$b")" "$NOCOL/$b"; done
+RECS='[{"lane":"ken-101","pane":"%1","account":"drovr","config_dir":"/h/.claude","harness":"claude","context_used_pct":35,"status":"ok","detail":null},{"lane":"ken-104","pane":"%4","account":"drovr","config_dir":"/h/.claude","harness":null,"context_used_pct":null,"status":"no_status_line","detail":"x"}]'
+NOCOL_OUT="$(PATH="$NOCOL" "$BASH" -c 'source "$1"; printf "%s" "$2" | lane_context_render' _ \
+  "$SCRIPTS_DIR/lib/lane-context.sh" "$RECS" 2>&1)" && nocol_rc=0 || nocol_rc=$?
+assert_eq "$nocol_rc" "0" "the table renders without column installed"
+assert_line "$NOCOL_OUT" \
+  '^LANE[[:space:]]+PANE[[:space:]]+ACCOUNT[[:space:]]+HARNESS[[:space:]]+CONTEXT_USED_PCT[[:space:]]+STATUS[[:space:]]*$' \
+  "the column-less header is aligned, not a run of tabs"
+assert_line "$NOCOL_OUT" \
+  '^ken-101[[:space:]]+%1[[:space:]]+drovr[[:space:]]+claude[[:space:]]+35%[[:space:]]+ok[[:space:]]*$' \
+  "a measured lane keeps its row where column is missing"
+assert_line "$NOCOL_OUT" \
+  '^ken-104[[:space:]]+%4[[:space:]]+drovr[[:space:]]+-[[:space:]]+-[[:space:]]+no_status_line[[:space:]]*$' \
+  "an unmeasured lane keeps its row too, dashes and all"
+assert_contains "$NOCOL_OUT" "CONSUMED" "the legend survives the missing column too"
 
 # 9. The account a lane runs under, resolved from the claim's config dir.
 assert_eq "$(jq -r '.[] | select(.lane=="ken-103") | .account' <<<"$OUT")" "eclaude" \

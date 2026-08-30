@@ -85,6 +85,13 @@ lane_context_emit() {
 # a sentence like that outranks the real status line above it. The branch
 # parenthetical is optional: a lane outside a repository has none, and a
 # session that has not rendered a percentage yet matches nothing at all.
+# The codex reading is a WHOLE LINE for the same reason: the context item
+# OPENS its line — leading whitespace or box decoration only, nothing
+# alphanumeric — and what may follow it is another status item behind a
+# separator, never running text. `Documentation: Context 60% used means
+# compact now` carries the fragment and is not a status line, and under a
+# bottom-most rule that sentence would otherwise take the verdict from the
+# real line above it.
 # The codex shape is tested first and consumes its line, so a screen carrying
 # both never takes the claude direction for a codex reading. Codex's status
 # item is user-configured and both directions ship, so both are matched and
@@ -95,8 +102,10 @@ lane_context_parse() {
   out="$(awk '
     {
       low = tolower($0)
-      if (match(low, /context:?[ \t]+[0-9]+%[ \t]+(left|used)/)) {
+      if (match(low, /^[^a-z0-9]*context:?[ \t]+[0-9]+%[ \t]+(left|used)([ \t]+(·|[|])[ \t]+.*)?[ \t]*$/)) {
         s = substr(low, RSTART, RLENGTH)
+        match(s, /[0-9]+%[ \t]+(left|used)/)
+        s = substr(s, RSTART, RLENGTH)
         remaining = (s ~ /left$/)
         gsub(/[^0-9]/, "", s)
         if (s + 0 <= 100) { harness = "codex"; used = remaining ? 100 - (s + 0) : s + 0 }
@@ -183,6 +192,33 @@ lane_context_collect() {
   } | jq -s '.'
 }
 
+# Align the tab-separated table on stdin; both lane tables render through
+# here. `column` is util-linux, not one of orch's declared dependencies (jq,
+# bash 3.2, flock), and installations that satisfy those ship without it —
+# where the pipeline fails and every row is lost, which on the compaction
+# rule reads as a fleet with no lanes rather than as a table that could not
+# be drawn. The rows matter more than their spacing, so the columns are
+# padded here when it is absent. awk stands in because POSIX mandates it and
+# this file already parses every screen with it.
+lane_context_columns() {
+  if command -v column >/dev/null 2>&1; then
+    column -t -s "$(printf '\t')"
+    return 0
+  fi
+  awk -F'\t' '
+    { rows[NR] = $0; if (NF > cols) cols = NF
+      for (i = 1; i <= NF; i++) if (length($i) > w[i]) w[i] = length($i) }
+    END {
+      for (r = 1; r <= NR; r++) {
+        n = split(rows[r], f, "\t"); line = ""
+        for (i = 1; i <= n; i++)
+          line = line (i < cols ? sprintf("%-" (w[i] + 2) "s", f[i]) : f[i])
+        sub(/[ \t]+$/, "", line)
+        print line
+      }
+    }'
+}
+
 # Table for the records on stdin. The legend is part of the output, not a
 # nicety: a bare percentage column is read in whichever direction the reader
 # last saw one, and the two harnesses print opposite directions.
@@ -198,6 +234,6 @@ lane_context_render() {
     (.[] | [ (.lane // "-"), .pane, (.account // "-"), (.harness // "-"),
              (if .context_used_pct == null then "-" else (.context_used_pct | tostring) + "%" end),
              .status ] | @tsv)
-  ' <<<"$recs" | column -t -s "$(printf '\t')"
+  ' <<<"$recs" | lane_context_columns
   printf 'CONTEXT_USED_PCT: percent of the context window CONSUMED. A Codex lane prints what is LEFT or what is USED; only LEFT is converted here.\n'
 }

@@ -12,7 +12,8 @@
 # Covered:
 #   1. CONFLICTING routes the conflicting verdict, cause base_conflict
 #   2. it is confirmed across polls like every other terminal verdict
-#   3. it outranks ejected, whose recovery would be a CI cycle
+#   3. it outranks ejected, whose recovery would be a CI cycle, and the
+#      failed-check probe, which routes to the same CI cycle on one look
 #   4. MERGEABLE and UNKNOWN route nothing
 #   5. state is read first: a merged PR never reports conflicting
 #   6. the human-readable line names the verdict and the remedy
@@ -80,7 +81,9 @@ ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
 #   $STUB_SEQ_DIR/queue-<n>.json   queue-membership GraphQL body
 # `<prefix>-last.json` serves every poll past the last numbered fixture.
 # Review-thread reads answer with an empty set so the late-findings guard
-# stays quiet; no case here exercises it.
+# stays quiet; no case here exercises it. `gh pr checks` and the Actions-run
+# read belong to the real ci-wait the failed-check probe delegates to:
+# STUB_PR_CHECKS_MODE=failure is what lets that probe reach a verdict at all.
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
@@ -138,6 +141,7 @@ case "${1:-}" in
       _emit_fixture queue "$(_next graphql)"
     fi
     if [[ "${2:-}" == "user" ]]; then echo "test-user"; exit 0; fi
+    if [[ "${2:-}" == repos/*/actions/runs* ]]; then echo '{"workflow_runs":[]}'; exit 0; fi
     ;;
   pr)
     if [[ "${2:-}" == "view" ]]; then
@@ -145,6 +149,14 @@ case "${1:-}" in
         _emit_fixture state "$(_next prview)"
       fi
       echo "CLEAN"
+      exit 0
+    fi
+    if [[ "${2:-}" == "checks" ]]; then
+      if [[ "${STUB_PR_CHECKS_MODE:-}" == "failure" ]]; then
+        echo '[{"name":"build","state":"FAILURE"}]'
+        exit 1
+      fi
+      echo '[{"name":"build","state":"SUCCESS"}]'
       exit 0
     fi
     ;;
@@ -221,6 +233,25 @@ err="$TMP_ROOT/e2"
 out="$(run_queue_wait QUEUE_WAIT_CONFIRM_POLLS=2 -- 1 1 4 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(jq -r .verdict <<<"$out")" "queued" "a one-poll CONFLICTING blip is not a conflict" "$err"
 
+# --- 2b. the deadline applies the same count -------------------------------
+# With the confirmation raised past the poll budget the candidate can never
+# reach it, so the wait runs to its deadline with a conflict reading
+# standing. Handing that back as `conflicting` gives a single unconfirmed
+# observation the name a confirmed one carries, and a caller routing on
+# verdict cannot tell them apart. The reading is not lost either: it is
+# reported beside the still-queued verdict rather than as one.
+new_case conflicting_unconfirmed_at_deadline
+write_fixture state last "$(pr_state OPEN CONFLICTING)"
+write_fixture queue last "$q_in_queue"
+err="$TMP_ROOT/e2b"
+out="$(run_queue_wait QUEUE_WAIT_CONFIRM_POLLS=9 -- 1 1 3 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(jq -r .verdict <<<"$out")" "queued" \
+  "an unconfirmed candidate does not carry a confirmed verdict's name at the deadline" "$err"
+assert_eq "$(jq -r .status <<<"$out")" "timeout" \
+  "that exit is a timeout, not a complete verdict" "$err"
+assert_eq "$(jq -r .unconfirmed_verdict <<<"$out")" "conflicting" \
+  "the standing reading is reported beside the verdict, never dropped" "$err"
+
 # --- 3. it outranks ejected ------------------------------------------------
 # A conflicting PR that also left the queue is not a CI problem: routing it
 # to `ejected` sends the caller into ci-fix for a failure CI never had.
@@ -232,6 +263,25 @@ err="$TMP_ROOT/e3"
 out="$(run_queue_wait -- 1 1 20 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(jq -r .verdict <<<"$out")" "conflicting" "a conflicting PR out of the queue is conflicting, not ejected" "$err"
 assert_eq "$(jq -r .was_in_merge_queue <<<"$out")" "true" "the queue memory it outranks is still recorded" "$err"
+
+# --- 3b. it outranks the failed-check probe too ----------------------------
+# The ranking above is an if/elif chain, so it settles conflicting against
+# ejected and disarm — and settles nothing against the probe, which sits
+# outside it and emits `disarmed` on ONE observation. A conflicting PR that
+# is armed and not enqueued satisfies the probe's shape, so on the first
+# poll, before the conflict is ever confirmed, the probe hands back the
+# disarm merge-pr.md routes to a CI cycle: a recovery cycle for a failure CI
+# never had. The probe must be able to fire here or the case proves nothing,
+# which is why the checks stub is put in failure mode.
+new_case conflicting_outranks_check_probe
+write_fixture state last "$(pr_state OPEN CONFLICTING)"
+write_fixture queue last "$q_armed_only"
+err="$TMP_ROOT/e3b"
+out="$(run_queue_wait STUB_PR_CHECKS_MODE=failure -- 1 1 20 --json 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(jq -r .verdict <<<"$out")" "conflicting" \
+  "a standing conflict is not overtaken by a single failed-check probe" "$err"
+assert_eq "$(jq -r .cause <<<"$out")" "base_conflict" \
+  "the verdict keeps the conflict's cause, not the probe's check_failed" "$err"
 
 # --- 4. every other mergeable value routes nothing -------------------------
 # UNKNOWN is what GitHub reports while it recomputes; routing on it would
