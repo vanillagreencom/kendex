@@ -381,6 +381,116 @@ run_collate_paths
 case "$(cat "$R/CHANGELOG.md")" in *"The unstaged rewrite nothing judged."*) ok "and its entry is folded in" ;;
   *) bad "and its entry is folded in" "$(cat "$R/CHANGELOG.md")" ;; esac
 
+echo "=== the record the judge names is the one split, guarded and rewritten ==="
+# A repo that points GROWTH_GUARDS_CHANGELOG_RECORD elsewhere gets that file
+# collated. The judge validates one record; a collation that rewrote another
+# would publish a file nothing measured.
+reset
+mkdir -p "$R/docs"
+printf '# Release Notes\n\n## [Unreleased]\n\n### Added\n\n- An entry it already carries.\n' >"$R/docs/Release Notes.md"
+git -C "$R" add -A
+git -C "$R" commit -q -m "chore: carry a record of its own"
+cp "$R/CHANGELOG.md" "$TMP/before"
+fragment added ken-1.md '- An entry for the other record.
+'
+run_collate_record() { # sets OUT and RC, with the record elsewhere
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && GROWTH_GUARDS_CHANGELOG_RECORD='docs/Release Notes.md' "$COLLATE" 2>&1)" || RC=$?
+}
+run_collate_record
+[ "$RC" -eq 0 ] && case "$OUT" in *"docs/Release Notes.md's [Unreleased] section"*) true ;; *) false ;; esac \
+  && ok "the configured record is what the run reports folding into" \
+  || bad "the configured record is what the run reports folding into" "rc=$RC out=$OUT"
+case "$(cat "$R/docs/Release Notes.md")" in *"An entry for the other record."*) ok "and the entry lands in it" ;;
+  *) bad "and the entry lands in it" "$(cat "$R/docs/Release Notes.md")" ;; esac
+untouched && ok "CHANGELOG.md, which the judge did not name, is untouched" \
+  || bad "CHANGELOG.md, which the judge did not name, is untouched" "$(diff "$TMP/before" "$R/CHANGELOG.md" || true)"
+[ -f "$R/changelog.d/added/ken-1.md" ] && bad "the fragment is deleted" "it survived" \
+  || ok "the fragment is deleted"
+# The guard follows it too: an unstaged edit to that record stops the write.
+git -C "$R" add -A
+git -C "$R" commit -q -m "chore: collated"
+fragment fixed ken-2.md '- A second entry.
+'
+printf '\n- A hand-written line nothing judged.\n' >>"$R/docs/Release Notes.md"
+run_collate_record
+[ "$RC" -eq 2 ] && case "$OUT" in *"differs between git and the working tree"*"docs/Release Notes.md"*) true ;; *) false ;; esac \
+  && ok "an unstaged edit to the configured record exits 2, naming it" \
+  || bad "an unstaged edit to the configured record exits 2, naming it" "rc=$RC out=$OUT"
+# And with that scope switched off there is nowhere to fold into, which is a
+# refusal rather than a write to some other file.
+OUT=""
+RC=0
+OUT="$(cd "$R" && GROWTH_GUARDS_CHANGELOG_RECORD= "$COLLATE" 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"record scope is off"*) true ;; *) false ;; esac \
+  && ok "no configured record is a refusal, not a write to CHANGELOG.md" \
+  || bad "no configured record is a refusal" "rc=$RC out=$OUT"
+
+echo "=== a fenced example of the heading is not the heading ==="
+# The collation asks the shared grammar where the section is. A search of its
+# own for `## [Unreleased]` puts the fragments under the example instead.
+reset
+cat >"$R/CHANGELOG.md" <<'EOF'
+# Changelog
+
+Write entries as fragments, never here:
+
+```
+## [Unreleased]
+
+- Not a real entry.
+```
+
+## [Unreleased]
+
+### Added
+
+- An entry the file already carries.
+
+## [1.0.0] - 2026-01-01
+
+### Added
+
+- A released entry.
+EOF
+git -C "$R" add -A
+git -C "$R" commit -q -m "chore: a record whose example names the heading"
+cp "$R/CHANGELOG.md" "$TMP/before"
+fragment added ken-1.md '- An entry the release folds in.
+'
+run_collate
+[ "$RC" -eq 0 ] && ok "the collation takes it" || bad "the collation takes it" "rc=$RC out=$OUT"
+cat >"$TMP/expected" <<'EOF'
+# Changelog
+
+Write entries as fragments, never here:
+
+```
+## [Unreleased]
+
+- Not a real entry.
+```
+
+## [Unreleased]
+
+### Added
+
+- An entry the file already carries.
+- An entry the release folds in.
+
+## [1.0.0] - 2026-01-01
+
+### Added
+
+- A released entry.
+EOF
+if diff -u "$TMP/expected" "$R/CHANGELOG.md" >"$TMP/diff" 2>&1; then
+  ok "the entry lands under the real heading and the example keeps its own lines"
+else
+  bad "the entry lands under the real heading and the example keeps its own lines" "$(cat "$TMP/diff")"
+fi
+
 echo "=== a changelog the collator cannot read stops the run ==="
 reset
 fragment fixed ken-1.md '- A fragment.

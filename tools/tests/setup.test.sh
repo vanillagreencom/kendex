@@ -128,8 +128,13 @@ printf '# Changelog\n\n## [Unreleased]\n' >"$R/CHANGELOG.md"
 git -C "$R" add -A
 RC=0
 OUT="$(git -C "$R" commit -m "chore(release): the collated changelog" 2>&1)" || RC=$?
-[ "$RC" -eq 0 ] && ok "CHANGELOG.md still counts, the way the release commit needs" \
-  || bad "CHANGELOG.md still counts, the way the release commit needs" "rc=$RC out=$OUT"
+[ "$RC" -ne 0 ] && case "$OUT" in *"without a changelog entry"*) true ;; *) false ;; esac \
+  && ok "the record alone is no entry while nothing declares a collation" \
+  || bad "the record alone is no entry while nothing declares a collation" "rc=$RC out=$OUT"
+RC=0
+OUT="$(cd "$R" && GROWTH_GUARDS_CHANGELOG_COLLATE=1 git commit -m "chore(release): the collated changelog" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "CHANGELOG.md counts under the declaration, the way the release commit needs" \
+  || bad "CHANGELOG.md counts under the declaration" "rc=$RC out=$OUT"
 printf 'fn fourth() {}\n' >"$R/crates/d.rs"
 git -C "$R" add -A
 RC=0

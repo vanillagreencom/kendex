@@ -259,14 +259,19 @@ longer header is a body sentence on the line every log shows.
 
 **The changelog a commit owes.** When `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS`
 (empty by default) names a glob some staged path matches, the commit must also
-add or modify a path under `GROWTH_GUARDS_CHANGELOG_PATHS` or
-`GROWTH_GUARDS_CHANGELOG_RECORD` — the same two scopes changelog-entries
-judges, resolved by the same library — or carry `[no-changelog]` in the
-header. Deleting a fragment is not writing one, so only additions and
-modifications count as evidence. The remedy names the fragment globs alone:
-the record satisfies the rule, but writing a line into it by hand is what
-changelog-entries refuses earlier in the same commit chain, so it is offered
-only as the release commit's own write.
+add or modify a path under `GROWTH_GUARDS_CHANGELOG_PATHS` — the fragment
+scope changelog-entries judges, resolved by the same library — or carry
+`[no-changelog]` in the header. Deleting a fragment is not writing one, so
+only additions and modifications count as evidence.
+
+`GROWTH_GUARDS_CHANGELOG_RECORD` counts as that entry only under
+`GROWTH_GUARDS_CHANGELOG_COLLATE=1`, the same declaration the record scope
+reads: that is the release commit folding the fragments in. Without it any
+edit to the record would count — a typo fixed in a section released years ago
+— and nothing else would catch it, since changelog-entries judges only the
+lines a commit GAINS under `[Unreleased]` and a released section is not that.
+The remedy therefore names the fragment globs alone and mentions the record
+as the release commit's own write.
 
 Git-generated headers are exempt from shape and length alone: nobody chose
 their wording or their size. The changelog rule still runs over them — a

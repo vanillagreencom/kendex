@@ -67,9 +67,10 @@ kendex.settings.toml [env] > default):
   GROWTH_GUARDS_CHANGELOG_PATHS   what counts as a written entry, with
   GROWTH_GUARDS_CHANGELOG_RECORD  — the same two scopes the changelog-entries
                                check judges (defaults "changelog.d/*/*.md"
-                               and "CHANGELOG.md"). The record satisfies the
-                               rule but is not offered as a remedy: the other
-                               check refuses a hand-added [Unreleased] line
+                               and "CHANGELOG.md"). The record counts only
+                               under GROWTH_GUARDS_CHANGELOG_COLLATE=1, the
+                               release commit's own declaration: any other
+                               edit to it is not an entry
 
 `[no-changelog]` anywhere in the header escapes the changelog rule.
 
@@ -205,12 +206,22 @@ if [ -n "$REQUIRED" ]; then
     fi
   done <"$GG_TMP/staged.z"
 
+  # The record counts as the entry only for the release commit that collates,
+  # and the declaration it already reads is the evidence. Without that, any
+  # edit to it counts — a typo fixed in a section released years ago — and
+  # nothing else would catch it: changelog-entries judges only the lines a
+  # commit GAINS under [Unreleased], and a released section is not that.
+  record_counts=0
+  if [ -n "$GG_CHANGELOG_RECORD" ] && [ "${GROWTH_GUARDS_CHANGELOG_COLLATE:-}" = "1" ]; then
+    record_counts=1
+  fi
+
   # The record is compared as one value, never folded into the pattern list:
   # a record path carrying a space would word-split into two globs there, and
   # writing that very file would then satisfy nothing.
   entry=""
   while IFS= read -r -d '' f; do
-    if [ -n "$GG_CHANGELOG_RECORD" ] && [ "$f" = "$GG_CHANGELOG_RECORD" ]; then
+    if [ "$record_counts" -eq 1 ] && [ "$f" = "$GG_CHANGELOG_RECORD" ]; then
       entry="$f"
       break
     fi
@@ -233,7 +244,7 @@ if [ -n "$REQUIRED" ]; then
           "write one of: $GG_CHANGELOG_SHOWN" \
           "or put [no-changelog] in the header when the commit changes nothing a consumer sees"
         [ -z "$GG_CHANGELOG_RECORD" ] \
-          || echo "  $(gg_shown "$GG_CHANGELOG_RECORD") counts only for the release commit that collates the fragments"
+          || echo "  $(gg_shown "$GG_CHANGELOG_RECORD") counts only under GROWTH_GUARDS_CHANGELOG_COLLATE=1, which is the release commit collating the fragments"
         ;;
     esac
   fi

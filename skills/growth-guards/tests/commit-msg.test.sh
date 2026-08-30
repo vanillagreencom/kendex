@@ -312,6 +312,27 @@ run_stdin "$STRAY"
 [ "$RC" -eq 1 ] && case "$OUT" in *"header is 205 characters (max 72)"*) true ;; *) false ;; esac \
   && ok "a header of stray continuation bytes counts each of them, never nothing" \
   || bad "a header of stray continuation bytes counts each of them" "rc=$RC out=$OUT"
+# The same holds for every shape that LOOKS like a sequence and is not one:
+# an overlong form, a surrogate encoding, a lead byte past the last code
+# point. Each is counted byte by byte, so 30 of them is 90 characters and not
+# 30 — a range written loosely here is a cap a malformed header walks past.
+malformed_counted=1
+for bad_seq in '\340\200\200:overlong' '\355\240\200:surrogate' '\364\220\200\200:out-of-range'; do
+  bytes="${bad_seq%%:*}"
+  what="${bad_seq#*:}"
+  run_stdin "fix: $(rep "$(printf "$bytes")" 30)"
+  # 5 for "fix: ", then one per byte of each malformed sequence.
+  want=$((5 + 30 * (${#bytes} / 4)))
+  [ "$RC" -eq 1 ] && case "$OUT" in *"header is $want characters (max 72)"*) true ;; *) false ;; esac \
+    || { malformed_counted=0; bad "a $what sequence is counted byte by byte" "want=$want rc=$RC out=$OUT"; }
+done
+[ "$malformed_counted" -eq 1 ] && ok "an overlong, surrogate or out-of-range sequence costs one per byte"
+# The control: the same count of WELL-FORMED three-byte sequences is 30
+# characters and passes, so the refusals above are the malformed ranges and
+# not the length rule refusing every multibyte header.
+run_stdin "fix: $(rep "$(printf '\342\200\224')" 30)"
+[ "$RC" -eq 0 ] && ok "control: 30 well-formed three-byte sequences are 30 characters and pass" \
+  || bad "control: 30 well-formed three-byte sequences pass" "rc=$RC out=$OUT"
 
 echo "=== shape and length are reported together, not one at a time ==="
 run_stdin "$(rep q 90)" "GROWTH_GUARDS_SUBJECT_MAX=20"
@@ -361,7 +382,7 @@ case "$OUT" in *"write one of: changelog.d/*/*.md"*) ok "the diagnostic names th
 printf '%s\n' "$OUT" | grep -F 'write one of:' | grep -qF 'CHANGELOG.md' \
   && bad "the remedy does not send a writer at the record" "$OUT" \
   || ok "the remedy does not send a writer at the record"
-case "$OUT" in *"CHANGELOG.md counts only for the release commit"*) ok "the record is named as the release commit's own write" ;;
+case "$OUT" in *"CHANGELOG.md counts only under GROWTH_GUARDS_CHANGELOG_COLLATE=1"*) ok "the record is named as the release commit's own write, and what declares it" ;;
   *) bad "the record is named as the release commit's own write" "$OUT" ;; esac
 run_rc 'fix(KEN-1): change a crate [no-changelog]'
 [ "$RC" -eq 0 ] && ok "[no-changelog] in the header waives it" \
@@ -397,12 +418,31 @@ run_rc 'fix(KEN-2): change a crate again'
 [ "$RC" -eq 1 ] && case "$OUT" in *"changed without a changelog entry"*) true ;; *) false ;; esac \
   && ok "deleting a fragment is not writing one" \
   || bad "deleting a fragment is not writing one" "rc=$RC out=$OUT"
-# The record counts too, which is what the release commit needs.
-printf '# Changelog\n\n## [Unreleased]\n\n- A fix consumers see.\n' >"$RC_REPO/CHANGELOG.md"
+# The record counts for the release commit that collates, and only there: an
+# edit to a section released long ago is not an entry, and changelog-entries
+# judges only the lines a commit GAINS under [Unreleased].
+printf '# Changelog\n\n## [Unreleased]\n\n- A fix consumers see.\n\n## [1.0.0] - 2026-01-01\n\n- A released entry.\n' >"$RC_REPO/CHANGELOG.md"
 git -C "$RC_REPO" add -A
 run_rc 'chore(release): collate the changelog'
-[ "$RC" -eq 0 ] && ok "the collated record counts as the entry" \
-  || bad "the collated record counts as the entry" "rc=$RC out=$OUT"
+[ "$RC" -eq 1 ] && case "$OUT" in *"changed without a changelog entry"*) true ;; *) false ;; esac \
+  && ok "the record alone is no entry — nothing declares this a collation" \
+  || bad "the record alone is no entry" "rc=$RC out=$OUT"
+OUT=""; RC=0
+OUT="$(cd "$RC_REPO" && printf 'chore(release): collate the changelog\n' | GROWTH_GUARDS_CHANGELOG_COLLATE=1 "$CM" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "GROWTH_GUARDS_CHANGELOG_COLLATE=1 makes the collated record the entry" \
+  || bad "GROWTH_GUARDS_CHANGELOG_COLLATE=1 makes the collated record the entry" "rc=$RC out=$OUT"
+# A correction in an ALREADY-RELEASED section is what the declaration keeps
+# out: no fragment, no [no-changelog], and no line gained under [Unreleased]
+# for the sibling lane to catch.
+git -C "$RC_REPO" commit -qm "chore(release): collate the changelog [no-changelog]"
+printf 'fn corrected() {}\n' >>"$RC_REPO/crates/core/lib.rs"
+printf '# Changelog\n\n## [Unreleased]\n\n- A fix consumers see.\n\n## [1.0.0] - 2026-01-01\n\n- A released entry, spelled right.\n' >"$RC_REPO/CHANGELOG.md"
+git -C "$RC_REPO" add -A
+run_rc 'fix(KEN-9): change a crate'
+[ "$RC" -eq 1 ] && case "$OUT" in *"changed without a changelog entry"*) true ;; *) false ;; esac \
+  && ok "a text correction in a released section is not an entry either" \
+  || bad "a text correction in a released section is not an entry either" "rc=$RC out=$OUT"
+git -C "$RC_REPO" reset -q --hard HEAD
 
 # A path git would quote in its text output — the name carries a byte outside
 # ASCII — still reaches the globs as the bytes git recorded. A quoted name
@@ -465,14 +505,14 @@ printf '# Changelog\n\n## [Unreleased]\n' >"$RC_REPO/docs/My Changelog.md"
 printf 'fn spaced() {}\n' >>"$RC_REPO/crates/core/lib.rs"
 git -C "$RC_REPO" add -A
 OUT=""; RC=0
-OUT="$(cd "$RC_REPO" && printf 'fix(KEN-5): change a crate\n' | GROWTH_GUARDS_CHANGELOG_RECORD="docs/My Changelog.md" "$CM" 2>&1)" || RC=$?
+OUT="$(cd "$RC_REPO" && printf 'fix(KEN-5): change a crate\n' | GROWTH_GUARDS_CHANGELOG_COLLATE=1 GROWTH_GUARDS_CHANGELOG_RECORD="docs/My Changelog.md" "$CM" 2>&1)" || RC=$?
 [ "$RC" -eq 0 ] && ok "a record path carrying a space satisfies the rule when it is written" \
   || bad "a record path carrying a space satisfies the rule when it is written" "rc=$RC out=$OUT"
 # The control: the same commit without that file owes an entry, so the pass
 # above is the record matching and not the rule going quiet.
 git -C "$RC_REPO" rm -q --cached "docs/My Changelog.md"
 OUT=""; RC=0
-OUT="$(cd "$RC_REPO" && printf 'fix(KEN-5): change a crate\n' | GROWTH_GUARDS_CHANGELOG_RECORD="docs/My Changelog.md" "$CM" 2>&1)" || RC=$?
+OUT="$(cd "$RC_REPO" && printf 'fix(KEN-5): change a crate\n' | GROWTH_GUARDS_CHANGELOG_COLLATE=1 GROWTH_GUARDS_CHANGELOG_RECORD="docs/My Changelog.md" "$CM" 2>&1)" || RC=$?
 [ "$RC" -eq 1 ] && ok "control: without it the same commit still owes an entry" \
   || bad "control: without it the same commit still owes an entry" "rc=$RC out=$OUT"
 git -C "$RC_REPO" reset -q --hard HEAD

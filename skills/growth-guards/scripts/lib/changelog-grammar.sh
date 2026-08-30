@@ -104,15 +104,27 @@ END {
 }
 '
 
-# The lines under `## [Unreleased]`, found by structure. A fenced block opens
-# on a run of three or more backticks or tildes (up to three leading spaces)
-# and closes only on a run of at least that length in the SAME character with
-# nothing but whitespace after it, so a three-backtick line inside a
-# four-backtick block does not end it. Nothing inside a fence is a heading; a
-# level-1 or level-2 ATX heading switches the section on or off, and every
-# other line inside it is content — the fence lines included, so an added
-# example counts as much as an added bullet. A code span or a fenced example
-# naming `## [Unreleased]` therefore moves nothing.
+# What the record's `## [Unreleased]` section IS, found by structure. A fenced
+# block opens on a run of three or more backticks or tildes (up to three
+# leading spaces) and closes only on a run of at least that length in the SAME
+# character with nothing but whitespace after it, so a three-backtick line
+# inside a four-backtick block does not end it. Nothing inside a fence is a
+# heading; a level-1 or level-2 ATX heading switches the section on or off,
+# and every other line inside it is content — the fence lines included, so an
+# added example counts as much as an added bullet. A code span or a fenced
+# example naming `## [Unreleased]` therefore moves nothing.
+#
+# Two readers, one grammar. The default emits the section's CONTENT, which is
+# what a commit's lines are compared against. `-v emit=bounds` emits where the
+# section BEGINS and ENDS instead, as NUL-free records:
+#
+#   unreleased<TAB>LINE          the heading's own line
+#   section<TAB>LINE<TAB>TEXT    a level-3 heading inside it, with its text
+#   end<TAB>LINE                 the first line past the section
+#
+# so a collator splits the file at those numbers rather than searching it for
+# a heading again — a second search is a second grammar, and it is the one
+# that puts entries under a fenced example.
 #
 # An unterminated fence leaves the parser unable to say where the section
 # starts or stops, so it exits 3 rather than reporting a document with no
@@ -132,8 +144,9 @@ function heading_text(l,   i, n, t) {
   i = lead(l); n = 0; while (substr(l, i + n + 1, 1) == "#") n++
   t = substr(l, i + n + 1)
   sub(/^[ \t]+/, "", t); sub(/[ \t]+#+[ \t]*$/, "", t); sub(/[ \t]+$/, "", t)
-  return tolower(t)
+  return t
 }
+function content(l) { if (inside && emit != "bounds") print l }
 {
   line = $0; sub(/\r$/, "", line)
   i = lead(line)
@@ -142,21 +155,27 @@ function heading_text(l,   i, n, t) {
   if (c == "`" || c == "~") { while (substr(line, i + run + 1, 1) == c) run++ }
   if (fence != "") {
     # A closing fence: same character, at least as long, and nothing after it.
-    if (c == fence && run >= flen && substr(line, i + run + 1) ~ /^[ \t]*$/) {
-      fence = ""
-      if (inside) print line
-      next
-    }
-    if (inside) print line
+    if (c == fence && run >= flen && substr(line, i + run + 1) ~ /^[ \t]*$/) fence = ""
+    content(line)
     next
   }
-  if (run >= 3) { fence = c; flen = run; if (inside) print line; next }
+  if (run >= 3) { fence = c; flen = run; content(line); next }
   lvl = heading_level(line)
   if (lvl == 1 || lvl == 2) {
-    inside = (lvl == 2 && index(heading_text(line), "[unreleased]") == 1)
+    if (inside && emit == "bounds") printf "end\t%d\n", NR
+    inside = (lvl == 2 && index(tolower(heading_text(line)), "[unreleased]") == 1)
+    if (inside && emit == "bounds") printf "unreleased\t%d\n", NR
     next
   }
-  if (inside && line ~ /[^ \t]/) print line
+  if (!inside) next
+  if (emit == "bounds") {
+    if (lvl == 3) printf "section\t%d\t%s\n", NR, heading_text(line)
+    next
+  }
+  if (line ~ /[^ \t]/) print line
 }
-END { if (fence != "") exit 3 }
+END {
+  if (fence != "") exit 3
+  if (inside && emit == "bounds") printf "end\t%d\n", NR + 1
+}
 '

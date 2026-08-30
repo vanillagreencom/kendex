@@ -153,13 +153,24 @@ gg_config_path() { # RAW LABEL — normalized on stdout; nonzero + ::error on st
 # shell and refused in another.
 #
 # Each well-formed UTF-8 sequence collapses to one character; every other byte
-# counts as itself. So a stray continuation byte, which belongs to no
-# sequence, costs one rather than nothing: text that is not valid UTF-8 has no
-# character count, and a cap must round that in the direction that cannot let
-# an over-long value through.
+# counts as itself. So a stray continuation byte, an overlong form, a
+# surrogate encoding and an out-of-range lead byte each cost one per byte
+# rather than one per sequence: text that is not valid UTF-8 has no character
+# count, and a cap must round that in the direction that cannot let an
+# over-long value through. The alternatives are the byte grammar RFC 3629
+# defines — the same ranges GG_ENTRY_AWK validates against — because a range
+# written loosely is what makes E0 80 80 or F4 90 80 80 measure as one.
 GG_CHARS_AWK_FN='
-function gg_chars(s) {
-  gsub(/[\302-\337][\200-\277]|[\340-\357][\200-\277][\200-\277]|[\360-\364][\200-\277][\200-\277][\200-\277]/, "x", s)
+function gg_chars(s,   seq) {
+  seq = "[\302-\337][\200-\277]"
+  seq = seq "|\340[\240-\277][\200-\277]"
+  seq = seq "|[\341-\354][\200-\277][\200-\277]"
+  seq = seq "|\355[\200-\237][\200-\277]"
+  seq = seq "|[\356-\357][\200-\277][\200-\277]"
+  seq = seq "|\360[\220-\277][\200-\277][\200-\277]"
+  seq = seq "|[\361-\363][\200-\277][\200-\277][\200-\277]"
+  seq = seq "|\364[\200-\217][\200-\277][\200-\277]"
+  gsub(seq, "x", s)
   return length(s)
 }
 '

@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# Folds the changelog.d fragments into CHANGELOG.md's [Unreleased] section
-# and deletes them. One entry is one file, so no two branches ever write the
-# same CHANGELOG line; this is the step that turns the files back into
+# Folds the changelog fragments into the collated record's [Unreleased]
+# section and deletes them. One entry is one file, so no two branches ever
+# write the same record line; this is the step that turns the files back into
 # sections, and only the release commit runs it.
 #
-# It judges nothing, and it does not decide what a fragment is either. Which
-# tracked paths are fragments, which section each belongs to, and whether one
-# is well formed — its shape, its length, a symlink or binary content where
-# changelog text should be — are all the growth-guards changelog-entries
-# lane's answers. This run asks that lane for its list and folds in exactly
-# what it names. One grammar, invoked here and at every commit, rather than
-# two spellings that can drift.
+# It judges nothing, and it decides nothing about the changelog either.
+# Which tracked paths are fragments, which section each belongs to, whether
+# one is well formed — its shape, its length, a symlink or binary content
+# where changelog text should be — which file is the collated record, and
+# where that record's [Unreleased] section begins and ends are all the
+# growth-guards changelog-entries lane's answers, the last of them from the
+# grammar that lane judges by. This run asks for them and folds in exactly
+# what it is told. One grammar, invoked here and at every commit, rather than
+# two spellings that can drift — a second search for the heading is what puts
+# entries under a fenced example of it.
 #
 # The fragments are the ones git carries, not whatever is on disk: the judge
 # reads the index, and an untracked stray nobody wrote cannot stop a release.
@@ -25,7 +28,7 @@
 # and removed like any other.
 #
 # Exit codes follow the guard family: 0 clean, 1 a fragment the judge
-# refuses, 2 could not run. CHANGELOG.md is replaced whole or not at all.
+# refuses, 2 could not run. The record is replaced whole or not at all.
 set -euo pipefail
 
 # The heading each section name is written under, in the order they are
@@ -34,6 +37,8 @@ set -euo pipefail
 SECTIONS="added:Added changed:Changed deprecated:Deprecated removed:Removed fixed:Fixed security:Security"
 
 JUDGE=.agents/skills/growth-guards/scripts/changelog-entries
+GG_LIB=.agents/skills/growth-guards/scripts/lib
+TAB="$(printf '\t')"
 
 if [ "$#" -gt 0 ]; then
   echo "changelog-collate: usage: changelog-collate" >&2
@@ -48,6 +53,17 @@ note() { echo "changelog-collate: $1"; }
 
 ROOT="$(git rev-parse --show-toplevel)" || die "not inside a git work tree — the collation could not run"
 cd "$ROOT" || die "could not enter $ROOT — the collation could not run"
+
+# The record's section boundaries come from the grammar the judge compares
+# against HEAD with, so the two cannot disagree about where [Unreleased] is.
+GG_CHECK=changelog-collate
+for lib in common.sh changelog-grammar.sh; do
+  [ -r "$GG_LIB/$lib" ] || die "$GG_LIB/$lib is missing — the changelog grammar could not be read; reinstall the growth-guards skill"
+done
+# shellcheck source=../.agents/skills/growth-guards/scripts/lib/common.sh
+source "$GG_LIB/common.sh" || die "could not load $GG_LIB/common.sh"
+# shellcheck source=../.agents/skills/growth-guards/scripts/lib/changelog-grammar.sh
+source "$GG_LIB/changelog-grammar.sh" || die "could not load $GG_LIB/changelog-grammar.sh"
 
 TMP="$(mktemp -d)" || die "could not create a work directory — the collation could not run"
 OUT=""
@@ -74,14 +90,17 @@ esac
 # index order, so each section's fragments arrive in the filename order the
 # release notes have always read.
 : >"$TMP/frags"
+: >"$TMP/dirs"
 for pair in $SECTIONS; do : >"$TMP/sel.${pair%%:*}"; done
 count=0
+RECORD=""
 guarded=()
 while IFS= read -r -d '' rec; do
   kind=${rec%%$'\t'*}
   rest=${rec#*$'\t'}
   case "$kind" in
     record)
+      RECORD="$rest"
       guarded+=(":(literal)$rest")
       continue
       ;;
@@ -99,6 +118,9 @@ while IFS= read -r -d '' rec; do
   [ -f "$path" ] || die "$path is in the index but not a file on disk — the collation could not run"
   printf '%s\0' "$path" >>"$TMP/sel.$sec"
   printf '%s\0' "$path" >>"$TMP/frags"
+  # The directory each fragment sits in, so an emptied one can go with it
+  # without this run spelling the fragment tree a second time.
+  printf '%s\0' "${path%/*}" >>"$TMP/dirs"
   guarded+=(":(literal)$path")
   count=$((count + 1))
 done <"$TMP/list"
@@ -107,6 +129,12 @@ if [ "$count" -eq 0 ]; then
   note "no fragments — nothing to collate"
   exit 0
 fi
+
+# One record path, for the guard, the split and the replacement alike. The
+# judge names it or the scope is off, and a collation with nowhere to fold
+# into refuses rather than writing some other file.
+[ -n "$RECORD" ] \
+  || die "the changelog-entries record scope is off (GROWTH_GUARDS_CHANGELOG_RECORD is empty), so there is no collated record to fold these fragments into"
 
 # The write folds in each file on disk and then deletes it, and it replaces
 # the record with what it read there — so an unstaged edit to any of them
@@ -131,35 +159,62 @@ for pair in $SECTIONS; do
   done <"$TMP/sel.$low"
 done
 
-[ -f CHANGELOG.md ] || die "CHANGELOG.md is missing — the collation could not run"
+[ -f "$RECORD" ] || die "$RECORD is missing — the collation could not run"
 : >"$TMP/pre"
 : >"$TMP/lead"
 : >"$TMP/post"
 
-# Split CHANGELOG.md into the part above [Unreleased], that section's lead
-# and per-section bodies, and the released versions below it. A body keeps one
+# Where the section begins, which level-3 headings it holds and where it ends
+# are the grammar's answers, as line numbers. Asking it rather than searching
+# the file again is what keeps the collation and the judge pointed at the
+# same heading: a fenced example of `## [Unreleased]` is not one to either.
+rc=0
+LC_ALL=C awk -v emit=bounds "$GG_UNRELEASED_AWK" <"$RECORD" >"$TMP/bounds" || rc=$?
+case "$rc" in
+  0) : ;;
+  3) die "$RECORD leaves a code fence unclosed — the [Unreleased] section cannot be located; close the fence" ;;
+  *) die "$RECORD could not be read (awk exit $rc) — the collation could not run" ;;
+esac
+
+start=0
+end=0
+: >"$TMP/secline"
+while IFS="$TAB" read -r kind a b; do
+  case "$kind" in
+    unreleased) start="$a" ;;
+    end) end="$a" ;;
+    section)
+      low="$(printf '%s' "$b" | tr '[:upper:]' '[:lower:]')"
+      case " $SECTIONS " in
+        *" $low:"*) : ;;
+        *) die "$RECORD names '$b' under [Unreleased], which is not a Keep a Changelog section — the collation could not run" ;;
+      esac
+      printf '%s\t%s\n' "$a" "$low" >>"$TMP/secline"
+      ;;
+    *) die "the changelog grammar emitted a boundary this collation does not understand: $kind" ;;
+  esac
+done <"$TMP/bounds"
+[ "$start" -gt 0 ] || die "$RECORD has no '## [Unreleased]' heading — the collation could not run"
+
+# Split at those numbers: the part above the heading, that section's lead and
+# per-section bodies, and the released versions below it. A body keeps one
 # blank line between its entries and none at its edges, so a section the file
 # spells under two headings comes out as one list.
 rc=0
-awk -v tmp="$TMP" -v known="added changed deprecated removed fixed security" '
+awk -v tmp="$TMP" -v start="$start" -v end="$end" -v table="$TMP/secline" '
   BEGIN {
-    n = split(known, k, " ")
-    for (i = 1; i <= n; i++) is[k[i]] = 1
-    out = tmp "/pre"
-    state = 0
-  }
-  state == 0 && /^## \[Unreleased\]/ { print > out; state = 1; out = tmp "/lead"; insec = 0; next }
-  state == 1 && /^## / { state = 2; out = tmp "/post"; insec = 0 }
-  state == 1 && /^###[[:space:]]/ {
-    sec = $0
-    sub(/^###[[:space:]]+/, "", sec)
-    sub(/[[:space:]]+$/, "", sec)
-    low = tolower(sec)
-    if (!(low in is)) {
-      print sec > "/dev/stderr"
-      exit 3
+    while ((getline l < table) > 0) {
+      split(l, p, "\t")
+      secline[p[1] + 0] = p[2]
     }
-    out = tmp "/sec." low
+    close(table)
+    out = tmp "/lead"
+    insec = 0
+  }
+  NR <= start { print > (tmp "/pre"); next }
+  end > 0 && NR >= end { print > (tmp "/post"); next }
+  NR in secline {
+    out = tmp "/sec." secline[NR]
     insec = 1
     started = 0
     held = 0
@@ -177,14 +232,8 @@ awk -v tmp="$TMP" -v known="added changed deprecated removed fixed security" '
     next
   }
   { print > out }
-  END { if (state == 0) exit 4 }
-' CHANGELOG.md 2>"$TMP/err" || rc=$?
-case "$rc" in
-  0) : ;;
-  3) die "CHANGELOG.md names '$(cat "$TMP/err")' under [Unreleased], which is not a Keep a Changelog section — the collation could not run" ;;
-  4) die "CHANGELOG.md has no '## [Unreleased]' heading — the collation could not run" ;;
-  *) die "CHANGELOG.md could not be read — the collation could not run" ;;
-esac
+' "$RECORD" || rc=$?
+[ "$rc" -eq 0 ] || die "$RECORD could not be split (awk exit $rc) — the collation could not run"
 
 trim() { # FILE — its content, edge blank lines dropped, interior runs capped at one
   awk '
@@ -220,13 +269,13 @@ assemble() {
   cat "$TMP/post" || return 1
 }
 
-OUT="$(mktemp ./CHANGELOG.md.XXXXXX)" || die "could not create the replacement file — the collation could not run"
-cp -p CHANGELOG.md "$OUT" || die "could not take CHANGELOG.md's mode — the collation could not run"
-assemble >"$OUT" || die "could not write the collated changelog — CHANGELOG.md is untouched"
-mv -- "$OUT" CHANGELOG.md || die "could not replace CHANGELOG.md — the collation could not run"
+OUT="$(mktemp -- "$RECORD.XXXXXX")" || die "could not create the replacement file — the collation could not run"
+cp -p -- "$RECORD" "$OUT" || die "could not take $RECORD's mode — the collation could not run"
+assemble >"$OUT" || die "could not write the collated changelog — $RECORD is untouched"
+mv -- "$OUT" "$RECORD" || die "could not replace $RECORD — the collation could not run"
 OUT=""
 
-# Past the move, every fragment is in CHANGELOG.md. Deleting stops for none of
+# Past the move, every fragment is in the record. Deleting stops for none of
 # them: one left behind folds in a second time on the next run, so the refusal
 # has to name every survivor, not the first.
 survivors=""
@@ -234,14 +283,15 @@ while IFS= read -r -d '' f; do
   rm -f -- "$f" || survivors="$survivors  $f"$'\n'
 done <"$TMP/frags"
 if [ -n "$survivors" ]; then
-  die "CHANGELOG.md is collated, but these fragments survived and would fold in a second time — delete them by hand:
+  die "$RECORD is collated, but these fragments survived and would fold in a second time — delete them by hand:
 ${survivors%$'\n'}"
 fi
-# A section directory the collation emptied goes with it. Not-empty and
-# not-found are both ordinary here, and neither leaves anything to act on.
-for pair in $SECTIONS; do
-  rmdir "changelog.d/${pair%%:*}" 2>/dev/null || true
-done
+# A directory the collation emptied goes with it — the ones the folded
+# fragments came out of, not a tree named a second time here. Not-empty and
+# not-found are both ordinary, and neither leaves anything to act on.
+while IFS= read -r -d '' d; do
+  rmdir -- "$d" 2>/dev/null || true
+done <"$TMP/dirs"
 
 if [ "$count" -eq 1 ]; then noun=entry; else noun=entries; fi
-note "folded $count $noun into CHANGELOG.md's [Unreleased] section"
+note "folded $count $noun into $RECORD's [Unreleased] section"
