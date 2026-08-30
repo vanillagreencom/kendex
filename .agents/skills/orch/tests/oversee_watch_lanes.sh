@@ -114,6 +114,8 @@ assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none
 assert_not_contains "$out" "EVENT lane-exited" "a failed probe never manufactures an exit" "$err"
 assert_contains "$(cat "$err")" "could not list the children of the pane behind 'gh-2'" \
   "the unusable probe is named on stderr" "$err"
+assert_contains "$(cat "$err")" "pgrep -P exited 2" \
+  "the note carries the status that actually occurred" "$err"
 assert_eq "$(grep -c 'could not list the children' "$err")" "1" \
   "the probe note is printed once per run, not per pass" "$err"
 
@@ -144,6 +146,24 @@ err="$TMP_ROOT/e3e"
 out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "an exited lane with a blank pane still exits 0" "$err"
 assert_eq "$(head -1 <<<"$out")" "EVENT lane-exited gh-2" "a blank pane does not swallow the event" "$err"
+
+# The liveness reply has one shape, `<pid> <command>`, and anything else is a
+# tmux that did not answer for this pane: a pid with no command behind it, or
+# a first field that is not a pid at all. Neither may be split into a pid and
+# an empty command and then judged.
+new_case lane_obs_missing_command
+printf '9002\n' > "$STUB_DIR/obs-gh-2.txt"
+err="$TMP_ROOT/e3b8"
+out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT window-gone gh-2" \
+  "a liveness reply with a pid and no command is window-gone" "$err"
+
+new_case lane_obs_non_numeric_pid
+printf 'fish fish\n' > "$STUB_DIR/obs-gh-2.txt"
+err="$TMP_ROOT/e3b9"
+out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT window-gone gh-2" \
+  "a liveness reply whose first field is not a pid is window-gone" "$err"
 
 # an unreadable pane command is window-gone, never a silent skip
 new_case lane_cmd_unreadable
@@ -179,7 +199,7 @@ assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" "the codex limit banne
 new_case usage_limit_before_question
 {
   printf "You've hit your session limit \xc2\xb7 resets 21:00\n"
-  printf 'Do you want to proceed?\n❯ 1. Yes\n  2. No\n'
+  printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n'
 } > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e3g"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
@@ -294,6 +314,63 @@ out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
   "a banner below the last user turn is the event" "$err"
 
+# A realistic transcript, with the E2-lead lines a real screen carries
+# between the banner and the composer. The marker must be an alternation of
+# literals: as a bracket expression it degrades to a set of BYTES on any awk
+# without multibyte support, every one of these lines then reads as a marker,
+# the boundary lands below the banner and usage-limit goes silent. A short
+# fixture cannot see that; this one can.
+new_case usage_limit_realistic_transcript
+{
+  printf '❯ pick the round back up\n'
+  printf '⏺ Ran 3 shell commands\n'
+  printf "You've hit your usage limit \xc2\xb7 resets 21:00\n"
+  printf '⏺ Teammate @dev-ken832-r3 finished\n'
+  printf '⎿  Wrote 6 lines to tmp/roundD.json\n'
+  printf '↓ 58.7k tokens\n'
+  printf '─────────────────────────────\n'
+  printf '\xe2\x9d\xaf\xc2\xa0\n'
+} > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3fc"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
+  "transcript lines between the banner and the composer are not markers" "$err"
+
+# A dialog screen draws no composer at all: Claude replaces it with the
+# selection rows, which it indents, so the last marker line there is the user
+# turn itself. Read as a composer, the boundary would slip back to the turn
+# before it and reopen the window over the very scrollback this slice exists
+# to exclude — a stale banner would mask a live question.
+new_case usage_limit_stale_banner_over_question
+{
+  printf "You've hit your usage limit \xc2\xb7 resets 21:00\n"
+  printf '❯ pick the round back up\n'
+  printf '⏺ Teammate @dev-ken832-r3 finished\n'
+  printf 'Do you want to proceed?\n'
+  printf '   ❯ 1. Yes\n     2. No\n'
+} > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3fa"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT question gh-2" \
+  "a stale banner never masks the live question on a dialog screen" "$err"
+assert_not_contains "$out" "EVENT usage-limit" \
+  "the banner above the turn stays scrollback when no composer is drawn" "$err"
+
+# ...and its control: on the same dialog screen, a banner BELOW the turn is
+# the account spent right now, and it still outranks the question
+new_case usage_limit_live_banner_over_question
+{
+  printf '❯ pick the round back up\n'
+  printf '⏺ Teammate @dev-ken832-r3 finished\n'
+  printf "You've hit your usage limit \xc2\xb7 resets 21:00\n"
+  printf 'Do you want to proceed?\n'
+  printf '   ❯ 1. Yes\n     2. No\n'
+} > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3fb"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
+  "a banner below the turn on a dialog screen is still the event" "$err"
+
 # The must-fail control: a lane with no banner at all
 new_case usage_limit_healthy
 printf '⏺ All green, nothing blocking.\n❯ \n' > "$STUB_DIR/pane-gh-2.txt"
@@ -344,13 +421,13 @@ new_case question
 {
   printf '⏺ I found two ways to do this.\n\n'
   printf 'Do you want to proceed?\n'
-  printf '❯ 1. Yes\n  2. No\n'
+  printf '   ❯ 1. Yes\n     2. No\n'
 } > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e4"
 out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "question exits 0" "$err"
 assert_eq "$(head -1 <<<"$out")" "EVENT question gh-2" "lane with a question prompt is the event" "$err"
-assert_contains "$out" "❯ 1. Yes" "pane tail follows the event line" "$err"
+assert_contains "$out" "   ❯ 1. Yes" "pane tail follows the event line" "$err"
 assert_not_contains "$out" "gh-1" "a working lane is not reported" "$err"
 assert_not_contains "$out" "EVENT idle-after-return" \
   "a selection prompt is a question, never an idle prompt" "$err"
@@ -360,7 +437,7 @@ assert_not_contains "$out" "EVENT idle-after-return" \
 new_case question_wrapped_shell
 printf 'fish\n' > "$STUB_DIR/cmd-gh-2.txt"
 printf '2747883\n' > "$STUB_DIR/kids-9002.txt"
-printf 'Do you want to proceed?\n❯ 1. Yes\n  2. No\n' > "$STUB_DIR/pane-gh-2.txt"
+printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e4a3"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT question gh-2" \
@@ -373,7 +450,7 @@ new_case pane_snapshot_per_lane
 printf 'a+b\na:b\n' > "$STUB_DIR/windows.txt"
 printf 'claude\n' > "$STUB_DIR/cmd-a+b.txt"
 printf 'claude\n' > "$STUB_DIR/cmd-a:b.txt"
-printf 'Do you want to proceed?\n❯ 1. Yes\n  2. No\n' > "$STUB_DIR/pane-a+b.txt"
+printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-a+b.txt"
 printf '⏺ working on it\n' > "$STUB_DIR/pane-a:b.txt"
 err="$TMP_ROOT/e4a2"
 out="$(run_watch -- --max-loops 1 'a+b' 'a:b' 2>"$err")" && rc=0 || rc=$?
@@ -461,7 +538,7 @@ assert_not_contains "$out" "EVENT idle-after-return" "a non-consecutive idle rea
 # pass would starve the lane-exited that the second pass earns.
 new_case question_bare_shell
 printf 'bash\n' > "$STUB_DIR/cmd-gh-2.txt"
-printf 'Do you want to proceed?\n❯ 1. Yes\n  2. No\n' > "$STUB_DIR/pane-gh-2.txt"
+printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e4c"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=none" \

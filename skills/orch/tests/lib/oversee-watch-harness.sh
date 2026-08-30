@@ -129,7 +129,8 @@ EOF
 # lane's one liveness read; panes.txt is `list-panes -a` (`<server pid> <pane
 # id>` lines, the lane-claim liveness key). pane-<lane>.<N>.txt and
 # cmd-<lane>.<N>.txt override the plain file on the Nth read of that lane, so a
-# case can change a screen between passes.
+# case can change a screen between passes; obs-<lane>.txt replaces the whole
+# liveness reply, for a case that needs a malformed one.
 cat > "$TMP_ROOT/bin/tmux" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
@@ -163,7 +164,9 @@ case "${1:-}" in
     n=$((n + 1)); printf '%s' "$n" > "$STUB_DIR/cmd-$lane.calls"
     src="$STUB_DIR/cmd-$lane.$n.txt"; [[ -f "$src" ]] || src="$STUB_DIR/cmd-$lane.txt"
     [[ -f "$src" ]] || { echo "can't find window: $lane" >&2; exit 1; }
-    # `#{pane_pid} #{pane_current_command}`: one read, pid first.
+    # `#{pane_pid} #{pane_current_command}`: one read, pid first. obs-<lane>.txt
+    # replaces the whole reply, so a case can hand the watch a malformed one.
+    if [[ -f "$STUB_DIR/obs-$lane.txt" ]]; then cat "$STUB_DIR/obs-$lane.txt"; exit 0; fi
     pid=9000; [[ -f "$STUB_DIR/panepid-$lane.txt" ]] && pid="$(cat "$STUB_DIR/panepid-$lane.txt")"
     printf '%s %s\n' "$pid" "$(cat "$src")"; exit 0 ;;
 esac
@@ -174,10 +177,11 @@ EOF
 # pgrep stub, modelling the probe the watch actually runs: `pgrep -P <pid>`
 # prints kids-<pid>.txt and exits 0 when that file exists — the children of a
 # pane process — and exits 1 with nothing when it does not, the way procps and
-# BSD pgrep both report no match. probe-fail-<pid> makes it exit 2, the status
-# both report for a probe that could not run at all (pgrep absent, the option
-# rejected). Every call is logged to pgrep.calls, so a case can hold the watch
-# to one probe per bare-shell lane per pass.
+# BSD pgrep both report no match. probe-fail-<pid> makes it exit 2, one of the
+# statuses that is not an answer — pgrep documents 2 for a syntax error and 3
+# for a fatal one, and a pgrep missing from PATH leaves 127. Every call is
+# logged to pgrep.calls, so a case can hold the watch to one probe per
+# bare-shell lane per pass.
 cat > "$TMP_ROOT/bin/pgrep" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail

@@ -95,15 +95,22 @@ WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens'
 # A ready input prompt: Claude Code's composer line, Codex's submit hint.
 # Present while working too, so it decides idleness only with WORKING_RE out.
 IDLE_PROMPT_RE='^❯|to submit message'
-# The marker each harness draws at column 0: Claude Code `❯`, Codex `›`. It
-# opens a submitted user message echoed into the transcript AND the composer
-# the lane sits at, so its content cannot tell the two apart — Codex draws the
-# same `› ` and a placeholder in an empty composer. Position can: the composer
-# is drawn under the transcript, so it is the LAST marker line on the screen
-# and every marker line above it is a turn the harness has already taken. Both
-# harnesses indent their selection rows, so a prompt the harness is asking
-# never reaches column 0.
-PANE_MARKER_RE='^[❯›]'
+# The marker each harness draws at column 0 for a submitted user message
+# echoed into the transcript AND for the composer the lane sits at: Claude
+# Code `❯`, Codex `›`. Spelled as an alternation of literals and NEVER as a
+# bracket expression: a bracket expression holding a multibyte character is a
+# set of its BYTES on every awk without multibyte support — mawk, one-true-awk
+# under LC_ALL=C, gawk under LC_ALL=C — where `[❯›]` matches any line opening
+# with an E2-lead character, which is most of a transcript.
+PANE_MARKER_RE='^❯|^›'
+# A Claude Code turn: the marker, an ASCII blank, then text. Its composer puts
+# U+00A0 after the marker instead, with or without an unsent draft, and its
+# dialogs indent their rows — so this is the one shape that can legitimately
+# be the LAST marker line on a screen, which is how a dialog screen carrying
+# no composer is told from a screen carrying one. Codex draws its turn, its
+# placeholder, its draft and its dialog rows all as `› ` and text, so its last
+# marker line is never a turn.
+CLAUDE_TURN_RE='^❯[[:blank:]]+[^[:space:]]'
 
 INTERVAL=240
 MAX_LOOPS=25
@@ -423,16 +430,19 @@ is_bare_shell() {
 # pane process and the harness as its child, so the pane reads `fish` for the
 # lane's whole life. Only a shell with nothing under it is finished.
 #
-# 0 a child, 1 none, 2 the probe could not answer — the three statuses procps
-# and BSD pgrep both return, verified on Linux and Darwin 25. `ps --ppid` is
-# procps-only and BSD ps rejects it with status 1, the same status it uses for
-# no match, which would read every pane as childless. One probe per bare-shell
-# lane per pass; no walking of the tree below.
+# Returns 0 for a child and 1 for none — pgrep's own two answers — and 2 for
+# anything else, which is not an answer at all: pgrep documents 2 for a syntax
+# error and 3 for a fatal one, and a pgrep missing from PATH leaves 127. The
+# raw status is kept in LANE_PROBE_RC so the note can name what happened.
+# `ps --ppid` is procps-only and BSD ps rejects it with status 1, the same
+# status it uses for no match, which read every pane as childless. One probe
+# per bare-shell lane per pass; no walking of the tree below.
+LANE_PROBE_RC=0
 pane_has_child() {
-  local rc=0
-  pgrep -P "$1" >/dev/null 2>&1 || rc=$?
-  [[ "$rc" -le 1 ]] || return 2
-  return "$rc"
+  LANE_PROBE_RC=0
+  pgrep -P "$1" >/dev/null 2>&1 || LANE_PROBE_RC=$?
+  [[ "$LANE_PROBE_RC" -le 1 ]] || return 2
+  return "$LANE_PROBE_RC"
 }
 
 # Said once per run, not per pass: the answer does not change under the watch.
@@ -440,19 +450,26 @@ LANE_PROBE_NOTED=0
 note_probe_unusable() {
   [[ "$LANE_PROBE_NOTED" -eq 0 ]] || return 0
   LANE_PROBE_NOTED=1
-  echo "oversee-watch: could not list the children of the pane behind '$1' (pgrep -P exited 2); shell panes stay watched rather than reported exited" >&2
+  echo "oversee-watch: could not list the children of the pane behind '$1' (pgrep -P exited $LANE_PROBE_RC); shell panes stay watched rather than reported exited" >&2
 }
 
 # The pane lines strictly below the last user turn — the whole pane when the
 # screen holds none. A banner the lane has since taken another turn past is
 # scrollback, not the account's state now: after a reset the old banner stays
 # on the visible screen, and reporting it every pass buries the live lanes.
-# The last marker line is the composer the lane is sitting at, so the turn is
-# the one before it.
+#
+# The last marker line is the composer, or a dialog row that has replaced it,
+# UNLESS it is a Claude Code turn — the one turn shape that can legitimately
+# be last, since Claude indents its dialog rows and marks its composer with
+# U+00A0. So the boundary is that line when it is a Claude turn, and the
+# marker line before it otherwise.
 pane_below_last_turn() {
-  awk -v marker="$PANE_MARKER_RE" '
-    { line[NR] = $0; if ($0 ~ marker) { turn = composer; composer = NR } }
-    END { for (i = turn + 1; i <= NR; i++) print line[i] }
+  awk -v marker="$PANE_MARKER_RE" -v claude_turn="$CLAUDE_TURN_RE" '
+    { line[NR] = $0; if ($0 ~ marker) { prev = last; last = NR } }
+    END {
+      turn = (last > 0 && line[last] ~ claude_turn) ? last : prev
+      for (i = turn + 1; i <= NR; i++) print line[i]
+    }
   ' <<<"$1"
 }
 

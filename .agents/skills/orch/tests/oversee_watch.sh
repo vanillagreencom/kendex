@@ -107,7 +107,7 @@ assert_contains "$(cat "$err")" "GH_REPO is not set" "pr-watch stderr is surface
 new_case prwatch_no_starve
 printf '12\tabcdef01\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out"
 printf '1' > "$STUB_DIR/prwatch.rc"
-printf 'Do you want to proceed?\n❯ 1. Yes\n  2. No\n' > "$STUB_DIR/pane-gh-2.txt"
+printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e1f"
 out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT question gh-2" "a lane question is seen despite standing pr-watch attention" "$err"
