@@ -74,7 +74,11 @@ function quoted(cmd, i, n, q,   start, ch, w) {
     ch = substr(cmd, i, 1)
     if (ch == q) { W = W w substr(cmd, start, i - start); HAVEW = 1; return i + 1 }
     if (ch == BS && q != SQ) {
-      w = w substr(cmd, start, i - start) substr(cmd, i + 1, 1)
+      w = w substr(cmd, start, i - start)
+      if (substr(cmd, i + 1, 2) == "\r\n") { i += 3; start = i; continue }
+      # A line continuation is removed inside quotes too, so a flag broken
+      # across lines reaches git whole and is judged whole.
+      if (substr(cmd, i + 1, 1) != "\n") w = w substr(cmd, i + 1, 1)
       i += 2; start = i; continue
     }
     i++
@@ -89,6 +93,9 @@ function heredoc(cmd, i, n,   ch, q, w) {
   while (i <= n) {
     ch = substr(cmd, i, 1)
     if (ch == " " || ch == "\t" || ch == "<" || ch == ">" || index(SEP, ch) > 0) break
+    # `$` before a quote is ANSI-C or locale quoting: `<<$<quote>EOF<quote>`
+    # names EOF, and kept raw the body never terminates.
+    if (ch == "$" && (substr(cmd, i + 1, 1) == SQ || substr(cmd, i + 1, 1) == "\"")) { i++; continue }
     if (ch == SQ || ch == "\"") {
       q = ch; i++
       while (i <= n && substr(cmd, i, 1) != q) { w = w substr(cmd, i, 1); i++ }
@@ -174,41 +181,64 @@ function scan(cmd,   n, i, ch, c2, d, j, start) {
   }
   end_command()
 }
+# A word that skips the hooks or injects configuration, or "" for anything else.
+# Only where the WHOLE word is one, which is what keeps a quoted commit message
+# out of it: a message naming --no-verify is one word of prose, not the flag.
+# Any `-c<value>` injects configuration whatever the value: an included file can
+# set core.hooksPath. A cluster reads left to right, so from the first
+# value-taking option the rest of the word is its value and `-mnote` is a message.
+function bypassword(t,   p, ch) {
+  if (t ~ /[ \t\n\r]/) return ""
+  if (t ~ /^--no-veri/ || t ~ /^-c/ || t ~ /^--config-env/) return t
+  if (t !~ /^-[A-Za-z]/) return ""
+  for (p = 2; p <= length(t); p++) {
+    ch = substr(t, p, 1)
+    if (index(SHORT_VALUE, ch) > 0) return ""
+    if (ch == "n") return t
+  }
+  return ""
+}
+# What an alias body says, kept under its name: whether it commits, and the
+# bypass it carries. Bookkeeping over words already read, not an expansion.
+function aliasdef(nm, body,   k, cnt, part, w) {
+  cnt = split(body, part, /[ \t\n\r]+/)
+  for (k = 1; k <= cnt; k++) {
+    if (part[k] == "commit") ALIASC[nm] = 1
+    w = bypassword(part[k])
+    if (w != "" && ALIASB[nm] == "") ALIASB[nm] = w
+  }
+}
 # The rule over the live words of one command.
-function judge(   m, t, g, c, a, p, ch) {
-  g = 0; c = 0; a = 0
+function judge(   m, t, g, c, a, inv, rest, eq, nm) {
+  g = 0; c = 0; a = 0; inv = ""
   for (m = 1; m <= NTOK; m++) {
     t = TOK[m]
     if (t == "-C" || t == "cd" || t ~ /^--git-dir/ || t ~ /^--work-tree/ || t ~ /^GIT_DIR=/ || t ~ /^GIT_WORK_TREE=/) MOVES = 1
     # Configuration reaches git from anywhere: an assignment, an export, a
     # config write in an earlier command. A bypass prints only beside a commit.
     if (t !~ /[ \t\n\r]/ && (t ~ /^GIT_CONFIG_/ || tolower(t) ~ /hookspath/)) setbypass(t)
-    # An alias is any subcommand this gate cannot read: `-c alias.c=<commit>`
-    # puts the commit inside one word, so a git command line that defines one
-    # counts as a commit and the -c that carried it counts as the injection.
-    if (tolower(t) ~ /alias\./) a = 1
+    # An alias is any subcommand this gate cannot read, so a git command line
+    # that defines one counts as a commit; the name and body are kept so a later
+    # invocation of that name commits too, whatever command wrote it.
+    if (tolower(t) ~ /alias\./) {
+      a = 1
+      rest = substr(t, index(tolower(t), "alias.") + 6)
+      eq = index(rest, "=")
+      if (eq > 0) { nm = substr(rest, 1, eq - 1); aliasdef(nm, substr(rest, eq + 1)) }
+      else if (rest != "") aliasdef(rest, TOK[m + 1])
+    }
+    else if (inv == "" && (t in ALIASC)) inv = t
     if (g == 0) { if (basename(t) == "git") g = m }
     else if (c == 0 && t == "commit") c = m
   }
-  if (g == 0 || (c == 0 && a == 0)) return
+  if (g == 0 || (c == 0 && a == 0 && inv == "")) return
   COMMIT = 1
   for (m = 1; m <= NTOK; m++) {
-    t = TOK[m]
-    # A word is a bypass only where the WHOLE word is one, which is what keeps a
-    # quoted commit message out of it: `git commit -m "why --no-verify is
-    # banned"` is one word of prose, not the flag. Any `-c<value>` injects
-    # configuration, whatever the value: an included file can set core.hooksPath.
-    if (t ~ /[ \t\n\r]/) continue
-    if (t ~ /^--no-veri/ || t ~ /^-c/ || t ~ /^--config-env/) { setbypass(t); return }
-    if (t !~ /^-[A-Za-z]/) continue
-    # A cluster reads left to right: from the first value-taking option the rest
-    # of the word is its value, so `-mnote` is a message and `-nm` is not.
-    for (p = 2; p <= length(t); p++) {
-      ch = substr(t, p, 1)
-      if (index(SHORT_VALUE, ch) > 0) break
-      if (ch == "n") { setbypass(t); return }
-    }
+    t = bypassword(TOK[m])
+    if (t != "") { setbypass(t); return }
   }
+  # Nothing in this argv skips the hooks, but the alias it invokes may.
+  if (inv != "" && ALIASB[inv] != "") setbypass(ALIASB[inv])
 }
 BEGIN {
   SQ = sprintf("%c", 39); BT = sprintf("%c", 96)

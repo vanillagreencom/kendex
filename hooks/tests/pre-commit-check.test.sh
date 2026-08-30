@@ -115,6 +115,10 @@ both() {
   assert_eq "$log" "" "unarmed: nothing of the repository's ran: $name"
 }
 
+# The bypass flag, assembled: this repository's own hook refuses a command
+# that spells it out, and this file is committed like any other.
+NV="--no-""verify"
+
 # --- Fixtures ----------------------------------------------------------------
 UNARMED="$TMP_ROOT/unarmed"
 mkdir -p "$UNARMED"
@@ -488,13 +492,31 @@ both 'git commit -m \"prose mentioning -n inside\"' 0 2 "prose naming -n"
 both 'git commit -m \"core.hooksPath is not to be touched\"' 0 2 "prose naming the key"
 
 echo
+echo "a quoted line continuation is removed, and \$<quote> names its delimiter"
+
+# bash removes a backslash-newline inside double quotes, so the flag reaches
+# git whole; appended, our word carried a newline and the whole-word test
+# skipped it. And `<<$<quote>EOF<quote>` names EOF: kept raw as $EOF the body
+# never terminates and its quote swallows the commit behind it.
+both 'git commit \"--no-veri\\\nfy\" -m x' 2 2 "a flag broken across lines inside quotes"
+# Double-quoted so the apostrophes survive; the $ is escaped so this shell does
+# not expand it before the hook reads it as text.
+ANSIC="cat <<\$'EOF'\\n\\\"\\nEOF\\ngit commit $NV -m \\\"x\\\""
+both "$ANSIC" 2 2 "an ANSI-C quoted delimiter"
+
+# The controls: a continuation inside an ordinary message is not a bypass, and
+# a quoted delimiter still ends its heredoc with the body inert.
+both 'git commit -m \"a\\\nb\"' 0 2 "a continuation inside a message"
+SQDELIM="cat <<'EOF'\\ngit commit $NV here\\nEOF\\ngit commit -m x"
+both "$SQDELIM" 0 2 "a single-quoted delimiter"
+
+echo
 echo "an escaped quote does not close its run"
 
 # A backslash escapes the next character inside a double-quoted or backtick
 # run, so `\"` is not the close. Read as one, everything through the next quote
 # is swallowed and the live command behind it disappears. The flag is assembled
 # because this repository's own hook refuses a command that spells it out.
-NV="--no-""verify"
 both "echo \\\"x\\\\\\\" y\\\" && git commit $NV -m \\\"x\\\"" 2 2 "an escaped double quote"
 both 'echo `x\\` y` && git commit '"$NV"' -m `x`' 2 2 "an escaped backtick"
 
@@ -533,6 +555,19 @@ assert_contains "$err" "'-c' bypasses" "the alias form names the injection that 
 # price is that writing an alias reads as a commit. Both pinned here.
 both 'git -c core.pager=cat log' 0 0 "a benign -c on a non-commit"
 both "git config alias.c 'commit $NV'" 0 2 "writing an alias reads as a commit"
+
+echo
+echo "an alias outlives the command that defined it"
+
+# A persisted alias is used by a later command that names neither `commit` nor
+# `alias.`, so nothing in it refuses on its own. The name and what its body
+# said are kept, and the later invocation carries the body's bypass.
+both "git config alias.c 'commit $NV' && git c --allow-empty -m x" 2 2 "a persisted alias that commits"
+run_hook "$ARMED" "$(payload "git config alias.c 'commit $NV' && git c --allow-empty -m x")" CHAIN_EXIT=0
+assert_contains "$err" "'--no-verify' bypasses" "the invocation names the flag the alias body carried"
+
+# The control: an alias whose body names no commit is not a commit when used.
+both "git config alias.c 'status' && git c" 0 2 "a persisted alias that does not commit"
 
 echo
 echo "only <<- accepts a tab-indented terminator"

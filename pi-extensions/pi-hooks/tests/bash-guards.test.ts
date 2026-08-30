@@ -336,6 +336,40 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		await both(`git config alias.c 'commit ${nv}'`, "allow", "refuse");
 	});
 
+	test("an alias outlives the command that defined it", async () => {
+		// A persisted alias is used by a later command that names neither `commit`
+		// nor `alias.`, so nothing in it refuses on its own. The name and what its
+		// body said are kept, and the invocation carries the body's bypass.
+		const nv = "--no-" + "verify";
+		const persisted = `git config alias.c 'commit ${nv}' && git c --allow-empty -m x`;
+		await both(persisted, "refuse", "refuse");
+		const named = await gate(armed, persisted);
+		if (named.verdict.kind !== "refuse") throw new Error("unreachable");
+		expect(named.verdict.reason).toContain(`'${nv}' bypasses`);
+		// The control: a body naming no commit is not a commit when the alias runs,
+		// and the record does not outlive the command string it was written in.
+		await both("git config alias.c 'status' && git c", "allow", "refuse");
+		expect(scanCommand("git c --allow-empty -m x").commit).toBe(false);
+	});
+
+	test("a quoted line continuation is removed, and $' names its delimiter", async () => {
+		// bash removes a backslash-newline inside double quotes, so the flag reaches
+		// git whole; appended, our word carried a newline and the whole-word test
+		// skipped it. And `<<$'EOF'` names EOF: kept raw as $EOF the body never
+		// terminates and its quote swallows the commit behind it.
+		const nv = "--no-" + "verify";
+		for (const command of [`git commit "--no-veri\\\nfy" -m x`, `cat <<$'EOF'\n"\nEOF\ngit commit ${nv} -m "x"`]) {
+			await both(command, "refuse", "refuse");
+			const named = await gate(armed, command);
+			if (named.verdict.kind !== "refuse") throw new Error("unreachable");
+			expect(named.verdict.reason).toContain(`'${nv}' bypasses`);
+		}
+		// The controls: a continuation inside an ordinary message is not a bypass,
+		// and a quoted delimiter still ends its heredoc with the body inert.
+		await both('git commit -m "a\\\nb"', "allow", "refuse");
+		await both(`cat <<'EOF'\ngit commit ${nv} here\nEOF\ngit commit -m x`, "allow", "refuse");
+	});
+
 	test("only <<- accepts a tab-indented terminator", async () => {
 		// Strip tabs from every terminator and a tab-indented EOF ends a plain
 		// heredoc early, leaving the body live: one quote in it swallowed the
