@@ -38,7 +38,10 @@
 # SIZE_RATCHET_CLASSES (a repo's own overrides) then
 # SIZE_RATCHET_DEFAULT_CLASSES (the list this package ships), else
 # SIZE_RATCHET_THRESHOLD. Class patterns are the excludes file's globs and
-# run through the same matcher.
+# run through the same matcher. One inversion: on a frozen path the shipped
+# list also classifies, a repo entry decides only if it restates that list's
+# own pattern, so a directory-scoped class cannot silently retitle the tests
+# and documents under it.
 #
 # A class threshold carries its UNIT: `pattern=400` is 400 lines,
 # `pattern=24k` is 24*1024 bytes. Lines are newline counts (`wc -l`), bytes
@@ -129,8 +132,10 @@ kendex.settings.toml [env] > default):
   SIZE_RATCHET_THRESHOLD   line threshold for a path in no class (default 400)
   SIZE_RATCHET_CLASSES     this repo's OVERRIDES: `pattern=threshold`
                            entries separated by `;`, excludes-file glob
-                           semantics, matched BEFORE the shipped list
-                           (default none)
+                           semantics, matched BEFORE the shipped list —
+                           except on a frozen path the shipped list also
+                           classifies, where only an entry restating that
+                           list's own pattern decides   (default none)
   SIZE_RATCHET_DEFAULT_CLASSES
                            the class list this package ships, same syntax;
                            set it empty to drop the shipped list alone —
@@ -355,7 +360,9 @@ parse_classes() { # SETTING-NAME VALUE — appends entries; sets PARSED_NOTE
 }
 
 # A repo's own entries are matched FIRST, so it overrides a class without
-# restating the list; the shipped list decides everything it leaves alone.
+# restating the list; the shipped list decides everything it leaves alone. On
+# a frozen path the shipped list also classifies, that order inverts —
+# path_threshold says why.
 CLASSES="$(sr_setting SIZE_RATCHET_CLASSES "")" || exit 2
 parse_classes SIZE_RATCHET_CLASSES "$CLASSES"
 # The verdict line reports the mapping the run actually used, rebuilt from
@@ -370,6 +377,24 @@ DEFAULT_CLASSES="$(sr_setting SIZE_RATCHET_DEFAULT_CLASSES "$SHIPPED_CLASSES")" 
 parse_classes SIZE_RATCHET_DEFAULT_CLASSES "$DEFAULT_CLASSES"
 SHIPPED_CLASS_COUNT=$((CLASS_COUNT - REPO_CLASS_COUNT))
 [ "$SHIPPED_CLASS_COUNT" -eq 0 ] || CLASSES_NOTE="$CLASSES_NOTE, $SHIPPED_CLASS_COUNT shipped class(es)"
+
+# A repo entry naming a pattern the shipped list already carries RESTATES that
+# class — the one way to say "this class, our number", and the only repo entry
+# path_threshold lets decide a frozen path.
+CLASS_RESTATED=()
+sr_ri=0
+while [ "$sr_ri" -lt "$REPO_CLASS_COUNT" ]; do
+  CLASS_RESTATED+=(0)
+  sr_si="$REPO_CLASS_COUNT"
+  while [ "$sr_si" -lt "$CLASS_COUNT" ]; do
+    if [ "${CLASS_PATTERNS[$sr_ri]}" = "${CLASS_PATTERNS[$sr_si]}" ]; then
+      CLASS_RESTATED[$sr_ri]=1
+      break
+    fi
+    sr_si=$((sr_si + 1))
+  done
+  sr_ri=$((sr_ri + 1))
+done
 
 # --- frozen classes: globs whose rows may never rise -------------------------
 # Same glob language as the classes and the exclusion list, no thresholds.
@@ -624,12 +649,33 @@ is_excluded() { # PATH — 0 when some exclusion glob matches the full path
 # Single resolver: collection stamps every counted row with PT and PU, and
 # report() re-runs it to name the threshold that judged the path — including
 # for a baseline row whose file left the tracked set.
+#
+# A repo entry is matched first, EXCEPT on a frozen path: `*` crosses `/`, so
+# a repo class scoped to a directory (`ui/*.ts=250`) also takes every test and
+# document under it, and a frozen path has no answer to a tightened threshold
+# — its row never rises, so the run demands a remedy the freeze forbids. Such
+# an entry is skipped and the shipped class that names the path decides. A
+# repo meaning to move a frozen class restates that class's own pattern, and
+# that entry still wins; where nothing else matched, the skipped entry stands,
+# because the base threshold is a number nobody wrote for that path.
 path_threshold() { # PATH
-  local i=0
+  local i=0 frozen="" shadowed=""
   # Indexed iteration bounded by CLASS_COUNT: a whole-array expansion on an
   # empty array is an unbound variable under Bash 3.2 with set -u.
   while [ "$i" -lt "$CLASS_COUNT" ]; do
     if glob_match "$1" "${CLASS_PATTERNS[$i]}"; then
+      if [ "$i" -lt "$REPO_CLASS_COUNT" ] && [ "${CLASS_RESTATED[$i]:-0}" != "1" ]; then
+        # The freeze list is a second glob sweep, so it is asked once per path
+        # and only for a repo entry that actually matched.
+        if [ -z "$frozen" ]; then
+          if is_frozen "$1"; then frozen="y"; else frozen="n"; fi
+        fi
+        if [ "$frozen" = "y" ]; then
+          [ -n "$shadowed" ] || shadowed="$i"
+          i=$((i + 1))
+          continue
+        fi
+      fi
       PT="${CLASS_THRESHOLDS[$i]}"
       PU="${CLASS_UNITS[$i]}"
       PC="${CLASS_PATTERNS[$i]}"
@@ -637,6 +683,12 @@ path_threshold() { # PATH
     fi
     i=$((i + 1))
   done
+  if [ -n "$shadowed" ]; then
+    PT="${CLASS_THRESHOLDS[$shadowed]}"
+    PU="${CLASS_UNITS[$shadowed]}"
+    PC="${CLASS_PATTERNS[$shadowed]}"
+    return 0
+  fi
   # SIZE_RATCHET_THRESHOLD is a line count: code is what falls through to it,
   # and lines are what every linter caps code by.
   PT="$THRESHOLD"

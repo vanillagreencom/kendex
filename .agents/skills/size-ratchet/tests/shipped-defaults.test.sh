@@ -248,6 +248,51 @@ run
 has "skills/x/SKILL.md" && bad "control: SKILL.md passes under the shipped class" "$OUT" \
   || ok "control: without the override the 10000-byte SKILL.md is under 24k and passes"
 
+echo "=== a repo class scoped to a directory does not shadow a frozen class ==="
+# `*` crosses `/`, so `ui/*.ts` reaches the test files under ui/ too. They are
+# frozen, so a 250-line ceiling on them would demand a split the class the
+# package ships already sized at 800.
+new_repo shadow
+mklines ui/src/App.ts 300
+mklines ui/src/App.test.ts 500
+mklines docs/guide.md 300
+git -C "$R" add -A
+run 'SIZE_RATCHET_CLASSES=ui/*.ts=250;ui/*.tsx=250'
+if [ "$RC" -eq 1 ] \
+  && has "ui/src/App.ts — 300 lines > threshold 250 (class ui/*.ts)" \
+  && ! has "ui/src/App.test.ts" && ! has "docs/guide.md"; then
+  ok "the repo class judges the component and hands the frozen test and doc back to the shipped list"
+else
+  bad "a directory-scoped repo class spares frozen paths" "rc=$RC out=$OUT"
+fi
+# The control: the freeze is what routes those two paths. Drop it and the same
+# repo class takes them at 250 — which is the defect this section pins.
+run 'SIZE_RATCHET_CLASSES=ui/*.ts=250;ui/*.tsx=250' SIZE_RATCHET_FROZEN_CLASSES=
+if [ "$RC" -eq 1 ] && has "ui/src/App.test.ts — 500 lines > threshold 250 (class ui/*.ts)"; then
+  ok "control: with nothing frozen the same class does take the test file at 250"
+else
+  bad "control: the freeze is what routes the shadowed path" "rc=$RC out=$OUT"
+fi
+# Markdown carries the unit too: the shadow would have judged 300 lines where
+# the shipped class judges bytes.
+run 'SIZE_RATCHET_CLASSES=docs/*=250'
+[ "$RC" -eq 0 ] && ok "a doc under a directory-scoped class keeps its shipped byte ceiling" \
+  || bad "markdown keeps its class under a directory-scoped repo entry" "rc=$RC out=$OUT"
+run 'SIZE_RATCHET_CLASSES=docs/*=250' SIZE_RATCHET_FROZEN_CLASSES=
+if [ "$RC" -eq 1 ] && has "docs/guide.md — 300 lines > threshold 250 (class docs/*)"; then
+  ok "control: unfrozen, that same entry judges the doc in lines at 250"
+else
+  bad "control: markdown shadow" "rc=$RC out=$OUT"
+fi
+# A frozen path the shipped list names no class for still takes the repo's
+# entry: the base threshold is a number nobody wrote for it.
+run 'SIZE_RATCHET_CLASSES=ui/*.ts=250' SIZE_RATCHET_DEFAULT_CLASSES=
+if [ "$RC" -eq 1 ] && has "ui/src/App.test.ts — 500 lines > threshold 250 (class ui/*.ts)"; then
+  ok "with no shipped class to hand the frozen path to, the repo entry still decides it"
+else
+  bad "skipped entry stands where the shipped list claims nothing" "rc=$RC out=$OUT"
+fi
+
 echo "=== the package excludes CHANGELOG*.md by default ==="
 new_repo changelog
 mkbytes CHANGELOG.md 200000

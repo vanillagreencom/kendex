@@ -265,18 +265,11 @@ ORCH_STATE_DIR = "tmp"
 # fall through to, the shipped list naming no TypeScript class — because a
 # component that long has stopped being one component.
 #
-# Every entry is scoped to ui/, and the test entries lead, for one reason:
-# this list is matched before the shipped one and its globs cross `/`, so a
-# repo class shadows every shipped class whose paths it also matches, and
-# each shadowed class has to be re-led at the same scope. `ui/*.ts` alone
-# takes ui/ test files at 250 — the ones named for a test and the ones that
-# are one by directory alike — while the freeze still reaches them, and a
-# frozen row can never rise. Scoping every entry to ui/ is the other half:
-# an unscoped `*.test.*` would also lead the shipped markdown classes, and a
-# test-named markdown file would take a line count in place of its byte
-# ceiling. Both directory forms are spelled out for the shipped list's own
-# reason: `*` may match nothing, but the literal `/` must still be there.
-SIZE_RATCHET_CLASSES = "ui/*.test.*=800;ui/*.spec.*=800;ui/test/*=800;ui/*/test/*=800;ui/tests/*=800;ui/*/tests/*=800;ui/__tests__/*=800;ui/*/__tests__/*=800;ui/*.ts=250;ui/*.tsx=250"
+# These globs cross `/`, so `ui/*.ts` also matches ui/ test files and any
+# other frozen path under ui/. The engine hands those back to the shipped
+# class that names them, so the two entries here are policy and nothing else
+# needs restating.
+SIZE_RATCHET_CLASSES = "ui/*.ts=250;ui/*.tsx=250"
 
 # ── Worktrees ────────────────────────────────────────────────────────────
 # What a fresh issue worktree gets from this checkout: only paths git does

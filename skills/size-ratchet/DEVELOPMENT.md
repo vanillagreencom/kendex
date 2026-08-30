@@ -128,6 +128,19 @@ shipped list alone — exact single-threshold behavior needs the repo's own
 entries in the shipped list, so a README or a doc under a `tests/` directory
 is judged as the document it is.
 
+First match wins **except on a frozen path**. `*` crosses `/`, so a repo
+class scoped to a directory (`ui/*.ts=250`) also matches every test file and
+document under it; those are frozen, and a frozen row never rises, so a
+tightened threshold there asks for a remedy the freeze forbids. The engine
+skips such an entry and lets the shipped class that names the path decide. A
+repo that means to move a frozen class restates that class's own pattern
+(`*/SKILL.md=8k`), and that entry still wins — restating the pattern is how
+a repo names which class it is moving. Where the shipped list claims the
+path at all is the whole question: with no shipped class to hand it to, the
+skipped entry stands rather than falling through to a base threshold nobody
+wrote for it. A consumer therefore never restates a shipped threshold to
+express a narrower policy on one directory.
+
 A directory name takes both class forms: `*` may match nothing but the
 literal `/` in `*/tests/*` still must be there, so `*/tests/*` covers
 `pkg/tests/x` and never a root-level `tests/x` — that one needs `tests/*`.
