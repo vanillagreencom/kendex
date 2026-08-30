@@ -43,20 +43,28 @@ skills/worktree/tests/bash32-portability.test.sh"
 # the others and nothing else.
 EXCLUDED_SOURCES="skills/linear/tests/bash32-portability.test.sh"
 
-# with_renders LIST — each path, followed by its tracked render. A skill this
-# repo does not install has no rendered copy and contributes only its source.
-with_renders() {
-  local p
+# The sources this repo does not install, which therefore have no rendered
+# copy. Every other source's render is required by name below. Declaring the
+# exception rather than asking the filesystem is the whole point: a roster
+# that discovers its own members cannot tell a render that matches from a
+# render that is gone, and answers both with silence.
+UNRENDERED="skills/harness-ci/tests/bash32-portability.test.sh"
+
+# expand LIST — each path, then its render unless the path is declared above.
+expand() {
+  local p u skip
   for p in $1; do
     printf '%s\n' "$p"
-    if git ls-files --error-unmatch "$RENDER_PREFIX$p" >/dev/null 2>&1; then
-      printf '%s\n' "$RENDER_PREFIX$p"
-    fi
+    skip=no
+    for u in $UNRENDERED; do
+      [ "$u" = "$p" ] && skip=yes
+    done
+    [ "$skip" = yes ] || printf '%s\n' "$RENDER_PREFIX$p"
   done
 }
 
-CARRIERS="$(with_renders "$CARRIER_SOURCES")"
-EXCLUDED="$(with_renders "$EXCLUDED_SOURCES")"
+CARRIERS="$(expand "$CARRIER_SOURCES")"
+EXCLUDED="$(expand "$EXCLUDED_SOURCES")"
 renders="$(printf '%s\n%s\n' "$CARRIERS" "$EXCLUDED" | grep -c "^$RENDER_PREFIX")"
 
 PASS=0
@@ -94,8 +102,9 @@ extract() {
 reference=""
 reference_file=""
 for f in $CARRIERS; do
-  if [ ! -f "$f" ]; then
-    bad "$f is listed as a carrier but does not exist"
+  if [ ! -f "$f" ] || ! git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+    bad "$f is on the roster but git does not carry it" \
+      "deleted or renamed: restore it, or take it off the roster on purpose"
     continue
   fi
   body=""
@@ -120,13 +129,26 @@ if [ -z "$reference" ]; then
   verdict
   exit
 fi
-# A roster that reached no render is a roster covering half the trees git
-# carries, and it would report that half as clean.
-if [ "$renders" -gt 0 ]; then
-  ok "the roster reached $renders rendered copies under $RENDER_PREFIX"
-else
-  bad "no rendered copy was checked, so drift under $RENDER_PREFIX would go unreported"
-fi
+ok "the roster required $renders rendered copies under $RENDER_PREFIX by name"
+
+# The declared exceptions are held to being exceptions. One naming a path that
+# is not a source excuses nothing and hides a typo; one whose skill this repo
+# has since installed leaves a real render off the roster entirely.
+for u in $UNRENDERED; do
+  known=no
+  for s in $CARRIER_SOURCES $EXCLUDED_SOURCES; do
+    [ "$s" = "$u" ] && known=yes
+  done
+  if [ "$known" = no ]; then
+    bad "$u is declared unrendered but is on neither source list" \
+      "a stale or misspelled entry excuses a render nobody is checking"
+  elif git ls-files --error-unmatch "$RENDER_PREFIX$u" >/dev/null 2>&1; then
+    bad "$u is declared unrendered, but $RENDER_PREFIX$u is tracked" \
+      "the skill is installed now: drop it from UNRENDERED so its render joins the roster"
+  else
+    ok "$u has no render, as declared"
+  fi
+done
 
 # The comparison has teeth: one changed byte must read as drift.
 if [ "$(printf '%s\n' "$reference" | sed '$s/$/x/')" = "$reference" ]; then
@@ -237,7 +259,13 @@ printf "%s" "$value" |& tee log
 printf "%s" "$value"|& tee log
 grep -q x file |&tee log
 (cat f)|& tee log
+run 2>&1|& tee log
+printf x\(|& cat
+printf x\;|& cat
+printf x\[|& cat
+cmd |&
 cmd &>> log
+cmd&>>log
   short) run ;;&
   short) run ;&
 case $x in short) run ;;&long) run ;; esac
@@ -257,7 +285,10 @@ PROBES_EOF
 # keeps honest. The first three are real bracket expressions out of
 # skills/preflight/scripts/preflight and the fourth a separator string out of
 # hooks/pre-commit-check.sh, the four places an unanchored |& or ;& matched;
-# the fifth is the regex alternation the pipe anchor must also walk past.
+# the rest are the regex shapes that spell one of these operators without
+# being one, including the escaped-metacharacter classes that bound how far
+# the pipe anchor may widen, and a real awk redirection pattern out of
+# skills/reviewer/tests/harness-safe-shell-lint.test.sh.
 CONTROLS="$(
   cat <<'CONTROLS_EOF'
 local -r frozen=1
@@ -284,6 +315,12 @@ RUNNER_RE="(^[[:space:]]*|[;&|\`(][[:space:]]*)"
 KIND_TAIL="([[:space:]\"'\`;&|)]|\$)"
   SEP = ";&|()" "\n" "\r"
 alternation='([a-z]|&)'
+escaped_class='[\(|&]'
+escaped_class2='[\;&|)]'
+escaped_class3='[\[;&]'
+escaped_class4='[a\(|&]'
+escaped_group='\(|&\)'
+awk_redirect_re=/([[:space:]]>>?|[0-9]>|&>)/
 first || second &
 first; second &
 echo "${1}, ${2}"
