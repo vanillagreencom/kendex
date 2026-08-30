@@ -63,10 +63,23 @@ if [[ -L "$RECOVERY" || ( -e "$RECOVERY" && ( ! -f "$RECOVERY" || ! -O "$RECOVER
   echo "container-close: recovery record is not an owned regular file: $RECOVERY" >&2
   exit 1
 fi
+UNRESOLVED="$RECOVERY_DIR/$PARENT_ID.unresolved.tsv"
+if [[ -L "$UNRESOLVED" || ( -e "$UNRESOLVED" && ( ! -f "$UNRESOLVED" || ! -O "$UNRESOLVED" ) ) ]]; then
+  echo "container-close: unresolved recovery record is not an owned regular file: $UNRESOLVED" >&2
+  exit 1
+fi
 
 recovery_conflict() {
-  echo "container-close: recovery conflict for $PARENT_ID: $1; reconcile Linear state, then remove $RECOVERY only if no cascade repair remains" >&2
+  local record="${2:-$RECOVERY}"
+  echo "container-close: recovery conflict for $PARENT_ID: $1; reconcile Linear state, then remove $record only if no cascade repair remains" >&2
   return 1
+}
+
+refuse_unresolved() {
+  [[ -e "$UNRESOLVED" || -L "$UNRESOLVED" ]] || return 0
+  [[ -f "$UNRESOLVED" && ! -L "$UNRESOLVED" && -O "$UNRESOLVED" ]] \
+    || { echo "container-close: unresolved recovery record is not an owned regular file: $UNRESOLVED" >&2; return 1; }
+  recovery_conflict "unresolved durable and fresh alternatives require operator reconciliation" "$UNRESOLVED"
 }
 
 RUN_DIR="$(mktemp -d "$MAIN_REPO_ROOT/tmp/container-close-$PARENT_ID.XXXXXX")" \
@@ -132,6 +145,23 @@ fetch_recovery_rows() {
     || { echo "container-close: canceled-child repair lookup was incomplete for $PARENT_ID" >&2; return 1; }
 }
 
+publish_unresolved() {
+  [[ ! -e "$UNRESOLVED" && ! -L "$UNRESOLVED" ]] \
+    || { recovery_conflict "unresolved alternatives already exist" "$UNRESOLVED"; return $?; }
+  local unresolved_tmp
+  unresolved_tmp="$(mktemp "$RECOVERY_DIR/$PARENT_ID.unresolved.XXXXXX")" \
+    || { echo "container-close: cannot create unresolved recovery record for $PARENT_ID" >&2; return 1; }
+  if ! awk -F '\t' 'BEGIN { OFS="\t" }
+    { source=(FILENAME == ARGV[1] ? "durable" : "fresh"); print $1, $2, $3, source }
+  ' "$RECOVERY" "$SNAPSHOT" > "$unresolved_tmp" || ! chmod 600 "$unresolved_tmp" || ! mv -f "$unresolved_tmp" "$UNRESOLVED"; then
+    rm -f -- "$unresolved_tmp"
+    echo "container-close: cannot publish unresolved recovery alternatives for $PARENT_ID" >&2
+    return 1
+  fi
+  rm -f -- "$RECOVERY" \
+    || { echo "container-close: cannot retire conflicted recovery record for $PARENT_ID" >&2; return 1; }
+}
+
 publish_recovery() {
   [[ -s "$SNAPSHOT" || -s "$RECOVERY" ]] || return 0
   local recovery_tmp
@@ -157,7 +187,8 @@ publish_recovery() {
       }
     ' "$RECOVERY" "$SNAPSHOT" > "$recovery_tmp" || {
       rm -f -- "$recovery_tmp"
-      recovery_conflict "durable and fresh rows disagree"
+      publish_unresolved || return 1
+      recovery_conflict "durable and fresh rows disagree; alternatives saved" "$UNRESOLVED"
       return $?
     }
   elif ! cp "$SNAPSHOT" "$recovery_tmp"; then
@@ -175,6 +206,7 @@ publish_recovery() {
 }
 
 repair_canceled() {
+  refuse_unresolved || return 1
   [[ -e "$RECOVERY" || -L "$RECOVERY" ]] || return 0
   [[ -f "$RECOVERY" && ! -L "$RECOVERY" && -O "$RECOVERY" ]] \
     || { echo "container-close: recovery record is not an owned regular file: $RECOVERY" >&2; return 1; }
@@ -193,7 +225,7 @@ repair_canceled() {
     current_type="$(jq -r --arg id "$id" 'select(.id == $id) | .state_type // ""' "$CURRENT")" \
       || { echo "container-close: canceled-child repair could not read the state type for $id" >&2; return 1; }
     [[ "$current_type" == "completed" ]] \
-      || { echo "container-close: canceled-child repair found unexpected state for $id: $current_state" >&2; return 1; }
+      || { recovery_conflict "repair found child $id in unexpected state $current_state"; return $?; }
     "$LINEAR" issues update "$id" --state "$state" >/dev/null \
       || { echo "container-close: could not restore $id to $state" >&2; return 1; }
     printf 'container-close: restored %s to %s\n' "$id" "$state" >&2
@@ -204,7 +236,7 @@ repair_canceled() {
     matches="$(jq -r --arg id "$id" --arg state "$state" \
       'select(.id == $id and .state == $state) | .id' "$CURRENT" | wc -l | tr -d ' ')" \
       || { echo "container-close: canceled-child repair could not verify $id" >&2; return 1; }
-    [[ "$matches" -eq 1 ]] || { echo "container-close: canceled-child repair could not verify $id at $state" >&2; return 1; }
+    [[ "$matches" -eq 1 ]] || { recovery_conflict "repair could not verify child $id at $state"; return $?; }
   done
   rm -f -- "$RECOVERY" || { echo "container-close: cannot remove verified recovery record for $PARENT_ID" >&2; return 1; }
 }
@@ -249,6 +281,7 @@ sync_linear || { echo "container-close: Linear sync failed for $PARENT_ID" >&2; 
 PARENT="$(parent_json)" || { echo "container-close: cannot read parent $PARENT_ID" >&2; exit 1; }
 PARENT_TYPE="$(jq -r '.state_type // ""' <<<"$PARENT")" \
   || { echo "container-close: parent response is invalid for $PARENT_ID" >&2; exit 1; }
+refuse_unresolved
 if [[ "$PARENT_TYPE" == "completed" ]]; then
   repair_canceled; printf 'closed %s\n' "$PARENT_ID"; exit 0
 fi

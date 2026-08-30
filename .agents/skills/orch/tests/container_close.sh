@@ -97,6 +97,12 @@ case "$resource:$action" in
     esac
     ;;
   issues:validate-completion)
+    if [[ -e "$root/complete.on.fresh.conflict" ]]; then
+      printf 'Done\n' > "$root/parent.state"
+      jq 'map(if .state_type == "canceled" then .state = "Done" | .state_type = "completed" else . end)' \
+        "$root/children.json" > "$root/children.next.$$"
+      mv "$root/children.next.$$" "$root/children.json"
+    fi
     mode="$(cat < "$root/validation.mode")"
     case "$mode" in
       exit) echo 'validator unavailable' >&2; exit 7 ;;
@@ -146,6 +152,10 @@ case "$resource:$action" in
       exit 8
     fi
     printf '%s\n' "$id" >> "$root/update.calls"
+    if [[ -e "$root/update.noop" ]]; then
+      printf '{"success":true}\n'
+      exit 0
+    fi
     type=started
     [[ "$wanted" == Canceled ]] && type=canceled
     jq --arg id "$id" --arg state "$wanted" --arg type "$type" \
@@ -168,6 +178,7 @@ git -C "$SANDBOX" worktree add -q -b caller-two "$CALLER_TWO"
 
 SCRIPT="$SANDBOX/skills/orch/scripts/container-close"
 RECOVERY="$SANDBOX/tmp/container-close-recovery/PARENT-1.tsv"
+UNRESOLVED="$SANDBOX/tmp/container-close-recovery/PARENT-1.unresolved.tsv"
 export FAKE_LINEAR_ROOT="$TMP_ROOT/state"
 export PATH="$TMP_ROOT/bin:$PATH"
 mkdir "$FAKE_LINEAR_ROOT" "$SANDBOX/tmp"
@@ -181,7 +192,8 @@ reset_state() {
     "$FAKE_LINEAR_ROOT/fail.complete.before" "$FAKE_LINEAR_ROOT/fail.update.once" "$FAKE_LINEAR_ROOT/gh.mode" \
     "$FAKE_LINEAR_ROOT/late.cascade.on.children" \
     "$FAKE_LINEAR_ROOT/fresh.conflict.on.children" "$FAKE_LINEAR_ROOT/update.calls" \
-    "$SANDBOX/tmp/container-close-recovery/PARENT-1.tsv"
+    "$FAKE_LINEAR_ROOT/complete.on.fresh.conflict" "$FAKE_LINEAR_ROOT/update.noop" \
+    "$RECOVERY" "$UNRESOLVED"
   rm -rf "$FAKE_LINEAR_ROOT/complete.entries"
   mkdir "$FAKE_LINEAR_ROOT/complete.entries"
 }
@@ -256,6 +268,32 @@ assert_eq "$(jq -r '.[] | select(.id == "CHILD-3") | .state_type' "$FAKE_LINEAR_
 [[ ! -e "$RECOVERY" ]] && ok "verified partial repair removes its record" || fail "verified partial repair removes its record"
 
 reset_state
+printf 'Done\n' > "$FAKE_LINEAR_ROOT/parent.state"
+printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Todo","state_type":"unstarted"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+mkdir -p "$(dirname "$RECOVERY")"
+printf 'CHILD-2\tCanceled\t0\n' > "$RECOVERY"
+rc=0
+run_close >/dev/null 2>"$TMP_ROOT/unexpected-repair.err" || rc=$?
+[[ $rc -ne 0 ]] && ok "unexpected repair state fails closed" || fail "unexpected repair state fails closed"
+assert_contains "$TMP_ROOT/unexpected-repair.err" "recovery conflict for PARENT-1: repair found child CHILD-2 in unexpected state Todo" "unexpected-state conflict names its cause"
+assert_contains "$TMP_ROOT/unexpected-repair.err" "$RECOVERY" "unexpected-state conflict names the recovery record"
+assert_contains "$TMP_ROOT/unexpected-repair.err" "reconcile Linear state, then remove" "unexpected-state conflict gives the remedy"
+[[ -s "$RECOVERY" ]] && ok "unexpected-state conflict retains recovery" || fail "unexpected-state conflict retains recovery"
+
+reset_state
+printf 'Done\n' > "$FAKE_LINEAR_ROOT/parent.state"
+printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Done","state_type":"completed"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+printf 'CHILD-2\tCanceled\t0\n' > "$RECOVERY"
+touch "$FAKE_LINEAR_ROOT/update.noop"
+rc=0
+run_close >/dev/null 2>"$TMP_ROOT/verification-repair.err" || rc=$?
+[[ $rc -ne 0 ]] && ok "failed repair verification fails closed" || fail "failed repair verification fails closed"
+assert_contains "$TMP_ROOT/verification-repair.err" "recovery conflict for PARENT-1: repair could not verify child CHILD-2 at Canceled" "verification conflict names its cause"
+assert_contains "$TMP_ROOT/verification-repair.err" "$RECOVERY" "verification conflict names the recovery record"
+assert_contains "$TMP_ROOT/verification-repair.err" "reconcile Linear state, then remove" "verification conflict gives the remedy"
+[[ -s "$RECOVERY" ]] && ok "verification conflict retains recovery" || fail "verification conflict retains recovery"
+
+reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
 touch "$FAKE_LINEAR_ROOT/fail.complete.before"
 rc=0
@@ -305,13 +343,29 @@ run_close >/dev/null 2>"$TMP_ROOT/merge-conflict-first.err" || rc=$?
 [[ $rc -ne 0 ]] && ok "merge-conflict fixture keeps durable recovery" || fail "merge-conflict fixture keeps durable recovery"
 rm -f "$FAKE_LINEAR_ROOT/fail.complete.before"
 touch "$FAKE_LINEAR_ROOT/fresh.conflict.on.children"
+touch "$FAKE_LINEAR_ROOT/complete.on.fresh.conflict"
 rc=0
 run_close >/dev/null 2>"$TMP_ROOT/merge-conflict.err" || rc=$?
 [[ $rc -ne 0 ]] && ok "conflicting durable and fresh recovery rows fail closed" || fail "conflicting durable and fresh recovery rows fail closed"
 assert_contains "$TMP_ROOT/merge-conflict.err" "recovery conflict for PARENT-1: durable and fresh rows disagree" "publish conflict names its cause"
-assert_contains "$TMP_ROOT/merge-conflict.err" "$RECOVERY" "publish conflict names the durable recovery path"
+assert_contains "$TMP_ROOT/merge-conflict.err" "$UNRESOLVED" "publish conflict names the unresolved recovery path"
 assert_contains "$TMP_ROOT/merge-conflict.err" "reconcile Linear state, then remove" "publish conflict gives the reconciliation remedy"
-assert_eq "$(cat "$RECOVERY")" $'CHILD-2\tCanceled\t0' "publish conflict preserves the durable row"
+assert_eq "$(cat "$UNRESOLVED")" $'CHILD-2\tCanceled\t0\tdurable\nCHILD-2\tCanceled Again\t0\tfresh' "publish conflict preserves both tagged alternatives"
+[[ ! -e "$RECOVERY" ]] && ok "publish conflict retires the ambiguous single-state record" || fail "publish conflict retires the ambiguous single-state record"
+assert_eq "$(jq -r '.[] | select(.id == "CHILD-2") | .state_type' "$FAKE_LINEAR_ROOT/children.json")" "completed" "parent completion cascades during conflicting merge"
+
+awk -F '\t' '$4 == "durable" { print $1 "\t" $2 "\t" $3 }' "$UNRESOLVED" > "$RECOVERY"
+before_unresolved="$(cat "$UNRESOLVED")"
+rc=0
+run_close >/dev/null 2>"$TMP_ROOT/unresolved-retry.err" || rc=$?
+[[ $rc -ne 0 ]] && ok "completed parent refuses unresolved automatic repair" || fail "completed parent refuses unresolved automatic repair"
+assert_contains "$TMP_ROOT/unresolved-retry.err" "unresolved durable and fresh alternatives require operator reconciliation" "unresolved retry names its cause"
+assert_contains "$TMP_ROOT/unresolved-retry.err" "$UNRESOLVED" "unresolved retry names the alternatives record"
+assert_contains "$TMP_ROOT/unresolved-retry.err" "reconcile Linear state, then remove" "unresolved retry gives the remedy"
+assert_eq "$(cat "$UNRESOLVED")" "$before_unresolved" "completed retry retains both unresolved alternatives"
+assert_eq "$(cat "$RECOVERY")" $'CHILD-2\tCanceled\t0' "completed retry retains a crash-window stale record"
+assert_eq "$(jq -r '.[] | select(.id == "CHILD-2") | .state_type' "$FAKE_LINEAR_ROOT/children.json")" "completed" "unresolved retry refuses stale restoration"
+[[ ! -e "$FAKE_LINEAR_ROOT/update.calls" ]] && ok "unresolved retry performs no repair mutation" || fail "unresolved retry performs no repair mutation"
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"ancestor","state":"Canceled","state_type":"canceled","depth":0},{"id":"CHILD-1","title":"done","state":"Done","state_type":"completed","depth":0}]' > "$FAKE_LINEAR_ROOT/children.json"
