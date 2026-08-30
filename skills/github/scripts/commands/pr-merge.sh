@@ -3,7 +3,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Source shared library for load_bot_token (also sets PROJECT_ROOT)
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/../lib/github-api.sh"
 # Issue prefixes that resolve on their own once GitHub finishes computing or
@@ -49,7 +48,7 @@ Modes:
   --force          Deliberately skip all checks, including review threads
   --auto           Enable auto-merge when immediate merge is blocked
 
-Exit codes:
+Merge-mode exit codes:
   0    MERGED PR #N
        Merge completed immediately.
   0    ALREADY MERGED PR #N <mergedAt>
@@ -62,6 +61,10 @@ Exit codes:
        Nothing merged, queued, or armed.
   1    CLOSED (not merged) PR #N
        The PR is closed unmerged. Nothing was attempted.
+
+--check exit:
+  --check exits 0 after any valid readiness JSON, including can_merge=false for
+  blocked or CLOSED. Argument or dispatch failures before JSON remain nonzero.
 
 Exit 75 is volatile:
   A queue ejection or failed protection check can disarm merge state silently.
@@ -228,7 +231,6 @@ run_checks() {
         return 0
     fi
 
-    # 1. Check mergeable status
     local mergeable
     mergeable=$(gh pr view "$pr_num" --json mergeable --jq '.mergeable' 2>/dev/null || echo "UNKNOWN")
     if [ "$mergeable" = "MERGEABLE" ]; then
@@ -299,7 +301,6 @@ run_checks() {
         fi
     fi
 
-    # 4. Check review status
     # reviewDecision is only populated with branch protection rules requiring approvals.
     # Fall back to checking latestReviews for both APPROVED and CHANGES_REQUESTED states.
     local review="" has_approved_review=false has_changes_requested=false
@@ -320,7 +321,6 @@ run_checks() {
         fi
     fi
 
-    # Output JSON
     local issues_json warnings_json
     issues_json=$(printf '%s\n' "${issues[@]:-}" | jq -R -s -c 'split("\n") | map(select(. != ""))')
     warnings_json=$(printf '%s\n' "${warnings[@]:-}" | jq -R -s -c 'split("\n") | map(select(. != ""))')

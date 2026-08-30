@@ -40,6 +40,10 @@ Options:
   --bot <login>    Override $GH_BOT_USERNAME for this call (e.g. for Codex)
   --help, -h       Show this help
 
+Compatibility:
+  Unrecognized flags become positional input. Surplus positionals after the
+  PR number and output selector are ignored.
+
 Output (default):
   JSON object with body, updated_at, id, and computed verdict
 

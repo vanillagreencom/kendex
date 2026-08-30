@@ -148,6 +148,15 @@ run_pr_view_format() {
        env -u GH_TOKEN -u GITHUB_TOKEN "$GITHUB_SH" -C "$TMP_ROOT/repo" pr-view 42 "--format=$fmt")
 }
 
+run_pr_view_passthrough() {
+  local calls_file="$1"
+  (cd "$TMP_ROOT/repo" \
+    && PATH="$TMP_ROOT/bin:$PATH" \
+       STUB_GH_CALLS="$calls_file" \
+       env -u GH_TOKEN -u GITHUB_TOKEN "$GITHUB_SH" -C "$TMP_ROOT/repo" \
+       pr-view 42 --web extra-position)
+}
+
 assert_not_contains() {
   local haystack="$1" needle="$2" name="$3"
   if grep -qF -- "$needle" <<<"$haystack"; then
@@ -251,6 +260,17 @@ rc=$?
 set -e
 assert_eq "$rc" "0" "successful pr-view exits 0" "$stderr"
 assert_eq "$(jq -r .number <<<"$output")" "42" "successful pr-view preserves gh JSON" "$stderr"
+
+calls="$TMP_ROOT/pr-view-passthrough.calls"
+: >"$calls"
+stderr="$TMP_ROOT/pr-view-passthrough.err"
+set +e
+output=$(run_pr_view_passthrough "$calls" 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "pr-view accepts passthrough arguments" "$stderr"
+assert_contains "$(cat "$calls")" "pr view 42 --web extra-position" \
+  "pr-view forwards unknown flags and extra positionals"
 
 echo
 echo "=== github.sh pr-view --format rejection ==="

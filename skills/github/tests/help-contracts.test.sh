@@ -28,9 +28,14 @@ extract_section() {
   end_count=$(grep -cxF -- "$end" <<<"$output" || true)
   [[ "$start_count" -eq 1 && "$end_count" -eq 1 ]] || return 2
   awk -v start="$start" -v end="$end" '
-    $0 == start { inside = 1; next }
-    $0 == end { if (inside) exit }
-    inside { print }
+    $0 == end {
+      if (!seen_start) bad = 1
+      else seen_end = 1
+      exit
+    }
+    $0 == start { seen_start = 1; next }
+    seen_start { print }
+    END { if (bad || !seen_start || !seen_end) exit 2 }
   ' <<<"$output"
 }
 
@@ -85,15 +90,28 @@ assert_file_token() {
 }
 
 run_help_contracts() {
-  local label="$1" root="$2" github_help merge_help label_add_help label_remove_help token
+  local label="$1" root="$2" github_help merge_help label_add_help label_remove_help pr_view_help sticky_help token
   github_help=$("$root/scripts/github.sh" --help)
   merge_help=$("$root/scripts/github.sh" pr-merge --help)
   label_add_help=$("$root/scripts/github.sh" label-add --help)
   label_remove_help=$("$root/scripts/github.sh" label-remove --help)
+  pr_view_help=$("$root/scripts/github.sh" pr-view --help)
+  sticky_help=$("$root/scripts/github.sh" sticky-comment --help)
 
-  for token in 'unknown flags' 'positionals' 'positional body' 'omitted PR number'; do
+  for token in 'Most subcommands' 'pr-view' 'gh pr view' '--format' \
+    'sticky-comment' 'unrecognized flags' 'positional input' 'ignored'; do
     assert_section_token "$github_help" 'Argument rules:' 'Configuration:' "$token" \
       "$label argument rules carry $token"
+  done
+
+  for token in '--format' 'unrecognized flags' 'extra positionals' 'gh pr view'; do
+    assert_section_token "$pr_view_help" 'Note:' 'Errors:' "$token" \
+      "$label pr-view compatibility carries $token"
+  done
+
+  for token in 'Unrecognized flags' 'positional input' 'Surplus positionals' 'ignored'; do
+    assert_section_token "$sticky_help" 'Compatibility:' 'Output (default):' "$token" \
+      "$label sticky-comment compatibility carries $token"
   done
 
   for token in 'GH_TOKEN' 'GITHUB_TOKEN' 'GH_BOT_TOKEN' 'GH_BOT_USERNAME' \
@@ -131,8 +149,14 @@ run_help_contracts() {
 
   for token in 'ALREADY MERGED PR #N' 'QUEUED IN MERGE QUEUE PR #N' \
     'AUTO-MERGE ENABLED PR #N' 'CLOSED (not merged) PR #N'; do
-    assert_section_token "$merge_help" 'Exit codes:' 'Exit 75 is volatile:' "$token" \
+    assert_section_token "$merge_help" 'Merge-mode exit codes:' '--check exit:' "$token" \
       "$label exit codes carry $token"
+  done
+
+  for token in '--check exits 0' 'valid readiness JSON' 'can_merge=false' \
+    'CLOSED' 'nonzero'; do
+    assert_section_token "$merge_help" '--check exit:' 'Exit 75 is volatile:' "$token" \
+      "$label check exit carries $token"
   done
 
   for token in 'queue-wait <N>' 'pr-watch.sh' 'ejected' 'disarmed' 'not_queued' \
@@ -175,6 +199,10 @@ echo "=== section-boundary must-fail controls ==="
 github_decoy=$'Argument rules:\nknown only\nConfiguration:\nunknown flags\nToken selection:'
 assert_section_rejects_decoy "$github_decoy" 'Argument rules:' 'Configuration:' \
   'unknown flags' 'github token in a sibling section does not satisfy ownership'
+
+reversed_decoy=$'Configuration:\nArgument rules:\nunknown flags\nToken selection:'
+assert_section_rejects_decoy "$reversed_decoy" 'Argument rules:' 'Configuration:' \
+  'unknown flags' 'end-before-start section boundaries are rejected'
 
 merge_decoy=$'Exit 75 is volatile:\nwatch only\nTerminal and mutation rules:\nejected\nReview-thread gate:'
 assert_section_rejects_decoy "$merge_decoy" 'Exit 75 is volatile:' \

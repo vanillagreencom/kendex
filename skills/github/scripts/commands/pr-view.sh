@@ -68,6 +68,8 @@ Options:
 Note:
   --format is not supported here. For a normalized safe/raw PR view use
   'github.sh pr-data [PR] --format=safe|raw'.
+  Other unrecognized flags and extra positionals pass through to gh pr view
+  for compatibility.
 
 Errors:
   Emits structured JSON on stdout ({"status":..., "error":..., "detail":...,

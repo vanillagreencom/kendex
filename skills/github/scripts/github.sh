@@ -74,9 +74,10 @@ Output Formats:
   flags.
 
 Argument rules:
-  Subcommands reject unknown flags and positionals beyond their documented
-  Usage. A positional body or omitted PR number is accepted only when that
-  command's Usage shows it.
+  Most subcommands reject unknown flags and extra positionals beyond Usage.
+  pr-view passes other flags and extra positionals to gh pr view, except its
+  explicit --format rejection. sticky-comment keeps legacy permissive parsing:
+  unrecognized flags become positional input, and surplus positionals are ignored.
 
 Configuration:
   Project files load in this order, from lowest to highest precedence:

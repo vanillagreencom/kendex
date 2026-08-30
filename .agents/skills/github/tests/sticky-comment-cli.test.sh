@@ -94,6 +94,10 @@ echo "=== sticky-comment.sh CLI fallback ==="
 out=$("$STICKY" 123 --verdict)
 assert_eq "$out" "approved" "default fallback selects known claude[bot] review summary"
 
+out=$("$STICKY" 123 --legacy-extra ignored --verdict)
+assert_eq "$out" "approved" \
+    "legacy parser accepts unknown flags and ignores surplus positionals"
+
 assert_fails_with \
     "explicit --bot disables known-bot fallback" \
     "No sticky comment found" \
