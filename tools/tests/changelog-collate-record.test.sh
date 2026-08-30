@@ -127,8 +127,10 @@ run_collate_record() { # sets OUT and RC, with the record elsewhere
   RC=0
   OUT="$(cd "$R" && GROWTH_GUARDS_CHANGELOG_RECORD='docs/Release Notes.md' "$COLLATE" 2>&1)" || RC=$?
 }
+# Every path in a message is rendered, so the assertions read it that way.
+SHOWN_RECORD="$(printf '%q' 'docs/Release Notes.md')"
 run_collate_record
-[ "$RC" -eq 0 ] && case "$OUT" in *"docs/Release Notes.md's [Unreleased] section"*) true ;; *) false ;; esac \
+[ "$RC" -eq 0 ] && case "$OUT" in *"$SHOWN_RECORD's [Unreleased] section"*) true ;; *) false ;; esac \
   && ok "the configured record is what the run reports folding into" \
   || bad "the configured record is what the run reports folding into" "rc=$RC out=$OUT"
 case "$(cat "$R/docs/Release Notes.md")" in *"An entry for the other record."*) ok "and the entry lands in it" ;;
@@ -144,7 +146,7 @@ fragment fixed ken-2.md '- A second entry.
 '
 printf '\n- A hand-written line nothing judged.\n' >>"$R/docs/Release Notes.md"
 run_collate_record
-[ "$RC" -eq 2 ] && case "$OUT" in *"differs between git and the working tree"*"docs/Release Notes.md"*) true ;; *) false ;; esac \
+[ "$RC" -eq 2 ] && case "$OUT" in *"differs between git and the working tree"*"$SHOWN_RECORD"*) true ;; *) false ;; esac \
   && ok "an unstaged edit to the configured record exits 2, naming it" \
   || bad "an unstaged edit to the configured record exits 2, naming it" "rc=$RC out=$OUT"
 # With that scope off there is nowhere to fold into: a refusal, not a write
@@ -244,6 +246,63 @@ run_collate
   && ok "control: staged, the same edit is the judge's refusal" \
   || bad "control: staged, the same edit is the judge's refusal" "rc=$RC out=$OUT"
 git -C "$R" reset -q --hard HEAD
+
+echo "=== a declared collation still refuses a record that is not a file ==="
+# GROWTH_GUARDS_CHANGELOG_COLLATE=1 is exported exactly while this runs, so a
+# check it disarmed would be off at the moment the record is rewritten: the
+# mv below would replace the symlink with a regular file, having read whatever
+# it pointed at.
+reset
+fragment fixed ken-1.md '- A fragment.
+'
+printf '# Elsewhere\n\n## [Unreleased]\n\n- A line.\n' >"$R/elsewhere.md"
+rm -f "$R/CHANGELOG.md"
+ln -s elsewhere.md "$R/CHANGELOG.md"
+git -C "$R" add -A
+OUT=""
+RC=0
+OUT="$(cd "$R" && GROWTH_GUARDS_CHANGELOG_COLLATE=1 "$COLLATE" 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"tracked as a symlink or gitlink"*) true ;; *) false ;; esac \
+  && ok "a staged record symlink is refused even under the declaration" \
+  || bad "a staged record symlink is refused even under the declaration" "rc=$RC out=$OUT"
+[ -L "$R/CHANGELOG.md" ] && ok "and the record is still the symlink it was" \
+  || bad "and the record is still the symlink it was" "it was replaced"
+[ -f "$R/changelog.d/fixed/ken-1.md" ] && ok "and the fragment is not deleted" \
+  || bad "and the fragment is not deleted" "it is gone"
+git -C "$R" reset -q --hard HEAD
+rm -f "$R/CHANGELOG.md" "$R/elsewhere.md"
+git -C "$R" checkout -q -- CHANGELOG.md 2>/dev/null || true
+
+echo "=== no path reaches a message as raw bytes ==="
+# A name is somebody else's bytes: a newline in one forges a line in the very
+# diagnostic that reports it, and an ESC reaches the terminal that prints it.
+reset
+NASTY="$(printf 'KEN\n1\033X.md')"
+mkdir -p "$R/changelog.d/fixed"
+printf -- '- An entry under a hostile name.\n' >"$R/changelog.d/fixed/$NASTY"
+git -C "$R" add -A -- changelog.d
+printf -- '- The unstaged rewrite.\n' >"$R/changelog.d/fixed/$NASTY"
+run_collate
+[ "$RC" -eq 2 ] && case "$OUT" in *"differs between git and the working tree"*) true ;; *) false ;; esac \
+  && ok "the unstaged edit under that name is refused" \
+  || bad "the unstaged edit under that name is refused" "rc=$RC out=$OUT"
+printf '%s' "$OUT" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\037\177]')" \
+  && bad "no control byte from the name may reach the output" "$OUT" \
+  || ok "no control byte from the name reaches the output"
+# Three lines: the judge's verdict, the refusal, and the one path under it. A
+# raw newline in the name would make four, and the reader of the first would
+# never see the rest.
+[ "$(printf '%s\n' "$OUT" | grep -c .)" -eq 3 ] \
+  && ok "the refusal names its one path on one line" \
+  || bad "the refusal names its one path on one line" "lines=$(printf '%s\n' "$OUT" | grep -c .) out=$OUT"
+# And the same on the success note, which carries the record's own name.
+git -C "$R" add -A
+run_collate
+[ "$RC" -eq 0 ] && ok "control: staged, the same tree collates" \
+  || bad "control: staged, the same tree collates" "rc=$RC out=$OUT"
+printf '%s' "$OUT" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\037\177]')" \
+  && bad "no control byte reaches the success note either" "$OUT" \
+  || ok "no control byte reaches the success note either"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

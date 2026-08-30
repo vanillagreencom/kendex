@@ -153,12 +153,17 @@ the parser unable to say where the section starts or stops, and a stray
 opening fence above the heading would otherwise make both sides parse to
 nothing and every hand-written line read as unchanged.
 
-The scope is judged only when HEAD already carries the record: a repository
+The COMPARISON runs only when HEAD already carries the record: a repository
 writing its first one is not hand-editing a collated file.
 `GROWTH_GUARDS_CHANGELOG_COLLATE=1` in the environment declares the
-collator's own write, the way `RATCHET_RAISE=1` declares a baseline. A path
-in both scopes is a config error — they judge by opposite rules. Each of the
-four ways this scope stands down — no record configured, the collator's
+collator's own write, the way `RATCHET_RAISE=1` declares a baseline — and it
+bypasses that comparison and nothing else. What the record IS, a real file
+holding measurable text, is judged whenever git carries one: the declaration
+is exported exactly while a collation is running, so a type check it switched
+off would be off at the moment the record is about to be rewritten, and the
+collator's own rename would turn a symlink into a regular file. A path in
+both scopes is a config error — they judge by opposite rules. Each of the
+four ways the comparison stands down — no record configured, the collator's
 declaration, a record git does not track, a record HEAD does not carry yet —
 names itself in the verdict, so a gate somebody disarmed never reads as a
 repository that has no record.

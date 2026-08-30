@@ -315,6 +315,62 @@ run_ce
 case "$OUT" in *"changelog-entries: OK"*) bad "no OK verdict may accompany a binary record" "$OUT" ;;
   *) ok "no OK verdict accompanies a binary record" ;; esac
 
+echo "=== the declaration bypasses the comparison, not what the record IS ==="
+# GROWTH_GUARDS_CHANGELOG_COLLATE=1 is exported exactly while a collation
+# runs, so a rule it switched off would be off at the one moment the record
+# is about to be rewritten. Only the gained-line comparison is a rule a
+# collation legitimately breaks.
+new_repo declared
+printf -- '- A fragment.\n' | frag fixed ken-1.md
+printf '# Changelog\n\n## [Unreleased]\n\n- One line.\n' >"$R/CHANGELOG.md"
+stage
+git -C "$R" commit -qm base
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_COLLATE=1'
+[ "$RC" -eq 0 ] && ok "control: a real record passes under the declaration" \
+  || bad "control: a real record passes under the declaration" "rc=$RC out=$OUT"
+# A symlink is the case the collator's own rename would then turn into a
+# regular file, with nothing having read what it pointed at.
+printf '# Elsewhere\n\n## [Unreleased]\n\n- One line.\n' >"$R/elsewhere.md"
+rm -f "$R/CHANGELOG.md"
+ln -s elsewhere.md "$R/CHANGELOG.md"
+stage
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_COLLATE=1'
+[ "$RC" -eq 2 ] && case "$OUT" in *"tracked as a symlink or gitlink"*) true ;; *) false ;; esac \
+  && ok "a staged record symlink is refused under the declaration too" \
+  || bad "a staged record symlink is refused under the declaration too" "rc=$RC out=$OUT"
+git -C "$R" reset -q --hard HEAD
+rm -f "$R/elsewhere.md"
+# So are the text rules: what the record IS does not turn on who is writing.
+{
+  printf '# Changelog\n\n## [Unreleased]\n\n- One line.\n  '
+  LC_ALL=C awk 'BEGIN { for (i = 0; i < 20; i++) printf "%c", 191 }'
+  printf '\n'
+} >"$R/CHANGELOG.md"
+stage
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_COLLATE=1'
+[ "$RC" -eq 2 ] && case "$OUT" in *"is not valid UTF-8"*) true ;; *) false ;; esac \
+  && ok "a record that is not valid UTF-8 is refused under the declaration too" \
+  || bad "a record that is not valid UTF-8 is refused under the declaration too" "rc=$RC out=$OUT"
+{
+  printf '# Changelog\n\n## [Unreleased]\n\n- One line.\n'
+  LC_ALL=C awk 'BEGIN { for (i = 0; i < 256; i++) printf "%c", i }'
+} >"$R/CHANGELOG.md"
+stage
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_COLLATE=1'
+[ "$RC" -eq 2 ] && case "$OUT" in *"holds binary content"*) true ;; *) false ;; esac \
+  && ok "a binary record is refused under the declaration too" \
+  || bad "a binary record is refused under the declaration too" "rc=$RC out=$OUT"
+# And the one rule it DOES bypass still stands down: a gained line passes.
+git -C "$R" reset -q --hard HEAD
+printf '# Changelog\n\n## [Unreleased]\n\n- One line.\n- A collated line.\n' >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 1 ] && ok "control: that same gained line is refused undeclared" \
+  || bad "control: that same gained line is refused undeclared" "rc=$RC out=$OUT"
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_COLLATE=1'
+[ "$RC" -eq 0 ] && ok "and the declaration is what lets it through" \
+  || bad "and the declaration is what lets it through" "rc=$RC out=$OUT"
+
 echo "=== the comparison does not turn on the caller's collation ==="
 # comm and its inputs must agree on one order. These lines sort one way by
 # byte and another under a locale that folds punctuation, so a mismatch makes
@@ -390,9 +446,9 @@ run_ce
   || bad "a record HEAD does not carry yet says so" "rc=$RC out=$OUT"
 git -C "$R" commit -qm base
 run_ce_env 'GROWTH_GUARDS_CHANGELOG_COLLATE=1'
-[ "$RC" -eq 0 ] && case "$OUT" in *"NOT judged"*"GROWTH_GUARDS_CHANGELOG_COLLATE=1"*) true ;; *) false ;; esac \
-  && ok "a disarmed gate says it was disarmed, and by what" \
-  || bad "a disarmed gate says it was disarmed, and by what" "rc=$RC out=$OUT"
+[ "$RC" -eq 0 ] && case "$OUT" in *"NOT compared"*"GROWTH_GUARDS_CHANGELOG_COLLATE=1"*) true ;; *) false ;; esac \
+  && ok "a declared collation says the comparison stood down, and what declared it" \
+  || bad "a declared collation says the comparison stood down, and what declared it" "rc=$RC out=$OUT"
 case "$OUT" in *"unchanged under [Unreleased]"*) bad "a disarmed gate never claims the record is unchanged" "$OUT" ;;
   *) ok "a disarmed gate never claims the record is unchanged" ;; esac
 run_ce_env 'GROWTH_GUARDS_CHANGELOG_RECORD='

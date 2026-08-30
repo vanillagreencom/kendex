@@ -25,7 +25,10 @@
 #
 # Every path moves as NUL-terminated bytes from the judge's records to the
 # fold and the delete, so a fragment whose name carries a newline is folded in
-# and removed like any other.
+# and removed like any other — and every path that reaches a message goes
+# through gg_shown on the way, because a guarantee dropped at the reporting
+# step is a name that forges a diagnostic line or reaches a terminal as
+# control codes.
 #
 # Exit codes follow the guard family: 0 clean, 1 a fragment the judge
 # refuses, 2 could not run. The record is replaced whole or not at all.
@@ -113,9 +116,9 @@ while IFS= read -r -d '' rec; do
   # rendering table refusing a name it has no heading for.
   case " $SECTIONS " in
     *" $sec:"*) : ;;
-    *) die "$JUDGE named section '$sec' for $path, which has no heading here — the collation could not run" ;;
+    *) die "$JUDGE named section '$sec' for $(gg_shown "$path"), which has no heading here — the collation could not run" ;;
   esac
-  [ -f "$path" ] || die "$path is in the index but not a file on disk — the collation could not run"
+  [ -f "$path" ] || die "$(gg_shown "$path") is in the index but not a file on disk — the collation could not run"
   printf '%s\0' "$path" >>"$TMP/sel.$sec"
   printf '%s\0' "$path" >>"$TMP/frags"
   # The directory each fragment sits in, so an emptied one can go with it
@@ -145,8 +148,8 @@ tracked=0
 git ls-files --error-unmatch -- ":(literal)$RECORD" >/dev/null 2>&1 || tracked=$?
 case "$tracked" in
   0) : ;;
-  1) die "$RECORD is not tracked, so nothing measured it and nothing would notice it change — stage it first" ;;
-  *) die "could not ask git whether $RECORD is tracked (git ls-files exit $tracked) — the collation could not run" ;;
+  1) die "$(gg_shown "$RECORD") is not tracked, so nothing measured it and nothing would notice it change — stage it first" ;;
+  *) die "could not ask git whether $(gg_shown "$RECORD") is tracked (git ls-files exit $tracked) — the collation could not run" ;;
 esac
 
 # The write folds in each file on disk and then deletes it, and it replaces
@@ -157,8 +160,15 @@ esac
 git diff --name-only -z -- "${guarded[@]}" >"$TMP/dirty" ||
   die "could not compare the changelog against the index — the collation could not run"
 if [ -s "$TMP/dirty" ]; then
+  # One line per path, each rendered: a name carrying a newline would
+  # otherwise forge lines in this very diagnostic, and an ESC would reach the
+  # terminal that prints it.
+  shown=""
+  while IFS= read -r -d '' dirty_path; do
+    shown="$shown  $(gg_shown "$dirty_path")"$'\n'
+  done <"$TMP/dirty"
   die "the changelog differs between git and the working tree; the collation publishes the files on disk and the judge measures the ones git carries — stage or restore these first:
-$(tr '\0' '\n' <"$TMP/dirty" | sed 's/^/  /')"
+${shown%$'\n'}"
 fi
 
 # awk normalizes a fragment that ends without a newline, which would
@@ -168,11 +178,11 @@ for pair in $SECTIONS; do
   : >"$TMP/frag.$low"
   : >"$TMP/sec.$low"
   while IFS= read -r -d '' f; do
-    awk 1 "$f" >>"$TMP/frag.$low" || die "could not read $f — the collation could not run"
+    awk 1 "$f" >>"$TMP/frag.$low" || die "could not read $(gg_shown "$f") — the collation could not run"
   done <"$TMP/sel.$low"
 done
 
-[ -f "$RECORD" ] || die "$RECORD is missing — the collation could not run"
+[ -f "$RECORD" ] || die "$(gg_shown "$RECORD") is missing — the collation could not run"
 : >"$TMP/pre"
 : >"$TMP/lead"
 : >"$TMP/post"
@@ -185,8 +195,8 @@ rc=0
 LC_ALL=C awk -v emit=bounds "$GG_UNRELEASED_AWK" <"$RECORD" >"$TMP/bounds" || rc=$?
 case "$rc" in
   0) : ;;
-  3) die "$RECORD leaves a code fence unclosed — the [Unreleased] section cannot be located; close the fence" ;;
-  *) die "$RECORD could not be read (awk exit $rc) — the collation could not run" ;;
+  3) die "$(gg_shown "$RECORD") leaves a code fence unclosed — the [Unreleased] section cannot be located; close the fence" ;;
+  *) die "$(gg_shown "$RECORD") could not be read (awk exit $rc) — the collation could not run" ;;
 esac
 
 start=0
@@ -200,14 +210,14 @@ while IFS="$TAB" read -r kind a b; do
       low="$(printf '%s' "$b" | tr '[:upper:]' '[:lower:]')"
       case " $SECTIONS " in
         *" $low:"*) : ;;
-        *) die "$RECORD names '$b' under [Unreleased], which is not a Keep a Changelog section — the collation could not run" ;;
+        *) die "$(gg_shown "$RECORD") names '$b' under [Unreleased], which is not a Keep a Changelog section — the collation could not run" ;;
       esac
       printf '%s\t%s\n' "$a" "$low" >>"$TMP/secline"
       ;;
     *) die "the changelog grammar emitted a boundary this collation does not understand: $kind" ;;
   esac
 done <"$TMP/bounds"
-[ "$start" -gt 0 ] || die "$RECORD has no '## [Unreleased]' heading — the collation could not run"
+[ "$start" -gt 0 ] || die "$(gg_shown "$RECORD") has no '## [Unreleased]' heading — the collation could not run"
 
 # Split at those numbers: the part above the heading, that section's lead and
 # per-section bodies, and the released versions below it. A body keeps one
@@ -246,7 +256,7 @@ awk -v tmp="$TMP" -v start="$start" -v end="$end" -v table="$TMP/secline" '
   }
   { print > out }
 ' "$RECORD" || rc=$?
-[ "$rc" -eq 0 ] || die "$RECORD could not be split (awk exit $rc) — the collation could not run"
+[ "$rc" -eq 0 ] || die "$(gg_shown "$RECORD") could not be split (awk exit $rc) — the collation could not run"
 
 trim() { # FILE — its content, edge blank lines dropped, interior runs capped at one
   awk '
@@ -283,9 +293,9 @@ assemble() {
 }
 
 OUT="$(mktemp -- "$RECORD.XXXXXX")" || die "could not create the replacement file — the collation could not run"
-cp -p -- "$RECORD" "$OUT" || die "could not take $RECORD's mode — the collation could not run"
-assemble >"$OUT" || die "could not write the collated changelog — $RECORD is untouched"
-mv -- "$OUT" "$RECORD" || die "could not replace $RECORD — the collation could not run"
+cp -p -- "$RECORD" "$OUT" || die "could not take $(gg_shown "$RECORD")'s mode — the collation could not run"
+assemble >"$OUT" || die "could not write the collated changelog — $(gg_shown "$RECORD") is untouched"
+mv -- "$OUT" "$RECORD" || die "could not replace $(gg_shown "$RECORD") — the collation could not run"
 OUT=""
 
 # Past the move, every fragment is in the record. Deleting stops for none of
@@ -293,10 +303,10 @@ OUT=""
 # has to name every survivor, not the first.
 survivors=""
 while IFS= read -r -d '' f; do
-  rm -f -- "$f" || survivors="$survivors  $f"$'\n'
+  rm -f -- "$f" || survivors="$survivors  $(gg_shown "$f")"$'\n'
 done <"$TMP/frags"
 if [ -n "$survivors" ]; then
-  die "$RECORD is collated, but these fragments survived and would fold in a second time — delete them by hand:
+  die "$(gg_shown "$RECORD") is collated, but these fragments survived and would fold in a second time — delete them by hand:
 ${survivors%$'\n'}"
 fi
 # A directory the collation emptied goes with it — the ones the folded
@@ -307,4 +317,4 @@ while IFS= read -r -d '' d; do
 done <"$TMP/dirs"
 
 if [ "$count" -eq 1 ]; then noun=entry; else noun=entries; fi
-note "folded $count $noun into $RECORD's [Unreleased] section"
+note "folded $count $noun into $(gg_shown "$RECORD")'s [Unreleased] section"
