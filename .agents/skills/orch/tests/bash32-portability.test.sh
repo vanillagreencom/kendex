@@ -69,9 +69,13 @@ PATTERN="$PATTERN"'|(^|[^[:alnum:]_])(declare|typeset|local|readonly)[[:blank:]]
 # Automatic FD allocation: exec {fd}< , {fd}> , {fd}>>
 PATTERN="$PATTERN"'|(^|[^$])\{[A-Za-z_][A-Za-z0-9_]*\}[<>]'
 # Case conversion, one character or every one, either direction, over every
-# parameter Bash takes it on: a name, a subscripted name, a positional, @ or
-# *, and an indirect one.
-PATTERN="$PATTERN"'|\$\{!?([A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?|[0-9]+|[@*])(,,?|\^\^?)'
+# parameter Bash takes it on: a name, a subscripted name, a positional, an
+# indirect one, and a special one. The special ones are the manual's list
+# rather than the ones that come to mind, and it is shorter than the list of
+# special parameters: ${-^}, ${?^} and ${#^} are bad substitutions, so only
+# $ ! 0 @ * and _ take the operator, and 0 and _ already read as a name or a
+# digit above.
+PATTERN="$PATTERN"'|\$\{!?([A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?|[0-9]+|[@*$!])(,,?|\^\^?)'
 PATTERN="$PATTERN"'|(^|[^[:alnum:]_])coproc([[:blank:]]|$)'
 # The pipe-with-stderr, the append-both redirection, and the two case
 # terminators. Each is anchored on BOTH sides, and both sides carry weight:
