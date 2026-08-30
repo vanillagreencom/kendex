@@ -1,6 +1,38 @@
 #!/usr/bin/env bash
 # Portable wall-clock bound for GitHub helper subprocesses.
 
+_kendex_github_restore_trap() {
+  local signal="$1" saved="$2"
+  if [ -n "$saved" ]; then
+    eval "$saved"
+  else
+    trap - "$signal"
+  fi
+}
+
+_kendex_github_stop_bounded_group() {
+  local signal="$1" target="$2" pid="$3" grace=0
+  [ -n "$target" ] || return 0
+  kill -s "$signal" -- "$target" 2>/dev/null || true
+  while kill -0 -- "$target" 2>/dev/null && [ "$grace" -lt 10 ]; do
+    sleep 0.1
+    grace=$((grace + 1))
+  done
+  kill -KILL -- "$target" 2>/dev/null || true
+  [ -z "$pid" ] || wait "$pid" 2>/dev/null || true
+}
+
+_kendex_github_forward_bounded_signal() {
+  local signal="$1" target="$2" pid="$3" old_hup="$4" old_int="$5" old_term="$6"
+  trap - HUP INT TERM
+  _kendex_github_stop_bounded_group "$signal" "$target" "$pid"
+  _kendex_github_restore_trap HUP "$old_hup"
+  _kendex_github_restore_trap INT "$old_int"
+  _kendex_github_restore_trap TERM "$old_term"
+  kill -s "$signal" "$$" 2>/dev/null || true
+  case "$signal" in HUP) return 129 ;; INT) return 130 ;; TERM) return 143 ;; esac
+}
+
 kendex_github_run_bounded() {
   local seconds="$1"
   shift
@@ -14,7 +46,14 @@ kendex_github_run_bounded() {
     return
   fi
 
-  local restore_monitor=0 pid ticks=0 max_ticks status=0 grace=0 target
+  local restore_monitor=0 pid="" ticks=0 max_ticks status=0 target=""
+  local old_hup old_int old_term
+  old_hup="$(trap -p HUP)"
+  old_int="$(trap -p INT)"
+  old_term="$(trap -p TERM)"
+  trap '_kendex_github_forward_bounded_signal HUP "$target" "$pid" "$old_hup" "$old_int" "$old_term"' HUP
+  trap '_kendex_github_forward_bounded_signal INT "$target" "$pid" "$old_hup" "$old_int" "$old_term"' INT
+  trap '_kendex_github_forward_bounded_signal TERM "$target" "$pid" "$old_hup" "$old_int" "$old_term"' TERM
   case "$-" in
     *m*) ;;
     *) set -m; restore_monitor=1 ;;
@@ -31,13 +70,10 @@ kendex_github_run_bounded() {
 
   while kill -0 "$pid" 2>/dev/null; do
     if [ "$ticks" -ge "$max_ticks" ]; then
-      kill -TERM -- "$target" 2>/dev/null || true
-      while kill -0 -- "$target" 2>/dev/null && [ "$grace" -lt 10 ]; do
-        sleep 0.1
-        grace=$((grace + 1))
-      done
-      kill -KILL -- "$target" 2>/dev/null || true
-      wait "$pid" 2>/dev/null || true
+      _kendex_github_stop_bounded_group TERM "$target" "$pid"
+      _kendex_github_restore_trap HUP "$old_hup"
+      _kendex_github_restore_trap INT "$old_int"
+      _kendex_github_restore_trap TERM "$old_term"
       return 124
     fi
     sleep 0.1
@@ -45,6 +81,9 @@ kendex_github_run_bounded() {
   done
 
   wait "$pid" || status=$?
+  _kendex_github_restore_trap HUP "$old_hup"
+  _kendex_github_restore_trap INT "$old_int"
+  _kendex_github_restore_trap TERM "$old_term"
   return "$status"
 }
 
