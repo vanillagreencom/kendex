@@ -108,6 +108,82 @@ fn catalog_content_is_written_as_committed_whatever_the_repository_asks() {
     }
 }
 
+/// The host can supply attributes as well as configuration, and attributes
+/// outrank it. A global attributes file converts the checkout with the
+/// line-ending settings already in place, so it is taken out of the
+/// materialising call too — and this repository commits none of its own,
+/// so the rule under test is the host's alone.
+///
+/// Both places a host keeps one. `core.attributesFile` names a file, and
+/// the same setting emptied is what displaces it; the default path is
+/// `git/attributes` under the config directory, reached here by giving the
+/// child a home of its own. Both `HOME` and `XDG_CONFIG_HOME` are set,
+/// because git resolves the default through the second where it is
+/// present and a suite that set only the first would be reading whatever
+/// the machine running it happens to have. The third source, the
+/// system-wide file, has no path a test host can write, so what is
+/// asserted for it is that the switch git offers reaches the child.
+#[test]
+fn a_host_attributes_file_does_not_reach_the_content_kendex_reads() {
+    for named in [true, false] {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        let into = tmp.path().join("into");
+        let home = tmp.path().join("home");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&into).unwrap();
+        fs::create_dir_all(home.join("git")).unwrap();
+        let attributes = match named {
+            true => tmp.path().join("host-attributes"),
+            false => home.join("git/attributes"),
+        };
+        fs::write(&attributes, "* text eol=crlf\n").unwrap();
+        asking_repository(&repo, None, &["config", "core.autocrlf", "false"]);
+        if named {
+            let set = Hardened::git(
+                &[
+                    "config",
+                    "core.attributesFile",
+                    &attributes.display().to_string(),
+                ],
+                Some(&repo),
+            )
+            .run()
+            .unwrap();
+            assert!(set.status.success());
+        }
+
+        let git_dir = repo.join(".git");
+        assert!(
+            Hardened::git_bare(&git_dir, &["read-tree", "HEAD"])
+                .run()
+                .unwrap()
+                .status
+                .success()
+        );
+        let written = Hardened::git_into(&git_dir, &into, &["checkout-index", "--all", "--force"])
+            .env("HOME", home.to_str().unwrap())
+            .env("XDG_CONFIG_HOME", home.to_str().unwrap())
+            .run()
+            .unwrap();
+        assert!(written.status.success(), "named={named}");
+        assert_eq!(
+            fs::read_to_string(into.join("SKILL.md")).unwrap(),
+            "one\ntwo\n",
+            "named={named}: a host attributes file reached the checkout"
+        );
+    }
+
+    assert_eq!(
+        child_env(&Hardened::git_into(
+            Path::new("/nowhere/.git"),
+            Path::new("/nowhere/into"),
+            &["checkout-index", "--all"],
+        ))[OsStr::new("GIT_ATTR_NOSYSTEM")],
+        Some(OsStr::new("1"))
+    );
+}
+
 /// The settings go no further than that. A call that inspects a repository
 /// somebody owns asks what that repository thinks, and its own line-ending
 /// rule is part of the answer.

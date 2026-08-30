@@ -79,14 +79,22 @@ const PINNED: &[&str] = &["protocol.ext.allow=never"];
 /// a repository that marks its files as text and `core.autocrlf` for one
 /// that does not.
 ///
-/// That is the whole of what they buy, and it is smaller than "the same
-/// bytes on every host". An attribute outranks configuration, so a catalog
-/// committing `* text eol=crlf` still gets CRLF; and an attribute may
-/// select `filter=<driver>`, whose `smudge` command lives in
-/// configuration, so one commit lands one way on a host that defines the
-/// driver and another on a host that does not. Neither is bypassed here,
-/// because whose intent wins between a repository and the machine reading
-/// it is a product question rather than this module's. KEN-850 owns it.
+/// Attributes outrank configuration, and the host can supply those too: a
+/// global attributes file, named by `core.attributesFile` or found at its
+/// default path, and a system-wide one. Either holding `* text eol=crlf`
+/// converts the checkout with the settings above already in place. So
+/// `core.attributesFile` is emptied here, which is git's documented unset,
+/// and `GIT_ATTR_NOSYSTEM` in the environment takes the system file out.
+///
+/// That is the boundary, and it is the line worth holding rather than
+/// narrowing the claim again: what the *host* says is silenced, what the
+/// *catalog* says is not. A repository's own committed `.gitattributes`
+/// still decides — `* text eol=crlf` still gets CRLF, and an attribute
+/// selecting `filter=<driver>` still reaches for a `smudge` command that
+/// lives in configuration, so one commit can land differently on a host
+/// defining that driver. Neither is bypassed, because whose intent wins
+/// between a catalog author and the machine reading them is a product
+/// question rather than this module's. KEN-850 owns it.
 ///
 /// It goes nowhere else, and the reach is the point rather than an
 /// oversight. A call that only *inspects* a repository is asking what that
@@ -96,7 +104,13 @@ const PINNED: &[&str] = &["protocol.ext.allow=never"];
 /// nobody made and the submit preflight refuses a clean tree. That is a
 /// repository the person in front of kendex owns, not one kendex
 /// downloaded.
-const MATERIALISING: &[&str] = &["core.autocrlf=false", "core.eol=lf"];
+const MATERIALISING: &[&str] = &[
+    "core.autocrlf=false",
+    "core.eol=lf",
+    // An empty value is how git spells "no attributes file", and it
+    // displaces the default path as well as any the host configured.
+    "core.attributesFile=",
+];
 
 mod programs;
 
@@ -186,7 +200,11 @@ impl Hardened {
     /// [`MATERIALISING`].
     fn git_materialising_command(args: Vec<OsString>, cwd: Option<&Path>) -> Hardened {
         let settled: Vec<&str> = PINNED.iter().chain(MATERIALISING).copied().collect();
-        Hardened::git_settled(&settled, args, cwd)
+        let mut hardened = Hardened::git_settled(&settled, args, cwd);
+        // The system attributes file has no config key to empty, so the
+        // one switch git offers for it is this.
+        hardened.command.env("GIT_ATTR_NOSYSTEM", "1");
+        hardened
     }
 
     fn git_settled(settings: &[&str], args: Vec<OsString>, cwd: Option<&Path>) -> Hardened {
