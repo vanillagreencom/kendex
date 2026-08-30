@@ -20,6 +20,40 @@
 # expansion would resolve each pattern against the WORK TREE — matching
 # whatever happens to be checked out instead of the tracked paths the scan
 # judges, and matching nothing at all in a sparse or bare checkout.
+
+# A setting holding a LIST of path globs, validated the way one path is. The
+# caller word-splits the result, so every check that reads a glob list applies
+# the same path discipline: absolute, escaping and '-'-leading entries are
+# configuration errors rather than globs that quietly match nothing. An empty
+# result means the setting named nothing — the caller decides whether that is
+# a switched-off check or an error.
+gg_config_path_list() { # RAW LABEL — normalized globs, space-separated, on stdout
+  local raw="$1" label="$2" entry norm out=""
+  # Callers run under `set -f`, so this splits on whitespace without the shell
+  # expanding a glob against the work tree.
+  for entry in $raw; do
+    norm="$(gg_config_path "$entry" "$label")" || return 1
+    out="${out:+$out }$norm"
+  done
+  printf '%s' "$out"
+}
+
+# Shell glob matched against the full repo-relative path (`*` crosses `/`),
+# the same match every exclusion list uses. The patterns come in word-split
+# and unquoted, which is what makes them globs.
+gg_path_matches() { # PATH PATTERN... — 0 when some pattern matches
+  local path="$1" pat
+  shift
+  for pat in "$@"; do
+    # $pat must expand unquoted to act as a glob.
+    # shellcheck disable=SC2254
+    case "$path" in
+      $pat) return 0 ;;
+    esac
+  done
+  return 1
+}
+
 GG_PATH_GLOBS=""
 GG_PATH_GLOBS_SHOWN=""
 
