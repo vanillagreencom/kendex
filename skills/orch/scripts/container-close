@@ -46,10 +46,15 @@ LOCK_FILE="$MAIN_REPO_ROOT/tmp/container-close-$PARENT_ID.lock"
 umask 077
 exec 9>>"$LOCK_FILE"
 LOCK_WAIT_SECONDS=120
-if ! flock -w "$LOCK_WAIT_SECONDS" 9; then
+LOCK_CONFLICT_RC=75
+LOCK_RC=0
+flock -E "$LOCK_CONFLICT_RC" -w "$LOCK_WAIT_SECONDS" 9 || LOCK_RC=$?
+if [[ $LOCK_RC -eq $LOCK_CONFLICT_RC ]]; then
   printf 'deferred\n'
   exit 0
 fi
+[[ $LOCK_RC -eq 0 ]] \
+  || { echo "container-close: cannot acquire lock for $PARENT_ID: flock exited $LOCK_RC" >&2; exit 1; }
 
 RECOVERY_DIR="$MAIN_REPO_ROOT/tmp/container-close-recovery"
 if [[ -L "$RECOVERY_DIR" || ( -e "$RECOVERY_DIR" && ! -d "$RECOVERY_DIR" ) ]]; then

@@ -48,6 +48,15 @@ esac
 SH
 chmod +x "$TMP_ROOT/bin/gh"
 
+REAL_FLOCK="$(command -v flock)"
+cat > "$TMP_ROOT/bin/flock" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ -z "${FLOCK_TEST_RC:-}" ]] || exit "$FLOCK_TEST_RC"
+exec "$REAL_FLOCK" "$@"
+SH
+chmod +x "$TMP_ROOT/bin/flock"
+
 REAL_MV="$(command -v mv)"
 cat > "$TMP_ROOT/bin/mv" <<'SH'
 #!/usr/bin/env bash
@@ -224,7 +233,7 @@ RECOVERY="$SANDBOX/tmp/container-close-recovery/PARENT-1.tsv"
 PENDING="$SANDBOX/tmp/container-close-recovery/PARENT-1.pending.tsv"
 export FAKE_LINEAR_ROOT="$TMP_ROOT/state"
 export PATH="$TMP_ROOT/bin:$PATH"
-export REAL_MV REAL_AWK
+export REAL_FLOCK REAL_MV REAL_AWK
 mkdir "$FAKE_LINEAR_ROOT" "$SANDBOX/tmp"
 
 reset_state() {
@@ -677,7 +686,8 @@ assert_eq "$(cat "$TMP_ROOT/race-one.out"):$(cat "$TMP_ROOT/race-two.out")" "clo
 
 WAIT_MUTANT="$SANDBOX/skills/orch/scripts/container-close-wait-mutant"
 assert_eq "$(grep -Fc 'LOCK_WAIT_SECONDS=120' "$SCRIPT")" "1" "bounded-wait control finds the production wait"
-assert_eq "$(grep -Fc 'if ! flock -w "$LOCK_WAIT_SECONDS" 9; then' "$SCRIPT")" "1" "bounded-wait control finds lock acquisition"
+assert_eq "$(grep -Fc 'LOCK_CONFLICT_RC=75' "$SCRIPT")" "1" "bounded-wait control finds the dedicated conflict status"
+assert_eq "$(grep -Fc 'flock -E "$LOCK_CONFLICT_RC" -w "$LOCK_WAIT_SECONDS" 9 || LOCK_RC=$?' "$SCRIPT")" "1" "bounded-wait control finds lock acquisition"
 awk 'index($0, "LOCK_WAIT_SECONDS=120") { print "LOCK_WAIT_SECONDS=0"; next } { print }' "$SCRIPT" > "$WAIT_MUTANT"
 chmod +x "$WAIT_MUTANT"
 reset_state
@@ -692,6 +702,13 @@ done
 assert_eq "$(cat "$TMP_ROOT/wait-mutant.out")" "deferred" "bounded-wait control fails with a single nonblocking attempt"
 touch "$FAKE_LINEAR_ROOT/release.complete"
 wait "$pid_one"
+
+reset_state
+rc=0
+FLOCK_TEST_RC=74 "$SCRIPT" "$SANDBOX" PARENT-1 > "$TMP_ROOT/flock-error.out" 2> "$TMP_ROOT/flock-error.err" || rc=$?
+assert_eq "$rc:$(cat "$TMP_ROOT/flock-error.out")" "1:" "operational flock error fails instead of deferring"
+assert_contains "$TMP_ROOT/flock-error.err" "cannot acquire lock for PARENT-1: flock exited 74" "operational flock error reports its status"
+[[ ! -e "$FAKE_LINEAR_ROOT/linear.calls" ]] && ok "operational flock error stops before Linear access" || fail "operational flock error stops before Linear access"
 
 COMMON_ROOT_MUTANT="$SANDBOX/skills/orch/scripts/container-close-root-mutant"
 assert_eq "$(grep -Fc 'common-root "$REPOSITORY_CHECKOUT"' "$SCRIPT")" "1" "common-root control finds shared-root resolution"
@@ -715,8 +732,8 @@ rc_two=0; wait "$pid_two" || rc_two=$?
 assert_eq "$rc_one:$rc_two:$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "0:0:2" "common-root control fails when callers keep checkout-local locks"
 
 RACE_MUTANT="$SANDBOX/skills/orch/scripts/container-close-race-mutant"
-assert_eq "$(grep -Fc 'if ! flock -w "$LOCK_WAIT_SECONDS" 9; then' "$SCRIPT")" "1" "race control finds flock acquisition"
-awk 'index($0, "if ! flock -w \"$LOCK_WAIT_SECONDS\" 9; then") { print "if false; then"; next } { print }' "$SCRIPT" > "$RACE_MUTANT"
+assert_eq "$(grep -Fc 'flock -E "$LOCK_CONFLICT_RC" -w "$LOCK_WAIT_SECONDS" 9 || LOCK_RC=$?' "$SCRIPT")" "1" "race control finds flock acquisition"
+awk 'index($0, "flock -E \"$LOCK_CONFLICT_RC\" -w \"$LOCK_WAIT_SECONDS\" 9 || LOCK_RC=$?") { print "LOCK_RC=0"; next } { print }' "$SCRIPT" > "$RACE_MUTANT"
 chmod +x "$RACE_MUTANT"
 race_failures=0
 for _iteration in {1..10}; do
