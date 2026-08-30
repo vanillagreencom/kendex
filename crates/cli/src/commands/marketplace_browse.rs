@@ -19,14 +19,7 @@ pub fn run_browse(
     json: bool,
     global: bool,
     scope: Option<String>,
-    community: bool,
 ) -> CliResult {
-    if community {
-        return Err(
-            "the community directory is not available yet — it arrives with the kendex.ai platform; browse a subscription by name for now"
-                .into(),
-        );
-    }
     let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::All)?;
     let mut rows: Vec<BrowseRow> = Vec::new();
     for scope in resolve_scopes(env, filter)? {

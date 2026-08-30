@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::agent::merged_instructions;
 use crate::error::Result;
@@ -7,7 +7,7 @@ use crate::manifest::Manifest;
 use crate::source_read::SealedSource;
 
 mod rendered;
-pub use rendered::{Block, Files, Rendered};
+pub use rendered::{Files, Rendered};
 
 const SKILL_FILE: &str = "SKILL.md";
 
@@ -62,16 +62,13 @@ fn with_instructions(
     instructions: Option<&str>,
 ) -> Result<Rendered> {
     let mut files = sealed.collect_skill_tree(source_dir)?;
-    let mut block = None;
     for (rel, bytes) in &mut files {
         if rel == Path::new(SKILL_FILE) {
             let text = String::from_utf8_lossy(bytes).into_owned();
-            let (rendered, put) = injected(&text, instructions);
-            block = put.map(|put| put.renamed(rel.clone()));
-            *bytes = rendered.into_bytes();
+            *bytes = inject_instructions(&text, instructions).into_bytes();
         }
     }
-    Ok(Rendered::injected(files, block))
+    Ok(Rendered::new(files))
 }
 
 /// The text with its frontmatter `name` replaced by `name`, emitted as a
@@ -120,36 +117,19 @@ pub(crate) fn with_name(text: &str, installed: &str) -> std::result::Result<Stri
 /// between markers, and strip + inject are exact inverses so re-rendering
 /// is byte-stable.
 pub fn inject_instructions(skill_md: &str, instructions: Option<&str>) -> String {
-    injected(skill_md, instructions).0
-}
-
-/// The same, and where the block went — the fact every later reading of
-/// "whose bytes are these" depends on, stated once by the code that puts
-/// them there.
-fn injected(skill_md: &str, instructions: Option<&str>) -> (String, Option<Block>) {
     let stripped = strip_block(skill_md);
     let Some(instructions) = instructions else {
-        return (stripped, None);
+        return stripped;
     };
     let block = format!(
         "{INSTRUCTIONS_START}\n## Project Instructions\n\n{instructions}\n{INSTRUCTIONS_END}\n"
     );
     let insert_at = frontmatter_end(&stripped);
     let (head, tail) = stripped.split_at(insert_at);
-    let separator = usize::from(!head.is_empty());
-    let start = head.len() + separator;
-    let text = match head.is_empty() {
+    match head.is_empty() {
         true => format!("{block}{tail}"),
         false => format!("{head}\n{block}{tail}"),
-    };
-    (
-        text,
-        Some(Block {
-            file: PathBuf::from(SKILL_FILE),
-            start,
-            end: start + block.len(),
-        }),
-    )
+    }
 }
 
 fn strip_block(text: &str) -> String {
@@ -251,6 +231,7 @@ mod tests {
         );
     }
     use crate::manifest::MANIFEST_SCHEMA;
+    use std::path::PathBuf;
 
     const SKILL: &str = "---\nname: github\ndescription: gh\n---\n\n# GitHub\n\nAuthor text.\n";
 
@@ -282,7 +263,7 @@ mod tests {
     #[test]
     fn a_crlf_skill_takes_the_name_it_installs_under() {
         let crlf = SKILL.replace('\n', "\r\n");
-        let mut rendered = Rendered::plain(vec![(PathBuf::from(SKILL_FILE), crlf.into_bytes())]);
+        let mut rendered = Rendered::new(vec![(PathBuf::from(SKILL_FILE), crlf.into_bytes())]);
         rendered.set_skill_name("docs__github");
         let text = String::from_utf8_lossy(&rendered.files()[0].1).into_owned();
         assert!(text.contains("name: docs__github"), "{text:?}");
@@ -307,7 +288,7 @@ mod tests {
             "---\nname: github\n  # by acme\ndescription: gh\n---\nBody.\n",
         ] {
             let mut rendered =
-                Rendered::plain(vec![(PathBuf::from(SKILL_FILE), text.as_bytes().to_vec())]);
+                Rendered::new(vec![(PathBuf::from(SKILL_FILE), text.as_bytes().to_vec())]);
             rendered.set_skill_name("acme__github");
             let out = String::from_utf8_lossy(&rendered.files()[0].1).into_owned();
             assert!(out.contains("name: acme__github"), "{out:?}");
@@ -348,17 +329,5 @@ mod tests {
             .find(|(p, _)| p.ends_with("run.sh"))
             .unwrap();
         assert_eq!(script.1, b"#!/bin/sh\n");
-
-        // The offsets come back with the tree, and they are the block the
-        // renderer wrote — not whatever a later search of the file finds.
-        let block = rendered
-            .block()
-            .expect("the render says where it put the block");
-        assert_eq!(block.file, PathBuf::from(SKILL_FILE));
-        let text = String::from_utf8_lossy(&skill_md.1).into_owned();
-        assert!(text[block.start..block.end].starts_with(INSTRUCTIONS_START));
-        assert!(text[block.start..block.end].ends_with(&format!("{INSTRUCTIONS_END}\n")));
-        assert!(text[block.start..block.end].contains("use gh"));
-        assert!(!text[..block.start].contains("use gh") && !text[block.end..].contains("use gh"));
     }
 }

@@ -4,8 +4,8 @@
 //! than raw declarations. How much that folds depends on the host: a
 //! GitHub reference folds whole, so `.git`, a trailing slash, case and
 //! URL shape never split one repository in two. Anywhere else only
-//! `.git`, a trailing slash and the case of the scheme and host come
-//! off — two URL shapes of one repository there stay two strings.
+//! `.git` and a trailing slash come off — two spellings of one repository
+//! there stay two strings.
 //!
 //! The mirror store is not one of them: it keys off the clone URL
 //! (`remote::store::repo_key`), which answers a different question —
@@ -49,26 +49,13 @@ pub fn owner_repo(reference: &str) -> Option<String> {
 /// One string per repository, however it is spelled. A GitHub reference
 /// folds whole: every shape [`owner_repo`] accepts becomes
 /// `github.com/<owner>/<repo>`, lowercased. On any other host only the
-/// endings that say nothing come off — `.git`, a trailing `/` — with the
-/// scheme and host lowercased and the path's case kept, so a shorthand
-/// and its scp-style URL are two identities there.
+/// endings that say nothing come off — `.git`, a trailing `/` — because
+/// `Team/catalog` and `team/catalog` can be two repositories there, and
+/// the mirror store keeps them apart.
 pub fn repo_identity(repo: &str) -> String {
     if let Some(owner_repo) = owner_repo(repo) {
         return format!("github.com/{owner_repo}");
     }
     let trimmed = repo.trim().trim_end_matches('/');
-    let trimmed = trimmed.strip_suffix(".git").unwrap_or(trimmed);
-    // Scheme and host are case-insensitive everywhere; the path is not on
-    // an arbitrary host, where `Team/catalog` and `team/catalog` can be two
-    // repositories — and the mirror store keeps them apart, so identity
-    // must too.
-    let path_start = match trimmed.find("://") {
-        Some(scheme_end) => trimmed[scheme_end + 3..]
-            .find('/')
-            .map_or(trimmed.len(), |host_len| scheme_end + 3 + host_len),
-        // scp-style `user@host:path`
-        None => trimmed.find(':').unwrap_or(0),
-    };
-    let (head, path) = trimmed.split_at(path_start);
-    format!("{}{path}", head.to_ascii_lowercase())
+    trimmed.strip_suffix(".git").unwrap_or(trimmed).to_owned()
 }

@@ -63,10 +63,6 @@ pub enum MarketplaceCommand {
         /// project | global | all (default all)
         #[arg(long)]
         scope: Option<String>,
-        /// The community directory (not available yet — coming with the
-        /// kendex.ai platform)
-        #[arg(long)]
-        community: bool,
     },
     /// Validate a marketplace directory — the alias of
     /// `check --catalog --strict`
@@ -323,10 +319,7 @@ pub fn run(env: &Env, command: MarketplaceCommand) -> CliResult {
             json,
             global,
             scope,
-            community,
-        } => {
-            super::marketplace_browse::run_browse(env, marketplace, json, global, scope, community)?
-        }
+        } => super::marketplace_browse::run_browse(env, marketplace, json, global, scope)?,
         MarketplaceCommand::Check { dir } => {
             let dir = match dir {
                 Some(dir) => dir,

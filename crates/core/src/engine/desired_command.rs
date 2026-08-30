@@ -124,7 +124,7 @@ fn as_skill(
     // and anything that points into them can only ever move together —
     // there is nothing of the project's in a command's rendering today, and
     // this is not a thing to remember if that changes.
-    let mut rendered = crate::render::skill::Rendered::plain(vec![(
+    let mut rendered = crate::render::skill::Rendered::new(vec![(
         PathBuf::from("SKILL.md"),
         crate::render::command::codex_skill(&name, &body, ctx.name).into_bytes(),
     )]);

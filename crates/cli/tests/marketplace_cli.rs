@@ -172,16 +172,6 @@ fn marketplace_browse_lists_a_subscriptions_packages() {
         stdout.contains("cat::gh  (skill) [available]  — Work with GitHub from the terminal"),
         "{stdout}"
     );
-
-    // The community directory is not built yet and says so instead of
-    // pretending it is empty.
-    let community = kendex(home, &project, &["marketplace", "browse", "--community"]);
-    assert!(!community.status.success());
-    assert!(
-        String::from_utf8_lossy(&community.stderr).contains("not available yet"),
-        "{}",
-        String::from_utf8_lossy(&community.stderr)
-    );
 }
 
 /// Unsubscribe refuses without a decision when packages are installed, keeps
