@@ -75,8 +75,8 @@ Exit 75 is volatile:
   lifecycle watcher; it stops when GitHub computes the current merge state.
 
 Terminal and mutation rules:
-  After github.sh router setup, a PR outside OPEN short-circuits pr-merge safety
-  checks, bot-token load, and merge-state mutation. --check reports state.
+  After github.sh router setup, MERGED or CLOSED short-circuits pr-merge safety
+  checks, bot-token load, and merge-state mutation; UNKNOWN continues. --check reports state.
 
   Every gh pr merge invocation is exact-head guarded by --match-head-commit; a changed head is BLOCKED.
   Queue membership comes from GraphQL isInMergeQueue and mergeQueueEntry. An

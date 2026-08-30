@@ -127,11 +127,13 @@ Errors and retries:
   Most commands write {"error": "message"} JSON to stderr and exit 1.
   pr-view --json writes its structured failure object to stdout; run
   'github.sh pr-view --help' for its status values and exit codes.
-  Operations routed through the shared gh_graphql and gh_rest wrappers retry
-  rate limits and retryable request failures for at most 3 attempts with
-  exponential backoff. Other operations keep their command-specific
-  first-failure behavior. An unreadable thread list, comment list, or CI log
-  is an error, never an empty result.
+  gh_graphql retries only nonzero gh command failures with no GraphQL errors
+  object. gh_rest retries rate limits and other command failures except
+  authentication and not-found responses. Both stop after at most 3 attempts
+  with exponential backoff. GraphQL error objects and excluded REST failures
+  return on the first attempt. Other operations keep command-specific failure
+  behavior. An unreadable thread list, comment list, or CI log is an error,
+  never an empty result.
 
 Examples:
   # Get PR data with all threads and comments

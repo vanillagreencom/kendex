@@ -133,8 +133,9 @@ run_help_contracts() {
       "$label auth preflight carries $token"
   done
 
-  for token in '{"error": "message"}' 'pr-view --json' 'gh_graphql' 'gh_rest' \
-    '3 attempts' 'first-failure'; do
+  for token in '{"error": "message"}' 'pr-view --json' 'gh_graphql' 'nonzero' \
+    'GraphQL errors' 'gh_rest' 'rate limits' 'authentication' 'not-found' \
+    '3 attempts' 'first attempt'; do
     assert_section_token "$github_help" 'Errors and retries:' 'Examples:' "$token" \
       "$label errors carry $token"
   done
@@ -165,7 +166,8 @@ run_help_contracts() {
       "$label exit-75 routing carries $token"
   done
 
-  for token in 'github.sh router setup' 'bot-token load' 'merge-state mutation' \
+  for token in 'github.sh router setup' 'MERGED or CLOSED' 'UNKNOWN continues' \
+    'bot-token load' 'merge-state mutation' \
     'exact-head guarded' '--match-head-commit' '--delete-branch' \
     'best-effort'; do
     assert_section_token "$merge_help" 'Terminal and mutation rules:' 'Review-thread gate:' "$token" \
