@@ -44,14 +44,19 @@ function judge(tokens: string[], scan: CommandScan): void {
 		if (t === "-C" || t === "cd" || t.startsWith("--git-dir") || t.startsWith("--work-tree") || t.startsWith("GIT_DIR=") || t.startsWith("GIT_WORK_TREE=")) scan.moves = true;
 		// Configuration reaches git from anywhere: an assignment, an export, a
 		// config write in an earlier command. A bypass prints only beside a commit.
-		if (t.startsWith("GIT_CONFIG_") || t.toLowerCase().includes("hookspath")) setBypass(scan, t);
+		if (!/[ \t\n\r]/.test(t) && (t.startsWith("GIT_CONFIG_") || t.toLowerCase().includes("hookspath"))) setBypass(scan, t);
 		if (!git) git = basename(t) === "git";
 		else if (t === "commit") commit = true;
 	}
 	if (!git || !commit) return;
 	scan.commit = true;
 	for (const t of tokens) {
-		if (/^--no-veri/.test(t) || t === "-c" || t.startsWith("--config-env")) return setBypass(scan, t);
+		// A word is a bypass only where the WHOLE word is one, which is what keeps a
+		// quoted commit message out of it: `git commit -m "why --no-verify is banned"`
+		// is one word of prose, not the flag. Any `-c<value>` injects configuration,
+		// whatever the value: an included file can set core.hooksPath.
+		if (/[ \t\n\r]/.test(t)) continue;
+		if (/^--no-veri/.test(t) || /^-c/.test(t) || t.startsWith("--config-env")) return setBypass(scan, t);
 		if (!/^-[A-Za-z]/.test(t)) continue;
 		// A cluster reads left to right: from the first value-taking option the rest
 		// of the word is its value, so `-mnote` is a message and `-nm` is not.
@@ -162,12 +167,14 @@ export function scanCommand(command: string): CommandScan {
 				i += 2;
 			}
 		} else if (ch === "'" || ch === '"' || ch === "`") {
-			// A quoted run is text: the contents are dropped and the word closes over
-			// the gap, so `g''it` is git and a quoted --no-verify is not a flag. A
-			// quote that never closes is one stray character, leaving the rest live.
+			// Quoting sets a word boundary; it does not stop the word existing. The
+			// contents join it unquoted, so `g''it` is git and a quoted --no-verify is
+			// the flag. A quote that never closes is one stray character, leaving the
+			// rest of the command live rather than swallowing it.
 			const close = command.indexOf(ch, i + 1);
 			if (close < 0) i++;
 			else {
+				word += command.slice(i + 1, close);
 				haveWord = true;
 				i = close + 1;
 			}

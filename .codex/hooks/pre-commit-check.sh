@@ -3,7 +3,7 @@
 # name: pre-commit-check
 # event: PreToolUse
 # matcher: Bash
-# description: On a git commit, defer to the working directory's armed git hooks — both pre-commit and commit-msg, marked and executable (kendex guard install arms them). Otherwise the commit is refused naming that command: arming is the local act that says a person wants this repository's committed scripts run on their commits, and this hook never runs them on their behalf. Where one is armed, a command that sidesteps it with git's no-verify flag, -n, or a core.hooksPath override is refused: git would skip the commit-msg hook too, and nothing here can check the message. The command is split into simple commands and only its live words are judged: heredoc bodies, comment tails and quoted contents are text, and a `git` word with a later `commit` word is the commit. Whole words decide, so -mnote is a message and --grep=commit is not a commit. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
+# description: On a git commit, defer to the working directory's armed git hooks — both pre-commit and commit-msg, marked and executable (kendex guard install arms them). Otherwise the commit is refused naming that command: arming is the local act that says a person wants this repository's committed scripts run on their commits, and this hook never runs them on their behalf. Where one is armed, a command that sidesteps it with git's no-verify flag, -n, or a core.hooksPath override is refused: git would skip the commit-msg hook too, and nothing here can check the message. The command is split into simple commands and only its live words are judged: heredoc bodies and comment tails are text, a quoted word is a live word whose text is its unquoted content, and a `git` word with a later `commit` word is the commit. Whole words decide, so a quoted --no-verify is the flag while a commit message naming it is one long word of prose. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
 # safety: Refuses a commit from a working directory with no armed git pre-commit hook rather than running that repository's own scripts to check it, and refuses a git commit argv that bypasses an armed hook (no-verify, -n) or injects git configuration that could (a global -c or --config-env option, a GIT_CONFIG_* assignment, a git config write of core.hooksPath); it models no argv, so a construct it does not recognise leaves the words standing and is judged rather than passing unjudged, and its blind spot is the other way round: text a shell would run but this drops, inside quotes or a heredoc body, and a commit aimed at another repository is that repository's armed hook's to gate.
 # timeout: 60
 # ---
@@ -118,14 +118,14 @@ function scan(cmd,   n, i, ch, c2, d, j, start) {
       if (c2 == "\r" && substr(cmd, i + 2, 1) == "\n") { i += 3; continue }
       W = W c2; HAVEW = 1; i += 2; continue
     }
-    # A quoted run is text: the contents are dropped and the word closes over
-    # the gap, so `g<quote><quote>it` is git and a quoted --no-verify is not a
-    # flag. A quote that never closes is one stray character, which leaves the
-    # rest of the command live rather than swallowing it.
+    # Quoting sets a word boundary; it does not stop the word existing. The
+    # contents join it unquoted, so `g<quote><quote>it` is git and a quoted
+    # --no-verify is the flag. A quote that never closes is one stray character,
+    # which leaves the rest of the command live rather than swallowing it.
     if (ch == SQ || ch == "\"" || ch == BT) {
       j = index(substr(cmd, i + 1), ch)
       if (j == 0) { i++; continue }
-      HAVEW = 1; i += j + 1; continue
+      W = W substr(cmd, i + 1, j - 1); HAVEW = 1; i += j + 1; continue
     }
     # `$(`, `<(` and `>(` hold their interior in the command enclosing them:
     # inside one, an operator separates words rather than commands.
@@ -167,7 +167,7 @@ function judge(   m, t, g, c, p, ch) {
     if (t == "-C" || t == "cd" || t ~ /^--git-dir/ || t ~ /^--work-tree/ || t ~ /^GIT_DIR=/ || t ~ /^GIT_WORK_TREE=/) MOVES = 1
     # Configuration reaches git from anywhere: an assignment, an export, a
     # config write in an earlier command. A bypass prints only beside a commit.
-    if (t ~ /^GIT_CONFIG_/ || tolower(t) ~ /hookspath/) setbypass(t)
+    if (t !~ /[ \t\n\r]/ && (t ~ /^GIT_CONFIG_/ || tolower(t) ~ /hookspath/)) setbypass(t)
     if (g == 0) { if (basename(t) == "git") g = m }
     else if (c == 0 && t == "commit") c = m
   }
@@ -175,7 +175,12 @@ function judge(   m, t, g, c, p, ch) {
   COMMIT = 1
   for (m = 1; m <= NTOK; m++) {
     t = TOK[m]
-    if (t ~ /^--no-veri/ || t == "-c" || t ~ /^--config-env/) { setbypass(t); return }
+    # A word is a bypass only where the WHOLE word is one, which is what keeps a
+    # quoted commit message out of it: `git commit -m "why --no-verify is
+    # banned"` is one word of prose, not the flag. Any `-c<value>` injects
+    # configuration, whatever the value: an included file can set core.hooksPath.
+    if (t ~ /[ \t\n\r]/) continue
+    if (t ~ /^--no-veri/ || t ~ /^-c/ || t ~ /^--config-env/) { setbypass(t); return }
     if (t !~ /^-[A-Za-z]/) continue
     # A cluster reads left to right: from the first value-taking option the rest
     # of the word is its value, so `-mnote` is a message and `-nm` is not.

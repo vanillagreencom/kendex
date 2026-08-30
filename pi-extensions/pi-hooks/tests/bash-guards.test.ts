@@ -274,6 +274,28 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		await both("{ git commit --no-verify -m x; }", "refuse", "refuse");
 	});
 
+	test("a quoted word is a live word", async () => {
+		// Quoting sets a word boundary; it does not stop the word existing.
+		for (const command of ['git commit "--no-verify" -m x', 'git "commit" --no-verify', '"git" commit --no-verify']) {
+			await both(command, "refuse", "refuse");
+			const named = await gate(armed, command);
+			if (named.verdict.kind !== "refuse") throw new Error("unreachable");
+			expect(named.verdict.reason).toContain("'--no-verify' bypasses");
+		}
+		// And the other half of the rule: a bypass is a word whose WHOLE content is
+		// one, so prose that merely names a flag is one long word and not the flag.
+		await both('git commit -m "--no-verify should never be used"', "allow", "refuse");
+		await both('git commit -m "prose mentioning -n inside"', "allow", "refuse");
+		await both('git commit -m "core.hooksPath is not to be touched"', "allow", "refuse");
+	});
+
+	test("a -c word injects configuration whatever its value", async () => {
+		await both("git -cinclude.path=/tmp/c commit -m x", "refuse", "refuse");
+		const named = await gate(armed, "git -cinclude.path=/tmp/c commit -m x");
+		if (named.verdict.kind !== "refuse") throw new Error("unreachable");
+		expect(named.verdict.reason).toContain("'-cinclude.path=/tmp/c' bypasses");
+	});
+
 	test("a construct the scanner never heard of leaves the words standing", async () => {
 		// Each of these desynchronised the argv parser that stood here, and each is
 		// closed by the rule reading live words instead: `coproc` is named nowhere.

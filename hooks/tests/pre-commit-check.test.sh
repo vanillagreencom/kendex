@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Tests for the pre-commit-check hook's contract: the command splits into
-# simple commands and only their live words are judged; deference to the
+# simple commands and only their live words are judged, a quoted word among
+# them; deference to the
 # repository's own armed git pre-commit hook (never a second validation)
 # unless a word in that command sidesteps it; the refusal where nothing is
 # armed; fail-closed when no armed hook exists, and when the payload names a
 # command the hook cannot read. A `-n`, `-c` or `--no-verify` belonging to a
 # heredoc body, another program, or a quoted commit message must pass through
-# without a refusal of its own, and a construct the scanner does not model
-# must leave the words standing rather than swallow them.
+# without a refusal of its own — a bypass is a word whose WHOLE content is one
+# — and a construct the scanner does not model must leave the words standing.
 #
 # The package script is stubbed inside each fixture repository, where the
 # hook looks for it, so the suite needs no built binary, runs no real chain,
@@ -468,6 +469,30 @@ both "$DESYNC" 2 2 "a substitution closing on a quoted paren"
 
 run_hook "$ARMED" "$(payload "$DESYNC")" CHAIN_EXIT=0
 assert_contains "$err" "'--no-verify' bypasses" "the desynchronised command names the flag it saw"
+
+echo
+echo "a quoted word is a live word"
+
+# Quoting sets a word boundary; it does not stop the word existing. The quotes
+# arrive JSON-escaped, as the harness sends them.
+both 'git commit \"--no-verify\" -m x' 2 2 "a quoted flag"
+both 'git \"commit\" --no-verify' 2 2 "a quoted subcommand"
+both '\"git\" commit --no-verify' 2 2 "a quoted command word"
+run_hook "$ARMED" "$(payload 'git commit \"--no-verify\" -m x')" CHAIN_EXIT=0
+assert_contains "$err" "'--no-verify' bypasses" "the quoted flag is named unquoted"
+
+# And the other half of the rule: a bypass is a word whose WHOLE content is
+# one, so prose that merely names a flag is one long word and not the flag.
+both 'git commit -m \"--no-verify should never be used\"' 0 2 "prose naming the flag"
+both 'git commit -m \"prose mentioning -n inside\"' 0 2 "prose naming -n"
+both 'git commit -m \"core.hooksPath is not to be touched\"' 0 2 "prose naming the key"
+
+echo
+echo "a -c word injects configuration whatever its value"
+
+both 'git -cinclude.path=/tmp/c commit -m x' 2 2 "an attached include.path"
+run_hook "$ARMED" "$(payload 'git -cinclude.path=/tmp/c commit -m x')" CHAIN_EXIT=0
+assert_contains "$err" "'-cinclude.path=/tmp/c' bypasses" "the attached value is named"
 
 echo
 echo "a construct the scanner never heard of leaves the words standing"
