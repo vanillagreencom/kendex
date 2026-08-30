@@ -196,22 +196,32 @@ fi
 # scanned tree it turns that tree's suite red, which is the whole claim these
 # suites make. The alternate spellings are here because they are how the
 # earlier set was walked past — extra whitespace, `typeset`, flag order,
-# one-character case conversion, a quoted boundary ahead of a pipe, a case arm
-# running straight into the next pattern, and a parameter that is not a name.
+# attributes split across separate option words, one-character case
+# conversion, a quoted boundary ahead of a pipe, a case arm running straight
+# into the next pattern, and a parameter that is not a name. `local -rA` and
+# `local -r -A` are the same declaration to Bash, so both are here: neither
+# spelling stands in for the other.
 PROBES="$(
   cat <<'PROBES_EOF'
 local -A cache
 local    -A cache
 local -rA cache
 local -Ar cache
+local -r -A cache
+local -r -x -A cache
 typeset -A cache
+typeset -r -A cache
 declare -A cache
 declare -gA cache
 declare -Ag cache
 declare -g COUNT=1
+declare -x -g name
 declare -n ref=target
 local -n ref=target
 readonly -A cache
+declare -l lowered_attr
+declare -u upper_attr
+local -al items
 mapfile -t lanes < panes.txt
 readarray -t lanes < panes.txt
 exec {lock_fd}<"$lockfile"
@@ -252,10 +262,19 @@ CONTROLS="$(
   cat <<'CONTROLS_EOF'
 local -r frozen=1
 local -a items
+local -ar items
+local -r -i count=0
+local -r -- name
 declare -i count=0
 declare -f helper
+declare -p NAME
+declare -r -x name
+declare -f -p helper
 readonly frozen=1
+readonly -a items
 typeset -r frozen=1
+grep -A 3 pattern file
+export -n VAR
 printf '%s\n' "${items[@]}"
 echo "${first}, ${second}"
 total=${#files[@]}

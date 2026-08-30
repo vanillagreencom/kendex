@@ -21,12 +21,22 @@ SCRIPTS_DIR="$(cd "$TEST_DIR/../scripts" && pwd)"
 # Nothing here does — CI is Linux on Bash 5, and the `bash -n` pass is that
 # same shell, so it parses Bash 4 without complaint. A construct assembled at
 # runtime — eval, a command held in a variable, a heredoc piped to bash — is
-# text this scan does not read as code. A clean scan says the source carries
-# no construct named below. It says nothing further.
+# text this scan does not read as code, and neither is one split over a
+# backslash continuation. A clean scan says the source carries no construct
+# named below. It says nothing further.
+#
+# And the set is what it names, not everything Bash 4 added. Parameter
+# transformations (${x@Q}), globstar, `wait -n` and `test -v` are outside it
+# on purpose; each is its own construct rather than another spelling of one
+# below, and adding one means adding its probe and its control with it.
 PATTERN='mapfile|readarray'
-# declare/typeset/local/readonly whose flag cluster holds A (associative),
-# g (global) or n (nameref): -A, -rA, -Ag, -g, -n.
-PATTERN="$PATTERN"'|(^|[^[:alnum:]_])(declare|typeset|local|readonly)[[:blank:]]+-[[:alnum:]]*[Agn]'
+# declare/typeset/local/readonly carrying a Bash 4 attribute anywhere in the
+# options: A (associative), g (global), n (nameref), l and u (the
+# declare-family spelling of case conversion). Bash accepts the attributes in
+# one cluster or in separate option words, and it accepts them in any order,
+# so -A, -rA, -Ar and -r -A are one declaration written four ways and all
+# four are caught.
+PATTERN="$PATTERN"'|(^|[^[:alnum:]_])(declare|typeset|local|readonly)[[:blank:]]+([-+][[:alnum:]]+[[:blank:]]+)*[-+][[:alnum:]]*[Aglnu]'
 # Automatic FD allocation: exec {fd}< , {fd}> , {fd}>>
 PATTERN="$PATTERN"'|(^|[^$])\{[A-Za-z_][A-Za-z0-9_]*\}[<>]'
 # Case conversion, one character or every one, either direction, over every
