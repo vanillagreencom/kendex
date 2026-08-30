@@ -38,39 +38,26 @@ pub(super) fn manifest_pre(base: Option<&Base>, path: &Path) -> Result<Pre> {
 }
 
 /// The plan's one manifest write, when anything needs it: skills an agent
-/// gained upstream, or a manifest still carrying an older schema line.
-/// Either way the file is serialized from the manifest this build read,
-/// which is what drops whatever an older schema carried and this one
-/// retired. One write whatever put it there: a second manifest write could
-/// never run, its precondition binds to the bytes the first one replaces.
-///
-/// `declared` is the manifest as the person wrote it, never the pinned
-/// copy a single-package update plans from — a synthetic pin serialized
-/// into the file reads as a hold the person chose.
+/// gained upstream. Nothing else rewrites the file — only the current
+/// schema loads, so there is no upgrade to plan, and a pass that wrote the
+/// manifest for its own sake would take the person's comments with it. One
+/// write whatever put it there: a second manifest write could never run,
+/// its precondition binds to the bytes the first one replaces.
 pub(super) fn plan_manifest_write(
     env: &Env,
     scope: &Scope,
-    declared: &Manifest,
     base: Option<&Base>,
     state: &DesiredState,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
-    let (description, written) = match &state.manifest_update {
-        Some(update) => ("Add new catalog skills to kendex.toml".to_owned(), update),
-        None if declared.schema < crate::manifest::MANIFEST_SCHEMA => (
-            format!(
-                "Upgrade {} to the current format",
-                crate::manifest::MANIFEST_FILE
-            ),
-            declared,
-        ),
-        None => return Ok(()),
+    let Some(update) = &state.manifest_update else {
+        return Ok(());
     };
     let path = crate::manifest::manifest_path(env, scope);
-    let mut written = written.clone();
+    let mut written = update.clone();
     written.schema = crate::manifest::MANIFEST_SCHEMA;
     ops.push(PlannedOp {
-        description: description.into(),
+        description: "Add new catalog skills to kendex.toml".into(),
         op: Op::WriteManifest {
             pre: manifest_pre(base, &path)?,
             path,

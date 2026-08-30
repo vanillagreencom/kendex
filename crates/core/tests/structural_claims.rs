@@ -102,39 +102,54 @@ fn refresh_reads_each_installs_own_recorded_source_across_scopes() {
     assert!(project_body.contains("B, revised."), "{project_body}");
 }
 
-/// The #1308 class over kendex.toml: the schema upgrade lands once, ends
-/// in exactly one terminator, and the pass after it changes nothing.
+/// The #1308 class over kendex.toml: the file a write leaves behind ends
+/// in exactly one terminator, and every pass after it leaves the bytes
+/// alone. A repair that ran on every pass is how the file grew a blank
+/// line per apply.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn schema_upgrade_lands_once_and_settles() {
+fn a_manifest_write_ends_in_one_terminator_and_settles() {
     let w = world();
+    write_catalog(&w.home.join("cat"), "Body.");
     let manifest_path = w.project.join("kendex.toml");
     let scope = Scope::Project {
         root: w.project.clone(),
     };
-    // Odd spacing and no trailing newline.
+    // No trailing newline on the file the write starts from: the repair
+    // has something to do exactly once.
     fs::write(
         &manifest_path,
-        "schema =   3   # my note\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"",
+        format!(
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"",
+            source_path(&w.home.join("cat"))
+        ),
     )
     .unwrap();
-    apply_scope(&w, &scope);
-    let upgraded = fs::read_to_string(&manifest_path).unwrap();
+
+    let report = ops::add(
+        &w.env,
+        &scope,
+        &ops::AddRequest {
+            source: Some("cat".into()),
+            skills: vec!["gh".into()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    apply::execute(&w.env, &report.plan, None).unwrap();
+
+    let written = fs::read_to_string(&manifest_path).unwrap();
+    assert!(written.contains("[skills.gh]"), "{written}");
     assert!(
-        upgraded.contains(&format!(
-            "schema = {}",
-            kendex_core::manifest::MANIFEST_SCHEMA
-        )),
-        "the upgrade landed: {upgraded}"
-    );
-    assert!(
-        upgraded.ends_with('\n') && !upgraded.ends_with("\n\n"),
-        "exactly one terminator: {upgraded:?}"
+        written.ends_with('\n') && !written.ends_with("\n\n"),
+        "exactly one terminator: {written:?}"
     );
 
-    // Stable from here: another pass changes nothing.
+    // Stable from here: two more passes over the same scope change nothing.
     apply_scope(&w, &scope);
-    assert_eq!(fs::read_to_string(&manifest_path).unwrap(), upgraded);
+    assert_eq!(fs::read_to_string(&manifest_path).unwrap(), written);
+    apply_scope(&w, &scope);
+    assert_eq!(fs::read_to_string(&manifest_path).unwrap(), written);
 }
 
 /// The #1307 class: corrupt state fails the operation closed — a damaged

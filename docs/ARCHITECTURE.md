@@ -135,7 +135,8 @@ lives in one capability table read by core and UI.
    in a disposable clone.
 10. Writes are byte-faithful: a file kendex edits round-trips
     byte-identically except for the intended edit, trailing newline
-    included. Change detection compares exact bytes.
+    included, and a file it cannot read is refused rather than rewritten.
+    Change detection compares exact bytes.
 11. Validation precedes mutation. Every input check for an operation runs
     before its first durable write, and a rejected operation leaves
     manifest, lock, and install tree byte-identical. Every rendering is
@@ -458,10 +459,12 @@ lives in one capability table read by core and UI.
   never adopted, and a note names every owner and differing default. A value
   no template completes is seeded from none, under a note naming the key.
   Seeding never touches a value; an edit rides that write, its span alone.
-- **Schemas are versioned and migrations are applies.** Manifest and lock
-  carry a format version; older files load, and the upgrade rides the
-  normal journaled, previewed plan as a surgical edit (the version line
-  only). Files from a newer kendex refuse to load.
+- **Schemas are versioned and nothing converts them.** Manifest and lock
+  carry a format version, and this build reads exactly the one it writes.
+  A file from an older kendex is refused as unreadable, left byte-for-byte
+  as written, with the move-it-aside-and-install-fresh remedy in the
+  message; one from a newer kendex refuses to load for the same reason in
+  the other direction.
 - **Permission intent is typed and never widens.** A source's tool
   allowlist survives parse, merge, and every renderer as
   `Unspecified | AllowOnly | DenyExtra`; explicit denies survive allowlist

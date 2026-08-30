@@ -40,13 +40,6 @@ const TOP_LEVEL: &[&str] = &[
     "forks",
 ];
 
-/// The tables schema 6 retired. An older file still carrying them loads —
-/// the deserializer drops them and the next write makes that durable — but
-/// on a current file they are stray keys like any other, so a record
-/// somebody put back by hand is named rather than silently dropped.
-const RETIRED_TABLES: &[&str] = &["safety-overrides", "safety-reviews"];
-const RETIRED_TABLES_LAST_SCHEMA: i64 = 5;
-
 /// What one `[sources.<name>]` table may hold. `rev` names the revision of
 /// a remote to read — a commit id pins, a tag or branch tracks.
 const SOURCE_KEYS: &[&str] = &["repo", "path", "rev", "enabled"];
@@ -91,19 +84,15 @@ pub fn validate(table: &Table) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     let schema = table.get("schema").and_then(Value::as_integer);
-    let readable = i64::from(super::OLDEST_READABLE_SCHEMA)..=i64::from(super::MANIFEST_SCHEMA);
-    if !schema.is_some_and(|s| readable.contains(&s)) {
+    if schema != Some(i64::from(super::MANIFEST_SCHEMA)) {
         findings.push(Finding {
             location: "schema".into(),
             problem: "missing or unsupported schema version".into(),
             fix: format!("set schema = {}", super::MANIFEST_SCHEMA),
         });
     }
-    let retired_still_read = schema.is_some_and(|s| s <= RETIRED_TABLES_LAST_SCHEMA);
     for key in table.keys() {
-        let known = TOP_LEVEL.contains(&key.as_str())
-            || (retired_still_read && RETIRED_TABLES.contains(&key.as_str()));
-        if !known {
+        if !TOP_LEVEL.contains(&key.as_str()) {
             findings.push(Finding {
                 location: key.clone(),
                 problem: "unknown table or key".into(),

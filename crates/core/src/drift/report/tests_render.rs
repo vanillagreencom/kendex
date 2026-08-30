@@ -114,7 +114,7 @@ fn control_characters_and_secrets_never_reach_the_report() {
 }
 
 #[test]
-fn v1_manifest_reads_as_could_not_check() {
+fn a_manifest_this_build_cannot_read_reads_as_could_not_check() {
     let tmp = tempfile::tempdir().unwrap();
     let env = env_in(tmp.path());
     let scope = project_scope(tmp.path());
@@ -125,7 +125,9 @@ fn v1_manifest_reads_as_could_not_check() {
 
     let report = check(&env, std::slice::from_ref(&scope));
     assert_eq!(report.status, CheckStatus::Unknown);
-    assert!(render_plain(&report).contains("v1 manifest"));
+    let said = render_plain(&report);
+    assert!(said.contains("no schema"), "{said}");
+    assert!(said.contains("install fresh"), "{said}");
 }
 
 /// A folded line kendex composed itself is spelled whole.

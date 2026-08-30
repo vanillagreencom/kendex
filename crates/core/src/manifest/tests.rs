@@ -5,7 +5,7 @@ use crate::model::ItemKind;
 #[test]
 fn round_trips_the_binding_skeleton() {
     let text = r#"
-schema = 1
+schema = 6
 
 [sources.kendex]
 repo = "vanillagreencom/kendex"
@@ -68,13 +68,13 @@ github = "prefer gh cli"
     assert_eq!(reloaded, manifest);
 }
 
-/// A schema-5 manifest still carries `[safety-overrides]` and
-/// `[safety-reviews]`. Loading accepts and drops them, and the next
-/// mutation write makes the drop durable at the current schema — the whole
-/// migration, with no record left behind.
+/// The tables schema 6 retired. A file still carrying them is a file from
+/// before schema 6, and it is refused whole rather than read with the
+/// records quietly dropped — the drop would go durable on the next write,
+/// over every other byte the person put there.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn safety_decision_tables_load_silently_and_die_on_the_next_write() {
+fn safety_decision_tables_are_refused_with_the_file_they_are_in() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("kendex.toml");
     let recorded = r#"
@@ -102,15 +102,17 @@ dismissed-at = "2026-01-01T00:00:00Z"
 "#;
     std::fs::write(&path, recorded).unwrap();
 
-    let manifest = load_for_mutation(&path).unwrap().unwrap();
-    assert_eq!(manifest.schema, MANIFEST_SCHEMA);
-    assert!(manifest.skills.contains_key("deploy"));
-
-    save(&path, &manifest).unwrap();
-    let written = std::fs::read_to_string(&path).unwrap();
-    assert!(!written.contains("safety-overrides"), "{written}");
-    assert!(!written.contains("safety-reviews"), "{written}");
-    assert!(written.contains(&format!("schema = {MANIFEST_SCHEMA}")));
+    let refused = load_for_mutation(&path).unwrap_err();
+    assert!(
+        matches!(refused, CoreError::LegacyManifest { .. }),
+        "{refused}"
+    );
+    assert!(refused.to_string().contains("schema 5"), "{refused}");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        recorded,
+        "and the file is left exactly as it was written"
+    );
 }
 
 #[test]

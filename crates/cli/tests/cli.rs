@@ -109,7 +109,7 @@ fn check_reports_an_unevaluated_package_as_drift_not_a_failure() {
     let project = home.join("dev/app");
     fs::write(
         project.join("kendex.toml"),
-        "schema = 5\n\n[sources.cat]\nrepo = \"owner/repo\"\n",
+        "schema = 6\n\n[sources.cat]\nrepo = \"owner/repo\"\n",
     )
     .unwrap();
 

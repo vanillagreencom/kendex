@@ -145,9 +145,9 @@ pub fn audit_all() -> Result<Vec<AuditView>, String> {
 }
 
 /// The apply path plans through the same loader the audit view used, so
-/// the listed plan is what executes — including the schema upgrade a v0.1
-/// manifest is owed on its first apply. (Orphan removal is the one opt-in
-/// extra; the dialog lists each left-behind item beside its checkbox.)
+/// the listed plan is what executes, and a manifest the view refused is
+/// refused here too. (Orphan removal is the one opt-in extra; the dialog
+/// lists each left-behind item beside its checkbox.)
 pub fn apply_scope(env: &Env, scope: &Scope, remove_orphans: bool) -> Result<AuditView, String> {
     // A manifest that vanished since the preview must be said out loud,
     // not answered with a silent empty apply.

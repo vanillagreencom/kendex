@@ -14,7 +14,7 @@ use kendex_core::model::ItemKind;
 use kendex_core::package;
 
 use super::{
-    REPO, commit, declare, fetch_mirrors, installed_body, locked_commit, sync_and_apply, world,
+    commit, declare, fetch_mirrors, installed_body, locked_commit, sync_and_apply, world,
     write_agent, write_manifest, write_skill,
 };
 
@@ -126,56 +126,6 @@ fn manifest_op(report: &kendex_core::engine::EngineReport) -> &apply::Op {
         })
         .expect("the plan writes the manifest");
     &op.op
-}
-
-/// The schema upgrade serializes the whole manifest. The bytes it
-/// serializes are the declared ones — the pass's synthetic holds, which
-/// pin every sibling at its installed commit so the update steers this
-/// pass alone, are not part of what the person wrote.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_schema_upgrade_writes_no_synthetic_hold() {
-    let w = world();
-    write_skill(&w.upstream, "a", "", "a version one.");
-    write_skill(&w.upstream, "b", "", "b version one.");
-    let first = commit(&w.upstream, "one");
-    let body = "[skills.a]\nsource = \"cat\"\n\n[skills.b]\nsource = \"cat\"\n";
-    declare(&w, body);
-    sync_and_apply(&w);
-
-    write_skill(&w.upstream, "a", "", "a version two.");
-    let second = commit(&w.upstream, "two");
-    fetch_mirrors(&w);
-
-    write_manifest(
-        &w,
-        &format!(
-            "schema = 4\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{body}"
-        ),
-    );
-
-    let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "a").unwrap();
-    assert!(
-        matches!(manifest_op(&report), apply::Op::WriteManifest { .. }),
-        "the upgrade is the plan's one manifest write"
-    );
-    apply::execute(&w.env, &report.plan).unwrap();
-
-    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        loaded.schema,
-        manifest::MANIFEST_SCHEMA,
-        "the upgrade landed"
-    );
-    assert_eq!(
-        loaded.declared(ItemKind::Skill)["b"].rev,
-        None,
-        "the sibling held for this pass must not come back as a declared hold"
-    );
-    assert_eq!(locked_commit(&w, "a"), second);
-    assert_eq!(locked_commit(&w, "b"), first);
 }
 
 /// The write a plan makes on its own account — an agent whose upstream

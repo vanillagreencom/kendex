@@ -144,31 +144,34 @@ fn the_page_is_told_which_kinds_can_be_kept() {
     );
 }
 
-/// The take-over is an apply like any other, so it owes the scope the
-/// migrations an apply owes it. Planned from a copy of the manifest that
-/// had already been normalized in memory, an older schema looked current
-/// and was written back unmigrated.
+/// The take-over is an apply like any other, so it reads the manifest the
+/// way every other apply does — and refuses an older schema rather than
+/// planning against a file this build cannot read. Planned from a copy
+/// normalized in memory, an older schema looked current and was written
+/// back over the person's bytes.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn an_older_schema_is_brought_forward_by_the_same_apply() {
+fn an_older_schema_refuses_the_take_over_and_writes_nothing() {
     let f = fixture();
     let path = f.project.join("kendex.toml");
     let older = fs::read_to_string(&path).unwrap().replace(
         "schema = 6",
         &format!("schema = {}", kendex_core::manifest::MANIFEST_SCHEMA - 1),
     );
-    fs::write(&path, older).unwrap();
+    fs::write(&path, &older).unwrap();
 
-    replace_unmanaged(&f.env, &f.scope, ItemKind::Skill, "deploy".into()).unwrap();
-
-    assert!(body(&f, "deploy").contains("Upstream."));
+    let Err(refused) = replace_unmanaged(&f.env, &f.scope, ItemKind::Skill, "deploy".into()) else {
+        panic!("a manifest this build cannot read must refuse the take-over");
+    };
+    assert!(refused.contains("install fresh"), "{refused}");
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        older,
+        "a refused take-over rewrites nothing"
+    );
     assert!(
-        fs::read_to_string(&path).unwrap().contains(&format!(
-            "schema = {}",
-            kendex_core::manifest::MANIFEST_SCHEMA
-        )),
-        "the scope was written without the migration it was owed:\n{}",
-        fs::read_to_string(&path).unwrap()
+        !body(&f, "deploy").contains("Upstream."),
+        "and takes nothing over"
     );
 }
 

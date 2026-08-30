@@ -17,18 +17,15 @@ pub use file::{
 pub(crate) use file::save;
 pub use validate::{Finding, validate};
 
-/// Current manifest schema. Schema 1 (v0.1) still loads; the first apply
-/// upgrades it in place through the normal journaled plan. A schema newer
-/// than this build refuses to load — downgrades must never corrupt.
-/// Schema 3 added per-item `rev` and `[forks]`; an older build saving a
-/// schema-3 manifest would silently drop them, which is what the refusal
-/// protects. Schemas 4 and 5 carried `[safety-overrides]` and
-/// `[safety-reviews]`, the recorded safety decisions; schema 6 retires
-/// both — the safety score is advisory, so the records decide nothing.
-/// Reading an older file drops them, and the next write makes that drop
-/// durable.
+/// Current manifest schema, and the only one that loads. Nothing converts
+/// an older file: each schema changed what a table means — schema 3 added
+/// per-item `rev` and `[forks]`, schemas 4 and 5 carried the recorded
+/// safety decisions schema 6 retired — so reading one under this build's
+/// rules answers wrongly rather than incompletely, and the write that
+/// follows makes it durable over the person's own bytes. A schema newer
+/// than this build refuses too; downgrades must never corrupt. Either way
+/// the file is left as written and the refusal names the way out.
 pub const MANIFEST_SCHEMA: u32 = 6;
-pub const OLDEST_READABLE_SCHEMA: u32 = 1;
 pub const DEFAULT_SOURCE_NAME: &str = "kendex";
 pub const DEFAULT_SOURCE_REPO: &str = "vanillagreencom/kendex";
 /// The reserved source name for content adopted into this scope.

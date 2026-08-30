@@ -78,7 +78,9 @@ fn lock_with(entries: &[(&str, LockEntry)]) -> Lock {
 
 /// A set's record: where it came out as, in the catalog the fixtures
 /// declare. The only account of where a set sits — its members carry
-/// their own commits and say nothing about the set's.
+/// their own commits and say nothing about the set's, so both sets below
+/// carry one and the assertions turn on which of them holds, never on
+/// which of them has a record at all.
 fn recorded_set(lock: &mut Lock, name: &str, commit: &str) {
     lock.bundles.insert(
         name.to_owned(),
@@ -142,7 +144,7 @@ fn a_derived_targets_bundle_is_exempt_and_a_stranger_bundle_holds() {
     assert_eq!(
         held.bundles["other"].rev,
         Some("bbb".to_owned()),
-        "a bundle the target has nothing to do with holds at its members' commit"
+        "a bundle the target has nothing to do with holds at its recorded commit"
     );
 }
 

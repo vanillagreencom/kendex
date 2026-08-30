@@ -76,7 +76,8 @@ mod tests {
         ));
         assert!(matches!(
             refusal(CoreError::LegacyManifest {
-                path: PathBuf::from("/w/app/kendex.toml")
+                path: PathBuf::from("/w/app/kendex.toml"),
+                message: "it names no schema".to_owned(),
             }),
             WriteRefused::Failed { .. }
         ));

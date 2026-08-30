@@ -10,7 +10,7 @@ use std::fs;
 use kendex_core::apply;
 use kendex_core::engine::{DriftState, audit};
 use kendex_core::error::CoreError;
-use kendex_core::lock::{LOCK_VERSION, load as load_lock, lock_path, save as save_lock};
+use kendex_core::lock::{LOCK_VERSION, load as load_lock, lock_path};
 use kendex_core::manifest;
 use kendex_core::model::ItemKind;
 use kendex_core::package;
@@ -618,51 +618,15 @@ fn updating_a_package_its_set_also_owns_through_a_parent_still_moves_it() {
     assert_eq!(locked_commit(&w, "a"), second);
 }
 
-/// A lock behind the current version is rewritten on the next apply, and
-/// that is the whole migration a bump needs here: a scope holding an older
-/// record gains the new one by being applied, not by machinery that goes
-/// looking for it. The version alone has to be enough — this lock is
-/// otherwise exactly what this build writes.
+/// A record naming a version this build does not write is refused, in
+/// both directions and for the same reason: a lock behind this format is
+/// missing evidence this build reads, and one ahead of it holds evidence
+/// this build would strip on its next write. Nothing converts either.
+/// The lock here is otherwise exactly what this build writes, so the
+/// version alone is what the refusal turns on.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_lock_behind_the_current_version_is_rewritten() {
-    let w = world();
-    write_skill(&w.upstream, "a", "", "a version one.");
-    write_skill(&w.upstream, "b", "", "b version one.");
-    fs::write(
-        w.upstream.join("kendex.toml"),
-        "[bundles.kit]\ndescription = \"a set\"\nskills = [\"a\", \"b\"]\n",
-    )
-    .unwrap();
-    commit(&w.upstream, "one");
-    declare(&w, "[bundles.kit]\nsource = \"cat\"\n");
-    sync_and_apply(&w);
-
-    let path = lock_path(&w.env, &w.scope);
-    let mut lock = load_lock(&path).unwrap();
-    assert_eq!(
-        lock.version, LOCK_VERSION,
-        "this build writes the current version"
-    );
-    lock.version = LOCK_VERSION - 1;
-    save_lock(&path, &lock).unwrap();
-
-    let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan).unwrap();
-
-    assert_eq!(
-        load_lock(&path).unwrap().version,
-        LOCK_VERSION,
-        "nothing else about this lock differs, so the version is what asked for the write"
-    );
-}
-
-/// The refusal that makes the bump worth anything: a build whose format is
-/// older than the lock in front of it stops rather than reading it, so it
-/// never writes back a record with the newer evidence stripped out.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_lock_from_a_newer_format_is_refused_rather_than_read() {
+fn a_lock_naming_another_version_is_refused_in_both_directions() {
     let w = world();
     write_skill(&w.upstream, "a", "", "a version one.");
     commit(&w.upstream, "one");
@@ -670,10 +634,32 @@ fn a_lock_from_a_newer_format_is_refused_rather_than_read() {
     sync_and_apply(&w);
 
     let path = lock_path(&w.env, &w.scope);
-    let mut lock = load_lock(&path).unwrap();
-    lock.version = LOCK_VERSION + 1;
-    save_lock(&path, &lock).unwrap();
+    assert_eq!(
+        load_lock(&path).unwrap().version,
+        LOCK_VERSION,
+        "this build writes the current version"
+    );
+    // Written as text: `save` stamps the version it writes, which is the
+    // whole point — only a hand-written or older-build record can name
+    // another one.
+    let current = fs::read_to_string(&path).unwrap();
+    let renumber = |version: u32| {
+        let stamped = format!("\"version\": {LOCK_VERSION}");
+        let text = current.replace(&stamped, &format!("\"version\": {version}"));
+        assert_ne!(text, current, "the version line must be the one rewritten");
+        fs::write(&path, text).unwrap();
+    };
 
+    renumber(LOCK_VERSION - 1);
+    let error = load_lock(&path).unwrap_err();
+    assert!(matches!(error, CoreError::LockCorrupt { .. }), "{error}");
+    assert!(error.to_string().contains("install fresh"), "{error}");
+    assert!(
+        audit(&w.env, &w.scope).is_err(),
+        "and nothing plans past it"
+    );
+
+    renumber(LOCK_VERSION + 1);
     let error = load_lock(&path).unwrap_err();
     assert!(
         matches!(error, CoreError::SchemaTooNew { found, .. } if found == i64::from(LOCK_VERSION) + 1),

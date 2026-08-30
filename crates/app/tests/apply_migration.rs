@@ -1,8 +1,7 @@
-//! The apply the user confirms must do what the preview said. An older
-//! manifest's first apply promises "Upgrade kendex.toml to the current
-//! format" — this pins that the app's apply path actually writes it,
-//! rather than re-planning from a mutation-normalized manifest that no
-//! longer looks old, and that one apply settles the file for good.
+//! What the app does with a manifest an older kendex wrote: says so, and
+//! leaves it alone. The preview reports the refusal as a scope error and
+//! the apply refuses too, so nothing rewrites a file this build cannot
+//! read — the person's comments included.
 #![cfg(unix)]
 
 #[path = "../../test_util.rs"]
@@ -11,12 +10,10 @@ use test_util::source_path;
 
 use std::fs;
 
-use kendex_app::audit::{apply_scope, view};
+use kendex_app::audit::{ScopeErrorKind, apply_scope, view};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::manifest::MANIFEST_SCHEMA;
 use kendex_core::model::Scope;
-
-const UPGRADE_OP: &str = "Upgrade kendex.toml to the current format";
 
 struct Fixture {
     _tmp: tempfile::TempDir,
@@ -34,18 +31,9 @@ impl Fixture {
     }
 }
 
-#[allow(clippy::unwrap_used)]
-fn v01_fixture() -> Fixture {
-    fixture(|source| {
-        format!(
-            "# my project setup\nschema = 1\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
-            source_path(&source)
-        )
-    })
-}
-
-/// A schema-5 manifest, comments and all, without the retired tables.
-const KEPT: &str = "# my project setup\nschema = 5\n\n# where the content comes from\n[sources.cat]\n{source}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"   # keep this\n";
+/// The part of an older manifest a refusal must not touch: comments,
+/// spacing and a trailing comment on a value.
+const KEPT: &str = "# my project setup\nschema = {schema}\n\n# where the content comes from\n[sources.cat]\n{source}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"   # keep this\n";
 
 /// The tables schema 6 retired, as a pre-6 kendex wrote them.
 const RETIRED: &str = "[safety-overrides.\"skill:gh:claude\"]\nreview-hash = \"abc\"\nruleset = 3\nfindings = [\"f1\"]\ngranted-at = \"2026-01-01T00:00:00Z\"\n\n[safety-reviews.\"skill:gh:claude\"]\nreview-hash = \"abc\"\nruleset = 3\n\n[safety-reviews.\"skill:gh:claude\".dismissed.f2]\nreason = \"intended\"\ndismissed-at = \"2026-01-01T00:00:00Z\"\n";
@@ -53,10 +41,10 @@ const RETIRED: &str = "[safety-overrides.\"skill:gh:claude\"]\nreview-hash = \"a
 #[allow(clippy::unwrap_used)]
 fn schema5_fixture() -> Fixture {
     fixture(|source| {
-        // The blank line introduces the retired table, and goes with it.
         format!(
             "{}\n{RETIRED}",
-            KEPT.replace("{source}", &source_path(&source))
+            KEPT.replace("{schema}", "5")
+                .replace("{source}", &source_path(&source))
         )
     })
 }
@@ -83,14 +71,6 @@ fn fixture(manifest: impl FnOnce(&std::path::Path) -> String) -> Fixture {
 
     let manifest_path = project.join("kendex.toml");
     fs::write(&manifest_path, manifest(&source)).unwrap();
-    fs::write(
-        project.join(".kendex-lock.json"),
-        format!(
-            "{{\n  \"version\": 1,\n  \"root\": {},\n  \"entries\": {{}}\n}}\n",
-            serde_json::to_string(&project.display().to_string()).unwrap()
-        ),
-    )
-    .unwrap();
 
     Fixture {
         env,
@@ -102,148 +82,73 @@ fn fixture(manifest: impl FnOnce(&std::path::Path) -> String) -> Fixture {
     }
 }
 
+/// A schema-5 manifest still carrying the retired safety tables. The
+/// preview says it cannot be read, the apply refuses, and every byte —
+/// comments and trailing comments included — is exactly where it was.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn apply_performs_the_upgrade_the_preview_promised() {
-    let f = v01_fixture();
-
-    let before = view(&f.env, &f.scope);
-    assert!(
-        before.plan.iter().any(|op| op == UPGRADE_OP),
-        "preview must promise the schema upgrade, got: {:?}",
-        before.plan
-    );
-
-    apply_scope(&f.env, &f.scope, false).unwrap();
-
-    let migrated = fs::read_to_string(&f.manifest_path).unwrap();
-    assert!(
-        migrated.contains(&format!("schema = {MANIFEST_SCHEMA}")),
-        "the upgrade landed: {migrated}"
-    );
-    assert!(
-        migrated.contains("[skills.gh]"),
-        "and what the person declared is still declared: {migrated}"
-    );
-
-    let after = view(&f.env, &f.scope);
-    assert!(
-        !after.plan.iter().any(|op| op == UPGRADE_OP),
-        "a second look must not promise the upgrade again, got: {:?}",
-        after.plan
-    );
-}
-
-/// A schema-5 manifest still carries the safety-decision tables. One apply
-/// upgrades it: the schema line moves and the retired records — which
-/// decide nothing any more — go with it. The declared skill installs in
-/// the same apply.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn the_upgrade_drops_the_retired_tables() {
+fn an_older_manifest_is_refused_and_left_byte_identical() {
     let f = schema5_fixture();
+    let original = fs::read_to_string(&f.manifest_path).unwrap();
+
     let before = view(&f.env, &f.scope);
-    assert!(
-        before.error.is_none(),
-        "{:?}",
-        before.error.as_ref().map(|error| &error.message)
-    );
-    assert!(
-        before.plan.iter().any(|op| op == UPGRADE_OP),
-        "preview must promise the schema upgrade, got: {:?}",
-        before.plan
-    );
+    let error = before.error.expect("an older manifest is a scope error");
+    assert!(error.message.contains("schema 5"), "{}", error.message);
+    assert!(error.message.contains("install fresh"), "{}", error.message);
+    assert!(before.plan.is_empty(), "{:?}", before.plan);
 
-    apply_scope(&f.env, &f.scope, false).unwrap();
-
-    let migrated = fs::read_to_string(&f.manifest_path).unwrap();
+    let Err(refused) = apply_scope(&f.env, &f.scope, false) else {
+        panic!("applying an older manifest must refuse");
+    };
+    assert!(refused.contains("install fresh"), "{refused}");
+    assert_eq!(fs::read_to_string(&f.manifest_path).unwrap(), original);
     assert!(
-        migrated.contains(&format!("schema = {MANIFEST_SCHEMA}")),
-        "{migrated}"
-    );
-    assert!(!migrated.contains("safety-overrides"), "{migrated}");
-    assert!(!migrated.contains("safety-reviews"), "{migrated}");
-    assert!(migrated.contains("[skills.gh]"), "{migrated}");
-    assert!(
-        f.scope_root().join(".claude/skills/gh").is_symlink(),
-        "the declared skill installs in the same apply"
-    );
-
-    let after = view(&f.env, &f.scope);
-    assert!(
-        !after.plan.iter().any(|op| op == UPGRADE_OP),
-        "a second look must not promise the upgrade again, got: {:?}",
-        after.plan
+        !f.scope_root().join(".claude/skills/gh").exists(),
+        "a refused scope installs nothing"
     );
 }
 
-/// The retired tables in every spelling TOML allows — a quoted header, a
-/// top-level dotted key, an inline table. The upgrade serializes the
-/// manifest this build read, which carries none of them, so after one
-/// apply the file loads at the current schema and carries neither name.
+/// A manifest naming no schema — a v0.1 file — is the same refusal.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn every_spelling_of_a_retired_table_is_gone_after_one_apply() {
-    let quoted = (
-        "",
-        "[\"safety-overrides\".\"skill:gh:claude\"]\nreview-hash = \"abc\"\n",
-    );
-    let dotted = (
-        "safety-reviews.\"skill:gh:claude\".review-hash = \"abc\"\n",
-        "",
-    );
-    let inline = (
-        "safety-overrides = { \"skill:gh:claude\" = { review-hash = \"abc\" } }\n",
-        "",
-    );
-    for (top, tail) in [quoted, dotted, inline] {
-        let f = fixture(|source| {
-            let kept = KEPT.replace("{source}", &source_path(&source));
-            format!(
-                "{}\n{tail}",
-                kept.replacen("schema = 5\n", &format!("schema = 5\n{top}"), 1)
-            )
-        });
-        let before = view(&f.env, &f.scope);
-        assert!(
-            before.error.is_none(),
-            "{top}{tail}: {:?}",
-            before.error.map(|e| e.message)
-        );
-        assert!(
-            before.plan.iter().any(|op| op == UPGRADE_OP),
-            "{:?}",
-            before.plan
-        );
+fn a_schema_less_manifest_is_refused_the_same_way() {
+    let f = fixture(|source| {
+        KEPT.replace("schema = {schema}\n", "")
+            .replace("{source}", &source_path(&source))
+    });
+    let original = fs::read_to_string(&f.manifest_path).unwrap();
 
-        apply_scope(&f.env, &f.scope, false).unwrap();
+    let error = view(&f.env, &f.scope)
+        .error
+        .expect("a schema-less manifest is a scope error");
+    assert!(error.message.contains("no schema"), "{}", error.message);
+    assert_eq!(fs::read_to_string(&f.manifest_path).unwrap(), original);
+}
 
-        let migrated = fs::read_to_string(&f.manifest_path).unwrap();
-        assert!(
-            !migrated.contains("safety-overrides"),
-            "{top}{tail}: {migrated}"
-        );
-        assert!(
-            !migrated.contains("safety-reviews"),
-            "{top}{tail}: {migrated}"
-        );
-        assert!(
-            migrated.contains(&format!("schema = {MANIFEST_SCHEMA}")),
-            "{migrated}"
-        );
-        assert!(migrated.contains("[skills.gh]"), "{migrated}");
-        let after = view(&f.env, &f.scope);
-        assert!(
-            after.error.is_none(),
-            "{top}{tail}: {:?}",
-            after.error.map(|e| e.message)
-        );
-        assert!(
-            !after.plan.iter().any(|op| op == UPGRADE_OP),
-            "{:?}",
-            after.plan
-        );
-    }
+/// A retired table put back by hand into a current manifest is named as
+/// the stray key it is, not silently dropped on the next write.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_retired_table_in_a_current_manifest_is_named_not_dropped() {
+    let f = fixture(|source| {
+        format!(
+            "{}\n{RETIRED}",
+            KEPT.replace("{schema}", &MANIFEST_SCHEMA.to_string())
+                .replace("{source}", &source_path(&source))
+        )
+    });
+    let original = fs::read_to_string(&f.manifest_path).unwrap();
+
+    let error = view(&f.env, &f.scope)
+        .error
+        .expect("a stray table is a scope error");
+    assert!(matches!(error.kind, ScopeErrorKind::ManifestInvalid));
+    assert!(
+        error.message.contains("safety-overrides"),
+        "the table is named: {}",
+        error.message
+    );
+    assert_eq!(fs::read_to_string(&f.manifest_path).unwrap(), original);
 }
 
 /// A manifest that vanished between the preview and the click is an error
@@ -251,7 +156,7 @@ fn every_spelling_of_a_retired_table_is_gone_after_one_apply() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn applying_without_a_manifest_is_an_error() {
-    let f = v01_fixture();
+    let f = schema5_fixture();
     fs::remove_file(&f.manifest_path).unwrap();
     let Err(error) = apply_scope(&f.env, &f.scope, false) else {
         panic!("applying without a manifest must error");

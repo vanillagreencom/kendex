@@ -12,12 +12,14 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Output};
 
-/// A lock naming the project it sits in — the record every project lock
-/// carries, without which a read refuses it as nobody's.
+/// A lock naming the version this build writes and the project it sits in
+/// — the two records every project lock carries, without either of which a
+/// read refuses it.
 #[allow(clippy::unwrap_used)]
 fn lock_of(proj: &Path, entries: &str) -> String {
     format!(
-        r#"{{"version":1,"root":{},"entries":{{{entries}}}}}"#,
+        r#"{{"version":{},"root":{},"entries":{{{entries}}}}}"#,
+        kendex_core::lock::LOCK_VERSION,
         serde_json::to_string(&proj.display().to_string()).unwrap()
     )
 }

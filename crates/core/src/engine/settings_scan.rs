@@ -27,10 +27,11 @@ use crate::settings_template::TemplateSource;
 ///
 /// One entry per skill the closure plans, so a skill this answers for is a
 /// skill an apply would seed for, and the two cannot come apart. A place
-/// whose files this build reads but will not write — a v1 manifest or
-/// lock — answers with nothing, the posture [`super::plan_apply`] takes
-/// for the same files. Global scope answers with nothing too: a global
-/// install seeds no settings.
+/// with no manifest answers with nothing, the posture
+/// [`super::plan_apply`] takes for the same file; one whose files this
+/// build cannot read refuses, the way every other read of them does.
+/// Global scope answers with nothing too: a global install seeds no
+/// settings.
 pub fn settings_templates(env: &Env, scope: &Scope) -> Result<BTreeMap<String, TemplateSource>> {
     let scope = &scope.canonical();
     let ManifestFile::Current(manifest) = manifest::load(&manifest::manifest_path(env, scope))?

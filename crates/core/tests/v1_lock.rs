@@ -28,7 +28,10 @@ fn fixture() -> Fixture {
 
     fs::write(
         project.join("kendex.toml"),
-        "schema = 1\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+        format!(
+            "schema = {}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+            kendex_core::manifest::MANIFEST_SCHEMA
+        ),
     )
     .unwrap();
 

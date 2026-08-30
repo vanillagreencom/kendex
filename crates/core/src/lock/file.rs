@@ -1,5 +1,5 @@
 //! Reading and writing a lock file: what sits at a path, the boundary a
-//! project's record may claim, and the version shapes that still load.
+//! project's record may claim, and the one version shape that loads.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -184,12 +184,30 @@ pub fn parse_text(path: &Path, text: &str) -> Result<LockFile> {
             path: path.to_path_buf(),
             message: e.to_string(),
         })?;
-    if let Some(version) = value.get("version").and_then(serde_json::Value::as_i64)
-        && version > i64::from(LOCK_VERSION)
-    {
+    let version = value.get("version").and_then(serde_json::Value::as_i64);
+    if version.is_some_and(|version| version > i64::from(LOCK_VERSION)) {
         return Err(CoreError::SchemaTooNew {
             path: path.to_path_buf(),
-            found: version,
+            found: version.unwrap_or_default(),
+        });
+    }
+    // The floor, and the reason there is one: every field a later version
+    // added is a fact this build reads and an older record simply does not
+    // carry — where an installed set sits, which project wrote the record,
+    // why an installation exists. Read as absent, each of those is a wrong
+    // answer rather than a missing one: a set placeable at nothing comes
+    // current on the next update of anything else, and an installation with
+    // no reason recorded is swept as one nobody asked for. Nothing converts
+    // the older shape, so nothing plans against it either.
+    if version != Some(i64::from(LOCK_VERSION)) {
+        return Err(CoreError::LockCorrupt {
+            path: path.to_path_buf(),
+            message: match version {
+                Some(version) => format!(
+                    "it is a version {version} record, and this kendex writes version {LOCK_VERSION}"
+                ),
+                None => "it names no version, so nothing here can say what shape it is".to_owned(),
+            },
         });
     }
     let lock: Lock = serde_json::from_value(value).map_err(|e| CoreError::LockCorrupt {
@@ -216,6 +234,11 @@ pub fn load(path: &Path) -> Result<Lock> {
 pub fn save(path: &Path, lock: &Lock) -> Result<()> {
     refuse_foreign_paths(path, lock)?;
     let mut lock = lock.clone();
+    // Stamped at the write, like the root beside it. The version is a fact
+    // about the build that wrote the file, and the read holds every record
+    // to exactly this number — two places deciding it is how a writer
+    // comes to put down something its own reader refuses.
+    lock.version = LOCK_VERSION;
     stamp_project(path, &mut lock)?;
     let mut text = serde_json::to_string_pretty(&lock).map_err(|e| CoreError::JsonParse {
         path: path.to_path_buf(),

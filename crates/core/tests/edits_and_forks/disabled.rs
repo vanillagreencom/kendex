@@ -83,7 +83,7 @@ fn an_edit_landing_after_the_enable_was_planned_refuses_the_toggle() {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     let manifest_with = |item: &str| {
         format!(
-            "schema = 5\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n{item}"
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n{item}"
         )
     };
     fs::write(&path, manifest_with("[agents.rev]\nsource = \"cat\"\n")).unwrap();

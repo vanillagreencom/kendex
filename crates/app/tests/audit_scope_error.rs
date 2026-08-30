@@ -27,7 +27,10 @@ fn fixture(name: &str) -> Fixture {
     fs::create_dir_all(project.join(".claude")).unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 2\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+        format!(
+            "schema = {}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+            kendex_core::manifest::MANIFEST_SCHEMA
+        ),
     )
     .unwrap();
     let lock_path = project.join(".kendex-lock.json");

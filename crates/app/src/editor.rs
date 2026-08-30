@@ -147,8 +147,8 @@ pub fn custom_hook_deliveries(
 }
 
 /// Every agent's recorded upstream assignment in one scope. A read-only
-/// lookup, so a v1 lock degrades to "nothing recorded" like the rest of the
-/// read surface instead of taking the editor's inventory down with it.
+/// lookup, so a scope with no lock yet answers "nothing recorded" rather
+/// than taking the editor's inventory down with it.
 ///
 /// Both answers come off one pass over the lock's agent entries. Presence
 /// in each is its own question: an agent lands in `automatic` only with a

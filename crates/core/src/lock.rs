@@ -8,21 +8,22 @@ use crate::env::Env;
 use crate::manifest::Method;
 use crate::model::{HarnessId, ItemKind, Scope};
 
-/// Current lock version, and the number every write records. Nothing
-/// converts an older record: what loads is what still deserializes into
-/// the shape below and names the project that wrote it, and anything else
-/// is refused as damaged — move it aside and install fresh. A lock newer
-/// than this build refuses to load outright. A bump is what stops an older
-/// build reading a newer record, dropping what it did not understand on
-/// its next write, and erasing evidence — of which bytes are whose, of which comment blocks seeding
-/// wrote, of where an installed set sits, or of which project wrote the
-/// record. Two of those are why a bump is not optional: a build that
-/// dropped a set's commit would leave a set whose members have come apart
-/// placeable at nothing, so the next update of anything else takes its
-/// other members current; and one that dropped `root` would refresh a
-/// project holding a nested checkout's lock without the ownership check,
-/// taking that checkout's files, then write the record back with nothing
-/// left to catch it.
+/// Current lock version, the number every write stamps, and the only one
+/// a read accepts. Nothing converts a record from another format: an older
+/// one is refused as damaged and a newer one as written by a newer build,
+/// and either way the way out is to move it aside and install fresh.
+///
+/// The floor is not ceremony. Every field a version added is a fact this
+/// build reads and an older record does not carry — which bytes are whose,
+/// which comment blocks seeding wrote, where an installed set sits, why an
+/// installation exists, which project wrote the record — and read as
+/// absent each of those is a wrong answer rather than a missing one: a set
+/// placeable at nothing comes current on the next update of anything else,
+/// an installation with no reason recorded is swept as one nobody asked
+/// for, and a lock naming no project would refresh a nested checkout's
+/// files as this project's and write the record back with nothing left to
+/// catch it. A bump is what stops an older build reading a newer record
+/// and dropping what it did not understand on its next write.
 pub const LOCK_VERSION: u32 = 8;
 
 /// The lock file a project scope carries. The global lock is `lock.json`

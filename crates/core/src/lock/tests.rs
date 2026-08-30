@@ -138,21 +138,36 @@ fn a_newer_lock_refuses_to_load() {
     );
 }
 
-/// An empty `entries` map is indistinguishable between v1 and v2 — it
-/// reads as v2, since that is the only reading a fresh scope can mean.
+/// The version is the whole gate: a record naming this build's number
+/// loads whatever else it holds, and one naming any other number — or
+/// none — is refused, because every field a later version added is a fact
+/// this build reads and an older record does not carry.
 #[test]
-fn an_empty_lock_reads_as_current() {
+fn only_this_builds_version_loads() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join(".kendex-lock.json");
-    std::fs::write(
-        &path,
-        format!(
-            r#"{{"version":1,"root":{},"entries":{{}}}}"#,
-            json(tmp.path())
-        ),
-    )
-    .unwrap();
+    let write = |version: &str| {
+        std::fs::write(
+            &path,
+            format!(r#"{{{version}"root":{},"entries":{{}}}}"#, json(tmp.path())),
+        )
+        .unwrap();
+    };
+
+    write(&format!(r#""version":{LOCK_VERSION},"#));
     assert!(matches!(load_file(&path).unwrap(), LockFile::Current(_)));
+
+    for older in ["1", "2", &(LOCK_VERSION - 1).to_string()] {
+        write(&format!(r#""version":{older},"#));
+        let error = load_file(&path).unwrap_err();
+        assert!(matches!(error, CoreError::LockCorrupt { .. }), "{error}");
+        assert!(error.to_string().contains("install fresh"), "{error}");
+    }
+
+    write("");
+    let error = load_file(&path).unwrap_err();
+    assert!(matches!(error, CoreError::LockCorrupt { .. }), "{error}");
+    assert!(error.to_string().contains("names no version"), "{error}");
 }
 
 /// A path as JSON data rather than text spliced into a literal: a

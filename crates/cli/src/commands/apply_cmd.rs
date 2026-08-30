@@ -48,9 +48,9 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
     // the first write beats a half-applied run.
     let mut planned = Vec::new();
     for scope in resolve_scopes(env, filter)? {
-        // Plan from the manifest as it sits on disk — the same loader the
-        // audit uses — so a v0.1 scope gets the schema upgrade its plan
-        // promises instead of a normalized copy that no longer looks old.
+        // Read the manifest as it sits on disk, through the same loader
+        // the audit uses, so this verb refuses exactly what the audit
+        // refused rather than planning against a normalized copy.
         let path = manifest::manifest_path(env, &scope);
         match manifest::load(&path)? {
             ManifestFile::Current(_) => {}

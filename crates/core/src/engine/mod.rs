@@ -136,9 +136,7 @@ fn plan_scope_once(
     let mut config_edits = config_edits::ConfigEditPlan::default();
 
     let base = options.manifest_base.as_ref();
-    // `declared`, never the planning copy: a synthetic pin serialized into
-    // the file is a hold the person never asked for.
-    plan_manifest_write(env, scope, declared, base, &state, &mut ops)?;
+    plan_manifest_write(env, scope, base, &state, &mut ops)?;
 
     plan_pass::plan_items(
         env,
@@ -239,8 +237,7 @@ fn scope_wide(scope: &Scope, ops: &mut Vec<PlannedOp>) -> Result<Vec<String>> {
 /// The synthetic holds come back out of the manifest this pass computed
 /// before anything can write it: that manifest is a copy of the pinned
 /// one, and no written manifest may carry a pin as if the person had
-/// chosen it. The plan's other manifest writes never see the pinned copy
-/// at all — [`plan_scope_once`] hands `plan_manifest_write` `declared`.
+/// chosen it.
 fn desired_pass<'a>(
     env: &Env,
     scope: &Scope,

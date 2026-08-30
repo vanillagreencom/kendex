@@ -38,9 +38,9 @@ pub enum CoreError {
     },
 
     #[error(
-        "{path} is a v1 manifest (no schema key) — no importer exists; move it aside or delete it, then install fresh"
+        "{path}: this manifest could not be read — {message}; move it aside or delete it, then install fresh"
     )]
-    LegacyManifest { path: PathBuf },
+    LegacyManifest { path: PathBuf, message: String },
 
     #[error(
         "{path}: this lock file could not be read — {message}; move it aside or delete it, then install fresh"

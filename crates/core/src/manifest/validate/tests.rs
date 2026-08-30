@@ -57,11 +57,32 @@ matcher = "Bash"
     }
 }
 
+/// The one schema this build reads. Anything else — an older number, a
+/// newer one, no number at all — is the same finding, so the editor
+/// rejects exactly what a file read does.
+#[test]
+fn only_the_current_schema_validates() {
+    let body = "[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n";
+    let located = |text: &str| -> Vec<String> {
+        validate(&parse(text))
+            .iter()
+            .map(|f| f.location.clone())
+            .collect()
+    };
+    assert_eq!(
+        located(&format!("schema = 6\n{body}")),
+        Vec::<String>::new()
+    );
+    assert_eq!(located(&format!("schema = 5\n{body}")), ["schema"]);
+    assert_eq!(located(&format!("schema = 7\n{body}")), ["schema"]);
+    assert_eq!(located(body), ["schema"]);
+}
+
 #[test]
 fn a_clean_manifest_validates_empty() {
     let table = parse(
         r#"
-schema = 1
+schema = 6
 [sources.kendex]
 repo = "vanillagreencom/kendex"
 [skills.github]
@@ -260,7 +281,7 @@ command = "./d.sh"
 #[test]
 fn a_clean_named_custom_hook_validates_empty() {
     let table: toml::Table = r#"
-schema = 1
+schema = 6
 [[custom-hooks]]
 name = "guard-pretooluse"
 event = "PreToolUse"
@@ -275,9 +296,10 @@ agents = "all"
     assert_eq!(validate(&table), Vec::new());
 }
 
-/// The safety-decision tables schema 6 retired are read from an older file
-/// and dropped, and on a current file they are stray keys: a record put
-/// back by hand is named with the remove-it fix, never dropped in silence.
+/// The safety-decision tables schema 6 retired are stray keys like any
+/// other: a record put back by hand is named with the remove-it fix, never
+/// dropped in silence. An older file carrying them never reaches here —
+/// the schema below current is refused at the read.
 #[test]
 fn retired_safety_tables_are_stray_keys_on_a_current_file() {
     let body = r#"
@@ -290,8 +312,6 @@ review-hash = "abc"
 [safety-reviews."skill:deploy:claude"]
 review-hash = "abc"
 "#;
-    assert_eq!(validate(&parse(&format!("schema = 5\n{body}"))), Vec::new());
-
     let findings = validate(&parse(&format!("schema = 6\n{body}")));
     let located: Vec<&str> = findings.iter().map(|f| f.location.as_str()).collect();
     assert_eq!(

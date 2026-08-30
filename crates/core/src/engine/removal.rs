@@ -16,23 +16,18 @@ use crate::model::{ItemKind, Scope};
 /// Automatic removals — refusals, sweeps, orphan cleanup nobody named —
 /// only take content they can prove is ours: every content path must hash
 /// to what apply last wrote. A record from before that hash existed cannot
-/// prove anything, so any content present holds — except a hook's outside
-/// pi, where anchor-less records are the common stock and holding them
-/// would exempt those hooks from cleanup for good. Explicitly asked-for
-/// removals are not gated here: the trash keeps what they take.
+/// prove anything, so any content present holds — except a hook's, where
+/// anchor-less records are the common stock and holding them would exempt
+/// those hooks from cleanup for good. Explicitly asked-for removals are
+/// not gated here: the trash keeps what they take.
 pub fn edit_holds(env: &Env, scope: &Scope, entry: &LockEntry) -> bool {
-    // A hook's anchor still proves its bytes wherever the record kept
-    // one. What an anchor-less record licenses splits by harness: pi's
-    // reserved-name move derives a new path the record never wrote, so a
-    // file already sitting there has to be proven before anything of
-    // this entry's is taken; everywhere else reading "no anchor" as
-    // "hands off" would quietly exempt every older hook install from
-    // every sweep.
+    // A hook's anchor still proves its bytes wherever the record kept one,
+    // and a hook is the one kind where an anchor-less record licenses
+    // nothing: reading "no anchor" as "hands off" would quietly exempt
+    // every older hook install, on every harness, from every sweep.
     let holdable = match entry.kind {
         ItemKind::Skill | ItemKind::Agent | ItemKind::Command => true,
-        ItemKind::Hook => {
-            entry.harness == crate::model::HarnessId::Pi || entry.rendered_hash.is_some()
-        }
+        ItemKind::Hook => entry.rendered_hash.is_some(),
         _ => false,
     };
     if !holdable {
