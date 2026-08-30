@@ -25,13 +25,13 @@ The reviewer-gate settings — `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_Q
 
 Per-verdict routing lives in the workflows (`submit-pr.md` § 4, `merge-pr.md` § 5); each verdict's semantics live in that script's `--help`.
 
-A wait is a running waiter, never a session sitting at its prompt. CI is not
-what an open PR waits on: a reviewer posts on its own schedule, often after
-the checks are green, and a session that stopped to watch CI sees neither the
-thread nor the gate. Three states decide an open PR — GitHub's merge state,
-the gate status with its description, and the unresolved thread count — and
-none of them stands in for another. Which waiter answers which is the table
-above; what each one reads is its `--help`.
+A wait is a running waiter, never a session sitting at its prompt. Four things
+decide an open PR: CI's verdict, GitHub's merge state, the gate status with its
+description, and the unresolved thread count. None stands in for another. CI
+green is a merge gate and `ci-wait` is what answers it, but it does not finish
+the PR. A reviewer posts on its own schedule, often after the checks pass, and
+a session parked on CI sees neither the thread nor the gate. Which waiter
+answers which is the table above; what each one reads is its `--help`.
 
 ## Waiter auth ladder
 
