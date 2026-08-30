@@ -27,6 +27,9 @@
 #   case 22 the same sentence in the CODEX shape, which carries its fragment
 #           in ordinary prose about compaction — dies the moment the codex
 #           branch is loosened back to matching anywhere in a line
+#   case 24 the same sentence two words long — dies the moment the codex
+#           trailing item is admitted by token COUNT rather than by shape,
+#           which is how `compact now` passed for a status item
 #   case 13 a pane that exited to its shell — dies if the liveness evidence
 #           is dropped, which is the only thing a window ever stood in for
 #
@@ -44,7 +47,8 @@
 #  10. a claim on ANOTHER tmux server is unreadable, never a local pane's
 #      number under its name
 #  11. codex's other status item, `Context 40% used`, is taken as it stands
-#  12. one line carrying both shapes reads as codex, not claude
+#  12. a claude status item behind the codex separator is not a codex
+#      status line; the codex status item carries a path and nothing else
 #  13. a pane that has exited to its shell is not measured from what it left
 #  14. a model and a percentage in prose is not a status line
 #  15. an unenumerable tmux server refuses every claim, not just foreign ones
@@ -62,6 +66,8 @@
 #  22. a codex context fragment in prose is not a status line, alone or
 #      below a real one
 #  23. the table still carries every row where `column` is not installed
+#  24. two words behind the codex separator are prose, not a status item
+#  25. every committed codex capture parses to the figure on its screen
 #
 # errexit is on: every case here either succeeds or is guarded, so an
 # unexpected non-zero is a broken fixture, not a finding to print past.
@@ -188,7 +194,7 @@ echo "=== lanes context ==="
 # Foreground process per pane. %9 is the one that exited to its shell.
 {
   for n in 1 2 3 4 5 10 13 14 15 16 21; do printf '%s %%%s claude\n' "$LIVE_PID" "$n"; done
-  for n in 6 7 8 19 20 22; do printf '%s %%%s codex\n' "$LIVE_PID" "$n"; done
+  for n in 6 7 8 19 20 22 23; do printf '%s %%%s codex\n' "$LIVE_PID" "$n"; done
   printf '%s %%9 fish\n' "$LIVE_PID"
   # tmux reports a login shell with the leading dash it was started with.
   printf '%s %%11 -bash\n' "$LIVE_PID"
@@ -222,6 +228,7 @@ write_claim twenty    "%19" "$H/.codex"  "ken-120"
 write_claim twentyone "%20" "$H/.codex"  "ken-121"
 write_claim twentytwo   "%21" "$H/.claude" "ken-122"
 write_claim twentythree "%22" "$H/.codex"  "ken-123"
+write_claim twentyfour  "%23" "$H/.codex"  "ken-124"
 # The foreign lane's pane NUMBER exists here too, on a screen that parses
 # cleanly: %1 is ken-101's, reading 35.
 write_claim_on "$FOREIGN_PID" foreign "%1" "$H/.claude" "ken-110"
@@ -317,9 +324,9 @@ screen 19 '  Codex is working
   Context 86% left
 ● Documentation: Context 60% used means compact now'
 screen 20 '● Documentation: Context 60% used means compact now'
-# 23 and 24. The other end of the same fragment. Prose can put the sentence
-# AFTER the status shape as easily as before it, and then the status-shaped
-# PREFIX is what matches while the sentence it sits inside never has to. Both
+# 22, trailing half. The other end of the same fragment. Prose can put the
+# sentence AFTER the status shape as easily as before it, and then the
+# status-shaped PREFIX matches while the sentence it sits in never has to. Both
 # screens put that line BELOW a real status line, which is where bottom-most
 # hands it the verdict.
 screen 21 '  kendex (🌳 ken-122) Opus 5 41% (brad@drovr.dev)     /rc
@@ -328,6 +335,15 @@ screen 21 '  kendex (🌳 ken-122) Opus 5 41% (brad@drovr.dev)     /rc
 screen 22 '  Context 86% left
 ● Context 77% used means compact now
 ● Context 77% used · and that is an example'
+# 24. The reproduction from KEN-885, and the shortest sentence of the class:
+# two words behind the separator. A trailing item admitted by token COUNT
+# takes `compact now` for a status item, and bottom-most then reports 60 used
+# for a lane that is 14 used — the overseer compacts the emptiest lane in the
+# fleet and skips the full one. Codex puts its working directory behind that
+# separator, so the item is matched by that shape and a sentence of any
+# length fails it.
+screen 23 'Context 86% left
+Context 60% used · compact now'
 
 OUT="$(run_ctx --json)"
 
@@ -361,13 +377,15 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-106") | .context_used_pct' <<<"$OUT
 assert_eq "$(jq -r '.[] | select(.lane=="ken-106") | .harness' <<<"$OUT")" "codex" \
   "the codex used shape names the codex harness"
 
-# 12. One line carrying both shapes. The codex branch consumes its line, so
-# the claude branch never re-reads it in the opposite direction: without that,
-# this screen reports 41 used for a lane that is 14 used.
-assert_eq "$(jq -r '.[] | select(.lane=="ken-107") | .context_used_pct' <<<"$OUT")" "14" \
-  "a line carrying both shapes is read as codex"
-assert_eq "$(jq -r '.[] | select(.lane=="ken-107") | .harness' <<<"$OUT")" "codex" \
-  "the codex shape wins the line it matched"
+# 12. `Opus 5 41%` is a claude status item, and behind the codex separator it
+# is not a status line of either harness: codex draws its working directory
+# there and nothing else, and the claude shape needs an account parenthetical
+# this line has none of. A trailing item admitted by token count took it for a
+# codex reading, which is the same allowance `compact now` walked through.
+assert_eq "$(jq -r '.[] | select(.lane=="ken-107") | .status' <<<"$OUT")" "no_status_line" \
+  "a claude status item behind the codex separator is not a codex status line"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-107") | .context_used_pct' <<<"$OUT")" "null" \
+  "that lane carries no number, not the one that shape carried"
 
 # 6 (codex arm). Over 100 is not a context figure in either shape: unguarded,
 # the conversion turns 140 left into -40 used.
@@ -459,15 +477,48 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-121") | .status' <<<"$OUT")" "no_st
 assert_eq "$(jq -r '.[] | select(.lane=="ken-121") | .context_used_pct' <<<"$OUT")" "null" \
   "that lane carries no number, not the sentence's"
 
-# 23 and 24. The trailing half of the same class: a status-shaped PREFIX with
-# prose after it. The claude line ends in its account and claude's own
-# right-hand hint; the codex line ends in its context item or one short
-# status item behind a separator. Neither end admits a sentence, so the real
-# status line above keeps the verdict.
+# 22, trailing half. A status-shaped PREFIX with prose after it. The claude
+# line ends in its account and claude's own right-hand hint; the codex line
+# ends in its context item or a working directory behind a separator. Neither
+# end admits a sentence, so the real status line above keeps the verdict.
 assert_eq "$(jq -r '.[] | select(.lane=="ken-122") | .context_used_pct' <<<"$OUT")" "41" \
   "claude prose after a status-shaped prefix does not outrank the status line above it"
 assert_eq "$(jq -r '.[] | select(.lane=="ken-123") | .context_used_pct' <<<"$OUT")" "14" \
   "codex prose after a status-shaped prefix does not outrank the status line above it"
+
+# 24. The reproduction from KEN-885. Two words behind the separator is the
+# shortest sentence of this class and the one a token count cannot refuse:
+# the lane has 14 used and the report called it 60, so the overseer compacted
+# the emptiest lane in the fleet and left the full one running.
+assert_eq "$(jq -r '.[] | select(.lane=="ken-124") | .context_used_pct' <<<"$OUT")" "14" \
+  "two words behind the codex separator are prose, not a status item"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-124") | .harness' <<<"$OUT")" "codex" \
+  "the real status line above keeps the verdict, and the harness with it"
+
+# 25. Every committed codex capture, parsed as it stands. These are real
+# `tmux capture-pane` output from Codex 0.151.0 (KEN-863), so what the reader
+# anchors to is what the harness draws: `Context <N>% left`, a separator, and
+# the session's working directory, ellipsised where the width ran out. A
+# capture whose screen carries no status line is a refusal, never a zero.
+FIXTURES="$TEST_DIR/fixtures/oversee-watch"
+
+parse_fixture() { # <capture file name>
+  "$BASH" -c 'source "$1"; lane_context_parse <"$2"' _ \
+    "$SCRIPTS_DIR/lib/lane-context.sh" "$FIXTURES/$1" || printf 'none\n'
+}
+
+assert_eq "$(parse_fixture codex-working.txt)" "$(printf 'codex\t0')" \
+  "the working capture reads 100% left as a context with nothing used"
+assert_eq "$(parse_fixture codex-composer-draft.txt)" "$(printf 'codex\t0')" \
+  "the composer-draft capture parses to the figure on its screen"
+assert_eq "$(parse_fixture codex-composer-idle.txt)" "$(printf 'codex\t0')" \
+  "the composer-idle capture parses to the figure on its screen"
+assert_eq "$(parse_fixture codex-idle-after-turn.txt)" "$(printf 'codex\t1')" \
+  "the idle-after-turn capture converts 99% left to 1 used"
+assert_eq "$(parse_fixture codex-dialog-model.txt)" "none" \
+  "a capture whose dialog covers the status line carries no reading"
+assert_eq "$(parse_fixture codex-dialog-trust.txt)" "none" \
+  "the trust-dialog capture carries no reading either"
 
 # 10. `capture-pane -t %N` answers from THIS server only, and pane ids restart
 # at %0 on each one. ken-110 claims %1 on another server; %1 here is ken-101's

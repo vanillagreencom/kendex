@@ -94,11 +94,12 @@ lane_context_emit() {
 # nothing alphanumeric — and what may follow it is another status item behind
 # a separator, never running text. `Documentation: Context 60% used means
 # compact now` fails the opening; `Context 60% used means compact now` fails
-# the end; and `Context 60% used · and that is an example` fails it too,
-# because a trailing item is capped at three tokens — the longest status item
-# this reader has seen (`Opus 5 41%`) — where a sentence is longer. Each is a
-# fragment a bottom-most rule would otherwise let take the verdict from the
-# real line above it.
+# the end. A trailing item is matched by SHAPE, not by token count: codex
+# puts its working directory there, so each item behind a separator is one
+# whitespace-free path — `/…` or `~/…`, ellipsised where the width runs out.
+# A count admits whatever is short enough, and `Context 60% used · compact
+# now` is two words: it is prose the reader took for a status line, and under
+# a bottom-most rule it took the verdict from the real line above it.
 # The codex shape is tested first and consumes its line, so a screen carrying
 # both never takes the claude direction for a codex reading. Codex's status
 # item is user-configured and both directions ship, so both are matched and
@@ -109,7 +110,7 @@ lane_context_parse() {
   out="$(awk '
     {
       low = tolower($0)
-      if (match(low, /^[^a-z0-9]*context:?[ \t]+[0-9]+%[ \t]+(left|used)([ \t]+(·|[|])[ \t]+[^ \t]+([ \t]+[^ \t]+){0,2})?[ \t]*$/)) {
+      if (match(low, /^[^a-z0-9]*context:?[ \t]+[0-9]+%[ \t]+(left|used)([ \t]+(·|[|])[ \t]+[~\/][^ \t]*)*[ \t]*$/)) {
         s = substr(low, RSTART, RLENGTH)
         match(s, /[0-9]+%[ \t]+(left|used)/)
         s = substr(s, RSTART, RLENGTH)
