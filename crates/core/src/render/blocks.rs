@@ -185,7 +185,16 @@ fn walk(lines: &[&str], placed: &mut [Placed]) {
         // every question below asks this rather than whether any
         // paragraph at all is open.
         let running = open.filter(|para| depth <= para.depth);
-        if let Some((marker, run, _)) = fence_marker(rest) {
+        // A fence's marker stands at most three spaces into its container,
+        // and a fourth is the indented code block instead. This walk knows
+        // one container, so the cap is measurable exactly where a
+        // blockquote's markers have been taken off. At the top level it is
+        // not: nothing here tells a document's own indent from a list
+        // item's content column, and a fenced block inside a list item
+        // starts four in, which is the common shape in a real skill.
+        if !(depth > 0 && indented(rest))
+            && let Some((marker, run, _)) = fence_marker(rest)
+        {
             fence = Some(Fence { marker, run, depth });
             open = None;
             code = None;
@@ -236,6 +245,7 @@ fn walk(lines: &[&str], placed: &mut [Placed]) {
 /// Whether this line closes the open fence: the same marker, a run at
 /// least as long, and nothing behind it.
 fn closes(fence: &Fence, content: &str) -> bool {
-    fence_marker(content)
-        .is_some_and(|(marker, run, bare)| marker == fence.marker && run >= fence.run && bare)
+    !(fence.depth > 0 && indented(content))
+        && fence_marker(content)
+            .is_some_and(|(marker, run, bare)| marker == fence.marker && run >= fence.run && bare)
 }

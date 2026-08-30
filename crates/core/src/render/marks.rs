@@ -313,7 +313,15 @@ fn whole_tag(after: &str) -> bool {
         rest = more;
     }
     let rest = rest.trim_start();
-    shuts(rest.strip_prefix('/').unwrap_or(rest))
+    match rest.strip_prefix('/') {
+        // Spacing stands before the slash of an empty tag and never after
+        // it: `/>` is one thing markdown reads, not two it finds either
+        // side of a gap.
+        Some(empty) => empty
+            .strip_prefix('>')
+            .is_some_and(|tail| tail.trim().is_empty()),
+        None => shuts(rest),
+    }
 }
 
 /// Whether a tag ends here: `>` and then nothing but whitespace.

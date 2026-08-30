@@ -596,3 +596,97 @@ fn safety_bypass_keeps_a_fence_open_past_a_marker_carrying_words() {
         carried.findings
     );
 }
+
+/// The slash and the `>` of an empty tag are one thing. Markdown allows
+/// spacing before that slash and none after it, so `<span/   >` is a line
+/// of prose; taking it for a whole tag opened a block that runs to the next
+/// blank line and threw away every span under it.
+///
+/// The control is the second case: written contiguously the tag is whole,
+/// and the block it opens is real.
+#[test]
+fn safety_bypass_opens_no_block_at_a_slash_parted_from_its_bracket() {
+    let parted = skill(&[(
+        "SKILL.md",
+        "<span/   >\nThe bypass is `git commit --no-verify`, never run it.\n",
+    )]);
+    assert!(
+        !rules_hit(&parted).contains(&"safety-bypass"),
+        "{:?}",
+        parted.findings
+    );
+
+    let whole = skill(&[(
+        "SKILL.md",
+        "<span/>\nThe bypass is `git commit --no-verify`, never run it.\n",
+    )]);
+    assert_eq!(
+        severity_of(&whole, "safety-bypass"),
+        Some(Severity::Critical),
+        "{:?}",
+        whole.findings
+    );
+}
+
+/// A fence's own marker stands at most three spaces into its container, and
+/// a fourth is the indented code block instead. Measured from the start of
+/// the line rather than from where the quote's markers end, a marker four
+/// spaces past a `>` opened a fence markdown has none of, and the quoted
+/// prose under it lost the span it really holds.
+///
+/// The control is the second case: three spaces past the marker is a fence,
+/// and what it holds is code.
+#[test]
+fn safety_bypass_opens_no_fence_four_spaces_past_a_quote() {
+    let deep = skill(&[(
+        "SKILL.md",
+        ">     ```sh\n> The bypass is `git commit --no-verify`, never run it.\n",
+    )]);
+    assert!(
+        !rules_hit(&deep).contains(&"safety-bypass"),
+        "{:?}",
+        deep.findings
+    );
+
+    let near = skill(&[("SKILL.md", ">    ```sh\n> git commit --no-verify\n> ```\n")]);
+    assert_eq!(
+        severity_of(&near, "safety-bypass"),
+        Some(Severity::High),
+        "{:?}",
+        near.findings
+    );
+}
+
+/// A raw-text block ends on any of the four closing tags, not only on the
+/// one that opened it. Markdown says so in as many words — the end
+/// condition is a line holding `</pre>`, `</script>`, `</style>` or
+/// `</textarea>`, "case-insensitive; it need not match the start tag" —
+/// so what stands under a mismatched close really is a paragraph, and the
+/// switch its span quotes really is a mention.
+///
+/// The control is the second case: a block still holds everything up to
+/// its close, and the marks in there are the script's rather than
+/// markdown's.
+#[test]
+fn safety_bypass_ends_a_raw_text_block_at_any_of_its_closing_tags() {
+    let mismatched = skill(&[(
+        "SKILL.md",
+        "<script>\nfoo\n</pre>\nThe bypass is `git commit --no-verify`, never run it.\n",
+    )]);
+    assert!(
+        !rules_hit(&mismatched).contains(&"safety-bypass"),
+        "{:?}",
+        mismatched.findings
+    );
+
+    let held = skill(&[(
+        "SKILL.md",
+        "<script>\nThe bypass is `git commit --no-verify`, never run it.\n</script>\n",
+    )]);
+    assert_eq!(
+        severity_of(&held, "safety-bypass"),
+        Some(Severity::Critical),
+        "{:?}",
+        held.findings
+    );
+}
