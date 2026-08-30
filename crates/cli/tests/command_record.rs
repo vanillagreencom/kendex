@@ -122,6 +122,17 @@ fn a_record_already_there_is_not_written_over_by_a_first_run() {
         "half a record",
         "a first run wrote over a record that was already there"
     );
+
+    // And nothing was read to reach that answer. Every run comes through
+    // here, `--version` and `--help` among them, so the steady state has
+    // to cost a look at one name — not a read and a hash of the whole
+    // executable. A running path that is not there at all says so: the
+    // read that would have failed never happens.
+    kendex_core::command_update::record_first_run(&env, &home.join("no/such/kendex")).unwrap();
+    assert!(
+        !home.join("no/such/kendex").exists(),
+        "the fixture exists, so this proves nothing"
+    );
 }
 
 /// Concurrent first runs leave one whole record and nothing beside it.

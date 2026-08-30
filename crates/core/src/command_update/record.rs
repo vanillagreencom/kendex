@@ -128,6 +128,19 @@ pub fn record_first_run(env: &Env, running: &Path) -> Result<(), String> {
     let Some(parent) = file.parent() else {
         return Err(format!("{} names no directory", file.display()));
     };
+    // Asked before anything is read. Every run reaches here, `--version`
+    // and `--help` included, and the answer after the first is always the
+    // same one — so the steady state costs a look at one name rather than
+    // a read and a hash of the whole executable and a staging file made
+    // and unmade beside it. `symlink_metadata`, so a link occupying the
+    // name counts as occupying it.
+    //
+    // Not the arbiter, only the cheap answer. Two runs can both see
+    // nothing here; the link below is what decides which of them was
+    // first.
+    if std::fs::symlink_metadata(&file).is_ok() {
+        return Ok(());
+    }
     std::fs::create_dir_all(parent)
         .map_err(|error| format!("{} could not be created: {error}", parent.display()))?;
     let bytes = std::fs::read(running)
