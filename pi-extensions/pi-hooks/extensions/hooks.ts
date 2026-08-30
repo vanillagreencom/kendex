@@ -23,8 +23,8 @@ export default function piHooks(pi: ExtensionAPI): void {
 	guard[INSTALL_SYMBOL] = true;
 
 	let turn = freshTurnState();
-	/** The last summary steered to the agent; see the end-of-turn handler. */
-	let lastClippySummary: string | undefined;
+	/** Identifies the last clippy run steered to the agent; see the end-of-turn handler. */
+	let lastClippyFingerprint: string | undefined;
 
 	pi.on("turn_start", () => {
 		turn = freshTurnState();
@@ -119,7 +119,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 		if (outcome.kind === "clean") {
 			// A clean turn also forgets the last report, so an error that comes
 			// back after a green turn is delivered again rather than suppressed.
-			lastClippySummary = undefined;
+			lastClippyFingerprint = undefined;
 			return undefined;
 		}
 		const summary = outcome.kind === "errors"
@@ -130,14 +130,19 @@ export default function piHooks(pi: ExtensionAPI): void {
 		// `triggerTurn: false` message is recorded without steering, which a
 		// headless run that is ending never reads. `triggerTurn: true` steers
 		// the active run, so the loop drains it after this event and the agent
-		// answers for its own errors in every mode. Repeating an identical
-		// summary is what that turn could loop on: the agent edits, clippy
-		// fails the same way, and the report steers again. Sending only a
-		// summary that changed bounds it — an agent making no progress is told
-		// once. `display: false` leaves interactive rendering to the
-		// notification below, which a headless session never sees.
-		if (summary !== lastClippySummary) {
-			lastClippySummary = summary;
+		// answers for its own errors in every mode. Repeating an identical run
+		// is what that turn could loop on: the agent edits, clippy fails the
+		// same way, and the report steers again. Steering only a run that
+		// changed bounds it — an agent making no progress is told once.
+		//
+		// The digest decides that, never the summary: the summary is a count
+		// and five header lines, so an edit that moves an error or changes its
+		// detail renders identically while the tree really did change. `display:
+		// false` leaves interactive rendering to the notification below, which a
+		// headless session never sees.
+		const fingerprint = outcome.kind === "errors" ? outcome.digest : outcome.reason;
+		if (fingerprint !== lastClippyFingerprint) {
+			lastClippyFingerprint = fingerprint;
 			pi.sendMessage(
 				{ customType: "kendex-clippy", content: summary, display: false },
 				{ triggerTurn: true },

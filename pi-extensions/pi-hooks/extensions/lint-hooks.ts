@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { filterClippyErrors, findCargoWorkspaceRoot, runWorkspaceClippy } from "./cargo.js";
 
 /**
@@ -9,7 +11,14 @@ import { filterClippyErrors, findCargoWorkspaceRoot, runWorkspaceClippy } from "
  */
 export type ClippyOutcome =
 	| { kind: "clean" }
-	| { kind: "errors"; lines: string[] }
+	/**
+	 * `lines` renders the report; `digest` identifies the run. They are not
+	 * interchangeable: `lines` is the header lines a filter recognised, capped,
+	 * so two runs differing in location, detail, or an error past the cap render
+	 * the same. `digest` covers everything clippy wrote, which is what a caller
+	 * asking "did anything change" has to compare.
+	 */
+	| { kind: "errors"; lines: string[]; digest: string }
 	| { kind: "unavailable"; reason: string };
 
 /**
@@ -26,7 +35,8 @@ export function workspaceClippyOutcome(cwd: string, timeoutMs: number): ClippyOu
 	const r = runWorkspaceClippy(root, clippyBudget);
 	if (r.timedOut) return { kind: "unavailable", reason: `cargo clippy timed out after ${clippyBudget}ms` };
 	if (r.exitCode === 0) return { kind: "clean" };
-	const lines = filterClippyErrors(`${r.stdout}\n${r.stderr}`);
+	const output = `${r.stdout}\n${r.stderr}`;
+	const lines = filterClippyErrors(output);
 	if (lines.length === 0) return { kind: "unavailable", reason: `cargo clippy exited ${r.exitCode} printing no error line` };
-	return { kind: "errors", lines };
+	return { kind: "errors", lines, digest: createHash("sha256").update(output).digest("hex") };
 }

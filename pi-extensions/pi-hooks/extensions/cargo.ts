@@ -25,27 +25,28 @@ export function runCargo(args: string[], cwd: string, timeoutMs: number): CargoR
 
 /**
  * In-process cache for `cargo metadata --workspace_root`. `cargo metadata` is
- * ~0.5-1s even on a warm cache; calling it on every edit/turn adds up. The
- * workspace root for a given cwd doesn't change during a session, so caching
- * by cwd is sound.
+ * ~0.5-1s even on a warm cache; calling it on every edit/turn adds up. A root
+ * a cwd once had it keeps for the session, so caching a hit is sound.
+ *
+ * Only hits are cached. A failed lookup is a condition the session can leave —
+ * cargo arrives on PATH, a manifest is written — and caching it would answer
+ * every later turn with a staleness nothing could clear.
  */
-const workspaceRootCache = new Map<string, string | null>();
+const workspaceRootCache = new Map<string, string>();
 
 export function findCargoWorkspaceRoot(cwd: string, timeoutMs: number): string | null {
-	if (workspaceRootCache.has(cwd)) return workspaceRootCache.get(cwd) ?? null;
+	const cached = workspaceRootCache.get(cwd);
+	if (cached !== undefined) return cached;
 	const r = runCargo(["metadata", "--format-version", "1", "--no-deps"], cwd, timeoutMs);
-	if (r.exitCode !== 0) {
-		workspaceRootCache.set(cwd, null);
-		return null;
-	}
+	if (r.exitCode !== 0) return null;
 	let root: string | null = null;
 	try {
 		const meta = JSON.parse(r.stdout);
-		if (typeof meta?.workspace_root === "string") root = meta.workspace_root;
+		if (typeof meta?.workspace_root === "string" && meta.workspace_root) root = meta.workspace_root;
 	} catch {
 		root = null;
 	}
-	workspaceRootCache.set(cwd, root);
+	if (root) workspaceRootCache.set(cwd, root);
 	return root;
 }
 

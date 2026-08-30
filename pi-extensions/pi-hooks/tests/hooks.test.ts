@@ -321,7 +321,7 @@ function initClippyProject(): string {
 	return dir;
 }
 
-/** A cargo that names `root` as the workspace and fails clippy with one error line. */
+/** A cargo naming `root` as the workspace, failing clippy with one error line and a location. FAKE_CLIPPY_EXIT, _SILENT and _LOC vary the run. */
 function fakeClippyBin(dir: string, root: string): string {
 	const bin = join(dir, "bin");
 	mkdirSync(bin, { recursive: true });
@@ -335,7 +335,10 @@ function fakeClippyBin(dir: string, root: string): string {
 		`  printf '{"workspace_root":"%s"}' ${JSON.stringify(root)}`,
 		"  exit 0",
 		"fi",
-		"printf '%s\\n' 'error[E0425]: cannot find value nope in this scope'",
+		'if [ "${FAKE_CLIPPY_SILENT:-}" != "1" ]; then',
+		"  printf '%s\\n' 'error[E0425]: cannot find value nope in this scope'",
+		'  printf \'  --> src/lib.rs:%s\\n\' "${FAKE_CLIPPY_LOC:-1:1}"',
+		"fi",
 		'exit "${FAKE_CLIPPY_EXIT:-101}"',
 		"",
 	].join("\n"));
@@ -501,6 +504,74 @@ describe("pi-hooks end-of-turn clippy", () => {
 			});
 		} finally {
 			delete process.env.FAKE_CLIPPY_EXIT;
+			rmSync(project, { recursive: true, force: true });
+			rmSync(cargoRoot, { recursive: true, force: true });
+		}
+	});
+
+	// A1: a failed workspace lookup is a condition the session can leave. If it
+	// were cached, every later turn would repeat the same unavailable summary
+	// and the guard would suppress the recovery forever.
+	test("a workspace found after a failed lookup is reported on the next turn", async () => {
+		const project = initClippyProject();
+		const cargoRoot = mkdtempSync(join(tmpdir(), "pi-hooks-cargo-"));
+		const emptyBin = mkdtempSync(join(tmpdir(), "pi-hooks-nocargo-"));
+		try {
+			const hooks = installTurnHandlers();
+			const ctx = { cwd: project, isProjectTrusted: () => true };
+			await onPath(emptyBin, () => editingTurn(hooks, project, ctx));
+			await onPath(fakeClippyBin(cargoRoot, project), () => editingTurn(hooks, project, ctx));
+			expect(hooks.sent).toHaveLength(2);
+			expect(hooks.sent[0].message.content).toContain("proved nothing about the tree");
+			expect(hooks.sent[1].message.content).toContain("clippy reported 1 workspace error(s)");
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+			rmSync(cargoRoot, { recursive: true, force: true });
+			rmSync(emptyBin, { recursive: true, force: true });
+		}
+	});
+
+	// A2: clippy failing while printing nothing the filter recognises. The
+	// workspace lookup succeeds here, so this reaches the branch the
+	// no-cargo-on-PATH case never gets to.
+	test("clippy failing with no error line is reported as unjudgeable", async () => {
+		const project = initClippyProject();
+		const cargoRoot = mkdtempSync(join(tmpdir(), "pi-hooks-cargo-"));
+		process.env.FAKE_CLIPPY_SILENT = "1";
+		try {
+			await onPath(fakeClippyBin(cargoRoot, project), async () => {
+				const sent = await turnEditing(project, {});
+				expect(sent).toHaveLength(1);
+				expectSteered(sent[0]);
+				expect(sent[0].message.content).toContain("cargo clippy exited 101 printing no error line");
+			});
+		} finally {
+			delete process.env.FAKE_CLIPPY_SILENT;
+			rmSync(project, { recursive: true, force: true });
+			rmSync(cargoRoot, { recursive: true, force: true });
+		}
+	});
+
+	// A3: the summary is a count and five header lines, so an error that moves
+	// renders identically. Suppressing on that loses real progress; the digest
+	// covers everything clippy wrote, so only an unchanged run is suppressed.
+	test("two runs that render alike but differ in full output are both steered", async () => {
+		const project = initClippyProject();
+		const cargoRoot = mkdtempSync(join(tmpdir(), "pi-hooks-cargo-"));
+		try {
+			await onPath(fakeClippyBin(cargoRoot, project), async () => {
+				const hooks = installTurnHandlers();
+				const ctx = { cwd: project, isProjectTrusted: () => true };
+				process.env.FAKE_CLIPPY_LOC = "1:1";
+				await editingTurn(hooks, project, ctx);
+				process.env.FAKE_CLIPPY_LOC = "9:9";
+				await editingTurn(hooks, project, ctx);
+				expect(hooks.sent).toHaveLength(2);
+				// The collision is real: both turns render the same text.
+				expect(hooks.sent[1].message.content).toBe(hooks.sent[0].message.content);
+			});
+		} finally {
+			delete process.env.FAKE_CLIPPY_LOC;
 			rmSync(project, { recursive: true, force: true });
 			rmSync(cargoRoot, { recursive: true, force: true });
 		}
