@@ -474,6 +474,57 @@ run_rc 'fix(KEN-6): change the UI'
 git -C "$RC_REPO" reset -q --hard HEAD
 rm -rf -- "${RC_REPO:?}/ui"
 
+# A rename is ONE entry under --name-only, naming the destination, so a file
+# moved OUT of a required path would leave the gate nothing to see — and that
+# is the direction that matters: the required path lost its content.
+git -C "$RC_REPO" reset -q --hard HEAD
+git -C "$RC_REPO" mv crates/core/lib.rs other-lib.rs
+run_rc 'refactor(KEN-7): move a crate file out'
+[ "$RC" -eq 1 ] && case "$OUT" in *"crates/core/lib.rs changed without a changelog entry"*) true ;; *) false ;; esac \
+  && ok "a rename OUT of a required path is refused, naming the path it left" \
+  || bad "a rename out of a required path is refused" "rc=$RC out=$OUT"
+run_rc 'refactor(KEN-7): move a crate file out [no-changelog]'
+[ "$RC" -eq 0 ] && ok "control: the same rename with [no-changelog] passes" \
+  || bad "control: the same rename with [no-changelog] passes" "rc=$RC out=$OUT"
+git -C "$RC_REPO" reset -q --hard HEAD
+# A rename entirely outside the required paths owes nothing, so the fix reads
+# both sides rather than treating every rename as a touch.
+mkdir -p "$RC_REPO/docs"
+printf 'notes\n' >"$RC_REPO/docs/a.md"
+git -C "$RC_REPO" add -A
+git -C "$RC_REPO" commit -qm "docs: a note"
+git -C "$RC_REPO" mv docs/a.md docs/b.md
+run_rc 'docs(KEN-7): rename a note'
+[ "$RC" -eq 0 ] && ok "a rename within unrequired paths owes nothing" \
+  || bad "a rename within unrequired paths owes nothing" "rc=$RC out=$OUT"
+# And a rename INTO the fragment tree is a written entry: that path carries
+# one now, which is what the evidence list is about.
+git -C "$RC_REPO" reset -q --hard HEAD
+mkdir -p "$RC_REPO/changelog.d/fixed"
+printf -- '- A fix consumers see.\n' >"$RC_REPO/pending-entry.md"
+git -C "$RC_REPO" add -A
+git -C "$RC_REPO" commit -qm "chore: park an entry"
+printf 'fn moved() {}\n' >>"$RC_REPO/crates/core/lib.rs"
+git -C "$RC_REPO" mv pending-entry.md changelog.d/fixed/ken-7.md
+git -C "$RC_REPO" add -A
+run_rc 'fix(KEN-7): change a crate'
+[ "$RC" -eq 0 ] && ok "a rename INTO the fragment tree is the entry" \
+  || bad "a rename into the fragment tree is the entry" "rc=$RC out=$OUT"
+# The control: renaming the same fragment back OUT is not writing one.
+git -C "$RC_REPO" reset -q --hard HEAD
+mkdir -p "$RC_REPO/changelog.d/fixed"
+printf -- '- A fix consumers see.\n' >"$RC_REPO/changelog.d/fixed/ken-8.md"
+git -C "$RC_REPO" add -A
+git -C "$RC_REPO" commit -qm "chore: park a fragment [no-changelog]"
+printf 'fn moved_again() {}\n' >>"$RC_REPO/crates/core/lib.rs"
+git -C "$RC_REPO" mv changelog.d/fixed/ken-8.md parked.md
+git -C "$RC_REPO" add -A
+run_rc 'fix(KEN-8): change a crate'
+[ "$RC" -eq 1 ] && case "$OUT" in *"changed without a changelog entry"*) true ;; *) false ;; esac \
+  && ok "control: moving a fragment away is not writing one" \
+  || bad "control: moving a fragment away is not writing one" "rc=$RC out=$OUT"
+git -C "$RC_REPO" reset -q --hard HEAD
+
 echo "=== the required paths are configuration, validated like every other path ==="
 git -C "$RC_REPO" reset -q --hard HEAD
 printf 'fn yet() {}\n' >>"$RC_REPO/crates/core/lib.rs"

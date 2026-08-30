@@ -184,18 +184,44 @@ if [ -n "$REQUIRED" ]; then
   # that then judges it cannot come to different answers.
   gg_changelog_scopes || exit 2
 
+  # --name-status, not --name-only: rename detection is on by default, and a
+  # rename comes back as ONE --name-only entry naming the DESTINATION, so a
+  # file moved OUT of a required path never reaches the scan and the commit
+  # that emptied it passes. The status letter and both paths are what say so.
   # -z, so a path carrying a newline or a byte git would otherwise quote
   # reaches the globs as the bytes git recorded: a quoted name matches no
   # glob, which is a rule that stops seeing the files it is about. Read back
   # from a FILE rather than a pipe, so the loops set variables in this shell.
   gg_tmpdir
-  git diff --cached --name-only -z >"$GG_TMP/staged.z" \
+  git diff --cached --name-status -z >"$GG_TMP/status.z" \
     || gg_collection_error "could not read the staged file list — the changelog rule could not run"
-  # Deleting a fragment is not writing one, and the staged list does not say
-  # which it was. Evidence of an entry comes from the additions and
-  # modifications alone.
-  git diff --cached --name-only --diff-filter=AM -z >"$GG_TMP/written.z" \
-    || gg_collection_error "could not read the staged additions — the changelog rule could not run"
+
+  # Both sides of a rename or a copy TOUCH: the source loses its content and
+  # the destination gains it. Only the destination is WRITTEN — deleting a
+  # fragment is not writing one, and neither is moving one away — so the
+  # evidence list keeps the additions and modifications it always did, plus
+  # the destination a rename creates.
+  : >"$GG_TMP/staged.z"
+  : >"$GG_TMP/written.z"
+  while IFS= read -r -d '' status; do
+    IFS= read -r -d '' src \
+      || gg_collection_error "the staged file list ended mid-record after status '$status' — the changelog rule could not run"
+    case "$status" in
+      R* | C*)
+        IFS= read -r -d '' dest \
+          || gg_collection_error "the staged file list ended before the destination of a '$status' record — the changelog rule could not run"
+        printf '%s\0' "$src" "$dest" >>"$GG_TMP/staged.z"
+        printf '%s\0' "$dest" >>"$GG_TMP/written.z"
+        ;;
+      A* | M*)
+        printf '%s\0' "$src" >>"$GG_TMP/staged.z"
+        printf '%s\0' "$src" >>"$GG_TMP/written.z"
+        ;;
+      *)
+        printf '%s\0' "$src" >>"$GG_TMP/staged.z"
+        ;;
+    esac
+  done <"$GG_TMP/status.z"
 
   touched=""
   while IFS= read -r -d '' f; do
