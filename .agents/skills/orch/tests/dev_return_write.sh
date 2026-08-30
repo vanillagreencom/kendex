@@ -12,6 +12,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 WRITE="$REPO_ROOT/skills/orch/scripts/dev-return-write"
 CHECK="$REPO_ROOT/skills/orch/scripts/dev-artifact-check"
+ROUND_WRITE="$REPO_ROOT/skills/orch/scripts/dev-round-write"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
@@ -82,15 +83,25 @@ assert_eq "$(jq -r '.summary' "$out" | head -1)" "## Completion Summary" "--summ
 assert_eq "$(jq -r '.summary_posted' "$out")" "false" "--summary-file keeps summary_posted false (nothing posted to a tracker)"
 
 # --- valid fix: items present ---
-out="$("$WRITE" --worktree "$worktree" --kind fix --issue issue-776 --round-id 7-7 \
-  --branch issue-776 --commit def456a --validate pass \
+fix_worktree="$TMP_ROOT/fix-wt"
+mkdir -p "$fix_worktree"
+git -C "$fix_worktree" init -q -b main
+git -C "$fix_worktree" config user.email test@example.com
+git -C "$fix_worktree" config user.name Test
+git -C "$fix_worktree" config commit.gpgsign false
+git -C "$fix_worktree" commit -q --allow-empty -m base
+fix_head="$(git -C "$fix_worktree" rev-parse HEAD)"
+"$ROUND_WRITE" --worktree "$fix_worktree" --issue issue-776 --round-id 7-7 \
+  --item 1 "fix nil deref" --item 2 "review decision" >/dev/null
+out="$("$WRITE" --worktree "$fix_worktree" --kind fix --issue issue-776 --round-id 7-7 \
+  --branch issue-776 --commit "$fix_head" --validate pass \
   --item 1 Applied "fixed nil deref" --item 2 Skipped "contradicts D010")"
 assert_eq "$(jq -r '.kind' "$out")" "fix" "fix .kind"
 assert_eq "$(jq -r '.items | length' "$out")" "2" "fix has 2 items"
 assert_eq "$(jq -r '.items[0].n | type' "$out")" "number" "fix item[0].n is a JSON number"
 assert_eq "$(jq -r '.items[1].decision' "$out")" "Skipped" "fix item[1].decision"
-assert_eq "$("$CHECK" --worktree "$worktree" --issue issue-776 --round-id 7-7 --expect-items 1,2 | jq -r '.reason')" "valid" \
-  "fix round-trips through round mode with matching --expect-items"
+assert_eq "$("$CHECK" --worktree "$fix_worktree" --issue issue-776 --round-id 7-7 --expect-items-from-round | jq -r '.reason')" "valid" \
+  "fix round-trips through bound round authorization"
 
 # --- valid bundled implement: --bundled + items ---
 out="$("$WRITE" --worktree "$worktree" --kind implement --issue PROJ-100 --round-id 8-8 \
