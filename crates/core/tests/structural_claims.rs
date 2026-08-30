@@ -107,10 +107,11 @@ fn refresh_reads_each_installs_own_recorded_source_across_scopes() {
 /// leaves the bytes alone. A repair that ran on every pass is how the file
 /// grew a blank line per apply.
 ///
-/// Not byte-faithfulness. Every write of this file serializes the manifest
-/// whole (`Op::WriteManifest`), so a comment beside a declaration does not
-/// survive one — invariant 10 records that exception, and a fixture with a
-/// comment in it would fail here rather than test anything.
+/// Not byte-faithfulness, which kendex.toml does not get. Every write of
+/// it serializes the manifest kendex read (`Op::WriteManifest` ->
+/// `manifest::save`), so comments and key order go, on an add as much as
+/// on any other write — invariant 10 says so. A fixture with a comment in
+/// it would fail here rather than test anything.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_manifest_write_ends_in_one_terminator_and_settles() {

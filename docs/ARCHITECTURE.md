@@ -133,10 +133,11 @@ lives in one capability table read by core and UI.
    the only writable surface; kendex never stages, commits, or resets in
    a repository it did not create. Work that must produce a commit runs
    in a disposable clone.
-10. Writes are byte-faithful: a file kendex edits round-trips
-    byte-identically but for the intended edit, newline included, and one
-    it cannot read is refused, never rewritten. kendex.toml is the
-    exception, serialized whole. Change detection compares exact bytes.
+10. Writes are byte-faithful where kendex edits in place: a structured
+    edit changes the keys it names and nothing else, newline included,
+    and a file it cannot read is refused, not rewritten. Change detection
+    compares exact bytes. kendex.toml is not edited in place: a write
+    serializes the manifest kendex read, losing comments and key order.
 11. Validation precedes mutation. Every input check for an operation runs
     before its first durable write, and a rejected operation leaves
     manifest, lock, and install tree byte-identical. Every rendering is
@@ -430,13 +431,12 @@ lives in one capability table read by core and UI.
   is rendered, records that. A first install retires nothing, and neither
   does an answer short of certainty: an entry moved, duplicated, or
   unnamed by the record is the person's to keep, and the pass registers
-  under the identity it renders beside it
-  (`engine::item_record::retire_previous`). Pi holds instead: its registry
-  is kendex's own file, so an entry there the record cannot place is a
-  question the hook waits on. Removal reads the same record; an editor
-  rewrites only its own registration; an entry no edit of kendex's can
-  reach is neither reconciled nor retired — proven by applying and reading
-  back.
+  under the identity it renders beside it (`item_record::retire_previous`).
+  Pi holds instead: its registry is kendex's own file, so an entry there
+  the record cannot place is a question the hook waits on. Removal reads
+  the same record; an editor rewrites only its own registration; an entry
+  no edit of kendex's can reach is neither reconciled nor retired — proven
+  by applying and reading back.
 - **Pi hooks are enforced through the carrier.** The `pi-hooks` extension
   package hosts native listeners; hook content rides in the registry
   kendex renders beside them (`kendex/hooks/<name>.sh` plus
