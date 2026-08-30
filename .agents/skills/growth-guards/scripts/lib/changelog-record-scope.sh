@@ -52,37 +52,52 @@ gg_collation_declared() { # 0 when this run is the release commit's own write
   [ "${GROWTH_GUARDS_CHANGELOG_COLLATE:-}" = "1" ]
 }
 
-# The record's own STRUCTURE, judged where every other rule about the record
-# is judged. It is one file's shape: the section is there, it is there once,
-# the fences close, and the level-3 headings inside it name sections this
-# family has somewhere to put. tools/changelog-collate needs exactly these
-# answers to split the file, and used to take them by asking the grammar
-# again itself — a second opinion that agreed until it did not. It reads the
-# accepted bounds off --list now, so this is the only place they are decided.
+# Whether a parsed copy of the record is one this guard ACCEPTS: the section
+# is there, it is there once, the fences close, and the level-3 headings
+# inside it name sections this family has somewhere to put.
 #
-# The accepted records land in $GG_TMP/bounds.z, NUL-terminated, in the
-# grammar's own spelling: `record-unreleased<TAB>LINE`,
-# `record-section<TAB>LINE<TAB>NAME` lowercased, `record-end<TAB>LINE`. A file
-# and not a variable, because a shell variable cannot hold the NUL that
-# separates them. Returns nonzero when the record is refused, so the caller
-# stops rather than comparing a document it has already rejected.
-gg_record_structure() { # 0 when the staged record's shape is one a release can fold into
-  local rc=0 kind a b low
-  : >"$GG_TMP/bounds.z"
-  LC_ALL=C awk -v emit=bounds "$GG_UNRELEASED_AWK" <"$GG_TMP/record.index" >"$GG_TMP/bounds" || rc=$?
+# One answer, asked of two copies with different consequences. The STAGED
+# copy is what the commit is making, so it must be accepted. HEAD's copy is
+# only the thing the staged one is compared against, and HEAD is history —
+# the committer cannot change what it holds, so a HEAD this rejects is a
+# comparison skipped, never a refusal. Asking the same question both times is
+# what keeps a malformed state added later from needing a second exemption:
+# whatever the staged copy would be refused for, HEAD is merely not compared
+# for.
+#
+# GG_RECORD_WHY carries the reason it was not accepted, phrased to follow the
+# record's name. GG_RECORD_HARD is 1 when the parser could not read the
+# document at all, which a caller that must be loud reports as a failed
+# measurement rather than a verdict.
+GG_RECORD_WHY=""
+GG_RECORD_HARD=0
+gg_record_accepts() { # PARSED-FILE [BOUNDS-OUT] — 0 when the copy is a record this guard accepts
+  local file="$1" out="${2:-}" rc=0 kind a b low
+  GG_RECORD_WHY=""
+  GG_RECORD_HARD=0
+  [ -z "$out" ] || : >"$out"
+  LC_ALL=C awk -v emit=bounds "$GG_UNRELEASED_AWK" <"$file" >"$GG_TMP/bounds" || rc=$?
   case "$rc" in
     0) : ;;
-    3) gg_collection_error "$(gg_shown "$RECORD") leaves a code fence unclosed — the [Unreleased] section cannot be located; close the fence" ;;
-    4) gg_collection_error "$(gg_shown "$RECORD") carries more than one '## [Unreleased]' heading — which one is the section cannot be decided; keep one" ;;
-    5)
-      # No section at all. A release folds every fragment into this heading
-      # and deletes the files they came from, so a record without one is a
-      # release that cannot run, caught here rather than at the tag.
-      refuse "$RECORD" "carries no '## [Unreleased]' heading" \
-        "open one — a release folds the fragments into it and has nowhere to put them otherwise"
+    3)
+      GG_RECORD_WHY="leaves a code fence unclosed — the [Unreleased] section cannot be located"
+      GG_RECORD_HARD=1
       return 1
       ;;
-    *) gg_collection_error "$(gg_shown "$RECORD") could not be read (awk exit $rc) — the [Unreleased] section cannot be located" ;;
+    4)
+      GG_RECORD_WHY="carries more than one '## [Unreleased]' heading — which one is the section cannot be decided"
+      GG_RECORD_HARD=1
+      return 1
+      ;;
+    5)
+      GG_RECORD_WHY="carries no '## [Unreleased]' heading"
+      return 1
+      ;;
+    *)
+      GG_RECORD_WHY="could not be read (awk exit $rc) — the [Unreleased] section cannot be located"
+      GG_RECORD_HARD=1
+      return 1
+      ;;
   esac
   while IFS="$GG_TAB" read -r kind a b; do
     case "$kind" in
@@ -91,17 +106,45 @@ gg_record_structure() { # 0 when the staged record's shape is one a release can 
         low="$(printf '%s' "$b" | tr '[:upper:]' '[:lower:]')"
         # Heading TEXT, so it may hold anything a line holds.
         if ! gg_is_section "$low"; then
-          refuse "$RECORD" "names '$(gg_scrubbed "$b")' under [Unreleased], which is not a Keep a Changelog section" \
-            "section one of: $GG_SECTIONS"
+          GG_RECORD_WHY="names '$(gg_scrubbed "$b")' under [Unreleased], which is not a Keep a Changelog section"
           return 1
         fi
         b="$low"
         ;;
       *) gg_collection_error "the changelog grammar emitted a boundary this judge does not understand: $(gg_shown "$kind")" ;;
     esac
-    printf 'record-%s\t%s%s\0' "$kind" "$a" "${b:+$(printf '\t%s' "$b")}" >>"$GG_TMP/bounds.z"
+    # The accepted records, NUL-terminated, in the grammar's own spelling:
+    # `record-unreleased<TAB>LINE`, `record-section<TAB>LINE<TAB>NAME`
+    # lowercased, `record-end<TAB>LINE`. A file and not a variable, because a
+    # shell variable cannot hold the NUL that separates them.
+    # tools/changelog-collate reads them off --list and splits the record
+    # there, rather than asking the grammar again and getting a second
+    # opinion that agreed until it did not.
+    [ -z "$out" ] || printf 'record-%s\t%s%s\0' "$kind" "$a" "${b:+$(printf '\t%s' "$b")}" >>"$out"
   done <"$GG_TMP/bounds"
   return 0
+}
+
+# The staged copy, which must be accepted. A shape the parser could not read
+# is a failed measurement; one it read and this guard will not have is a
+# verdict. Returns nonzero either way so the caller stops rather than
+# comparing a document it has already rejected.
+gg_record_structure() { # 0 when the staged record's shape is one a release can fold into
+  if gg_record_accepts "$GG_TMP/record.index" "$GG_TMP/bounds.z"; then
+    return 0
+  fi
+  [ "$GG_RECORD_HARD" -eq 0 ] || gg_collection_error "$(gg_shown "$RECORD") $GG_RECORD_WHY"
+  case "$GG_RECORD_WHY" in
+    "carries no"*)
+      # A release folds every fragment into this heading and deletes the files
+      # they came from, so a record without one is a release that cannot run,
+      # caught here rather than at the tag.
+      refuse "$RECORD" "$GG_RECORD_WHY" \
+        "open one — a release folds the fragments into it and has nowhere to put them otherwise"
+      ;;
+    *) refuse "$RECORD" "$GG_RECORD_WHY" "section one of: $GG_SECTIONS" ;;
+  esac
+  return 1
 }
 
 gg_changelog_record_scope() { # fills RECORD_NOTE; counts violations
@@ -148,28 +191,49 @@ gg_changelog_record_scope() { # fills RECORD_NOTE; counts violations
     if [ -z "$RECORD_HEAD_ENTRY" ]; then
       RECORD_NOTE="; no record to compare — HEAD carries no $(gg_shown "$RECORD") yet"
     else
-      # HEAD's copy comes in by the same path, so the rules that judged the
-      # staged one judge it too.
-      gg_changelog_blob "$RECORD_HEAD_SHA" "$RECORD" \
-        || gg_collection_error "$(gg_shown "$RECORD") holds binary content in HEAD's copy — the collated record is not changelog text"
-      cat -- "$GG_TMP/blob" >"$GG_TMP/record.head" \
-        || gg_collection_error "could not take HEAD's copy of $(gg_shown "$RECORD")"
-      # Content, because the structure of both copies is already settled:
-      # gg_record_structure judged the staged one, and HEAD's was judged by
-      # the run that accepted it. What is left to read is the lines.
-      for side in index head; do
+      # HEAD is history. What the commit is making is the staged copy, judged
+      # above; HEAD is only the thing it is compared against, and a comparison
+      # that cannot be made is one SKIPPED with a reason. Refusing here would
+      # demand a repair and then block the commit performing it, and a record
+      # malformed in HEAD could never be fixed at all.
+      #
+      # Every way HEAD can fail to be a record goes down this one path: bytes
+      # that are not changelog text, and any shape gg_record_accepts will not
+      # have. A state added to that predicate later is covered here without
+      # anyone deciding it should be.
+      head_ok=1
+      head_why=""
+      if ! gg_changelog_blob "$RECORD_HEAD_SHA" "$RECORD" soft; then
+        head_ok=0
+        head_why="is not changelog text in HEAD's copy"
+      else
+        cat -- "$GG_TMP/blob" >"$GG_TMP/record.head" \
+          || gg_collection_error "could not take HEAD's copy of $(gg_shown "$RECORD")"
+        if ! gg_record_accepts "$GG_TMP/record.head"; then
+          head_ok=0
+          head_why="$GG_RECORD_WHY, in HEAD's copy"
+        fi
+      fi
+      # Content, because the shape of what is read here is already settled:
+      # the staged copy was accepted above, and HEAD's is read only when it
+      # was accepted too.
+      ur_status=0
+      LC_ALL=C awk "$GG_UNRELEASED_AWK" <"$GG_TMP/record.index" >"$GG_TMP/ur.index" || ur_status=$?
+      [ "$ur_status" -eq 0 ] \
+        || gg_collection_error "could not read the [Unreleased] section of the staged copy of $(gg_shown "$RECORD") (awk exit $ur_status)"
+      LC_ALL=C sort -o "$GG_TMP/ur.index" "$GG_TMP/ur.index" \
+        || gg_collection_error "could not order the [Unreleased] lines of the staged copy of $(gg_shown "$RECORD")"
+      if [ "$head_ok" -eq 1 ]; then
         ur_status=0
-        LC_ALL=C awk "$GG_UNRELEASED_AWK" <"$GG_TMP/record.$side" >"$GG_TMP/ur.$side" || ur_status=$?
-        # Exit 5 is a copy with no canonical heading, which is an empty
-        # section's worth of lines. The staged copy cannot be one — it was
-        # refused above — so this is HEAD's, from before the section existed.
-        [ "$ur_status" -ne 5 ] || ur_status=0
+        LC_ALL=C awk "$GG_UNRELEASED_AWK" <"$GG_TMP/record.head" >"$GG_TMP/ur.head" || ur_status=$?
         [ "$ur_status" -eq 0 ] \
-          || gg_collection_error "could not read the [Unreleased] section of the $side copy of $(gg_shown "$RECORD") (awk exit $ur_status)"
-        LC_ALL=C sort -o "$GG_TMP/ur.$side" "$GG_TMP/ur.$side" \
-          || gg_collection_error "could not order the [Unreleased] lines of the $side copy of $(gg_shown "$RECORD")"
-      done
-      if gg_collation_declared; then
+          || gg_collection_error "could not read the [Unreleased] section of HEAD's copy of $(gg_shown "$RECORD") (awk exit $ur_status)"
+        LC_ALL=C sort -o "$GG_TMP/ur.head" "$GG_TMP/ur.head" \
+          || gg_collection_error "could not order the [Unreleased] lines of HEAD's copy of $(gg_shown "$RECORD")"
+      fi
+      if [ "$head_ok" -eq 0 ]; then
+        RECORD_NOTE="; $(gg_shown "$RECORD") NOT compared — it $head_why, which this commit is free to repair and not to blame for"
+      elif gg_collation_declared; then
         # THE one thing the declaration permits, at the one place it is read.
         # Everything above ran whether or not it is set, which is the property
         # that keeps a rule added later out of here.

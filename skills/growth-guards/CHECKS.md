@@ -175,6 +175,15 @@ the parser unable to say where the section starts or stops, and a stray
 opening fence above the heading would otherwise make both sides parse to
 nothing and every hand-written line read as unchanged.
 
+Every shape rule here judges the STAGED copy. HEAD is history — the committer
+cannot change what it holds — so a record HEAD carries that this guard would
+not accept is a comparison SKIPPED, naming the reason, never a refusal.
+Refusing on HEAD's shape would demand a repair and then block the commit
+making it, and a record malformed in HEAD could never be fixed at all. That
+covers every way HEAD can fail to be a record, including bytes that are not
+changelog text, because it is the same acceptance test either copy is put to
+rather than a list of tolerated states.
+
 A SECOND `## [Unreleased]` heading is exit 2 for the same reason: which one
 is the section is undecided. A duplicate carries no content of its own, so
 this comparison would call the record unchanged, while the collator splits

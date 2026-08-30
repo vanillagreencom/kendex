@@ -87,14 +87,23 @@ line !~ UTF8 { print NR; exit }
 #
 # Binary is the caller's to phrase — a fragment is refused, a record cannot be
 # compared at all — so it comes back as status 1 rather than a verdict here.
-gg_changelog_blob() { # SHA LABEL — fills $GG_TMP/blob; 1 = binary, no verdict
-  local sha="$1" label="$2" bad
+# A third argument, `soft`, makes bytes that are not changelog text a RETURN
+# rather than an exit. One caller wants it: the record's copy in HEAD, which
+# is history the committer cannot change, so it must not block the commit
+# replacing it. Everywhere else a blob that cannot be measured is a
+# measurement that failed, which this family exits on. Reading the blob at
+# all stays loud in both: bytes git could not produce are not the same as
+# bytes that are not text.
+gg_changelog_blob() { # SHA LABEL [soft] — fills $GG_TMP/blob; 1 = not changelog text
+  local sha="$1" label="$2" soft="${3:-}" bad
   gg_read_blob "$sha" "$label" changelog
   ! gg_blob_is_binary "$GG_TMP/blob" "$label" || return 1
   bad="$(LC_ALL=C awk "$GG_UTF8_AWK" <"$GG_TMP/blob")" \
     || gg_collection_error "could not read $(gg_shown "$label") to check its encoding"
-  [ -z "$bad" ] \
-    || gg_collection_error "$(gg_shown "$label") line $bad is not valid UTF-8 — text with no character count cannot be measured"
+  if [ -n "$bad" ]; then
+    [ "$soft" != "soft" ] || return 1
+    gg_collection_error "$(gg_shown "$label") line $bad is not valid UTF-8 — text with no character count cannot be measured"
+  fi
 }
 
 # One measurement row, "M<TAB>characters<TAB>first line". A fragment is one
