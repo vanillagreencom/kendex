@@ -141,8 +141,10 @@ pub(super) fn stored_in_slot(
     let Some(occupant) = occupant else {
         return Ok(None);
     };
+    // Text, so `paths::slashed` spells it — the rule every other path the
+    // adopt refusals name goes through.
     let occupant = sealed.relative(&occupant).unwrap_or(&occupant);
-    Ok(Some(crate::names::shown(&occupant.display().to_string())))
+    Ok(Some(crate::names::shown(&crate::paths::slashed(occupant))))
 }
 
 pub(super) fn agent_stems(sealed: &SealedSource, dir: &str) -> Vec<String> {
