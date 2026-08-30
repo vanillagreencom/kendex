@@ -160,8 +160,9 @@ run_help_contracts() {
       "$label check exit carries $token"
   done
 
-  for token in 'queue-wait <N>' 'pr-watch.sh' 'ejected' 'disarmed' 'not_queued' \
-    'Dequeued' 'closed' 'unknown' 'README.md "Exit 75 recovery"' 'await-mergeable'; do
+  for token in 'merge-queue-watch' 'expected head' 'watch generation' \
+    'durable verdict' 'recovery action' 'README.md "Exit 75 recovery"' \
+    'github.sh pr-merge <N> --auto' 'await-mergeable'; do
     assert_section_token "$merge_help" 'Exit 75 is volatile:' 'Terminal and mutation rules:' "$token" \
       "$label exit-75 routing carries $token"
   done

@@ -67,12 +67,10 @@ Merge-mode exit codes:
   blocked or CLOSED. Argument or dispatch failures before JSON remain nonzero.
 
 Exit 75 is volatile:
-  A queue ejection or failed protection check can disarm merge state silently.
-  Launch the prepared .agents/skills/orch/scripts/merge-queue-watch before returning; it binds repository, PR, expected head, and watch generation.
-  Its one-shot worker writes a durable verdict and claims one recovery action; the review-gate reducer still reports fleet attention.
-  Route verdicts through README.md "Exit 75 recovery". Re-arm only through
-  github.sh pr-merge <N> --auto after that route. await-mergeable is not the
-  lifecycle watcher; it stops when GitHub computes the current merge state.
+  A queue ejection can disarm merge state. Launch the prepared .agents/skills/orch/scripts/merge-queue-watch before returning; it binds repository, PR, expected head, and watch generation.
+  Its one-shot worker writes a durable verdict and claims one recovery action. Route verdicts through README.md "Exit 75 recovery"; the review-gate reducer still reports fleet attention.
+  Re-arm only through github.sh pr-merge <N> --auto after that route.
+  await-mergeable is not the lifecycle watcher; it stops when GitHub computes state.
 
 Terminal and mutation rules:
   After github.sh router setup, MERGED or CLOSED short-circuits pr-merge safety
@@ -301,8 +299,7 @@ run_checks() {
         fi
     fi
 
-    # reviewDecision is only populated with branch protection rules requiring approvals.
-    # Fall back to checking latestReviews for both APPROVED and CHANGES_REQUESTED states.
+    # reviewDecision requires branch protection; latestReviews covers both terminal review states.
     local review="" has_approved_review=false has_changes_requested=false
     local review_json
     if ! review_json=$(json_or_default '{}' object gh pr view "$pr_num" --json reviewDecision,latestReviews); then
@@ -627,7 +624,6 @@ main() {
         echo "BLOCKED PR #$pr_num — prepared head changed before merge attempt (expected=$expected_head, actual=$current_head)" >&2; exit 1
     fi
 
-    # --auto queues the exact head until GitHub's requirements clear.
     local -a cmd=(pr merge "$pr_num" "$method" --match-head-commit "$expected_head")
     [ "$auto" = true ] && cmd+=(--auto)
 
