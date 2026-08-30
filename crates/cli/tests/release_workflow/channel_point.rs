@@ -61,6 +61,10 @@ enum Channel<'a> {
     /// Published, carrying `feed.json` and no `latest.json` — the shape a
     /// half-written channel is left in, which the guard reads as fresh.
     HalfWritten,
+    /// Published and carrying the whole set a candidate reads, signatures
+    /// beside the digests documents. What a channel this release job has
+    /// already written once looks like.
+    CarryingSigned(&'static str),
     /// Published, with a manifest that names no version at all.
     Unreadable,
 }
@@ -164,6 +168,7 @@ fn point_channel_staging(
                case \"$name\" in\n\
                  latest.json) printf '%s\\n' \"$GH_MANIFEST\" > \"$dir/latest.json\" ;;\n\
                  feed.json) printf '%s\\n' \"$GH_FEED\" > \"$dir/feed.json\" ;;\n\
+                 *) cp \"$GH_CHANNEL/$name\" \"$dir/$name\" ;;\n\
                esac\n\
              done\n\
              exit 0 ;;\n\
@@ -185,7 +190,9 @@ fn point_channel_staging(
     fs::set_permissions(bin.join("gh"), fs::Permissions::from_mode(0o755)).unwrap();
 
     let manifest = match channel {
-        Channel::Carrying(version) => format!(r#"{{"version":"{version}"}}"#),
+        Channel::Carrying(version) | Channel::CarryingSigned(version) => {
+            format!(r#"{{"version":"{version}"}}"#)
+        }
         _ => "{}".to_owned(),
     };
     if !matches!(channel, Channel::Absent) {
@@ -193,6 +200,11 @@ fn point_channel_staging(
     }
     if matches!(channel, Channel::Carrying(_) | Channel::Unreadable) {
         for name in ["latest.json", "feed.json"] {
+            fs::write(published.join(name), "").unwrap();
+        }
+    }
+    if matches!(channel, Channel::CarryingSigned(_)) {
+        for name in STAGED {
             fs::write(published.join(name), "").unwrap();
         }
     }
@@ -406,7 +418,7 @@ fn a_run_handed_no_manifests_writes_nothing() {
 #[test]
 fn a_failed_upload_puts_back_what_the_channel_had() {
     let run = point_channel(
-        Channel::Carrying("1.0.0-rc1"),
+        Channel::CarryingSigned("1.0.0-rc1"),
         "1.0.0-rc2",
         &["dist/latest.json"],
         &[],
@@ -422,16 +434,23 @@ fn a_failed_upload_puts_back_what_the_channel_had() {
         .filter(|c| c.starts_with("release upload"))
         .nth(1)
         .unwrap_or_else(|| panic!("nothing was put back: {:?}", run.calls));
-    // Both names, and from the copies on disk: the shell expanded the glob
-    // against what the download actually wrote, so a manifest that never
-    // came down could not appear here.
-    for name in ["saved/latest.json", "saved/feed.json"] {
-        assert!(restored.contains(name), "{name} not restored: {restored}");
+    // Every name, and from the copies on disk: the shell expanded the glob
+    // against what the download actually wrote, so an asset that never came
+    // down could not appear here. The signature is in the list because a
+    // digests document without it refuses every update, which is a channel
+    // reported as repaired and broken for every candidate.
+    for name in STAGED {
+        assert!(
+            restored.contains(&format!("saved/{name}")),
+            "saved/{name} not restored: {restored}"
+        );
     }
     assert!(restored.contains("--clobber"), "{restored}");
+    let mut had: Vec<String> = STAGED.iter().map(|name| (*name).to_owned()).collect();
+    had.sort();
     assert_eq!(
         run.after,
-        Some(vec!["feed.json".to_owned(), "latest.json".to_owned()]),
+        Some(had),
         "the channel is not carrying what it was: {:?}",
         run.calls
     );
@@ -558,34 +577,64 @@ fn a_restore_that_could_not_finish_says_what_the_channel_carries() {
 #[test]
 fn a_restore_that_changed_the_channel_names_what_is_there_now() {
     let run = point_channel(
-        Channel::HalfWritten,
+        Channel::Carrying("1.0.0-rc1"),
         "1.0.0-rc2",
         &["dist/latest.json", "delete-asset"],
-        &["latest.json"],
+        &["digests-x86_64-unknown-linux-gnu.json"],
     );
     assert_ne!(
         run.code, 0,
         "a failed restore was survivable: {:?}",
         run.calls
     );
-    // The saved feed.json is back up, and the latest.json this run added is
-    // still there because taking it off is the command that failed.
+    // The two saved manifests are back up, and the digests document this run
+    // added is still there because taking it off is the command that failed.
     assert_eq!(
         run.after,
-        Some(vec!["feed.json".to_owned(), "latest.json".to_owned()]),
+        Some(vec![
+            "digests-x86_64-unknown-linux-gnu.json".to_owned(),
+            "feed.json".to_owned(),
+            "latest.json".to_owned(),
+        ]),
         "the restore left the channel unchanged, so this proves nothing: {:?}",
         run.calls
     );
     assert!(
-        run.output.contains("It carries feed.json latest.json"),
+        run.output
+            .contains("It carries digests-x86_64-unknown-linux-gnu.json feed.json latest.json"),
         "{}",
         run.output
     );
     // What the channel carried when the restore began, and so what a snapshot
     // taken before it would have named.
     assert!(
-        !run.output.contains("It carries latest.json"),
+        !run.output.contains("It carries feed.json latest.json"),
         "the message names the channel as the restore found it: {}",
+        run.output
+    );
+}
+
+/// A channel a write did not finish on is not a channel this run may take.
+/// Carrying nothing is a release nothing has published to, and any tag may
+/// have it; carrying assets with no `latest.json` is a release whose version
+/// is gone, and calling that fresh lets every tag past the comparison this
+/// guard exists to make — an older one included, which is the rollback it
+/// refuses everywhere else. Repair is a person's.
+#[cfg(unix)]
+#[test]
+fn a_channel_a_write_did_not_finish_on_stops_the_run() {
+    let run = point_channel(Channel::HalfWritten, "1.0.0-rc2", &[], &[]);
+    assert_ne!(run.code, 0, "{:?}", run.calls);
+    assert!(
+        run.ran("release upload").is_none(),
+        "a half-written channel was written over: {:?}",
+        run.calls
+    );
+    // Named, because the one thing that clears this state is somebody
+    // looking at the channel.
+    assert!(
+        run.output.contains("no latest.json"),
+        "the run did not say what it found: {}",
         run.output
     );
 }

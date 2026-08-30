@@ -91,7 +91,10 @@ restore() {
     return 0
   fi
   if [ -n "$(ls -A saved 2>/dev/null)" ]; then
-    gh release upload "$CHANNEL" saved/*.json --repo "$GITHUB_REPOSITORY" --clobber || return 0
+    # Every saved asset, not the documents alone. A digests document and the
+    # signature beside it are one answer to a candidate: put half of it back
+    # and the channel reads as repaired while every update is refused.
+    gh release upload "$CHANNEL" saved/* --repo "$GITHUB_REPOSITORY" --clobber || return 0
   fi
   while IFS= read -r file; do
     name=$(basename "$file")
@@ -123,7 +126,16 @@ elif ! assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${CHANNEL}" --j
 elif ! save_manifests; then
   why="the ${CHANNEL} channel carries a manifest that could not be downloaded"
 elif ! grep -qxF latest.json <<< "$assets"; then
-  state=fresh  # Published carrying nothing: no write has landed here yet.
+  # Carrying nothing is a channel no write has landed on, and this run may
+  # take it. Carrying something without a latest.json is a channel a write
+  # did not finish on, and the version it was meant to name is gone: called
+  # fresh, any tag would pass the comparison it exists to face, which is the
+  # rollback this guard is here to refuse. Repair is a person's, not a run's.
+  if [ -n "$assets" ]; then
+    why="the ${CHANNEL} channel carries assets but no latest.json, so nothing here can say what it holds"
+  else
+    state=fresh
+  fi
 else
   current=$(jq -r '.version // empty' saved/latest.json) || current=""
   if [ -n "$current" ]; then
