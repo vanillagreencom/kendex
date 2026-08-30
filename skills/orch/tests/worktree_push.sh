@@ -13,6 +13,9 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 PUSH="$REPO_ROOT/skills/orch/scripts/worktree-push"
 STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
+ROUND_WRITE="$REPO_ROOT/skills/orch/scripts/dev-round-write"
+RETURN_WRITE="$REPO_ROOT/skills/orch/scripts/dev-return-write"
+ARTIFACT_CHECK="$REPO_ROOT/skills/orch/scripts/dev-artifact-check"
 
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -176,6 +179,58 @@ assert_eq "$RUN_RC" "0" "second mapped push exits 0"
 assert_eq "$(state_json "$work" | jq -r '.rebase_map | length')" "3" "second map merges into rebase_map"
 assert_eq "$(state_json "$work" | jq -r '.fixed_items[0].commit')" "${NEW_A2:0:7}" "already-rewritten SHA follows the new mapping"
 assert_eq "$(state_json "$work" | jq -r '.pr_comment_review.fixes[0].commit')" "dropped:${OLD_B:0:8}" "a dropped-marked commit stays marked across pushes"
+
+echo
+echo "=== restack remaps the exact fix-round snapshot ==="
+
+restack_wt="$TMP_ROOT/restack-wt"
+mkdir -p "$restack_wt"
+git -C "$restack_wt" init -q -b main
+git -C "$restack_wt" config user.email test@example.com
+git -C "$restack_wt" config user.name Test
+git -C "$restack_wt" config commit.gpgsign false
+git -C "$restack_wt" commit -q --allow-empty -m delegation-base
+restack_old="$(git -C "$restack_wt" rev-parse HEAD)"
+"$ROUND_WRITE" --worktree "$restack_wt" --issue KEN-RESTACK --round-id 1-1 --item 1 restack >/dev/null
+mkdir -p "$restack_wt/tools"
+printf 'upstream\n' > "$restack_wt/tools/upstream-tool"
+git -C "$restack_wt" add tools/upstream-tool
+git -C "$restack_wt" commit -q -m upstream-protected-addition
+restack_base="$(git -C "$restack_wt" rev-parse HEAD)"
+printf 'round fix\n' > "$restack_wt/README.md"
+git -C "$restack_wt" add README.md
+git -C "$restack_wt" commit -q -m round-fix
+restack_head="$(git -C "$restack_wt" rev-parse HEAD)"
+"$RETURN_WRITE" --worktree "$restack_wt" --kind fix --issue KEN-RESTACK --round-id 1-1 \
+  --branch main --commit "$restack_head" --validate pass --item 1 Applied done >/dev/null
+before_restack="$($ARTIFACT_CHECK --worktree "$restack_wt" --issue KEN-RESTACK --round-id 1-1 2>/dev/null || true)"
+assert_eq "$(jq -r '.reason' <<<"$before_restack")" "unapproved_additions" \
+  "old delegation snapshot sees the upstream protected addition"
+
+restack_state="$TMP_ROOT/restack-state"
+mkdir -p "$restack_state"
+(cd "$restack_state" && "$STATE" init KEN-RESTACK --agent generalist \
+  --worktree "$restack_wt" --branch main >/dev/null)
+STUB_PUSH_STDOUT="rebase-map: $restack_old $restack_base" \
+  run_push "$restack_state" --worktree "$restack_wt" --issue KEN-RESTACK
+assert_eq "$RUN_RC" "0" "restack map and authorization reconciliation succeed together"
+restack_auth="$restack_wt/.git/kendex/dev-round-authorizations/KEN-RESTACK-1-1.json"
+restack_recovery="$restack_wt/tmp/dev-round-KEN-RESTACK-1-1.json"
+assert_eq "$(jq -r '.base_sha' "$restack_auth")" "$restack_base" "external authorization moves to the restacked base snapshot"
+assert_eq "$(jq -r '.base_sha' "$restack_recovery")" "$restack_base" "recovery copy moves to the same restacked base snapshot"
+after_restack="$($ARTIFACT_CHECK --worktree "$restack_wt" --issue KEN-RESTACK --round-id 1-1)"
+assert_eq "$(jq -r '.reason' <<<"$after_restack")" "valid" \
+  "upstream protected addition is outside the remapped round snapshot"
+
+"$ROUND_WRITE" --worktree "$restack_wt" --issue KEN-RESTACK --round-id 2-2 --item 1 divergent >/dev/null
+divergent_recovery="$restack_wt/tmp/dev-round-KEN-RESTACK-2-2.json"
+jq '.adds = ["tools/not-authorized"]' "$divergent_recovery" > "$TMP_ROOT/divergent-recovery.json"
+mv "$TMP_ROOT/divergent-recovery.json" "$divergent_recovery"
+STUB_PUSH_STDOUT="rebase-map: $restack_head $restack_base" \
+  run_push "$restack_state" --worktree "$restack_wt" --issue KEN-RESTACK
+assert_eq "$RUN_RC" "1" "divergent authorization copies fail reconciliation closed"
+assert_contains "$(cat "$run_err")" "authorization and recovery copy diverge" \
+  "divergence refusal names the violated round invariant"
 
 echo
 echo "=== a failed push still applies its map (rebase precedes the push) ==="

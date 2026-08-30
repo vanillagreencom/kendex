@@ -42,7 +42,7 @@ The external authorization adds `"schema_version": 1` and `"worktree": "[CANONIC
 
 ## Readers
 
-- **`dev-artifact-check --expect-items-from-round`** derives the expected items and additions from the external authorization after checking the worktree copy exactly matches it. It compares `base_sha...HEAD` through a checked, NUL-delimited Git probe. Comparison failures return `comparison_failed`; an unusable classifier result returns `classifier_failed`.
+- **`dev-artifact-check --expect-items-from-round`** derives the expected items and additions from the external authorization after checking the worktree copy exactly matches it. It compares the exact `base_sha` snapshot directly to `HEAD` through a checked, NUL-delimited Git probe. `worktree-push` remaps both authorization copies when a restack rewrites that snapshot. Comparison failures return `comparison_failed`; an unusable classifier result returns `classifier_failed`.
 - **A respawned dev agent** reads `items[]` to recover the item numbers and texts.
 - **The tail-reconciliation nudge** points at the record.
 

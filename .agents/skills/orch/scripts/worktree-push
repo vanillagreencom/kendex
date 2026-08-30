@@ -18,6 +18,9 @@
 #     form `dropped:<recorded-sha>` when the mapping is `dropped` — the
 #     commit no longer exists on the branch, so publishers must omit it or
 #     cite the upstream equivalent, never print it as a live SHA;
+#   - remaps each fix-round base_sha in the external authorization and worktree
+#     recovery copy together, refusing divergent copies or a dropped base whose
+#     exact replacement snapshot is unknown;
 #   - prints one `sha-reconcile:` summary line naming what changed.
 #
 # The rebase happens BEFORE the network push, so a rejected push can still
@@ -145,9 +148,89 @@ worktree_abs="$(cd -P -- "$worktree" 2>/dev/null && pwd -P)" \
 	|| fail "not a directory: $worktree"
 git_dir="$(git -C "$worktree_abs" rev-parse --absolute-git-dir 2>/dev/null)" \
 	|| fail "not a git worktree: $worktree_abs"
+git_common_dir="$(git -C "$worktree_abs" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
+	|| fail "could not resolve the git common directory for $worktree_abs"
 
 state_flags=()
 [[ -z "$state_dir" ]] || state_flags=(--state-dir "$state_dir")
+
+reconcile_round_authorizations() {
+	local map_json="$1" auth_dir auth round_id recovery base_sha new_sha
+	local auth_tmp recovery_tmp auth_backup recovery_backup
+	auth_dir="$git_common_dir/kendex/dev-round-authorizations"
+	[[ -d "$auth_dir" ]] || return 0
+	for auth in "$auth_dir/$issue-"*.json; do
+		[[ -e "$auth" || -L "$auth" ]] || continue
+		[[ -f "$auth" && ! -L "$auth" ]] || {
+			printf 'worktree-push: round authorization is not a regular file: %s\n' "$auth" >&2
+			return 1
+		}
+		round_id="$(jq -r '.round_id // ""' "$auth")" || return 1
+		[[ "$round_id" =~ ^[A-Za-z0-9._-]+$ && "$round_id" != *..* ]] || {
+			printf 'worktree-push: invalid round id in authorization %s\n' "$auth" >&2
+			return 1
+		}
+		recovery="$worktree_abs/tmp/dev-round-$issue-$round_id.json"
+		[[ -f "$recovery" && ! -L "$recovery" ]] || {
+			printf 'worktree-push: recovery copy missing or not regular for %s: %s\n' "$auth" "$recovery" >&2
+			return 1
+		}
+		jq -e --slurpfile recovery "$recovery" --arg issue "$issue" \
+			--arg round "$round_id" --arg worktree "$worktree_abs" '
+			.schema_version == 1 and .issue == $issue and .round_id == $round
+			and .worktree == $worktree and ($recovery | length) == 1
+			and $recovery[0].schema_version == 2
+			and $recovery[0].issue == .issue and $recovery[0].round_id == .round_id
+			and $recovery[0].base_sha == .base_sha and $recovery[0].adds == .adds
+			and $recovery[0].items == .items
+		' "$auth" >/dev/null 2>&1 || {
+			printf 'worktree-push: authorization and recovery copy diverge for round %s\n' "$round_id" >&2
+			return 1
+		}
+		base_sha="$(jq -r '.base_sha' "$auth")" || return 1
+		new_sha="$(jq -r --arg base "$base_sha" '.[$base] // empty' <<<"$map_json")" || return 1
+		[[ -n "$new_sha" ]] || continue
+		[[ "$new_sha" != "dropped" ]] || {
+			printf 'worktree-push: round %s base %s was dropped; no exact replacement snapshot is known\n' "$round_id" "$base_sha" >&2
+			return 1
+		}
+		auth_tmp="$(mktemp "$auth_dir/.round-auth-remap.XXXXXX")" || return 1
+		recovery_tmp="$(mktemp "$worktree_abs/tmp/.round-recovery-remap.XXXXXX")" || {
+			rm -f "$auth_tmp"
+			return 1
+		}
+		jq --arg base "$new_sha" '.base_sha = $base' "$auth" >"$auth_tmp" \
+			&& jq --arg base "$new_sha" '.base_sha = $base' "$recovery" >"$recovery_tmp" || {
+			rm -f "$auth_tmp" "$recovery_tmp"
+			return 1
+		}
+		auth_backup="$(mktemp "$auth_dir/.round-auth-backup.XXXXXX")" || {
+			rm -f "$auth_tmp" "$recovery_tmp"
+			return 1
+		}
+		recovery_backup="$(mktemp "$worktree_abs/tmp/.round-recovery-backup.XXXXXX")" || {
+			rm -f "$auth_tmp" "$recovery_tmp" "$auth_backup"
+			return 1
+		}
+		rm -f "$auth_backup" "$recovery_backup"
+		ln "$auth" "$auth_backup" && ln "$recovery" "$recovery_backup" || {
+			rm -f "$auth_tmp" "$recovery_tmp" "$auth_backup" "$recovery_backup"
+			return 1
+		}
+		if ! mv -f "$auth_tmp" "$auth"; then
+			rm -f "$recovery_tmp" "$auth_backup" "$recovery_backup"
+			return 1
+		fi
+		if ! mv -f "$recovery_tmp" "$recovery"; then
+			if ! mv -f "$auth_backup" "$auth"; then
+				printf 'worktree-push: failed to restore authorization after recovery-copy remap failed: %s\n' "$auth" >&2
+			fi
+			rm -f "$recovery_tmp" "$recovery_backup"
+			return 1
+		fi
+		rm -f "$auth_backup" "$recovery_backup"
+	done
+}
 
 # Apply one map (a JSON object of old->new) to workflow state atomically and
 # print the sha-reconcile summary. The map travels by environment variable so
@@ -157,6 +240,7 @@ state_flags=()
 # through each other.
 reconcile_map() {
 	local map_json="$1" report
+	reconcile_round_authorizations "$map_json" || return 1
 	report="$(WTP_MAP="$map_json" "$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} update-report "$issue" '
 		def remap($map): . as $sha
 		  | reduce ($map | to_entries[]) as $e ($sha;

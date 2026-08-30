@@ -344,7 +344,7 @@ collect_unapproved_additions() {
   probe="$(mktemp "$repo/tmp/.dev-artifact-additions.XXXXXX")" \
     || return 3
   scratch_files+=("$probe")
-  if ! git -C "$repo" diff --find-renames --diff-filter=A --name-only -z "$base_sha...HEAD" > "$probe"; then
+  if ! git -C "$repo" diff --find-renames --diff-filter=A --name-only -z "$base_sha" HEAD > "$probe"; then
     rm -f -- "$probe"
     return 2
   fi

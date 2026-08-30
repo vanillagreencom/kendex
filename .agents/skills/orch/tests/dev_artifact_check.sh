@@ -444,9 +444,6 @@ move_head="$(git -C "$adds_wt" rev-parse HEAD)"
   --validate pass --item 1 Applied done >/dev/null
 assert_eq "$(reason --worktree "$adds_wt" --issue issue-826 --round-id 3-3 --expect-items-from-round)" "valid" \
   "a moved file is not treated as an addition"
-
-# A three-dot comparison with no merge base is a distinct failed probe, never
-# an empty violation set or unapproved_additions with no files.
 diverge_wt="$TMP_ROOT/diverge"
 mkdir -p "$diverge_wt"
 git -C "$diverge_wt" init -q -b main
@@ -460,37 +457,42 @@ git -C "$diverge_wt" commit -q --allow-empty -m divergent
 diverge_head="$(git -C "$diverge_wt" rev-parse HEAD)"
 "$WRITE" --worktree "$diverge_wt" --kind fix --issue issue-826 --round-id 4-4 --branch divergent \
   --commit "$diverge_head" --validate pass --item 1 Applied done >/dev/null
+diverge_out="$("$CHECK" --worktree "$diverge_wt" --issue issue-826 --round-id 4-4)"
+assert_eq "$(jq -r '.reason' <<<"$diverge_out")" "valid" \
+  "direct snapshot comparison accepts histories with no merge base"
+git_shim_dir="$TMP_ROOT/git-shim"
+mkdir -p "$git_shim_dir"
+cat > "$git_shim_dir/git" <<'EOF'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  [[ "$arg" == "diff" ]] && exit 42
+done
+exec "$REAL_GIT" "$@"
+EOF
+chmod +x "$git_shim_dir/git"
+real_git="$(command -v git)"
 set +e
-diverge_out="$("$CHECK" --worktree "$diverge_wt" --issue issue-826 --round-id 4-4 --expect-items-from-round 2>/dev/null)"
-diverge_rc=$?
+comparison_out="$(REAL_GIT="$real_git" PATH="$git_shim_dir:$PATH" "$CHECK" \
+  --worktree "$diverge_wt" --issue issue-826 --round-id 4-4 2>/dev/null)"
+comparison_rc=$?
 set -e
-assert_eq "$diverge_rc" "1" "a comparison with no merge base fails acceptance"
-assert_eq "$(jq -r '.ok' <<<"$diverge_out")" "false" "comparison failure reports ok false"
-assert_eq "$(jq -r '.verdict' <<<"$diverge_out")" "retry" "comparison failure routes to retry"
-assert_eq "$(jq -r '.reason' <<<"$diverge_out")" "comparison_failed" "comparison failure has a distinct reason"
-assert_eq "$(jq -c '.files' <<<"$diverge_out")" "[]" "comparison failure does not fabricate refused files"
+assert_eq "$comparison_rc" "1" "a failed direct snapshot probe refuses acceptance"
+assert_eq "$(jq -r '.reason' <<<"$comparison_out")" "comparison_failed" \
+  "failed direct snapshot probe keeps the distinct reason"
 routing_mutant="$TMP_ROOT/routing-mutant"
 cp "$CHECK" "$routing_mutant"
 sed -i.bak 's/emit false "$file" "comparison_failed"/emit false "$file" "unapproved_additions"/' "$routing_mutant"
 chmod +x "$routing_mutant"
 set +e
-routing_mutant_out="$("$routing_mutant" --worktree "$diverge_wt" --issue issue-826 --round-id 4-4 --expect-items-from-round 2>/dev/null)"
+routing_mutant_out="$(REAL_GIT="$real_git" PATH="$git_shim_dir:$PATH" "$routing_mutant" \
+  --worktree "$diverge_wt" --issue issue-826 --round-id 4-4 2>/dev/null)"
 set -e
 if [[ "$(jq -r '.reason' <<<"$routing_mutant_out")" == "comparison_failed" ]]; then
   FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "routing control detects a comparison-failure misroute"
 else
   PASS=$((PASS + 1)); printf '  ok    %s\n' "routing control detects a comparison-failure misroute"
 fi
-
 # --- kendex#994: the recorded commit must name a real object in the worktree's repo ---
-# Case 1 (hyprtrade CC-1006): a dev agent hand-reconstructed a full SHA from the
-# short form — same 8-char prefix as HEAD, fabricated tail — and the receipt
-# passed every schema gate while naming no object. That must now fail with the
-# distinct fatal reason commit_unresolvable. Case 2: a commit orphaned by a
-# later rebase still resolves as an object but is no ancestor of HEAD; per the
-# issue that is a distinct NON-FATAL signal (warning=commit_unreachable, ok
-# stays true) because a legitimate rebase produces it. All the non-git-repo
-# worktrees above (plain mktemp dirs) skip these gates entirely.
 gitwt="$TMP_ROOT/gitwt"
 mkdir -p "$gitwt/tmp"
 git -C "$gitwt" init -q -b main
