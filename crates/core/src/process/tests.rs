@@ -36,54 +36,134 @@ fn git_runs_without_redirecting_environment_and_without_prompts() {
     assert_eq!(&args[..settled.len()], settled.as_slice());
 }
 
-/// Git converts line endings on checkout when the config it reads says to,
-/// so a host whose config says to hands back different bytes than a host
-/// whose config does not. The host that asks by default is Windows, but
-/// neither setting is Windows-only, so the arrangement that host makes is
-/// built here instead — a repository whose own config asks for the
-/// conversion, which outranks everything but the command line.
-#[test]
-fn a_repository_asking_for_line_ending_conversion_is_still_checked_out_as_committed() {
-    for asked in [
-        // What Git for Windows writes into the system config.
-        vec!["config", "core.autocrlf", "true"],
-        // The other door: `core.eol` decides for a repository that marks
-        // its own files as text.
-        vec!["config", "core.eol", "crlf"],
+/// A repository holding `one\ntwo\n` that asks for CRLF in its working
+/// tree, by the config `asked` sets and the `attributes` it ships. The host
+/// that asks by default is Windows, but neither setting is Windows-only, so
+/// the arrangement that host makes is built here, in a place that outranks
+/// everything but the command line.
+fn asking_repository(dir: &Path, attributes: Option<&str>, asked: &[&str]) {
+    if let Some(attributes) = attributes {
+        fs::write(dir.join(".gitattributes"), attributes).unwrap();
+    }
+    fs::write(dir.join("SKILL.md"), "one\ntwo\n").unwrap();
+    for args in [
+        vec!["init", "--quiet", "-b", "main"],
+        asked.to_vec(),
+        vec!["add", "-A"],
+        vec![
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "--quiet",
+            "-m",
+            "one",
+        ],
     ] {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path();
-        let file = repo.join("SKILL.md");
-        fs::write(repo.join(".gitattributes"), "* text\n").unwrap();
-        fs::write(&file, "one\ntwo\n").unwrap();
-        for args in [
-            vec!["init", "--quiet", "-b", "main"],
-            asked.clone(),
-            vec!["add", "-A"],
-            vec![
-                "-c",
-                "user.email=t@t",
-                "-c",
-                "user.name=t",
-                "commit",
-                "--quiet",
-                "-m",
-                "one",
-            ],
-        ] {
-            let run = Hardened::git(&args, Some(repo)).run().unwrap();
-            assert!(run.status.success(), "git {args:?}");
-        }
-        fs::remove_file(&file).unwrap();
+        let run = Hardened::git(&args, Some(dir)).run().unwrap();
+        assert!(run.status.success(), "git {args:?}");
+    }
+}
 
-        let reset = Hardened::git(&["reset", "--hard", "HEAD", "--quiet"], Some(repo))
+/// The two doors. `core.autocrlf=true` is what Git for Windows' installer
+/// writes into the system config, and it decides for a repository that says
+/// nothing about its own files; `core.eol` decides for one that marks them
+/// as text.
+const ASKING: [(Option<&str>, &[&str]); 2] = [
+    (None, &["config", "core.autocrlf", "true"]),
+    (Some("* text\n"), &["config", "core.eol", "crlf"]),
+];
+
+/// Content is materialised the way `remote::store` materialises it, and
+/// what lands is what was committed however the repository asks for it to
+/// be written.
+#[test]
+fn catalog_content_is_written_as_committed_whatever_the_repository_asks() {
+    for (attributes, asked) in ASKING {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        let into = tmp.path().join("into");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&into).unwrap();
+        asking_repository(&repo, attributes, asked);
+
+        let git_dir = repo.join(".git");
+        assert!(
+            Hardened::git_bare(&git_dir, &["read-tree", "HEAD"])
+                .run()
+                .unwrap()
+                .status
+                .success()
+        );
+        let written = Hardened::git_into(&git_dir, &into, &["checkout-index", "--all", "--force"])
             .run()
             .unwrap();
-        assert!(reset.status.success());
+        assert!(written.status.success(), "{asked:?}");
         assert_eq!(
-            fs::read_to_string(&file).unwrap(),
+            fs::read_to_string(into.join("SKILL.md")).unwrap(),
             "one\ntwo\n",
-            "{asked:?} reached the checkout"
+            "{asked:?} reached the content kendex reads"
+        );
+    }
+}
+
+/// The settings go no further than that. A call that inspects a repository
+/// somebody owns asks what that repository thinks, and its own line-ending
+/// rule is part of the answer.
+///
+/// The working copy here is the one that rule produces, written by an
+/// ordinary checkout rather than by hand, and then touched so the index's
+/// stat cache no longer vouches for it and `status` has to hash the file
+/// again. Reading it under the repository's own rule finds no change.
+/// Reading it with the conversion forced off finds a modification nobody
+/// made, and `author::preflight` then refuses to submit a tree that is in
+/// fact clean. `--no-optional-locks` is what `author::status` passes, so
+/// the read cannot quietly refresh the index and hide the question.
+///
+/// Only the `core.autocrlf` door is exercised, and that is the whole of
+/// it: a repository that marks its files as text is normalised on the way
+/// in whatever the configuration says, so the conversion settings cannot
+/// change what `status` sees there. Where they can is a repository that
+/// ships no attributes and leans on `core.autocrlf`, which is the Git for
+/// Windows default and what an author's own checkout looks like.
+#[test]
+fn a_status_read_honours_the_line_endings_the_repository_asked_for() {
+    let (attributes, asked) = ASKING[0];
+    {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path();
+        asking_repository(repo, attributes, asked);
+        let file = repo.join("SKILL.md");
+
+        fs::remove_file(&file).unwrap();
+        let restored = Hardened::git(&["checkout", "--", "SKILL.md"], Some(repo))
+            .run()
+            .unwrap();
+        assert!(restored.status.success(), "{asked:?}");
+        assert_eq!(
+            fs::read(&file).unwrap(),
+            b"one\r\ntwo\r\n",
+            "{asked:?}: the rule was ignored"
+        );
+        // The index's stat cache vouches for the file git just wrote, and a
+        // read that trusts it never looks at the bytes. Moving the
+        // modification time off what the index recorded is what makes
+        // `status` hash the file again, which is the moment the conversion
+        // rule decides the answer.
+        let handle = fs::OpenOptions::new().write(true).open(&file).unwrap();
+        handle
+            .set_times(fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH))
+            .unwrap();
+
+        let status = Hardened::git_in(repo, &["--no-optional-locks", "status", "--porcelain"])
+            .run()
+            .unwrap();
+        assert!(status.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&status.stdout),
+            "",
+            "{asked:?}: a working copy the repository itself wrote reads as modified"
         );
     }
 }

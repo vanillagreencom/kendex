@@ -52,6 +52,13 @@ impl Hardened {
     /// Both ends are pinned on the command line, where they outrank any
     /// `core.worktree` in the mirror, so the write lands in the directory
     /// named here and nowhere else.
+    ///
+    /// The one call that writes a working tree kendex then reads, so the
+    /// one that settles line endings — `super::MATERIALISING` says why it
+    /// goes here and nowhere else. Every other constructor above is either
+    /// an inspection or has no working tree to write: `git_bare` attaches
+    /// none, and the only clone kendex makes is `--mirror`, which is bare
+    /// for the same reason. Conversion happens where git writes files.
     pub fn git_into(git_dir: &Path, work_tree: &Path, args: &[&str]) -> Hardened {
         let mut pinned = vec![
             OsString::from("--git-dir"),
@@ -60,7 +67,7 @@ impl Hardened {
             work_tree.as_os_str().to_owned(),
         ];
         pinned.extend(owned(args));
-        let mut hardened = Hardened::git_command(pinned, Some(work_tree));
+        let mut hardened = Hardened::git_materialising_command(pinned, Some(work_tree));
         hardened.label = format!("git {}", args.join(" "));
         hardened
     }

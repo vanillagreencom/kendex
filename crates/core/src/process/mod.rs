@@ -55,30 +55,37 @@ const GIT_REDIRECTS: &[&str] = &[
 /// gitconfig — the host's, the user's, or one a downloaded repository ships
 /// — can reopen it.
 ///
-/// `protocol.ext.allow`: the `ext::` transport runs a shell command named in
-/// the URL, and a manifest's `repo` string is what reaches `git clone`.
+/// The `ext::` transport runs a shell command named in the URL, and a
+/// manifest's `repo` string is what reaches `git clone`.
+const PINNED: &[&str] = &["protocol.ext.allow=never"];
+
+/// Settled on top of [`PINNED`], for the one call that writes catalog
+/// content this machine then reads.
 ///
-/// `core.autocrlf` and `core.eol`: what a catalog checks out must not
-/// depend on which host checked it out. Both settings tell git to rewrite
-/// line endings on the way out of the object store, and Git for Windows'
-/// installer writes `autocrlf=true` into the system config — which is what
-/// the GitHub Actions Windows runner carries — so the same catalog gave
-/// one set of bytes there and another on Linux. Pinned here, every host
-/// agrees.
+/// What a catalog checks out must not depend on which host checked it out.
+/// Both settings tell git to rewrite line endings as it writes a working
+/// tree, and Git for Windows' installer puts `autocrlf=true` in the system
+/// config — which is what the GitHub Actions Windows runner carries — so
+/// the same catalog gave one set of bytes there and another on Linux.
+/// Settled here, every host agrees. Both rather than one, because
+/// `core.eol` decides for a repository that marks its files as text and
+/// `core.autocrlf` for one that does not.
 ///
 /// What that leaves is what the repository declares for itself: a
 /// `.gitattributes` is an attribute and outranks any configuration, so a
 /// catalog committing `* text eol=crlf` still gets CRLF. It gets it
 /// equally on every host, which is the property kendex needs; the claim is
-/// deliberately this narrow rather than "the bytes the blob holds". Both
-/// settings are pinned rather than one, because `core.eol` decides for a
-/// repository that marks its files as text and `core.autocrlf` for one
-/// that does not.
-const PINNED: &[&str] = &[
-    "protocol.ext.allow=never",
-    "core.autocrlf=false",
-    "core.eol=lf",
-];
+/// deliberately this narrow rather than "the bytes the blob holds".
+///
+/// It goes nowhere else, and the reach is the point rather than an
+/// oversight. A call that only *inspects* a repository is asking what that
+/// repository thinks, and its own normalisation is part of the answer:
+/// `git status` compares the working tree against the index through it, so
+/// forcing the conversion off there reports a line-ending-only change
+/// nobody made and the submit preflight refuses a clean tree. That is a
+/// repository the person in front of kendex owns, not one kendex
+/// downloaded.
+const MATERIALISING: &[&str] = &["core.autocrlf=false", "core.eol=lf"];
 
 mod programs;
 
@@ -161,7 +168,18 @@ impl Hardened {
     }
 
     fn git_command(args: Vec<OsString>, cwd: Option<&Path>) -> Hardened {
-        let settled = PINNED
+        Hardened::git_settled(PINNED, args, cwd)
+    }
+
+    /// The same, for the call that writes catalog content — see
+    /// [`MATERIALISING`].
+    fn git_materialising_command(args: Vec<OsString>, cwd: Option<&Path>) -> Hardened {
+        let settled: Vec<&str> = PINNED.iter().chain(MATERIALISING).copied().collect();
+        Hardened::git_settled(&settled, args, cwd)
+    }
+
+    fn git_settled(settings: &[&str], args: Vec<OsString>, cwd: Option<&Path>) -> Hardened {
+        let settled = settings
             .iter()
             .flat_map(|setting| [OsString::from("-c"), OsString::from(*setting)]);
         let mut hardened = Hardened::new("git", settled.chain(args).collect());
