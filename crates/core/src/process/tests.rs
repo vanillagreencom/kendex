@@ -29,10 +29,63 @@ fn git_runs_without_redirecting_environment_and_without_prompts() {
             .ends_with("-oBatchMode=yes")
     );
     let args: Vec<_> = hardened.command.get_args().collect();
-    assert_eq!(
-        &args[..2],
-        [OsStr::new("-c"), OsStr::new("protocol.ext.allow=never")]
-    );
+    let settled: Vec<_> = PINNED
+        .iter()
+        .flat_map(|setting| [OsStr::new("-c"), OsStr::new(setting)])
+        .collect();
+    assert_eq!(&args[..settled.len()], settled.as_slice());
+}
+
+/// Git converts line endings on checkout when the config it reads says to,
+/// and a converted file is no longer the content the catalog offered. The
+/// host that asks for this by default is Windows, but neither setting is
+/// Windows-only, so the arrangement that host makes is built here instead
+/// — a repository whose own config asks for the conversion, which outranks
+/// everything but the command line.
+#[test]
+fn a_repository_asking_for_line_ending_conversion_is_still_checked_out_as_committed() {
+    for asked in [
+        // What Git for Windows writes into the system config.
+        vec!["config", "core.autocrlf", "true"],
+        // The other door: `core.eol` decides for a repository that marks
+        // its own files as text.
+        vec!["config", "core.eol", "crlf"],
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path();
+        let file = repo.join("SKILL.md");
+        fs::write(repo.join(".gitattributes"), "* text\n").unwrap();
+        fs::write(&file, "one\ntwo\n").unwrap();
+        for args in [
+            vec!["init", "--quiet", "-b", "main"],
+            asked.clone(),
+            vec!["add", "-A"],
+            vec![
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "--quiet",
+                "-m",
+                "one",
+            ],
+        ] {
+            let run = Hardened::git(&args, Some(repo)).run().unwrap();
+            assert!(run.status.success(), "git {args:?}");
+        }
+        fs::remove_file(&file).unwrap();
+
+        let reset = Hardened::git(&["reset", "--hard", "HEAD", "--quiet"], Some(repo))
+            .run()
+            .unwrap();
+        assert!(reset.status.success());
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            "one\ntwo\n",
+            "{asked:?} reached the checkout"
+        );
+    }
 }
 
 /// A user whose catalog needs a specific key sets `GIT_SSH_COMMAND`.

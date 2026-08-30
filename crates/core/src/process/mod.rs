@@ -51,6 +51,32 @@ const GIT_REDIRECTS: &[&str] = &[
     "GIT_NAMESPACE",
 ];
 
+/// Configuration every git call settles on its own command line, where no
+/// gitconfig — the host's, the user's, or one a downloaded repository ships
+/// — can reopen it.
+///
+/// `protocol.ext.allow`: the `ext::` transport runs a shell command named in
+/// the URL, and a manifest's `repo` string is what reaches `git clone`.
+///
+/// `core.autocrlf` and `core.eol`: a checkout hands kendex the content a
+/// catalog offered, and it has to be the same content on every host — the
+/// bytes are what a package installs and what a comparison is against. Git
+/// rewrites line endings on the way out of the object store when either of
+/// these says to, so on a host that says so every text file gains a
+/// carriage return per line and stops being what the repository holds. Git
+/// for Windows' installer writes `core.autocrlf=true` into the system
+/// config, which is what the GitHub Actions Windows runner carries;
+/// `core.eol` decides the same question for a repository whose own
+/// `.gitattributes` marks files as text, and defaults to the platform's
+/// ending. Both are shut here rather than per call site because the
+/// conversion belongs to every checkout, not to one command, and shutting
+/// one alone leaves the other door open.
+const PINNED: &[&str] = &[
+    "protocol.ext.allow=never",
+    "core.autocrlf=false",
+    "core.eol=lf",
+];
+
 mod programs;
 
 pub struct Hardened {
@@ -132,19 +158,10 @@ impl Hardened {
     }
 
     fn git_command(args: Vec<OsString>, cwd: Option<&Path>) -> Hardened {
-        // The `ext::` transport runs a shell command named in the URL. A
-        // manifest's `repo` string is what reaches `git clone`, so it is
-        // shut on the command line, where a gitconfig cannot reopen it.
-        let mut hardened = Hardened::new(
-            "git",
-            [
-                OsString::from("-c"),
-                OsString::from("protocol.ext.allow=never"),
-            ]
-            .into_iter()
-            .chain(args)
-            .collect(),
-        );
+        let settled = PINNED
+            .iter()
+            .flat_map(|setting| [OsString::from("-c"), OsString::from(*setting)]);
+        let mut hardened = Hardened::new("git", settled.chain(args).collect());
         hardened.scrub_git_redirects();
         let inherited = std::env::var("GIT_SSH_COMMAND").ok();
         hardened

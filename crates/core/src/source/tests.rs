@@ -189,7 +189,19 @@ fn an_explicit_catalog_does_not_list_names_it_cannot_install() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     std::fs::write(root.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
-    for dir in ["ok", "pay\u{202e}gnp.exe", "-rf", "nul"] {
+    // `nul` is a name Win32 resolves to a device, so on Windows the
+    // directory cannot be made and no such entry is ever read back off
+    // disk — there the platform, not kendex, is what keeps the row from
+    // being drawn. What kendex owes on both hosts is that the name is
+    // refused when it is asked for, and the `find_item` loop below still
+    // holds it to that: `names::item_problem` judges the name before
+    // anything looks at a directory, and `names.rs` covers that rule
+    // directly.
+    let mut names = vec!["ok", "pay\u{202e}gnp.exe", "-rf"];
+    if !cfg!(windows) {
+        names.push("nul");
+    }
+    for dir in names {
         std::fs::create_dir_all(root.join("skills").join(dir)).unwrap();
         std::fs::write(root.join("skills").join(dir).join("SKILL.md"), "body").unwrap();
     }

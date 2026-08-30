@@ -213,12 +213,22 @@ mod tests {
     /// A `..` under a directory that does not exist is resolved by
     /// nothing, so the landing still holds it. Read lexically it is inside
     /// the root; followed it is not, and the refusal is what says so.
+    ///
+    /// The root is reduced, because that is the spelling `resolved_dir`
+    /// answers in and the setup has to meet it. The tail is joined a
+    /// segment at a time rather than as one `absent/../../elsewhere/x`:
+    /// `/` is a separator to Windows only outside the verbatim form, and
+    /// `paths::canonical` reduces per path, so a root it cannot reduce
+    /// would take the tail as a single filename and this would stop
+    /// testing what it names.
     #[test]
     #[allow(clippy::unwrap_used)]
     fn a_landing_that_still_walks_back_is_refused() {
         let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path().canonicalize().unwrap();
-        let target = root.join("absent/../../elsewhere/x");
+        let root = crate::paths::canonical(tmp.path()).unwrap();
+        let target = ["absent", "..", "..", "elsewhere", "x"]
+            .iter()
+            .fold(root.clone(), |path, segment| path.join(segment));
         assert!(target.starts_with(&root), "it reads as inside the root");
         assert!(matches!(
             landed_within(Some(&root), Outside::Theirs, &target),
