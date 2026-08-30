@@ -1,6 +1,10 @@
 //! Putting the gate in place, taking it away, and reporting on it — the
-//! verbs, the migration off the retired arming, and what `kendex check`
-//! says about a repository in each state.
+//! verbs, and what `kendex check` says about a repository in each state.
+//!
+//! One verdict, one voice. `kendex guard check` and the commit-hook line of
+//! `kendex check` are the same call to the package's `--check`, so what is
+//! asserted here is relay: the package's own sentence and its own exit
+//! code, not a kendex paraphrase of either.
 
 use crate::test_util::source_path;
 
@@ -31,6 +35,9 @@ fn disarming_leaves_a_pre_existing_hook_behind() {
 
 /// `kendex check` folds in the installer's own armed verdict: unarmed is
 /// drift the reader can act on, armed says nothing.
+///
+/// The sentence is the package's, word for word — `NOT armed`, in its
+/// capitals — because kendex composes none of it.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn check_reports_whether_the_shims_are_armed() {
@@ -46,7 +53,12 @@ fn check_reports_whether_the_shims_are_armed() {
         "{}",
         said(&unarmed)
     );
-    assert!(said(&unarmed).contains("not armed"), "{}", said(&unarmed));
+    assert!(
+        said(&unarmed).contains("growth-guards git hooks:"),
+        "the package's own words did not come through: {}",
+        said(&unarmed)
+    );
+    assert!(said(&unarmed).contains("NOT armed"), "{}", said(&unarmed));
 
     run(home, &root, "kendex", &["guard", "install"]);
     let armed = run(home, &root, "kendex", &["check"]);
@@ -94,12 +106,10 @@ fn a_declared_project_outside_a_repository_has_no_hook_verdict() {
 /// `.git/config` and says nothing about repositories, so `Repo::probe`
 /// reports could-not-tell before the hooks path is ever asked for.
 ///
-/// `hooks_redirected`'s own refusal to read any non-1 status as "unset" is
-/// defence behind that, and deliberately not pinned here: every way to
-/// break the config breaks the probe first, so an isolated trigger would
-/// have to be a race. It is written to fail closed because the cost of
-/// being wrong is a clean armed verdict about a repository whose effective
-/// hooks path was never established.
+/// The probe is what stands between a scope and the package's `--check`,
+/// so a repository it cannot read never reaches the installer at all: the
+/// report says the check could not be taken, with no remedy attached to a
+/// state nobody has diagnosed.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_configuration_git_cannot_read_is_not_an_armed_repository() {
@@ -166,267 +176,6 @@ fn check_is_silent_about_an_undeclared_package_that_armed_nothing() {
     assert!(!said(&out).contains("commit hooks"), "{}", said(&out));
 }
 
-/// `kendex check` reads the hook files and never runs anything out of the
-/// repository — a clone's status must not execute its author's code.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn check_reads_the_hooks_and_runs_nothing() {
-    use std::os::unix::fs::PermissionsExt;
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
-    let root = repo(home);
-    install_package(home, &root, &["growth-guards"]);
-
-    // Unarmed, with the package installed: reported, read natively.
-    let out = run(home, &root, "kendex", &["check"]);
-    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    assert!(said(&out).contains("not armed"), "{}", said(&out));
-
-    // Armed for real, then the installer swapped for one that proves
-    // whether anything ran it. Armed is the interesting case: that is when
-    // a check tempted to ask the package would ask.
-    arm_by_hand(&root);
-    let marker = home.join("checker-ran");
-    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
-    std::fs::write(
-        &installer,
-        format!("#!/usr/bin/env bash\ntouch {}\nexit 0\n", marker.display()),
-    )
-    .unwrap();
-    std::fs::set_permissions(&installer, std::fs::Permissions::from_mode(0o755)).unwrap();
-
-    let out = run(home, &root, "kendex", &["check"]);
-    assert!(!said(&out).contains("commit hooks"), "{}", said(&out));
-    assert!(!marker.exists(), "check ran the repository's script");
-}
-
-/// Shims that outlived their package are named, file by file.
-///
-/// The state the install record cannot see: the package is in no lock and
-/// under no skills directory, so the drift report has nothing to compare
-/// and `guard check` has no installer to ask — while every commit execs a
-/// script that is gone. The marker in the hook files is the whole test.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn check_names_the_shims_a_removed_package_left_behind() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
-    let root = repo(home);
-    std::fs::write(root.join("kendex.toml"), "schema = 6\n").unwrap();
-    install_package_undeclared(&root, &["growth-guards"]);
-    arm_by_hand(&root);
-    std::fs::remove_dir_all(root.join(".agents/skills/growth-guards")).unwrap();
-
-    // The state is real: nothing can be committed here.
-    std::fs::write(root.join("b.txt"), "later\n").unwrap();
-    git_ok(home, &root, &["add", "-A"]);
-    let blocked = crate::git(home, &root, &["commit", "-m", "feat: stranded"]);
-    assert!(!blocked.status.success(), "{}", said(&blocked));
-
-    let out = run(home, &root, "kendex", &["check"]);
-    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    let text = said(&out);
-    assert!(text.contains("commit hooks"), "{text}");
-    assert!(
-        text.contains("installed in no project of this repository"),
-        "{text}"
-    );
-    let hooks = root.canonicalize().unwrap().join(".git/hooks");
-    for file in ["pre-commit", "commit-msg", "kendex-guards"] {
-        assert!(
-            text.contains(&hooks.join(file).display().to_string()),
-            "{file} was not named:\n{text}"
-        );
-    }
-    assert!(
-        !text.contains("guard install"),
-        "a leftover was reported as an unarmed install:\n{text}"
-    );
-
-    // With hooks redirected git reads none of these, so no commit fails
-    // and nothing is claimed about one.
-    git_ok(home, &root, &["config", "core.hooksPath", ".husky"]);
-    let out = run(home, &root, "kendex", &["check"]);
-    assert!(
-        !said(&out).contains("commit hooks"),
-        "a redirected repository was reported as failing every commit:\n{}",
-        said(&out)
-    );
-
-    // A file of the helper's name beside hooks that carry no marker execs
-    // on no commit: the installer leaves such a file alone, and so does
-    // the report.
-    git_ok(home, &root, &["config", "--unset", "core.hooksPath"]);
-    for lane in ["pre-commit", "commit-msg"] {
-        std::fs::write(root.join(".git/hooks").join(lane), "#!/bin/sh\nexit 0\n").unwrap();
-    }
-    assert!(root.join(".git/hooks/kendex-guards").is_file());
-    let out = run(home, &root, "kendex", &["check"]);
-    assert!(
-        !said(&out).contains("commit hooks"),
-        "a lone helper with unmarked hooks was reported as stranded:\n{}",
-        said(&out)
-    );
-
-    // A hook that MENTIONS the marker mid-line is a consumer's own comment.
-    // The installer's owned-line rule is the marker closing a line, so its
-    // removal would leave this file exactly as it is — and advice to strip
-    // it would eat somebody else's line.
-    for lane in ["pre-commit", "commit-msg"] {
-        std::fs::write(
-            root.join(".git/hooks").join(lane),
-            "#!/bin/sh\n# lines ending in # kendex-guards-hook belong to kendex\nexit 0\n",
-        )
-        .unwrap();
-    }
-    let out = run(home, &root, "kendex", &["check"]);
-    assert!(
-        !said(&out).contains("commit hooks"),
-        "a hook that merely mentions the marker was reported as stranded:\n{}",
-        said(&out)
-    );
-
-    // Owned lanes again — the disabled spelling, which the installer still
-    // owns because the marker closes the line — beside a file of the
-    // helper's name carrying no helper marker. The uninstaller refuses to
-    // remove that file, so the lanes are named and it is not.
-    for lane in ["pre-commit", "commit-msg"] {
-        std::fs::write(
-            root.join(".git/hooks").join(lane),
-            format!("#!/bin/sh\n# \"$kendex_gg_h\" {lane} || exit $?; # kendex-guards-hook\n"),
-        )
-        .unwrap();
-    }
-    let helper = hooks.join("kendex-guards");
-    std::fs::write(&helper, "#!/bin/sh\necho somebody else's\n").unwrap();
-    let out = run(home, &root, "kendex", &["check"]);
-    let text = said(&out);
-    assert!(text.contains("commit hooks"), "{text}");
-    for lane in ["pre-commit", "commit-msg"] {
-        assert!(
-            text.contains(&hooks.join(lane).display().to_string()),
-            "{lane} was not named:\n{text}"
-        );
-    }
-    assert!(
-        !text.contains(&helper.display().to_string()),
-        "a foreign file of the helper's name was named for deletion:\n{text}"
-    );
-}
-
-/// The ownership markers kendex reads are the installer's own.
-///
-/// Three constants in two languages, and this branch already lost one of
-/// them: the helper marker was dropped from the crate on the reasoning that
-/// the helper's fixed name identified it, which is not the predicate the
-/// uninstaller uses — it requires the marker, and preserves a foreign file
-/// of that name. So the values come out of the script rather than beside
-/// it.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn the_ownership_markers_match_the_installers_own() {
-    let installer = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../skills/growth-guards/scripts/install-git-hooks")
-        .canonicalize()
-        .unwrap();
-    let text = std::fs::read_to_string(&installer).unwrap();
-    let declared = |name: &str| -> String {
-        let prefix = format!("{name}=\"");
-        text.lines()
-            .find_map(|line| line.strip_prefix(&prefix))
-            .and_then(|rest| rest.strip_suffix('"'))
-            .unwrap_or_else(|| panic!("the installer declares {name} as one quoted string"))
-            .to_owned()
-    };
-    for (name, ours) in [
-        ("HOOK_SENTINEL", kendex_core::guard::MARKER),
-        ("CREATED_MARKER", kendex_core::guard::CREATED_MARKER),
-        ("HELPER_MARKER", kendex_core::guard::HELPER_MARKER),
-    ] {
-        assert_eq!(
-            declared(name),
-            ours,
-            "the installer's {name} and the one kendex reads by have drifted"
-        );
-    }
-}
-
-/// One repository, two kendex projects, one hooks directory. The project
-/// without the package is gated by the one that armed it — not stranded —
-/// and the advice to delete the shims would have disarmed its neighbour.
-///
-/// The repository root is itself a project, which is the ordinary shape: a
-/// `.claude/CLAUDE.md` at the top marks it as one. A search that stops at
-/// the first project it meets stops there and never sees `apps/api`.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_neighbouring_project_carrying_the_package_is_not_a_leftover() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
-    std::fs::create_dir_all(home.join(".claude")).unwrap();
-    let root = home.join("mono");
-    let api = root.join("apps/api");
-    let web = root.join("apps/web");
-    std::fs::create_dir_all(root.join(".claude")).unwrap();
-    std::fs::write(root.join(".claude/CLAUDE.md"), "the monorepo\n").unwrap();
-    std::fs::create_dir_all(api.join(".agents")).unwrap();
-    std::fs::create_dir_all(web.join(".agents")).unwrap();
-    git_ok(home, &root, &["init", "--quiet", "-b", "main"]);
-    git_ok(home, &root, &["config", "user.email", "t@t"]);
-    git_ok(home, &root, &["config", "user.name", "t"]);
-    std::fs::write(root.join("a.txt"), "hi\n").unwrap();
-    git_ok(home, &root, &["add", "-A"]);
-    git_ok(home, &root, &["commit", "--quiet", "-m", "feat: base"]);
-    install_package(home, &api, &["growth-guards"]);
-    let armed = run(home, &api, "kendex", &["guard", "install"]);
-    assert!(armed.status.success(), "{}", said(&armed));
-    std::fs::write(web.join("kendex.toml"), "schema = 6\n").unwrap();
-
-    for from in [&web, &root] {
-        let out = run(home, from, "kendex", &["check"]);
-        assert!(
-            !said(&out).contains("commit hooks"),
-            "a gated repository was reported as stranded from {}:\n{}",
-            from.display(),
-            said(&out)
-        );
-        assert_eq!(out.status.code(), Some(0), "{}", said(&out));
-    }
-
-    // The control: a commit from the project without the package runs the
-    // neighbour's chain and passes.
-    std::fs::write(web.join("b.txt"), "fine\n").unwrap();
-    git_ok(home, &web, &["add", "-A"]);
-    git_ok(home, &web, &["commit", "--quiet", "-m", "feat: from web"]);
-}
-
-/// Arm through the package's own installer.
-///
-/// Not a hand-written approximation: the check compares against the exact
-/// bytes that installer writes, so a fixture that guesses at them is
-/// testing the guess. This is the same call `kendex guard install` makes.
-#[allow(clippy::unwrap_used)]
-fn arm_by_hand(root: &std::path::Path) {
-    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
-    let out = std::process::Command::new(&installer)
-        .args(["--repo", &root.to_string_lossy()])
-        // Run from the fixture: git's own environment reaches this child,
-        // and a test binary invoked from another checkout would otherwise
-        // hand it that repository.
-        .current_dir(root)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "install-git-hooks: {}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
 /// `kendex guard check` is the package's own `--check`, relayed.
 ///
 /// The verb exists so a person can have the full vocabulary — armed,
@@ -458,14 +207,11 @@ fn the_check_verb_relays_the_packages_own_verdict() {
 
 /// A hook git will not run is not an armed repository.
 ///
-/// The marker says this package armed the file; the execute bit says git
-/// will execute it. Git skips a hook without one in silence, so a marker in
-/// a file it ignores describes a gate that is not there — and every reader
-/// of the marker stands aside for it.
-///
-/// Executability is git's own rule about hook files, not this package's
-/// about their contents, which is why asking it is not the grammar this
-/// crate deliberately no longer has.
+/// The guard line says this package armed the file; the execute bit says
+/// git will execute it. Git skips a hook without one in silence, so a
+/// guard line in a file it ignores describes a gate that is not there.
+/// The package's `--check` asks both, and `kendex check` asks nothing:
+/// it prints what came back.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hook_git_will_not_run_is_not_armed() {
@@ -494,44 +240,6 @@ fn a_hook_git_will_not_run_is_not_armed() {
     assert!(
         out.contains("commit hooks"),
         "a hook git will not run still read armed: {out}"
-    );
-}
-
-/// The search roots kendex walks are the ones the package walks.
-///
-/// Two lists of the same directories in two languages, and the last pair of
-/// those drifted for nine review rounds. This one survives because the
-/// verbs have to find the copy an armed repository runs: a kendex that
-/// looked somewhere the package does not would report on a package no
-/// commit ever reaches.
-///
-/// It reads `lib/skill-roots.sh`, which is the shell side's only definition
-/// — the installer, the helper baked into `.git/hooks` and the pre-commit
-/// chain all take it from there. When there were four, this pin read one of
-/// them and the other three went stale behind it.
-///
-/// Token equality, not a parse. The shell list is one space-separated
-/// string by construction, and comparing them as sets would pass a pair
-/// that searched the same places in a different order.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn the_search_roots_match_the_installers_own_list() {
-    let definition = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../skills/growth-guards/scripts/lib/skill-roots.sh")
-        .canonicalize()
-        .unwrap();
-    let text = std::fs::read_to_string(&definition).unwrap();
-    let line = text
-        .lines()
-        .find_map(|line| line.strip_prefix("GG_SKILL_ROOTS=\""))
-        .and_then(|rest| rest.strip_suffix('"'))
-        .expect("the package declares GG_SKILL_ROOTS as one quoted string");
-    let theirs: Vec<&str> = line.split_whitespace().collect();
-    assert_eq!(
-        theirs,
-        kendex_core::guard::SEARCH_ROOTS,
-        "the installer searches {theirs:?} and kendex searches {:?}",
-        kendex_core::guard::SEARCH_ROOTS
     );
 }
 
@@ -622,131 +330,61 @@ fn each_of_the_packages_streams_is_relayed_on_its_own() {
     );
 }
 
-/// A copy in a SIBLING work tree gates this one, and is not a leftover.
+/// A repository the package calls foreign is reported in the package's own
+/// sentence, under the package's own exit code.
 ///
-/// `.git/hooks` lives in the common git directory, so one copy of it runs
-/// for every work tree attached to that directory — not just this one and
-/// the main checkout. A search that looks only at those two calls the
-/// shared shims stranded from any third work tree and tells the reader to
-/// delete files the sibling's copy is still using, on a repository where
-/// every commit is gated perfectly well.
+/// The whole delegation, end to end. kendex used to answer this from the
+/// hook bytes with a grammar of its own, and the two grammars disagreed
+/// about which files count as this package's for as long as both existed.
+/// So the helper here is one the installer refuses to own — an executable
+/// file of the right name carrying none of its marker, which is exactly
+/// what the uninstaller preserves and the checker declines to vouch for —
+/// and what `kendex check` prints is the line `install-git-hooks --check`
+/// wrote about it.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_copy_in_a_sibling_work_tree_is_not_a_leftover() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
-    let root = repo(home);
-    git_ok(home, &root, &["worktree", "add", "--quiet", "../armer"]);
-    git_ok(home, &root, &["worktree", "add", "--quiet", "../reader"]);
-    let armer = home.join("armer");
-    let reader = home.join("reader");
-
-    // The package is installed and armed in one linked work tree. Neither
-    // the main checkout nor the other work tree carries a copy.
-    std::fs::create_dir_all(armer.join(".agents")).unwrap();
-    install_package(home, &armer, &["growth-guards"]);
-    let armed = run(home, &armer, "kendex", &["guard", "install"]);
-    assert!(armed.status.success(), "{}", said(&armed));
-
-    // The reader is a project of its own with no copy and no record of one
-    // — everything the diagnosis sees short of the sibling.
-    std::fs::create_dir_all(reader.join(".agents")).unwrap();
-    std::fs::write(reader.join("kendex.toml"), "schema = 6\n").unwrap();
-    assert!(!root.join(".agents/skills/growth-guards").exists());
-    assert!(!reader.join(".agents/skills/growth-guards").exists());
-
-    let out = run(home, &reader, "kendex", &["check"]);
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "the sibling's copy went unfound: {}",
-        said(&out)
-    );
-    assert!(!said(&out).contains("commit hooks"), "{}", said(&out));
-
-    // The must-fail control: with every copy gone the shims really are
-    // stranded, and the same reader says so by file. Every skills root and
-    // links as well as trees, because an install fans out to each tool
-    // directory the work tree has and links the rest at the first.
-    for base in kendex_core::guard::SEARCH_ROOTS {
-        let copy = armer.join(base).join(kendex_core::guard::SKILL);
-        match copy.is_symlink() {
-            true => std::fs::remove_file(&copy).unwrap(),
-            false if copy.exists() => std::fs::remove_dir_all(&copy).unwrap(),
-            false => {}
-        }
-    }
-    let out = run(home, &reader, "kendex", &["check"]);
-    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    let text = said(&out);
-    assert!(
-        text.contains("installed in no project of this repository"),
-        "{text}"
-    );
-    let hooks = root.canonicalize().unwrap().join(".git/hooks");
-    for file in ["pre-commit", "commit-msg", "kendex-guards"] {
-        assert!(
-            text.contains(&hooks.join(file).display().to_string()),
-            "{file} was not named:\n{text}"
-        );
-    }
-}
-
-/// A search domain that could not be read in full is a verdict that could
-/// not be taken, never a leftover.
-///
-/// "No copy anywhere" is the premise behind advice to delete a
-/// repository's hook files. A directory the walk cannot open holds an
-/// unknown number of copies, so folding it into "nothing here" makes the
-/// destructive half of the diagnosis fire on a repository nobody has
-/// looked at.
-#[cfg(unix)]
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_search_domain_it_cannot_read_is_could_not_check_not_a_leftover() {
+fn check_relays_the_packages_words_about_a_foreign_hook() {
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
-    // Resolved, like the hooks path the two leftover cases below build:
-    // the report names the directory as the walk resolved it, and on a
-    // system where the temp root is reached through a symlink the
-    // unresolved spelling is a different string.
-    let root = repo(home).canonicalize().unwrap();
-    std::fs::write(root.join("kendex.toml"), "schema = 6\n").unwrap();
-    install_package_undeclared(&root, &["growth-guards"]);
-    arm_by_hand(&root);
-    std::fs::remove_dir_all(root.join(".agents/skills/growth-guards")).unwrap();
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
+    let armed = run(home, &root, "kendex", &["guard", "install"]);
+    assert!(armed.status.success(), "{}", said(&armed));
 
-    // The control: with the whole tree readable, this is the drift verdict
-    // that names the files to delete.
-    let out = said(&run(home, &root, "kendex", &["check"]));
+    // The control: armed is the silent verdict, exit 0.
+    let clean = run(home, &root, "kendex", &["check"]);
+    assert_eq!(clean.status.code(), Some(0), "{}", said(&clean));
+    assert!(!said(&clean).contains("commit hooks"), "{}", said(&clean));
+
+    // Somebody else's file, of the helper's name. The lanes still delegate
+    // to it, so this is a repository whose commits run a script the package
+    // never wrote.
+    let helper = root.join(".git/hooks/kendex-guards");
+    std::fs::write(&helper, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    // What the package says, asked directly.
+    let theirs = run(home, &root, "kendex", &["guard", "check"]);
+    assert_eq!(theirs.status.code(), Some(1), "{}", said(&theirs));
+    let sentence = String::from_utf8_lossy(&theirs.stdout).trim().to_owned();
     assert!(
-        out.contains("installed in no project of this repository"),
-        "{out}"
+        sentence.contains("was not written by this installer"),
+        "{sentence}"
     );
 
-    // One directory of the domain, unopenable. Nothing else changes.
-    let locked = root.join("locked");
-    std::fs::create_dir(&locked).unwrap();
-    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
-    if std::fs::read_dir(&locked).is_ok() {
-        // Permission bits do not stop this process — running as root, where
-        // there is no unreadable directory to build.
-        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
-        return;
-    }
+    // And the same words, and the same verdict, out of `kendex check`.
     let out = run(home, &root, "kendex", &["check"]);
-    let text = said(&out);
-    let code = out.status.code();
-    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
-
-    assert_eq!(code, Some(2), "could-not-check was not reported: {text}");
-    assert!(
-        !text.contains("installed in no project of this repository"),
-        "an unreadable directory read as a repository with no copy:\n{text}"
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "the package's exit was not relayed: {}",
+        said(&out)
     );
+    let text = said(&out);
+    assert!(text.contains("commit hooks"), "{text}");
     assert!(
-        text.contains(&locked.display().to_string()),
-        "the directory it could not read is not named:\n{text}"
+        text.contains("was not written by this installer"),
+        "the package's own sentence was not relayed:\n{text}\nit said: {sentence}"
     );
 }

@@ -1,10 +1,9 @@
-//! The repository a guard verb is standing in, and where git looks for its
-//! hooks.
+//! The repository a guard verb is standing in.
 //!
 //! Small on purpose, and smaller than it was. kendex arms hooks through the
 //! growth-guards package and no longer reasons about them: it needs to know
-//! which repository it is in, where the package's scripts should be run
-//! from, and where the hook files sit. What "armed" means belongs to the
+//! which repository it is in and where the package's scripts should be run
+//! from. Where the hook files sit, and what "armed" means, belong to the
 //! package.
 
 use std::path::{Path, PathBuf};
@@ -191,101 +190,6 @@ impl Repo {
                     dir.display(),
                     output.status.code(),
                     complaint.trim()
-                ),
-            )),
-        }
-    }
-
-    /// The hooks directory git reads with no redirect in the way.
-    pub fn default_hooks_dir(&self) -> PathBuf {
-        self.common_dir.join("hooks")
-    }
-
-    /// Every work tree attached to this repository's common git directory,
-    /// canonical and deduplicated, in git's own order — the main checkout
-    /// first, then the linked ones.
-    ///
-    /// The domain of "does this repository carry the package". The hooks
-    /// directory lives in the common git dir, so one copy of it gates every
-    /// work tree attached to that dir, and a sibling work tree is reachable
-    /// from no path under this one. git is the only thing that knows the
-    /// whole set.
-    ///
-    /// `-z` rather than plain porcelain, because a path is bytes. The plain
-    /// format writes one per line, so a checkout whose name contains a
-    /// newline — legal on unix, and a name a person can create — becomes two
-    /// records naming two directories that do not exist. `-z` terminates
-    /// each field with NUL and leaves the bytes alone.
-    ///
-    /// A registration whose directory is gone is dropped rather than
-    /// reported: git prunes those lazily, and a work tree that is not there
-    /// holds no copy of anything. That is a definite answer, unlike a
-    /// directory that is there and cannot be read, which is why only the
-    /// first is silent.
-    pub fn worktrees(&self) -> Result<Vec<PathBuf>> {
-        let output = Hardened::git(
-            &["worktree", "list", "--porcelain", "-z"],
-            Some(&self.worktree),
-        )
-        .run()?;
-        if !output.status.success() {
-            return Err(guard_err(
-                "hooks",
-                format!(
-                    "could not list the work trees of {} (git exited {:?}): {}",
-                    self.worktree.display(),
-                    output.status.code(),
-                    String::from_utf8_lossy(&output.stderr).trim()
-                ),
-            ));
-        }
-        let mut trees = Vec::new();
-        for field in output.stdout.split(|byte| *byte == b'\0') {
-            let Some(path) = field.strip_prefix(b"worktree ") else {
-                continue;
-            };
-            let path = path_from(path.to_vec(), "worktree list")?;
-            match path.canonicalize() {
-                Ok(path) => {
-                    if !trees.contains(&path) {
-                        trees.push(path);
-                    }
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(CoreError::io(&path, error)),
-            }
-        }
-        Ok(trees)
-    }
-
-    /// Whether `core.hooksPath` is set to anything at all.
-    ///
-    /// Set means git reads hooks from somewhere this does not attempt to
-    /// work out — the empty value switches them off, a relative one resolves
-    /// against the work tree, an absolute one may or may not be this same
-    /// directory under another name, and telling those apart is the grammar
-    /// that used to live here and drifted from the package's every time it
-    /// was touched. Set at all is answered "not armed", which is safe for
-    /// all of them; the package's own `--check` is what says more.
-    /// Exit 1 is git for "not set", and it is the ONLY answer that means
-    /// unredirected. Everything else is a repository whose configuration
-    /// could not be read — a broken `.git/config` exits 128 — and folding
-    /// that into "not redirected" sends the caller on to measure the
-    /// default hooks directory and report a clean armed verdict about a
-    /// repository whose effective hooks path was never determined. Could
-    /// not measure is its own answer, and it is the one this returns.
-    pub fn hooks_redirected(&self) -> Result<bool> {
-        let output =
-            Hardened::git(&["config", "--get", "core.hooksPath"], Some(&self.worktree)).run()?;
-        match output.status.code() {
-            Some(0) => Ok(true),
-            Some(1) => Ok(false),
-            other => Err(guard_err(
-                "hooks",
-                format!(
-                    "could not read core.hooksPath in {} (git exited {other:?}): {}",
-                    self.worktree.display(),
-                    String::from_utf8_lossy(&output.stderr).trim()
                 ),
             )),
         }

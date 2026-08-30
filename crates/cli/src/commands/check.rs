@@ -52,11 +52,17 @@ pub fn run(
 /// tracks, and a repository whose shims drifted looks identical on disk to
 /// one that never armed any.
 ///
-/// Read natively, never executed. A checkout is other people's data, and
-/// this is a read: cloning a repository and asking after its status must
-/// not run code its author chose. The package's own checker speaks a richer
-/// vocabulary and a person can still run it — but running it is an
-/// invocation, and this is not one.
+/// The verdict is the package's own `install-git-hooks --check`, relayed
+/// word for word and exit for exit. kendex used to read the hook files
+/// itself here, with a second grammar for what "armed" means; the two
+/// never agreed for long, and the disagreement showed up as a session-start
+/// report contradicting the gate that actually runs.
+///
+/// That costs a subprocess per declared project at every session start, and
+/// it runs a script out of the checkout. What licenses it is the project's
+/// own install record: `installed_here` asks first, so a clone that merely
+/// carries the files executes nothing, and the only checkouts whose scripts
+/// run are the ones this project declared and `kendex apply` already runs.
 ///
 /// Only project scopes have a work tree to ask about. A verdict that could
 /// not be taken is `could not check`, never a silent pass.
@@ -67,15 +73,21 @@ fn fold_commit_hooks(env: &Env, checked: &mut CheckReport, scopes: &[kendex_core
         let Scope::Project { root } = scope.canonical() else {
             continue;
         };
-        // One probe per scope, shared by both reads below: each costs git
-        // processes, and this runs at every session start.
-        //
+        // A checkout that merely carries the files is not missing an arming
+        // nobody asked for, and its scripts are not ours to run. Asked
+        // before the probe: both cost git processes, and this runs at every
+        // session start.
+        if !installed_here(env, scope) {
+            continue;
+        }
         // No repository here is no verdict: there is nothing to arm and no
         // drift to report. Folding it into "not armed" told a scope with no
         // work tree to run `kendex guard install`, which exits 2 there —
-        // advice that cannot be taken, every session.
-        let repo = match kendex_core::guard::Repo::probe(&root) {
-            Ok(Some(repo)) => repo,
+        // advice that cannot be taken, every session. The installer's own
+        // refusal is exit 2, so asking it would report could-not-check
+        // there for ever instead.
+        match kendex_core::guard::Repo::probe(&root) {
+            Ok(Some(_)) => {}
             Ok(None) => continue,
             Err(error) => {
                 report::fold(
@@ -86,51 +98,19 @@ fn fold_commit_hooks(env: &Env, checked: &mut CheckReport, scopes: &[kendex_core
                 );
                 continue;
             }
-        };
-        // A checkout that merely carries the files is not missing an
-        // arming nobody asked for, so only a project whose own install
-        // record declares the package hears about unarmed hooks. One whose
-        // record does NOT is where a removal may have left shims behind:
-        // the package is in no record, and what it left armed is the one
-        // state here that stops every commit. Named by file, because the
-        // remedy is by hand — the uninstaller that would strip these went
-        // with the package, so a name half spelled is advice nobody can
-        // take. That is why the sentence is `Text::Own`: kendex composed
-        // it, over at most the two hook lanes and their helper, and the
-        // report bounds it by dropping the line whole rather than cutting
-        // a path in half.
-        let (class, text) = match installed_here(env, scope) {
-            false => match kendex_core::guard::stranded(&repo) {
-                Ok(files) if files.is_empty() => continue,
-                Ok(files) => {
-                    let files: Vec<String> = files
-                        .iter()
-                        .map(|path| path.display().to_string())
-                        .collect();
-                    (
-                        Class::Drift,
-                        Text::Own(format!(
-                            "{} armed the commit hooks and is installed in no project of this repository, so every commit fails until {} are dealt with — strip the lines marked `{}` from each hook, and delete a whole file only where it carries `{}` or is the helper kendex wrote beside the hooks",
-                            kendex_core::guard::SKILL,
-                            files.join(", "),
-                            kendex_core::guard::MARKER,
-                            kendex_core::guard::CREATED_MARKER
-                        )),
-                    )
-                }
-                Err(error) => (Class::Unknown, Text::Foreign(error.to_string())),
-            },
-            true => match kendex_core::guard::armed(&repo) {
-                Ok(true) => continue,
-                Ok(false) => (
-                    Class::Drift,
-                    Text::Own(format!(
-                        "commit hooks are not armed in {} — `kendex guard install` arms them, and `kendex guard check` says more",
-                        root.display()
-                    )),
-                ),
-                Err(error) => (Class::Unknown, Text::Foreign(error.to_string())),
-            },
+        }
+        let (class, text) = match kendex_core::guard::check(&root) {
+            // 0 armed, 1 not armed, 2 could not determine — the package's
+            // taxonomy, and the summary line is its one line of stdout.
+            Ok(report) if report.code == 0 => continue,
+            Ok(report) => (
+                match report.code {
+                    1 => Class::Drift,
+                    _ => Class::Unknown,
+                },
+                Text::Foreign(report.stdout.join(" ")),
+            ),
+            Err(error) => (Class::Unknown, Text::Foreign(error.to_string())),
         };
         report::fold(checked, "commit hooks", class, text);
     }

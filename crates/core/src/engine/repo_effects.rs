@@ -151,8 +151,9 @@ fn blocked(drift: &[DriftRow], name: &str) -> bool {
 /// tree is still there while this plan is only planned, which is the whole
 /// window the CLI has to run the uninstaller in: once the plan executes the
 /// scripts are gone, and shims that exec a script that is not there fail
-/// every commit closed. A tree already missing declares nothing here; what
-/// it left armed is `guard::stranded`'s to report. A tree that is there and
+/// every commit closed. A tree already missing declares nothing here, and
+/// nothing reports what it left armed: the shims are the package's to
+/// describe, and the package is gone. A tree that is there and
 /// cannot be read is neither, and neither is one whose declaration will not
 /// parse: either error stops the plan with the package still installed,
 /// rather than reporting a declaration of nothing and letting the removal
