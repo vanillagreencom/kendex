@@ -173,6 +173,6 @@ if ! gh release upload "$CHANNEL" "${publishing[@]}" \
   if [ -n "$absent" ]; then
     published=" This run is what published that channel; there was none before it."
   fi
-  echo "::error::Uploading to the ${CHANNEL} channel failed, and what it carries now is some mixture of what was already there and what landed, which this run does not read back.${published} Re-run the tag: that run reads the channel and either writes it or names what has to come off it by hand."
+  echo "::error::Uploading to the ${CHANNEL} channel failed, and what it carries now is some mixture of what was already there and what landed, which this run does not read back.${published} Re-run the tag: that run reads the channel and either writes it or refuses, saying what it found."
   exit 1
 fi

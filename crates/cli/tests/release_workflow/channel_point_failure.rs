@@ -98,9 +98,14 @@ fn a_failed_upload_that_kept_latest_json_is_written_by_the_re_run() {
 /// message that sent the operator at it is the one that says so.
 ///
 /// The two messages are asserted against each other here, because nothing
-/// checking them together is how they drifted the first time: the failure
-/// promises the next run names what has to come off, so the refusal has to
-/// name it.
+/// checking them together is how the failure's claim about the next run
+/// outran the refusals twice. What is checked is the claim as the WEAKEST
+/// refusal can keep it: that the run refuses and says what it found. Four
+/// refusals can follow this failure and they differ — two of them fail
+/// because a read failed, so an asset list is not something they could ever
+/// give. `a_read_it_could_not_make_stops_the_write` drives those three; the
+/// asset names below are this one branch's own, not what the failure
+/// promises.
 #[cfg(unix)]
 #[test]
 fn a_failed_upload_that_lost_latest_json_refuses_every_later_run() {
@@ -120,7 +125,7 @@ fn a_failed_upload_that_lost_latest_json_refuses_every_later_run() {
     assert!(
         failed
             .output
-            .contains("names what has to come off it by hand"),
+            .contains("either writes it or refuses, saying what it found"),
         "{}",
         failed.output
     );
@@ -137,13 +142,22 @@ fn a_failed_upload_that_lost_latest_json_refuses_every_later_run() {
         "the re-run published over the leftovers: {:?}",
         again.calls
     );
-    // The promise kept: the asset by name, and that it has to go.
+    // The claim kept, as every refusal has to keep it.
+    assert!(
+        again.output.contains("Nothing was written to the")
+            && again.output.contains("no latest.json"),
+        "the refusal did not say what it found: {}",
+        again.output
+    );
+    // And what this branch can give beyond it, because the read above it
+    // already held the names. Asserted apart from the claim, so a later
+    // change here cannot be read as the failure promising it.
     assert!(
         again
             .output
             .contains("carries feed.json and no latest.json")
             && again.output.contains("have to come off"),
-        "the refusal did not name what the failure promised: {}",
+        "the branch that can name the leftovers did not: {}",
         again.output
     );
     assert_eq!(
