@@ -158,9 +158,26 @@ the fragment or `CHANGELOG.md`, run it again. Then rename `## [Unreleased]` to
 `## [X.Y.Z] - YYYY-MM-DD` and open a fresh empty one, which leaves the guard
 nothing gained to refuse.
 
-`GROWTH_GUARDS_CHANGELOG_COLLATE=1` declares a deliberate write under
-`## [Unreleased]`. It is needed only when the guard or the commit runs while
-the collated entries are still under that heading.
+**The release commit carries `GROWTH_GUARDS_CHANGELOG_COLLATE=1`:**
+
+```
+GROWTH_GUARDS_CHANGELOG_COLLATE=1 git commit -m "chore(release): vX.Y.Z"
+```
+
+That declaration is what makes `CHANGELOG.md` count as the changelog entry
+the commit owes. The release commit stages the version bump under `crates/`,
+which `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS` names, and the fragments that
+would otherwise be its entry were just deleted by the collator — deleting one
+is not writing one. Without the declaration the `commit-msg` lane refuses the
+release commit, and `[no-changelog]` would be a lie about a commit that ships
+every entry there is.
+
+The same declaration also stands the record scope's comparison down, which
+matters when the guard or the commit runs while the collated entries are
+still under `## [Unreleased]` — renaming that heading first leaves nothing
+gained, so that half is usually already satisfied. It bypasses the comparison
+alone: a record that is a symlink, binary, or not valid UTF-8 is refused
+either way.
 
 ## Version bumps
 

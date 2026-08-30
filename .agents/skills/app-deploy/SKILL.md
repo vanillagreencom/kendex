@@ -15,9 +15,13 @@ summary: "Releases a kendex version: bumps versions, finalizes the changelog, ta
    entries under a new `## [<version>] - <date>` heading, leaving an empty
    `## [Unreleased]` above it; confirm every breaking change carries its
    **Breaking** call-out and migration note.
-3. Commit, tag `v<version>`, push the tag. CI builds each target and
-   publishes a draft GitHub Release with CLI binaries, app bundles, and
-   `feed.json` (details: `docs/RELEASING.md`).
+3. Commit with `GROWTH_GUARDS_CHANGELOG_COLLATE=1` — that declaration is
+   what makes `CHANGELOG.md` count as the entry this commit owes for the
+   version bump under `crates/`, whose fragments the collator just deleted,
+   and the `commit-msg` lane refuses the commit without it. Then tag
+   `v<version>` and push the tag. CI builds each target and publishes a draft
+   GitHub Release with CLI binaries, app bundles, and `feed.json` (details:
+   `docs/RELEASING.md`).
 4. Review the draft, then publish it — publishing is what makes the
    version "latest" for self-update.
 

@@ -150,6 +150,35 @@ OUT="$(git -C "$R" commit -m "Merge branch 'topic' into main" 2>&1)" || RC=$?
 [ "$RC" -eq 0 ] && ok "control: the same Merge with a fragment passes" \
   || bad "control: the same Merge with a fragment passes" "rc=$RC out=$OUT"
 
+echo "=== the documented release commit passes the gate it has to pass ==="
+# The flow in docs/RELEASING.md, .pi/prompts/gh-release.md and the app-deploy
+# skill: collate the fragments into the record, delete them, bump the version
+# under crates/, stage exactly those paths, commit. The bump obliges an entry
+# and the fragments are gone, so the record has to count — and it counts only
+# under the declaration all three of those documents now carry.
+git -C "$R" reset -q --hard HEAD
+mkdir -p "$R/changelog.d/fixed" "$R/crates/app"
+printf -- '- A fix consumers see.\n' >"$R/changelog.d/fixed/ken-9.md"
+printf '{ "version": "1.0.0" }\n' >"$R/crates/app/tauri.conf.json"
+printf '# Changelog\n\n## [Unreleased]\n' >"$R/CHANGELOG.md"
+git -C "$R" add -A
+git -C "$R" commit -qm "chore: a release to cut [no-changelog]"
+# The collation, as the flow runs it: the entry moves into the record and the
+# fragment is deleted.
+rm -f "$R/changelog.d/fixed/ken-9.md"
+printf '# Changelog\n\n## [Unreleased]\n\n## [1.0.1] - 2026-01-01\n\n### Fixed\n\n- A fix consumers see.\n' >"$R/CHANGELOG.md"
+printf '{ "version": "1.0.1" }\n' >"$R/crates/app/tauri.conf.json"
+git -C "$R" add -A -- CHANGELOG.md changelog.d crates/app/tauri.conf.json
+RC=0
+OUT="$(git -C "$R" commit -m "chore(release): v1.0.1" 2>&1)" || RC=$?
+[ "$RC" -ne 0 ] && case "$OUT" in *"without a changelog entry"*) true ;; *) false ;; esac \
+  && ok "control: without the declaration the release commit is refused" \
+  || bad "control: without the declaration the release commit is refused" "rc=$RC out=$OUT"
+RC=0
+OUT="$(cd "$R" && GROWTH_GUARDS_CHANGELOG_COLLATE=1 git commit -m "chore(release): v1.0.1" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "the documented release commit, declaration and all, is accepted" \
+  || bad "the documented release commit, declaration and all, is accepted" "rc=$RC out=$OUT"
+
 echo "=== the package caps the subject; git's own subjects are exempt ==="
 LONG="docs: $(printf 'x%.0s' $(seq 1 70))" # 76 characters
 printf 'y\n' >>"$R/README.md"

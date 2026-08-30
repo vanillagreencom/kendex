@@ -28,9 +28,14 @@ Added entry; major only when asked).
    nonzero exit from the collator halts the release: read its message, fix
    the fragment or `CHANGELOG.md`, run it again.
 3. Bump the three version sites; `cargo build -q`; `tools/guard`.
-4. Commit `chore(release): vX.Y.Z` with exactly `Cargo.toml Cargo.lock
-   crates/app/tauri.conf.json CHANGELOG.md changelog.d`; push through the
-   normal PR flow if branch protection requires it, else push `main`.
+4. Commit with exactly `Cargo.toml Cargo.lock crates/app/tauri.conf.json
+   CHANGELOG.md changelog.d`, carrying the collation declaration:
+   `GROWTH_GUARDS_CHANGELOG_COLLATE=1 git commit -m "chore(release): vX.Y.Z"`.
+   That declaration is what makes `CHANGELOG.md` count as this commit's
+   changelog entry — the version bump under `crates/` obliges one and the
+   fragments were just deleted — so the `commit-msg` lane refuses the commit
+   without it. Then push through the normal PR flow if branch protection
+   requires it, else push `main`.
 5. Tag the MERGED commit, never the local branch: after the bump is on
    `origin/main`, run `git fetch origin`, confirm `git log -1 origin/main`
    is the bump commit, then `git tag vX.Y.Z origin/main && git push

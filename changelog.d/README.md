@@ -30,8 +30,9 @@ judge refuses, 2 could not run.
 
 That same lane refuses any line under `## [Unreleased]` in `CHANGELOG.md`
 that HEAD does not already carry. `GROWTH_GUARDS_CHANGELOG_COLLATE=1`
-declares a deliberate write there, needed only when the guard or the commit
-runs while collated entries are still under that heading.
+declares a deliberate write there. The release commit carries it for a second
+reason too: it is what makes `CHANGELOG.md` count as that commit's own entry,
+once the collator has deleted the fragments (`docs/RELEASING.md`).
 
 A commit touching `crates/` or `ui/` without one of these files is refused by
 the growth-guards `commit-msg` lane, which reads
