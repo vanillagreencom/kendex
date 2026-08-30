@@ -1,0 +1,8 @@
+drop|f.sh:12:  # never use coproc here
+drop|12:  # never use coproc here
+drop|f.sh:12:# mapfile is banned
+drop|12:#mapfile is banned
+keep|f.sh:12:  mapfile -t x < f
+keep|12:  coproc cat
+keep|f.sh:12:  printf "%s" "# not a comment"
+keep|12:x=1 # trailing comment

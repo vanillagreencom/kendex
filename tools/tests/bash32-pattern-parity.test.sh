@@ -2,11 +2,10 @@
 # The bash32 pattern set is carried, verbatim, by every suite in this repo
 # that scans shell source for Bash 4 syntax. The copies are the design: skills
 # install independently, so a judge inside one skill is absent from every
-# install that skips it. This suite is what makes copies safe. It holds every
-# copy byte-identical so improving one improves all, proves the set's teeth
-# once against the text a real suite ships, and pins the roster so a new suite
-# must join or be excluded on purpose. It spans both trees, because a render
-# is where a hand edit looks least wrong.
+# install that skips it. This suite makes copies safe. It holds every copy
+# byte-identical, proves the set's teeth once against the text a real suite
+# ships, and pins the roster over both trees, because a render is where a
+# hand edit looks least wrong.
 #
 # EVERY CHECK BELOW FAILS CLOSED. A proof that cannot fail is worse than no
 # proof, because ten files rest on this one. So no result is read out of an
@@ -170,9 +169,8 @@ fi
 
 # --- 2. the roster is closed ---
 # Over markers first, then over filenames. The tenth carrier was an inline
-# scan inside bot_review_status.sh, found by reading rather than by anything
-# failing, so a roster that closes over `bash32-portability.test.sh` would
-# miss the next one added the same way.
+# scan inside bot_review_status.sh, found by reading rather than by a
+# failure, so closing over the filename alone would miss the next one.
 case "$BEGIN" in
 *[\\^\$.\[\]\|\(\)\*\+\?\{\}]*)
   bad "the marker carries a regex metacharacter, so the tree-wide scan cannot pin it"
@@ -230,17 +228,30 @@ for f in $EXCLUDED; do
 done
 
 # --- 3. the set's teeth, against the text the suites ship ---
-# The pattern is built out of the block, not run from it. A shell single-quote
-# ends at the next one, so the literal between the quotes is exactly the bytes
-# in it and a line carrying a second quote is not an assignment at all — which
-# is what an `eval` of a shape-checked line would have run. The first
-# assignment opens the chain, the rest append to it, and anything else is a
-# refusal, so a block can define a pattern and nothing more.
+# The pattern is built out of the block, not run from it. A single-quote ends
+# at the next one, so the literal between them is exactly the bytes in it and
+# a line carrying a second quote is not an assignment — which is what an
+# `eval` of a shape-checked line would have run. The first assignment opens
+# the chain, the rest append, anything else is refused.
+QUOTERUN="a block line closes its quote and keeps going, so it is not an assignment"
 PATTERN=""
+COMMENT_HIT=""
 built=none
 while IFS= read -r line; do
   case "$line" in
   '#'* | '') continue ;;
+  "COMMENT_HIT=$Q"*"$Q")
+    body="${line#"COMMENT_HIT=$Q"}"
+    body="${body%"$Q"}"
+    case "$body" in *"$Q"*) bad "$QUOTERUN" "$line"; built=refused; break ;; esac
+    if [ -n "$COMMENT_HIT" ]; then
+      bad "the block declares COMMENT_HIT twice" "$line"
+      built=refused
+      break
+    fi
+    COMMENT_HIT="$body"
+    continue
+    ;;
   esac
   if [ "$built" = none ]; then
     prefix="PATTERN=$Q"
@@ -251,18 +262,12 @@ while IFS= read -r line; do
   "$prefix"*"$Q")
     body="${line#"$prefix"}"
     body="${body%"$Q"}"
-    case "$body" in
-    *"$Q"*)
-      bad "a block line closes its quote and keeps going, so it is not an assignment" "$line"
-      built=refused
-      break
-      ;;
-    esac
+    case "$body" in *"$Q"*) bad "$QUOTERUN" "$line"; built=refused; break ;; esac
     PATTERN="$PATTERN$body"
     built=yes
     ;;
   *)
-    bad "the block holds a line that is not the PATTERN assignment expected here" "$line"
+    bad "the block holds a line that is not an assignment expected here" "$line"
     built=refused
     break
     ;;
@@ -270,12 +275,13 @@ while IFS= read -r line; do
 done <<EOF
 $reference
 EOF
-if [ "$built" != yes ] || [ -z "$PATTERN" ]; then
-  bad "no pattern could be built from the block, so nothing below was proven"
+if [ "$built" != yes ] || [ -z "$PATTERN" ] || [ -z "$COMMENT_HIT" ]; then
+  bad "no pattern or comment filter could be built from the block, so nothing below was proven"
   verdict
   exit
 fi
-ok "the block parses as a PATTERN chain and was never executed"
+ok "the block parses into PATTERN and COMMENT_HIT, and was never executed"
+
 
 # The proof's two fixtures, read as data and never sourced. tools/tests/data
 # holds them a line per case: probes are Bash 4 constructs the set must flag,
@@ -290,17 +296,36 @@ PROBES=""
 CONTROLS=""
 UNCATCHABLE=""
 OVERFLAGGED=""
+COMMENT_HITS=""
 fixture_status=0
 PROBES="$(cat tools/tests/data/bash32-probes.txt)" || fixture_status=$?
 CONTROLS="$(cat tools/tests/data/bash32-controls.txt)" || fixture_status=$?
 UNCATCHABLE="$(cat tools/tests/data/bash32-uncatchable.txt)" || fixture_status=$?
 OVERFLAGGED="$(cat tools/tests/data/bash32-overflagged.txt)" || fixture_status=$?
+COMMENT_HITS="$(cat tools/tests/data/bash32-comment-hits.txt)" || fixture_status=$?
 if [ "$fixture_status" -ne 0 ] || [ -z "$PROBES" ] || [ -z "$CONTROLS" ] ||
-  [ -z "$UNCATCHABLE" ] || [ -z "$OVERFLAGGED" ]; then
+  [ -z "$UNCATCHABLE" ] || [ -z "$OVERFLAGGED" ] || [ -z "$COMMENT_HITS" ]; then
   bad "a fixture under tools/tests/data is missing or empty, so the proof has no cases"
   verdict
   exit
 fi
+
+# The comment filter is shared like the pattern and checked like it, over the
+# two hit shapes a scan produces. Cases are `drop|HIT` and `keep|HIT`.
+filter_ok=yes
+while IFS= read -r c; do
+  [ -n "$c" ] || continue
+  want="${c%%|*}"
+  hit="${c#*|}"
+  if printf '%s\n' "$hit" | grep -qE "$COMMENT_HIT"; then got=drop; else got=keep; fi
+  [ "$got" = "$want" ] || {
+    bad "the comment filter should $want this hit, and does not" "$hit"
+    filter_ok=no
+  }
+done <<EOF
+$COMMENT_HITS
+EOF
+[ "$filter_ok" = no ] || ok "the comment filter drops comment hits and keeps code hits"
 
 # scan MODE PATTERN LINES — the lines PATTERN misses, or the ones it hits. 2
 # when grep could not run: an invalid ERE prints nothing and exits 2, and
@@ -336,11 +361,10 @@ else
   ok "no Bash 3.2-legal control line is flagged"
 fi
 
-# The stated limit is a list, and these two checks keep it from going stale.
-# The block names shapes a text scan cannot decide, in both directions: ones
-# it misses and ones it flags though they are legal. Each must still behave
-# the way the block says. Closing one is a contract change, and it reds here
-# until the block's list is rewritten to match.
+# The stated limit is a list, and these two checks keep it from going stale:
+# the block names shapes a scan cannot decide in both directions, and each
+# must still behave as the block says. Closing one is a contract change and
+# reds here until that list is rewritten to match.
 status=0
 now_caught="$(scan hit "$PATTERN" "$UNCATCHABLE")" || status=$?
 if [ "$status" -ne 0 ]; then

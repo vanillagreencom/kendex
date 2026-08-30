@@ -1,3 +1,6 @@
 local \
 eval "$assembled_declaration"
 v="${arr[${x%]}]^}"
+'mapfile' -t values
+map\file -t values
+"declare" -A cache

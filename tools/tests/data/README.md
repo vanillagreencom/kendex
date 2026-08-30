@@ -19,7 +19,10 @@ text and never sourced.
 - `bash32-controls.txt` — Bash 3.2-legal source the set must leave alone,
   including the real bracket expressions and separator strings in this repo
   that an unanchored operator pattern used to match.
-- `bash32-uncatchable.txt` — Bash 4 constructs the set does NOT flag.
+- `bash32-uncatchable.txt` — Bash 4 constructs the set does NOT flag, such as
+  a builtin the shell reaches through quote removal (`'mapfile' -t v`).
+- `bash32-comment-hits.txt` — grep hit lines the shared comment filter must
+  drop or keep, as `drop|HIT` and `keep|HIT`, in both shapes a scan produces.
 - `bash32-overflagged.txt` — Bash 3.2-legal source the set DOES flag, because
   it spells an operator inside a regex literal or a string. The fix for a
   real script is to respell the line, as `skills/preflight/scripts/preflight`

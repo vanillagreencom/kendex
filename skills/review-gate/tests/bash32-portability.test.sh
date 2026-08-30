@@ -94,14 +94,28 @@ PATTERN="$PATTERN"'|\$\{!?([A-Za-z_][A-Za-z0-9_]*(\[([^][]|\[[^]]*\])*\])?|[0-9]
 # no escape hatch here yet, and adding one is a change to make then.
 #
 # WHAT THIS CANNOT DECIDE, named so the next reader does not file it again.
-# A regex reads text; deciding which text is code is parsing. These are that
-# boundary rather than oversights. The misses are checked as misses in
+#
+# ONE SENTENCE COVERS ALL OF IT: a text scan reads text, and the shell reads
+# words. Every gap below is that, in one direction or the other — a name the
+# shell resolves through quote removal that the text does not spell, or text
+# that spells a construct the shell never runs. Neither is an oversight and
+# neither is chased; the answer to both is a lane that runs these suites
+# under a real Bash 3.2, filed as this PR's follow-up.
+#
+# The misses are checked as misses in
 # tools/tests/data/bash32-uncatchable.txt and the over-flags as over-flags in
 # bash32-overflagged.txt, so neither list can quietly go stale:
 #
-#   - an operator inside a regex literal, a string or a comment is flagged.
-#     That is the accepted cost of matching operators plainly, and the fix is
-#     to respell the line the way preflight's bracket expressions now are.
+#   - a name the shell reaches through quote removal: `'mapfile' -t v`,
+#     `"declare" -A c`, `map\file -t v`. Bash strips the quoting before it
+#     looks the word up, and doing that is the shell's job, not a scan's.
+#   - a construct inside a string on a code line, `printf '%s\n' "use coproc
+#     here"`, is flagged. Telling a string from code is parsing. A whole-line
+#     comment is not: those are skipped, which is where the realistic false
+#     positive lived.
+#   - an operator inside a regex literal or string data is flagged for the
+#     same reason. That is the accepted cost of matching operators plainly,
+#     and the fix is to respell the line as preflight's brackets now are.
 #   - a subscript nested more than one level, or one whose inner expansion
 #     carries a literal `]`, as in ${arr[${x%]}]^}. Balancing brackets is
 #     beyond a regular expression, so the depth is bounded and declared
@@ -119,6 +133,11 @@ PATTERN="$PATTERN"'|\$\{!?([A-Za-z_][A-Za-z0-9_]*(\[([^][]|\[[^]]*\])*\])?|[0-9]
 # pipe, `>>file 2>&1` for the redirection, a repeated case body for the
 # fallthrough — and a script that writes those needs no verdict here.
 PATTERN="$PATTERN"'|\|&|&>>|;;?&'
+# A whole-line comment executes nothing, and recognising one is not parsing:
+# it is the one narrowing available here that costs no catch. Every suite
+# filters its HITS through this, never its source lines, so it matches both
+# shapes a scan produces — `file:12:  # ...` and `12:  # ...`.
+COMMENT_HIT='(^|:)[0-9]+:[[:blank:]]*#'
 # --- shared bash32 pattern set: end
 # BSD dirname/basename can reject the `--` end-of-options marker; use
 # parameter expansion (or a path that cannot start with '-') instead.
@@ -177,6 +196,8 @@ for f in ${sh_files[@]+"${sh_files[@]}"}; do
     echo "FAIL: the portability scan over $f could not run (grep exited $scan_status)" >&2
     exit 1
   fi
+  # A whole-line comment is not a violation; the shared filter drops it.
+  hits="$(printf '%s' "$hits" | grep -vE "$COMMENT_HIT")" || true
   if [ -n "$hits" ]; then
     violations="$violations$(printf '%s\n' "$hits" | sed "s|^|$f:|")$nl"
   fi
