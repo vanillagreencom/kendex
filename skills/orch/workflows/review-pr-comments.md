@@ -293,6 +293,8 @@ git -C "[WORKTREE_PATH]" push origin HEAD
 
 The word "tracked" (any form) without a `KEN-` or `#` issue id turns the gate red (`untracked-claim`) unless the reply opens with `Fixed in <sha>` or `Declined:`; only a later reply of one of the three forms clears it, and resolving the thread does not. A decline is a decline — say so.
 
+`[REASON]` is the mechanism the decline disproves: the passing state, or the false premise the finding rests on. A decline whose reason is empty, or is only a label — `frozen`, `at the cap`, `out of scope`, `pre-existing`, `flagged separately`, a test count — turns the gate red the same way (`unreasoned-decline`), and dropping the colon exempts nothing: `Declined, out of scope` is read as the decline it is. A label beside a real reason is fine; a label instead of one is not.
+
 ```bash
 .agents/skills/github/scripts/github.sh post-reply "[THREAD_ID]" "[REPLY_BODY]" --pr "[PR_NUMBER]"
 .agents/skills/github/scripts/github.sh resolve-thread "[THREAD_ID]"

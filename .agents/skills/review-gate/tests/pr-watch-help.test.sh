@@ -44,6 +44,7 @@ set -e
 assert_eq "$rc" "0" "pw71: --help exits 0 with GH_REPO unset"
 assert_contains "$out" "Usage: pr-watch.sh" "pw71: --help prints usage"
 assert_contains "$out" "untracked-claim" "pw71: --help lists the untracked-claim kind"
+assert_contains "$out" "unreasoned-decline" "pw71: --help lists the unreasoned-decline kind"
 assert_contains "$out" "GLOBAL failures" "pw71: --help carries the exit-2 shapes"
 
 set +e

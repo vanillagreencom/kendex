@@ -42,7 +42,7 @@ Review and QA-review belong to the reviewer skill: [`../reviewer/workflows/revie
 
 ## Round Contract
 
-Execute workflow sections in order; a "**Skip if**" condition is the workflow's decision, never your own scope assessment. Never push and never open a PR — the orchestrator does that after review passes.
+Execute workflow sections in order; a "**Skip if**" condition is the workflow's decision, never your own scope assessment. Never push and never open a PR — the orchestrator does that after review passes. A finding on a mechanism this diff introduces or arms is a fix whatever the round; a `Declined:` there states the passing state or the false premise, never a label or a test count.
 
 **The completion artifact is the round.** `dev-return-write` writes it after the commit; never hand-author the JSON (schema: orch [`schemas/dev-return.md`](../orch/schemas/dev-return.md)).
 

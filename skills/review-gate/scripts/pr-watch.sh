@@ -54,6 +54,14 @@ Attention kinds:
                      tracking and names no issue; only a later Fixed in
                      <sha>, Declined: <reason>, or Tracked: <issue> reply
                      clears it. Needs the predicate (evaluate mode only)
+  unreasoned-decline a thread whose newest disposition reply declines and
+                     names no mechanism — an empty reason, or nothing but
+                     non-reason tokens (frozen, cap, round N, tests pass,
+                     out of scope, pre-existing and the like). Read by
+                     shape, so a decline written without the colon counts
+                     too. Cleared by a reply that states the passing state
+                     or the false premise. Needs the predicate (evaluate
+                     mode only)
   gate-stale         the predicate and the gate context's newest row
                      disagree, in either mismatch direction — the writer
                      has not converged (event missed, cron slipped). With
@@ -488,7 +496,7 @@ for number in $pr_numbers; do
     # The writer validates this same interface; an unknown or empty verdict
     # from a zero-exit predicate is a broken reducer, never a healthy PR.
     case "$verdict" in
-      approved|awaiting|threads-open|changes-requested|untracked-claim) ;;
+      approved|awaiting|threads-open|changes-requested|untracked-claim|unreasoned-decline) ;;
       *)
         emit "$number" "$head" error "predicate produced no recognizable verdict (broken output)"
         errored=1
@@ -515,6 +523,15 @@ for number in $pr_numbers; do
       attention=1
       if [ "$gate_state" = "success" ]; then
         emit "$number" "$head" gate-stale "an unanchored tracking claim but the newest '$GATE_CONTEXT' row is success — the writer has not converged$queued"
+        heal "$number" "$head"
+      fi
+      continue
+      ;;
+    unreasoned-decline)
+      emit "$number" "$head" unreasoned-decline "$detail$queued"
+      attention=1
+      if [ "$gate_state" = "success" ]; then
+        emit "$number" "$head" gate-stale "a decline naming no mechanism but the newest '$GATE_CONTEXT' row is success — the writer has not converged$queued"
         heal "$number" "$head"
       fi
       continue

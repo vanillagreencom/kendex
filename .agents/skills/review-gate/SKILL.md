@@ -35,6 +35,8 @@ the gate; and merge-group statuses never read the mode, posting green as
 | `awaiting` | `pending` | No review evidence for this head yet. |
 | `threads-open` | `pending` | Evidence exists, but review threads are unresolved. |
 | `changes-requested` | `failure` | A reviewer objects. Red means objection — never a build failure. |
+| `untracked-claim` | `failure` | A thread's disposition reply claims tracking and names no issue. |
+| `unreasoned-decline` | `failure` | A thread's disposition reply declines and names no mechanism: the reason is empty, or is only a label such as `frozen`, `out of scope`, `pre-existing`, or a test count. Read by shape, so a decline written without the colon counts too; a label beside a real reason is fine. |
 | (exit 2, no verdict) | *unchanged* | A read failed or config is invalid. Take NO action; retry next pass. |
 
 **Reading the gate's own pending text.** `no review evidence at <sha> yet;

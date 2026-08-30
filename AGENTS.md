@@ -32,4 +32,5 @@ reply contract is in the orch skill, not here.
   unless the relevant code changed since.
 - Author replies are `Fixed in <sha>`, `Declined: <reason>`, or
   `Tracked: KEN-<n>` / `#<n>`; the merge gate rejects tracking claims that
-  name no issue.
+  name no issue, and declines whose reason is a label rather than the
+  passing state or false premise they disprove.
