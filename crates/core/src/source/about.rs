@@ -65,7 +65,7 @@ pub fn about(sealed: &SealedSource, config: &SourceConfig) -> AboutReport {
                             &mut found,
                             dir,
                             ItemKind::Skill,
-                            super::layout::flat_skills(sealed, dir).len(),
+                            super::layout::flat_skills(sealed, dir).map_or(0, |names| names.len()),
                         );
                     }
                 }
@@ -84,7 +84,7 @@ pub fn about(sealed: &SealedSource, config: &SourceConfig) -> AboutReport {
                     &mut found,
                     dir,
                     ItemKind::Agent,
-                    super::layout::agent_stems(sealed, dir).len(),
+                    super::layout::agent_stems(sealed, dir).map_or(0, |names| names.len()),
                 );
             }
             if config.mode == CatalogMode::Explicit {
@@ -94,7 +94,7 @@ pub fn about(sealed: &SealedSource, config: &SourceConfig) -> AboutReport {
                         &mut found,
                         dir,
                         kind,
-                        super::layout::ext_stems(sealed, dir, ext).len(),
+                        super::layout::ext_stems(sealed, dir, ext).map_or(0, |names| names.len()),
                     );
                 }
             }

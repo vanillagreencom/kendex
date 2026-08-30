@@ -9,6 +9,7 @@
 //! (one `/`), which is exactly what `names::item_problem` admits, so directory
 //! traversal never doubles as a deeper identity encoding.
 
+use crate::error::Result;
 use crate::model::ItemKind;
 use crate::source_read::SealedSource;
 
@@ -25,20 +26,20 @@ pub(super) fn fixed_kind_dir(kind: ItemKind) -> (&'static str, &'static str) {
 
 /// The skills one explicit catalog dir holds — a directory carrying `SKILL.md`,
 /// at the top level (`gh`) or one segment down (`plugin/item`).
-pub(super) fn flat_skills(sealed: &SealedSource, dir: &str) -> Vec<String> {
+pub(super) fn flat_skills(sealed: &SealedSource, dir: &str) -> Result<Vec<String>> {
     let is_skill = |path: &std::path::Path| sealed.is_file(&path.join("SKILL.md"));
     nested_names(sealed, dir, &is_skill, |path| {
         path.file_name()?.to_str().map(str::to_owned)
     })
 }
 
-pub(super) fn agent_stems(sealed: &SealedSource, dir: &str) -> Vec<String> {
+pub(super) fn agent_stems(sealed: &SealedSource, dir: &str) -> Result<Vec<String>> {
     file_stems(sealed, dir, "md")
 }
 
 /// The item names one kind dir holds — every file with the kind's extension,
 /// by stem, at the top level or one segment down.
-fn file_stems(sealed: &SealedSource, dir: &str, ext: &str) -> Vec<String> {
+fn file_stems(sealed: &SealedSource, dir: &str, ext: &str) -> Result<Vec<String>> {
     let is_item =
         |path: &std::path::Path| path.extension().is_some_and(|e| e == ext) && sealed.is_file(path);
     nested_names(sealed, dir, &is_item, |path| {
@@ -47,7 +48,7 @@ fn file_stems(sealed: &SealedSource, dir: &str, ext: &str) -> Vec<String> {
 }
 
 /// The item names a fixed kind dir holds, by file stem.
-pub(super) fn ext_stems(sealed: &SealedSource, dir: &str, ext: &str) -> Vec<String> {
+pub(super) fn ext_stems(sealed: &SealedSource, dir: &str, ext: &str) -> Result<Vec<String>> {
     file_stems(sealed, dir, ext)
 }
 
@@ -57,17 +58,25 @@ pub(super) fn ext_stems(sealed: &SealedSource, dir: &str, ext: &str) -> Vec<Stri
 /// installs — `find_item` refuses the rest, so listing them would draw only
 /// dead rows and, for a deceptive name, one whose shown spelling is not the
 /// name that lands on disk.
+///
+/// A directory that will not list is an error, never an empty listing. The
+/// occupancy guard adoption asks before it replaces a slot reads through
+/// here, and a guard that reads "nothing is stored there" out of a read it
+/// could not make deletes what it was written to protect.
 fn nested_names(
     sealed: &SealedSource,
     dir: &str,
     is_item: &dyn Fn(&std::path::Path) -> bool,
     leaf: impl Fn(&std::path::Path) -> Option<String>,
-) -> Vec<String> {
-    let Ok(entries) = sealed.list_dir(&sealed.root().join(dir)) else {
-        return Vec::new();
-    };
+) -> Result<Vec<String>> {
+    // A kind dir the catalog does not have holds nothing, which is an
+    // answer. One that is there and will not list is not.
+    let dir = sealed.root().join(dir);
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
     let mut names = Vec::new();
-    for entry in entries {
+    for entry in sealed.list_dir(&dir)? {
         if is_item(&entry)
             && let Some(name) = leaf(&entry)
         {
@@ -79,9 +88,8 @@ fn nested_names(
             // suites and fixtures, the same vocabulary a skill tree marks
             // as supporting — files there are about the items, not items.
             && !matches!(parent, "tests" | "test" | "fixtures" | "testdata")
-            && let Ok(children) = sealed.list_dir(&entry)
         {
-            for child in children {
+            for child in sealed.list_dir(&entry)? {
                 if is_item(&child)
                     && let Some(leaf) = leaf(&child)
                 {
@@ -93,5 +101,5 @@ fn nested_names(
     names.retain(|name| crate::names::item_problem(name).is_none());
     names.sort();
     names.dedup();
-    names
+    Ok(names)
 }

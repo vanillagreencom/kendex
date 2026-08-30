@@ -102,7 +102,7 @@ pub(crate) fn slot_unreachable(
         // what the source lists, never what the path exists as: a `plugin`
         // directory carrying no SKILL.md is nobody's item, and there is no
         // earlier copy of this name to replace.
-        let held = config::nested_under(&sealed, &config, kind, name, slot);
+        let held = config::nested_under(&sealed, &config, kind, name, slot)?;
         return Ok(held.map(|held| {
             format!(
                 "`{}` is stored here, and this name would be written over it",

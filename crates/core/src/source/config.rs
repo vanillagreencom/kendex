@@ -315,26 +315,37 @@ fn catalog_file(sealed: &SealedSource, dir: &str, file: &str) -> Option<PathBuf>
     sealed.is_file(&path).then_some(path)
 }
 
+/// What a catalog offers of one kind, for the surfaces that draw a listing:
+/// a directory that will not list draws no rows. Anything writing bytes asks
+/// `list_items_checked`, which refuses rather than reading it as empty.
 pub fn list_items(sealed: &SealedSource, config: &SourceConfig, kind: ItemKind) -> Vec<String> {
+    list_items_checked(sealed, config, kind).unwrap_or_default()
+}
+
+fn list_items_checked(
+    sealed: &SealedSource,
+    config: &SourceConfig,
+    kind: ItemKind,
+) -> Result<Vec<String>> {
     if config.mode == CatalogMode::Unusable {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     if let Some(registry) = &config.plugin_registry {
-        return catalog::items(sealed, registry, kind);
+        return Ok(catalog::items(sealed, registry, kind));
     }
     let mut names = Vec::new();
     match kind {
         ItemKind::Skill => match config.mode {
             CatalogMode::Explicit => {
                 for dir in &config.skill_dirs {
-                    names.extend(super::layout::flat_skills(sealed, dir));
+                    names.extend(super::layout::flat_skills(sealed, dir)?);
                 }
             }
             _ => names.extend(config.discovery.skills.iter().map(|s| s.name.clone())),
         },
         ItemKind::Agent => {
             for dir in &config.agent_dirs {
-                names.extend(super::layout::agent_stems(sealed, dir));
+                names.extend(super::layout::agent_stems(sealed, dir)?);
             }
         }
         // Executable kinds are offered only where the catalog declared
@@ -344,13 +355,13 @@ pub fn list_items(sealed: &SealedSource, config: &SourceConfig, kind: ItemKind) 
             if config.mode == CatalogMode::Explicit =>
         {
             let (dir, ext) = super::layout::fixed_kind_dir(kind);
-            names.extend(super::layout::ext_stems(sealed, dir, ext));
+            names.extend(super::layout::ext_stems(sealed, dir, ext)?);
         }
         _ => {}
     }
     names.sort();
     names.dedup();
-    names
+    Ok(names)
 }
 
 /// Which of this kind's listed items the local source stores inside `slot`,
@@ -362,20 +373,28 @@ pub fn list_items(sealed: &SealedSource, config: &SourceConfig, kind: ItemKind) 
 /// whose item is a file — `plugin/item.md` beside `plugin.md`, nesting
 /// nothing — is never named here. Both paths come from the reader, so an
 /// ancestor symlink cannot make two names for one directory read as two.
+///
+/// Both halves read under `names::fold`: a stored `Data-Science/eda` and an
+/// incoming plain `data-science` are one directory on macOS and Windows, so
+/// exact spelling would call that slot free. And a listing that cannot be
+/// read is an error — the caller replaces what the slot holds on `None`.
 pub(super) fn nested_under(
     sealed: &SealedSource,
     config: &SourceConfig,
     kind: ItemKind,
     name: &str,
     slot: &std::path::Path,
-) -> Option<String> {
-    let slot = sealed.relative(slot)?;
-    list_items(sealed, config, kind).into_iter().find(|held| {
-        crate::names::split(held).is_some_and(|(plugin, _)| plugin == name)
-            && find_item(sealed, config, kind, held).is_some_and(|path| {
-                sealed
-                    .relative(&path)
-                    .is_some_and(|held| held.starts_with(slot))
-            })
-    })
+) -> Result<Option<String>> {
+    use crate::names::{fold, folds_under, split};
+    // Nothing this source holds lies inside a path that is not in it.
+    let Some(slot) = sealed.relative(slot) else {
+        return Ok(None);
+    };
+    let folded = fold(name);
+    let listed = list_items_checked(sealed, config, kind)?;
+    Ok(listed.into_iter().find(|held| {
+        split(held).is_some_and(|(plugin, _)| fold(plugin) == folded)
+            && find_item(sealed, config, kind, held)
+                .is_some_and(|path| sealed.relative(&path).is_some_and(|p| folds_under(p, slot)))
+    }))
 }

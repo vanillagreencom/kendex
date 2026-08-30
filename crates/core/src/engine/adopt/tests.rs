@@ -364,6 +364,123 @@ fn a_plain_skill_over_the_namespaced_one_stored_there_refuses() {
     assert!(root.join("skills/handmade/SKILL.md").is_file());
 }
 
+/// The spelling half of the same collision. A macOS or Windows volume
+/// hands `Data-Science` and `data-science` to one directory, so the stored
+/// `Data-Science/eda` sits in the slot a plain `data-science` asks for even
+/// though the two names differ character by character. The refusal reads
+/// both sides under `names::fold`, which is a fact about the names rather
+/// than about the host running the test, so it holds here too.
+#[test]
+fn a_plain_skill_over_a_differently_cased_namespaced_one_refuses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let scope = Scope::Global;
+    let held = tmp.path().join(".claude/skills");
+    fs::create_dir_all(held.join("Data-Science__eda")).unwrap();
+    fs::write(
+        held.join("Data-Science__eda/SKILL.md"),
+        "the namespaced one",
+    )
+    .unwrap();
+    let plan = adopt(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        "Data-Science/eda",
+        &[HarnessId::Claude],
+    )
+    .unwrap();
+    crate::apply::execute(&env, &plan, None).unwrap();
+
+    fs::create_dir_all(held.join("data-science")).unwrap();
+    fs::write(held.join("data-science/SKILL.md"), "the plain one").unwrap();
+    let trashed = || fs::read_dir(env.trash_dir()).map_or(0, Iterator::count);
+    let before = trashed();
+    let refused = adopt(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        "data-science",
+        &[HarnessId::Claude],
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(refused.contains("Data-Science/eda"), "{refused:?}");
+    let root = crate::source::local_source_root(&env, &scope);
+    let sealed = crate::source_read::SealedSource::open(&root).unwrap();
+    let config = crate::source::source_config_for(&sealed, LOCAL_SOURCE_NAME).unwrap();
+    assert_eq!(
+        crate::source::list_items(&sealed, &config, ItemKind::Skill),
+        ["Data-Science/eda"]
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("skills/Data-Science/eda/SKILL.md")).unwrap(),
+        "the namespaced one"
+    );
+    assert_eq!(trashed(), before);
+}
+
+/// The occupancy read is a read, and a read that fails is not an answer of
+/// "the slot is free". Here the directory holding `data-science/eda` is
+/// past the bound the sealed reader lists within, so the listing the guard
+/// asks for cannot be made — and adoption refuses instead of trashing what
+/// the plain name would land on top of. A local source that declares its
+/// own layout is the shape that reaches this: without a control file the
+/// search table walks the same directory first and refuses there.
+#[test]
+fn a_plain_skill_over_a_slot_whose_listing_fails_refuses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let scope = Scope::Global;
+    let held = tmp.path().join(".claude/skills");
+    fs::create_dir_all(held.join("data-science__eda")).unwrap();
+    fs::write(
+        held.join("data-science__eda/SKILL.md"),
+        "the namespaced one",
+    )
+    .unwrap();
+    let plan = adopt(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        "data-science/eda",
+        &[HarnessId::Claude],
+    )
+    .unwrap();
+    crate::apply::execute(&env, &plan, None).unwrap();
+
+    let root = crate::source::local_source_root(&env, &scope);
+    fs::write(root.join("kendex.toml"), "schema = 6\n").unwrap();
+    let stored = root.join("skills/data-science");
+    for n in 0..4_096 {
+        fs::create_dir(stored.join(format!("filler-{n:04}"))).unwrap();
+    }
+
+    fs::create_dir_all(held.join("data-science")).unwrap();
+    fs::write(held.join("data-science/SKILL.md"), "the plain one").unwrap();
+    let trashed = || fs::read_dir(env.trash_dir()).map_or(0, Iterator::count);
+    let before = trashed();
+    let refused = adopt(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        "data-science",
+        &[HarnessId::Claude],
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(refused, CoreError::SourceEscape { .. }),
+        "{refused:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("skills/data-science/eda/SKILL.md")).unwrap(),
+        "the namespaced one"
+    );
+    assert_eq!(trashed(), before);
+}
+
 /// A refused name is printed, not run. The name reaches stderr through
 /// the CLI's `Error: {e}`, so a control sequence inside it would clear
 /// the reader's screen while telling them the name was refused.

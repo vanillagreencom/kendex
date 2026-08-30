@@ -243,6 +243,21 @@ pub fn fold(name: &str) -> String {
         .join("/")
 }
 
+/// Whether `path` is `prefix` or sits inside it once every segment is read
+/// under [`fold`] — `Path::starts_with` for the spellings a collision-folding
+/// filesystem hands to one entry. The comparison stays at segment boundaries,
+/// so `data-science-2` is not inside `Data-Science`. Both sides fold on every
+/// host: a local source is carried between machines, and a slot that is free
+/// here and taken on macOS is a slot kendex refuses either way.
+pub fn folds_under(path: &std::path::Path, prefix: &std::path::Path) -> bool {
+    let mut segments = path.components();
+    prefix.components().all(|wanted| {
+        segments.next().is_some_and(|held| {
+            fold(&held.as_os_str().to_string_lossy()) == fold(&wanted.as_os_str().to_string_lossy())
+        })
+    })
+}
+
 /// An entry beside `target` whose name folds to the target's leaf without
 /// being that exact leaf — the neighbour a case- or composition-folding
 /// filesystem would hand the same file to. The one reading of "does a
@@ -322,6 +337,19 @@ mod tests {
         // Composed and decomposed accents are one file on macOS.
         assert_eq!(fold("caf\u{e9}"), fold("cafe\u{301}"));
         assert_ne!(fold("cafe"), fold("caf\u{e9}"));
+    }
+
+    #[test]
+    fn a_path_folds_under_a_prefix_segment_by_segment() {
+        let under = |path: &str, prefix: &str| {
+            folds_under(std::path::Path::new(path), std::path::Path::new(prefix))
+        };
+        assert!(under("skills/Data-Science/eda", "skills/data-science"));
+        assert!(under("skills/data-science", "skills/data-science"));
+        // A longer segment is a different name, not a nested one.
+        assert!(!under("skills/data-science-2/eda", "skills/data-science"));
+        assert!(!under("skills/data-science", "skills/data-science/eda"));
+        assert!(!under("agents/data-science/eda", "skills/data-science"));
     }
 
     /// One path segment holds no separator: only the kinds a plugin-registry
