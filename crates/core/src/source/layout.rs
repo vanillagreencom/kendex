@@ -79,7 +79,7 @@ pub(super) fn stored_in_slot(
     // A read that could not be made is not an empty directory: reading one
     // as the other is how a guard deletes what it exists to protect.
     let occupant = sealed
-        .list_dir(&held)?
+        .all_entries(&held)?
         .into_iter()
         .find(|entry| !replaceable || item_dir(sealed, kind, entry));
     let Some(occupant) = occupant else {
@@ -120,14 +120,14 @@ pub(super) fn ext_stems(sealed: &SealedSource, dir: &str, ext: &str) -> Vec<Stri
 /// and one unreadable sibling must not take the readable items of the same
 /// kind out of `add --all` and out of place resolution. Nothing deciding
 /// what a write would destroy asks this — that reads the disk, through
-/// `SealedSource::list_dir`, where a refused read is an error.
+/// `SealedSource::all_entries`, where a refused read is an error.
 fn nested_names(
     sealed: &SealedSource,
     dir: &str,
     is_item: &dyn Fn(&std::path::Path) -> bool,
     leaf: impl Fn(&std::path::Path) -> Option<String>,
 ) -> Vec<String> {
-    let Ok(entries) = sealed.list_dir(&sealed.root().join(dir)) else {
+    let Ok(entries) = sealed.readable_entries(&sealed.root().join(dir)) else {
         return Vec::new();
     };
     let mut names = Vec::new();
@@ -143,7 +143,7 @@ fn nested_names(
             // suites and fixtures, the same vocabulary a skill tree marks
             // as supporting — files there are about the items, not items.
             && !matches!(parent, "tests" | "test" | "fixtures" | "testdata")
-            && let Ok(children) = sealed.list_dir(&entry)
+            && let Ok(children) = sealed.readable_entries(&entry)
         {
             for child in children {
                 if is_item(&child)

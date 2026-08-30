@@ -162,19 +162,40 @@ impl SealedSource {
         self.read_to_string(path).map(Some)
     }
 
-    /// Entries of a directory, bounded and sorted. Symlinked entries are
-    /// listed too — reading through one is what fails, loudly.
+    /// Every entry of a directory, bounded and sorted, or an error.
+    /// Symlinked entries are listed too — reading through one is what
+    /// fails, loudly.
     ///
-    /// A directory that will not enumerate is an error, whole or per entry.
-    /// A caller deciding whether a write would land on stored content must
-    /// not get a refused read spelled as an empty directory; a caller that
-    /// only draws rows decides for itself what an unreadable directory
-    /// costs it.
-    pub fn list_dir(&self, dir: &Path) -> Result<Vec<PathBuf>> {
+    /// The reading for a caller that is about to decide what a write would
+    /// land on top of, or which bytes install: a name the directory will
+    /// not hand over means the answer is unknown, and an unknown answer
+    /// read as an empty directory is how a guard deletes what it exists to
+    /// protect.
+    pub fn all_entries(&self, dir: &Path) -> Result<Vec<PathBuf>> {
+        self.entries(dir, true)
+    }
+
+    /// The entries of a directory that could be read, bounded and sorted.
+    ///
+    /// The reading for a caller that draws rows: a name the directory will
+    /// not hand over costs its own row and no other, so one unreadable
+    /// entry never takes a directory's readable items out of a listing.
+    /// The directory itself is a different matter and still errors — that
+    /// is not one row, it is the whole answer, and what an unreadable
+    /// directory costs the surface is the surface's to decide.
+    pub fn readable_entries(&self, dir: &Path) -> Result<Vec<PathBuf>> {
+        self.entries(dir, false)
+    }
+
+    fn entries(&self, dir: &Path, every: bool) -> Result<Vec<PathBuf>> {
         self.contained(dir)?;
         let mut entries: Vec<PathBuf> = Vec::new();
         for entry in fs::read_dir(dir).map_err(|e| CoreError::io(dir, e))? {
-            entries.push(entry.map_err(|e| CoreError::io(dir, e))?.path());
+            match entry {
+                Ok(entry) => entries.push(entry.path()),
+                Err(e) if every => return Err(CoreError::io(dir, e)),
+                Err(_) => continue,
+            }
             // The bound holds while collecting — a million-entry directory
             // must not get a million-entry allocation first. A directory of
             // exactly the limit is within it; the entry after that is not.
@@ -232,7 +253,7 @@ impl SealedSource {
                 reason: format!("catalog tree nests deeper than {MAX_TREE_DEPTH} levels"),
             });
         }
-        for path in self.list_dir(dir)? {
+        for path in self.all_entries(dir)? {
             let Some(name) = path.file_name() else {
                 continue;
             };
