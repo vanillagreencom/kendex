@@ -560,6 +560,33 @@ run_rc 'fix(KEN-8): change a crate'
   || bad "control: moving a fragment away is not writing one" "rc=$RC out=$OUT"
 git -C "$RC_REPO" reset -q --hard HEAD
 
+# The committer's diff.renames must not reach this scan. Set to copies it makes
+# git pair a duplicated file as C — a status carrying two paths whose SOURCE the
+# commit leaves in place — and the scan reads a vocabulary it never handled. The
+# pin is what keeps the letters closed, so the control is a repo configured the
+# way that would break it, judged the same as any other.
+git -C "$RC_REPO" config diff.renames copies
+# The copy source is a required path the commit also modifies, which is the only
+# way git offers a file as a copy source at all.
+printf 'fn copied() {}\n' >>"$RC_REPO/crates/core/lib.rs"
+cp "$RC_REPO/crates/core/lib.rs" "$RC_REPO/docs/copy.rs"
+git -C "$RC_REPO" add -A
+run_rc 'fix(KEN-9): change a crate'
+[ "$RC" -eq 1 ] && case "$OUT" in *"crates/core/lib.rs changed without a changelog entry"*) true ;; *) false ;; esac \
+  && ok "a copy-configured repo is judged on the same status vocabulary" \
+  || bad "a copy-configured repo is judged on the same status vocabulary" "rc=$RC out=$OUT"
+# And the entry written beside the copy still counts: a stream the scan misread
+# would lose the fragment that follows the copy record.
+mkdir -p "$RC_REPO/changelog.d/fixed"
+printf -- '- A fix consumers see.\n' >"$RC_REPO/changelog.d/fixed/ken-9.md"
+git -C "$RC_REPO" add -A
+run_rc 'fix(KEN-9): change a crate'
+[ "$RC" -eq 0 ] && ok "the entry written beside a copy is still the entry" \
+  || bad "the entry written beside a copy is still the entry" "rc=$RC out=$OUT"
+git -C "$RC_REPO" config --unset diff.renames
+git -C "$RC_REPO" reset -q --hard HEAD
+rm -f "$RC_REPO/docs/copy.rs"
+
 echo "=== the required paths are configuration, validated like every other path ==="
 git -C "$RC_REPO" reset -q --hard HEAD
 printf 'fn yet() {}\n' >>"$RC_REPO/crates/core/lib.rs"
