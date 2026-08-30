@@ -155,7 +155,7 @@ prepare() {
     '{schema_version:1,issue_id:$issue,repository:$repo,pr_number:$pr,head_sha:$head,
       watch_id:$watch,gate_mode:$gate,recovery_count:$recovery,main_repo_root:$root,
       worktree:$worktree,worktree_branch:$worktree_branch,artifact_path:$artifact,log_path:$log,runtime_dir:$runtime,
-      prepared_at:$now,status:"prepared",action:null,terminal:false,
+      prepared_at:$now,launch_attempt:0,status:"prepared",action:null,terminal:false,
       supervisor_pid:null,launched_at:null,deadline:null,lane_postmerge:null,
       cleanup:{required:$cleanup,status:"not_started",diagnostic:null},diagnostic:null}' > "$new_state"
   (
@@ -182,7 +182,7 @@ prepare() {
 }
 
 launch() {
-  local poll=30 max_wait=2400 method pid deadline now ready log runtime waiter
+  local poll=30 max_wait=2400 method pid deadline now ready log runtime waiter artifact retry_artifact attempt
   while [[ $# -gt 0 ]]; do
     case "$1" in --root) ROOT="${2:-}"; shift 2 ;; --issue) ISSUE="${2:-}"; shift 2 ;;
       --watch-id) WATCH_ID="${2:-}"; shift 2 ;; --poll) poll="${2:-}"; shift 2 ;;
@@ -191,6 +191,8 @@ launch() {
   resolve_state; require_state
   [[ "$poll" =~ ^[1-9][0-9]*$ && "$max_wait" =~ ^[1-9][0-9]*$ && "$poll" -le "$max_wait" ]] || die "invalid wait bounds"
   now=$(date +%s); deadline=$((now + max_wait + 90)); runtime=$(state_value .runtime_dir); log=$(state_value .log_path)
+  artifact=$(state_value .artifact_path); attempt=$(state_value '(.launch_attempt // 0) + 1')
+  retry_artifact="${artifact%/*}/verdict-$attempt.json"
   waiter="$SCRIPT_DIR/queue-wait"
   if [[ ! -x "$waiter" ]]; then
     launch_failure "queue-wait is missing: $waiter; diagnostics: $log"
@@ -198,9 +200,11 @@ launch() {
   fi
   if command -v setsid >/dev/null 2>&1; then method="setsid"; else method="nohup"; fi
   atomic_update 'if .watch_id!=$watch or .head_sha!=$head or (.status|IN("prepared","launch_failed")|not) then error("prepared claim lost") else
-      .status="launching"|.action=null|.diagnostic=null|.launch_method=$method|.launched_at=$now|
+      .artifact_path=(if .status=="launch_failed" then $retry_artifact else .artifact_path end)|
+      .launch_attempt=$attempt|.status="launching"|.action=null|.diagnostic=null|.launch_method=$method|.launched_at=$now|
       .setup_deadline=($now+10)|.deadline=$deadline|.updated_at=$now end' \
-    --arg watch "$WATCH_ID" --arg head "$(state_value .head_sha)" --arg method "$method" --argjson now "$now" --argjson deadline "$deadline" \
+    --arg watch "$WATCH_ID" --arg head "$(state_value .head_sha)" --arg method "$method" --arg retry_artifact "$retry_artifact" \
+    --argjson attempt "$attempt" --argjson now "$now" --argjson deadline "$deadline" \
     || die "prepared lifecycle was terminalized before launch"
   if [[ "$method" == setsid ]]; then
     setsid -f "$SELF" __supervise "$STATE_FILE" "$WATCH_ID" "$waiter" "$poll" "$max_wait" >> "$log" 2>&1 \

@@ -14,6 +14,7 @@ wait_exists() { local i; for ((i=0;i<100;i++)); do [[ -e "$1" ]] && return 0; sl
 
 MAIN="$TMP/main" WT="$TMP/worktree" BIN="$TMP/bin" SCRIPTS="$TMP/orch/scripts"
 REAL_SETSID=$(command -v setsid || true)
+REAL_CHMOD=$(command -v chmod)
 mkdir -p "$MAIN" "$BIN" "$SCRIPTS/lib"
 git -C "$MAIN" init -q
 git -C "$MAIN" config user.email test@example.com
@@ -106,9 +107,16 @@ exec "$WATCH_REAL_SETSID" "$@"
 EOF
 chmod +x "$BIN/setsid"
 fi
+cat > "$BIN/chmod" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -f "$WATCH_SUPERVISOR_PID_DELAY" && "${*: -1}" == */supervisor.pid ]]; then sleep 6; fi
+exec "$WATCH_REAL_CHMOD" "$@"
+EOF
+chmod +x "$BIN/chmod"
 export PATH="$BIN:$PATH" WATCH_MODE="$MODE" WATCH_RELEASE="$RELEASE" WATCH_HEAD_FILE="$HEAD_FILE" WATCH_MAIN="$MAIN" WATCH_WORKTREE="$WT"
 export WATCH_GH_PAUSE="$TMP/gh-pause" WATCH_SETUP_GATE="$TMP/setup-gate" WATCH_REAL_SETSID="$REAL_SETSID" WATCH_CLEANUP_FAIL="$TMP/cleanup-fail" WATCH_CLEANUP_INTERRUPT="$TMP/cleanup-interrupt"
-export WATCH_SETSID_FAIL="$TMP/setsid-fail" WATCH_CLEANUP_PAUSE="$TMP/cleanup-pause" WATCH_AUTH_LOG="$TMP/auth.log" WATCH_WORKER_LOG="$TMP/worker.log" GH_REPO=wrong/repository GITHUB_REPOSITORY=wrong/repository
+export WATCH_SETSID_FAIL="$TMP/setsid-fail" WATCH_CLEANUP_PAUSE="$TMP/cleanup-pause" WATCH_AUTH_LOG="$TMP/auth.log" WATCH_WORKER_LOG="$TMP/worker.log" WATCH_REAL_CHMOD="$REAL_CHMOD" WATCH_SUPERVISOR_PID_DELAY="$TMP/supervisor-pid-delay" GH_REPO=wrong/repository GITHUB_REPOSITORY=wrong/repository
 unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN
 init_out=$("$SCRIPTS/merge-queue-watch" init --worktree "$WT" --issue KEN-829 --branch watch-test)
 eq "$(jq -r .exists <<<"$init_out")" true "standalone init creates workflow state"
@@ -346,6 +354,24 @@ replay=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .action <<<"$replay")" resume_launch "setup failure cannot hand back before launch recovery"
 launch_bounded "$watch"
 eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" watching "same watch retries after setup repair"
+"$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
+
+prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
+touch "$WATCH_SUPERVISOR_PID_DELAY"
+set +e
+"$SCRIPTS/merge-queue-watch" launch --root "$MAIN" --issue KEN-829 --watch-id "$watch" --poll 1 --max-wait 10 >/dev/null 2>&1
+setup_rc=$?
+set -e
+rm -f -- "$WATCH_SUPERVISOR_PID_DELAY"
+if [[ "$setup_rc" -ne 0 ]]; then ok "supervisor failure before ready exits nonzero"; else bad "supervisor failure before ready exited zero"; fi
+eq "$(jq -r .verdict "$artifact")" unknown "dead supervisor publishes its setup failure"
+launch_bounded "$watch"
+retry_artifact=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .artifact_path)
+[[ "$retry_artifact" != "$artifact" ]] && ok "retry reserves a fresh artifact identity" || bad "retry reused the dead supervisor artifact"
+touch "$RELEASE"; wait_file "$retry_artifact" || bad "retried supervisor verdict missing"
+eq "$(jq -r .verdict "$retry_artifact")" ejected "retry publishes the new supervisor verdict"
+result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .action <<<"$result")" recovery "consume routes the retried supervisor verdict"
 "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
 
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
