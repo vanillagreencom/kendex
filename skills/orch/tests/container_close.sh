@@ -46,6 +46,26 @@ esac
 SH
 chmod +x "$TMP_ROOT/bin/gh"
 
+REAL_MV="$(command -v mv)"
+cat > "$TMP_ROOT/bin/mv" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+target=""
+for arg in "$@"; do target="$arg"; done
+if [[ -n "${RECOVERY_PUBLISH_TARGET:-}" && "$target" == "$RECOVERY_PUBLISH_TARGET" ]]; then
+  count=0
+  [[ ! -e "${MV_SHIM_COUNT:?}" ]] || count="$(cat "$MV_SHIM_COUNT")"
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$MV_SHIM_COUNT"
+  case "${MV_SHIM_MODE:-}" in
+    interrupt-once) [[ $count -ne 1 ]] || kill -TERM "$PPID" ;;
+    fail-once) [[ $count -ne 1 ]] || exit 75 ;;
+  esac
+fi
+exec "$REAL_MV" "$@"
+SH
+chmod +x "$TMP_ROOT/bin/mv"
+
 cat > "$SANDBOX/skills/linear/scripts/linear.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -178,9 +198,9 @@ git -C "$SANDBOX" worktree add -q -b caller-two "$CALLER_TWO"
 
 SCRIPT="$SANDBOX/skills/orch/scripts/container-close"
 RECOVERY="$SANDBOX/tmp/container-close-recovery/PARENT-1.tsv"
-UNRESOLVED="$SANDBOX/tmp/container-close-recovery/PARENT-1.unresolved.tsv"
 export FAKE_LINEAR_ROOT="$TMP_ROOT/state"
 export PATH="$TMP_ROOT/bin:$PATH"
+export REAL_MV
 mkdir "$FAKE_LINEAR_ROOT" "$SANDBOX/tmp"
 
 reset_state() {
@@ -193,7 +213,7 @@ reset_state() {
     "$FAKE_LINEAR_ROOT/late.cascade.on.children" \
     "$FAKE_LINEAR_ROOT/fresh.conflict.on.children" "$FAKE_LINEAR_ROOT/update.calls" \
     "$FAKE_LINEAR_ROOT/complete.on.fresh.conflict" "$FAKE_LINEAR_ROOT/update.noop" \
-    "$RECOVERY" "$UNRESOLVED"
+    "$RECOVERY"
   rm -rf "$FAKE_LINEAR_ROOT/complete.entries"
   mkdir "$FAKE_LINEAR_ROOT/complete.entries"
 }
@@ -271,7 +291,7 @@ reset_state
 printf 'Done\n' > "$FAKE_LINEAR_ROOT/parent.state"
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Todo","state_type":"unstarted"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
 mkdir -p "$(dirname "$RECOVERY")"
-printf 'CHILD-2\tCanceled\t0\n' > "$RECOVERY"
+printf 'resolved\nCHILD-2\tCanceled\t0\n' > "$RECOVERY"
 rc=0
 run_close >/dev/null 2>"$TMP_ROOT/unexpected-repair.err" || rc=$?
 [[ $rc -ne 0 ]] && ok "unexpected repair state fails closed" || fail "unexpected repair state fails closed"
@@ -283,7 +303,7 @@ assert_contains "$TMP_ROOT/unexpected-repair.err" "reconcile Linear state, then 
 reset_state
 printf 'Done\n' > "$FAKE_LINEAR_ROOT/parent.state"
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Done","state_type":"completed"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
-printf 'CHILD-2\tCanceled\t0\n' > "$RECOVERY"
+printf 'resolved\nCHILD-2\tCanceled\t0\n' > "$RECOVERY"
 touch "$FAKE_LINEAR_ROOT/update.noop"
 rc=0
 run_close >/dev/null 2>"$TMP_ROOT/verification-repair.err" || rc=$?
@@ -319,8 +339,8 @@ assert_eq "$(jq -r '.[] | select(.id == "CHILD-2") | .state_type' "$FAKE_LINEAR_
 [[ ! -e "$RECOVERY" ]] && ok "late cascade repair removes the merged recovery" || fail "late cascade repair removes the merged recovery"
 
 LATE_MUTANT="$SANDBOX/skills/orch/scripts/container-close-late-mutant"
-assert_eq "$(grep -Fc '"$RECOVERY" "$SNAPSHOT" > "$recovery_tmp"' "$SCRIPT")" "1" "late-cascade control finds recovery merging"
-awk 'index($0, "\"$RECOVERY\" \"$SNAPSHOT\" > \"$recovery_tmp\"") { print "    " sprintf("%c", 39) " \"$SNAPSHOT\" > \"$recovery_tmp\" || {"; next } { print }' "$SCRIPT" > "$LATE_MUTANT"
+assert_eq "$(grep -Fc '"$ACTIVE_ROWS" "$SNAPSHOT" >> "$recovery_tmp"' "$SCRIPT")" "1" "late-cascade control finds recovery merging"
+awk 'index($0, "\"$ACTIVE_ROWS\" \"$SNAPSHOT\" >> \"$recovery_tmp\"") { print "    " sprintf("%c", 39) " \"$SNAPSHOT\" >> \"$recovery_tmp\" || {"; next } { print }' "$SCRIPT" > "$LATE_MUTANT"
 chmod +x "$LATE_MUTANT"
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
@@ -344,28 +364,52 @@ run_close >/dev/null 2>"$TMP_ROOT/merge-conflict-first.err" || rc=$?
 rm -f "$FAKE_LINEAR_ROOT/fail.complete.before"
 touch "$FAKE_LINEAR_ROOT/fresh.conflict.on.children"
 touch "$FAKE_LINEAR_ROOT/complete.on.fresh.conflict"
+MV_INTERRUPT_COUNT="$TMP_ROOT/mv-interrupt.count"
+export RECOVERY_PUBLISH_TARGET="$RECOVERY" MV_SHIM_MODE=interrupt-once MV_SHIM_COUNT="$MV_INTERRUPT_COUNT"
 rc=0
 run_close >/dev/null 2>"$TMP_ROOT/merge-conflict.err" || rc=$?
+unset RECOVERY_PUBLISH_TARGET MV_SHIM_MODE MV_SHIM_COUNT
 [[ $rc -ne 0 ]] && ok "conflicting durable and fresh recovery rows fail closed" || fail "conflicting durable and fresh recovery rows fail closed"
+assert_eq "$(cat "$MV_INTERRUPT_COUNT")" "1" "termination arrives immediately before atomic unresolved publication"
 assert_contains "$TMP_ROOT/merge-conflict.err" "recovery conflict for PARENT-1: durable and fresh rows disagree" "publish conflict names its cause"
-assert_contains "$TMP_ROOT/merge-conflict.err" "$UNRESOLVED" "publish conflict names the unresolved recovery path"
+assert_contains "$TMP_ROOT/merge-conflict.err" "$RECOVERY" "publish conflict names the active recovery path"
 assert_contains "$TMP_ROOT/merge-conflict.err" "reconcile Linear state, then remove" "publish conflict gives the reconciliation remedy"
-assert_eq "$(cat "$UNRESOLVED")" $'CHILD-2\tCanceled\t0\tdurable\nCHILD-2\tCanceled Again\t0\tfresh' "publish conflict preserves both tagged alternatives"
-[[ ! -e "$RECOVERY" ]] && ok "publish conflict retires the ambiguous single-state record" || fail "publish conflict retires the ambiguous single-state record"
+assert_eq "$(cat "$RECOVERY")" $'unresolved\nCHILD-2\tCanceled\t0\tdurable\nCHILD-2\tCanceled Again\t0\tfresh' "publish conflict atomically activates both tagged alternatives"
 assert_eq "$(jq -r '.[] | select(.id == "CHILD-2") | .state_type' "$FAKE_LINEAR_ROOT/children.json")" "completed" "parent completion cascades during conflicting merge"
 
-awk -F '\t' '$4 == "durable" { print $1 "\t" $2 "\t" $3 }' "$UNRESOLVED" > "$RECOVERY"
-before_unresolved="$(cat "$UNRESOLVED")"
+before_unresolved="$(cat "$RECOVERY")"
 rc=0
 run_close >/dev/null 2>"$TMP_ROOT/unresolved-retry.err" || rc=$?
 [[ $rc -ne 0 ]] && ok "completed parent refuses unresolved automatic repair" || fail "completed parent refuses unresolved automatic repair"
 assert_contains "$TMP_ROOT/unresolved-retry.err" "unresolved durable and fresh alternatives require operator reconciliation" "unresolved retry names its cause"
-assert_contains "$TMP_ROOT/unresolved-retry.err" "$UNRESOLVED" "unresolved retry names the alternatives record"
+assert_contains "$TMP_ROOT/unresolved-retry.err" "$RECOVERY" "unresolved retry names the active envelope"
 assert_contains "$TMP_ROOT/unresolved-retry.err" "reconcile Linear state, then remove" "unresolved retry gives the remedy"
-assert_eq "$(cat "$UNRESOLVED")" "$before_unresolved" "completed retry retains both unresolved alternatives"
-assert_eq "$(cat "$RECOVERY")" $'CHILD-2\tCanceled\t0' "completed retry retains a crash-window stale record"
+assert_eq "$(cat "$RECOVERY")" "$before_unresolved" "completed retry retains both unresolved alternatives"
 assert_eq "$(jq -r '.[] | select(.id == "CHILD-2") | .state_type' "$FAKE_LINEAR_ROOT/children.json")" "completed" "unresolved retry refuses stale restoration"
 [[ ! -e "$FAKE_LINEAR_ROOT/update.calls" ]] && ok "unresolved retry performs no repair mutation" || fail "unresolved retry performs no repair mutation"
+
+reset_state
+printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+touch "$FAKE_LINEAR_ROOT/fail.complete.before"
+rc=0
+run_close >/dev/null 2>"$TMP_ROOT/publication-failure-first.err" || rc=$?
+[[ $rc -ne 0 ]] && ok "publication-failure fixture keeps resolved recovery" || fail "publication-failure fixture keeps resolved recovery"
+rm -f "$FAKE_LINEAR_ROOT/fail.complete.before"
+touch "$FAKE_LINEAR_ROOT/fresh.conflict.on.children" "$FAKE_LINEAR_ROOT/complete.on.fresh.conflict"
+MV_FAILURE_COUNT="$TMP_ROOT/mv-failure.count"
+export RECOVERY_PUBLISH_TARGET="$RECOVERY" MV_SHIM_MODE=fail-once MV_SHIM_COUNT="$MV_FAILURE_COUNT"
+rc=0
+run_close >/dev/null 2>"$TMP_ROOT/publication-failure.err" || rc=$?
+unset RECOVERY_PUBLISH_TARGET MV_SHIM_MODE MV_SHIM_COUNT
+[[ $rc -ne 0 ]] && ok "rename retry still reports the unresolved conflict" || fail "rename retry still reports the unresolved conflict"
+assert_eq "$(cat "$MV_FAILURE_COUNT")" "2" "failed atomic publication retries once"
+assert_eq "$(cat "$RECOVERY")" $'unresolved\nCHILD-2\tCanceled\t0\tdurable\nCHILD-2\tCanceled Again\t0\tfresh' "rename retry activates both recoverable alternatives"
+before_unresolved="$(cat "$RECOVERY")"
+rc=0
+run_close >/dev/null 2>"$TMP_ROOT/publication-failure-retry.err" || rc=$?
+[[ $rc -ne 0 ]] && ok "completed retry refuses the publication-failure envelope" || fail "completed retry refuses the publication-failure envelope"
+assert_eq "$(cat "$RECOVERY")" "$before_unresolved" "publication-failure retry retains both alternatives"
+assert_eq "$(jq -r '.[] | select(.id == "CHILD-2") | .state_type' "$FAKE_LINEAR_ROOT/children.json")" "completed" "publication-failure retry cannot apply stale recovery"
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"ancestor","state":"Canceled","state_type":"canceled","depth":0},{"id":"CHILD-1","title":"done","state":"Done","state_type":"completed","depth":0}]' > "$FAKE_LINEAR_ROOT/children.json"
@@ -373,7 +417,7 @@ touch "$FAKE_LINEAR_ROOT/fail.complete.before"
 rc=0
 run_close >/dev/null 2>"$TMP_ROOT/depth-first.err" || rc=$?
 [[ $rc -ne 0 ]] && ok "depth-order fixture records the ancestor" || fail "depth-order fixture records the ancestor"
-assert_eq "$(cat "$RECOVERY")" $'CHILD-2\tCanceled\t0' "durable recovery persists child depth"
+assert_eq "$(cat "$RECOVERY")" $'resolved\nCHILD-2\tCanceled\t0' "resolved envelope persists child depth"
 rm -f "$FAKE_LINEAR_ROOT/fail.complete.before"
 jq '. += [{"id":"CHILD-3","title":"descendant","state":"Canceled","state_type":"canceled","depth":1}]' \
   "$FAKE_LINEAR_ROOT/children.json" > "$FAKE_LINEAR_ROOT/children.with-descendant"
@@ -382,8 +426,8 @@ touch "$FAKE_LINEAR_ROOT/interrupt.after.complete"
 rc=0
 run_close >/dev/null 2>"$TMP_ROOT/depth-interrupt.err" || rc=$?
 [[ $rc -ne 0 ]] && ok "depth-order fixture interrupts before repair" || fail "depth-order fixture interrupts before repair"
-assert_eq "$(cut -f1 "$RECOVERY")" $'CHILD-3\nCHILD-2' "merged recovery sorts descendants before ancestors"
-assert_eq "$(cut -f3 "$RECOVERY")" $'1\n0' "merged recovery stores descending depth"
+assert_eq "$(sed '1d' "$RECOVERY" | cut -f1)" $'CHILD-3\nCHILD-2' "merged recovery sorts descendants before ancestors"
+assert_eq "$(sed '1d' "$RECOVERY" | cut -f3)" $'1\n0' "merged recovery stores descending depth"
 rm -f "$FAKE_LINEAR_ROOT/interrupt.after.complete"
 out="$(run_close 2>"$TMP_ROOT/depth-retry.err")"
 assert_eq "$out" "closed PARENT-1" "depth-ordered retry closes the parent"
@@ -407,7 +451,7 @@ touch "$FAKE_LINEAR_ROOT/interrupt.after.complete"
 rc=0
 "$DEPTH_MUTANT" "$SANDBOX" PARENT-1 >/dev/null 2>&1 || rc=$?
 [[ $rc -ne 0 ]] && ok "depth-order mutant interrupts before repair" || fail "depth-order mutant interrupts before repair"
-assert_eq "$(cut -f1 "$RECOVERY")" $'CHILD-2\nCHILD-3' "depth-order control fails when merged rows keep insertion order"
+assert_eq "$(sed '1d' "$RECOVERY" | cut -f1)" $'CHILD-2\nCHILD-3' "depth-order control fails when merged rows keep insertion order"
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"

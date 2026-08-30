@@ -75,10 +75,11 @@ an open parent validates matching recovery, retains it, and atomically merges it
 with the next snapshot. Every recovery conflict names the durable record path.
 Reconcile the Linear states, then remove that record only when no cascade repair
 remains. A durable-versus-fresh conflict stores both tagged alternatives in an
-owner-only `.unresolved.tsv` record and retires the single-state record.
-Automation refuses open and completed parents until the operator reconciles and
-removes the unresolved record. Exit zero prints one `closed [PARENT_ID]` or
-`deferred [CHILD_IDS...]` line to stdout.
+owner-only unresolved envelope at the active recovery pathname. Resolved and
+unresolved generations replace that pathname atomically; termination is masked
+and a failed rename retried during publication. Every reader refuses an
+unresolved active envelope until the operator reconciles and removes it. Exit
+zero prints one `closed [PARENT_ID]` or `deferred [CHILD_IDS...]` line to stdout.
 A closed result may include recovery diagnostics on stderr; consumers preserve
 them all.
 Any incomplete read, summary, completion, or repair exits nonzero. `sync-base`

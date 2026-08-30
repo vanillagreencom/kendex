@@ -63,23 +63,21 @@ if [[ -L "$RECOVERY" || ( -e "$RECOVERY" && ( ! -f "$RECOVERY" || ! -O "$RECOVER
   echo "container-close: recovery record is not an owned regular file: $RECOVERY" >&2
   exit 1
 fi
-UNRESOLVED="$RECOVERY_DIR/$PARENT_ID.unresolved.tsv"
-if [[ -L "$UNRESOLVED" || ( -e "$UNRESOLVED" && ( ! -f "$UNRESOLVED" || ! -O "$UNRESOLVED" ) ) ]]; then
-  echo "container-close: unresolved recovery record is not an owned regular file: $UNRESOLVED" >&2
-  exit 1
-fi
-
 recovery_conflict() {
-  local record="${2:-$RECOVERY}"
-  echo "container-close: recovery conflict for $PARENT_ID: $1; reconcile Linear state, then remove $record only if no cascade repair remains" >&2
+  echo "container-close: recovery conflict for $PARENT_ID: $1; reconcile Linear state, then remove $RECOVERY only if no cascade repair remains" >&2
   return 1
 }
 
 refuse_unresolved() {
-  [[ -e "$UNRESOLVED" || -L "$UNRESOLVED" ]] || return 0
-  [[ -f "$UNRESOLVED" && ! -L "$UNRESOLVED" && -O "$UNRESOLVED" ]] \
-    || { echo "container-close: unresolved recovery record is not an owned regular file: $UNRESOLVED" >&2; return 1; }
-  recovery_conflict "unresolved durable and fresh alternatives require operator reconciliation" "$UNRESOLVED"
+  [[ -e "$RECOVERY" || -L "$RECOVERY" ]] || return 0
+  local status
+  IFS= read -r status < "$RECOVERY" \
+    || { echo "container-close: recovery envelope is empty for $PARENT_ID: $RECOVERY" >&2; return 1; }
+  case "$status" in
+    resolved) return 0 ;;
+    unresolved) recovery_conflict "unresolved durable and fresh alternatives require operator reconciliation" ;;
+    *) echo "container-close: recovery envelope has invalid status $status: $RECOVERY" >&2; return 1 ;;
+  esac
 }
 
 RUN_DIR="$(mktemp -d "$MAIN_REPO_ROOT/tmp/container-close-$PARENT_ID.XXXXXX")" \
@@ -89,9 +87,11 @@ SNAPSHOT="$RUN_DIR/canceled.tsv"
 CURRENT="$RUN_DIR/current.jsonl"
 SUMMARY="$RUN_DIR/summary.md"
 CHILD_ROWS="$RUN_DIR/children.tsv"
+ACTIVE_ROWS="$RUN_DIR/active.tsv"
+PUBLISHED_ROWS="$RUN_DIR/published.tsv"
 
 cleanup() {
-  rm -f -- "$SNAPSHOT" "$CURRENT" "$SUMMARY" "$CHILD_ROWS"
+  rm -f -- "$SNAPSHOT" "$CURRENT" "$SUMMARY" "$CHILD_ROWS" "$ACTIVE_ROWS" "$PUBLISHED_ROWS"
   rmdir -- "$RUN_DIR" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -145,21 +145,43 @@ fetch_recovery_rows() {
     || { echo "container-close: canceled-child repair lookup was incomplete for $PARENT_ID" >&2; return 1; }
 }
 
+restore_signal_traps() {
+  trap 'exit 130' INT
+  trap 'exit 143' TERM HUP
+}
+
+atomic_replace_recovery() {
+  local source="$1" _attempt
+  trap '' INT TERM HUP
+  for _attempt in 1 2 3; do
+    if mv -f "$source" "$RECOVERY"; then
+      restore_signal_traps
+      return 0
+    fi
+  done
+  restore_signal_traps
+  echo "container-close: cannot atomically publish recovery envelope for $PARENT_ID" >&2
+  return 1
+}
+
+load_resolved_active() {
+  refuse_unresolved || return 1
+  sed '1d' "$RECOVERY" > "$ACTIVE_ROWS" \
+    || { echo "container-close: cannot read resolved recovery envelope for $PARENT_ID" >&2; return 1; }
+  load_recovery_rows "$ACTIVE_ROWS"
+}
+
 publish_unresolved() {
-  [[ ! -e "$UNRESOLVED" && ! -L "$UNRESOLVED" ]] \
-    || { recovery_conflict "unresolved alternatives already exist" "$UNRESOLVED"; return $?; }
   local unresolved_tmp
   unresolved_tmp="$(mktemp "$RECOVERY_DIR/$PARENT_ID.unresolved.XXXXXX")" \
     || { echo "container-close: cannot create unresolved recovery record for $PARENT_ID" >&2; return 1; }
-  if ! awk -F '\t' 'BEGIN { OFS="\t" }
+  if ! printf 'unresolved\n' > "$unresolved_tmp" || ! awk -F '\t' 'BEGIN { OFS="\t" }
     { source=(FILENAME == ARGV[1] ? "durable" : "fresh"); print $1, $2, $3, source }
-  ' "$RECOVERY" "$SNAPSHOT" > "$unresolved_tmp" || ! chmod 600 "$unresolved_tmp" || ! mv -f "$unresolved_tmp" "$UNRESOLVED"; then
+  ' "$ACTIVE_ROWS" "$SNAPSHOT" >> "$unresolved_tmp" || ! chmod 600 "$unresolved_tmp" || ! atomic_replace_recovery "$unresolved_tmp"; then
     rm -f -- "$unresolved_tmp"
     echo "container-close: cannot publish unresolved recovery alternatives for $PARENT_ID" >&2
     return 1
   fi
-  rm -f -- "$RECOVERY" \
-    || { echo "container-close: cannot retire conflicted recovery record for $PARENT_ID" >&2; return 1; }
 }
 
 publish_recovery() {
@@ -170,11 +192,13 @@ publish_recovery() {
   if [[ -e "$RECOVERY" || -L "$RECOVERY" ]]; then
     [[ -f "$RECOVERY" && ! -L "$RECOVERY" && -O "$RECOVERY" ]] \
       || { echo "container-close: recovery record is not an owned regular file: $RECOVERY" >&2; return 1; }
-    load_recovery_rows "$RECOVERY" || return 1
+    load_resolved_active || return 1
   fi
   recovery_tmp="$(mktemp "$RECOVERY_DIR/$PARENT_ID.XXXXXX")" \
     || { echo "container-close: cannot create recovery record for $PARENT_ID" >&2; return 1; }
-  if [[ -s "$RECOVERY" ]]; then
+  printf 'resolved\n' > "$recovery_tmp" \
+    || { rm -f -- "$recovery_tmp"; echo "container-close: cannot initialize recovery envelope for $PARENT_ID" >&2; return 1; }
+  if [[ -s "$ACTIVE_ROWS" ]]; then
     awk -F '\t' 'BEGIN { OFS="\t" }
       NF != 3 || $1 == "" || $2 == "" || $3 !~ /^[0-9]+$/ { bad=1; exit }
       !($1 in states) { states[$1]=$2; depths[$1]=$3; order[++count]=$1; next }
@@ -185,20 +209,22 @@ publish_recovery() {
           if (depths[order[j]] > depths[order[i]]) { swap=order[i]; order[i]=order[j]; order[j]=swap }
         for (i=1; i<=count; i++) print order[i], states[order[i]], depths[order[i]]
       }
-    ' "$RECOVERY" "$SNAPSHOT" > "$recovery_tmp" || {
+    ' "$ACTIVE_ROWS" "$SNAPSHOT" >> "$recovery_tmp" || {
       rm -f -- "$recovery_tmp"
       publish_unresolved || return 1
-      recovery_conflict "durable and fresh rows disagree; alternatives saved" "$UNRESOLVED"
+      recovery_conflict "durable and fresh rows disagree; alternatives saved"
       return $?
     }
-  elif ! cp "$SNAPSHOT" "$recovery_tmp"; then
+  elif ! awk '{ print }' "$SNAPSHOT" >> "$recovery_tmp"; then
     rm -f -- "$recovery_tmp"
     echo "container-close: cannot copy recovery record for $PARENT_ID" >&2
     return 1
   fi
   ids=(); states=(); depths=()
-  load_recovery_rows "$recovery_tmp" || { rm -f -- "$recovery_tmp"; return 1; }
-  if ! chmod 600 "$recovery_tmp" || ! mv -f "$recovery_tmp" "$RECOVERY"; then
+  sed '1d' "$recovery_tmp" > "$PUBLISHED_ROWS" \
+    || { rm -f -- "$recovery_tmp"; echo "container-close: cannot validate recovery envelope for $PARENT_ID" >&2; return 1; }
+  load_recovery_rows "$PUBLISHED_ROWS" || { rm -f -- "$recovery_tmp"; return 1; }
+  if ! chmod 600 "$recovery_tmp" || ! atomic_replace_recovery "$recovery_tmp"; then
     rm -f -- "$recovery_tmp"
     echo "container-close: cannot publish recovery record for $PARENT_ID" >&2
     return 1
@@ -211,7 +237,7 @@ repair_canceled() {
   [[ -f "$RECOVERY" && ! -L "$RECOVERY" && -O "$RECOVERY" ]] \
     || { echo "container-close: recovery record is not an owned regular file: $RECOVERY" >&2; return 1; }
   local ids=() states=() depths=() id state current_state current_type index matches
-  load_recovery_rows "$RECOVERY" || return 1
+  load_resolved_active || return 1
   [[ ${#ids[@]} -gt 0 ]] || { echo "container-close: recovery record is empty for $PARENT_ID" >&2; return 1; }
   fetch_recovery_rows || return 1
   for ((index=0; index<${#ids[@]}; index++)); do
@@ -246,7 +272,7 @@ check_open_recovery() {
   [[ -f "$RECOVERY" && ! -L "$RECOVERY" && -O "$RECOVERY" ]] \
     || { echo "container-close: recovery record is not an owned regular file: $RECOVERY" >&2; return 1; }
   local ids=() states=() depths=() id state current_state index
-  load_recovery_rows "$RECOVERY" || return 1
+  load_resolved_active || return 1
   [[ ${#ids[@]} -gt 0 ]] || { echo "container-close: recovery record is empty for $PARENT_ID" >&2; return 1; }
   fetch_recovery_rows || return 1
   for ((index=0; index<${#ids[@]}; index++)); do
