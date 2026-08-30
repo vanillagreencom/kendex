@@ -87,6 +87,44 @@ trap cleanup EXIT
 emit() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >>"$TMP/findings.tsv"; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# --- content, the only judge of what a lane may read -------------------------
+content_of() { # IDX PATH -> inspectable content path on stdout; nonzero if unavailable
+  local out
+  if [ "$MODE" = "staged" ]; then
+    # Staged scope judges staged bytes: a worktree copy carrying unstaged
+    # edits would put the diff line numbers and the content out of sync.
+    out="$TMP/blob.$1"
+    if [ ! -f "$out" ]; then
+      git show ":$2" >"$out.part" 2>/dev/null || { rm -f "$out.part"; return 1; }
+      mv -- "$out.part" "$out" || return 1
+    fi
+    printf '%s' "$out"
+  else
+    [ -f "$2" ] && [ ! -h "$2" ] || return 1
+    printf '%s' "$2"
+  fi
+}
+
+# git calls a blob binary when a NUL falls in its leading 8000 bytes, and no
+# byte past that window changes the verdict. That window is what the
+# growth-guards lanes sample too (GG_BINARY_SAMPLE), so the two halves of this
+# repository cannot answer one question by two rules. `grep -I` asks a
+# different question: GNU grep answers binary on a NUL anywhere in its first
+# buffer, tens of kilobytes past where git stops looking, so a file git reads
+# as text would be dropped unread.
+BINARY_SAMPLE=8000
+content_is_binary() { # CONTENT-PATH PATH — 0 when git would call the content binary
+  local total stripped
+  # A read that FAILS is no verdict at all. Skipping it would leave the path
+  # inside a clean count no lane ever read, so it is loud instead — the policy
+  # the growth-guards lanes take for this same condition.
+  total="$(head -c "$BINARY_SAMPLE" -- "$1" | wc -c)" \
+    || env_error "could not read $2 to classify its content — refusing to report clean over a file no lane read"
+  stripped="$(head -c "$BINARY_SAMPLE" -- "$1" | LC_ALL=C tr -d '\000' | wc -c)" \
+    || env_error "could not read $2 to classify its content — refusing to report clean over a file no lane read"
+  [ "$((total))" -ne "$((stripped))" ]
+}
+
 # --- change set --------------------------------------------------------------
 # Diff config is pinned, not inherited: a repo setting noprefix, a mnemonic
 # prefix, quotePath, an external differ or a textconv filter would each
@@ -95,7 +133,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # binary and emit 'Binary files ... differ' with no hunks, so one attributes
 # line would hide a whole extension's added lines from every line-scoped lane
 # — a scan reported over a file it never read. What forcing text lets through
-# is judged on content in the lane loop below.
+# is judged on content by the verdict below, before the patch is taken.
 git_diff() { git -c core.quotePath=false -c diff.noprefix=false -c diff.mnemonicPrefix=false diff --no-ext-diff --no-textconv --text "$@"; }
 
 resolve_base() { # -> merge-base commit on stdout; nonzero when none resolves
@@ -124,14 +162,12 @@ case "$MODE" in
   staged)
     git rev-parse --verify --quiet HEAD >/dev/null || env_error "the repository has no commits yet — nothing to diff --staged against"
     git_diff --cached --name-only --diff-filter=d -z >"$TMP/files.z" || env_error "git diff --cached failed"
-    git_diff --cached --unified=0 --no-color --no-renames --diff-filter=d >"$TMP/patch" || env_error "git diff --cached failed"
     git_diff --cached --name-only --no-renames --diff-filter=A >"$TMP/newfiles.list" || env_error "git diff --cached failed"
     ;;
   base)
     git rev-parse --verify --quiet HEAD >/dev/null || env_error "the repository has no commits yet — pass --all"
     BASE="$(resolve_base)" || env_error "could not resolve a default diff base (tried origin/HEAD, origin/main, main) — pass --base REF or --all"
     git_diff --name-only --diff-filter=d -z "$BASE" -- >"$TMP/files.z" || env_error "git diff against $BASE failed"
-    git_diff --unified=0 --no-color --no-renames --diff-filter=d "$BASE" -- >"$TMP/patch" || env_error "git diff against $BASE failed"
     git_diff --name-only --no-renames --diff-filter=A "$BASE" -- >"$TMP/newfiles.list" || env_error "git diff against $BASE failed"
     # A file never added is invisible to `git diff` yet is part of the change
     # the author is about to commit: every non-ignored untracked file is a new
@@ -151,15 +187,43 @@ while IFS= read -r -d '' f; do
   printf '%s\n' "$f"
 done <"$TMP/files.z" >"$TMP/files.list"
 
+# Which changed paths carry inspectable lines is decided HERE, once, before a
+# single byte reaches the patch parser. A binary blob that travelled through
+# that parser could forge a `+++ b/<path>` header out of its own bytes, take
+# over another file's record and destroy the added lines already collected for
+# it — and would pay a full decode of the asset to do it. The whole-file lanes
+# still see every changed path through files.list: only the LINES are withheld.
+: >"$TMP/textfiles.list"
+PATCH_EXCLUDE=()
+IDX=0
+while IFS= read -r f; do
+  IDX=$((IDX + 1))
+  # No resolvable content is no content to judge — a symlink in every scope
+  # but staged. The lane loop drops such a path on the same test.
+  cpath="$(content_of "$IDX" "$f")" || continue
+  if content_is_binary "$cpath" "$f"; then
+    PATCH_EXCLUDE+=(":(exclude,literal)$f")
+    continue
+  fi
+  printf '%s\n' "$f" >>"$TMP/textfiles.list"
+done <"$TMP/files.list"
+
 if [ "$MODE" = "all" ]; then
-  # Every line counts as added. Binary and empty files carry no inspectable
-  # lines (grep -I reports no match for either), so they contribute none.
+  # Every line of a file with inspectable content counts as added.
   while IFS= read -r f; do
-    [ -f "$f" ] && [ ! -h "$f" ] || continue
-    grep -Iq . -- "$f" 2>/dev/null || continue
     PF="$f" awk 'BEGIN { p = ENVIRON["PF"] } { print p "\t" FNR "\t" $0 }' "./$f" >>"$TMP/added.tsv"
-  done <"$TMP/files.list"
+  done <"$TMP/textfiles.list"
 else
+  # The binary paths are excluded at the source, so no asset is ever decoded
+  # into the patch and none of its bytes can reach the parser below.
+  case "$MODE" in
+    staged)
+      git_diff --cached --unified=0 --no-color --no-renames --diff-filter=d -- ${PATCH_EXCLUDE[@]+"${PATCH_EXCLUDE[@]}"} >"$TMP/patch" || env_error "git diff --cached failed"
+      ;;
+    base)
+      git_diff --unified=0 --no-color --no-renames --diff-filter=d "$BASE" -- ${PATCH_EXCLUDE[@]+"${PATCH_EXCLUDE[@]}"} >"$TMP/patch" || env_error "git diff against $BASE failed"
+      ;;
+  esac
   awk -v out="$TMP/added.tsv" '
     /^\+\+\+ / {
       rest = substr($0, 5)
@@ -195,8 +259,9 @@ else
     esac
     printf '%s\n' "$f" >>"$TMP/files.list"
     printf '%s\n' "$f" >>"$TMP/newfiles.list"
-    [ -f "$f" ] && [ ! -h "$f" ] || continue
-    grep -Iq . -- "$f" 2>/dev/null || continue
+    IDX=$((IDX + 1))
+    cpath="$(content_of "$IDX" "$f")" || continue
+    if content_is_binary "$cpath" "$f"; then continue; fi
     PF="$f" awk 'BEGIN { p = ENVIRON["PF"] } { print p "\t" FNR "\t" $0 }' "./$f" >>"$TMP/added.tsv"
   done <"$TMP/untracked.z"
 fi
@@ -222,23 +287,6 @@ git ls-files >"$TMP/tracked.list" || env_error "git ls-files failed"
 { cat "$TMP/tracked.list"; tr '\0' '\n' <"$TMP/untracked.z"; } | awk -F/ '{ p = ""; for (i = 1; i < NF; i++) { p = (i == 1 ? $i : p "/" $i); print p } }' | LC_ALL=C sort -u >"$TMP/trackeddirs"
 
 # --- shared helpers ----------------------------------------------------------
-content_of() { # IDX PATH -> inspectable content path on stdout; nonzero if unavailable
-  local out
-  if [ "$MODE" = "staged" ]; then
-    # Staged scope judges staged bytes: a worktree copy carrying unstaged
-    # edits would put the diff line numbers and the content out of sync.
-    out="$TMP/blob.$1"
-    if [ ! -f "$out" ]; then
-      git show ":$2" >"$out.part" 2>/dev/null || { rm -f "$out.part"; return 1; }
-      mv -- "$out.part" "$out" || return 1
-    fi
-    printf '%s' "$out"
-  else
-    [ -f "$2" ] && [ ! -h "$2" ] || return 1
-    printf '%s' "$2"
-  fi
-}
-
 added_lines_of() { # IDX -> path to that file's added line numbers
   local out="$TMP/lines.$1"
   [ -f "$out" ] || cut -f1 -- "$TMP/rec.$1" >"$out"
@@ -816,19 +864,10 @@ while IFS= read -r f; do
   IDX=$((IDX + 1))
   REC="$TMP/rec.$IDX"
   [ -f "$REC" ] || : >"$REC"
+  # A binary file's record is empty because the producer above never wrote
+  # one — content decided that once, for every scope, before the patch was
+  # taken. The whole-file lanes below still see the path.
   cpath="$(content_of "$IDX" "$f")" || continue
-  # CONTENT decides which files have inspectable lines, never an attributes
-  # rule: git_diff forces --text so no rule can withhold them, and a genuinely
-  # binary blob gives its added lines up here instead, under the same `grep
-  # -I` test --all applies to every tracked file. Raw bytes never reach a
-  # finding record, and the whole-file lanes still see the path.
-  bin_status=0
-  grep -Iq . -- "$cpath" >/dev/null 2>&1 || bin_status=$?
-  # 1 is "no inspectable text" — binary, or nothing but empty lines. Above 1
-  # the content could not be read at all, which is no verdict: the file drops
-  # out whole, the way an unresolvable content path above drops it.
-  [ "$bin_status" -le 1 ] || continue
-  [ "$bin_status" -eq 0 ] || : >"$REC"
 
   is_sh=0
   has_ee=0

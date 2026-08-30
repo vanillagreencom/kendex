@@ -338,5 +338,98 @@ else
   bad "control: the same bytes without the NUL are read as text" "rc=$RC out=$OUT"
 fi
 
+# git calls a blob binary on a NUL in its LEADING 8000 BYTES and reads the rest
+# as text. A wider window would drop a file git reads as text, taking its added
+# lines out of every lane while the run still counted it changed.
+seed binary-window
+{
+  printf '# Staged\n\n'
+  printf 'See `docs/gone.md` for the rest.\n'
+  head -c 20000 /dev/zero | tr '\0' 'x'
+  printf '\n\000\n'
+} >"$R/docs/staged.md"
+git -C "$R" add docs/staged.md
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
+  ok "a NUL past the leading 8000 bytes leaves the file text, as it is to git"
+else
+  bad "a NUL past the leading 8000 bytes leaves the file text, as it is to git" "rc=$RC out=$OUT"
+fi
+
+# The other half of "no lines": a file whose lines are withheld is still a
+# CHANGED FILE, and the whole-file lanes judge the path, not the content — no
+# amount of binary content makes a new suite wired. The temp-path line is what
+# makes the second half of this assertion mean something: it is a line-scoped
+# finding on that same path, and the NUL is the only reason it stays quiet.
+seed binary-wholefile
+mkdir -p "$R/tests" "$R/.github/workflows"
+printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash tests/other.test.sh\n' >"$R/.github/workflows/ci.yml"
+git -C "$R" add -A
+git -C "$R" commit -qm ci
+printf '#!/usr/bin/env bash\nset -euo pipefail\nmkdir -p /tmp/preflight-fixture\n# \000\n' >"$R/tests/new.test.sh"
+git -C "$R" add tests/new.test.sh
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "tests/new.test.sh:0: [unwired-suite]" && ! has "[hardcoded-temp-path]"; then
+  ok "a binary file still reaches the whole-file lanes; only its lines are withheld"
+else
+  bad "a binary file still reaches the whole-file lanes; only its lines are withheld" "rc=$RC out=$OUT"
+fi
+printf '#!/usr/bin/env bash\nset -euo pipefail\nmkdir -p /tmp/preflight-fixture\n# x\n' >"$R/tests/new.test.sh"
+git -C "$R" add tests/new.test.sh
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "tests/new.test.sh:0: [unwired-suite]" && has "tests/new.test.sh:3: [hardcoded-temp-path]"; then
+  ok "control: without the NUL the same fixture fires on the line too"
+else
+  bad "control: without the NUL the same fixture fires on the line too" "rc=$RC out=$OUT"
+fi
+
+# A committed blob whose own bytes spell a patch header. Forcing --text hands
+# every changed file's raw content to the patch parser unless content is judged
+# FIRST: a line reading '++ b/<path>' renders with the '+' prefix as a file
+# header at column 1, re-points the parser at that path, and the record split
+# then reopens and truncates it — destroying another file's added lines.
+seed binary-forged-header
+printf '# Staged\n\nSee `docs/gone.md` for the rest.\n' >"$R/docs/staged.md"
+printf 'PNG\000\n++ b/docs/staged.md\n+junk\n' >"$R/zz.bin"
+git -C "$R" add -A
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
+  ok "a binary blob cannot forge a patch header over another file's lines"
+else
+  bad "a binary blob cannot forge a patch header over another file's lines" "rc=$RC out=$OUT"
+fi
+run_pf
+if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
+  ok "--base holds the same line against the forged header"
+else
+  bad "--base holds the same line against the forged header" "rc=$RC out=$OUT"
+fi
+
+echo "=== content the run cannot read fails loudly, never a clean verdict ==="
+
+# A read that FAILS is not a verdict of "no lines". The path is already inside
+# the changed-file count, so a silent skip would print a clean total covering
+# content no lane read — the exact shape every pin above exists to close.
+seed unreadable
+printf '# New\n\nSee `docs/gone.md` for the rest.\n' >"$R/docs/new.md"
+if [ "$(id -u)" -eq 0 ]; then
+  printf '  skip  the unreadable-content pin needs a non-root reader (chmod 000 cannot deny root)\n'
+else
+  chmod 000 "$R/docs/new.md"
+  run_pf
+  chmod 644 "$R/docs/new.md"
+  if [ "$RC" -eq 2 ] && has "docs/new.md" && ! has "preflight: clean"; then
+    ok "content the run cannot read is exit 2, naming the path"
+  else
+    bad "content the run cannot read is exit 2, naming the path" "rc=$RC out=$OUT"
+  fi
+  run_pf
+  if [ "$RC" -eq 1 ] && has "docs/new.md:3: [docs-cited-paths]"; then
+    ok "control: the same file readable produces the ordinary verdict"
+  else
+    bad "control: the same file readable produces the ordinary verdict" "rc=$RC out=$OUT"
+  fi
+fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
