@@ -6,8 +6,9 @@ fetching CI failure logs; gating and performing merges; and comparing several
 PRs before a batch merge.
 
 Every command prints JSON by default, so output can be piped straight into
-`jq`. `SKILL.md` is the full command reference; `DEVELOPMENT.md` covers
-internals.
+`jq`. Start with `./scripts/github.sh --help`, then use
+`./scripts/github.sh <command> --help` for the full contract. `SKILL.md`
+carries agent routing and recovery; `DEVELOPMENT.md` covers internals.
 
 ## Setup
 

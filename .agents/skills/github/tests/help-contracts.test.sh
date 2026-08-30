@@ -63,6 +63,15 @@ assert_section_rejects_decoy() {
   fi
 }
 
+assert_section_rejects_token() {
+  local output="$1" start="$2" end="$3" token="$4" name="$5"
+  if section_has_token "$output" "$start" "$end" "$token"; then
+    fail "$name" "found stale token: $token"
+  else
+    pass "$name"
+  fi
+}
+
 word_count_at_most() {
   local text="$1" limit="$2" count
   count=$(wc -w <<<"$text")
@@ -90,13 +99,22 @@ assert_file_token() {
 }
 
 run_help_contracts() {
-  local label="$1" root="$2" github_help merge_help label_add_help label_remove_help pr_view_help sticky_help token
+  local label="$1" root="$2" github_help merge_help label_add_help label_remove_help pr_view_help sticky_help readme token
   github_help=$("$root/scripts/github.sh" --help)
   merge_help=$("$root/scripts/github.sh" pr-merge --help)
   label_add_help=$("$root/scripts/github.sh" label-add --help)
   label_remove_help=$("$root/scripts/github.sh" label-remove --help)
   pr_view_help=$("$root/scripts/github.sh" pr-view --help)
   sticky_help=$("$root/scripts/github.sh" sticky-comment --help)
+  readme="$(<"$root/README.md")"
+
+  for token in 'github.sh --help' '<command> --help' 'SKILL.md' 'DEVELOPMENT.md'; do
+    assert_section_token "$readme" '# GitHub Queries' '## Setup' "$token" \
+      "$label README entry point carries $token"
+  done
+  assert_section_rejects_token "$readme" '# GitHub Queries' '## Setup' \
+    'SKILL.md` is the full command reference' \
+    "$label README does not call SKILL.md the full reference"
 
   for token in 'Most subcommands' 'pr-view' 'gh pr view' '--format' \
     'sticky-comment' 'unrecognized flags' 'positional input' 'ignored'; do
