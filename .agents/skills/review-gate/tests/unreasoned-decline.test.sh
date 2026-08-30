@@ -38,11 +38,14 @@ thread() { # thread ISRESOLVED COMMENT_JSON… (comma-joined)
 human() { printf '{"body":%s,"author":{"__typename":"User"}}' "$(jq -Rn --arg b "$1" '$b')"; }
 bot()   { printf '{"body":%s,"author":{"__typename":"Bot"}}'  "$(jq -Rn --arg b "$1" '$b')"; }
 
-# unreasoned is the THIRD field. The helpers assert on it by position so a
-# field added or reordered in the page shape reddens here rather than being
-# silently read as another term's count.
-counted()     { case "$1" in *" "*" 1 "*) return 0 ;; esac; return 1; }
-not_counted() { case "$1" in *" "*" 0 "*) return 0 ;; esac; return 1; }
+# unreasoned is the THIRD field. The helpers split the line and read that
+# field, rather than globbing for the digit anywhere in it: a glob is right
+# only while every count is one digit, and it would keep passing if a field
+# were added or reordered in the page shape. Read by position, that reddens
+# here instead of being silently satisfied by another term's count.
+unreasoned() { local _unresolved _untracked f _rest; read -r _unresolved _untracked f _rest <<<"$1"; printf '%s' "$f"; }
+counted()     { [ "$(unreasoned "$1")" = 1 ]; }
+not_counted() { [ "$(unreasoned "$1")" = 0 ]; }
 
 check() { # check WANT LABEL BODY
   local want="$1" label="$2" out
@@ -80,6 +83,19 @@ check counted "Declined: works as intended" \
   'Declined: works as intended'
 check counted "a decline that is only a sha" \
   'Declined: a1fa74dca'
+# The reply this issue exists to catch, quoted from #1860, pinned verbatim.
+# It shipped KEN-884..KEN-889, and it went uncaught through a first draft of
+# this term because the token list carried `frozen` and not `freeze`.
+check counted "THE MOTIVATING REPLY: a freeze plus a filing that never happened" \
+  "Declined under this PR's freeze, flagged separately"
+check counted "the same reply with nothing trailing it" \
+  "Declined under this PR's freeze."
+# #1847: the freeze restated as procedure. Who ordered the freeze and which
+# push was the last says nothing about whether the finding reproduces.
+check counted "a freeze attributed to the owner and nothing more" \
+  "Declined: frozen at 39db56854, per the owner's instruction."
+check counted "the same, spelled out at length" \
+  'Declined: frozen at 39db56854 — the owner set the previous push as this PR'"'"'s last.'
 
 echo "=== the real reasons that must pass ==="
 
@@ -95,14 +111,21 @@ check clean "a test count beside a mechanism" \
   'Declined: the suite passes and the reproduction hits a branch the parser rejects before it.'
 check clean "a short but real reason" \
   'Declined: that argument never reaches argv; the wrapper consumes it.'
+# From #1860, and the control that keeps the freeze vocabulary honest: the
+# same wrapper as the motivating reply, and it concedes a mechanism, so
+# widening the vocabulary must not reach it.
+check clean "a freeze that does concede the mechanism" \
+  "Declined under this PR's freeze. You are right about the mechanism, and it fails in the safe direction."
 
-# The boundary, pinned deliberately. The rule is "the reason is ONLY the
-# token", so a token wrapped in prose that still names no mechanism is out of
-# its reach. This case is not a bug in the term; it is the term's stated
-# scope, and it is here so the next author sees the edge instead of
-# rediscovering it. Widening past this needs a rule about what prose counts
-# as a mechanism, which word subtraction cannot decide.
-check clean "KNOWN LIMIT: a token wrapped in prose and a test count is not reached" \
+# The boundary, pinned deliberately. The subtraction is vocabulary, so it
+# ends where the residue stops being words and becomes NAMES — the suite,
+# lane or test the count belongs to. `lifecycle` and `tools/guard` below are
+# identifiers, and no word list reaches an identifier. This case is not a bug
+# in the term; it is the term's stated scope, and it is here so the next
+# author sees the edge instead of rediscovering it. Widening past it needs a
+# rule about what prose counts as a mechanism, which word subtraction cannot
+# decide.
+check clean "KNOWN LIMIT: a count whose residue is a suite name is not reached" \
   'Declined: frozen at a1fa74dca; lifecycle 104/104 and the tools/guard run at this head.'
 
 echo "=== the colon is not what makes it a decline ==="
@@ -132,7 +155,7 @@ out=$(page "$(thread true "$(bot 'Declined: frozen')")")
 not_counted "$out" && ok "a bot decline never moves the disposition" || bad "a bot decline never moves the disposition" "$out"
 
 out=$(page "$(thread true "$(human 'Declined: frozen')"),$(thread true "$(human 'Declined: pre-existing')")")
-case "$out" in *" "*" 2 "*) ok "every offending thread is counted";; *) bad "every offending thread is counted" "$out";; esac
+[ "$(unreasoned "$out")" = 2 ] && ok "every offending thread is counted" || bad "every offending thread is counted" "$out"
 
 out=$(page "$(thread true "$(human 'Declined: frozen'),$(human 'Declined: the caller guards it, so that branch cannot run')")")
 not_counted "$out" && ok "a later real reason clears an earlier bare decline" || bad "a later real reason clears an earlier bare decline" "$out"
@@ -202,6 +225,27 @@ else
 
   out=$(npage "$(thread true "$(human 'Declined: out of scope.')")")
   counted "$out" && ok "narrowed: the punctuated form still counts" || bad "narrowed: the punctuated form still counts" "$out"
+fi
+
+echo
+echo "--- must-fail probe: the freeze vocabulary, removed ---"
+# Same jq with `freeze` dropped back out of the token list, leaving only
+# `frozen`. That is the state a first draft of this term shipped in, and the
+# motivating reply cleared the gate in it. The reply must stop being counted
+# here while the punctuated freeze fixture keeps counting, so the count is
+# this inflection's rather than the term's.
+UNFROZEN="$(sed 's/frozen|freezes?|freezing|/frozen|/' <<<"$prog")"
+if [ "$UNFROZEN" = "$prog" ]; then
+  bad "probe planted nothing" "the freeze vocabulary did not match"
+else
+  uprog="$UNFROZEN"
+  upage() { jq -r "$uprog" <<<"{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[$1]}}}}}"; }
+
+  out=$(upage "$(thread true "$(human "Declined under this PR's freeze, flagged separately")")")
+  not_counted "$out" && ok "removed: the motivating reply clears the gate again" || bad "removed: the motivating reply clears the gate again" "$out"
+
+  out=$(upage "$(thread true "$(human 'Declined: frozen at a1fa74dca; 104/104 pass')")")
+  counted "$out" && ok "removed: the frozen form still counts" || bad "removed: the frozen form still counts" "$out"
 fi
 
 echo
