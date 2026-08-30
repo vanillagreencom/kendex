@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { filterClippyErrors, findCargoWorkspaceRoot, runWorkspaceClippy } from "./cargo.js";
 
 /**
@@ -11,35 +9,8 @@ import { filterClippyErrors, findCargoWorkspaceRoot, runWorkspaceClippy } from "
  */
 export type ClippyOutcome =
 	| { kind: "clean" }
-	/**
-	 * `lines` and `reason` render the report; `digest` identifies the run. They
-	 * are not interchangeable, and a caller asking "did anything change" must
-	 * compare the digest. `lines` is the header lines a filter recognised,
-	 * capped, so two runs differing in location, detail, or an error past the
-	 * cap render the same. `reason` is coarser still — a timeout says how long
-	 * it waited and nothing about the partial output it collected, so two
-	 * unlike runs read alike.
-	 */
-	| { kind: "errors"; lines: string[]; digest: string }
-	| { kind: "unavailable"; reason: string; digest: string };
-
-/**
- * Digest what a run produced, with line order canonicalized. cargo interleaves
- * diagnostics from parallel jobs, so two runs over an unchanged tree print the
- * same lines in a different order: measured on this workspace, three
- * consecutive runs gave 440 identical lines, three different raw digests, and
- * one sorted digest. Hashing the raw text would make every run look new and
- * the guard would never suppress anything.
- *
- * Sorting is the whole canonicalization. Nothing else here is speculative: a
- * run that reports more diagnostics than the last one really did produce
- * different output — a build still settling does that — and steering on it is
- * correct.
- */
-function digestOf(...parts: string[]): string {
-	const canonical = parts.join("\n").split("\n").sort().join("\n");
-	return createHash("sha256").update(canonical).digest("hex");
-}
+	| { kind: "errors"; lines: string[] }
+	| { kind: "unavailable"; reason: string };
 
 /**
  * Run workspace clippy and report up to 15 error header lines. Used by the
@@ -49,32 +20,13 @@ function digestOf(...parts: string[]): string {
 export function workspaceClippyOutcome(cwd: string, timeoutMs: number): ClippyOutcome {
 	const metadataBudget = Math.min(5000, Math.floor(timeoutMs / 4));
 	const root = findCargoWorkspaceRoot(cwd, metadataBudget);
-	// The one outcome with no run output behind it: `findCargoWorkspaceRoot`
-	// answers `string | null` and drops what cargo printed, so the reason is
-	// genuinely all there is to identify this by. Two lookups failing for
-	// unlike causes therefore share a digest and the second is suppressed;
-	// closing that needs the metadata output carried out of that function.
-	if (!root) {
-		const reason = "cargo metadata named no workspace root here";
-		return { kind: "unavailable", reason, digest: digestOf(reason) };
-	}
+	if (!root) return { kind: "unavailable", reason: "cargo metadata named no workspace root here" };
 
 	const clippyBudget = Math.max(1, timeoutMs - metadataBudget);
 	const r = runWorkspaceClippy(root, clippyBudget);
-	// Whatever the run collected before it was abandoned or gave up. A timeout
-	// and a failure printing nothing recognisable both keep it: the reason
-	// alone would make two unlike runs one, which is the suppression this
-	// digest exists to refuse.
-	const output = `${r.stdout}\n${r.stderr}`;
-	if (r.timedOut) {
-		const reason = `cargo clippy timed out after ${clippyBudget}ms`;
-		return { kind: "unavailable", reason, digest: digestOf(reason, output) };
-	}
+	if (r.timedOut) return { kind: "unavailable", reason: `cargo clippy timed out after ${clippyBudget}ms` };
 	if (r.exitCode === 0) return { kind: "clean" };
-	const lines = filterClippyErrors(output);
-	if (lines.length === 0) {
-		const reason = `cargo clippy exited ${r.exitCode} printing no error line`;
-		return { kind: "unavailable", reason, digest: digestOf(reason, output) };
-	}
-	return { kind: "errors", lines, digest: digestOf(output) };
+	const lines = filterClippyErrors(`${r.stdout}\n${r.stderr}`);
+	if (lines.length === 0) return { kind: "unavailable", reason: `cargo clippy exited ${r.exitCode} printing no error line` };
+	return { kind: "errors", lines };
 }

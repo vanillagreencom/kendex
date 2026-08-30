@@ -23,8 +23,6 @@ export default function piHooks(pi: ExtensionAPI): void {
 	guard[INSTALL_SYMBOL] = true;
 
 	let turn = freshTurnState();
-	/** Identifies the last clippy run steered to the agent; see the end-of-turn handler. */
-	let lastClippyFingerprint: string | undefined;
 
 	pi.on("turn_start", () => {
 		turn = freshTurnState();
@@ -35,14 +33,6 @@ export default function piHooks(pi: ExtensionAPI): void {
 	// place. Fire-and-forget — an informational check never gates startup.
 	pi.on("session_start", (event, ctx: ExtensionContext) => {
 		recordProjectTrust(ctx);
-		// The fingerprint is per conversation, and every reason but `reload`
-		// starts a different one in this same process (`/new`, `/resume`,
-		// `/fork` and `/clone` all shut the session down and start another;
-		// `reload` only re-runs extensions in place). Carrying it across that
-		// boundary would suppress the new conversation's first failing turn,
-		// which in a headless run has no notification to fall back on. Ahead of
-		// every config read: a reset must not depend on a toggle.
-		if (event.reason !== "reload") lastClippyFingerprint = undefined;
 		if (event.reason === "reload" || event.reason === "resume") return;
 		const cfg = readConfig(ctx.cwd);
 		if (!getBool(cfg, "enabled") || !getBool(cfg, "sessionDriftCheck")) return;
@@ -124,12 +114,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 		if (turn.rustFilesTouched.size === 0) return undefined;
 
 		const outcome = workspaceClippyOutcome(ctx.cwd, getNumber(cfg, "clippyTimeoutMs"));
-		if (outcome.kind === "clean") {
-			// A clean turn also forgets the last report, so an error that comes
-			// back after a green turn is delivered again rather than suppressed.
-			lastClippyFingerprint = undefined;
-			return undefined;
-		}
+		if (outcome.kind === "clean") return undefined;
 		const summary = outcome.kind === "errors"
 			? `pi-hooks: clippy reported ${outcome.lines.length} workspace error(s) at turn end:\n${outcome.lines.slice(0, 5).join("\n")}`
 			: `pi-hooks: end-of-turn clippy proved nothing about the tree: ${outcome.reason}.`;
@@ -138,23 +123,19 @@ export default function piHooks(pi: ExtensionAPI): void {
 		// `triggerTurn: false` message is recorded without steering, which a
 		// headless run that is ending never reads. `triggerTurn: true` steers
 		// the active run, so the loop drains it after this event and the agent
-		// answers for its own errors in every mode. Repeating an identical run
-		// is what that turn could loop on: the agent edits, clippy fails the
-		// same way, and the report steers again. Steering only a run that
-		// changed bounds it — an agent making no progress is told once.
+		// answers for its own errors in every mode. Every failing turn reports:
+		// an agent that cannot fix an error hears the same advisory each turn,
+		// which is noisy and self-correcting, where suppressing a repeat can
+		// leave a headless turn told nothing when there was something to say.
+		// The turn state above is the bound — a turn that writes no `.rs` file
+		// runs no clippy — so a report costs an edit, not a loop.
 		//
-		// The digest decides that, never the rendered text: the summary is a
-		// count and five header lines, and an unavailable reason is coarser
-		// still, so a run that changed can read identically while the tree
-		// really did change. `display: false` leaves interactive rendering to
-		// the notification below, which a headless session never sees.
-		if (outcome.digest !== lastClippyFingerprint) {
-			lastClippyFingerprint = outcome.digest;
-			pi.sendMessage(
-				{ customType: "kendex-clippy", content: summary, display: false },
-				{ triggerTurn: true },
-			);
-		}
+		// `display: false` leaves interactive rendering to the notification
+		// below, which a headless session never sees.
+		pi.sendMessage(
+			{ customType: "kendex-clippy", content: summary, display: false },
+			{ triggerTurn: true },
+		);
 		if (ctx.hasUI) ctx.ui.notify(summary, outcome.kind === "errors" ? "warning" : "info");
 		return undefined;
 	});
