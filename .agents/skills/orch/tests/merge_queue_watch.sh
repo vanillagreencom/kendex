@@ -18,6 +18,7 @@ MAIN="$TMP/main" WT="$TMP/worktree" BIN="$TMP/bin" SCRIPTS="$TMP/orch/scripts"
 REAL_SETSID=$(command -v setsid || true)
 REAL_CHMOD=$(command -v chmod)
 REAL_FLOCK=$(command -v flock)
+REAL_PS=$(command -v ps)
 mkdir -p "$MAIN" "$BIN" "$SCRIPTS/lib"
 git -C "$MAIN" init -q
 git -C "$MAIN" config user.email test@example.com
@@ -132,9 +133,17 @@ fi
 exec "$WATCH_REAL_FLOCK" "$@"
 EOF
 chmod +x "$BIN/flock"
+cat > "$BIN/ps" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${MERGE_QUEUE_FORCE_PS_IDENTITY:-0}" == 1 ]]; then printf '%s\n' "$*" >> "$WATCH_PS_LOG"; fi
+exec "$WATCH_REAL_PS" "$@"
+EOF
+chmod +x "$BIN/ps"
 export PATH="$BIN:$PATH" WATCH_MODE="$MODE" WATCH_RELEASE="$RELEASE" WATCH_HEAD_FILE="$HEAD_FILE" WATCH_MAIN="$MAIN" WATCH_WORKTREE="$WT"
 export WATCH_GH_PAUSE="$TMP/gh-pause" WATCH_SETUP_GATE="$TMP/setup-gate" WATCH_REAL_SETSID="$REAL_SETSID" WATCH_CLEANUP_FAIL="$TMP/cleanup-fail" WATCH_CLEANUP_INTERRUPT="$TMP/cleanup-interrupt"
-export WATCH_SETSID_FAIL="$TMP/setsid-fail" WATCH_SETSID_DELAY="$TMP/setsid-delay" WATCH_CLEANUP_PAUSE="$TMP/cleanup-pause" WATCH_AUTH_LOG="$TMP/auth.log" WATCH_WORKER_LOG="$TMP/worker.log" WATCH_REAL_CHMOD="$REAL_CHMOD" WATCH_REAL_FLOCK="$REAL_FLOCK" WATCH_FAIL_FLOCK_GATE="$TMP/fail-flock-gate" WATCH_SUPERVISOR_PID_DELAY="$TMP/supervisor-pid-delay" GH_REPO=wrong/repository GITHUB_REPOSITORY=wrong/repository
+export WATCH_SETSID_FAIL="$TMP/setsid-fail" WATCH_SETSID_DELAY="$TMP/setsid-delay" WATCH_CLEANUP_PAUSE="$TMP/cleanup-pause" WATCH_AUTH_LOG="$TMP/auth.log" WATCH_WORKER_LOG="$TMP/worker.log" WATCH_REAL_CHMOD="$REAL_CHMOD" WATCH_REAL_FLOCK="$REAL_FLOCK" WATCH_FAIL_FLOCK_GATE="$TMP/fail-flock-gate" WATCH_REAL_PS="$REAL_PS" WATCH_PS_LOG="$TMP/ps.log" WATCH_SUPERVISOR_PID_DELAY="$TMP/supervisor-pid-delay" GH_REPO=wrong/repository GITHUB_REPOSITORY=wrong/repository
+touch "$WATCH_PS_LOG"
 unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN
 init_out=$("$SCRIPTS/merge-queue-watch" init --worktree "$WT" --issue KEN-829 --branch watch-test)
 eq "$(jq -r .exists <<<"$init_out")" true "standalone init creates workflow state"
@@ -507,8 +516,10 @@ prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep")
 launch_bounded "$watch"
 state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
 fallback_supervisor=$(jq -r .supervisor_pid "$state_path")
+ps_calls=$(wc -l < "$WATCH_PS_LOG")
 export MERGE_QUEUE_FORCE_PS_IDENTITY=1
 "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
+[[ "$(wc -l < "$WATCH_PS_LOG")" -gt "$ps_calls" ]] && ok "forced whitespace identity check invokes ps" || bad "forced whitespace identity check bypassed ps"
 if ! kill -0 "$fallback_supervisor" 2>/dev/null; then ok "ps environment identity supports repository paths with spaces"; else bad "ps fallback rejected a valid supervisor under a whitespace path"; fi
 unset MERGE_QUEUE_FORCE_PS_IDENTITY
 touch "$RELEASE"
@@ -520,8 +531,10 @@ attempt=$(jq -r .launch_attempt_id "$state_path"); runtime=$(jq -r .runtime_dir 
 env "MERGE_QUEUE_SUPERVISOR_TOKEN=${identity}0" bash -c 'while :; do sleep 1; done' "$SCRIPTS/merge-queue-watch" __supervise "$state_path" "$watch" "$attempt" "$runtime" "$artifact" 999 "$SCRIPTS/queue-wait" 1 10 & similar_identity_pid=$!
 jq --argjson pid "$similar_identity_pid" '.supervisor_pid=$pid' "$state_path" > "$TMP/similar-identity-state.json"
 chmod 600 "$TMP/similar-identity-state.json"; mv "$TMP/similar-identity-state.json" "$state_path"
+ps_calls=$(wc -l < "$WATCH_PS_LOG")
 export MERGE_QUEUE_FORCE_PS_IDENTITY=1
 "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
+[[ "$(wc -l < "$WATCH_PS_LOG")" -gt "$ps_calls" ]] && ok "forced similar-generation check invokes ps" || bad "forced similar-generation check bypassed ps"
 kill -0 "$similar_identity_pid" 2>/dev/null && ok "ps environment identity rejects a similar generation" || bad "ps fallback matched a similar generation token"
 unset MERGE_QUEUE_FORCE_PS_IDENTITY
 kill "$similar_identity_pid" 2>/dev/null || true; wait "$similar_identity_pid" 2>/dev/null || true
@@ -535,8 +548,10 @@ identity_changed="$TMP/identity-changed"
 env "WATCH_IDENTITY_CHANGED=$identity_changed" "MERGE_QUEUE_SUPERVISOR_TOKEN=$identity" bash -c 'trap '\''touch "$WATCH_IDENTITY_CHANGED"; exec env -u MERGE_QUEUE_SUPERVISOR_TOKEN sleep 30'\'' TERM; while :; do sleep 1; done' "$SCRIPTS/merge-queue-watch" __supervise "$state_path" "$watch" "$attempt" "$runtime" "$artifact" 999 "$SCRIPTS/queue-wait" 1 10 & changed_identity_pid=$!
 jq --argjson pid "$changed_identity_pid" '.supervisor_pid=$pid' "$state_path" > "$TMP/changed-identity-state.json"
 chmod 600 "$TMP/changed-identity-state.json"; mv "$TMP/changed-identity-state.json" "$state_path"
+ps_calls=$(wc -l < "$WATCH_PS_LOG")
 export MERGE_QUEUE_FORCE_PS_IDENTITY=1
 "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
+[[ "$(wc -l < "$WATCH_PS_LOG")" -gt "$ps_calls" ]] && ok "forced identity-change check invokes ps" || bad "forced identity-change check bypassed ps"
 wait_exists "$identity_changed" && ok "teardown sent TERM to the captured identity" || bad "teardown never signaled the captured identity"
 kill -0 "$changed_identity_pid" 2>/dev/null && ok "teardown stops when the PID changes identity" || bad "teardown escalated KILL after identity changed"
 unset MERGE_QUEUE_FORCE_PS_IDENTITY
