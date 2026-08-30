@@ -68,22 +68,24 @@ version is a candidate reads its updates from there
 call with their baked version). A shipped `1.0.0` is on the release channel
 and is never offered a candidate; nothing on the machine selects this.
 
-The channel only ever moves forward: `tools/release-channel-point` reads the
-version it already carries and leaves it alone when that is ahead of the tag
-being published, so re-running an older tag cannot roll every candidate back
-to it. Nothing it could not establish counts as permission to write — a
-listing it could not make, a channel carrying assets but no `latest.json`, a
-manifest naming no version, a version that is not SemVer — each of those stops
-the job with the channel as it was.
+The channel only ever moves forward while it carries a version to compare
+against: `tools/release-channel-point` reads that version off its
+`latest.json` and leaves the channel alone when it is ahead of the tag being
+published, so re-running an older tag cannot roll every candidate back to it.
+A channel carrying nothing has no such version, and any tag may take it.
+Nothing the job could not establish counts as permission to write — a listing
+it could not make, a channel carrying assets but no `latest.json`, a manifest
+naming no version, a version that is not SemVer — each of those stops the job
+with the channel as it was.
 
-An upload that fails partway is the one case where something did change, and
-which repair it needs depends on which manifest went with it. The job fails
-either way. A channel still carrying its `latest.json` is one the next tag run
-writes over, so re-running the tag is the whole repair. A channel that lost
-`latest.json` is refused by the rule above on every later run, so a person has
-to delete what is left on it before a tag re-run publishes anything. The job's
-error names both, because nothing it can read off its own failure says which
-one it left.
+A partial upload is the one failure that leaves the channel changed, and the
+job does not repair it. `gh release upload --clobber` deletes an asset before
+uploading its replacement, and uploads in parallel, so what the channel
+carries afterwards is whatever landed and the run that failed cannot read that
+back. The next tag run can, and the rule above is the one it applies: a
+channel it cannot read a version off is refused and needs a person, anything
+else it takes. So the failure says what the run did and sends you at that next
+run, rather than naming a state it has no way to know.
 
 That guard is a job of its own, and the only one holding a concurrency group,
 so two candidates cut close together cannot interleave their read and write of

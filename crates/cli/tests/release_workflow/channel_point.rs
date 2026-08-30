@@ -2,10 +2,12 @@
 //! job runs. It is the only thing that writes the fixed pre-release release,
 //! and every write it makes is destructive: two manifests overwritten in
 //! place, on the one URL every candidate machine reads its updates from. So
-//! what is asked of it here is which reads let a write through and which
-//! leave the channel as it was.
+//! what is asked of it here is which channel states let a write through and
+//! which stop it with the channel as it was.
 //!
-//! Which tags reach it at all, and which job runs it, are `channel.rs`.
+//! What a write that failed partway leaves, and what the run after it does
+//! with that, are `channel_point_failure.rs`. Which tags reach the guard at
+//! all, and which job runs it, are `channel.rs`.
 
 #[cfg(unix)]
 use std::fs;
@@ -17,7 +19,7 @@ use crate::test_util::rooted;
 use crate::{job, job_declaring, step, workflow};
 
 /// The guard the channel job runs, as a path this test can execute.
-fn channel_script() -> std::path::PathBuf {
+pub(crate) fn channel_script() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../{CHANNEL_SCRIPT}"))
 }
 
@@ -28,21 +30,21 @@ const CHANNEL_SCRIPT: &str = "tools/release-channel-point";
 
 /// What one run of the channel step did.
 #[cfg(unix)]
-struct Pointed {
-    code: i32,
-    calls: Vec<String>,
+pub(crate) struct Pointed {
+    pub(crate) code: i32,
+    pub(crate) calls: Vec<String>,
     /// Everything the run printed. A refusal that does not say what it found
     /// leaves nobody able to repair the channel, so the message is part of
     /// the behaviour rather than decoration on it.
-    output: String,
+    pub(crate) output: String,
     /// What the channel carries once the run is over, sorted, or `None` if
     /// no release is published there.
-    after: Option<Vec<String>>,
+    pub(crate) after: Option<Vec<String>>,
 }
 
 #[cfg(unix)]
 impl Pointed {
-    fn ran(&self, verb: &str) -> Option<&String> {
+    pub(crate) fn ran(&self, verb: &str) -> Option<&String> {
         self.calls.iter().find(|c| c.starts_with(verb))
     }
 }
@@ -50,7 +52,7 @@ impl Pointed {
 /// The state of the pre-release channel a run finds.
 #[cfg(unix)]
 #[derive(Clone, Copy, Debug)]
-enum Channel<'a> {
+pub(crate) enum Channel<'a> {
     /// No channel release published yet.
     Absent,
     /// Published, with nothing uploaded to it — the one state that leaves
@@ -71,7 +73,7 @@ enum Channel<'a> {
 /// its target, so the guard cannot hold a list of them and these tests would
 /// not notice a guard that published the manifests alone.
 #[cfg(unix)]
-const STAGED: [&str; 4] = [
+pub(crate) const STAGED: [&str; 4] = [
     "latest.json",
     "feed.json",
     "digests-x86_64-unknown-linux-gnu.json",
@@ -79,27 +81,28 @@ const STAGED: [&str; 4] = [
 ];
 
 /// One channel and one `dist`, which the guard can be run against more than
-/// once. What a failed run leaves behind is what the next run reads, so the
-/// two are asked of the same channel rather than of a second fixture posed
-/// to look like the first one's wreckage.
+/// once. What a run leaves behind is what the next one reads, assets and
+/// manifest contents alike: an upload copies the staged file onto the
+/// channel and the download copies it back, so the two are asked of the same
+/// channel rather than of a second fixture posed to look like the first
+/// one's wreckage.
 ///
 /// The stub keeps the channel as a directory, one file per asset, so a call
 /// reads what the calls before it actually wrote. A run cannot be shown a
 /// channel that never existed, and the assertions below are about the state
 /// the run left rather than the calls it happened to make.
 #[cfg(unix)]
-struct Fixture {
+pub(crate) struct Fixture {
     /// Held for its `Drop`: the paths below live inside it.
     _dir: tempfile::TempDir,
     root: std::path::PathBuf,
     published: std::path::PathBuf,
-    manifest: String,
 }
 
 #[cfg(unix)]
 #[allow(clippy::unwrap_used)]
 impl Fixture {
-    fn new(channel: Channel, staged: &[&str]) -> Fixture {
+    pub(crate) fn new(channel: Channel, staged: &[&str]) -> Fixture {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let root = rooted(&dir);
@@ -119,14 +122,17 @@ impl Fixture {
                  # `--clobber` deletes an asset before uploading its\n\
                  # replacement, so an upload that fails loses what it was\n\
                  # replacing. GH_LANDED names the replacements that got up\n\
-                 # before it gave up.\n\
+                 # before it gave up; the rest are gone.\n\
                  shift 3\n\
                  while [ $# -gt 0 ]; do\n\
                    case \"$1\" in --repo) shift 2; continue ;; --*) shift; continue ;; esac\n\
-                   rm -f \"$GH_CHANNEL/$(basename \"$1\")\"\n\
+                   name=$(basename \"$1\")\n\
+                   rm -f \"$GH_CHANNEL/$name\"\n\
+                   for got in $GH_LANDED; do\n\
+                     [ \"$got\" = \"$name\" ] && cp \"$1\" \"$GH_CHANNEL/$name\"\n\
+                   done\n\
                    shift\n\
                  done\n\
-                 for name in $GH_LANDED; do touch \"$GH_CHANNEL/$name\"; done\n\
                fi\n\
                exit 1\n\
              fi\n\
@@ -136,7 +142,7 @@ impl Fixture {
                  shift 3\n\
                  while [ $# -gt 0 ]; do\n\
                    case \"$1\" in --repo) shift 2; continue ;; --*) shift; continue ;; esac\n\
-                   touch \"$GH_CHANNEL/$(basename \"$1\")\"\n\
+                   cp \"$1\" \"$GH_CHANNEL/$(basename \"$1\")\"\n\
                    shift\n\
                  done\n\
                  exit 0 ;;\n\
@@ -155,7 +161,7 @@ impl Fixture {
                  [ \"$want\" = \" latest.json\" ] || exit 1\n\
                  mkdir -p \"$dir\"\n\
                  if [ -e \"$GH_CHANNEL/latest.json\" ]; then\n\
-                   printf '%s\\n' \"$GH_MANIFEST\" > \"$dir/latest.json\"\n\
+                   cp \"$GH_CHANNEL/latest.json\" \"$dir/latest.json\"\n\
                  fi\n\
                  exit 0 ;;\n\
              esac\n\
@@ -176,26 +182,26 @@ impl Fixture {
         fs::set_permissions(bin.join("gh"), fs::Permissions::from_mode(0o755)).unwrap();
 
         let published = root.join("channel");
-        let manifest = match channel {
-            Channel::Carrying(version) => format!(r#"{{"version":"{version}"}}"#),
-            _ => "{}".to_owned(),
-        };
         if !matches!(channel, Channel::Absent) {
             fs::create_dir_all(&published).unwrap();
         }
         if matches!(channel, Channel::Carrying(_) | Channel::Unreadable) {
-            for name in ["latest.json", "feed.json"] {
-                fs::write(published.join(name), "").unwrap();
-            }
+            // The seed for a channel no run here wrote. Past the first
+            // upload the channel carries what that upload put on it.
+            let seed = match channel {
+                Channel::Carrying(version) => format!(r#"{{"version":"{version}"}}"#),
+                _ => "{}".to_owned(),
+            };
+            fs::write(published.join("latest.json"), seed).unwrap();
+            fs::write(published.join("feed.json"), "{}").unwrap();
         }
         if matches!(channel, Channel::HalfWritten) {
-            fs::write(published.join("feed.json"), "").unwrap();
+            fs::write(published.join("feed.json"), "{}").unwrap();
         }
         Fixture {
             _dir: dir,
             root,
             published,
-            manifest,
         }
     }
 
@@ -203,12 +209,24 @@ impl Fixture {
     /// fail, standing in for the transient errors every read here has to
     /// tell apart from an answer; `landed` names the assets a failing upload
     /// gets onto the channel before it gives up.
-    fn run(&self, new_version: &str, fail: &[&str], landed: &[&str]) -> Pointed {
+    pub(crate) fn run(&self, new_version: &str, fail: &[&str], landed: &[&str]) -> Pointed {
         let log = self.root.join("gh.log");
         let failing = self.root.join("gh.fail");
-        // Per run, so the calls below are this run's and not the last one's.
+        // Per run, so the calls below are this run's and not the last one's,
+        // and so the version the guard reads back is one this run's own
+        // download wrote rather than a leftover of the run before it.
         fs::write(&log, "").unwrap();
         fs::write(&failing, fail.join("\n")).unwrap();
+        fs::remove_dir_all(self.root.join("manifest")).ok();
+        // What the release job stages is the manifest of the tag it built.
+        let staged_manifest = self.root.join("dist/latest.json");
+        if staged_manifest.is_file() {
+            fs::write(
+                &staged_manifest,
+                format!(r#"{{"version":"{new_version}"}}"#),
+            )
+            .unwrap();
+        }
         let run = std::process::Command::new(channel_script())
             .current_dir(&self.root)
             .env_clear()
@@ -224,7 +242,6 @@ impl Fixture {
             .env("GH_FAIL", &failing)
             .env("GH_LANDED", landed.join(" "))
             .env("GH_CHANNEL", &self.published)
-            .env("GH_MANIFEST", &self.manifest)
             .env("GITHUB_REPOSITORY", "vanillagreencom/kendex")
             .env("CHANNEL", channel_step_env("CHANNEL"))
             .env("NEW_VERSION", new_version)
@@ -442,118 +459,37 @@ fn a_run_handed_no_manifests_writes_nothing() {
     );
 }
 
-/// The upload is the one call that changes the channel, and the branch that
-/// catches it failing has to fail the job. A guard that printed its error and
-/// then exited 0 would let the release workflow's channel job go green with
-/// the channel short a manifest, which every candidate machine reads as no
-/// update at all.
-///
-/// Which repair it needs is not something the run can read off its own
-/// failure, so the message names both, and both are asserted: a channel that
-/// kept its latest.json is one the next tag run writes over, and a channel
-/// that lost it needs a person before any tag run means anything.
+/// The channel's two manifests are one answer, and either one alone is half
+/// of it: the app stays on the version the stale latest.json names while
+/// `kendex update` follows feed.json to the new one, with nothing on the
+/// channel reporting the two as disagreeing. Driven over both names, so
+/// neither direction can regress on its own.
 #[cfg(unix)]
 #[test]
-fn a_failed_upload_fails_the_job_and_names_both_repairs() {
-    let run = Fixture::new(Channel::Carrying("1.0.0-rc1"), &STAGED).run(
-        "1.0.0-rc2",
-        &["dist/latest.json"],
-        &["latest.json", "feed.json"],
-    );
-    assert_ne!(
-        run.code, 0,
-        "a failed upload was survivable: {:?}",
-        run.calls
-    );
-    // The fixture reached the upload rather than stopping at an earlier read,
-    // so it is that branch this exercises and not one above it.
-    assert!(
-        run.ran("release upload").is_some(),
-        "the run never got as far as the upload: {:?}",
-        run.calls
-    );
-    for said in [
-        "Uploading to the prerelease channel failed",
-        "Re-run the tag if the channel still carries latest.json",
-        "deletes the assets left on it",
+fn a_run_handed_half_the_manifests_writes_nothing() {
+    for (missing, staged) in [
+        (
+            "latest.json",
+            ["feed.json", "digests-x86_64-unknown-linux-gnu.json"],
+        ),
+        (
+            "feed.json",
+            ["latest.json", "digests-x86_64-unknown-linux-gnu.json"],
+        ),
     ] {
-        assert!(run.output.contains(said), "{said} missing: {}", run.output);
+        let run = point_channel_staging(Channel::Carrying("1.0.0-rc1"), "1.0.0-rc2", &[], &staged);
+        assert_ne!(run.code, 0, "{missing}: {:?}", run.calls);
+        assert!(
+            run.ran("release upload").is_none(),
+            "half the answer still went up without {missing}: {:?}",
+            run.calls
+        );
+        assert!(
+            run.output.contains(&format!("was handed no {missing}")),
+            "the run did not say which half it was missing: {}",
+            run.output
+        );
     }
-}
-
-/// The other half of that message, driven. An upload that fails after
-/// `--clobber` has deleted latest.json leaves the channel carrying assets
-/// nothing can read a version off, and the guard refuses exactly that state
-/// — so the tag re-run the operator would otherwise reach for publishes
-/// nothing, and the channel needs a person first. Both runs are against the
-/// one channel: the second reads what the first actually left.
-#[cfg(unix)]
-#[test]
-fn a_failed_upload_that_lost_latest_json_refuses_every_later_run() {
-    let channel = Fixture::new(Channel::Carrying("1.0.0-rc1"), &STAGED);
-    let failed = channel.run("1.0.0-rc2", &["dist/latest.json"], &["feed.json"]);
-    assert_ne!(
-        failed.code, 0,
-        "a failed upload was survivable: {:?}",
-        failed.calls
-    );
-    assert_eq!(
-        failed.after,
-        Some(vec!["feed.json".to_owned()]),
-        "the fixture did not lose latest.json, so this proves nothing: {:?}",
-        failed.calls
-    );
-
-    // The re-run the message would send them on, with nothing failing.
-    let again = channel.run("1.0.0-rc2", &[], &[]);
-    assert_ne!(
-        again.code, 0,
-        "the re-run wrote over a channel nothing can read: {:?}",
-        again.calls
-    );
-    assert!(
-        again.ran("release upload").is_none(),
-        "the re-run published over the leftovers: {:?}",
-        again.calls
-    );
-    assert!(
-        again.output.contains("carries assets but no latest.json"),
-        "{}",
-        again.output
-    );
-    assert_eq!(
-        again.after,
-        Some(vec!["feed.json".to_owned()]),
-        "the re-run changed the channel it refused: {:?}",
-        again.calls
-    );
-}
-
-/// The channel's two manifests are one answer. Handed a `dist` carrying
-/// feed.json and no latest.json, a run that published what it had would leave
-/// the channel naming one version in the file candidates read and another in
-/// the file they check it against, and nothing downstream reports that as
-/// wrong.
-#[cfg(unix)]
-#[test]
-fn a_run_handed_no_latest_json_writes_nothing() {
-    let run = point_channel_staging(
-        Channel::Carrying("1.0.0-rc1"),
-        "1.0.0-rc2",
-        &[],
-        &["feed.json", "digests-x86_64-unknown-linux-gnu.json"],
-    );
-    assert_ne!(run.code, 0, "{:?}", run.calls);
-    assert!(
-        run.ran("release upload").is_none(),
-        "half the answer still went up: {:?}",
-        run.calls
-    );
-    assert!(
-        run.output.contains("was handed no latest.json"),
-        "the run did not say what it found: {}",
-        run.output
-    );
 }
 
 /// A channel a write did not finish on is not a channel this run may take.

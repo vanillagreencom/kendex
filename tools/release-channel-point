@@ -9,15 +9,11 @@
 # can use come from it. Exit 0 wrote the channel or left it alone on purpose,
 # exit 1 says what stopped it.
 #
-# Only one failure leaves the channel changed, and how it is repaired depends
-# on which manifest went with it. `gh release upload --clobber` deletes an
-# asset before uploading its replacement, so an upload that fell over partway
-# either left latest.json up, in which case re-running the tag writes the
-# whole set again, or took it off, in which case the check below refuses the
-# channel on every later run and a person has to delete what is left on it
-# before a tag re-run can write. Nothing here repairs the second state,
-# because a run that cannot read a version off the channel cannot tell a
-# leftover from a release it would be rolling back.
+# A partial upload is the one failure that leaves the channel changed, and
+# this script does not repair it. The next tag run reads what is there and
+# applies one rule: a channel carrying assets it cannot read a version off is
+# refused and needs a person, anything else it takes. So a failure here says
+# what this run did and sends whoever reads it at that run.
 #
 # One verdict decides the write, and only `write` and `hold` are verdicts.
 # Each read leaves either a channel state this run established or the reason
@@ -29,13 +25,24 @@
 # through.
 set -euo pipefail
 
+# The pair a candidate reads together, named once because every use below is
+# of the pair and not of either name. `manifest_url_for` sends the desktop
+# updater to latest.json and `feed_url_for` sends `kendex update` and the
+# app's own discovery read to feed.json, so publishing one without the other
+# leaves the app on the version the stale one names while `kendex update`
+# follows the other to a new one, with nothing on the channel reporting the
+# two as disagreeing.
+MANIFESTS="dist/latest.json dist/feed.json"
+
 # What this run puts on the channel, read off the files it was handed rather
-# than listed here. The two manifests are fixed, but a digests document
-# carries the target it was built for, so the set is whatever the release
-# published and a build that gains a target needs no edit here.
+# than listed here. The pair is fixed, but a digests document carries the
+# target it was built for, so the rest of the set is whatever the release
+# published and a build that gains a target needs no edit here. A missing
+# digests document is not refused below: a channel with fewer is a release
+# built for fewer targets, not a broken one.
 uploaded() {
   local file
-  for file in dist/latest.json dist/feed.json dist/digests-*; do
+  for file in $MANIFESTS dist/digests-*; do
     [ -f "$file" ] && printf '%s\n' "$file"
   done
   return 0
@@ -133,20 +140,16 @@ publishing=()
 while IFS= read -r file; do
   publishing+=("$file")
 done < <(uploaded)
-if [ "${#publishing[@]}" -eq 0 ]; then
-  echo "::error::Nothing was written to the ${CHANNEL} channel: this run was handed no manifests to publish. Re-run the tag."
+# Neither half goes up alone. A dist holding neither reaches this too, so it
+# is the only emptiness check the write needs.
+short=""
+for file in $MANIFESTS; do
+  [ -f "$file" ] || short="$short ${file#dist/}"
+done
+if [ -n "$short" ]; then
+  echo "::error::Nothing was written to the ${CHANNEL} channel: this run was handed no${short}, and the channel's manifests are published together or not at all. Re-run the tag."
   exit 1
 fi
-# The two manifests are one answer. Publishing feed.json over a latest.json
-# this run was not handed leaves the channel naming one version in the file
-# candidates read and another in the file they check it against, and nothing
-# downstream reports that as wrong.
-case " ${publishing[*]} " in
-  *" dist/latest.json "*) ;;
-  *)
-    echo "::error::Nothing was written to the ${CHANNEL} channel: this run was handed no latest.json, and the channel's manifests are published together or not at all. Re-run the tag."
-    exit 1 ;;
-esac
 # The write begins here, past the verdict and past the list. A channel that
 # did not exist is published now.
 if [ -n "$absent" ]; then
@@ -159,15 +162,14 @@ if [ -n "$absent" ]; then
 fi
 if ! gh release upload "$CHANNEL" "${publishing[@]}" \
      --repo "$GITHUB_REPOSITORY" --clobber; then
-  # Which repair this needs is not something the run can read off its own
-  # failure, so the message names both. A channel still carrying latest.json
-  # is one the next tag run writes over. A channel that lost it is one every
-  # later run refuses at the check above, and the assets left on it have to
-  # go before a tag re-run means anything.
+  # `gh` deletes before it uploads and uploads in parallel, so a failure can
+  # leave anything from the whole set to nothing at all and this run cannot
+  # read back which. The next run can, and its own refusals say what it
+  # found, so this one states what it did and stops there.
   published=""
   if [ -n "$absent" ]; then
-    published=" This run published that channel, so what is on it is what landed before the failure."
+    published=" This run is what published that channel; there was none before it."
   fi
-  echo "::error::Uploading to the ${CHANNEL} channel failed, and it may be short a manifest.${published} Re-run the tag if the channel still carries latest.json: that writes the whole set again. If it does not, every run refuses the channel until someone deletes the assets left on it, and only then does re-running the tag publish anything."
+  echo "::error::Uploading to the ${CHANNEL} channel failed, and what it carries now is whatever landed before that, which this run cannot read back.${published} Re-run the tag: that run reads the channel and either writes it or names what has to come off it by hand."
   exit 1
 fi
