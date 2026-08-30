@@ -21,8 +21,9 @@ GROWTH_GUARDS_CHANGELOG_RECORD = "CHANGELOG.md"
 
 # Paths whose change obliges a changelog entry, checked by the commit-msg
 # lane over the staged file list: a commit touching one must also write a
-# fragment or the record, or carry [no-changelog] in its subject. Empty =
-# rule off.
+# fragment, or the record under GROWTH_GUARDS_CHANGELOG_COLLATE=1 (the
+# release commit collating them), or carry [no-changelog] in its subject.
+# Empty = rule off.
 GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS = ""
 
 # Repo-local check the pre-commit shim runs LAST: a repo-root-relative
