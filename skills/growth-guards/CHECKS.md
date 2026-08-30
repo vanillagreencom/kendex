@@ -337,16 +337,20 @@ longer header is a body sentence on the line every log shows.
 add or modify a path under `GROWTH_GUARDS_CHANGELOG_PATHS` — the fragment
 scope changelog-entries judges, resolved by the same library — or carry
 `[no-changelog]` in the header. Deleting a fragment is not writing one, so
-evidence is an addition, a modification, a type change, or the destination of
-a rename or a copy — every shape that leaves a path carrying an entry it did
-not carry before. What that path became is changelog-entries' judgement,
-running beside this one.
+evidence is a path that comes out of the commit carrying content it did not
+carry at that path before: a blob where there was none, a blob that changed,
+or the destination of a rename. What that path became is changelog-entries'
+judgement, running beside this one.
 
-The staged list comes from `--name-status`, not `--name-only`: rename
-detection is on by default and a rename comes back as one `--name-only` entry
-naming the DESTINATION, so a file moved OUT of a required path would leave
-this gate nothing to see. Both sides of a rename touch — the source loses its
-content, the destination gains it — and the status letter is what says so.
+The staged list comes from `--raw`, the spelling `todo-ban` and
+`byte-ceiling` already use, with rename detection pinned rather than
+inherited. A raw record carries the old and new mode and the old and new blob
+for every path, so what the commit did to a file is read off the record
+rather than inferred from a status letter. Both sides of a rename TOUCH — the
+source loses its content, the destination gains it — and a chmod is a touch
+and nothing else, because its blob did not move. A letter that says only
+"modified" cannot tell a rewrite from a permission bit, and a changelog
+requirement satisfied by one is a requirement satisfied by nothing.
 
 `GROWTH_GUARDS_CHANGELOG_RECORD` counts as that entry only under
 `GROWTH_GUARDS_CHANGELOG_COLLATE=1`, the same declaration the record scope

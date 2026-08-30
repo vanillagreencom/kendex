@@ -193,63 +193,85 @@ if [ -n "$REQUIRED" ]; then
   # that then judges it cannot come to different answers.
   gg_changelog_scopes || exit 2
 
-  # --name-status, not --name-only: a rename comes back as ONE --name-only
-  # entry naming the DESTINATION, so a file moved OUT of a required path
-  # never reaches the scan and the commit that emptied it passes. The status
-  # letter and both paths are what say so.
-  # -c diff.renames=true, the spelling todo-ban and byte-ceiling already use:
-  # detection is PINNED to renames rather than inherited from the committer,
-  # so `diff.renames=copies` cannot turn this scan's status vocabulary into
-  # something it does not handle. R is then the only letter carrying two
-  # paths, and the set of letters this loop must read is closed.
+  # --raw, the spelling todo-ban and byte-ceiling already use: a raw record
+  # carries the old and new MODE and the old and new BLOB for every path, so
+  # what a commit did to a file is read off the record rather than inferred
+  # from a letter. --name-status collapses each record into one letter, and
+  # every distinction the letter hid became a defect in turn: a rename read
+  # as a touch of its destination alone, a type change read as a touch, a
+  # copy read as a rename, and a chmod read as an entry somebody wrote.
+  # Modes and blobs leave nothing to interpret.
+  # -c diff.renames=true and --find-renames=100%, the sibling spelling again:
+  # detection is PINNED rather than inherited, so `diff.renames=copies`
+  # cannot put a record shape on this stream that the loop does not read, and
+  # R stays the only status carrying two paths.
   # -z, so a path carrying a newline or a byte git would otherwise quote
   # reaches the globs as the bytes git recorded: a quoted name matches no
   # glob, which is a rule that stops seeing the files it is about. Read back
   # from a FILE rather than a pipe, so the loops set variables in this shell.
   gg_tmpdir
-  git -c diff.renames=true diff --cached --name-status -z >"$GG_TMP/status.z" \
+  git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% \
+    >"$GG_TMP/raw.z" \
     || gg_collection_error "could not read the staged file list — the changelog rule could not run"
 
-  # Both sides of a rename TOUCH: the source loses its content and the
-  # destination gains it. Only the destination is WRITTEN — deleting a
-  # fragment is not writing one, and neither is moving one away — so the
-  # evidence list keeps the additions and modifications it always did, plus
-  # the destination a rename creates. A COPY is not that: its source comes
-  # out of the commit unchanged, so staging it would demand an entry for a
-  # file the commit did not touch. Pinning detection above is what keeps C
-  # off this stream; the arm below refuses it rather than reading it as a
-  # rename, because that pin is the only thing holding.
+  # TOUCHED is every path the record names, both sides of a rename included:
+  # the source loses its content and the destination gains it, and a file
+  # moved OUT of a required path is a change to that path.
   #
-  # A type change is written too: the path holds different content of a
-  # different kind now, which is what an entry at it would be. What that
-  # content turned INTO is the changelog-entries lane's judgement, running
-  # beside this one — a path that became a symlink is refused there, so
-  # counting it here costs nothing and refusing it would reject a commit
-  # that replaced a link with a real entry.
+  # WRITTEN is narrower, and it is a question about BLOBS rather than about
+  # letters: does this path come out of the commit holding content it did not
+  # hold at this path before? A null new blob means the path is gone, and
+  # deleting a fragment is not writing one. A rename's destination held
+  # nothing at that path before, so it is written whatever its blob says —
+  # which is also why a pure rename, whose two blobs are equal, still counts.
+  # Everything else is written exactly when the blob CHANGED, so a chmod on
+  # an existing fragment is a touch and nothing more: the mode moved and the
+  # content did not, which is not an entry anybody wrote.
+  #
+  # That rule keeps what the letters used to say and drops nothing. A type
+  # change rewrites the blob, so replacing a symlink with a real entry still
+  # counts — and what the content turned INTO is the changelog-entries lane's
+  # judgement, running beside this one.
+  #
+  # A COPY leaves its source unchanged, so staging it would demand an entry
+  # for a file the commit did not touch. Pinning detection above is what
+  # keeps C off this stream; the arm below refuses it rather than reading it
+  # as a rename, because that pin is the only thing holding.
   : >"$GG_TMP/staged.z"
   : >"$GG_TMP/written.z"
-  while IFS= read -r -d '' status; do
+  while IFS= read -r -d '' meta; do
     IFS= read -r -d '' src \
-      || gg_collection_error "the staged file list ended mid-record after status $(gg_shown "$status") — the changelog rule could not run"
+      || gg_collection_error "the staged file list ended mid-record after $(gg_shown "$meta") — the changelog rule could not run"
+    # Record shape: ":srcmode dstmode srcsha dstsha status". Splitting is safe
+    # under the `set -f` at the top of this file — the fields are modes, hex
+    # and a letter, and none of them is a path.
+    # shellcheck disable=SC2086
+    set -- $meta
+    [ "$#" -eq 5 ] \
+      || gg_collection_error "the staged file list carried a record of $# field(s), not five: $(gg_shown "$meta") — the changelog rule could not run"
+    srcsha="$3"
+    dstsha="$4"
+    status="$5"
     case "$status" in
+      C*)
+        gg_collection_error "git reported a copy ($(gg_shown "$status")) though this scan pins diff.renames=true — the changelog rule could not run"
+        ;;
       R*)
         IFS= read -r -d '' dest \
           || gg_collection_error "the staged file list ended before the destination of a $(gg_shown "$status") record — the changelog rule could not run"
         printf '%s\0' "$src" "$dest" >>"$GG_TMP/staged.z"
         printf '%s\0' "$dest" >>"$GG_TMP/written.z"
-        ;;
-      C*)
-        gg_collection_error "git reported a copy ($(gg_shown "$status")) though this scan pins diff.renames=true — the changelog rule could not run"
-        ;;
-      A* | M* | T*)
-        printf '%s\0' "$src" >>"$GG_TMP/staged.z"
-        printf '%s\0' "$src" >>"$GG_TMP/written.z"
-        ;;
-      *)
-        printf '%s\0' "$src" >>"$GG_TMP/staged.z"
+        continue
         ;;
     esac
-  done <"$GG_TMP/status.z"
+    printf '%s\0' "$src" >>"$GG_TMP/staged.z"
+    # A sha of nothing but zeros is git saying there is no blob on that side,
+    # whatever the hash algorithm's length. No blob after the commit is a path
+    # that is gone; the same blob on both sides is a path whose content stayed.
+    case "$dstsha" in
+      *[!0]*) [ "$srcsha" = "$dstsha" ] || printf '%s\0' "$src" >>"$GG_TMP/written.z" ;;
+    esac
+  done <"$GG_TMP/raw.z"
 
   touched=""
   while IFS= read -r -d '' f; do

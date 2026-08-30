@@ -620,6 +620,40 @@ git -C "$RC_REPO" config --unset diff.renames
 git -C "$RC_REPO" reset -q --hard HEAD
 rm -f "$RC_REPO/docs/copy.rs"
 
+# A MODE change is not an entry. The scan reads blobs, not letters: a chmod
+# leaves the fragment's content exactly where it was, and a letter that says
+# only "modified" cannot tell that from a rewrite.
+git -C "$RC_REPO" reset -q --hard HEAD
+mkdir -p "$RC_REPO/changelog.d/fixed"
+printf -- '- An old entry nobody is rewriting.\n' >"$RC_REPO/changelog.d/fixed/old.md"
+git -C "$RC_REPO" add -A
+git -C "$RC_REPO" commit -qm "chore: park an entry [no-changelog]"
+printf 'fn chmodded() {}\n' >>"$RC_REPO/crates/core/lib.rs"
+chmod +x "$RC_REPO/changelog.d/fixed/old.md"
+git -C "$RC_REPO" add -A
+run_rc 'fix(KEN-10): change a crate'
+[ "$RC" -eq 1 ] && case "$OUT" in *"crates/core/lib.rs changed without a changelog entry"*) true ;; *) false ;; esac \
+  && ok "a chmod on an existing fragment is not the entry" \
+  || bad "a chmod on an existing fragment is not the entry" "rc=$RC out=$OUT"
+# The control: editing that same fragment's content is.
+git -C "$RC_REPO" reset -q --hard HEAD
+printf 'fn edited() {}\n' >>"$RC_REPO/crates/core/lib.rs"
+printf -- '- An old entry, now rewritten.\n' >"$RC_REPO/changelog.d/fixed/old.md"
+git -C "$RC_REPO" add -A
+run_rc 'fix(KEN-10): change a crate'
+[ "$RC" -eq 0 ] && ok "control: rewriting the same fragment is the entry" \
+  || bad "control: rewriting the same fragment is the entry" "rc=$RC out=$OUT"
+# And the mode alone still counts as a TOUCH, so a chmod under a required
+# path is a change to it: the two sets answer different questions.
+git -C "$RC_REPO" reset -q --hard HEAD
+chmod +x "$RC_REPO/crates/core/lib.rs"
+git -C "$RC_REPO" add -A
+run_rc 'fix(KEN-10): make a crate file executable'
+[ "$RC" -eq 1 ] && case "$OUT" in *"crates/core/lib.rs changed without a changelog entry"*) true ;; *) false ;; esac \
+  && ok "a chmod under a required path is still a touch" \
+  || bad "a chmod under a required path is still a touch" "rc=$RC out=$OUT"
+git -C "$RC_REPO" reset -q --hard HEAD
+
 echo "=== the required paths are configuration, validated like every other path ==="
 git -C "$RC_REPO" reset -q --hard HEAD
 printf 'fn yet() {}\n' >>"$RC_REPO/crates/core/lib.rs"
