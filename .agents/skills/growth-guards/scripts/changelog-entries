@@ -148,36 +148,6 @@ PATTERNS="$GG_CHANGELOG_PATTERNS"
 PATTERNS_SHOWN="$GG_CHANGELOG_SHOWN"
 RECORD="$GG_CHANGELOG_RECORD"
 
-# Where the fragments live: each pattern's leading run of glob-free
-# directories, stopping before the first globbed segment and before the file
-# name. A pattern with no glob at all names one exact file and roots nowhere,
-# whether or not that name carries a slash — naming one file is not naming
-# the directory it sits in. Every tracked path under a root that no pattern
-# matches is refused below: a file sitting in the fragment tree that nothing
-# would ever fold in is the silent drop this judge exists to stop.
-ROOTS=""
-for pat in $PATTERNS; do
-  case "$pat" in
-    *[*?[]*) ;;
-    *) continue ;;
-  esac
-  root=""
-  rest="$pat"
-  while [ -n "$rest" ]; do
-    seg="${rest%%/*}"
-    [ "$seg" != "$rest" ] || break
-    rest="${rest#*/}"
-    case "$seg" in *[*?[]*) break ;; esac
-    root="${root:+$root/}$seg"
-  done
-  [ -n "$root" ] || continue
-  case " $ROOTS " in
-    *" $root "*) ;;
-    *) ROOTS="${ROOTS:+$ROOTS }$root" ;;
-  esac
-done
-
-
 gg_tmpdir
 : >"$GG_TMP/list.z"
 
@@ -214,7 +184,7 @@ while IFS= read -r -d '' rec; do
   fi
   if ! gg_matches_path_glob "$f"; then
     under=0
-    for root in $ROOTS; do
+    for root in $GG_PATH_ROOTS; do
       case "$f" in
         "$root"/README.md) under=0; break ;;
         "$root"/*) under=1 ;;
@@ -235,11 +205,37 @@ while IFS= read -r -d '' rec; do
       ;;
   esac
   # The section is the directory the fragment sits directly under, because
-  # that is the heading the collator writes it beneath.
-  dir="${f%/*}"
-  sec="${dir##*/}"
-  if [ "$dir" = "$f" ] || [ "${SECTIONS#*" $sec "}" = "$SECTIONS" ]; then
-    refuse "$f" "names no section" "a fragment is <dir>/<section>/<name>.md, section one of:${SECTIONS% }"
+  # that is the heading the collator writes it beneath — and the depth is
+  # counted from the ROOT its pattern roots at, never from the immediate
+  # parent. A two-segment glob reaches three-segment paths too, since `*`
+  # crosses `/`, and a parent-only rule reads one of those as an entry it can
+  # place whenever the last directory happens to name a section. Two segments
+  # past the root, exactly: one of section, one of name.
+  sec=""
+  under_root=0
+  for root in $GG_PATH_ROOTS; do
+    case "$f" in
+      "$root"/*) under_root=1 ;;
+      *) continue ;;
+    esac
+    rest="${f#"$root"/}"
+    case "$rest" in
+      */*/*) ;;
+      */*)
+        sec="${rest%%/*}"
+        break
+        ;;
+    esac
+  done
+  # A pattern carrying no glob roots nowhere and names one file, so no root
+  # claims it: the directory it sits in is its section, as the pattern's
+  # author spelled it.
+  if [ "$under_root" -eq 0 ]; then
+    dir="${f%/*}"
+    [ "$dir" = "$f" ] || sec="${dir##*/}"
+  fi
+  if [ -z "$sec" ] || [ "${SECTIONS#*" $sec "}" = "$SECTIONS" ]; then
+    refuse "$f" "names no section" "a fragment is <root>/<section>/<name>.md — one directory of section, one of name — section one of:${SECTIONS% }"
     continue
   fi
   # The one path into a changelog blob, in lib/changelog-grammar.sh: it reads

@@ -54,11 +54,23 @@ gg_path_matches() { # PATH PATTERN... — 0 when some pattern matches
   return 1
 }
 
+# Where a lane's content LIVES, derived from the same globs: each pattern's
+# leading run of glob-free directories, stopping before the first globbed
+# segment and before the file name. changelog.d/*/*.md roots at changelog.d.
+# A pattern carrying no glob at all names one file and roots nowhere, whether
+# or not that name carries a slash — naming one file is not naming the
+# directory it sits in.
+#
+# A root is what lets a lane say "everything else under here is refused", and
+# what lets it count depth from the root rather than from a path's immediate
+# parent: `*` crosses `/`, so a two-segment glob reaches three-segment paths
+# too, and a parent-only rule reads those as content it can place.
 GG_PATH_GLOBS=""
 GG_PATH_GLOBS_SHOWN=""
+GG_PATH_ROOTS=""
 
 gg_load_path_globs() { # RAW-LIST LABEL KEY — fills GG_PATH_GLOBS and _SHOWN
-  local raw="$1" label="$2" key="$3" pat
+  local raw="$1" label="$2" key="$3" pat root rest seg
   # The precondition enforces itself. Without `set -f` the failure is
   # invisible — no status, no message, just a scan over whatever the work
   # tree happens to hold — so a lane that forgot it must not run at all.
@@ -79,6 +91,27 @@ gg_load_path_globs() { # RAW-LIST LABEL KEY — fills GG_PATH_GLOBS and _SHOWN
   # file, so a remedy would name a path that cannot exist. gg_scrubbed keeps
   # the bytes and replaces only what a terminal would act on.
   GG_PATH_GLOBS_SHOWN="$(gg_scrubbed "$GG_PATH_GLOBS")"
+  GG_PATH_ROOTS=""
+  for pat in $GG_PATH_GLOBS; do
+    case "$pat" in
+      *[*?[]*) ;;
+      *) continue ;;
+    esac
+    root=""
+    rest="$pat"
+    while [ -n "$rest" ]; do
+      seg="${rest%%/*}"
+      [ "$seg" != "$rest" ] || break
+      rest="${rest#*/}"
+      case "$seg" in *[*?[]*) break ;; esac
+      root="${root:+$root/}$seg"
+    done
+    [ -n "$root" ] || continue
+    case " $GG_PATH_ROOTS " in
+      *" $root "*) ;;
+      *) GG_PATH_ROOTS="${GG_PATH_ROOTS:+$GG_PATH_ROOTS }$root" ;;
+    esac
+  done
 }
 
 gg_matches_path_glob() { # PATH — 0 when some configured glob matches the full path

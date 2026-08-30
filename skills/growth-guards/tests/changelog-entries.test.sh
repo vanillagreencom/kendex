@@ -263,6 +263,28 @@ run_ce
   || bad "a fragment below a section directory is refused" "rc=$RC out=$OUT"
 git -C "$R" rm -rq --cached changelog.d/fixed/deeper
 rm -rf "$R/changelog.d/fixed/deeper"
+# The shape the glob DOES match and the grammar does not: `*` crosses `/`, so
+# changelog.d/*/*.md reaches changelog.d/archive/fixed/x.md, whose immediate
+# parent is a real section name. Depth is counted from the root the pattern
+# roots at, or this reads as a fixed entry and is folded in.
+printf -- '- Nested under a real section name.\n' | frag archive/fixed ken-3.md
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/archive/fixed/ken-3.md names no section"*) true ;; *) false ;; esac \
+  && ok "a path two directories below the root is refused, though its parent names a section" \
+  || bad "a path two directories below the root is refused" "rc=$RC out=$OUT"
+case "$OUT" in *"one directory of section, one of name"*) ok "and the remedy states the depth" ;;
+  *) bad "and the remedy states the depth" "$OUT" ;; esac
+# The control: the same file one directory up is a fragment, so the refusal
+# above is the depth and not the name.
+git -C "$R" rm -rq --cached changelog.d/archive
+rm -rf -- "${R:?}/changelog.d/archive"
+printf -- '- Nested under a real section name.\n' | frag fixed ken-3.md
+run_ce
+[ "$RC" -eq 0 ] && ok "control: the same entry directly under the section passes" \
+  || bad "control: the same entry directly under the section passes" "rc=$RC out=$OUT"
+git -C "$R" rm -q --cached changelog.d/fixed/ken-3.md
+rm -f "$R/changelog.d/fixed/ken-3.md"
+stage
 printf -- '- Flat.\n' >"$R/flat.md"
 stage
 run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=flat.md'

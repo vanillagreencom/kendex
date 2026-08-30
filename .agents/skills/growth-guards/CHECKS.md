@@ -94,9 +94,13 @@ must be
 
 - a real text file — a path git tracks as a symlink or a submodule gitlink,
   and a blob git would call binary, are refused, not skipped;
-- directly under a Keep a Changelog section directory (`added`, `changed`,
-  `deprecated`, `removed`, `fixed`, `security`), because that directory is
-  the heading the collator writes it beneath;
+- exactly two segments past its pattern's root — one directory of section,
+  one of name — under a Keep a Changelog section directory (`added`,
+  `changed`, `deprecated`, `removed`, `fixed`, `security`), because that
+  directory is the heading the collator writes it beneath. Depth is counted
+  from the root, never from the immediate parent: `*` crosses `/`, so
+  `changelog.d/*/*.md` reaches `changelog.d/archive/fixed/x.md` too, whose
+  parent names a real section and which nothing could route;
 - exactly one Markdown list item — the first non-blank line opens with a
   hyphen and a space and says something, and every later NON-BLANK line
   indents under it, so an indented second paragraph is part of the entry;

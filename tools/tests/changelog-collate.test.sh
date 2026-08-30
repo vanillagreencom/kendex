@@ -172,6 +172,26 @@ run_collate
   && ok "a fragment below a section directory exits 1, naming it" \
   || bad "a fragment below a section directory exits 1, naming it" "rc=$RC out=$OUT"
 
+reset
+fragment fixed ken-1.md '- A placeable fragment.
+'
+# `*` crosses `/`, so the glob reaches this and its parent names a real
+# section. Folding it in and deleting it is the quiet failure a collation
+# that folds exactly the judge's list would otherwise make.
+mkdir -p "$R/changelog.d/archive/fixed"
+printf -- '- Nested under a real section name.\n' >"$R/changelog.d/archive/fixed/ken-3.md"
+git -C "$R" add -A -- changelog.d
+run_collate
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/archive/fixed/ken-3.md names no section"*) true ;; *) false ;; esac \
+  && ok "a path two directories below the root stops the collation, naming it" \
+  || bad "a path two directories below the root stops the collation" "rc=$RC out=$OUT"
+untouched && ok "CHANGELOG.md is untouched by that refusal" \
+  || bad "CHANGELOG.md is untouched by that refusal" "it changed"
+[ -f "$R/changelog.d/archive/fixed/ken-3.md" ] && ok "and the nested file is not deleted" \
+  || bad "and the nested file is not deleted" "it is gone"
+[ -f "$R/changelog.d/fixed/ken-1.md" ] && ok "nor is the fragment beside it" \
+  || bad "nor is the fragment beside it" "it is gone"
+
 echo "=== a fragment is exactly one list item, or it is refused ==="
 reset
 fragment fixed empty.md ''
