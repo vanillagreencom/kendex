@@ -56,10 +56,10 @@ source "$SCRIPT_DIR/lib/changelog-grammar.sh"
 # shellcheck source=lib/changelog-record-scope.sh
 source "$SCRIPT_DIR/lib/changelog-record-scope.sh"
 
-# The Keep a Changelog sections, and the only directory names a fragment may
-# sit under: the collator writes each fragment beneath the heading its
-# directory names, and has nowhere to put one that names no section.
-SECTIONS=" added changed deprecated removed fixed security "
+# The sections a fragment's directory may name, and the test for membership
+# in them, are lib/changelog-grammar.sh's GG_SECTIONS and gg_is_section: the
+# collator writes each fragment beneath the heading its directory names, and
+# has nowhere to put one that names no section.
 
 usage() {
   cat <<'EOF'
@@ -236,8 +236,8 @@ while IFS= read -r -d '' rec; do
   # disagree.
   gg_path_glob_section "$f"
   sec="$GG_PATH_SECTION"
-  if [ -z "$sec" ] || [ "${SECTIONS#*" $sec "}" = "$SECTIONS" ]; then
-    refuse "$f" "names no section" "a fragment sits where its pattern places it, <section>/<name> at that pattern's own depth — section one of:${SECTIONS% }"
+  if [ -z "$sec" ] || ! gg_is_section "$sec"; then
+    refuse "$f" "names no section" "a fragment sits where its pattern places it, <section>/<name> at that pattern's own depth — section one of: $GG_SECTIONS"
     continue
   fi
   # The one path into a changelog blob, in lib/changelog-grammar.sh: it reads

@@ -139,6 +139,28 @@ run_collate
   && ok "an unknown section directory is the judge's refusal, carried out as exit 1" \
   || bad "an unknown section directory is the judge's refusal, carried out as exit 1" "rc=$RC out=$OUT"
 
+# A directory whose name is a RUN of section names is not a section. Looked
+# for inside the joined list it is found there, and the judge passes a
+# fragment this collation then has no heading for — one judge saying yes and
+# the release saying no.
+reset
+fragment 'added changed' ken-1.md '- Two sections in one directory name.
+'
+run_collate
+# The path is rendered, so the space it carries reaches the reader escaped.
+[ "$RC" -eq 1 ] && case "$OUT" in *'changelog.d/added\ changed/ken-1.md names no section'*) true ;; *) false ;; esac \
+  && ok "a directory named after a run of sections names no section" \
+  || bad "a directory named after a run of sections names no section" "rc=$RC out=$OUT"
+untouched && ok "CHANGELOG.md is untouched by that refusal" \
+  || bad "CHANGELOG.md is untouched by that refusal" "it changed"
+# The control: each half alone is a real section and collates.
+reset
+fragment added ken-1.md '- An added entry.
+'
+run_collate
+[ "$RC" -eq 0 ] && ok "control: the same name's first half alone is a section" \
+  || bad "control: the same name's first half alone is a section" "rc=$RC out=$OUT"
+
 reset
 fragment fixed ken-1.md '- A placeable fragment.
 '

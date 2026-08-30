@@ -115,11 +115,12 @@ while IFS= read -r -d '' rec; do
   sec=${rest%%$'\t'*}
   path=${rest#*$'\t'}
   # Not a second grammar: the judge decides the section, and this is the
-  # rendering table refusing a name it has no heading for.
-  case " $SECTIONS " in
-    *" $sec:"*) : ;;
-    *) die "$JUDGE named section $(gg_shown "$sec") for $(gg_shown "$path"), which has no heading here — the collation could not run" ;;
-  esac
+  # rendering table refusing a name it has no heading for. gg_is_section, not
+  # a containment test over the table: this name came off a PATH, which may
+  # carry the space the table is joined by.
+  if ! gg_is_section "$sec"; then
+    die "$JUDGE named section $(gg_shown "$sec") for $(gg_shown "$path"), which has no heading here — the collation could not run"
+  fi
   [ -f "$path" ] || die "$(gg_shown "$path") is in the index but not a file on disk — the collation could not run"
   printf '%s\0' "$path" >>"$TMP/sel.$sec"
   printf '%s\0' "$path" >>"$TMP/frags"
@@ -216,10 +217,10 @@ while IFS="$TAB" read -r kind a b; do
     end) end="$a" ;;
     section)
       low="$(printf '%s' "$b" | tr '[:upper:]' '[:lower:]')"
-      case " $SECTIONS " in
-        *" $low:"*) : ;;
-        *) die "$(gg_shown "$RECORD") names '$(gg_scrubbed "$b")' under [Unreleased], which is not a Keep a Changelog section — the collation could not run" ;;
-      esac
+      # Heading TEXT, so it may hold anything a line holds, spaces included.
+      if ! gg_is_section "$low"; then
+        die "$(gg_shown "$RECORD") names '$(gg_scrubbed "$b")' under [Unreleased], which is not a Keep a Changelog section — the collation could not run"
+      fi
       printf '%s\t%s\n' "$a" "$low" >>"$TMP/secline"
       ;;
     *) die "the changelog grammar emitted a boundary this collation does not understand: $(gg_shown "$kind")" ;;

@@ -129,6 +129,32 @@ END {
 }
 '
 
+# The Keep a Changelog sections, and the ONE test for membership in them.
+#
+# A space-joined list is a set only when the value looked up cannot hold the
+# separator. These values can. A section name reaches this off a tracked PATH
+# segment or out of a level-3 heading's text, and both may carry spaces, so a
+# containment test finds ` added changed ` inside the joined list and reads
+# `changelog.d/added changed/x.md` as a section — the judge accepts a fragment
+# the collator then has no heading for, and the release stops on it. Compared
+# token by token it cannot, whatever the value holds.
+#
+# The same reasoning is why GG_PATH_ROOTS may keep its containment test in
+# lib/configured-paths.sh: those values come out of a space-SEPARATED setting,
+# so none of them can hold a space to begin with. What decides the shape of
+# the test is where the value came from, not how the list is written.
+GG_SECTIONS="added changed deprecated removed fixed security"
+
+gg_is_section() { # NAME — 0 when NAME is exactly one of the sections
+  local s
+  for s in $GG_SECTIONS; do
+    if [ "$s" = "$1" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 # What the record's `## [Unreleased]` section IS, found by structure. A fenced
 # block opens on a run of three or more backticks or tildes (up to three
 # leading spaces) and closes only on a run of at least that length in the SAME
