@@ -47,9 +47,11 @@ costs them a line in a tracked file, which comes back on the next run every
 time they delete it.
 
 The marker is the template's own word. It is cut off before the assignment is
-written, so a consumer's file never carries it. Anything else after a value is
-a finding, because a misspelled marker loads exactly as a correct one does and
-nothing downstream would ever say the key had quietly stopped being written.
+written, so a consumer's file never carries it. Write it after the value and
+nowhere else: on a comment line of its own it marks nothing, and both ways of
+getting it wrong are findings. A marker nothing reads is silent twice over —
+the key is never written, and it is never reported as unanswered either,
+because nothing downstream knows it was ever marked.
 
 The write happens once, when the skill arrives, and arrival is the consumer's
 `kendex.toml` gaining the declaration. Only `add` does that, so every other

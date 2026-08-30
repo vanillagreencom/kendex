@@ -27,10 +27,12 @@
 # comment block immediately above every key, with no blank line and no other
 # assignment between them; every key a shell identifier; every value a
 # single-line double-quoted string containing no `"` and no `\`. The only
-# thing that may follow a value is `# required`. Seeding takes whatever it
-# recognizes and says nothing about the rest, so run `kendex marketplace
-# check` on your catalog: it reads this file the way a consumer's shell will
-# read what seeding wrote, and it names a marker you misspelled.
+# thing that may follow a value is `# required`, which is also the only
+# place that marker means anything — on a comment line of its own it marks
+# nothing. Seeding takes whatever it recognizes and says nothing about the
+# rest, so run `kendex marketplace check` on your catalog: it reads this
+# file the way a consumer's shell will read what seeding wrote, and it
+# names a marker you put in the wrong place or spelled wrong.
 
 [env]
 

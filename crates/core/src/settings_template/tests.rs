@@ -150,6 +150,36 @@ fn the_required_marker_rides_with_the_value_and_nothing_else_may() {
     assert!(plain.findings.is_empty(), "{:?}", plain.findings);
 }
 
+/// The marker on a line of its own marks nothing, and it is the mistake an
+/// author is invited to make: every template header names `# required`
+/// inside a sentence before they ever see one after a value. Unflagged it
+/// is silent twice over — the key is never written, and it is never
+/// reported as unanswered either, because nothing knows it was marked.
+#[test]
+fn a_marker_on_its_own_comment_line_is_located() {
+    assert_eq!(
+        located("[env]\n# How long to wait.\n# required\nWAIT = \"900\"\n"),
+        [(
+            3,
+            "this comment line is just `required`, which marks nothing".to_owned()
+        )]
+    );
+    // Outside `[env]` too: a marker nothing reads is a marker nothing
+    // reads, whichever table it sits over.
+    assert_eq!(
+        located("# required\n[env]\n# How long to wait.\nWAIT = \"900\"\n")
+            .iter()
+            .map(|(line, _)| *line)
+            .collect::<Vec<u32>>(),
+        [1]
+    );
+    // The word inside a sentence is what every shipped template writes,
+    // and it is not a marker.
+    assert!(
+        located("[env]\n# Keys marked `# required` land on arrival.\nWAIT = \"900\"\n").is_empty()
+    );
+}
+
 #[test]
 fn a_header_the_loaders_refuse_is_located_and_does_not_cascade() {
     // `[other] # note` is where the lenient reader kept reading [env]

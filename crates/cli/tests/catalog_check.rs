@@ -3,6 +3,10 @@
 //! what `kendex init` writes.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::rooted;
+
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -308,6 +312,40 @@ fn a_malformed_settings_template_fails_marketplace_check() {
         "{said}"
     );
     assert!(said.contains("    fix: keep one [env] table"), "{said}");
+}
+
+/// The marker on a line of its own reaches the author through the same
+/// check the rest of the grammar does. Left unflagged it is silent to the
+/// end: the key is never written, and it is never reported as unanswered
+/// either, because nothing downstream knows it was ever marked.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_marker_on_its_own_comment_line_fails_marketplace_check() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let home = home.as_path();
+    let catalog = catalog_shipping(
+        home,
+        "[env]\n\n# The team every write targets.\n# required\nTEAM = \"\"\n",
+    );
+    let output = kendex(
+        home,
+        home,
+        &["marketplace", "check", catalog.to_str().unwrap()],
+    );
+
+    let said = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(!output.status.success(), "{said}");
+    assert!(
+        said.contains(
+            "settings: skills/review/kendex.settings.toml.example:4: this comment line is just `required`, which marks nothing"
+        ),
+        "{said}"
+    );
+    assert!(
+        said.contains("fix: write the marker after the value it marks"),
+        "{said}"
+    );
 }
 
 /// The must-fail control's other half: a template with nothing wrong with
