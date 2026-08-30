@@ -203,6 +203,175 @@ run -- --staged
 staged="$(git -C "$R" diff --cached --name-only)"
 case "$staged" in *"$BASE"*) ok "and the baseline is staged, so the commit carries it" ;; *) bad "the baseline is staged" "staged=$staged" ;; esac
 
+echo "=== a --staged run the rewrite cannot rescue leaves the baseline alone ==="
+# The residue a rejected commit must not carry: the developer never asked for
+# those bytes, and is about to go and change something else.
+new_repo autolower-reject
+mklines grew.rs 500
+mklines shrunk.rs 500
+mkdir -p "$R/tools"
+printf 'grew.rs\t500\nshrunk.rs\t500\n' >"$R/$BASE"
+git -C "$R" add -A
+git -C "$R" commit -q -m seed
+mklines grew.rs 600
+mklines shrunk.rs 450
+git -C "$R" add grew.rs shrunk.rs
+run -- --staged
+[ "$RC" -eq 1 ] && has "baselined file grew: grew.rs" \
+  && ok "the run still fails on the growth the rewrite cannot fix" \
+  || bad "the run fails on the growth" "rc=$RC out=$OUT"
+[ "$(cat "$R/$BASE")" = "$(printf 'grew.rs\t500\nshrunk.rs\t500')" ] \
+  && ok "and the worktree baseline is byte-identical to what the run found" \
+  || bad "the worktree baseline is untouched" "row=$(cat "$R/$BASE")"
+case "$(git -C "$R" diff --cached --name-only)" in
+  *"$BASE"*) bad "nothing is staged by a rejected run" "the baseline is in the index" ;;
+  *) ok "and nothing was staged — the rejected commit carries no baseline change" ;;
+esac
+# The control that the rewrite really would have fired: drop the growth and
+# the identical fixture passes, staging the same lowered row.
+mklines grew.rs 500
+git -C "$R" add grew.rs
+run -- --staged
+[ "$RC" -eq 0 ] && [ "$(cat "$R/$BASE")" = "$(printf 'grew.rs\t500\nshrunk.rs\t450')" ] \
+  && ok "control: with the growth gone the same run tightens and stages" \
+  || bad "control: the rewrite fires once the run can come out clean" "rc=$RC row=$(cat "$R/$BASE") out=$OUT"
+
+echo "=== a malformed WORKTREE baseline never fails a clean staged snapshot ==="
+# Hand-editing a row is the documented way to raise one, so a half-typed row
+# is the realistic state; the commit records the index copy, which is fine.
+new_repo autolower-malformed
+mklines big.rs 500
+mkdir -p "$R/tools"
+printf 'big.rs\t500\n' >"$R/$BASE"
+git -C "$R" add -A
+git -C "$R" commit -q -m seed
+printf 'big.rs\tfive hundred\n' >"$R/$BASE"
+run -- --staged
+[ "$RC" -eq 0 ] && ok "the commit passes on its own snapshot, rewrite skipped" \
+  || bad "a malformed worktree copy does not fail the staged run" "rc=$RC out=$OUT"
+[ "$(cat "$R/$BASE")" = "$(printf 'big.rs\tfive hundred')" ] \
+  && ok "and the half-typed row is left exactly as it was" \
+  || bad "the malformed copy is untouched" "row=$(cat "$R/$BASE")"
+# The control: the same file GOVERNING a run is still a loud config error.
+run
+[ "$RC" -eq 2 ] && has "malformed row(s) above" \
+  && ok "control: the same file governing the default mode is exit 2" \
+  || bad "control: a governing malformed baseline is exit 2" "rc=$RC out=$OUT"
+# And the case the rewrite is actually reached for: a snapshot that FAILS,
+# with the half-typed row in the worktree. The verdict is the commit's own,
+# reported as a violation — never the config error of a file it does not
+# record.
+new_repo autolower-malformed-failing
+mklines big.rs 500
+mkdir -p "$R/tools"
+printf 'big.rs\t500\n' >"$R/$BASE"
+git -C "$R" add -A
+git -C "$R" commit -q -m seed
+mklines big.rs 600
+git -C "$R" add big.rs
+printf 'big.rs\tfive hundred\n' >"$R/$BASE"
+run -- --staged
+[ "$RC" -eq 1 ] && has "baselined file grew: big.rs" \
+  && ok "a failing snapshot reports its own verdict, the malformed rewrite source skipped" \
+  || bad "a malformed worktree copy does not turn a violation into a config error" "rc=$RC out=$OUT"
+[ "$(cat "$R/$BASE")" = "$(printf 'big.rs\tfive hundred')" ] \
+  && ok "and the half-typed row is still exactly as it was" \
+  || bad "the malformed copy survives a failing run" "row=$(cat "$R/$BASE")"
+
+echo "=== an added or raised row names the ROW, not the file's size ==="
+# The two quantities differ whenever the row sits above the file, which is
+# exactly when both a LOOSE and a raise verdict fire on one path — and a gate
+# refusal that quotes the wrong number is a wrong-cause message.
+new_repo raise-numbers
+mkdir -p "$R/tools"
+mklines other.rs 500
+mklines big.rs 500
+printf 'other.rs\t500\n' >"$R/$BASE"
+git -C "$R" add -A
+git -C "$R" commit -q -m seed
+printf 'big.rs\t900\nother.rs\t500\n' >"$R/$BASE"
+git -C "$R" add -A
+run
+[ "$RC" -eq 1 ] && has "baseline row added: big.rs — row 900 lines" \
+  && ok "an added row is reported at the row's own value" \
+  || bad "an added row names the row" "rc=$RC out=$OUT"
+has "baseline looser than reality: big.rs — baseline 900 > actual 500 lines" \
+  && ok "and the measurement is where it belongs, on the LOOSE line" \
+  || bad "the LOOSE line carries the measurement" "out=$OUT"
+# The same for a raise: HEAD's row and the current row, never the file.
+new_repo raise-numbers-raised
+mkdir -p "$R/tools"
+mklines big.rs 500
+printf 'big.rs\t500\n' >"$R/$BASE"
+git -C "$R" add -A
+git -C "$R" commit -q -m seed
+printf 'big.rs\t900\n' >"$R/$BASE"
+git -C "$R" add -A
+run
+[ "$RC" -eq 1 ] && has "baseline row raised: big.rs — row 500 -> 900 lines" \
+  && ok "a raised row is reported as HEAD's row to the current row" \
+  || bad "a raised row names both rows" "rc=$RC out=$OUT"
+
+echo "=== no HEAD baseline is not a clean raise check ==="
+new_repo no-head-rows
+mkdir -p "$R/tools"
+mklines small.rs 10
+git -C "$R" add -A
+git -C "$R" commit -q -m seed
+mklines big.rs 500
+printf 'big.rs\t500\n' >"$R/$BASE"
+git -C "$R" add -A
+run
+[ "$RC" -eq 0 ] && has "HEAD carries no baseline rows, so added and raised rows were not judged" \
+  && ok "a run with no reference says so instead of reporting a clean check" \
+  || bad "no reference is named on the verdict line" "rc=$RC out=$OUT"
+git -C "$R" commit -q -m freeze
+run
+[ "$RC" -eq 0 ] && ok "control: once HEAD carries the rows the run is clean" \
+  || bad "control: a run with a reference is clean" "rc=$RC out=$OUT"
+has "were not judged" && bad "and carries no such note" "$OUT" \
+  || ok "and carries no such note"
+
+echo "=== a class that changes its unit is not a free re-measure ==="
+# The migration this package's own markdown classes perform: a row committed
+# in lines, its class counting bytes afterwards. --update is the remedy the
+# UNITS diagnostic itself prints, so the run right after it is the one that
+# must still see the growth.
+new_repo unit-migration
+mkdir -p "$R/tools"
+mkbytes doc.md 70000
+printf 'doc.md\t600\n' >"$R/$BASE"
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: a markdown row in lines"
+mkbytes doc.md 200000
+git -C "$R" add -A
+run
+[ "$RC" -eq 1 ] && has "wrong unit: doc.md" \
+  && ok "the row counts what its class no longer does, so it is one to re-measure" \
+  || bad "a unit mismatch is reported" "rc=$RC out=$OUT"
+run -- --update
+git -C "$R" add -A
+run
+[ "$RC" -eq 1 ] && has "frozen baseline row raised: doc.md — row 70000 -> 200000 bytes" \
+  && ok "the re-measured row is judged against HEAD's file in the SAME unit, so the growth still fails" \
+  || bad "a re-measured row is judged against HEAD" "rc=$RC out=$OUT"
+run RATCHET_RAISE=1
+[ "$RC" -eq 1 ] && ok "and the declaration does not carry it either — markdown is frozen" \
+  || bad "the declaration does not carry a frozen unit migration" "rc=$RC out=$OUT"
+# The control: the SAME migration on a file that did not grow re-measures for
+# free, which is what every consumer's first commit after the upgrade does.
+new_repo unit-migration-clean
+mkdir -p "$R/tools"
+mkbytes doc.md 70000
+printf 'doc.md\t600\n' >"$R/$BASE"
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: a markdown row in lines"
+run -- --update
+git -C "$R" add -A
+run
+[ "$RC" -eq 0 ] && ok "control: an unchanged file's row re-measures into the new unit and passes" \
+  || bad "control: an unchanged file re-measures for free" "rc=$RC out=$OUT"
+
 echo "=== the --staged rewrite carries unstaged row edits rather than dropping them ==="
 new_repo autolower-edge
 mklines big.rs 500

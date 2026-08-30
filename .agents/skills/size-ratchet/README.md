@@ -3,9 +3,9 @@
 A tighten-only gate on file size. New code cannot introduce a tracked file
 over its threshold; files already over it are frozen in a baseline at their
 current sizes and may only shrink. Growth is never automated away: the single
-path to a bigger number is a human editing the baseline row in a reviewed
-diff, declared with `RATCHET_RAISE=1`, and refused outright in a frozen
-class. Markdown is measured in bytes and code in lines. Flags and exit codes:
+path to a bigger number on an existing row is a human editing it in a
+reviewed diff, declared with `RATCHET_RAISE=1`, and in a frozen class refused
+even then. Markdown is measured in bytes and code in lines. Flags and exit codes:
 `size-ratchet --help`; verdicts: [Semantics](#semantics); internals:
 `DEVELOPMENT.md`.
 
@@ -63,13 +63,17 @@ A baseline row is the only way past a threshold, so a row a change adds or
 raises is that threshold routed around.
 
 - **Frozen classes** (`SIZE_RATCHET_FROZEN_CLASSES`, default every markdown
-  class and every test class) refuse a raise outright. A test splits and a
-  document is cut; neither is ever the fix that needs the added lines.
+  class and every test class) refuse a **raise of an existing row** outright,
+  whatever the run carries. A test splits and a document is cut; neither is
+  ever the fix that needs the added lines.
 - **Every other added or raised row** needs `RATCHET_RAISE=1` on the
   invocation. No commit message is read — a pre-commit hook cannot see one —
   so the reason belongs in the commit body, where review reads it.
+- **A first row** for a path HEAD's baseline carries none for is a
+  **bootstrap**, not a raise, and the declaration admits it in every class,
+  frozen included. A renamed path is such a path, so a rename bootstraps.
 - A repo whose HEAD carries no baseline rows yet is bootstrapping, and the
-  gate stays quiet until its first row set is committed.
+  gate says so on its verdict line rather than reporting a clean raise check.
 
 ## Baseline format
 

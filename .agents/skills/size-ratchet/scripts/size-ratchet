@@ -13,9 +13,12 @@
 #   (d) a row in the wrong unit — a byte class carrying a line row or the
 #       reverse: the number means something else now, so it is re-measured
 #       (--update), never compared;
-#   (e) a row a change ADDS or RAISES over HEAD's — refused outright when
-#       the path is in a frozen class, and otherwise only with
-#       RATCHET_RAISE=1 on the invocation.
+#   (e) a row a change ADDS or RAISES over HEAD's. RAISING an existing row
+#       needs RATCHET_RAISE=1 on the invocation, and is refused whatever the
+#       run carries when the path is in a frozen class. A FIRST row for a
+#       path HEAD's baseline carries none for is a bootstrap, which
+#       RATCHET_RAISE=1 admits in every class, frozen included; a renamed
+#       path is such a path, so a rename bootstraps rather than raises.
 #
 # --update: rewrite the baseline TIGHTENING ONLY — lower rows to current
 # reality, re-measure rows whose unit no longer matches their class, remove
@@ -97,10 +100,12 @@ never raises) and then re-checks.
 --staged counts INDEX blobs for every tracked file instead of preferring the
 worktree copy — what a commit will actually record. For a pre-commit hook.
 It also runs the --update rewrite itself and `git add`s the baseline, so a
-commit that shrinks a limited file passes first time. Two accepted edges,
-neither of which loosens a row: a `git commit -- <paths>` commit acquires
-the baseline change, and unrelated unstaged row edits in the baseline get
-staged along with it.
+commit that shrinks a limited file passes first time. The rewrite lands only
+when it makes the run clean: a failing run restores the baseline and stages
+nothing, and a malformed worktree copy is skipped rather than failing a
+commit whose staged snapshot is fine. Two accepted edges, neither of which
+loosens a row: a `git commit -- <paths>` commit acquires the baseline change,
+and unrelated unstaged row edits in the baseline get staged along with it.
 
 Units. A class threshold is LINES when it is a bare number (`400`) and
 BYTES when it carries the `k` suffix (`24k` = 24*1024 bytes). A baseline row
@@ -130,10 +135,16 @@ hand-written file: the added lines are the fix and the file has no concept
 seam, or fragments of one concept are merged back into one file. Never for
 tests, docs, comments, or lines a review round asked for; generated and
 vendored content is excluded, not raised. A row a change adds or raises over
-HEAD's baseline needs RATCHET_RAISE=1 on the invocation, and a row in a
-frozen class is refused even with it. No commit message is read: a
-pre-commit hook cannot see one, so the reason belongs in the commit body for
-review, not in a check.
+HEAD's baseline needs RATCHET_RAISE=1 on the invocation. RAISING an existing
+row is refused in a frozen class whatever the run carries; a FIRST row for a
+path HEAD's baseline does not carry is a bootstrap, and the declaration
+admits one in every class — a renamed path is such a path, so a rename
+bootstraps rather than raises. No commit message is read: a pre-commit hook
+cannot see one, so the reason belongs in the commit body for review, not in
+a check.
+
+A run whose HEAD carries no baseline rows has no reference for the added and
+raised checks, so the verdict line says so rather than reading as clean.
 
 Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 EOF
@@ -646,24 +657,29 @@ format_row() { # SIZE UNIT — the baseline row's number
 }
 
 # --- baseline: path<TAB>size, LC_ALL=C sorted, unique paths ------------------
-# The same hygiene holds wherever the rows came from — the worktree copy, the
-# index copy, or the worktree copy the --staged rewrite is about to read.
-# SUGGEST names the file a fix command would operate on, and is empty for a
-# copy the caller has no path to hand back.
-validate_baseline_rows() { # FILE LABEL [SUGGEST]
-  local file="$1" label="$2" suggest="${3:-}" grep_status=0 bad_rows dup_paths hint=""
+# The same hygiene holds wherever the rows came from. MODE says what a bad row
+# MEANS: `fatal` for the copy that GOVERNS the verdict — reviewed input, so it
+# fails loud — and `soft` for a copy the run only wants to REWRITE, which
+# returns nonzero and leaves the caller to skip the rewrite. SUGGEST names the
+# file a fix command would operate on, and is empty for a copy the caller has
+# no path to hand back.
+validate_baseline_rows() { # MODE FILE LABEL [SUGGEST]
+  local mode="$1" file="$2" label="$3" suggest="${4:-}" grep_status=0 bad_rows dup_paths hint=""
   bad_rows="$(grep -nEv -- "^[^${TAB}]+${TAB}[1-9][0-9]*b?\$" "$file")" || grep_status=$?
   [ "$grep_status" -le 1 ] || collection_error "could not validate $label (grep exit $grep_status)"
   if [ -n "$bad_rows" ]; then
+    [ "$mode" = "fatal" ] || return 1
     printf '%s\n' "$bad_rows" >&2
     config_error "$label: malformed row(s) above (expected 'path<TAB>size' with a positive count, suffixed 'b' when the class counts bytes)"
   fi
   [ -z "$suggest" ] || hint=" (LC_ALL=C sort -o $suggest $suggest)"
   if ! LC_ALL=C sort -c -- "$file" 2>/dev/null; then
+    [ "$mode" = "fatal" ] || return 1
     config_error "$label: rows must be LC_ALL=C sorted$hint"
   fi
   dup_paths="$(cut -f1 -- "$file" | LC_ALL=C uniq -d)" || collection_error "could not scan $label for duplicate paths"
   if [ -n "$dup_paths" ]; then
+    [ "$mode" = "fatal" ] || return 1
     printf '%s\n' "$dup_paths" >&2
     config_error "$label: duplicate path row(s) above"
   fi
@@ -678,7 +694,7 @@ if [ "$baseline_state" -eq 2 ]; then
 elif [ "$baseline_state" -eq 1 ] && [ -f "$BASELINE_FILE" ]; then
   # grep exit 1 = every row well-formed; exit >= 2 = the validation itself
   # broke, which must never read as a clean baseline.
-  validate_baseline_rows "$BASELINE_FILE" "$BASELINE_FILE" "$BASELINE_FILE"
+  validate_baseline_rows fatal "$BASELINE_FILE" "$BASELINE_FILE" "$BASELINE_FILE"
   cp -- "$BASELINE_FILE" "$TMP/baseline.tsv" || collection_error "could not stage a working copy of $BASELINE_FILE"
 elif read_index_file_mode "$BASELINE_FILE"; [ -n "$INDEX_FILE_MODE" ]; then
   case "$INDEX_FILE_MODE" in
@@ -696,7 +712,7 @@ elif read_index_file_mode "$BASELINE_FILE"; [ -n "$INDEX_FILE_MODE" ]; then
   # The presence probe above already proved the index entry exists, so a
   # failing read here is runtime (I/O, corrupt object) — never config.
   git show ":$BASELINE_FILE" >"$TMP/baseline.tsv" || collection_error "failed to read tracked baseline from the index: $BASELINE_FILE"
-  validate_baseline_rows "$TMP/baseline.tsv" "$BASELINE_FILE (index copy)"
+  validate_baseline_rows fatal "$TMP/baseline.tsv" "$BASELINE_FILE (index copy)"
 else
   : >"$TMP/baseline.tsv" || collection_error "could not initialize the empty baseline scratch file"
 fi
@@ -926,7 +942,7 @@ evaluate() { # BASELINE-TSV — violations on stdout, one per line, tab-separate
 }
 
 report() { # VIOLATIONS-FILE — human diagnostics on stdout
-  local kind path n b raw why rem unit
+  local kind path n b raw why rem boot unit
   while IFS="$TAB" read -r kind path n raw; do
     path_threshold "$path"; if [ -n "$PC" ]; then why="class $PC"; else why="default"; fi
     unit="$(unit_noun "$PU")s"
@@ -934,11 +950,17 @@ report() { # VIOLATIONS-FILE — human diagnostics on stdout
     # the row's `b` suffix comes off — except in the wrong-unit verdict,
     # where the suffix IS the finding.
     b="$(row_value "$raw")"
+    # A frozen class refuses a RAISE of an existing row, which is what `rem`
+    # speaks to. A row HEAD's baseline carries none for is a BOOTSTRAP, which
+    # the declaration admits in every class, so the ADDED verdict gets `boot`
+    # instead: telling its author no declaration helps names the wrong cause
+    # at the one moment one would have carried the run.
     if is_frozen "$path"; then
-      rem="split at a concept seam (a frozen class is never raised)"
+      rem="split at a concept seam (a frozen class never raises an existing row)"
     else
       rem="split at a concept seam (RATCHET_RAISE=1 raises the row only when the added lines are the fix with no seam, or fragments of one concept are merged back into one file)"
     fi
+    boot="split at a concept seam, or declare the row with RATCHET_RAISE=1 — a first row for a path HEAD's baseline does not carry is a bootstrap, admitted in every class"
     case "$kind" in
       NEW)
         echo "size-ratchet FAIL new offender: $path — $n $unit > threshold $PT ($why), no baseline row"
@@ -965,8 +987,8 @@ report() { # VIOLATIONS-FILE — human diagnostics on stdout
         echo "  remedy: run size-ratchet --update to re-measure the row"
         ;;
       ADDED)
-        echo "size-ratchet FAIL baseline row added: $path — $n $unit > threshold $PT ($why), and HEAD's baseline carries no row for it"
-        echo "  remedy: $rem"
+        echo "size-ratchet FAIL baseline row added: $path — row $n $unit > threshold $PT ($why), and HEAD's baseline carries no row for it"
+        echo "  remedy: $boot"
         ;;
       RAISED)
         echo "size-ratchet FAIL baseline row raised: $path — row $b -> $n $unit, threshold $PT ($why)"
@@ -974,7 +996,7 @@ report() { # VIOLATIONS-FILE — human diagnostics on stdout
         ;;
       FROZEN)
         echo "size-ratchet FAIL frozen baseline row raised: $path — row $b -> $n $unit, threshold $PT ($why); a frozen class refuses a raise whatever RATCHET_RAISE says"
-        echo "  remedy: split at a concept seam"
+        echo "  remedy: split at a concept seam (a frozen class never raises an existing row)"
         ;;
     esac
   done <"$1"
@@ -1350,38 +1372,6 @@ if [ "$MODE" = "seed" ]; then
   echo "size-ratchet --seed: first baseline written at $BASELINE_FILE ($rows row(s)) — commit it; rows only move down from here"
 fi
 
-# --- --staged: lower the shrunk rows itself ----------------------------------
-# A commit that shrinks a limited file used to fail, wait for a --update, and
-# be made again. The pre-commit run does that rewrite itself and stages the
-# result, so the commit passes the first time.
-#
-# The rewrite reads the WORKTREE copy, which is what gets staged: rebuilding
-# from the index copy would delete a developer's unstaged row edits instead of
-# carrying them. Two accepted edges follow, both visible in the diff: a
-# `git commit -- <paths>` commit acquires the baseline change, and unrelated
-# unstaged row edits go into the index with it.
-#
-# Nothing here loosens a row. The rewrite is tighten-only against the STAGED
-# content, so an unstaged raise is pulled back down to the measured size; and
-# the verdict below runs against the INDEX copy either way, so a row the
-# worktree carries and the commit does not still fails the run. A commit that
-# stages the baseline's DELETION is left alone: it carries no baseline, and
-# rewriting the worktree copy would put the file back.
-if [ "$MODE" = "check" ] && [ "$STAGED" -eq 1 ] && [ "$baseline_state" -ne 2 ] && [ -f "$BASELINE_FILE" ]; then
-  cp -- "$TMP/baseline.tsv" "$TMP/baseline.staged-index" || collection_error "could not preserve the index baseline before the --staged rewrite"
-  validate_baseline_rows "$BASELINE_FILE" "$BASELINE_FILE" "$BASELINE_FILE"
-  cp -- "$BASELINE_FILE" "$TMP/baseline.tsv" || collection_error "could not stage a working copy of $BASELINE_FILE for the --staged rewrite"
-  tighten_baseline "--staged"
-  if [ "$BASELINE_REWRITTEN" = "1" ]; then
-    git add -- "$BASELINE_FILE" || collection_error "could not stage the rewritten baseline at $BASELINE_FILE — it WAS rewritten in the worktree; stage it or rerun"
-    echo "size-ratchet --staged: staged the tightened baseline at $BASELINE_FILE"
-  else
-    # No rewrite, so the worktree copy governs nothing: the commit's own
-    # snapshot decides, exactly as it did before this step ran.
-    cp -- "$TMP/baseline.staged-index" "$TMP/baseline.tsv" || collection_error "could not restore the index baseline after the --staged rewrite"
-  fi
-fi
-
 # --- rows a change adds or raises --------------------------------------------
 # A baseline row is the only way past a threshold, so a row a change ADDS or
 # RAISES is that threshold routed around. RATCHET_RAISE=1 on the invocation
@@ -1412,48 +1402,150 @@ read_head_baseline() {
   HEAD_BASELINE="$TMP/baseline.head"
 }
 
+# A change that moves a class from lines to bytes (or back) leaves HEAD's rows
+# counting something else, and comparing across the two would read 1099 lines
+# as 1099 bytes. Skipping instead is worse: the row is re-measured at the
+# file's CURRENT size, so a commit that changes the unit AND grows the file
+# freezes the growth for free. HEAD's rows are re-expressed in the unit their
+# class counts NOW — measured from HEAD's own blob — so the comparison happens
+# in one unit and only a file that did not grow re-measures for free.
+head_rows_in_class_units() { # — writes HEAD's rows at $TMP/baseline.head.now
+  local p u n
+  awk -F'\t' -v OFS='\t' -v countsfile="$TMP/counts.tsv" '
+    function rowunit(v) { return (v ~ /b$/) ? "b" : "l" }
+    FILENAME == countsfile { cu[$1] = $4; next }
+    ($1 in cu) && rowunit($2) != cu[$1] { print $1, cu[$1] }
+  ' "$TMP/counts.tsv" "$HEAD_BASELINE" >"$TMP/head.reunit" || collection_error "could not list the HEAD rows a unit change left uncomparable"
+  cp -- "$HEAD_BASELINE" "$TMP/baseline.head.now" || collection_error "could not stage HEAD's rows for the raise comparison"
+  [ -s "$TMP/head.reunit" ] || return 0
+  : >"$TMP/head.remeasured" || collection_error "could not initialize the HEAD re-measure scratch file"
+  while IFS="$TAB" read -r p u || [ -n "$p" ]; do
+    [ -n "$p" ] || continue
+    read_head_file_mode "$p"
+    case "$HEAD_FILE_MODE" in
+      100*) ;;
+      *) collection_error "HEAD's baseline carries a row for '$p' in a unit its class no longer counts, and HEAD has no regular file there to re-measure — refusing to judge the row against a quantity it cannot compare" ;;
+    esac
+    git show "HEAD:$p" >"$TMP/head.blob" || collection_error "could not read '$p' from HEAD to re-express its row in the unit its class counts now"
+    n="$(measure_file "$TMP/head.blob" "$u" "could not measure HEAD's copy of '$p' to re-express its row in the unit its class counts now")"
+    printf '%s\t%s\n' "$p" "$(format_row "$n" "$u")" >>"$TMP/head.remeasured" || collection_error "could not record HEAD's re-expressed row for '$p'"
+  done <"$TMP/head.reunit"
+  awk -F'\t' -v OFS='\t' -v newfile="$TMP/head.remeasured" '
+    FILENAME == newfile { v[$1] = $2; next }
+    { print $1, (($1 in v) ? v[$1] : $2) }
+  ' "$TMP/head.remeasured" "$HEAD_BASELINE" >"$TMP/baseline.head.reunit" || collection_error "could not re-express HEAD's rows in the units their classes count now"
+  mv -- "$TMP/baseline.head.reunit" "$TMP/baseline.head.now" || collection_error "could not stage the re-expressed HEAD rows"
+}
+
 # Violation rows in evaluate()'s shape: KIND<TAB>path<TAB>size<TAB>previous.
-# Only a row doing work is judged — one whose file is over its threshold. A
-# row for a file at or under it is already STALE, and naming it twice would
-# report one root cause as two. Frozen membership is a shell glob, so it is
-# stamped on each row here and read as a column in awk.
+# The size field is the ROW's own value, the number a person wrote — the
+# measurement belongs to LOOSE and GROW, and a refusal quoting it would name a
+# quantity the gate never compared. Only a row doing work is judged — one
+# whose file is over its threshold. A row for a file at or under it is already
+# STALE, and naming it twice would report one root cause as two. Frozen
+# membership is a shell glob, so it is stamped on each row here and read as a
+# column in awk. The read continues past a final line with no newline: a
+# hand-edited row is where such a file comes from, and a lost last row is a
+# row never judged.
 rows_raised() { # CURRENT-BASELINE — violations on stdout
   [ -n "$HEAD_BASELINE" ] || return 0
   local p n frozen
   : >"$TMP/baseline.judged" || collection_error "could not initialize the row-judgment scratch file"
-  while IFS="$TAB" read -r p n; do
+  while IFS="$TAB" read -r p n || [ -n "$p" ]; do
     [ -n "$p" ] || continue
     if is_frozen "$p"; then frozen="frozen"; else frozen="open"; fi
     printf '%s\t%s\t%s\n' "$p" "$n" "$frozen" >>"$TMP/baseline.judged" || collection_error "could not record the baseline row for '$p'"
   done <"$1"
-  awk -F'\t' -v OFS='\t' -v countsfile="$TMP/counts.tsv" -v headfile="$HEAD_BASELINE" -v raise_ok="$RAISE_OK" '
+  head_rows_in_class_units
+  awk -F'\t' -v OFS='\t' -v countsfile="$TMP/counts.tsv" -v headfile="$TMP/baseline.head.now" -v raise_ok="$RAISE_OK" '
     function rowunit(v) { return (v ~ /b$/) ? "b" : "l" }
     function rowsize(v) { sub(/b$/, "", v); return v + 0 }
     FILENAME == countsfile { now[$1] = $2 + 0; thr[$1] = $3 + 0; unit[$1] = $4; next }
     FILENAME == headfile   { was[$1] = $2; had[$1] = 1; next }
     !($1 in now) { next }
     now[$1] <= thr[$1] { next }
-    # A row in the wrong unit is already reported as one to re-measure, and a
-    # unit change is a re-measure and never a raise: comparing across units
-    # would read a line count as a byte count and call it growth.
+    # A row in the wrong unit is already reported as one to re-measure, and
+    # its number means something else until it is; HEAD is read in the class
+    # unit above, so every comparison below is between like quantities.
     rowunit($2) != unit[$1] { next }
-    !($1 in had) { if (raise_ok != "1") print "ADDED", $1, now[$1], "-"; next }
-    rowunit(was[$1]) != rowunit($2) { next }
+    !($1 in had) { if (raise_ok != "1") print "ADDED", $1, rowsize($2), "-"; next }
     rowsize($2) > rowsize(was[$1]) {
       if ($3 == "frozen") print "FROZEN", $1, rowsize($2), was[$1]
       else if (raise_ok != "1") print "RAISED", $1, rowsize($2), was[$1]
     }
-  ' "$TMP/counts.tsv" "$HEAD_BASELINE" "$TMP/baseline.judged"
+  ' "$TMP/counts.tsv" "$TMP/baseline.head.now" "$TMP/baseline.judged"
 }
 
 # --- verdict -------------------------------------------------------------------
-evaluate "$TMP/baseline.tsv" >"$TMP/violations.tsv" || collection_error "could not evaluate the baseline against the collected counts"
+# Both halves of the judgment over one candidate baseline, so the --staged
+# rewrite below can ask what its candidate earns before anything is written.
+run_verdict() { # BASELINE-TSV — fills $TMP/violations.tsv, sets VIOLATIONS
+  evaluate "$1" >"$TMP/violations.tsv" || collection_error "could not evaluate the baseline against the collected counts"
+  rows_raised "$1" >>"$TMP/violations.tsv" || collection_error "could not judge the baseline rows against HEAD's baseline"
+  VIOLATIONS="$(count_nonempty_lines "$TMP/violations.tsv")"
+}
+
 read_head_baseline
-rows_raised "$TMP/baseline.tsv" >>"$TMP/violations.tsv" || collection_error "could not judge the baseline rows against HEAD's baseline"
-violations="$(count_nonempty_lines "$TMP/violations.tsv")"
+run_verdict "$TMP/baseline.tsv"
+
+# --- --staged: lower the shrunk rows itself ----------------------------------
+# A commit that shrinks a limited file used to fail, wait for a --update, and
+# be made again. The pre-commit run does that rewrite itself and stages the
+# result, so the commit passes the first time.
+#
+# A commit this gate REJECTS leaves the baseline exactly as it found it, in
+# the worktree and in the index: the developer never asked for those bytes.
+# Hence the ordering — the commit's own snapshot is judged first, the rewrite
+# works from saved copies, and `git add` is reached only once the rewritten
+# candidate comes out clean. A LATER lane of the hook chain can still reject a
+# commit with the baseline staged; that residue is a row that moved only
+# because a file shrank.
+#
+# The rewrite reads the WORKTREE copy, which is what gets staged: rebuilding
+# from the index copy would delete a developer's unstaged row edits instead of
+# carrying them. Two accepted edges follow, both visible in the diff: a
+# `git commit -- <paths>` commit acquires the baseline change, and unrelated
+# unstaged row edits go into the index with it.
+#
+# Nothing here loosens a row: the rewrite is tighten-only against the STAGED
+# content, so an unstaged raise is pulled back down to the measured size, and
+# wherever it does not land the INDEX copy governs the verdict. Two worktree
+# states are left alone — a staged DELETION (the commit freezes nothing, and
+# rewriting would put the file back) and a MALFORMED copy (a hand-edit in
+# progress is not a gate, and must not fail a commit whose snapshot is clean).
+if [ "$MODE" = "check" ] && [ "$STAGED" -eq 1 ] && [ "$VIOLATIONS" -gt 0 ] \
+  && [ "$baseline_state" != "2" ] && [ -f "$BASELINE_FILE" ] \
+  && validate_baseline_rows soft "$BASELINE_FILE" "$BASELINE_FILE"; then
+  cp -- "$TMP/violations.tsv" "$TMP/violations.staged-index" || collection_error "could not preserve the verdict before the --staged rewrite"
+  cp -- "$TMP/baseline.tsv" "$TMP/baseline.staged-index" || collection_error "could not preserve the index baseline before the --staged rewrite"
+  cp -- "$BASELINE_FILE" "$TMP/baseline.worktree-orig" || collection_error "could not preserve the worktree baseline before the --staged rewrite"
+  cp -- "$TMP/baseline.worktree-orig" "$TMP/baseline.tsv" || collection_error "could not stage a working copy of $BASELINE_FILE for the --staged rewrite"
+  tighten_baseline "--staged"
+  [ "$BASELINE_REWRITTEN" != "1" ] || run_verdict "$TMP/baseline.tsv"
+  if [ "$BASELINE_REWRITTEN" = "1" ] && [ "$VIOLATIONS" -eq 0 ]; then
+    git add -- "$BASELINE_FILE" || collection_error "could not stage the rewritten baseline at $BASELINE_FILE — it WAS rewritten in the worktree; stage it or rerun"
+    echo "size-ratchet --staged: staged the tightened baseline at $BASELINE_FILE"
+  else
+    # Either there was nothing to rewrite, or the rewrite did not resolve the
+    # run. Put the worktree copy back byte for byte and report what the
+    # commit's own snapshot earned.
+    if [ "$BASELINE_REWRITTEN" = "1" ]; then
+      cat -- "$TMP/baseline.worktree-orig" >"$BASELINE_FILE" || collection_error "could not restore $BASELINE_FILE after an unsuccessful --staged rewrite — inspect the file before trusting it"
+      echo "size-ratchet --staged: the run is not clean, so $BASELINE_FILE is restored and nothing was staged"
+    fi
+    cp -- "$TMP/baseline.staged-index" "$TMP/baseline.tsv" || collection_error "could not restore the index baseline after the --staged rewrite"
+    cp -- "$TMP/violations.staged-index" "$TMP/violations.tsv" || collection_error "could not restore the verdict after the --staged rewrite"
+    VIOLATIONS="$(count_nonempty_lines "$TMP/violations.tsv")"
+  fi
+fi
+
 report "$TMP/violations.tsv" || collection_error "could not read the violations scratch file to report them"
-if [ "$violations" -gt 0 ]; then
-  echo "size-ratchet: $violations violation(s) — threshold $THRESHOLD$CLASSES_NOTE, baseline $BASELINE_FILE"
+# "no reference" is not "checked and clean": a run whose HEAD carries no rows
+# never judged an added or raised one, and says which of the two it is.
+RAISE_NOTE=""
+[ -n "$HEAD_BASELINE" ] || RAISE_NOTE=" — HEAD carries no baseline rows, so added and raised rows were not judged"
+if [ "$VIOLATIONS" -gt 0 ]; then
+  echo "size-ratchet: $VIOLATIONS violation(s) — threshold $THRESHOLD$CLASSES_NOTE, baseline $BASELINE_FILE$RAISE_NOTE"
   exit 1
 fi
-echo "size-ratchet: OK — $checked tracked file(s) checked, threshold $THRESHOLD$CLASSES_NOTE"
+echo "size-ratchet: OK — $checked tracked file(s) checked, threshold $THRESHOLD$CLASSES_NOTE$RAISE_NOTE"

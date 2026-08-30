@@ -281,14 +281,29 @@ mkfile y.test.txt 15
 printf 'other.txt\t15\ny.test.txt\t15\n' >"$R/$BASE"
 git -C "$R" add -A
 run_frozen
-[ "$RC" -eq 1 ] && case "$OUT" in *"baseline row added: y.test.txt — 15 lines > threshold 10"*) true ;; *) false ;; esac \
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline row added: y.test.txt — row 15 lines > threshold 10"*) true ;; *) false ;; esac \
   && ok "adding a row fails undeclared, naming the count and threshold" \
   || bad "adding a row fails undeclared, naming the count and threshold" "rc=$RC out=$OUT"
+# The remedy on THIS verdict must name the declaration, because the
+# declaration is what carries it — even here, in a frozen class.
+case "$OUT" in *"remedy: split at a concept seam, or declare the row with RATCHET_RAISE=1"*) ok "and its remedy names the declaration a bootstrap row needs" ;; *) bad "the added-row remedy names RATCHET_RAISE=1" "$OUT" ;; esac
 # A new path still gets its bootstrap row: the frozen list refuses raises, not
 # first rows.
 RAISE=1 run_frozen
 [ "$RC" -eq 0 ] && ok "a declared bootstrap row passes even in a frozen class" \
   || bad "a declared bootstrap row passes even in a frozen class" "rc=$RC out=$OUT"
+# The control that the frozen list is doing anything at all: the SAME path, a
+# row later, RAISED rather than bootstrapped, with the same declaration.
+git -C "$R" commit -q -m "the bootstrap row, now HEAD's"
+mkfile y.test.txt 20
+printf 'other.txt\t15\ny.test.txt\t20\n' >"$R/$BASE"
+git -C "$R" add -A
+RAISE=1 run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"frozen baseline row raised: y.test.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
+  && ok "control: raising that same frozen row is refused under the same declaration" \
+  || bad "control: a frozen RAISE is refused where the bootstrap passed" "rc=$RC out=$OUT"
+# And the remedy each verdict prints is the one that would work.
+case "$OUT" in *"remedy: split at a concept seam (a frozen class never raises an existing row)"*) ok "and its remedy is the split, not a declaration that will not help" ;; *) bad "the frozen raise remedy is the split alone" "$OUT" ;; esac
 # The control that this gate is not frozen-class only: an ordinary row is
 # refused undeclared and passes declared.
 commit_baselined nontest plain.txt 15 15
@@ -312,6 +327,31 @@ run_frozen
   && ok "a row under the threshold is stale" \
   || bad "a row under the threshold is stale" "rc=$RC out=$OUT"
 case "$OUT" in *"row raised"* | *"row added"*) bad "one root cause is reported once" "$OUT" ;; *) ok "one root cause is reported once" ;; esac
+# A hand edit is the only way to a bigger number, and a hand edit is where a
+# file with no final newline comes from — so the LAST row is exactly the one a
+# dropped incomplete line would stop judging, silently and with exit 0.
+new_repo nofinalnewline
+mkdir -p "$R/tools"
+mkfile aaa.rs 15
+mkfile zzz.rs 20
+printf 'aaa.rs\t15\nzzz.rs\t15\n' >"$R/$BASE"
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: two baselined offenders"
+printf 'aaa.rs\t15\nzzz.rs\t20' >"$R/$BASE"
+git -C "$R" add -A
+run_sr
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline row raised: zzz.rs — row 15 -> 20 lines"*) true ;; *) false ;; esac \
+  && ok "a raise on the last row is judged even with no trailing newline" \
+  || bad "the last row of a newline-less baseline is judged" "rc=$RC out=$OUT"
+# The control: the identical baseline WITH the newline reports the same thing,
+# so the case above is about the missing byte and nothing else.
+printf 'aaa.rs\t15\nzzz.rs\t20\n' >"$R/$BASE"
+git -C "$R" add -A
+run_sr
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline row raised: zzz.rs — row 15 -> 20 lines"*) true ;; *) false ;; esac \
+  && ok "control: the same rows with the newline give the same verdict" \
+  || bad "control: the newline-terminated baseline gives the same verdict" "rc=$RC out=$OUT"
+
 # A placeholder committed empty is not a row set: judging against it would
 # call every row of the first real baseline one this change added.
 new_repo emptyhead

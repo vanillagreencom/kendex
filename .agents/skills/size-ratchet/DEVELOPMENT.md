@@ -54,7 +54,8 @@ does not carry, and a policy file staged for DELETION governs as absent. An
 untracked source (a personal `.env.local`) is still the worktree copy, and
 an explicit environment variable still wins over everything. The one thing
 `--staged` reads from the worktree is the baseline it is about to REWRITE —
-see the next section, where the verdict still comes from the index copy.
+see the next section, where the index copy still governs unless the rewrite
+lands.
 
 ## The tighten-only rewrite
 
@@ -71,9 +72,18 @@ row edits rather than carrying them. Two accepted edges follow, both visible
 in the diff: a `git commit -- <paths>` commit acquires the baseline change,
 and unrelated unstaged row edits go into the index with it. Neither loosens a
 row: the rewrite is tighten-only against the STAGED content, so an unstaged
-raise is pulled back down to the measured size, and when no rewrite happens
-the INDEX copy governs the verdict, so a row the worktree carries and the
-commit does not still fails the run.
+raise is pulled back down to the measured size, and wherever the rewrite does
+not land the INDEX copy governs the verdict, so a row the worktree carries
+and the commit does not still fails the run.
+
+The rewrite lands only where it RESOLVES the run. The commit's own snapshot
+is judged first; the rewrite then runs from saved copies and its candidate is
+re-judged, and only a clean candidate reaches `git add`. Anything else
+restores the worktree baseline byte for byte and reports what the snapshot
+earned, so a rejected commit carries no baseline change the developer never
+asked for. A malformed WORKTREE copy skips the rewrite with a note rather
+than failing the run: a hand-edit in progress is not a gate, and the commit
+records the index copy.
 
 The baseline is itself a counted file, so the rewrite reconciles its own row
 against the file it is about to become. A line row settles in one pass —
@@ -185,8 +195,11 @@ is what a repo adopting a class needs on day one.
 
 Rows already at HEAD are grandfathered, because the gate judges the change
 and not the history it inherited. A HEAD with no baseline (an unborn HEAD,
-a first `--seed`, a baseline this change introduces) has nothing to compare
-and the rule stays quiet. A row whose file is at or under its threshold is
-reported as stale instead, so one root cause reads as one verdict. A unit
-change is never a raise: the two numbers are not comparable, so the row is
-re-measured and the gate says nothing about it.
+a first `--seed`, a baseline this change introduces) has nothing to compare,
+so the run passes and its verdict line says the added and raised checks did
+not run — "no reference" must never read as "checked and clean". A row whose
+file is at or under its threshold is reported as stale instead, so one root
+cause reads as one verdict. A class that changes its UNIT does not escape:
+HEAD's row is re-expressed in the unit the class counts now, measured from
+HEAD's own blob, so the comparison runs in one unit and only a file that did
+not grow re-measures for free.

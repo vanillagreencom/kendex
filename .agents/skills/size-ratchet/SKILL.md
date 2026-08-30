@@ -91,10 +91,12 @@ commit body) is correct in exactly two cases, both for hand-written files:
    real size. Shrink or delete the emptied rows in the same diff.
 
 The gate enforces both halves of that itself. A row a change adds or raises
-over HEAD's baseline fails unless the run carries `RATCHET_RAISE=1`, and a
-row in a **frozen class** — every markdown class and every test class by
-default — fails whatever it carries: a test splits and a document is cut, so
-no declaration buys either one more room. Rows already at HEAD are
+over HEAD's baseline fails unless the run carries `RATCHET_RAISE=1`, and
+RAISING an existing row in a **frozen class** — every markdown class and
+every test class by default — fails whatever it carries: a test splits and a
+document is cut, so no declaration buys either one more room. A FIRST row for
+a path HEAD's baseline carries none for is a bootstrap, and the declaration
+admits it in every class, a renamed path included. Rows already at HEAD are
 grandfathered, and a repo with no committed row set yet is bootstrapping.
 Generated and vendored content is never raised either: it is excluded (the
 exclusion list, `pattern<TAB>reason`) and leaves the counted set.
