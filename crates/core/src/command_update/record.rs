@@ -3,12 +3,15 @@
 //!
 //! `install.sh` writes it, `kendex update` refreshes it for the binary it
 //! is running as, and every replacement rewrites it for the bytes that
-//! landed. Read by `command_update::command_beside_app`, which will not
-//! replace a file no record vouches for.
+//! landed. A replacement made under another account writes that account's
+//! record instead, so the next run from the recorded path moves this one to
+//! the bytes it finds there. Read by `command_update::command_beside_app`,
+//! which will not replace a file no record vouches for.
 
 use std::path::{Path, PathBuf};
 
 use crate::env::Env;
+use crate::install_channel::{Host, HostProbe};
 
 /// What an installer recorded about the `kendex` command it installed:
 /// where it put it, and what it put there.
@@ -119,6 +122,9 @@ fn stage(
 /// being run once, and the app would then carry the copy nobody uses and
 /// leave the one they do.
 ///
+/// A record already here goes to [`refresh_the_replaced_bytes`], which
+/// holds that rule and moves the digest alone.
+///
 /// A record already present but unreadable stays as it is. `recorded_command`
 /// reads it as no record and the app refuses the command, which is the safe
 /// direction; `kendex update` rewrites it, because that is the run replacing
@@ -131,15 +137,16 @@ pub fn record_first_run(env: &Env, running: &Path) -> Result<(), String> {
     // Asked before anything is read. Every run reaches here, `--version`
     // and `--help` included, and the answer after the first is always the
     // same one — so the steady state costs a look at one name rather than
-    // a read and a hash of the whole executable and a staging file made
-    // and unmade beside it. `symlink_metadata`, so a link occupying the
-    // name counts as occupying it.
+    // a staging file made and unmade beside it, and the arm below buys the
+    // read and the hash of the whole executable out of it too.
+    // `symlink_metadata`, so a link occupying the name counts as occupying
+    // it.
     //
     // Not the arbiter, only the cheap answer. Two runs can both see
     // nothing here; the link below is what decides which of them was
     // first.
-    if std::fs::symlink_metadata(&file).is_ok() {
-        return Ok(());
+    if let Ok(here) = std::fs::symlink_metadata(&file) {
+        return refresh_the_replaced_bytes(env, running, &here);
     }
     std::fs::create_dir_all(parent)
         .map_err(|error| format!("{} could not be created: {error}", parent.display()))?;
@@ -175,6 +182,67 @@ pub fn record_first_run(env: &Env, running: &Path) -> Result<(), String> {
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
         Err(error) => Err(format!("{} could not be written: {error}", file.display())),
     }
+}
+
+/// Move the digest of a record that names the file this process is running
+/// from, where the bytes at that file are no longer the ones it names.
+///
+/// An update run with the privilege the desktop app lacks writes its record
+/// into the privileged account's data directory, so the record here keeps
+/// naming the bytes that run replaced. `command_beside_app` then stops
+/// matching a command kendex does own, and the card that offered the one
+/// command out of that state falls to the arm that names nobody. The person
+/// is left with a current command the app will never offer to move again.
+///
+/// What licenses the write is what licenses a first run, and it is the same
+/// file: a process running from the recorded path is the recorded command,
+/// whatever bytes it now holds, and executing them is the proof no lookup
+/// by name can offer. So the digest moves and the path does not. A record
+/// naming any other file is left alone — repointing a record by path is
+/// what `record_first_run` refuses, and it still refuses it.
+///
+/// Nothing here is privileged and nothing crosses an account. The process
+/// is the person's own, the file is the one their own [`Env`] names, and
+/// the bytes hashed are the ones this process was loaded from.
+fn refresh_the_replaced_bytes(
+    env: &Env,
+    running: &Path,
+    record_file: &std::fs::Metadata,
+) -> Result<(), String> {
+    let Some(record) = recorded_command(env) else {
+        return Ok(());
+    };
+    if Host.resolve(&record.path) != Host.resolve(running) {
+        return Ok(());
+    }
+    // The record is written after the bytes it describes — by `install.sh`,
+    // by every replacement, and by the arm above — so bytes no newer than
+    // the record are bytes it already names. Every run of every verb
+    // reaches here, and that ordering is what keeps the steady state off a
+    // read and a hash of the whole executable. Where either timestamp
+    // cannot be read the record stays as it is, which is this function's
+    // answer to everything it cannot establish; a replacement that carried
+    // an older timestamp across is missed the same way, and the record then
+    // stays exactly where it was before this arm existed.
+    let replaced = match (
+        record_file.modified(),
+        std::fs::metadata(running).and_then(|bytes| bytes.modified()),
+    ) {
+        (Ok(recorded_at), Ok(written_at)) => written_at > recorded_at,
+        _ => false,
+    };
+    if !replaced {
+        return Ok(());
+    }
+    let bytes = std::fs::read(running)
+        .map_err(|error| format!("{} could not be read: {error}", running.display()))?;
+    if crate::hash::sha256_hex(&bytes) == record.digest {
+        return Ok(());
+    }
+    // Written back under the path the record already spells, not the
+    // resolved one: the two name the same file, and a record rewritten as
+    // a link's target stops describing the name a later release replaces.
+    record_command(env, &record.path, &bytes)
 }
 
 /// The same record, taken from a file already on disk — the running
