@@ -60,11 +60,27 @@ if [[ -n "${RECOVERY_PUBLISH_TARGET:-}" && "$target" == "$RECOVERY_PUBLISH_TARGE
   case "${MV_SHIM_MODE:-}" in
     interrupt-once) [[ $count -ne 1 ]] || kill -TERM "$PPID" ;;
     fail-once) [[ $count -ne 1 ]] || exit 75 ;;
+    fail-all) exit 75 ;;
   esac
 fi
 exec "$REAL_MV" "$@"
 SH
 chmod +x "$TMP_ROOT/bin/mv"
+
+REAL_AWK="$(command -v awk)"
+cat > "$TMP_ROOT/bin/awk" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -n "${CONSTRUCTION_TERM_COUNT:-}" ]]; then
+  count=0
+  [[ ! -e "$CONSTRUCTION_TERM_COUNT" ]] || count="$(cat "$CONSTRUCTION_TERM_COUNT")"
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$CONSTRUCTION_TERM_COUNT"
+  [[ $count -ne 1 ]] || kill -TERM "$PPID"
+fi
+exec "$REAL_AWK" "$@"
+SH
+chmod +x "$TMP_ROOT/bin/awk"
 
 cat > "$SANDBOX/skills/linear/scripts/linear.sh" <<'SH'
 #!/usr/bin/env bash
@@ -198,9 +214,10 @@ git -C "$SANDBOX" worktree add -q -b caller-two "$CALLER_TWO"
 
 SCRIPT="$SANDBOX/skills/orch/scripts/container-close"
 RECOVERY="$SANDBOX/tmp/container-close-recovery/PARENT-1.tsv"
+PENDING="$SANDBOX/tmp/container-close-recovery/PARENT-1.pending.tsv"
 export FAKE_LINEAR_ROOT="$TMP_ROOT/state"
 export PATH="$TMP_ROOT/bin:$PATH"
-export REAL_MV
+export REAL_MV REAL_AWK
 mkdir "$FAKE_LINEAR_ROOT" "$SANDBOX/tmp"
 
 reset_state() {
@@ -213,7 +230,7 @@ reset_state() {
     "$FAKE_LINEAR_ROOT/late.cascade.on.children" \
     "$FAKE_LINEAR_ROOT/fresh.conflict.on.children" "$FAKE_LINEAR_ROOT/update.calls" \
     "$FAKE_LINEAR_ROOT/complete.on.fresh.conflict" "$FAKE_LINEAR_ROOT/update.noop" \
-    "$RECOVERY"
+    "$RECOVERY" "$PENDING"
   rm -rf "$FAKE_LINEAR_ROOT/complete.entries"
   mkdir "$FAKE_LINEAR_ROOT/complete.entries"
 }
@@ -364,13 +381,13 @@ run_close >/dev/null 2>"$TMP_ROOT/merge-conflict-first.err" || rc=$?
 rm -f "$FAKE_LINEAR_ROOT/fail.complete.before"
 touch "$FAKE_LINEAR_ROOT/fresh.conflict.on.children"
 touch "$FAKE_LINEAR_ROOT/complete.on.fresh.conflict"
-MV_INTERRUPT_COUNT="$TMP_ROOT/mv-interrupt.count"
-export RECOVERY_PUBLISH_TARGET="$RECOVERY" MV_SHIM_MODE=interrupt-once MV_SHIM_COUNT="$MV_INTERRUPT_COUNT"
+CONSTRUCTION_TERM_COUNT="$TMP_ROOT/construction-term.count"
+export CONSTRUCTION_TERM_COUNT
 rc=0
 run_close >/dev/null 2>"$TMP_ROOT/merge-conflict.err" || rc=$?
-unset RECOVERY_PUBLISH_TARGET MV_SHIM_MODE MV_SHIM_COUNT
+unset CONSTRUCTION_TERM_COUNT
 [[ $rc -ne 0 ]] && ok "conflicting durable and fresh recovery rows fail closed" || fail "conflicting durable and fresh recovery rows fail closed"
-assert_eq "$(cat "$MV_INTERRUPT_COUNT")" "1" "termination arrives immediately before atomic unresolved publication"
+assert_eq "$(cat "$TMP_ROOT/construction-term.count")" "2" "termination during construction still builds the unresolved envelope"
 assert_contains "$TMP_ROOT/merge-conflict.err" "recovery conflict for PARENT-1: durable and fresh rows disagree" "publish conflict names its cause"
 assert_contains "$TMP_ROOT/merge-conflict.err" "$RECOVERY" "publish conflict names the active recovery path"
 assert_contains "$TMP_ROOT/merge-conflict.err" "reconcile Linear state, then remove" "publish conflict gives the reconciliation remedy"
@@ -397,19 +414,21 @@ run_close >/dev/null 2>"$TMP_ROOT/publication-failure-first.err" || rc=$?
 rm -f "$FAKE_LINEAR_ROOT/fail.complete.before"
 touch "$FAKE_LINEAR_ROOT/fresh.conflict.on.children" "$FAKE_LINEAR_ROOT/complete.on.fresh.conflict"
 MV_FAILURE_COUNT="$TMP_ROOT/mv-failure.count"
-export RECOVERY_PUBLISH_TARGET="$RECOVERY" MV_SHIM_MODE=fail-once MV_SHIM_COUNT="$MV_FAILURE_COUNT"
+export RECOVERY_PUBLISH_TARGET="$RECOVERY" MV_SHIM_MODE=fail-all MV_SHIM_COUNT="$MV_FAILURE_COUNT"
 rc=0
 run_close >/dev/null 2>"$TMP_ROOT/publication-failure.err" || rc=$?
 unset RECOVERY_PUBLISH_TARGET MV_SHIM_MODE MV_SHIM_COUNT
-[[ $rc -ne 0 ]] && ok "rename retry still reports the unresolved conflict" || fail "rename retry still reports the unresolved conflict"
-assert_eq "$(cat "$MV_FAILURE_COUNT")" "2" "failed atomic publication retries once"
-assert_eq "$(cat "$RECOVERY")" $'unresolved\nCHILD-2\tCanceled\t0\tdurable\nCHILD-2\tCanceled Again\t0\tfresh' "rename retry activates both recoverable alternatives"
-before_unresolved="$(cat "$RECOVERY")"
+[[ $rc -ne 0 ]] && ok "exhausted rename retries fail closed" || fail "exhausted rename retries fail closed"
+assert_eq "$(cat "$MV_FAILURE_COUNT")" "3" "all atomic publication attempts fail"
+assert_eq "$(cat "$PENDING")" $'unresolved\nCHILD-2\tCanceled\t0\tdurable\nCHILD-2\tCanceled Again\t0\tfresh' "exhausted publication retains the pending alternatives"
+assert_eq "$(cat "$RECOVERY")" $'resolved\nCHILD-2\tCanceled\t0' "failed publication leaves the old active generation intact"
 rc=0
 run_close >/dev/null 2>"$TMP_ROOT/publication-failure-retry.err" || rc=$?
-[[ $rc -ne 0 ]] && ok "completed retry refuses the publication-failure envelope" || fail "completed retry refuses the publication-failure envelope"
-assert_eq "$(cat "$RECOVERY")" "$before_unresolved" "publication-failure retry retains both alternatives"
+[[ $rc -ne 0 ]] && ok "completed retry promotes then refuses the pending generation" || fail "completed retry promotes then refuses the pending generation"
+[[ ! -e "$PENDING" ]] && ok "startup consumes the pending generation before active reads" || fail "startup consumes the pending generation before active reads"
+assert_eq "$(cat "$RECOVERY")" $'unresolved\nCHILD-2\tCanceled\t0\tdurable\nCHILD-2\tCanceled Again\t0\tfresh' "startup promotes both pending alternatives atomically"
 assert_eq "$(jq -r '.[] | select(.id == "CHILD-2") | .state_type' "$FAKE_LINEAR_ROOT/children.json")" "completed" "publication-failure retry cannot apply stale recovery"
+[[ ! -e "$FAKE_LINEAR_ROOT/update.calls" ]] && ok "pending promotion performs no stale Linear update" || fail "pending promotion performs no stale Linear update"
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"ancestor","state":"Canceled","state_type":"canceled","depth":0},{"id":"CHILD-1","title":"done","state":"Done","state_type":"completed","depth":0}]' > "$FAKE_LINEAR_ROOT/children.json"
