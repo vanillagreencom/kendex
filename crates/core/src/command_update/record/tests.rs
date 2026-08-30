@@ -85,3 +85,62 @@ fn a_first_run_vouches_for_its_own_file_and_no_other() {
         "a file the first run did not name was adopted"
     );
 }
+
+/// A staging name left behind by a run that died between the link and the
+/// unlink is a second name for the record itself. Written to rather than
+/// created, the record is truncated and filled in with whatever the next
+/// run was staging — the first-writer contract undone by its own cleanup
+/// not having happened.
+///
+/// Driven through the name supply rather than through a real crash: what
+/// varies is which name a staging write is offered, and the case is the
+/// one where the first offer is taken.
+#[test]
+fn a_staging_name_left_behind_is_never_written_through() {
+    let dir = tempfile::tempdir().unwrap();
+    let record = dir.path().join("installed-command");
+    std::fs::write(&record, "the record already here\n").unwrap();
+    // What a crash leaves: the staging name still pointing at the record.
+    let leftover = dir.path().join("installed-command.stale");
+    std::fs::hard_link(&record, &leftover).unwrap();
+    let free = dir.path().join("installed-command.free");
+
+    let offers = std::sync::atomic::AtomicUsize::new(0);
+    let staged = stage("the next run's record\n", || {
+        match offers.fetch_add(1, std::sync::atomic::Ordering::Relaxed) {
+            0 => leftover.clone(),
+            _ => free.clone(),
+        }
+    })
+    .unwrap();
+
+    assert_eq!(staged, free, "the taken name was staged under");
+    assert_eq!(
+        std::fs::read_to_string(&record).unwrap(),
+        "the record already here\n",
+        "the record was written through its other name"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&free).unwrap(),
+        "the next run's record\n"
+    );
+}
+
+/// Every name taken is a failure, not a silent overwrite of the last one
+/// offered. The message names how many were tried, because the state it
+/// describes is a directory nobody has swept.
+#[test]
+fn a_staging_write_with_no_free_name_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let taken = dir.path().join("installed-command.taken");
+    std::fs::write(&taken, "someone else's\n").unwrap();
+
+    let why = stage("mine\n", || taken.clone()).unwrap_err();
+
+    assert!(why.contains(&STAGING_ATTEMPTS.to_string()), "{why}");
+    assert_eq!(
+        std::fs::read_to_string(&taken).unwrap(),
+        "someone else's\n",
+        "the taken name was written anyway"
+    );
+}
