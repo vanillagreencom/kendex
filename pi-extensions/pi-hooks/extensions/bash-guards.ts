@@ -17,16 +17,10 @@ const MARKER = "# kendex-guards-hook";
 const GIT_BUDGET_MS = 5000;
 /** Shell control operators that end one simple command and start the next. */
 const SEPARATORS = new Set([";", "&", "|", "(", ")", "\n", "\r"]);
-/** git global options that take their value as the next word. */
-const GIT_GLOBAL_VALUE = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--exec-path", "--config-env", "--attr-source"]);
-/** Words that stand in front of a command without being it. */
-const TRANSPARENT = new Set("if then else elif fi while until do done ! time command exec eval nohup sudo doas env nice ionice timeout stdbuf setsid xargs export declare typeset local readonly".split(" "));
-/** `git commit` long options taking the next word as value. */
-const COMMIT_VALUE = new Set("--author --date --message --file --template --cleanup --reuse-message --reedit-message --fixup --squash --pathspec-from-file --trailer".split(" "));
-/** `git commit` short options whose value is the next word. */
+/** Characters that end a run of ordinary word text. */
+const BREAK = new Set([" ", "\t", "\\", "'", '"', "`", "$", "<", ">", "#", ...SEPARATORS]);
+/** `git commit` short options whose value is attached or the next word. */
 const SHORT_VALUE = "mFcCt";
-/** A word that can be a command name; anything else is shell left in. */
-const COMMAND_WORD = /^[A-Za-z0-9_./-]+$/;
 
 /** What the scan found across every `git` argv: whether one is a commit, whether
  * it may land elsewhere, and the first word bypassing a hook or injecting config. */
@@ -42,111 +36,58 @@ function setBypass(scan: CommandScan, token: string): void {
 	scan.bypass = flat.length > 60 ? flat.slice(0, 60) : flat;
 }
 
-/** Judge one simple command: assignments, transparent prefixes, command word. */
+/** The rule over the live words of one command. */
 function judge(tokens: string[], scan: CommandScan): void {
-	let k = 0;
-	let prefixed = false;
-	while (k < tokens.length) {
-		const t = tokens[k];
-		// Environment-injected configuration reaches git wherever it stands.
-		if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) {
-			if (t.startsWith("GIT_CONFIG_")) setBypass(scan, t);
-			if (t.startsWith("GIT_DIR=") || t.startsWith("GIT_WORK_TREE=")) scan.moves = true;
-			k++;
-		} else if (TRANSPARENT.has(basename(t))) {
-			prefixed = true;
-			k++;
-		} else break;
+	let git = false;
+	let commit = false;
+	for (const t of tokens) {
+		if (t === "-C" || t === "cd" || t.startsWith("--git-dir") || t.startsWith("--work-tree") || t.startsWith("GIT_DIR=") || t.startsWith("GIT_WORK_TREE=")) scan.moves = true;
+		// Configuration reaches git from anywhere: an assignment, an export, a
+		// config write in an earlier command. A bypass prints only beside a commit.
+		if (t.startsWith("GIT_CONFIG_") || t.toLowerCase().includes("hookspath")) setBypass(scan, t);
+		if (!git) git = basename(t) === "git";
+		else if (t === "commit") commit = true;
 	}
-	if (k >= tokens.length) return;
-	// Two ways a command stops being modelled, and neither gets a guess: a command
-	// word with shell in it (`PATH+=x`, `$(...)`), and a wrapper hiding it —
-	// `sudo -u git` names an account. Both take word-order.
-	const base = basename(tokens[k]);
-	if (!COMMAND_WORD.test(tokens[k]) || (base !== "git" && prefixed)) {
-		fallback(tokens.join(" "), scan);
-		return;
-	}
-	if (base !== "git") {
-		if (base === "cd") scan.moves = true;
-		return;
-	}
-	// Global options run to the first word that is not one. One taking a separate
-	// value owns it, so the -c in `git -C -c commit` is the -C path, not a flag;
-	// -c and -C take an attached value too. They inject config only as GLOBAL
-	// options: after the subcommand `git commit -c` is --reedit-message.
-	let j = k + 1;
-	let inject = "";
-	let moves = false;
-	while (j < tokens.length && tokens[j].startsWith("-")) {
-		const t = tokens[j];
-		if (!inject && (t === "-c" || /^-c./.test(t) || t.startsWith("--config-env"))) inject = t;
-		if (t === "-C" || /^-C./.test(t) || t.startsWith("--git-dir") || t.startsWith("--work-tree")) moves = true;
-		j += GIT_GLOBAL_VALUE.has(t) ? 2 : 1;
-	}
-	const subcommand = j < tokens.length ? tokens[j] : "";
-	// A core.hooksPath line disarms the hook, and a read is refused with the write.
-	if (subcommand === "config") {
-		for (let m = j + 1; m < tokens.length; m++) if (tokens[m].toLowerCase().includes("hookspath")) setBypass(scan, tokens[m]);
-		return;
-	}
-	if (subcommand !== "commit") return;
+	if (!git || !commit) return;
 	scan.commit = true;
-	if (inject) setBypass(scan, inject);
-	if (moves) scan.moves = true;
-	// git takes any unique prefix of --no-verify, and -n alone or in a cluster is
-	// the same flag; `--` ends the options, and an option value is not a flag.
-	for (let m = j + 1; m < tokens.length; m++) {
-		const t = tokens[m];
-		if (t === "--") return;
-		if (t.startsWith("--")) {
-			if (/^--no-veri/.test(t)) return setBypass(scan, t);
-			if (COMMIT_VALUE.has(t)) m++;
-		} else if (t.startsWith("-")) {
-			// A cluster reads left to right: from the first value-taking option the
-			// rest of the token is its value, so `-mnote` is a message.
-			for (let p = 1; p < t.length; p++) {
-				if (SHORT_VALUE.includes(t[p])) {
-					if (p === t.length - 1) m++;
-					break;
-				}
-				if (t[p] === "n") return setBypass(scan, t);
-			}
+	for (const t of tokens) {
+		if (/^--no-veri/.test(t) || t === "-c" || t.startsWith("--config-env")) return setBypass(scan, t);
+		if (!/^-[A-Za-z]/.test(t)) continue;
+		// A cluster reads left to right: from the first value-taking option the rest
+		// of the word is its value, so `-mnote` is a message and `-nm` is not.
+		for (let p = 1; p < t.length; p++) {
+			if (SHORT_VALUE.includes(t[p])) break;
+			if (t[p] === "n") return setBypass(scan, t);
 		}
 	}
 }
 
-/** The rule this parser replaced, kept for every input it cannot model. Over-
- * refusal is the trade; a bypass counts only where the command names git. */
-function fallback(command: string, scan: CommandScan): void {
-	const words = ` ${command} `.replace(/[^a-zA-Z0-9_=-]+/g, " ");
-	const git = words.indexOf(" git ");
-	if (git < 0) return;
-	// A core.hooksPath line disarms the hook whether or not this command commits.
-	const key = / [a-zA-Z0-9_=-]*hookspath[^ ]* /i.exec(words);
-	if (key) setBypass(scan, key[0].trim());
-	if (words.indexOf(" commit ", git + 4) < 0) return;
-	scan.commit = true;
-	const flag = / (--no-veri[a-z]*|-[a-zA-Z]*n[a-zA-Z]*|-c|--config-env[^ ]*|GIT_CONFIG_[^ ]*) /.exec(words);
-	if (flag) setBypass(scan, flag[1]);
-}
-
-/** Split a bash command into simple commands and judge each `git` argv. One
- * left-to-right pass: quotes hold a word together, control operators end a
- * simple command, a heredoc body is skipped whole. Text outside a git argv —
- * that body, a comment, a redirection target, another program's arguments, an
- * operand after `--`, a value — is not a flag. A command it cannot model —
- * quoting that never closes, a command word with shell left in it, a wrapper
- * hiding that word — takes the word-order rule, which may over-refuse; `sh -c`,
- * git aliases and unlisted wrappers stay invisible. Mirrors the bash hook. */
+/**
+ * Only live command text is judged. A quoted run, a comment tail and a heredoc
+ * body are not commands, so their contents never reach a word; what survives is
+ * whole words, and the rule over them is the word order: a `git` word with a
+ * later `commit` word is a commit, and a word in it that skips the hooks or
+ * injects configuration is the bypass. Whole words, so `--grep=commit` is not a
+ * commit and `-mnote` is a message rather than -n.
+ *
+ * Nothing here models an argv. Every round that tried named one more construct
+ * and opened the next hole, so this scanner answers one question — which text is
+ * a live word — and knows nothing of options, wrappers or subcommands. An
+ * unrecognised prefix simply leaves `git commit --no-verify` standing.
+ *
+ * Its blind spot is the other side of that trade: text a shell would run but
+ * this drops, inside quotes (`sh -c "git commit --no-verify"`) or a heredoc
+ * body. Those are the false refusals this gate exists to end, and git's own
+ * hooks remain the control. Mirrors `hooks/pre-commit-check.sh`.
+ */
 export function scanCommand(command: string): CommandScan {
 	const scan: CommandScan = { commit: false, moves: false, bypass: null };
 	const n = command.length;
 	let tokens: string[] = [];
 	let word = "";
 	let haveWord = false;
-	let unbalanced = false;
-	let heredocs: { delim: string; dash: boolean }[] = [];
+	let heredocs: string[] = [];
+	let depth = 0;
 	let i = 0;
 	const flush = (): void => {
 		if (!haveWord) return;
@@ -159,170 +100,124 @@ export function scanCommand(command: string): CommandScan {
 		if (tokens.length > 0) judge(tokens, scan);
 		tokens = [];
 	};
-	/** A single-quoted or backtick run: no escapes inside. */
-	const quoted = (q: string): void => {
-		const start = ++i;
-		while (i < n && command[i] !== q) i++;
-		word += command.slice(start, i);
-		haveWord = true;
-		if (i >= n) unbalanced = true;
-		i++;
-	};
-	/** A backslash escapes the next character, newline aside: line joining. */
-	const dquoted = (): void => {
-		let start = ++i;
-		haveWord = true;
-		while (i < n) {
-			if (command[i] === '"') {
-				word += command.slice(start, i++);
-				return;
-			}
-			if (command[i] === "\\") {
-				word += command.slice(start, i);
-				if (command[i + 1] !== "\n") word += command[i + 1] ?? "";
-				i += 2;
-				start = i;
-				continue;
-			}
-			i++;
-		}
-		word += command.slice(start, i);
-		unbalanced = true;
-	};
-	/** Consume a $(...) or ${...} whole: its operators never split a command. */
-	const substitution = (): void => {
-		const opener = command[i + 1];
-		const closer = opener === "(" ? ")" : "}";
-		const start = i++;
-		let depth = 0;
-		while (i < n) {
-			if (command[i] === opener) depth++;
-			else if (command[i] === closer && --depth === 0) {
-				i++;
-				break;
-			}
-			i++;
-		}
-		word += command.slice(start, i);
-		haveWord = true;
-	};
-	/** A redirection ends the word and contributes nothing to the argv: descriptor,
-	 * operator and target are consumed, so `git >/dev/null commit` reads `commit`.
-	 * `<<` names a heredoc: its target is the delimiter, continuations joined. */
-	const redirect = (): void => {
-		// An IO number or {name} descriptor touches its operator: it is the word
-		// being built now, and it belongs to the redirection wherever one stands.
-		if (haveWord && /^([0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})$/.test(word)) {
-			word = "";
-			haveWord = false;
-		}
-		flush();
-		if (command.startsWith("<(", i) || command.startsWith(">(", i)) {
-			// `<(...)`/`>(...)` is one target: substitution() takes it whole.
-			substitution();
-			word = "";
-			haveWord = false;
-			return;
-		}
-		let heredoc = false;
-		let dash = false;
-		if (command.startsWith("<<<", i)) i += 3;
-		else if (command.startsWith("<<", i)) {
-			heredoc = true;
-			i += 2;
-			dash = command[i] === "-";
-			if (dash) i++;
-		} else if (command.startsWith(">>", i) || command.startsWith(">&", i) || command.startsWith("<&", i) || command.startsWith(">|", i)) i += 2;
-		else i++;
+	/** A heredoc delimiter: quotes and line continuations come out of it, so
+	 * `<<EO\<newline>F` names EOF and the body ends where bash ends it. */
+	const heredoc = (): void => {
 		while (i < n && (command[i] === " " || command[i] === "\t")) i++;
-		let target = "";
+		let delim = "";
 		while (i < n) {
 			const ch = command[i];
 			if (ch === " " || ch === "\t" || ch === "<" || ch === ">" || SEPARATORS.has(ch)) break;
 			if (ch === "'" || ch === '"') {
 				i++;
-				while (i < n && command[i] !== ch) target += command[i++];
+				while (i < n && command[i] !== ch) delim += command[i++];
 				i++;
-			} else if (ch === "\\" && (command[i + 1] === "\n" || command.startsWith("\r\n", i + 1))) {
-				i += command[i + 1] === "\r" ? 3 : 2; // a line continuation: `<<EO\<newline>F` names EOF
-			} else if (ch === "\\") {
-				target += command[i + 1] ?? "";
+			} else if (ch === "\\" && command[i + 1] === "\n") i += 2;
+			else if (ch === "\\") {
+				delim += command[i + 1] ?? "";
 				i += 2;
 			} else {
-				target += ch;
+				delim += ch;
 				i++;
 			}
 		}
-		if (heredoc && target) heredocs.push({ delim: target, dash });
+		if (delim) heredocs.push(delim);
 	};
-	/** Skip each heredoc body opened on the line just ended, terminator too. */
+	/** Skip each body opened on the line just ended, terminator included. One that
+	 * never terminates is left live rather than swallowing the rest. */
 	const heredocBodies = (): void => {
-		i++;
-		for (const h of heredocs) {
+		const start = ++i;
+		for (const delim of heredocs) {
 			while (i < n) {
-				const start = i;
+				const from = i;
 				while (i < n && command[i] !== "\n") i++;
-				let line = command.slice(start, i).replace(/\r$/, "");
+				const line = command.slice(from, i).replace(/\r$/, "").replace(/^\t+/, "");
 				if (i < n) i++;
-				if (h.dash) line = line.replace(/^\t+/, "");
-				if (line === h.delim) break;
+				if (line === delim) break;
 			}
+			if (i >= n) i = start;
 		}
 		heredocs = [];
 	};
 	while (i < n) {
 		const start = i;
-		while (i < n) {
-			const c = command[i];
-			if (c === " " || c === "\t" || c === "\\" || c === "'" || c === '"' || c === "`" || c === "$" || c === "<" || c === ">" || c === "#" || c === "{" || c === "}" || SEPARATORS.has(c)) break;
-			i++;
-		}
+		while (i < n && !BREAK.has(command[i])) i++;
 		if (i > start) {
 			word += command.slice(start, i);
 			haveWord = true;
 		}
 		if (i >= n) break;
 		const ch = command[i];
+		const c2 = command[i + 1];
 		if (ch === " " || ch === "\t") {
 			flush();
 			i++;
 		} else if (ch === "\\") {
 			// A backslash-newline is line joining: the shell removes both.
-			if (command[i + 1] === "\n") i += 2;
-			else if (command[i + 1] === "\r" && command[i + 2] === "\n") i += 3;
+			if (c2 === "\n") i += 2;
+			else if (c2 === "\r" && command[i + 2] === "\n") i += 3;
 			else {
-				word += command[i + 1] ?? "";
+				word += c2 ?? "";
 				haveWord = true;
 				i += 2;
 			}
-		} else if (ch === "'" || ch === "`") quoted(ch);
-		else if (ch === '"') dquoted();
-		else if (ch === "$" && (command[i + 1] === "(" || command[i + 1] === "{")) substitution();
-		else if (ch === "#" && !haveWord) {
-			// A # begins a comment at word start only; mid-word it is `-m x#y`.
-			while (i < n && command[i] !== "\n") i++;
-		} else if ((ch === "{" || ch === "}") && !haveWord && (i + 1 >= n || command[i + 1] === " " || command[i + 1] === "\t" || SEPARATORS.has(command[i + 1]))) {
-			// A brace is a keyword only as a whole word: `-m a{b}` is expansion.
-			endCommand();
-			i++;
-		} else if (ch === "<" || ch === ">") redirect();
-		else if (ch === "&" && command[i + 1] === ">") {
-			// `&>` takes no IO number: flush the argument before it here instead.
+		} else if (ch === "'" || ch === '"' || ch === "`") {
+			// A quoted run is text: the contents are dropped and the word closes over
+			// the gap, so `g''it` is git and a quoted --no-verify is not a flag. A
+			// quote that never closes is one stray character, leaving the rest live.
+			const close = command.indexOf(ch, i + 1);
+			if (close < 0) i++;
+			else {
+				haveWord = true;
+				i = close + 1;
+			}
+		} else if (ch === "$" && c2 === "(") {
+			// `$(`, `<(` and `>(` hold their interior in the command enclosing them:
+			// inside one, an operator separates words rather than commands.
+			depth++;
+			i += 2;
+		} else if ((ch === "<" || ch === ">") && c2 === "(") {
 			flush();
-			i++;
-			redirect();
-		} else if (SEPARATORS.has(ch)) {
-			endCommand();
-			if (ch === "\n") heredocBodies();
-			else i++;
-		} else {
+			depth++;
+			i += 2;
+		} else if (ch === "$") {
 			word += ch;
 			haveWord = true;
 			i++;
+		} else if (ch === "<" && c2 === "<") {
+			flush();
+			i += 2;
+			if (command[i] === "-") i++;
+			heredoc();
+		} else if (ch === "<" || ch === ">") {
+			// A redirection operator ends a word and nothing else: the target that
+			// follows is one more word, and `git >x commit` is still a commit.
+			flush();
+			i++;
+			if (command[i] === "&" || command[i] === "|" || command[i] === ">") i++;
+		} else if (ch === "&" && c2 === ">") {
+			flush();
+			i += 2;
+		} else if (ch === "#" && haveWord) {
+			// A # begins a comment at word start only; mid-word it is `-m x#y`.
+			word += ch;
+			i++;
+		} else if (ch === "#") {
+			while (i < n && command[i] !== "\n") i++;
+		} else if (ch === ")" && depth > 0) {
+			depth--;
+			flush();
+			i++;
+		} else if (depth > 0) {
+			flush();
+			i++;
+		} else {
+			endCommand();
+			if (ch === "\n") heredocBodies();
+			else i++;
 		}
 	}
 	endCommand();
-	if (unbalanced) fallback(command, scan);
 	return scan;
 }
 

@@ -184,13 +184,13 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		expect(commit("ls -la")).toBe(false);
 		expect(commit("git commit -m test")).toBe(true);
 		expect(commit("git -C /somewhere/else commit -m test")).toBe(true);
-		// A newline ends a command; a tab is word whitespace, so that payload
-		// is one `cd` with five arguments and no commit at all.
 		expect(commit("cargo fmt\ngit commit -m x")).toBe(true);
 		expect(commit("cargo fmt\r\ngit commit -m x")).toBe(true);
-		expect(commit("cd sub\tgit commit -m x")).toBe(false);
-		// Words outside a git argv are text, not a commit.
-		expect(commit("echo git commit")).toBe(false);
+		// A tab is word whitespace, so those are arguments of one `cd` — but they
+		// are live words all the same, and the rule reads words rather than an argv.
+		expect(commit("cd sub\tgit commit -m x")).toBe(true);
+		expect(commit("echo git commit")).toBe(true);
+		// Whole words, and the order has to hold: neither of these is a commit.
 		expect(commit("git status && echo commit")).toBe(false);
 		expect(commit("git log --grep=commit")).toBe(false);
 		expect(commit("commit git")).toBe(false);
@@ -213,7 +213,6 @@ describe("pre-commit gate: the bash hook's contract", () => {
 			'python3 -c "print(1)" && git commit -m x',
 			'git commit -m "explain why --no-verify is banned"',
 			'gh pr comment 7 --body "we never pass --no-verify" && git commit -m x',
-			"git commit -c HEAD --reset-author",
 		]) {
 			expect([command, scanCommand(command).bypass]).toEqual([command, null]);
 			await both(command, "allow", "refuse");
@@ -264,12 +263,38 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		await both("git commit -m x \\\n--no-verify", "refuse", "refuse");
 	});
 
-	test("git option boundaries hold", async () => {
-		await both("git commit -- --no-verify", "allow", "refuse");
-		await both("git commit -m x -- -n", "allow", "refuse");
-		await both("git commit -F --no-verify", "allow", "refuse");
+	test("a bypass word is a bypass word", async () => {
+		// No argv model means no `--` and no option values: a word that reads as the
+		// flag is refused wherever it stands. Bizarre forms, and they fail closed.
+		await both("git commit -- --no-verify", "refuse", "refuse");
+		await both("git commit -m x -- -n", "refuse", "refuse");
+		await both("git commit -F --no-verify", "refuse", "refuse");
+		await both("git commit -c HEAD --reset-author", "refuse", "refuse");
 		await both("git commit -m a{b} --no-verify", "refuse", "refuse");
 		await both("{ git commit --no-verify -m x; }", "refuse", "refuse");
+	});
+
+	test("a construct the scanner never heard of leaves the words standing", async () => {
+		// Each of these desynchronised the argv parser that stood here, and each is
+		// closed by the rule reading live words instead: `coproc` is named nowhere.
+		for (const command of [
+			"echo $(printf '(') && git commit --no-verify -m x",
+			"git >$(printf /dev/null) commit --no-verify -m x",
+			"coproc git commit --no-verify -m x",
+			// An operator inside a substitution separates words, not commands.
+			"git -C $(cd /t && pwd) commit --no-verify -m x",
+			"git &>out commit --no-verify -m x",
+			// A heredoc that never terminates would otherwise swallow the rest.
+			"cat <<EOF\ngit commit --no-verify -m x",
+		]) {
+			await both(command, "refuse", "refuse");
+			const named = await gate(armed, command);
+			if (named.verdict.kind !== "refuse") throw new Error("unreachable");
+			expect(named.verdict.reason).toContain("'--no-verify' bypasses");
+		}
+		// The control for the joined delimiter: there the body IS skipped, so the
+		// words in it are prose rather than flags.
+		await both("cat <<EO\\\nF > n.md\ngit commit --no-verify is banned here\nEOF\ngit commit -m x", "allow", "refuse");
 	});
 
 	test("a short-option cluster is read left to right", async () => {
@@ -307,7 +332,7 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		]) {
 			await both(command, "refuse", "refuse");
 		}
-		await both("echo git commit --no-verify", "allow", "allow");
+		await both("echo git commit --no-verify", "refuse", "refuse");
 	});
 
 	test("a wrapper option's operand is not a command word", async () => {
@@ -374,7 +399,7 @@ describe("pre-commit gate: the bash hook's contract", () => {
 	test("a git global option owns its value", async () => {
 		await both("git -ccore.hooksPath=/dev/null commit -m x", "refuse", "refuse");
 		await both("git -C /tmp -c user.name=x commit -m y", "refuse", "refuse");
-		await both("git -C -c commit -m x", "allow", "refuse");
+		await both("git -C -c commit -m x", "refuse", "refuse");
 
 		const attached = await gate(armed, "git -ccore.hooksPath=/dev/null commit -m x");
 		if (attached.verdict.kind !== "refuse") throw new Error("unreachable");

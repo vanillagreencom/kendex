@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Tests for the pre-commit-check hook's contract: the command splits into
-# simple commands and only a `git` invocation's argv is judged; deference to
-# the repository's own armed git pre-commit hook (never a second validation)
-# unless that argv sidesteps it; the refusal where nothing is armed;
-# fail-closed when no armed hook exists, and when the payload names a command
-# the hook cannot read. Shell forms the hook does not run — `$(…)`,
-# backticks, `cd "$dir"`, unexpanded variables — must pass through without a
-# refusal of their own, and so must a `-n`, `-c` or `--no-verify` belonging to
-# a heredoc body, another program, or a quoted commit message.
+# simple commands and only their live words are judged; deference to the
+# repository's own armed git pre-commit hook (never a second validation)
+# unless a word in that command sidesteps it; the refusal where nothing is
+# armed; fail-closed when no armed hook exists, and when the payload names a
+# command the hook cannot read. A `-n`, `-c` or `--no-verify` belonging to a
+# heredoc body, another program, or a quoted commit message must pass through
+# without a refusal of its own, and a construct the scanner does not model
+# must leave the words standing rather than swallow them.
 #
 # The package script is stubbed inside each fixture repository, where the
 # hook looks for it, so the suite needs no built binary, runs no real chain,
@@ -227,10 +227,10 @@ for form in \
   assert_eq "$log" "" "nothing was run for: $form"
 done
 
-# A tab is word whitespace to the shell, never a command separator: that
-# payload is one `cd` with five arguments, and no commit for this lane to gate.
+# A tab is word whitespace, so those are five arguments of one `cd` — but they
+# are live words all the same, and the rule reads words rather than an argv.
 run_hook "$UNARMED" "$(payload 'cd sub\tgit commit -m x')" CHAIN_EXIT=1
-assert_eq "$rc" "0" "a tab makes arguments of git commit, not a command"
+assert_eq "$rc" "2" "a tab leaves git and commit standing as live words"
 
 echo
 echo "unreadable payload"
@@ -358,7 +358,7 @@ both 'cat <<EOF > tmp/note.md\nrun cat -n on the file\nEOF\ngit commit -m note' 
 both 'python3 -c \"print(1)\" && git commit -m x' 0 2 "another program's -c"
 both 'git commit -m \"explain why --no-verify is banned\"' 0 2 "prose in a quoted message"
 both 'gh pr comment 7 --body \"we never pass --no-verify\" && git commit -m x' 0 2 "prose in another program's argv"
-both 'git commit -c HEAD --reset-author' 0 2 "-c after commit is --reedit-message"
+both 'git commit -c HEAD --reset-author' 2 2 "-c anywhere in a commit is config"
 
 # The same forms with the flag moved into the commit's own argv.
 # shellcheck disable=SC2016
@@ -403,11 +403,13 @@ both 'cargo fmt && \\\ngit commit -m x' 0 2 "a plain commit on the continued lin
 both 'git commit -m x \\\n--no-verify' 2 2 "a flag joined onto the argv"
 
 echo
-echo "git option boundaries hold"
+echo "a bypass word is a bypass word"
 
-both 'git commit -- --no-verify' 0 2 "a pathspec after --"
-both 'git commit -m x -- -n' 0 2 "-n as a pathspec after --"
-both 'git commit -F --no-verify' 0 2 "-F takes its value"
+# No argv model means no `--` and no option values: a word that reads as the
+# flag is refused wherever it stands. Bizarre forms, and they fail closed.
+both 'git commit -- --no-verify' 2 2 "a pathspec after --"
+both 'git commit -m x -- -n' 2 2 "-n as a pathspec after --"
+both 'git commit -F --no-verify' 2 2 "the value of an option that takes one"
 both 'git commit -m a{b} --no-verify' 2 2 "a brace is expansion, not a command break"
 both '{ git commit --no-verify -m x; }' 2 2 "a brace group still holds a commit"
 
@@ -426,7 +428,7 @@ both 'nice git commit -n -m x' 2 2 "nice"
 both 'timeout 30 git commit -n -m x' 2 2 "timeout with its duration"
 both 'stdbuf -o0 git commit -n -m x' 2 2 "stdbuf with its own option"
 both '/usr/bin/git commit --no-verify -m x' 2 2 "an absolute git path"
-both 'echo git commit --no-verify' 0 0 "a word outside any argv is still text"
+both 'echo git commit --no-verify' 2 2 "a word another program would print"
 
 # A wrapper option's operand is not a command word: `git` is an ordinary
 # account name (gitolite, Gitea), and reading it as the command left the
@@ -468,6 +470,30 @@ run_hook "$ARMED" "$(payload "$DESYNC")" CHAIN_EXIT=0
 assert_contains "$err" "'--no-verify' bypasses" "the desynchronised command names the flag it saw"
 
 echo
+echo "a construct the scanner never heard of leaves the words standing"
+
+# Each of these desynchronised the argv parser that stood here, and each is
+# closed by the rule reading live words instead: `coproc` is named nowhere.
+# Double-quoted so the apostrophes survive; the $ is escaped so this shell does
+# not run the substitution the hook has to read as text.
+PAREN="echo \$(printf '(') && git commit --no-verify -m x"
+both "$PAREN" 2 2 "a quoted paren inside a substitution"
+# shellcheck disable=SC2016
+both 'git >$(printf /dev/null) commit --no-verify -m x' 2 2 "a substitution as a redirection target"
+both 'coproc git commit --no-verify -m x' 2 2 "a keyword this lane does not know"
+# shellcheck disable=SC2016
+both 'git -C $(cd /t && pwd) commit --no-verify -m x' 2 2 "an operator inside a substitution"
+both 'git &>out commit --no-verify -m x' 2 2 "an &> before the subcommand"
+both 'commit git' 0 0 "commit before git is not a commit"
+
+# A heredoc that never terminates would otherwise swallow every command after
+# it; the body is left live instead. The joined delimiter is the control: there
+# the body IS skipped, so the words in it are not flags.
+both 'cat <<EOF\ngit commit --no-verify -m x' 2 2 "an unterminated heredoc"
+HEREDOC_PROSE='cat <<EO\\\nF > n.md\ngit commit --no-verify is banned here\nEOF\ngit commit -m x'
+both "$HEREDOC_PROSE" 0 2 "prose in a body behind a joined delimiter"
+
+echo
 echo "a redirection is redirection wherever it stands"
 
 # A line continuation inside the delimiter is removed, so this heredoc ends at
@@ -501,7 +527,7 @@ echo "a git global option owns its value"
 
 both 'git -ccore.hooksPath=/dev/null commit -m x' 2 2 "an attached -c injection"
 both 'git -C /tmp -c user.name=x commit -m y' 2 2 "a -c behind a -C with its path"
-both 'git -C -c commit -m x' 0 2 "a -c that is the -C path value"
+both 'git -C -c commit -m x' 2 2 "a -c standing as the -C path value"
 
 run_hook "$ARMED" "$(payload 'git -ccore.hooksPath=/dev/null commit -m x')" CHAIN_EXIT=0
 assert_contains "$err" "'-ccore.hooksPath=/dev/null' bypasses" "the attached form names the injection"

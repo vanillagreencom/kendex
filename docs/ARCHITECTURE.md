@@ -396,13 +396,13 @@ lives in one capability table read by core and UI.
   and a measurement that fails is exit 2 rather than a silent pass. Which
   repository a commit targets is git's question, answered where the target
   has an armed hook: the `pre-commit-check` PreToolUse hook reads a commit
-  out of a `git` argv, defers where both git hooks of its own working
+  out of a command's live words, defers where both git hooks of its own working
   directory carry the marker and run, and refuses the commit otherwise rather
   than running the repository's own scripts on its behalf: arming is the
   local act that asks for that, and a clone carries no hooks. Sidestepping an armed one (`--no-verify`, `-n`) or injecting git
-  config (a global `-c`, `--config-env`, `GIT_CONFIG_*`) is refused: git skips
-  commit-msg too, unjudgeable here. Only a `git` argv is judged, so a heredoc
-  body, a comment and another program's flags are text. It gates its working
+  config (`-c`, `--config-env`, `GIT_CONFIG_*`, a `core.hooksPath` key) is
+  refused: git skips commit-msg too, unjudgeable here. It models no argv, so a
+  heredoc body, a comment tail and quoted contents are text. It gates its working
   directory only, and where it cannot defer a stderr notice names the directory
   it judged; a payload it cannot read is a refusal, as is nothing armed.
 - **kendex carries no migration machinery.** Breaking changes are a
