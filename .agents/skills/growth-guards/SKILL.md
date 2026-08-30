@@ -1,7 +1,7 @@
 ---
 name: growth-guards
 description: "Load to add, tune, or debug a repo growth guard, its git hooks, or GROWTH_GUARDS_* settings."
-summary: "Six repo growth guards beside size-ratchet (todo-ban, byte-ceiling, suppression-ban, conflict-markers, changelog-entries, commit-msg) and the git hook shims that run them."
+summary: "Seven repo growth guards beside size-ratchet (todo-ban, byte-ceiling, suppression-ban, conflict-markers, changelog-entries, prose, commit-msg) and the git hook shims that run them."
 license: MIT
 user-invocable: true
 metadata:
@@ -25,7 +25,7 @@ repo-effects:
     - "preflight"
   notes:
     - "An existing pre-commit or commit-msg hook keeps its content and its exit status: one marked line goes in after the shebang and falls through to what was already there. core.hooksPath is never set."
-    - "The chain runs in order: size-ratchet --staged, preflight --staged, the growth-guards batch (todo-ban, byte-ceiling, suppression-ban, conflict-markers, changelog-entries), then the repo-root executable named by GROWTH_GUARDS_PRE_COMMIT_LOCAL. A companion that is not installed is an announced skip, never a silently missing check, and one that is installed but cannot run stops the commit rather than skipping it; the stated skips are preflight on a repository's first commit and a repo-local size-ratchet that rejects --staged."
+    - "The chain runs in order: size-ratchet --staged, preflight --staged, the growth-guards batch (todo-ban, byte-ceiling, suppression-ban, conflict-markers, changelog-entries, prose), then the repo-root executable named by GROWTH_GUARDS_PRE_COMMIT_LOCAL. A companion that is not installed is an announced skip, never a silently missing check, and one that is installed but cannot run stops the commit rather than skipping it; the stated skips are preflight on a repository's first commit and a repo-local size-ratchet that rejects --staged."
     - "Both hooks block on any nonzero verdict and fail closed on a guard that could not run. Passing git's no-verify flag bypasses one commit, and skips the message gate with it."
     - "The gate needs no kendex binary once armed: git runs this package's committed scripts, so a machine that never installed kendex still gates commits. Arming does not travel, though — git clones no hooks and this package never sets core.hooksPath — so every clone is armed once, by whoever clones it."
 ---
@@ -34,7 +34,7 @@ repo-effects:
 
 > **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
 
-Six checks beside `size-ratchet`, sharing its idiom and exit contract.
+Seven checks beside `size-ratchet`, sharing its idiom and exit contract.
 
 ```bash
 .agents/skills/growth-guards/scripts/growth-guards              # batch: every enabled repo check
@@ -54,6 +54,7 @@ Each check is also invocable as `scripts/CHECK`.
 | **suppression-ban** | Blanket lint suppressions fail flat: module-wide rust `allow` inner attributes, file-level ruff/flake8 noqa, the bare `eslint-disable` block form, bare or `all` nolint, biome's `biome-ignore-all` / unscoped `biome-ignore-start` / rule-less `biome-ignore lint` and group forms. Bare rust `allow(dead_code)`/`allow(unused*)` attributes are counted per file against a tighten-only baseline; `--update` lowers/removes rows, never adds or raises one. A per-line suppression naming its lint with a stated reason stays legal. |
 | **conflict-markers** | An unresolved merge-conflict marker in a tracked, non-excluded file fails: the open/base/close trio (seven `<`, seven vertical bars, seven `>`) at column 0, each followed by a space or end of line. No baseline. Indented or quoted occurrences and the bare seven-equals separator do not fire. |
 | **changelog-entries** | A changelog entry over the character cap (default 200) fails. An entry opens on a list marker (`-`, `*`, `+`) at column 0 followed by a space or tab, and runs to the next such marker, an ATX heading (up to three leading spaces, one to six hashes, then a space, a tab, or end of line), or a blank line followed by a line that is neither indented nor a marker — an indented second paragraph is part of the entry. Its text is those lines with CR stripped and whitespace runs collapsed to one space, counted in characters. A symlink, a gitlink or a binary blob at a configured path is named as unmeasured, and text that is not valid UTF-8 is a collection error; paths matching no tracked file are a clean pass. |
+| **prose** | A history reference in a configured markdown file fails: a calendar date, a three- or four-digit issue number after `#`, or a word naming a past state. Scope is the path list — by default the file names an agent harness loads on its own (`SKILL.md`, `workflows/*.md`, `AGENTS.md`, `CLAUDE.md`), so a reference doc, a changelog and a design record are out of scope by not being named. Matching is case-insensitive and whole-word. No baseline; the word list is in CHECKS.md. |
 | **commit-msg** | Header must be `type(scope)!: subject` (scope and `!` optional). Uppercase issue keys (`fix(ABC-123)`) and `#`-number scopes pass; git-generated messages (Merge/Revert/Reapply, fixup!/squash!/amend!) pass unchanged. Takes the message file or stdin. |
 
 Exit codes everywhere: `0` clean, `1` violations, `2` usage/config/collection
@@ -103,7 +104,7 @@ Layering and reasoning: [README](README.md).
 
 | Key | Default | Meaning |
 |---|---|---|
-| `GROWTH_GUARDS_CHECKS` | `todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries` | Batch check list (`commit-msg` never batches). |
+| `GROWTH_GUARDS_CHECKS` | `todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose` | Batch check list (`commit-msg` never batches). |
 | `GROWTH_GUARDS_TODO_EXCLUDES` | `tools/todo-ban-excludes` | todo-ban exclusion list. |
 | `GROWTH_GUARDS_BYTE_CEILING_KB` | `200` | Byte ceiling in KB. |
 | `GROWTH_GUARDS_BYTE_EXCLUDES` | `tools/byte-ceiling-excludes` | byte-ceiling exclusion list (declared asset trees). |
@@ -112,6 +113,7 @@ Layering and reasoning: [README](README.md).
 | `GROWTH_GUARDS_CONFLICT_EXCLUDES` | `tools/conflict-markers-excludes` | conflict-markers exclusion list. |
 | `GROWTH_GUARDS_CHANGELOG_CAP` | `200` | Characters per changelog entry. |
 | `GROWTH_GUARDS_CHANGELOG_PATHS` | `CHANGELOG.md` | Space-separated globs naming the changelog files, matched against the full repo-relative path (`*` crosses `/`). |
+| `GROWTH_GUARDS_PROSE_PATHS` | `SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md` | Space-separated globs naming the markdown the prose lane scans, matched against the full repo-relative path (`*` crosses `/`). |
 | `GROWTH_GUARDS_COMMIT_TYPES` | `build chore ci docs feat fix perf refactor revert style test` | Accepted commit types. |
 | `GROWTH_GUARDS_PRE_COMMIT_LOCAL` | *(empty)* | Repo-root-relative executable the pre-commit shim runs last. |
 

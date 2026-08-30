@@ -96,6 +96,41 @@ and a repository keeping one entry per file names that tree instead
 An empty list is a config error; the way to switch the check off is to drop
 it from `GROWTH_GUARDS_CHECKS`.
 
+## prose
+
+Instruction markdown states the rule that holds now. A history reference in
+a file an agent loads fails: a calendar date (`20YY-MM-DD`), a three- or
+four-digit issue number after `#`, or one of the words `previously`,
+`used to`, `no longer`, `reverted`, `an earlier`, `earlier round`,
+`incident`, `historically`, `originally`, `at the time`. An agent acts on
+the rule, and a rule wrapped in the story of how it got there costs every
+reader the same paragraph to discard — so the story goes in the commit that
+made the change, where it stays readable and stops being reread.
+
+Matching is case-insensitive (the banned strings are words, and a
+sentence-initial capital is the same word) and whole-word, so `incidental`
+and `unreverted` never fire. The issue-number shape takes no leading
+boundary — a reference glued to a filename (`spec.md#1204`) is the same
+reference — and a longer digit run does not match a prefix of itself, so a
+five-digit token passes.
+
+Scope is the whole rule. `GROWTH_GUARDS_PROSE_PATHS` is a space-separated
+list of shell globs matched against the full repo-relative path, `*`
+crossing `/` as in the excludes lists, and it REPLACES the default rather
+than adding to it. The default names what an agent harness loads on its own,
+each name spelled twice because `*` crosses `/` but never stands in for the
+separator itself:
+
+```
+SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md
+```
+
+Everything else keeps its history: a README, a reference doc under a skill,
+a changelog, a design record. There is no excludes list — narrowing the path
+list is the one control, and an empty list is a config error (the way to
+switch the check off is to drop it from `GROWTH_GUARDS_CHECKS`). A list
+matching no tracked file is a clean pass that scans nothing.
+
 ## commit-msg
 
 Conventional-commit gate over one message, shaped for the git `commit-msg`

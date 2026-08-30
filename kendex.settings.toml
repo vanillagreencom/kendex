@@ -231,9 +231,9 @@ DEV_VALIDATE_CMD = "tools/guard"
 
 # The repo-root executable the guard chain runs last, after size-ratchet,
 # preflight and the growth-guards batch. tools/guard holds this repository's
-# own rules — the prose rules, the CHANGELOG rules, the repo-specific scans,
-# fmt, clippy, the test run — and no OTHER lane of the chain runs them, so
-# without this key a fresh clone arms hooks that gate none of them.
+# own rules — the CHANGELOG rules, the repo-specific scans, fmt, clippy, the
+# test run — and no OTHER lane of the chain runs them, so without this key a
+# fresh clone arms hooks that gate none of them.
 GROWTH_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"
 
 # The changelog-entries lane reads the fragment tree alone. CHANGELOG.md is

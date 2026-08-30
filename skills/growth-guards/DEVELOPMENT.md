@@ -7,8 +7,8 @@ docs live in README.md.
 
 - `scripts/growth-guards` — batch dispatcher and single-check router
 - `scripts/todo-ban`, `scripts/byte-ceiling`, `scripts/suppression-ban`,
-  `scripts/conflict-markers`, `scripts/changelog-entries`,
-  `scripts/commit-msg` — the six checks, each a standalone executable
+  `scripts/conflict-markers`, `scripts/changelog-entries`, `scripts/prose`,
+  `scripts/commit-msg` — the seven checks, each a standalone executable
 - `scripts/pre-commit` — the chain the git `pre-commit` shim runs
 - `scripts/install-git-hooks` — hook installer, remover, and `--check` verdict
 - `scripts/lib/common.sh`, `scripts/lib/settings.sh` — shared helpers and
