@@ -21,6 +21,33 @@
 # product code did reach it after all. What covers a harness suite is its own
 # must-fail control, which mutates the harness directly.
 #
+# A suite whose subject is an ABSENCE — no Bash 4 construct in a shipped
+# script, no banned citation in shipped markdown, no scratch directory left
+# behind — is unmeasurable from the other direction, and the method inverts on
+# it rather than merely missing it: blanking the product removes the very thing
+# the suite looks for, so it passes by construction and gets read as asserting
+# nothing. Such a suite declares
+#
+#     # vacuous-suite-scan: absence-subject
+#
+# in its first 20 lines and is counted under absence-subject instead. This
+# claim is checked the same way, and the check means the opposite thing: a
+# suite that declares it and then FAILS the blanked run found something in a
+# product that holds nothing, so what it asserts is not the absence it
+# declared. What covers an absence assertion is its own must-fail control,
+# which injects the forbidden thing.
+#
+# A suite declares at most one subject. Two declarations are a malformed
+# header rather than a category to resolve by precedence, and they end the run.
+#
+# What is left under vacuous after those two categories is not always a suite
+# to fix. A suite whose subject does not travel with the skill — a document
+# shipped only in the catalog repo, a live driver that opts itself out when its
+# environment is absent — reaches no assertion in either run and is correctly
+# reported vacuous here. There is nothing to declare in that case: what settles
+# such a suite is the subject arriving, not a category. Each one carries its
+# reason in its own header.
+#
 # A skill the caller NAMES must be scannable: a path that does not exist, has
 # no tests directory, or holds no shell suites is an error, because a
 # measurement was asked for and cannot be made. --all enumerates candidates
@@ -39,6 +66,16 @@
 # the copy was not measured, so a run where every suite was unrunnable is a
 # total measurement failure and says so, rather than reporting zeroes at
 # status 0 for automation to read as clean.
+#
+# unrunnable-in-copy is a property of the staging, not a verdict on the suite.
+# One skill is staged alone, so a suite that reads a sibling skill — a
+# cross-skill contract lint reaching for ../reviewer/ — finds nothing there and
+# fails the PRISTINE run, which is where a suite is disqualified before any
+# comparison. The same goes for a suite that reads the repository around the
+# skill, or installs into it. Such a suite is neither confirmed nor denied
+# here; what would settle it is staging its dependencies alongside it, which
+# this scan does not do. Read the count as "out of this method's reach", never
+# as a suite that failed.
 
 set -euo pipefail
 
@@ -138,17 +175,40 @@ run_suite() {
     "$SUITE_TIMEOUT_BIN" "$SUITE_TIMEOUT" bash "$suite_path" >/dev/null 2>&1
 }
 
-# A suite that declares the harness as its subject: this metric breaks product
-# files, and a harness suite has none, so it can neither pass nor fail on their
-# account.
-declares_harness_subject() {
-    head -n 20 "$1" | grep -q '^# vacuous-suite-scan: harness-subject$'
+# The subject a suite declares, empty when it declares none. Both known
+# subjects name something this metric cannot settle, for opposite reasons; the
+# header states which. An unknown word is a typo in a declaration nothing would
+# otherwise read, and two declarations are a header claiming two subjects —
+# both end the run rather than being silently ignored or resolved by order.
+suite_subject() {
+    local declared count
+    declared="$(head -n 20 "$1" | sed -n 's/^# vacuous-suite-scan: \([a-z][a-z-]*\)$/\1/p')"
+    if [[ -z "$declared" ]]; then
+        return 0
+    fi
+    count="$(printf '%s\n' "$declared" | grep -c .)"
+    if [[ "$count" -ne 1 ]]; then
+        die "$1 declares $count vacuous-suite-scan subjects, and a suite has one: $(printf '%s' "$declared" | tr '\n' ' ')"
+    fi
+    case "$declared" in
+    harness-subject | absence-subject) printf '%s' "$declared" ;;
+    *) die "$1 declares an unknown vacuous-suite-scan subject: $declared (known: harness-subject, absence-subject)" ;;
+    esac
+}
+
+# Why a declared subject is contradicted by a failing blanked run. The two
+# subjects are unmeasurable for opposite reasons, so the disproof differs.
+contradiction_reason() {
+    case "$1" in
+    harness-subject) printf 'declares harness-subject but breaking product code reached it' ;;
+    absence-subject) printf 'declares absence-subject but failed against a blanked product, which holds nothing for it to find' ;;
+    esac
 }
 
 scan_skill() {
     local skill_dir="$1"
-    local name tmp pristine blanked suite measured=0
-    local -a suites=() vacuous=() unrunnable=() red=() harness=() contradicting=()
+    local name tmp pristine blanked suite subject measured=0
+    local -a suites=() vacuous=() unrunnable=() red=() harness=() absence=() contradicting=()
 
     name="$(basename "$skill_dir")"
     [[ -d "$skill_dir/tests" ]] || die "$skill_dir has no tests directory"
@@ -176,14 +236,17 @@ scan_skill() {
             unrunnable+=("$suite")
             continue
         fi
+        subject="$(suite_subject "$skill_dir/tests/$suite")"
         if run_suite "$blanked/tests/$suite"; then
-            if declares_harness_subject "$skill_dir/tests/$suite"; then
-                harness+=("$suite")
-            else
-                vacuous+=("$suite")
-            fi
-        elif declares_harness_subject "$skill_dir/tests/$suite"; then
-            contradicting+=("$suite")
+            case "$subject" in
+            harness-subject) harness+=("$suite") ;;
+            absence-subject) absence+=("$suite") ;;
+            *) vacuous+=("$suite") ;;
+            esac
+        elif [[ -n "$subject" ]]; then
+            # "SUBJECT SUITE": the reason to report differs by subject, and a
+            # suite name is a basename from tests/*.sh, so the space splits.
+            contradicting+=("$subject $suite")
         else
             red+=("$suite")
         fi
@@ -201,6 +264,12 @@ scan_skill() {
     #                  reason the category exists — counting it would let a
     #                  target holding only harness suites exit 0 having
     #                  measured no vacuity at all
+    #   absence        NOT settled, for the mirror reason: breaking product
+    #                  files is what removes the thing an absence assertion
+    #                  looks for, so the blanked pass is the method's own
+    #                  doing and says nothing about the suite. Counting it
+    #                  would let a target of nothing but absence assertions
+    #                  exit 0 on measurements none of which were taken.
     #   unrunnable     NOT settled: it never reached the comparison
     #
     # Every category the loop above can assign appears in this list. Adding
@@ -209,16 +278,17 @@ scan_skill() {
     SCAN_MEASURED=$((SCAN_MEASURED + measured))
     [[ "$measured" -gt 0 ]] || SCAN_UNMEASURED="$SCAN_UNMEASURED $name"
 
-    printf '%-20s %3d suites  %3d vacuous  %3d harness-subject  %3d detecting  %3d unrunnable-in-copy\n' \
-        "$name" "${#suites[@]}" "${#vacuous[@]}" "${#harness[@]}" "${#red[@]}" "${#unrunnable[@]}"
+    printf '%-20s %3d suites  %3d vacuous  %3d harness-subject  %3d absence-subject  %3d detecting  %3d unrunnable-in-copy\n' \
+        "$name" "${#suites[@]}" "${#vacuous[@]}" "${#harness[@]}" "${#absence[@]}" "${#red[@]}" "${#unrunnable[@]}"
 
     for suite in ${contradicting[@]+"${contradicting[@]}"}; do
-        printf '    CONTRADICTION %s declares harness-subject but breaking product code reached it\n' "$suite"
+        printf '    CONTRADICTION %s %s\n' "${suite#* }" "$(contradiction_reason "${suite%% *}")"
     done
 
     if [[ "$LIST_NAMES" -eq 1 ]]; then
         for suite in ${vacuous[@]+"${vacuous[@]}"}; do printf '    vacuous          %s\n' "$suite"; done
         for suite in ${harness[@]+"${harness[@]}"}; do printf '    harness-subject  %s\n' "$suite"; done
+        for suite in ${absence[@]+"${absence[@]}"}; do printf '    absence-subject  %s\n' "$suite"; done
         for suite in ${unrunnable[@]+"${unrunnable[@]}"}; do printf '    unrunnable       %s\n' "$suite"; done
     fi
 
@@ -283,13 +353,13 @@ main() {
     # and measuring nothing are the same failure here, at the whole-run level
     # and per skill, so neither needs its own check.
     if [[ "$SCAN_MEASURED" -eq 0 || -n "$SCAN_UNMEASURED" ]]; then
-        die "no suite was measured${SCAN_UNMEASURED:+ in:$SCAN_UNMEASURED} — a scan that measured nothing is not a scan that passed. Name a skill directory or pass --all; a named one measures nothing when its suites cannot run from a copy, or are all harness-subject, which this metric cannot settle"
+        die "no suite was measured${SCAN_UNMEASURED:+ in:$SCAN_UNMEASURED} — a scan that measured nothing is not a scan that passed. Name a skill directory or pass --all; a named one measures nothing when its suites cannot run from a copy, or are all harness-subject or absence-subject, which this metric cannot settle"
     fi
 
     # A separate invariant, not a second statement of the one above: this is a
     # declaration the measurement disproved, not a measurement that failed.
     [[ "$SCAN_CONTRADICTIONS" -eq 0 ]] ||
-        die "a suite declared harness-subject that this metric did reach"
+        die "a suite's declared subject was disproved by the blanked run"
 }
 
 main "$@"
