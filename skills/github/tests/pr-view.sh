@@ -179,6 +179,15 @@ run_pr_view_json_help_value() {
        pr-view --json --help)
 }
 
+run_pr_view_help_value() {
+  local calls_file="$1" flag="$2"
+  (cd "$TMP_ROOT/repo" \
+    && PATH="$TMP_ROOT/bin:$PATH" \
+       STUB_GH_CALLS="$calls_file" \
+       env -u GH_TOKEN -u GITHUB_TOKEN "$GITHUB_SH" -C "$TMP_ROOT/repo" \
+       pr-view "$flag" --help)
+}
+
 without_timeout_utility() {
   command() {
     if [[ "${1:-}" == "-v" && "${2:-}" == "timeout" ]]; then
@@ -386,6 +395,19 @@ set -e
 assert_eq "$rc" "0" "pr-view accepts a help-shaped JSON field value" "$stderr"
 assert_contains "$(cat "$calls")" "pr view --json --help" \
   "pr-view keeps the JSON field value with its option"
+
+for flag in --template --jq --repo -t -q -R; do
+  calls="$TMP_ROOT/pr-view-help-value-${flag#-}.calls"
+  : >"$calls"
+  stderr="$TMP_ROOT/pr-view-help-value-${flag#-}.err"
+  set +e
+  output=$(run_pr_view_help_value "$calls" "$flag" 2>"$stderr")
+  rc=$?
+  set -e
+  assert_eq "$rc" "0" "pr-view accepts --help as the $flag value" "$stderr"
+  assert_contains "$(cat "$calls")" "pr view $flag --help" \
+    "pr-view forwards $flag with its help-shaped value"
+done
 
 echo
 echo "=== github.sh pr-view --format rejection ==="

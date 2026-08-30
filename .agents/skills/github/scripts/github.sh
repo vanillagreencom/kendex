@@ -189,7 +189,8 @@ _takes_value() {
         pr-create:--base | pr-create:--head | pr-create:--label) return 0 ;;
         pr-data:--format | pr-threads:--format) return 0 ;;
         pr-edit-body:--body-file) return 0 ;;
-        pr-view:--json) return 0 ;;
+        pr-view:--json | pr-view:--jq | pr-view:--template | pr-view:--repo) return 0 ;;
+        pr-view:-q | pr-view:-t | pr-view:-R) return 0 ;;
         sticky-comment:--bot) return 0 ;;
         *) return 1 ;;
     esac
@@ -203,7 +204,7 @@ for _arg in "$@"; do
     fi
     case "$_arg" in
         --help|-h) _help_route=1; break ;;
-        --*) if _takes_value "$_arg"; then _skip_value=1; fi ;;
+        -*) if _takes_value "$_arg"; then _skip_value=1; fi ;;
     esac
 done
 unset _arg _skip_value

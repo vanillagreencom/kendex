@@ -91,7 +91,7 @@ main() {
 
     while [ $# -gt 0 ]; do
         case "$1" in
-            --json)
+            --json|--jq|--template|--repo|-q|-t|-R)
                 cmd+=("$1")
                 shift
                 if [ $# -gt 0 ]; then
