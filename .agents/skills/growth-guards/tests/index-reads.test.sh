@@ -184,6 +184,26 @@ case "$OUT" in
   *) ok "the refusal is not dressed as a clean verdict" ;;
 esac
 
+echo "=== end to end: prose over an unmerged index ==="
+
+# prose walks `ls-files -s`, which emits one record per STAGE, so an
+# unresolved merge would hand it rival blobs for one path. Its guard runs
+# over the whole index before the walk: the fixture carries no file the
+# default path list matches, so a lane that skipped the guard would report
+# the clean "no tracked file matches" verdict instead of refusing.
+conflicted_repo prose-unmerged
+RC=0
+OUT="$(cd "$R" && "$SCRIPTS/prose" 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] \
+  && ok "prose refuses rather than reporting OK over an unmerged index" \
+  || bad "prose refuses rather than reporting OK over an unmerged index" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"prose: OK"*)
+    bad "prose's refusal is not dressed as a clean verdict" "out=$OUT"
+    ;;
+  *) ok "prose's refusal is not dressed as a clean verdict" ;;
+esac
+
 # Control: staging the conflicted content resolves the index, and the SAME
 # bytes then fail as the violation they are — the guard did not replace the
 # measurement, it unblocked it.

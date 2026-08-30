@@ -88,6 +88,14 @@ put SKILL.md 'The colour token is #12345 and the port is #12.'
 run_prose
 [ "$RC" -eq 0 ] && ok "a five-digit run and a two-digit run both pass" \
   || bad "five- and two-digit runs pass" "rc=$RC out=$OUT"
+put SKILL.md 'Swatches #123abc, #1234ab, #0088cc and #3366ff are colours.'
+run_prose
+[ "$RC" -eq 0 ] && ok "a CSS hex colour opening with digits is not an issue reference" \
+  || bad "hex colours pass" "rc=$RC out=$OUT"
+put SKILL.md 'Landed in #1204) and #228, per #999.'
+run_prose
+[ "$RC" -eq 1 ] && ok "control: a reference followed by punctuation or a space still fails" \
+  || bad "control: real references still fail" "rc=$RC out=$OUT"
 put SKILL.md '### Heading with 4 words'
 run_prose
 [ "$RC" -eq 0 ] && ok "an ATX heading is not an issue reference" || bad "ATX heading passes" "rc=$RC out=$OUT"
@@ -95,7 +103,7 @@ run_prose
 echo "=== scope: each default name is scanned, and nothing else is ==="
 new_repo scope
 put SKILL.md 'clean'
-for f in SKILL.md AGENTS.md CLAUDE.md skills/dev/SKILL.md skills/dev/AGENTS.md skills/dev/CLAUDE.md workflows/ship.md skills/dev/workflows/ship.md; do
+for f in SKILL.md AGENTS.md CLAUDE.md skills/dev/SKILL.md skills/dev/AGENTS.md skills/dev/CLAUDE.md workflows/ship.md skills/dev/workflows/ship.md agents/rust.md .claude/agents/rust.md; do
   put "$f" 'Seeded 2026-08-12.'
   run_prose
   [ "$RC" -eq 1 ] && case "$OUT" in *"history reference: $f:1:"*) true ;; *) false ;; esac \
@@ -109,7 +117,10 @@ for f in README.md CHECKS.md docs/design.md CHANGELOG.md skills/dev/references/a
   put "$f" 'Seeded 2026-08-12, reverted in #1204.'
 done
 run_prose
-[ "$RC" -eq 0 ] && ok "README, CHECKS, docs, CHANGELOG, references and a workflows-named file keep their history" \
+# The count is asserted with the status: a scan that matched NOTHING also
+# exits 0, and would satisfy a bare rc check while proving nothing.
+[ "$RC" -eq 0 ] && case "$OUT" in *"prose: OK — no history references in 10 scanned file(s)"*) true ;; *) false ;; esac \
+  && ok "README, CHECKS, docs, CHANGELOG, references and a workflows-named file keep their history, with the ten scoped files still read" \
   || bad "out-of-scope files keep their history" "rc=$RC out=$OUT"
 
 echo "=== GROWTH_GUARDS_PROSE_PATHS REPLACES the list (and that is provable) ==="
@@ -155,6 +166,88 @@ run_prose --no-such-flag
 run_prose --help
 [ "$RC" -eq 0 ] && case "$OUT" in *"usage: prose"*) true ;; *) false ;; esac \
   && ok "--help prints usage at exit 0" || bad "--help prints usage" "rc=$RC out=$OUT"
+
+echo "=== a configured path that is not markdown is named, never counted clean ==="
+new_repo unmeasurable
+put notes/target.md 'Seeded 2026-08-12.'
+put skills/dev/SKILL.md 'Seeded 2026-08-12.'
+run_prose
+[ "$RC" -eq 1 ] && case "$OUT" in *"history reference: skills/dev/SKILL.md:1:"*) true ;; *) false ;; esac \
+  && ok "control: the same content as a REGULAR file at the scoped path fails" \
+  || bad "control: regular file at the scoped path fails" "rc=$RC out=$OUT"
+# The blob of a tracked symlink is its TARGET PATH, so `git grep --cached`
+# greps the string "../../notes/target.md" and finds nothing — with no status
+# and no stderr to show for it.
+rm "$R/skills/dev/SKILL.md"
+ln -s ../../notes/target.md "$R/skills/dev/SKILL.md"
+git -C "$R" add -A
+[ "$(git -C "$R" ls-files -s skills/dev/SKILL.md | cut -d' ' -f1)" = "120000" ] \
+  && ok "fixture: the scoped path really is tracked as a symlink" \
+  || bad "fixture: scoped path tracked as a symlink" "$(git -C "$R" ls-files -s skills/dev/SKILL.md)"
+run_prose
+case "$OUT" in
+  *"not measured: skills/dev/SKILL.md"*"tracked as a symlink"*) ok "a symlinked scoped path is NAMED as unmeasured" ;;
+  *) bad "symlinked scoped path is named as unmeasured" "rc=$RC out=$OUT" ;;
+esac
+case "$OUT" in
+  *"1 matched path(s) not measured"*) ok "the verdict carries the unmeasured tally" ;;
+  *) bad "verdict carries the unmeasured tally" "rc=$RC out=$OUT" ;;
+esac
+case "$OUT" in
+  *"prose: OK — nothing measurable to scan"*) ok "no bare clean verdict is printed over a path the lane never read" ;;
+  *) bad "no bare clean verdict over an unread path" "rc=$RC out=$OUT" ;;
+esac
+
+# A gitlink at a scoped path: mode 160000 carries a commit id, not markdown.
+new_repo gitlink
+put SKILL.md 'clean'
+git -C "$R" commit -qm base
+SUB_SHA="$(git -C "$R" rev-parse HEAD)"
+git -C "$R" update-index --add --cacheinfo "160000,$SUB_SHA,vendor/AGENTS.md"
+[ "$(git -C "$R" ls-files -s vendor/AGENTS.md | cut -d' ' -f1)" = "160000" ] \
+  && ok "fixture: the scoped path really is tracked as a gitlink" \
+  || bad "fixture: scoped path tracked as a gitlink" "$(git -C "$R" ls-files -s vendor/AGENTS.md)"
+run_prose
+[ "$RC" -eq 0 ] && case "$OUT" in *"not measured: vendor/AGENTS.md"*"submodule gitlink"*) true ;; *) false ;; esac \
+  && ok "a gitlink at a scoped path is named as unmeasured, not read as markdown" \
+  || bad "gitlink named as unmeasured" "rc=$RC out=$OUT"
+
+# Binary content: `git grep -I` drops such a blob with no status and no
+# stderr, so the classification pass has to catch it first.
+new_repo binaryblob
+printf 'Seeded 2026-08-12.\n' >"$R/AGENTS.md"
+git -C "$R" add -A
+run_prose
+[ "$RC" -eq 1 ] && ok "control: the same reference in TEXT fails" \
+  || bad "control: reference in text fails" "rc=$RC out=$OUT"
+printf 'lead\000Seeded 2026-08-12.\n' >"$R/AGENTS.md"
+git -C "$R" add -A
+run_prose
+[ "$RC" -eq 0 ] && case "$OUT" in *"not measured: AGENTS.md"*"binary content"*) true ;; *) false ;; esac \
+  && ok "a binary blob at a scoped path is named as unmeasured" \
+  || bad "binary blob named as unmeasured" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"no history references in"*) bad "no clean file-count verdict may cover a blob the lane never read" "$OUT" ;;
+  *) ok "no clean file-count verdict covers the unread blob" ;;
+esac
+
+echo "=== the glob list is matched against the INDEX, not the work tree ==="
+# `set -f` in the script is what this pins. Without it the configured
+# patterns are pathname-expanded against the WORK TREE before matching, so a
+# tracked file missing from the checkout drops out of the scan silently —
+# and a sparse or bare checkout loses the whole list.
+new_repo indexglob
+put workflows/a.md 'clean'
+put workflows/b.md 'Seeded 2026-08-12.'
+run_prose
+[ "$RC" -eq 1 ] && case "$OUT" in *"history reference: workflows/b.md:1:"*) true ;; *) false ;; esac \
+  && ok "control: both tracked workflows are scanned while both sit in the work tree" \
+  || bad "control: both workflows scanned" "rc=$RC out=$OUT"
+rm "$R/workflows/b.md"   # still in the index; gone from the checkout
+run_prose
+[ "$RC" -eq 1 ] && case "$OUT" in *"history reference: workflows/b.md:1:"*) true ;; *) false ;; esac \
+  && ok "a tracked file absent from the work tree is still scanned (the glob never touches the checkout)" \
+  || bad "index glob survives a missing work-tree file" "rc=$RC out=$OUT"
 
 echo "=== the skill's own shipped markdown does not trip the lane ==="
 new_repo self
@@ -210,9 +303,13 @@ OID="$(git -C "$R" rev-parse :SKILL.md)"
 [ -f "$R/.git/objects/${OID:0:2}/${OID:2}" ] || bad "fixture: the staged blob is not a loose object at the expected path" "$OID"
 rm -f -- "$R/.git/objects/${OID:0:2}/${OID:2}"
 run_prose
-[ "$RC" -eq 2 ] && case "$OUT" in *"error: "*"unable to read"*) true ;; *) false ;; esac \
-  && ok "a vanished staged blob is exit 2 carrying git's own error line" \
-  || bad "vanished blob is exit 2 with git's error line" "rc=$RC out=$OUT"
+# The classification pass reads every matched blob before the scan, so a
+# vanished object is refused there — earlier than the grep, and named as the
+# unread file it is rather than skipped as unmeasurable content.
+[ "$RC" -eq 2 ] && case "$OUT" in *"cannot read blob"*"refusing to skip an unread file"*) true ;; *) false ;; esac \
+  && ok "a vanished staged blob is exit 2 carrying git's own diagnostic" \
+  || bad "vanished blob is exit 2 with git's diagnostic" "rc=$RC out=$OUT"
+case "$OUT" in *"not measured"*) bad "an unread blob is a refusal, never an unmeasured skip" "$OUT" ;; *) ok "an unread blob is not dressed as an unmeasured skip" ;; esac
 case "$OUT" in *"prose: OK"*) bad "no OK verdict may accompany an unread blob" "$OUT" ;; *) ok "no OK verdict accompanies the unread blob" ;; esac
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

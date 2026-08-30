@@ -88,48 +88,9 @@ gg_positive_int "$CAP" "GROWTH_GUARDS_CHANGELOG_CAP"
 
 PATHS_RAW="$(gg_setting GROWTH_GUARDS_CHANGELOG_PATHS "CHANGELOG.md")" || exit 2
 
-# Each pattern goes through the family's path discipline: absolute, escaping
-# and '-'-leading values are configuration errors, never a glob that quietly
-# matches nothing. An empty list is one too — a check that measures nowhere
-# while reporting OK is the silent pass this family refuses; dropping the
-# check from GROWTH_GUARDS_CHECKS is how it is turned off.
-PATTERNS=""
-# The same list rendered for messages: a configured pattern is somebody's
-# bytes too, and %q would escape the globs out of the copy that has to match.
-PATTERNS_SHOWN=""
-for raw in $PATHS_RAW; do
-  norm="$(gg_config_path "$raw" changelog)" || exit 2
-  PATTERNS="${PATTERNS:+$PATTERNS }$norm"
-  PATTERNS_SHOWN="${PATTERNS_SHOWN:+$PATTERNS_SHOWN }$(gg_shown "$norm")"
-done
-[ -n "$PATTERNS" ] || gg_config_error "GROWTH_GUARDS_CHANGELOG_PATHS names no path — name at least one, or drop this check from GROWTH_GUARDS_CHECKS"
-
-matches_configured() { # PATH — 0 when some configured glob matches the full path
-  local path="$1" pat
-  for pat in $PATTERNS; do
-    # $pat must expand unquoted to act as a glob.
-    # shellcheck disable=SC2254
-    case "$path" in
-      $pat) return 0 ;;
-    esac
-  done
-  return 1
-}
-
-# git calls a blob binary when a NUL byte falls in its leading bytes, and the
-# --cached scans the sibling checks run skip such a blob. This walk reads raw
-# bytes rather than going through git grep, so it makes the same judgement
-# itself: measuring binary yields a meaningless length and prints the bytes
-# back out.
-BINARY_SAMPLE=8000
-blob_is_binary() { # FILE LABEL — 0 when a NUL falls in the leading bytes
-  local total stripped
-  total="$(head -c "$BINARY_SAMPLE" -- "$1" | wc -c)" \
-    || gg_collection_error "could not sample $(gg_shown "$2") to classify its content"
-  stripped="$(head -c "$BINARY_SAMPLE" -- "$1" | LC_ALL=C tr -d '\000' | wc -c)" \
-    || gg_collection_error "could not sample $(gg_shown "$2") to classify its content"
-  [ "$((total))" -ne "$((stripped))" ]
-}
+# The path list, its validation and its matcher are the family's, shared with
+# the sibling lane scoped the same way: lib/common.sh § configured path globs.
+gg_load_path_globs "$PATHS_RAW" changelog GROWTH_GUARDS_CHANGELOG_PATHS || exit 2
 
 # Violation rows as "V<TAB>line<TAB>characters<TAB>first line", then one
 # "N<TAB>count" tally so the clean verdict reports what it measured rather
@@ -224,7 +185,7 @@ note_skip() { # PATH REASON — a matched path this scan cannot measure
 while IFS= read -r -d '' rec; do
   # Record shape: "<mode> <sha> <stage>\t<path>".
   f="${rec#*"$GG_TAB"}"
-  matches_configured "$f" || continue
+  gg_matches_path_glob "$f" || continue
   mode="${rec%% *}"
   case "$mode" in
     120000)
@@ -241,7 +202,7 @@ while IFS= read -r -d '' rec; do
   git cat-file blob "$sha" >"$GG_TMP/blob" 2>"$GG_TMP/blob.err" \
     || { [ ! -s "$GG_TMP/blob.err" ] || cat -- "$GG_TMP/blob.err" >&2
       gg_collection_error "cannot read blob $sha for $(gg_shown "$f") — refusing to skip an unread changelog"; }
-  if blob_is_binary "$GG_TMP/blob" "$f"; then
+  if gg_blob_is_binary "$GG_TMP/blob" "$f"; then
     note_skip "$f" "binary content, not changelog text"
     continue
   fi
@@ -278,7 +239,7 @@ fi
 # as skipped above, and telling its reader that no file matched would send
 # them to widen a glob that was already right.
 if [ "$checked" -eq 0 ] && [ "$skipped" -eq 0 ]; then
-  echo "changelog-entries: OK — no tracked file matches GROWTH_GUARDS_CHANGELOG_PATHS ($PATTERNS_SHOWN)"
+  echo "changelog-entries: OK — no tracked file matches GROWTH_GUARDS_CHANGELOG_PATHS ($GG_PATH_GLOBS_SHOWN)"
   exit 0
 fi
 echo "changelog-entries: OK — $entries entry(ies) in $checked file(s) within the cap ($CAP characters)$UNMEASURED"

@@ -111,18 +111,21 @@ Matching is case-insensitive (the banned strings are words, and a
 sentence-initial capital is the same word) and whole-word, so `incidental`
 and `unreverted` never fire. The issue-number shape takes no leading
 boundary — a reference glued to a filename (`spec.md#1204`) is the same
-reference — and a longer digit run does not match a prefix of itself, so a
-five-digit token passes.
+reference — and the character after the digit run must be neither a digit
+nor a hex letter, which is what keeps a longer token and a CSS colour out:
+`#12345`, `#1234ab` and `#0088cc` all pass.
 
 Scope is the whole rule. `GROWTH_GUARDS_PROSE_PATHS` is a space-separated
 list of shell globs matched against the full repo-relative path, `*`
 crossing `/` as in the excludes lists, and it REPLACES the default rather
-than adding to it. The default names what an agent harness loads on its own,
-each name spelled twice because `*` crosses `/` but never stands in for the
-separator itself:
+than adding to it. The default names what an agent harness loads on its own
+— a skill's entry point and its workflows, an agent definition, and the
+repo-level instruction files — each name spelled twice because `*` crosses
+`/` but never stands in for the separator itself, the second spelling also
+reaching a rendered copy under `.claude/` or `.agents/`:
 
 ```
-SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md
+SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md
 ```
 
 Everything else keeps its history: a README, a reference doc under a skill,
@@ -130,6 +133,14 @@ a changelog, a design record. There is no excludes list — narrowing the path
 list is the one control, and an empty list is a config error (the way to
 switch the check off is to drop it from `GROWTH_GUARDS_CHECKS`). A list
 matching no tracked file is a clean pass that scans nothing.
+
+A configured path that is not readable markdown is named as unmeasured and
+counted apart from the clean total, the way `changelog-entries` names one: a
+path git tracks as a symlink or a submodule gitlink, and a blob git would
+call binary. Each of the three is a path `git grep --cached` would drop with
+no status and no stderr — a symlink's blob is its target path, not the file
+a harness loads through it — so the walk classifies every matched blob
+before the scan. A blob it cannot read is a collection error, never a skip.
 
 ## commit-msg
 
