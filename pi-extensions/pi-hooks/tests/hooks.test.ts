@@ -283,16 +283,19 @@ describe("pi-hooks bash guard passthrough", () => {
 
 type TurnHandler = (event: Record<string, unknown>, ctx: Record<string, unknown>) => Promise<unknown>;
 type SentMessage = { customType: string; content: string; display: boolean };
+/** Both arguments of every `pi.sendMessage` call: the options decide delivery, so they are asserted. */
+type SentCall = { message: SentMessage; options: Record<string, unknown> | undefined };
+type TurnHooks = { onToolResult: TurnHandler; onTurnEnd: TurnHandler; sent: SentCall[] };
 
-function installTurnHandlers(): { onToolResult: TurnHandler; onTurnEnd: TurnHandler; sent: SentMessage[] } {
+function installTurnHandlers(): TurnHooks {
 	const handlers = new Map<string, TurnHandler>();
-	const sent: SentMessage[] = [];
+	const sent: SentCall[] = [];
 	const pi = {
 		on(event: string, cb: TurnHandler) {
 			handlers.set(event, cb);
 		},
-		sendMessage(message: SentMessage) {
-			sent.push(message);
+		sendMessage(message: SentMessage, options?: Record<string, unknown>) {
+			sent.push({ message, options });
 		},
 	};
 	piHooks(pi as never);
@@ -352,15 +355,25 @@ async function onPath(bin: string, run: () => Promise<void>): Promise<void> {
 }
 
 describe("pi-hooks end-of-turn clippy", () => {
-	async function turnEditing(
-		project: string,
-		ctxExtras: Record<string, unknown>,
-	): Promise<SentMessage[]> {
-		const { onToolResult, onTurnEnd, sent } = installTurnHandlers();
-		const ctx = { cwd: project, isProjectTrusted: () => true, ...ctxExtras };
-		await onToolResult({ toolName: "edit", input: { path: join(project, "src", "lib.rs") } }, ctx);
-		await onTurnEnd({}, ctx);
-		return sent;
+	/** One turn that edits a `.rs` file, against an already-installed extension. */
+	async function editingTurn(hooks: TurnHooks, project: string, ctx: Record<string, unknown>): Promise<void> {
+		await hooks.onToolResult({ toolName: "edit", input: { path: join(project, "src", "lib.rs") } }, ctx);
+		await hooks.onTurnEnd({}, ctx);
+	}
+
+	async function turnEditing(project: string, ctxExtras: Record<string, unknown>): Promise<SentCall[]> {
+		const hooks = installTurnHandlers();
+		await editingTurn(hooks, project, { cwd: project, isProjectTrusted: () => true, ...ctxExtras });
+		return hooks.sent;
+	}
+
+	// `triggerTurn: true` is the whole delivery: since pi#8022 a `triggerTurn:
+	// false` message is recorded without steering the active run, so a headless
+	// run that is ending never reads it.
+	function expectSteered(call: SentCall): void {
+		expect(call.options).toEqual({ triggerTurn: true });
+		expect(call.message.customType).toBe("kendex-clippy");
+		expect(call.message.display).toBe(false);
 	}
 
 	test("a headless turn hands the agent the clippy summary", async () => {
@@ -371,10 +384,9 @@ describe("pi-hooks end-of-turn clippy", () => {
 				// No `hasUI`, no `ui`: the notification lane a headless Pi lacks.
 				const sent = await turnEditing(project, {});
 				expect(sent).toHaveLength(1);
-				expect(sent[0].customType).toBe("kendex-clippy");
-				expect(sent[0].display).toBe(false);
-				expect(sent[0].content).toContain("clippy reported 1 workspace error(s)");
-				expect(sent[0].content).toContain("cannot find value nope");
+				expectSteered(sent[0]);
+				expect(sent[0].message.content).toContain("clippy reported 1 workspace error(s)");
+				expect(sent[0].message.content).toContain("cannot find value nope");
 			});
 		} finally {
 			rmSync(project, { recursive: true, force: true });
@@ -395,7 +407,8 @@ describe("pi-hooks end-of-turn clippy", () => {
 				expect(notices).toHaveLength(1);
 				expect(notices[0]).toContain("clippy reported 1 workspace error(s)");
 				expect(sent).toHaveLength(1);
-				expect(sent[0].content).toBe(notices[0]);
+				expectSteered(sent[0]);
+				expect(sent[0].message.content).toBe(notices[0]);
 			});
 		} finally {
 			rmSync(project, { recursive: true, force: true });
@@ -433,11 +446,63 @@ describe("pi-hooks end-of-turn clippy", () => {
 			await onPath(emptyBin, async () => {
 				const sent = await turnEditing(project, {});
 				expect(sent).toHaveLength(1);
-				expect(sent[0].content).toContain("proved nothing about the tree");
+				expectSteered(sent[0]);
+				expect(sent[0].message.content).toContain("proved nothing about the tree");
 			});
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 			rmSync(emptyBin, { recursive: true, force: true });
+		}
+	});
+
+	// The steered message makes the agent take another turn, which can edit and
+	// fail the same way. Without the repeat guard that is a loop; with it an
+	// agent making no progress is told once.
+	test("an unchanged summary is steered once, however many turns repeat it", async () => {
+		const project = initClippyProject();
+		const cargoRoot = mkdtempSync(join(tmpdir(), "pi-hooks-cargo-"));
+		const notices: string[] = [];
+		try {
+			await onPath(fakeClippyBin(cargoRoot, project), async () => {
+				const hooks = installTurnHandlers();
+				const ctx = {
+					cwd: project,
+					isProjectTrusted: () => true,
+					hasUI: true,
+					ui: { notify: (message: string) => notices.push(message) },
+				};
+				await editingTurn(hooks, project, ctx);
+				await editingTurn(hooks, project, ctx);
+				await editingTurn(hooks, project, ctx);
+				expect(hooks.sent).toHaveLength(1);
+				// The notification is not a loop risk and keeps reporting.
+				expect(notices).toHaveLength(3);
+			});
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+			rmSync(cargoRoot, { recursive: true, force: true });
+		}
+	});
+
+	test("an error returning after a clean turn is steered again", async () => {
+		const project = initClippyProject();
+		const cargoRoot = mkdtempSync(join(tmpdir(), "pi-hooks-cargo-"));
+		try {
+			await onPath(fakeClippyBin(cargoRoot, project), async () => {
+				const hooks = installTurnHandlers();
+				const ctx = { cwd: project, isProjectTrusted: () => true };
+				await editingTurn(hooks, project, ctx);
+				process.env.FAKE_CLIPPY_EXIT = "0";
+				await editingTurn(hooks, project, ctx);
+				delete process.env.FAKE_CLIPPY_EXIT;
+				await editingTurn(hooks, project, ctx);
+				expect(hooks.sent).toHaveLength(2);
+				expect(hooks.sent[1].message.content).toBe(hooks.sent[0].message.content);
+			});
+		} finally {
+			delete process.env.FAKE_CLIPPY_EXIT;
+			rmSync(project, { recursive: true, force: true });
+			rmSync(cargoRoot, { recursive: true, force: true });
 		}
 	});
 });

@@ -23,6 +23,8 @@ export default function piHooks(pi: ExtensionAPI): void {
 	guard[INSTALL_SYMBOL] = true;
 
 	let turn = freshTurnState();
+	/** The last summary steered to the agent; see the end-of-turn handler. */
+	let lastClippySummary: string | undefined;
 
 	pi.on("turn_start", () => {
 		turn = freshTurnState();
@@ -114,20 +116,33 @@ export default function piHooks(pi: ExtensionAPI): void {
 		if (turn.rustFilesTouched.size === 0) return undefined;
 
 		const outcome = workspaceClippyOutcome(ctx.cwd, getNumber(cfg, "clippyTimeoutMs"));
-		if (outcome.kind === "clean") return undefined;
+		if (outcome.kind === "clean") {
+			// A clean turn also forgets the last report, so an error that comes
+			// back after a green turn is delivered again rather than suppressed.
+			lastClippySummary = undefined;
+			return undefined;
+		}
 		const summary = outcome.kind === "errors"
 			? `pi-hooks: clippy reported ${outcome.lines.length} workspace error(s) at turn end:\n${outcome.lines.slice(0, 5).join("\n")}`
 			: `pi-hooks: end-of-turn clippy proved nothing about the tree: ${outcome.reason}.`;
 
-		// Pi discards a turn_end handler's return value, so the summary reaches
-		// the agent as a steering message instead: the loop drains those right
-		// after this event, so it lands in the next request whether or not a
-		// screen exists. `display: false` leaves interactive rendering to the
+		// Pi discards a turn_end handler's return value, and since pi#8022 a
+		// `triggerTurn: false` message is recorded without steering, which a
+		// headless run that is ending never reads. `triggerTurn: true` steers
+		// the active run, so the loop drains it after this event and the agent
+		// answers for its own errors in every mode. Repeating an identical
+		// summary is what that turn could loop on: the agent edits, clippy
+		// fails the same way, and the report steers again. Sending only a
+		// summary that changed bounds it — an agent making no progress is told
+		// once. `display: false` leaves interactive rendering to the
 		// notification below, which a headless session never sees.
-		pi.sendMessage(
-			{ customType: "kendex-clippy", content: summary, display: false },
-			{ triggerTurn: false },
-		);
+		if (summary !== lastClippySummary) {
+			lastClippySummary = summary;
+			pi.sendMessage(
+				{ customType: "kendex-clippy", content: summary, display: false },
+				{ triggerTurn: true },
+			);
+		}
 		if (ctx.hasUI) ctx.ui.notify(summary, outcome.kind === "errors" ? "warning" : "info");
 		return undefined;
 	});
