@@ -143,14 +143,13 @@ export default function piHooks(pi: ExtensionAPI): void {
 		// same way, and the report steers again. Steering only a run that
 		// changed bounds it — an agent making no progress is told once.
 		//
-		// The digest decides that, never the summary: the summary is a count
-		// and five header lines, so an edit that moves an error or changes its
-		// detail renders identically while the tree really did change. `display:
-		// false` leaves interactive rendering to the notification below, which a
-		// headless session never sees.
-		const fingerprint = outcome.kind === "errors" ? outcome.digest : outcome.reason;
-		if (fingerprint !== lastClippyFingerprint) {
-			lastClippyFingerprint = fingerprint;
+		// The digest decides that, never the rendered text: the summary is a
+		// count and five header lines, and an unavailable reason is coarser
+		// still, so a run that changed can read identically while the tree
+		// really did change. `display: false` leaves interactive rendering to
+		// the notification below, which a headless session never sees.
+		if (outcome.digest !== lastClippyFingerprint) {
+			lastClippyFingerprint = outcome.digest;
 			pi.sendMessage(
 				{ customType: "kendex-clippy", content: summary, display: false },
 				{ triggerTurn: true },

@@ -336,7 +336,9 @@ function fakeClippyBin(dir: string, root: string): string {
 		`  printf '{"workspace_root":"%s"}' ${JSON.stringify(root)}`,
 		"  exit 0",
 		"fi",
-		'if [ "${FAKE_CLIPPY_SILENT:-}" != "1" ]; then',
+		'if [ "${FAKE_CLIPPY_SILENT:-}" = "1" ]; then',
+		'  printf \'warning: %s\\n\' "${FAKE_CLIPPY_NOISE:-none}"',
+		"else",
 		"  printf '%s\\n' 'error[E0425]: cannot find value nope in this scope'",
 		'  printf \'  --> src/lib.rs:%s\\n\' "${FAKE_CLIPPY_LOC:-1:1}"',
 		"fi",
@@ -601,6 +603,55 @@ describe("pi-hooks end-of-turn clippy", () => {
 				expect(steersAfter).toEqual({ startup: 2, reload: 1, new: 2, resume: 2, fork: 2 });
 			});
 		} finally {
+			rmSync(project, { recursive: true, force: true });
+			rmSync(cargoRoot, { recursive: true, force: true });
+		}
+	});
+
+	// B1: an unavailable run was deduplicated on its reason, which says how long
+	// a timeout waited and nothing about what the run collected. Two unlike
+	// runs read alike, and the second was suppressed — the same fail-quiet the
+	// errors digest closed, left open on this variant.
+	test("two unjudgeable runs that produced different output both steer", async () => {
+		const project = initClippyProject();
+		const cargoRoot = mkdtempSync(join(tmpdir(), "pi-hooks-cargo-"));
+		process.env.FAKE_CLIPPY_SILENT = "1";
+		try {
+			await onPath(fakeClippyBin(cargoRoot, project), async () => {
+				const hooks = installTurnHandlers();
+				const ctx = { cwd: project, isProjectTrusted: () => true };
+				process.env.FAKE_CLIPPY_NOISE = "first";
+				await editingTurn(hooks, project, ctx);
+				process.env.FAKE_CLIPPY_NOISE = "second";
+				await editingTurn(hooks, project, ctx);
+				expect(hooks.sent).toHaveLength(2);
+				// The collision is real: both runs render the same reason.
+				expect(hooks.sent[1].message.content).toBe(hooks.sent[0].message.content);
+			});
+		} finally {
+			delete process.env.FAKE_CLIPPY_SILENT;
+			delete process.env.FAKE_CLIPPY_NOISE;
+			rmSync(project, { recursive: true, force: true });
+			rmSync(cargoRoot, { recursive: true, force: true });
+		}
+	});
+
+	test("two unjudgeable runs that produced the same output steer once", async () => {
+		const project = initClippyProject();
+		const cargoRoot = mkdtempSync(join(tmpdir(), "pi-hooks-cargo-"));
+		process.env.FAKE_CLIPPY_SILENT = "1";
+		process.env.FAKE_CLIPPY_NOISE = "unchanged";
+		try {
+			await onPath(fakeClippyBin(cargoRoot, project), async () => {
+				const hooks = installTurnHandlers();
+				const ctx = { cwd: project, isProjectTrusted: () => true };
+				await editingTurn(hooks, project, ctx);
+				await editingTurn(hooks, project, ctx);
+				expect(hooks.sent).toHaveLength(1);
+			});
+		} finally {
+			delete process.env.FAKE_CLIPPY_SILENT;
+			delete process.env.FAKE_CLIPPY_NOISE;
 			rmSync(project, { recursive: true, force: true });
 			rmSync(cargoRoot, { recursive: true, force: true });
 		}
