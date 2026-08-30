@@ -460,6 +460,15 @@ fn occupied_settings_path_is_a_conflict_not_a_clobber() {
 /// What that costs is worth knowing, because it is what an author chooses
 /// when they mark a key. A consumer who set the key through the app has
 /// its comment as the template read at THAT moment, and it stays that way.
+///
+/// What kills this one is a mechanism rather than a mutation, so no line
+/// of the tree reaches it: restore `settings_seed::refresh_comments` and
+/// the ledger it is gated on, and call it from `settings_write::settle`
+/// before the merge. Its own history is the proof it can go red — the
+/// assertion here is the exact negative of
+/// `a_revised_template_refreshes_an_unedited_comment_through_a_real_apply`,
+/// which passed on the commit before this rule landed and asserted the
+/// rewrite this now refuses.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_revised_template_does_not_follow_its_comment_into_the_file() {

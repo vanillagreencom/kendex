@@ -197,14 +197,35 @@ fn header(
 /// it is an ordinary comment: both readers see no marker, the loaders have
 /// no opinion on a comment at all, and the key an author declared the
 /// consumer must decide is then never written AND never reported as
-/// unanswered, because nothing downstream knows it was marked. Every
-/// mention of the word in a shipped template is inside a sentence, so the
-/// whole-line spelling is the mistake and only the mistake.
+/// unanswered, because nothing downstream knows it was marked.
+///
+/// Read the way a person reads it, which is the opposite of the rule
+/// after a value and deliberately so. There the exact spelling is what is
+/// honoured, so anything else is refused; here nothing is being honoured
+/// at all and the only question is whether the line is the marker word. So
+/// the comparison folds what changes the word's presentation and not the
+/// word: its case, and the punctuation a line collects from being written
+/// as a heading. `# Required` and `# required.` mean it as plainly as
+/// `# required` does, and answering only the lowercase spelling left the
+/// same silence one keystroke away. The text arrives trimmed of its `#`
+/// and its spacing, so those need no answer of their own.
+///
+/// What this deliberately does not reach is a misspelling: `# requried`
+/// and `# requireds` on a line of their own stay silent, because telling
+/// those from an ordinary comment means guessing at what the author meant,
+/// and a line of free prose is what it would guess against. Presentation
+/// is a closed set; misspelling is not, and a rule that tried to cover it
+/// would be back next round one keystroke further out.
+///
+/// Every mention of the word in a shipped template is inside a sentence,
+/// so a line that is nothing but the word is the mistake and only the
+/// mistake.
 fn marker_alone(line: u32, said: &str) -> Option<TemplateFinding> {
     let marker = crate::settings_seed::REQUIRED_MARKER;
-    (said == marker).then(|| TemplateFinding {
+    let word = said.to_ascii_lowercase();
+    (word.trim_end_matches(['.', ',', ':', ';', '!', '?']) == marker).then(|| TemplateFinding {
         line,
-        problem: format!("this comment line is just `{marker}`, which marks nothing"),
+        problem: format!("this comment line is just `{said}`, which marks nothing"),
         fix: format!("write the marker after the value it marks, as `KEY = \"\" # {marker}`"),
     })
 }

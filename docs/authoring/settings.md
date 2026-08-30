@@ -2,25 +2,27 @@
 
 A skill ships a `kendex.settings.toml.example` at its root for the keys a
 consumer sets. The file does two jobs. It DECLARES those keys, which is what
-the app's Settings pane renders and what a save is checked against. And it
-SEEDS the ones it marks `# required`: when the skill arrives in a project,
-kendex reads that file's `[env]` table and writes each marked key, together
-with the comment block directly above it, into the consuming repo's
-`kendex.settings.toml`.
+the app's Settings pane renders and what a save is checked against. And it is
+what a write into the consumer's `kendex.settings.toml` is made from, for the
+keys it marks `# required`.
+
+**What reaches a consumer's file, and when, is stated once**, under [What an
+install writes](#what-an-install-writes-and-what-it-leaves). Nothing else here
+restates it, so that paragraph is the one to change if the rule ever does.
 
 Seeding is a skill's alone. An agent, hook, command or MCP server that ships
 one of these files installs normally and seeds nothing — the file is inert,
-and no error says so. It runs on project scope for an enabled skill that at
-least one harness here targets, and it runs before any skill tree is written:
-a plan whose every rendering is refused still seeds. A global install seeds
-nothing.
+and no error says so. It runs on project scope, for an enabled skill at least
+one harness here targets; a global install writes nothing. A rendering the
+same pass refuses does not take the settings write with it: what a template
+says is read whether or not that skill's tree lands.
 
 Declaring a key is what puts it in front of a person. The app shows one row
 per declared key and refuses to save a key no template declares, and declaring
-costs a consumer nothing at install time, since only a marked key is written.
-So declare what somebody might reasonably change, and leave out what only a
-maintainer or a test ever touches, such as a scan's exclusion-file path or a
-cap nobody tunes. An undeclared key is read the same way and is set by hand, in
+alone costs a consumer nothing. So declare what somebody might reasonably
+change, and leave out what only a maintainer or a test ever touches, such as a
+scan's exclusion-file path or a cap nobody tunes. An undeclared key is read
+the same way and is set by hand, in
 `kendex.settings.toml` or any layer above it. Every key belongs in the
 `SKILL.md` table either way; that is the reference, and it is the body a
 marketplace page shows for a skill. A `README.md` beside it ships with the skill and appears in
@@ -34,6 +36,23 @@ Start from
 
 ## What an install writes, and what it leaves
 
+Two things put a key in a consumer's `kendex.settings.toml`, and nothing else
+ever does.
+
+An ARRIVAL writes the keys the template marks `# required`, once. Arrival is
+the consumer's `kendex.toml` gaining the declaration, read expanded — a bundle
+arrives the members it carries, and a skill arrives the dependencies it pulls
+in. Only `add` gains a declaration, so every other pass writes nothing: a
+refresh leaves the file byte-identical, and a key the consumer deleted stays
+deleted, in a fresh clone as much as anywhere. However the manifest gains the
+declaration counts, so a consumer who hand-writes one has already spent the
+arrival; a later `add` of that skill gains nothing and writes nothing, and
+removing it and adding it again is the way back.
+
+A SAVE from the app writes the key it names, marked or not, inserting the
+assignment first so the value has somewhere to land. That is how most keys
+reach a consumer's file, since only marked ones arrive.
+
 Mark a key `# required` when the consumer has to decide it — when there is no
 answer a default could stand in for. `LINEAR_TEAM` is one: empty, every Linear
 write refuses rather than guess a team. A key whose empty or shipped value
@@ -41,28 +60,19 @@ already does something sensible is not one, however important it is; its
 comment says what that value does, and a consumer who wants another writes it
 themselves.
 
-Everything else stays declared and is never written. A key holding the value
-your own code reads when nothing assigns it buys the consumer nothing and
-costs them a line in a tracked file.
+Everything else stays declared and unmarked, so no arrival writes it. A key
+holding the value your own code reads when nothing assigns it buys the
+consumer nothing and costs them a line in a tracked file; the consumer who
+wants it puts it there.
 
 The marker is the template's own word. It is cut off before the assignment is
 written, so a consumer's file never carries it. Write it after the value and
-nowhere else: on a comment line of its own it marks nothing, and both ways of
-getting it wrong are findings. A marker nothing reads is silent twice over —
-the key is never written, and it is never reported as unanswered either,
-because nothing downstream knows it was ever marked.
-
-The write happens once, when the skill arrives, and arrival is the consumer's
-`kendex.toml` gaining the declaration — read expanded, so a bundle arrives the
-members it carries and a skill arrives the dependencies it pulls in. Only
-`add` does that, so every other pass writes nothing: a refresh leaves the file
-byte-identical, and a key the consumer deleted stays deleted, in a fresh clone
-as much as anywhere. However the manifest gains the declaration counts, so a
-consumer who hand-writes one has already spent the arrival: a later `kendex
-add` of that skill gains nothing and writes nothing, and removing it and
-adding it again is the way back. The one other thing that inserts a key is a
-save from the app, which writes the key it names so the value has an
-assignment to land on.
+nowhere else. On a comment line of its own it marks nothing, and both ways of
+getting it wrong are findings: after a value, whatever you wrote there; on a
+line of its own, the word however you capitalise or punctuate it. A marker
+nothing reads is silent twice over. No arrival writes the key, and nothing
+reports it as unanswered either, because nothing downstream knows it was ever
+marked.
 
 A marked key nobody has answered is reported instead. So a template that gains
 a marked key after release does not reach an existing consumer as a write into
@@ -79,24 +89,23 @@ naming each owner and each default, and where the pass writes the key at all
 it writes the first declaration in package-name order.
 
 Nothing ever revisits a block already in the consumer's file. Once a key and
-its comment are there, whether an arrival or a save put them there, they are
-the consumer's: a revised template does not follow the revision in, because
-that would be a write on a pass nobody asked to write. Most of what a
-consumer carries got there through the app, since only marked keys arrive, so
-the comment on any key is the wording the consumer who set it keeps. Revising
-one reaches nobody who already has it.
+its comment are there, whichever of the two put them there, they are the
+consumer's: a revised template does not follow the revision in, because that
+would be a write on a pass nobody asked for. So the comment you ship is the
+wording every consumer who takes that key keeps, and revising it reaches
+nobody who already has it.
 
 ## The grammar
 
-The shell loaders decide this, not the template: what your `[env]` table says
-is copied into the consumer's `kendex.settings.toml`, and
-`skills/*/scripts/lib/kendex-env.sh` and `settings.sh` are what read it there.
+The shell loaders decide this, not the template:
+`skills/*/scripts/lib/kendex-env.sh` and `settings.sh` are what read your keys
+where they land, so what those refuse is what this refuses.
 
 - One `[env]` table. A table header is a lone `[name]` on its own line —
   `[env] # the table` is refused, and so is anything else with a bracket in it.
 - A key is a shell identifier: letters, digits and underscores, starting with a
-  letter or underscore. Anything else, `FOO-BAR` and `"WAIT"` included, is
-  seeded and then read by nothing.
+  letter or underscore. Anything else, `FOO-BAR` and `"WAIT"` included, is a
+  key nothing reads, wherever it lands.
 - A value is one double-quoted string on one line, containing no `"` and no
   `\`. The only thing that may follow it is `# required`.
 - Each key gets a comment block immediately above it. A blank line between

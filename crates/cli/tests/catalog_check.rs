@@ -318,34 +318,41 @@ fn a_malformed_settings_template_fails_marketplace_check() {
 /// check the rest of the grammar does. Left unflagged it is silent to the
 /// end: the key is never written, and it is never reported as unanswered
 /// either, because nothing downstream knows it was ever marked.
+///
+/// Both spellings run here because the check exiting 0 is what the review
+/// measured. `# Required` reached this surface as a clean pass while the
+/// lowercase word failed it, so a rule that widened in the scan and not in
+/// what an author actually runs would read as fixed and not be.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_marker_on_its_own_comment_line_fails_marketplace_check() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
-    let home = home.as_path();
-    let catalog = catalog_shipping(
-        home,
-        "[env]\n\n# The team every write targets.\n# required\nTEAM = \"\"\n",
-    );
-    let output = kendex(
-        home,
-        home,
-        &["marketplace", "check", catalog.to_str().unwrap()],
-    );
+    for said_as in ["required", "Required"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let home = home.as_path();
+        let catalog = catalog_shipping(
+            home,
+            &format!("[env]\n\n# The team every write targets.\n# {said_as}\nTEAM = \"\"\n"),
+        );
+        let output = kendex(
+            home,
+            home,
+            &["marketplace", "check", catalog.to_str().unwrap()],
+        );
 
-    let said = String::from_utf8_lossy(&output.stderr).into_owned();
-    assert!(!output.status.success(), "{said}");
-    assert!(
-        said.contains(
-            "settings: skills/review/kendex.settings.toml.example:4: this comment line is just `required`, which marks nothing"
-        ),
-        "{said}"
-    );
-    assert!(
-        said.contains("fix: write the marker after the value it marks"),
-        "{said}"
-    );
+        let said = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert!(!output.status.success(), "{said_as}: {said}");
+        assert!(
+            said.contains(&format!(
+                "settings: skills/review/kendex.settings.toml.example:4: this comment line is just `{said_as}`, which marks nothing"
+            )),
+            "{said_as}: {said}"
+        );
+        assert!(
+            said.contains("fix: write the marker after the value it marks"),
+            "{said_as}: {said}"
+        );
+    }
 }
 
 /// The must-fail control's other half: a template with nothing wrong with

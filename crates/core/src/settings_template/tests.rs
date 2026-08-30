@@ -163,11 +163,62 @@ fn the_required_marker_rides_with_the_value_and_nothing_else_may() {
 /// `the_reader_flags_exactly_what_the_loaders_cannot_read`.
 #[test]
 fn a_marker_on_its_own_comment_line_is_located() {
+    // However the word is presented. Answering only the lowercase spelling
+    // left the same silence one keystroke away, which is the round this
+    // rule is on.
+    for said in [
+        "required",
+        "Required",
+        "REQUIRED",
+        "  required  ",
+        "required.",
+        "Required:",
+        "required!",
+    ] {
+        assert_eq!(
+            located(&format!(
+                "[env]\n# How long to wait.\n#{said}\nWAIT = \"900\"\n"
+            )),
+            [(
+                3,
+                format!(
+                    "this comment line is just `{}`, which marks nothing",
+                    said.trim()
+                )
+            )],
+            "{said:?}"
+        );
+    }
+    // `##` opens a comment as plainly as `#` does.
     assert_eq!(
-        located("[env]\n# How long to wait.\n# required\nWAIT = \"900\"\n"),
+        located("[env]\n# How long to wait.\n## Required\nWAIT = \"900\"\n")
+            .iter()
+            .map(|(line, _)| *line)
+            .collect::<Vec<u32>>(),
+        [3]
+    );
+    // A misspelling gets no finding, and deliberately. Telling `# requried`
+    // from an ordinary comment line means guessing at what the author
+    // meant, and a line of free prose is what it would guess against;
+    // presentation is a closed set and misspelling is not. After a value,
+    // where the exact spelling is what gets honoured, these are all caught.
+    for said in ["requried", "requireds", "require", "requires"] {
+        assert!(
+            located(&format!(
+                "[env]\n# How long to wait.\n# {said}\nWAIT = \"900\"\n"
+            ))
+            .is_empty(),
+            "{said:?}"
+        );
+    }
+    // Inside a multiline value the line is the value and not a comment, so
+    // the widened word does not reach in: one finding, and it is the
+    // value's.
+    assert_eq!(
+        located("[env]\n# What it holds.\nBLOB = \"\"\"\n# required\n\"\"\"\n"),
         [(
             3,
-            "this comment line is just `required`, which marks nothing".to_owned()
+            "BLOB's default is not a one-line double-quoted string free of \" and \\".to_owned()
         )]
     );
     // Outside `[env]` too: a marker nothing reads is a marker nothing
