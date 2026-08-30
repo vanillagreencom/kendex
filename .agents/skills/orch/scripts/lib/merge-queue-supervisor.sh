@@ -1,17 +1,35 @@
 # shellcheck shell=bash
 
 merge_queue_supervise() {
-  local state_file="$1" watch_id="$2" waiter="$3" poll="$4" max_wait="$5"
-  local repo pr head main_root artifact log runtime deadline temp output worker_pid="" worker_rc=0 event=""
+  local state_file="$1" watch_id="$2" attempt_id="$3" runtime="$4" artifact="$5" deadline="$6"
+  local waiter="$7" poll="$8" max_wait="$9"
+  local repo pr head main_root log temp output worker_pid="" worker_rc=0 event=""
   local event_fifo owner_fifo watchdog_pid="" published=false
   repo=$(jq -r .repository "$state_file"); pr=$(jq -r .pr_number "$state_file")
-  head=$(jq -r .head_sha "$state_file"); artifact=$(jq -r .artifact_path "$state_file")
+  head=$(jq -r .head_sha "$state_file")
   main_root=$(jq -r .main_repo_root "$state_file")
-  log=$(jq -r .log_path "$state_file"); runtime=$(jq -r .runtime_dir "$state_file")
-  deadline=$(jq -r .deadline "$state_file"); temp="$runtime/worker.json"; output="$runtime/artifact.tmp"
+  log=$(jq -r .log_path "$state_file"); temp="$runtime/worker.json"; output="$runtime/artifact.tmp"
   event_fifo="$runtime/events"; owner_fifo="$runtime/deadline-owner"
-  [[ -d "$runtime" && ! -L "$runtime" && "$(cat < "$runtime/token")" == "$watch_id" ]] || return 1
+  [[ -d "$runtime" && ! -L "$runtime" && "$(cat < "$runtime/token")" == "$attempt_id" ]] || return 1
   [[ -d "$main_root" ]] || return 1
+
+  attempt_is_current() {
+    (flock -s -w 10 9 || exit 1
+      jq -e --arg watch "$watch_id" --arg attempt "$attempt_id" --arg runtime "$runtime" --arg artifact "$artifact" '
+        .watch_id==$watch and .launch_attempt_id==$attempt and .runtime_dir==$runtime and .artifact_path==$artifact and
+        (.status|IN("launching","watching"))' "$state_file" >/dev/null
+    ) 9>"$state_file.lock"
+  }
+  publish_output() {
+    chmod 600 "$output" || return 1
+    (flock -w 10 9 || exit 1
+      jq -e --arg watch "$watch_id" --arg attempt "$attempt_id" --arg runtime "$runtime" --arg artifact "$artifact" '
+        .watch_id==$watch and .launch_attempt_id==$attempt and .runtime_dir==$runtime and .artifact_path==$artifact and
+        (.status|IN("launching","watching"))' "$state_file" >/dev/null || exit 1
+      ln "$output" "$artifact"
+    ) 9>"$state_file.lock"
+  }
+  attempt_is_current || return 1
 
   stop_worker() {
     local i
@@ -25,12 +43,12 @@ merge_queue_supervise() {
   publish_unknown() {
     local reason="$1" rc="$2"
     [[ -e "$artifact" ]] && return 0
-    jq -n --arg repo "$repo" --argjson pr "$pr" --arg head "$head" --arg watch "$watch_id" \
+    jq -n --arg repo "$repo" --argjson pr "$pr" --arg head "$head" --arg watch "$watch_id" --arg attempt "$attempt_id" \
       --arg reason "$reason" --argjson rc "$rc" --arg log "$log" \
       '{schema_version:1,status:"error",verdict:"unknown",repository:$repo,pr_number:$pr,
-        expected_head:$head,observed_head:"",watch_id:$watch,cause:$reason,
+        expected_head:$head,observed_head:"",watch_id:$watch,launch_attempt_id:$attempt,cause:$reason,
         worker_exit_code:$rc,diagnostic_path:$log}' > "$output" || return 1
-    chmod 600 "$output" && ln "$output" "$artifact" && published=true
+    publish_output && published=true
   }
   cleanup() {
     local rc=$?
@@ -73,10 +91,10 @@ merge_queue_supervise() {
       (.verdict|IN("merged","conflicting","ejected","disarmed","dequeued","closed","queued","not_queued","unknown"))' "$temp" >/dev/null 2>&1; then
     publish_unknown worker_output_invalid "$worker_rc"; trap - EXIT TERM HUP INT; return 0
   fi
-  jq --arg repo "$repo" --argjson pr "$pr" --arg head "$head" --arg watch "$watch_id" --arg log "$log" \
+  jq --arg repo "$repo" --argjson pr "$pr" --arg head "$head" --arg watch "$watch_id" --arg attempt "$attempt_id" --arg log "$log" \
     '. + {schema_version:1,repository:$repo,pr_number:$pr,expected_head:$head,
-      observed_head:"",watch_id:$watch,diagnostic_path:$log}' "$temp" > "$output"
-  chmod 600 "$output" && ln "$output" "$artifact" || return 1
+      observed_head:"",watch_id:$watch,launch_attempt_id:$attempt,diagnostic_path:$log}' "$temp" > "$output"
+  publish_output || return 1
   published=true; printf '%s\n' "$worker_rc" > "$runtime/terminal"; chmod 600 "$runtime/terminal"
   trap - EXIT TERM HUP INT
 }

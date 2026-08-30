@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 
 MERGE_QUEUE_REPORT_FILTER='{issue_id,watch_id,status,action,repository,pr_number,head_sha,worktree_branch,
-  gate_mode,recovery_count,artifact_path,log_path,deadline,verdict,verdict_cause,
+  gate_mode,recovery_count,launch_attempt,launch_attempt_id,runtime_dir,artifact_path,log_path,deadline,verdict,verdict_cause,
   lane_postmerge,cleanup,diagnostic,error:(.diagnostic.error // null),
   worker_exit_code:(.diagnostic.worker_exit_code // null),
   diagnostic_path:(.diagnostic.diagnostic_path // .log_path)}'

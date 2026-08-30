@@ -11,6 +11,7 @@ bad() { FAIL=$((FAIL+1)); printf '  FAIL  %s\n' "$1"; }
 eq() { if [[ "$1" == "$2" ]]; then ok "$3"; else bad "$3 (expected $2, got $1)"; fi; }
 wait_file() { local i; for ((i=0;i<100;i++)); do [[ -s "$1" ]] && return 0; sleep 0.05; done; return 1; }
 wait_exists() { local i; for ((i=0;i<100;i++)); do [[ -e "$1" ]] && return 0; sleep 0.05; done; return 1; }
+inode() { stat -c %i "$1" 2>/dev/null || stat -f %i "$1"; }
 
 MAIN="$TMP/main" WT="$TMP/worktree" BIN="$TMP/bin" SCRIPTS="$TMP/orch/scripts"
 REAL_SETSID=$(command -v setsid || true)
@@ -102,6 +103,10 @@ cat > "$BIN/setsid" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ ! -f "$WATCH_SETSID_FAIL" ]] || exit 41
+if [[ -f "$WATCH_SETSID_DELAY.enabled" ]]; then
+  "$WATCH_REAL_SETSID" -f bash -c 'touch "$WATCH_SETSID_DELAY.entered"; while [[ ! -f "$WATCH_SETSID_DELAY.release" ]]; do sleep 0.05; done; exec "$@"' bash "$WATCH_REAL_SETSID" "$@"
+  exit 0
+fi
 if [[ -f "$WATCH_SETUP_GATE.enabled" ]]; then touch "$WATCH_SETUP_GATE.entered"; while [[ ! -f "$WATCH_SETUP_GATE.release" ]]; do sleep 0.05; done; fi
 exec "$WATCH_REAL_SETSID" "$@"
 EOF
@@ -116,7 +121,7 @@ EOF
 chmod +x "$BIN/chmod"
 export PATH="$BIN:$PATH" WATCH_MODE="$MODE" WATCH_RELEASE="$RELEASE" WATCH_HEAD_FILE="$HEAD_FILE" WATCH_MAIN="$MAIN" WATCH_WORKTREE="$WT"
 export WATCH_GH_PAUSE="$TMP/gh-pause" WATCH_SETUP_GATE="$TMP/setup-gate" WATCH_REAL_SETSID="$REAL_SETSID" WATCH_CLEANUP_FAIL="$TMP/cleanup-fail" WATCH_CLEANUP_INTERRUPT="$TMP/cleanup-interrupt"
-export WATCH_SETSID_FAIL="$TMP/setsid-fail" WATCH_CLEANUP_PAUSE="$TMP/cleanup-pause" WATCH_AUTH_LOG="$TMP/auth.log" WATCH_WORKER_LOG="$TMP/worker.log" WATCH_REAL_CHMOD="$REAL_CHMOD" WATCH_SUPERVISOR_PID_DELAY="$TMP/supervisor-pid-delay" GH_REPO=wrong/repository GITHUB_REPOSITORY=wrong/repository
+export WATCH_SETSID_FAIL="$TMP/setsid-fail" WATCH_SETSID_DELAY="$TMP/setsid-delay" WATCH_CLEANUP_PAUSE="$TMP/cleanup-pause" WATCH_AUTH_LOG="$TMP/auth.log" WATCH_WORKER_LOG="$TMP/worker.log" WATCH_REAL_CHMOD="$REAL_CHMOD" WATCH_SUPERVISOR_PID_DELAY="$TMP/supervisor-pid-delay" GH_REPO=wrong/repository GITHUB_REPOSITORY=wrong/repository
 unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN
 init_out=$("$SCRIPTS/merge-queue-watch" init --worktree "$WT" --issue KEN-829 --branch watch-test)
 eq "$(jq -r .exists <<<"$init_out")" true "standalone init creates workflow state"
@@ -162,6 +167,7 @@ if kill -0 "$supervisor" 2>/dev/null; then ok "supervisor survives the launch co
 touch "$RELEASE"; wait_file "$artifact" || bad "merged verdict was not published"
 eq "$(jq -r .watch_id "$artifact")" "$watch" "artifact binds watch id"
 eq "$(jq -r .expected_head "$artifact")" "$HEAD_A" "artifact binds expected head"
+eq "$(jq -r .launch_attempt_id "$artifact")" "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .launch_attempt_id)" "artifact binds launch attempt"
 event_out=$("$SCRIPTS/merge-queue-watch" event --root "$MAIN" --issue KEN-829)
 if [[ "$event_out" == ready* ]]; then ok "fleet event wakes the owner once verdict exists"; else bad "fleet event missing"; fi
 event_again=$("$SCRIPTS/merge-queue-watch" event --root "$MAIN" --issue KEN-829)
@@ -290,7 +296,7 @@ fi
 
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
 state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
-jq '.status="launching"|.setup_deadline=0|.deadline=((now|floor)+600)' "$state_path" > "$TMP/orphan.json"
+jq --arg attempt "$watch-attempt-1" '.launch_attempt=1|.launch_attempt_id=$attempt|.status="launching"|.setup_deadline=0|.deadline=((now|floor)+600)' "$state_path" > "$TMP/orphan.json"
 chmod 600 "$TMP/orphan.json"; mv "$TMP/orphan.json" "$state_path"
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .action <<<"$result")" resume_launch "orphaned launching state wakes into launch recovery"
@@ -315,9 +321,9 @@ eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -
 
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
 state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
-jq '.status="launching"|.setup_deadline=((now|floor)+10)|.deadline=((now|floor)+600)' "$state_path" > "$TMP/completed-launch.json"
+jq --arg attempt "$watch-attempt-1" '.launch_attempt=1|.launch_attempt_id=$attempt|.status="launching"|.setup_deadline=((now|floor)+10)|.deadline=((now|floor)+600)' "$state_path" > "$TMP/completed-launch.json"
 chmod 600 "$TMP/completed-launch.json"; mv "$TMP/completed-launch.json" "$state_path"
-jq -n --arg watch "$watch" --arg head "$HEAD_A" '{schema_version:1,status:"complete",verdict:"merged",repository:"owner/repo",pr_number:42,expected_head:$head,observed_head:"",watch_id:$watch}' > "$artifact"
+jq -n --arg watch "$watch" --arg attempt "$watch-attempt-1" --arg head "$HEAD_A" '{schema_version:1,status:"complete",verdict:"merged",repository:"owner/repo",pr_number:42,expected_head:$head,observed_head:"",watch_id:$watch,launch_attempt_id:$attempt}' > "$artifact"
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .action <<<"$result")" postmerge "completed artifact outranks launching setup state"
 "$SCRIPTS/merge-queue-watch" merge-pr-complete --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
@@ -365,14 +371,65 @@ set -e
 rm -f -- "$WATCH_SUPERVISOR_PID_DELAY"
 if [[ "$setup_rc" -ne 0 ]]; then ok "supervisor failure before ready exits nonzero"; else bad "supervisor failure before ready exited zero"; fi
 eq "$(jq -r .verdict "$artifact")" unknown "dead supervisor publishes its setup failure"
+old_inode=$(inode "$artifact")
 launch_bounded "$watch"
 retry_artifact=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .artifact_path)
 [[ "$retry_artifact" != "$artifact" ]] && ok "retry reserves a fresh artifact identity" || bad "retry reused the dead supervisor artifact"
 touch "$RELEASE"; wait_file "$retry_artifact" || bad "retried supervisor verdict missing"
 eq "$(jq -r .verdict "$retry_artifact")" ejected "retry publishes the new supervisor verdict"
+eq "$(jq -r .verdict "$artifact")" unknown "retry preserves the dead supervisor artifact"
+[[ "$(inode "$retry_artifact")" != "$old_inode" ]] && ok "retry artifact has its own inode" || bad "retry artifact reused the dead supervisor output inode"
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .action <<<"$result")" recovery "consume routes the retried supervisor verdict"
 "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
+
+prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
+launch_bounded "$watch"; touch "$RELEASE"; wait_file "$artifact" || bad "stale-consume fixture verdict missing"
+touch "$WATCH_GH_PAUSE.enabled"
+"$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829 >"$TMP/stale-consume.out" 2>"$TMP/stale-consume.err" & stale_consume_pid=$!
+wait_exists "$WATCH_GH_PAUSE.entered" || bad "consume did not capture the old launch attempt"
+state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
+jq '.status="launch_failed"|.action="launch"|.supervisor_pid=null' "$state_path" > "$TMP/stale-consume-state.json"
+chmod 600 "$TMP/stale-consume-state.json"; mv "$TMP/stale-consume-state.json" "$state_path"
+launch_bounded "$watch"
+replacement_artifact=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .artifact_path)
+touch "$WATCH_GH_PAUSE.release"
+set +e; wait "$stale_consume_pid"; stale_consume_rc=$?; set -e
+[[ "$stale_consume_rc" -ne 0 ]] && ok "stale consume cannot claim the replacement attempt" || bad "stale consume claimed across the launch-attempt fence"
+eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" watching "stale consume leaves the replacement attempt active"
+wait_file "$replacement_artifact" || bad "replacement verdict missing after stale consume"
+result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .action <<<"$result")" recovery "replacement verdict survives stale consume"
+"$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
+rm -f -- "$WATCH_GH_PAUSE.enabled" "$WATCH_GH_PAUSE.entered" "$WATCH_GH_PAUSE.release"
+
+if [[ -n "$REAL_SETSID" ]]; then
+  prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
+  delayed_runtime=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .runtime_dir)
+  touch "$WATCH_SETSID_DELAY.enabled"
+  set +e; "$SCRIPTS/merge-queue-watch" launch --root "$MAIN" --issue KEN-829 --watch-id "$watch" --poll 1 --max-wait 10 >/dev/null 2>&1; delayed_rc=$?; set -e
+  [[ "$delayed_rc" -ne 0 ]] && ok "pre-PID supervisor delay enters launch recovery" || bad "pre-PID supervisor delay reported success"
+  wait_exists "$WATCH_SETSID_DELAY.entered" || bad "pre-PID supervisor did not enter its delay gate"
+  rm -f -- "$WATCH_SETSID_DELAY.enabled"
+  launch_bounded "$watch"
+  delayed_replacement_artifact=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .artifact_path)
+  delayed_replacement_runtime=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .runtime_dir)
+  [[ "$delayed_replacement_runtime" != "$delayed_runtime" ]] && ok "replacement attempt has its own runtime directory" || bad "replacement reused the delayed supervisor runtime"
+  touch "$RELEASE"
+  wait_file "$delayed_replacement_artifact" || bad "replacement verdict missing after delayed supervisor release"
+  printf 'malformed\n' > "$MODE"
+  touch "$WATCH_SETSID_DELAY.release"
+  sleep 0.5
+  [[ ! -e "$artifact" ]] && ok "unregistered delayed supervisor cannot publish into retry files" || bad "unregistered delayed supervisor published after retry"
+  eq "$(jq -r .verdict "$delayed_replacement_artifact")" ejected "unregistered delayed supervisor cannot rewrite the replacement verdict"
+  printf 'ejected\n' > "$MODE"
+  result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
+  eq "$(jq -r .action <<<"$result")" recovery "replacement verdict wins after delayed supervisor release"
+  "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
+  rm -f -- "$WATCH_SETSID_DELAY.entered" "$WATCH_SETSID_DELAY.release"
+else
+  ok "pre-PID supervisor fence skipped without setsid"
+fi
 
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
 "$SCRIPTS/merge-queue-watch" direct-merged --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
