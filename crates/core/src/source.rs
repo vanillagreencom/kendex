@@ -96,7 +96,19 @@ pub(crate) fn slot_unreachable(
     let sealed = crate::source_read::SealedSource::open(&root)?;
     let config = source_config_for(&sealed, LOCAL_SOURCE_NAME)?;
     let Some((plugin, _)) = crate::names::split(name) else {
-        return Ok(None);
+        // The same nesting from the other side. A plain `plugin`'s slot IS
+        // the directory `plugin/item` is stored in, so a capture there
+        // takes the namespaced item with it. What occupies the slot is
+        // what the source lists, never what the path exists as: a `plugin`
+        // directory carrying no SKILL.md is nobody's item, and there is no
+        // earlier copy of this name to replace.
+        let held = config::nested_under(&sealed, &config, kind, name, slot);
+        return Ok(held.map(|held| {
+            format!(
+                "`{}` is stored here, and this name would be written over it",
+                crate::names::shown(&held)
+            )
+        }));
     };
     // Nesting is a fact about the two paths, not about the plugin half
     // naming something. A skill's package IS the directory `plugin`, so a

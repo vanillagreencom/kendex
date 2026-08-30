@@ -277,6 +277,93 @@ fn a_namespaced_name_under_an_existing_package_refuses() {
     assert!(trash_is_empty(&env));
 }
 
+/// The same nesting from the other side, and the direction that used to
+/// delete. `data-science/eda` is stored at `<local>/skills/data-science`,
+/// so the slot a plain `data-science` asks for is the directory holding
+/// it — and the slot existing is not an earlier copy of `data-science`,
+/// a name the local source lists nowhere. A project's plain skill is its
+/// own source in `.agents`, so the local source is a plain skill's
+/// destination only at the global scope.
+#[test]
+fn a_plain_skill_over_the_namespaced_one_stored_there_refuses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let scope = Scope::Global;
+    let held = tmp.path().join(".claude/skills");
+    fs::create_dir_all(held.join("data-science__eda")).unwrap();
+    fs::write(
+        held.join("data-science__eda/SKILL.md"),
+        "the namespaced one",
+    )
+    .unwrap();
+    let plan = adopt(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        "data-science/eda",
+        &[HarnessId::Claude],
+    )
+    .unwrap();
+    crate::apply::execute(&env, &plan, None).unwrap();
+
+    fs::create_dir_all(held.join("data-science")).unwrap();
+    fs::write(held.join("data-science/SKILL.md"), "the plain one").unwrap();
+    let trashed = || fs::read_dir(env.trash_dir()).map_or(0, Iterator::count);
+    let before = trashed();
+    let refused = adopt(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        "data-science",
+        &[HarnessId::Claude],
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(refused.contains("data-science/eda"), "{refused:?}");
+    // The local source still offers the namespaced skill under its own
+    // name, and the declaration still resolves to content that is there.
+    let root = crate::source::local_source_root(&env, &scope);
+    let sealed = crate::source_read::SealedSource::open(&root).unwrap();
+    let config = crate::source::source_config_for(&sealed, LOCAL_SOURCE_NAME).unwrap();
+    assert_eq!(
+        crate::source::list_items(&sealed, &config, ItemKind::Skill),
+        ["data-science/eda"]
+    );
+    let manifest =
+        crate::manifest::load_for_mutation(&crate::manifest::manifest_path(&env, &scope))
+            .unwrap()
+            .unwrap();
+    assert_eq!(
+        manifest.declared(ItemKind::Skill)["data-science/eda"].source,
+        LOCAL_SOURCE_NAME
+    );
+    assert_eq!(
+        crate::source::find_item(&sealed, &config, ItemKind::Skill, "data-science/eda"),
+        Some(root.join("skills/data-science/eda"))
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("skills/data-science/eda/SKILL.md")).unwrap(),
+        "the namespaced one"
+    );
+    assert_eq!(trashed(), before);
+
+    // The refusal is the collision's, not a refusal of every plain name:
+    // one whose slot holds nothing is still kept.
+    fs::create_dir_all(held.join("handmade")).unwrap();
+    fs::write(held.join("handmade/SKILL.md"), "mine").unwrap();
+    let plan = adopt(
+        &env,
+        &scope,
+        ItemKind::Skill,
+        "handmade",
+        &[HarnessId::Claude],
+    )
+    .unwrap();
+    crate::apply::execute(&env, &plan, None).unwrap();
+    assert!(root.join("skills/handmade/SKILL.md").is_file());
+}
+
 /// A refused name is printed, not run. The name reaches stderr through
 /// the CLI's `Error: {e}`, so a control sequence inside it would clear
 /// the reader's screen while telling them the name was refused.

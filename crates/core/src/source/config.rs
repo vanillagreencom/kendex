@@ -352,3 +352,30 @@ pub fn list_items(sealed: &SealedSource, config: &SourceConfig, kind: ItemKind) 
     names.dedup();
     names
 }
+
+/// Which of this kind's listed items the local source stores inside `slot`,
+/// for the name whose slot it is. A namespaced `plugin/item` is stored under
+/// its plugin half, so a plain `plugin`'s slot is the directory holding it —
+/// and only a listed item occupies that slot: a directory carrying no
+/// `SKILL.md` is nobody's item, which is what mere existence of the path
+/// cannot tell apart. The resolved paths decide, not the names, so a kind
+/// whose item is a file — `plugin/item.md` beside `plugin.md`, nesting
+/// nothing — is never named here. Both paths come from the reader, so an
+/// ancestor symlink cannot make two names for one directory read as two.
+pub(super) fn nested_under(
+    sealed: &SealedSource,
+    config: &SourceConfig,
+    kind: ItemKind,
+    name: &str,
+    slot: &std::path::Path,
+) -> Option<String> {
+    let slot = sealed.relative(slot)?;
+    list_items(sealed, config, kind).into_iter().find(|held| {
+        crate::names::split(held).is_some_and(|(plugin, _)| plugin == name)
+            && find_item(sealed, config, kind, held).is_some_and(|path| {
+                sealed
+                    .relative(&path)
+                    .is_some_and(|held| held.starts_with(slot))
+            })
+    })
+}
