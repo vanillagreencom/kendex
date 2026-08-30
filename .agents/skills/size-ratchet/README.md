@@ -24,8 +24,9 @@ even then. Markdown is measured in bytes and code in lines. Flags and exit codes
   exclusion list.
 - **Units**: a class threshold counts LINES when it is a bare number and
   BYTES when it carries the `k` suffix (`24k` = 24×1024 bytes). Lines are
-  newline counts. The shipped list measures markdown in bytes, because a line
-  count on prose moves 60% under a re-wrap, and everything else in lines.
+  newline counts. The shipped list measures markdown in bytes, because a
+  re-wrap moves a line count on prose and leaves the byte count alone, and
+  everything else in lines.
 - **Threshold**: `SIZE_RATCHET_CLASSES` first, then the shipped
   `SIZE_RATCHET_DEFAULT_CLASSES`, then `SIZE_RATCHET_THRESHOLD` (default
   `400` lines) — see [Path classes](#path-classes). Every file resolves to
@@ -82,8 +83,8 @@ raises is that threshold routed around.
 the size suffixed `b` when its class counts bytes:
 
 ```
-docs/handbook.md	86104b
 crates/core/src/error.rs	495
+docs/handbook.md	86104b
 ```
 
 Rows are `LC_ALL=C` sorted, paths unique, counts positive. A malformed,
@@ -126,7 +127,9 @@ and the shipped list decides everything they leave alone.
 SIZE_RATCHET_CLASSES = "*/SKILL.md=32k"
 ```
 
-`SIZE_RATCHET_DEFAULT_CLASSES = ""` runs with no classes at all.
+`SIZE_RATCHET_DEFAULT_CLASSES = ""` drops the shipped list; the repo's own
+`SIZE_RATCHET_CLASSES` still matches first, so single-threshold behavior
+needs both unset.
 
 A directory name takes **both** forms: `*/tests/*` requires a
 slash-delimited prefix, so a root-level `tests/` needs its own `tests/*`

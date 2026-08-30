@@ -64,13 +64,13 @@ NL='
 # The class list every consumer gets without configuring one. A repo
 # overrides a class through SIZE_RATCHET_CLASSES; it does not restate the
 # list. Markdown is measured in bytes and sits at the high end of the
-# published guidance for each kind of file: an instruction file loads every
-# session (Claude documents 200 lines per file; Codex caps the whole
-# root-to-cwd AGENTS.md chain at 32 KiB, so 24k leaves room for the nested
-# ones), a SKILL.md body is documented at 5k tokens, one workflow loads at a
-# time, and everything else is read on demand and paged. Markdown entries
-# come first so a README or a doc under a tests/ directory is judged as the
-# document it is. Code keeps lines, which is what every linter caps.
+# published per-file guidance for each kind of file: an instruction file
+# loads every session, and the AGENTS.md classes sit under the whole-chain
+# cap so the nested files fit inside it; a SKILL.md body loads whenever its
+# skill does, one workflow loads at a time, and everything else is read on
+# demand and paged. Markdown entries come first so a README or a doc under a
+# tests/ directory is judged as the document it is. Code keeps lines, which
+# is what every linter caps.
 SHIPPED_CLASSES="AGENTS.md=24k;CLAUDE.md=24k;*/AGENTS.md=24k;*/CLAUDE.md=24k;*/SKILL.md=24k;*/workflows/*.md=40k;*.md=64k;*/tests/*=800;*/test/*=800;*/__tests__/*=800;*/tests.rs=800;*test_util.rs=800;*.test.*=800;*.spec.*=800"
 
 # Rows in these classes never rise. A test splits and a document is cut;
@@ -272,9 +272,9 @@ esac
 # never collapse into "this path takes the base threshold".
 #
 # A threshold carries its UNIT: a bare number counts lines, a `k` suffix
-# counts kibibytes. Markdown moves 60% under a re-wrap and varies twofold in
-# density between repos, so a line count on it measures the author's fill
-# column; bytes measure the document. The unit rides beside the number in
+# counts kibibytes. A re-wrap moves a line count on markdown and leaves the
+# byte count alone, so a line count on it measures the author's fill column;
+# bytes measure the document. The unit rides beside the number in
 # CLASS_UNITS (`l` or `b`) so every measurement, row and comparison
 # downstream knows what it is counting.
 CLASS_PATTERNS=()

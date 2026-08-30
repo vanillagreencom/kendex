@@ -90,7 +90,9 @@ commit body) is correct in exactly two cases, both for hand-written files:
    are combined back into one, and the merged file's row rises to its
    real size. Shrink or delete the emptied rows in the same diff.
 
-The gate enforces both halves of that itself. A row a change adds or raises
+Which case applies is yours to judge and the gate's to ignore: it reads
+`RATCHET_RAISE=1` and nothing else, and cannot see a commit message at all.
+What it enforces is two other things. A row a change adds or raises
 over HEAD's baseline fails unless the run carries `RATCHET_RAISE=1`, and
 RAISING an existing row in a **frozen class** — every markdown class and
 every test class by default — fails whatever it carries: a test splits and a

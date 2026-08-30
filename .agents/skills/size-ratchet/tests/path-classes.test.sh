@@ -13,7 +13,7 @@ SR="$SKILL_DIR/scripts/size-ratchet"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_DEFAULT_CLASSES SIZE_RATCHET_FROZEN_CLASSES SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE 2>/dev/null || true
+unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_DEFAULT_CLASSES SIZE_RATCHET_FROZEN_CLASSES SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE RATCHET_RAISE 2>/dev/null || true
 # The shipped class list and frozen list are policy, pinned by
 # shipped-defaults.test.sh. Every fixture here declares its own thresholds,
 # so both start empty and a case that needs one sets it.
@@ -273,6 +273,32 @@ run_raw SIZE_RATCHET_THRESHOLD=400 'SIZE_RATCHET_CLASSES=*/tests/*=800'
 [ "$RC" -eq 0 ] && ok "control: the well-formed mapping the malformed cases mutate really passes" \
   || bad "well-formed mapping control" "rc=$RC out=$OUT"
 
+echo "=== a malformed frozen list is a config error naming the entry ==="
+# The frozen list's job is REFUSING raises, so an entry the parser cannot read
+# must not be dropped: a silently skipped pattern is a class that stopped
+# being frozen, which is the fail-open direction for this list.
+run_raw SIZE_RATCHET_THRESHOLD=400 'SIZE_RATCHET_FROZEN_CLASSES=*/tests/*=800'
+if [ "$RC" -eq 2 ] && case "$OUT" in *"entry '*/tests/*=800' carries a '='"*) true ;; *) false ;; esac; then
+  ok "a frozen entry carrying a threshold is exit 2 naming the entry"
+else
+  bad "a frozen entry with '=' is a config error" "rc=$RC out=$OUT"
+fi
+for sep in tab newline; do
+  case "$sep" in
+    tab) bad_frozen="$(printf 'a\tb*')" ;;
+    newline) bad_frozen="$(printf 'a\nb*')" ;;
+  esac
+  run_raw SIZE_RATCHET_THRESHOLD=400 "SIZE_RATCHET_FROZEN_CLASSES=$bad_frozen"
+  if [ "$RC" -eq 2 ] && case "$OUT" in *"has a tab or newline"*) true ;; *) false ;; esac; then
+    ok "a $sep inside a frozen entry is exit 2 (the list is one line)"
+  else
+    bad "a $sep inside a frozen entry is a config error" "rc=$RC out=$OUT"
+  fi
+done
+run_raw SIZE_RATCHET_THRESHOLD=400 'SIZE_RATCHET_FROZEN_CLASSES=*/tests/*'
+[ "$RC" -eq 0 ] && ok "control: the well-formed frozen list those cases mutate really passes" \
+  || bad "well-formed frozen list control" "rc=$RC out=$OUT"
+
 echo "=== --update stays tighten-only against each file's own threshold ==="
 new_repo upd
 mkfile pkg/tests/shrunk.txt 900
@@ -320,14 +346,16 @@ else
   bad "--update never raises under a class" "rc=$RC out=$OUT row=$(cat "$R/tools/size-ratchet-baseline.tsv")"
 fi
 
-echo "=== every shipped suite isolates every SIZE_RATCHET_* key the script reads ==="
-# An inherited mapping or threshold must not be able to reclassify a fixture
-# or fail a suite: each suite's `unset` line has to name the whole key set,
-# derived from the script rather than restated here.
-# Every SIZE_RATCHET_* identifier the shipped sources name, whatever reads
-# it: keying off `sr_setting` alone would miss a key read another way (the
-# settings-file override already is one).
-KEYS="$(grep -rho 'SIZE_RATCHET_[A-Z][A-Z_]*' "$SKILL_DIR/scripts" | LC_ALL=C sort -u | tr '\n' ' ' || true)"
+echo "=== every shipped suite isolates every *RATCHET_* key the script reads ==="
+# An inherited mapping, threshold or DECLARATION must not be able to
+# reclassify a fixture or carry a raise a suite means to refuse: each suite's
+# `unset` line has to name the whole key set, derived from the script rather
+# than restated here.
+# Every RATCHET_* identifier the shipped sources name, whatever reads it:
+# keying off `sr_setting` alone would miss a key read another way (the
+# settings-file override is one, and RATCHET_RAISE — read from the
+# environment alone, and outside the SIZE_RATCHET_ prefix — is another).
+KEYS="$(grep -rhoE '[A-Z_]*RATCHET_[A-Z][A-Z_]*' "$SKILL_DIR/scripts" | LC_ALL=C sort -u | tr '\n' ' ' || true)"
 missing=""
 unaccounted=""
 checked_suites=0
@@ -347,19 +375,22 @@ done
 # Anti-vacuous controls: a derivation that found no keys, or a predicate that
 # selected no suites, would otherwise pass silently.
 derived_ok=yes
-for key in SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE; do
+control_keys="SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_DEFAULT_CLASSES SIZE_RATCHET_FROZEN_CLASSES SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE RATCHET_RAISE"
+control_n=0
+for key in $control_keys; do
+  control_n=$((control_n + 1))
   case " $KEYS " in
     *" $key "*) ;;
     *) derived_ok="no ($key)" ;;
   esac
 done
-[ "$derived_ok" = yes ] && ok "the key set really derives from the sources (control: all five SIZE_RATCHET_* keys are in it)" \
+[ "$derived_ok" = yes ] && ok "the key set really derives from the sources (control: all $control_n keys the script reads are in it)" \
   || bad "key set derivation" "missing $derived_ok in KEYS=$KEYS"
 # No magic count: every suite is either checked or provably gate-free.
 [ "$checked_suites" -gt 0 ] && [ -z "$unaccounted" ] \
   && ok "every suite is accounted for — $checked_suites run the gate and are checked, the rest never touch it" \
   || bad "every suite is accounted for" "checked=$checked_suites unaccounted:$unaccounted"
-[ -z "$missing" ] && ok "every gate-running suite unsets every SIZE_RATCHET_* key" \
+[ -z "$missing" ] && ok "every gate-running suite unsets every RATCHET_* key" \
   || bad "suites isolate the whole key set" "missing:$missing"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

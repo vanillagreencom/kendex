@@ -11,6 +11,11 @@
 # fail.
 set -euo pipefail
 
+# Hermetic: the size-ratchet lane and the bare ratchet control below both read
+# RATCHET_RAISE from the environment, and an exported one turns the undeclared
+# row this suite refuses into a declared row it accepts.
+unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_DEFAULT_CLASSES SIZE_RATCHET_FROZEN_CLASSES SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE RATCHET_RAISE 2>/dev/null || true
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUARD="$(cd "$TEST_DIR/.." && pwd)/guard"
 REPO="$(cd "$TEST_DIR/../.." && pwd)"
@@ -229,7 +234,10 @@ baseline "crates/existing.rs${TAB}401"
 git -C "$R" add -A
 git -C "$R" commit -q -m "chore: a baseline with a row in it"
 mkfile crates/uncapped.rs 401
-mkfile ui/uncapped.ts 300
+# Both over the deciding threshold, in both of the repo's languages: the
+# shipped list carries no ui entry, so a TypeScript file is judged by the 400
+# default like any other unclassed path.
+mkfile ui/uncapped.ts 401
 printf '// %s: unfinished\n' "TO""DO" >"$R/crates/marker.rs" # split, or todo-ban fails this file
 printf '#![allow(dead_code)]\n' >"$R/crates/blanket.rs"
 head -c 300000 /dev/zero | tr '\0' 'x' >"$R/crates/huge.bin"

@@ -11,7 +11,7 @@ SR="$SKILL_DIR/scripts/size-ratchet"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_DEFAULT_CLASSES SIZE_RATCHET_FROZEN_CLASSES SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE 2>/dev/null || true
+unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_DEFAULT_CLASSES SIZE_RATCHET_FROZEN_CLASSES SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE RATCHET_RAISE 2>/dev/null || true
 # The shipped class list and frozen list are policy, pinned by
 # shipped-defaults.test.sh. Every fixture here declares its own thresholds,
 # so both start empty and a case that needs one sets it.

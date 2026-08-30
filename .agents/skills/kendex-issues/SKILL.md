@@ -74,7 +74,8 @@ orch owns every step. kendex-specific parameters:
   short-circuit, or a script; added prose last. Skills are instructions,
   not explanations; `tools/guard` refuses history and reasons in them.
 - **Size ratchet**: split at a seam. `RATCHET_RAISE=1` only when the added
-  lines are the fix itself and no seam exists; the frozen classes (markdown
+  lines are the fix itself and no seam exists — never for tests, docs,
+  comments, or lines a review round asked for; the frozen classes (markdown
   and tests) refuse a raise whatever it says.
 - **Review must converge** (orch SKILL.md): a recurring defect class is
   fixed at its source, never per comment. A round that is only scope,

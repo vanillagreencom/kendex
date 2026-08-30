@@ -19,9 +19,9 @@ under this skill.
 ## Units
 
 A class threshold carries its unit: a bare number counts lines, a `k` suffix
-counts kibibytes. Markdown is measured in bytes because a line count on it
-moves 60% under a re-wrap and varies twofold in density between repos, while
-the byte count does not; code keeps lines, which is what every linter caps.
+counts kibibytes. Markdown is measured in bytes because a re-wrap moves a
+line count on prose and leaves the byte count alone; code keeps lines, which
+is what every linter caps.
 
 The unit rides beside the threshold through class resolution (`PU`), through
 collection (one pending batch per unit, so an interleaved tree still batches
@@ -52,10 +52,10 @@ a TRACKED baseline, exclusion list or settings source is read from the index
 too, so an unstaged edit to any of them cannot authorize growth the commit
 does not carry, and a policy file staged for DELETION governs as absent. An
 untracked source (a personal `.env.local`) is still the worktree copy, and
-an explicit environment variable still wins over everything. The one thing
-`--staged` reads from the worktree is the baseline it is about to REWRITE —
-see the next section, where the index copy still governs unless the rewrite
-lands.
+an explicit environment variable still wins over everything. Besides that
+untracked source, the one thing `--staged` reads from the worktree is the
+baseline it is about to REWRITE — see the next section, where the index copy
+still governs unless the rewrite lands.
 
 ## The tighten-only rewrite
 
@@ -119,10 +119,11 @@ then rerun.
 The class list a path is matched against is `SIZE_RATCHET_CLASSES` (the
 repo's own overrides) followed by `SIZE_RATCHET_DEFAULT_CLASSES` (the list
 the package ships), first match wins. A repo therefore overrides a class
-without restating the list, and `SIZE_RATCHET_DEFAULT_CLASSES=""` is exact
-single-threshold behavior. Markdown entries come before the test entries in
-the shipped list, so a README or a doc under a `tests/` directory is judged
-as the document it is.
+without restating the list, and `SIZE_RATCHET_DEFAULT_CLASSES=""` drops the
+shipped list alone — exact single-threshold behavior needs the repo's own
+`SIZE_RATCHET_CLASSES` empty too. Markdown entries come before the test
+entries in the shipped list, so a README or a doc under a `tests/` directory
+is judged as the document it is.
 
 A directory name takes both class forms: `*` may match nothing but the
 literal `/` in `*/tests/*` still must be there, so `*/tests/*` covers

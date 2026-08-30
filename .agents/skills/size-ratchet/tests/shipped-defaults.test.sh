@@ -22,6 +22,7 @@ ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
 BASE="tools/size-ratchet-baseline.tsv"
+TAB="$(printf '\t')"
 
 new_repo() { # NAME
   R="$TMP/$1"
@@ -148,6 +149,45 @@ for quiet in src/tests/big.rs docs/small.md CLAUDE.md; do
   has "offender: $quiet" && bad "$quiet is under its class and must not be reported" "$OUT" \
     || ok "$quiet is under its shipped class and is not mentioned"
 done
+
+echo "=== markdown entries come first, so a doc under tests/ is judged as a doc ==="
+# The shipped list's ORDER is behavioural, not cosmetic: first match wins, so
+# the same file is a document at its byte class or a test at 800 lines
+# depending on which entry the resolver reaches first.
+new_repo md-under-tests
+mklines pkg/tests/notes.md 900
+git -C "$R" add -A
+run
+[ "$RC" -eq 0 ] && ok "a 900-line markdown file under tests/ passes — its byte class judged it" \
+  || bad "a doc under tests/ is judged as a doc" "rc=$RC out=$OUT"
+# The control: the same file under the inverted list IS an offender at 800
+# lines, so the shipped order is what spared it.
+run 'SIZE_RATCHET_DEFAULT_CLASSES=*/tests/*=800;*/test/*=800;*.md=64k'
+[ "$RC" -eq 1 ] && has "pkg/tests/notes.md — 900 lines > threshold 800" \
+  && ok "control: with the test entries first the same file fails at 800 lines" \
+  || bad "control: the inverted order fails the same file" "rc=$RC out=$OUT"
+
+echo "=== a row's unit suffix is exactly one trailing b, or the row is malformed ==="
+# Every consumer of a row strips ONE trailing b, so a row the validator lets
+# through with two would be read as the bare number by all of them.
+new_repo row-suffix
+mklines big.rs 500
+mkdir -p "$R/tools"
+git -C "$R" add -A
+for row in "big.rs${TAB}500bb" "big.rs${TAB}b500" "big.rs${TAB}500b7"; do
+  printf '%s\n' "$row" >"$R/$BASE"
+  git -C "$R" add -A
+  run
+  [ "$RC" -eq 2 ] && has "malformed row(s) above" && has "$row" \
+    && ok "the row '$row' is exit 2, quoted back" \
+    || bad "a malformed suffix is a config error" "row=$row rc=$RC out=$OUT"
+done
+# The control: the single-suffix form those mutate is accepted.
+printf 'big.rs\t500\n' >"$R/$BASE"
+git -C "$R" add -A
+run
+[ "$RC" -eq 0 ] && ok "control: the well-formed row those cases mutate really passes" \
+  || bad "well-formed row control" "rc=$RC out=$OUT"
 
 echo "=== a repo overrides a class, never the list ==="
 new_repo override

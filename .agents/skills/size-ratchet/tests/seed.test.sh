@@ -12,7 +12,7 @@ SR="$SKILL_DIR/scripts/size-ratchet"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_DEFAULT_CLASSES SIZE_RATCHET_FROZEN_CLASSES SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE 2>/dev/null || true
+unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_DEFAULT_CLASSES SIZE_RATCHET_FROZEN_CLASSES SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE RATCHET_RAISE 2>/dev/null || true
 # The shipped class list and frozen list are policy, pinned by
 # shipped-defaults.test.sh. Every fixture here declares its own thresholds,
 # so both start empty and a case that needs one sets it.
@@ -26,6 +26,28 @@ bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 mkfile() { # PATH LINES
   mkdir -p "$R/$(dirname "$1")"
   awk -v n="$2" 'BEGIN { for (i = 1; i <= n; i++) print "line " i }' >"$R/$1"
+}
+
+mkbytes() { # PATH BYTES — exactly BYTES bytes, and zero newlines, so a case
+            # that confuses the units is visible rather than coincidental
+  mkdir -p "$R/$(dirname "$1")"
+  head -c "$2" /dev/zero | tr '\0' 'x' >"$R/$1"
+}
+
+new_repo() { # NAME
+  R="$TMP/$1"
+  mkdir -p "$R/tools"
+  git -C "$R" -c init.defaultBranch=main init -q
+  git -C "$R" config user.email test@example.com
+  git -C "$R" config user.name test
+}
+
+run_classed() { # CLASSES [args...] — run in $R under CLASSES; sets OUT and RC
+  local classes="$1"
+  shift
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 SIZE_RATCHET_CLASSES="$classes" "$SR" "$@" 2>&1)" || RC=$?
 }
 
 run_sr() { # [args...] — run in $R at threshold 10, tests class 20; sets OUT and RC
@@ -88,6 +110,59 @@ selfrow="$(grep -F 'tools/size-ratchet-baseline.tsv' "$R/tools/size-ratchet-base
 git -C "$R" add -A
 run_sr
 [ "$RC" -eq 0 ] && ok "the committed baseline passes its own gate" || bad "self-row post-check" "rc=$RC out=$OUT"
+
+echo "=== a byte class seeds a suffixed row, and the check reads it back ==="
+# Without this the b suffix could be dropped anywhere on the seed path and
+# nothing would notice: --seed would write bare numbers and the very next
+# check would call every one of them a row in the wrong unit — a bootstrap
+# that fails its own gate.
+new_repo seed-bytes
+mkbytes doc.md 70000
+mkfile code.txt 25
+git -C "$R" add -A
+run_classed '*.md=64k' --seed
+[ "$RC" -eq 0 ] && ok "--seed exits 0 with a byte-class offender" || bad "byte-class seed exit" "rc=$RC out=$OUT"
+expected="$(printf 'code.txt\t25\ndoc.md\t70000b\n')"
+actual="$(cat "$R/tools/size-ratchet-baseline.tsv" 2>/dev/null || echo MISSING)"
+[ "$actual" = "$expected" ] && ok "the byte row carries its b suffix and the line row does not" \
+  || bad "seeded byte row" "$(printf 'expected:\n%s\ngot:\n%s' "$expected" "$actual")"
+git -C "$R" add -A
+run_classed '*.md=64k'
+[ "$RC" -eq 0 ] && ok "and the check reads the suffixed row back clean" \
+  || bad "the seeded byte row passes its own gate" "rc=$RC out=$OUT"
+
+echo "=== a byte-classed BASELINE reconciles its own row in bytes ==="
+# The self-row fixed point is where the suffix is hardest to keep: the row's
+# own digits are part of the length it records. A line row settles in one
+# pass, so only a byte-classed baseline exercises the loop.
+new_repo seed-bytes-selfrow
+for i in $(seq 1 100); do mkfile "$(printf 'off-%03d.txt' "$i")" 15; done
+git -C "$R" add -A
+run_classed 'tools/*=1k' --seed
+[ "$RC" -eq 0 ] && ok "--seed exits 0 with a byte-classed baseline" || bad "byte self-row seed exit" "rc=$RC out=$OUT"
+bytes="$(wc -c <"$R/tools/size-ratchet-baseline.tsv" | tr -d ' ')"
+selfrow="$(grep -F 'tools/size-ratchet-baseline.tsv' "$R/tools/size-ratchet-baseline.tsv" || echo MISSING)"
+[ "$selfrow" = "$(printf 'tools/size-ratchet-baseline.tsv\t%sb' "$bytes")" ] \
+  && ok "the self-row is the file's own byte count, suffixed ($bytes bytes)" \
+  || bad "byte self-row" "bytes=$bytes selfrow=$selfrow"
+git -C "$R" add -A
+run_classed 'tools/*=1k'
+[ "$RC" -eq 0 ] && ok "the seeded byte-classed baseline passes its own gate" \
+  || bad "byte self-row post-check" "rc=$RC out=$OUT"
+# And --update runs the same reconciliation: shrinking a file lowers its row,
+# which changes the baseline's own byte length, which the self-row records.
+mkfile off-001.txt 12
+git -C "$R" add -A
+run_classed 'tools/*=1k' --update
+[ "$RC" -eq 0 ] && ok "--update exits 0 on a byte-classed baseline" || bad "byte self-row update exit" "rc=$RC out=$OUT"
+bytes="$(wc -c <"$R/tools/size-ratchet-baseline.tsv" | tr -d ' ')"
+selfrow="$(grep -F 'tools/size-ratchet-baseline.tsv' "$R/tools/size-ratchet-baseline.tsv" || echo MISSING)"
+[ "$selfrow" = "$(printf 'tools/size-ratchet-baseline.tsv\t%sb' "$bytes")" ] \
+  && ok "--update settles the byte self-row at the rewritten file's own length ($bytes bytes)" \
+  || bad "byte self-row after --update" "bytes=$bytes selfrow=$selfrow"
+grep -qxF "$(printf 'off-001.txt\t12')" "$R/tools/size-ratchet-baseline.tsv" \
+  && ok "and the shrunk row was the one that moved" \
+  || bad "the shrunk row is lowered" "$(grep -F 'off-001.txt' "$R/tools/size-ratchet-baseline.tsv")"
 
 echo "=== --seed refuses an index-only baseline ==="
 R="$TMP/sparse-seed"
