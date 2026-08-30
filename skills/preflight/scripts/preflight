@@ -638,11 +638,11 @@ MKTEMP_ASSIGN="=[\"']?\\\$\\(mktemp"
 # An mktemp INVOCATION: the word at a command position — line start, or
 # after a substitution, pipe, list or group operator. The word inside a
 # message string or a usage line names the tool, it does not run it.
-MKTEMP_CALL_RE='(^[[:space:]]*|[;|&(`{][[:space:]]*)mktemp([^A-Za-z0-9_.-]|$)'
+MKTEMP_CALL_RE='(^[[:space:]]*|[;(`{&|][[:space:]]*)mktemp([^A-Za-z0-9_.-]|$)'
 # An EXIT-time trap in either of its portable spellings, at a command
 # position on a non-comment line — the word inside a message or a comment
 # arms nothing.
-TRAP_EXIT_RE='(^[[:space:]]*|[;|&(`{][[:space:]]*)trap[[:space:]].*[[:space:]](EXIT|0)([[:space:]]|;|$)'
+TRAP_EXIT_RE='(^[[:space:]]*|[;(`{&|][[:space:]]*)trap[[:space:]].*[[:space:]](EXIT|0)([[:space:]]|;|$)'
 has_exit_trap() { # FILE
   grep -Ev -- '^[[:space:]]*#' "$1" 2>/dev/null | grep -Eq -- "$TRAP_EXIT_RE"
 }
@@ -660,7 +660,7 @@ TMPPATH_CREATE_RE='(mkdtemp|mkdtempSync|mkdir|mkdirSync|makedirs|create_dir_all)
 # a root-level sibling (mkdtempSync("/tmp") makes /tmpXXXXXX). Plain mkdir
 # of the bare root stays out: creating /tmp itself is a no-op.
 TMPPATH_CREATE_RE="$TMPPATH_CREATE_RE"'|(mkdtemp|mkdtempSync)[[:space:]]*\([^)]*["'\''`]/(var/)?tmp["'\''`]'
-TMPPATH_CREATE_RE="$TMPPATH_CREATE_RE"'|(^[[:space:]]*|[;|&(`{][[:space:]]*)mkdir[[:space:]]+-p[[:space:]]+["'\'']?/(var/)?tmp/'
+TMPPATH_CREATE_RE="$TMPPATH_CREATE_RE"'|(^[[:space:]]*|[;(`{&|][[:space:]]*)mkdir[[:space:]]+-p[[:space:]]+["'\'']?/(var/)?tmp/'
 
 # The attribution shape only: a review-fleet bot name coupled to a PR/review
 # reference — a parenthetical credit, a per-bot review credit, a bot review
@@ -775,7 +775,7 @@ swallowed_cmd() { # LINE -> command name on stdout
       }
       $0 = out rest
     }
-    match($0, /(^[[:space:]]*|[;|&(`{][[:space:]]*)(grep|find|git|jq|diff|cmp)([[:space:]][^|]*)?\|\|[[:space:]]*(true|:)([^A-Za-z0-9_.-]|$)/) {
+    match($0, /(^[[:space:]]*|[;(`{&|][[:space:]]*)(grep|find|git|jq|diff|cmp)([[:space:]][^|]*)?\|\|[[:space:]]*(true|:)([^A-Za-z0-9_.-]|$)/) {
       s = substr($0, RSTART, RLENGTH)
       if (match(s, /(grep|find|git|jq|diff|cmp)/)) print substr(s, RSTART, RLENGTH)
       exit
@@ -834,7 +834,7 @@ build_runner_index() {
     # scripts run from the root of the tree that owns them.
     sed -e '/^[[:space:]]*#/d' -e 's/[[:space:]]#.*//' -- "$c" >"$TMP/runner.body.one"
     for kind in vitest jest; do
-      LC_ALL=C grep -qE "(^[[:space:]]*|[;&|\`(][[:space:]]*|(npx|pnpm|yarn|exec|dlx)[[:space:]]+|:[[:space:]]*[\"']?)([A-Za-z_][A-Za-z0-9_]*=([^[:space:]'\"]|'[^']*'|\"[^\"]*\")*[[:space:]]+)*$kind([[:space:]\"'\`;&|)]|\$)" "$TMP/runner.body.one" || continue
+      LC_ALL=C grep -qE "(^[[:space:]]*|[;\`(&|][[:space:]]*|(npx|pnpm|yarn|exec|dlx)[[:space:]]+|:[[:space:]]*[\"']?)([A-Za-z_][A-Za-z0-9_]*=([^[:space:]'\"]|'[^']*'|\"[^\"]*\")*[[:space:]]+)*$kind([[:space:]\"'\`&;|)]|\$)" "$TMP/runner.body.one" || continue
       scope=""
       case "$r" in
         .github/workflows/*) ;;

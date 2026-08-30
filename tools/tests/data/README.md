@@ -9,11 +9,15 @@ text and never sourced.
 - `bash32-controls.txt` — Bash 3.2-legal source the set must leave alone,
   including the real bracket expressions and separator strings in this repo
   that an unanchored operator pattern used to match.
-- `bash32-uncatchable.txt` — Bash 4 constructs the set does NOT flag, each
-  named in the block's stated limit. Asserting the misses keeps that list
-  from going stale: close one of these and the suite reds until the limit is
-  rewritten to match. The limit also names shapes flagged in the other
-  direction, like `[a;&b]`, which cannot be listed here.
+- `bash32-uncatchable.txt` — Bash 4 constructs the set does NOT flag.
+- `bash32-overflagged.txt` — Bash 3.2-legal source the set DOES flag, because
+  it spells an operator inside a regex literal or a string. The fix for a
+  real script is to respell the line, as `skills/preflight/scripts/preflight`
+  now does; these lines are kept here as the accepted cost, written down.
+
+The last two are the block's stated limit, one file per direction. Asserting
+both keeps that list from going stale: change what the set decides and the
+suite reds until the limit is rewritten to match.
 
 A construct added to one belongs in the other's thinking too: a probe that
 widens an anchor needs a control that keeps the widening honest.

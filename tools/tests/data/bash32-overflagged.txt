@@ -1,0 +1,16 @@
+MKTEMP_CALL_RE='(^[[:space:]]*|[;|&(`{][[:space:]]*)mktemp([^A-Za-z0-9_.-]|$)'
+RUNNER_RE="(^[[:space:]]*|[;&|\`(][[:space:]]*)"
+KIND_TAIL="([[:space:]\"'\`;&|)]|\$)"
+  SEP = ";&|()" "\n" "\r"
+alternation='([a-z]|&)'
+escaped_class='[\(|&]'
+escaped_class2='[\;&|)]'
+escaped_class3='[\[;&]'
+escaped_class4='[a\(|&]'
+escaped_group='\(|&\)'
+awk_redirect_re=/([[:space:]]>>?|[0-9]>|&>)/
+plain_class='[|&]'
+open_class='[|&(]'
+brace_class='[|&{]'
+class_with_semi='[;&]'
+sedprog='s/\(foo\)|&/x/'

@@ -289,12 +289,14 @@ ok "the block parses as a PATTERN chain and was never executed"
 PROBES=""
 CONTROLS=""
 UNCATCHABLE=""
+OVERFLAGGED=""
 fixture_status=0
 PROBES="$(cat tools/tests/data/bash32-probes.txt)" || fixture_status=$?
 CONTROLS="$(cat tools/tests/data/bash32-controls.txt)" || fixture_status=$?
 UNCATCHABLE="$(cat tools/tests/data/bash32-uncatchable.txt)" || fixture_status=$?
+OVERFLAGGED="$(cat tools/tests/data/bash32-overflagged.txt)" || fixture_status=$?
 if [ "$fixture_status" -ne 0 ] || [ -z "$PROBES" ] || [ -z "$CONTROLS" ] ||
-  [ -z "$UNCATCHABLE" ]; then
+  [ -z "$UNCATCHABLE" ] || [ -z "$OVERFLAGGED" ]; then
   bad "a fixture under tools/tests/data is missing or empty, so the proof has no cases"
   verdict
   exit
@@ -334,20 +336,32 @@ else
   ok "no Bash 3.2-legal control line is flagged"
 fi
 
-# The stated limit is a list, and this is what keeps it from going stale. Each
-# of these is named in the block as a shape a text scan cannot decide, so each
-# must still go unflagged; closing one is a contract change and reds here
+# The stated limit is a list, and these two checks keep it from going stale.
+# The block names shapes a text scan cannot decide, in both directions: ones
+# it misses and ones it flags though they are legal. Each must still behave
+# the way the block says. Closing one is a contract change, and it reds here
 # until the block's list is rewritten to match.
 status=0
 now_caught="$(scan hit "$PATTERN" "$UNCATCHABLE")" || status=$?
 if [ "$status" -ne 0 ]; then
   bad "the stated-limit scan could not run (grep exited nonzero)"
 elif [ -n "$now_caught" ]; then
-  bad "the set now flags a construct the block says it cannot decide" \
+  bad "the set now flags a construct the block says it misses" \
     "$(printf '%s\n' "$now_caught" | head -10)
 rewrite the block's stated limit, or take the line out of the fixture"
 else
-  ok "every shape the block calls undecidable is still unflagged"
+  ok "every shape the block calls a miss is still unflagged"
+fi
+status=0
+now_clean="$(scan miss "$PATTERN" "$OVERFLAGGED")" || status=$?
+if [ "$status" -ne 0 ]; then
+  bad "the over-flag scan could not run (grep exited nonzero)"
+elif [ -n "$now_clean" ]; then
+  bad "the set no longer flags source the block says it over-flags" \
+    "$(printf '%s\n' "$now_clean" | head -10)
+an anchor came back, or the line changed: rewrite the block's list to match"
+else
+  ok "every line the block calls an accepted over-flag is still flagged"
 fi
 
 # Both checks above read the pattern rather than passing on their own shape: a

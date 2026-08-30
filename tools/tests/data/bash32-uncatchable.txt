@@ -1,3 +1,2 @@
-printf x |&>out
-printf x |&<in
 local \
+eval "$assembled_declaration"

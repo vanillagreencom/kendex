@@ -49,33 +49,40 @@ PATTERN="$PATTERN"'|(^|[^$])\{[A-Za-z_][A-Za-z0-9_]*\}[<>]'
 PATTERN="$PATTERN"'|\$\{!?([A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?|[0-9]+|[-#?$!@*])(,,?|\^\^?)'
 PATTERN="$PATTERN"'|(^|[^[:alnum:]_])coproc([[:blank:]]|$)'
 # The pipe-with-stderr, the append-both redirection, and the two case
-# terminators, each anchored on BOTH sides. The left admits every real token
-# boundary — a bare word, a quote, a brace, a bracket, a blank, a line end,
-# an escaped metacharacter — and the right admits only what can begin a
-# command. Widening one side and not the other reopens the side left alone:
-# unanchored, these matched the character classes inside preflight's own
-# regexes; anchored on one side only, they missed a quoted left boundary and
-# a case arm running straight into the next pattern.
+# terminators, matched plainly. There is no boundary anchor here, and that is
+# a decision rather than an omission.
+#
+# Neighbouring characters cannot separate an operator from the same bytes
+# inside a regex literal or a string, because the shell grammar permits
+# almost anything on either side of one. `printf x |&]` parses, and so do
+# `|&/bin/cat`, `|&'cat'`, `|&>out` and `x\(|& cat`. A right-hand set taken
+# from the grammar must therefore admit `]`, and admitting `]` matches the
+# bracket expression `[|&]` again. Four rounds of anchoring found the
+# boundary too permissive twice and too restrictive twice; a rule that costs
+# a door per round is the wrong rule, not an under-specified one.
+#
+# So the cost moves from an unauditable regex to a visible line. A script
+# that spells one of these operators inside its own regex or string data IS
+# flagged, and the fix is to write it so it does not: a bracket expression's
+# members carry no order, so [;|&(`{] becomes [;(`{&|] and matches exactly
+# the same characters. skills/preflight/scripts/preflight carries the six
+# sites that needed it. A script that genuinely cannot avoid the spelling has
+# no escape hatch here yet, and adding one is a change to make then.
 #
 # WHAT THIS CANNOT DECIDE, named so the next reader does not file it again.
-# A regex reads text; deciding which text is code is parsing. Every line here
-# is that boundary rather than an oversight, and the ones that are misses are
-# checked as misses in tools/tests/data/bash32-uncatchable.txt, so this list
-# cannot quietly go stale:
+# A regex reads text; deciding which text is code is parsing. These are that
+# boundary rather than oversights. The misses are checked as misses in
+# tools/tests/data/bash32-uncatchable.txt and the over-flags as over-flags in
+# bash32-overflagged.txt, so neither list can quietly go stale:
 #
-#   - a redirection straight after the operator, `printf x |&>out`. Admitting
-#     > and < there reddens the awk pattern at
-#     skills/reviewer/tests/harness-safe-shell-lint.test.sh:104, which spells
-#     |&> and is legal source. One or the other, never both.
-#   - a bracket expression whose members spell an operator between word
-#     characters: `[a;&b]` reads exactly as the case arm `x;&b)`, and is
-#     flagged. Same for `[\(|&]` against `x\(|& cat`.
-#   - an operator inside a string or a comment. `msg="a |& b"` is flagged,
-#     and so is one written in prose in a suite that does not strip comments.
+#   - an operator inside a regex literal, a string or a comment is flagged.
+#     That is the accepted cost of matching operators plainly, and the fix is
+#     to respell the line the way preflight's bracket expressions now are.
 #   - a construct assembled at runtime: eval, a command held in a variable, a
-#     heredoc piped to bash.
-#   - a declaration split over a backslash continuation, which a line-oriented
-#     scan does not see at all.
+#     heredoc piped to bash. The text never appears, so nothing reads it.
+#   - a declaration split over a backslash continuation, which a
+#     line-oriented scan does not see at all.
+#   - whether a script RUNS under Bash 3.2. Nothing here does.
 #
 # What covers these is not another pattern. Each SKILL.md declares the shell
 # floor its scripts run on, and a lane running these suites under a real Bash
@@ -83,7 +90,7 @@ PATTERN="$PATTERN"'|(^|[^[:alnum:]_])coproc([[:blank:]]|$)'
 # lands, every construct above has a Bash 3.2 spelling — `2>&1 |` for the
 # pipe, `>>file 2>&1` for the redirection, a repeated case body for the
 # fallthrough — and a script that writes those needs no verdict here.
-PATTERN="$PATTERN"'|(^|[^;(]|\\[;(])\|&([[:blank:]]|$|[[:alnum:]_.~$"])|&>>|(^|[^|]);;?&([^]|]|$)'
+PATTERN="$PATTERN"'|\|&|&>>|;;?&'
 # --- shared bash32 pattern set: end
 
 # grep's status is part of the answer: 0 found, 1 none, anything else is a

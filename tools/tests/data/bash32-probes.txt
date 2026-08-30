@@ -65,3 +65,8 @@ case $x in a) printf x[;&b) :;; esac
   a) [ -n "$v" ];& b) :;;
 case x in x) printf \[;& y) :;; esac
 case x in x) printf [;& y) :;; esac
+printf x |&>out
+printf x |&<in
+printf x |&/bin/cat
+printf x |&'cat'
+case x in x) printf \|;& y) :;; esac
