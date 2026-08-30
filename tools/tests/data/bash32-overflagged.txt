@@ -16,3 +16,4 @@ class_with_semi='[;&]'
 sedprog='s/\(foo\)|&/x/'
 printf '%s\n' "use coproc here"
 x=1  # never use coproc here
+# never use coproc in this Bash 3 script

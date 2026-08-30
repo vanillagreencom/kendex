@@ -13,12 +13,12 @@
 # pipefail` it aborts `lanes context` outright rather than losing one lane. A
 # reviewer caught it by hand and #1847 removed it; nothing else would have.
 #
-# Comment lines are not scanned. orch documents this prohibition inside the
-# scripts it constrains — `scripts/git-context` and `scripts/lib/lane-context.sh`
-# both name the construct they avoid and why — and a lint that reds its own
-# contract teaches the next author to delete the explanation instead of the
-# construct. Case b.4 pins the skip to comments; b.1-b.3 prove code is still
-# caught, so the skip cannot be what makes this suite green.
+# Comment lines ARE scanned, along with everything else in the file. orch used
+# to skip them, so that `scripts/git-context` and `scripts/lib/lane-context.sh`
+# could name the construct they avoid and say why. They still do; they just
+# name it in words now, because a `#` line inside a multiline double-quoted
+# word is live code the shell expands, and skipping `#` lines let a Bash 4
+# expansion through this gate in silence.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -134,10 +134,15 @@ PATTERN="$PATTERN"'|\$\{!?([A-Za-z_][A-Za-z0-9_]*(\[([^][]|\[[^]]*\])*\])?|[0-9]
 #   - a name the shell reaches through quote removal: `'mapfile' -t v`,
 #     `"declare" -A c`, `map\file -t v`. Bash strips the quoting before it
 #     looks the word up, and doing that is the shell's job, not a scan's.
-#   - a construct inside a string on a code line, `printf '%s\n' "use coproc
-#     here"`, or after a trailing `#` on one, `x=1  # no coproc`, is flagged.
-#     Telling either from code is parsing. A WHOLE-LINE comment is not, and
-#     those are skipped, which is where the realistic false positive lived.
+#   - a construct anywhere in the file text is flagged, comment or string
+#     alike: `# never use coproc here`, `x=1  # no coproc`, `printf '%s\n'
+#     "use coproc here"`. There is no comment skip, and that is deliberate.
+#     A `#` line inside a multiline double-quoted word is LIVE CODE that bash
+#     expands, so skipping `#` lines let `${name^^}` through a portability
+#     gate in silence. Telling the two apart is lexing, and every cheap
+#     approximation of it drops hits — it fails open, just less often. This
+#     way the cost is loud, lands on whoever wrote the line, and is fixed by
+#     respelling it, as preflight's brackets and orch's comments now are.
 #   - an operator inside a regex literal or string data is flagged for the
 #     same reason. That is the accepted cost of matching operators plainly,
 #     and the fix is to respell the line as preflight's brackets now are.
@@ -158,22 +163,6 @@ PATTERN="$PATTERN"'|\$\{!?([A-Za-z_][A-Za-z0-9_]*(\[([^][]|\[[^]]*\])*\])?|[0-9]
 # pipe, `>>file 2>&1` for the redirection, a repeated case body for the
 # fallthrough — and a script that writes those needs no verdict here.
 PATTERN="$PATTERN"'|\|&|&>>|;;?&'
-# A WHOLE-LINE comment executes nothing, and recognising one is not parsing:
-# it is the one narrowing available here that costs no catch. Every suite
-# filters its HITS through this, never its source lines, so it matches both
-# shapes a scan produces — `file:12:  # ...` and `12:  # ...`.
-#
-# Anchored at the start, because a hit line carries the scanned line's own
-# text and that text can spell a prefix. Unanchored, `mapfile -t v # see
-# foo.sh:12: # note` was dropped as a comment and a real call went uncaught.
-# The anchor assumes no colon in a scanned path, which is the ambiguity in
-# grep's own output rather than one this adds; a path holding one keeps its
-# comments instead, an over-flag and never a missed catch.
-#
-# A TRAILING comment on a code line is not covered and is not meant to be:
-# `x=1  # never use coproc here` is flagged, because knowing that `#` is not
-# inside a string or a heredoc is parsing. It is in bash32-overflagged.txt.
-COMMENT_HIT='^([^:]*:)?[0-9]+:[[:blank:]]*#'
 # --- shared bash32 pattern set: end
 
 # scan_bash4 <dir>
@@ -197,8 +186,7 @@ scan_bash4() {
             return 2
         fi
         [ -n "$hits" ] || continue
-        printf '%s\n' "$hits" |
-            awk -v f="$f" -v skip="$COMMENT_HIT" '$0 !~ skip { print f ":" $0 }'
+        printf '%s\n' "$hits" | sed "s|^|$f:|"
     done <"$list"
 }
 
@@ -271,18 +259,6 @@ for probe in \
         fail "lint MISSED an injected $name (no teeth)"
     fi
 done
-
-# b.4 — and the documented exception is exactly that: the same construct, on a
-# comment line, is not a violation.
-comment_status=0
-hits="$(scan_bash4 "$(probe_dir comment '  # has none and rejects `local -A`, which errexit would abort on')")" || comment_status=$?
-if [ "$comment_status" -ne 0 ]; then
-    fail "scan could not run over the comment probe (exit $comment_status)"
-elif [ -z "$hits" ]; then
-    pass "lint ignores a comment naming a forbidden construct"
-else
-    fail "lint false-flagged a comment naming a forbidden construct"
-fi
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

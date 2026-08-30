@@ -26,7 +26,7 @@ case "$cmd" in
         shopt -s nocasematch
         if [[ "$branch" =~ $pattern ]]; then
             issue_id="${BASH_REMATCH[0]}"
-            # tr, not ${var,,}/${var^^}: macOS Bash 3.2 lacks them.
+            # tr, not the case-conversion expansions: macOS Bash 3.2 lacks them.
             issue_id_lower="$(printf '%s' "$issue_id" | tr '[:upper:]' '[:lower:]')"
             case "$issue_id_lower" in
             issue-*) printf '%s\n' "$issue_id_lower" ;;

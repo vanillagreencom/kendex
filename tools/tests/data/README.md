@@ -21,10 +21,11 @@ text and never sourced.
   that an unanchored operator pattern used to match.
 - `bash32-uncatchable.txt` — Bash 4 constructs the set does NOT flag, such as
   a builtin the shell reaches through quote removal (`'mapfile' -t v`).
-- `bash32-comment-hits.txt` — grep hit lines the shared comment filter must
-  drop or keep, as `drop|HIT` and `keep|HIT`, in both shapes a scan produces.
 - `bash32-overflagged.txt` — Bash 3.2-legal source the set DOES flag, because
-  it spells an operator inside a regex literal or a string. The fix for a
+  it spells a construct inside a comment, a regex literal or a string. There
+  is no comment skip: a `#` line inside a multiline double-quoted word is live
+  code, so skipping those let a Bash 4 expansion through in silence. The fix
+  for a
   real script is to respell the line, as `skills/preflight/scripts/preflight`
   now does; these lines are kept here as the accepted cost, written down.
 

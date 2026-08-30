@@ -169,7 +169,7 @@ main() {
                 emit_ready_pr_fetch_failure "verify"
                 exit 0
             fi
-            # Use while-read instead of mapfile (bash 4+ only)
+            # Use while-read instead of the Bash 4 array-read builtin
             while IFS= read -r num; do
                 [ -n "$num" ] && pr_nums+=("$num")
             done < <(echo "$ready_prs" | jq -r '.[] | select(.ready) | .number')
@@ -204,7 +204,7 @@ main() {
             emit_ready_pr_fetch_failure "quick"
             exit 0
         fi
-        # Use while-read instead of mapfile (bash 4+ only)
+        # Use while-read instead of the Bash 4 array-read builtin
         while IFS= read -r num; do
             [ -n "$num" ] && pr_nums+=("$num")
         done < <(echo "$ready_prs" | jq -r '.[] | select(.ready) | .number')

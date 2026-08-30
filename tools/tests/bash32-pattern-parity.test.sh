@@ -235,23 +235,10 @@ done
 # the chain, the rest append, anything else is refused.
 QUOTERUN="a block line closes its quote and keeps going, so it is not an assignment"
 PATTERN=""
-COMMENT_HIT=""
 built=none
 while IFS= read -r line; do
   case "$line" in
   '#'* | '') continue ;;
-  "COMMENT_HIT=$Q"*"$Q")
-    body="${line#"COMMENT_HIT=$Q"}"
-    body="${body%"$Q"}"
-    case "$body" in *"$Q"*) bad "$QUOTERUN" "$line"; built=refused; break ;; esac
-    if [ -n "$COMMENT_HIT" ]; then
-      bad "the block declares COMMENT_HIT twice" "$line"
-      built=refused
-      break
-    fi
-    COMMENT_HIT="$body"
-    continue
-    ;;
   esac
   if [ "$built" = none ]; then
     prefix="PATTERN=$Q"
@@ -275,12 +262,12 @@ while IFS= read -r line; do
 done <<EOF
 $reference
 EOF
-if [ "$built" != yes ] || [ -z "$PATTERN" ] || [ -z "$COMMENT_HIT" ]; then
-  bad "no pattern or comment filter could be built from the block, so nothing below was proven"
+if [ "$built" != yes ] || [ -z "$PATTERN" ]; then
+  bad "no pattern could be built from the block, so nothing below was proven"
   verdict
   exit
 fi
-ok "the block parses into PATTERN and COMMENT_HIT, and was never executed"
+ok "the block parses as a PATTERN chain and was never executed"
 
 
 # The proof's two fixtures, read as data and never sourced. tools/tests/data
@@ -296,36 +283,18 @@ PROBES=""
 CONTROLS=""
 UNCATCHABLE=""
 OVERFLAGGED=""
-COMMENT_HITS=""
 fixture_status=0
 PROBES="$(cat tools/tests/data/bash32-probes.txt)" || fixture_status=$?
 CONTROLS="$(cat tools/tests/data/bash32-controls.txt)" || fixture_status=$?
 UNCATCHABLE="$(cat tools/tests/data/bash32-uncatchable.txt)" || fixture_status=$?
 OVERFLAGGED="$(cat tools/tests/data/bash32-overflagged.txt)" || fixture_status=$?
-COMMENT_HITS="$(cat tools/tests/data/bash32-comment-hits.txt)" || fixture_status=$?
 if [ "$fixture_status" -ne 0 ] || [ -z "$PROBES" ] || [ -z "$CONTROLS" ] ||
-  [ -z "$UNCATCHABLE" ] || [ -z "$OVERFLAGGED" ] || [ -z "$COMMENT_HITS" ]; then
+  [ -z "$UNCATCHABLE" ] || [ -z "$OVERFLAGGED" ]; then
   bad "a fixture under tools/tests/data is missing or empty, so the proof has no cases"
   verdict
   exit
 fi
 
-# The comment filter is shared like the pattern and checked like it, over the
-# two hit shapes a scan produces. Cases are `drop|HIT` and `keep|HIT`.
-filter_ok=yes
-while IFS= read -r c; do
-  [ -n "$c" ] || continue
-  want="${c%%|*}"
-  hit="${c#*|}"
-  if printf '%s\n' "$hit" | grep -qE "$COMMENT_HIT"; then got=drop; else got=keep; fi
-  [ "$got" = "$want" ] || {
-    bad "the comment filter should $want this hit, and does not" "$hit"
-    filter_ok=no
-  }
-done <<EOF
-$COMMENT_HITS
-EOF
-[ "$filter_ok" = no ] || ok "the comment filter drops comment hits and keeps code hits"
 
 # scan MODE PATTERN LINES — the lines PATTERN misses, or the ones it hits. 2
 # when grep could not run: an invalid ERE prints nothing and exits 2, and

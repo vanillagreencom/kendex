@@ -149,8 +149,8 @@ lane_context_collect() {
   local claims="$1" alias_fn="$2" cfg lane server pane screen parsed
   local this_server detail cmd pane_cmds p_pid p_pane p_cmd
   # `<pane id> <command>` per line, not an associative array: macOS Bash 3.2
-  # has none and rejects `local -A`, which under this file's errexit would
-  # abort the whole report rather than lose one lane.
+  # has none and rejects an associative-array declaration, which under this
+  # file's errexit would abort the whole report rather than lose one lane.
   pane_cmds=""
   this_server=""
   while read -r p_pid p_pane p_cmd; do
