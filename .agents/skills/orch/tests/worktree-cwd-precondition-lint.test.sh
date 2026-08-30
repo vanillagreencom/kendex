@@ -6,17 +6,29 @@
 #
 # The cure is a precondition the agent runs before anything repo-relative:
 # every `Worktree: [PLACEHOLDER]` line inside a `<delegation_format>` block
-# is followed immediately by a `Worktree Check:` line naming that SAME
-# placeholder. `pwd` reports where the shell actually is, so the check can
-# fail; a line that merely restates the delegated path cannot.
+# is followed immediately by a `Worktree Check:` line that OPENS with a
+# backticked `pwd` and names that SAME placeholder. `pwd` reports where the
+# shell actually is, so the check can fail; a line that merely restates the
+# delegated path cannot.
 #
-# This lint is the answer to the recurrence, not to the eleven sites: a new
-# delegation block that carries `Worktree:` without its check fails here
-# rather than shipping the silent-wrong-tree hazard again.
+# All three conditions are load-bearing, and the command one is the reason
+# this lint was rewritten. Matching the label and the placeholder alone is
+# fail-open: replacing the opening of a real check with `Worktree Check:
+# trust the path.` left the whole suite green, because the rest of the line
+# still carried its placeholder. Matching `pwd` ANYWHERE on the line is the
+# same hole one step further in — that mutation still said "re-run `pwd`" in
+# its remedy clause. What has to hold is that the first executable step is
+# the command, so the check is asserted by position, not by mention.
 #
-# Scoped to `<delegation_format>` blocks in orch's workflows. A `Worktree:`
-# mention in prose or in a fenced example is not a delegation and is not
-# scanned.
+# This lint is the answer to the recurrence, not to the individual sites: a
+# new delegation block that carries `Worktree:` without a working check
+# fails here rather than shipping the silent-wrong-tree hazard again.
+#
+# Scope is every skill doc that can carry a delegation, not one directory —
+# scoping the first sweep to orch/workflows is what let the
+# project-management site sit unguarded. Tests are excluded: their probe
+# fixtures carry deliberately broken blocks. A `Worktree:` mention in prose
+# or in a fenced example is not a delegation and is not scanned.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,7 +45,9 @@ fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 # scan_worktree_precondition <file>
 # Emits one "file:line: ..." line per defect. Inside a <delegation_format>
 # block, a `Worktree: [TOKEN]` line must be followed on the very next line by
-# a `Worktree Check:` line whose text contains `[TOKEN]` — the same
+# a `Worktree Check:` line that (a) opens with `pwd` as its first backticked
+# span, so the agent's first executable step is the command that reports
+# where the shell actually is, and (b) contains `[TOKEN]` — the same
 # placeholder, so a filled delegation compares against its own path and not
 # another site's. Lines outside a delegation block are never scanned.
 scan_worktree_precondition() {
@@ -47,8 +61,17 @@ scan_worktree_precondition() {
       if (pending) {
         if ($0 !~ /^[[:space:]]*Worktree Check:/) {
           printf "%s:%d: Worktree: [%s] is not followed by a Worktree Check line\n", f, pendline, token
-        } else if (index($0, "[" token "]") == 0) {
-          printf "%s:%d: Worktree Check names no [%s] to compare pwd against\n", f, NR, token
+        } else {
+          rest = $0
+          sub(/^[[:space:]]*Worktree Check:[[:space:]]*/, "", rest)
+          cmd = ""
+          if (match(rest, /`[^`]*`/)) cmd = substr(rest, RSTART + 1, RLENGTH - 2)
+          if (cmd != "pwd") {
+            printf "%s:%d: Worktree Check does not open with a backticked pwd (first command: %s)\n", f, NR, (cmd == "" ? "none" : cmd)
+          }
+          if (index($0, "[" token "]") == 0) {
+            printf "%s:%d: Worktree Check names no [%s] to compare pwd against\n", f, NR, token
+          }
         }
         pending = 0
       }
@@ -65,7 +88,10 @@ scan_worktree_precondition() {
 echo "=== orch delegation worktree-cwd-precondition lint ==="
 
 # --- Part a: every shipped delegation block carries the precondition -------
-DOCS="$(ls "$SKILLS_ROOT"/orch/workflows/*.md)"
+# Every skill doc, not one skill's workflows: a delegation that hands over a
+# worktree is checked wherever it lives. Tests are excluded — their probe
+# fixtures carry deliberately broken blocks.
+DOCS="$(find "$SKILLS_ROOT" -name '*.md' -not -path '*/tests/*' | sort)"
 offenders=""
 sites=0
 for doc in $DOCS; do
@@ -130,6 +156,34 @@ if [ -n "$(scan_worktree_precondition "$(probe last 'Branch: [BRANCH]\nWorktree:
   pass "lint flags a Worktree: line that closes the delegation"
 else
   fail "lint MISSED a trailing Worktree: line"
+fi
+
+# b.7 — THE REPORTED FAIL-OPEN. The exact mutation two reviewers landed
+# independently: the opening command replaced by prose, everything after it
+# left intact. The line still carries its placeholder AND still says `pwd` in
+# the remedy clause, so both a placeholder check and an anywhere-on-the-line
+# `pwd` check pass it. Only asserting the FIRST backticked span catches it.
+MUTANT='Worktree: [WORKTREE_PATH]\nWorktree Check: trust the path. It must print [WORKTREE_PATH]; a bare `git status` answers about the wrong tree. Any other path — `cd [WORKTREE_PATH]`, re-run `pwd`, and report where it started.'
+if [ -n "$(scan_worktree_precondition "$(probe mutant "$MUTANT")" )" ]; then
+  pass "lint flags a check whose leading command was replaced by prose"
+else
+  fail "lint MISSED the reported fail-open (a check that runs nothing)"
+fi
+
+# b.8 — a check opening with the WRONG command is flagged. `pwd` has to be
+# the first executable step; a different command does not report the cwd.
+if [ -n "$(scan_worktree_precondition "$(probe wrongcmd 'Worktree: [WORKTREE_PATH]\nWorktree Check: `git status` before any repo-relative command. It must print [WORKTREE_PATH].')" )" ]; then
+  pass "lint flags a check opening with a command other than pwd"
+else
+  fail "lint MISSED a check opening with the wrong command"
+fi
+
+# b.9 — an unbackticked mention is not a command. Without the code span
+# there is nothing marked for the agent to run.
+if [ -n "$(scan_worktree_precondition "$(probe unmarked 'Worktree: [WORKTREE_PATH]\nWorktree Check: run pwd before any repo-relative command. It must print [WORKTREE_PATH].')" )" ]; then
+  pass "lint flags a check whose pwd is not a marked command"
+else
+  fail "lint MISSED an unbackticked pwd"
 fi
 
 # b.5 — a Worktree: mention outside a delegation block is NOT scanned.
