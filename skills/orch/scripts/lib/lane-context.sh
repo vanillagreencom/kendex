@@ -57,9 +57,10 @@ set -euo pipefail
 # running less, vim or git log still holds the old footer and passes any
 # not-a-shell test. `[a-z0-9]*claude` covers the per-account wrappers this
 # fleet launches through — nclaude, dclaude, 1claude — which exec the real
-# binary, and agent-confine is the launcher they exec through. Anything else
-# is refused BY NAME, so a harness missing from this list reads as a named
-# refusal in the report rather than as a lane that stopped being measured.
+# binary, and agent-confine is the launcher both harnesses exec through, so
+# it names neither. Anything else is refused BY NAME, so a harness missing
+# from this list reads as a named refusal in the report rather than as a lane
+# that stopped being measured.
 LANE_CONTEXT_HARNESSES='[a-z0-9]*claude|codex|pi|agent-confine'
 
 # Shells choose the refusal's wording and nothing else: a pane back at its
@@ -87,10 +88,11 @@ lane_context_emit() {
 
 # Read one context figure from a captured screen on stdin. $1 is the pane's
 # foreground process, and it decides which shape is offered: `codex` the codex
-# shape alone, a claude wrapper spelling or `agent-confine` the claude shape
-# alone. Anything else — `pi`, or an empty name for a pane that has left the
-# enumeration — is offered both, because a reader with no rule for a harness
-# has nothing better than the shapes themselves. Prints
+# shape alone, a claude wrapper spelling the claude shape alone. Anything else
+# is offered both, because a reader with no rule for a harness has nothing
+# better than the shapes themselves — `pi`, an empty name for a pane that has
+# left the enumeration, and `agent-confine`, which is the launcher BOTH
+# harnesses exec through and so names neither. Prints
 # `<harness>\t<used percent>`; exits 1 when the shape offered found nothing.
 #
 # The codex shape is offered the FINAL NON-EMPTY line and no other. The
@@ -138,7 +140,7 @@ lane_context_parse() {
   local out shape="both"
   case "${1:-}" in
     codex) shape="codex" ;;
-    *claude | agent-confine) shape="claude" ;;
+    *claude) shape="claude" ;;
   esac
   out="$(awk -v shape="$shape" '
     {
@@ -233,7 +235,7 @@ lane_context_collect() {
       if ! parsed="$(lane_context_parse "$cmd" <<<"$screen")"; then
         case "$cmd" in
           codex) detail="the screen does not end in a codex status line; whatever moved it — a dialog over the footer, a redraw caught mid-frame — is covering the figure" ;;
-          *claude | agent-confine) detail="the screen carries no claude status line" ;;
+          *claude) detail="the screen carries no claude status line" ;;
           *) detail="the screen carries neither harness's context figure" ;;
         esac
         lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" "" "" \

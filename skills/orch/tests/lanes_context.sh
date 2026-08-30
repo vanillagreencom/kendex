@@ -41,6 +41,9 @@
 #   case 27 a claude pane quoting a codex status line on its final row —
 #           dies the moment the harness is inferred from the screen instead
 #           of taken from the pane
+#   case 28 a codex lane whose pane command is the agent-confine wrapper —
+#           dies the moment that wrapper is read as a harness spelling
+#           instead of as the launcher both harnesses exec through
 #   case 13 a pane that exited to its shell — dies if the liveness evidence
 #           is dropped, which is the only thing a window ever stood in for
 #
@@ -86,6 +89,9 @@
 #  26. a codex pane that does not end in a codex status line carries no
 #      reading, whatever its transcript holds, and says what it could not read
 #  27. a claude pane is read by the claude shape however its screen ends
+#  28. the agent-confine wrapper names no harness, so a pane running it is
+#      offered both shapes and a wrapped codex lane is measured like any
+#      other
 #
 # errexit is on: every case here either succeeds or is guarded, so an
 # unexpected non-zero is a broken fixture, not a finding to print past.
@@ -217,6 +223,10 @@ echo "=== lanes context ==="
   # shape rule for, so both are offered and the fall-through guard is
   # reachable — the only place it still is.
   printf '%s %%27 pi\n' "$LIVE_PID"
+  # 28. agent-confine is the launcher BOTH harnesses exec through, so its
+  # pane command names neither and both shapes are offered. %28 is a wrapped
+  # codex lane, %29 a wrapped claude one, %30 a wrapped pane showing neither.
+  for n in 28 29 30; do printf '%s %%%s agent-confine\n' "$LIVE_PID" "$n"; done
   printf '%s %%9 fish\n' "$LIVE_PID"
   # tmux reports a login shell with the leading dash it was started with.
   printf '%s %%11 -bash\n' "$LIVE_PID"
@@ -255,6 +265,9 @@ write_claim twentyfive  "%24" "$H/.codex"  "ken-125"
 write_claim twentysix   "%25" "$H/.codex"  "ken-126"
 write_claim twentyseven "%26" "$H/.claude" "ken-127"
 write_claim twentyeight "%27" "$H/.codex"  "ken-128"
+write_claim twentynine  "%28" "$H/.codex"  "ken-129"
+write_claim thirty      "%29" "$H/.claude" "ken-130"
+write_claim thirtyone   "%30" "$H/.codex"  "ken-131"
 # The foreign lane's pane NUMBER exists here too, on a screen that parses
 # cleanly: %1 is ken-101's, reading 35.
 write_claim_on "$FOREIGN_PID" foreign "%1" "$H/.claude" "ken-110"
@@ -405,6 +418,20 @@ screen 26 '  kendex (🌳 ken-127) Opus 5 41% (brad@drovr.dev)     /rc
 # shape is never offered at all.
 screen 27 '  kendex (🌳 ken-128) Opus 5 35% (brad@drovr.dev)     /rc
   Context 140% left'
+# 28. A wrapped lane. Its pane command is `agent-confine`, which is what both
+# harnesses exec through, so it names neither and both shapes are offered.
+# %28 is a codex lane whose screen ends on its own status line: read for the
+# claude shape alone it is a refusal, and an unmeasured lane is one the
+# overseer never compacts. %29 holds the other half shut — a wrapped claude
+# lane under an agent-row footer, which the codex shape cannot reach because
+# that footer is what the screen ends on. %30 shows neither shape, and its
+# refusal names both.
+screen 28 '  Codex is working
+  Context 86% left'
+screen 29 '  kendex (🌳 ken-130) Opus 5 27% (brad@drovr.dev)     /rc
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1 agent
+  ◯ dev-ken-885  Follow workflow: .agents/skills/dev/workflo… 4m 2s'
+screen 30 'plain shell output with no harness status line'
 
 OUT="$(run_ctx --json)"
 
@@ -596,6 +623,24 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-127") | .context_used_pct' <<<"$OUT
   "a codex status line quoted on a claude pane does not take the lane's reading"
 assert_eq "$(jq -r '.[] | select(.lane=="ken-127") | .harness' <<<"$OUT")" "claude" \
   "the pane's own harness is what names the reading"
+
+# 28. The wrapper is not a harness spelling. Dispatched to the claude shape
+# alone, %28's perfectly good final row is a refusal and the lane goes
+# unmeasured — the outcome this reader exists to prevent, on the one pane
+# command a codex lane is as likely to present as a claude one. %29 is what
+# offering both shapes must not cost: the codex shape only ever sees the last
+# row, and a claude footer sits below the status line, so the wrapped claude
+# lane keeps its reading.
+assert_eq "$(jq -r '.[] | select(.lane=="ken-129") | .context_used_pct' <<<"$OUT")" "14" \
+  "a wrapped codex lane is read at the line its screen ends on"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-129") | .harness' <<<"$OUT")" "codex" \
+  "the wrapper names no harness; the shape that matched does"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-130") | .context_used_pct' <<<"$OUT")" "27" \
+  "a wrapped claude lane keeps its reading from under the agent-row footer"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-130") | .harness' <<<"$OUT")" "claude" \
+  "and is still named claude"
+assert_contains "$(jq -r '.[] | select(.lane=="ken-131") | .detail' <<<"$OUT")" "neither harness's context figure" \
+  "a wrapped pane showing neither shape is refused for both, not for claude alone"
 
 # 25. Every committed codex capture, parsed as it stands. These are real
 # `tmux capture-pane` output from Codex 0.151.0 (KEN-863), and they are the
