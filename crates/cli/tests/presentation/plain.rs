@@ -21,7 +21,7 @@ fn the_blocked_refresh_prints_the_lines_scripts_parse() {
         "plain",
         &["refresh", "-y", "--scope", "project"],
     ));
-    let scope = project.display().to_string();
+    let scope = kendex_core::paths::slashed(&project);
 
     let shape: Vec<String> = printed
         .lines()

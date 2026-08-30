@@ -223,7 +223,7 @@ fn updates_lines_lead_with_their_place() {
         .unwrap_or_else(|| panic!("no gh line in {said}"));
     let root = proj.canonicalize().unwrap();
     assert!(
-        line.starts_with(&format!("{}  skill gh", root.display())),
+        line.starts_with(&format!("{}  skill gh", kendex_core::paths::slashed(&root))),
         "{line}"
     );
 

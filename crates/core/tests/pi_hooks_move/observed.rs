@@ -57,7 +57,7 @@ fn a_held_hook_is_listed_where_it_runs_from() {
     assert!(
         scored.iter().any(|row| row.kind == ItemKind::Hook
             && row.harness == HarnessId::Pi
-            && row.location == w.dot().join("hooks.json").display().to_string()),
+            && row.location == kendex_core::paths::slashed(&w.dot().join("hooks.json"))),
         "the safety scan counts it too: {:?}",
         scored
             .iter()
@@ -131,7 +131,7 @@ fn a_link_at_the_new_registry_does_not_bring_the_old_one_back() {
         observed_rows(&w.env, &w.scope())
             .unwrap()
             .iter()
-            .all(|row| row.location != w.dot().join("hooks.json").display().to_string()),
+            .all(|row| row.location != kendex_core::paths::slashed(&w.dot().join("hooks.json"))),
         "and the safety scan says the same"
     );
 

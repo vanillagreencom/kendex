@@ -296,7 +296,7 @@ fn a_hook_command_that_carries_the_danger_still_scores() {
     assert_eq!(dangerous[0].severity, crate::quality::Severity::High);
     assert_eq!(
         dangerous[0].location,
-        format!("{} (command)", path.display()),
+        format!("{} (command)", crate::paths::slashed(&path)),
         "{:?}",
         found.findings
     );
@@ -453,7 +453,7 @@ fn every_executable_variant_of_a_copilot_entry_scores() {
     assert_eq!(dangerous[0].severity, crate::quality::Severity::High);
     assert_eq!(
         dangerous[0].location,
-        format!("{} (command)", path.display()),
+        format!("{} (command)", crate::paths::slashed(&path)),
         "{:?}",
         found.findings
     );

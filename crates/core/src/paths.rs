@@ -54,6 +54,12 @@ const LEGACY_MAX_PATH: usize = 248;
 /// gets a path that shell cannot read, which is the honest answer where
 /// the alternative names a different file or none. A root reaches here
 /// that way only from a harness root somebody set to the verbatim form.
+///
+/// **Routing a producer here routes its readers too.** A test that builds
+/// both sides of a comparison carries one spelling whichever it is, and
+/// that is why fixture paths are left raw — but the moment one side is a
+/// value from here, the expectation has to be spelled here as well, or the
+/// two agree only on the host where the separator already matches.
 pub fn slashed(path: &Path) -> String {
     let text = path.to_string_lossy();
     let reduced = plain(&text);

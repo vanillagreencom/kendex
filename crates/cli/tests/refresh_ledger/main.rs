@@ -154,7 +154,7 @@ fn a_blocked_refresh_ends_on_a_ledger_naming_every_outcome_and_its_next_step() {
     assert!(
         printed.contains(&format!(
             "  also at {}",
-            project.join(".agents/skills/growth-guards").display()
+            kendex_core::paths::slashed(&project.join(".agents/skills/growth-guards"))
         )),
         "every position is named, so the reader can act on each: {printed}"
     );
@@ -167,7 +167,7 @@ fn a_blocked_refresh_ends_on_a_ledger_naming_every_outcome_and_its_next_step() {
         ledger(&printed),
         format!(
             "{}: refreshed 3 changes · skipped 1 item on conflict · flagged 2 items on safety",
-            project.display()
+            kendex_core::paths::slashed(&project)
         ),
         "{printed}"
     );
@@ -224,7 +224,10 @@ fn a_clean_refresh_ends_on_the_count_alone() {
     ));
     assert_eq!(
         ledger(&printed),
-        format!("{}: refreshed 2 changes", project.display()),
+        format!(
+            "{}: refreshed 2 changes",
+            kendex_core::paths::slashed(&project)
+        ),
         "a clean run reports its writes and carries no outcome it does not have: {printed}"
     );
 }
@@ -264,7 +267,7 @@ fn a_current_scope_with_findings_still_reads_up_to_date() {
         ledger(&printed),
         format!(
             "{}: up to date · flagged 1 item on safety",
-            project.display()
+            kendex_core::paths::slashed(&project)
         ),
         "{printed}"
     );

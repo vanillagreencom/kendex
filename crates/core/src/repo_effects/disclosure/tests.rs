@@ -81,13 +81,13 @@ fn git_paths_land_in_the_common_dir_and_read_as_shared() {
     };
     assert_eq!(
         hook.path,
-        main.join(".git/hooks/pre-commit").display().to_string()
+        crate::paths::slashed(&main.join(".git/hooks/pre-commit"))
     );
     assert!(hook.shared, "{hook:?}");
     // `.github` shares a prefix with `.git` as text and nothing else.
     assert_eq!(
         workflow.path,
-        linked.join(".github/x").display().to_string()
+        crate::paths::slashed(&linked.join(".github/x"))
     );
     assert!(!workflow.shared, "{workflow:?}");
 }
@@ -123,7 +123,7 @@ fn a_git_path_is_read_by_components_not_by_prefix() {
         };
         assert_eq!(
             written.path,
-            common.join("hooks/pre-commit").display().to_string(),
+            crate::paths::slashed(&common.join("hooks/pre-commit")),
             "{spelling}"
         );
         assert!(written.shared, "{spelling}: {written:?}");
@@ -138,7 +138,7 @@ fn a_git_path_is_read_by_components_not_by_prefix() {
     let [written] = offers.shown[0].writes.as_slice() else {
         panic!("one path: {offers:?}");
     };
-    assert_eq!(written.path, common.display().to_string());
+    assert_eq!(written.path, crate::paths::slashed(&common));
     assert!(written.shared, "{written:?}");
 }
 

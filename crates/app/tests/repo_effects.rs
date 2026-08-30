@@ -189,7 +189,7 @@ fn the_effect_comes_back_unrun_and_a_separate_yes_arms_it() {
     let hooks = f.project.join(".git/hooks");
     let written: Vec<&str> = offer.writes.iter().map(|w| w.path.as_str()).collect();
     assert!(
-        written.contains(&hooks.join("pre-commit").to_str().unwrap()),
+        written.contains(&kendex_core::paths::slashed(&hooks.join("pre-commit")).as_str()),
         "{written:?}"
     );
     assert!(offer.writes.iter().all(|w| w.shared), "{:?}", offer.writes);

@@ -32,7 +32,7 @@ fn shape(setup: &[&str], args: &[&str]) -> Vec<String> {
     let ready = fill(args);
     let borrowed: Vec<&str> = ready.iter().map(String::as_str).collect();
     let printed = said(&kendex(home, &project, "plain", &borrowed));
-    let scope = project.display().to_string();
+    let scope = kendex_core::paths::slashed(&project);
     printed
         .lines()
         .map(|line| match line.split_whitespace().next() {

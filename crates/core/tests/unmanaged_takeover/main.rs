@@ -124,7 +124,7 @@ fn the_refusal_says_which_files_are_in_the_way() {
     );
     assert_eq!(
         row.detail,
-        dir.display().to_string(),
+        kendex_core::paths::slashed(&dir),
         "the row says where they are, and the surface says what that means"
     );
 
@@ -401,10 +401,14 @@ fn the_refusal_names_every_position_a_take_over_empties() {
 
     let audited = audit(&w.env, &w.scope).unwrap();
     let row = deploy_row(&audited.drift);
-    assert_eq!(row.detail, canonical.display().to_string(), "{row:?}");
+    assert_eq!(
+        row.detail,
+        kendex_core::paths::slashed(&canonical),
+        "{row:?}"
+    );
     assert_eq!(
         row.also_in_the_way,
-        vec![link.display().to_string()],
+        vec![kendex_core::paths::slashed(&link)],
         "{row:?}"
     );
 
@@ -437,7 +441,11 @@ fn an_empty_harness_position_is_not_named_as_in_the_way() {
 
     let audited = audit(&w.env, &w.scope).unwrap();
     let row = deploy_row(&audited.drift);
-    assert_eq!(row.detail, canonical.display().to_string(), "{row:?}");
+    assert_eq!(
+        row.detail,
+        kendex_core::paths::slashed(&canonical),
+        "{row:?}"
+    );
     assert!(row.also_in_the_way.is_empty(), "{row:?}");
 }
 

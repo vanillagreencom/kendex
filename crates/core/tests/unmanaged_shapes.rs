@@ -213,7 +213,7 @@ fn a_file_where_a_folder_goes_is_never_offered_the_keep() {
     let row = row.drift.iter().find(|row| row.name == "deploy").unwrap();
     assert_eq!(row.state, DriftState::Conflict);
     assert_eq!(row.cause, Some(DriftCause::UnmanagedWrongShape), "{row:?}");
-    assert_eq!(row.detail, position.display().to_string());
+    assert_eq!(row.detail, kendex_core::paths::slashed(&position));
     assert!(!row.cause.unwrap().can_keep());
     assert!(row.cause.unwrap().can_replace());
     assert!(
@@ -243,7 +243,7 @@ fn a_folder_where_a_file_goes_is_never_offered_the_keep() {
     let row = row.drift.iter().find(|row| row.name == "scout").unwrap();
     assert_eq!(row.state, DriftState::Conflict);
     assert_eq!(row.cause, Some(DriftCause::UnmanagedWrongShape), "{row:?}");
-    assert_eq!(row.detail, position.display().to_string());
+    assert_eq!(row.detail, kendex_core::paths::slashed(&position));
     assert!(!row.cause.unwrap().can_keep());
     assert!(
         adopt(
@@ -333,7 +333,7 @@ fn a_position_reaches_the_row_as_the_path_it_is() {
     assert_eq!(row.cause, Some(DriftCause::UnmanagedContent), "{row:?}");
     assert_eq!(
         row.detail,
-        position.display().to_string(),
+        kendex_core::paths::slashed(&position),
         "the row carries a rendering of the place instead of the place"
     );
     assert!(
