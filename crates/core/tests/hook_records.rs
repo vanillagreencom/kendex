@@ -3,9 +3,11 @@
 //! A lock written before kendex kept a registration, or before it kept a
 //! matcher, says less than a later one — and retires no more than it can
 //! name. Only an entry the record identifies unambiguously comes out;
-//! anything less settles, registers under its own identity, and leaves
-//! the person's entries to them. Outside pi, a refresh never wedges on
-//! what the document holds.
+//! anything less settles here, registers under its own identity, and
+//! leaves the person's entries to them, so a refresh never wedges on what
+//! the document holds. Pi is the one harness that holds instead, because
+//! it is the one whose registry kendex renders whole — `pi_carrier`
+//! carries those cases.
 #![cfg(unix)]
 
 #[path = "../../test_util.rs"]
@@ -111,12 +113,12 @@ fn as_written_by(f: &Fixture, key: &str, keep: &[&str]) {
     fs::write(&path, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
 }
 
-/// A record that names no registration leaves the document alone. The
-/// command is all such a record could look an entry up by, and the
-/// person's own registration of the same command answers that search
-/// too: read as kendex's leftovers, their entry put the hook in conflict
-/// on every refresh, with nothing to settle it. Only pi's reserved-name
-/// move searches by command, because only it deletes what it finds.
+/// A record that names no registration leaves the document alone, and
+/// nothing searches by command to make up for it. The command is all such
+/// a record could look an entry up by, and the person's own registration
+/// of the same command answers that search too: read as kendex's
+/// leftovers, their entry put the hook in conflict on every refresh, with
+/// nothing to settle it.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_record_that_names_no_registration_leaves_their_duplicate_alone() {
