@@ -32,7 +32,7 @@
 #                 account's limit banner below the last user turn on its
 #                 screen — one pass, and the claimed config dir when a live
 #                 lane claim names the window
-#   6. question   a listed lane's pane shows a question/selection prompt
+#   6. question   a question/selection prompt below the last user turn
 #   7. idle-after-return a listed lane whose harness has not exited sits at
 #                 its composer with no work in flight on two consecutive
 #                 passes
@@ -180,8 +180,8 @@ Events, checked in this order every pass:
                              since worked past is old news. The config dir is
                              appended when a live lane claim names this window
                              (last 40 non-empty pane lines follow)
-  EVENT question <lane>      the lane's pane shows a question/selection
-                             prompt (last 40 non-empty pane lines follow)
+  EVENT question <lane>      a question/selection prompt below the last user
+                             turn (last 40 non-empty pane lines follow)
   EVENT idle-after-return <lane>
                              the harness has not exited and its pane sits at
                              the composer (`❯`, Codex's submit
