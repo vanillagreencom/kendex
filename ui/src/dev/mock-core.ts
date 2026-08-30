@@ -83,7 +83,7 @@ export const coreHandlers: Record<string, Handler> = {
         return {
           kind: "needsPrivilege",
           path: "/usr/local/bin/kendex",
-          command: "sudo '/usr/local/bin/kendex' update",
+          command: "sudo kendex update",
         };
       default:
         return null;

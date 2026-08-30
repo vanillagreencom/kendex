@@ -3,14 +3,12 @@
 //! so the rule that no value read off the machine reaches a command string
 //! is kept in one file.
 
-use std::path::Path;
-
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::CommandBeside;
 use crate::install_channel::InstallChannel;
-use crate::names::{quoted, shown};
+use crate::names::shown;
 
 /// What the sidebar card says about the `kendex` command beside the app,
 /// before Update now is pressed — afterwards the app has restarted and
@@ -38,31 +36,8 @@ pub enum CommandNotice {
     NeedsPrivilege { path: String, command: String },
 }
 
-/// What `kendex update` is spelled as when it has to run as root, naming
-/// the file the card just named.
-///
-/// The path, because `sudo` resolves a bare name against its own
-/// `secure_path` and not against this person's `PATH`. `install.sh` reaches
-/// `/usr/local/bin` whenever that is the first of its two directories on
-/// `PATH`, and that is the case that reaches this state at all — the app
-/// cannot write there. A distribution whose `secure_path` leaves it out
-/// answers `command not found`; one carrying a second `kendex` inside
-/// `secure_path` updates that one and leaves this file where it was.
-///
-/// The path and nothing else. Carrying `HOME` would put the record where
-/// the app reads it, and would also point a root process at a tree its
-/// owner controls: the record is opened by name and every component of
-/// that name is theirs to replace, so a person allowed only this one
-/// command under `sudoers` could aim it at a root-owned file. What the
-/// elevated run leaves behind is root's record and a stale one of theirs;
-/// that is a card that stops offering, not a file that changes hands.
-/// KEN-853 carries the record across without a privileged write.
-///
-/// Quoted, not merely shown: `shown` makes a path readable, and this is a
-/// line somebody pastes into a root shell.
-fn elevated_update(path: &Path) -> String {
-    format!("sudo {} update", quoted(&path.display().to_string()))
-}
+/// What `kendex update` is spelled as when it has to run as root.
+const ELEVATED_UPDATE: &str = "sudo kendex update";
 
 impl CommandNotice {
     /// What the card owes a person about this command, or `None` where it
@@ -72,7 +47,7 @@ impl CommandNotice {
             CommandBeside::Ours(_) | CommandBeside::Absent => None,
             CommandBeside::NeedsPrivilege(path) => Some(Self::NeedsPrivilege {
                 path: shown(&path.display().to_string()),
-                command: elevated_update(path),
+                command: ELEVATED_UPDATE.to_owned(),
             }),
             CommandBeside::NotOurs(InstallChannel::Managed { manager, command }) => {
                 Some(Self::Managed {
