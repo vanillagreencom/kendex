@@ -48,13 +48,13 @@ By default the skill runs exactly ONE reviewer: the highest-priority entry in `S
 | `SECOND_OPINION_REVIEW_INSTRUCTIONS` | `"AGENTS.md review-bots.md .github/instructions/*.instructions.md"` | Repo instruction files appended to the review prompt; empty disables |
 | `SECOND_OPINION_TIMEOUT` | `"1080"` | Seconds to wait per external CLI invocation; a review's one retry on a malformed response can double the total. The script computes the detached run's deadline |
 
-`kendex add`/`refresh` seed these keys from this skill's `kendex.settings.toml.example` when the file is missing and add absent keys to an existing file. Run `scripts/second-opinion detect` to see which target a review would use from your current session.
+None of these keys is written into your `kendex.settings.toml`. Each ships the value the scripts read when nothing assigns it, so set the ones you want changed. The app's Settings pane offers the same rows from this skill's `kendex.settings.toml.example`. Run `scripts/second-opinion detect` to see which target a review would use from your current session.
 
 ## Configuration
 
 Defaults work out of the box in a **detected Claude Code or Codex session** — there every key below is optional. Any other client must declare its session model: Pi, OpenCode, Cursor and undetected shells front a model the script cannot probe, so a run there refuses until `SECOND_OPINION_CURRENT_MODEL` names the model the session runs (or `none` when there is no session model, as in CI or a plain terminal). Set shared, non-sensitive defaults in `kendex.settings.toml` under `[env]`. Existing `.env.local` values still work and should be reserved for personal overrides.
 
-Project installs seed `kendex.settings.toml` from this skill's `kendex.settings.toml.example` when the file is missing, or merge any missing second-opinion keys into an existing file without overwriting user values.
+An install writes none of these into `kendex.settings.toml`. Every one ships a working default, so assign a key there only to change it.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|

@@ -55,7 +55,7 @@ Cross-model is enforced in every mode: a run with no eligible target exits 1 nam
 
 ## Configuration
 
-Set non-sensitive defaults in `kendex.settings.toml` under `[env]`; `.env.local` wins over it, and a `.env` file is never read. `SECOND_OPINION_CURRENT_MODEL` and `SECOND_OPINION_FOREGROUND_CAP` are session-only; a project-file foreground-cap declaration is refused, and shipped workflows pass `--foreground` directly. Project installs seed `kendex.settings.toml` from this skill's `kendex.settings.toml.example` when missing and merge only absent second-opinion keys into existing files. Keys, defaults, and the built-in `claude`/`codex` commands: `second-opinion --help`.
+Set non-sensitive defaults in `kendex.settings.toml` under `[env]`; `.env.local` wins over it, and a `.env` file is never read. `SECOND_OPINION_CURRENT_MODEL` and `SECOND_OPINION_FOREGROUND_CAP` are session-only; a project-file foreground-cap declaration is refused, and shipped workflows pass `--foreground` directly. An install writes none of these into `kendex.settings.toml`; every one ships a working default, so assign a key there only to change it. Keys, defaults, and the built-in `claude`/`codex` commands: `second-opinion --help`.
 
 ## Error Handling
 

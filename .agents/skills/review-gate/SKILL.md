@@ -90,8 +90,8 @@ git add .agents/skills/review-gate
 cp .agents/skills/review-gate/templates/review-gate-writer.yml \
    .github/workflows/review-gate-writer.yml
 
-# 3. seed the repo's settings from the shipped example, then edit the
-#    handful of values this repo actually decides (table below)
+# 3. assign the handful of values this repo actually decides (table
+#    below); an install writes none of them, since each has a default
 $EDITOR kendex.settings.toml
 
 # 4. prove the install answers for itself
