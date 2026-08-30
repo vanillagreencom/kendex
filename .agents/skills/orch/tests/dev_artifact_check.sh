@@ -94,11 +94,15 @@ rc=$?
 assert_eq "$rc" "0" "valid implement receipt exits 0"
 assert_eq "$(jq -r '.ok' <<<"$out")" "true" "valid implement receipt reports ok=true"
 assert_eq "$(jq -r '.path' <<<"$out")" "$artifact" "valid implement receipt reports its path"
-assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "valid implement receipt reports reason=valid"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "flagless implement receipt reports reason=valid"
 
-# --- valid: fix receipt (fallback items rule, no --expect-items) ---
+# A flagless round fix automatically requires authorization; this plain
+# non-repository fixture has none and cannot fall through to the item fallback.
 printf '%s' "$valid_fix" > "$artifact"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "valid" "valid fix receipt reports reason=valid"
+set +e
+"$CHECK" --worktree "$worktree" --issue "$issue" --round-id "$R" >/dev/null 2>&1
+assert_eq "$?" "2" "flagless fix receipt cannot bypass round authorization"
+set -e
 
 # --- round-id identity: a DIFFERENT requested round resolves a different path → missing ---
 assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id 9999-0)" "missing" "wrong round id resolves a different path → missing"
@@ -138,19 +142,19 @@ assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "i
 
 # --- incomplete: kind fix OR bundled requires a non-empty, well-formed items[] ---
 printf '%s' "$valid_fix" | jq -c 'del(.items)' > "$artifact"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "incomplete" "fix with items missing reports reason=incomplete"
+assert_eq "$(reason --file "$artifact")" "incomplete" "file-mode fix with items missing reports reason=incomplete"
 printf '%s' "$valid_fix" | jq -c '.items=[]' > "$artifact"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "incomplete" "fix with empty items reports reason=incomplete"
+assert_eq "$(reason --file "$artifact")" "incomplete" "file-mode fix with empty items reports reason=incomplete"
 printf '%s' "$valid_fix" | jq -c '.items="nope"' > "$artifact"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "incomplete" "fix with non-array items reports reason=incomplete"
+assert_eq "$(reason --file "$artifact")" "incomplete" "file-mode fix with non-array items reports reason=incomplete"
 printf '%s' "$valid_fix" | jq -c '.items=[{"n":1,"decision":"Applied"}]' > "$artifact"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "incomplete" "fix with item missing reasoning reports reason=incomplete"
+assert_eq "$(reason --file "$artifact")" "incomplete" "file-mode fix with item missing reasoning reports reason=incomplete"
 printf '%s' "$valid_fix" | jq -c '.items=[{"n":1,"decision":"Applied","reasoning":""}]' > "$artifact"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "incomplete" "fix with empty reasoning reports reason=incomplete"
+assert_eq "$(reason --file "$artifact")" "incomplete" "file-mode fix with empty reasoning reports reason=incomplete"
 printf '%s' "$valid_fix" | jq -c '.items=[{"n":1,"decision":"Nope","reasoning":"x"}]' > "$artifact"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "incomplete" "fix with out-of-enum decision reports reason=incomplete"
+assert_eq "$(reason --file "$artifact")" "incomplete" "file-mode fix with out-of-enum decision reports reason=incomplete"
 printf '%s' "$valid_fix" | jq -c '.items=[{"n":"1","decision":"Applied","reasoning":"x"}]' > "$artifact"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "incomplete" "fix with non-numeric item .n reports reason=incomplete"
+assert_eq "$(reason --file "$artifact")" "incomplete" "file-mode fix with non-numeric item .n reports reason=incomplete"
 
 # bundled implement with empty items → incomplete
 printf '%s' "$valid_impl" | jq -c '.bundled=true' > "$artifact"
@@ -164,8 +168,8 @@ assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "v
 printf '%s' "$valid_analysis" > "$artifact"
 out="$("$CHECK" --worktree "$worktree" --issue "$issue" --round-id "$R")"
 rc=$?
-assert_eq "$rc" "0" "valid analysis receipt exits 0"
-assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "valid analysis receipt reports reason=valid"
+assert_eq "$rc" "0" "flagless analysis receipt exits 0"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "flagless analysis receipt reports reason=valid"
 assert_eq "$(jq -r '.validate' <<<"$out")" "null" "analysis receipt echoes validate=null (no validation ran)"
 # The inverse rule: a commit/validate/validate_note key PRESENT on an analysis
 # artifact is a fabricated claim about a round that ran none → invalid, even
@@ -195,7 +199,7 @@ assert_eq "$(reason --file "$artifact" --expect-items 1,2)" "incomplete" "analys
 
 # --- gate ordering: invalid (scalars/round) beats incomplete (items) ---
 printf '%s' "$valid_fix" | jq -c 'del(.commit) | .items=[]' > "$artifact"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "invalid" "invalid scalar beats incomplete (fix missing .commit + empty items)"
+assert_eq "$(reason --file "$artifact")" "invalid" "file-mode invalid scalar beats incomplete"
 
 # --- --expect-items: exact set coverage for fix rounds ---
 printf '%s' "$valid_fix" > "$artifact"   # items n = [1,2]
@@ -303,6 +307,8 @@ rr_head="$(git -C "$rr_wt" rev-parse HEAD)"
   --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
 assert_eq "$(reason --worktree "$rr_wt" --issue issue-9 --round-id 7-8 --expect-items-from-round)" "valid" \
   "artifact covering the persisted round set → valid (writers round-trip)"
+assert_eq "$(reason --worktree "$rr_wt" --issue issue-9 --round-id 7-8)" "valid" \
+  "flagless fix automatically resolves bound round authorization"
 # an artifact missing a delegated item must fail exactly as with explicit numbers
 "$WRITE" --worktree "$rr_wt" --kind fix --issue issue-9 --round-id 8-9 --branch b --commit "$rr_head" \
   --validate pass --item 1 Applied a >/dev/null
@@ -537,8 +543,8 @@ assert_eq "$(jq -r '.warning' <<<"$out")" "null" "commit-less analysis artifact 
 # gate ordering: scalar invalid beats the commit gates; commit_unresolvable beats incomplete
 printf '%s' "$valid_impl" | jq -c 'del(.commit)' > "$gartifact"
 assert_eq "$(reason --worktree "$gitwt" --issue "$issue" --round-id "$R")" "invalid" "missing .commit in a git worktree stays reason=invalid (scalar gate first)"
-printf '%s' "$valid_fix" | jq -c --arg c "$fake_sha" '.commit=$c | .items=[]' > "$gartifact"
-assert_eq "$(reason --worktree "$gitwt" --issue "$issue" --round-id "$R")" "commit_unresolvable" "commit_unresolvable beats incomplete (fake sha + empty items)"
+printf '%s' "$valid_impl" | jq -c --arg c "$fake_sha" '.commit=$c | .bundled=true | .items=[]' > "$gartifact"
+assert_eq "$(reason --worktree "$gitwt" --issue "$issue" --round-id "$R")" "commit_unresolvable" "commit_unresolvable beats bundled-item incompleteness"
 
 # non-repo worktree keeps today's behavior: commit gates skipped, still valid
 printf '%s' "$valid_impl" > "$artifact"

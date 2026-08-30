@@ -80,7 +80,9 @@ back to the per-wake check alone.
 
 Round mode (the production path): resolves WT/tmp/dev-return-ISSUE-RID.json,
 requires it exists, its internal .round_id == RID, then the scalar/kind, commit
-object (against WT's git repo, kendex#994), and items gates.
+object (against WT's git repo, kendex#994), and items gates. A kind fix receipt
+automatically resolves --expect-items-from-round authorization even when the
+caller supplied no expected-set flag. Implement and analysis remain flagless.
 File mode: validates one explicit JSON file (round_id checked only when --round-id
 is supplied). It is a test/parity affordance — round-trip checks and known-path
 artifacts — with no production caller; the orch workflows always use round mode.
@@ -491,6 +493,7 @@ expect_from_round=false
 round_record=""
 authorization=""
 repo=""
+round_mode=false
 wait_secs=0
 interval=5
 
@@ -511,6 +514,7 @@ if [[ "${1:-}" == "--file" ]]; then
     esac
   done
 elif [[ "${1:-}" == --* ]]; then
+  round_mode=true
   worktree=""
   issue=""
   round_id=""
@@ -617,6 +621,16 @@ else
   exit 2
 fi
 
+reroute_flagless_fix() {
+  if [[ "$round_mode" == "true" && "$expect_from_round" != "true" && -f "$file" ]] \
+    && jq -e '(.kind? // "") == "fix"' "$file" >/dev/null 2>&1; then
+    local rc=0
+    "$0" --worktree "$worktree" --issue "$issue" --round-id "$round_id" --expect-items-from-round \
+      || rc=$?
+    exit "$rc"
+  fi
+}
+
 # Shared tail: --expect-items grammar (both modes), then validate — once, or,
 # with --wait, repeatedly until the verdict leaves "wait" or the deadline lands.
 if [[ -n "$expect_items" && ! "$expect_items" =~ $EXPECT_GRAMMAR ]]; then
@@ -631,6 +645,7 @@ if (( wait_secs > 0 )); then
   # deadline — and never depends on the agent's return message being delivered.
   deadline=$(( $(date +%s) + wait_secs ))
   while :; do
+    reroute_flagless_fix
     rc=0
     out="$(validate_artifact "$file" "$want_round" "$expect_items" "$repo" "$authorization")" || rc=$?
     verdict="$(jq -r '.verdict // "wait"' <<<"$out" 2>/dev/null || printf 'wait')"
@@ -645,4 +660,5 @@ if (( wait_secs > 0 )); then
     sleep "$sleep_for"
   done
 fi
+reroute_flagless_fix
 if validate_artifact "$file" "$want_round" "$expect_items" "$repo" "$authorization"; then exit 0; else exit 1; fi
