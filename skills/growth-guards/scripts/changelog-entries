@@ -240,8 +240,10 @@ while IFS= read -r -d '' rec; do
     refuse "$f" "names no section" "a fragment is <dir>/<section>/<name>.md, section one of:${SECTIONS% }"
     continue
   fi
-  gg_read_blob "$sha" "$f" changelog
-  if gg_blob_is_binary "$GG_TMP/blob" "$f"; then
+  # The one path into a changelog blob, in lib/changelog-grammar.sh: it reads
+  # the bytes and proves them text this family can measure. Binary is the only
+  # answer left to phrase, and a fragment nothing can read is refused.
+  if ! gg_changelog_blob "$sha" "$f"; then
     refuse "$f" "holds binary content" "a fragment is the Markdown list item it becomes"
     continue
   fi
@@ -258,7 +260,6 @@ while IFS= read -r -d '' rec; do
   [ "$status" -eq 0 ] || gg_collection_error "could not measure the entry in $(gg_shown "$f") (awk exit $status)"
   while IFS="$GG_TAB" read -r kind a b; do
     case "$kind" in
-      X) gg_collection_error "$(gg_shown "$f") line $a is not valid UTF-8 — an entry with no character count cannot be measured against the cap" ;;
       M)
         [ "$a" -gt "$CAP" ] || continue
         echo "changelog-entries FAIL long entry: $(gg_shown "$f") — $a characters (cap $CAP)"
@@ -300,6 +301,9 @@ else
       head_entry="$(git ls-tree HEAD -- ":(literal)$RECORD")" || tree_status=$?
       [ "$tree_status" -eq 0 ] \
         || gg_collection_error "could not probe HEAD for $(gg_shown "$RECORD") (git ls-tree exit $tree_status)"
+      # Record shape: "<mode> <type> <sha>\t<path>".
+      head_sha="${head_entry#* * }"
+      head_sha="${head_sha%%"$GG_TAB"*}"
       ;;
     1) ;;
     *) gg_collection_error "could not resolve HEAD while reading $(gg_shown "$RECORD") (git rev-parse exit $head_status)" ;;
@@ -307,10 +311,20 @@ else
   if [ -z "$head_entry" ]; then
     RECORD_NOTE="; no record to compare — HEAD carries no $(gg_shown "$RECORD") yet"
   else
-    git cat-file blob "$RECORD_SHA" >"$GG_TMP/record.index" \
-      || gg_collection_error "could not read the staged $(gg_shown "$RECORD")"
-    git show "HEAD:$RECORD" >"$GG_TMP/record.head" \
-      || gg_collection_error "could not read HEAD's $(gg_shown "$RECORD")"
+    # Both copies come in by the same path the fragments do, so the binary
+    # and encoding rules cannot reach one scope and miss the other. A record
+    # nothing can read is a collection error rather than a violation: there is
+    # no entry to rewrite, and no comparison to make.
+    for side in index head; do
+      case "$side" in
+        index) side_sha="$RECORD_SHA" ;;
+        head) side_sha="$head_sha" ;;
+      esac
+      gg_changelog_blob "$side_sha" "$RECORD" \
+        || gg_collection_error "$(gg_shown "$RECORD") holds binary content in its $side copy — the collated record is not changelog text"
+      cat -- "$GG_TMP/blob" >"$GG_TMP/record.$side" \
+        || gg_collection_error "could not take the $side copy of $(gg_shown "$RECORD")"
+    done
     for side in index head; do
       ur_status=0
       LC_ALL=C awk "$GG_UNRELEASED_AWK" <"$GG_TMP/record.$side" >"$GG_TMP/ur.$side" || ur_status=$?

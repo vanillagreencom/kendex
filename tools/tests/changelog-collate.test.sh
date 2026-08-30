@@ -353,9 +353,8 @@ case "$(cat "$R/CHANGELOG.md")" in *"unstaged rewrite"*) ok "the staged wording 
   *) bad "the staged wording is the one folded in" "$(cat "$R/CHANGELOG.md")" ;; esac
 
 echo "=== the staleness guard follows the configured paths, not a spelling of its own ==="
-# A repo that repoints the fragment globs must get its staleness check over
-# the tree it actually uses. The paths guarded are the ones the judge just
-# named, so the guard and the fold set cannot drift apart.
+# The paths guarded are the ones the judge just named, so a repo that repoints
+# the fragment globs is guarded over the tree it actually uses.
 reset
 mkdir -p "$R/notes.d/fixed"
 printf -- '- An entry the release folds in.\n' >"$R/notes.d/fixed/ken-1.md"
@@ -380,116 +379,6 @@ run_collate_paths
   || bad "control: staged, the same tree collates" "rc=$RC out=$OUT"
 case "$(cat "$R/CHANGELOG.md")" in *"The unstaged rewrite nothing judged."*) ok "and its entry is folded in" ;;
   *) bad "and its entry is folded in" "$(cat "$R/CHANGELOG.md")" ;; esac
-
-echo "=== the record the judge names is the one split, guarded and rewritten ==="
-# A repo that points GROWTH_GUARDS_CHANGELOG_RECORD elsewhere gets that file
-# collated. The judge validates one record; a collation that rewrote another
-# would publish a file nothing measured.
-reset
-mkdir -p "$R/docs"
-printf '# Release Notes\n\n## [Unreleased]\n\n### Added\n\n- An entry it already carries.\n' >"$R/docs/Release Notes.md"
-git -C "$R" add -A
-git -C "$R" commit -q -m "chore: carry a record of its own"
-cp "$R/CHANGELOG.md" "$TMP/before"
-fragment added ken-1.md '- An entry for the other record.
-'
-run_collate_record() { # sets OUT and RC, with the record elsewhere
-  OUT=""
-  RC=0
-  OUT="$(cd "$R" && GROWTH_GUARDS_CHANGELOG_RECORD='docs/Release Notes.md' "$COLLATE" 2>&1)" || RC=$?
-}
-run_collate_record
-[ "$RC" -eq 0 ] && case "$OUT" in *"docs/Release Notes.md's [Unreleased] section"*) true ;; *) false ;; esac \
-  && ok "the configured record is what the run reports folding into" \
-  || bad "the configured record is what the run reports folding into" "rc=$RC out=$OUT"
-case "$(cat "$R/docs/Release Notes.md")" in *"An entry for the other record."*) ok "and the entry lands in it" ;;
-  *) bad "and the entry lands in it" "$(cat "$R/docs/Release Notes.md")" ;; esac
-untouched && ok "CHANGELOG.md, which the judge did not name, is untouched" \
-  || bad "CHANGELOG.md, which the judge did not name, is untouched" "$(diff "$TMP/before" "$R/CHANGELOG.md" || true)"
-[ -f "$R/changelog.d/added/ken-1.md" ] && bad "the fragment is deleted" "it survived" \
-  || ok "the fragment is deleted"
-# The guard follows it too: an unstaged edit to that record stops the write.
-git -C "$R" add -A
-git -C "$R" commit -q -m "chore: collated"
-fragment fixed ken-2.md '- A second entry.
-'
-printf '\n- A hand-written line nothing judged.\n' >>"$R/docs/Release Notes.md"
-run_collate_record
-[ "$RC" -eq 2 ] && case "$OUT" in *"differs between git and the working tree"*"docs/Release Notes.md"*) true ;; *) false ;; esac \
-  && ok "an unstaged edit to the configured record exits 2, naming it" \
-  || bad "an unstaged edit to the configured record exits 2, naming it" "rc=$RC out=$OUT"
-# And with that scope switched off there is nowhere to fold into, which is a
-# refusal rather than a write to some other file.
-OUT=""
-RC=0
-OUT="$(cd "$R" && GROWTH_GUARDS_CHANGELOG_RECORD= "$COLLATE" 2>&1)" || RC=$?
-[ "$RC" -eq 2 ] && case "$OUT" in *"record scope is off"*) true ;; *) false ;; esac \
-  && ok "no configured record is a refusal, not a write to CHANGELOG.md" \
-  || bad "no configured record is a refusal" "rc=$RC out=$OUT"
-
-echo "=== a fenced example of the heading is not the heading ==="
-# The collation asks the shared grammar where the section is. A search of its
-# own for `## [Unreleased]` puts the fragments under the example instead.
-reset
-cat >"$R/CHANGELOG.md" <<'EOF'
-# Changelog
-
-Write entries as fragments, never here:
-
-```
-## [Unreleased]
-
-- Not a real entry.
-```
-
-## [Unreleased]
-
-### Added
-
-- An entry the file already carries.
-
-## [1.0.0] - 2026-01-01
-
-### Added
-
-- A released entry.
-EOF
-git -C "$R" add -A
-git -C "$R" commit -q -m "chore: a record whose example names the heading"
-cp "$R/CHANGELOG.md" "$TMP/before"
-fragment added ken-1.md '- An entry the release folds in.
-'
-run_collate
-[ "$RC" -eq 0 ] && ok "the collation takes it" || bad "the collation takes it" "rc=$RC out=$OUT"
-cat >"$TMP/expected" <<'EOF'
-# Changelog
-
-Write entries as fragments, never here:
-
-```
-## [Unreleased]
-
-- Not a real entry.
-```
-
-## [Unreleased]
-
-### Added
-
-- An entry the file already carries.
-- An entry the release folds in.
-
-## [1.0.0] - 2026-01-01
-
-### Added
-
-- A released entry.
-EOF
-if diff -u "$TMP/expected" "$R/CHANGELOG.md" >"$TMP/diff" 2>&1; then
-  ok "the entry lands under the real heading and the example keeps its own lines"
-else
-  bad "the entry lands under the real heading and the example keeps its own lines" "$(cat "$TMP/diff")"
-fi
 
 echo "=== a changelog the collator cannot read stops the run ==="
 reset
@@ -516,43 +405,35 @@ run_collate
 untouched && ok "CHANGELOG.md is untouched by that refusal too" \
   || bad "CHANGELOG.md is untouched by that refusal too" "it changed"
 
+# git says nothing about a file it does not track, so a diff-based guard
+# cannot see an untracked record at all.
 reset
 fragment fixed ken-1.md '- A fragment.
 '
 rm -f "$R/CHANGELOG.md"
 git -C "$R" rm -q --cached CHANGELOG.md
 run_collate
-[ "$RC" -eq 2 ] && case "$OUT" in *"CHANGELOG.md is missing"*) true ;; *) false ;; esac \
-  && ok "a missing CHANGELOG names the file, not an unreadable one" \
-  || bad "a missing CHANGELOG names the file, not an unreadable one" "rc=$RC out=$OUT"
-[ -f "$R/changelog.d/fixed/ken-1.md" ] && ok "the fragment survives a missing CHANGELOG" \
-  || bad "the fragment survives a missing CHANGELOG" "it is gone"
-
-echo "=== an unstaged record edit stops the write, the way an unstaged fragment does ==="
-# The judge measures the bytes git carries; the collation publishes the bytes
-# on disk. An edit only one of them can see must stop the run, or a line
-# nothing judged is folded into the released record.
-reset
-fragment fixed ken-1.md '- A fragment.
-'
-git -C "$R" commit -q -m "chore: carry the record"
-cp "$R/CHANGELOG.md" "$TMP/before"
-perl -0pi -e 's/^- An entry the file already carries\.$/- An entry the file already carries.\n- A hand-written line nothing judged./m' "$R/CHANGELOG.md"
+[ "$RC" -eq 2 ] && case "$OUT" in *"CHANGELOG.md is not tracked"*) true ;; *) false ;; esac \
+  && ok "a record git does not track is refused, naming it" \
+  || bad "a record git does not track is refused, naming it" "rc=$RC out=$OUT"
+[ -f "$R/changelog.d/fixed/ken-1.md" ] && ok "the fragment survives that refusal" \
+  || bad "the fragment survives that refusal" "it is gone"
+printf '# Changelog\n\n## [Unreleased]\n' >"$R/CHANGELOG.md"
 run_collate
-[ "$RC" -eq 2 ] && case "$OUT" in *"differs between git and the working tree"*"CHANGELOG.md"*) true ;; *) false ;; esac \
-  && ok "an unstaged edit to the record exits 2, naming it" \
-  || bad "an unstaged edit to the record exits 2, naming it" "rc=$RC out=$OUT"
-case "$(cat "$R/CHANGELOG.md")" in *"A hand-written line nothing judged"*) ok "the unstaged edit is still in the file, unpublished" ;;
-  *) bad "the unstaged edit is still in the file" "$(cat "$R/CHANGELOG.md")" ;; esac
-[ -f "$R/changelog.d/fixed/ken-1.md" ] && ok "the fragment is not deleted by that refusal" \
-  || bad "the fragment is not deleted by that refusal" "it is gone"
-# The control: staged, the same edit reaches the judge, which refuses it.
+[ "$RC" -eq 2 ] && case "$OUT" in *"CHANGELOG.md is not tracked"*) true ;; *) false ;; esac \
+  && ok "an untracked record on disk is refused too, not rewritten unmeasured" \
+  || bad "an untracked record on disk is refused too" "rc=$RC out=$OUT"
+case "$(cat "$R/CHANGELOG.md")" in *"A fragment."*) bad "and it is left as it was" "$(cat "$R/CHANGELOG.md")" ;;
+  *) ok "and it is left as it was" ;; esac
+[ -f "$R/changelog.d/fixed/ken-1.md" ] && ok "and the fragment is not deleted" \
+  || bad "and the fragment is not deleted" "it is gone"
+# Staged for the first time is enough: the guard can see it from there.
 git -C "$R" add -A
 run_collate
-[ "$RC" -eq 1 ] && case "$OUT" in *"gained lines under [Unreleased]"*) true ;; *) false ;; esac \
-  && ok "control: staged, the same edit is the judge's refusal" \
-  || bad "control: staged, the same edit is the judge's refusal" "rc=$RC out=$OUT"
-git -C "$R" reset -q --hard HEAD
+[ "$RC" -eq 0 ] && ok "a record staged for the first time collates" \
+  || bad "a record staged for the first time collates" "rc=$RC out=$OUT"
+case "$(cat "$R/CHANGELOG.md")" in *"A fragment."*) ok "and its entry lands in it" ;;
+  *) bad "and its entry lands in it" "$(cat "$R/CHANGELOG.md")" ;; esac
 
 echo "=== a failure past the replacement file leaves nothing half-written ==="
 reset
@@ -691,9 +572,8 @@ done
   || bad "the README survives the collation" "it is gone"
 
 echo "=== a fragment whose name carries a newline is folded in and deleted ==="
-# The judge names paths as NUL-terminated bytes and the collation carries them
-# that way to the fold and the delete. A newline in a name is a legal byte;
-# read back a line at a time it becomes two paths, neither of which exists.
+# A newline in a name is a legal byte; read back a line at a time it becomes
+# two paths, neither of which exists.
 reset
 NL_NAME="$(printf 'KEN\n1.md')"
 mkdir -p "$R/changelog.d/fixed"

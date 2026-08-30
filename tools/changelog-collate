@@ -136,6 +136,19 @@ fi
 [ -n "$RECORD" ] \
   || die "the changelog-entries record scope is off (GROWTH_GUARDS_CHANGELOG_RECORD is empty), so there is no collated record to fold these fragments into"
 
+# git carries the record, or the staleness guard below cannot see it: `git
+# diff` says nothing about an untracked file, so the collation would rewrite
+# a record no judge ever measured and then delete the tracked fragments that
+# went into it. A record staged for the first time satisfies this; one that
+# was never added does not.
+tracked=0
+git ls-files --error-unmatch -- ":(literal)$RECORD" >/dev/null 2>&1 || tracked=$?
+case "$tracked" in
+  0) : ;;
+  1) die "$RECORD is not tracked, so nothing measured it and nothing would notice it change — stage it first" ;;
+  *) die "could not ask git whether $RECORD is tracked (git ls-files exit $tracked) — the collation could not run" ;;
+esac
+
 # The write folds in each file on disk and then deletes it, and it replaces
 # the record with what it read there — so an unstaged edit to any of them
 # would be published without the judge ever having measured it. The paths

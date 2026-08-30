@@ -173,12 +173,18 @@ fragment. The count is in characters: a UTF-8 sequence counts once, so an em
 dash costs one, and a fragment wrapped over four indented lines measures the
 same as the same text on one.
 
-Text that is not valid UTF-8 is a collection error naming the line, not a
-skip. git calls such a blob text whenever it holds no NUL, and there is no
-character count to take over it — a run of stray continuation bytes would
-otherwise measure as almost nothing. The quoted first line has every C0
-control except tab, and DEL, replaced: bytes in a tracked file must not reach
-the reader's terminal through a diagnostic.
+Both scopes reach a blob by one path. It reads the bytes and proves them text
+this check can measure: a blob git would call binary — a NUL in its leading
+bytes — is refused, and text that is not valid UTF-8 is a collection error
+naming the line, since there is no character count to take over it and a run
+of stray continuation bytes would otherwise measure as almost nothing. A
+fragment that fails either is a violation; a record that does is a collection
+error, because there is no comparison left to make. One path, so a rule added
+to it cannot reach the fragments and miss the record.
+
+The quoted first line has every C0 control except tab, and DEL, replaced:
+bytes in a tracked file must not reach the reader's terminal through a
+diagnostic.
 
 ## prose
 

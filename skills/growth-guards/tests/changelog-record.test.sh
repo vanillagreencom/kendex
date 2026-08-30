@@ -259,6 +259,62 @@ git -C "$R" commit -qm "chore: carry the fenced record"
 run_ce
 [ "$RC" -eq 0 ] && ok "control: the same fenced document with nothing added passes" \
   || bad "control: the same fenced document with nothing added passes" "rc=$RC out=$OUT"
+echo "=== the record is read the way a fragment is: text, or no verdict ==="
+new_repo recordtext
+printf -- '- A fragment.\n' | frag fixed ken-1.md
+printf '# Changelog\n\n## [Unreleased]\n\n- One line.\n' >"$R/CHANGELOG.md"
+stage
+git -C "$R" commit -qm base
+run_ce
+[ "$RC" -eq 0 ] && ok "control: an ordinary record is judged and clean" \
+  || bad "control: an ordinary record is judged and clean" "rc=$RC out=$OUT"
+# UNCHANGED and holding bytes that are not valid UTF-8. Nothing is gained, so
+# a comparison alone reports clean over a document it cannot count — which is
+# the refusal the fragment scope has always given.
+{
+  printf '# Changelog\n\n## [Unreleased]\n\n- One line.\n  '
+  LC_ALL=C awk 'BEGIN { for (i = 0; i < 20; i++) printf "%c", 191 }'
+  printf '\n'
+} >"$R/CHANGELOG.md"
+stage
+git -C "$R" commit -qm "chore: a record with stray bytes"
+run_ce
+[ "$RC" -eq 2 ] && case "$OUT" in *"CHANGELOG.md line 6 is not valid UTF-8"*) true ;; *) false ;; esac \
+  && ok "an unchanged record that is not valid UTF-8 is exit 2, naming the line" \
+  || bad "an unchanged record that is not valid UTF-8 is exit 2" "rc=$RC out=$OUT"
+case "$OUT" in *"changelog-entries: OK"*) bad "no OK verdict may accompany a record it could not read" "$OUT" ;;
+  *) ok "no OK verdict accompanies a record it could not read" ;; esac
+# GAINED invalid bytes are the same refusal, not a line violation: the
+# encoding is judged before anything is compared.
+{
+  printf '# Changelog\n\n## [Unreleased]\n\n- One line.\n  '
+  LC_ALL=C awk 'BEGIN { for (i = 0; i < 20; i++) printf "%c", 191 }'
+  printf '\n- A hand-written line.\n'
+} >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 2 ] && case "$OUT" in *"is not valid UTF-8"*) true ;; *) false ;; esac \
+  && ok "newly gained invalid bytes are the encoding refusal, not a gained-line violation" \
+  || bad "newly gained invalid bytes are the encoding refusal" "rc=$RC out=$OUT"
+case "$OUT" in *"gained lines under [Unreleased]"*) bad "no gained-line verdict over unreadable bytes" "$OUT" ;;
+  *) ok "no gained-line verdict over unreadable bytes" ;; esac
+# Binary content is the other half of the same discipline. Every byte value,
+# so a NUL falls in the sample git classifies on.
+{
+  printf '# Changelog\n\n## [Unreleased]\n\n- One line.\n'
+  LC_ALL=C awk 'BEGIN { for (i = 0; i < 256; i++) printf "%c", i }'
+} >"$R/CHANGELOG.md"
+stage
+[ -z "$(git -C "$R" grep --cached -I -l . -- CHANGELOG.md)" ] \
+  && ok "fixture: git itself calls the record binary" \
+  || bad "fixture: git itself calls the record binary" "git grep listed it"
+run_ce
+[ "$RC" -eq 2 ] && case "$OUT" in *"holds binary content"*) true ;; *) false ;; esac \
+  && ok "a binary record is exit 2, never compared line by line" \
+  || bad "a binary record is exit 2" "rc=$RC out=$OUT"
+case "$OUT" in *"changelog-entries: OK"*) bad "no OK verdict may accompany a binary record" "$OUT" ;;
+  *) ok "no OK verdict accompanies a binary record" ;; esac
+
 echo "=== the comparison does not turn on the caller's collation ==="
 # comm and its inputs must agree on one order. These lines sort one way by
 # byte and another under a locale that folds punctuation, so a mismatch makes

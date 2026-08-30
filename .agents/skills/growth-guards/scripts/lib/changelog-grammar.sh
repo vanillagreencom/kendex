@@ -58,10 +58,50 @@ BEGIN { empty = "has no entry in it — a fragment is the Markdown list item it 
 END { if (!seen) print empty }
 '
 
-# One measurement row, "M<TAB>characters<TAB>first line", or "X<TAB>line" for
-# text that cannot be measured. A fragment is one list item whose later lines
-# all indent under it, so measuring is joining every line and counting what
-# comes out — there is no second entry to find a boundary for.
+# The first line of a blob that is not valid UTF-8, or nothing. Strict, as the
+# byte grammar RFC 3629 defines it: a run of stray continuation bytes, an
+# overlong form, a surrogate encoding and an out-of-range lead byte are each
+# text with no character count, and counting one would read a run of bytes as
+# almost nothing.
+GG_UTF8_AWK='
+BEGIN {
+  UTF8 = "^([\001-\177]"
+  UTF8 = UTF8 "|[\302-\337][\200-\277]"
+  UTF8 = UTF8 "|\340[\240-\277][\200-\277]"
+  UTF8 = UTF8 "|[\341-\354][\200-\277][\200-\277]"
+  UTF8 = UTF8 "|\355[\200-\237][\200-\277]"
+  UTF8 = UTF8 "|[\356-\357][\200-\277][\200-\277]"
+  UTF8 = UTF8 "|\360[\220-\277][\200-\277][\200-\277]"
+  UTF8 = UTF8 "|[\361-\363][\200-\277][\200-\277][\200-\277]"
+  UTF8 = UTF8 "|\364[\200-\217][\200-\277][\200-\277])*$"
+}
+{ line = $0; sub(/\r$/, "", line) }
+line !~ UTF8 { print NR; exit }
+'
+
+# ONE path into a changelog blob, whichever scope is reading it. The bytes
+# land in $GG_TMP/blob having been proven to be text this family can measure:
+# git calls a blob binary when a NUL falls in its leading bytes, and text that
+# is not valid UTF-8 has no character count to take. Two scopes reading a blob
+# their own way is two places for the next rule to be added to one of.
+#
+# Binary is the caller's to phrase — a fragment is refused, a record cannot be
+# compared at all — so it comes back as status 1 rather than a verdict here.
+gg_changelog_blob() { # SHA LABEL — fills $GG_TMP/blob; 1 = binary, no verdict
+  local sha="$1" label="$2" bad
+  gg_read_blob "$sha" "$label" changelog
+  ! gg_blob_is_binary "$GG_TMP/blob" "$label" || return 1
+  bad="$(LC_ALL=C awk "$GG_UTF8_AWK" <"$GG_TMP/blob")" \
+    || gg_collection_error "could not read $(gg_shown "$label") to check its encoding"
+  [ -z "$bad" ] \
+    || gg_collection_error "$(gg_shown "$label") line $bad is not valid UTF-8 — text with no character count cannot be measured"
+}
+
+# One measurement row, "M<TAB>characters<TAB>first line". A fragment is one
+# list item whose later lines all indent under it, so measuring is joining
+# every line and counting what comes out — there is no second entry to find a
+# boundary for. It measures; it validates nothing, because gg_changelog_blob
+# has already proven these bytes are text this family can count.
 #
 # LC_ALL=C is what makes the character count exact: it puts awk on bytes, and
 # gg_chars subtracts the continuation bytes to turn bytes back into
@@ -74,28 +114,13 @@ END { if (!seen) print empty }
 GG_ENTRY_AWK="$GG_CHARS_AWK_FN"'
 BEGIN {
   CTRL = "[\001-\010\013-\037\177]"
-  # Strict UTF-8, spelled out as the byte grammar RFC 3629 defines: the count
-  # below is "bytes that are not continuation bytes", which is the character
-  # count only while every continuation byte follows a lead byte that claims
-  # it. A line of stray continuation bytes would otherwise measure as nothing.
-  UTF8 = "^([\001-\177]"
-  UTF8 = UTF8 "|[\302-\337][\200-\277]"
-  UTF8 = UTF8 "|\340[\240-\277][\200-\277]"
-  UTF8 = UTF8 "|[\341-\354][\200-\277][\200-\277]"
-  UTF8 = UTF8 "|\355[\200-\237][\200-\277]"
-  UTF8 = UTF8 "|[\356-\357][\200-\277][\200-\277]"
-  UTF8 = UTF8 "|\360[\220-\277][\200-\277][\200-\277]"
-  UTF8 = UTF8 "|[\361-\363][\200-\277][\200-\277][\200-\277]"
-  UTF8 = UTF8 "|\364[\200-\217][\200-\277][\200-\277])*$"
 }
-{ line = $0; sub(/\r$/, "", line) }
-line !~ UTF8 { printf "X\t%d\n", NR; bad = 1; exit }
 {
+  line = $0; sub(/\r$/, "", line)
   if (first == "" && line ~ /[^ \t]/) first = line
   text = text " " line
 }
 END {
-  if (bad) exit
   gsub(/[ \t]+/, " ", text)
   sub(/^ /, "", text)
   sub(/ $/, "", text)
