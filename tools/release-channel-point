@@ -70,7 +70,7 @@ elif ! grep -qxF latest.json <<< "$assets"; then
   # fresh, any tag would pass the comparison it exists to face, which is the
   # rollback this guard is here to refuse. Repair is a person's, not a run's.
   if [ -n "$assets" ]; then
-    why="the ${CHANNEL} channel carries assets but no latest.json, so nothing here can say what it holds"
+    why="the ${CHANNEL} channel carries $(paste -sd' ' - <<< "$assets") and no latest.json, so nothing here can say what it holds; those have to come off before a tag re-run publishes anything"
   else
     state=fresh
   fi
@@ -144,10 +144,11 @@ done < <(uploaded)
 # is the only emptiness check the write needs.
 short=""
 for file in $MANIFESTS; do
-  [ -f "$file" ] || short="$short ${file#dist/}"
+  [ -f "$file" ] && continue
+  if [ -z "$short" ]; then short="${file#dist/}"; else short="$short or ${file#dist/}"; fi
 done
 if [ -n "$short" ]; then
-  echo "::error::Nothing was written to the ${CHANNEL} channel: this run was handed no${short}, and the channel's manifests are published together or not at all. Re-run the tag."
+  echo "::error::Nothing was written to the ${CHANNEL} channel: this run was handed no ${short}, and the channel's manifests are published together or not at all. Re-run the tag."
   exit 1
 fi
 # The write begins here, past the verdict and past the list. A channel that
@@ -163,13 +164,15 @@ fi
 if ! gh release upload "$CHANNEL" "${publishing[@]}" \
      --repo "$GITHUB_REPOSITORY" --clobber; then
   # `gh` deletes before it uploads and uploads in parallel, so a failure can
-  # leave anything from the whole set to nothing at all and this run cannot
-  # read back which. The next run can, and its own refusals say what it
-  # found, so this one states what it did and stops there.
+  # leave anything from the whole set to nothing at all, old assets a
+  # cancelled worker never deleted included. This run does not read back
+  # which: a read after a failed call can fail too, and a message naming a
+  # state nobody established is what stops anyone looking. The next run does
+  # read it, and its own refusals say what it found.
   published=""
   if [ -n "$absent" ]; then
     published=" This run is what published that channel; there was none before it."
   fi
-  echo "::error::Uploading to the ${CHANNEL} channel failed, and what it carries now is whatever landed before that, which this run cannot read back.${published} Re-run the tag: that run reads the channel and either writes it or names what has to come off it by hand."
+  echo "::error::Uploading to the ${CHANNEL} channel failed, and what it carries now is some mixture of what was already there and what landed, which this run does not read back.${published} Re-run the tag: that run reads the channel and either writes it or names what has to come off it by hand."
   exit 1
 fi

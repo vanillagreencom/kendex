@@ -2,8 +2,8 @@
 //! changes the channel fails, and what the run after it does with that.
 //! `gh release upload --clobber` deletes an asset before uploading its
 //! replacement and uploads in parallel, so a failure can leave anything from
-//! the whole set to nothing at all, and the run that failed cannot read back
-//! which. Each state below is driven out of that one branch, and each is
+//! the whole set to nothing at all, and the run that failed does not read
+//! back which. Each state below is driven out of that one branch, and each is
 //! answered by the next run rather than by the failure.
 //!
 //! The guard's reads and its verdict are `channel_point.rs`, whose fixture
@@ -21,9 +21,9 @@ use crate::channel_point::{Channel, Fixture, STAGED};
 /// update at all.
 ///
 /// What it says is what this run knows: the upload failed, and the channel
-/// carries whatever landed. It names no post-failure state, because it has
-/// no way to read one — the three tests below drive three different states
-/// out of the same branch.
+/// carries some mixture of what was there and what landed. It names no
+/// post-failure state, because it does not read one — the three tests below
+/// drive three different states out of the same branch.
 #[cfg(unix)]
 #[test]
 fn a_failed_upload_fails_the_job_and_defers_to_the_next_run() {
@@ -48,7 +48,7 @@ fn a_failed_upload_fails_the_job_and_defers_to_the_next_run() {
     let channel = channel_step_env("CHANNEL");
     for said in [
         format!("Uploading to the {channel} channel failed"),
-        "which this run cannot read back".to_owned(),
+        "which this run does not read back".to_owned(),
         "Re-run the tag: that run reads the channel".to_owned(),
     ] {
         assert!(run.output.contains(&said), "{said} missing: {}", run.output);
@@ -96,6 +96,11 @@ fn a_failed_upload_that_kept_latest_json_is_written_by_the_re_run() {
 /// latest.json, so the channel carries assets nothing can read a version off
 /// and every later run refuses it. The tag re-run publishes nothing, and the
 /// message that sent the operator at it is the one that says so.
+///
+/// The two messages are asserted against each other here, because nothing
+/// checking them together is how they drifted the first time: the failure
+/// promises the next run names what has to come off, so the refusal has to
+/// name it.
 #[cfg(unix)]
 #[test]
 fn a_failed_upload_that_lost_latest_json_refuses_every_later_run() {
@@ -112,6 +117,13 @@ fn a_failed_upload_that_lost_latest_json_refuses_every_later_run() {
         "the fixture did not lose latest.json, so this proves nothing: {:?}",
         failed.calls
     );
+    assert!(
+        failed
+            .output
+            .contains("names what has to come off it by hand"),
+        "{}",
+        failed.output
+    );
 
     // The re-run the message sends them on, with nothing failing.
     let again = channel.run("1.0.0-rc2", &[], &[]);
@@ -125,9 +137,13 @@ fn a_failed_upload_that_lost_latest_json_refuses_every_later_run() {
         "the re-run published over the leftovers: {:?}",
         again.calls
     );
+    // The promise kept: the asset by name, and that it has to go.
     assert!(
-        again.output.contains("carries assets but no latest.json"),
-        "{}",
+        again
+            .output
+            .contains("carries feed.json and no latest.json")
+            && again.output.contains("have to come off"),
+        "the refusal did not name what the failure promised: {}",
         again.output
     );
     assert_eq!(

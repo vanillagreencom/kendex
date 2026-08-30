@@ -457,6 +457,13 @@ fn a_run_handed_no_manifests_writes_nothing() {
         "an empty dist still uploaded: {:?}",
         run.calls
     );
+    // Both names, as a sentence: pasted together they read as a typo in a
+    // CI log, which is the one place this message is ever read.
+    assert!(
+        run.output.contains("handed no latest.json or feed.json"),
+        "{}",
+        run.output
+    );
 }
 
 /// The channel's two manifests are one answer, and either one alone is half
@@ -489,6 +496,69 @@ fn a_run_handed_half_the_manifests_writes_nothing() {
             "the run did not say which half it was missing: {}",
             run.output
         );
+    }
+}
+
+/// The forward-only rule, asked of a channel this guard wrote rather than of
+/// one the fixture posed. The version comes back out of the manifest the
+/// first run uploaded, so the read the whole rule rests on is driven end to
+/// end: a stub that put an empty file up there would leave the second run
+/// with no version and no `hold` to make.
+#[cfg(unix)]
+#[test]
+fn a_channel_this_guard_wrote_holds_against_an_older_tag() {
+    let channel = Fixture::new(Channel::Empty, &STAGED);
+    let wrote = channel.run("1.0.0-rc9", &[], &[]);
+    assert_eq!(wrote.code, 0, "the first run refused: {}", wrote.output);
+
+    let older = channel.run("1.0.0-rc2", &[], &[]);
+    assert_eq!(
+        older.code, 0,
+        "the older tag was an error: {}",
+        older.output
+    );
+    assert!(
+        older.ran("release upload").is_none(),
+        "the older tag rolled the channel back: {:?}",
+        older.calls
+    );
+    assert!(
+        older
+            .output
+            .contains("carries 1.0.0-rc9, ahead of 1.0.0-rc2"),
+        "{}",
+        older.output
+    );
+    assert_eq!(
+        older.after, wrote.after,
+        "the run that held still changed the channel: {:?}",
+        older.calls
+    );
+}
+
+/// The accepting side of the pair rule. Only the two manifests are required,
+/// so a release built for fewer targets still points the channel — a guard
+/// that grew to require a per-target document would refuse every one of them
+/// and hold the channel until somebody read the job log.
+#[cfg(unix)]
+#[test]
+fn a_release_with_no_digests_document_still_points_the_channel() {
+    let run = point_channel_staging(
+        Channel::Carrying("1.0.0-rc1"),
+        "1.0.0-rc2",
+        &[],
+        &["latest.json", "feed.json"],
+    );
+    assert_eq!(
+        run.code, 0,
+        "a release with no digests was refused: {}",
+        run.output
+    );
+    let upload = run
+        .ran("release upload")
+        .unwrap_or_else(|| panic!("nothing was published: {:?}", run.calls));
+    for name in ["dist/latest.json", "dist/feed.json"] {
+        assert!(upload.contains(name), "{name} missing from {upload}");
     }
 }
 

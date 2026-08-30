@@ -81,11 +81,12 @@ with the channel as it was.
 A partial upload is the one failure that leaves the channel changed, and the
 job does not repair it. `gh release upload --clobber` deletes an asset before
 uploading its replacement, and uploads in parallel, so what the channel
-carries afterwards is whatever landed and the run that failed cannot read that
-back. The next tag run can, and the rule above is the one it applies: a
-channel it cannot read a version off is refused and needs a person, anything
-else it takes. So the failure says what the run did and sends you at that next
-run, rather than naming a state it has no way to know.
+carries afterwards is some mixture of what was there and what landed, and the
+run that failed does not read that back. The next tag run does, and the rule
+above is the one it applies: a channel carrying assets it cannot read a
+version off is refused and needs a person, anything else it takes. So the
+failure says what the run did and sends you at that next run, rather than
+naming a state it did not establish.
 
 That guard is a job of its own, and the only one holding a concurrency group,
 so two candidates cut close together cannot interleave their read and write of
