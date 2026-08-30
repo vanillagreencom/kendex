@@ -13,6 +13,9 @@ docs live in README.md.
 - `scripts/install-git-hooks` — hook installer, remover, and `--check` verdict
 - `scripts/lib/common.sh`, `scripts/lib/settings.sh` — shared helpers and
   layered settings resolution
+- `scripts/lib/configured-paths.sh` — the configured-path-list concept for the
+  lanes scoped by one: the glob list, the walk over the index records, and
+  what may be measured at a matched path
 - `scripts/lib/hook-check.sh` — the read-only verdict `install-git-hooks
   --check` returns over the shims this installer writes
 - `scripts/lib/hooks-path.sh` — where git reads hooks from, and whether
@@ -264,4 +267,12 @@ glob matched against the full repo-relative path (`*` crosses `/`); blank
 lines and `#` comments ignored; a pattern without a reason is a config
 error. **Baseline format**: `path<TAB>count`, `LC_ALL=C` sorted, unique
 paths, positive counts; malformed, unsorted, or duplicated rows are config
-errors (exit 2), never repaired silently.
+errors (exit 2), never repaired silently. **Path-globs format**
+(`GROWTH_GUARDS_CHANGELOG_PATHS`, `GROWTH_GUARDS_PROSE_PATHS`, both loaded
+by `gg_load_path_globs`): one space-separated list of shell globs against
+the full repo-relative path (`*` crosses `/`), REPLACING the built-in
+default rather than extending it. An absolute pattern, one escaping the
+repository, one leading with `-`, and an empty list are all config errors
+(exit 2); a list matching no tracked file is a clean pass. The caller runs
+under `set -f`, which the loader checks: without it the patterns expand
+against the work tree instead of matching the index.

@@ -112,8 +112,10 @@ sentence-initial capital is the same word) and whole-word, so `incidental`
 and `unreverted` never fire. The issue-number shape takes no leading
 boundary — a reference glued to a filename (`spec.md#1204`) is the same
 reference — and the character after the digit run must be neither a digit
-nor a hex letter, which is what keeps a longer token and a CSS colour out:
-`#12345`, `#1234ab` and `#0088cc` all pass.
+nor a hex letter, which is what keeps a longer token out: `#12345`,
+`#1234ab` and `#0088cc` all pass. Three- and four-digit shorthand still
+fires: `#900` is also how issue 900 is written, and no boundary can tell the
+two apart.
 
 Scope is the whole rule. `GROWTH_GUARDS_PROSE_PATHS` is a space-separated
 list of shell globs matched against the full repo-relative path, `*`
@@ -134,13 +136,28 @@ list is the one control, and an empty list is a config error (the way to
 switch the check off is to drop it from `GROWTH_GUARDS_CHECKS`). A list
 matching no tracked file is a clean pass that scans nothing.
 
-A configured path that is not readable markdown is named as unmeasured and
-counted apart from the clean total, the way `changelog-entries` names one: a
-path git tracks as a symlink or a submodule gitlink, and a blob git would
-call binary. Each of the three is a path `git grep --cached` would drop with
-no status and no stderr — a symlink's blob is its target path, not the file
-a harness loads through it — so the walk classifies every matched blob
-before the scan. A blob it cannot read is a collection error, never a skip.
+`git grep --cached` drops three shapes at a configured path with no status
+and no stderr — a symlink entry, a submodule gitlink, and a blob it calls
+binary — so the walk classifies every matched record itself before the scan.
+
+A **symlink** is read through: its blob holds the target path, which is
+resolved against the link's directory and scanned in the link's place, so a
+scoped name pointed at an unscanned body is not a hole. A target already in
+the configured scope is left to its own record — it is scanned under its own
+name, and resolving it again would report every hit twice — so the common
+`.claude/CLAUDE.md` → `../AGENTS.md` shape costs nothing and says nothing. A
+target that is absolute, escapes the repository, is untracked, or is itself
+a link or a gitlink is a collection error: content the lane was pointed at
+and cannot reach is not content it may skip.
+
+A **gitlink**, and a blob carrying a **NUL byte** in its leading bytes, are
+named as unmeasured and counted apart from the clean total, the way
+`changelog-entries` names one. That NUL sample is the whole binary rule
+here: git's own is taken from the path's userdiff driver, so `*.md -diff`
+would make it call a plain text file binary, and the scan therefore runs
+with `--text` — the walk has already removed everything this lane considers
+unreadable, so nothing is left for git to drop. A blob the walk cannot read
+is a collection error, never a skip.
 
 ## commit-msg
 

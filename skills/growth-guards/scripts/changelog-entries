@@ -167,48 +167,20 @@ END { if (!bad) { flush(); printf "N\t%d\n", total } }
 '
 
 gg_tmpdir
-# ls-files -s emits one record per STAGE for an unmerged path, so the walk
-# below would read rival blobs as separate files.
-gg_require_merged_index
-git ls-files -sz >"$GG_TMP/files.z" || gg_collection_error "git ls-files failed"
 
 checked=0
 entries=0
 violations=0
-skipped=0
 
-note_skip() { # PATH REASON — a matched path this scan cannot measure
-  echo "changelog-entries: not measured: $(gg_shown "$1") — $2"
-  skipped=$((skipped + 1))
-}
-
-while IFS= read -r -d '' rec; do
-  # Record shape: "<mode> <sha> <stage>\t<path>".
-  f="${rec#*"$GG_TAB"}"
-  gg_matches_path_glob "$f" || continue
-  mode="${rec%% *}"
-  case "$mode" in
-    120000)
-      note_skip "$f" "tracked as a symlink, not changelog text"
-      continue
-      ;;
-    160000)
-      note_skip "$f" "tracked as a submodule gitlink, not changelog text"
-      continue
-      ;;
-  esac
-  rest="${rec#* }"
-  sha="${rest%% *}"
-  git cat-file blob "$sha" >"$GG_TMP/blob" 2>"$GG_TMP/blob.err" \
-    || { [ ! -s "$GG_TMP/blob.err" ] || cat -- "$GG_TMP/blob.err" >&2
-      gg_collection_error "cannot read blob $sha for $(gg_shown "$f") — refusing to skip an unread changelog"; }
-  if gg_blob_is_binary "$GG_TMP/blob" "$f"; then
-    note_skip "$f" "binary content, not changelog text"
-    continue
-  fi
+# The walk over the configured paths — the records, the glob match, and the
+# shapes at a configured path that are not changelog text — is the family's:
+# lib/common.sh § one walk over the configured paths. A symlink is named as
+# unmeasured rather than followed; this lane measures the file at the path it
+# was pointed at.
+measure_entries() { # PATH BLOBFILE
+  local f="$1" blob="$2" status=0 kind a b c
   checked=$((checked + 1))
-  status=0
-  LC_ALL=C awk -v cap="$CAP" "$ENTRY_AWK" <"$GG_TMP/blob" >"$GG_TMP/report" || status=$?
+  LC_ALL=C awk -v cap="$CAP" "$ENTRY_AWK" <"$blob" >"$GG_TMP/report" || status=$?
   [ "$status" -eq 0 ] || gg_collection_error "could not measure the entries in $(gg_shown "$f") (awk exit $status)"
   while IFS="$GG_TAB" read -r kind a b c; do
     case "$kind" in
@@ -226,7 +198,10 @@ while IFS= read -r -d '' rec; do
       *) gg_collection_error "unrecognized measurement record $(gg_shown "$kind") while reading $(gg_shown "$f")" ;;
     esac
   done <"$GG_TMP/report"
-done <"$GG_TMP/files.z"
+}
+
+gg_walk_configured_paths "changelog text" changelog skip measure_entries
+skipped="$GG_WALK_SKIPPED"
 
 UNMEASURED=""
 [ "$skipped" -eq 0 ] || UNMEASURED="; $skipped matched path(s) not measured"

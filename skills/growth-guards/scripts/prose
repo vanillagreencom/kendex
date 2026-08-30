@@ -10,11 +10,12 @@
 # reference doc, a changelog and a design record keep their history intact.
 # GROWTH_GUARDS_PROSE_PATHS replaces the path list.
 #
-# Content comes from the index, like every scan in this family, and a
-# configured path that is not readable markdown — a symlink, a submodule
-# gitlink, binary content — is named as unmeasured rather than folded into
-# the clean count. Matching is case-insensitive: the banned strings are
-# words, and a sentence-initial capital is the same word.
+# Content comes from the index, like every scan in this family. A symlink at
+# a configured path is read through to its target, so a scoped name cannot
+# become a hole; a submodule gitlink and binary content are named as
+# unmeasured rather than folded into the clean count. Matching is
+# case-insensitive: the banned strings are words, and a sentence-initial
+# capital is the same word.
 #
 # Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 set -euo pipefail
@@ -34,9 +35,9 @@ source "$SCRIPT_DIR/lib/common.sh"
 # shellcheck source=lib/settings.sh
 source "$SCRIPT_DIR/lib/settings.sh"
 
-# The file names an agent harness loads on its own: a skill's entry point and
-# its workflows, an agent definition, and the repo-level instruction files.
-# Each name is spelled twice — at the repository root and anywhere below it —
+# What an agent harness loads on its own: a skill's entry point and its
+# workflows, an agent definition, and the repo-level instruction files. Each
+# name is spelled twice — at the repository root and anywhere below it —
 # because `*` crosses `/` but never stands in for the separator itself, and
 # the second spelling is also what reaches a rendered copy under `.claude/`
 # or `.agents/`.
@@ -50,9 +51,9 @@ A history reference in agent-loaded markdown fails: a calendar date
 (20YY-MM-DD), a three- or four-digit issue number after '#', or a word
 naming a past state. Matching is case-insensitive and reads index content.
 Only the configured paths are scanned; a reference doc, a changelog and a
-design record are out of scope by not being named. A configured path git
-tracks as a symlink or a submodule, or whose content is binary, is named as
-unmeasured.
+design record are out of scope by not being named. A symlink at a configured
+path is read through to its target; a submodule gitlink and binary content
+are named as unmeasured.
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -89,64 +90,39 @@ gg_load_path_globs "$PATHS_RAW" prose GROWTH_GUARDS_PROSE_PATHS || exit 2
 # rather than \< and \>, which are a GNU extension the regex engines behind
 # `git grep` do not all carry. The issue-number shape takes no leading
 # boundary — a reference glued to a filename ('spec.md#1204') is the same
-# reference — and its trailing class excludes the hex digits, so neither a
-# longer digit run nor a CSS colour ('#1234ab', '#0088cc') reads as one.
+# reference — and its trailing class excludes the hex digits, so a longer
+# token passes: '#12345' and the six-digit colour '#1234ab' are neither of
+# them a reference. Three- and four-digit shorthand still fires ('#900' is
+# also how issue 900 is written), which is the one collision the shape
+# cannot resolve.
 WORD='previously|used to|no longer|reverted|an earlier|earlier round|incident|historically|originally|at the time'
 PROSE_ERE="20[0-9]{2}-[0-9]{2}-[0-9]{2}|#[0-9]{3,4}([^0-9A-Fa-f]|\$)|(^|[^[:alnum:]_])($WORD)([^[:alnum:]_]|\$)"
 
 gg_tmpdir
-# `ls-files -s` emits one record per STAGE for an unmerged path, so the walk
-# below would read rival blobs as separate files.
-gg_require_merged_index
-git ls-files -sz >"$GG_TMP/files.z" || gg_collection_error "git ls-files failed"
 
-skipped=0
-note_skip() { # PATH REASON — a matched path this scan cannot measure
-  echo "prose: not measured: $(gg_shown "$1") — $2"
-  skipped=$((skipped + 1))
-}
-
-# Literal pathspecs, built from the walk rather than handing the configured
+# Literal pathspecs, built from a walk rather than handing the configured
 # globs to git: the family's glob contract is the shell's, and git's pathspec
 # matching is a near neighbour, not the same rule. Building the list here is
 # also what makes "nothing matched" visible — an empty pathspec list means
 # EVERY tracked file to git, so a lane that passed it through would scan the
 # whole repository the moment its configuration matched nothing.
 #
-# The mode is read for the same reason the sibling lane reads it: `git grep
-# --cached` over a tracked symlink greps the TARGET PATH its blob holds, not
-# the markdown a harness loads through it, and it does so with no status and
-# no stderr — so the lane would print a clean verdict over a file it never
-# read. A gitlink and a binary blob disappear the same silent way.
+# The walk itself is the family's — lib/common.sh § one walk over the
+# configured paths — and it is what classifies each blob. `git grep --cached`
+# SKIPS a symlink index entry outright, never reading through it, and drops a
+# gitlink and a binary blob the same way: with no status and no stderr, so
+# the lane would otherwise print a clean verdict over content it never read.
+# A symlink here is resolved to its target and the target scanned in its
+# place, so a scoped name cannot be turned into a hole.
 MATCHED_SPECS=()
 matched=0
-while IFS= read -r -d '' rec; do
-  # Record shape: "<mode> <sha> <stage>\t<path>".
-  f="${rec#*"$GG_TAB"}"
-  gg_matches_path_glob "$f" || continue
-  mode="${rec%% *}"
-  case "$mode" in
-    120000)
-      note_skip "$f" "tracked as a symlink, not markdown"
-      continue
-      ;;
-    160000)
-      note_skip "$f" "tracked as a submodule gitlink, not markdown"
-      continue
-      ;;
-  esac
-  rest="${rec#* }"
-  sha="${rest%% *}"
-  git cat-file blob "$sha" >"$GG_TMP/blob" 2>"$GG_TMP/blob.err" \
-    || { [ ! -s "$GG_TMP/blob.err" ] || cat -- "$GG_TMP/blob.err" >&2
-      gg_collection_error "cannot read blob $sha for $(gg_shown "$f") — refusing to skip an unread file"; }
-  if gg_blob_is_binary "$GG_TMP/blob" "$f"; then
-    note_skip "$f" "binary content, not markdown"
-    continue
-  fi
-  MATCHED_SPECS+=(":(literal)$f")
+add_spec() { # PATH BLOBFILE — one measurable path for the scan below
+  MATCHED_SPECS+=(":(literal)$1")
   matched=$((matched + 1))
-done <"$GG_TMP/files.z"
+}
+
+gg_walk_configured_paths markdown file resolve add_spec
+skipped="$GG_WALK_SKIPPED"
 
 UNMEASURED=""
 [ "$skipped" -eq 0 ] || UNMEASURED="; $skipped matched path(s) not measured"
@@ -163,9 +139,14 @@ if [ "$matched" -eq 0 ]; then
   exit 0
 fi
 
-# The banned strings are words, so the same word opening a sentence is the
-# same violation.
-GG_GREP_LANE_FLAGS=(-i)
+# -i: the banned strings are words, so the same word opening a sentence is
+# the same violation. -a: the walk above already excluded every blob this
+# lane considers unreadable, so its own judgement is the only one that
+# governs — git's is a DIFFERENT rule, taken from the path's userdiff driver,
+# and a repository marking `*.md -diff` (or `binary`) would otherwise have
+# the hardcoded -I drop a scoped file with no status and no stderr. -a is
+# parsed after -I and wins.
+GG_GREP_LANE_FLAGS=(-i -a)
 gg_grep_lane "history reference" "$PROSE_ERE" \
   "state the rule that holds now and delete the story; the date, the issue number and the past state belong in the commit that made the change" \
   "${MATCHED_SPECS[@]}"

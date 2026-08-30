@@ -92,6 +92,10 @@ put SKILL.md 'Swatches #123abc, #1234ab, #0088cc and #3366ff are colours.'
 run_prose
 [ "$RC" -eq 0 ] && ok "a CSS hex colour opening with digits is not an issue reference" \
   || bad "hex colours pass" "rc=$RC out=$OUT"
+put SKILL.md 'The brand red is #900 and the accent is #369.'
+run_prose
+[ "$RC" -eq 1 ] && ok "all-digit shorthand still fails: #900 is also how issue 900 is written" \
+  || bad "all-digit shorthand fails" "rc=$RC out=$OUT"
 put SKILL.md 'Landed in #1204) and #228, per #999.'
 run_prose
 [ "$RC" -eq 1 ] && ok "control: a reference followed by punctuation or a space still fails" \
@@ -175,28 +179,68 @@ run_prose
 [ "$RC" -eq 1 ] && case "$OUT" in *"history reference: skills/dev/SKILL.md:1:"*) true ;; *) false ;; esac \
   && ok "control: the same content as a REGULAR file at the scoped path fails" \
   || bad "control: regular file at the scoped path fails" "rc=$RC out=$OUT"
-# The blob of a tracked symlink is its TARGET PATH, so `git grep --cached`
-# greps the string "../../notes/target.md" and finds nothing — with no status
-# and no stderr to show for it.
+# `git grep --cached` SKIPS a symlink index entry outright — it never reads
+# through to the target, and spends no status and no stderr doing it — so a
+# scoped name pointed at an unscanned body is a hole unless the walk resolves
+# it. notes/target.md is out of the default scope, so nothing else reaches it.
 rm "$R/skills/dev/SKILL.md"
 ln -s ../../notes/target.md "$R/skills/dev/SKILL.md"
 git -C "$R" add -A
 [ "$(git -C "$R" ls-files -s skills/dev/SKILL.md | cut -d' ' -f1)" = "120000" ] \
   && ok "fixture: the scoped path really is tracked as a symlink" \
   || bad "fixture: scoped path tracked as a symlink" "$(git -C "$R" ls-files -s skills/dev/SKILL.md)"
+OUT="$(cd "$R" && git grep --cached -nIE '2026' -- 'skills/dev/SKILL.md' 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 1 ] && [ -z "$OUT" ] \
+  && ok "fixture: a bare --cached grep over the symlink entry finds nothing at all" \
+  || bad "fixture: bare grep over the symlink entry finds nothing" "rc=$RC out=$OUT"
 run_prose
+[ "$RC" -eq 1 ] && case "$OUT" in *"history reference: notes/target.md:1:"*) true ;; *) false ;; esac \
+  && ok "the symlink is resolved and its out-of-scope target is scanned in its place" \
+  || bad "symlink resolved to its target" "rc=$RC out=$OUT"
 case "$OUT" in
-  *"not measured: skills/dev/SKILL.md"*"tracked as a symlink"*) ok "a symlinked scoped path is NAMED as unmeasured" ;;
-  *) bad "symlinked scoped path is named as unmeasured" "rc=$RC out=$OUT" ;;
+  *"not measured"*) bad "a resolved symlink is not an unmeasured path" "$OUT" ;;
+  *) ok "no unmeasured line accompanies a resolved symlink" ;;
 esac
+
+# A symlink to a file the scan ALREADY covers under its own name adds
+# nothing: no second report of the same hit, and no noise line either. This
+# is the shape every repo carries (.claude/CLAUDE.md -> ../AGENTS.md).
+new_repo linkinscope
+put AGENTS.md 'Seeded 2026-08-12.'
+mkdir -p "$R/.claude"
+ln -s ../AGENTS.md "$R/.claude/CLAUDE.md"
+git -C "$R" add -A
+run_prose
+[ "$RC" -eq 1 ] && [ "$(printf '%s\n' "$OUT" | grep -c 'history reference: AGENTS.md:1:')" -eq 1 ] \
+  && ok "a symlink to an already-scanned scoped file reports its hit exactly once" \
+  || bad "in-scope symlink target is not double-reported" "rc=$RC out=$OUT"
 case "$OUT" in
-  *"1 matched path(s) not measured"*) ok "the verdict carries the unmeasured tally" ;;
-  *) bad "verdict carries the unmeasured tally" "rc=$RC out=$OUT" ;;
+  *"not measured"*) bad "a symlink to an in-scope file must print no noise line" "$OUT" ;;
+  *) ok "a symlink to an in-scope file prints no unmeasured line" ;;
 esac
-case "$OUT" in
-  *"prose: OK — nothing measurable to scan"*) ok "no bare clean verdict is printed over a path the lane never read" ;;
-  *) bad "no bare clean verdict over an unread path" "rc=$RC out=$OUT" ;;
-esac
+put AGENTS.md 'clean'
+run_prose
+[ "$RC" -eq 0 ] && case "$OUT" in *"no history references in 1 scanned file(s)"*) true ;; *) false ;; esac \
+  && ok "control: with the target clean the pair counts as the one file it is" \
+  || bad "control: in-scope symlink pair counts once" "rc=$RC out=$OUT"
+
+# A target the walk cannot reach is a collection error, never a skip.
+new_repo linkbroken
+put keep.md 'clean'
+ln -s ../outside.md "$R/AGENTS.md"
+git -C "$R" add -A
+run_prose
+[ "$RC" -eq 2 ] && case "$OUT" in *"points outside the repository"*) true ;; *) false ;; esac \
+  && ok "a symlink escaping the repository is exit 2" \
+  || bad "escaping symlink is exit 2" "rc=$RC out=$OUT"
+rm "$R/AGENTS.md"
+ln -s missing.md "$R/AGENTS.md"
+git -C "$R" add -A
+run_prose
+[ "$RC" -eq 2 ] && case "$OUT" in *"does not track"*) true ;; *) false ;; esac \
+  && ok "a symlink to an untracked path is exit 2" \
+  || bad "untracked symlink target is exit 2" "rc=$RC out=$OUT"
+case "$OUT" in *"prose: OK"*) bad "no OK verdict may accompany an unreachable target" "$OUT" ;; *) ok "no OK verdict accompanies the unreachable target" ;; esac
 
 # A gitlink at a scoped path: mode 160000 carries a commit id, not markdown.
 new_repo gitlink
@@ -230,6 +274,35 @@ case "$OUT" in
   *"no history references in"*) bad "no clean file-count verdict may cover a blob the lane never read" "$OUT" ;;
   *) ok "no clean file-count verdict covers the unread blob" ;;
 esac
+
+echo "=== git's own binary rule cannot silence a scoped path ==="
+# grep_source_is_binary consults the path's userdiff driver, so `*.md -diff`
+# makes git call a plain text blob binary and the hardcoded -I drop it with
+# no status and no stderr. The walk's classification is the only judgement
+# that may govern here.
+new_repo attrbinary
+put SKILL.md 'Seeded 2026-08-12.'
+run_prose
+[ "$RC" -eq 1 ] && ok "control: the reference fails with no attributes set" \
+  || bad "control: reference fails without attributes" "rc=$RC out=$OUT"
+OUT="$(cd "$R" && git grep --cached -nIE '2026' -- 'SKILL.md' 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 0 ] && ok "fixture: a bare -I grep still sees it before the attribute" \
+  || bad "fixture: bare -I grep sees it" "rc=$RC out=$OUT"
+put .gitattributes '*.md -diff'
+OUT="$(cd "$R" && git grep --cached -nIE '2026' -- 'SKILL.md' 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 1 ] && [ -z "$OUT" ] \
+  && ok "fixture: with '*.md -diff' the same -I grep drops it silently" \
+  || bad "fixture: -diff makes -I drop it" "rc=$RC out=$OUT"
+run_prose
+[ "$RC" -eq 1 ] && case "$OUT" in *"history reference: SKILL.md:1:"*) true ;; *) false ;; esac \
+  && ok "the lane still fails on a '-diff' path (its own classification governs)" \
+  || bad "-diff path still scanned" "rc=$RC out=$OUT"
+case "$OUT" in *"prose: OK"*) bad "no OK verdict may accompany a '-diff' path carrying a reference" "$OUT" ;; *) ok "no OK verdict accompanies the '-diff' path" ;; esac
+put .gitattributes '*.md binary'
+run_prose
+[ "$RC" -eq 1 ] && case "$OUT" in *"history reference: SKILL.md:1:"*) true ;; *) false ;; esac \
+  && ok "the 'binary' attribute macro cannot silence it either" \
+  || bad "'binary' attribute path still scanned" "rc=$RC out=$OUT"
 
 echo "=== the glob list is matched against the INDEX, not the work tree ==="
 # `set -f` in the script is what this pins. Without it the configured
@@ -311,6 +384,17 @@ run_prose
   || bad "vanished blob is exit 2 with git's diagnostic" "rc=$RC out=$OUT"
 case "$OUT" in *"not measured"*) bad "an unread blob is a refusal, never an unmeasured skip" "$OUT" ;; *) ok "an unread blob is not dressed as an unmeasured skip" ;; esac
 case "$OUT" in *"prose: OK"*) bad "no OK verdict may accompany an unread blob" "$OUT" ;; *) ok "no OK verdict accompanies the unread blob" ;; esac
+
+echo "=== the shared glob loader refuses a caller running without set -f ==="
+COMMON="$SKILL_DIR/scripts/lib/common.sh"
+OUT="$(cd "$R" && GG_CHECK=probe bash -c 'set -euo pipefail; set +f; . "$1"; gg_load_path_globs "*.md" probe PROBE_KEY' _ "$COMMON" 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"pathname expansion is on"*) true ;; *) false ;; esac \
+  && ok "the loader exits 2 when the caller left pathname expansion on" \
+  || bad "loader refuses without set -f" "rc=$RC out=$OUT"
+OUT="$(cd "$R" && GG_CHECK=probe bash -c 'set -euo pipefail; set -f; . "$1"; gg_load_path_globs "*.md" probe PROBE_KEY; printf %s "$GG_PATH_GLOBS"' _ "$COMMON" 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 0 ] && [ "$OUT" = "*.md" ] \
+  && ok "control: under set -f the same call loads the glob unexpanded" \
+  || bad "control: loader works under set -f" "rc=$RC out=$OUT"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

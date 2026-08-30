@@ -19,6 +19,13 @@ set -euo pipefail
 # with the source unfound, rather than quietly resolving somewhere else.
 # shellcheck source=paths.sh
 source "$(dirname -- "${BASH_SOURCE[0]}")/paths.sh"
+# The configured-path-list concept, whole: the glob list, the walk, and what
+# a lane may measure at a matched path. Its helpers call back into this file,
+# which is why it is sourced here rather than by each lane — resolution is at
+# call time, so the order of the two is free.
+# not-a-path: same bootstrap as above; the idiom it loads is not available yet.
+# shellcheck source=configured-paths.sh
+source "$(dirname -- "${BASH_SOURCE[0]}")/configured-paths.sh"
 
 GG_TAB="$(printf '\t')"
 GG_VIOLATIONS=0
@@ -267,64 +274,6 @@ gg_is_excluded() { # PATH — 0 when some exclusion glob matches the full path
     esac
   done
   return 1
-}
-
-# --- configured path globs: one setting naming a space-separated list -------
-# The lanes scoped by a PATH LIST rather than by an excludes file share this.
-# Each pattern goes through the family's path discipline — absolute, escaping
-# and '-'-leading values are configuration errors, never a glob that quietly
-# matches nothing — and an empty list is one too: a check that measures
-# nowhere while reporting OK is the silent pass this family refuses, and
-# dropping the check from GROWTH_GUARDS_CHECKS is how it is turned off.
-#
-# The caller runs under `set -f`. The list is word-split, and pathname
-# expansion would resolve each pattern against the WORK TREE — matching
-# whatever happens to be checked out instead of the tracked paths the scan
-# judges, and matching nothing at all in a sparse or bare checkout.
-GG_PATH_GLOBS=""
-GG_PATH_GLOBS_SHOWN=""
-
-gg_load_path_globs() { # RAW-LIST LABEL KEY — fills GG_PATH_GLOBS and _SHOWN
-  local raw="$1" label="$2" key="$3" pat norm
-  GG_PATH_GLOBS=""
-  GG_PATH_GLOBS_SHOWN=""
-  for pat in $raw; do
-    norm="$(gg_config_path "$pat" "$label")" || return 1
-    GG_PATH_GLOBS="${GG_PATH_GLOBS:+$GG_PATH_GLOBS }$norm"
-    # The same list rendered for messages: a configured pattern is somebody's
-    # bytes too, and %q would escape the globs out of the copy that has to
-    # match.
-    GG_PATH_GLOBS_SHOWN="${GG_PATH_GLOBS_SHOWN:+$GG_PATH_GLOBS_SHOWN }$(gg_shown "$norm")"
-  done
-  [ -n "$GG_PATH_GLOBS" ] \
-    || gg_config_error "$key names no path — name at least one, or drop this check from GROWTH_GUARDS_CHECKS"
-}
-
-gg_matches_path_glob() { # PATH — 0 when some configured glob matches the full path
-  local path="$1" pat
-  for pat in $GG_PATH_GLOBS; do
-    # $pat must expand unquoted to act as a glob.
-    # shellcheck disable=SC2254
-    case "$path" in
-      $pat) return 0 ;;
-    esac
-  done
-  return 1
-}
-
-# git calls a blob binary when a NUL byte falls in its leading bytes, and the
-# --cached scans skip such a blob — `git grep -I` drops it with no status and
-# no stderr. A lane walking configured paths makes the same judgement here so
-# it can NAME the path as unmeasured, rather than counting an unread blob into
-# a clean total.
-GG_BINARY_SAMPLE=8000
-gg_blob_is_binary() { # FILE LABEL — 0 when a NUL falls in the leading bytes
-  local total stripped
-  total="$(head -c "$GG_BINARY_SAMPLE" -- "$1" | wc -c)" \
-    || gg_collection_error "could not sample $(gg_shown "$2") to classify its content"
-  stripped="$(head -c "$GG_BINARY_SAMPLE" -- "$1" | LC_ALL=C tr -d '\000' | wc -c)" \
-    || gg_collection_error "could not sample $(gg_shown "$2") to classify its content"
-  [ "$((total))" -ne "$((stripped))" ]
 }
 
 # `git grep --cached` SKIPS an unmerged index entry entirely: it spends no
