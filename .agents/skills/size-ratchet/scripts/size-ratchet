@@ -18,10 +18,10 @@
 #       run carries when the path is in a frozen class. A FIRST row for a
 #       path HEAD's baseline carries none for is a bootstrap, which
 #       RATCHET_RAISE=1 admits in every class, frozen included; a renamed
-#       path is such a path, so a rename bootstraps rather than raises.
-#       A change that MOVES the baseline itself is judged against the rows
-#       at the path HEAD's own settings named, so a relocation carries no
-#       row past this check.
+#       path is such a path, so a rename bootstraps rather than raises;
+#   (f) a change that MOVES the baseline and rewrites it in the same commit.
+#       Across a move nothing compares the rows, so the move travels alone
+#       and the rows change in the commit after it.
 #
 # --update: rewrite the baseline TIGHTENING ONLY — lower rows to current
 # reality, re-measure rows whose unit no longer matches their class, remove
@@ -157,11 +157,11 @@ bootstraps rather than raises. No commit message is read: a pre-commit hook
 cannot see one, so the reason belongs in the commit body for review, not in
 a check.
 
-A commit that MOVES SIZE_RATCHET_BASELINE is judged against HEAD's rows at
-the path HEAD's own settings named. Every source that resolution reads comes
-from HEAD when git tracks it and from the invocation when it does not, and a
-source it cannot reproduce is a loud refusal rather than a silent "no rows".
---baseline skips the lookup, being the operator's override and not a commit.
+A commit that MOVES SIZE_RATCHET_BASELINE leaves HEAD carrying nothing at the
+path this run reads, so the added and raised checks have no reference and a
+raise would land unjudged. Such a commit is refused unless the rows arriving
+at the new path are byte for byte the rows that left the old one: the move
+travels alone, and the rows change in the commit after it.
 
 A run whose HEAD carries no baseline rows has no reference for the added and
 raised checks, so the verdict line says so rather than reading as clean.
@@ -683,9 +683,12 @@ format_row() { # SIZE UNIT — the baseline row's number
 # returns nonzero and leaves the caller to skip the rewrite. SUGGEST names the
 # file a fix command would operate on, and is empty for a copy the caller has
 # no path to hand back.
+# What a baseline row looks like, in one place: this validator and the moved
+# baseline check below both ask the question and must not answer it apart.
+BASELINE_ROW_RE="^[^${TAB}]+${TAB}[1-9][0-9]*b?\$"
 validate_baseline_rows() { # MODE FILE LABEL [SUGGEST]
   local mode="$1" file="$2" label="$3" suggest="${4:-}" grep_status=0 bad_rows dup_paths hint="" fault=""
-  bad_rows="$(grep -nEv -- "^[^${TAB}]+${TAB}[1-9][0-9]*b?\$" "$file")" || grep_status=$?
+  bad_rows="$(grep -nEv -- "$BASELINE_ROW_RE" "$file")" || grep_status=$?
   [ "$grep_status" -le 1 ] || collection_error "could not validate $label (grep exit $grep_status)"
   [ -z "$suggest" ] || hint=" (LC_ALL=C sort -o $suggest $suggest)"
   # One fault decided in one place, so a soft caller cannot inherit an arm
@@ -1027,6 +1030,10 @@ report() { # VIOLATIONS-FILE — human diagnostics on stdout
       FROZEN)
         echo "size-ratchet FAIL frozen baseline row raised: $path — row $b -> $n $unit, threshold $PT ($why); a frozen class refuses a raise whatever RATCHET_RAISE says"
         echo "  remedy: split at a concept seam (a frozen class never raises an existing row)"
+        ;;
+      MOVED)
+        echo "size-ratchet FAIL baseline moved and rewritten: $path -> $BASELINE_FILE — HEAD's rows left $path, and the rows arriving at $BASELINE_FILE are not them; across a move nothing compares them, so a raise would land unjudged"
+        echo "  remedy: move the baseline in a commit that changes nothing else, then change its rows in the next one"
         ;;
     esac
   done <"$1"
@@ -1419,200 +1426,86 @@ RAISE_OK="${RATCHET_RAISE:-}"
 # and against a zero-row HEAD every one of them would read as newly added. A
 # git failure is never "absent": read_head_file_mode refuses on one.
 HEAD_BASELINE=""
-# The path those rows came from when it is not the configured one: a change
-# that RELOCATES the baseline is judged against the rows it moved.
-HEAD_BASELINE_FROM=""
-
-# Never `$(...)`: collection_error inside a command substitution exits the
-# subshell alone, and the caller would read the refusal as "HEAD has no rows".
-read_head_rows_at() { # PATH — fills HEAD_BASELINE, "" when HEAD carries none there
+read_head_baseline() {
   HEAD_BASELINE=""
-  read_head_file_mode "$1"
+  read_head_file_mode "$BASELINE_FILE"
   [ -n "$HEAD_FILE_MODE" ] || return 0
   case "$HEAD_FILE_MODE" in
     100*) ;;
     *) return 0 ;; # not a regular file at HEAD; there is no row set to compare
   esac
-  git show "HEAD:$1" >"$TMP/baseline.head" || collection_error "could not read $1 from HEAD — refusing to judge added and raised rows against a baseline it could not read"
+  git show "HEAD:$BASELINE_FILE" >"$TMP/baseline.head" || collection_error "could not read $BASELINE_FILE from HEAD — refusing to judge added and raised rows against a baseline it could not read"
   [ "$(count_nonempty_lines "$TMP/baseline.head")" -gt 0 ] || return 0
   HEAD_BASELINE="$TMP/baseline.head"
 }
 
-# --- where HEAD's own configuration put the baseline -------------------------
-# Resolved through the SAME sr_setting chain this run used, over a scratch tree
-# holding HEAD's view of every source that chain consults, and resolved on
-# EVERY run, because which file HEAD's baseline was is the first question and
-# the rows in it the second. The tree is the whole answer: a source it does not
-# reproduce faithfully makes the HEAD-side resolution equal the run's own for a
-# reason that is not HEAD's configuration, and "HEAD has no rows" is then
-# reached without judgement, which is the defect itself. So each source kind is
-# reproduced or the run refuses; nothing falls through. What the tree must
-# hold, by the route sr_setting reaches the source:
+# --- a baseline that MOVED ---------------------------------------------------
+# The check above reads HEAD at the CONFIGURED path. Move that path and HEAD
+# carries nothing there, so the rows have no reference and every raise the
+# change makes — a frozen one included — lands unjudged.
 #
-#   set in the environment      nothing. One process answers both sides.
-#   SIZE_RATCHET_SETTINGS_FILE=/dev/null
-#                               nothing. It selects no source at all.
-#   an absolute path            nothing. The same file answers both sides.
-#   a relative path that leaves the repository
-#                               the worktree file, at its own spelling. No
-#                               commit can carry it, so it is the invocation's.
-#   a path git tracks nowhere   the worktree file. Unversioned, so the
-#                               invocation's; a commit reaches this gate
-#                               through --staged, where an added source is in
-#                               the index and the branch below governs.
-#   tracked, absent at HEAD     nothing. This change ADDS the source.
-#   a regular file at HEAD      HEAD's blob.
-#   a symlink at HEAD           HEAD's blob at the end of the chain, resolved
-#                               through HEAD, staged at the link's spelling.
-#                               sr_setting reads bytes, so a regular file
-#                               there reads identically. A chain leaving the
-#                               repository ends on an unversioned file and
-#                               takes the out-of-repository row above.
-#   anything else at HEAD       a refusal. A chain longer than HEAD_LINK_MAX,
-#                               or one ending on a directory or a gitlink, is
-#                               a configuration no tree can stand in for.
+# The gate does not follow the move. Where HEAD's baseline was is a question
+# only HEAD's settings answer, and those resolve through a chain this script
+# consults but does not own, so answering it here means keeping a second
+# implementation of someone else's contract in step with it. A move is refused
+# instead, and the rows travel in a commit that changes nothing else.
 #
-# --baseline is skipped outright: a flag is the operator pointing this run at a
-# file, never a commit relocating anything.
-HEAD_SETTINGS_BASELINE=""
-
-# The sources sr_setting consults, in the order it consults them.
-SETTINGS_SOURCES=()
-settings_sources() {
-  SETTINGS_SOURCES=()
-  [ "${SIZE_RATCHET_SETTINGS_FILE:-}" != "/dev/null" ] || return 0
-  SETTINGS_SOURCES=(".env.local")
-  if [ -n "${SIZE_RATCHET_SETTINGS_FILE:-}" ]; then
-    SETTINGS_SOURCES+=("$SIZE_RATCHET_SETTINGS_FILE")
-  else
-    SETTINGS_SOURCES+=(".kendex/settings.toml" "kendex.settings.toml")
-  fi
-}
-
-index_tracks() { # PATH — 0 when the index carries it
-  local status=0
-  git ls-files --error-unmatch -- ":(literal)$1" >/dev/null 2>&1 || status=$?
-  case "$status" in
-    0) return 0 ;;
-    1) return 1 ;;
-    *) collection_error "could not query the index for $1 (git ls-files exit $status) — refusing to judge added and raised rows without knowing whether this change adds the source" ;;
+# The discriminator is what the change does to the OLD file: a path HEAD
+# carried a row set at, which the judged snapshot no longer carries. It cannot
+# misfire on the three bootstraps. An unborn HEAD has no paths to remove. A
+# baseline this change introduces leaves HEAD carrying no row set anywhere, so
+# there is none to remove. A placeholder committed empty is AT the configured
+# path and is filled rather than removed, and holds no rows to recognize even
+# if it were. What the check does see is one bound worth stating: a change that
+# points the setting elsewhere while leaving the old file tracked, rows and
+# all, removes nothing and is not a move it can name.
+#
+# A pure move passes. The rows that arrive are byte for byte the rows that
+# left, so no row rose across it; anything else about them is the next
+# commit's business.
+baseline_moved() { # CANDIDATE-BASELINE — violations on stdout
+  [ -z "$HEAD_BASELINE" ] || return 0
+  local p head_status=0 diff_status=0
+  git rev-parse --verify --quiet HEAD >/dev/null 2>&1 || head_status=$?
+  case "$head_status" in
+    0) ;;
+    1) return 0 ;; # an unborn HEAD removed nothing
+    *) collection_error "could not resolve HEAD while looking for a moved baseline (git rev-parse exit $head_status) — refusing to treat the move as absent" ;;
   esac
-}
-
-# Eight hops is past any real settings install and short of a loop's patience.
-HEAD_LINK_MAX=8
-stage_head_blob() { # PATH DEST — HEAD's file content at PATH, chain followed
-  local path="$1" dest="$2" hops=0 target dir
-  while :; do
-    read_head_file_mode "$path"
-    case "$HEAD_FILE_MODE" in
-      "") return 0 ;; # HEAD carries no such source
-      100*) break ;;
-      120000)
-        hops=$((hops + 1))
-        [ "$hops" -le "$HEAD_LINK_MAX" ] || collection_error "the settings source '$1' is a symlink chain longer than $HEAD_LINK_MAX hops at HEAD — refusing to judge added and raised rows against a configuration it cannot follow"
-        git show "HEAD:$path" >"$TMP/head.link" || collection_error "could not read the symlink '$path' from HEAD to follow the settings source it points at"
-        target="$(cat -- "$TMP/head.link")" || collection_error "could not read the target of the symlink '$path' at HEAD"
-        # A chain that leaves the repository ends on an unversioned file, which
-        # both sides read the same way, so it is copied from where it is rather
-        # than refused. The link is resolved from the repository root, which is
-        # this run's working directory.
-        case "$target" in
-          /*)
-            [ ! -f "$target" ] || cp -- "$target" "$dest" || collection_error "could not stage the out-of-repository file '$target' that the settings source '$1' points at"
-            return 0
-            ;;
-        esac
-        dir="${path%/*}"
-        [ "$dir" != "$path" ] || dir=""
-        path="$(sr_settings_normalize_path "${dir:+$dir/}$target")"
-        case "$path" in
-          "" | ".." | "../"*)
-            [ ! -f "$path" ] || cp -- "$path" "$dest" || collection_error "could not stage the out-of-repository file '$path' that the settings source '$1' points at"
-            return 0
-            ;;
-        esac
-        ;;
-      *) collection_error "the settings source '$1' is not a regular file at HEAD (mode $HEAD_FILE_MODE) — refusing to judge added and raised rows against a configuration it cannot read" ;;
-    esac
-  done
-  git show "HEAD:$path" >"$dest" || collection_error "could not read $path from HEAD to resolve the baseline path it configures"
-}
-
-read_head_settings_baseline() { # — "" when HEAD names no usable path
-  HEAD_SETTINGS_BASELINE=""
-  [ "$BASELINE_SET" -eq 0 ] || return 0
-  local dir="$TMP/head-settings" cwd src norm dest parent depth d
-  rm -rf -- "$dir" || collection_error "could not clear the scratch copy of HEAD's settings"
-  settings_sources
-  # A source spelled with a leading `..` still has to land inside the tree, so
-  # the resolution runs from a directory nested as deep as the deepest such
-  # spelling. Counting every `..` segment overshoots, which costs an unused
-  # directory and can never come up short.
-  depth=0
-  for src in ${SETTINGS_SOURCES+"${SETTINGS_SOURCES[@]}"}; do
-    d="$(printf '%s\n' "$src" | awk -F'/' '{ n = 0; for (i = 1; i <= NF; i++) if ($i == "..") n++; print n }')" \
-      || collection_error "could not measure the depth of the settings source '$src'"
-    [ "$d" -le "$depth" ] || depth="$d"
-  done
-  cwd="$dir"
-  while [ "$depth" -gt 0 ]; do
-    cwd="$cwd/nested"
-    depth=$((depth - 1))
-  done
-  mkdir -p -- "$cwd" || collection_error "could not create a scratch copy of HEAD's settings"
-  for src in ${SETTINGS_SOURCES+"${SETTINGS_SOURCES[@]}"}; do
-    case "$src" in /*) continue ;; esac
-    dest="$cwd/$src"
-    parent="$cwd/${src%/*}"
-    [ "${src%/*}" != "$src" ] || parent="$cwd"
-    mkdir -p -- "$parent" || collection_error "could not stage the directory for HEAD's copy of $src"
-    # git reads a tree path canonically — `sub/../f` names `f` — so every
-    # probe and read takes the NORMALIZED spelling, while the copy is written
-    # under the spelling the resolver will look for.
-    norm="$(sr_settings_normalize_path "$src")"
-    case "$norm" in
-      "" | ".." | "../"*)
-        [ ! -f "$src" ] || cp -- "$src" "$dest" || collection_error "could not stage the out-of-repository settings source $src"
-        continue
-        ;;
-    esac
-    read_head_file_mode "$norm"
-    if [ -n "$HEAD_FILE_MODE" ]; then
-      stage_head_blob "$norm" "$dest"
-    elif ! index_tracks "$norm"; then
-      [ ! -f "$src" ] || cp -- "$src" "$dest" || collection_error "could not stage the untracked settings source $src"
-    fi
-  done
-  # sr_setting reads its sources relative to the working directory and returns
-  # nonzero (never exits) on an unreadable one, so the tree answers from $cwd
-  # and a refusal propagates instead of resolving to a default.
-  HEAD_SETTINGS_BASELINE="$(cd "$cwd" && SR_SETTINGS_FROM_INDEX=0 sr_setting SIZE_RATCHET_BASELINE "tools/size-ratchet-baseline.tsv")" \
-    || collection_error "could not resolve SIZE_RATCHET_BASELINE from HEAD's settings — refusing to judge added and raised rows without knowing where HEAD's baseline was"
-  HEAD_SETTINGS_BASELINE="$(normalize_rel_path "$HEAD_SETTINGS_BASELINE")" || HEAD_SETTINGS_BASELINE=""
-  # A shape the configured path itself would be refused for names no row set
-  # to read; the run's own resolution already rejected it for this side.
-  case "$HEAD_SETTINGS_BASELINE" in /* | -*) HEAD_SETTINGS_BASELINE="" ;; esac
-}
-
-# WHICH PATH first, then the rows at it. Reading the configured path and
-# keeping whatever rows it holds accepts a file HEAD's own configuration never
-# read: a repository carrying a stale b.tsv at 20 while its settings named
-# a.tsv at 15 had the 20 taken for grandfathered, and the raise to 20 was never
-# judged. HEAD's effective baseline is the file HEAD's settings pointed at, and
-# no rows there is HEAD having no reference — not a reason to read another
-# file. The three bootstraps are unaffected: each leaves HEAD naming the path
-# this run resolved, or one HEAD carries no rows at.
-read_head_baseline() {
-  HEAD_BASELINE_FROM=""
-  local path="$BASELINE_FILE"
-  read_head_settings_baseline
-  if [ -n "$HEAD_SETTINGS_BASELINE" ] && [ "$HEAD_SETTINGS_BASELINE" != "$BASELINE_FILE" ]; then
-    path="$HEAD_SETTINGS_BASELINE"
-    HEAD_BASELINE_FROM="$path"
+  # --no-renames, because a `git mv` of the baseline is exactly the move this
+  # looks for and rename detection would report it as one path, not a removal.
+  if [ "$STAGED" -eq 1 ]; then
+    git diff --cached --no-renames --name-only --diff-filter=D HEAD >"$TMP/removed.tsv" || diff_status=$?
+  else
+    git diff --no-renames --name-only --diff-filter=D HEAD >"$TMP/removed.tsv" || diff_status=$?
   fi
-  read_head_rows_at "$path"
-  [ -n "$HEAD_BASELINE" ] || HEAD_BASELINE_FROM=""
+  [ "$diff_status" -eq 0 ] || collection_error "could not list what this change removes (git diff exit $diff_status) — refusing to treat a moved baseline as absent"
+  while IFS= read -r p || [ -n "$p" ]; do
+    [ -n "$p" ] || continue
+    [ "$p" != "$BASELINE_FILE" ] || continue
+    head_rows_removed "$p" || continue
+    cmp -s -- "$TMP/removed.head" "$1" && continue
+    # "-" placeholders, never empty fields: report() reads these rows with
+    # tab-IFS, and whitespace IFS collapses consecutive tabs.
+    printf '%s\t%s\t%s\t%s\n' "MOVED" "$p" "-" "-"
+  done <"$TMP/removed.tsv"
+}
+
+# Whether HEAD's blob at PATH was a baseline. The row shape is the only
+# question — sorting and duplicates are the governing copy's business, and a
+# file that fails them is still the row set this change carried away.
+head_rows_removed() { # PATH — 0 when HEAD held a row set there, at $TMP/removed.head
+  local status=0
+  read_head_file_mode "$1"
+  case "$HEAD_FILE_MODE" in 100*) ;; *) return 1 ;; esac
+  git show "HEAD:$1" >"$TMP/removed.head" || collection_error "could not read $1 from HEAD to tell whether it was the baseline this change moved"
+  [ "$(count_nonempty_lines "$TMP/removed.head")" -gt 0 ] || return 1
+  grep -qEv -- "$BASELINE_ROW_RE" "$TMP/removed.head" || status=$?
+  case "$status" in
+    0) return 1 ;; # a line that is not a row: whatever left, it was not a baseline
+    1) return 0 ;;
+    *) collection_error "could not read $1 from HEAD to tell whether it was the baseline this change moved (grep exit $status)" ;;
+  esac
 }
 
 # A change that moves a class from lines to bytes (or back) leaves HEAD's rows
@@ -1695,6 +1588,7 @@ rows_raised() { # CURRENT-BASELINE — violations on stdout
 run_verdict() { # BASELINE-TSV — fills $TMP/violations.tsv, sets VIOLATIONS
   evaluate "$1" >"$TMP/violations.tsv" || collection_error "could not evaluate the baseline against the collected counts"
   rows_raised "$1" >>"$TMP/violations.tsv" || collection_error "could not judge the baseline rows against HEAD's baseline"
+  baseline_moved "$1" >>"$TMP/violations.tsv" || collection_error "could not tell whether this change moves the baseline"
   VIOLATIONS="$(count_nonempty_lines "$TMP/violations.tsv")"
 }
 
@@ -1771,11 +1665,7 @@ report "$TMP/violations.tsv" || collection_error "could not read the violations 
 # "no reference" is not "checked and clean": a run whose HEAD carries no rows
 # never judged an added or raised one, and says which of the two it is.
 RAISE_NOTE=""
-if [ -z "$HEAD_BASELINE" ]; then
-  RAISE_NOTE=" — HEAD carries no baseline rows, so added and raised rows were not judged"
-elif [ -n "$HEAD_BASELINE_FROM" ]; then
-  RAISE_NOTE=" — added and raised rows judged against HEAD's baseline at $HEAD_BASELINE_FROM, which this change relocates"
-fi
+[ -n "$HEAD_BASELINE" ] || RAISE_NOTE=" — HEAD carries no baseline rows, so added and raised rows were not judged"
 if [ "$VIOLATIONS" -gt 0 ]; then
   echo "size-ratchet: $VIOLATIONS violation(s) — threshold $THRESHOLD$CLASSES_NOTE, baseline $BASELINE_FILE$RAISE_NOTE"
   exit 1

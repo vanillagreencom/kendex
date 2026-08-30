@@ -367,11 +367,10 @@ run_frozen
 [ "$RC" -eq 0 ] && ok "a zero-row HEAD baseline is no baseline, so the first row passes undeclared" \
   || bad "a zero-row HEAD baseline is no baseline, so the first row passes undeclared" "rc=$RC out=$OUT"
 
-echo "=== a commit that MOVES the baseline is judged against the rows it moved ==="
-# The path the CURRENT invocation resolves is not the path HEAD's rows are at:
-# a commit that relocates SIZE_RATCHET_BASELINE leaves HEAD carrying nothing at
-# the new one. Read as "HEAD has no rows" that is every raise unjudged, frozen
-# ones included, so the rows are followed to the path HEAD's settings named.
+echo "=== a commit that MOVES the baseline is refused, in both classes ==="
+# The raise gate reads HEAD at the CONFIGURED path. Move that path and HEAD
+# carries nothing there, so a raised row — a frozen one included — would land
+# with nothing to compare it against. The move is refused instead.
 settings_baseline() { # PATH — the fixture's committed settings name it
   printf '[env]\nSIZE_RATCHET_BASELINE = "%s"\n' "$1" >"$R/kendex.settings.toml"
 }
@@ -384,7 +383,7 @@ relocating_repo() { # NAME PATH LINES ROWLINES — HEAD's rows at tools/a.tsv
   git -C "$R" add -A
   git -C "$R" commit -q -m "seed: a baselined offender, baseline at tools/a.tsv"
 }
-relocate() { # PATH ROWLINES — the same rows move to tools/b.tsv at ROWLINES
+relocate() { # PATH ROWLINES — the rows move to tools/b.tsv at ROWLINES
   printf '%s\t%s\n' "$1" "$2" >"$R/tools/b.tsv"
   rm -f "$R/tools/a.tsv"
   settings_baseline tools/b.tsv
@@ -393,33 +392,75 @@ relocate() { # PATH ROWLINES — the same rows move to tools/b.tsv at ROWLINES
 relocating_repo relocfrozen x.test.txt 15 15
 relocate x.test.txt 15
 run_frozen
-[ "$RC" -eq 0 ] && ok "control: a relocation that moves the rows unchanged passes" \
-  || bad "a relocation that moves the rows unchanged passes" "rc=$RC out=$OUT"
-case "$OUT" in *"judged against HEAD's baseline at tools/a.tsv, which this change relocates"*) ok "and the verdict says which rows it judged against" ;; *) bad "the verdict names the relocated baseline" "$OUT" ;; esac
+[ "$RC" -eq 0 ] && ok "control: a move that carries the rows unchanged passes" \
+  || bad "a move that carries the rows unchanged passes" "rc=$RC out=$OUT"
 mkfile x.test.txt 20
 relocate x.test.txt 20
 RAISE=1 run_frozen
-[ "$RC" -eq 1 ] && case "$OUT" in *"frozen baseline row raised: x.test.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
-  && ok "a frozen row raised across the relocation is refused, declaration and all" \
-  || bad "a frozen raise across a relocation is refused" "rc=$RC out=$OUT"
-# The open class takes the other branch of the same judgment: refused
-# undeclared, carried by the declaration, exactly as it is in place.
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten: tools/a.tsv -> tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "a frozen row raised across the move is refused, declaration and all" \
+  || bad "a frozen raise across a move is refused" "rc=$RC out=$OUT"
+case "$OUT" in *"move the baseline in a commit that changes nothing else"*) ok "and the refusal says what to do instead" ;; *) bad "the move refusal names its remedy" "$OUT" ;; esac
+# The open class takes the same refusal, and this is where it differs from an
+# in-place raise: there the declaration carries it, across a move nothing does.
 relocating_repo relocopen plain.txt 15 15
 mkfile plain.txt 20
 relocate plain.txt 20
 run_frozen
-[ "$RC" -eq 1 ] && case "$OUT" in *"baseline row raised: plain.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
-  && ok "an unfrozen row raised across the relocation is refused undeclared" \
-  || bad "an unfrozen raise across a relocation is refused undeclared" "rc=$RC out=$OUT"
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten: tools/a.tsv -> tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "an unfrozen row raised across the move is refused undeclared" \
+  || bad "an unfrozen raise across a move is refused undeclared" "rc=$RC out=$OUT"
 RAISE=1 run_frozen
-[ "$RC" -eq 0 ] && ok "control: the declaration carries that unfrozen raise, as it does in place" \
-  || bad "the declaration carries an unfrozen raise across a relocation" "rc=$RC out=$OUT"
+[ "$RC" -eq 1 ] && ok "and the declaration does not carry it, where in place it would" \
+  || bad "the declaration does not carry a raise across a move" "rc=$RC out=$OUT"
+# A `git mv` is the same move, and rename detection must not hide it. Four
+# rows with one raised keeps the two files similar enough that git pairs them,
+# which is exactly when a rename-detecting listing reports no removal at all.
+new_repo relocgitmv
+mkdir -p "$R/tools"
+for f in m p1 p2 p3; do mkfile "$f.test.txt" 15; done
+printf 'm.test.txt\t15\np1.test.txt\t15\np2.test.txt\t15\np3.test.txt\t15\n' >"$R/tools/a.tsv"
+settings_baseline tools/a.tsv
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: four baselined offenders at tools/a.tsv"
+mkfile m.test.txt 20
+git -C "$R" mv tools/a.tsv tools/b.tsv
+printf 'm.test.txt\t20\np1.test.txt\t15\np2.test.txt\t15\np3.test.txt\t15\n' >"$R/tools/b.tsv"
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+RAISE=1 run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten: tools/a.tsv -> tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "a git mv of the baseline is the same move, not a rename that hides it" \
+  || bad "a git mv of the baseline is the same move" "rc=$RC out=$OUT"
+# The staged lane reads the index, and a commit is what it judges.
+relocating_repo relocstaged s.test.txt 15 15
+mkfile s.test.txt 20
+relocate s.test.txt 20
+RAISE=1 run_frozen --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten: tools/a.tsv -> tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "the staged lane refuses the same move" \
+  || bad "the staged lane refuses the same move" "rc=$RC out=$OUT"
+# A removed file that is not a row set is not a moved baseline: the check reads
+# the row shape, so an ordinary deletion beside a first baseline stays a
+# bootstrap.
+new_repo notabaseline
+mkdir -p "$R/tools"
+mkfile n.test.txt 5
+printf 'some prose, not a row\n' >"$R/notes.txt"
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: no baseline, one ordinary file"
+mkfile n.test.txt 15
+printf 'n.test.txt\t15\n' >"$R/tools/b.tsv"
+rm -f "$R/notes.txt"
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+run_frozen
+[ "$RC" -eq 0 ] && ok "a removed file that is not a row set is not a moved baseline" \
+  || bad "a removed file that is not a row set is not a moved baseline" "rc=$RC out=$OUT"
 
-echo "=== and the three bootstraps still pass: they leave HEAD naming no rows ==="
-# Each of the three produces an empty HEAD row set legitimately, and each is
-# the case a refusal on emptiness alone would break. All three are run with the
-# baseline path relocated in the same commit, which is the only way the lookup
-# above runs at all.
+echo "=== and the three bootstraps still pass: none of them removes a row set ==="
+# Each legitimately leaves HEAD with no rows at the configured path, and each
+# is what refusing on that emptiness alone would break.
 new_repo bootunborn
 mkdir -p "$R/tools"
 mkfile u.test.txt 15
@@ -451,130 +492,6 @@ run_frozen
 [ "$RC" -eq 0 ] && ok "a HEAD baseline committed empty is no row set, wherever the path moves" \
   || bad "an empty HEAD baseline is no row set across a relocation" "rc=$RC out=$OUT"
 case "$OUT" in *"HEAD carries no baseline rows, so added and raised rows were not judged"*) ok "and a bootstrap still says the check had no reference" ;; *) bad "a bootstrap still reports that nothing was judged" "$OUT" ;; esac
-
-echo "=== every source kind that lookup reads is reproduced from HEAD, or refused ==="
-# A source the scratch tree does not reproduce faithfully makes the HEAD-side
-# resolution equal the run's own for a reason that is not HEAD's configuration,
-# and the raise gate is skipped again. One case per source kind.
-
-# .env.local is the invocation's only while it is UNTRACKED. Versioned it is
-# the commit's, and under --staged the run reads it from the index while HEAD's
-# copy is what the raise gate has to compare against.
-new_repo dotenvtracked
-mkdir -p "$R/tools"
-mkfile x.test.txt 15
-printf 'x.test.txt\t15\n' >"$R/tools/a.tsv"
-printf 'SIZE_RATCHET_BASELINE=tools/a.tsv\n' >"$R/.env.local"
-git -C "$R" add -A
-git -C "$R" commit -q -m "seed: the baseline path in a tracked .env.local"
-mkfile x.test.txt 20
-printf 'SIZE_RATCHET_BASELINE=tools/b.tsv\n' >"$R/.env.local"
-relocate x.test.txt 20
-RAISE=1 run_frozen --staged
-[ "$RC" -eq 1 ] && case "$OUT" in *"frozen baseline row raised: x.test.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
-  && ok "a tracked .env.local moving the path is the commit's, and the raise is refused" \
-  || bad "a tracked .env.local moving the path is judged" "rc=$RC out=$OUT"
-
-# A tracked symlink is a supported install shape, and the link staying put
-# while its TARGET moves the path is the same relocation one indirection down.
-new_repo symlinktarget
-mkdir -p "$R/tools"
-mkfile y.test.txt 15
-printf 'y.test.txt\t15\n' >"$R/tools/a.tsv"
-printf '[env]\nSIZE_RATCHET_BASELINE = "tools/a.tsv"\n' >"$R/real.settings.toml"
-ln -s real.settings.toml "$R/kendex.settings.toml"
-git -C "$R" add -A
-git -C "$R" commit -q -m "seed: the settings file reached through a tracked symlink"
-mkfile y.test.txt 20
-printf '[env]\nSIZE_RATCHET_BASELINE = "tools/b.tsv"\n' >"$R/real.settings.toml"
-relocate y.test.txt 20
-RAISE=1 run_frozen
-[ "$RC" -eq 1 ] && case "$OUT" in *"frozen baseline row raised: y.test.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
-  && ok "a symlinked settings source is followed through HEAD, so its target's move is judged" \
-  || bad "a symlinked settings source is followed through HEAD" "rc=$RC out=$OUT"
-
-# A settings file this change ADDS is one HEAD never had: HEAD's baseline is
-# wherever its own configuration left it, which here is the built-in default.
-new_repo settingsadded
-mkdir -p "$R/tools"
-mkfile z.test.txt 15
-printf 'z.test.txt\t15\n' >"$R/$BASE"
-git -C "$R" add -A
-git -C "$R" commit -q -m "seed: rows at the default path, no settings file"
-mkfile z.test.txt 20
-printf 'z.test.txt\t20\n' >"$R/tools/b.tsv"
-rm -f "$R/$BASE"
-settings_baseline tools/b.tsv
-git -C "$R" add -A
-RAISE=1 run_frozen
-[ "$RC" -eq 1 ] && case "$OUT" in *"frozen baseline row raised: z.test.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
-  && ok "a settings file this change adds leaves HEAD on its own default, and the raise is refused" \
-  || bad "a settings file this change adds leaves HEAD on its own default" "rc=$RC out=$OUT"
-# The control that tracking is what decides: the SAME move, from a settings
-# file git carries nowhere, is the invocation's and reads the same on both
-# sides, so there is no reference and the run says so.
-git -C "$R" rm --cached -q kendex.settings.toml
-run_frozen
-[ "$RC" -eq 0 ] && case "$OUT" in *"HEAD carries no baseline rows"*) true ;; *) false ;; esac \
-  && ok "control: an untracked settings file is the invocation's, on both sides" \
-  || bad "control: an untracked settings file is the invocation's" "rc=$RC out=$OUT"
-
-# A chain that leaves the repository ends on a file no commit can carry, so it
-# is copied from where it is: both sides read it, and refusing would fail a
-# supported install shape on every run. Omitting it instead sends the lookup to
-# the built-in default, where this fixture has no rows and the raise below
-# would pass unjudged.
-printf '[env]\nSIZE_RATCHET_BASELINE = "tools/b.tsv"\n' >"$TMP/outside.settings.toml"
-new_repo settingsescape
-mkdir -p "$R/tools"
-mkfile q.test.txt 15
-printf 'q.test.txt\t15\n' >"$R/tools/b.tsv"
-ln -s ../outside.settings.toml "$R/kendex.settings.toml"
-git -C "$R" add -A
-git -C "$R" commit -q -m "seed: the baseline path named through a symlink out of the repository"
-mkfile q.test.txt 20
-printf 'q.test.txt\t20\n' >"$R/tools/b.tsv"
-git -C "$R" add -A
-RAISE=1 run_frozen
-[ "$RC" -eq 1 ] && case "$OUT" in *"frozen baseline row raised: q.test.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
-  && ok "a settings symlink leaving the repository is followed to the file it names" \
-  || bad "a settings symlink leaving the repository is followed" "rc=$RC out=$OUT"
-
-echo "=== which file HEAD's baseline WAS is asked before the rows in it ==="
-# Reading the configured path and keeping whatever rows it holds accepts a file
-# HEAD's configuration never read. A stale destination carrying the raised
-# number reads as grandfathered, and the raise to it is never judged.
-new_repo stalendestination
-mkdir -p "$R/tools"
-mkfile x.test.txt 15
-printf 'x.test.txt\t15\n' >"$R/tools/a.tsv"
-printf 'x.test.txt\t20\n' >"$R/tools/b.tsv"
-settings_baseline tools/a.tsv
-git -C "$R" add -A
-git -C "$R" commit -q -m "seed: rows at tools/a.tsv, a stale tools/b.tsv beside them"
-mkfile x.test.txt 20
-settings_baseline tools/b.tsv
-git -C "$R" add -A
-RAISE=1 run_frozen
-[ "$RC" -eq 1 ] && case "$OUT" in *"frozen baseline row raised: x.test.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
-  && ok "a stale row set at the destination is not HEAD's baseline, and the raise is refused" \
-  || bad "a stale row set at the destination is not HEAD's baseline" "rc=$RC out=$OUT"
-# The control that the destination's rows are not simply ignored: HEAD's
-# settings naming the SAME path is the ordinary case, and its rows judge.
-new_repo samepath
-mkdir -p "$R/tools"
-mkfile x.test.txt 15
-printf 'x.test.txt\t15\n' >"$R/tools/b.tsv"
-settings_baseline tools/b.tsv
-git -C "$R" add -A
-git -C "$R" commit -q -m "seed: rows at the path the settings name"
-mkfile x.test.txt 20
-printf 'x.test.txt\t20\n' >"$R/tools/b.tsv"
-git -C "$R" add -A
-RAISE=1 run_frozen
-[ "$RC" -eq 1 ] && case "$OUT" in *"frozen baseline row raised: x.test.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
-  && ok "control: rows at the path HEAD's settings name are the ones that judge" \
-  || bad "control: rows at the path HEAD's settings name judge" "rc=$RC out=$OUT"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
