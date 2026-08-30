@@ -171,6 +171,12 @@ END {
 #      empty one reads as a clean record; in bounds mode both are emitted and
 #      a collator keeping the last one folds fragments under the wrong
 #      heading and then deletes the files they came from.
+#   5  NO canonical heading, so there is no section here. This is the one
+#      status a caller may go on to treat as ordinary: a document that never
+#      had a section is not the same as one staging its section away, and
+#      only the caller knows which of those it is holding. It is a status
+#      rather than empty output because an EMPTY section parses to nothing
+#      too, and the two must not read alike.
 GG_UNRELEASED_AWK='
 function lead(l,   i) { i = 0; while (i < 3 && substr(l, i + 1, 1) == " ") i++; return i }
 function heading_level(l,   i, n, c) {
@@ -223,7 +229,10 @@ END {
   # A body that bailed lands here too, and its status is the one to keep: an
   # unclosed fence past the second heading must not rename that refusal.
   if (rc) exit rc
+  # The fence first: it is why the heading below it was never seen, and
+  # reporting the missing heading would name the symptom over the cause.
   if (fence != "") exit 3
   if (inside && emit == "bounds") printf "end\t%d\n", NR + 1
+  if (!seen) exit 5
 }
 '

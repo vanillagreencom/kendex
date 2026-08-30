@@ -201,6 +201,9 @@ case "$rc" in
   # Which heading is the section decides where these fragments are published
   # and they are deleted straight after, so an undecided answer stops the run.
   4) die "$(gg_shown "$RECORD") carries more than one '## [Unreleased]' heading — which one is the section cannot be decided; keep one" ;;
+  # The grammar's own answer, not a second look at what it emitted: there is
+  # no section to fold into, and these fragments would be deleted after.
+  5) die "$(gg_shown "$RECORD") has no '## [Unreleased]' heading — the collation could not run" ;;
   *) die "$(gg_shown "$RECORD") could not be read (awk exit $rc) — the collation could not run" ;;
 esac
 
@@ -222,7 +225,6 @@ while IFS="$TAB" read -r kind a b; do
     *) die "the changelog grammar emitted a boundary this collation does not understand: $(gg_shown "$kind")" ;;
   esac
 done <"$TMP/bounds"
-[ "$start" -gt 0 ] || die "$(gg_shown "$RECORD") has no '## [Unreleased]' heading — the collation could not run"
 
 # Split at those numbers: the part above the heading, that section's lead and
 # per-section bodies, and the released versions below it. A body keeps one

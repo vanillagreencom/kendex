@@ -511,5 +511,84 @@ run_ce
   && ok "control: judged and clean says exactly that" \
   || bad "control: judged and clean says exactly that" "rc=$RC out=$OUT"
 
+echo "=== a record staged away is a deletion, not a repository that never had one ==="
+# The two states look identical from the index alone, and read as the same
+# stand-down they would ship the consumer changelog's deletion as a clean run.
+new_repo recordgone
+printf -- '- A fragment.\n' | frag fixed ken-1.md
+printf '# Changelog\n\n## [Unreleased]\n\n- One line.\n' >"$R/CHANGELOG.md"
+stage
+git -C "$R" commit -qm base
+run_ce
+[ "$RC" -eq 0 ] && ok "control: the record HEAD carries is judged and clean" \
+  || bad "control: the record HEAD carries is judged and clean" "rc=$RC out=$OUT"
+git -C "$R" rm -q CHANGELOG.md
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"CHANGELOG.md is tracked in HEAD and staged away"*) true ;; *) false ;; esac \
+  && ok "deleting the record is refused, naming it" \
+  || bad "deleting the record is refused, naming it" "rc=$RC out=$OUT"
+case "$OUT" in *"is not tracked"*) bad "a deletion never reads as a repository with no record" "$OUT" ;;
+  *) ok "and it never reads as a repository with no record" ;; esac
+# A rename out from under the setting is the same deletion by another spelling.
+git -C "$R" reset -q --hard HEAD
+git -C "$R" mv CHANGELOG.md HISTORY.md
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"CHANGELOG.md is tracked in HEAD and staged away"*) true ;; *) false ;; esac \
+  && ok "renaming the record away is the same refusal" \
+  || bad "renaming the record away is the same refusal" "rc=$RC out=$OUT"
+# The release write is declared, and the declaration covers this too.
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_COLLATE=1'
+[ "$RC" -eq 0 ] && case "$OUT" in *"removal NOT judged"*"GROWTH_GUARDS_CHANGELOG_COLLATE=1"*) true ;; *) false ;; esac \
+  && ok "a declared collation may write the removal, and says so" \
+  || bad "a declared collation may write the removal, and says so" "rc=$RC out=$OUT"
+# The control that matters: a repository that never carried one still stands
+# down cleanly, which is the case this refusal must not swallow.
+git -C "$R" reset -q --hard HEAD
+new_repo recordnever
+printf -- '- A fragment.\n' | frag fixed ken-1.md
+run_ce
+[ "$RC" -eq 0 ] && case "$OUT" in *"no record to judge"*"is not tracked"*) true ;; *) false ;; esac \
+  && ok "control: a repository that never had a record stands down" \
+  || bad "control: a repository that never had a record stands down" "rc=$RC out=$OUT"
+
+echo "=== staging the heading away is a refusal, not an unchanged section ==="
+# An EMPTY section and a MISSING one both parse to nothing, so the comparison
+# alone reports the record unchanged and the malformed state lands.
+new_repo recordheading
+printf -- '- A fragment.\n' | frag fixed ken-1.md
+printf '# Changelog\n\n## [Unreleased]\n' >"$R/CHANGELOG.md"
+stage
+git -C "$R" commit -qm base
+run_ce
+[ "$RC" -eq 0 ] && case "$OUT" in *"unchanged under [Unreleased]"*) true ;; *) false ;; esac \
+  && ok "control: an empty section HEAD also carries is unchanged" \
+  || bad "control: an empty section HEAD also carries is unchanged" "rc=$RC out=$OUT"
+printf '# Log\n' >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"stages away the '## [Unreleased]' heading"*) true ;; *) false ;; esac \
+  && ok "staging the heading away is refused, naming what went" \
+  || bad "staging the heading away is refused, naming what went" "rc=$RC out=$OUT"
+case "$OUT" in *"unchanged under [Unreleased]"*) bad "no run calls that record unchanged" "$OUT" ;;
+  *) ok "and no run calls that record unchanged" ;; esac
+# The release renames the heading and opens a fresh empty one, so the flow the
+# docs describe is not what this refuses.
+printf '# Changelog\n\n## [Unreleased]\n\n## [1.0.0] - 2026-01-01\n' >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 0 ] && ok "control: renaming it and opening a fresh empty one passes" \
+  || bad "control: renaming it and opening a fresh empty one passes" "rc=$RC out=$OUT"
+# And a record whose section was never opened is not a removal either.
+new_repo recordnoheading
+printf -- '- A fragment.\n' | frag fixed ken-1.md
+printf '# Log\n\n- Nothing calls itself unreleased.\n' >"$R/CHANGELOG.md"
+stage
+git -C "$R" commit -qm base
+printf '# Log\n\n- Nothing calls itself unreleased.\n- Nor this.\n' >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 0 ] && ok "control: a record that never opened a section is no removal" \
+  || bad "control: a record that never opened a section is no removal" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

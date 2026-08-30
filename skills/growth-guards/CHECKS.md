@@ -177,6 +177,18 @@ this comparison would call the record unchanged, while the collator splits
 the file at whichever heading it read last and deletes the fragments it
 published under it.
 
+Staging the heading AWAY, where HEAD carries one and the index does not, is
+a violation. An empty section and a missing one both parse to nothing, so
+the comparison alone reports the record unchanged and the malformed state
+lands, with a later collation left nowhere to fold into. A release renames
+the heading and opens a fresh empty one, which is not this.
+
+A record git tracks in HEAD and not in the index is a DELETION, and it is a
+violation too. Absent from the index is otherwise indistinguishable from a
+repository that has no record yet, and read as that it would ship the
+consumer changelog's removal as a clean run. Retire the scope by emptying
+`GROWTH_GUARDS_CHANGELOG_RECORD`, not by deleting the file.
+
 The COMPARISON runs only when HEAD already carries the record: a repository
 writing its first one is not hand-editing a collated file.
 `GROWTH_GUARDS_CHANGELOG_COLLATE=1` in the environment declares the

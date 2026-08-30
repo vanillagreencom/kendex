@@ -515,8 +515,11 @@ untouched && ok "CHANGELOG.md is untouched by that refusal too" \
 reset
 fragment fixed ken-1.md '- A fragment.
 '
-rm -f "$R/CHANGELOG.md"
-git -C "$R" rm -q --cached CHANGELOG.md
+# Committed away, not merely unstaged: the judge refuses a record HEAD still
+# carries and the index does not, which is a deletion rather than the absence
+# this case is about.
+git -C "$R" rm -q CHANGELOG.md
+git -C "$R" commit -q -m "chore: retire the record"
 run_collate
 [ "$RC" -eq 2 ] && case "$OUT" in *"CHANGELOG.md is not tracked"*) true ;; *) false ;; esac \
   && ok "a record git does not track is refused, naming it" \

@@ -53,6 +53,8 @@ source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/settings.sh"
 # shellcheck source=lib/changelog-grammar.sh
 source "$SCRIPT_DIR/lib/changelog-grammar.sh"
+# shellcheck source=lib/changelog-record-scope.sh
+source "$SCRIPT_DIR/lib/changelog-record-scope.sh"
 
 # The Keep a Changelog sections, and the only directory names a fragment may
 # sit under: the collator writes each fragment beneath the heading its
@@ -274,98 +276,9 @@ while IFS= read -r -d '' rec; do
 done <"$GG_TMP/files.z"
 
 # --- the record scope --------------------------------------------------------
-# Judged only when HEAD already carries the record: a repository writing its
-# first CHANGELOG.md is not hand-editing a collated one, and every line of it
-# would read as gained. Each way the scope stands down says which way it was,
-# so a gate somebody disarmed for this run never reads as a repository that
-# has no record yet.
-RECORD_NOTE=""
-if [ -z "$RECORD" ]; then
-  RECORD_NOTE="; no record scope — GROWTH_GUARDS_CHANGELOG_RECORD is empty"
-elif [ -z "$RECORD_SHA" ]; then
-  RECORD_NOTE="; no record to judge — $(gg_shown "$RECORD") is not tracked"
-else
-  # What the record IS — a real file, holding text this family can measure —
-  # is judged whenever git carries one. Only the COMPARISON below is a rule a
-  # collation legitimately breaks, so only that is what the declaration
-  # bypasses: a run that skipped these would let a symlink through, and the
-  # collator's own rename would then replace it with a regular file.
-  case "$RECORD_MODE" in
-    120000 | 160000) gg_collection_error "$(gg_shown "$RECORD") is tracked as a symlink or gitlink — the record could not be read" ;;
-  esac
-  gg_changelog_blob "$RECORD_SHA" "$RECORD" \
-    || gg_collection_error "$(gg_shown "$RECORD") holds binary content in its staged copy — the collated record is not changelog text"
-  cat -- "$GG_TMP/blob" >"$GG_TMP/record.index" \
-    || gg_collection_error "could not take the staged copy of $(gg_shown "$RECORD")"
-
-  if [ "${GROWTH_GUARDS_CHANGELOG_COLLATE:-}" = "1" ]; then
-    RECORD_NOTE="; $(gg_shown "$RECORD") NOT compared — GROWTH_GUARDS_CHANGELOG_COLLATE=1 declares this write"
-  else
-    head_entry=""
-    head_status=0
-    git rev-parse --verify --quiet HEAD >/dev/null 2>&1 || head_status=$?
-    case "$head_status" in
-      0)
-        tree_status=0
-        head_entry="$(git ls-tree HEAD -- ":(literal)$RECORD")" || tree_status=$?
-        [ "$tree_status" -eq 0 ] \
-          || gg_collection_error "could not probe HEAD for $(gg_shown "$RECORD") (git ls-tree exit $tree_status)"
-        # Record shape: "<mode> <type> <sha>\t<path>".
-        head_sha="${head_entry#* * }"
-        head_sha="${head_sha%%"$GG_TAB"*}"
-        ;;
-      1) ;;
-      *) gg_collection_error "could not resolve HEAD while reading $(gg_shown "$RECORD") (git rev-parse exit $head_status)" ;;
-    esac
-    if [ -z "$head_entry" ]; then
-      RECORD_NOTE="; no record to compare — HEAD carries no $(gg_shown "$RECORD") yet"
-    else
-      # HEAD's copy comes in by the same path, so the rules that judged the
-      # staged one judge it too.
-      gg_changelog_blob "$head_sha" "$RECORD" \
-        || gg_collection_error "$(gg_shown "$RECORD") holds binary content in HEAD's copy — the collated record is not changelog text"
-      cat -- "$GG_TMP/blob" >"$GG_TMP/record.head" \
-        || gg_collection_error "could not take HEAD's copy of $(gg_shown "$RECORD")"
-      for side in index head; do
-        ur_status=0
-        LC_ALL=C awk "$GG_UNRELEASED_AWK" <"$GG_TMP/record.$side" >"$GG_TMP/ur.$side" || ur_status=$?
-        # Exit 3 is the parser saying a fence never closed, so it cannot say
-        # where the section starts or stops. Reporting the record unchanged
-        # over a document it could not read is the silent pass this family
-        # refuses.
-        [ "$ur_status" -ne 3 ] \
-          || gg_collection_error "$(gg_shown "$RECORD") leaves a code fence unclosed in its $side copy — the [Unreleased] section cannot be located; close the fence"
-        # Exit 4 is the parser saying the document has two of the heading, so
-        # which one is the section is undecided. Both copies are read here, so
-        # this refuses the commit that INTRODUCES the second one and every
-        # commit after it until one goes.
-        [ "$ur_status" -ne 4 ] \
-          || gg_collection_error "$(gg_shown "$RECORD") carries more than one '## [Unreleased]' heading in its $side copy — which one is the section cannot be decided; keep one"
-        [ "$ur_status" -eq 0 ] \
-          || gg_collection_error "could not read the [Unreleased] section of the $side copy of $(gg_shown "$RECORD") (awk exit $ur_status)"
-        LC_ALL=C sort -o "$GG_TMP/ur.$side" "$GG_TMP/ur.$side" \
-          || gg_collection_error "could not order the [Unreleased] lines of the $side copy of $(gg_shown "$RECORD")"
-      done
-      # No comm -u: a second copy of a line HEAD carries once is a line this
-      # commit gained.
-      added="$(LC_ALL=C comm -13 "$GG_TMP/ur.head" "$GG_TMP/ur.index")" \
-        || gg_collection_error "could not compare the [Unreleased] section of $(gg_shown "$RECORD") against HEAD"
-      if [ -z "$added" ]; then
-        RECORD_NOTE="; $(gg_shown "$RECORD") unchanged under [Unreleased]"
-      else
-        echo "changelog-entries FAIL $(gg_shown "$RECORD") gained lines under [Unreleased]"
-        # The first five, with every C0 control except tab, and DEL, replaced:
-        # these are the record's own bytes, and an escape sequence in one must
-        # not reach the reader's terminal. awk caps the count itself rather
-        # than piping into `head`, whose exit would break the pipeline under
-        # pipefail.
-        printf '%s\n' "$added" | LC_ALL=C awk 'NR <= 5 { gsub(/[\001-\010\013-\037\177]/, "?"); print "    " $0 }'
-        echo "  write $PATTERNS_SHOWN instead — the collator folds fragments in at release; GROWTH_GUARDS_CHANGELOG_COLLATE=1 declares that write"
-        violations=$((violations + 1))
-      fi
-    fi
-  fi
-fi
+# lib/changelog-record-scope.sh: one tracked file judged against HEAD, which
+# shares nothing with the walk above but the verdict it reports into.
+gg_changelog_record_scope
 
 if [ "$violations" -gt 0 ]; then
   echo "changelog-entries: $violations violation(s) — cap $CAP characters, $checked fragment(s) measured"
