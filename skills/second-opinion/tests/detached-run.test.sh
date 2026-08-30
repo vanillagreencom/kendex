@@ -194,6 +194,64 @@ assert_rc "$rc" 0 "a published marker beats the deadline and the dead pid"
 assert_contains "$TMP_ROOT/marker.stdout" "$TMP_ROOT/marker-run-answer" \
   "the marker path prints the artifact"
 
+echo "=== a marker landing in the pid-death window is still read ==="
+# The wrapper writes the marker and THEN exits, so a poll can read the log,
+# find nothing, and see the pid die a moment later with the marker already on
+# disk. The re-read inside the pid-death branch is what catches that; without
+# it the wait reports 75 for a run that has in fact finished. The cost is one
+# spurious 75 and a rerun, not a wrong status — robustness, not correctness.
+#
+# Staged by grep CALL COUNT, never by the clock: the stub publishes the marker
+# after the poll's first read of the log, which is exactly the window, and the
+# case decides the same way however slowly it runs.
+mkdir "$TMP_ROOT/race-bin"
+cat > "$TMP_ROOT/race-bin/grep" <<'SH'
+#!/usr/bin/env bash
+count=0
+[[ ! -e "$RACE_COUNT" ]] || count="$(cat < "$RACE_COUNT")"
+count=$((count + 1))
+printf '%s\n' "$count" > "$RACE_COUNT"
+grep_rc=0
+"$REAL_GREP" "$@" || grep_rc=$?
+[[ $count -ne 1 ]] || printf '%s\n' "$RACE_MARKER" >> "$RACE_LOG"
+exit "$grep_rc"
+SH
+chmod +x "$TMP_ROOT/race-bin/grep"
+race_wait() { # RUNTIME LABEL — run the staged window case, print the exit code
+  local runtime="$1" label="$2" rc=0
+  stage_runtime "$label" stagedtoken
+  PATH="$TMP_ROOT/race-bin:$PATH" REAL_GREP="$(command -v grep)" \
+    RACE_COUNT="$TMP_ROOT/$label.count" RACE_LOG="$TMP_ROOT/$label/worker.log" \
+    RACE_MARKER="__SECOND_OPINION_EXIT_stagedtoken__=5" \
+    "$runtime" wait "$TMP_ROOT/$label-answer" "$TMP_ROOT/$label" \
+    "$(($(date +%s) + 60))" stagedtoken 5 \
+    > "$TMP_ROOT/$label.stdout" 2> "$TMP_ROOT/$label.stderr" || rc=$?
+  printf '%s\n' "$rc"
+}
+rc="$(race_wait "$RUNTIME" race)"
+assert_rc "$rc" 5 "a marker written in the pid-death window still decides the run"
+[[ -e "$TMP_ROOT/race" ]] && fail "the recovered completion left runtime state behind"
+ok "the recovered completion removes the runtime directory"
+
+# Control: the same staged window against a wait whose pid-death branch has
+# lost its re-read must report 75 instead. Without it this case cannot say
+# which read decided the run.
+RACE_MUTANT="$MUTANT_DIR/race-mutant-runtime"
+awk '
+  /if ! worker_alive "\$worker_pid"; then/ { print; dropping = 1; next }
+  dropping && /\[\[ -z "\$line" \]\] \|\| continue/ { dropping = 0; next }
+  dropping && (/grep_rc=0/ || /line=\$\(completion_line/ || /grep_rc -ne 2/) { next }
+  { print }
+' "$RUNTIME" > "$RACE_MUTANT"
+chmod +x "$RACE_MUTANT"
+[[ $(($(wc -l < "$RUNTIME") - $(wc -l < "$RACE_MUTANT"))) -eq 4 ]] \
+  || fail "the re-read control removed something other than the four-line re-read"
+ok "the re-read control removes exactly the pid-death re-read"
+rc="$(race_wait "$RACE_MUTANT" race-mutant)"
+assert_rc "$rc" 75 "the re-read control rejects a wait that never re-reads"
+assert_contains "$TMP_ROOT/race-mutant.stderr" "the detached worker is gone" \
+  "the control's 75 is the pid-death branch, not a spent slice"
+
 echo "=== a worker's own exit status is what the wait returns ==="
 # EXIT_CLI_FAILED and its siblings mean something an operator acts on, so the
 # protocol has to carry them out unchanged rather than flattening them to 1.
