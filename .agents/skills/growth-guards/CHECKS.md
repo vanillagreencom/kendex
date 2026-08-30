@@ -180,9 +180,12 @@ cannot change what it holds — so a record HEAD carries that this guard would
 not accept is a comparison SKIPPED, naming the reason, never a refusal.
 Refusing on HEAD's shape would demand a repair and then block the commit
 making it, and a record malformed in HEAD could never be fixed at all. That
-covers every way HEAD can fail to be a record, including bytes that are not
-changelog text, because it is the same acceptance test either copy is put to
-rather than a list of tolerated states.
+covers every way HEAD can fail to be a record — the entry's MODE, its bytes
+and its shape, classified together in one answer — because it is the same
+acceptance test either copy is put to rather than a list of tolerated states.
+A gitlink or a tree has no blob to read as a record and a symlink's blob is a
+path rather than a document, so each of those is history to repair as much as
+a malformed heading is.
 
 A SECOND `## [Unreleased]` heading is exit 2 for the same reason: which one
 is the section is undecided. A duplicate carries no content of its own, so

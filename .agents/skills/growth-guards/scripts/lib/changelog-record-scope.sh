@@ -17,23 +17,68 @@
 # is a second answer waiting to disagree with the first.
 RECORD_HEAD_ENTRY=""
 RECORD_HEAD_SHA=""
-gg_record_head_probe() { # fills RECORD_HEAD_ENTRY and RECORD_HEAD_SHA, or leaves them empty
+RECORD_HEAD_MODE=""
+gg_record_head_probe() { # fills RECORD_HEAD_ENTRY, _MODE and _SHA, or leaves them empty
   local head_status=0 tree_status=0
   RECORD_HEAD_ENTRY=""
   RECORD_HEAD_SHA=""
+  RECORD_HEAD_MODE=""
   git rev-parse --verify --quiet HEAD >/dev/null 2>&1 || head_status=$?
   case "$head_status" in
     0)
       RECORD_HEAD_ENTRY="$(git ls-tree HEAD -- ":(literal)$RECORD")" || tree_status=$?
       [ "$tree_status" -eq 0 ] \
         || gg_collection_error "could not probe HEAD for $(gg_shown "$RECORD") (git ls-tree exit $tree_status)"
-      # Record shape: "<mode> <type> <sha>\t<path>".
+      # Record shape: "<mode> <type> <sha>\t<path>". The MODE is kept, not
+      # dropped: what HEAD holds at that path is a gitlink, a tree, a symlink
+      # or a file, and only the last of those has a blob to read as a record.
+      RECORD_HEAD_MODE="${RECORD_HEAD_ENTRY%% *}"
       RECORD_HEAD_SHA="${RECORD_HEAD_ENTRY#* * }"
       RECORD_HEAD_SHA="${RECORD_HEAD_SHA%%"$GG_TAB"*}"
       ;;
     1) ;;
     *) gg_collection_error "could not resolve HEAD while reading $(gg_shown "$RECORD") (git rev-parse exit $head_status)" ;;
   esac
+}
+
+# Whether HEAD's copy is one this scope can compare AGAINST, answered once
+# over every dimension it has: the entry's MODE, then its bytes, then its
+# shape. HEAD is history — the committer cannot change what it holds — so
+# each of these is a comparison skipped with its reason, never a refusal.
+#
+# One classifier because it was two passes: the parse statuses were settled
+# and the entry mode was not, so a gitlink or a tree in HEAD still exited on
+# a blob read that cannot answer, and a symlink's blob was parsed as though
+# the link target were a record. A dimension added later belongs in here, in
+# front of the comparison, rather than in a third pass beside it.
+#
+# The staged side is stricter and stays so: a non-regular mode there is
+# refused outright, because that is what the commit is MAKING.
+GG_HEAD_WHY=""
+gg_record_head_comparable() { # 0 when HEAD's copy is one this scope can compare against
+  GG_HEAD_WHY=""
+  # Mode first, and by what it IS rather than by a list of what it is not: a
+  # gitlink and a tree have no blob at all, and a symlink's blob is a path,
+  # so none of them is a document to parse. Reading the sha before asking
+  # this is what made two of them exit rather than answer.
+  case "$RECORD_HEAD_MODE" in
+    100644 | 100755) ;;
+    *)
+      GG_HEAD_WHY="is not a regular file in HEAD's copy (mode $(gg_shown "$RECORD_HEAD_MODE"))"
+      return 1
+      ;;
+  esac
+  if ! gg_changelog_blob "$RECORD_HEAD_SHA" "$RECORD" soft; then
+    GG_HEAD_WHY="is not changelog text in HEAD's copy"
+    return 1
+  fi
+  cat -- "$GG_TMP/blob" >"$GG_TMP/record.head" \
+    || gg_collection_error "could not take HEAD's copy of $(gg_shown "$RECORD")"
+  if ! gg_record_accepts "$GG_TMP/record.head"; then
+    GG_HEAD_WHY="$GG_RECORD_WHY, in HEAD's copy"
+    return 1
+  fi
+  return 0
 }
 
 # The declaration, read in ONE place in this scope and permitting ONE thing:
@@ -197,22 +242,15 @@ gg_changelog_record_scope() { # fills RECORD_NOTE; counts violations
       # demand a repair and then block the commit performing it, and a record
       # malformed in HEAD could never be fixed at all.
       #
-      # Every way HEAD can fail to be a record goes down this one path: bytes
-      # that are not changelog text, and any shape gg_record_accepts will not
-      # have. A state added to that predicate later is covered here without
-      # anyone deciding it should be.
+      # Every way HEAD can fail to be a record is one answer, given by
+      # gg_record_head_comparable over mode, bytes and shape together. A
+      # dimension added there is covered here without anyone deciding it
+      # should be.
       head_ok=1
       head_why=""
-      if ! gg_changelog_blob "$RECORD_HEAD_SHA" "$RECORD" soft; then
+      if ! gg_record_head_comparable; then
         head_ok=0
-        head_why="is not changelog text in HEAD's copy"
-      else
-        cat -- "$GG_TMP/blob" >"$GG_TMP/record.head" \
-          || gg_collection_error "could not take HEAD's copy of $(gg_shown "$RECORD")"
-        if ! gg_record_accepts "$GG_TMP/record.head"; then
-          head_ok=0
-          head_why="$GG_RECORD_WHY, in HEAD's copy"
-        fi
+        head_why="$GG_HEAD_WHY"
       fi
       # Content, because the shape of what is read here is already settled:
       # the staged copy was accepted above, and HEAD's is read only when it
