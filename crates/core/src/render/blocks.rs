@@ -94,6 +94,21 @@ struct Paragraph {
     block: usize,
 }
 
+/// A fenced block standing open: what will close it, and the blockquote
+/// depth its opening line stood at.
+struct Fence {
+    marker: char,
+    run: usize,
+    depth: usize,
+}
+
+/// A raw HTML block standing open, with the depth its opening line stood
+/// at.
+struct Raw {
+    kind: Html,
+    depth: usize,
+}
+
 fn place(lines: &[&str]) -> Vec<Placed> {
     let mut placed: Vec<Placed> = lines
         .iter()
@@ -102,34 +117,19 @@ fn place(lines: &[&str]) -> Vec<Placed> {
             block: None,
         })
         .collect();
-    fenced(lines, &mut placed);
-    leaves(lines, &mut placed);
+    walk(lines, &mut placed);
     placed
 }
 
-/// Marks the lines a fence holds. The opening line is not one of them: what
-/// stands on it is the fence and its info string, and the block's own text
-/// starts below.
-fn fenced(lines: &[&str], placed: &mut [Placed]) {
-    let mut fence: Option<(char, usize)> = None;
-    for (at, line) in lines.iter().enumerate() {
-        if fence.is_some() {
-            placed[at].inside = true;
-        }
-        match (fence_marker(line), fence) {
-            (Some((marker, run, bare)), Some((open, len)))
-                if marker == open && run >= len && bare =>
-            {
-                fence = None;
-            }
-            (Some((marker, run, _)), None) => fence = Some((marker, run)),
-            _ => {}
-        }
-    }
-}
-
-/// Numbers the leaf blocks the lines a fence left over carry, and marks the
-/// indented ones as code.
+/// Numbers the leaf blocks the lines carry and marks the ones a code block
+/// holds.
+///
+/// A line is asked which container it stands in before it is asked what it
+/// is. Everything a line can be — a fence's marker, a tag, an indent, a
+/// heading — is read past the blockquote markers it carries, and a block
+/// already open owns the markers it opened at and no others. Only a
+/// paragraph continues lazily; a fence and a raw HTML block end where their
+/// container stops, because a line that has dropped a marker has left them.
 ///
 /// A run of indented lines is a block of its own, but only where no
 /// paragraph stands open: markdown does not let four spaces interrupt one,
@@ -138,42 +138,64 @@ fn fenced(lines: &[&str], placed: &mut [Placed]) {
 /// inside it, blank lines among them included — they are the block's, not
 /// separation between blocks — and a blank run trailing it belongs to
 /// whatever follows.
-fn leaves(lines: &[&str], placed: &mut [Placed]) {
+fn walk(lines: &[&str], placed: &mut [Placed]) {
+    let mut fence: Option<Fence> = None;
+    let mut raw: Option<Raw> = None;
+    let mut code: Option<(usize, usize)> = None;
     let mut open: Option<Paragraph> = None;
-    let mut html: Option<Html> = None;
-    let mut code: Option<usize> = None;
     let mut next = 0;
     for (at, line) in lines.iter().enumerate() {
-        if placed[at].inside {
-            open = None;
-            code = None;
-            continue;
+        let (depth, rest) = quote_depth(line, usize::MAX);
+        if let Some(held) = &fence {
+            match depth < held.depth {
+                true => fence = None,
+                false => {
+                    placed[at].inside = true;
+                    let (_, content) = quote_depth(line, held.depth);
+                    if closes(held, content) {
+                        fence = None;
+                    }
+                    open = None;
+                    code = None;
+                    continue;
+                }
+            }
         }
-        let (depth, rest) = quote_depth(line);
-        if let Some(kind) = html {
-            html = (!html_closes(kind, rest)).then_some(kind);
-            code = None;
-            continue;
+        if let Some(held) = &raw {
+            match depth < held.depth {
+                true => raw = None,
+                false => {
+                    let (_, content) = quote_depth(line, held.depth);
+                    if html_closes(held.kind, content) {
+                        raw = None;
+                    }
+                    open = None;
+                    code = None;
+                    continue;
+                }
+            }
         }
         if line.trim().is_empty() {
             open = None;
             continue;
         }
-        if let Some(kind) = html_opens(rest) {
-            html = (!html_closes(kind, rest)).then_some(kind);
+        if let Some((marker, run, _)) = fence_marker(rest) {
+            fence = Some(Fence { marker, run, depth });
             open = None;
             code = None;
             continue;
         }
-        // A fence's opening line, a thematic break, a setext underline and a
-        // blockquote marker with nothing behind it each end the block above
-        // them and carry no inline content of their own.
+        if let Some(kind) = html_opens(rest, open.is_some()) {
+            raw = (!html_closes(kind, rest)).then_some(Raw { kind, depth });
+            open = None;
+            code = None;
+            continue;
+        }
+        // A thematic break, a setext underline and a blockquote marker with
+        // nothing behind it each end the block above them and carry no
+        // inline content of their own.
         let underline = open.is_some_and(|para| para.depth == depth) && setext_underline(rest);
-        if fence_marker(line).is_some()
-            || thematic_break(rest)
-            || underline
-            || rest.trim().is_empty()
-        {
+        if thematic_break(rest) || underline || rest.trim().is_empty() {
             open = None;
             code = None;
             continue;
@@ -181,12 +203,14 @@ fn leaves(lines: &[&str], placed: &mut [Placed]) {
         let continues = open
             .is_some_and(|para| depth <= para.depth && !atx_heading(rest) && !list_marker(rest));
         if !continues && indented(rest) {
-            if let Some(from) = code {
+            if let Some((held, from)) = code
+                && held == depth
+            {
                 placed[from + 1..=at]
                     .iter_mut()
-                    .for_each(|held| held.inside = true);
+                    .for_each(|line| line.inside = true);
             }
-            code = Some(at);
+            code = Some((depth, at));
             open = None;
             continue;
         }
@@ -202,4 +226,11 @@ fn leaves(lines: &[&str], placed: &mut [Placed]) {
             }
         }
     }
+}
+
+/// Whether this line closes the open fence: the same marker, a run at
+/// least as long, and nothing behind it.
+fn closes(fence: &Fence, content: &str) -> bool {
+    fence_marker(content)
+        .is_some_and(|(marker, run, bare)| marker == fence.marker && run >= fence.run && bare)
 }

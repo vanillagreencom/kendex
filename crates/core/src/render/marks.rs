@@ -16,17 +16,22 @@ pub fn indented(line: &str) -> bool {
     line.starts_with("    ") || line.starts_with('\t')
 }
 
-/// How many blockquote markers open this line, and what stands after the
-/// last of them. Each marker takes up to three spaces of indent, its `>`,
-/// and one space of its own.
+/// How many blockquote markers open this line, taking at most `limit` of
+/// them, and what stands after the ones taken.
 ///
 /// The count is what a lazy continuation is read against: a line carrying
 /// fewer markers than the paragraph above it is still that paragraph, and
-/// only a line carrying more opens a quote inside it.
-pub fn quote_depth(line: &str) -> (usize, &str) {
+/// only a line carrying more opens a quote inside it. The limit is for a
+/// block already standing open, which owns the markers it opened at and no
+/// others: inside a fence every further `>` is the code's own text, so
+/// taking it as a marker would let a deeper line close a fence it never
+/// stood in.
+pub fn quote_depth(line: &str, limit: usize) -> (usize, &str) {
     let mut rest = line;
     let mut depth = 0;
-    while let Some(after) = unindented(rest).and_then(|open| open.strip_prefix('>')) {
+    while depth < limit
+        && let Some(after) = unindented(rest).and_then(|open| open.strip_prefix('>'))
+    {
         depth += 1;
         rest = after.strip_prefix(' ').unwrap_or(after);
     }
@@ -91,12 +96,17 @@ pub fn list_marker(line: &str) -> bool {
 /// A raw HTML block's kind, which is what says where it ends: `Raw` at a
 /// closing `</script>`, `</pre>`, `</style>` or `</textarea>`, `Comment`
 /// at `-->`, `Question` at `?>`, `Bang` at `>`, `Cdata` at `]]>`, and
-/// `Named` — a block-level tag from markdown's own list — at a blank line.
+/// `Named` at a blank line.
 ///
-/// Markdown's seventh kind, any complete tag standing alone on its line,
-/// is left out. It is the one kind that may not interrupt a paragraph, so
-/// reading a line of prose that opens with a tag as a block of its own
-/// would end a span markdown leaves running.
+/// `Named` is two of markdown's kinds, which end alike and start
+/// differently. A block-level tag from markdown's own list opens one
+/// wherever it stands, an open paragraph included. Any other whole tag
+/// alone on its line opens one only where no paragraph stands open: that
+/// kind may not interrupt one, so reading it as a block under a paragraph
+/// ends a span markdown leaves running, and refusing it everywhere leaves
+/// a span running that markdown ends. Both directions are a switch scored
+/// as the wrong thing, which is why the rule is the conditional one rather
+/// than either half of it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Html {
     Raw,
@@ -106,6 +116,10 @@ pub enum Html {
     Cdata,
     Named,
 }
+
+/// The tags whose content markdown reads raw, ending only at a closing tag
+/// of their own.
+const RAW_TAGS: [&str; 4] = ["script", "pre", "style", "textarea"];
 
 /// The tags markdown reads as a block of their own, from its own list.
 const BLOCK_TAGS: [&str; 62] = [
@@ -173,61 +187,146 @@ const BLOCK_TAGS: [&str; 62] = [
     "ul",
 ];
 
-/// Which raw HTML block this line opens, if any. Every kind here may
-/// interrupt a paragraph, so a line opening one ends the block above it.
-pub fn html_opens(line: &str) -> Option<Html> {
-    let after = unindented(line)?.strip_prefix('<')?.to_ascii_lowercase();
-    if ["script", "pre", "style", "textarea"]
-        .iter()
-        .any(|name| tag_named(&after, name))
-    {
-        return Some(Html::Raw);
-    }
+/// Which raw HTML block this line opens, if any. `paragraph` says whether
+/// one stands open above it, which is what the whole-tag kind turns on;
+/// every other kind interrupts a paragraph, so a line opening one of those
+/// ends the block above it.
+pub fn html_opens(line: &str, paragraph: bool) -> Option<Html> {
+    let after = unindented(line)?.strip_prefix('<')?;
+    // A comment, a processing instruction, a declaration and a CDATA
+    // section are spelled, not named: their openers are literal text, so
+    // none of them is read against a lowercase copy. `CDATA` in
+    // particular is the spelling markdown asks for and the only one.
     if after.starts_with("!--") {
         return Some(Html::Comment);
     }
     if after.starts_with('?') {
         return Some(Html::Question);
     }
-    if after.starts_with("![cdata[") {
+    if after.starts_with("![CDATA[") {
         return Some(Html::Cdata);
     }
-    if let Some(rest) = after.strip_prefix('!')
-        && rest.starts_with(|c: char| c.is_ascii_alphabetic())
+    if after
+        .strip_prefix('!')
+        .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_alphabetic()))
     {
         return Some(Html::Bang);
     }
-    let name = after.strip_prefix('/').unwrap_or(&after);
-    BLOCK_TAGS
-        .iter()
-        .any(|tag| tag_named(name, tag))
-        .then_some(Html::Named)
+    // A tag name is case-insensitive, so the kinds named by one are the
+    // only ones read against a lowercase copy.
+    let lower = after.to_ascii_lowercase();
+    if RAW_TAGS.iter().any(|name| tag_named(&lower, name, false)) {
+        return Some(Html::Raw);
+    }
+    let named = lower.strip_prefix('/').unwrap_or(&lower);
+    if BLOCK_TAGS.iter().any(|tag| tag_named(named, tag, true)) {
+        return Some(Html::Named);
+    }
+    (!paragraph && whole_tag(after)).then_some(Html::Named)
 }
 
 /// Whether `after` — a line past its `<` — opens with this tag name and
-/// nothing but the tag's own end behind it. The end is what tells `<p `
-/// from the `<param` standing one letter further on.
-fn tag_named(after: &str, name: &str) -> bool {
-    after.strip_prefix(name).is_some_and(|rest| {
-        rest.is_empty()
-            || rest.starts_with('>')
-            || rest.starts_with("/>")
-            || rest.starts_with(char::is_whitespace)
-    })
+/// nothing but the name's own end behind it. `empty_tag` admits the `/>`
+/// that closes a tag holding nothing, which the raw-text kind does not
+/// take: `<script/>` has no content for markdown to read raw and no
+/// closing tag coming, so reading it as that kind runs the block to the
+/// end of the document.
+fn tag_named(after: &str, name: &str, empty_tag: bool) -> bool {
+    let Some(rest) = after.strip_prefix(name) else {
+        return false;
+    };
+    rest.is_empty()
+        || rest.starts_with('>')
+        || rest.starts_with(char::is_whitespace)
+        || (empty_tag && rest.starts_with("/>"))
+}
+
+/// What stands past a tag name — an ASCII letter, then letters, digits and
+/// `-` — or `None` where no name stands there.
+fn past_name(text: &str) -> Option<&str> {
+    let len = text
+        .bytes()
+        .take_while(|b| b.is_ascii_alphanumeric() || *b == b'-')
+        .count();
+    let named = text.bytes().next().is_some_and(|b| b.is_ascii_alphabetic());
+    named.then(|| &text[len..])
+}
+
+/// What stands past one attribute, or `None` where none stands there. An
+/// attribute is whitespace, a name, and optionally `=` and a value — bare,
+/// or run to the quote that opened it.
+fn past_attribute(text: &str) -> Option<&str> {
+    let rest = text.strip_prefix(char::is_whitespace)?.trim_start();
+    let opens = rest
+        .bytes()
+        .next()
+        .is_some_and(|b| b.is_ascii_alphabetic() || matches!(b, b'_' | b':'));
+    if !opens {
+        return None;
+    }
+    let len = rest
+        .bytes()
+        .take_while(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b':' | b'.' | b'-'))
+        .count();
+    let rest = &rest[len..];
+    let Some(value) = rest.trim_start().strip_prefix('=') else {
+        return Some(rest);
+    };
+    let value = value.trim_start();
+    match value.bytes().next() {
+        Some(quote @ (b'"' | b'\'')) => {
+            let inner = &value[1..];
+            let end = inner.find(char::from(quote))?;
+            Some(&inner[end + 1..])
+        }
+        _ => {
+            let len = value
+                .bytes()
+                .take_while(|b| !b" \t\"'=<>`".contains(b))
+                .count();
+            (len > 0).then(|| &value[len..])
+        }
+    }
+}
+
+/// Whether what stands past a `<` is one whole tag with nothing but
+/// whitespace behind it: a name, any attributes and `>` for an open tag,
+/// or `/`, a name and `>` for a closing one.
+fn whole_tag(after: &str) -> bool {
+    if let Some(closing) = after.strip_prefix('/') {
+        return past_name(closing).is_some_and(shuts);
+    }
+    let Some(mut rest) = past_name(after) else {
+        return false;
+    };
+    while let Some(more) = past_attribute(rest) {
+        rest = more;
+    }
+    let rest = rest.trim_start();
+    shuts(rest.strip_prefix('/').unwrap_or(rest))
+}
+
+/// Whether a tag ends here: `>` and then nothing but whitespace.
+fn shuts(rest: &str) -> bool {
+    rest.trim_start()
+        .strip_prefix('>')
+        .is_some_and(|tail| tail.trim().is_empty())
 }
 
 /// Whether this line ends the open block. A kind that ends on a mark ends
 /// on the line carrying it, the line that opened the block included.
 pub fn html_closes(kind: Html, line: &str) -> bool {
-    let lower = line.to_ascii_lowercase();
     match kind {
-        Html::Raw => ["</script>", "</pre>", "</style>", "</textarea>"]
-            .iter()
-            .any(|end| lower.contains(end)),
-        Html::Comment => lower.contains("-->"),
-        Html::Question => lower.contains("?>"),
-        Html::Bang => lower.contains('>'),
-        Html::Cdata => lower.contains("]]>"),
-        Html::Named => lower.trim().is_empty(),
+        Html::Raw => {
+            let lower = line.to_ascii_lowercase();
+            RAW_TAGS
+                .iter()
+                .any(|name| lower.contains(&format!("</{name}>")))
+        }
+        Html::Comment => line.contains("-->"),
+        Html::Question => line.contains("?>"),
+        Html::Bang => line.contains('>'),
+        Html::Cdata => line.contains("]]>"),
+        Html::Named => line.trim().is_empty(),
     }
 }

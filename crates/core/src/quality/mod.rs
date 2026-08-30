@@ -58,7 +58,7 @@ fn digest(material: &str) -> String {
 /// so any change to what a finding *is* must bump this — a new rule, a
 /// widened pattern, a re-calibrated severity, and equally a change to how a
 /// finding is identified.
-pub const RULESET_VERSION: u32 = 4;
+pub const RULESET_VERSION: u32 = 5;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Type, Hash,

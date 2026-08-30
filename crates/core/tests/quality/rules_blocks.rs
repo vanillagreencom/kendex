@@ -280,3 +280,162 @@ fn safety_bypass_leaves_a_switch_quoted_by_an_indented_continuation() {
         apart.findings
     );
 }
+
+/// A fence opens inside a blockquote the same as anywhere else, and what
+/// it holds is code. Reading the line before its markers were consumed
+/// left the fence unrecognised, so the two runs of backticks paired as an
+/// inline span and the switch quoted between them was scored a mention —
+/// the same silence this whole reading exists to close, in the reading
+/// itself.
+///
+/// The control is the second case: a quoted line whose switch stands in an
+/// inline span is still naming it, and naming it is not running it.
+#[test]
+fn safety_bypass_reads_a_switch_a_quoted_fence_holds_as_code() {
+    let fenced = skill(&[("SKILL.md", "> ```sh\n> git commit --no-verify\n> ```\n")]);
+    assert_eq!(
+        severity_of(&fenced, "safety-bypass"),
+        Some(Severity::High),
+        "{:?}",
+        fenced.findings
+    );
+
+    let named = skill(&[(
+        "SKILL.md",
+        "> The bypass is `git commit --no-verify`, never run it.\n",
+    )]);
+    assert!(
+        !rules_hit(&named).contains(&"safety-bypass"),
+        "{:?}",
+        named.findings
+    );
+}
+
+/// A raw HTML block opened inside a blockquote ends where that quote does.
+/// Only a paragraph continues lazily, so a line that has dropped the
+/// marker has left the block; carrying no depth on the open block ran it
+/// on to the next blank line, swallowing a paragraph whose span was real
+/// and reporting the switch it quoted as one standing in the open.
+///
+/// The control is the second case: while the quote does continue, the
+/// block holds, and the marks inside it are the document's own HTML rather
+/// than markdown's.
+#[test]
+fn safety_bypass_ends_a_quoted_html_block_where_its_quote_ends() {
+    let left = skill(&[(
+        "SKILL.md",
+        "> <div>\nThe bypass is `git commit\n--no-verify`, never run it.\n",
+    )]);
+    assert!(
+        !rules_hit(&left).contains(&"safety-bypass"),
+        "{:?}",
+        left.findings
+    );
+
+    let held = skill(&[(
+        "SKILL.md",
+        "> <div>\n> The bypass is `git commit\n> --no-verify`, never run it.\n",
+    )]);
+    assert_eq!(
+        severity_of(&held, "safety-bypass"),
+        Some(Severity::High),
+        "{:?}",
+        held.findings
+    );
+}
+
+/// A fence closes on a marker standing at the depth its opener stood at.
+/// Inside a fenced block every further `>` is the code's own text, so a
+/// quoted marker closes nothing; consuming it as a container marker ended
+/// the block early and turned the code under it back into prose, where a
+/// pair of backticks quoted the switch and the finding went away.
+///
+/// The control is the second case: a marker at the opener's own depth does
+/// close it, and the line under that is prose again.
+#[test]
+fn safety_bypass_closes_a_fence_only_at_the_depth_it_opened_in() {
+    let quoted = skill(&[(
+        "SKILL.md",
+        "```sh\n> ```\nThe bypass is `git commit --no-verify`, never run it.\n",
+    )]);
+    assert_eq!(
+        severity_of(&quoted, "safety-bypass"),
+        Some(Severity::Critical),
+        "{:?}",
+        quoted.findings
+    );
+
+    let plain = skill(&[(
+        "SKILL.md",
+        "```sh\n```\nThe bypass is `git commit --no-verify`, never run it.\n",
+    )]);
+    assert!(
+        !rules_hit(&plain).contains(&"safety-bypass"),
+        "{:?}",
+        plain.findings
+    );
+}
+
+/// A whole tag alone on its line opens a raw HTML block where no paragraph
+/// stands open, whatever its name. Refusing that kind everywhere left the
+/// tag and the line under it reading as one paragraph, where the backticks
+/// paired and quoted a switch nothing had quoted.
+///
+/// The control is the second case, and it is the half the refusal got
+/// right: this kind may not interrupt a paragraph, so under an open one
+/// the same tag is that paragraph's next line and the span across it is
+/// real.
+#[test]
+fn safety_bypass_opens_a_block_at_a_whole_tag_only_where_no_paragraph_is() {
+    let alone = skill(&[(
+        "SKILL.md",
+        "<span>\nThe bypass is `git commit --no-verify`, never run it.\n",
+    )]);
+    assert_eq!(
+        severity_of(&alone, "safety-bypass"),
+        Some(Severity::Critical),
+        "{:?}",
+        alone.findings
+    );
+
+    let within = skill(&[(
+        "SKILL.md",
+        "The bypass is `git commit\n<span>\n--no-verify`, never run it.\n",
+    )]);
+    assert!(
+        !rules_hit(&within).contains(&"safety-bypass"),
+        "{:?}",
+        within.findings
+    );
+}
+
+/// A tag holding nothing opens no raw-text block. `<script/>` has no
+/// content for markdown to read raw and no closing tag coming, so taking
+/// it for the kind that ends at `</script>` ran the block to the end of
+/// the document and threw away every span below it.
+///
+/// The control is the second case: a real `<script>` does hold its content
+/// raw, and the marks in there are the script's rather than markdown's.
+#[test]
+fn safety_bypass_leaves_a_span_under_a_tag_that_holds_nothing() {
+    let empty = skill(&[(
+        "SKILL.md",
+        "<script/>\n\nThe bypass is `git commit --no-verify`, never run it.\n",
+    )]);
+    assert!(
+        !rules_hit(&empty).contains(&"safety-bypass"),
+        "{:?}",
+        empty.findings
+    );
+
+    let holding = skill(&[(
+        "SKILL.md",
+        "<script>\nThe bypass is `git commit --no-verify`, never run it.\n</script>\n",
+    )]);
+    assert_eq!(
+        severity_of(&holding, "safety-bypass"),
+        Some(Severity::Critical),
+        "{:?}",
+        holding.findings
+    );
+}
