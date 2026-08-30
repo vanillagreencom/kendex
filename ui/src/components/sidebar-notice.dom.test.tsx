@@ -250,14 +250,14 @@ describe("the action each channel allows", () => {
       {
         kind: "needsPrivilege",
         path: "/usr/local/bin/kendex",
-        command: "sudo HOME=\"$HOME\" '/usr/local/bin/kendex' update",
+        command: "sudo '/usr/local/bin/kendex' update",
       },
     );
     expect(container.textContent).toContain(
       appUpdateCommandPrivilegeNote("/usr/local/bin/kendex"),
     );
     expect(container.textContent).toContain(
-      "sudo HOME=\"$HOME\" '/usr/local/bin/kendex' update",
+      "sudo '/usr/local/bin/kendex' update",
     );
     // Not the answer for a command nothing could place: that one names
     // nothing to run, and this one does.

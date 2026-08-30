@@ -39,7 +39,7 @@ pub enum CommandNotice {
 }
 
 /// What `kendex update` is spelled as when it has to run as root, naming
-/// the file the card just named and carrying the home it was read from.
+/// the file the card just named.
 ///
 /// The path, because `sudo` resolves a bare name against its own
 /// `secure_path` and not against this person's `PATH`. `install.sh` reaches
@@ -49,21 +49,19 @@ pub enum CommandNotice {
 /// answers `command not found`; one carrying a second `kendex` inside
 /// `secure_path` updates that one and leaves this file where it was.
 ///
-/// `HOME`, because the record of which file this is belongs to the person,
-/// not to root. Sudo resets the environment on most distributions, so an
-/// elevated run would write its record into root's data directory, this
-/// person's record would keep naming the bytes that were replaced, and the
-/// card would drop from here to the arm that names nobody — the one command
-/// offered turning into a door out of app-driven updates.
+/// The path and nothing else. Carrying `HOME` would put the record where
+/// the app reads it, and would also point a root process at a tree its
+/// owner controls: the record is opened by name and every component of
+/// that name is theirs to replace, so a person allowed only this one
+/// command under `sudoers` could aim it at a root-owned file. What the
+/// elevated run leaves behind is root's record and a stale one of theirs;
+/// that is a card that stops offering, not a file that changes hands.
+/// KEN-853 carries the record across without a privileged write.
 ///
 /// Quoted, not merely shown: `shown` makes a path readable, and this is a
-/// line somebody pastes into a root shell. `$HOME` is fixed text of ours
-/// and is left for their shell to expand.
+/// line somebody pastes into a root shell.
 fn elevated_update(path: &Path) -> String {
-    format!(
-        "sudo HOME=\"$HOME\" {} update",
-        quoted(&path.display().to_string())
-    )
+    format!("sudo {} update", quoted(&path.display().to_string()))
 }
 
 impl CommandNotice {

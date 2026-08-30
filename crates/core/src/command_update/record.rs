@@ -55,36 +55,8 @@ pub fn record_command(env: &Env, path: &Path, bytes: &[u8]) -> Result<(), String
     }
     let digest = crate::hash::sha256_hex(bytes);
     std::fs::write(&file, format!("{}\n{digest}\n", path.display()))
-        .map_err(|error| format!("{} could not be written: {error}", file.display()))?;
-    hand_back_to_the_caller(&file, caller_ids(|name| std::env::var(name).ok()));
-    Ok(())
+        .map_err(|error| format!("{} could not be written: {error}", file.display()))
 }
-
-/// Who ran `sudo`, where sudo says so and nowhere else.
-///
-/// The card's elevated command carries `HOME`, so a run under `sudo` writes
-/// this record into the person's own data directory rather than root's,
-/// which is where the app reads it. What lands there is owned by root, and
-/// their next unprivileged run could not rewrite it. Sudo names them; no
-/// lookup, no guess, and no ids at all when this is not a sudo run.
-fn caller_ids(read: impl Fn(&str) -> Option<String>) -> Option<(u32, u32)> {
-    let id = |name: &str| read(name)?.parse::<u32>().ok();
-    Some((id("SUDO_UID")?, id("SUDO_GID")?))
-}
-
-/// Give the record back to them. Best effort: a chown that fails leaves a
-/// root-owned record, which is a record the app still reads and their next
-/// elevated run still rewrites — worse than tidy, better than a run that
-/// stopped over the ownership of a file it had already written.
-#[cfg(unix)]
-fn hand_back_to_the_caller(file: &Path, ids: Option<(u32, u32)>) {
-    if let Some((uid, gid)) = ids {
-        let _ = std::os::unix::fs::chown(file, Some(uid), Some(gid));
-    }
-}
-
-#[cfg(not(unix))]
-fn hand_back_to_the_caller(_file: &Path, _ids: Option<(u32, u32)>) {}
 
 /// The same record, taken from a file already on disk — the running
 /// command identifying itself, where the bytes are not in hand.

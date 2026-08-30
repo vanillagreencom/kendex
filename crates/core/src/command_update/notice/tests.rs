@@ -32,26 +32,25 @@ fn the_card_is_told_what_each_state_owes_a_person() {
         )),
         Some(CommandNotice::NeedsPrivilege {
             path: "/usr/local/bin/kendex".to_owned(),
-            command: "sudo HOME=\"$HOME\" '/usr/local/bin/kendex' update".to_owned(),
+            command: "sudo '/usr/local/bin/kendex' update".to_owned(),
         })
     );
 }
 
-/// The command names the file the card just named, and carries the home
-/// the record belongs to.
+/// The command names the file the card just named.
 ///
 /// `sudo` resolves a bare name against `secure_path`, so `sudo kendex` is
-/// either not found or a different kendex; and it resets the environment,
-/// so an elevated run without `HOME` writes its record into root's data
-/// directory and the person's own record keeps naming bytes that are gone.
-/// Either way the one command the card offers fails to do what it says.
+/// either not found or a different kendex — a card offering one command
+/// that does not reach the file it just named.
 #[test]
-fn the_elevated_command_names_the_file_and_the_home() {
+fn the_elevated_command_names_the_file_it_updates() {
     let said = elevated_update(Path::new("/opt/kendex/bin/kendex"));
 
-    assert!(said.contains("'/opt/kendex/bin/kendex'"), "{said}");
-    assert!(said.contains(r#"HOME="$HOME""#), "{said}");
+    assert_eq!(said, "sudo '/opt/kendex/bin/kendex' update");
     assert!(!said.contains("sudo kendex"), "{said}");
+    // Nothing of this person's environment is handed to the root process:
+    // the record it would reach is opened by a name they control.
+    assert!(!said.contains("HOME"), "{said}");
 }
 
 /// A path is quoted, not merely shown: this is a line somebody pastes into
