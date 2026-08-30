@@ -129,7 +129,7 @@ SIZE_RATCHET_CLASSES = "*/SKILL.md=32k"
 
 `SIZE_RATCHET_DEFAULT_CLASSES = ""` drops the shipped list; the repo's own
 `SIZE_RATCHET_CLASSES` still matches first, so single-threshold behavior
-needs both unset.
+needs both empty.
 
 A directory name takes **both** forms: `*/tests/*` requires a
 slash-delimited prefix, so a root-level `tests/` needs its own `tests/*`
