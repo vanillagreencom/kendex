@@ -260,6 +260,15 @@ GH_ISSUE_PATTERN = "ken-[0-9]+"
 LINEAR_FORMAT = "safe"
 ORCH_STATE_DIR = "tmp"
 
+# File-size ratchet classes this repo sets for itself, matched before the
+# shipped list. ui/ TypeScript is held to 250, tighter than the shipped
+# default, because a component that long has stopped being one component.
+# The two test entries lead only to keep the shipped test class reaching ui/
+# test files: this list is matched first, so without them `ui/*.ts` — whose
+# `*` crosses `/` — would take every ui test file at 250, and tests are a
+# frozen class, so none of those rows could ever rise.
+SIZE_RATCHET_CLASSES = "*.test.*=800;*.spec.*=800;ui/*.ts=250;ui/*.tsx=250"
+
 # ── Worktrees ────────────────────────────────────────────────────────────
 # What a fresh issue worktree gets from this checkout: only paths git does
 # not carry. An entry does nothing when git carries every path under it, and
