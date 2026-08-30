@@ -12,9 +12,15 @@ fn shipped(owners: &[(&str, &str)]) -> Vec<SeededEnv> {
         .collect()
 }
 
+/// The conflict notes for a pass that writes every key it is handed —
+/// where the note has an owner to name.
+fn conflict_notes_all(entries: &[SeededEnv]) -> Vec<String> {
+    conflict_notes(entries, &super::all(entries))
+}
+
 #[test]
 fn one_note_groups_every_owner_and_every_distinct_default() {
-    let notes = conflict_notes(&shipped(&[
+    let notes = conflict_notes_all(&shipped(&[
         ("alpha", "[env]\n# Wait.\nWAIT = \"900\"\n"),
         ("beta", "[env]\n# Wait.\nWAIT = \"900\"\n"),
         ("gamma", "[env]\n# Wait.\nWAIT = \"600\"\n"),
@@ -22,14 +28,14 @@ fn one_note_groups_every_owner_and_every_distinct_default() {
     assert_eq!(
         notes,
         [
-            "kendex.settings.toml WAIT: packages ship different defaults — \"900\" (alpha, beta), \"600\" (gamma) — where this file does not already assign it, alpha's is the one seeded, so set the value yourself if that is not the one you want"
+            "kendex.settings.toml WAIT: packages ship different defaults — \"900\" (alpha, beta), \"600\" (gamma) — where this file does not already assign it, alpha's is the one written, so set the value yourself if that is not the one you want"
         ]
     );
 }
 
 #[test]
 fn packages_agreeing_on_a_shared_key_say_nothing() {
-    let notes = conflict_notes(&shipped(&[
+    let notes = conflict_notes_all(&shipped(&[
         (
             "alpha",
             "[env]\n# Mode.\nMODE = \"enforce\"\n# Wait.\nWAIT = \"900\"\n",
@@ -44,7 +50,7 @@ fn packages_agreeing_on_a_shared_key_say_nothing() {
 
 #[test]
 fn a_key_only_one_package_ships_says_nothing() {
-    let notes = conflict_notes(&shipped(&[
+    let notes = conflict_notes_all(&shipped(&[
         ("alpha", "[env]\n# Depth.\nDEPTH = \"2\"\n"),
         ("beta", "[env]\n# Width.\nWIDTH = \"3\"\n"),
     ]));
@@ -61,11 +67,11 @@ fn the_note_names_the_owner_whose_value_merge_actually_seeds() {
         ("beta", "[env]\n# Wait.\nWAIT = \"600\"\n"),
         ("gamma", "[env]\n# Wait.\nWAIT = \"300\"\n"),
     ]);
-    let notes = conflict_notes(&entries);
+    let notes = conflict_notes(&entries, &super::all(&entries));
     assert_eq!(
         notes,
         [
-            "kendex.settings.toml WAIT: packages ship different defaults — \"900\" (alpha), \"600\" (beta), \"300\" (gamma) — where this file does not already assign it, alpha's is the one seeded, so set the value yourself if that is not the one you want"
+            "kendex.settings.toml WAIT: packages ship different defaults — \"900\" (alpha), \"600\" (beta), \"300\" (gamma) — where this file does not already assign it, alpha's is the one written, so set the value yourself if that is not the one you want"
         ]
     );
     // And alpha is what merge writes, which is what the note claims.
@@ -76,21 +82,21 @@ fn the_note_names_the_owner_whose_value_merge_actually_seeds() {
 
 #[test]
 fn a_default_no_decoder_reads_still_names_its_owner() {
-    let notes = conflict_notes(&shipped(&[
+    let notes = conflict_notes_all(&shipped(&[
         ("alpha", "[env]\n# Wait.\nWAIT = 900\n"),
         ("beta", "[env]\n# Wait.\nWAIT = \"600\"\n"),
     ]));
     assert_eq!(
         notes,
         [
-            "kendex.settings.toml WAIT: packages ship different defaults — 900 (alpha), \"600\" (beta) — where this file does not already assign it, alpha's is the one seeded, so set the value yourself if that is not the one you want"
+            "kendex.settings.toml WAIT: packages ship different defaults — 900 (alpha), \"600\" (beta) — where this file does not already assign it, alpha's is the one written, so set the value yourself if that is not the one you want"
         ]
     );
 }
 
 #[test]
 fn a_trailing_comment_is_not_a_different_default() {
-    let notes = conflict_notes(&shipped(&[
+    let notes = conflict_notes_all(&shipped(&[
         ("alpha", "[env]\n# Wait.\nWAIT = \"900\"\n"),
         ("beta", "[env]\n# Wait.\nWAIT = \"900\" # seconds\n"),
     ]));
@@ -99,7 +105,7 @@ fn a_trailing_comment_is_not_a_different_default() {
 
 #[test]
 fn catalog_text_reaches_a_note_escaped() {
-    let notes = conflict_notes(&shipped(&[
+    let notes = conflict_notes_all(&shipped(&[
         ("alpha", "[env]\n# Wait.\nWAIT = \"90\u{1b}[31m0\"\n"),
         ("be\u{1b}[31mta", "[env]\n# Wait.\nWAIT = \"600\"\n"),
     ]));
@@ -116,7 +122,7 @@ fn two_different_multiline_defaults_are_not_one_default() {
     let template = |body: &str| format!("[env]\n# A blob.\nBLOB = \"\"\"\n{body}\n\"\"\"\n");
     let mut shipped = seeded(&template("from a"), "a");
     shipped.extend(seeded(&template("from b"), "b"));
-    let notes = conflict_notes(&shipped);
+    let notes = conflict_notes_all(&shipped);
     assert_eq!(notes.len(), 1, "{notes:?}");
     // Each value shown whole on the one line, so the two read as the
     // different defaults they are.
@@ -126,7 +132,7 @@ fn two_different_multiline_defaults_are_not_one_default() {
     // And two shipping the SAME multiline value still say nothing.
     let mut agreeing = seeded(&template("same"), "a");
     agreeing.extend(seeded(&template("same"), "b"));
-    assert!(conflict_notes(&agreeing).is_empty());
+    assert!(conflict_notes_all(&agreeing).is_empty());
 }
 /// Two defaults that differ only in what the display collapses are still
 /// two defaults. `default_shown` joins a value's lines with a space for
@@ -142,7 +148,7 @@ fn defaults_the_display_collapses_alike_are_still_a_disagreement() {
     assert_eq!(shipped[0].default_shown(), shipped[1].default_shown());
     assert_ne!(shipped[0].default_key(), shipped[1].default_key());
 
-    let notes = conflict_notes(&shipped);
+    let notes = conflict_notes_all(&shipped);
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(notes[0].contains("(split)"), "{notes:?}");
     assert!(notes[0].contains("(joined)"), "{notes:?}");
@@ -150,5 +156,5 @@ fn defaults_the_display_collapses_alike_are_still_a_disagreement() {
     // Two that really are the same value still say nothing.
     let mut agreeing = seeded(&template("a\nb"), "one");
     agreeing.extend(seeded(&template("a\nb"), "two"));
-    assert!(conflict_notes(&agreeing).is_empty());
+    assert!(conflict_notes_all(&agreeing).is_empty());
 }

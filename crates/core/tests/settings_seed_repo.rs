@@ -6,12 +6,10 @@
 //! Every later pass writes nothing, so a refresh leaves the file
 //! byte-identical and a key the consumer deleted stays deleted.
 //!
-//! The subject is the merge. A refresh also refreshes seeded COMMENT
-//! blocks, which is a live write and not modelled here: it is gated on a
-//! ledger in `.kendex-lock.json`, which is untracked, so what it would do
-//! in any particular checkout is not derivable from tracked bytes. It can
-//! only reach a block seeding itself wrote, which is now only a required
-//! key's.
+//! Arrival is the manifest gaining the declaration, which only `add`
+//! does, so the merge is the whole of what reaches this file. A block
+//! already in it is never revisited — nothing follows a template revision
+//! in — so there is no second write to model here.
 #![cfg(unix)]
 
 use std::path::{Path, PathBuf};

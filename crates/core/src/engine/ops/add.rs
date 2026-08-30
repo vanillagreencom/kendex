@@ -81,6 +81,10 @@ pub fn add_seeded(
         return Err(CoreError::InstallsNowhere { reason });
     }
     let mut manifest = manifest_for_mutation(env, scope)?;
+    // Arrival is the manifest gaining a declaration, and it is the one
+    // thing that applies a settings template. Committed state, so a clone
+    // carrying no lock re-arrives nothing.
+    let declared = manifest.skill_names();
     if let Some((name, decl)) = seed {
         manifest.sources.insert(name, decl);
     }
@@ -147,7 +151,11 @@ pub fn add_seeded(
         }
     }
 
-    let mut report = plan_scope(env, scope, &manifest, &lock, &PlanOptions::default())?;
+    let options = PlanOptions {
+        arriving_skills: &manifest.skill_names() - &declared,
+        ..PlanOptions::default()
+    };
+    let mut report = plan_scope(env, scope, &manifest, &lock, &options)?;
     report.notes.extend(notes);
     ensure_manifest_persisted(env, scope, &manifest, &mut report)?;
     Ok(report)

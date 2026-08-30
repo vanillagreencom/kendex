@@ -70,30 +70,6 @@ pub struct Lock {
     /// A lock written before this was recorded simply has none.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub bundles: BTreeMap<String, BundleRev>,
-    /// Per `kendex.settings.toml` key: which skill seeded it and the hash
-    /// of the comment block seeding last wrote — the proof a later refresh
-    /// needs before it may rewrite the comment to a newer template.
-    /// Project-scope locks only.
-    #[serde(
-        default,
-        skip_serializing_if = "BTreeMap::is_empty",
-        rename = "settings-seeds"
-    )]
-    pub settings_seeds: BTreeMap<String, SettingsSeed>,
-}
-
-/// One seeded settings key's provenance.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct SettingsSeed {
-    /// The skill whose template owns this key's comment. `None` on records
-    /// imported from a v1 ledger that named no owner: those verify — a
-    /// hand edit is still told from seeded text — but are never rewritten.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub owner: Option<String>,
-    /// FNV-1a (v1's algorithm, kept so imported ledgers verify) of the
-    /// comment block last written by seeding.
-    pub hash: String,
 }
 
 /// One source's resolution at the last write.

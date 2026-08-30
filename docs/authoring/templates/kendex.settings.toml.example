@@ -3,16 +3,20 @@
 # same file under an agent, hook, command or MCP server installs without
 # seeding anything.
 #
-# Two jobs, and the second is the bigger one. It DECLARES the keys a consumer
-# sets: the app's Settings pane renders a row per key here, with this comment
-# beside it, and a save of a key no template declares is refused. Put in what
-# somebody might reasonably change; a key only a maintainer touches is read
-# just the same and set by hand. And it SEEDS — but only the keys you mark
-# `# required`, and only when the skill arrives in a project. Those are the keys the consumer has to decide, the
-# ones with no answer a default could stand in for. Everything else ships the
-# value your own code reads when nothing assigns it, so writing it into a
-# consumer's tracked file would put a line there that changes nothing and
-# comes back every time they delete it. Nothing here is written on a refresh.
+# Two jobs, and the second is the bigger one. It DECLARES the keys a
+# consumer sets: the app's Settings pane renders a row per key here, with
+# this comment beside it, and a save of a key no template declares is
+# refused. Put in what somebody might reasonably change; a key only a
+# maintainer touches is read just the same and set by hand. And it SEEDS,
+# but only the keys you mark `# required`, and only when the skill arrives,
+# which is the consumer's kendex.toml gaining the declaration. Those are the
+# keys the consumer has to decide, the ones with no answer a default could
+# stand in for; a marked key nobody answers is reported on every pass
+# instead. Everything else ships the value your own code reads when nothing
+# assigns it, so writing it into a tracked file would put a line there that
+# changes nothing and comes back every time they delete it. Nothing here is
+# written on a refresh, comment blocks included: once a block is in their
+# file it is theirs, and a revision does not follow it in.
 #
 # Commit-safe values only. A value that must stay out of git (a token, a
 # credential, a personal identifier) never appears here as an assignment:

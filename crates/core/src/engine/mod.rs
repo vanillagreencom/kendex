@@ -156,8 +156,7 @@ fn plan_scope_once(
     // Notes about the scope rather than about any one item: what the
     // settings seed found, what the reserved-name move did, what the git
     // posture changed.
-    let (mut scope_notes, settings_drift) =
-        plan_settings_seed(scope, &state, options, lock, &mut new_lock, &mut ops)?;
+    let (mut scope_notes, settings_drift) = plan_settings_seed(scope, &state, options, &mut ops)?;
     drift.extend(settings_drift);
 
     // Trash ops all pass one guard: writes for this pass are already
@@ -272,7 +271,6 @@ fn fresh_lock(manifest: &Manifest, lock: &Lock, state: &desired::DesiredState) -
         entries: BTreeMap::new(),
         sources: source_revisions(manifest, lock, state),
         bundles: bundle_revisions(manifest, lock, state),
-        settings_seeds: lock.settings_seeds.clone(),
     }
 }
 

@@ -4,13 +4,14 @@
 //! is decided by a different question. The manifest and the lock are
 //! kendex's own records and every pass rewrites them; this one is the
 //! consumer's, tracked in their repository, and a pass may put a line in
-//! it only when the template it comes from is arriving or a save names the
-//! key. What the seeding rule IS lives in [`crate::settings_seed`]; this
-//! is where a scope asks it.
+//! it only when the skill the template comes from is arriving here or a
+//! save names the key. Arrival rides in on the plan's options, because the
+//! only thing that arrives a skill is the `add` that declares it. What the
+//! rule IS lives in [`crate::settings_seed`]; this is where a scope asks
+//! it.
 
 use crate::apply::{Op, PlannedOp, Pre};
 use crate::error::Result;
-use crate::lock::Lock;
 use crate::model::{HarnessId, ItemKind, Scope};
 
 use super::desired::DesiredState;
@@ -52,15 +53,13 @@ fn cannot_write(scope: &Scope, file: String, detail: String) -> DriftRow {
 /// refreshes and edits become one `WriteFile` with one precondition, and
 /// the ledger they all move rides out on the one lock this pass writes.
 ///
-/// The notes go out before any of it: a shared key several packages give
-/// different defaults is worth saying whether or not this pass has a write
-/// to plan for it.
+/// The notes ride out either way: a key several packages give different
+/// defaults, and a required key this file still does not answer, are worth
+/// saying whether or not this pass has a write to plan.
 pub(super) fn plan_settings_seed(
     scope: &Scope,
     state: &DesiredState,
     options: &crate::engine::PlanOptions,
-    lock: &Lock,
-    new_lock: &mut crate::lock::Lock,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<(Vec<String>, Vec<DriftRow>)> {
     let draft = options.settings_draft.as_ref();
@@ -81,7 +80,19 @@ pub(super) fn plan_settings_seed(
     if state.settings_env.is_empty() && edits.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
-    let notes = crate::settings_seed::seed_notes(&state.settings_env);
+    // What this pass may put in the file: a template's required keys where
+    // its skill is arriving, plus the keys a save names — a value has to
+    // have an assignment to land on, and most keys never get one from an
+    // install at all.
+    let seeding = crate::settings_seed::Seeding::new(
+        options.arriving_skills.iter().cloned(),
+        edits.iter().map(|edit| edit.key.clone()),
+    );
+    // A file this pass cannot read is one that answers no key, which is
+    // what the notes below are then told. Nothing is written there either
+    // way, so the required keys are reported as unanswered, which is the
+    // true thing to say about a file kendex cannot see into.
+    let unread = std::collections::BTreeSet::new();
     let path = crate::settings_seed::settings_file_path(root);
     let file = path
         .file_name()
@@ -98,9 +109,17 @@ pub(super) fn plan_settings_seed(
             file,
             format!("{} is not a regular file", path.display()),
         );
+        let notes = crate::settings_seed::seed_notes(&state.settings_env, &unread, &seeding);
         return Ok((notes, vec![row]));
     }
     let current = crate::fs::read_if_exists(&path)?;
+    let assigned = current
+        .as_deref()
+        .map(crate::settings_seed::assigned_keys)
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    let notes = crate::settings_seed::seed_notes(&state.settings_env, &assigned, &seeding);
     // A file that already declares env — as an array of tables, or in a
     // top-level assignment — has nowhere a setting can go, and writing
     // around it would leave a document that does not load. Said the way
@@ -120,7 +139,7 @@ pub(super) fn plan_settings_seed(
         );
         return Ok((notes, vec![cannot_write(scope, file, problem)]));
     }
-    let settled = settle(current.as_deref(), state, lock, draft, &path, new_lock)?;
+    let settled = settle(current.as_deref(), state, &seeding, edits, &path)?;
     // Nothing to write when the finished text is what the file already
     // holds — and, where there was no file, when there is nothing to make.
     match &current {
@@ -131,15 +150,11 @@ pub(super) fn plan_settings_seed(
     let Settled {
         text,
         added,
-        updated,
         edited,
     } = settled;
     let mut said = Vec::new();
     if !added.is_empty() {
         said.push(format!("seed {}", added.join(", ")));
-    }
-    if !updated.is_empty() {
-        said.push(format!("refresh the comments on {}", updated.join(", ")));
     }
     if !edited.is_empty() {
         said.push(format!("set {}", edited.join(", ")));
@@ -171,66 +186,36 @@ struct Settled {
     text: String,
     /// Keys this pass inserted, in the order they were written.
     added: Vec<String>,
-    /// Keys whose seeded comment block was rewritten to its template's.
-    updated: Vec<String>,
     /// Keys whose value this pass changed.
     edited: Vec<String>,
 }
 
-/// Seed, refresh and edit, in that order, into one finished text.
+/// Seed and edit, in that order, into one finished text.
 ///
 /// The order is the point. Edits land on the seeded text and never on the
 /// file as it was: a key this pass just inserted is one the same pass can
-/// then set, and the two are one write. The ledger's seed records move
-/// here too, because what was written and what is recorded are one answer
-/// and asking them apart is how they come to disagree.
+/// then set, and the two are one write.
+///
+/// Two things reach the file and no third one does. A block already there
+/// is never revisited, whichever pass wrote it: following a template
+/// revision into it would be a write on a pass nobody asked to write, and
+/// there is no such pass.
 fn settle(
     current: Option<&str>,
     state: &DesiredState,
-    lock: &Lock,
-    draft: Option<&crate::settings_file::SettingsDraft>,
+    seeding: &crate::settings_seed::Seeding,
+    edits: &[crate::settings_file::SettingsEdit],
     path: &std::path::Path,
-    new_lock: &mut crate::lock::Lock,
 ) -> Result<Settled> {
-    let edits = draft.map_or(&[][..], |draft| draft.edits.as_slice());
-    // What this pass may put in the file: a template's required keys where
-    // its skill is arriving, plus the keys a save names — a value has to
-    // have an assignment to land on, and most keys never get one from an
-    // install at all.
-    let seeding = crate::settings_seed::Seeding::for_pass(
-        &state.settings_env,
-        &crate::lock::skill_names(lock),
-        edits.iter().map(|edit| edit.key.clone()),
-    );
-    let (seeded, added, updated) = match current {
-        None => match crate::settings_seed::merge(None, &state.settings_env, &seeding) {
-            Some((text, added)) => (text, added, Vec::new()),
-            None => (String::new(), Vec::new(), Vec::new()),
-        },
-        Some(original) => {
-            let (refreshed, updated) = crate::settings_seed::refresh_comments(
-                original,
-                &state.settings_env,
-                &mut new_lock.settings_seeds,
-            );
-            match crate::settings_seed::merge(Some(&refreshed), &state.settings_env, &seeding) {
-                Some((text, added)) => (text, added, updated),
-                None => (refreshed, Vec::new(), updated),
-            }
-        }
+    let (seeded, added) = match crate::settings_seed::merge(current, &state.settings_env, seeding) {
+        Some((text, added)) => (text, added),
+        None => (current.unwrap_or_default().to_owned(), Vec::new()),
     };
     let (text, edited) =
         crate::settings_file::apply_edits(&seeded, edits, &state.settings_env, path)?;
-    crate::settings_seed::record_seeds(
-        &mut new_lock.settings_seeds,
-        &state.settings_env,
-        &added,
-        &seeding,
-    );
     Ok(Settled {
         text,
         added,
-        updated,
         edited,
     })
 }

@@ -145,9 +145,29 @@ fn save(f: &Fixture, edits: Vec<SettingsEdit>, base: Base) -> Result<(), CoreErr
     Ok(())
 }
 
+/// Every pass after the arrival: a refresh, which applies no template.
+#[allow(clippy::unwrap_used)]
+fn refresh(f: &Fixture) {
+    let report = kendex_core::engine::audit(&f.env, &f.scope).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
+}
+
+/// The pass the skill arrives on, which is the one that applies its
+/// template — the names `ops::add` would hand the plan, being the ones its
+/// manifest gained.
 #[allow(clippy::unwrap_used)]
 fn install(f: &Fixture) {
-    let report = kendex_core::engine::audit(&f.env, &f.scope).unwrap();
+    let manifest = kendex_core::manifest::load_for_mutation(&kendex_core::manifest::manifest_path(
+        &f.env, &f.scope,
+    ))
+    .unwrap()
+    .unwrap();
+    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
+    let options = PlanOptions {
+        arriving_skills: manifest.skills.keys().cloned().collect(),
+        ..PlanOptions::default()
+    };
+    let report = plan_scope(&f.env, &f.scope, &manifest, &lock, &options).unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
 }
 
@@ -245,23 +265,20 @@ fn a_save_that_seeds_a_missing_key_and_sets_it_is_one_write() {
         .map(|op| op.line())
         .collect();
     assert_eq!(writes.len(), 1, "{writes:?}");
-    assert!(writes[0].contains("seed REVIEWERS, DEPTH"), "{writes:?}");
+    // The edited key and nothing beside it: a save arrives no skill, so
+    // the marked key this template also ships is not written here.
+    assert!(writes[0].contains("seed DEPTH"), "{writes:?}");
     assert!(writes[0].contains("set DEPTH"), "{writes:?}");
+    assert!(!writes[0].contains("REVIEWERS"), "{writes:?}");
     apply::execute(&f.env, &report.plan).unwrap();
 
     let written = fs::read_to_string(settings_path(&f)).unwrap();
     assert!(written.contains("DEPTH = \"7\""), "{written}");
     assert!(written.contains("# How deep."), "{written}");
 
-    // The ledger holds the seed, so a later template revision may still
-    // rewrite the comment block over it.
-    let ledger = kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope))
-        .unwrap()
-        .settings_seeds;
-    assert_eq!(
-        ledger.get("DEPTH").and_then(|seed| seed.owner.clone()),
-        Some("review".to_owned())
-    );
+    // What the consumer now carries is theirs. A template revision does
+    // not follow it in: nothing revisits a block already in the file, so
+    // a later pass plans no write at all.
     let revised = TEMPLATE.replace("# How deep.", "# How deep it goes.");
     fs::write(
         f.project
@@ -269,13 +286,10 @@ fn a_save_that_seeds_a_missing_key_and_sets_it_is_one_write() {
         &revised,
     )
     .unwrap();
-    install(&f);
-    let refreshed = fs::read_to_string(settings_path(&f)).unwrap();
-    // The first asserts the refresh acted; the second that it left the
-    // value alone. A survival assertion is satisfied by its own input, so
-    // it is only worth anything beside one that proves the code ran.
-    assert!(refreshed.contains("# How deep it goes."), "{refreshed}");
-    assert!(refreshed.contains("DEPTH = \"7\""), "{refreshed}");
+    refresh(&f);
+    let after = fs::read_to_string(settings_path(&f)).unwrap();
+    assert_eq!(after, written, "a later pass changes nothing here");
+    assert!(!after.contains("# How deep it goes."), "{after}");
 }
 
 /// The manifest and the settings go down together or not at all. The

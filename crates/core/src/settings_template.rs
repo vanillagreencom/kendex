@@ -73,9 +73,6 @@ pub struct TemplateEntry {
     /// The default with its quotes removed. There are no escapes to
     /// decode: a value carrying `"` or `\` is a finding, not a row.
     pub value: String,
-    /// Whether the template marks this key as one the consumer must
-    /// decide, which is what an install writes into their file.
-    pub required: bool,
     /// 1-based first and last line of the comment block.
     pub comment_span: (u32, u32),
     /// 1-based line the assignment sits on.
@@ -296,7 +293,6 @@ fn scan(text: &str) -> (TemplateRead, BTreeSet<u32>) {
                 comment_span: (taken[0].0, taken[taken.len() - 1].0),
                 comment: taken.into_iter().map(|(_, text)| text).collect(),
                 value,
-                required: marker == Some(crate::settings_seed::REQUIRED_MARKER),
                 line,
             });
         }

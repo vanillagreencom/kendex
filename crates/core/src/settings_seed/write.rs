@@ -6,9 +6,8 @@
 //! file's terminator while a value's own newlines are copied as the
 //! template wrote them.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
-use crate::lock::SettingsSeed;
 use crate::settings_toml::Row;
 
 use super::{SeededEnv, Seeding, assigned_keys, env_blocked, opens_env, seeding_for, table_row};
@@ -148,21 +147,4 @@ pub fn merge(
         out.push_str(row.raw);
     }
     Some((out, added))
-}
-
-/// The ledger records the added entries were seeded, each under the owner
-/// whose lines were written — asked of [`seeding_for`], the same question
-/// `merge` asked, so the record names the skill that actually supplied the
-/// bytes.
-pub fn record_seeds(
-    seeds: &mut BTreeMap<String, SettingsSeed>,
-    entries: &[SeededEnv],
-    added: &[String],
-    seeding: &Seeding,
-) {
-    for key in added {
-        if let Some(seeded) = seeding_for(entries, key, seeding) {
-            seeds.insert(key.clone(), seeded.seed_record());
-        }
-    }
 }

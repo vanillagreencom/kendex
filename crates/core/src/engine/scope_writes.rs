@@ -187,7 +187,6 @@ pub(super) fn plan_lock_write(
     if new_lock.entries == lock.entries
         && (new_lock.sources == lock.sources || new_lock.entries.is_empty())
         && (new_lock.bundles == lock.bundles || new_lock.entries.is_empty())
-        && new_lock.settings_seeds == lock.settings_seeds
         && (lock.version == crate::lock::LOCK_VERSION || lock.entries.is_empty())
     {
         return Ok(());

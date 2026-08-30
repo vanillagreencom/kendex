@@ -451,17 +451,17 @@ lives in one capability table read by core and UI.
   carrier is still enforced. The session-start drift report rides the same
   mechanism: same script, same kill-switch, fire-and-forget into session
   start; a reloaded or resumed session never repeats it.
-- **A seeded settings comment refreshes only while provably unedited.**
-  A skill writes its `# required` keys into `kendex.settings.toml` on arrival
-  and nothing on a refresh; the lock keeps, per key, the seeding skill and the
-  FNV-1a hash of its comment. A revision rewrites that comment only while its
-  text still hashes to the record and the template is the recorded owner's. A
-  v1 record imports with no owner, earned only where the comment is word for
-  word v1's. Where several skills ship one key, the first whose template
-  completes the value is seeded, refresh follows that owner, a bare key is
-  never adopted, and a note names every owner and differing default. A value
-  no template completes is seeded from none, under a note naming the key.
-  Seeding never touches a value; an edit rides that write, its span alone.
+- **A settings template applies once, when its skill arrives.**
+  A skill's `# required` keys are written into `kendex.settings.toml` when it
+  arrives, write-if-absent, and arrival is the consumer's `kendex.toml` gaining
+  the declaration — committed state, so a clone carrying no lock re-arrives
+  nothing. Every other pass writes nothing there, comment blocks included: a
+  block already in the file is the consumer's and no revision follows it in.
+  Where several skills ship one key, the first whose template completes the
+  value is the one written, and a note names every owner and differing default.
+  A value no template completes is written from none, under a note naming the
+  key, and a marked key nobody has answered is named on every pass. Seeding
+  never touches a value; an edit rides that write, its span alone.
 - **Schemas are versioned and nothing converts them.** Manifest and lock
   carry a format version, and this build reads exactly the one it writes.
   A file from an older kendex is refused as unreadable, left byte-for-byte

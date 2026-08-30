@@ -46,16 +46,21 @@ your own code reads when nothing assigns it buys the consumer nothing and
 costs them a line in a tracked file, which comes back on the next run every
 time they delete it.
 
-The marker is the template's own word: it is cut off before the assignment is
+The marker is the template's own word. It is cut off before the assignment is
 written, so a consumer's file never carries it. Anything else after a value is
-a finding — a misspelled marker loads exactly as a correct one does, so
+a finding, because a misspelled marker loads exactly as a correct one does and
 nothing downstream would ever say the key had quietly stopped being written.
 
-The write happens once, when the skill arrives. Later passes over the same
-project write nothing: a refresh leaves the file byte-identical, and a key the
-consumer deleted stays deleted. The one other thing that inserts a key is a
-save from the app, which seeds the key it names so the value has an assignment
-to land on.
+The write happens once, when the skill arrives, and arrival is the consumer's
+`kendex.toml` gaining the declaration. Only `add` does that, so every other
+pass writes nothing: a refresh leaves the file byte-identical, and a key the
+consumer deleted stays deleted, in a fresh clone as much as anywhere. The one
+other thing that inserts a key is a save from the app, which writes the key it
+names so the value has an assignment to land on.
+
+A marked key nobody has answered is reported instead. So a template that gains
+a marked key after release does not reach an existing consumer as a write into
+their file; every plan and audit names the key until they set it.
 
 A key already assigned in the consumer's file is never seeded over, and no
 install rewrites a value. The presence check is deliberately wider than what
@@ -64,15 +69,15 @@ the readers look at: an assignment of that key anywhere in the file, inside
 
 Several packages may ship the same key. Where they agree on the default,
 nothing is said. Where they disagree, every plan and audit carries one note
-naming each owner and each default, and seeding still writes the first
-declaration in package-name order.
+naming each owner and each default, and where the pass writes the key at all
+it writes the first declaration in package-name order.
 
-Comment blocks are the one thing a later install may rewrite. The lock records,
-per key, the skill that seeded it and a hash of the comment block seeding last
-wrote. A revised template rewrites that block only while the on-disk text still
-hashes to the record and the template belongs to the recorded owner. Anything
-else — an edited comment, another skill's template — is preserved untouched, so
-a consumer's own wording survives every refresh.
+Nothing ever revisits a block already in the consumer's file. Once a key and
+its comment are there, whether an arrival or a save put them there, they are
+the consumer's: a revised template does not follow the revision in, because
+that would be a write on a pass nobody asked to write. Choose the comment you
+ship with a marked key accordingly, since it is the wording a consumer who
+takes it keeps.
 
 ## The grammar
 

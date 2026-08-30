@@ -1,9 +1,8 @@
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 use super::*;
 
 mod notes;
-mod refresh;
 
 const TEMPLATE: &str = "# ignored preamble\n[env]\n# Which reviewer set to run.\n# Comma separated.\nREVIEWERS = \"arch,security\"\n\nDEPTH = \"2\"\n\n[other]\nX = \"1\"\n";
 
@@ -433,9 +432,8 @@ fn a_one_line_value_left_unterminated_is_refused_by_name() {
 
 /// One key, one winner, and everyone has to name it. A broken template
 /// declaring a key before a valid one had `merge` write the valid skill's
-/// bytes while the ledger and the notes named the broken one — a record
-/// pointing at a template that supplied nothing, which stops the real
-/// owner's comments refreshing and lets the broken owner's overwrite them.
+/// bytes while the notes named the broken one — a note pointing at a
+/// template that supplied nothing.
 #[test]
 fn a_broken_declaration_before_a_valid_one_never_becomes_the_owner() {
     let mut shipped = seeded("[env]\n# Theirs.\nMODE = \"\n", "broken");
@@ -448,32 +446,21 @@ fn a_broken_declaration_before_a_valid_one_never_becomes_the_owner() {
     assert!(text.contains("MODE = \"real\""), "{text}");
     assert!(text.contains("# Ours."), "the winner's comment too: {text}");
 
-    // The ledger.
-    let mut ledger = BTreeMap::new();
-    record_seeds(&mut ledger, &shipped, &added, &all(&shipped));
-    assert_eq!(ledger["MODE"].owner.as_deref(), Some("good"));
-
     // The selection everyone asks.
     assert_eq!(
         writable_for(&shipped, "MODE").map(|s| s.owner.as_str()),
         Some("good")
     );
+    assert_eq!(
+        seeding_for(&shipped, "MODE", &all(&shipped)).map(|s| s.owner.as_str()),
+        Some("good")
+    );
 
     // And the notes: a broken declaration is not a competing default that
-    // lands, so nothing claims the broken skill's value was seeded.
-    for note in seed_notes(&shipped) {
-        assert!(!note.contains("broken's is the one seeded"), "{note}");
+    // lands, so nothing claims the broken skill's value was written.
+    for note in seed_notes(&shipped, &BTreeSet::new(), &all(&shipped)) {
+        assert!(!note.contains("broken's is the one written"), "{note}");
     }
-
-    // The refresh gate follows the same winner: with the ledger naming
-    // `good`, `good`'s template is the one whose comment may rewrite.
-    let file = "[env]\n# Ours.\nMODE = \"mine\"\n";
-    let mut revised = seeded("[env]\n# Theirs, revised.\nMODE = \"\n", "broken");
-    revised.extend(seeded("[env]\n# Ours, revised.\nMODE = \"real\"\n", "good"));
-    let (out, updated) = refresh_comments(file, &revised, &mut ledger);
-    assert_eq!(updated, ["MODE"]);
-    assert!(out.contains("# Ours, revised."), "{out}");
-    assert!(!out.contains("Theirs"), "{out}");
 }
 
 /// An inline table the file never closes is refused like any other
@@ -590,16 +577,16 @@ fn an_incomplete_declaration_is_not_a_default_to_disagree_with() {
     shipped.extend(seeded("[env]\n# Ours.\nBLOB = \"ok\"\n", "good"));
 
     assert!(
-        conflict_notes(&shipped).is_empty(),
+        conflict_notes(&shipped, &all(&shipped)).is_empty(),
         "one default is not a disagreement: {:?}",
-        conflict_notes(&shipped)
+        conflict_notes(&shipped, &all(&shipped))
     );
     // The key is supplied, so nothing is refused either: no note at all.
     assert!(unterminated_notes(&shipped).is_empty());
     assert!(
-        seed_notes(&shipped).is_empty(),
+        seed_notes(&shipped, &BTreeSet::new(), &all(&shipped)).is_empty(),
         "{:?}",
-        seed_notes(&shipped)
+        seed_notes(&shipped, &BTreeSet::new(), &all(&shipped))
     );
 
     let (text, added) = merge(None, &shipped, &all(&shipped)).expect("BLOB is missing");
@@ -610,10 +597,10 @@ fn an_incomplete_declaration_is_not_a_default_to_disagree_with() {
     let mut real = seeded("[env]\n# Theirs.\nBLOB = \"theirs\"\n", "one");
     real.extend(seeded("[env]\n# Ours.\nBLOB = \"ours\"\n", "two"));
     assert_eq!(
-        conflict_notes(&real).len(),
+        conflict_notes(&real, &all(&real)).len(),
         1,
         "{:?}",
-        conflict_notes(&real)
+        conflict_notes(&real, &all(&real))
     );
 }
 
@@ -661,7 +648,10 @@ fn an_inline_table_spanning_lines_is_seeded_whole() {
         assert_eq!(entries[0].assignment, format!("MAP = {value}"), "{value}");
 
         let shipped = seeded(&template, "review");
-        assert!(seed_notes(&shipped).is_empty(), "{value}");
+        assert!(
+            seed_notes(&shipped, &BTreeSet::new(), &all(&shipped)).is_empty(),
+            "{value}"
+        );
         let (text, added) = merge(None, &shipped, &all(&shipped)).expect("MAP is missing");
         assert_eq!(added, ["MAP"], "{value}");
         let want: toml::Table = template.parse().expect("the template parses");

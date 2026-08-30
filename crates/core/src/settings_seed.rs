@@ -5,7 +5,8 @@
 //! template applies once, when its skill arrives, and writes then only the
 //! keys it marks `# required`; a save writes the keys it names. Nothing
 //! else here ever reaches a consumer's file, so a refresh leaves it
-//! byte-identical and a key deleted from it stays deleted.
+//! byte-identical and a key deleted from it stays deleted. A key nobody
+//! answers is named by [`notes`] rather than written.
 //!
 //! The shell-side readers consume the `[env]` table only, but the presence
 //! check here stays file-wide, conservatively: seeding must never add a key
@@ -24,26 +25,21 @@
 //! spelled the destination's way, an LF template seeded into a CRLF file
 //! hands the consumer a different string from the one it declared.
 //!
-//! Seeded comments stay current ([`refresh`]): the lock keeps, per key, the
-//! FNV-1a hash of the comment block last written by seeding, and a key's
-//! comment is rewritten to the template's revision only while its on-disk
-//! text still hashes to that record — anything else is a hand edit,
-//! preserved forever. Value lines are never touched, and every write here
-//! is byte-faithful: comment-block bytes (and the inserted block on a
-//! merge) are the only bytes that change, so CRLF files and
-//! missing-terminator state survive untouched.
+//! Nothing here ever revisits a block it wrote. A comment a consumer
+//! carries is theirs from the moment it lands, whether an arrival or a
+//! save put it there, and a later template revision does not follow it in:
+//! that would be a write into a tracked file on a pass nobody asked to
+//! write. Every write is byte-faithful — the inserted block is the only
+//! change — so CRLF files and missing-terminator state survive untouched.
 
-use crate::lock::SettingsSeed;
 use crate::settings_toml::{Line, Row};
 
 mod env;
 mod notes;
-mod refresh;
 mod write;
 pub use env::{EnvBlocked, env_blocked};
-pub use notes::{conflict_notes, seed_notes, unterminated_notes};
-pub use refresh::refresh_comments;
-pub use write::{merge, record_seeds};
+pub use notes::{conflict_notes, seed_notes, unanswered_notes, unterminated_notes};
+pub use write::merge;
 
 pub const SETTINGS_FILE: &str = "kendex.settings.toml";
 pub const SETTINGS_TEMPLATE: &str = "kendex.settings.toml.example";
@@ -104,42 +100,6 @@ pub struct SeededEnv {
     pub entry: EnvEntry,
     /// The declared skill whose template this came from.
     pub owner: String,
-}
-
-impl SeededEnv {
-    /// The comment block this entry would write, trimmed the way the
-    /// ledger hashes it.
-    fn comment(&self) -> &[String] {
-        trim_blank_edges(&self.entry.comment)
-    }
-
-    /// The ledger record seeding this entry writes.
-    pub fn seed_record(&self) -> SettingsSeed {
-        SettingsSeed {
-            owner: Some(self.owner.clone()),
-            hash: comment_hash(self.comment()),
-        }
-    }
-}
-
-/// The seeded comment block's hash: 64-bit FNV-1a over the block's lines
-/// joined with `\n`.
-pub fn comment_hash(lines: &[String]) -> String {
-    crate::hash::fnv1a_hex(lines.join("\n").as_bytes())
-}
-
-/// Blank separators around a comment block are layout, not content: trim
-/// them off both edges before comparing or hashing. Interior blanks stay.
-fn trim_blank_edges(lines: &[String]) -> &[String] {
-    let mut lo = 0;
-    let mut hi = lines.len();
-    while lo < hi && lines[lo].trim().is_empty() {
-        lo += 1;
-    }
-    while hi > lo && lines[hi - 1].trim().is_empty() {
-        hi -= 1;
-    }
-    &lines[lo..hi]
 }
 
 /// MEMBERSHIP — whether the shell loaders read the assignments under this
@@ -288,14 +248,13 @@ pub fn assigned_keys(text: &str) -> Vec<String> {
 /// consumer filters entries itself, so none can be left behind when the
 /// rule changes.
 ///
-/// Four consumers must agree on which declarations count — the bytes
-/// `merge` writes, the owner [`record_seeds`] records, the template a
-/// later comment refresh is gated on, and the defaults
-/// [`conflict_notes`] compares. Derived separately, the rule was changed
-/// in one and missed in the rest: a broken template declaring a key
-/// before a valid one had the valid skill's bytes written under the
-/// broken skill's name, and the notes reported a conflict between a
-/// skill's real default and a broken one's empty one.
+/// Every consumer must agree on which declarations count — the bytes
+/// `merge` writes, the owner [`conflict_notes`] names, the defaults it
+/// compares. Derived separately, the rule was changed in one and missed
+/// in the rest: a broken template declaring a key before a valid one had
+/// the valid skill's bytes written under the broken skill's name, and the
+/// notes reported a conflict between a skill's real default and a broken
+/// one's empty one.
 pub fn writable_all<'a>(
     entries: &'a [SeededEnv],
     key: &str,
@@ -362,9 +321,9 @@ impl Seeding {
     }
 
     /// Whether this declaration is one the pass writes. The one statement
-    /// of the rule: `merge` writes exactly what this admits and
-    /// [`record_seeds`] records exactly what it chose, so the bytes and
-    /// the ledger cannot come to different answers.
+    /// of the rule, asked through [`seeding_for`] by everyone: the bytes
+    /// `merge` puts in the file and the owner a note names cannot come to
+    /// different answers about which declaration spoke.
     fn writes(&self, seeded: &SeededEnv) -> bool {
         (seeded.entry.required && self.arriving.contains(&seeded.owner))
             || self.edited.contains(&seeded.entry.key)

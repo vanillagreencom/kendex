@@ -65,9 +65,31 @@ fn fixture(enabled: bool) -> Fixture {
     }
 }
 
+/// A pass over the scope that arrives nothing: every `kendex refresh`,
+/// every audit, every apply that declares no new skill.
 #[allow(clippy::unwrap_used)]
-fn apply_now(f: &Fixture) {
+fn refresh_now(f: &Fixture) {
     let report = audit(&f.env, &f.scope).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
+}
+
+/// The pass a skill arrives on, as `ops::add` builds it: the names the
+/// manifest gained. Held apart from the refresh above because which of the
+/// two a test runs is the whole subject here.
+#[allow(clippy::unwrap_used)]
+fn arrive(f: &Fixture, skills: &[&str]) {
+    let manifest = kendex_core::manifest::load_for_mutation(&kendex_core::manifest::manifest_path(
+        &f.env, &f.scope,
+    ))
+    .unwrap()
+    .unwrap();
+    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
+    let options = kendex_core::engine::PlanOptions {
+        arriving_skills: skills.iter().map(|name| (*name).to_owned()).collect(),
+        ..kendex_core::engine::PlanOptions::default()
+    };
+    let report =
+        kendex_core::engine::plan_scope(&f.env, &f.scope, &manifest, &lock, &options).unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
 }
 
@@ -75,7 +97,7 @@ fn apply_now(f: &Fixture) {
 #[allow(clippy::unwrap_used)]
 fn seeds_env_defaults_and_never_overwrites_user_values() {
     let f = fixture(true);
-    apply_now(&f);
+    arrive(&f, &["review"]);
 
     let settings_path = f.project.join("kendex.settings.toml");
     let seeded = fs::read_to_string(&settings_path).unwrap();
@@ -94,7 +116,7 @@ fn seeds_env_defaults_and_never_overwrites_user_values() {
     // A user-edited value survives every later apply, wherever it lives.
     let edited = seeded.replace("\"arch,security\"", "\"mine\"");
     fs::write(&settings_path, &edited).unwrap();
-    apply_now(&f);
+    arrive(&f, &["review"]);
     let after = fs::read_to_string(&settings_path).unwrap();
     assert_eq!(after, edited);
 
@@ -108,13 +130,6 @@ fn seeds_env_defaults_and_never_overwrites_user_values() {
             .any(|op| op.line().contains("kendex.settings.toml")),
         "clean settings file must not be re-planned"
     );
-
-    // Seeding left its evidence: the lock's ledger names the owner and the
-    // comment hash for every seeded key.
-    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
-    let record = lock.settings_seeds.get("REVIEWERS").unwrap();
-    assert_eq!(record.owner.as_deref(), Some("review"));
-    assert!(!lock.settings_seeds.contains_key("DEPTH"));
 }
 
 /// The template applies once, when the skill arrives. Every later pass
@@ -125,7 +140,7 @@ fn seeds_env_defaults_and_never_overwrites_user_values() {
 #[allow(clippy::unwrap_used)]
 fn a_refresh_writes_nothing_the_arrival_already_settled() {
     let f = fixture(true);
-    apply_now(&f);
+    arrive(&f, &["review"]);
     let settings_path = f.project.join("kendex.settings.toml");
     let arrived = fs::read_to_string(&settings_path).unwrap();
     assert!(
@@ -134,7 +149,7 @@ fn a_refresh_writes_nothing_the_arrival_already_settled() {
     );
 
     // Byte-identical across a refresh that changes nothing else.
-    apply_now(&f);
+    refresh_now(&f);
     assert_eq!(fs::read_to_string(&settings_path).unwrap(), arrived);
 
     // The consumer decides they do not want the key after all.
@@ -161,7 +176,7 @@ fn a_refresh_writes_nothing_the_arrival_already_settled() {
             .map(|op| &op.description)
             .collect::<Vec<_>>()
     );
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     assert_eq!(
         fs::read_to_string(&settings_path).unwrap(),
         without,
@@ -176,7 +191,7 @@ fn a_refresh_writes_nothing_the_arrival_already_settled() {
 #[allow(clippy::unwrap_used)]
 fn a_second_skill_arriving_later_seeds_only_its_own() {
     let f = fixture(true);
-    apply_now(&f);
+    arrive(&f, &["review"]);
     let settings_path = f.project.join("kendex.settings.toml");
     let first = fs::read_to_string(&settings_path).unwrap();
 
@@ -205,7 +220,7 @@ fn a_second_skill_arriving_later_seeds_only_its_own() {
         format!("{text}\n[skills.later]\nsource = \"cat\"\nenabled = true\n"),
     )
     .unwrap();
-    apply_now(&f);
+    arrive(&f, &["later"]);
 
     let after = fs::read_to_string(&settings_path).unwrap();
     assert!(
@@ -216,11 +231,105 @@ fn a_second_skill_arriving_later_seeds_only_its_own() {
     assert!(!after.contains("LATER_DEPTH"), "{after}");
 }
 
+/// The command itself, not a hand-built plan: `add` arrives the skills its
+/// manifest gained, and a second `add` of the same one gains nothing and
+/// arrives nothing. The manifest is committed, so this survives a clone
+/// that carries no lock.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn add_arrives_what_the_manifest_gains_and_a_second_add_arrives_nothing() {
+    let f = fixture(true);
+    // The declaration is already in the fixture manifest, so this scope
+    // starts from one that declares nothing and adds `review` for real.
+    let manifest_path = f.project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest_path).unwrap();
+    let (before_skills, _) = text.split_once("\n[skills.review]").unwrap();
+    fs::write(&manifest_path, format!("{before_skills}\n")).unwrap();
+
+    let request = kendex_core::engine::ops::AddRequest {
+        source: Some("cat".to_owned()),
+        skills: vec!["review".to_owned()],
+        ..Default::default()
+    };
+    let report = kendex_core::engine::ops::add(&f.env, &f.scope, &request).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
+
+    let settings_path = f.project.join("kendex.settings.toml");
+    let arrived = fs::read_to_string(&settings_path).unwrap();
+    assert!(
+        arrived.contains("REVIEWERS"),
+        "the add arrived it: {arrived}"
+    );
+
+    // The consumer decides against the key, and adds the same skill again.
+    let without = arrived
+        .lines()
+        .filter(|line| !line.starts_with("REVIEWERS"))
+        .map(|line| format!("{line}\n"))
+        .collect::<String>();
+    fs::write(&settings_path, &without).unwrap();
+    let again = kendex_core::engine::ops::add(&f.env, &f.scope, &request).unwrap();
+    apply::execute(&f.env, &again.plan).unwrap();
+    assert_eq!(
+        fs::read_to_string(&settings_path).unwrap(),
+        without,
+        "the manifest gained nothing, so nothing arrived"
+    );
+}
+
+/// A required key nothing writes is named on every pass, so a template
+/// that gains one after release reaches the consumer as a note rather than
+/// as a write into their file.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_unanswered_required_key_is_reported_on_every_pass() {
+    let f = fixture(true);
+    let says_it = |report: &kendex_core::engine::EngineReport| {
+        report
+            .notes
+            .iter()
+            .filter(|note| note.contains("REVIEWERS") && note.contains("needs this key decided"))
+            .count()
+    };
+    assert_eq!(says_it(&audit(&f.env, &f.scope).unwrap()), 1);
+
+    // The arrival writes it, and has nothing left to report.
+    arrive(&f, &["review"]);
+    assert_eq!(says_it(&audit(&f.env, &f.scope).unwrap()), 0);
+
+    // Deleted on purpose: the note comes back, and no write does.
+    let settings_path = f.project.join("kendex.settings.toml");
+    let text = fs::read_to_string(&settings_path).unwrap();
+    let without: String = text
+        .lines()
+        .filter(|line| !line.starts_with("REVIEWERS"))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    fs::write(&settings_path, &without).unwrap();
+    let report = audit(&f.env, &f.scope).unwrap();
+    assert_eq!(says_it(&report), 1, "{:?}", report.notes);
+    assert!(
+        !report
+            .plan
+            .ops
+            .iter()
+            .any(|op| op.line().contains("kendex.settings.toml")),
+        "reported, never written"
+    );
+
+    // A key with a working default is never reported.
+    assert!(
+        !report.notes.iter().any(|note| note.contains("DEPTH")),
+        "{:?}",
+        report.notes
+    );
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn disabled_skill_does_not_seed() {
     let f = fixture(false);
-    apply_now(&f);
+    arrive(&f, &["review"]);
     assert!(!f.project.join("kendex.settings.toml").exists());
 }
 
@@ -245,17 +354,26 @@ fn occupied_settings_path_is_a_conflict_not_a_clobber() {
     );
 }
 
+/// A block already in the consumer's file is theirs from the moment it
+/// lands. Nothing revisits it: a template that revises its comment does
+/// not follow the revision in, because there is no pass that writes into
+/// this file without being asked to.
+///
+/// What that costs is worth knowing, because it is what an author chooses
+/// when they mark a key. A consumer who set the key through the app has
+/// its comment as the template read at THAT moment, and it stays that way.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_revised_template_refreshes_an_unedited_comment_through_a_real_apply() {
+fn a_revised_template_does_not_follow_its_comment_into_the_file() {
     let f = fixture(true);
-    apply_now(&f);
+    arrive(&f, &["review"]);
     let settings_path = f.project.join("kendex.settings.toml");
-
-    // Upstream improves the comment; the value stays the user's.
     let before = fs::read_to_string(&settings_path).unwrap();
-    let user_valued = before.replace("\"arch,security\"", "\"mine\"");
-    fs::write(&settings_path, &user_valued).unwrap();
+    assert!(
+        before.contains("# Which reviewers run by default."),
+        "{before}"
+    );
+
     let template_v2 = TEMPLATE.replace(
         "# Which reviewers run by default.",
         "# Which reviewers run by default.\n# Comma separated, no spaces.",
@@ -270,42 +388,24 @@ fn a_revised_template_refreshes_an_unedited_comment_through_a_real_apply() {
         &template_v2,
     )
     .unwrap();
-    apply_now(&f);
 
-    let after = fs::read_to_string(&settings_path).unwrap();
+    let report = audit(&f.env, &f.scope).unwrap();
     assert!(
-        after.contains("# Comma separated, no spaces."),
-        "unedited seeded comment follows the template: {after}"
+        !report
+            .plan
+            .ops
+            .iter()
+            .any(|op| op.line().contains("kendex.settings.toml")),
+        "a revised comment plans no write: {:?}",
+        report
+            .plan
+            .ops
+            .iter()
+            .map(|op| &op.description)
+            .collect::<Vec<_>>()
     );
-    assert!(
-        after.contains("REVIEWERS = \"mine\""),
-        "value lines are never touched: {after}"
-    );
-
-    // A hand-edited comment stops following forever.
-    let edited = after.replace("# Comma separated, no spaces.", "# My own words.");
-    fs::write(&settings_path, &edited).unwrap();
-    apply_now(&f);
-    fs::write(
-        f.project
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("catalog/skills/review/kendex.settings.toml.example"),
-        TEMPLATE.replace(
-            "# Which reviewers run by default.",
-            "# Third revision of the words.",
-        ),
-    )
-    .unwrap();
-    apply_now(&f);
-    let frozen = fs::read_to_string(&settings_path).unwrap();
-    assert!(
-        frozen.contains("# My own words."),
-        "a hand-edited comment is preserved forever: {frozen}"
-    );
-    assert!(!frozen.contains("# Third revision of the words."));
+    apply::execute(&f.env, &report.plan).unwrap();
+    assert_eq!(fs::read_to_string(&settings_path).unwrap(), before);
 }
 
 /// A skill the safety gate holds back on every harness has no say over
@@ -353,15 +453,13 @@ fn a_skill_with_findings_installs_and_seeds_like_any_other() {
             .any(|row| row.name == "hostile" && !row.advisory.findings.is_empty()),
         "the hostile skill is scored, and the findings ride on the plan"
     );
-    apply::execute(&f.env, &report.plan).unwrap();
+    arrive(&f, &["review", "hostile"]);
     let settings = fs::read_to_string(f.project.join("kendex.settings.toml")).unwrap();
     assert!(settings.contains("REVIEWERS"), "the clean skill seeds");
     assert!(
         settings.contains("HOSTILE_KEY"),
         "advisory means it installs and seeds: {settings}"
     );
-    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
-    assert!(lock.settings_seeds.contains_key("HOSTILE_KEY"));
 }
 
 /// A skill no harness here installs is not an installation: nothing of
@@ -393,49 +491,6 @@ fn a_skill_installed_on_no_harness_seeds_nothing() {
     );
     apply::execute(&f.env, &report.plan).unwrap();
     assert!(!f.project.join("kendex.settings.toml").exists());
-}
-
-/// An install predating the ledger adopts its unedited comments on the
-/// next pass with no file change — and that ledger-only change must still
-/// reach the lock, or every pass re-adopts and nothing ever persists.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn an_adoption_only_ledger_change_is_written_to_the_lock() {
-    let f = fixture(true);
-    apply_now(&f);
-    let lock_path = kendex_core::lock::lock_path(&f.env, &f.scope);
-    let mut value: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&lock_path).unwrap()).unwrap();
-    assert!(!value["settings-seeds"].as_object().unwrap().is_empty());
-    value.as_object_mut().unwrap().remove("settings-seeds");
-    fs::write(&lock_path, serde_json::to_string_pretty(&value).unwrap()).unwrap();
-
-    let report = audit(&f.env, &f.scope).unwrap();
-    assert!(
-        !report
-            .plan
-            .ops
-            .iter()
-            .any(|op| op.line().contains("kendex.settings.toml")),
-        "adoption changes no file: {:?}",
-        report
-            .plan
-            .ops
-            .iter()
-            .map(|op| &op.description)
-            .collect::<Vec<_>>()
-    );
-    apply::execute(&f.env, &report.plan).unwrap();
-    let lock = kendex_core::lock::load(&lock_path).unwrap();
-    assert_eq!(
-        lock.settings_seeds
-            .get("REVIEWERS")
-            .unwrap()
-            .owner
-            .as_deref(),
-        Some("review"),
-        "the adopted record persisted"
-    );
 }
 
 /// A project installing several skills, each shipping the `[env]` lines it
@@ -498,14 +553,22 @@ fn a_key_shipped_with_differing_defaults_gets_one_grouped_note() {
         ),
     ]);
     let notes = audit(&f.env, &f.scope).unwrap().notes;
-    let about: Vec<&String> = notes.iter().filter(|note| note.contains("WAIT")).collect();
+    let about: Vec<&String> = notes
+        .iter()
+        .filter(|note| note.contains("different defaults"))
+        .collect();
     assert_eq!(about.len(), 1, "{notes:?}");
     // Every owner and every distinct default, in one line.
     assert!(about[0].contains("\"900\" (alpha, beta)"), "{about:?}");
     assert!(about[0].contains("\"600\" (gamma)"), "{about:?}");
+    // This pass arrives nothing, so the note claims no write.
+    assert!(
+        about[0].contains("nothing here writes this key"),
+        "{about:?}"
+    );
 
     // The note changes nothing: the declaration seeding picked still lands.
-    apply_now(&f);
+    arrive(&f, &["alpha", "beta", "gamma"]);
     let seeded = fs::read_to_string(f.project.join("kendex.settings.toml")).unwrap();
     assert!(seeded.contains("WAIT = \"900\""), "{seeded}");
     assert!(!seeded.contains("\"600\""), "{seeded}");
@@ -515,23 +578,16 @@ fn a_key_shipped_with_differing_defaults_gets_one_grouped_note() {
 #[allow(clippy::unwrap_used)]
 fn a_key_shipped_with_one_default_everywhere_is_silent() {
     let f = many_owners(&[
-        (
-            "alpha",
-            "[env]\n# The gate.\nMODE = \"enforce\" # required\n",
-        ),
-        (
-            "beta",
-            "[env]\n# The gate.\nMODE = \"enforce\" # required\n",
-        ),
+        ("alpha", "[env]\n# The gate.\nMODE = \"enforce\"\n"),
+        ("beta", "[env]\n# The gate.\nMODE = \"enforce\"\n"),
     ]);
     let notes = audit(&f.env, &f.scope).unwrap().notes;
     assert!(!notes.iter().any(|note| note.contains("MODE")), "{notes:?}");
 }
 
-/// The note is raised before the settings file is read, so it also fires on
-/// a key the file already assigns — where seeding writes nothing at all.
-/// The disagreement is still worth saying; claiming a value landed there
-/// would not be.
+/// The disagreement fires on a key the file already assigns too, where
+/// nothing would be written whatever the pass. It is still worth saying;
+/// claiming a value landed there would not be.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_note_claims_no_write_for_a_key_the_file_already_assigns() {
@@ -556,7 +612,7 @@ fn the_note_claims_no_write_for_a_key_the_file_already_assigns() {
         .collect();
     assert_eq!(about.len(), 1, "{:?}", report.notes);
     assert!(
-        about[0].contains("where this file does not already assign it"),
+        about[0].contains("nothing here writes this key"),
         "{about:?}"
     );
     // Nothing is planned for the settings file, so nothing was seeded.
@@ -568,7 +624,7 @@ fn the_note_claims_no_write_for_a_key_the_file_already_assigns() {
             .any(|op| op.line().contains("kendex.settings.toml")),
         "an assigned key must not be re-seeded"
     );
-    apply_now(&f);
+    refresh_now(&f);
     assert_eq!(
         fs::read_to_string(&settings).unwrap(),
         "[env]\n# Mine.\nWAIT = \"5\"\n"

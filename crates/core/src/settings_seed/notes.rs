@@ -5,9 +5,9 @@
 //! what a person has to know about what seeding is about to do, or
 //! decline to do, and every note is read on a terminal.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use super::{SETTINGS_FILE, SeededEnv};
+use super::{SETTINGS_FILE, SeededEnv, Seeding};
 
 /// What the plan says about keys several packages ship with different
 /// defaults: one line per key, naming every default and everyone who ships
@@ -22,16 +22,17 @@ use super::{SETTINGS_FILE, SeededEnv};
 /// never completes ships no default to disagree with and is reported by
 /// [`unterminated_notes`] instead.
 ///
-/// The note is raised before the settings file is even read, because the
-/// disagreement is worth saying either way. So it says which default
-/// seeding WOULD write, under the condition seeding writes at all: a key
-/// the file already assigns is left alone, and a note claiming a value
-/// landed would be false exactly there.
+/// What the note says about the consequence depends on whether this pass
+/// would write the key at all, and it asks [`super::seeding_for`] — the
+/// same question `merge` asks — rather than deciding again. Most passes
+/// write nothing, and a note claiming a seed on one of those names a value
+/// that never arrives; where a pass does write, naming a different
+/// declaration than the bytes came from names the wrong package.
 ///
 /// Key, owners and defaults are all catalog text a download supplied, so
 /// the finished line goes through [`crate::names::shown`]: a note is read
 /// on a terminal, and nothing in it is a sequence to act on.
-pub fn conflict_notes(entries: &[SeededEnv]) -> Vec<String> {
+pub fn conflict_notes(entries: &[SeededEnv], seeding: &Seeding) -> Vec<String> {
     // Distinct defaults per key, each with its owners, both in declaration
     // order; the key order is the file's, so the notes read stably.
     //
@@ -61,21 +62,69 @@ pub fn conflict_notes(entries: &[SeededEnv]) -> Vec<String> {
     by_key
         .into_iter()
         .filter(|(_, defaults)| defaults.len() > 1)
-        .filter_map(|(key, defaults)| {
-            // Whose value lands is `writable_for`'s answer, never the
-            // first declaration: naming a skill whose template seeding
-            // could not write would point at bytes that never arrived.
-            // With no writable declaration nothing is seeded at all, and
-            // `unterminated_notes` is the note that belongs to that key.
-            let lands = &super::writable_for(entries, key)?.owner;
+        .map(|(key, defaults)| {
             let shown: Vec<String> = defaults
                 .iter()
                 .map(|had| format!("{} ({})", had.shown, had.owners.join(", ")))
                 .collect();
-            Some(crate::names::shown(&format!(
-                "{SETTINGS_FILE} {key}: packages ship different defaults — {} — where this file does not already assign it, {lands}'s is the one seeded, so set the value yourself if that is not the one you want",
+            // Whose value lands, where one does, is the chooser's answer
+            // and never the first declaration: naming a skill whose bytes
+            // this pass would not write points at a value that never
+            // arrives. Where the pass writes none of them, saying so is
+            // the whole of what there is to say.
+            let consequence = match super::seeding_for(entries, key, seeding) {
+                Some(seeded) => format!(
+                    "where this file does not already assign it, {}'s is the one written",
+                    seeded.owner
+                ),
+                None => "nothing here writes this key, so what your scripts read is whichever default they carry".to_owned(),
+            };
+            crate::names::shown(&format!(
+                "{SETTINGS_FILE} {key}: packages ship different defaults — {} — {consequence}, so set the value yourself if that is not the one you want",
                 shown.join(", ")
-            )))
+            ))
+        })
+        .collect()
+}
+
+/// What the plan says about a key a template marks `# required` that this
+/// file does not answer and this pass will not write.
+///
+/// A template applies once, when its skill arrives, so a template that
+/// gains a marked key after release reaches no consumer that already has
+/// the skill. Nothing writes it into their file — that is the whole point
+/// of the rule — so the gap is named on every pass instead, and it is
+/// named for a key they deleted on purpose too, which is the honest thing
+/// to say about a key the skill still wants answered.
+///
+/// Silent where the pass is about to write the key: the arrival that
+/// writes it has nothing to report, and neither does a save setting it.
+///
+/// Key and owners are catalog text a download supplied, so the finished
+/// line goes through [`crate::names::shown`] like every other note.
+pub fn unanswered_notes(
+    entries: &[SeededEnv],
+    assigned: &BTreeSet<String>,
+    seeding: &Seeding,
+) -> Vec<String> {
+    let mut by_key: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for seeded in entries {
+        let key = seeded.entry.key.as_str();
+        if !seeded.entry.required || assigned.contains(key) {
+            continue;
+        }
+        if super::seeding_for(entries, key, seeding).is_some() {
+            continue;
+        }
+        by_key.entry(key).or_default().push(&seeded.owner);
+    }
+    by_key
+        .into_iter()
+        .map(|(key, owners)| {
+            crate::names::shown(&format!(
+                "{SETTINGS_FILE} {key}: {} needs this key decided and nothing here assigns it — no default stands in for it, so set it yourself",
+                owners.join(", ")
+            ))
         })
         .collect()
 }
@@ -134,12 +183,18 @@ pub fn unterminated_notes(entries: &[SeededEnv]) -> Vec<String> {
 }
 
 /// Everything the plan says about these entries before a byte is written:
-/// keys several packages ship with different defaults, and keys no
-/// template can supply whole. One call so a caller cannot take half the
+/// keys several packages ship with different defaults, keys no template
+/// can supply whole, and keys a template says the project must decide that
+/// this file does not answer. One call so a caller cannot take part of the
 /// answer — a note nobody asked for is a key silently left out.
-pub fn seed_notes(entries: &[SeededEnv]) -> Vec<String> {
-    let mut notes = conflict_notes(entries);
+pub fn seed_notes(
+    entries: &[SeededEnv],
+    assigned: &BTreeSet<String>,
+    seeding: &Seeding,
+) -> Vec<String> {
+    let mut notes = conflict_notes(entries, seeding);
     notes.extend(unterminated_notes(entries));
+    notes.extend(unanswered_notes(entries, assigned, seeding));
     notes
 }
 
