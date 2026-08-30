@@ -474,5 +474,31 @@ else
   fi
 fi
 
+# Staged scope reads the index, so the failure is the index lookup's: the
+# blob the change set just listed cannot be materialized. The path stays in
+# the changed-file count either way, so a silent skip here is the same clean
+# verdict over unread content — it just arrives through the other scope.
+seed vanished-blob
+printf '# New\n\nSee `docs/gone.md` for the rest.\n' >"$R/docs/new.md"
+git -C "$R" add docs/new.md
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "docs/new.md:3: [docs-cited-paths]"; then
+  ok "control: the staged file reports the ordinary verdict while its blob is readable"
+else
+  bad "control: the staged file reports the ordinary verdict" "rc=$RC out=$OUT"
+fi
+OID="$(git -C "$R" rev-parse :0:docs/new.md)"
+if [ ! -f "$R/.git/objects/${OID:0:2}/${OID:2}" ]; then
+  bad "fixture: the staged blob is a loose object at the expected path" "$OID"
+else
+  rm -f -- "$R/.git/objects/${OID:0:2}/${OID:2}"
+  run_pf --staged
+  if [ "$RC" -eq 2 ] && has "docs/new.md" && ! has "preflight: clean"; then
+    ok "a staged blob the index lookup cannot materialize is exit 2, naming the path"
+  else
+    bad "a vanished staged blob is exit 2, naming the path" "rc=$RC out=$OUT"
+  fi
+fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

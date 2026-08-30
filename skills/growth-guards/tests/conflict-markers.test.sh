@@ -158,6 +158,51 @@ run_cm
   && ok "control: a planted marker fails while the script stays unnamed" \
   || bad "control: planted marker fails, script unnamed" "rc=$RC out=$OUT"
 
+echo "=== a carrier the sniff skips is named, and qualifies the verdict ==="
+new_repo unmeasured
+printf 'fn main() {}\n' >"$R/ok.rs"
+# An asset whose bytes happen to spell the open marker at column 0. The
+# listing forces text, so this path IS matched and reaches the content
+# sniff; a NUL in git's leading window is what keeps it out of the count.
+# Unread is not clean: the path is named and the verdict carries the count.
+printf '\211PNG\r\n\032\n\000\000\n%s HEAD\n' "$OPEN" >"$R/asset.png"
+git -C "$R" add -A
+run_cm
+[ "$RC" -eq 0 ] && case "$OUT" in
+  *"not measured: asset.png — binary content, not text"*"conflict-markers: OK"*"1 matched path(s) not measured"*) true ;;
+  *) false ;;
+esac \
+  && ok "a clean verdict names the skipped carrier and says how many went unmeasured" \
+  || bad "clean verdict carries the unmeasured qualifier" "rc=$RC out=$OUT"
+
+# The same qualifier on a FAILING verdict: a real marker elsewhere decides
+# the exit code, and the unread carrier still has to be declared.
+printf '%s theirs\n' "$CLOSE" >"$R/planted.txt"
+git -C "$R" add -A
+run_cm
+[ "$RC" -eq 1 ] && case "$OUT" in
+  *"not measured: asset.png — binary content, not text"*"conflict-markers: 1 conflict marker(s)"*"1 matched path(s) not measured"*) true ;;
+  *) false ;;
+esac \
+  && ok "a violation verdict carries the same qualifier" \
+  || bad "violation verdict carries the unmeasured qualifier" "rc=$RC out=$OUT"
+
+# The must-fail control: the same bytes with the NULs taken out are text, so
+# the carrier is measured, fires, and nothing is declared unmeasured.
+printf '\211PNG\r\n\032\n\n%s HEAD\n' "$OPEN" >"$R/asset.png"
+git -C "$R" add -A
+run_cm
+[ "$RC" -eq 1 ] && case "$OUT" in
+  *"conflict marker: asset.png:"*) true ;;
+  *) false ;;
+esac \
+  && ok "control: the same bytes without a NUL are read, and fire" \
+  || bad "control: the NUL-free carrier fires" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"not measured"*) bad "nothing goes unmeasured once the carrier is text" "$OUT" ;;
+  *) ok "and no unmeasured qualifier accompanies a fully read scan" ;;
+esac
+
 echo "=== fail-closed: a broken scan terminates, never passes ==="
 new_repo grepfail
 printf 'clean file\n' >"$R/ok.txt"

@@ -88,8 +88,17 @@ emit() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >>"$TMP/findings.tsv"; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
 # --- content, the only judge of what a lane may read -------------------------
-content_of() { # IDX PATH -> inspectable content path on stdout; nonzero if unavailable
+# Two answers no caller may collapse. Nothing to inspect BY DESIGN — a symlink
+# outside staged scope — is a silent skip. A read that FAILED is the opposite:
+# the content exists, so skipping would leave the path inside the changed-file
+# count with no lane having read it, the clean verdict content_is_binary
+# refuses below. That one is loud here, in the caller's own shell: the result
+# lands in CONTENT rather than on stdout, because env_error inside a command
+# substitution would exit only the subshell and the run would carry on.
+CONTENT=""
+content_of() { # IDX PATH — sets CONTENT; nonzero when there is no content to judge
   local out
+  CONTENT=""
   if [ "$MODE" = "staged" ]; then
     # Staged scope judges staged bytes: a worktree copy carrying unstaged
     # edits would put the diff line numbers and the content out of sync.
@@ -101,13 +110,19 @@ content_of() { # IDX PATH -> inspectable content path on stdout; nonzero if unav
       # deciding this path's verdict, or no blob at all, which drops the path
       # out of the binary exclusion and hands its raw bytes to the patch
       # parser. `:0:` consumes the selector, and the whole remainder is path.
-      git show ":0:$2" >"$out.part" 2>/dev/null || { rm -f "$out.part"; return 1; }
-      mv -- "$out.part" "$out" || return 1
+      #
+      # An index entry the change set just listed has content by definition,
+      # so a lookup that misses it (a corrupt or missing object) or a write
+      # that cannot land is a failed read, never a shape with nothing to read.
+      { git show ":0:$2" >"$out.part" 2>/dev/null && mv -- "$out.part" "$out"; } || {
+        rm -f "$out.part"
+        env_error "could not read the staged content of $2 — refusing to report clean over a file no lane read"
+      }
     fi
-    printf '%s' "$out"
+    CONTENT="$out"
   else
     [ -f "$2" ] && [ ! -h "$2" ] || return 1
-    printf '%s' "$2"
+    CONTENT="$2"
   fi
 }
 
@@ -206,8 +221,8 @@ while IFS= read -r f; do
   IDX=$((IDX + 1))
   # No resolvable content is no content to judge — a symlink in every scope
   # but staged. The lane loop drops such a path on the same test.
-  cpath="$(content_of "$IDX" "$f")" || continue
-  if content_is_binary "$cpath" "$f"; then
+  content_of "$IDX" "$f" || continue
+  if content_is_binary "$CONTENT" "$f"; then
     PATCH_EXCLUDE+=(":(exclude,literal)$f")
     continue
   fi
@@ -266,8 +281,8 @@ else
     printf '%s\n' "$f" >>"$TMP/files.list"
     printf '%s\n' "$f" >>"$TMP/newfiles.list"
     IDX=$((IDX + 1))
-    cpath="$(content_of "$IDX" "$f")" || continue
-    if content_is_binary "$cpath" "$f"; then continue; fi
+    content_of "$IDX" "$f" || continue
+    if content_is_binary "$CONTENT" "$f"; then continue; fi
     PF="$f" awk 'BEGIN { p = ENVIRON["PF"] } { print p "\t" FNR "\t" $0 }' "./$f" >>"$TMP/added.tsv"
   done <"$TMP/untracked.z"
 fi
@@ -765,7 +780,8 @@ build_runner_index() {
   : >"$TMP/runner.defaultglob"
   while IFS= read -r r; do
     k=$((k + 1))
-    c="$(content_of "r$k" "$r")" || { RUNNERS_READ_WHOLE=0; continue; }
+    content_of "r$k" "$r" || { RUNNERS_READ_WHOLE=0; continue; }
+    c="$CONTENT"
     cat -- "$c" >>"$TMP/runner.bodies"
     # A runner invoking bare vitest or jest runs that runner's own default
     # include glob — no path in the runner ever names the suites it
@@ -872,8 +888,11 @@ while IFS= read -r f; do
   [ -f "$REC" ] || : >"$REC"
   # A binary file's record is empty because the producer above never wrote
   # one — content decided that once, for every scope, before the patch was
-  # taken. The whole-file lanes below still see the path.
-  cpath="$(content_of "$IDX" "$f")" || continue
+  # taken. The whole-file lanes below still see the path. Held in a name of
+  # its own: the runner index the unwired-suite lane builds calls content_of
+  # again, for other paths.
+  content_of "$IDX" "$f" || continue
+  cpath="$CONTENT"
 
   is_sh=0
   has_ee=0

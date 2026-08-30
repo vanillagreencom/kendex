@@ -351,6 +351,52 @@ OUT="$(cd "$R" && PATH="$GIT_SHIM:$PATH" "$SB" 2>&1)" && RC=0 || RC=$?
   || bad "a git grep execution failure is a collection error" "rc=$RC out=$OUT"
 case "$OUT" in *"suppression-ban: OK"*) bad "no OK verdict may accompany a broken scan" "$OUT" ;; *) ok "no OK verdict accompanies the broken scan" ;; esac
 
+echo "=== a carrier the sniff skips is named, and qualifies the verdict ==="
+new_repo unmeasured
+printf 'fn main() {}\n' >"$R/ok.rs"
+# A .rs path whose bytes carry the module-wide pragma at column 0 and a NUL
+# in git's leading window: the listing forces text, so the path IS matched
+# and reaches the content sniff, and the sniff is what keeps it out of the
+# count. Unread is not clean — the path is named and the verdict says so.
+printf '\000\n#![allow(dead_code)]\nfn f() {}\n' >"$R/blob.rs"
+git -C "$R" add -A
+run_sb
+[ "$RC" -eq 0 ] && case "$OUT" in
+  *"not measured: blob.rs — binary content, not text"*"suppression-ban: OK"*"1 matched path(s) not measured"*) true ;;
+  *) false ;;
+esac \
+  && ok "a clean verdict names the skipped carrier and says how many went unmeasured" \
+  || bad "clean verdict carries the unmeasured qualifier" "rc=$RC out=$OUT"
+
+# The same qualifier on a FAILING verdict: a readable pragma elsewhere
+# decides the exit code, and the unread carrier still has to be declared.
+printf '#![allow(dead_code)]\nfn g() {}\n' >"$R/blanket.rs"
+git -C "$R" add -A
+run_sb
+[ "$RC" -eq 1 ] && case "$OUT" in
+  *"not measured: blob.rs — binary content, not text"*"suppression-ban: 1 violation(s)"*"1 matched path(s) not measured"*) true ;;
+  *) false ;;
+esac \
+  && ok "a violation verdict carries the same qualifier" \
+  || bad "violation verdict carries the unmeasured qualifier" "rc=$RC out=$OUT"
+
+# The must-fail control: the same bytes with the NUL taken out are text, so
+# the carrier is measured, fires on its own line, and nothing is declared
+# unmeasured.
+printf '\n#![allow(dead_code)]\nfn f() {}\n' >"$R/blob.rs"
+git -C "$R" add -A
+run_sb
+[ "$RC" -eq 1 ] && case "$OUT" in
+  *"module-wide rust allow: blob.rs:2:"*) true ;;
+  *) false ;;
+esac \
+  && ok "control: the same bytes without a NUL are read, and fire" \
+  || bad "control: the NUL-free carrier fires" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"not measured"*) bad "nothing goes unmeasured once the carrier is text" "$OUT" ;;
+  *) ok "and no unmeasured qualifier accompanies a fully read scan" ;;
+esac
+
 echo "=== fail-closed: an unreadable staged blob is a collection error ==="
 new_repo unreadable
 printf '#[allow(dead_code)]\nfn f() {}\n' >"$R/bare.rs"
