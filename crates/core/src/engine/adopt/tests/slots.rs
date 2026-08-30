@@ -299,6 +299,131 @@ fn a_plain_skill_over_a_slot_holding_a_differently_named_item_refuses() {
     assert!(trash_is_empty(&env));
 }
 
+/// The same catalog with the slot holding a plain skill of its own, which
+/// makes the slot replaceable rather than empty. Its one immediate child,
+/// `foo`, is no item — the item is `foo/eda`, a level further down, which
+/// is where a declared catalog directory legitimately keeps it. A search
+/// that stops at the children reports the slot free and the capture takes
+/// the stored item with the directory.
+#[test]
+fn a_plain_skill_over_an_item_stored_deeper_in_its_slot_refuses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let stored = store_local_skill(&env, "data-science/foo/eda", "the stored one");
+    store_local_skill(&env, "data-science", "the earlier plain one");
+    let root = crate::source::local_source_root(&env, &Scope::Global);
+    fs::write(
+        root.join("kendex.toml"),
+        "[catalog]\nskills = [\"skills/data-science\"]\n",
+    )
+    .unwrap();
+
+    let refused = refuse_plain_skill(&env, &home, "data-science");
+
+    assert!(refused.contains("data-science/foo/eda"), "{refused:?}");
+    assert_eq!(
+        fs::read_to_string(stored.join("SKILL.md")).unwrap(),
+        "the stored one"
+    );
+    // The source still offers the stored item under its own name, so a
+    // declaration naming it still resolves to content that is there.
+    let sealed = crate::source_read::SealedSource::open(&root).unwrap();
+    let config = crate::source::source_config_for(&sealed, LOCAL_SOURCE_NAME).unwrap();
+    assert_eq!(
+        crate::source::list_items(&sealed, &config, ItemKind::Skill),
+        ["foo/eda"]
+    );
+    assert_eq!(
+        crate::source::find_item(&sealed, &config, ItemKind::Skill, "foo/eda"),
+        Some(stored)
+    );
+    assert!(trash_is_empty(&env));
+}
+
+/// The must-fail half: what the descendant search must NOT call an
+/// occupant. A slot that is an empty directory holds nothing, and the
+/// earlier copy of the name being kept holds only its own supporting tree,
+/// which the capture is written over — the search descends through every
+/// level of that tree and finds no item there, so both adoptions land. A
+/// guard that refuses these refuses every re-adopt.
+#[test]
+fn a_plain_skill_over_a_slot_holding_nothing_of_its_own_lands() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let stored = store_local_skill(&env, "handmade", "the earlier one");
+    fs::create_dir_all(stored.join("references/deep/deeper")).unwrap();
+    fs::write(stored.join("references/deep/deeper/notes.md"), "supporting").unwrap();
+    fs::create_dir_all(stored.join("scripts")).unwrap();
+    fs::write(stored.join("scripts/run.sh"), "#!/bin/sh\n").unwrap();
+    let vacant = crate::source::local_source_root(&env, &Scope::Global).join("skills/vacant");
+    fs::create_dir_all(&vacant).unwrap();
+
+    for (name, body) in [("handmade", "the newer one"), ("vacant", "a first copy")] {
+        let held = home.join(".claude/skills").join(name);
+        fs::create_dir_all(&held).unwrap();
+        fs::write(held.join("SKILL.md"), body).unwrap();
+        let plan = adopt(
+            &env,
+            &Scope::Global,
+            ItemKind::Skill,
+            name,
+            &[HarnessId::Claude],
+        )
+        .unwrap();
+        crate::apply::execute(&env, &plan, None).unwrap();
+    }
+
+    assert_eq!(
+        fs::read_to_string(stored.join("SKILL.md")).unwrap(),
+        "the newer one"
+    );
+    assert_eq!(
+        fs::read_to_string(vacant.join("SKILL.md")).unwrap(),
+        "a first copy"
+    );
+}
+
+/// The descendant search looks at a bounded number of entries, and a slot
+/// wider than that bound is one it has not finished looking at. Not
+/// finished is not empty, so adoption refuses. Nothing is stored under this
+/// slot but the earlier copy's own filler: the bound is the only reason to
+/// refuse, so the refusal is the bound's or it is nobody's.
+#[test]
+fn a_plain_skill_over_a_slot_too_wide_to_search_refuses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let stored = store_local_skill(&env, "data-science", "the earlier plain one");
+    // One entry past the budget, counting the earlier copy's own SKILL.md.
+    for n in 0..crate::source_read::TREE_BOUND.files {
+        fs::create_dir(stored.join(format!("filler-{n:04}"))).unwrap();
+    }
+
+    let held = home.join(".claude/skills/data-science");
+    fs::create_dir_all(&held).unwrap();
+    fs::write(held.join("SKILL.md"), "the plain one").unwrap();
+    let refused = adopt(
+        &env,
+        &Scope::Global,
+        ItemKind::Skill,
+        "data-science",
+        &[HarnessId::Claude],
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(refused, CoreError::SourceEscape { .. }),
+        "{refused:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(stored.join("SKILL.md")).unwrap(),
+        "the earlier plain one"
+    );
+    assert!(trash_is_empty(&env));
+}
+
 /// A listing skips a `tests` directory wherever it finds one — the support
 /// vocabulary a browse row is drawn through, since files there are about the
 /// items rather than items. A legal `tests/foo` is therefore a skill no

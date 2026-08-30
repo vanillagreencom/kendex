@@ -121,23 +121,20 @@ pub(super) fn stored_in_slot(
     if !sealed.dir_at(&held)? {
         return Ok(None);
     }
-    // Being the plain item makes the slot replaceable, not empty. Its own
-    // `SKILL.md` and supporting files belong to the item the capture is
-    // written over, so they are not occupants — but a namespaced item
-    // stored under the same directory is a second item, and the write
-    // takes it too. Which children are items is `stored_item`'s to say,
-    // the same judge `flat_skills` lists them by.
-    let replaceable = stored_item(sealed, kind, &held)?;
     // A read that could not be made is not an empty directory, and a probe
     // that could not be made is not a child that is no item: reading either
     // one as the other is how a guard deletes what it exists to protect.
-    let mut occupant = None;
-    for entry in sealed.all_entries(&held)? {
-        if !replaceable || stored_item(sealed, kind, &entry)? {
-            occupant = Some(entry);
-            break;
-        }
-    }
+    let occupant = match stored_item(sealed, kind, &held)? {
+        // Being the plain item makes the slot replaceable, not empty. Its
+        // own `SKILL.md` and supporting files belong to the item the
+        // capture is written over, so they are not occupants — but an item
+        // stored under the same directory is a second item, and the write
+        // takes it too.
+        true => descendant_item(sealed, kind, &held)?,
+        // A slot that is not the item holds nothing the capture may take,
+        // so any entry at all is an occupant.
+        false => sealed.all_entries(&held)?.into_iter().next(),
+    };
     let Some(occupant) = occupant else {
         return Ok(None);
     };
@@ -145,6 +142,66 @@ pub(super) fn stored_in_slot(
     // `paths::slashed` spells it rather than the platform's separator.
     let occupant = sealed.relative(&occupant).unwrap_or(&occupant);
     Ok(Some(crate::names::shown(&crate::paths::slashed(occupant))))
+}
+
+/// The shallowest item stored anywhere under a replaceable slot, or
+/// nothing when the slot holds only the plain item's own files. Which
+/// directory is an item is [`stored_item`]'s to say, the same judge
+/// `flat_skills` lists them by.
+///
+/// Immediate children are not the whole slot. A catalog that declares its
+/// own directories stores its items under one of them, and that directory
+/// can itself be a plain name's slot: with `skills/data-science` declared,
+/// `foo/eda` is stored at `skills/data-science/foo/eda`, where the only
+/// child of the slot is `foo`, which is no item. How deep the items sit is
+/// the catalog's to choose, so the search descends instead of reading the
+/// tables that chose it — a table says what a source OFFERS, and both the
+/// display exclusions it is drawn through and an unusable one offering
+/// nothing read as an empty slot over a directory holding content.
+///
+/// The search is bounded by the entries it looks at rather than by depth,
+/// which leaves a directory's whole width free to multiply at every level.
+/// The budget is the tree bound: a slot holding more entries than kendex
+/// will read out of one tree holds more than it can render back. Past it
+/// the search has not finished looking, which is not the same answer as
+/// having found nothing, and this is a guard — so it refuses.
+fn descendant_item(
+    sealed: &SealedSource,
+    kind: ItemKind,
+    slot: &std::path::Path,
+) -> Result<Option<PathBuf>> {
+    let budget = crate::source_read::TREE_BOUND.files;
+    let mut left = budget;
+    // Breadth first: the occupant named is a path a person is sent to look
+    // at, and the shallowest one is the nearest to the name they typed.
+    let mut pending = std::collections::VecDeque::from([slot.to_path_buf()]);
+    while let Some(dir) = pending.pop_front() {
+        for entry in sealed.all_entries(&dir)? {
+            let Some(remaining) = left.checked_sub(1) else {
+                return Err(crate::error::CoreError::SourceEscape {
+                    path: slot.to_path_buf(),
+                    reason: format!(
+                        "more than {budget} entries under one slot — \
+                         cannot tell what is stored there"
+                    ),
+                });
+            };
+            left = remaining;
+            // Only a directory is a skill and only a directory holds one,
+            // so an entry that is neither is no item and no place to keep
+            // looking. The probe is fallible all the same: an entry the
+            // filesystem will not describe is not an entry that is no
+            // directory.
+            if !sealed.dir_at(&entry)? {
+                continue;
+            }
+            if stored_item(sealed, kind, &entry)? {
+                return Ok(Some(entry));
+            }
+            pending.push_back(entry);
+        }
+    }
+    Ok(None)
 }
 
 pub(super) fn agent_stems(sealed: &SealedSource, dir: &str) -> Vec<String> {
