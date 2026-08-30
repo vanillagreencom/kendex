@@ -42,7 +42,7 @@ Cross-model second opinion via external AI CLI. Every mode walks the `SECOND_OPI
 - **Do not pass `--timeout`** unless the user explicitly asks for a different value for this specific call — the script reads the default from project config.
 - **Always pass `--cwd`** with the absolute project root path. Never use `--cwd .`.
 - Pass `--foreground` when the call can outlast the harness foreground cap. This detaches the run and prints its artifact, deadline, and wait command.
-- Execute the exact printed wait command until it returns a terminal status. Exit 75 means completion is still recoverable; do other event checks, then rerun the same command. Exit 124 is the supervisor's published terminal deadline result.
+- Execute the exact printed wait command until it returns a terminal status. Exit 75 means completion is still recoverable; do other event checks, then rerun the same command. Exit 124 is terminal: the run reached its deadline and was stopped.
 - For `quick` mode, you can pass the question inline: `.agents/skills/second-opinion/scripts/second-opinion quick "your question here" --cwd /path --foreground`.
 
 ## Session identity

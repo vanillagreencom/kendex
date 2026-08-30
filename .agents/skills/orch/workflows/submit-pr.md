@@ -48,7 +48,7 @@ mkdir -p [WORKTREE_PATH]/tmp
 
 Capture the launch status, stdout, and stderr. A nonzero launch or stdout with no line beginning `wait:` means no wait protocol exists: report `local external review failed — [SECOND-OPINION STDERR]` and continue to § 2 without running the wait command or `review-artifact-check`.
 
-Execute the exact command printed after `wait:`. Exit 75 means completion is still recoverable; do other event checks, then rerun the same command. Exit 124 is the supervisor's published terminal deadline result. Continue until terminal before running `review-artifact-check`.
+Execute the exact command printed after `wait:`. Exit 75 means completion is still recoverable; do other event checks, then rerun the same command. Exit 124 is terminal: the run reached its deadline and was stopped. Continue until terminal before running `review-artifact-check`.
 
 Use the epoch output as `LOCAL_STARTED_AT`:
 

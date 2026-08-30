@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 
+# --detached-worker is the runtime's word to the process it detached, and to
+# the lane children that process forks. It carries the parent's resolved model
+# identity, so it is proven rather than believed: the caller must hold the
+# runtime directory and its token, and the identity file inside must name that
+# same token. A caller who simply passes the flag has none of that and is
+# refused — otherwise the flag would be a way to declare any identity at all,
+# and the cross-model guard is the thing that identity decides.
 second_opinion_authenticate_detached() {
   DETACHED_AUTH_MODEL="" DETACHED_AUTH_SOURCE="" DETACHED_RUNTIME_DIR="" DETACHED_RUN_TOKEN=""
   if ! "$1"; then
@@ -31,17 +38,12 @@ second_opinion_authenticate_detached() {
   unset SECOND_OPINION_RUNTIME_DIR SECOND_OPINION_RUN_TOKEN
 }
 
+# Everything the preloader resolved is settled before any project file is
+# read: the loader sources .env.local and exports a settings [env] table into
+# this shell, and SCRIPT_DIR is what the script sources its own runtime from.
 second_opinion_freeze_preloader_state() {
   readonly SCRIPT_DIR FOREGROUND_CAP_IN_CALLER_ENV FOREGROUND_CAP_WAS_IN_CALLER_ENV \
     CURRENT_MODEL_IS_SESSION_SCOPED CURRENT_MODEL_IN_CALLER_ENV DETACHED_AUTH_REQUESTED \
-    DETACHED_LANE_REQUESTED DETACHED_AUTH_MODEL DETACHED_AUTH_SOURCE \
-    DETACHED_RUNTIME_DIR DETACHED_RUN_TOKEN
+    DETACHED_AUTH_MODEL DETACHED_AUTH_SOURCE DETACHED_RUNTIME_DIR DETACHED_RUN_TOKEN
   readonly -a ORIGINAL_ARGS
-  _KENDEX_PROTECTED_KEYS=(SCRIPT_DIR RUNTIME ORIGINAL_ARGS FOREGROUND_CAP_IN_CALLER_ENV \
-    FOREGROUND_CAP_WAS_IN_CALLER_ENV CURRENT_MODEL_IS_SESSION_SCOPED \
-    CURRENT_MODEL_IN_CALLER_ENV DETACHED_AUTH_REQUESTED DETACHED_LANE_REQUESTED \
-    DETACHED_AUTH_MODEL DETACHED_AUTH_SOURCE DETACHED_RUNTIME_DIR DETACHED_RUN_TOKEN \
-    SECOND_OPINION_FOREGROUND_CAP SECOND_OPINION_RUNTIME_DIR \
-    SECOND_OPINION_RUN_TOKEN _KENDEX_PROTECTED_KEYS)
-  readonly -a _KENDEX_PROTECTED_KEYS
 }

@@ -244,7 +244,7 @@ Exit codes:
      a zero exit. No external verdict; whatever partial output existed is kept
      as <output>.failed.json and the CLI's own error text is echoed on stderr
   75 detached wait: completion is still recoverable — rerun the same command
-  124 detached wait: the supervisor published its terminal deadline result
+  124 detached wait: the run reached its deadline without publishing a status
 HELP
 }
 # Help is answered before project configuration is read: sourcing a repo's
@@ -252,17 +252,15 @@ HELP
 # option parser treats -h/--help at any position as help, so the same scan
 # decides here.
 DETACHED_AUTH_REQUESTED=false
-DETACHED_LANE_REQUESTED=false
 for _arg in "$@"; do
   case "$_arg" in
     -h|--help) show_help; exit 0 ;;
     --detached-worker) DETACHED_AUTH_REQUESTED=true ;;
-    --lane-worker) DETACHED_LANE_REQUESTED=true; DETACHED_AUTH_REQUESTED=true ;;
   esac
 done
 unset _arg
-# shellcheck source=lib/detached-auth.sh
-source "$SCRIPT_DIR/lib/detached-auth.sh"
+# shellcheck source=lib/detached-identity.sh
+source "$SCRIPT_DIR/lib/detached-identity.sh"
 second_opinion_authenticate_detached "$DETACHED_AUTH_REQUESTED" || exit 1
 second_opinion_freeze_preloader_state
 # Resolved only after help is answered: help must not require a git
@@ -391,7 +389,6 @@ while [[ $# -gt 0 ]]; do
     --timeout=*) TIMEOUT="${1#--timeout=}"; shift ;;
     --foreground) FOREGROUND_CAP=true; shift ;;
     --detached-worker) DETACHED_WORKER=true; shift ;;
-    --lane-worker) DETACHED_WORKER=true; shift ;;
     # The multi-lane parent's word to its own children, and the reason it is a
     # flag rather than an environment variable: a project settings file's [env]
     # table names any variable it likes, and whether an output path belongs to
@@ -1861,11 +1858,14 @@ if $MULTI_LANE; then
         echo "→ lane stderr capture could not be opened — log replay lost: $lane" >&2
       fi
       umask "$lane_umask_prev"
+      # A lane child of a detached run gets the same ownership proof and flag:
+      # it inherits the parent's identity rather than re-deriving one, and must
+      # not detach again. A foreground parent has no proof to hand down.
       if [[ -n "$DETACHED_RUNTIME_DIR" ]]; then
         export SECOND_OPINION_RUNTIME_DIR="$DETACHED_RUNTIME_DIR" SECOND_OPINION_RUN_TOKEN="$DETACHED_RUN_TOKEN"
-        lane_worker_arg=--lane-worker
+        detached_worker_arg=--detached-worker
       else
-        lane_worker_arg=
+        detached_worker_arg=
       fi
       # `=` form throughout: a split-form option now refuses a flag-shaped
       # value, and every one of these is derived from caller input that may
@@ -1876,7 +1876,7 @@ if $MULTI_LANE; then
       # invocation, so the restriction reaches those writes and nothing else
       # the lane creates.
       exec "$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" review --target="$lane" --range="$REVIEW_RANGE" --cwd="$CWD" \
-        --timeout="$TIMEOUT" --output="$lane_out" --scratch-output ${lane_worker_arg:+"$lane_worker_arg"} \
+        --timeout="$TIMEOUT" --output="$lane_out" --scratch-output ${detached_worker_arg:+"$detached_worker_arg"} \
         >/dev/null 2>&3 3>&-
     ) &
     LANE_PIDS+=($!)

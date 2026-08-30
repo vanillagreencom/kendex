@@ -59,6 +59,11 @@ for defect in header bom; do
   fi
 done
 
+# SECOND_OPINION_FOREGROUND_CAP is a statement about ONE session, so a project
+# file may not make it for every session in the repo. The refusal fires on the
+# value that actually reaches the run: a project declaration the caller did not
+# set. A caller who exports the key holds the higher-precedence value and the
+# run is that caller's own, whatever a project file also says.
 printf '[env]\nSECOND_OPINION_FOREGROUND_CAP = "1"\n' > "$proj/kendex.settings.toml"
 rc=0
 env -u SECOND_OPINION_FOREGROUND_CAP "$SO" detect >/dev/null 2>"$TMP_ROOT/err" || rc=$?
@@ -70,22 +75,15 @@ grep -q "session-only SECOND_OPINION_FOREGROUND_CAP" "$TMP_ROOT/err" \
 grep -q "pass --foreground" "$TMP_ROOT/err" \
   && ok "(foreground-cap) the refusal names the supported flag" \
   || fail "(foreground-cap) refusal did not name --foreground: $(cat "$TMP_ROOT/err")"
-rc=0
-SECOND_OPINION_FOREGROUND_CAP=1 "$SO" detect >/dev/null 2>"$TMP_ROOT/err" || rc=$?
-[ "$rc" -eq 1 ] && ok "(foreground-cap-shadow) caller precedence does not hide the project key" \
-  || fail "(foreground-cap-shadow) expected exit 1, got $rc: $(cat "$TMP_ROOT/err")"
-grep -q "session-only SECOND_OPINION_FOREGROUND_CAP" "$TMP_ROOT/err" \
-  && ok "(foreground-cap-shadow) refusal still names the project collision" \
-  || fail "(foreground-cap-shadow) refusal lost the project key: $(cat "$TMP_ROOT/err")"
 rm -f "$proj/kendex.settings.toml"
 printf 'export SAFE=1 SECOND_OPINION_FOREGROUND_CAP=1\n' > "$proj/.env.local"
 rc=0
-SECOND_OPINION_FOREGROUND_CAP=1 "$SO" detect >/dev/null 2>"$TMP_ROOT/err" || rc=$?
-[ "$rc" -eq 1 ] && ok "(foreground-cap-later-export) every export assignment is checked" \
-  || fail "(foreground-cap-later-export) expected exit 1, got $rc: $(cat "$TMP_ROOT/err")"
+env -u SECOND_OPINION_FOREGROUND_CAP "$SO" detect >/dev/null 2>"$TMP_ROOT/err" || rc=$?
+[ "$rc" -eq 1 ] && ok "(foreground-cap-env-file) an .env.local declaration exits 1" \
+  || fail "(foreground-cap-env-file) expected exit 1, got $rc: $(cat "$TMP_ROOT/err")"
 grep -q "session-only SECOND_OPINION_FOREGROUND_CAP" "$TMP_ROOT/err" \
-  && ok "(foreground-cap-later-export) later protected assignment is refused" \
-  || fail "(foreground-cap-later-export) protected assignment escaped: $(cat "$TMP_ROOT/err")"
+  && ok "(foreground-cap-env-file) the refusal names the session-only key" \
+  || fail "(foreground-cap-env-file) refusal did not name the key: $(cat "$TMP_ROOT/err")"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

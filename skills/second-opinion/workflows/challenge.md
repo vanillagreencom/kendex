@@ -57,7 +57,7 @@ Run `second-opinion …`; it backgrounds itself and prints when to check.
   --foreground
 ```
 
-Execute the exact command printed after `wait:`. Exit 75 means completion is still recoverable; do other event checks, then rerun the same command. Exit 124 is the supervisor's published terminal deadline result. When it succeeds, read the file printed after `artifact:` with `cat < [ARTIFACT_PATH]`.
+Execute the exact command printed after `wait:`. Exit 75 means completion is still recoverable; do other event checks, then rerun the same command. Exit 124 is terminal: the run reached its deadline and was stopped. When it succeeds, read the file printed after `artifact:` with `cat < [ARTIFACT_PATH]`.
 
 ## 3. Present Results
 

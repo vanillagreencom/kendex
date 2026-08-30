@@ -42,23 +42,6 @@ kendex_parent_env_has() {
   return 1
 }
 
-kendex_key_protected() {
-  local key="$1" protected
-  for protected in ${_KENDEX_PROTECTED_KEYS[@]+"${_KENDEX_PROTECTED_KEYS[@]}"}; do
-    [[ "$key" == "$protected" ]] && return 0
-  done
-  return 1
-}
-
-kendex_refuse_protected() {
-  if [[ "$2" == SECOND_OPINION_FOREGROUND_CAP ]]; then
-    echo "::error::$1: session-only SECOND_OPINION_FOREGROUND_CAP cannot be set by project configuration; pass --foreground or export it in this session" >&2
-  else
-    echo "::error::$1: $2 is runtime-owned and cannot be set by project configuration" >&2
-  fi
-  return 1
-}
-
 # A UTF-8 byte-order mark is neither whitespace nor `[` nor a key character
 # to any reader in either resolver family, so a BOM-prefixed first line
 # silently misfiles the header or assignment it hides. Refuse the file
@@ -93,28 +76,10 @@ kendex_source_usable() { # PATH — 0 = readable regular file or absent; 1 + ::e
 }
 
 kendex_source_env_file() {
-  local file="$1" line trimmed key assignment
+  local file="$1"
   kendex_source_usable "$file" || return 1
   [[ -f "$file" ]] || return 0
   kendex_bom_guard "$file" || return 1
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    trimmed="$(kendex_trim "$line")"
-    if [[ "$trimmed" == export[[:space:]]* ]]; then
-      trimmed="$(kendex_trim "${trimmed#export}")"
-      trimmed="${trimmed//;/ }"
-      for assignment in $trimmed; do
-        [[ "$assignment" == *=* ]] || continue
-        key="${assignment%%=*}"
-        kendex_key_protected "$key" \
-          && { kendex_refuse_protected "$file" "$key"; return 1; }
-      done
-    else
-      key="${trimmed%%[[:space:]=]*}"
-      if [[ "$trimmed" == *=* ]] && kendex_key_protected "$key"; then
-        kendex_refuse_protected "$file" "$key"; return 1
-      fi
-    fi
-  done < "$file"
   # shellcheck source=/dev/null
   source "$file"
 }
@@ -177,9 +142,6 @@ kendex_load_settings_file() {
     if ! value="$(kendex_decode_value "${line#*=}")"; then
       echo "::error::$file: unsupported syntax for $key (expected a single-line basic string with no '\"' and no '\\': $key = \"value\")" >&2
       return 1
-    fi
-    if kendex_key_protected "$key"; then
-      kendex_refuse_protected "$file" "$key"; return 1
     fi
 
     # Parent-process values win over project [env] tables. The snapshot is
