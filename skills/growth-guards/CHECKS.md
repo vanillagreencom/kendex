@@ -25,9 +25,10 @@ the words. A space between them exempts nothing.
   a path from it, while a blob whose first block carries a NUL is skipped
   as the asset it is.
 - (default) — every tracked file, read from the index. This is the CI
-  scope, and the only one that sees a marker no commit is touching. It
-  reads the blobs git calls text, so a `-diff` rule or a NUL byte puts a
-  file outside it; closing that gap is KEN-844.
+  scope, and the only one that sees a marker no commit is touching. Content
+  governs here as it does at commit — the shared index scan forces text, so
+  an attributes rule cannot put a file outside it, and sniffs each file it
+  names for a NUL in its leading bytes, so an asset is not decoded.
 
 ## byte-ceiling
 

@@ -246,9 +246,16 @@ read, while an asset whose bytes happen to spell a marker cannot block a
 commit with a record of raw bytes. Sniffing only the named paths keeps that
 at one `cat-file` per marker-carrying file, not one per staged file.
 
-The index-wide lane makes no such promise. It runs `git grep -I`, so a blob
-git calls binary — including one a `-diff` rule makes it call binary — is
-outside its scan. Closing that half is KEN-844.
+The index-wide lane gives the same answer, in the shared `gg_grep_lane` that
+every index scan in the family runs through. Both of its `git grep` phases
+force text, and they move TOGETHER: text on the listing over `-I` on the
+per-file detail scan would name a file the detail scan then finds nothing in,
+which the lane's own invariant turns into a spurious exit 2. Each named file
+is then sniffed for a NUL in its leading bytes before it is detailed — one
+`cat-file` per matching file, since only a file the listing named is read.
+`conflict-markers`, `suppression-ban`'s seven lanes and `prose` inherit that
+rule from the helper; `prose` reaches it having already made the same
+judgement in its own walk.
 
 ## byte-ceiling sizing
 

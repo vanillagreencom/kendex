@@ -312,20 +312,37 @@ gg_grep_guard() { # STATUS ERRFILE CONTEXT — returns only when the scan is com
 
 # One banned shape, scanned over INDEX content in two phases: the offending
 # FILES (-l -z, so a path containing ':' cannot garble parsing), then the
-# numbered hits per file, where the known path prefix strips exactly. Binary
-# files are skipped (-I). The per-file pass is line-oriented, so a path
-# embedding a newline yields no DETAIL lines — the file still fails phase one.
+# numbered hits per file, where the known path prefix strips exactly. The
+# per-file pass is line-oriented, so a path embedding a newline yields no
+# DETAIL lines — the file still fails phase one.
+#
+# CONTENT decides what is scannable here and an attribute never does. Both
+# scans force text (-a): `git grep -I` asks the path's userdiff driver, so one
+# committed `*.ext -diff` or `*.ext binary` row makes git call every matching
+# blob binary and drop it with no status and no stderr — a whole extension
+# reading as clean. The two scans move TOGETHER; a text-forced listing over a
+# binary-skipping detail scan names a file the detail scan then finds nothing
+# in, which the invariant below turns into a spurious exit 2. What forcing
+# text lets through is judged on content instead: a listed blob carrying a NUL
+# in its leading bytes is a genuine asset, is skipped, and never reaches a
+# violation record as raw bytes. That is the same answer todo-ban's commit
+# lane gives the same question.
 # Needs GG_TMP (gg_tmpdir) and the excludes already loaded.
 gg_grep_lane() { # LABEL ERE REMEDY PATHSPEC... — numbered violations on stdout
   local label="$1" ere="$2" remedy="$3" status=0 f hit_status hit
   shift 3
   gg_require_merged_index "$@"
-  LC_ALL=C git grep --cached -lIzE ${GG_GREP_LANE_FLAGS[@]+"${GG_GREP_LANE_FLAGS[@]}"} "$ere" -- "$@" >"$GG_TMP/lane.z" 2>"$GG_TMP/lane.err" || status=$?
+  LC_ALL=C git grep --cached -alzE ${GG_GREP_LANE_FLAGS[@]+"${GG_GREP_LANE_FLAGS[@]}"} "$ere" -- "$@" >"$GG_TMP/lane.z" 2>"$GG_TMP/lane.err" || status=$?
   gg_grep_guard "$status" "$GG_TMP/lane.err" "scanning tracked files for $label"
   while IFS= read -r -d '' f; do
     gg_is_excluded "$f" && continue
+    # The stage-0 blob at that exact path, so the sniff reads the same bytes
+    # the scan matched. Only a path the listing NAMED is read, so this costs
+    # one `cat-file` per matching file, never one per tracked file.
+    gg_read_blob ":0:$f" "$f" "$label"
+    gg_blob_is_binary "$GG_TMP/blob" "$f" && continue
     hit_status=0
-    LC_ALL=C git grep --cached -nIE ${GG_GREP_LANE_FLAGS[@]+"${GG_GREP_LANE_FLAGS[@]}"} "$ere" -- ":(literal)$f" >"$GG_TMP/lane.hits" 2>"$GG_TMP/lane.err" || hit_status=$?
+    LC_ALL=C git grep --cached -anE ${GG_GREP_LANE_FLAGS[@]+"${GG_GREP_LANE_FLAGS[@]}"} "$ere" -- ":(literal)$f" >"$GG_TMP/lane.hits" 2>"$GG_TMP/lane.err" || hit_status=$?
     gg_grep_guard "$hit_status" "$GG_TMP/lane.err" "detailing the $label hits in '$f'"
     # This file just listed as containing hits; anything but a clean re-scan
     # (including "no matches") means the measurement is broken.

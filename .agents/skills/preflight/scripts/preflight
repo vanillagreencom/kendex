@@ -90,8 +90,13 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # --- change set --------------------------------------------------------------
 # Diff config is pinned, not inherited: a repo setting noprefix, a mnemonic
 # prefix, quotePath, an external differ or a textconv filter would each
-# reshape the patch this parser reads.
-git_diff() { git -c core.quotePath=false -c diff.noprefix=false -c diff.mnemonicPrefix=false diff --no-ext-diff --no-textconv "$@"; }
+# reshape the patch this parser reads. --text is the same pin against
+# .gitattributes: a committed '-diff' or 'binary' row makes git call the path
+# binary and emit 'Binary files ... differ' with no hunks, so one attributes
+# line would hide a whole extension's added lines from every line-scoped lane
+# — a scan reported over a file it never read. What forcing text lets through
+# is judged on content in the lane loop below.
+git_diff() { git -c core.quotePath=false -c diff.noprefix=false -c diff.mnemonicPrefix=false diff --no-ext-diff --no-textconv --text "$@"; }
 
 resolve_base() { # -> merge-base commit on stdout; nonzero when none resolves
   local cand base
@@ -812,6 +817,18 @@ while IFS= read -r f; do
   REC="$TMP/rec.$IDX"
   [ -f "$REC" ] || : >"$REC"
   cpath="$(content_of "$IDX" "$f")" || continue
+  # CONTENT decides which files have inspectable lines, never an attributes
+  # rule: git_diff forces --text so no rule can withhold them, and a genuinely
+  # binary blob gives its added lines up here instead, under the same `grep
+  # -I` test --all applies to every tracked file. Raw bytes never reach a
+  # finding record, and the whole-file lanes still see the path.
+  bin_status=0
+  grep -Iq . -- "$cpath" >/dev/null 2>&1 || bin_status=$?
+  # 1 is "no inspectable text" — binary, or nothing but empty lines. Above 1
+  # the content could not be read at all, which is no verdict: the file drops
+  # out whole, the way an unresolvable content path above drops it.
+  [ "$bin_status" -le 1 ] || continue
+  [ "$bin_status" -eq 0 ] || : >"$REC"
 
   is_sh=0
   has_ee=0

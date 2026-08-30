@@ -255,5 +255,88 @@ else
   bad "with nothing left to compare against, the run fails closed instead of reporting clean" "rc=$RC out=$OUT"
 fi
 
+echo "=== an attributes rule cannot withhold the lines a change adds ==="
+
+# A committed '-diff' (or 'binary') row makes git call a path binary, and the
+# patch then says "Binary files ... differ" with no hunks at all: every
+# line-scoped lane would have nothing to read while the run still counted the
+# file as changed — a scan reported but never performed. One row would take a
+# whole extension out of reach.
+CITE='# Staged
+
+See `docs/gone.md` for the rest.
+'
+
+seed attrs-staged
+printf '%s' "$CITE" >"$R/docs/staged.md"
+git -C "$R" add docs/staged.md
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
+  ok "control: the added dead citation fires with no attributes row"
+else
+  bad "control: the added dead citation fires with no attributes row" "rc=$RC out=$OUT"
+fi
+printf '*.md -diff\n' >"$R/.gitattributes"
+git -C "$R" add .gitattributes
+# The fixture is real only if the row has in fact flipped git's verdict.
+if git -C "$R" diff --cached --no-ext-diff -- docs/staged.md | grep -q '^Binary files'; then
+  ok "fixture: with '*.md -diff' an unpinned diff carries no hunks"
+else
+  bad "fixture: '-diff' makes an unpinned diff carry no hunks" "rc=$RC"
+fi
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
+  ok "--staged still reads the added line under a '-diff' row"
+else
+  bad "--staged still reads the added line under a '-diff' row" "rc=$RC out=$OUT"
+fi
+if has "preflight: clean"; then
+  bad "no clean verdict may cover a file whose lines were withheld" "$OUT"
+else
+  ok "no clean verdict covers the withheld lines"
+fi
+printf '*.md binary\n' >"$R/.gitattributes"
+git -C "$R" add .gitattributes
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
+  ok "the 'binary' attribute macro cannot withhold them either"
+else
+  bad "the 'binary' attribute macro cannot withhold them either" "rc=$RC out=$OUT"
+fi
+
+# The base scope reads the same patch shape against the merge base.
+seed attrs-base
+printf '*.md -diff\n' >"$R/.gitattributes"
+git -C "$R" add .gitattributes
+git -C "$R" commit -qm attrs
+printf '%s' "$CITE" >"$R/docs/staged.md"
+run_pf
+if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
+  ok "--base still reads the added line under a '-diff' row"
+else
+  bad "--base still reads the added line under a '-diff' row" "rc=$RC out=$OUT"
+fi
+
+# The other half: forcing text is not a licence to decode an asset. Content
+# is the judge in every scope — the same test --all applies to a tracked file
+# — so binary bytes contribute no lines and no finding built from them.
+seed attrs-binary
+printf 'PNG\000See `docs/gone.md` for the rest.\n' >"$R/docs/staged.md"
+git -C "$R" add docs/staged.md
+run_pf --staged
+if [ "$RC" -eq 0 ] && has "preflight: clean (1 changed file(s))"; then
+  ok "a changed file whose own bytes are binary contributes no lines"
+else
+  bad "a changed file whose own bytes are binary contributes no lines" "rc=$RC out=$OUT"
+fi
+printf 'PNG See `docs/gone.md` for the rest.\n' >"$R/docs/staged.md"
+git -C "$R" add docs/staged.md
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "docs/staged.md:1: [docs-cited-paths]"; then
+  ok "control: the same bytes without the NUL are read as text"
+else
+  bad "control: the same bytes without the NUL are read as text" "rc=$RC out=$OUT"
+fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

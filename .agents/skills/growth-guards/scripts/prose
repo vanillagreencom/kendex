@@ -141,13 +141,10 @@ if [ "$matched" -eq 0 ]; then
 fi
 
 # -i: the banned strings are words, so the same word opening a sentence is
-# the same violation. -a: the walk above already excluded every blob this
-# lane considers unreadable, so its own judgement is the only one that
-# governs — git's is a DIFFERENT rule, taken from the path's userdiff driver,
-# and a repository marking `*.md -diff` (or `binary`) would otherwise have
-# the hardcoded -I drop a scoped file with no status and no stderr. -a is
-# parsed after -I and wins.
-GG_GREP_LANE_FLAGS=(-i -a)
+# the same violation. Nothing else — the lane forces text and judges content
+# itself, and the walk above has already removed every blob this lane
+# considers unreadable, so its own judgement is the only one that governs.
+GG_GREP_LANE_FLAGS=(-i)
 gg_grep_lane "history reference" "$PROSE_ERE" \
   "state the rule that holds now and delete the story; the date, the issue number and the past state belong in the commit that made the change" \
   "${MATCHED_SPECS[@]}"

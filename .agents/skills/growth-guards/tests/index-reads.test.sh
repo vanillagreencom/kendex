@@ -459,5 +459,95 @@ case "$OUT" in
   *) ok "no partial cache file survives the resolve" ;;
 esac
 
+echo "=== gg_grep_lane: content decides what is scanned, an attributes rule never does ==="
+
+# Every index-wide lane in the family scans through gg_grep_lane. `git grep
+# -I` takes its binary verdict from the path's userdiff driver, so ONE
+# committed attributes row would put a whole extension outside the scan with
+# no status and no stderr — a clean verdict over content never read. Each
+# lane is pinned end to end, each against a control proving the same fixture
+# fails without the row.
+run_check() { # SCRIPT — RC and OUT from a run inside $R
+  RC=0
+  OUT="$(cd "$R" && "$SCRIPTS/$1" 2>&1)" || RC=$?
+}
+
+new_repo attrs-todo
+# Spelled in halves so this suite is not itself a work marker.
+MARKER="TO""DO"
+printf 'x = 1  # %s: real\n' "$MARKER" >"$R/code.py"
+git -C "$R" add -A
+run_check todo-ban
+[ "$RC" -eq 1 ] && case "$OUT" in *"work marker: code.py:1:"*) true ;; *) false ;; esac \
+  && ok "control: the marker fails with no attributes row" \
+  || bad "control: the marker fails with no attributes row" "rc=$RC out=$OUT"
+printf '*.py -diff\n' >"$R/.gitattributes"
+git -C "$R" add -A
+# The fixture is real only if git's own -I judgement has in fact flipped.
+RC=0
+OUT="$(cd "$R" && git grep --cached -nIE "$MARKER" -- 'code.py' 2>&1)" || RC=$?
+[ "$RC" -eq 1 ] && [ -z "$OUT" ] \
+  && ok "fixture: with '*.py -diff' a bare -I grep drops the file silently" \
+  || bad "fixture: -diff makes a bare -I grep drop the file" "rc=$RC out=$OUT"
+run_check todo-ban
+[ "$RC" -eq 1 ] && case "$OUT" in *"work marker: code.py:1:"*) true ;; *) false ;; esac \
+  && ok "the index-wide todo-ban lane still reads a '-diff' path" \
+  || bad "index-wide todo-ban reads a '-diff' path" "rc=$RC out=$OUT"
+case "$OUT" in *"OK — no work markers"*) bad "no clean verdict may accompany the hidden marker" "$OUT" ;; *) ok "no clean verdict accompanies the hidden marker" ;; esac
+printf '*.py binary\n' >"$R/.gitattributes"
+git -C "$R" add -A
+run_check todo-ban
+[ "$RC" -eq 1 ] && case "$OUT" in *"work marker: code.py:1:"*) true ;; *) false ;; esac \
+  && ok "the 'binary' attribute macro cannot hide it either" \
+  || bad "'binary' macro cannot hide the marker" "rc=$RC out=$OUT"
+
+new_repo attrs-conflict
+printf '<<<<<<< HEAD\na\n=======\nb\n>>>>>>> other\n' >"$R/merge.txt"
+git -C "$R" add -A
+run_check conflict-markers
+[ "$RC" -eq 1 ] && case "$OUT" in *"conflict marker: merge.txt:1:"*) true ;; *) false ;; esac \
+  && ok "control: the conflict markers fail with no attributes row" \
+  || bad "control: conflict markers fail without the row" "rc=$RC out=$OUT"
+printf '*.txt -diff\n' >"$R/.gitattributes"
+git -C "$R" add -A
+run_check conflict-markers
+[ "$RC" -eq 1 ] && case "$OUT" in *"conflict marker: merge.txt:1:"*) true ;; *) false ;; esac \
+  && ok "a '-diff' row cannot hide a conflict marker" \
+  || bad "'-diff' row cannot hide a conflict marker" "rc=$RC out=$OUT"
+
+new_repo attrs-suppression
+printf '#![allow(dead_code)]\n' >"$R/lib.rs"
+git -C "$R" add -A
+run_check suppression-ban
+[ "$RC" -eq 1 ] && case "$OUT" in *"module-wide rust allow: lib.rs:1:"*) true ;; *) false ;; esac \
+  && ok "control: the blanket allow fails with no attributes row" \
+  || bad "control: blanket allow fails without the row" "rc=$RC out=$OUT"
+printf '*.rs -diff\n' >"$R/.gitattributes"
+git -C "$R" add -A
+run_check suppression-ban
+[ "$RC" -eq 1 ] && case "$OUT" in *"module-wide rust allow: lib.rs:1:"*) true ;; *) false ;; esac \
+  && ok "a '-diff' row cannot hide a blanket suppression" \
+  || bad "'-diff' row cannot hide a blanket suppression" "rc=$RC out=$OUT"
+
+# The other half of forcing text: what the scan may NOT decode. The judgement
+# is the blob's own bytes — a NUL in its leading block, git's content rule —
+# so an asset whose bytes happen to spell the shape is skipped rather than
+# reported as a violation record full of raw bytes.
+new_repo attrs-binary
+printf 'PNG\000 %s: not a marker\n' "$MARKER" >"$R/logo.png"
+git -C "$R" add -A
+run_check todo-ban
+[ "$RC" -eq 0 ] && case "$OUT" in *"OK — no work markers"*) true ;; *) false ;; esac \
+  && ok "a blob whose leading bytes carry a NUL is not scanned" \
+  || bad "binary blob is not scanned" "rc=$RC out=$OUT"
+case "$OUT" in *"$MARKER"*) bad "no raw bytes from the asset reach the output" "$OUT" ;; *) ok "no raw bytes from the asset reach the output" ;; esac
+# Control: the same bytes without the NUL are text, and text is scanned.
+printf 'PNG  %s: not a marker\n' "$MARKER" >"$R/logo.png"
+git -C "$R" add -A
+run_check todo-ban
+[ "$RC" -eq 1 ] && case "$OUT" in *"work marker: logo.png:1:"*) true ;; *) false ;; esac \
+  && ok "control: the same bytes without the NUL are scanned as text" \
+  || bad "control: same bytes without the NUL are scanned" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

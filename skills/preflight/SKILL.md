@@ -19,7 +19,10 @@ tags: [review, testing]
 
 Every lane is diff-scoped and fail-only: findings land only on lines this
 change ADDED; a lane that cannot decide reports nothing. There is no
-warnings tier.
+warnings tier. CONTENT decides which lines a lane may read, never an
+attribute: the diff is taken with `--text`, so a `.gitattributes` `-diff` or
+`binary` row cannot withhold the lines a change adds, and a file whose own
+bytes are binary contributes none in any scope.
 
 ```bash
 .agents/skills/preflight/scripts/preflight              # vs the default branch's merge base
