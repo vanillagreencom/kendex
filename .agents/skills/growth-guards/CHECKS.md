@@ -105,9 +105,26 @@ A long entry is named with its file, its length and its first line. One
 number is the whole length rule — no line counting — so an entry that states
 its outcome passes however it is wrapped.
 
+**Everything else in the fragment tree is refused.** A pattern's *root* is its
+leading run of glob-free directories, stopping before the first globbed
+segment and before the file name: `changelog.d/*/*.md` roots at
+`changelog.d`, and a pattern naming an exact path roots nowhere and sweeps
+nothing. Every tracked path under a root that no pattern matches is a
+violation — a file in the fragment tree that nothing would ever fold in is a
+silent drop otherwise, and one nothing judges is a symlink or a heading
+published verbatim by whatever does fold it in. The one exemption is a
+`README.md` directly under a root, which documents the format.
+
 Paths matching no tracked file are a clean pass: a repository with no
 fragments has nothing to judge. An empty list is a config error; the way to
 switch the check off is to drop it from `GROWTH_GUARDS_CHECKS`.
+
+`--list` judges, and on a clean verdict writes the accepted fragments to
+standard output as `SECTION<TAB>PATH` records terminated by NUL, every human
+line going to standard error. A refused run lists nothing. That list is the
+whole answer to "which paths are fragments and which section is each in", so
+a collator folds in exactly what this check accepted rather than re-deriving
+path shape of its own.
 
 ### The record
 
@@ -117,17 +134,28 @@ scope off) is the collated file. A line the index carries under its
 both write that list insert at the same place and the merge queue ejects the
 trailing one, so entries are written as fragments and folded in at release.
 
-The heading is found by structure, never by substring — a fenced block is
-opened and closed by three or more backticks or tildes and holds no headings,
-a level-1 or level-2 ATX heading switches the section on or off, and
-everything else inside it is content. So a fragment or an example quoting
-`## [Unreleased]` moves nothing.
+The heading is found by structure, never by substring. A fenced block opens
+on a run of three or more backticks or tildes and closes only on a run of at
+least that length in the same character with nothing but whitespace after it,
+so a three-backtick line inside a four-backtick block does not end it. Nothing
+inside a fence is a heading; a level-1 or level-2 ATX heading switches the
+section on or off, and everything else inside it is content. So a fragment or
+an example quoting `## [Unreleased]` moves nothing.
+
+An unterminated fence is exit 2 naming the file, not a clean pass. It leaves
+the parser unable to say where the section starts or stops, and a stray
+opening fence above the heading would otherwise make both sides parse to
+nothing and every hand-written line read as unchanged.
 
 The scope is judged only when HEAD already carries the record: a repository
 writing its first one is not hand-editing a collated file.
 `GROWTH_GUARDS_CHANGELOG_COLLATE=1` in the environment declares the
 collator's own write, the way `RATCHET_RAISE=1` declares a baseline. A path
-in both scopes is a config error — they judge by opposite rules.
+in both scopes is a config error — they judge by opposite rules. Each of the
+four ways this scope stands down — no record configured, the collator's
+declaration, a record git does not track, a record HEAD does not carry yet —
+names itself in the verdict, so a gate somebody disarmed never reads as a
+repository that has no record.
 
 ### Measuring one entry
 

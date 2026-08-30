@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Pins tools/changelog-collate: it calls the growth-guards changelog-entries
-# lane over the fragments git carries before it writes anything, carries that
-# lane's verdict out as its own, folds every fragment under its own section in
-# Keep a Changelog order and filename order, deletes every one of them, and
-# leaves CHANGELOG.md whole when it refuses. The refusing direction runs first
+# Pins tools/changelog-collate: it folds in exactly the fragments the
+# growth-guards changelog-entries lane names, under the section that lane
+# gives each one, carries that lane's verdict out as its own, refuses a
+# changelog.d or a CHANGELOG.md the index and the disk disagree about, emits
+# each section in Keep a Changelog order and filename order within it,
+# deletes every fragment, and leaves CHANGELOG.md whole when it refuses. The refusing direction runs first
 # in every pair, and each refusal is checked to have left CHANGELOG.md and the
 # fragments as they were — a collator that half-writes or half-deletes is the
 # failure this replaces.
@@ -54,6 +55,9 @@ Preamble.
 - A released entry.
 EOF
   git -C "$R" add -A
+  # Committed, not merely staged: the judge compares the record's staged copy
+  # against HEAD, so a fixture that only stages one reads as a hand edit.
+  git -C "$R" commit -q --allow-empty -m "chore: reset the fixture"
   cp "$R/CHANGELOG.md" "$TMP/before"
 }
 
@@ -64,6 +68,13 @@ fragment() { # SECTION NAME CONTENT — written and staged, the way a commit car
   # collator to read it, not the judge's record scope to see a staged hand
   # edit — which is its own refusal, pinned below.
   git -C "$R" add -A -- changelog.d
+}
+
+record_is() { # CONTENT on stdin — index, HEAD and the work tree all agree
+  cat >"$R/CHANGELOG.md"
+  git -C "$R" add -A
+  git -C "$R" commit -q -m "chore: set the changelog"
+  cp "$R/CHANGELOG.md" "$TMP/before"
 }
 
 run_collate() { # [ARG...] — sets OUT and RC
@@ -109,11 +120,12 @@ fragment fixed ken-1.md '- A placeable fragment.
 printf -- '- Stray.\n' >"$R/changelog.d/loose.md"
 git -C "$R" add -A
 run_collate
-# Outside the fragment glob, so the judge never sees it: the collation has no
-# heading to put it under, and leaving it behind is a silent drop.
-[ "$RC" -eq 2 ] && case "$OUT" in *"changelog.d/loose.md is under changelog.d but is not a fragment"*) true ;; *) false ;; esac \
-  && ok "a file outside a section directory exits 2, naming it" \
-  || bad "a file outside a section directory exits 2, naming it" "rc=$RC out=$OUT"
+# The judge owns the whole answer to "is this a fragment", so a stray in the
+# fragment tree is its exit 1 here and at every commit, not a release-time
+# surprise the collation raises on its own.
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/loose.md is in the fragment tree but is not a fragment"*) true ;; *) false ;; esac \
+  && ok "a file outside a section directory is the judge's exit 1, naming it" \
+  || bad "a file outside a section directory is the judge's exit 1, naming it" "rc=$RC out=$OUT"
 untouched && ok "CHANGELOG.md is untouched by the refusal" \
   || bad "CHANGELOG.md is untouched by the refusal" "$(diff "$TMP/before" "$R/CHANGELOG.md" || true)"
 [ -f "$R/changelog.d/fixed/ken-1.md" ] && ok "the placeable fragment is not deleted by the refusal" \
@@ -126,6 +138,31 @@ run_collate
 [ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/bogus/ken-1.md names no section"*) true ;; *) false ;; esac \
   && ok "an unknown section directory is the judge's refusal, carried out as exit 1" \
   || bad "an unknown section directory is the judge's refusal, carried out as exit 1" "rc=$RC out=$OUT"
+
+reset
+fragment fixed ken-1.md '- A placeable fragment.
+'
+mkdir -p "$R/changelog.d/added"
+printf 'whatever\n' >"$R/changelog.d/added/notes"
+git -C "$R" add -A -- changelog.d
+run_collate
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/added/notes is in the fragment tree but is not a fragment"*) true ;; *) false ;; esac \
+  && ok "a path in a section directory that the globs do not cover is refused, not folded in unjudged" \
+  || bad "a path in a section directory that the globs do not cover is refused" "rc=$RC out=$OUT"
+untouched && ok "CHANGELOG.md is untouched by that refusal" \
+  || bad "CHANGELOG.md is untouched by that refusal" "it changed"
+
+reset
+mkdir -p "$R/changelog.d/added"
+ln -s ../../CHANGELOG.md "$R/changelog.d/added/notes"
+git -C "$R" add -A -- changelog.d
+run_collate
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/added/notes is in the fragment tree but is not a fragment"*) true ;; *) false ;; esac \
+  && ok "a symlink under a section directory is refused rather than published verbatim" \
+  || bad "a symlink under a section directory is refused" "rc=$RC out=$OUT"
+untouched && ok "the symlink target is untouched" \
+  || bad "the symlink target is untouched" "it changed"
+rm -f "$R/changelog.d/added/notes"
 
 reset
 fragment fixed/deeper ken-2.md '- Deeper.
@@ -319,8 +356,7 @@ echo "=== a changelog the collator cannot read stops the run ==="
 reset
 fragment fixed ken-1.md '- A fragment.
 '
-printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n- Released.\n' >"$R/CHANGELOG.md"
-cp "$R/CHANGELOG.md" "$TMP/before"
+printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n- Released.\n' | record_is
 run_collate
 [ "$RC" -eq 2 ] && case "$OUT" in *"no '## [Unreleased]' heading"*) true ;; *) false ;; esac \
   && ok "a CHANGELOG with no [Unreleased] exits 2" \
@@ -333,8 +369,7 @@ no_leftover && ok "no replacement file is left behind" \
 reset
 fragment fixed ken-1.md '- A fragment.
 '
-printf '# Changelog\n\n## [Unreleased]\n\n### Notes\n\n- Not a section.\n' >"$R/CHANGELOG.md"
-cp "$R/CHANGELOG.md" "$TMP/before"
+printf '# Changelog\n\n## [Unreleased]\n\n### Notes\n\n- Not a section.\n' | record_is
 run_collate
 [ "$RC" -eq 2 ] && case "$OUT" in *"names 'Notes' under [Unreleased]"*) true ;; *) false ;; esac \
   && ok "a heading that is no Keep a Changelog section exits 2, naming it" \
@@ -346,12 +381,39 @@ reset
 fragment fixed ken-1.md '- A fragment.
 '
 rm -f "$R/CHANGELOG.md"
+git -C "$R" rm -q --cached CHANGELOG.md
 run_collate
 [ "$RC" -eq 2 ] && case "$OUT" in *"CHANGELOG.md is missing"*) true ;; *) false ;; esac \
   && ok "a missing CHANGELOG names the file, not an unreadable one" \
   || bad "a missing CHANGELOG names the file, not an unreadable one" "rc=$RC out=$OUT"
 [ -f "$R/changelog.d/fixed/ken-1.md" ] && ok "the fragment survives a missing CHANGELOG" \
   || bad "the fragment survives a missing CHANGELOG" "it is gone"
+
+echo "=== an unstaged record edit stops the write, the way an unstaged fragment does ==="
+# The judge measures the bytes git carries; the collation publishes the bytes
+# on disk. An edit only one of them can see must stop the run, or a line
+# nothing judged is folded into the released record.
+reset
+fragment fixed ken-1.md '- A fragment.
+'
+git -C "$R" commit -q -m "chore: carry the record"
+cp "$R/CHANGELOG.md" "$TMP/before"
+perl -0pi -e 's/^- An entry the file already carries\.$/- An entry the file already carries.\n- A hand-written line nothing judged./m' "$R/CHANGELOG.md"
+run_collate
+[ "$RC" -eq 2 ] && case "$OUT" in *"differs between git and the working tree"*"CHANGELOG.md"*) true ;; *) false ;; esac \
+  && ok "an unstaged edit to the record exits 2, naming it" \
+  || bad "an unstaged edit to the record exits 2, naming it" "rc=$RC out=$OUT"
+case "$(cat "$R/CHANGELOG.md")" in *"A hand-written line nothing judged"*) ok "the unstaged edit is still in the file, unpublished" ;;
+  *) bad "the unstaged edit is still in the file" "$(cat "$R/CHANGELOG.md")" ;; esac
+[ -f "$R/changelog.d/fixed/ken-1.md" ] && ok "the fragment is not deleted by that refusal" \
+  || bad "the fragment is not deleted by that refusal" "it is gone"
+# The control: staged, the same edit reaches the judge, which refuses it.
+git -C "$R" add -A
+run_collate
+[ "$RC" -eq 1 ] && case "$OUT" in *"gained lines under [Unreleased]"*) true ;; *) false ;; esac \
+  && ok "control: staged, the same edit is the judge's refusal" \
+  || bad "control: staged, the same edit is the judge's refusal" "rc=$RC out=$OUT"
+git -C "$R" reset -q --hard HEAD
 
 echo "=== a failure past the replacement file leaves nothing half-written ==="
 reset
@@ -491,7 +553,7 @@ done
 
 echo "=== two headings for one section collapse into one, in section order ==="
 reset
-cat >"$R/CHANGELOG.md" <<'EOF'
+record_is <<'EOF'
 # Changelog
 
 ## [Unreleased]

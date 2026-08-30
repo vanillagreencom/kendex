@@ -80,20 +80,22 @@ END {
 }
 '
 
-# The lines under `## [Unreleased]`, found by structure. A fenced block is
-# opened and closed by three or more backticks or tildes (up to three leading
-# spaces) and nothing inside one is a heading; a level-1 or level-2 ATX
-# heading switches the section on or off, and every other non-blank line
-# inside it is content. So a code span or a fenced example naming
-# `## [Unreleased]` moves nothing.
+# The lines under `## [Unreleased]`, found by structure. A fenced block opens
+# on a run of three or more backticks or tildes (up to three leading spaces)
+# and closes only on a run of at least that length in the SAME character with
+# nothing but whitespace after it, so a three-backtick line inside a
+# four-backtick block does not end it. Nothing inside a fence is a heading; a
+# level-1 or level-2 ATX heading switches the section on or off, and every
+# other line inside it is content — the fence lines included, so an added
+# example counts as much as an added bullet. A code span or a fenced example
+# naming `## [Unreleased]` therefore moves nothing.
+#
+# An unterminated fence leaves the parser unable to say where the section
+# starts or stops, so it exits 3 rather than reporting a document with no
+# [Unreleased] content: a stray ``` above the heading would otherwise make
+# every side parse to nothing and every hand-written line read as unchanged.
 GG_UNRELEASED_AWK='
 function lead(l,   i) { i = 0; while (i < 3 && substr(l, i + 1, 1) == " ") i++; return i }
-function fence_char(l,   i, c, n) {
-  i = lead(l); c = substr(l, i + 1, 1)
-  if (c != "`" && c != "~") return ""
-  n = 0; while (substr(l, i + n + 1, 1) == c) n++
-  return (n >= 3) ? c : ""
-}
 function heading_level(l,   i, n, c) {
   i = lead(l)
   if (substr(l, i + 1, 1) != "#") return 0
@@ -110,14 +112,21 @@ function heading_text(l,   i, n, t) {
 }
 {
   line = $0; sub(/\r$/, "", line)
-  fc = fence_char(line)
-  if (fc != "") {
-    if (fence == "") fence = fc
-    else if (fence == fc) fence = ""
-    else if (inside) print line
+  i = lead(line)
+  c = substr(line, i + 1, 1)
+  run = 0
+  if (c == "`" || c == "~") { while (substr(line, i + run + 1, 1) == c) run++ }
+  if (fence != "") {
+    # A closing fence: same character, at least as long, and nothing after it.
+    if (c == fence && run >= flen && substr(line, i + run + 1) ~ /^[ \t]*$/) {
+      fence = ""
+      if (inside) print line
+      next
+    }
+    if (inside) print line
     next
   }
-  if (fence != "") { if (inside) print line; next }
+  if (run >= 3) { fence = c; flen = run; if (inside) print line; next }
   lvl = heading_level(line)
   if (lvl == 1 || lvl == 2) {
     inside = (lvl == 2 && index(heading_text(line), "[unreleased]") == 1)
@@ -125,5 +134,5 @@ function heading_text(l,   i, n, t) {
   }
   if (inside && line ~ /[^ \t]/) print line
 }
+END { if (fence != "") exit 3 }
 '
-

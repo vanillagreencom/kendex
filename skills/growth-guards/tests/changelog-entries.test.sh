@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Pins for scripts/changelog-entries, the one judge of a repository's
 # changelog over two scopes: a fragment is a real text file under a section
-# directory holding exactly one list item within the character cap, and the
-# collated record gains no line under [Unreleased] that HEAD does not carry.
+# directory holding exactly one list item within the character cap, every
+# other tracked path in the fragment tree is refused, --list is what the
+# collator folds in, and the collated record gains no line under [Unreleased]
+# that HEAD does not carry.
 # The configured globs decide what is read, content comes from the index, and
 # a scan that could not complete is exit 2. Every green assertion is paired
 # with a control that proves it can fail.
@@ -267,6 +269,101 @@ run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=flat.md'
 [ "$RC" -eq 1 ] && case "$OUT" in *"flat.md names no section"*) true ;; *) false ;; esac \
   && ok "a fragment in no directory at all names no section either" \
   || bad "a fragment in no directory at all names no section either" "rc=$RC out=$OUT"
+
+echo "=== every other tracked path in the fragment tree is refused ==="
+new_repo tree
+printf -- '- A fragment.\n' | frag fixed ken-1.md
+printf '# changelog.d\n\n- Format notes running past what an entry may say, at length.\n' >"$R/changelog.d/README.md"
+stage
+run_ce
+[ "$RC" -eq 0 ] && ok "control: the tree with only fragments and its README is clean" \
+  || bad "control: the tree with only fragments and its README is clean" "rc=$RC out=$OUT"
+# A path in a section directory the globs do not cover: nothing would ever
+# fold it in, and nothing else in the chain would ever look at it.
+printf 'whatever\n' >"$R/changelog.d/fixed/notes"
+stage
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/notes is in the fragment tree but is not a fragment"*) true ;; *) false ;; esac \
+  && ok "a path in a section directory that no glob covers is refused, naming the globs" \
+  || bad "a path in a section directory that no glob covers is refused" "rc=$RC out=$OUT"
+case "$OUT" in *"changelog.d/\\*/\\*.md"*) ok "the refusal names what a fragment must match" ;; *) bad "the refusal names what a fragment must match" "$OUT" ;; esac
+git -C "$R" rm -q --cached changelog.d/fixed/notes
+rm -f "$R/changelog.d/fixed/notes"
+# A symlink there is refused the same way, so its target's bytes are never
+# published by something that folds the path in unjudged.
+ln -s ../../CHANGELOG.md "$R/changelog.d/fixed/notes"
+stage
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/notes is in the fragment tree but is not a fragment"*) true ;; *) false ;; esac \
+  && ok "a symlink the globs do not cover is refused too" \
+  || bad "a symlink the globs do not cover is refused too" "rc=$RC out=$OUT"
+git -C "$R" rm -q --cached changelog.d/fixed/notes
+rm -f "$R/changelog.d/fixed/notes"
+# A stray at the top of the tree, which matches no two-segment glob.
+printf -- '- Stray.\n' >"$R/changelog.d/oops.md"
+stage
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/oops.md is in the fragment tree but is not a fragment"*) true ;; *) false ;; esac \
+  && ok "a stray at the top of the tree is refused" \
+  || bad "a stray at the top of the tree is refused" "rc=$RC out=$OUT"
+git -C "$R" rm -q --cached changelog.d/oops.md
+rm -f "$R/changelog.d/oops.md"
+# The README beside it is the one exemption, and only directly under a root.
+stage
+run_ce
+[ "$RC" -eq 0 ] && ok "control: the README directly under the root stays exempt" \
+  || bad "control: the README directly under the root stays exempt" "rc=$RC out=$OUT"
+printf '# notes\n' >"$R/changelog.d/fixed/README.md"
+stage
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/README.md"*) true ;; *) false ;; esac \
+  && ok "a README below a section directory is not exempt" \
+  || bad "a README below a section directory is not exempt" "rc=$RC out=$OUT"
+git -C "$R" rm -q --cached changelog.d/fixed/README.md
+rm -f "$R/changelog.d/fixed/README.md"
+stage
+# A pattern with no glob names one exact path and roots nowhere: only the
+# file it names is judged.
+printf -- '- %s\n' "$(rep x 250)" >"$R/elsewhere.md"
+printf 'not a fragment\n' >"$R/beside.md"
+stage
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=elsewhere.md'
+[ "$RC" -eq 1 ] && case "$OUT" in *beside.md*) false ;; *"elsewhere.md"*) true ;; *) false ;; esac \
+  && ok "an exact-path pattern roots nowhere and sweeps nothing beside it" \
+  || bad "an exact-path pattern roots nowhere and sweeps nothing beside it" "rc=$RC out=$OUT"
+git -C "$R" rm -q --cached elsewhere.md beside.md
+rm -f "$R/elsewhere.md" "$R/beside.md"
+stage
+
+echo "=== --list is the fragment set, with the section each belongs to ==="
+new_repo listing
+printf -- '- One.\n' | frag fixed ken-1.md
+printf -- '- Two.\n' | frag added ken-2.md
+printf '# changelog.d\n' >"$R/changelog.d/README.md"
+stage
+LIST=""
+LIST_RC=0
+LIST="$(cd "$R" && "$CE" --list 2>/dev/null | tr '\0' '\n')" || LIST_RC=$?
+case "$LIST" in *"added$(printf '\t')changelog.d/added/ken-2.md"*) ok "each record carries the section the judge decided" ;;
+  *) bad "each record carries the section the judge decided" "$LIST" ;; esac
+case "$LIST" in *"fixed$(printf '\t')changelog.d/fixed/ken-1.md"*) ok "and the path beside it" ;;
+  *) bad "and the path beside it" "$LIST" ;; esac
+case "$LIST" in *README*) bad "the README is not listed as a fragment" "$LIST" ;; *) ok "the README is not listed as a fragment" ;; esac
+[ "$(printf '%s\n' "$LIST" | grep -c .)" -eq 2 ] && ok "nothing else is listed" \
+  || bad "nothing else is listed" "$LIST"
+OUT=""
+RC=0
+OUT="$(cd "$R" && "$CE" --list 2>&1 >/dev/null)" || RC=$?
+case "$OUT" in *"changelog-entries: OK"*) ok "the human verdict goes to standard error in list mode" ;;
+  *) bad "the human verdict goes to standard error in list mode" "$OUT" ;; esac
+# A refused run lists nothing: a caller must never fold in a set this run was
+# still going to refuse something from.
+printf 'prose\n' >"$R/changelog.d/fixed/bad.md"
+stage
+LIST_RC=0
+LIST="$(cd "$R" && "$CE" --list 2>/dev/null)" || LIST_RC=$?
+[ "$LIST_RC" -eq 1 ] && [ -z "$LIST" ] && ok "a refused run lists nothing" \
+  || bad "a refused run lists nothing" "rc=$LIST_RC list=$LIST"
 
 echo "=== a matched path that is not changelog text is refused, never skipped ==="
 new_repo notext
@@ -541,6 +638,76 @@ run_ce
 [ "$RC" -eq 1 ] && case "$OUT" in *"- A gained line under a sub-heading."*) true ;; *) false ;; esac \
   && ok "a level-3 heading does not close the section" \
   || bad "a level-3 heading does not close the section" "rc=$RC out=$OUT"
+
+echo "=== an unclosed fence fails closed; a shorter run does not close a longer one ==="
+new_repo fences
+printf -- '- A fragment.\n' | frag fixed ken-1.md
+printf '# Changelog\n\n## [Unreleased]\n\n- One line.\n' >"$R/CHANGELOG.md"
+stage
+git -C "$R" commit -qm base
+# A stray opening fence above the heading: a parser that swallows headings
+# while a fence is open finds no section on either side, compares nothing to
+# nothing, and calls a hand-written line unchanged.
+printf '# Changelog\n\n```\n\n## [Unreleased]\n\n- One line.\n- SNEAKED IN BY HAND.\n' >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 2 ] && case "$OUT" in *"leaves a code fence unclosed"*) true ;; *) false ;; esac \
+  && ok "an unterminated fence is exit 2, naming what could not be located" \
+  || bad "an unterminated fence is exit 2" "rc=$RC out=$OUT"
+case "$OUT" in *"unchanged under [Unreleased]"*) bad "no run may call the record unchanged over a document it could not read" "$OUT" ;;
+  *) ok "no run calls the record unchanged over a document it could not read" ;; esac
+# A three-backtick line inside a four-backtick block closes nothing, so the
+# real four-backtick close is what ends it and the heading after it is found.
+{
+  printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n'
+  printf '````\n```\n````\n\n'
+  printf '## [Unreleased]\n\n- One line.\n- SNEAKED IN BY HAND.\n'
+} >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"gained lines under [Unreleased]"*"- SNEAKED IN BY HAND."*) true ;; *) false ;; esac \
+  && ok "a shorter run inside a longer fence does not end it, and the heading after it is found" \
+  || bad "a shorter run inside a longer fence does not end it" "rc=$RC out=$OUT"
+# The control: the same document with nothing added passes, so the refusal
+# above is the line and not the fence shape failing outright.
+{
+  printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n'
+  printf '````\n```\n````\n\n'
+  printf '## [Unreleased]\n\n- One line.\n'
+} >"$R/CHANGELOG.md"
+stage
+git -C "$R" commit -qm "chore: carry the fenced record"
+run_ce
+[ "$RC" -eq 0 ] && ok "control: the same fenced document with nothing added passes" \
+  || bad "control: the same fenced document with nothing added passes" "rc=$RC out=$OUT"
+echo "=== a record scope that stands down says which way it stood down ==="
+new_repo standdown
+printf -- '- A fragment.\n' | frag fixed ken-1.md
+run_ce
+[ "$RC" -eq 0 ] && case "$OUT" in *"no record to judge"*"is not tracked"*) true ;; *) false ;; esac \
+  && ok "an untracked record says so" \
+  || bad "an untracked record says so" "rc=$RC out=$OUT"
+printf '# Changelog\n\n## [Unreleased]\n\n- One line.\n' >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 0 ] && case "$OUT" in *"HEAD carries no"*) true ;; *) false ;; esac \
+  && ok "a record HEAD does not carry yet says so" \
+  || bad "a record HEAD does not carry yet says so" "rc=$RC out=$OUT"
+git -C "$R" commit -qm base
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_COLLATE=1'
+[ "$RC" -eq 0 ] && case "$OUT" in *"NOT judged"*"GROWTH_GUARDS_CHANGELOG_COLLATE=1"*) true ;; *) false ;; esac \
+  && ok "a disarmed gate says it was disarmed, and by what" \
+  || bad "a disarmed gate says it was disarmed, and by what" "rc=$RC out=$OUT"
+case "$OUT" in *"unchanged under [Unreleased]"*) bad "a disarmed gate never claims the record is unchanged" "$OUT" ;;
+  *) ok "a disarmed gate never claims the record is unchanged" ;; esac
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_RECORD='
+[ "$RC" -eq 0 ] && case "$OUT" in *"no record scope"*"is empty"*) true ;; *) false ;; esac \
+  && ok "an empty record setting says the scope is off" \
+  || bad "an empty record setting says the scope is off" "rc=$RC out=$OUT"
+run_ce
+[ "$RC" -eq 0 ] && case "$OUT" in *"unchanged under [Unreleased]"*) true ;; *) false ;; esac \
+  && ok "control: judged and clean says exactly that" \
+  || bad "control: judged and clean says exactly that" "rc=$RC out=$OUT"
 
 echo "=== hostile bytes in a name or a pattern never leave their line ==="
 new_repo hostile

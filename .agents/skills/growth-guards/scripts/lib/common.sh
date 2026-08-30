@@ -299,17 +299,9 @@ gg_load_excludes() { # FILE — fills GG_EXCLUDE_PATTERNS
 }
 
 gg_is_excluded() { # PATH — 0 when some exclusion glob matches the full path
-  local path="$1" pat
-  # Guarded expansion: an empty array is an unbound variable under Bash 3.2
-  # with set -u.
-  for pat in ${GG_EXCLUDE_PATTERNS[@]+"${GG_EXCLUDE_PATTERNS[@]}"}; do
-    # $pat must expand unquoted to act as a glob.
-    # shellcheck disable=SC2254
-    case "$path" in
-      $pat) return 0 ;;
-    esac
-  done
-  return 1
+  # The loaded list, matched by the one spelling above. Guarded expansion: an
+  # empty array is an unbound variable under Bash 3.2 with set -u.
+  gg_path_matches "$1" ${GG_EXCLUDE_PATTERNS[@]+"${GG_EXCLUDE_PATTERNS[@]}"}
 }
 
 # `git grep --cached` SKIPS an unmerged index entry entirely: it spends no

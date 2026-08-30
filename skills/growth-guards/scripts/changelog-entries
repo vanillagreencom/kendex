@@ -59,7 +59,7 @@ SECTIONS=" added changed deprecated removed fixed security "
 
 usage() {
   cat <<'EOF'
-usage: changelog-entries
+usage: changelog-entries [--list]
 
 Two scopes, one judge.
 
@@ -76,6 +76,17 @@ The record (GROWTH_GUARDS_CHANGELOG_RECORD): a line the index carries under
 its `## [Unreleased]` heading that HEAD does not is refused — entries are
 written as fragments and collated at release. The heading is found by ATX
 structure outside fenced code, never by substring.
+
+A tracked path under a fragment root that the globs do not cover is refused
+too — it is a fragment nothing would ever fold in. A root is a pattern's
+leading run of glob-free directories (changelog.d/*/*.md roots at
+changelog.d); a pattern naming an exact path roots nowhere, and a README.md
+directly under a root documents the format rather than being an entry.
+
+--list judges, and on a clean verdict writes the accepted fragments to
+standard output as SECTION<TAB>PATH records terminated by NUL, every human
+line going to standard error. That list is what the collator folds in, so
+one grammar decides which paths are fragments and which section each is.
 
 Tracked content is read from the index; text that is not valid UTF-8 is a
 collection error. Paths matching no tracked file are a clean pass.
@@ -98,15 +109,24 @@ Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 EOF
 }
 
-if [ $# -gt 0 ]; then
+LIST=0
+while [ $# -gt 0 ]; do
   case "$1" in
     -h | --help)
       usage
       exit 0
       ;;
+    --list) LIST=1 ;;
     *) gg_config_error "unknown argument '$1' (see --help)" ;;
   esac
-fi
+  shift
+done
+
+# The machine list keeps the original standard output; in list mode every
+# human line goes to standard error, so a caller reading the list reads only
+# the list.
+exec 3>&1
+[ "$LIST" -eq 0 ] || exec 1>&2
 
 gg_repo_root_cd
 
@@ -121,6 +141,30 @@ PATHS_RAW="$(gg_setting GROWTH_GUARDS_CHANGELOG_PATHS "changelog.d/*/*.md")" || 
 gg_load_path_globs "$PATHS_RAW" changelog GROWTH_GUARDS_CHANGELOG_PATHS || exit 2
 PATTERNS_SHOWN="$GG_PATH_GLOBS_SHOWN"
 
+# Where the fragments live: each pattern's leading run of glob-free
+# directories, stopping before the first globbed segment and before the file
+# name. A pattern with no glob names one exact path and roots nowhere. Every
+# tracked path under a root that no pattern matches is refused below — a file
+# sitting in the fragment tree that nothing would ever fold in is the silent
+# drop this judge exists to stop.
+ROOTS=""
+for pat in $GG_PATH_GLOBS; do
+  root=""
+  rest="$pat"
+  while [ -n "$rest" ]; do
+    seg="${rest%%/*}"
+    [ "$seg" != "$rest" ] || break
+    rest="${rest#*/}"
+    case "$seg" in *[*?[]*) break ;; esac
+    root="${root:+$root/}$seg"
+  done
+  [ -n "$root" ] || continue
+  case " $ROOTS " in
+    *" $root "*) ;;
+    *) ROOTS="${ROOTS:+$ROOTS }$root" ;;
+  esac
+done
+
 RECORD_RAW="$(gg_setting GROWTH_GUARDS_CHANGELOG_RECORD "CHANGELOG.md")" || exit 2
 RECORD=""
 if [ -n "$RECORD_RAW" ]; then
@@ -132,6 +176,7 @@ if [ -n "$RECORD_RAW" ]; then
 fi
 
 gg_tmpdir
+: >"$GG_TMP/list.z"
 
 checked=0
 violations=0
@@ -164,7 +209,18 @@ while IFS= read -r -d '' rec; do
     RECORD_SHA="$sha"
     RECORD_MODE="$mode"
   fi
-  gg_matches_path_glob "$f" || continue
+  if ! gg_matches_path_glob "$f"; then
+    under=0
+    for root in $ROOTS; do
+      case "$f" in
+        "$root"/README.md) under=0; break ;;
+        "$root"/*) under=1 ;;
+      esac
+    done
+    [ "$under" -eq 1 ] || continue
+    refuse "$f" "is in the fragment tree but is not a fragment" "a fragment matches one of: $PATTERNS_SHOWN"
+    continue
+  fi
   case "$mode" in
     120000)
       refuse "$f" "is tracked as a symlink" "a fragment is a file of its own"
@@ -195,6 +251,7 @@ while IFS= read -r -d '' rec; do
     continue
   fi
   checked=$((checked + 1))
+  printf '%s\t%s\0' "$sec" "$f" >>"$GG_TMP/list.z"
   status=0
   LC_ALL=C awk "$GG_ENTRY_AWK" <"$GG_TMP/blob" >"$GG_TMP/report" || status=$?
   [ "$status" -eq 0 ] || gg_collection_error "could not measure the entry in $(gg_shown "$f") (awk exit $status)"
@@ -217,11 +274,19 @@ while IFS= read -r -d '' rec; do
 done <"$GG_TMP/files.z"
 
 # --- the record scope --------------------------------------------------------
-# Only when HEAD already carries the record: a repository writing its first
-# CHANGELOG.md is not hand-editing a collated one, and every line of it would
-# read as gained.
-record_judged=0
-if [ -n "$RECORD" ] && [ -n "$RECORD_SHA" ] && [ "${GROWTH_GUARDS_CHANGELOG_COLLATE:-}" != "1" ]; then
+# Judged only when HEAD already carries the record: a repository writing its
+# first CHANGELOG.md is not hand-editing a collated one, and every line of it
+# would read as gained. Each way the scope stands down says which way it was,
+# so a gate somebody disarmed for this run never reads as a repository that
+# has no record yet.
+RECORD_NOTE=""
+if [ -z "$RECORD" ]; then
+  RECORD_NOTE="; no record scope — GROWTH_GUARDS_CHANGELOG_RECORD is empty"
+elif [ "${GROWTH_GUARDS_CHANGELOG_COLLATE:-}" = "1" ]; then
+  RECORD_NOTE="; $(gg_shown "$RECORD") NOT judged — GROWTH_GUARDS_CHANGELOG_COLLATE=1 declares this write"
+elif [ -z "$RECORD_SHA" ]; then
+  RECORD_NOTE="; no record to judge — $(gg_shown "$RECORD") is not tracked"
+else
   case "$RECORD_MODE" in
     120000 | 160000) gg_collection_error "$(gg_shown "$RECORD") is tracked as a symlink or gitlink — the record could not be read" ;;
   esac
@@ -238,15 +303,24 @@ if [ -n "$RECORD" ] && [ -n "$RECORD_SHA" ] && [ "${GROWTH_GUARDS_CHANGELOG_COLL
     1) ;;
     *) gg_collection_error "could not resolve HEAD while reading $(gg_shown "$RECORD") (git rev-parse exit $head_status)" ;;
   esac
-  if [ -n "$head_entry" ]; then
-    record_judged=1
+  if [ -z "$head_entry" ]; then
+    RECORD_NOTE="; no record to compare — HEAD carries no $(gg_shown "$RECORD") yet"
+  else
     git cat-file blob "$RECORD_SHA" >"$GG_TMP/record.index" \
       || gg_collection_error "could not read the staged $(gg_shown "$RECORD")"
     git show "HEAD:$RECORD" >"$GG_TMP/record.head" \
       || gg_collection_error "could not read HEAD's $(gg_shown "$RECORD")"
     for side in index head; do
-      LC_ALL=C awk "$GG_UNRELEASED_AWK" <"$GG_TMP/record.$side" >"$GG_TMP/ur.$side" \
-        || gg_collection_error "could not read the [Unreleased] section of the $side copy of $(gg_shown "$RECORD")"
+      ur_status=0
+      LC_ALL=C awk "$GG_UNRELEASED_AWK" <"$GG_TMP/record.$side" >"$GG_TMP/ur.$side" || ur_status=$?
+      # Exit 3 is the parser saying a fence never closed, so it cannot say
+      # where the section starts or stops. Reporting the record unchanged
+      # over a document it could not read is the silent pass this family
+      # refuses.
+      [ "$ur_status" -ne 3 ] \
+        || gg_collection_error "$(gg_shown "$RECORD") leaves a code fence unclosed in its $side copy — the [Unreleased] section cannot be located; close the fence"
+      [ "$ur_status" -eq 0 ] \
+        || gg_collection_error "could not read the [Unreleased] section of the $side copy of $(gg_shown "$RECORD") (awk exit $ur_status)"
       LC_ALL=C sort -o "$GG_TMP/ur.$side" "$GG_TMP/ur.$side" \
         || gg_collection_error "could not order the [Unreleased] lines of the $side copy of $(gg_shown "$RECORD")"
     done
@@ -254,7 +328,9 @@ if [ -n "$RECORD" ] && [ -n "$RECORD_SHA" ] && [ "${GROWTH_GUARDS_CHANGELOG_COLL
     # commit gained.
     added="$(LC_ALL=C comm -13 "$GG_TMP/ur.head" "$GG_TMP/ur.index")" \
       || gg_collection_error "could not compare the [Unreleased] section of $(gg_shown "$RECORD") against HEAD"
-    if [ -n "$added" ]; then
+    if [ -z "$added" ]; then
+      RECORD_NOTE="; $(gg_shown "$RECORD") unchanged under [Unreleased]"
+    else
       echo "changelog-entries FAIL $(gg_shown "$RECORD") gained lines under [Unreleased]"
       # The first five, with every C0 control and DEL replaced: these are the
       # record's own bytes, and an escape sequence in one must not reach the
@@ -267,13 +343,13 @@ if [ -n "$RECORD" ] && [ -n "$RECORD_SHA" ] && [ "${GROWTH_GUARDS_CHANGELOG_COLL
   fi
 fi
 
-RECORD_NOTE=""
-[ "$record_judged" -eq 0 ] || RECORD_NOTE="; $(gg_shown "$RECORD") unchanged under [Unreleased]"
-
 if [ "$violations" -gt 0 ]; then
   echo "changelog-entries: $violations violation(s) — cap $CAP characters, $checked fragment(s) measured"
   exit 1
 fi
+# Only past the verdict: a caller must never fold in a list this run was
+# still going to refuse something from.
+[ "$LIST" -eq 0 ] || cat -- "$GG_TMP/list.z" >&3
 if [ "$checked" -eq 0 ]; then
   echo "changelog-entries: OK — no tracked file matches GROWTH_GUARDS_CHANGELOG_PATHS ($PATTERNS_SHOWN)$RECORD_NOTE"
   exit 0
