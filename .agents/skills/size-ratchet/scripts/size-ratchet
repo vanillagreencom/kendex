@@ -1006,9 +1006,10 @@ while [ "$sr_ni" -lt "$REPO_CLASS_COUNT" ]; do
   sr_entry="${CLASS_PATTERNS[$sr_ni]}=${CLASS_RAW[$sr_ni]}"
   # DECIDED is the predicate, so the bare rendering is unreachable for an
   # entry that governed nothing. WHY it governed nothing is not said: a
-  # pattern matching nothing, a pattern an earlier entry already claimed, and
-  # one passed over on frozen paths all arrive here, and the engine holds no
-  # state that tells them apart. The line says the part it can stand behind.
+  # pattern matching nothing and a pattern an earlier entry already claimed
+  # arrive here alike and no state tells those two apart. An entry the frozen
+  # skip passed over does carry its own state, and reads the same here anyway,
+  # because one reason is enough once the entry governed nothing at all.
   if [ "${CLASS_DECIDED[$sr_ni]:-0}" != "1" ]; then
     sr_entry="$sr_entry (governed nothing: decided no counted path)"
   elif [ "${CLASS_YIELDED[$sr_ni]:-0}" = "1" ]; then

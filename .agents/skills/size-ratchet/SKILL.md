@@ -39,14 +39,16 @@ migration note for repos already using this format:
 
 ## Responding to a failure
 
-Every diagnostic names the file, its size, the baseline row it violated,
-the deciding threshold (class pattern or default), and the remedy: *split
-at a concept seam*.
+Every size diagnostic names the file, its size, the baseline row it
+violated, the deciding threshold (class pattern or default), and the remedy:
+*split at a concept seam*.
 
-Two verdicts are not a size problem and take no judgment. **A row in the
+Three verdicts are not a size problem and take no judgment. **A row in the
 wrong unit** is a class that changed what it counts: run `--update`, which
 re-measures the row. **A shrunk row** under `--staged` is already lowered
-and staged by the run itself.
+and staged by the run itself. **A moved baseline** names the two paths
+instead of a file and a size: move the baseline in a commit that changes
+nothing else, then change its rows in the next one.
 
 **Check composition before the seam.** A file over its cap whose bulk is
 inline tests needs those tests moved to the language's separate-test

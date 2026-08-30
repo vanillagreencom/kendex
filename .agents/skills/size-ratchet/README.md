@@ -45,6 +45,10 @@ even then. Markdown is measured in bytes and code in lines. Flags and exit codes
      instead of comparing it.
   5. **A row added or raised over HEAD's baseline** — see
      [Raising a row](#raising-a-row).
+  6. **The baseline moved and its rows changed** — HEAD's rows left the old
+     path and the rows arriving at the new one are not them, so nothing
+     compares them and a raise would land unjudged. Move the baseline in a
+     commit that changes nothing else, then change its rows in the next one.
 - **`--staged`** counts index blobs for every tracked file rather than
   preferring the worktree copy: what the commit records is the blob. Use it
   in a pre-commit hook; CI, which checks out a clean tree, does not need it.
@@ -166,9 +170,10 @@ clause in one of them.
 The verdict line says what each entry governed. An entry that decided some
 paths and was passed over on frozen ones reads `ui/*.ts=250 (yielded on
 frozen paths)`; one that decided none reads `(governed nothing: decided no
-counted path)`. It does not say why, because a pattern matching nothing, a
-pattern an earlier entry already claimed, and one passed over on frozen paths
-all reach that state and the engine cannot tell them apart.
+counted path)`. It reports the state, not the cause: a pattern matching
+nothing and a pattern an earlier entry already claimed cannot be told apart,
+and an entry passed over on frozen paths reads the same once it decided
+nothing, because one reason is enough.
 
 `SIZE_RATCHET_DEFAULT_CLASSES = ""` drops the shipped list; the repo's own
 `SIZE_RATCHET_CLASSES` still matches first, so single-threshold behavior
