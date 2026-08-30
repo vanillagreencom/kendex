@@ -88,15 +88,27 @@ supervisor_pid() {
   printf '%s' "$pid"
 }
 supervisor_live() {
-  local pid="$1" attempt_id="$2" command
+  local pid="$1" attempt_id="$2" runtime="$3" artifact="$4" command arg i
+  local argv=()
   [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
   kill -0 "$pid" 2>/dev/null || return 1
-  command=$(ps -p "$pid" -o command= 2>/dev/null) || return 1
-  [[ "$command" == *"merge-queue-watch __supervise"* && "$command" == *"$WATCH_ID"* && "$command" == *"$attempt_id"* ]]
+  if [[ -r "/proc/$pid/cmdline" ]]; then
+    while IFS= read -r -d '' arg; do argv[${#argv[@]}]="$arg"; done < "/proc/$pid/cmdline"
+  else
+    [[ "$SELF$STATE_FILE$WATCH_ID$attempt_id$runtime$artifact" != *[[:space:]]* ]] || return 1
+    command=$(ps -ww -p "$pid" -o command= 2>/dev/null) || return 1
+    read -r -a argv <<<"$command"
+  fi
+  for ((i=0; i+6<${#argv[@]}; i++)); do
+    [[ "${argv[i]}" == "$SELF" && "${argv[i+1]}" == __supervise && "${argv[i+2]}" == "$STATE_FILE" &&
+       "${argv[i+3]}" == "$WATCH_ID" && "${argv[i+4]}" == "$attempt_id" && "${argv[i+5]}" == "$runtime" &&
+       "${argv[i+6]}" == "$artifact" ]] && return 0
+  done
+  return 1
 }
 terminate_supervisor() {
-  local pid="$1" attempt_id="$2" i
-  supervisor_live "$pid" "$attempt_id" || return 0
+  local pid="$1" attempt_id="$2" runtime="$3" artifact="$4" i
+  supervisor_live "$pid" "$attempt_id" "$runtime" "$artifact" || return 0
   kill -TERM "$pid" 2>/dev/null || true
   for ((i=0; i<50; i++)); do kill -0 "$pid" 2>/dev/null || return 0; sleep 0.1; done
   kill -KILL "$pid" 2>/dev/null || true
@@ -104,13 +116,13 @@ terminate_supervisor() {
   return 1
 }
 launch_failure() {
-  local detail="$1" attempt_id="$2" runtime="$3" pid="${4:-}"
-  pid=$(supervisor_pid "$runtime" "$pid"); [[ -z "$pid" ]] || terminate_supervisor "$pid" "$attempt_id" || true
-  atomic_update 'if .watch_id!=$watch or .launch_attempt_id!=$attempt or .runtime_dir!=$runtime or
+  local detail="$1" attempt_id="$2" runtime="$3" artifact="$4" pid="${5:-}"
+  pid=$(supervisor_pid "$runtime" "$pid"); [[ -z "$pid" ]] || terminate_supervisor "$pid" "$attempt_id" "$runtime" "$artifact" || true
+  atomic_update 'if .watch_id!=$watch or .launch_attempt_id!=$attempt or .runtime_dir!=$runtime or .artifact_path!=$artifact or
       (.status|IN("launching","watching")|not) then error("launch claim lost") else
       .status="launch_failed"|.action="launch"|.terminal=false|.supervisor_pid=null|
       .diagnostic={cause:"launch_failed",detail:$detail}|.updated_at=(now|floor) end' \
-    --arg watch "$WATCH_ID" --arg attempt "$attempt_id" --arg runtime "$runtime" --arg detail "$detail" \
+    --arg watch "$WATCH_ID" --arg attempt "$attempt_id" --arg runtime "$runtime" --arg artifact "$artifact" --arg detail "$detail" \
     || die "could not claim launch recovery; inspect the active lifecycle before handback"
 }
 live_pr() {
@@ -237,7 +249,7 @@ launch() {
   fi
   if [[ "$method" == setsid ]]; then
     setsid -f "$SELF" __supervise "$STATE_FILE" "$WATCH_ID" "$attempt_id" "$runtime" "$artifact" "$deadline" "$waiter" "$poll" "$max_wait" >> "$log" 2>&1 \
-      || { launch_failure "setsid could not launch supervisor; see $log" "$attempt_id" "$runtime"; die "detached supervisor launch failed; see $log"; }
+      || { launch_failure "setsid could not launch supervisor; see $log" "$attempt_id" "$runtime" "$artifact"; die "detached supervisor launch failed; see $log"; }
   else
     nohup "$SELF" __supervise "$STATE_FILE" "$WATCH_ID" "$attempt_id" "$runtime" "$artifact" "$deadline" "$waiter" "$poll" "$max_wait" </dev/null >> "$log" 2>&1 &
   fi
@@ -247,17 +259,17 @@ launch() {
     sleep 0.05
   done
   if [[ ! -f "$ready" ]]; then
-    launch_failure "supervisor did not establish worker liveness; see $log" "$attempt_id" "$runtime"
+    launch_failure "supervisor did not establish worker liveness; see $log" "$attempt_id" "$runtime" "$artifact"
     tail -20 "$log" >&2 || true
     die "supervisor setup failed; diagnostics: $log"
   fi
   pid=$(cat < "$runtime/supervisor.pid")
-  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || { launch_failure "supervisor pid is malformed" "$attempt_id" "$runtime"; die "supervisor pid is malformed"; }
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || { launch_failure "supervisor pid is malformed" "$attempt_id" "$runtime" "$artifact"; die "supervisor pid is malformed"; }
   if ! atomic_update 'if .watch_id!=$watch or .launch_attempt_id!=$attempt or .runtime_dir!=$runtime or
       .artifact_path!=$artifact or .status!="launching" then error("launch claim lost") else
       .status="watching"|.supervisor_pid=$pid|.updated_at=(now|floor) end' \
       --arg watch "$WATCH_ID" --arg attempt "$attempt_id" --arg runtime "$runtime" --arg artifact "$artifact" --argjson pid "$pid"; then
-    terminate_supervisor "$pid" "$attempt_id" || true
+    terminate_supervisor "$pid" "$attempt_id" "$runtime" "$artifact" || true
     die "lifecycle was terminalized during launch"
   fi
   json_report
@@ -307,7 +319,7 @@ consume() {
   recovery=$(jq -r .recovery_count <<<"$snapshot"); log=$(jq -r .log_path <<<"$snapshot"); now=$(date +%s)
   if [[ "$status" == launching && ! -s "$artifact" ]]; then
     pid=$(supervisor_pid "$runtime" "$recorded_pid")
-    if supervisor_live "$pid" "$attempt_id"; then
+    if supervisor_live "$pid" "$attempt_id" "$runtime" "$artifact"; then
       if [[ "$now" -le "$setup_deadline" ]]; then
         jq -cn --arg watch "$WATCH_ID" '{status:"launching",watch_id:$watch,action:"pending"}'; return
       fi
@@ -318,17 +330,17 @@ consume() {
     elif [[ -z "$pid" && "$now" -le "$setup_deadline" ]]; then
       jq -cn --arg watch "$WATCH_ID" '{status:"launching",watch_id:$watch,action:"pending"}'; return
     else
-      launch_failure "launching supervisor died or missed its setup deadline; see $log" "$attempt_id" "$runtime" "$recorded_pid"
+      launch_failure "launching supervisor died or missed its setup deadline; see $log" "$attempt_id" "$runtime" "$artifact" "$recorded_pid"
       consume_report; return
     fi
   fi
   if [[ ! -s "$artifact" ]]; then
     pid=$(supervisor_pid "$runtime" "$recorded_pid"); token="$runtime/token"
-    if [[ -f "$token" && "$(cat < "$token")" == "$attempt_id" && "$now" -le "$deadline" ]] && supervisor_live "$pid" "$attempt_id"; then
+    if [[ -f "$token" && "$(cat < "$token")" == "$attempt_id" && "$now" -le "$deadline" ]] && supervisor_live "$pid" "$attempt_id" "$runtime" "$artifact"; then
       jq -cn --arg status pending --arg watch "$WATCH_ID" '{status:$status,watch_id:$watch,action:"pending"}'
       return
     fi
-    terminate_supervisor "$pid" "$attempt_id" || true
+    terminate_supervisor "$pid" "$attempt_id" "$runtime" "$artifact" || true
     fail_state watch_lost "artifact missing and supervisor dead or overdue; see $log" "$attempt_id" "$artifact"
     json_report; return
   fi
@@ -385,10 +397,10 @@ event() {
   deadline=$(jq -r '.deadline // 0' <<<"$snapshot"); setup_deadline=$(jq -r '.setup_deadline // 0' <<<"$snapshot")
   now=$(date +%s); pid=$(supervisor_pid "$runtime" "$recorded_pid")
   if [[ "$status" == launching && ! -s "$artifact" ]]; then
-    if supervisor_live "$pid" "$attempt_id"; then [[ "$now" -le "$setup_deadline" ]] && exit 1; printf 'ready %s %s\n' "$ISSUE" "$WATCH_ID"; return 0; fi
+    if supervisor_live "$pid" "$attempt_id" "$runtime" "$artifact"; then [[ "$now" -le "$setup_deadline" ]] && exit 1; printf 'ready %s %s\n' "$ISSUE" "$WATCH_ID"; return 0; fi
     [[ -z "$pid" && "$now" -le "$setup_deadline" ]] && exit 1
   fi
-  if [[ -s "$artifact" ]] || [[ "$now" -gt "$deadline" ]] || ! supervisor_live "$pid" "$attempt_id"; then printf 'ready %s %s\n' "$ISSUE" "$WATCH_ID"; return 0; fi
+  if [[ -s "$artifact" ]] || [[ "$now" -gt "$deadline" ]] || ! supervisor_live "$pid" "$attempt_id" "$runtime" "$artifact"; then printf 'ready %s %s\n' "$ISSUE" "$WATCH_ID"; return 0; fi
   exit 1
 }
 
@@ -431,15 +443,26 @@ acknowledge() {
 }
 
 fail_command() {
-  local cause="" snapshot attempt_id runtime recorded_pid pid
+  local cause="" snapshot fresh attempt_id runtime artifact recorded_pid pid i fresh_attempt fresh_artifact
   while [[ $# -gt 0 ]]; do case "$1" in --root) ROOT="${2:-}"; shift 2 ;; --issue) ISSUE="${2:-}"; shift 2 ;;
     --watch-id) WATCH_ID="${2:-}"; shift 2 ;; --cause) cause="${2:-}"; shift 2 ;; *) die "unknown fail option: $1" ;; esac; done
   resolve_state; require_state; [[ "$cause" =~ ^(arm_failed|merge_blocked|launch_failed|operator_abandoned)$ ]] || die "invalid failure cause"
-  snapshot=$(state_snapshot) || die "cannot snapshot active launch attempt"
-  WATCH_ID="${WATCH_ID:-$(jq -r .watch_id <<<"$snapshot")}"
-  attempt_id=$(jq -r '.launch_attempt_id // empty' <<<"$snapshot"); runtime=$(jq -r .runtime_dir <<<"$snapshot")
-  recorded_pid=$(jq -r '.supervisor_pid // empty' <<<"$snapshot"); pid=$(supervisor_pid "$runtime" "$recorded_pid")
-  fail_state "$cause" "$cause"; terminate_supervisor "$pid" "$attempt_id" || true; json_report
+  for ((i=0; i<2; i++)); do
+    snapshot=$(state_snapshot) || die "cannot snapshot active launch attempt"
+    WATCH_ID="${WATCH_ID:-$(jq -r .watch_id <<<"$snapshot")}"
+    attempt_id=$(jq -r '.launch_attempt_id // empty' <<<"$snapshot"); runtime=$(jq -r .runtime_dir <<<"$snapshot")
+    artifact=$(jq -r .artifact_path <<<"$snapshot"); recorded_pid=$(jq -r '.supervisor_pid // empty' <<<"$snapshot")
+    pid=$(supervisor_pid "$runtime" "$recorded_pid")
+    if fail_state "$cause" "$cause" "$attempt_id" "$artifact"; then
+      terminate_supervisor "$pid" "$attempt_id" "$runtime" "$artifact" || true
+      json_report; return
+    fi
+    fresh=$(state_snapshot) || die "cannot resnapshot launch attempt after failure claim loss"
+    fresh_attempt=$(jq -r '.launch_attempt_id // empty' <<<"$fresh"); fresh_artifact=$(jq -r .artifact_path <<<"$fresh")
+    [[ "$fresh_attempt" == "$attempt_id" && "$fresh_artifact" == "$artifact" ]] \
+      || die "launch attempt changed before failure claim; replacement was left active"
+  done
+  die "could not claim failure for the active launch attempt"
 }
 
 inspect() { parse_root_issue "$@"; cat < "$STATE_FILE"; }
