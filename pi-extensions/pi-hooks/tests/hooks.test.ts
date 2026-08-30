@@ -336,6 +336,13 @@ function fakeClippyBin(dir: string, root: string): string {
 		`  printf '{"workspace_root":"%s"}' ${JSON.stringify(root)}`,
 		"  exit 0",
 		"fi",
+		// Two error lines whose order varies, for the digest's canonicalization.
+		'case "${FAKE_CLIPPY_ORDER:-}" in',
+		"forward) printf '%s\\n' 'error: alpha' 'error: beta' ;;",
+		"reverse) printf '%s\\n' 'error: beta' 'error: alpha' ;;",
+		"changed) printf '%s\\n' 'error: alpha' 'error: gamma' ;;",
+		"esac",
+		'if [ -n "${FAKE_CLIPPY_ORDER:-}" ]; then exit "${FAKE_CLIPPY_EXIT:-101}"; fi',
 		'if [ "${FAKE_CLIPPY_SILENT:-}" = "1" ]; then',
 		'  printf \'warning: %s\\n\' "${FAKE_CLIPPY_NOISE:-none}"',
 		"else",
@@ -652,6 +659,52 @@ describe("pi-hooks end-of-turn clippy", () => {
 		} finally {
 			delete process.env.FAKE_CLIPPY_SILENT;
 			delete process.env.FAKE_CLIPPY_NOISE;
+			rmSync(project, { recursive: true, force: true });
+			rmSync(cargoRoot, { recursive: true, force: true });
+		}
+	});
+
+	// cargo interleaves diagnostics from parallel jobs, so an unchanged tree
+	// prints the same lines in a different order and a raw digest makes every
+	// run look new — the guard would never suppress and the steering loop it
+	// exists to bound would be live. Measured on the kendex workspace: three
+	// consecutive runs, 440 identical lines, three raw digests, one sorted.
+	test("two runs whose lines differ only in order are one run to the guard", async () => {
+		const project = initClippyProject();
+		const cargoRoot = mkdtempSync(join(tmpdir(), "pi-hooks-cargo-"));
+		try {
+			await onPath(fakeClippyBin(cargoRoot, project), async () => {
+				const hooks = installTurnHandlers();
+				const ctx = { cwd: project, isProjectTrusted: () => true };
+				process.env.FAKE_CLIPPY_ORDER = "forward";
+				await editingTurn(hooks, project, ctx);
+				process.env.FAKE_CLIPPY_ORDER = "reverse";
+				await editingTurn(hooks, project, ctx);
+				expect(hooks.sent).toHaveLength(1);
+			});
+		} finally {
+			delete process.env.FAKE_CLIPPY_ORDER;
+			rmSync(project, { recursive: true, force: true });
+			rmSync(cargoRoot, { recursive: true, force: true });
+		}
+	});
+
+	// The other half: canonicalizing order must not canonicalize away content.
+	test("two runs whose lines genuinely differ are two runs to the guard", async () => {
+		const project = initClippyProject();
+		const cargoRoot = mkdtempSync(join(tmpdir(), "pi-hooks-cargo-"));
+		try {
+			await onPath(fakeClippyBin(cargoRoot, project), async () => {
+				const hooks = installTurnHandlers();
+				const ctx = { cwd: project, isProjectTrusted: () => true };
+				process.env.FAKE_CLIPPY_ORDER = "forward";
+				await editingTurn(hooks, project, ctx);
+				process.env.FAKE_CLIPPY_ORDER = "changed";
+				await editingTurn(hooks, project, ctx);
+				expect(hooks.sent).toHaveLength(2);
+			});
+		} finally {
+			delete process.env.FAKE_CLIPPY_ORDER;
 			rmSync(project, { recursive: true, force: true });
 			rmSync(cargoRoot, { recursive: true, force: true });
 		}

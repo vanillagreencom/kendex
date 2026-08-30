@@ -23,8 +23,22 @@ export type ClippyOutcome =
 	| { kind: "errors"; lines: string[]; digest: string }
 	| { kind: "unavailable"; reason: string; digest: string };
 
+/**
+ * Digest what a run produced, with line order canonicalized. cargo interleaves
+ * diagnostics from parallel jobs, so two runs over an unchanged tree print the
+ * same lines in a different order: measured on this workspace, three
+ * consecutive runs gave 440 identical lines, three different raw digests, and
+ * one sorted digest. Hashing the raw text would make every run look new and
+ * the guard would never suppress anything.
+ *
+ * Sorting is the whole canonicalization. Nothing else here is speculative: a
+ * run that reports more diagnostics than the last one really did produce
+ * different output — a build still settling does that — and steering on it is
+ * correct.
+ */
 function digestOf(...parts: string[]): string {
-	return createHash("sha256").update(parts.join("\n")).digest("hex");
+	const canonical = parts.join("\n").split("\n").sort().join("\n");
+	return createHash("sha256").update(canonical).digest("hex");
 }
 
 /**
