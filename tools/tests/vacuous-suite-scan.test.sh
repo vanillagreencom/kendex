@@ -232,8 +232,54 @@ if [ "$RC" -ne 0 ]; then
 else
   bad "a misspelled subject is refused rather than ignored" "rc=0 out=$OUT"
 fi
-has "and the refusal lists the ones that exist" \
-  "known: harness-subject, absence-subject"
+has "and the refusal shows the canonical declarations" \
+  "a declaration is exactly '# vacuous-suite-scan: harness-subject'"
+
+echo "=== a declaration is read by its prefix, so a malformed payload is refused ==="
+# Each line below is one a reader would call a declaration, carrying a payload
+# outside the accepted shape. The failure being pinned is what used to happen
+# to them: the payload was matched as part of the detection, so a line that
+# missed the shape read as no declaration at all and its suite fell through to
+# vacuous with no refusal — the reverse of what the refusal is for.
+refuses_payload() { # refuses_payload NAME DECL_LINE PAYLOAD
+  local S
+  S="$(new_skill "malformed-$1")"
+  add_detecting "$S"
+  add_absence "$S" bad "$2"
+  scan "$S"
+  if [ "$RC" -ne 0 ]; then
+    ok "the $1 payload is refused"
+  else
+    bad "the $1 payload is refused" "rc=0 out=$OUT"
+  fi
+  has "and the refusal prints the $1 payload" \
+    "declares an unknown vacuous-suite-scan subject: '$3'"
+}
+
+refuses_payload underscored '# vacuous-suite-scan: absence_subject' ' absence_subject'
+refuses_payload capitalized '# vacuous-suite-scan: Absence-subject' ' Absence-subject'
+refuses_payload trailing-space '# vacuous-suite-scan: absence-subject ' ' absence-subject '
+refuses_payload empty '# vacuous-suite-scan:' ''
+
+echo "=== a well-formed declaration does not shield a malformed one ==="
+# The doubled-declaration refusal counts declarations, so it has to count the
+# malformed line too: a header whose second line is unreadable is still a
+# header claiming two subjects, not a header claiming the first one.
+S="$(new_skill goodplusbad)"
+add_detecting "$S"
+cat >"$S/tests/pair.test.sh" <<'SUITE'
+#!/usr/bin/env bash
+# vacuous-suite-scan: harness-subject
+# vacuous-suite-scan: absence_subject
+set -euo pipefail
+SUITE
+scan "$S"
+if [ "$RC" -ne 0 ]; then
+  ok "one good and one malformed declaration are refused together"
+else
+  bad "one good and one malformed declaration are refused together" "rc=0 out=$OUT"
+fi
+has "and the count sees both lines" "declares 2 vacuous-suite-scan subjects"
 
 echo "=== a malformed declaration is read even on a suite that cannot run ==="
 # A header defect is settled by reading the header, so it must not depend on
@@ -256,7 +302,7 @@ else
   bad "the typo is refused though its suite never reached the comparison" "rc=0 out=$OUT"
 fi
 has "and the refusal names the unknown subject" \
-  "declares an unknown vacuous-suite-scan subject: absense-subject"
+  "declares an unknown vacuous-suite-scan subject: ' absense-subject'"
 # The refusal comes before staging, so no tally line was printed for the skill.
 lacks "and nothing was classified first" "unrunnable-in-copy"
 

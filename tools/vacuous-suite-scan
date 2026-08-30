@@ -179,22 +179,23 @@ run_suite() {
 
 # The subject a suite declares, empty when it declares none. Both known
 # subjects name something this metric cannot settle, for opposite reasons; the
-# header states which. An unknown word is a typo in a declaration nothing would
-# otherwise read, and two declarations are a header claiming two subjects —
-# both end the run rather than being silently ignored or resolved by order.
+# header states which. A line is a declaration by its PREFIX, and its payload
+# judged after: folding the payload into the detection lets a typo outside the
+# accepted shape — an underscore, a capital, a trailing space — read as no
+# declaration at all and fall silently through to vacuous. An unknown payload
+# is refused by name, an empty one included; a malformed second declaration is
+# counted like any other and refused as a header claiming two subjects.
 suite_subject() {
     local declared count
-    declared="$(head -n 20 "$1" | sed -n 's/^# vacuous-suite-scan: \([a-z][a-z-]*\)$/\1/p')"
-    if [[ -z "$declared" ]]; then
-        return 0
-    fi
+    declared="$(head -n 20 "$1" | grep '^# vacuous-suite-scan:')" || true
+    [[ -n "$declared" ]] || return 0
     count="$(printf '%s\n' "$declared" | grep -c .)"
     if [[ "$count" -ne 1 ]]; then
         die "$1 declares $count vacuous-suite-scan subjects, and a suite has one: $(printf '%s' "$declared" | tr '\n' ' ')"
     fi
     case "$declared" in
-    harness-subject | absence-subject) printf '%s' "$declared" ;;
-    *) die "$1 declares an unknown vacuous-suite-scan subject: $declared (known: harness-subject, absence-subject)" ;;
+    "# vacuous-suite-scan: harness-subject" | "# vacuous-suite-scan: absence-subject") printf '%s' "${declared#\# vacuous-suite-scan: }" ;;
+    *) die "$1 declares an unknown vacuous-suite-scan subject: '${declared#\# vacuous-suite-scan:}' (a declaration is exactly '# vacuous-suite-scan: harness-subject' or '# vacuous-suite-scan: absence-subject')" ;;
     esac
 }
 
