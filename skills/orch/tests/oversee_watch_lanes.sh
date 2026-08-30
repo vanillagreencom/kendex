@@ -95,10 +95,27 @@ out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" \
   "a shell pane with a child process is a live lane, not an exit" "$err"
 assert_not_contains "$out" "EVENT lane-exited" "a wrapped lane is never dropped from the watch" "$err"
-assert_eq "$(grep -c . "$STUB_DIR/ps.calls")" "2" \
-  "one ps per bare-shell lane per pass (2 passes, 1 shell lane)" "$err"
-assert_not_contains "$(cat "$STUB_DIR/ps.calls")" "9001" \
-  "a lane whose foreground IS the harness is never handed to ps" "$err"
+assert_eq "$(grep -c . "$STUB_DIR/pgrep.calls")" "2" \
+  "one probe per bare-shell lane per pass (2 passes, 1 shell lane)" "$err"
+assert_not_contains "$(cat "$STUB_DIR/pgrep.calls")" "9001" \
+  "a lane whose foreground IS the harness is never probed" "$err"
+
+# A probe that cannot run at all is not an answer. `ps --ppid` is procps-only
+# and BSD ps rejects it with the same status it uses for no match, which read
+# every pane as childless; whatever the cause, an unjudgeable lane stays
+# watched rather than being retired on a failure.
+new_case lane_probe_unusable
+printf 'fish\n' > "$STUB_DIR/cmd-gh-2.txt"
+: > "$STUB_DIR/probe-fail-9002"
+err="$TMP_ROOT/e3b7"
+out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" \
+  "a lane whose child probe cannot run is never reported exited" "$err"
+assert_not_contains "$out" "EVENT lane-exited" "a failed probe never manufactures an exit" "$err"
+assert_contains "$(cat "$err")" "could not list the children of the pane behind 'gh-2'" \
+  "the unusable probe is named on stderr" "$err"
+assert_eq "$(grep -c 'could not list the children' "$err")" "1" \
+  "the probe note is printed once per run, not per pass" "$err"
 
 # The must-fail control for the case above: the same bare shell with nothing
 # under it — a lane typed at a prompt whose harness has quit
@@ -198,6 +215,70 @@ assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=none
   "a banner the lane has since worked past is not the event" "$err"
 assert_not_contains "$out" "EVENT usage-limit" \
   "a stale banner above a later user turn never fires" "$err"
+
+# The composer is the last marker line on the screen, and it is never a turn:
+# if it counted as one the whole pane would be sliced away and usage-limit
+# would go silent for every lane. Claude Code draws it as `❯` + U+00A0, which
+# these fixtures spell in bytes and then verify, so a fixture that degrades
+# into an ASCII space fails here instead of passing quietly.
+new_case usage_limit_above_empty_composer
+{
+  printf '⏺ Working through the queue.\n'
+  printf "You've hit your usage limit \xc2\xb7 resets 21:00\n"
+  printf '\xe2\x9d\xaf\xc2\xa0\n'
+} > "$STUB_DIR/pane-gh-2.txt"
+assert_eq "$(grep -c "$(printf '\xc2\xa0')" "$STUB_DIR/pane-gh-2.txt")" "1" \
+  "the composer fixture carries U+00A0, not an ASCII space"
+err="$TMP_ROOT/e3f6"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
+  "the empty composer is not a turn, so a banner above it is still reported" "$err"
+
+# ...and neither is a composer holding an unsent draft
+new_case usage_limit_above_composer_draft
+{
+  printf '⏺ Working through the queue.\n'
+  printf "You've hit your usage limit \xc2\xb7 resets 21:00\n"
+  printf '\xe2\x9d\xaf\xc2\xa0take the next round\n'
+} > "$STUB_DIR/pane-gh-2.txt"
+assert_eq "$(grep -c "$(printf '\xc2\xa0')" "$STUB_DIR/pane-gh-2.txt")" "1" \
+  "the draft-composer fixture carries U+00A0, not an ASCII space"
+err="$TMP_ROOT/e3f7"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
+  "an unsent draft in the composer is not a turn either" "$err"
+
+# Codex draws the composer with the SAME `› ` and text a submitted turn uses,
+# so only its position separates them. Its placeholder must not read as a turn.
+new_case usage_limit_above_codex_composer
+printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
+{
+  printf '\xe2\x80\xba pick the round back up\n'
+  printf '\xe2\x80\xa2 Ran 3 commands\n'
+  printf 'Usage limit reached. Increase your limits to continue.\n'
+  printf '\xe2\x80\xba Ask Codex to do anything\n'
+} > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3f8"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
+  "a codex banner below the last turn is reported, the composer notwithstanding" "$err"
+
+# ...and the must-fail control: the same codex screen with the banner ABOVE
+# the turn is scrollback, which the composer must not resurrect
+new_case usage_limit_codex_stale_banner
+printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
+{
+  printf 'Usage limit reached. Increase your limits to continue.\n'
+  printf '\xe2\x80\xba pick the round back up\n'
+  printf '\xe2\x80\xa2 Ran 3 commands\n'
+  printf '\xe2\x80\xba Ask Codex to do anything\n'
+} > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3f9"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=none" \
+  "a codex banner the lane has worked past is not the event" "$err"
+assert_not_contains "$out" "EVENT usage-limit" \
+  "the codex composer never resurrects a stale banner" "$err"
 
 # The must-fail control for the case above: the same screen with the banner
 # BELOW the turn — the account is spent right now

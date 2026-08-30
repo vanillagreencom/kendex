@@ -20,12 +20,14 @@
 #                 after --since
 #   3. window-gone a listed tmux lane window no longer exists
 #   4. lane-exited a listed lane's window is alive but its pane holds a bare
-#                 shell with NO child process on two consecutive passes — the
-#                 harness under it exited (session limit, crash, quit) and the
-#                 slot is free. A lane resumed by typing the wrapper at an
-#                 interactive prompt keeps the shell as the pane process and
-#                 the harness as its child, so the child is what tells them
-#                 apart
+#                 shell that `pgrep -P` reports NO child under, on two
+#                 consecutive passes — the harness under it exited (session
+#                 limit, crash, quit) and the slot is free. A lane resumed by
+#                 typing the wrapper at an interactive prompt keeps the shell
+#                 as the pane process and the harness as its child, so the
+#                 child is what tells them apart. A probe that cannot run at
+#                 all is not an answer: that lane stays watched, noted once on
+#                 stderr
 #   5. usage-limit a listed lane whose harness has not exited shows the
 #                 account's limit banner below the last user turn on its
 #                 screen — one pass, and the claimed config dir when a live
@@ -93,15 +95,15 @@ WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens'
 # A ready input prompt: Claude Code's composer line, Codex's submit hint.
 # Present while working too, so it decides idleness only with WORKING_RE out.
 IDLE_PROMPT_RE='^❯|to submit message'
-# A submitted user message, echoed into the transcript. Claude Code draws it
-# with the SAME `❯` marker as its composer, so a turn is the marker, an ASCII
-# blank, and text: the composer draws `❯` and U+00A0 and never matches, with
-# or without an unsent draft. A selection option (`❯ 1. Yes`) is the harness
-# asking, so USER_TURN_OPTION_RE takes those back out. Both go to awk through
-# `-v`, which processes escapes, so the literal dot is a bracket expression:
-# `\.` would warn on every pass, onto the stderr the overseer reads.
-USER_TURN_RE='^❯[[:blank:]]+[^[:space:]]'
-USER_TURN_OPTION_RE='^❯[[:blank:]]+[0-9]+[.][[:blank:]]'
+# The marker each harness draws at column 0: Claude Code `❯`, Codex `›`. It
+# opens a submitted user message echoed into the transcript AND the composer
+# the lane sits at, so its content cannot tell the two apart — Codex draws the
+# same `› ` and a placeholder in an empty composer. Position can: the composer
+# is drawn under the transcript, so it is the LAST marker line on the screen
+# and every marker line above it is a turn the harness has already taken. Both
+# harnesses indent their selection rows, so a prompt the harness is asking
+# never reaches column 0.
+PANE_MARKER_RE='^[❯›]'
 
 INTERVAL=240
 MAX_LOOPS=25
@@ -139,14 +141,16 @@ Events, checked in this order every pass:
   EVENT window-gone <lane>   a listed tmux window no longer exists
   EVENT lane-exited <lane>   the window is alive but the pane's current
                              command is a bare shell (bash/zsh/fish/sh/dash,
-                             login spellings too) AND its `#{pane_pid}` has no
-                             child process, on two consecutive passes: the
-                             harness under it exited — session limit, crash,
-                             quit — and the lane's slot is free (last 40
-                             non-empty pane lines follow, carrying why). A
-                             lane resumed by typing the wrapper at a shell
-                             prompt keeps that shell as the pane process, so a
-                             bare shell WITH a child is a live lane
+                             login spellings too) AND `pgrep -P` reports no
+                             child of its `#{pane_pid}`, on two consecutive
+                             passes: the harness under it exited — session
+                             limit, crash, quit — and the lane's slot is free
+                             (last 40 non-empty pane lines follow, carrying
+                             why). A lane resumed by typing the wrapper at a
+                             shell prompt keeps that shell as the pane
+                             process, so a bare shell WITH a child is a live
+                             lane. A pgrep that cannot run is not an answer:
+                             the lane stays watched, noted once on stderr
   EVENT usage-limit <lane> [<config-dir>]
                              the harness has not exited and the pane shows the
                              account's limit banner
@@ -413,25 +417,42 @@ is_bare_shell() {
   return 1
 }
 
-# The pane's process has a child. A foreground shell does not mean the lane is
-# over: a lane started by typing the wrapper at an interactive prompt
+# Does the pane's process have a child? A foreground shell does not mean the
+# lane is over: a lane started by typing the wrapper at an interactive prompt
 # (`hclaude --resume <id>`, the normal way to resume) keeps that shell as the
 # pane process and the harness as its child, so the pane reads `fish` for the
-# lane's whole life. Only a shell with nothing under it is finished. One `ps`
-# per bare-shell lane per pass; no walking of the tree below.
+# lane's whole life. Only a shell with nothing under it is finished.
+#
+# 0 a child, 1 none, 2 the probe could not answer — the three statuses procps
+# and BSD pgrep both return, verified on Linux and Darwin 25. `ps --ppid` is
+# procps-only and BSD ps rejects it with status 1, the same status it uses for
+# no match, which would read every pane as childless. One probe per bare-shell
+# lane per pass; no walking of the tree below.
 pane_has_child() {
-  [[ -n "$1" ]] || return 1
-  [[ -n "$(ps -o pid= --ppid "$1" 2>/dev/null)" ]]
+  local rc=0
+  pgrep -P "$1" >/dev/null 2>&1 || rc=$?
+  [[ "$rc" -le 1 ]] || return 2
+  return "$rc"
+}
+
+# Said once per run, not per pass: the answer does not change under the watch.
+LANE_PROBE_NOTED=0
+note_probe_unusable() {
+  [[ "$LANE_PROBE_NOTED" -eq 0 ]] || return 0
+  LANE_PROBE_NOTED=1
+  echo "oversee-watch: could not list the children of the pane behind '$1' (pgrep -P exited 2); shell panes stay watched rather than reported exited" >&2
 }
 
 # The pane lines strictly below the last user turn — the whole pane when the
 # screen holds none. A banner the lane has since taken another turn past is
 # scrollback, not the account's state now: after a reset the old banner stays
 # on the visible screen, and reporting it every pass buries the live lanes.
+# The last marker line is the composer the lane is sitting at, so the turn is
+# the one before it.
 pane_below_last_turn() {
-  awk -v turn="$USER_TURN_RE" -v opt="$USER_TURN_OPTION_RE" '
-    { line[NR] = $0; if ($0 ~ turn && $0 !~ opt) last = NR }
-    END { for (i = last + 1; i <= NR; i++) print line[i] }
+  awk -v marker="$PANE_MARKER_RE" '
+    { line[NR] = $0; if ($0 ~ marker) { turn = composer; composer = NR } }
+    END { for (i = turn + 1; i <= NR; i++) print line[i] }
   ' <<<"$1"
 }
 
@@ -450,7 +471,7 @@ lane_pane_file() { printf '%s/pane.%s' "$WORK_DIR" "$1"; }
 
 check_lanes() {
   [[ ${#LANES[@]} -gt 0 ]] || return 0
-  local existing lane pane obs cmd pid state i states="" shell_now="" idle_now="" claims="" claimed pane_key
+  local existing lane pane obs cmd pid state probe i states="" shell_now="" idle_now="" claims="" claimed pane_key
   existing="$(tmux list-windows -F '#W' 2>&1)" || die "tmux list-windows failed: $existing"
   for lane in "${LANES[@]}"; do
     if ! grep -qxF -- "$lane" <<<"$existing"; then
@@ -479,7 +500,16 @@ check_lanes() {
     pid="${obs%%[[:blank:]]*}"
     cmd="${obs#*[[:blank:]]}"
     state=live
-    if is_bare_shell "$cmd" && ! pane_has_child "$pid"; then state=exited; fi
+    if is_bare_shell "$cmd"; then
+      probe=0; pane_has_child "$pid" || probe=$?
+      # 2 is a probe that could not run, never an answer: a lane the watch
+      # cannot judge stays watched, since a wrong lane-exited retires a
+      # working lane while a missed one costs a pass.
+      case "$probe" in
+        1) state=exited ;;
+        2) note_probe_unusable "$lane" ;;
+      esac
+    fi
     states+="$i"$'\t'"$state"$'\n'
   done
   # A lane window outlives its harness: open-terminal runs claude/codex inside

@@ -7,15 +7,17 @@
 # oversee_watch_lanes.sh the pane side. Both build the same sandbox, so it
 # lives here rather than in either of them.
 #
-# Sourced, never run: the runners glob tests/*.sh and this file defines
-# functions only. A suite sources it, adds its cases, and prints the
-# `pass: N   fail: M` line itself.
+# Sourced, never run: the runners glob tests/*.sh, so nothing here executes on
+# its own. Sourcing it sets the shell options, builds $TMP_ROOT and the stub
+# binaries under it, arms the cleanup trap, and defines the assertion helpers,
+# `new_case` and `run_watch`. A suite sources it, adds its cases, and prints
+# the `pass: N   fail: M` line itself.
 # Set here as well as in each suite: this file's own body relies on it, and a
 # suite that forgot it must not get a sandbox built without it.
 set -euo pipefail
 
-# Resolved from this file, not from the sourcing suite: lib/ sits one level
-# below tests/, which is two below the skill.
+# Resolved from this file, not from the sourcing suite: four levels up from
+# skills/<skill>/tests/lib is the repo root.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 TMP_ROOT="$(mktemp -d)" || { echo "oversee-watch harness: mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -169,20 +171,24 @@ printf 'unexpected tmux call: %s\n' "$*" >&2
 exit 1
 EOF
 
-# ps stub: `ps -o pid= --ppid <pid>` prints kids-<pid>.txt when that file
-# exists — the children of a pane process — and exits 1 with nothing when it
-# does not, the way procps reports no match. Every call is logged to ps.calls,
-# so a case can hold the watch to one ps per bare-shell lane per pass.
-cat > "$TMP_ROOT/bin/ps" <<'EOF'
+# pgrep stub, modelling the probe the watch actually runs: `pgrep -P <pid>`
+# prints kids-<pid>.txt and exits 0 when that file exists — the children of a
+# pane process — and exits 1 with nothing when it does not, the way procps and
+# BSD pgrep both report no match. probe-fail-<pid> makes it exit 2, the status
+# both report for a probe that could not run at all (pgrep absent, the option
+# rejected). Every call is logged to pgrep.calls, so a case can hold the watch
+# to one probe per bare-shell lane per pass.
+cat > "$TMP_ROOT/bin/pgrep" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
 ppid=""
 while [[ $# -gt 0 ]]; do
-  case "$1" in --ppid) ppid="$2"; shift ;; esac
+  case "$1" in -P) ppid="$2"; shift ;; esac
   shift
 done
-[[ -n "$ppid" ]] || { echo "unexpected ps call" >&2; exit 1; }
-printf '%s\n' "$ppid" >> "$STUB_DIR/ps.calls"
+[[ -n "$ppid" ]] || exit 2
+printf '%s\n' "$ppid" >> "$STUB_DIR/pgrep.calls"
+[[ -f "$STUB_DIR/probe-fail-$ppid" ]] && exit 2
 [[ -f "$STUB_DIR/kids-$ppid.txt" ]] || exit 1
 cat "$STUB_DIR/kids-$ppid.txt"
 EOF
@@ -203,7 +209,7 @@ rcf="$STUB_DIR/prwatch.rc.$n"; [[ -f "$rcf" ]] || rcf="$STUB_DIR/prwatch.rc"
 rc=0; [[ -f "$rcf" ]] && rc="$(cat "$rcf")"
 exit "$rc"
 EOF
-chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/tmux" "$TMP_ROOT/bin/ps" "$TMP_ROOT/bin/pr-watch-stub.sh"
+chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/tmux" "$TMP_ROOT/bin/pgrep" "$TMP_ROOT/bin/pr-watch-stub.sh"
 
 STUB_DIR=""
 STATE_DIR=""

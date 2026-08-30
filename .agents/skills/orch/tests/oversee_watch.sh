@@ -27,7 +27,8 @@
 #       project GH_BOT_TOKEN; a failing pr list exits 2 (never a quiet 0)
 #   7.  lanes given outside tmux exit 2
 #   8.  a missing pr-watch.sh is a stderr note, not a failure
-#   9.  --help exits 0 and states both liveness rules
+#   9.  --help exits 0, names the probe it runs, and states both liveness
+#       rules including the unusable-probe path
 set -euo pipefail
 
 # shellcheck source=lib/oversee-watch-harness.sh
@@ -330,8 +331,12 @@ err="$TMP_ROOT/e9"
 out="$(run_watch -- --help 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "--help exits 0" "$err"
 assert_contains "$out" "EVENT question" "--help documents the event kinds" "$err"
-assert_contains "$out" "child process" \
-  "--help states the rule that keeps a wrapped lane out of lane-exited" "$err"
+assert_contains "$out" "reports no" \
+  "--help states the probe that keeps a wrapped lane out of lane-exited" "$err"
+assert_contains "$out" "pgrep -P" \
+  "--help names the probe the code actually runs" "$err"
+assert_contains "$out" "not an answer" \
+  "--help states that an unusable probe keeps the lane watched" "$err"
 assert_contains "$out" "last user turn on its screen" \
   "--help states where a limit banner has to sit to count" "$err"
 

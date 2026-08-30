@@ -104,7 +104,7 @@ skills/orch/scripts/dev-artifact-check	482
 skills/orch/scripts/dev-return-write	430
 skills/orch/scripts/lanes	556
 skills/orch/scripts/open-terminal	639
-skills/orch/scripts/oversee-watch	594
+skills/orch/scripts/oversee-watch	624
 skills/orch/scripts/queue-wait	1027
 skills/orch/scripts/review-artifact-check	413
 skills/orch/scripts/workflow-state	546
