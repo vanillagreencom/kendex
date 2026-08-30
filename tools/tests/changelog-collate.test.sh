@@ -311,7 +311,7 @@ run_collate
 [ "$RC" -eq 0 ] && ok "the collation folds the committed fragment in" \
   || bad "the collation folds the committed fragment in" "rc=$RC out=$OUT"
 run_collate
-[ "$RC" -eq 2 ] && case "$OUT" in *"differs between git and the working tree"*"changelog.d/fixed/ken-1.md"*) true ;; *) false ;; esac \
+[ "$RC" -eq 2 ] && case "$OUT" in *"changelog.d/fixed/ken-1.md is in the index but not a file on disk"*) true ;; *) false ;; esac \
   && ok "a second run over that state refuses instead of folding the deletion in again" \
   || bad "a second run over that state refuses instead of folding the deletion in again" "rc=$RC out=$OUT"
 # The collated CHANGELOG.md goes into the index with the deletion, which is
@@ -351,6 +351,35 @@ run_collate
   || bad "staging the edit lets the write proceed" "rc=$RC out=$OUT"
 case "$(cat "$R/CHANGELOG.md")" in *"unstaged rewrite"*) ok "the staged wording is the one folded in" ;;
   *) bad "the staged wording is the one folded in" "$(cat "$R/CHANGELOG.md")" ;; esac
+
+echo "=== the staleness guard follows the configured paths, not a spelling of its own ==="
+# A repo that repoints the fragment globs must get its staleness check over
+# the tree it actually uses. The paths guarded are the ones the judge just
+# named, so the guard and the fold set cannot drift apart.
+reset
+mkdir -p "$R/notes.d/fixed"
+printf -- '- An entry the release folds in.\n' >"$R/notes.d/fixed/ken-1.md"
+git -C "$R" add -A -- notes.d
+run_collate_paths() { # sets OUT and RC, with the fragments elsewhere
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && GROWTH_GUARDS_CHANGELOG_PATHS='notes.d/*/*.md' "$COLLATE" 2>&1)" || RC=$?
+}
+printf -- '- The unstaged rewrite nothing judged.\n' >"$R/notes.d/fixed/ken-1.md"
+run_collate_paths
+[ "$RC" -eq 2 ] && case "$OUT" in *"differs between git and the working tree"*"notes.d/fixed/ken-1.md"*) true ;; *) false ;; esac \
+  && ok "an unstaged edit under the configured tree exits 2, naming it" \
+  || bad "an unstaged edit under the configured tree exits 2, naming it" "rc=$RC out=$OUT"
+untouched && ok "CHANGELOG.md is untouched by that refusal" \
+  || bad "CHANGELOG.md is untouched by that refusal" "it changed"
+# The control: staged, the same tree collates, so the refusal above is the
+# guard reaching notes.d and not the run failing for another reason.
+git -C "$R" add -A -- notes.d
+run_collate_paths
+[ "$RC" -eq 0 ] && ok "control: staged, the same tree collates" \
+  || bad "control: staged, the same tree collates" "rc=$RC out=$OUT"
+case "$(cat "$R/CHANGELOG.md")" in *"The unstaged rewrite nothing judged."*) ok "and its entry is folded in" ;;
+  *) bad "and its entry is folded in" "$(cat "$R/CHANGELOG.md")" ;; esac
 
 echo "=== a changelog the collator cannot read stops the run ==="
 reset
@@ -550,6 +579,22 @@ done
   || bad "the emptied section directories are removed" "still on disk:$leftover"
 [ -f "$R/changelog.d/README.md" ] && ok "the README survives the collation" \
   || bad "the README survives the collation" "it is gone"
+
+echo "=== a fragment whose name carries a newline is folded in and deleted ==="
+# The judge names paths as NUL-terminated bytes and the collation carries them
+# that way to the fold and the delete. A newline in a name is a legal byte;
+# read back a line at a time it becomes two paths, neither of which exists.
+reset
+NL_NAME="$(printf 'KEN\n1.md')"
+mkdir -p "$R/changelog.d/fixed"
+printf -- '- An entry under a name with a newline in it.\n' >"$R/changelog.d/fixed/$NL_NAME"
+git -C "$R" add -A -- changelog.d
+run_collate
+[ "$RC" -eq 0 ] && ok "the collation takes it" || bad "the collation takes it" "rc=$RC out=$OUT"
+case "$(cat "$R/CHANGELOG.md")" in *"An entry under a name with a newline in it."*) ok "its entry is folded in" ;;
+  *) bad "its entry is folded in" "$(cat "$R/CHANGELOG.md")" ;; esac
+[ -e "$R/changelog.d/fixed/$NL_NAME" ] && bad "and the fragment is deleted" "it survived" \
+  || ok "and the fragment is deleted"
 
 echo "=== two headings for one section collapse into one, in section order ==="
 reset

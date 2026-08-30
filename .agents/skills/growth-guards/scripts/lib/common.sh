@@ -146,15 +146,22 @@ gg_config_path() { # RAW LABEL — normalized on stdout; nonzero + ::error on st
   printf '%s' "$norm"
 }
 
-# The family's character count, as awk source: bytes that are not UTF-8
-# continuation bytes, read under LC_ALL=C. One definition, because every cap
-# in this package counts one way — bash's ${#var} follows the ambient locale,
-# and a git hook inherits whatever environment the committer has, so the same
-# text would be accepted in one shell and refused in another. Bytes that are
-# not valid UTF-8 have no character count; they measure as themselves, which
-# can only over-count and never lets an over-long value through.
+# The family's character count, as awk source, read under LC_ALL=C. One
+# definition, because every cap in this package counts one way — bash's
+# ${#var} follows the ambient locale, and a git hook inherits whatever
+# environment the committer has, so the same text would be accepted in one
+# shell and refused in another.
+#
+# Each well-formed UTF-8 sequence collapses to one character; every other byte
+# counts as itself. So a stray continuation byte, which belongs to no
+# sequence, costs one rather than nothing: text that is not valid UTF-8 has no
+# character count, and a cap must round that in the direction that cannot let
+# an over-long value through.
 GG_CHARS_AWK_FN='
-function gg_chars(s,   n, c) { n = length(s); c = gsub(/[\200-\277]/, "", s); return n - c }
+function gg_chars(s) {
+  gsub(/[\302-\337][\200-\277]|[\340-\357][\200-\277][\200-\277]|[\360-\364][\200-\277][\200-\277][\200-\277]/, "x", s)
+  return length(s)
+}
 '
 
 gg_chars() { # TEXT — its character count on stdout

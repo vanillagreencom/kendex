@@ -280,6 +280,38 @@ for loc in C C.UTF-8 en_US.UTF-8; do
     && ok "and 73 of them is 73 characters under $loc, not its byte count" \
     || bad "and 73 of them is 73 characters under $loc" "rc=$RC out=$OUT"
 done
+# The SHAPE rule answers under the same rules. Its scope class is ASCII in
+# every surface that documents it, and a bracket range is a COLLATION range
+# under a UTF-8 locale — so an accented scope is admitted there and refused
+# here unless the match is pinned. These bytes sit in the scope, which is the
+# only part of the ERE a locale changes; the length fixtures above carry
+# theirs in the subject and reach none of it.
+for loc in C C.UTF-8 en_US.UTF-8; do
+  run_stdin 'fix(café): tighten the gate' "LC_ALL=$loc"
+  [ "$RC" -eq 1 ] && case "$OUT" in *"non-conventional header"*) true ;; *) false ;; esac \
+    && ok "an accented scope is outside the documented class under $loc" \
+    || bad "an accented scope is outside the documented class under $loc" "rc=$RC out=$OUT"
+  run_stdin 'fix(cafe): tighten the gate' "LC_ALL=$loc"
+  [ "$RC" -eq 0 ] && ok "control: the same scope in ASCII passes under $loc" \
+    || bad "control: the same scope in ASCII passes under $loc" "rc=$RC out=$OUT"
+done
+# And bytes that are not valid UTF-8 at all decide the same way everywhere:
+# the subject class is "not whitespace", which they are.
+BADBYTES="$(printf 'fix: \377\376 bad bytes')"
+for loc in C C.UTF-8 en_US.UTF-8; do
+  run_stdin "$BADBYTES" "LC_ALL=$loc"
+  [ "$RC" -eq 0 ] && ok "a subject carrying invalid UTF-8 is judged the same under $loc" \
+    || bad "a subject carrying invalid UTF-8 is judged the same under $loc" "rc=$RC out=$OUT"
+done
+# Such bytes have no character count, and a cap has to round that the way that
+# cannot let an over-long header through. Each of these continuation bytes
+# belongs to no sequence, so each costs one: 205 bytes is 205 characters, not
+# the 5 a bytes-minus-continuations count would report.
+STRAY="fix: $(rep "$(printf '\277')" 200)"
+run_stdin "$STRAY"
+[ "$RC" -eq 1 ] && case "$OUT" in *"header is 205 characters (max 72)"*) true ;; *) false ;; esac \
+  && ok "a header of stray continuation bytes counts each of them, never nothing" \
+  || bad "a header of stray continuation bytes counts each of them" "rc=$RC out=$OUT"
 
 echo "=== shape and length are reported together, not one at a time ==="
 run_stdin "$(rep q 90)" "GROWTH_GUARDS_SUBJECT_MAX=20"

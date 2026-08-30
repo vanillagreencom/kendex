@@ -223,6 +223,18 @@ run_ce
   || bad "an unterminated fence is exit 2" "rc=$RC out=$OUT"
 case "$OUT" in *"unchanged under [Unreleased]"*) bad "no run may call the record unchanged over a document it could not read" "$OUT" ;;
   *) ok "no run calls the record unchanged over a document it could not read" ;; esac
+# A run of the fence character with content after it is an opening fence, not
+# a closing one, so it ends nothing either.
+{
+  printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n'
+  printf '```\n``` js\n## [Unreleased]\n```\n\n'
+  printf '## [Unreleased]\n\n- One line.\n- SNEAKED IN BY HAND.\n'
+} >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"gained lines under [Unreleased]"*"- SNEAKED IN BY HAND."*) true ;; *) false ;; esac \
+  && ok "a run with content after it closes no fence, so the heading below it is found" \
+  || bad "a run with content after it closes no fence" "rc=$RC out=$OUT"
 # A three-backtick line inside a four-backtick block closes nothing, so the
 # real four-backtick close is what ends it and the heading after it is found.
 {

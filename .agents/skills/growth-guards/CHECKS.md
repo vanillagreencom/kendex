@@ -109,8 +109,10 @@ its outcome passes however it is wrapped.
 **Everything else in the fragment tree is refused.** A pattern's *root* is its
 leading run of glob-free directories, stopping before the first globbed
 segment and before the file name: `changelog.d/*/*.md` roots at
-`changelog.d`, and a pattern naming an exact path roots nowhere and sweeps
-nothing. Every tracked path under a root that no pattern matches is a
+`changelog.d`. A pattern carrying no glob at all names one file, and naming
+one file is not naming the directory it sits in, so it roots nowhere and
+sweeps nothing — `changelog.d/README.md` as a pattern judges that file and no
+other. Every tracked path under a root that no pattern matches is a
 violation — a file in the fragment tree that nothing would ever fold in is a
 silent drop otherwise, and one nothing judges is a symlink or a heading
 published verbatim by whatever does fold it in. The one exemption is a
@@ -120,12 +122,15 @@ Paths matching no tracked file are a clean pass: a repository with no
 fragments has nothing to judge. An empty list is a config error; the way to
 switch the check off is to drop it from `GROWTH_GUARDS_CHECKS`.
 
-`--list` judges, and on a clean verdict writes the accepted fragments to
-standard output as `SECTION<TAB>PATH` records terminated by NUL, every human
-line going to standard error. A refused run lists nothing. That list is the
-whole answer to "which paths are fragments and which section is each in", so
-a collator folds in exactly what this check accepted rather than re-deriving
-path shape of its own.
+`--list` judges, and on a clean verdict writes to standard output — every
+human line going to standard error — one NUL-terminated record per line of
+business: `fragment<TAB>SECTION<TAB>PATH` for each accepted fragment, and
+`record<TAB>PATH` for the collated record when that scope is on. A refused
+run lists nothing. NUL, so a path carrying a newline survives the read. That
+output is the whole answer to "which paths are fragments, which section each
+is in, and which paths this judgement covers", so a collator folds in exactly
+what this check accepted and guards exactly what it measured, rather than
+deriving either a second time.
 
 ### The record
 

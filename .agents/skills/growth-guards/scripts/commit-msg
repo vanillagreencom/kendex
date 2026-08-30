@@ -150,7 +150,11 @@ if [ "$GENERATED" -eq 1 ]; then
 else
   HEADER_ERE="^($TYPE_ALT)(\([#A-Za-z0-9 _.,/-]+\))?!?: [^[:space:]]"
   match_status=0
-  printf '%s\n' "$HEADER" | grep -qE "$HEADER_ERE" || match_status=$?
+  # LC_ALL=C, for the same reason gg_chars runs under it below: a bracket
+  # range is a COLLATION range under a UTF-8 locale, so [A-Za-z] admits an
+  # accented scope there and refuses it here. The class this gate documents
+  # is ASCII, and it must be that class in every shell a hook is run from.
+  printf '%s\n' "$HEADER" | LC_ALL=C grep -qE "$HEADER_ERE" || match_status=$?
   [ "$match_status" -le 1 ] || gg_collection_error "grep failed matching the header (exit $match_status)"
   if [ "$match_status" -eq 0 ]; then
     echo "commit-msg: OK — conventional header: $HEADER"

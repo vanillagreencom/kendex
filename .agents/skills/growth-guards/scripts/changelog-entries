@@ -80,13 +80,18 @@ structure outside fenced code, never by substring.
 A tracked path under a fragment root that the globs do not cover is refused
 too — it is a fragment nothing would ever fold in. A root is a pattern's
 leading run of glob-free directories (changelog.d/*/*.md roots at
-changelog.d); a pattern naming an exact path roots nowhere, and a README.md
-directly under a root documents the format rather than being an entry.
+changelog.d); a pattern carrying no glob at all names one file and roots
+nowhere, and a README.md directly under a root documents the format rather
+than being an entry.
 
---list judges, and on a clean verdict writes the accepted fragments to
-standard output as SECTION<TAB>PATH records terminated by NUL, every human
-line going to standard error. That list is what the collator folds in, so
-one grammar decides which paths are fragments and which section each is.
+--list judges, and on a clean verdict writes to standard output, every human
+line going to standard error, one NUL-terminated record per line of business:
+"fragment<TAB>SECTION<TAB>PATH" for each accepted fragment and, when that
+scope is on, "record<TAB>PATH" for the collated record. NUL, so a path
+carrying a newline survives. That output is what the collator folds in and
+what it guards against an unstaged edit, so one grammar decides which paths
+are fragments, which section each is in, and which paths the whole judgement
+covers.
 
 Tracked content is read from the index; text that is not valid UTF-8 is a
 collection error. Paths matching no tracked file are a clean pass.
@@ -143,12 +148,17 @@ RECORD="$GG_CHANGELOG_RECORD"
 
 # Where the fragments live: each pattern's leading run of glob-free
 # directories, stopping before the first globbed segment and before the file
-# name. A pattern with no glob names one exact path and roots nowhere. Every
-# tracked path under a root that no pattern matches is refused below — a file
-# sitting in the fragment tree that nothing would ever fold in is the silent
-# drop this judge exists to stop.
+# name. A pattern with no glob at all names one exact file and roots nowhere,
+# whether or not that name carries a slash — naming one file is not naming
+# the directory it sits in. Every tracked path under a root that no pattern
+# matches is refused below: a file sitting in the fragment tree that nothing
+# would ever fold in is the silent drop this judge exists to stop.
 ROOTS=""
 for pat in $PATTERNS; do
+  case "$pat" in
+    *[*?[]*) ;;
+    *) continue ;;
+  esac
   root=""
   rest="$pat"
   while [ -n "$rest" ]; do
@@ -242,7 +252,7 @@ while IFS= read -r -d '' rec; do
     continue
   fi
   checked=$((checked + 1))
-  printf '%s\t%s\0' "$sec" "$f" >>"$GG_TMP/list.z"
+  printf 'fragment\t%s\t%s\0' "$sec" "$f" >>"$GG_TMP/list.z"
   status=0
   LC_ALL=C awk "$GG_ENTRY_AWK" <"$GG_TMP/blob" >"$GG_TMP/report" || status=$?
   [ "$status" -eq 0 ] || gg_collection_error "could not measure the entry in $(gg_shown "$f") (awk exit $status)"
@@ -339,8 +349,12 @@ if [ "$violations" -gt 0 ]; then
   exit 1
 fi
 # Only past the verdict: a caller must never fold in a list this run was
-# still going to refuse something from.
-[ "$LIST" -eq 0 ] || cat -- "$GG_TMP/list.z" >&3
+# still going to refuse something from. The record goes with it, so the
+# caller guards the same paths this run judged.
+if [ "$LIST" -eq 1 ]; then
+  cat -- "$GG_TMP/list.z" >&3
+  [ -z "$RECORD" ] || printf 'record\t%s\0' "$RECORD" >&3
+fi
 if [ "$checked" -eq 0 ]; then
   echo "changelog-entries: OK — no tracked file matches GROWTH_GUARDS_CHANGELOG_PATHS ($PATTERNS_SHOWN)$RECORD_NOTE"
   exit 0

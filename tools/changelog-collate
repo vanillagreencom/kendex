@@ -14,10 +14,15 @@
 #
 # The fragments are the ones git carries, not whatever is on disk: the judge
 # reads the index, and an untracked stray nobody wrote cannot stop a release.
-# Their content, and the record's, are read from the working tree, so a
-# changelog.d or a CHANGELOG.md that the index and the disk disagree about
-# stops the write — that is what makes the judge's verdict a verdict over the
-# bytes about to be published.
+# Their content, and the record's, are read from the working tree, so any path
+# the judgement covers that the index and the disk disagree about stops the
+# write — that is what makes the judge's verdict a verdict over the bytes
+# about to be published. Which paths those are is the judge's answer too,
+# never a list spelled a second time here.
+#
+# Every path moves as NUL-terminated bytes from the judge's records to the
+# fold and the delete, so a fragment whose name carries a newline is folded in
+# and removed like any other.
 #
 # Exit codes follow the guard family: 0 clean, 1 a fragment the judge
 # refuses, 2 could not run. CHANGELOG.md is replaced whole or not at all.
@@ -53,19 +58,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# The write folds in the file on disk and then deletes it, and it replaces
-# CHANGELOG.md with what it read there — so an unstaged edit to either would
-# be published without the judge ever having measured it. Both trees are
-# settled before the judge is asked anything.
-dirty="$(git diff --name-only -- changelog.d CHANGELOG.md)" ||
-  die "could not compare the changelog against the index — the collation could not run"
-if [ -n "$dirty" ]; then
-  die "the changelog differs between git and the working tree; the collation publishes the files on disk and the judge measures the ones git carries — stage or restore these first:
-$(printf '%s\n' "$dirty" | sed 's/^/  /')"
-fi
-
-# The judge, before anything is written: it refuses, and on a clean verdict
-# it names every fragment and the section it belongs to. Nothing is folded in
+# The judge, first: it refuses, and on a clean verdict it names every
+# fragment, the section it belongs to, and the record. Nothing is folded in
 # while it refuses anything, and its verdict is this run's.
 [ -x "$JUDGE" ] || die "$JUDGE is missing or not executable — the fragment judge could not run; reinstall the growth-guards skill"
 judge_status=0
@@ -76,12 +70,26 @@ case "$judge_status" in
   *) die "$JUDGE could not run (exit $judge_status) — nothing was written" ;;
 esac
 
-# SECTION<TAB>PATH per NUL-terminated record, in the judge's own order.
+# TYPE<TAB>...  per NUL-terminated record, in the judge's own order — which is
+# index order, so each section's fragments arrive in the filename order the
+# release notes have always read.
 : >"$TMP/frags"
 for pair in $SECTIONS; do : >"$TMP/sel.${pair%%:*}"; done
+count=0
+guarded=()
 while IFS= read -r -d '' rec; do
-  sec=${rec%%$'\t'*}
-  path=${rec#*$'\t'}
+  kind=${rec%%$'\t'*}
+  rest=${rec#*$'\t'}
+  case "$kind" in
+    record)
+      guarded+=(":(literal)$rest")
+      continue
+      ;;
+    fragment) : ;;
+    *) die "$JUDGE emitted a record this collation does not understand: $kind" ;;
+  esac
+  sec=${rest%%$'\t'*}
+  path=${rest#*$'\t'}
   # Not a second grammar: the judge decides the section, and this is the
   # rendering table refusing a name it has no heading for.
   case " $SECTIONS " in
@@ -89,28 +97,36 @@ while IFS= read -r -d '' rec; do
     *) die "$JUDGE named section '$sec' for $path, which has no heading here — the collation could not run" ;;
   esac
   [ -f "$path" ] || die "$path is in the index but not a file on disk — the collation could not run"
-  printf '%s\n' "$path" >>"$TMP/sel.$sec"
-  printf '%s\n' "$path" >>"$TMP/frags"
+  printf '%s\0' "$path" >>"$TMP/sel.$sec"
+  printf '%s\0' "$path" >>"$TMP/frags"
+  guarded+=(":(literal)$path")
+  count=$((count + 1))
 done <"$TMP/list"
 
-LC_ALL=C sort -o "$TMP/frags" "$TMP/frags" || die "could not order the fragment list — the collation could not run"
-count=$(wc -l <"$TMP/frags") || die "could not count the fragments — the collation could not run"
-count=$((count))
 if [ "$count" -eq 0 ]; then
   note "no fragments — nothing to collate"
   exit 0
 fi
 
+# The write folds in each file on disk and then deletes it, and it replaces
+# the record with what it read there — so an unstaged edit to any of them
+# would be published without the judge ever having measured it. The paths
+# checked are the ones the judge just named, so the guard and the thing it
+# guards cannot drift apart.
+git diff --name-only -z -- "${guarded[@]}" >"$TMP/dirty" ||
+  die "could not compare the changelog against the index — the collation could not run"
+if [ -s "$TMP/dirty" ]; then
+  die "the changelog differs between git and the working tree; the collation publishes the files on disk and the judge measures the ones git carries — stage or restore these first:
+$(tr '\0' '\n' <"$TMP/dirty" | sed 's/^/  /')"
+fi
+
 # awk normalizes a fragment that ends without a newline, which would
-# otherwise glue two entries into one line. Filename order within a section,
-# as the release notes have always read.
+# otherwise glue two entries into one line.
 for pair in $SECTIONS; do
   low=${pair%%:*}
   : >"$TMP/frag.$low"
   : >"$TMP/sec.$low"
-  LC_ALL=C sort -o "$TMP/sel.$low" "$TMP/sel.$low" ||
-    die "could not order the $low fragments — the collation could not run"
-  while IFS= read -r f; do
+  while IFS= read -r -d '' f; do
     awk 1 "$f" >>"$TMP/frag.$low" || die "could not read $f — the collation could not run"
   done <"$TMP/sel.$low"
 done
@@ -214,7 +230,7 @@ OUT=""
 # them: one left behind folds in a second time on the next run, so the refusal
 # has to name every survivor, not the first.
 survivors=""
-while IFS= read -r f; do
+while IFS= read -r -d '' f; do
   rm -f -- "$f" || survivors="$survivors  $f"$'\n'
 done <"$TMP/frags"
 if [ -n "$survivors" ]; then

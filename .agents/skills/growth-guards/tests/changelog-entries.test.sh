@@ -322,35 +322,83 @@ run_ce
 git -C "$R" rm -q --cached changelog.d/fixed/README.md
 rm -f "$R/changelog.d/fixed/README.md"
 stage
-# A pattern with no glob names one exact path and roots nowhere: only the
-# file it names is judged.
-printf -- '- %s\n' "$(rep x 250)" >"$R/elsewhere.md"
-printf 'not a fragment\n' >"$R/beside.md"
+# A pattern carrying no glob names one file, and naming one file is not
+# naming the directory it sits in — so it roots nowhere and sweeps nothing,
+# slash or no slash. The pattern below sits two directories deep, which is the
+# shape a leading-run derivation would give a root to.
+new_repo exactpath
+mkdir -p "$R/changelog.d/added"
+printf -- '- %s\n' "$(rep x 250)" >"$R/changelog.d/added/only.md"
+printf 'not a fragment at all\n' >"$R/changelog.d/added/beside.txt"
 stage
-run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=elsewhere.md'
-[ "$RC" -eq 1 ] && case "$OUT" in *beside.md*) false ;; *"elsewhere.md"*) true ;; *) false ;; esac \
-  && ok "an exact-path pattern roots nowhere and sweeps nothing beside it" \
-  || bad "an exact-path pattern roots nowhere and sweeps nothing beside it" "rc=$RC out=$OUT"
-git -C "$R" rm -q --cached elsewhere.md beside.md
-rm -f "$R/elsewhere.md" "$R/beside.md"
-stage
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=changelog.d/added/only.md'
+[ "$RC" -eq 1 ] \
+  && case "$OUT" in *"is not a fragment"*) false ;; *) true ;; esac \
+  && case "$OUT" in *"long entry: changelog.d/added/only.md"*) true ;; *) false ;; esac \
+  && ok "an exact-path pattern carrying a slash roots nowhere and sweeps nothing beside it" \
+  || bad "an exact-path pattern carrying a slash roots nowhere" "rc=$RC out=$OUT"
+# The control: a globbed pattern over that same directory DOES root there, and
+# then the neighbour is refused — so the pass above is the exact-path rule and
+# not a sweep that never runs.
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=changelog.d/added/*.md'
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/added/beside.txt is in the fragment tree but is not a fragment"*) true ;; *) false ;; esac \
+  && ok "control: a globbed pattern over the same directory does root there" \
+  || bad "control: a globbed pattern over the same directory does root there" "rc=$RC out=$OUT"
 
-echo "=== --list is the fragment set, with the section each belongs to ==="
+# The README exemption wins over every root, not merely the last one checked:
+# with a nested pair, the deeper root exempts its own README while the
+# shallower one still contains it.
+new_repo nestedroots
+mkdir -p "$R/changelog.d/nested/fixed"
+printf -- '- A nested entry.\n' >"$R/changelog.d/nested/fixed/a.md"
+printf '# nested\n\n- Format notes.\n' >"$R/changelog.d/nested/README.md"
+stage
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=changelog.d/nested/*/*.md changelog.d/*/legacy/*.md'
+[ "$RC" -eq 0 ] && ok "a README under the deeper of two nested roots is exempt" \
+  || bad "a README under the deeper of two nested roots is exempt" "rc=$RC out=$OUT"
+# The control: any other name in its place is swept by the shallower root.
+mv "$R/changelog.d/nested/README.md" "$R/changelog.d/nested/NOTES.md"
+stage
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=changelog.d/nested/*/*.md changelog.d/*/legacy/*.md'
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/nested/NOTES.md is in the fragment tree but is not a fragment"*) true ;; *) false ;; esac \
+  && ok "control: the same file under any other name is swept" \
+  || bad "control: the same file under any other name is swept" "rc=$RC out=$OUT"
+
+echo "=== --list is what the collator folds in and what it guards ==="
 new_repo listing
 printf -- '- One.\n' | frag fixed ken-1.md
 printf -- '- Two.\n' | frag added ken-2.md
 printf '# changelog.d\n' >"$R/changelog.d/README.md"
+printf '# Changelog\n\n## [Unreleased]\n' >"$R/CHANGELOG.md"
 stage
+TAB="$(printf '\t')"
 LIST=""
 LIST_RC=0
 LIST="$(cd "$R" && "$CE" --list 2>/dev/null | tr '\0' '\n')" || LIST_RC=$?
-case "$LIST" in *"added$(printf '\t')changelog.d/added/ken-2.md"*) ok "each record carries the section the judge decided" ;;
-  *) bad "each record carries the section the judge decided" "$LIST" ;; esac
-case "$LIST" in *"fixed$(printf '\t')changelog.d/fixed/ken-1.md"*) ok "and the path beside it" ;;
+[ "$LIST_RC" -eq 0 ] || bad "a clean run lists" "rc=$LIST_RC"
+case "$LIST" in *"fragment${TAB}added${TAB}changelog.d/added/ken-2.md"*) ok "each fragment record carries the section the judge decided" ;;
+  *) bad "each fragment record carries the section the judge decided" "$LIST" ;; esac
+case "$LIST" in *"fragment${TAB}fixed${TAB}changelog.d/fixed/ken-1.md"*) ok "and the path beside it" ;;
   *) bad "and the path beside it" "$LIST" ;; esac
+# The record goes with them, so a caller guards the paths this run judged
+# rather than a list it spells a second time.
+case "$LIST" in *"record${TAB}CHANGELOG.md"*) ok "the record is named too" ;;
+  *) bad "the record is named too" "$LIST" ;; esac
 case "$LIST" in *README*) bad "the README is not listed as a fragment" "$LIST" ;; *) ok "the README is not listed as a fragment" ;; esac
-[ "$(printf '%s\n' "$LIST" | grep -c .)" -eq 2 ] && ok "nothing else is listed" \
+[ "$(printf '%s\n' "$LIST" | grep -c .)" -eq 3 ] && ok "nothing else is listed" \
   || bad "nothing else is listed" "$LIST"
+OFFLIST="$(cd "$R" && GROWTH_GUARDS_CHANGELOG_RECORD= "$CE" --list 2>/dev/null | tr '\0' '\n')"
+case "$OFFLIST" in
+  *record*) bad "no record record where that scope is off" "$OFFLIST" ;;
+  *) ok "no record record where that scope is off" ;;
+esac
+# NUL-terminated, not newline-terminated: that is the whole guarantee a path
+# carrying a newline rests on, and a terminator swap must not go unnoticed.
+RAW="$(cd "$R" && "$CE" --list 2>/dev/null | od -An -c | tr -s ' ')"
+[ "$(printf '%s' "$RAW" | grep -c '\\0')" -ge 1 ] \
+  && case "$RAW" in *'\n'*) false ;; *) true ;; esac \
+  && ok "every record ends in NUL and none in a newline" \
+  || bad "every record ends in NUL and none in a newline" "$RAW"
 OUT=""
 RC=0
 OUT="$(cd "$R" && "$CE" --list 2>&1 >/dev/null)" || RC=$?
