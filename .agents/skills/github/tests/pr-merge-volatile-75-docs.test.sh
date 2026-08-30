@@ -82,33 +82,45 @@ assert_matches "$table" 'README\.md § Exit 75 recovery' \
 readme_src=$(sed -n '/^## Exit 75 recovery$/,/^## /p' "$REPO_ROOT/skills/github/README.md")
 assert_matches "$readme_src" 'exits 75 when the PR is queued or auto-merge is armed' \
   "README states the volatile 75 contract"
-# The verdict set grows (queue-wait gained `conflicting`), so the README
-# points at the tables that already carry it instead of restating them — a
-# list here was a fifth copy going stale on every addition. Routing lives in
-# the workflow, semantics in the script's --help; both pointers are pinned,
-# and so are the sections they resolve to.
+# The verdict set grows, so the README points at the tables that carry it
+# instead of restating them: routing in the workflow, semantics in the
+# script's --help. Neither pointer is total — queue-wait's JSON contract
+# carries verdicts emit_error raises, `unknown` among them — so the refusal
+# covering a verdict the table has no row for is pinned in both copies an
+# operator reads.
 assert_matches "$readme_src" 'merge-pr\.md` § 5 step 1' \
   "README routes verdicts by the workflow table rather than restating them"
 assert_matches "$readme_src" 'queue-wait --help` § Verdicts is where' \
   "README keeps queue-wait --help as the reference for what a verdict means"
+assert_matches "$readme_src" '^A verdict with no row there is never re-armed: surface it and hand it back\.$' \
+  "README refuses to re-arm a verdict the routing table does not route"
 assert_matches "$readme_src" 'is a CI repair first' \
   "README requires the CI repair before re-arming an ejected head"
 assert_matches "$script_src" 'route every verdict by orch merge-pr\.md § 5 step 1' \
   "the script's own note routes by the same table the README names"
+assert_matches "$script_src" 'a verdict with no row there is never re-armed: surface it and hand it back' \
+  "the script's own note carries the same refusal, for an operator with no orch skill in front of them"
 assert_matches "$script_src" 'repair what the cause names before re-arming' \
   "the script's own note requires the repair before a re-arm, as the README does"
 
-# A pointer is worth what its target is. Both are anchored on the row or the
+# A pointer is worth what its target is. Each is anchored on the row or the
 # heading itself, so prose elsewhere in either file naming a verdict cannot
 # stand in for the section going missing.
 queue_wait_src=$(cat "$REPO_ROOT/skills/orch/scripts/queue-wait")
-assert_matches "$queue_wait_src" '^Verdicts \(the merge-pr § 5 step 1 routing table\):$' \
+assert_matches "$queue_wait_src" "^Verdicts \(the semantics behind merge-pr § 5 step 1's routing table\):\$" \
   "queue-wait --help still carries the § Verdicts heading the README names"
 merge_pr_src=$(cat "$REPO_ROOT/skills/orch/workflows/merge-pr.md")
 assert_matches "$merge_pr_src" '^   \| `verdict` \| Meaning \| Action \|$' \
   "merge-pr § 5 step 1 still carries the routing table the README routes to"
 assert_matches "$merge_pr_src" '^   \| `conflicting` \|.*\| Restack cycle below \|$' \
   "that table routes the conflicting verdict, as a row and not as prose"
+# Beside it, so a later verdict addition cannot reopen the hole this closed:
+# the table must route the error verdict queue-wait already emits, and must
+# state the rule for one it does not yet have a row for.
+assert_matches "$merge_pr_src" '^   \| `unknown` \|.*\| Surface and hand back\..*Never re-arm' \
+  "that table routes the unknown verdict to surface-and-hand-back, not to a re-arm"
+assert_matches "$merge_pr_src" '^   A verdict with no row above is never re-armed: surface it and hand it back\.$' \
+  "the table states the rule for a verdict it has no row for"
 assert_matches "$table" 'await-mergeable` is not that' \
   "the outcomes section states await-mergeable is not the ejection watcher"
 

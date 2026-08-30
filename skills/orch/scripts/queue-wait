@@ -50,7 +50,7 @@ included, which is what it reads while GitHub recomputes and what it
 settles at after a merge. `state` is read first in the same call, so a
 merged PR exits on MERGED before mergeable is consulted at all.
 
-Verdicts (the merge-pr § 5 step 1 routing table):
+Verdicts (the semantics behind merge-pr § 5 step 1's routing table):
   merged      state == "MERGED". The only exit-0 verdict.
   conflicting mergeable == "CONFLICTING": the head conflicts with the base.
               The queue rejects it and an armed auto-merge sits forever, so
@@ -88,16 +88,16 @@ read failed — a failed read is unknown, never zero (absorbed, warned after
 3 consecutive failures, never compared), so a read failure can neither
 fabricate nor erase movement.
 
-Confirmation covers exactly the verdicts the routing table above notes as
-candidates: conflicting, ejected, and the auto-merge-cleared disarm. Each
-must hold across QUEUE_WAIT_CONFIRM_POLLS consecutive polls (default 2)
-before terminating the wait, so one blip cannot start a spurious recovery
-cycle, and a verdict added later stays outside this claim until it is noted
-as a candidate too. Every other exit is one observation: merged, closed,
-dequeued, the check_failed disarm (ci-wait's, reported under the same
-`disarmed` name), and not_queued. A candidate STILL STANDING at the deadline
-outranks "still queued" — a poll that routes nothing clears it, so what wins
-is a candidate never contradicted, not one merely seen.
+Confirmation applies to the verdicts routed through note_candidate:
+conflicting, ejected, and the auto-merge-cleared disarm. Each must hold
+across QUEUE_WAIT_CONFIRM_POLLS consecutive polls (default 2) before
+terminating the wait, so one blip cannot start a spurious recovery cycle; a
+verdict added later is confirmed only if it is routed through note_candidate
+too. Every other exit is one observation: merged, closed, dequeued, the
+check_failed disarm (ci-wait's, reported under the same `disarmed` name),
+and not_queued. A candidate STANDING AT THE LAST POLL outranks "still
+queued" — a poll that routes nothing clears it, so an earlier candidate
+already contradicted does not decide the deadline.
 
 Failed-required-check probe (--no-check-probe to disable): detection of
 the failed-required-check disarm cause is delegated to
@@ -1032,9 +1032,9 @@ while [ "$polls" -eq 0 ] || [ "$elapsed" -lt "$MAX_WAIT" ]; do
   sleep_within_budget "$POLL_INTERVAL"
 done
 
-# Deadline reached. A candidate ejection/disarm seen at least once outranks
-# "still queued" — an unconfirmed real ejection must not be reported as a
-# merge that is still on its way.
+# Deadline reached. A candidate still standing at the last poll outranks
+# "still queued" — an unconfirmed real conflict, ejection or disarm must not
+# be reported as a merge that is still on its way.
 if [[ -n "$candidate_verdict" ]]; then
   last_cause="$candidate_cause"
   emit_result "complete" "$candidate_verdict"

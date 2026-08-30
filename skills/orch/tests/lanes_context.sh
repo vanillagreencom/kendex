@@ -10,12 +10,13 @@
 # what these cases pin.
 #
 # Where the status line SITS is pinned too, and by property rather than by
-# count. The claude screens below are real `tmux capture-pane` output from
-# this fleet (see case 1); the footer under a status line is one row per
-# running agent, so no line count reaches an orchestrating lane's. Three
-# cases hold that shut, each against a different mutation:
-#   case 1  a real six-row footer — dies the moment any bottom window
-#           narrower than that is taken off the screen
+# count. Case 1's screen is a real `tmux capture-pane`; the other claude
+# screens are built from real status lines. The footer under a status line
+# grows by a row per running agent, so no line count reaches an
+# orchestrating lane's. Three cases hold that shut, each against a different
+# mutation:
+#   case 1  an orchestrating lane's real footer — dies the moment any bottom
+#           window narrower than it is taken off the screen
 #   case 14 a session with no percentage yet, under prose that names a model
 #           and one — dies if the claude shape is loosened back to accepting
 #           words between the model name and the percentage
@@ -40,6 +41,10 @@
 #  13. a pane that has exited to its shell is not measured from what it left
 #  14. a model and a percentage in prose is not a status line
 #  15. an unenumerable tmux server refuses every claim, not just foreign ones
+#  16. a login shell (`-bash`) and a second shell name are refused too, not
+#      only the one name case 13 supplies
+#  17. the model's dotted version and its `(1M context)` parenthetical both
+#      sit between the model name and the percentage, and both parse
 #
 # errexit is on: every case here either succeeds or is guarded, so an
 # unexpected non-zero is a broken fixture, not a finding to print past.
@@ -165,9 +170,12 @@ echo "=== lanes context ==="
 
 # Foreground process per pane. %9 is the one that exited to its shell.
 {
-  for n in 1 2 3 4 5 10; do printf '%s %%%s claude\n' "$LIVE_PID" "$n"; done
+  for n in 1 2 3 4 5 10 13 14; do printf '%s %%%s claude\n' "$LIVE_PID" "$n"; done
   for n in 6 7 8; do printf '%s %%%s codex\n' "$LIVE_PID" "$n"; done
   printf '%s %%9 fish\n' "$LIVE_PID"
+  # tmux reports a login shell with the leading dash it was started with.
+  printf '%s %%11 -bash\n' "$LIVE_PID"
+  printf '%s %%12 zsh\n' "$LIVE_PID"
 } > "$PANES"
 
 write_claim one    "%1"  "$H/.claude"  "ken-101"
@@ -179,18 +187,20 @@ write_claim seven  "%7"  "$H/.codex"   "ken-107"
 write_claim eight  "%8"  "$H/.codex"   "ken-108"
 write_claim nine   "%9"  "$H/.claude"  "ken-109"
 write_claim eleven "%10" "$H/.claude"  "ken-111"
+write_claim twelve   "%11" "$H/.claude" "ken-112"
+write_claim thirteen "%12" "$H/.claude" "ken-113"
+write_claim fourteen "%13" "$H/.claude" "ken-114"
+write_claim fifteen  "%14" "$H/.claude" "ken-115"
 # The foreign lane's pane NUMBER exists here too, on a screen that parses
 # cleanly: %1 is ken-101's, reading 35.
 write_claim_on "$FOREIGN_PID" foreign "%1" "$H/.claude" "ken-110"
 
-# 1. An ORCHESTRATING lane, captured live rather than written from memory:
-# tmux panes %16, %23 and %24 of server 2723552 on 2026-08-29 — %16 supplying
-# the screen, the other two their agent rows. Below the status line sit the
-# permission-mode row, the branch row, and one row per running agent: a
-# six-line non-blank footer here, and unbounded in general, since a lane
-# running more agents draws more rows. Any window narrower than the footer
-# loses exactly the lanes the overseer compaction rule exists for. Only the
-# box rules are trimmed, to keep this file narrow; nothing else is altered.
+# 1. An ORCHESTRATING lane, captured live rather than written from memory.
+# The footer below its status line grows by a row per running agent, so it
+# is unbounded: a lane running more agents draws more rows, and any window
+# narrower than the footer loses exactly the lanes the overseer compaction
+# rule exists for. Only the box rules are trimmed, to keep this file narrow;
+# nothing else is altered.
 screen 1 '  ⎿  Tip: Use /clear to start fresh when switching topics and free up context
 
 ──────────────────────────────
@@ -231,13 +241,34 @@ $ '
 screen 10 '● Opus 5 has used 35% of its window on this lane so far
   scribd-brain Opus 5 (1M context) (S)
   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents'
+# 16. Two more panes back at their shell, each carrying a status line that
+# parses cleanly: whichever one gets measured is a lane reporting the number
+# it stopped at. %11 is a LOGIN shell, which tmux names with the dash it was
+# started with; %12 is a second name from the list, so the list is driven by
+# more than the one entry case 13 supplies.
+screen 11 '  kendex (🌳 ken-112) Opus 5 44% (brad@drovr.dev)     /rc
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+$ '
+screen 12 '  kendex (🌳 ken-113) Opus 5 55% (brad@drovr.dev)     /rc
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+$ '
+# 17. What Claude puts between the model name and the percentage. The window
+# size rides in a parenthetical, and a point-release model puts a dotted
+# version in the version slot; both spellings run on this fleet right now.
+# Without either allowance the line matches nothing and the lane drops out of
+# the report unmeasured, which is the failure the whole `context` verb exists
+# to prevent.
+screen 13 '  scribd-brain Opus 5 (1M context) 22% (brad@drovr.dev)     /rc
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents'
+screen 14 '  scribd-brain Sonnet 4.5 (1M context) 12% (brad@drovr.dev)     /rc
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents'
 
 OUT="$(run_ctx --json)"
 
 # 1. The claude shape carries the share USED, and is reported as it stands —
 # from under a footer no line count would have cleared.
 assert_eq "$(jq -r '.[] | select(.lane=="ken-101") | .context_used_pct' <<<"$OUT")" "35" \
-  "the claude status line reports its number as used, under a six-row footer"
+  "the claude status line reports its number as used, under an agent-row footer"
 assert_eq "$(jq -r '.[] | select(.lane=="ken-101") | .harness' <<<"$OUT")" "claude" \
   "the matched shape names the harness, with nothing recorded in advance"
 assert_eq "$(jq -r '.[] | select(.lane=="ken-101") | .status' <<<"$OUT")" "ok" \
@@ -288,6 +319,31 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-109") | .context_used_pct' <<<"$OUT
   "an exited pane carries no number"
 assert_contains "$(jq -r '.[] | select(.lane=="ken-109") | .detail' <<<"$OUT")" "exited to its shell" \
   "the refusal names the evidence it acted on"
+
+# 16. The dash a login shell carries is stripped before the name is matched,
+# and the list holds more than the one name case 13 drives. Each of these
+# panes left a readable status line behind, so a lapse in either reports 44
+# or 55 for a lane that is running nothing.
+assert_eq "$(jq -r '.[] | select(.lane=="ken-112") | .status' <<<"$OUT")" "no_status_line" \
+  "a pane at a login shell is refused, dash and all"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-112") | .context_used_pct' <<<"$OUT")" "null" \
+  "a login-shell pane carries no number, not the one left on its screen"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-113") | .status' <<<"$OUT")" "no_status_line" \
+  "a second shell name from the list is refused too"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-113") | .context_used_pct' <<<"$OUT")" "null" \
+  "that pane carries no number either"
+
+# 17. The version slot and the parenthetical. A lane on a 1M-context session,
+# or on a point-release model, is measured like any other; unmatched, it
+# leaves the report entirely and never gets compacted.
+assert_eq "$(jq -r '.[] | select(.lane=="ken-114") | .context_used_pct' <<<"$OUT")" "22" \
+  "a parenthetical between the model name and the percentage is read through"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-114") | .harness' <<<"$OUT")" "claude" \
+  "that line still names the claude harness"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-115") | .context_used_pct' <<<"$OUT")" "12" \
+  "a dotted model version is read through, parenthetical and all"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-115") | .harness' <<<"$OUT")" "claude" \
+  "that line names the claude harness too"
 
 # 14. Prose names a model and a percentage with words between them; the
 # status line below it names a model and no percentage at all. Neither is a

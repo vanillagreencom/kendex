@@ -81,12 +81,13 @@ review-gate beside this one):
   pass that prints `disarmed … (re-arm)` lines.
 
 Route each verdict by the table in
-`.agents/skills/orch/workflows/merge-pr.md` § 5 step 1 — it names the action
-for every verdict and grows with the verdict set, so a list here would be a
-copy going stale on each addition; `queue-wait --help` § Verdicts is where
-each verdict's meaning lives. Whatever the route, repair what the `cause`
-names before re-arming — a `merge_group_failed`/`check_failed` cause
-is a CI repair first, else the same head ejects again. Re-arm with
+`.agents/skills/orch/workflows/merge-pr.md` § 5 step 1 — a list here would be
+a copy going stale on each addition to the verdict set;
+`queue-wait --help` § Verdicts is where each verdict's meaning lives.
+A verdict with no row there is never re-armed: surface it and hand it back.
+Whatever the route, repair what the `cause` names before re-arming: a
+`merge_group_failed`/`check_failed` cause is a CI repair first, else the same
+head ejects again. Re-arm with
 `.agents/skills/github/scripts/github.sh pr-merge <N> --auto`.
 
 Where branch protection *is* enabled, the opposite problem appears: after a

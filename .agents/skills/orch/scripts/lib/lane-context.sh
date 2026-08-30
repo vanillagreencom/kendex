@@ -13,12 +13,12 @@
 # which harness a pane runs. Both are reported as CONTEXT_USED_PCT: one
 # direction, and a rising number always means a fuller context.
 #
-# WHERE the status line sits is not a line count. Claude draws below it a
-# permission-mode row, a branch row, and ONE ROW PER RUNNING AGENT, so the
-# footer grows with the fleet — and the deepest footers belong to the
-# orchestrating lanes, the ones this measurement exists for. The whole
-# captured screen is read and the BOTTOM-MOST reading wins: anything above it
-# is an earlier render of the same lane, from before it compacted.
+# WHERE the status line sits is not a line count. Claude draws ONE ROW PER
+# RUNNING AGENT below it, so the footer grows with the fleet — and the
+# deepest footers belong to the orchestrating lanes, the ones this
+# measurement exists for. The whole captured screen is read and the
+# BOTTOM-MOST reading wins: anything above it is an earlier render of the
+# same lane, from before it compacted.
 #
 # A screen that outlived its harness is refused rather than measured, and
 # that refusal takes positive evidence, never distance: a pane whose
@@ -113,13 +113,16 @@ lane_context_parse() {
 # says whether a harness is still drawing the screen about to be read.
 lane_context_collect() {
   local claims="$1" alias_fn="$2" cfg lane server pane screen parsed
-  local this_server detail cmd p_pid p_pane p_cmd
-  local -A pane_cmd=()
+  local this_server detail cmd pane_cmds p_pid p_pane p_cmd
+  # `<pane id> <command>` per line, not an associative array: macOS Bash 3.2
+  # has none and rejects `local -A`, which under this file's errexit would
+  # abort the whole report rather than lose one lane.
+  pane_cmds=""
   this_server=""
   while read -r p_pid p_pane p_cmd; do
     [[ -n "$p_pane" ]] || continue
     [[ -n "$this_server" ]] || this_server="$p_pid"
-    pane_cmd["$p_pane"]="$p_cmd"
+    pane_cmds+="$p_pane $p_cmd"$'\n'
   done < <(tmux list-panes -a -F '#{pid} #{pane_id} #{pane_current_command}' 2>/dev/null)
   {
     while IFS=$'\t' read -r cfg lane server pane; do
@@ -134,7 +137,7 @@ lane_context_collect() {
           "unreadable" "$detail"
         continue
       fi
-      cmd="${pane_cmd["$pane"]:-}"
+      cmd="$(awk -v p="$pane" '$1 == p { print $2; exit }' <<<"$pane_cmds")"
       if [[ "${cmd#-}" =~ ^($LANE_CONTEXT_SHELLS)$ ]]; then
         lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" "" "" \
           "no_status_line" "the pane has exited to its shell; any reading left on its screen is what the lane ended with"

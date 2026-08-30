@@ -156,6 +156,9 @@ Use the output as `MAIN_REPO_ROOT`.
    | `closed` | The PR was closed out from under the merge | Skip steps 2-4 and hand back |
    | `queued` | Deadline reached, still armed. `cause: still_progressing` = queue-entry or check-run movement within the last 3 polls, or a check-run still running on the merge-group head; `stalled` = neither (`progressing` is `null` when unobservable) | Not a failure — never re-arm or recover on `still_progressing`. Re-run the same `queue-wait` on it. Only when the session cannot keep waiting: skip steps 2-4 and note in § 6 that sync and cleanup need `merge-pr [PR_NUMBER]` re-run once merged |
    | `not_queued` | The `--auto` merge never armed | Re-run `pr-merge [PR_NUMBER] --auto` once; still unarmed → surface and hand back |
+   | `unknown` | `status: error` — the queue state could not be read at all (`gh` missing, no auth, repo unresolvable, or GitHub rejected the query). The `stderr` line says which | Surface and hand back. Never re-arm: nothing read the queue state, so an arming already live would be re-armed blind |
+
+   A verdict with no row above is never re-armed: surface it and hand it back.
 
    **Recovery cycle** — route the failure back into ci-fix, never fix CI by hand:
 

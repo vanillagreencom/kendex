@@ -271,15 +271,18 @@ out="$(run_queue_wait -- 1 1 20 --no-check-probe 2>"$err")" && rc=0 || rc=$?
 assert_contains "$out" "conflicting" "the plain line names the verdict" "$err"
 assert_contains "$out" "restacked" "the plain line names the remedy" "$err"
 
-# The verdict is part of the contract the --help heredoc states, and that
-# contract is the routing table four other documents now delegate to: the
-# github README, orch's gates.md, merge-pr.md § 5 step 1 and pr-merge.sh all
-# point here rather than restating a verdict list. Anchored on the row, so
-# deleting the row cannot pass on the word appearing in the prose above it.
+# The --help heredoc is the semantics reference other documents point at
+# instead of restating a verdict list, so deleting a row here strands them.
+# The row assertion is anchored on the row, so deleting it cannot pass on the
+# word appearing in the prose above. The ranking is a sentence, matched
+# against a whitespace-flattened copy: it wraps mid-clause in the heredoc,
+# and anchoring on a wrap point would break on any reflow of a rule that
+# survived it.
 help_out="$(run_queue_wait -- --help 2>/dev/null)"
+help_flat="$(tr '\n' ' ' <<<"$help_out" | tr -s ' ')"
 assert_matches "$help_out" '^  conflicting mergeable == "CONFLICTING": the head conflicts with the base\.$' \
-  "--help carries the conflicting verdict as a row of its routing table"
-assert_matches "$help_out" '^ +this outranks ejected and disarmed — the fix is a restack, not$' \
+  "--help carries the conflicting verdict as a row of its § Verdicts block"
+assert_matches "$help_flat" 'this outranks ejected and disarmed — the fix is a restack, not a CI cycle\.' \
   "the row states the ranking that keeps a conflict out of the recovery cycle"
 assert_matches "$help_out" '# only when known: base_conflict \|$' \
   "--help carries its cause in the cause list, not only in prose"
