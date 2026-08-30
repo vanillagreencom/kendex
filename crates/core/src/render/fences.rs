@@ -100,17 +100,114 @@ fn stands(text: &str) -> Vec<Stand> {
     stand
 }
 
+/// Whether a block boundary falls between two prose lines. A run of
+/// backticks reaches only as far as the block it opened in, and this is
+/// what stops one at the edge.
+///
+/// Four shapes draw a boundary. An ATX heading is one line and a block of
+/// its own, so a boundary falls on both sides of it. A setext underline
+/// closes the heading whose text stands above it, so a boundary falls
+/// after it. A list marker opens an item, which is a block of its own,
+/// while a line carrying no marker continues the item above it. A
+/// blockquote is a block whether or not a blank line precedes it, so a
+/// quoted line and a plain one are never the same block.
+///
+/// Nothing else here is a container. A table row, an HTML block and a
+/// footnote definition each end a paragraph in markdown and do not end
+/// one here.
+fn breaks_a_block(above: &str, below: &str) -> bool {
+    atx_heading(above)
+        || setext_underline(above)
+        || atx_heading(below)
+        || setext_underline(below)
+        || list_marker(below)
+        || quoted(above) != quoted(below)
+}
+
+/// What stands past up to three spaces of indent, or `None` at four,
+/// where markdown reads an indented block rather than a marker.
+fn unindented(line: &str) -> Option<&str> {
+    let rest = line.trim_start_matches(' ');
+    (line.len() - rest.len() <= 3).then_some(rest)
+}
+
+/// One to six `#`, then whitespace or the end of the line.
+fn atx_heading(line: &str) -> bool {
+    let Some(rest) = unindented(line) else {
+        return false;
+    };
+    let hashes = rest.bytes().take_while(|b| *b == b'#').count();
+    (1..=6).contains(&hashes)
+        && rest[hashes..]
+            .chars()
+            .next()
+            .is_none_or(char::is_whitespace)
+}
+
+/// Nothing but `=` or nothing but `-`. A run of dashes with no paragraph
+/// above it is a thematic break rather than an underline, and both are
+/// blocks, so one reading answers for both.
+fn setext_underline(line: &str) -> bool {
+    let Some(rest) = unindented(line).map(str::trim_end) else {
+        return false;
+    };
+    !rest.is_empty() && (rest.bytes().all(|b| b == b'=') || rest.bytes().all(|b| b == b'-'))
+}
+
+/// A list item's marker: `-`, `+` or `*`, or up to nine digits and a `.`
+/// or `)`, then whitespace or the end of the line. The whitespace is what
+/// tells a marker from the `--no-verify` that opens a line of prose.
+fn list_marker(line: &str) -> bool {
+    let Some(rest) = unindented(line) else {
+        return false;
+    };
+    let after = match rest.as_bytes() {
+        [b'-' | b'+' | b'*', tail @ ..] => tail,
+        bytes => {
+            let digits = bytes.iter().take_while(|b| b.is_ascii_digit()).count();
+            match bytes.get(digits) {
+                Some(b'.' | b')') if (1..=9).contains(&digits) => &bytes[digits + 1..],
+                _ => return false,
+            }
+        }
+    };
+    after.first().is_none_or(u8::is_ascii_whitespace)
+}
+
+/// Whether this line stands inside a blockquote.
+fn quoted(line: &str) -> bool {
+    unindented(line).is_some_and(|rest| rest.starts_with('>'))
+}
+
+/// Whether the byte at `at` is one a backslash made literal. Backslashes
+/// escape each other, so it is the run of them ending at `at` that
+/// decides: an odd run leaves the byte escaped, an even one leaves it a
+/// delimiter with escaped backslashes in front of it.
+fn escaped(bytes: &[u8], at: usize) -> bool {
+    let before = bytes[..at].iter().rev();
+    before.take_while(|b| **b == b'\\').count() % 2 == 1
+}
+
 /// Inline code spans of one line, as outer byte ranges. A run of backticks
 /// closes only on a run of the same length, so a span may quote backticks
 /// of its own, and a run that never meets its match is the literal
 /// characters rather than an opener — which is what keeps one stray
 /// backtick from reading the rest of a document as quoted.
+///
+/// A backslash-escaped backtick opens nothing: it is the character the
+/// text wanted to show. It still closes, because markdown reads no
+/// escapes inside a span — a backslash there is one more byte of the code
+/// being quoted.
 pub fn code_spans(line: &str) -> Vec<(usize, usize)> {
     let bytes = line.as_bytes();
     let mut spans: Vec<(usize, usize)> = Vec::new();
     let mut at = 0;
     while at < bytes.len() {
         if bytes[at] != b'`' {
+            at += 1;
+            continue;
+        }
+        if escaped(bytes, at) {
             at += 1;
             continue;
         }
@@ -141,12 +238,16 @@ pub fn code_spans(line: &str) -> Vec<(usize, usize)> {
 /// read together rather than one at a time: a line a span crosses whole is
 /// quoted for its whole length.
 ///
-/// The reach is one paragraph — a run of `prose` lines with no blank among
-/// them — not the whole document. A run that meets no match before the
-/// paragraph ends quotes nothing, which is what stops one stray backtick
-/// from reaching forward past every blank line for a partner and quoting
-/// everything in between. Lines that are not prose are left empty: there
-/// the marks are the shell's, not markdown's.
+/// The reach is one block — a run of `prose` lines with no blank line and
+/// no boundary among them — not the whole document. A run that meets no
+/// match before the block ends quotes nothing, which is what stops one
+/// stray backtick from reaching forward for a partner and quoting
+/// everything in between. A blank line is not the only thing that ends a
+/// block: [`breaks_a_block`] says where else one ends, and a run reaching
+/// across such a boundary would pair two backticks markdown reads as
+/// literal characters and quote a whole line nobody quoted. Lines that are
+/// not prose are left empty: there the marks are the shell's, not
+/// markdown's.
 pub fn code_spans_by_line(lines: &[String], prose: &[bool]) -> Vec<Vec<(usize, usize)>> {
     let mut spans: Vec<Vec<(usize, usize)>> = vec![Vec::new(); lines.len()];
     let paragraph = |at: usize| prose[at] && !lines[at].trim().is_empty();
@@ -157,7 +258,10 @@ pub fn code_spans_by_line(lines: &[String], prose: &[bool]) -> Vec<Vec<(usize, u
             continue;
         }
         let mut to = from;
-        while to + 1 < lines.len() && paragraph(to + 1) {
+        while to + 1 < lines.len()
+            && paragraph(to + 1)
+            && !breaks_a_block(&lines[to], &lines[to + 1])
+        {
             to += 1;
         }
         let joined = lines[from..=to].join("\n");
