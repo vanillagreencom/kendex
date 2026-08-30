@@ -69,8 +69,7 @@ those trees it committed.
   a dotted key, an inline table, a nested table, a name wearing whitespace,
   an escaped name and an escaped value all answer `false` that way, and so
   does `source = "in-place"` under any table but `[skills.<name>]`, the only
-  one that accounts. Every one of those is a hand edit: kendex declares in
-  place for skills alone.
+  one that accounts.
 - **Merge base on `pull_request`** (`base...head`): the base branch moves
   under an open PR, and only the merge base isolates what the PR changed.
 - **Two endpoints on `push` and `merge_group`** (`base head`): a force-push
