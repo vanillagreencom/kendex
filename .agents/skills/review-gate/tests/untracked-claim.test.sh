@@ -14,8 +14,16 @@ PASS=0 FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ok    $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  FAIL  $1"; echo "        got: $2"; }
 
-prog="$(sed -n "/^t_threads_page_jq='/,/^  end'/p" "$PRED" | sed "s/^t_threads_page_jq='//; s/^  end'\$/  end/")"
+# Both halves come out of the script: RG_DISPOSITION_DEFS (the reply forms,
+# shared with --declined-on-added-lines) and the page program that consumes
+# them. Assembled here the way the script assembles them, so a change to
+# either reaches this suite instead of going untested.
+defs="$(sed -n "/^RG_DISPOSITION_DEFS='/,/^'\$/p" "$PRED" | sed "s/^RG_DISPOSITION_DEFS='//; /^'\$/d")"
+[ -n "$defs" ] || { echo "FAIL: could not extract RG_DISPOSITION_DEFS"; exit 1; }
+prog="$(sed -n "/^t_threads_page_jq=/,/^  end'/p" "$PRED" | sed "1d; s/^  end'\$/  end/")"
 [ -n "$prog" ] || { echo "FAIL: could not extract t_threads_page_jq"; exit 1; }
+prog="$defs
+$prog"
 
 page() { # page RESOLVED_JSON…  -> jq output
   jq -r "$prog" <<<"{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[$1]}}}}}"
@@ -67,6 +75,13 @@ case "$out" in "0 1 "*) ok "Fixed in without a sha is not a disposition";; *) ba
 
 out=$(page "$(thread true "$(human 'Declined: the caller is tracked by the loader already')")")
 case "$out" in "0 0 "*) ok "a Declined: reply with a naked track-word is never a claim";; *) bad "a Declined: reply with a naked track-word is never a claim" "$out";; esac
+
+# The close check (--declined-on-added-lines) reads a WIDER decline form than
+# this term does, out of the same defs block. Widening `disposition` too would
+# loosen the gate: this reply would stop being a claim while still naming no
+# issue. It must stay a claim.
+out=$(page "$(thread true "$(human 'Declined under this PR'"'"'s freeze, tracked separately.')")")
+case "$out" in "0 1 "*) ok "a decline without the colon is still an untracked claim to the gate";; *) bad "a decline without the colon is still an untracked claim to the gate" "$out";; esac
 
 out=$(page "$(thread false "$(human 'looking')")")
 case "$out" in "1 0 "*) ok "unresolved counting unchanged";; *) bad "unresolved counting unchanged" "$out";; esac

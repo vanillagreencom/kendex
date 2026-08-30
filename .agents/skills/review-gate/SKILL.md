@@ -260,6 +260,11 @@ nothing else.
 # validate settings values alone, no evidence read, no PR required
 .agents/skills/review-gate/scripts/review-predicate.sh --check-config
 
+# may this PR's work item be closed? (env: GH_REPO, PR_NUMBER) — exit 0
+# clean, 1 a decline stands on a line the diff added (one line per thread
+# on stdout), 2 no verdict. orch's merge-pr close step runs this
+.agents/skills/review-gate/scripts/review-predicate.sh --declined-on-added-lines
+
 # converge every open PR's gate status (env: GH_REPO)
 .agents/skills/review-gate/scripts/review-writer.sh
 

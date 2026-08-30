@@ -11,7 +11,7 @@ Paths are as installed in a consuming repo, under
 
 | File | What it is |
 |------|------------|
-| `scripts/review-predicate.sh` | Answers "is this head reviewed?" — verdict on stdout, exit 2 means no verdict, take no action. `--check-config` runs its settings-validation phase alone. Resolves which sources could open the gate at this head, and calls the composer below for the awaiting verdict's description. |
+| `scripts/review-predicate.sh` | Answers "is this head reviewed?" — verdict on stdout, exit 2 means no verdict, take no action. `--check-config` runs its settings-validation phase alone. `--declined-on-added-lines` answers a second question for orch's merge-pr close step. May this PR's work item be closed, or does a decline stand on a line the diff added? It reuses the thread reply forms rather than parsing them twice. Resolves which sources could open the gate at this head, and calls the composer below for the awaiting verdict's description. |
 | `tests/lib/gh-shim.sh` | The fake `gh` every offline proof puts on PATH: fixtures by endpoint, real jq for `--jq`, fail switches. |
 | `tests/lib/selftest-fixtures.sh` | The fixture writers, one per endpoint shape, sourced by the selftest. |
 | `scripts/awaiting-detail.sh` | Fits that resolved source list into the 140 characters GitHub keeps of a status description. Decides no eligibility of its own. Required at runtime: the predicate exits 2 with no verdict if it fails. |

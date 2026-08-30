@@ -288,6 +288,8 @@ git -C "[WORKTREE_PATH]" push origin HEAD
 
 The word "tracked" (any form) without a `KEN-` or `#` issue id turns the gate red (`untracked-claim`) unless the reply opens with `Fixed in <sha>` or `Declined:`; only a later reply of one of the three forms clears it, and resolving the thread does not. A decline is a decline — say so.
 
+`Declined:` is not one of the forms open on a thread anchored to a line this diff added. No freeze of this PR, whoever declared it, reaches a cause the diff introduced or armed ([finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence)); those threads take `Fixed in <sha>` or `Tracked: <ID>`, and merge-pr § 5 step 2 refuses to close the work item while such a reply stands.
+
 ```bash
 .agents/skills/github/scripts/github.sh post-reply "[THREAD_ID]" "[REPLY_BODY]" --pr "[PR_NUMBER]"
 .agents/skills/github/scripts/github.sh resolve-thread "[THREAD_ID]"

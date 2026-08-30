@@ -44,6 +44,8 @@ Review and QA-review belong to the reviewer skill: [`../reviewer/workflows/revie
 
 Execute workflow sections in order; a "**Skip if**" condition is the workflow's decision, never your own scope assessment. Never push and never open a PR — the orchestrator does that after review passes.
 
+**No freeze covers what this diff did.** A freeze of this PR never answers a finding on a line this diff added, whoever declared it and whether the disposition is written as `freeze` or as `Declined:`. Those threads take `Fixed in <sha>`, or `Tracked: <ID>` with the issue filed before the reply. `merge-pr.md` § 5 step 2 refuses to close the work item while a `Declined:` reply stands on one. The dispositions and the rest of the rule are in [orch references/finding-disposition.md § Recurrence](../orch/references/finding-disposition.md#recurrence).
+
 **The completion artifact is the round.** `dev-return-write` writes it after the commit; never hand-author the JSON (schema: orch [`schemas/dev-return.md`](../orch/schemas/dev-return.md)).
 
 - `--issue` is the delegation's `Artifact Key:` line — the normalized workflow-state key (`issue-N` for GitHub, `PROJ-123` for Linear), never the tracker-native `OWNER/REPO#N` or a bare number — and `--round-id` its `Round ID:` line.

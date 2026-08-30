@@ -29,6 +29,10 @@ COMMENTS_WF="$SKILL_DIR/workflows/review-pr-comments.md"
 DEV_FIX_WF="$SKILL_DIR/workflows/dev-fix.md"
 OVERSEE_WF="$SKILL_DIR/workflows/oversee.md"
 STATE_SCHEMA="$SKILL_DIR/schemas/workflow-state.md"
+ORCH_SKILL="$SKILL_DIR/SKILL.md"
+MERGE_WF="$SKILL_DIR/workflows/merge-pr.md"
+DEV_SKILL="$(cd "$SKILL_DIR/../dev" && pwd)/SKILL.md"
+PREDICATE="$(cd "$SKILL_DIR/../review-gate/scripts" && pwd)/review-predicate.sh"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
@@ -68,6 +72,8 @@ strip_comments() {
 }
 
 recurrence_section() { strip_comments "$1" | awk '/^## Recurrence$/{on=1;next} /^## /{on=0} on'; }
+round_contract() { strip_comments "$1" | awk '/^## Round Contract$/{on=1;next} /^## /{on=0} on'; }
+merge_close_step() { strip_comments "$1" | awk '/^2\. \*\*Sync the tracker/{on=1} /^3\. \*\*Sync the main repo/{on=0} on'; }
 section_6_head() { strip_comments "$1" | awk '/^## 6\./{on=1} /^### 6\.1/{on=0} on'; }
 section_6_1() { strip_comments "$1" | awk '/^### 6\.1/{on=1;next} /^### 6\.2/{on=0} on'; }
 section_6_3() { strip_comments "$1" | awk '/^### 6\.3/{on=1;next} /^## 7\./{on=0} on'; }
@@ -132,7 +138,7 @@ check_token "$COMMENTS_WF" '../references/finding-disposition.md#recurrence' \
 # reach grep and trip pipefail.
 first_line() {
   local out
-  out=$(grep -nF "$2" <<<"$(strip_comments "$1")" || true)
+  out=$(grep -nF -- "$2" <<<"$(strip_comments "$1")" || true)
   [[ -n "$out" ]] || return 0
   printf '%s' "${out%%$'\n'*}" | cut -d: -f1
 }
@@ -292,6 +298,72 @@ else
   pass "oversee.md keeps no second statement of the rule"
 fi
 
+# --- a freeze never covers what the diff did (KEN-890) -------------------
+# The rule the freeze audit found stated twice and applied nowhere. Three
+# documents say it and one step enforces it, so all four are pinned here.
+# The load-bearing literal is the phrase that IS the rule — rewording it
+# away is rewording the rule away, which is the whole failure mode: the
+# restriction existed under the name `freeze` while the declines that
+# shipped the defects were written `Declined:`.
+ADDED_LINE='a line this diff added'
+
+check_region_token() {
+  # $1 = extractor, $2 = file, $3 = literal token, $4 = label
+  if grep -qF -- "$3" <<<"$("$1" "$2")"; then pass "$4"; else fail "$4"; fi
+}
+
+check_region_token recurrence_section "$DISPOSITION" "$ADDED_LINE" \
+  "Recurrence states the rule as the diff's own added line"
+check_section_token "$DISPOSITION" '`Declined:`' \
+  "Recurrence names Declined: as the second carrier of a freeze"
+check_section_token "$DISPOSITION" 'merge-pr.md' \
+  "Recurrence names the step that enforces the rule"
+
+check_region_token round_contract "$DEV_SKILL" "$ADDED_LINE" \
+  "the dev round contract carries the rule"
+check_region_token round_contract "$DEV_SKILL" '`Declined:`' \
+  "the dev round contract names the reply form it forbids"
+check_region_token round_contract "$DEV_SKILL" 'finding-disposition.md#recurrence' \
+  "the dev round contract points at the one home of the rule"
+
+check_token "$ORCH_SKILL" "$ADDED_LINE" \
+  "orch SKILL.md's reply-form rule carries the same line"
+check_region_token section_6_3 "$COMMENTS_WF" "$ADDED_LINE" \
+  "the reply step carries the same line where the reply is written"
+
+# The enforcement, which is what makes this different from the two earlier
+# statements of the rule: a command, its exit routes, and its position ahead
+# of the tracker write it gates.
+check_region_token merge_close_step "$MERGE_WF" '--declined-on-added-lines' \
+  "merge-pr's close step runs the check"
+check_region_token merge_close_step "$MERGE_WF" '**Do not close.**' \
+  "the close step refuses on the check's refusal"
+check_region_token merge_close_step "$MERGE_WF" 'do not claim tracker completion' \
+  "the close step refuses on an unreadable read too"
+
+check_gate_order() {
+  # $1 = file — `before` when the check precedes the tracker write it gates
+  local checked closed
+  checked="$(first_line "$1" '--declined-on-added-lines')"
+  closed="$(first_line "$1" 'linear.sh issues complete')"
+  [[ -n "$checked" && -n "$closed" ]] || { printf 'missing\n'; return; }
+  if [[ "$checked" -lt "$closed" ]]; then printf 'before\n'; else printf 'after\n'; fi
+}
+
+case "$(check_gate_order "$MERGE_WF")" in
+  before) pass "the check runs before the tracker write it gates" ;;
+  after)  fail "the check now runs after the issue is already closed" ;;
+  *)      fail "merge-pr.md lost the check or the tracker write" ;;
+esac
+
+# The check itself, not only its callers: a workflow calling a flag the
+# script does not implement is the same hole as no check at all.
+if [[ -x "$PREDICATE" ]] && "$PREDICATE" --help 2>/dev/null | grep -qF -- '--declined-on-added-lines'; then
+  pass "review-predicate.sh implements and documents the flag the close step runs"
+else
+  fail "review-predicate.sh does not answer --declined-on-added-lines"
+fi
+
 # --- planted controls: prove each check can fail -------------------------
 echo
 echo "--- planted controls ---"
@@ -381,7 +453,10 @@ fi
 gone strip_comments "$(plant router "$COMMENTS_WF" 's|/finding-disposition.md#recurrence|/finding-disposition.md|g')" \
   '../references/finding-disposition.md#recurrence' "a dropped Recurrence router link"
 
-CTRL="$(plant inertrouter "$COMMENTS_WF" '/finding-disposition\.md#recurrence/ && !done { print "<!--"; print; print "-->"; done = 1; next } { print }' awk)"
+# EVERY router line, not the first: § 6.3 carries a second one, and one
+# router left live is a router — the control has to remove the route, not a
+# copy of it.
+CTRL="$(plant inertrouter "$COMMENTS_WF" '/finding-disposition\.md#recurrence/ { print "<!--"; print; print "-->"; next } { print }' awk)"
 if grep -qF '<!--' "$CTRL"; then
   gone strip_comments "$CTRL" '../references/finding-disposition.md#recurrence' "a commented-out router paragraph"
 else
@@ -475,6 +550,45 @@ if grep -qE 'structural-close|`freeze`|Tracked:' <<<"$(strip_comments "$CTRL")";
 else
   fail "lint MISSED a rule restated in oversee.md"
 fi
+
+# --- controls for the freeze/added-line rule -----------------------------
+gone recurrence_section "$(drop rule-disposition "$DISPOSITION" "$ADDED_LINE")" \
+  "$ADDED_LINE" "a Recurrence section that stopped naming the diff's own added line"
+gone recurrence_section "$(drop rule-declined "$DISPOSITION" '`Declined:`')" \
+  '`Declined:`' "a rule that covers freeze but not the Declined: spelling of it"
+gone recurrence_section "$(drop rule-enforcer "$DISPOSITION" 'merge-pr.md')" \
+  'merge-pr.md' "a rule with no step named as its enforcer"
+gone round_contract "$(drop rule-dev "$DEV_SKILL" "$ADDED_LINE")" \
+  "$ADDED_LINE" "a dev round contract that dropped the rule"
+gone round_contract "$(drop rule-dev-anchor "$DEV_SKILL" 'finding-disposition.md#recurrence')" \
+  'finding-disposition.md#recurrence' "a dev round contract cut loose from the rule's one home"
+gone strip_comments "$(drop rule-orch "$ORCH_SKILL" "$ADDED_LINE")" \
+  "$ADDED_LINE" "an orch reply-form rule that dropped the carve-out"
+gone section_6_3 "$(drop rule-reply "$COMMENTS_WF" "$ADDED_LINE")" \
+  "$ADDED_LINE" "a reply step that dropped the carve-out where the reply is written"
+gone merge_close_step "$(drop rule-check "$MERGE_WF" '--declined-on-added-lines')" \
+  '--declined-on-added-lines' "a close step that stopped running the check"
+gone merge_close_step "$(drop rule-refuse "$MERGE_WF" '**Do not close.**')" \
+  '**Do not close.**' "a close step that runs the check and closes anyway"
+gone merge_close_step "$(drop rule-noverdict "$MERGE_WF" 'do not claim tracker completion')" \
+  'do not claim tracker completion' "a close step that treats an unreadable read as clean"
+
+# The inert form, the one the two earlier statements of this rule took: the
+# step left in place but commented out.
+CTRL="$(plant rule-inert "$MERGE_WF" '/--declined-on-added-lines/ && !done { print "<!--"; print; print "-->"; done = 1; next } { print }' awk)"
+if grep -qF '<!--' "$CTRL"; then
+  gone merge_close_step "$CTRL" '--declined-on-added-lines' "a commented-out close check"
+else
+  fail "control rule-inert planted no comment markers"
+fi
+
+# Order control: the check moved behind the tracker write, which is a check
+# that reports on an issue already marked Done.
+CTRL="$(plant rule-order "$MERGE_WF" '/--declined-on-added-lines/ && !moved { saved = $0; moved = 1; next } { print } /linear\.sh issues complete/ && moved && !placed { print ""; print saved; placed = 1 }' awk)"
+case "$(check_gate_order "$CTRL")" in
+  after) pass "lint flags a close check moved behind the tracker write" ;;
+  *)     fail "lint MISSED a close check moved behind the tracker write" ;;
+esac
 
 while IFS= read -r unplanted_note; do
   [[ -n "$unplanted_note" ]] && fail "$unplanted_note"

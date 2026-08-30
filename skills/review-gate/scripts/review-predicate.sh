@@ -10,8 +10,8 @@ shopt -u nocasematch nocaseglob extglob 2>/dev/null || true
 
 print_usage() {
   cat <<'USAGE'
-Usage: review-predicate.sh [--help | --check-config]   (otherwise env-driven,
-                                                        no positional arguments)
+Usage: review-predicate.sh [--help | --check-config | --declined-on-added-lines]
+                           (otherwise env-driven, no positional arguments)
 
 The single source of truth for "is this PR head reviewed?". Callers:
 review-writer.sh (the single writer, which converges the merge-blocking
@@ -29,9 +29,37 @@ Output: one machine-readable line on stdout:
 
 Exit codes:
   0  evaluated (the verdict line is authoritative)
+  1  --declined-on-added-lines only: the refusal. At least one thread stands
+     declined on a line this PR's diff added; each is named on stdout.
   2  an evidence read failed or the configuration is invalid; NO verdict was
      reached. Callers must treat this as "take no action", never as awaiting:
      acting on a transient API failure could flip a healthy PR's merge state.
+
+--declined-on-added-lines answers a different question from the gate: may this
+PR's work item be CLOSED? It refuses while a `Declined:` reply stands on a
+thread anchored to a line the PR's own diff added — the disposition
+`references/finding-disposition.md` section Recurrence forbids, since no
+freeze of a PR covers a cause the diff introduced or armed. Requires GH_REPO
+and PR_NUMBER; HEAD_SHA is not read, because a thread's disposition outlives
+the head it was written against. Resolved threads are read too: resolving is
+what hid these declines from the next pass.
+
+A thread's disposition is its newest non-bot comment that is a `Fixed in
+<sha>` reply, opens with the word "declined" in any punctuation, or carries a
+track-word — the gate's own reduction plus that wider decline form, both
+defined in one place below. The wider form is deliberate: the declines this
+check exists to catch were written "Declined under this PR's freeze.", and
+only the gate's untracked-claim term needs the colon (widening THAT would let
+such a reply clear a tracking claim naming no issue). The anchor is
+the last line of the thread's first comment's diffHunk — the line commented
+on — and `+` there is a line this diff added. A declined thread whose anchor
+cannot be read is exit 2, never a pass: an unreadable anchor is the same
+"no verdict" a failed read is. Independent of REVIEW_GATE_MODE and
+REVIEW_GATE_THREADS: those disable the merge gate's terms, not this refusal.
+
+Output on refusal, one line per thread, then the verdict line:
+  declined-on-added-line thread=<id> path=<file> line=<n> reply=<text>
+  verdict=declined-on-added-line detail=<N> thread(s) ...
 
 --check-config resolves and validates every setting below, prints one line,
 and exits WITHOUT reading any evidence or requiring GH_REPO / PR_NUMBER /
@@ -236,17 +264,23 @@ USAGE
 
 # The predicate is env-driven: zero arguments evaluate, exactly one
 # -h/--help prints usage, exactly one --check-config validates settings and
-# stops, and every other argument list — an explicitly empty argument
-# included — is a configuration error with no verdict. A misspelled or stale
-# wrapper flag must never fall through to a normal gate evaluation, so
-# validation is by argument count, not by position.
+# stops, exactly one --declined-on-added-lines answers the close question,
+# and every other argument list — an explicitly empty argument included — is
+# a configuration error with no verdict. A misspelled or stale wrapper flag
+# must never fall through to a normal gate evaluation, so validation is by
+# argument count, not by position.
 CHECK_CONFIG_ONLY=0
+DECLINED_ON_ADDED_ONLY=0
 if [ "$#" -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
   print_usage
   exit 0
 fi
 if [ "$#" -eq 1 ] && [ "$1" = "--check-config" ]; then
   CHECK_CONFIG_ONLY=1
+  shift
+fi
+if [ "$#" -eq 1 ] && [ "$1" = "--declined-on-added-lines" ]; then
+  DECLINED_ON_ADDED_ONLY=1
   shift
 fi
 if [ "$#" -gt 0 ]; then
@@ -256,6 +290,32 @@ fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$script_dir/lib/settings.sh"
+
+# The thread reply forms, in ONE spelling. Both readers below prefix their jq
+# program with this — the gate's untracked-claim term and the
+# --declined-on-added-lines refusal — so a change to what a reply form is
+# reaches both instead of one.
+#
+# `standing` is the thread's disposition: its newest non-bot comment that is
+# a reply form or carries a track-word. Bot comments are exempt (they quote
+# each other) and other replies never move it; a thread with no such comment
+# yields `empty`, which drops it from whichever reduction is running.
+#
+# The two reductions read different sets on purpose. `disposition` is the
+# canonical form the doctrine names, and the gate's untracked-claim term is
+# the only thing it may mean: widening it would let "Declined under the
+# freeze, tracked separately" clear a tracking claim naming no issue, which
+# is loosening a merge gate. `declined` is wider — any reply OPENING with
+# the word — because that is what the declines under audit were actually
+# written as ("Declined under this PR's freeze."), and a close check that
+# only saw the colon form would miss half of them.
+RG_DISPOSITION_DEFS='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|declined:)"; "i");
+def declined: test("^\\s*declined\\b"; "i");
+def tracking: test("(?i)\\btrack(ed|ing|s)?\\b");
+def replies: [(.comments.nodes // [])[] | select((.author.__typename // "User") != "Bot") | (.body // "")];
+def standing: [replies[] | select(disposition or tracking)] | last // empty;
+def standing_close: [replies[] | select(disposition or declined or tracking)] | last // empty;
+'
 
 # `|| exit 2`: rg_setting fails on a present-but-unparseable assignment, and
 # that is a configuration error (no verdict), never an empty value.
@@ -531,6 +591,137 @@ EOF_COMMENT_CFG
 if [ "$CHECK_CONFIG_ONLY" = "1" ]; then
   echo "review-predicate: configuration is valid"
   exit 0
+fi
+
+# --declined-on-added-lines: the close question, answered here and nowhere
+# else. It reads threads at every head this PR ever had, so HEAD_SHA is not
+# required and the head-scoped evidence model below never runs. Neither
+# REVIEW_GATE_MODE nor REVIEW_GATE_THREADS reaches it: both switch off terms
+# of the merge gate, and a repo turning the gate off has not decided that a
+# freeze may now answer a defect its own diff introduced.
+if [ "$DECLINED_ON_ADDED_ONLY" = "1" ]; then
+  for required in GH_REPO PR_NUMBER; do
+    if [ -z "$(eval "echo \${$required:-}")" ]; then
+      echo "::error::review-predicate: $required is required" >&2
+      exit 2
+    fi
+  done
+
+  # One page in, NDJSON out: a `page` control object, then one `offender`
+  # object per thread standing declined on an added line. Refusals are
+  # `malformed`, and each has a distinct reason so a caller is never told
+  # the wrong thing about why no verdict was reached.
+  #
+  # The anchor is the last line of the FIRST comment's diffHunk — the line
+  # GitHub anchored the thread to. `+` there is a line this diff added; a
+  # space or `-` is context or a removed line, which the diff did not add.
+  # A declined thread whose diffHunk is absent or null cannot be judged
+  # either way and refuses; threads that are not declined are dropped
+  # before that test, so an unanchored discussion thread costs nothing.
+  dol_page_jq="$RG_DISPOSITION_DEFS"'
+def anchor: (.comments.nodes // [])[0].diffHunk;
+def anchor_added: (anchor // "") | split("\n") | map(select(length > 0)) | last // "" | startswith("+");
+(.data.repository.pullRequest.reviewThreads) as $t
+| ([$t.nodes[]? | select(standing_close | declined)]) as $dec
+| if (($t | type) != "object") or (($t.nodes | type) != "array")
+    or (($t.pageInfo.hasNextPage | type) != "boolean")
+  then {control: "malformed", why: "review thread page shape"}
+  elif ([$t.nodes[] | select(.comments.pageInfo.hasNextPage == true)] | length) > 0
+  then {control: "malformed", why: "a thread past 50 comments cannot be read in this page shape"}
+  elif ([$dec[] | select((anchor | type) != "string")] | length) > 0
+  then {control: "malformed", why: "a declined thread carries no readable diff anchor"}
+  else ({control: "page", next: $t.pageInfo.hasNextPage, cursor: ($t.pageInfo.endCursor // "END")}),
+       ($dec[]
+        | select(anchor_added)
+        | {control: "offender",
+           id: (.id // "?"),
+           path: (.path // "?"),
+           line: ((.line // .originalLine // 0) | tostring),
+           reply: (standing_close | gsub("\\s+"; " ") | .[0:120])})
+  end'
+
+  dol_query='query($owner:String!,$repo:String!,$number:Int!,$after:String){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{id path line originalLine comments(first:50){pageInfo{hasNextPage} nodes{body diffHunk author{__typename}}}}}}}}'
+  dol_cursor=""
+  dol_pages=0
+  dol_offenders=""
+  dol_count=0
+  while :; do
+    dol_pages=$((dol_pages + 1))
+    if [ "$dol_pages" -gt 20 ]; then
+      echo "::error::review-predicate: review threads for PR #$PR_NUMBER exceed the 20-page bound — no verdict" >&2
+      exit 2
+    fi
+    if [ -n "$dol_cursor" ]; then
+      dol_raw="$(gh_read graphql -f query="$dol_query" \
+        -F owner="${GH_REPO%/*}" -F repo="${GH_REPO#*/}" -F number="$PR_NUMBER" -f after="$dol_cursor")" || {
+        echo "::error::could not read review threads for PR #$PR_NUMBER" >&2
+        exit 2
+      }
+    else
+      dol_raw="$(gh_read graphql -f query="$dol_query" \
+        -F owner="${GH_REPO%/*}" -F repo="${GH_REPO#*/}" -F number="$PR_NUMBER")" || {
+        echo "::error::could not read review threads for PR #$PR_NUMBER" >&2
+        exit 2
+      }
+    fi
+    if [ -z "$dol_raw" ]; then
+      echo "::error::review thread read produced zero bytes (broken read)" >&2
+      exit 2
+    fi
+    dol_page="$(jq -c "$dol_page_jq" <<<"$dol_raw" 2>/dev/null)" || {
+      echo "::error::could not evaluate review threads for PR #$PR_NUMBER (unreadable page)" >&2
+      exit 2
+    }
+    dol_why="$(jq -r 'select(.control == "malformed") | .why' <<<"$dol_page")" || {
+      echo "::error::could not evaluate review threads for PR #$PR_NUMBER (unreadable page)" >&2
+      exit 2
+    }
+    if [ -n "$dol_why" ]; then
+      echo "::error::review-predicate: $dol_why — no verdict for PR #$PR_NUMBER" >&2
+      exit 2
+    fi
+    dol_rows="$(jq -r 'select(.control == "offender")
+      | "declined-on-added-line thread=" + .id + " path=" + .path + " line=" + .line + " reply=" + .reply' <<<"$dol_page")" || {
+      echo "::error::could not format the declined-thread rows for PR #$PR_NUMBER" >&2
+      exit 2
+    }
+    if [ -n "$dol_rows" ]; then
+      dol_offenders="$dol_offenders$dol_rows
+"
+      dol_count=$((dol_count + $(printf '%s\n' "$dol_rows" | wc -l | tr -d ' ')))
+    fi
+    # Captured with their own handlers: an unread status here would leave
+    # dol_next empty, the loop would break, and an unread page could hold
+    # the very thread this refuses on.
+    dol_next="$(jq -r 'select(.control == "page") | .next' <<<"$dol_page")" \
+      && dol_next_cursor="$(jq -r 'select(.control == "page") | .cursor' <<<"$dol_page")" || {
+      echo "::error::could not read the review thread page control for PR #$PR_NUMBER" >&2
+      exit 2
+    }
+    case "$dol_next" in
+      true) ;;
+      false) break ;;
+      *)
+        echo "::error::review-predicate: review thread page carried no next-page flag for PR #$PR_NUMBER — no verdict" >&2
+        exit 2
+        ;;
+    esac
+    if [ "$dol_next_cursor" = "END" ] || [ -z "$dol_next_cursor" ] || [ "$dol_next_cursor" = "$dol_cursor" ]; then
+      # hasNextPage with no ADVANCING cursor: the remainder cannot be read,
+      # and an unread page could hold the very thread this refuses on.
+      echo "::error::review-predicate: review thread pagination did not advance for PR #$PR_NUMBER — no verdict" >&2
+      exit 2
+    fi
+    dol_cursor="$dol_next_cursor"
+  done
+
+  if [ "$dol_count" -eq 0 ]; then
+    echo "verdict=ok detail=no Declined: reply stands on a line this diff added"
+    exit 0
+  fi
+  printf '%s' "$dol_offenders"
+  echo "verdict=declined-on-added-line detail=$dol_count thread(s) decline a finding on a line this diff added — fix it, or file the issue and reply Tracked: <ID>, before closing the work item"
+  exit 1
 fi
 
 for required in GH_REPO PR_NUMBER HEAD_SHA; do
@@ -1335,14 +1526,12 @@ fi
 unresolved=0
 untracked=0
 if [ "$THREADS_MODE" = "enforce" ]; then
-# A thread's disposition is its newest non-bot comment that is a Fixed in
-# <sha>/Declined: reply or carries a track-word; other comments never move
-# it. It is an untracked claim when it is not such a reply and names no
+# A thread's disposition is `standing` (RG_DISPOSITION_DEFS). It is an
+# untracked claim when that reply is not a disposition form and names no
 # issue (ABC-123 or #123); resolving the thread does not clear it, since the
-# claimant is also the resolver. Bot comments are exempt (they quote each
-# other); a missing comments field reads as none. A thread past 50 comments
-# cannot be fully read in this page shape, so it fails closed as malformed.
-t_threads_page_jq='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|declined:)"; "i");
+# claimant is also the resolver. A thread past 50 comments cannot be fully
+# read in this page shape, so it fails closed as malformed.
+t_threads_page_jq="$RG_DISPOSITION_DEFS"'
   if ((.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | type) != "boolean")
     or ([.data.repository.pullRequest.reviewThreads.nodes[] | select((.isResolved | type) != "boolean")] | length) > 0
   then "malformed"
@@ -1350,8 +1539,7 @@ t_threads_page_jq='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|decli
   then "malformed"
   else ([.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length | tostring)
     + " " + ([.data.repository.pullRequest.reviewThreads.nodes[]
-        | ([(.comments.nodes // [])[] | select((.author.__typename // "User") != "Bot") | (.body // "")
-            | select(disposition or test("(?i)\\btrack(ed|ing|s)?\\b"))] | last // empty)
+        | standing
         | select(disposition | not)
         | select(test("([A-Z][A-Z0-9]+-[0-9]+|#[0-9]+)\\b") | not)] | length | tostring)
     + " " + (.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | tostring)

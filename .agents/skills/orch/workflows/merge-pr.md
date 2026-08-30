@@ -251,6 +251,24 @@ Use the output as `MAIN_REPO_ROOT`.
 
 2. **Sync the tracker and close a finished container** — **Linear only**. Skip the WHOLE step for GitHub work items: resolve the tracker first; an `issue-N` key in any casing is a GitHub item.
 
+   **The close is gated on the PR's own dispositions.** Run this before any
+   tracker write, and route on its exit — never on reading the threads
+   yourself:
+
+   ```bash
+   env GH_REPO=[OWNER/REPO] PR_NUMBER=[PR_NUMBER] [MAIN_REPO_ROOT]/.agents/skills/review-gate/scripts/review-predicate.sh --declined-on-added-lines
+   ```
+
+   | Exit | Route |
+   |------|-------|
+   | `0` | Nothing stands declined on a line this diff added. Continue. |
+   | `1` | **Do not close.** Each refused thread is named on stdout as `thread=<id> path=<file> line=<n>`. Carry every line into § 6, leave the work item in its live state, and hand back: the finding is fixed in a follow-up PR, or filed and the thread re-replied `Tracked: <ID>`. |
+   | `2` | The threads could not be read. Do not close, carry the diagnostic into § 6, and do not claim tracker completion. |
+
+   A repo without the review-gate skill has no `review-predicate.sh`: record
+   `declined-check: not run (review-gate not installed)` in § 6 and continue.
+   That is the only case where the close proceeds unchecked, and it says so.
+
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh sync --reconcile
    ```
