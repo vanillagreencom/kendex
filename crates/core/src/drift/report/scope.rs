@@ -40,21 +40,15 @@ struct ScopeCheck<'a> {
 }
 
 impl ScopeCheck<'_> {
-    /// The manifest: parse failures are could-not-check, a v1 manifest is
-    /// read-only until migration, and the one hard failure this check has
-    /// always had — an agent referencing an undeclared skill — stays one.
+    /// The manifest: parse failures — a v1 file among them — are
+    /// could-not-check, and the one hard failure this check has always had
+    /// — an agent referencing an undeclared skill — stays one.
     fn manifest_lines(&self, sections: &mut Sections) -> Option<crate::manifest::Manifest> {
         let prefix = self.prefix;
         let manifest =
             match crate::manifest::load(&crate::manifest::manifest_path(self.env, self.scope)) {
                 Ok(crate::manifest::ManifestFile::Current(manifest)) => Some(*manifest),
                 Ok(crate::manifest::ManifestFile::Absent) => None,
-                Ok(crate::manifest::ManifestFile::Legacy { .. }) => {
-                    sections.unknown.push(unknown(format!(
-                        "{prefix}v1 manifest — not checked; move it aside or delete it"
-                    )));
-                    None
-                }
                 Err(error) => {
                     sections.unknown.push(unknown(format!(
                         "{prefix}manifest: {}",
@@ -132,9 +126,6 @@ impl ScopeCheck<'_> {
                     }
                 }
             }
-            Ok(crate::lock::LockFile::Legacy { .. }) => sections.unknown.push(unknown(format!(
-                "{prefix}v1 lock — install history not checked; move it aside or delete it"
-            ))),
             Ok(crate::lock::LockFile::Absent) => {}
             Err(error) => sections.unknown.push(unknown(format!(
                 "{prefix}lock: {}",

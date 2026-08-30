@@ -114,13 +114,13 @@ dismissed-at = "2026-01-01T00:00:00Z"
 }
 
 #[test]
-fn schema_less_file_is_legacy_and_never_a_mutation_target() {
+fn schema_less_file_is_refused_and_never_a_mutation_target() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("kendex.toml");
     let v1 = "[agent-skills]\nrust = [\"clippy\"]\n";
     std::fs::write(&path, v1).unwrap();
 
-    assert!(matches!(load(&path).unwrap(), ManifestFile::Legacy { .. }));
+    assert!(matches!(load(&path), Err(CoreError::LegacyManifest { .. })));
     assert!(matches!(
         load_for_mutation(&path),
         Err(CoreError::LegacyManifest { .. })

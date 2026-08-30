@@ -64,7 +64,6 @@ fn entry(name: &str, commit: Option<&str>, reasons: &[Reason]) -> LockEntry {
         upstream_skills: None,
         emitted: None,
         registration: None,
-        left_pi_reserved_name: false,
         reasons: reasons.iter().cloned().collect(),
     }
 }
@@ -75,6 +74,20 @@ fn lock_with(entries: &[(&str, LockEntry)]) -> Lock {
         lock.entries.insert((*key).to_owned(), entry.clone());
     }
     lock
+}
+
+/// A set's record: where it came out as, in the catalog the fixtures
+/// declare. The only account of where a set sits — its members carry
+/// their own commits and say nothing about the set's.
+fn recorded_set(lock: &mut Lock, name: &str, commit: &str) {
+    lock.bundles.insert(
+        name.to_owned(),
+        crate::lock::BundleRev {
+            source: "cat".to_owned(),
+            source_repo: "owner/catalog".to_owned(),
+            commit: commit.to_owned(),
+        },
+    );
 }
 
 #[test]
@@ -114,10 +127,12 @@ fn a_derived_targets_bundle_is_exempt_and_a_stranger_bundle_holds() {
             name: bundle.to_owned(),
         },
     };
-    let lock = lock_with(&[
+    let mut lock = lock_with(&[
         ("skill:m1:claude", entry("m1", Some("aaa"), &[of("kit")])),
         ("skill:o1:claude", entry("o1", Some("bbb"), &[of("other")])),
     ]);
+    recorded_set(&mut lock, "kit", "aaa");
+    recorded_set(&mut lock, "other", "bbb");
 
     let (held, _) = held_for(&manifest, &lock, ItemKind::Skill, "m1");
     assert_eq!(
@@ -377,7 +392,7 @@ fn an_edge_recorded_against_another_source_exempts_nothing() {
             name: "kit".to_owned(),
         },
     };
-    let lock = lock_with(&[
+    let mut lock = lock_with(&[
         (
             "skill:parent:claude",
             entry("parent", Some("ppp"), &[Reason::Requested]),
@@ -408,6 +423,7 @@ fn an_edge_recorded_against_another_source_exempts_nothing() {
             ),
         ),
     ]);
+    recorded_set(&mut lock, "kit", "mmm");
 
     let (held, _) = held_for(&manifest, &lock, ItemKind::Skill, "dep");
     assert_eq!(

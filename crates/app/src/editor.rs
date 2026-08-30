@@ -163,9 +163,7 @@ fn agent_skill_facts(
         .map_err(|e| e.to_string())?
     {
         kendex_core::lock::LockFile::Current(lock) => lock,
-        kendex_core::lock::LockFile::Absent | kendex_core::lock::LockFile::Legacy { .. } => {
-            return Ok(AgentSkillFacts::default());
-        }
+        kendex_core::lock::LockFile::Absent => return Ok(AgentSkillFacts::default()),
     };
     let mut facts = AgentSkillFacts::default();
     for entry in lock.entries.into_values() {
@@ -271,7 +269,6 @@ mod tests {
                 .map(|list| list.iter().map(|s| (*s).to_owned()).collect()),
             emitted: None,
             registration: None,
-            left_pi_reserved_name: false,
             reasons: std::collections::BTreeSet::from([kendex_core::lock::Reason::Requested]),
         }
     }

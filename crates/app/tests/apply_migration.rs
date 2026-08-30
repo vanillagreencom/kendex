@@ -2,7 +2,7 @@
 //! manifest's first apply promises "Upgrade kendex.toml to the current
 //! format" — this pins that the app's apply path actually writes it,
 //! rather than re-planning from a mutation-normalized manifest that no
-//! longer looks old, and that the upgrade moves only the bytes it has to.
+//! longer looks old, and that one apply settles the file for good.
 #![cfg(unix)]
 
 #[path = "../../test_util.rs"]
@@ -44,8 +44,7 @@ fn v01_fixture() -> Fixture {
     })
 }
 
-/// The part of a schema-5 manifest that survives: comments, spacing and a
-/// trailing comment on a value, every byte the upgrade must keep.
+/// A schema-5 manifest, comments and all, without the retired tables.
 const KEPT: &str = "# my project setup\nschema = 5\n\n# where the content comes from\n[sources.cat]\n{source}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"   # keep this\n";
 
 /// The tables schema 6 retired, as a pre-6 kendex wrote them.
@@ -115,14 +114,16 @@ fn apply_performs_the_upgrade_the_preview_promised() {
         before.plan
     );
 
-    let original = fs::read_to_string(&f.manifest_path).unwrap();
     apply_scope(&f.env, &f.scope, false).unwrap();
 
     let migrated = fs::read_to_string(&f.manifest_path).unwrap();
-    assert_eq!(
-        migrated,
-        original.replacen("schema = 1", &format!("schema = {MANIFEST_SCHEMA}"), 1),
-        "the upgrade must change the schema line and nothing else"
+    assert!(
+        migrated.contains(&format!("schema = {MANIFEST_SCHEMA}")),
+        "the upgrade landed: {migrated}"
+    );
+    assert!(
+        migrated.contains("[skills.gh]"),
+        "and what the person declared is still declared: {migrated}"
     );
 
     let after = view(&f.env, &f.scope);
@@ -134,12 +135,12 @@ fn apply_performs_the_upgrade_the_preview_promised() {
 }
 
 /// A schema-5 manifest still carries the safety-decision tables. One apply
-/// upgrades it: the schema line moves, the retired tables go, and every
-/// other byte — comments, spacing, a trailing comment — stays exactly where
-/// it was. The declared skill installs in the same apply.
+/// upgrades it: the schema line moves and the retired records — which
+/// decide nothing any more — go with it. The declared skill installs in
+/// the same apply.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn the_upgrade_drops_the_retired_tables_and_keeps_every_other_byte() {
+fn the_upgrade_drops_the_retired_tables() {
     let f = schema5_fixture();
     let before = view(&f.env, &f.scope);
     assert!(
@@ -153,23 +154,16 @@ fn the_upgrade_drops_the_retired_tables_and_keeps_every_other_byte() {
         before.plan
     );
 
-    let original = fs::read_to_string(&f.manifest_path).unwrap();
-    let kept = original
-        .strip_suffix(RETIRED)
-        .unwrap()
-        .strip_suffix('\n')
-        .unwrap();
     apply_scope(&f.env, &f.scope, false).unwrap();
 
     let migrated = fs::read_to_string(&f.manifest_path).unwrap();
-    assert_eq!(
-        migrated,
-        kept.replacen("schema = 5", &format!("schema = {MANIFEST_SCHEMA}"), 1),
-        "the upgrade moves the schema line, cuts the retired tables and nothing else"
+    assert!(
+        migrated.contains(&format!("schema = {MANIFEST_SCHEMA}")),
+        "{migrated}"
     );
     assert!(!migrated.contains("safety-overrides"), "{migrated}");
     assert!(!migrated.contains("safety-reviews"), "{migrated}");
-    assert!(migrated.contains("# keep this"), "{migrated}");
+    assert!(migrated.contains("[skills.gh]"), "{migrated}");
     assert!(
         f.scope_root().join(".claude/skills/gh").is_symlink(),
         "the declared skill installs in the same apply"
@@ -183,11 +177,10 @@ fn the_upgrade_drops_the_retired_tables_and_keeps_every_other_byte() {
     );
 }
 
-/// The retired tables in spellings the text cut does not recognise — a
-/// quoted header, a top-level dotted key, an inline table. The loader gate
-/// sends each to the full rewrite: after one apply the file loads at the
-/// current schema and carries neither name. (Written surgically, such a
-/// file would keep the table and be refused on every later load.)
+/// The retired tables in every spelling TOML allows — a quoted header, a
+/// top-level dotted key, an inline table. The upgrade serializes the
+/// manifest this build read, which carries none of them, so after one
+/// apply the file loads at the current schema and carries neither name.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn every_spelling_of_a_retired_table_is_gone_after_one_apply() {

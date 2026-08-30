@@ -1,6 +1,5 @@
 use kendex_core::engine::{PlanOptions, plan_apply};
 use kendex_core::env::Env;
-use kendex_core::error::CoreError;
 use kendex_core::manifest::{self, ManifestFile};
 use kendex_core::names::shown;
 
@@ -59,7 +58,6 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
                 say(&format!("{}: no manifest", scope_label(&scope)));
                 continue;
             }
-            ManifestFile::Legacy { .. } => return Err(CoreError::LegacyManifest { path }.into()),
         }
         let options = PlanOptions {
             remove_orphans: true,

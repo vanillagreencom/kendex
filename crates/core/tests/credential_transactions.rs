@@ -180,24 +180,6 @@ fn spawn_logout(
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn an_older_login_during_revoke_is_preserved() {
-    let (store, fetch, revoke_started, allow_revoke) = logout_fixture();
-    let logout = spawn_logout(&fetch, &store);
-    revoke_started.recv().unwrap();
-
-    store.save(&credential("replacement")).unwrap();
-    allow_revoke.send(()).unwrap();
-
-    let refused = logout.join().unwrap().unwrap_err().to_string();
-    assert!(refused.contains("sign-in changed"), "{refused}");
-    assert!(refused.contains("retry the request"), "{refused}");
-    let kept = store.load().unwrap().unwrap();
-    assert_eq!(kept.access_token, "kxa_replacement");
-    assert_eq!(kept.refresh_token, "kxr_replacement");
-}
-
-#[test]
-#[allow(clippy::unwrap_used)]
 fn an_older_logout_during_revoke_stays_signed_out() {
     let (store, fetch, revoke_started, allow_revoke) = logout_fixture();
     let logout = spawn_logout(&fetch, &store);

@@ -1,4 +1,5 @@
-//! The v0.1 → v0.2 schema migration: journaled, transactional, surgical.
+//! The schema upgrade an older manifest's first apply carries: journaled
+//! and transactional like every other write, and over in one pass.
 #![cfg(unix)]
 
 #[path = "../../test_util.rs"]
@@ -39,8 +40,7 @@ fn fixture() -> Fixture {
     )
     .unwrap();
 
-    // Hand-formatted v0.1 manifest: the upgrade must change the schema line
-    // and nothing else.
+    // Hand-formatted v0.1 manifest: what the upgrade reads.
     let original = format!(
         "# my project setup\nschema = 1\n\n[sources.cat]\n{}   # local catalog\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
         source_path(&source)
@@ -69,7 +69,7 @@ fn fixture() -> Fixture {
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_v01_scope_upgrades_in_place_changing_only_the_schema_line() {
+fn a_v01_scope_upgrades_and_installs_in_one_pass() {
     let f = fixture();
     let report = audit(&f.env, &f.scope).unwrap();
     assert!(
@@ -82,11 +82,11 @@ fn a_v01_scope_upgrades_in_place_changing_only_the_schema_line() {
     apply::execute(&f.env, &report.plan).unwrap();
 
     let migrated = fs::read_to_string(&f.manifest_path).unwrap();
-    assert_eq!(
-        migrated,
-        f.original
-            .replacen("schema = 1", &format!("schema = {MANIFEST_SCHEMA}"), 1)
+    assert!(
+        migrated.contains(&format!("schema = {MANIFEST_SCHEMA}")),
+        "{migrated}"
     );
+    assert!(migrated.contains("[skills.gh]"), "{migrated}");
     let lock = load_lock(&lock_path(&f.env, &f.scope)).unwrap();
     assert_eq!(lock.version, kendex_core::lock::LOCK_VERSION);
     assert!(lock.entries.contains_key("skill:gh:claude"));
@@ -131,55 +131,6 @@ fn an_interrupted_migration_rolls_back_byte_identically() {
         let error = apply::execute(&f.env, &plan).unwrap_err();
         assert!(matches!(error, CoreError::RolledBack { .. }));
         assert_eq!(fs::read_to_string(&f.manifest_path).unwrap(), f.original);
-    }
-}
-
-/// A comment that merely mentions the schema line must never absorb the
-/// rewrite; the real assignment below it is the one that changes.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_comment_mentioning_the_schema_line_is_not_the_schema_line() {
-    let f = fixture();
-    let tricky = f.original.replacen(
-        "# my project setup",
-        "# was schema = 1 before the migration",
-        1,
-    );
-    fs::write(&f.manifest_path, &tricky).unwrap();
-
-    let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan).unwrap();
-
-    let migrated = fs::read_to_string(&f.manifest_path).unwrap();
-    assert_eq!(
-        migrated,
-        tricky.replace("schema = 1\n", &format!("schema = {MANIFEST_SCHEMA}\n"))
-    );
-    assert!(migrated.contains("# was schema = 1 before the migration"));
-}
-
-/// Non-canonical but valid spellings upgrade in place too — compact
-/// spacing and a trailing comment survive byte-for-byte; nothing falls
-/// back to a whole-file rewrite that would strip comments.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn unusual_schema_spellings_upgrade_in_place() {
-    for (spelling, upgraded) in [
-        ("schema=1".to_owned(), format!("schema={MANIFEST_SCHEMA}")),
-        (
-            "schema = 1   # v0.1".to_owned(),
-            format!("schema = {MANIFEST_SCHEMA}   # v0.1"),
-        ),
-    ] {
-        let f = fixture();
-        let variant = f.original.replacen("schema = 1", &spelling, 1);
-        fs::write(&f.manifest_path, &variant).unwrap();
-
-        let report = audit(&f.env, &f.scope).unwrap();
-        apply::execute(&f.env, &report.plan).unwrap();
-
-        let migrated = fs::read_to_string(&f.manifest_path).unwrap();
-        assert_eq!(migrated, variant.replacen(&spelling, &upgraded, 1));
     }
 }
 

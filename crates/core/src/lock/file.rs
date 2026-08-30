@@ -7,7 +7,7 @@ use crate::error::{CoreError, Result};
 use crate::fs::{atomic_write, read_if_exists};
 use crate::paths::canonical;
 
-use super::{LOCK_FILE, LOCK_VERSION, Lock, Reason};
+use super::{LOCK_FILE, LOCK_VERSION, Lock};
 
 /// The project root whose lock sits at `path`, or `None` where the path is
 /// the global lock. The inverse of [`super::lock_path`]: a project scope's lock is
@@ -159,42 +159,13 @@ fn stamp_project(path: &Path, lock: &mut Lock) -> Result<()> {
     Ok(())
 }
 
-/// What sits at a lock path. A v1 lock keys entries by bare name and carries
-/// a `harnesses` array; v2 keys carry `kind:name:harness` with one `harness`
-/// field. The shapes are incompatible — deserializing v1 text straight into
-/// [`Lock`] surfaces a raw "missing field" error instead of naming what the
-/// file actually is.
+/// What sits at a lock path. Only the shape this build writes loads: a
+/// record from an older generation is damaged as far as this build is
+/// concerned, and [`CoreError::LockCorrupt`] names the way out.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LockFile {
     Absent,
-    Legacy { raw: String },
     Current(Lock),
-}
-
-/// `"version": 1` alone cannot identify the old product generation: this
-/// product's own v0.1 locks also say 1 and load compatibly (see
-/// [`LOCK_VERSION`]). The key shape is the discriminator — bare-name keys
-/// against v2's always-present `kind:name:harness` separator — and it only
-/// applies to files not declaring a version above 1, so a current file with
-/// odd keys is diagnosed as corrupt, never mislabeled v1. An empty map
-/// matches both shapes and reads as current, the only reading a lost lock
-/// or a fresh scope can mean.
-fn is_v1(value: &serde_json::Value) -> bool {
-    let version = value.get("version").and_then(serde_json::Value::as_i64);
-    if version.is_some_and(|v| v > 1) {
-        return false;
-    }
-    value
-        .get("entries")
-        .and_then(serde_json::Value::as_object)
-        .is_some_and(|entries| !entries.is_empty() && entries.keys().all(|k| !k.contains(':')))
-}
-
-/// Text-taking wrapper for callers (the CLI's one-shot v1 importer) that
-/// have not already parsed the JSON. Unparseable text is not v1 — it is
-/// corrupt, and `load_file` names that distinctly.
-pub fn is_v1_text(text: &str) -> bool {
-    serde_json::from_str(text).is_ok_and(|value| is_v1(&value))
 }
 
 pub fn load_file(path: &Path) -> Result<LockFile> {
@@ -221,45 +192,22 @@ pub fn parse_text(path: &Path, text: &str) -> Result<LockFile> {
             found: version,
         });
     }
-    if is_v1(&value) {
-        return Ok(LockFile::Legacy {
-            raw: text.to_owned(),
-        });
-    }
-    let mut lock: Lock = serde_json::from_value(value).map_err(|e| CoreError::LockCorrupt {
+    let lock: Lock = serde_json::from_value(value).map_err(|e| CoreError::LockCorrupt {
         path: path.to_path_buf(),
         message: e.to_string(),
     })?;
-    backfill_requested_reason(&mut lock);
     refuse_foreign_paths(path, &lock)?;
     refuse_another_project(path, &lock)?;
     Ok(LockFile::Current(lock))
 }
 
-// A record written before installations carried their reasons: everything
-// installed then was installed because it was asked for, which is the only
-// reading that cannot invent a dependency nobody declared. The next write
-// records it.
-fn backfill_requested_reason(lock: &mut Lock) {
-    for entry in lock.entries.values_mut() {
-        if entry.reasons.is_empty() {
-            entry.reasons.insert(Reason::Requested);
-        }
-    }
-}
-
-/// Load for mutation: a v1 lock is a hard error, never a write target — same
-/// posture as [`crate::manifest::load_for_mutation`]. Callers that only
-/// observe (the audit view) use [`load_file`] instead so a v1 lock degrades
-/// to a note rather than blocking the read.
+/// Load for mutation. An absent lock is a fresh scope; anything this build
+/// cannot read has already been refused by [`parse_text`].
 pub fn load(path: &Path) -> Result<Lock> {
     match load_file(path)? {
         LockFile::Absent => Ok(Lock {
             version: LOCK_VERSION,
             ..Lock::default()
-        }),
-        LockFile::Legacy { .. } => Err(CoreError::LegacyLock {
-            path: path.to_path_buf(),
         }),
         LockFile::Current(lock) => Ok(lock),
     }

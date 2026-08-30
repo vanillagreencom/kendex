@@ -618,66 +618,6 @@ fn updating_a_package_its_set_also_owns_through_a_parent_still_moves_it() {
     assert_eq!(locked_commit(&w, "a"), second);
 }
 
-/// A lock written before a set's commit was recorded has none. The members
-/// were installed together and none of them has moved off the set on its
-/// own yet, so where they agree is where the set is — and that reading
-/// stands in until the next write records it.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_lock_that_records_no_set_commit_reads_the_members_instead() {
-    let w = world();
-    write_skill(&w.upstream, "a", "", "a version one.");
-    write_skill(&w.upstream, "b", "", "b version one.");
-    fs::write(
-        w.upstream.join("kendex.toml"),
-        "[bundles.kit]\ndescription = \"a set\"\nskills = [\"a\", \"b\"]\n",
-    )
-    .unwrap();
-    let first = commit(&w.upstream, "one");
-    declare(
-        &w,
-        "[skills.a]\nsource = \"cat\"\n\n[bundles.kit]\nsource = \"cat\"\n",
-    );
-    sync_and_apply(&w);
-
-    // The record an older kendex would have left: everything else the same,
-    // the set's commit simply absent.
-    let path = lock_path(&w.env, &w.scope);
-    let mut lock = load_lock(&path).unwrap();
-    assert!(
-        !lock.bundles.is_empty(),
-        "this pass records it, which is what the test removes"
-    );
-    lock.bundles.clear();
-    save_lock(&path, &lock).unwrap();
-
-    write_skill(&w.upstream, "a", "", "a version two.");
-    write_skill(&w.upstream, "c", "", "c version one.");
-    fs::write(
-        w.upstream.join("kendex.toml"),
-        "[bundles.kit]\ndescription = \"a set\"\nskills = [\"a\", \"b\", \"c\"]\n",
-    )
-    .unwrap();
-    let second = commit(&w.upstream, "two");
-    fetch_mirrors(&w);
-
-    let report = package::update_one(&w.env, &w.scope, ItemKind::Skill, "a").unwrap();
-    apply::execute(&w.env, &report.plan).unwrap();
-
-    assert!(installed_body(&w, "a").contains("a version two."));
-    assert_eq!(locked_commit(&w, "a"), second);
-    assert!(
-        !w.home.join("app/.agents/skills/c").exists(),
-        "the members placed the set: {:?}",
-        report.plan.ops
-    );
-    assert_eq!(locked_commit(&w, "b"), first);
-    assert!(
-        !load_lock(&path).unwrap().bundles.is_empty(),
-        "and the write that followed recorded it"
-    );
-}
-
 /// A lock behind the current version is rewritten on the next apply, and
 /// that is the whole migration a bump needs here: a scope holding an older
 /// record gains the new one by being applied, not by machinery that goes

@@ -17,9 +17,6 @@ use crate::source::SourceState;
 use super::desired::DesiredState;
 use super::{DriftRow, DriftState, config_edits};
 
-mod manifest_text;
-pub(super) use manifest_text::plan_schema_upgrade;
-
 /// Whether a plan already persists the manifest. A caller about to insert
 /// its own save must know: a second write to the same file binds to bytes
 /// the first one replaces and could never run.
@@ -41,16 +38,15 @@ pub(super) fn manifest_pre(base: Option<&Base>, path: &Path) -> Result<Pre> {
 }
 
 /// The plan's one manifest write, when anything needs it: skills an agent
-/// gained upstream take the full serialized write — or, without that, the
-/// schema upgrade lands as a surgical text edit that keeps the user's
-/// comments and formatting. One write whatever put it there: a second
-/// manifest write could never run, its precondition binds to the bytes the
-/// first one replaces.
+/// gained upstream, or a manifest still carrying an older schema line.
+/// Either way the file is serialized from the manifest this build read,
+/// which is what drops whatever an older schema carried and this one
+/// retired. One write whatever put it there: a second manifest write could
+/// never run, its precondition binds to the bytes the first one replaces.
 ///
 /// `declared` is the manifest as the person wrote it, never the pinned
-/// copy a single-package update plans from: the surgical edit falls back
-/// to serializing it, and a synthetic pin in the file reads as a hold the
-/// person chose.
+/// copy a single-package update plans from — a synthetic pin serialized
+/// into the file reads as a hold the person chose.
 pub(super) fn plan_manifest_write(
     env: &Env,
     scope: &Scope,
@@ -59,21 +55,26 @@ pub(super) fn plan_manifest_write(
     state: &DesiredState,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
-    let Some(update) = &state.manifest_update else {
-        if declared.schema < crate::manifest::MANIFEST_SCHEMA {
-            plan_schema_upgrade(env, scope, declared, base, ops)?;
-        }
-        return Ok(());
+    let (description, written) = match &state.manifest_update {
+        Some(update) => ("Add new catalog skills to kendex.toml".to_owned(), update),
+        None if declared.schema < crate::manifest::MANIFEST_SCHEMA => (
+            format!(
+                "Upgrade {} to the current format",
+                crate::manifest::MANIFEST_FILE
+            ),
+            declared,
+        ),
+        None => return Ok(()),
     };
     let path = crate::manifest::manifest_path(env, scope);
-    let mut updated = update.clone();
-    updated.schema = crate::manifest::MANIFEST_SCHEMA;
+    let mut written = written.clone();
+    written.schema = crate::manifest::MANIFEST_SCHEMA;
     ops.push(PlannedOp {
-        description: "Add new catalog skills to kendex.toml".into(),
+        description: description.into(),
         op: Op::WriteManifest {
             pre: manifest_pre(base, &path)?,
             path,
-            manifest: Box::new(updated),
+            manifest: Box::new(written),
         },
     });
     Ok(())

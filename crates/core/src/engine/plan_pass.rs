@@ -27,7 +27,6 @@ pub(super) fn plan_items(
     lock: &Lock,
     options: &PlanOptions,
     owned_paths: &BTreeSet<PathBuf>,
-    legacy_pi: &super::pi_hooks_move::Preflight,
     drift: &mut Vec<DriftRow>,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut config_edits::ConfigEditPlan,
@@ -51,13 +50,6 @@ pub(super) fn plan_items(
             &options.overwrite_edited_names,
         );
         if !discard && holds::hold_local_edit(env, item, scope, lock, &mut sink) {
-            continue;
-        }
-        // Not gated on `discard`: the preflight already took the discard
-        // into account, so a hold that survives it is one discarding
-        // cannot settle — a copy kendex cannot read, or a registration it
-        // cannot take out.
-        if holds::hold_legacy_copy(item, scope, lock, legacy_pi, &mut sink) {
             continue;
         }
         let replace = named(
@@ -102,7 +94,6 @@ pub(super) fn plan_refusals(
     scope: &Scope,
     lock: &Lock,
     state: &desired::DesiredState,
-    legacy_pi: &super::pi_hooks_move::Preflight,
     guard: &mut removal::TrashGuard,
     drift: &mut Vec<DriftRow>,
     ops: &mut Vec<PlannedOp>,
@@ -124,31 +115,15 @@ pub(super) fn plan_refusals(
             // non-pi hook it cannot vouch for), edited bytes are not an
             // automatic casualty of an upstream change, so they hold and
             // the conflict says why.
-            // The reserved-name move's hold counts here too: what it is
-            // holding is still what runs, and its record is the only
-            // thing a later pass can claim it with.
-            let edited = removal::edit_holds(env, scope, entry);
-            let legacy_hold = (refusal.kind == crate::model::ItemKind::Hook
-                && refusal.harness == crate::model::HarnessId::Pi)
-                .then(|| legacy_pi.hold(&refusal.name))
-                .flatten();
-            if edited || legacy_hold.is_some() {
-                // The refusal says why nothing new was written; the hold
-                // says why the old copy is still running, in the same
-                // words every other path says it in. Edits in the files
-                // outrank it — that is the half a discard can settle.
-                let (why, cause) = match legacy_hold.filter(|_| !edited) {
-                    Some(hold) => hold.row(EDITS_KEPT),
-                    None => (EDITS_KEPT.to_owned(), Some(DriftCause::LocalEdit)),
-                };
+            if removal::edit_holds(env, scope, entry) {
                 drift.push(DriftRow {
                     kind: refusal.kind,
                     name: refusal.name.clone(),
                     harness: refusal.harness,
                     scope: scope.clone(),
                     state: DriftState::Conflict,
-                    detail: format!("{} — {why}", refusal.reason),
-                    cause,
+                    detail: format!("{} — {EDITS_KEPT}", refusal.reason),
+                    cause: Some(DriftCause::LocalEdit),
                     compared: None,
                     also_in_the_way: Vec::new(),
                 });

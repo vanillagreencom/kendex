@@ -42,10 +42,9 @@ pub enum CoreError {
     )]
     LegacyManifest { path: PathBuf },
 
-    #[error("{path} is a v1 lock — no importer exists; move it aside or delete it")]
-    LegacyLock { path: PathBuf },
-
-    #[error("{path}: this lock file is damaged and could not be read — {message}")]
+    #[error(
+        "{path}: this lock file could not be read — {message}; move it aside or delete it, then install fresh"
+    )]
     LockCorrupt { path: PathBuf, message: String },
 
     #[error(

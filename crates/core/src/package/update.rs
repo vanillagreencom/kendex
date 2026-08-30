@@ -112,26 +112,16 @@ pub fn update_many(env: &Env, scope: &Scope, targets: &[UpdateTarget]) -> Result
 }
 
 /// The manifest a targeted update plans against, `None` where the scope
-/// has none, or the refusal a legacy one earns.
-///
-/// A legacy manifest is refused loudly rather than read as "declares
-/// nothing": the whole-scope audit's observation-only posture would
-/// silently answer this targeted verb with an empty plan.
+/// has none. A file this build cannot read is refused by the load itself.
 fn plannable_manifest(env: &Env, scope: &Scope) -> Result<Option<Manifest>> {
     let path = crate::manifest::manifest_path(env, scope);
     match crate::manifest::load(&path)? {
         crate::manifest::ManifestFile::Current(manifest) => Ok(Some(*manifest)),
         crate::manifest::ManifestFile::Absent => Ok(None),
-        crate::manifest::ManifestFile::Legacy { .. } => Err(CoreError::LegacyManifest { path }),
     }
 }
 
-/// Which of these packages the lock records an installation of. A v1 lock
-/// is refused here for the same reason a v1 manifest is: read as "not
-/// installed", a declared package would fall through to the whole-scope
-/// audit's observation-only posture and this verb would answer with an
-/// empty plan nothing surfaces, while a derived one would be blamed on the
-/// name the caller typed.
+/// Which of these packages the lock records an installation of.
 fn installed_names(
     env: &Env,
     scope: &Scope,
@@ -151,6 +141,5 @@ fn installed_names(
             .collect()),
         // Nothing recorded yet — a declared package still plans.
         crate::lock::LockFile::Absent => Ok(std::collections::BTreeSet::new()),
-        crate::lock::LockFile::Legacy { .. } => Err(CoreError::LegacyLock { path: lock_path }),
     }
 }

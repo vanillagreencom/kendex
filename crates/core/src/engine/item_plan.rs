@@ -145,12 +145,12 @@ pub(super) fn plan_item(
     };
     new_lock
         .entries
-        .insert(item.key.clone(), record(item, existing, installed_at));
+        .insert(item.key.clone(), record(item, installed_at));
     Ok(())
 }
 
 /// What this pass records about the installation it just planned.
-fn record(item: &Desired, existing: Option<&LockEntry>, installed_at: String) -> LockEntry {
+fn record(item: &Desired, installed_at: String) -> LockEntry {
     LockEntry {
         name: item.name.clone(),
         kind: item.kind,
@@ -166,9 +166,6 @@ fn record(item: &Desired, existing: Option<&LockEntry>, installed_at: String) ->
         upstream_skills: item.upstream_skills.clone(),
         emitted: item.emitted.clone(),
         registration: registration(item),
-        // Carried, never re-derived: what a pass records about a finished
-        // move outlives every later rendering of the item.
-        left_pi_reserved_name: existing.is_some_and(|entry| entry.left_pi_reserved_name),
         reasons: item.reasons.clone(),
     }
 }
@@ -270,11 +267,6 @@ fn plan_registration(
     let retire = match super::item_record::retire_previous(item, existing) {
         super::item_record::Previous::Settled => None,
         super::item_record::Previous::Retire(path, edit) => Some((path, edit)),
-        // Only a pi hook answers this way — elsewhere an unsettled
-        // document settles. Nothing is written beside entries pi's pass
-        // cannot tell its own from: this one registration holds, and
-        // says which document to look at.
-        super::item_record::Previous::Ambiguous(why) => return Ok(Planned::Conflict(why)),
     };
     let edits: Vec<(PathBuf, ConfigEdit)> =
         retire.into_iter().chain(edits.iter().cloned()).collect();

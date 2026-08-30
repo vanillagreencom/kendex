@@ -1,7 +1,7 @@
-//! A v1 lock (bare-name keys, `harnesses` array, no singular `harness`) must
-//! not crash the audit with a raw serde error, and a damaged or
-//! future-version lock must not take down the rest of a multi-scope audit —
-//! the caller sees it as data (a note, or a distinctly typed error) instead.
+//! A v1 lock (bare-name keys, `harnesses` array, no singular `harness`) is
+//! a shape this build does not read, and a future-version lock is one it
+//! will not read. Each refuses through the audit as its own typed error,
+//! naming the way out, rather than as a raw serde failure.
 #![cfg(unix)]
 
 use std::fs;
@@ -61,29 +61,13 @@ const V1_LOCK: &str = r#"{
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_v1_lock_audits_read_only_with_a_note_instead_of_a_parse_error() {
+fn a_v1_lock_refuses_the_audit_and_names_the_fresh_install() {
     let f = fixture();
     fs::write(&f.lock_path, V1_LOCK).unwrap();
 
-    let report = audit(&f.env, &f.scope).unwrap();
-    assert!(
-        report.notes.iter().any(|n| n.contains("from version 1")),
-        "expected a v1-lock note, got: {:?}",
-        report.notes
-    );
-    assert!(report.plan.ops.is_empty(), "nothing is planned read-only");
-}
-
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_corrupt_lock_is_a_distinct_error_not_a_v1_note() {
-    let f = fixture();
-    fs::write(&f.lock_path, "{not json").unwrap();
-
-    assert!(matches!(
-        audit(&f.env, &f.scope),
-        Err(CoreError::LockCorrupt { .. })
-    ));
+    let error = audit(&f.env, &f.scope).unwrap_err();
+    assert!(matches!(error, CoreError::LockCorrupt { .. }), "{error}");
+    assert!(error.to_string().contains("install fresh"), "{error}");
 }
 
 #[test]

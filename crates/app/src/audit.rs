@@ -149,15 +149,12 @@ pub fn audit_all() -> Result<Vec<AuditView>, String> {
 /// manifest is owed on its first apply. (Orphan removal is the one opt-in
 /// extra; the dialog lists each left-behind item beside its checkbox.)
 pub fn apply_scope(env: &Env, scope: &Scope, remove_orphans: bool) -> Result<AuditView, String> {
-    // A manifest that vanished or turned legacy since the preview must be
-    // said out loud, not answered with a silent empty apply.
+    // A manifest that vanished since the preview must be said out loud,
+    // not answered with a silent empty apply.
     let path = manifest::manifest_path(env, scope);
     match manifest::load(&path).map_err(|e| e.to_string())? {
         manifest::ManifestFile::Current(_) => {}
         manifest::ManifestFile::Absent => return Err("no manifest for this scope yet".into()),
-        manifest::ManifestFile::Legacy { .. } => {
-            return Err(CoreError::LegacyManifest { path }.to_string());
-        }
     }
     let options = PlanOptions {
         remove_orphans,

@@ -640,45 +640,6 @@ fn a_login_waiting_for_refresh_commits_the_new_family_last() {
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_mixed_version_login_during_refresh_is_preserved() {
-    let (store, fetch, refresh_started, allow_refresh) = transaction_fixture();
-    let refresh = spawn_refresh(&fetch, &store);
-    refresh_started.recv().unwrap();
-
-    // Models an older installed client that does not know the transaction lock.
-    store.save(&replacement_login()).unwrap();
-    allow_refresh.send(()).unwrap();
-
-    let refused = refresh.join().unwrap().unwrap_err().to_string();
-    assert!(refused.contains("sign-in changed"), "{refused}");
-    assert!(refused.contains("retry the request"), "{refused}");
-    let kept = store.load().unwrap().unwrap();
-    assert_eq!(kept.access_token, "kxa_login");
-    assert_eq!(kept.refresh_token, "kxr_login");
-    assert_eq!(fetch.login_access_calls.load(Ordering::SeqCst), 0);
-}
-
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_mixed_version_login_survives_a_refused_old_refresh() {
-    let (store, fetch, refresh_started, allow_refresh) =
-        transaction_fixture_with_refresh((401, r#"{"error":"invalid_grant"}"#));
-    let refresh = spawn_refresh(&fetch, &store);
-    refresh_started.recv().unwrap();
-
-    store.save(&replacement_login()).unwrap();
-    allow_refresh.send(()).unwrap();
-
-    let refused = refresh.join().unwrap().unwrap_err().to_string();
-    assert!(refused.contains("sign-in changed"), "{refused}");
-    assert!(refused.contains("retry the request"), "{refused}");
-    let kept = store.load().unwrap().unwrap();
-    assert_eq!(kept.access_token, "kxa_login");
-    assert_eq!(kept.refresh_token, "kxr_login");
-}
-
-#[test]
-#[allow(clippy::unwrap_used)]
 fn a_logout_waiting_for_refresh_revokes_the_rotated_family_last() {
     let (store, fetch, refresh_started, allow_refresh) = transaction_fixture();
     let refresh = spawn_refresh(&fetch, &store);

@@ -46,7 +46,6 @@ pub fn settings_templates(env: &Env, scope: &Scope) -> Result<BTreeMap<String, T
             version: crate::lock::LOCK_VERSION,
             ..Lock::default()
         },
-        LockFile::Legacy { .. } => return Ok(BTreeMap::new()),
     };
     let state = super::desired::desired_state(env, scope, &manifest, &lock, false, None)?;
     Ok(state.settings_templates)

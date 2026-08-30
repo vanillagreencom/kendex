@@ -220,9 +220,7 @@ fn held_manifest(
             })
             .filter_map(|(name, decl)| {
                 let repo = source_repo(manifest, &decl.source)?;
-                let commit = held_at(lock, &decl.source, repo, |entry| {
-                    entry.kind == kind && entry.name == *name
-                })?;
+                let commit = held_at(lock, kind, name, &decl.source, repo)?;
                 Some((name.clone(), commit))
             })
             .collect();
@@ -325,18 +323,17 @@ fn from_source(entry: &LockEntry, source: &str, repo: &str) -> bool {
 /// no commit recorded, two that disagree, or one that came from somewhere
 /// this declaration no longer reads.
 ///
-/// Every installation `belongs` names is asked, not only the ones that
-/// still match the source. Filtering first reads the survivors as
-/// agreement and pins the declaration on their commit, which moves the
-/// other copy into a history it was never installed from.
-fn held_at(
-    lock: &Lock,
-    source: &str,
-    repo: &str,
-    belongs: impl Fn(&LockEntry) -> bool,
-) -> Option<String> {
+/// Every installation of this item is asked, not only the ones that still
+/// match the source. Filtering first reads the survivors as agreement and
+/// pins the declaration on their commit, which moves the other copy into a
+/// history it was never installed from.
+fn held_at(lock: &Lock, kind: ItemKind, name: &str, source: &str, repo: &str) -> Option<String> {
     let mut agreed: Option<String> = None;
-    for entry in lock.entries.values().filter(|entry| belongs(entry)) {
+    for entry in lock
+        .entries
+        .values()
+        .filter(|entry| entry.kind == kind && entry.name == name)
+    {
         if !from_source(entry, source, repo) {
             return None;
         }
@@ -355,21 +352,9 @@ fn held_at(
 /// where it sits that survives its members moving. Read back only where
 /// the declaration still reads from what the record names — a rebind
 /// leaves it describing a set this scope no longer installs.
-///
-/// A lock written before that commit was recorded has none, and the
-/// members are all there is to go on: they were installed together and
-/// nothing has moved one of them off the set on its own yet, so where they
-/// agree is where the set is. The next write records it.
 fn held_commit(lock: &Lock, bundle: &str, source: &str, repo: &str) -> Option<String> {
-    if let Some(recorded) = lock.bundles.get(bundle) {
-        return (recorded.source == source && recorded.source_repo == repo)
-            .then(|| recorded.commit.clone());
-    }
-    held_at(lock, source, repo, |entry| {
-        entry.reasons.iter().any(
-            |reason| matches!(reason, Reason::MemberOf { bundle: of } if of.name == bundle && of.source == source),
-        )
-    })
+    let recorded = lock.bundles.get(bundle)?;
+    (recorded.source == source && recorded.source_repo == repo).then(|| recorded.commit.clone())
 }
 
 #[cfg(test)]

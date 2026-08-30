@@ -109,15 +109,11 @@ pub fn report_route(
     kind: Option<ItemKind>,
 ) -> Result<ReportRouteView, String> {
     let env = env()?;
-    // Read-only lookup: a v1 lock degrades to "no provenance" like the rest
-    // of the read surface, instead of blocking the report dialog outright.
     let lock = match kendex_core::lock::load_file(&kendex_core::lock::lock_path(&env, &scope))
         .map_err(|e| e.to_string())?
     {
         kendex_core::lock::LockFile::Current(lock) => lock,
-        kendex_core::lock::LockFile::Absent | kendex_core::lock::LockFile::Legacy { .. } => {
-            kendex_core::lock::Lock::default()
-        }
+        kendex_core::lock::LockFile::Absent => kendex_core::lock::Lock::default(),
     };
     let route =
         kendex_core::report::route(&lock, &name, kind, kendex_core::report::DEFAULT_UPSTREAM);

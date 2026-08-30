@@ -429,37 +429,24 @@ lives in one capability table read by core and UI.
   applies what is rendered, records that. A first install retires nothing,
   and neither does an answer short of certainty: an entry moved,
   duplicated, or unnamed by the record is the person's to keep, and the
-  pass registers under the identity it renders beside it. Only a pi hook's
-  ambiguity holds (`engine::item_record::retire_previous`), because pi's
-  move deletes what it identifies (`engine::pi_hooks_move`). Removal reads
-  the same record; an editor rewrites only what its own registration
-  names; an entry no edit of kendex's can reach is neither reconciled nor
-  retired — proven by applying and reading back.
+  pass registers under the identity it renders beside it
+  (`engine::item_record::retire_previous`). Removal reads the same record;
+  an editor rewrites only what its own registration names; an entry no
+  edit of kendex's can reach is neither reconciled nor retired — proven by
+  applying and reading back.
 - **Pi hooks are enforced through the carrier.** The `pi-hooks` extension
   package hosts native listeners; hook content rides in the registry
   kendex renders beside them (`kendex/hooks/<name>.sh` plus
   `kendex/hooks.json`, keyed by Pi's listener names — tool call, tool
   result, turn end, session start). Pi reserves `hooks/` beside every root
-  it loads, so storage sits under `kendex/`; `engine::pi_hooks_move`
-  retires the old layout, taking only what this scope's lock names and
-  its bytes prove, holding whole what it cannot (installation and
-  registration together) and saying why — [docs/adapters/pi.md](adapters/pi.md)
-  carries the rules in full. A finished move is recorded in the lock
-  (`LockEntry::left_pi_reserved_name`), written only where proven; every
-  consumer reads that record (`Preflight`), and past it nothing under the
-  reserved name is asked about. A deletion asks for a plain file and binds
-  the type it proved with the hash (`preflight::provenance`,
-  `preflight::discardable`, `Pre::PlainHashIs`); every hold reaches the
-  conflict row through `Hold::row`. A held hook runs from the old
-  registry, so Pi's hook surface list carries that registry too while an
-  installation is still under the reserved name
-  (`pi_hooks_move::legacy_registry_lives`). The capability row says what
-  the mechanism supports; labels read carrier reality (`pi_ext::carrier`),
-  and Pi loads project and global settings both, so a project-installed
-  hook with only a global carrier is still enforced. The session-start
-  drift report rides the same mechanism: same script, same kill-switch,
-  fire-and-forget into session start; a reloaded or resumed session never
-  repeats it.
+  it loads, so storage sits under `kendex/` and nothing reads or writes a
+  registry beside the root — [docs/adapters/pi.md](adapters/pi.md) carries
+  the rules in full. The capability row says what the mechanism supports;
+  labels read carrier reality (`pi_ext::carrier`), and Pi loads project
+  and global settings both, so a project-installed hook with only a global
+  carrier is still enforced. The session-start drift report rides the same
+  mechanism: same script, same kill-switch, fire-and-forget into session
+  start; a reloaded or resumed session never repeats it.
 - **A seeded settings comment refreshes only while provably unedited.**
   Skills seed `[env]` defaults into `kendex.settings.toml` write-if-absent;
   the lock keeps, per key, the seeding skill and the FNV-1a hash of its

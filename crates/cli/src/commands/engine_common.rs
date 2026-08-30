@@ -2,7 +2,6 @@ pub use super::blocked::{print_conflicts, print_drift};
 
 use kendex_core::engine::{DriftRow, DriftState, EngineReport};
 use kendex_core::env::Env;
-use kendex_core::error::CoreError;
 use kendex_core::model::{HarnessId, ItemKind};
 use kendex_core::names::shown;
 
@@ -284,11 +283,4 @@ pub fn refresh_failures(report: &EngineReport) -> Vec<String> {
         })
         .cloned()
         .collect()
-}
-
-pub fn is_legacy(error: &CoreError) -> bool {
-    matches!(
-        error,
-        CoreError::LegacyManifest { .. } | CoreError::LegacyLock { .. }
-    )
 }

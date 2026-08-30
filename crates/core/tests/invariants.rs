@@ -401,6 +401,8 @@ fn invariant_8_one_writer_per_scope() {
     assert!(matches!(error, CoreError::ScopeBusy { .. }));
 }
 
+/// A v1 manifest is refused at every door — the audit's included — and
+/// nothing rewrites it on the way out.
 #[test]
 fn legacy_v1_manifests_stay_byte_identical() {
     let f = fixture();
@@ -409,9 +411,8 @@ fn legacy_v1_manifests_stay_byte_identical() {
 
     let error = ops::manifest_for_mutation(&f.env, &f.scope).unwrap_err();
     assert!(matches!(error, CoreError::LegacyManifest { .. }));
-    let report = audit(&f.env, &f.scope).unwrap();
-    assert!(report.notes.iter().any(|n| n.contains("from version 1")));
-    assert!(report.plan.is_empty());
+    let error = audit(&f.env, &f.scope).unwrap_err();
+    assert!(matches!(error, CoreError::LegacyManifest { .. }), "{error}");
     assert_eq!(
         fs::read_to_string(f.project.join("kendex.toml")).unwrap(),
         v1

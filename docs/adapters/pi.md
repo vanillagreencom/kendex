@@ -58,63 +58,9 @@ the name alone, and `tools/` when it holds entries beyond Pi's own `fd`/`rg`
 binaries and dotfiles. kendex keeps both scripts and registry one level
 down, under `kendex/` (`harness::pi::HOOK_HOME`), and writes nothing to
 `tools/` at either scope — an extension's `bin` entries link into the
-scope's `bin/`. Anything a prior kendex left under a reserved name is moved
-off on the next plan, the directory with it (`engine::pi_hooks_move`):
-
-- kendex takes a file under the reserved name only when this scope's lock
-  names it and its bytes hash to what apply last wrote; from the legacy
-  registry it takes only entries the lock accounts for that are really in
-  the file, trashing the registry only when that leaves it empty.
-- A hook nothing declares any more is retired outright; a hook this pass
-  rendered is retired against that rendering; a still-declared hook whose
-  replacement this pass did not put in place (source unresolved, script or
-  registration unwritten) waits. Bundle members are not orphans.
-- A copy kendex cannot prove it wrote holds the whole installation: its old
-  registration stays live and no fresh rendering takes over. A registration
-  kendex cannot remove holds the script it names. Removability is proven by
-  taking the entry out and reading the document back, never by the edit
-  reporting success (a handler directly under its event is a shape the edit
-  reaches past).
-- A registry that is a link, unreadable, or holds an entry kendex must
-  remove in a shape its editor cannot rewrite blocks every hook; an entry
-  kendex cannot pick out of an otherwise editable document blocks that hook
-  alone. A hook on record as finished blocks nothing.
-- A registration is identified by its command plus, where the record kept
-  them, its event and matcher — read from the keyed parts of the document,
-  never from the one display line. An unset matcher and an empty matcher
-  are the same matcher. Two entries with the same command and no recorded
-  event or matcher are one unresolved puzzle, and a puzzle holds.
-- At the new path the record keeps the event and matcher the hook was
-  installed under, whatever the catalog renders today. Under the reserved
-  name a script-backed hook is named by its command alone.
-- A registration moved by hand to the new path, or written in a shape
-  kendex's edits step over, is detected by applying this pass and reading
-  the file back: a refresh never doubles it and a removal never takes the
-  script out from under it. Naming the hook for removal writes nothing and
-  removes the command wherever it was moved.
-- A link where the registry goes is not read through; that is a scope
-  question, not a hook question, and is asked wherever the old layout is.
-- Once a hook has finished moving, nothing under the reserved name is
-  kendex's — not the script, not an entry spelling the command kendex
-  registered, not the empty directory. The lock records this
-  (`left_pi_reserved_name`); the move reads it back instead of recomputing.
-  It is written only when the move is proven over: new copy in place,
-  nothing of the hook's registered under the reserved name, and the new path
-  running what the record asks (for a hook installed disabled, nothing). A
-  first-time install is over before it starts. A lock without the record
-  falls back to reading; the first pass finding nothing under the reserved
-  name writes the record. The record is what moved the install record's
-  version to 5; an older kendex refuses the file.
-- Discarding edits finishes the move in the same pass — old copy to the
-  trash, one registration left. Discarding covers bytes only: every gate
-  that lets a deletion through asks for a plain file first; a directory or
-  link where the script was is held and named, never trashed. Everything
-  held back gets a line saying which file and why; `refresh` prints them,
-  and the conflict row carries the same cause.
-- While any installation of kendex's remains under the reserved name, the
-  registry beside it is a scan surface: `kendex list`, the app and the
-  safety scan carry the copy that is firing. Once nothing of kendex's is
-  left there, that registry goes unread.
+scope's `bin/`. Nothing reads or writes a `hooks.json` beside the root: one
+a prior kendex left there is inert, and `kendex remove` plus `kendex add`
+is what takes it away.
 
 Enforcement is read live (`pi_ext::carrier::enforcement`): with the carrier
 registered in either scope's settings the hook is enforced; with no carrier

@@ -16,11 +16,10 @@ use super::{
 };
 
 /// What sits at a manifest path. A schema-less file is a v1 manifest:
-/// nothing converts it, and every write path refuses it by name.
+/// nothing converts it, and every read refuses it by name.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ManifestFile {
     Absent,
-    Legacy { raw: String },
     Current(Box<Manifest>),
 }
 
@@ -68,8 +67,8 @@ pub fn parse_text(path: &Path, text: &str) -> Result<ManifestFile> {
             message: e.to_string(),
         })?;
     if !table.contains_key("schema") {
-        return Ok(ManifestFile::Legacy {
-            raw: text.to_owned(),
+        return Err(CoreError::LegacyManifest {
+            path: path.to_path_buf(),
         });
     }
     if let Some(schema) = table.get("schema").and_then(toml::Value::as_integer)
@@ -103,10 +102,10 @@ pub fn save(path: &Path, manifest: &Manifest) -> Result<()> {
     atomic_write(path, &text)
 }
 
-/// Load for mutation: a legacy file is a hard error, never a write target.
-/// Whatever schema was read, a mutation writes the current one — every
-/// write path upgrades as a side effect of writing at all.
-/// [`read_for_mutation`] with the base dropped, so the two cannot drift.
+/// Load for mutation. Whatever schema was read, a mutation writes the
+/// current one — every write path upgrades as a side effect of writing at
+/// all. [`read_for_mutation`] with the base dropped, so the two cannot
+/// drift.
 pub fn load_for_mutation(path: &Path) -> Result<Option<Manifest>> {
     Ok(read_for_mutation(path)?.0)
 }
@@ -125,9 +124,6 @@ pub fn read_for_mutation(path: &Path) -> Result<(Option<Manifest>, Base)> {
     let base = Base::of(&text);
     match parse_text(path, &text)? {
         ManifestFile::Absent => Ok((None, base)),
-        ManifestFile::Legacy { .. } => Err(CoreError::LegacyManifest {
-            path: path.to_path_buf(),
-        }),
         ManifestFile::Current(mut manifest) => {
             manifest.schema = MANIFEST_SCHEMA;
             Ok((Some(*manifest), base))

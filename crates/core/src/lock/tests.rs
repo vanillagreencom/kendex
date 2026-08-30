@@ -17,7 +17,6 @@ fn lock_round_trips_and_missing_file_is_empty() {
         entry_key(ItemKind::Skill, "github", HarnessId::Claude),
         LockEntry {
             registration: None,
-            left_pi_reserved_name: false,
             name: "github".into(),
             kind: ItemKind::Skill,
             harness: HarnessId::Claude,
@@ -67,25 +66,6 @@ fn lock_round_trips_and_missing_file_is_empty() {
     assert!(std::fs::read_to_string(&path).unwrap().ends_with('\n'));
 }
 
-/// A record from before installations carried reasons reads back as one
-/// the user asked for — the only reading that invents nothing.
-#[test]
-fn entries_without_reasons_read_as_requested() {
-    let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join(".kendex-lock.json");
-    std::fs::write(
-        &path,
-        format!(
-            r#"{{"version":2,"root":{},"entries":{{"skill:gh:claude":{{"name":"gh","kind":"skill","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"symlink","installedAt":"2026-01-01T00:00:00Z","sourceHash":"abc","enabled":true}}}}}}"#,
-            json(tmp.path())
-        ),
-    )
-    .unwrap();
-    let lock = load(&path).unwrap();
-    let entry = &lock.entries["skill:gh:claude"];
-    assert_eq!(entry.reasons, BTreeSet::from([Reason::Requested]));
-}
-
 #[test]
 fn timestamps_are_iso8601() {
     let ts = crate::clock::timestamp();
@@ -95,10 +75,11 @@ fn timestamps_are_iso8601() {
 }
 
 /// A v1 lock (bare-name keys, a `harnesses` array, no singular
-/// `harness`) must read as a recognized legacy shape, never as a raw
-/// serde "missing field" error.
+/// `harness`) is a shape this build does not read. Nothing converts it:
+/// the load fails, and the message names the path out — move it aside and
+/// install fresh.
 #[test]
-fn a_v1_lock_reads_as_legacy_not_a_parse_error() {
+fn a_v1_lock_fails_to_load_and_names_the_fresh_install() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join(".kendex-lock.json");
     std::fs::write(
@@ -106,8 +87,10 @@ fn a_v1_lock_reads_as_legacy_not_a_parse_error() {
         r#"{"version":1,"entries":{"gh":{"name":"gh","kind":"skill","source":"kendex","source_repo":"vanillagreencom/kendex","harnesses":["claude-code"],"method":"symlink","installed_at":"2026-01-01T00:00:00Z","source_hash":"abc"}}}"#,
     )
     .unwrap();
-    assert!(matches!(load_file(&path).unwrap(), LockFile::Legacy { .. }));
-    assert!(matches!(load(&path), Err(CoreError::LegacyLock { .. })));
+    let error = load_file(&path).unwrap_err();
+    assert!(matches!(error, CoreError::LockCorrupt { .. }), "{error}");
+    assert!(error.to_string().contains("install fresh"), "{error}");
+    assert!(matches!(load(&path), Err(CoreError::LockCorrupt { .. })));
 }
 
 /// Malformed JSON is reported as a damaged lock, distinct from the v1
@@ -351,7 +334,6 @@ fn a_project_lock_is_never_written_claiming_another_tree() {
         entry_key(ItemKind::Skill, "gh", HarnessId::Claude),
         LockEntry {
             registration: None,
-            left_pi_reserved_name: false,
             name: "gh".into(),
             kind: ItemKind::Skill,
             harness: HarnessId::Claude,

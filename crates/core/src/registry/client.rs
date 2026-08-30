@@ -84,9 +84,12 @@ fn rotate_locked(
     let pair = match refresh(fetch, &credential.refresh_token) {
         Ok(pair) => pair,
         Err(Refused::Definitive(why)) => {
-            // Older installed clients do not take this guard. A network call
-            // gives one time to replace the family, so re-read before clearing.
-            let removal = remove_rejected(store, &credential);
+            // Under the refresh guard this call holds: the family the
+            // server just refused is the installed one, and it goes.
+            let removal = match store.clear() {
+                Ok(()) => Removal::Done,
+                Err(error) => Removal::Failed(error),
+            };
             return Err(expired(
                 removal,
                 format!("your sign-in has expired ({why})"),
@@ -103,12 +106,6 @@ fn rotate_locked(
         // Rotation replaces the tokens, never the sign-in they belong to.
         sign_in: credential.sign_in.clone(),
     };
-    // Mixed-version writers do not know this guard. Never replace a family
-    // an older client committed during the refresh request.
-    let current = required(store.load()?)?;
-    if current.refresh_token != credential.refresh_token {
-        return Err(sign_in_changed("refreshing"));
-    }
     store.save(&rotated)?;
     drop(refresh_guard);
 
@@ -154,14 +151,6 @@ pub fn logout(fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result<bool> {
             why: format!("{error} — the local credential was kept so you can retry"),
         }
     })?;
-    // An older client can commit another family without taking this guard.
-    // Re-read after revocation so logout cannot clear that newer sign-in.
-    let Some(current) = store.load()? else {
-        return Ok(true);
-    };
-    if current.refresh_token != credential.refresh_token {
-        return Err(sign_in_changed("logging out"));
-    }
     store.clear()?;
     Ok(true)
 }

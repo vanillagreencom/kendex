@@ -8,29 +8,21 @@ use crate::env::Env;
 use crate::manifest::Method;
 use crate::model::{HarnessId, ItemKind, Scope};
 
-/// Current lock version. Versions 1 (v0.1) through 7 still load — the
-/// shapes are compatible and the next lock write records the current
-/// version. A lock newer than this build refuses to load. Version 3 added
-/// `source_commit` and `rendered_hash`; version 4 added `settings-seeds`;
-/// version 5 added `left_pi_reserved_name`, a registration's matcher, and
-/// a recorded registration for hooks with a script of their own; version
-/// 6 added `bundles`; version 7 dropped the scope an install reason
-/// recorded, which was always the scope holding the lock and spelled a
-/// project's root as an absolute path; version 8 added `root`, the
-/// project a record was written under.
-/// Each bump is what stops an older build from reading the lock, dropping
-/// the newer record on its next write, and erasing evidence — of which
-/// bytes are whose, of which comment blocks seeding wrote, of a move out
-/// of the directory pi reserved being over, of where an installed set
-/// sits, or of which project wrote the record. Three of those are why a
-/// bump is not optional: a build that dropped the pi record would read a
-/// finished move as unfinished and reclaim what the person has since put
-/// under the reserved name; one that dropped a set's commit would leave a
-/// set whose members have come apart placeable at nothing, so the next
-/// update of anything else takes its other members current; and one that
-/// dropped `root` would refresh a project holding a nested checkout's
-/// lock without the ownership check, taking that checkout's files, then
-/// write the record back with nothing left to catch it.
+/// Current lock version, and the number every write records. Nothing
+/// converts an older record: what loads is what still deserializes into
+/// the shape below and names the project that wrote it, and anything else
+/// is refused as damaged — move it aside and install fresh. A lock newer
+/// than this build refuses to load outright. A bump is what stops an older
+/// build reading a newer record, dropping what it did not understand on
+/// its next write, and erasing evidence — of which bytes are whose, of which comment blocks seeding
+/// wrote, of where an installed set sits, or of which project wrote the
+/// record. Two of those are why a bump is not optional: a build that
+/// dropped a set's commit would leave a set whose members have come apart
+/// placeable at nothing, so the next update of anything else takes its
+/// other members current; and one that dropped `root` would refresh a
+/// project holding a nested checkout's lock without the ownership check,
+/// taking that checkout's files, then write the record back with nothing
+/// left to catch it.
 pub const LOCK_VERSION: u32 = 8;
 
 /// The lock file a project scope carries. The global lock is `lock.json`
@@ -219,24 +211,11 @@ pub struct LockEntry {
     /// script.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registration: Option<HookRegistration>,
-    /// Pi hooks only: this installation's move out of the directory pi
-    /// reserved has finished. A finished move is a fact about the past,
-    /// so it is recorded here instead of being re-derived from what is on
-    /// disk now — an edit to the new copy, or a catalog that changes the
-    /// hook's event, would otherwise re-open a move that is over. Once
-    /// this is set, everything under the reserved name is somebody
-    /// else's, whatever its bytes or its command happen to be.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub left_pi_reserved_name: bool,
     /// Every reason this installation exists. Never empty once written: an
     /// installation nothing can account for would be swept the moment
     /// anything looked at it.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub reasons: BTreeSet<Reason>,
-}
-
-fn is_false(value: &bool) -> bool {
-    !*value
 }
 
 /// One hook entry as a harness's registry keys it: event plus command.
@@ -291,7 +270,7 @@ pub fn skill_names(lock: &Lock) -> std::collections::BTreeSet<String> {
 }
 
 mod file;
-pub use file::{LockFile, is_v1_text, load, load_file, parse_text, save};
+pub use file::{LockFile, load, load_file, parse_text, save};
 
 /// Where this scope's lock lives. Off the canonical root, like every
 /// scope-path derivation (`manifest::manifest_path`): the path must

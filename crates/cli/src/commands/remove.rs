@@ -7,6 +7,7 @@ use crate::ui;
 use kendex_core::apply::Op;
 use kendex_core::engine::{EngineReport, ops};
 use kendex_core::env::Env;
+use kendex_core::error::CoreError;
 use kendex_core::model::Scope;
 use kendex_core::names::shown;
 
@@ -42,7 +43,7 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
         let report = match planned {
             Ok(report) => report,
             // A scope without a v2 manifest has nothing of ours to remove.
-            Err(error) if super::engine_common::is_legacy(&error) => continue,
+            Err(CoreError::LegacyManifest { .. }) => continue,
             Err(error) => return Err(error.into()),
         };
         let report = match mode {
