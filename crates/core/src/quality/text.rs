@@ -346,11 +346,13 @@ fn hook_docs(
 pub fn lines(text: &str, markdown: bool) -> Vec<Line> {
     let raw: Vec<&str> = text.lines().collect();
     let lower: Vec<String> = raw.iter().map(|line| flatten(line)).collect();
-    let prose = match markdown {
-        true => crate::render::prose_lines(text),
-        false => vec![false; raw.len()],
+    // The spans come off the document's own bytes, and index the flattened
+    // copy just as well: flattening rewrites whitespace and case one byte
+    // for one, and touches neither a backtick nor the backslash escaping it.
+    let spans = match markdown {
+        true => crate::render::code_spans_by_line(text),
+        false => vec![Vec::new(); raw.len()],
     };
-    let spans = crate::render::code_spans_by_line(&lower, &prose);
     raw.iter()
         .zip(lower)
         .zip(spans)

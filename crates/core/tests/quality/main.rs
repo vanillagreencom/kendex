@@ -12,6 +12,7 @@ mod fixture;
 mod kinds;
 mod reading;
 mod rules;
+mod rules_blocks;
 mod rules_fetch;
 mod rules_shapes;
 mod scoring;
