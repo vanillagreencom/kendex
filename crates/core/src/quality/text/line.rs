@@ -4,6 +4,7 @@
 
 use super::super::Severity;
 use super::super::phrase::find_phrase;
+use crate::render::code_spans;
 
 /// One line of a document, classified.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,7 +21,7 @@ pub struct Line {
     pub describing: bool,
     /// This line is prose: markdown, outside its code blocks. It decides
     /// one thing and nothing else — which marks quote, which
-    /// [`Line::runs_at`] reads. Prose names a switch inside backticks and
+    /// [`Line::runs_at`] reads. Prose names a switch inside a code span and
     /// an apostrophe in it is punctuation; a command line is the other way
     /// round. Weight is a separate question: see `describing`.
     pub prose: bool,
@@ -123,30 +124,30 @@ impl Line {
     /// passes it to git. What does is the same characters standing in the
     /// open, and that is the only thing this answers yes to.
     ///
-    /// The marks that quote are the line's own. In prose a run of
-    /// backticks opens and closes a code span, and `'` and `"` are
-    /// punctuation. On a command line `'` and `"` hold a string, a
-    /// backtick runs what it holds rather than quoting it, and a `#` at a
-    /// word boundary opens a comment that reaches the end of the line.
+    /// The marks that quote are the line's own. In prose the code spans
+    /// are markdown's, read by [`code_spans`]: a run of backticks closes
+    /// only on a run of its own length, one that never meets its match
+    /// quotes nothing, and `'` and `"` are punctuation throughout. On a
+    /// command line `'` and `"` hold a string, a backtick runs what it
+    /// holds rather than quoting it, and a `#` opens a comment that
+    /// reaches the end of the line wherever a word could start.
     pub fn runs_at(&self, at: usize) -> bool {
         if at < self.command_at() {
             return false;
         }
+        if self.prose {
+            return !code_spans(&self.lower)
+                .into_iter()
+                .any(|(start, end)| at >= start && at < end);
+        }
         let mut open: Option<char> = None;
         let mut at_a_break = true;
-        let mut chars = self.lower.char_indices().peekable();
+        let mut chars = self.lower.char_indices();
         while let Some((offset, c)) = chars.next() {
             if offset >= at {
                 return open.is_none();
             }
-            if self.prose {
-                // A run of backticks is one mark, so a double-backtick
-                // span opens once and closes once.
-                if c == '`' {
-                    while chars.next_if(|(_, next)| *next == '`').is_some() {}
-                    open = open.xor(Some('`'));
-                }
-            } else if open == Some('\'') {
+            if open == Some('\'') {
                 // Nothing inside a single-quoted string escapes.
                 open = (c != '\'').then_some('\'');
             } else if c == '\\' {
@@ -158,8 +159,21 @@ impl Line {
             } else if c == '#' && at_a_break {
                 return false;
             }
-            at_a_break = c.is_whitespace();
+            at_a_break = c.is_whitespace() || ends_a_token(c);
         }
         open.is_none()
     }
+}
+
+/// Where a shell word can start again: after one of the operator
+/// characters, the same as after a space. `true;# never use --no-verify`
+/// runs the switch no more than `true # never use --no-verify` does.
+///
+/// Every longer operator — `&&`, `||`, `;;`, `2>`, `&>` — ends in one of
+/// these, so the character before the `#` is the whole question. Nothing
+/// else ends a word: after `{`, `}`, `!`, `=` or a closing quote the `#`
+/// is another byte of the word already being built, and a literal `#` is
+/// not a comment.
+fn ends_a_token(c: char) -> bool {
+    matches!(c, ';' | '&' | '|' | '<' | '>' | '(' | ')')
 }

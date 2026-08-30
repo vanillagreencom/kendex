@@ -3,7 +3,7 @@
 //! left as authored rather than mangled.
 
 use super::super::RenderWarning;
-use super::super::fences::fence_marker;
+use super::super::fences::{code_spans, fence_marker};
 use super::{CLAUDE_TOOLS, SKILL_POINTER, Word, word};
 use crate::model::HarnessId;
 
@@ -249,39 +249,6 @@ fn capitalize(phrase: &str) -> String {
         Some(first) => first.to_uppercase().chain(chars).collect(),
         None => String::new(),
     }
-}
-
-/// Inline code spans as outer byte ranges. A run of backticks closes only
-/// on a run of the same length, so a span may quote backticks of its own.
-fn code_spans(line: &str) -> Vec<(usize, usize)> {
-    let bytes = line.as_bytes();
-    let mut spans: Vec<(usize, usize)> = Vec::new();
-    let mut at = 0;
-    while at < bytes.len() {
-        if bytes[at] != b'`' {
-            at += 1;
-            continue;
-        }
-        let run = bytes[at..].iter().take_while(|b| **b == b'`').count();
-        let mut scan = at + run;
-        while scan < bytes.len() {
-            if bytes[scan] != b'`' {
-                scan += 1;
-                continue;
-            }
-            let close = bytes[scan..].iter().take_while(|b| **b == b'`').count();
-            if close == run {
-                spans.push((at, scan + close));
-                break;
-            }
-            scan += close;
-        }
-        at = match spans.last() {
-            Some((start, end)) if *start == at => *end,
-            _ => at + run,
-        };
-    }
-    spans
 }
 
 /// Markdown links as outer byte ranges — link text and target both.

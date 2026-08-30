@@ -298,6 +298,85 @@ fn safety_bypass_reads_past_a_mention_to_the_use_behind_it() {
     );
 }
 
+/// A backtick that closes nothing quotes nothing. Markdown ends a run of
+/// backticks only on a run of the same length, so an opener with no match
+/// is literal text — and treating it as a toggle would let one stray
+/// backtick hide every switch after it on the line, which is this rule
+/// going quiet in a score somebody installs on.
+#[test]
+fn safety_bypass_still_reads_a_switch_after_a_backtick_that_closes_nothing() {
+    let result = skill(&[(
+        "SKILL.md",
+        "Prefer `git commit -m done over git commit --no-verify -m done.\n",
+    )]);
+    assert_eq!(
+        severity_of(&result, "safety-bypass"),
+        Some(Severity::Critical),
+        "{:?}",
+        result.findings
+    );
+}
+
+/// A span opened by two backticks holds single ones as its own text, which
+/// is how markdown writes a backtick at all. Reading the inner one as the
+/// close reports the rest of the span as though it stood in the open.
+#[test]
+fn safety_bypass_leaves_a_backtick_quoted_inside_a_longer_span() {
+    let result = skill(&[(
+        "SKILL.md",
+        "The shape is ``git commit` --no-verify`` in a doc.\n",
+    )]);
+    assert!(
+        !rules_hit(&result).contains(&"safety-bypass"),
+        "{:?}",
+        result.findings
+    );
+}
+
+/// Switching an item off parks its file under a `.disabled` suffix and
+/// changes nothing about what the file is. A disabled artifact that scored
+/// differently would mean disabling something invented findings in it.
+#[test]
+fn a_disabled_markdown_artifact_scores_as_its_enabled_twin() {
+    let body = "The bypass is `git commit --no-verify`, which this never runs.\n";
+    let on = skill(&[("SKILL.md", body)]);
+    let off = skill(&[("SKILL.md.disabled", body)]);
+    assert!(
+        !rules_hit(&off).contains(&"safety-bypass"),
+        "{:?}",
+        off.findings
+    );
+    assert_eq!(rules_hit(&off), rules_hit(&on));
+    assert_eq!(off.safety.score, on.safety.score);
+}
+
+/// A `#` opens a comment wherever a word can start, and a shell operator
+/// ends a word as surely as a space does. Every longer operator ends in
+/// one of these characters, so the byte before the `#` settles it.
+#[test]
+fn safety_bypass_reads_a_comment_that_opens_after_an_operator() {
+    for op in [";", "&&", "||", "|", "&", ">", "<", "(", ")"] {
+        let text = format!("true{op}# never pass --no-verify\n");
+        let result = skill(&[("scripts/pre-commit", text.as_str())]);
+        assert!(
+            !rules_hit(&result).contains(&"safety-bypass"),
+            "{op}: {:?}",
+            result.findings
+        );
+    }
+
+    // Nothing else ends a word. After `}` the `#` is one more byte of the
+    // word being built, and the switch behind it is still an argument this
+    // line hands to a program.
+    let word = skill(&[("scripts/pre-commit", "true}# never pass --no-verify\n")]);
+    assert_eq!(
+        severity_of(&word, "safety-bypass"),
+        Some(Severity::Critical),
+        "{:?}",
+        word.findings
+    );
+}
+
 /// Flags that ordinary tools carry say nothing on their own. The kendex
 /// `github` skill uses `--force` forty-two times, every one of them about
 /// its own documented override, and `--yes` is in every non-interactive

@@ -1,7 +1,8 @@
-//! Where a document's code blocks are, so the prose rewrite leaves them
-//! alone and the fork walk reads their whitespace as content. Fenced and
+//! Where a document's code is, so the prose rewrite leaves it alone, the
+//! fork walk reads a block's whitespace as content, and the safety rules
+//! tell a switch named in a span from one a line would run. Fenced and
 //! indented blocks are both blocks; this module is the one place that says
-//! which lines stand inside one.
+//! which lines stand inside one and where a line's inline spans are.
 
 /// A fence line: any leading whitespace, then three or more backticks or
 /// tildes. `bare` — nothing but whitespace after the run — is what makes a
@@ -65,4 +66,40 @@ pub fn inside_a_block(text: &str) -> Vec<bool> {
         }
     }
     inside
+}
+
+/// Inline code spans of one line, as outer byte ranges. A run of backticks
+/// closes only on a run of the same length, so a span may quote backticks
+/// of its own, and a run that never meets its match is the literal
+/// characters rather than an opener — which is what keeps one stray
+/// backtick from reading the rest of a document as quoted.
+pub fn code_spans(line: &str) -> Vec<(usize, usize)> {
+    let bytes = line.as_bytes();
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] != b'`' {
+            at += 1;
+            continue;
+        }
+        let run = bytes[at..].iter().take_while(|b| **b == b'`').count();
+        let mut scan = at + run;
+        while scan < bytes.len() {
+            if bytes[scan] != b'`' {
+                scan += 1;
+                continue;
+            }
+            let close = bytes[scan..].iter().take_while(|b| **b == b'`').count();
+            if close == run {
+                spans.push((at, scan + close));
+                break;
+            }
+            scan += close;
+        }
+        at = match spans.last() {
+            Some((start, end)) if *start == at => *end,
+            _ => at + run,
+        };
+    }
+    spans
 }

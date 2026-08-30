@@ -6,9 +6,10 @@ pub mod skill;
 pub mod validate;
 pub mod vocab;
 
-/// Which lines stand inside a code block, which is what tells whitespace
-/// that is a block's own content from whitespace that separates prose.
-pub(crate) use fences::inside_a_block;
+/// Where a document's code is: which lines stand inside a block, which is
+/// what tells whitespace that is a block's own content from whitespace
+/// that separates prose, and where one line's inline spans are.
+pub(crate) use fences::{code_spans, inside_a_block};
 
 /// One thing the user should hear about a rendering, with the fix when
 /// there is one — every render lint travels through this shape.

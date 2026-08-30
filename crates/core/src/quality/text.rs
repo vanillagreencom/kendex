@@ -263,9 +263,15 @@ pub fn lines(text: &str, markdown: bool) -> Vec<Line> {
 /// Whether this path's text is markdown, where a code block is marked and
 /// everything outside one is prose. Everything else — a script, a hook's
 /// command, a config file — reads as a command line throughout.
+///
+/// The parked suffix comes off first. `SKILL.md.disabled` is the same
+/// markdown as `SKILL.md` and the audit reads it as one, so judging it by
+/// the trailing extension would make switching an item off turn its code
+/// spans back into findings.
 fn is_markdown(location: &str) -> bool {
     let lower = location.to_ascii_lowercase();
-    lower.ends_with(".md") || lower.ends_with(".markdown")
+    let base = lower.strip_suffix(".disabled").unwrap_or(&lower);
+    base.ends_with(".md") || base.ends_with(".markdown")
 }
 
 /// ASCII-lowercase with every whitespace byte turned into a space. Both
