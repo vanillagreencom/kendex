@@ -12,16 +12,22 @@
 #      parity is what lets one proof stand for every copy;
 #   3. pins the roster, so a new bash32-portability suite must join the set
 #      or be excluded on purpose, and an excluded one cannot drift back in.
+#
+# The roster spans both trees. A skill is authored under skills/ and rendered
+# into .agents/skills/, git tracks both, and the render is where a hand edit
+# looks least wrong to a reader — so a rendered copy is checked exactly as its
+# source is, not trusted to match it.
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 BEGIN='# --- shared bash32 pattern set: begin'
 END='# --- shared bash32 pattern set: end'
+RENDER_PREFIX='.agents/'
 Q="'"
 
-# Every file that carries the block. A suite outside this list carrying it, or
-# one in it without it, fails below.
-CARRIERS="skills/github/tests/bot_review_status.sh
+# Every authored file that carries the block. A suite outside this list
+# carrying it, or one in it without it, fails below.
+CARRIER_SOURCES="skills/github/tests/bot_review_status.sh
 skills/growth-guards/tests/bash32-portability.test.sh
 skills/harness-ci/tests/bash32-portability.test.sh
 skills/orch/tests/bash32-portability.test.sh
@@ -35,7 +41,23 @@ skills/worktree/tests/bash32-portability.test.sh"
 # contract — linear.sh requires Bash 4+ and says so in --help — so the shared
 # set would forbid the runtime that skill demands. It shares the filename with
 # the others and nothing else.
-EXCLUDED="skills/linear/tests/bash32-portability.test.sh"
+EXCLUDED_SOURCES="skills/linear/tests/bash32-portability.test.sh"
+
+# with_renders LIST — each path, followed by its tracked render. A skill this
+# repo does not install has no rendered copy and contributes only its source.
+with_renders() {
+  local p
+  for p in $1; do
+    printf '%s\n' "$p"
+    if git ls-files --error-unmatch "$RENDER_PREFIX$p" >/dev/null 2>&1; then
+      printf '%s\n' "$RENDER_PREFIX$p"
+    fi
+  done
+}
+
+CARRIERS="$(with_renders "$CARRIER_SOURCES")"
+EXCLUDED="$(with_renders "$EXCLUDED_SOURCES")"
+renders="$(printf '%s\n%s\n' "$CARRIERS" "$EXCLUDED" | grep -c "^$RENDER_PREFIX")"
 
 PASS=0
 FAIL=0
@@ -98,6 +120,13 @@ if [ -z "$reference" ]; then
   verdict
   exit
 fi
+# A roster that reached no render is a roster covering half the trees git
+# carries, and it would report that half as clean.
+if [ "$renders" -gt 0 ]; then
+  ok "the roster reached $renders rendered copies under $RENDER_PREFIX"
+else
+  bad "no rendered copy was checked, so drift under $RENDER_PREFIX would go unreported"
+fi
 
 # The comparison has teeth: one changed byte must read as drift.
 if [ "$(printf '%s\n' "$reference" | sed '$s/$/x/')" = "$reference" ]; then
@@ -108,7 +137,8 @@ fi
 
 # --- 2. the roster is closed -----------------------------------------------
 
-for f in $(git ls-files -- 'skills/*/tests/bash32-portability.test.sh' | LC_ALL=C sort); do
+for f in $(git ls-files -- 'skills/*/tests/bash32-portability.test.sh' \
+  "$RENDER_PREFIX"'skills/*/tests/bash32-portability.test.sh' | LC_ALL=C sort); do
   listed=no
   for c in $CARRIERS $EXCLUDED; do
     [ "$c" = "$f" ] && listed=yes
@@ -117,7 +147,7 @@ for f in $(git ls-files -- 'skills/*/tests/bash32-portability.test.sh' | LC_ALL=
     ok "$f is on the roster"
   else
     bad "$f is a bash32-portability suite this file has never heard of" \
-      "add it to CARRIERS, or to EXCLUDED with the reason it asserts something else"
+      "add it to CARRIER_SOURCES, or to EXCLUDED_SOURCES with the reason it asserts something else"
   fi
 done
 
@@ -166,7 +196,8 @@ fi
 # scanned tree it turns that tree's suite red, which is the whole claim these
 # suites make. The alternate spellings are here because they are how the
 # earlier set was walked past — extra whitespace, `typeset`, flag order,
-# one-character case conversion.
+# one-character case conversion, a quoted boundary ahead of a pipe, a case arm
+# running straight into the next pattern, and a parameter that is not a name.
 PROBES="$(
   cat <<'PROBES_EOF'
 local -A cache
@@ -192,17 +223,31 @@ lowered="${name,}"
 first="${words[0]^}"
 coproc FOO { :; }
 coproc { read -r line; }
-grep -q x file |& tee log
-grep -q x file|& tee log
+printf "%s" "$value" |& tee log
+printf "%s" "$value"|& tee log
+grep -q x file |&tee log
+(cat f)|& tee log
 cmd &>> log
   short) run ;;&
   short) run ;&
+case $x in short) run ;;&long) run ;; esac
+case $x in short) run ;&long) run ;; esac
+initial="${1^}"
+lowered="${1,}"
+indirect="${!name^}"
+indirect_all="${!name^^}"
+every="${@^^}"
+star="${*,,}"
+tenth="${10^}"
 PROBES_EOF
 )"
 
 # Lines that must NOT be flagged: a set that reds Bash 3.2-legal source is a
-# set nobody can keep. The last two are real bracket expressions out of
-# skills/preflight/scripts/preflight, where an unanchored |& or ;& matched.
+# set nobody can keep, and every probe above widens an anchor that a line here
+# keeps honest. The first three are real bracket expressions out of
+# skills/preflight/scripts/preflight and the fourth a separator string out of
+# hooks/pre-commit-check.sh, the four places an unanchored |& or ;& matched;
+# the fifth is the regex alternation the pipe anchor must also walk past.
 CONTROLS="$(
   cat <<'CONTROLS_EOF'
 local -r frozen=1
@@ -217,8 +262,14 @@ total=${#files[@]}
 fallback=${value:-,}
 MKTEMP_CALL_RE='(^[[:space:]]*|[;|&(`{][[:space:]]*)mktemp([^A-Za-z0-9_.-]|$)'
 RUNNER_RE="(^[[:space:]]*|[;&|\`(][[:space:]]*)"
+KIND_TAIL="([[:space:]\"'\`;&|)]|\$)"
+  SEP = ";&|()" "\n" "\r"
+alternation='([a-z]|&)'
 first || second &
 first; second &
+echo "${1}, ${2}"
+echo "${*}"
+echo "${!ref}"
 CONTROLS_EOF
 )"
 

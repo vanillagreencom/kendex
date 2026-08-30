@@ -262,7 +262,8 @@ assert_eq "$(compute_sticky_verdict_from_body "Recommendation: no approval")" "c
 echo
 echo "=== Bash 3.2 portability ==="
 # --- shared bash32 pattern set: begin
-# Every suite that scans for Bash 4 syntax carries this block verbatim.
+# Every suite that scans for Bash 4 syntax carries this block verbatim, the
+# .agents/skills/ render included.
 # tools/tests/bash32-pattern-parity.test.sh holds the copies byte-identical
 # and proves the set's teeth once, against the text these files ship. There
 # is no file they could source instead: skills install independently, so a
@@ -280,13 +281,23 @@ PATTERN='mapfile|readarray'
 PATTERN="$PATTERN"'|(^|[^[:alnum:]_])(declare|typeset|local|readonly)[[:blank:]]+-[[:alnum:]]*[Agn]'
 # Automatic FD allocation: exec {fd}< , {fd}> , {fd}>>
 PATTERN="$PATTERN"'|(^|[^$])\{[A-Za-z_][A-Za-z0-9_]*\}[<>]'
-# Case conversion, one character (${x^}) or every one (${x^^}), either way.
-PATTERN="$PATTERN"'|\$\{[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?(,,?|\^\^?)'
+# Case conversion, one character or every one, either direction, over every
+# parameter Bash takes it on: a name, a subscripted name, a positional, @ or
+# *, and an indirect one.
+PATTERN="$PATTERN"'|\$\{!?([A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?|[0-9]+|[@*])(,,?|\^\^?)'
 PATTERN="$PATTERN"'|(^|[^[:alnum:]_])coproc([[:blank:]]|$)'
-# |&, &>>, and the ;& / ;;& case terminators. Anchored on the operator's
-# neighbours, so a bracket expression in a script's own regex — [;|&(] — is
-# not read as a pipe.
-PATTERN="$PATTERN"'|(^|[[:blank:]]|[[:alnum:]_)}])\|&|&>>|;;?&([[:blank:]]|$)'
+# The pipe-with-stderr, the append-both redirection, and the two case
+# terminators. Each is anchored on BOTH sides, and both sides carry weight:
+# wide enough to admit every real token boundary, a bare word or quote or
+# brace or blank or line end, and narrow enough to leave a script's own
+# bracket expression alone. Only shapes that cannot occur in real shell are
+# excluded, since nothing legal ends a command with [ or ; or ( ahead of a
+# pipe, starts one with ) after it, or puts a bare alternation bar after a
+# case terminator. Widening one side and not the other reopens the side left
+# alone: unanchored, these matched the character classes inside preflight's
+# own regexes; anchored on one side only, they missed a quoted left boundary
+# and a case arm that runs straight into the next pattern.
+PATTERN="$PATTERN"'|(^|[^[;(])\|&([^)]|$)|&>>|(^|[^[]);;?&([^|]|$)'
 # --- shared bash32 pattern set: end
 portability_violations="$(grep -rnE "$PATTERN" "$SCRIPTS_DIR" \
     | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
