@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# vacuous-suite-scan: harness-subject
 # The library's verdict, exercised from outside it.
 #
 # assert.sh decides a suite's exit status in __assert_on_exit, and every other

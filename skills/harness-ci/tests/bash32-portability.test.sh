@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# vacuous-suite-scan: absence-subject
 # The classifier runs on whatever image a consumer's CI uses, macOS system
 # Bash 3.2 included, so shipped scripts may not use Bash 4+ builtins or syntax
 # (mapfile/readarray, associative arrays, automatic FD-allocation

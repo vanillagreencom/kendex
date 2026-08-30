@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# vacuous-suite-scan: harness-subject
 # Pins what a tenth suite must not be able to forget: no suite may run git
 # against a fixture while inheriting the caller's configuration, and the
 # shared harness must stay outside the tests/*.sh glob that runners execute.

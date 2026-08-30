@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# vacuous-suite-scan: absence-subject
 # Regression test for the reviewer skill's "Harness-Safe Shell" rule (kendex#510,
 # a recurrence of #369). Under Codex `approval=never`, a required read-only
 # validation such as `jq -e <filter> <file> >/dev/null` is rejected because the

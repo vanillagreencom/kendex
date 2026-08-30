@@ -7,11 +7,6 @@
 # present, never that a behavioral claim written in prose is true. It passes
 # vacuously where the template is not shipped.
 #
-# tools/vacuous-suite-scan reports it vacuous for that reason, and the report
-# is correct: the scan stages this skill alone, the template is not in it, and
-# every pin above is then skipped. There is no subject to declare — what would
-# clear the flag is the template travelling with the skill.
-#
 # The bundle rules themselves are prose and have no lint. Nothing here checks
 # that a bundle parent is born in Backlog rather than Triage, carries its
 # project's complete label set, takes its children's highest priority, takes

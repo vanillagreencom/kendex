@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# vacuous-suite-scan: absence-subject
 # Regression lint: reject multiline inline --body in dev workflow docs.
 #
 # A `linear.sh comments create ... --body "` whose opening quote does NOT close

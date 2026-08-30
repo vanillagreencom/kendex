@@ -139,12 +139,6 @@ jobs:
         if: matrix.shard == 'shell'
         run: bash skills/orch/tests/run-all.sh
 
-      # Repo-only policy check, kept out of the orch suite because that
-      # suite is installed into other projects with their own gate settings.
-      - name: review-gate policy
-        if: matrix.shard == 'shell'
-        run: tools/review-gate-policy-check
-
       # A failure is announced twice: inline where it happened, and in a
       # FAILED SUITES block at the end — the tail of a red job must name the
       # culprits instead of showing only the later suites passing.

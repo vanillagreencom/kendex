@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# vacuous-suite-scan: harness-subject
 # An assertion the suite cannot see is refused, not counted.
 #
 # A subshell — a command substitution, a pipeline element, a backgrounded or

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# vacuous-suite-scan: absence-subject
 # These scripts run under macOS system bash, which is 3.2. Bash 4+ constructs
 # fail there at runtime rather than at review time, so they are linted out.
 set -euo pipefail

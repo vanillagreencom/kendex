@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# vacuous-suite-scan: absence-subject
 # Architecture-invariant lint: the dep-radar skill is the GENERIC engine.
 # Concrete package, binary, fork, and project names belong in each repo's
 # generated docs/dep-radar/inventory.md, never in the skill docs. This lint is a

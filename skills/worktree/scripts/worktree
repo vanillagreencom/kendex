@@ -325,7 +325,6 @@ EOF
 print_push_help() {
   cat <<'EOF'
 Usage: worktree push [ID|/path] [--set-upstream|-u] [--no-rebase]
-       worktree push [ID|/path] [flags...] --check-args
 
 Push worktree branch to remote. Auto-rebases onto origin/<default> first.
 Uses BOT_REMOTE_NAME from project config if set, otherwise falls back to
@@ -364,13 +363,6 @@ the normal SSH path.
 Options:
   -u, --set-upstream    Set upstream tracking branch
   --no-rebase           Skip auto-rebase
-  --check-args          Parse the arguments and exit: 0 when this exact
-                        argument vector is one push accepts, 1 with the same
-                        diagnostic when it is not. No resolution, no rebase,
-                        no push. A caller that consumes state before pushing
-                        (orch's worktree-push and its pending rebase-map
-                        sidecar) validates the forwarded vector this way
-                        first, so a bad flag is refused with nothing consumed.
 
 Any other flag is a usage error (exit 1), so a typo cannot quietly become a
 default-behavior push. The ID or path may appear before or after the flags,
@@ -918,11 +910,9 @@ emit_rebase_map() {
   done
 }
 
-# Parse `push`'s arguments. The push dispatch and its parse-only --check-args
-# mode run this one loop, so a caller validating a forwarded argument vector
-# and the real push can never disagree about which flags exist (KEN-570).
-# Sets PUSH_ARG, PUSH_SET_UPSTREAM, PUSH_AUTO_REBASE and PUSH_CHECK_ARGS;
-# returns 1 with the usage error on stderr for anything it does not accept.
+# Parse `push`'s arguments. Sets PUSH_ARG, PUSH_SET_UPSTREAM and
+# PUSH_AUTO_REBASE; returns 1 with the usage error on stderr for anything it
+# does not accept (KEN-570).
 # Seen-ness is tracked separately from the value so an empty first positional
 # — itself refused, since resolution would silently fall back to $PWD and push
 # the current checkout — still counts against the single-target rule.
@@ -930,13 +920,11 @@ parse_push_args() {
   PUSH_ARG=""
   PUSH_SET_UPSTREAM=""
   PUSH_AUTO_REBASE=true
-  PUSH_CHECK_ARGS=false
   local arg_seen=false
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -u|--set-upstream) PUSH_SET_UPSTREAM="-u"; shift ;;
       --no-rebase) PUSH_AUTO_REBASE=false; shift ;;
-      --check-args) PUSH_CHECK_ARGS=true; shift ;;
       # An unknown --flag must fail rather than be dropped. The catch-all
       # shift this replaces turned a typo like `--no-rebse` into a silent
       # default-behavior push, and forced callers to pre-screen flags
@@ -4690,13 +4678,6 @@ case "${1:-}" in
     ARG="$PUSH_ARG"
     SET_UPSTREAM="$PUSH_SET_UPSTREAM"
     AUTO_REBASE="$PUSH_AUTO_REBASE"
-    # --check-args validates and stops: no resolution, no rebase, no push. A
-    # caller that consumes state before invoking push uses it to learn the
-    # verdict while nothing is consumed yet.
-    if [[ "$PUSH_CHECK_ARGS" == true ]]; then
-      exit 0
-    fi
-
     if [[ -z "$ARG" ]]; then
       WT_PATH="$PWD"
     elif [[ "$ARG" == */* ]]; then

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# vacuous-suite-scan: absence-subject
 # Every command substitution that produces a PATH uses the sentinel idiom.
 #
 # Three rounds of review found this one site at a time: `$(...)` strips

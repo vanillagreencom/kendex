@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# vacuous-suite-scan: absence-subject
 # Pins for the family's EXIT cleanup: it removes only what THIS process
 # created. An inherited GG_TMP or ownership flag must never decide what a
 # guard deletes, and a check a hook lane runs must not remove the settings

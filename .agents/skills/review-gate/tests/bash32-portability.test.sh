@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# vacuous-suite-scan: absence-subject
 # The review-gate scripts run on consumer CI images and on macOS system Bash
 # 3.2, so shipped scripts may not use Bash 4+ builtins or syntax
 # (mapfile/readarray, associative arrays, automatic FD-allocation

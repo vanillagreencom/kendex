@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# vacuous-suite-scan: harness-subject
 # The wrapper launches its full-decision-table replays from inside the
 # fixture blocks, so an early exit from a later block leaves replays running.
 # This proves the wrapper's teardown owns the whole replay TREE — the

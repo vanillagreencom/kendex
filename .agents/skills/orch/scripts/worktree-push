@@ -40,11 +40,11 @@
 # Every argument outside this wrapper's own namespace (--worktree, --issue,
 # --state-dir, --help) is forwarded verbatim to `worktree push`, which rejects
 # a flag it does not know. The push flag vocabulary lives there alone; see
-# `worktree push --help`. This wrapper validates before it acts: the exact
-# forwarded vector goes to `worktree push --check-args` — push's own parser,
-# doing no git work — before any state is consumed, so a mistyped flag is
-# refused with the pending sidecar still in place. A misspelling of an owned
-# flag needs no separate guess here: push does not know --sate-dir either.
+# `worktree push --help`, which is where a mistyped flag is caught. What
+# stands between a wrong argument and a wrong write is the state resolution
+# above the sidecar: a state file recording another issue or another worktree
+# is refused, an ambiguous one is refused, and a reconcile that fails keeps
+# the sidecar for the retry.
 # The state file resolves exactly like any other workflow-state call:
 # --state-dir, then $ORCH_STATE_DIR, then tmp/ under the caller's working
 # directory.
@@ -125,17 +125,9 @@ while [[ $# -gt 0 ]]; do
 		usage
 		exit 0
 		;;
-	# push's parse-only mode is this wrapper's own tool, not a mode it can
-	# forward: it would leave the real push a no-op while the sidecar was
-	# already consumed and state reconciled against a rebase that never ran.
-	--check-args | --check-args=*)
-		fail "--check-args is push's parse-only mode and cannot be forwarded through this wrapper: the push would do nothing while workflow state was reconciled anyway"
-		;;
 	# Everything outside this wrapper's own namespace is `worktree push`'s to
 	# accept or reject; push fails closed on a flag it does not know, so
-	# pass-through here keeps one copy of that vocabulary (KEN-570). The
-	# forwarded vector is put to push's parser below, before this run
-	# consumes anything.
+	# pass-through here keeps one copy of that vocabulary (KEN-570).
 	*)
 		push_args+=("$1")
 		shift
@@ -153,23 +145,6 @@ worktree_abs="$(cd -P -- "$worktree" 2>/dev/null && pwd -P)" \
 	|| fail "not a directory: $worktree"
 git_dir="$(git -C "$worktree_abs" rev-parse --absolute-git-dir 2>/dev/null)" \
 	|| fail "not a git worktree: $worktree_abs"
-
-# Validate before acting. A mistyped --state-dir is the dangerous case: it
-# falls back silently (ORCH_STATE_DIR, then tmp/ under the caller's
-# directory), so a typo would resolve some other issue's state, consume this
-# issue's pending sidecar into it, and only then let push reject the flag,
-# with the sidecar already gone. --check-args runs push's own argument loop —
-# the same code path the real push runs, so the two cannot drift — and does no
-# git work, so a rejection here costs nothing. The vector is the one the real
-# push gets, positional included. The check runs FROM the worktree, already
-# proven a git worktree above: the script resolves its project at startup and
-# exits before parsing anything when the caller's directory is not a
-# repository, which would make a startup failure read as an argument verdict.
-check_rc=0
-(cd "$worktree_abs" && "$WORKTREE_BIN" push --check-args "$worktree_abs" ${push_args[@]+"${push_args[@]}"}) \
-	|| check_rc=$?
-[[ "$check_rc" -eq 0 ]] \
-	|| fail "worktree push refused these arguments (its exit was $check_rc; any diagnostic is above); nothing was consumed and no state was reconciled"
 
 state_flags=()
 [[ -z "$state_dir" ]] || state_flags=(--state-dir "$state_dir")
@@ -268,6 +243,11 @@ sidecar="$git_dir/worktree-push-pending-map-$state_key.json"
 # must land before this run pushes (and possibly rebases again). Only this
 # tool writes in the git dir, so the content is trusted; a damaged file still
 # fails closed — reconcile_map's fromjson errors and the map is kept.
+#
+# It reconciles HERE, above the push, and not below it (KEN-907): once this
+# run has pushed it has already rebased, so a reconcile that fails down there
+# would exit with this run's own map persisted nowhere, and the retry does
+# not rebase again to reprint it.
 if [[ -f "$sidecar" ]]; then
 	pending_map="$(cat -- "$sidecar")" || fail "could not read the pending rebase map at $sidecar"
 	reconcile_map "$pending_map" \

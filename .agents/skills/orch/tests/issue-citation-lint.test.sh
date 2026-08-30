@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# vacuous-suite-scan: absence-subject
 # Regression lint for VST-34. .github/instructions/skills-and-agents.instructions.md
 # bans issue-number citations (`kendex#NNN`, bare `(#NNN)`) in instruction-flow
 # skill/agent markdown — the always-loaded SKILL.md and agent-definition files

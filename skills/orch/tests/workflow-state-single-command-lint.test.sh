@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# vacuous-suite-scan: absence-subject
 # Regression lint for kendex#526 (a recurrence of the #369/#510 command-shape
 # class). Under Codex `approval=never`, a batch of several newline-separated (or
 # `;`-separated) commands in ONE tool call is rejected purely for its
