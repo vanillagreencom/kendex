@@ -386,6 +386,49 @@ run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=changelog.d/nested/*/*.md changelog.d/
   && ok "control: the same file under any other name is swept" \
   || bad "control: the same file under any other name is swept" "rc=$RC out=$OUT"
 
+echo "=== what is not a fragment is settled before any pattern is consulted ==="
+# An exemption that only takes effect when no pattern reaches the path is an
+# exemption whose meaning turns on the pattern shape. These pin it from the
+# other side: the same file, exempt or judged according to where the ROOT
+# falls, not according to whether some glob happened to match it first.
+new_repo exemptions
+printf -- '- A proper entry.\n' | frag fixed x.md
+printf '# changelog.d/fixed\n\nHow to write one of these.\n' >"$R/changelog.d/fixed/README.md"
+printf '# changelog.d\n\nHow to write one of these.\n' >"$R/changelog.d/README.md"
+stage
+# Narrowed to one section: the root IS changelog.d/fixed, so the README
+# directly under it documents the format — and it matches the glob, which is
+# what used to get it judged as a fragment instead.
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=changelog.d/fixed/*.md'
+[ "$RC" -eq 0 ] && ok "a README under the root a narrowed pattern derives is exempt, though the glob reaches it" \
+  || bad "a README under the root a narrowed pattern derives is exempt" "rc=$RC out=$OUT"
+# The default: that same file is root+2, a fragment position, and is judged.
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/README.md"*) true ;; *) false ;; esac \
+  && ok "control: under the default pattern the same file is a fragment position and is judged" \
+  || bad "control: under the default pattern the same file is judged" "rc=$RC out=$OUT"
+case "$OUT" in *"changelog.d/README.md"*) bad "and the README at the default root stays exempt" "$OUT" ;;
+  *) ok "and the README at the default root stays exempt" ;; esac
+# The configured record is the file fragments are folded INTO. A root drawn
+# around it must not make it a stray in its own tree.
+new_repo recordinside
+printf -- '- A proper entry.\n' | frag fixed x.md
+printf '# Changelog\n\n## [Unreleased]\n' >"$R/changelog.d/CHANGELOG.md"
+stage
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_RECORD=changelog.d/CHANGELOG.md'
+[ "$RC" -eq 0 ] && ok "a record configured inside the fragment tree is not swept as a stray" \
+  || bad "a record configured inside the fragment tree is not swept as a stray" "rc=$RC out=$OUT"
+# The control: any other file in its place IS a stray, so the pass above is
+# the record and not the sweep going quiet.
+git -C "$R" rm -q --cached changelog.d/CHANGELOG.md
+rm -f "$R/changelog.d/CHANGELOG.md"
+printf '# Notes\n' >"$R/changelog.d/NOTES.md"
+stage
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_RECORD=changelog.d/CHANGELOG.md'
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/NOTES.md is in the fragment tree but is not a fragment"*) true ;; *) false ;; esac \
+  && ok "control: another file in that same place is swept" \
+  || bad "control: another file in that same place is swept" "rc=$RC out=$OUT"
+
 echo "=== --list is what the collator folds in and what it guards ==="
 new_repo listing
 printf -- '- One.\n' | frag fixed ken-1.md

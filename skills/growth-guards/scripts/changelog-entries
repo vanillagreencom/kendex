@@ -182,12 +182,35 @@ while IFS= read -r -d '' rec; do
     RECORD_SHA="$sha"
     RECORD_MODE="$mode"
   fi
+  # What is NOT a fragment is settled before anything asks whether a pattern
+  # reaches it, or the answer turns on which pattern shape produced the root.
+  # A README directly under a root documents the format; the configured
+  # record is the file fragments are folded INTO, and a root drawn around it
+  # does not make it a stray in its own tree. Neither is judged as a fragment
+  # and neither is swept.
+  exempt=0
+  if [ -n "$RECORD" ] && [ "$f" = "$RECORD" ]; then
+    exempt=1
+  else
+    for root in $GG_PATH_ROOTS; do
+      case "$f" in
+        "$root"/README.md)
+          exempt=1
+          break
+          ;;
+      esac
+    done
+  fi
+  [ "$exempt" -eq 0 ] || continue
+
   if ! gg_matches_path_glob "$f"; then
     under=0
     for root in $GG_PATH_ROOTS; do
       case "$f" in
-        "$root"/README.md) under=0; break ;;
-        "$root"/*) under=1 ;;
+        "$root"/*)
+          under=1
+          break
+          ;;
       esac
     done
     [ "$under" -eq 1 ] || continue

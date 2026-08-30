@@ -123,8 +123,15 @@ sweeps nothing — `changelog.d/README.md` as a pattern judges that file and no
 other. Every tracked path under a root that no pattern matches is a
 violation — a file in the fragment tree that nothing would ever fold in is a
 silent drop otherwise, and one nothing judges is a symlink or a heading
-published verbatim by whatever does fold it in. The one exemption is a
-`README.md` directly under a root, which documents the format.
+published verbatim by whatever does fold it in.
+
+Two paths are exempt, and they are settled BEFORE any pattern is consulted so
+that what they mean does not turn on which pattern shape produced the root: a
+`README.md` directly under a root, which documents the format, and the
+configured record itself, which is the file fragments are folded into rather
+than a stray in its own tree. Judged after the glob instead, a README under a
+root a narrowing pattern derives would match that glob and be refused as a
+malformed fragment — the opposite of an exemption.
 
 Paths matching no tracked file are a clean pass: a repository with no
 fragments has nothing to judge. An empty list is a config error; the way to
