@@ -2,8 +2,8 @@
 //! job runs. It is the only thing that writes the fixed pre-release release,
 //! and every write it makes is destructive: two manifests overwritten in
 //! place, on the one URL every candidate machine reads its updates from. So
-//! what is asked of it here is not what it does when the calls succeed but
-//! what it leaves behind when one of them does not.
+//! what is asked of it here is which reads let a write through and which
+//! leave the channel as it was.
 //!
 //! Which tags reach it at all, and which job runs it, are `channel.rs`.
 
@@ -31,9 +31,9 @@ const CHANNEL_SCRIPT: &str = "tools/release-channel-point";
 struct Pointed {
     code: i32,
     calls: Vec<String>,
-    /// Everything the run printed. A channel left half written is bad; one
-    /// that announces itself as repaired is what stops anyone looking, so
-    /// the message is part of the behaviour rather than decoration on it.
+    /// Everything the run printed. A refusal that does not say what it found
+    /// leaves nobody able to repair the channel, so the message is part of
+    /// the behaviour rather than decoration on it.
     output: String,
     /// What the channel carries once the run is over, sorted, or `None` if
     /// no release is published there.
@@ -61,10 +61,6 @@ enum Channel<'a> {
     /// Published, carrying `feed.json` and no `latest.json` — the shape a
     /// half-written channel is left in, which the guard reads as fresh.
     HalfWritten,
-    /// Published and carrying the whole set a candidate reads, signatures
-    /// beside the digests documents. What a channel this release job has
-    /// already written once looks like.
-    CarryingSigned(&'static str),
     /// Published, with a manifest that names no version at all.
     Unreadable,
 }
@@ -83,8 +79,7 @@ const STAGED: [&str; 4] = [
 
 /// Runs the guard with `gh` stubbed. `fail` holds fragments of the `gh`
 /// calls that should fail, standing in for the transient errors every read
-/// here has to tell apart from an answer; `landed` names the manifests a
-/// failing upload gets onto the channel before it gives up.
+/// here has to tell apart from an answer.
 ///
 /// The stub keeps the channel as a directory, one file per asset, so a call
 /// reads what the calls before it actually wrote. A run cannot be shown a
@@ -92,8 +87,8 @@ const STAGED: [&str; 4] = [
 /// the run left rather than the calls it happened to make.
 #[cfg(unix)]
 #[allow(clippy::unwrap_used)]
-fn point_channel(channel: Channel, new_version: &str, fail: &[&str], landed: &[&str]) -> Pointed {
-    point_channel_staging(channel, new_version, fail, landed, &STAGED)
+fn point_channel(channel: Channel, new_version: &str, fail: &[&str]) -> Pointed {
+    point_channel_staging(channel, new_version, fail, &STAGED)
 }
 
 /// The same, with the release's output named rather than assumed, for the
@@ -104,7 +99,6 @@ fn point_channel_staging(
     channel: Channel,
     new_version: &str,
     fail: &[&str],
-    landed: &[&str],
     staged: &[&str],
 ) -> Pointed {
     use std::os::unix::fs::PermissionsExt;
@@ -126,17 +120,6 @@ fn point_channel_staging(
         "#!/bin/sh\n\
          printf '%s\\n' \"$*\" >> \"$GH_LOG\"\n\
          if [ -s \"$GH_FAIL\" ] && printf '%s\\n' \"$*\" | grep -qFf \"$GH_FAIL\"; then\n\
-           if [ \"$1 $2\" = \"release upload\" ]; then\n\
-             # `--clobber` deletes an asset before uploading its replacement,\n\
-             # so an upload that fails loses what it was replacing.\n\
-             shift 3\n\
-             while [ $# -gt 0 ]; do\n\
-               case \"$1\" in --repo) shift 2; continue ;; --*) shift; continue ;; esac\n\
-               rm -f \"$GH_CHANNEL/$(basename \"$1\")\"\n\
-               shift\n\
-             done\n\
-             for name in $GH_LANDED; do touch \"$GH_CHANNEL/$name\"; done\n\
-           fi\n\
            exit 1\n\
          fi\n\
          case \"$1 $2\" in\n\
@@ -190,9 +173,7 @@ fn point_channel_staging(
     fs::set_permissions(bin.join("gh"), fs::Permissions::from_mode(0o755)).unwrap();
 
     let manifest = match channel {
-        Channel::Carrying(version) | Channel::CarryingSigned(version) => {
-            format!(r#"{{"version":"{version}"}}"#)
-        }
+        Channel::Carrying(version) => format!(r#"{{"version":"{version}"}}"#),
         _ => "{}".to_owned(),
     };
     if !matches!(channel, Channel::Absent) {
@@ -200,11 +181,6 @@ fn point_channel_staging(
     }
     if matches!(channel, Channel::Carrying(_) | Channel::Unreadable) {
         for name in ["latest.json", "feed.json"] {
-            fs::write(published.join(name), "").unwrap();
-        }
-    }
-    if matches!(channel, Channel::CarryingSigned(_)) {
-        for name in STAGED {
             fs::write(published.join(name), "").unwrap();
         }
     }
@@ -225,7 +201,6 @@ fn point_channel_staging(
         )
         .env("GH_LOG", &log)
         .env("GH_FAIL", &failing)
-        .env("GH_LANDED", landed.join(" "))
         .env("GH_CHANNEL", &published)
         .env("GH_MANIFEST", &manifest)
         .env(
@@ -268,26 +243,48 @@ fn point_channel_staging(
 /// treated that as "nothing there" would upload over whatever is — which
 /// is the rollback the guard exists to prevent, reached through a lost
 /// connection instead of a stale tag.
+///
+/// Each names the read it could not make, because every one of these stops
+/// the run whatever the guard concludes afterwards — a download nobody
+/// checked leaves no manifest to read, which stops the write too, under a
+/// message sending the operator at a channel that is fine.
 #[cfg(unix)]
 #[test]
 fn a_read_it_could_not_make_stops_the_write() {
-    for (state, failing) in [
-        (Channel::Carrying("2.0.0-rc1"), "/releases --paginate"),
-        (Channel::Carrying("2.0.0-rc1"), "/releases/tags/"),
-        (Channel::Carrying("2.0.0-rc1"), "release download"),
+    for (state, failing, said) in [
+        (
+            Channel::Carrying("2.0.0-rc1"),
+            "/releases --paginate",
+            "releases could not be listed",
+        ),
+        (
+            Channel::Carrying("2.0.0-rc1"),
+            "/releases/tags/",
+            "its assets could not be read",
+        ),
+        (
+            Channel::Carrying("2.0.0-rc1"),
+            "release download",
+            "manifest could not be downloaded",
+        ),
     ] {
-        let run = point_channel(state, "1.0.0-rc1", &[failing], &[]);
+        let run = point_channel(state, "1.0.0-rc1", &[failing]);
         assert_ne!(run.code, 0, "{failing} was survivable: {:?}", run.calls);
         assert!(
             run.ran("release upload").is_none(),
             "{failing} still uploaded: {:?}",
             run.calls
         );
+        assert!(
+            run.output.contains(said),
+            "{failing} was reported as something else: {}",
+            run.output
+        );
     }
 
     // A manifest that names no version is the same answer: nothing here
     // can tell whether this tag is ahead of what is published.
-    let run = point_channel(Channel::Unreadable, "1.0.0-rc1", &[], &[]);
+    let run = point_channel(Channel::Unreadable, "1.0.0-rc1", &[]);
     assert_ne!(run.code, 0, "an unreadable manifest was survivable");
     assert!(run.ran("release upload").is_none(), "{:?}", run.calls);
 }
@@ -322,7 +319,7 @@ fn a_channel_version_that_is_not_a_version_stops_the_write() {
             !core_can_read(carried),
             "{carried} reads, so it is not an example of anything"
         );
-        let run = point_channel(Channel::Carrying(carried), "1.0.0-rc2", &[], &[]);
+        let run = point_channel(Channel::Carrying(carried), "1.0.0-rc2", &[]);
         assert_ne!(run.code, 0, "{carried} was survivable: {:?}", run.calls);
         assert!(
             run.ran("release upload").is_none(),
@@ -344,7 +341,7 @@ fn every_candidate_replaces_both_manifests_on_the_channel() {
         Channel::Empty,
         Channel::Carrying("1.0.0-rc1"),
     ] {
-        let run = point_channel(state, "1.0.0-rc2", &[], &[]);
+        let run = point_channel(state, "1.0.0-rc2", &[]);
         assert_eq!(run.code, 0, "{state:?}: {:?}", run.calls);
         assert_eq!(
             run.ran("release create").is_some(),
@@ -398,219 +395,12 @@ fn every_candidate_replaces_both_manifests_on_the_channel() {
 #[cfg(unix)]
 #[test]
 fn a_run_handed_no_manifests_writes_nothing() {
-    let run = point_channel_staging(Channel::Carrying("1.0.0-rc1"), "1.0.0-rc2", &[], &[], &[]);
+    let run = point_channel_staging(Channel::Carrying("1.0.0-rc1"), "1.0.0-rc2", &[], &[]);
     assert_ne!(run.code, 0, "{:?}", run.calls);
     assert!(
         run.ran("release upload").is_none(),
         "an empty dist still uploaded: {:?}",
         run.calls
-    );
-}
-
-/// `gh release upload --clobber` deletes an asset before uploading its
-/// replacement, and says in its own help that a failed upload loses the
-/// original. A candidate reading a channel with no `latest.json` sees no
-/// update at all, so an upload that fell over halfway would break every
-/// candidate machine until somebody re-ran a tag. What came down goes back
-/// up. Not an atomic swap — there is no such thing here — but a failure
-/// that leaves the channel as it found it.
-#[cfg(unix)]
-#[test]
-fn a_failed_upload_puts_back_what_the_channel_had() {
-    let run = point_channel(
-        Channel::CarryingSigned("1.0.0-rc1"),
-        "1.0.0-rc2",
-        &["dist/latest.json"],
-        &[],
-    );
-    assert_ne!(
-        run.code, 0,
-        "a failed upload was survivable: {:?}",
-        run.calls
-    );
-    let restored = run
-        .calls
-        .iter()
-        .filter(|c| c.starts_with("release upload"))
-        .nth(1)
-        .unwrap_or_else(|| panic!("nothing was put back: {:?}", run.calls));
-    // Every name, and from the copies on disk: the shell expanded the glob
-    // against what the download actually wrote, so an asset that never came
-    // down could not appear here. The signature is in the list because a
-    // digests document without it refuses every update, which is a channel
-    // reported as repaired and broken for every candidate.
-    for name in STAGED {
-        assert!(
-            restored.contains(&format!("saved/{name}")),
-            "saved/{name} not restored: {restored}"
-        );
-    }
-    assert!(restored.contains("--clobber"), "{restored}");
-    let mut had: Vec<String> = STAGED.iter().map(|name| (*name).to_owned()).collect();
-    had.sort();
-    assert_eq!(
-        run.after,
-        Some(had),
-        "the channel is not carrying what it was: {:?}",
-        run.calls
-    );
-    assert!(
-        run.output.contains("is back as this run found it"),
-        "{}",
-        run.output
-    );
-}
-
-/// A channel this run created, and could not then write, is a channel that
-/// was not there before this run. There is nothing to put back on it: the
-/// copies the case above restores from are of manifests the channel already
-/// carried, and a fresh one carried none. So the release goes, and what a
-/// half-populated channel would have said — that a candidate is up to date
-/// on manifests naming downloads that were never uploaded — is not said at
-/// all. The tag it was created on stays: `gh release create` reuses one, so
-/// a run cannot tell a tag it made from a tag that was already there, and a
-/// tag carrying no release publishes nothing either way.
-#[cfg(unix)]
-#[test]
-fn a_failed_upload_removes_a_channel_this_run_created() {
-    let run = point_channel(
-        Channel::Absent,
-        "1.0.0-rc2",
-        &["dist/feed.json"],
-        &["latest.json"],
-    );
-    assert_ne!(
-        run.code, 0,
-        "a failed upload was survivable: {:?}",
-        run.calls
-    );
-    assert_eq!(
-        run.after, None,
-        "the channel this run created was left behind: {:?}",
-        run.calls
-    );
-    assert!(
-        run.ran(&format!("release delete {}", channel_step_env("CHANNEL")))
-            .is_some(),
-        "nothing removed the channel: {:?}",
-        run.calls
-    );
-    assert!(run.output.contains("has been removed"), "{}", run.output);
-}
-
-/// A channel published but carrying nothing is the other fresh state, and
-/// the one the case above leaves behind. Nothing comes back here either,
-/// because nothing was there — what has to go is whatever this run put on
-/// it, so the next tag finds the empty channel the last one found.
-#[cfg(unix)]
-#[test]
-fn a_failed_upload_takes_back_what_it_put_on_an_empty_channel() {
-    let run = point_channel(
-        Channel::Empty,
-        "1.0.0-rc2",
-        &["dist/feed.json"],
-        &["latest.json"],
-    );
-    assert_ne!(
-        run.code, 0,
-        "a failed upload was survivable: {:?}",
-        run.calls
-    );
-    assert_eq!(
-        run.after,
-        Some(Vec::new()),
-        "the channel kept what this run put on it: {:?}",
-        run.calls
-    );
-    assert!(
-        run.output.contains("is back as this run found it"),
-        "{}",
-        run.output
-    );
-}
-
-/// The restore is `gh` calls too, and they fail the way every other call
-/// here can. What must not happen then is the run reporting a channel it did
-/// not put back: a half-written channel that announces itself as repaired is
-/// what stops anyone looking at it. So the message says it could not, and
-/// names what is on the channel for whoever has to repair it.
-#[cfg(unix)]
-#[test]
-fn a_restore_that_could_not_finish_says_what_the_channel_carries() {
-    let run = point_channel(
-        Channel::Carrying("1.0.0-rc1"),
-        "1.0.0-rc2",
-        &["dist/feed.json", "saved/"],
-        &["latest.json"],
-    );
-    assert_ne!(
-        run.code, 0,
-        "a failed restore was survivable: {:?}",
-        run.calls
-    );
-    assert_eq!(
-        run.after,
-        Some(vec!["latest.json".to_owned()]),
-        "the fixture did not leave a half-written channel: {:?}",
-        run.calls
-    );
-    assert!(
-        run.output.contains("could not be put back")
-            && run.output.contains("It carries latest.json"),
-        "{}",
-        run.output
-    );
-    assert!(
-        !run.output.contains("is back as this run found it"),
-        "a channel that was not put back was reported as put back: {}",
-        run.output
-    );
-}
-
-/// Every command the restore runs changes the asset set on its way to
-/// failing: `--clobber` deletes an asset before uploading its replacement,
-/// and a `delete-asset` only runs once a saved upload has already landed. So
-/// the set as the restore found it is not the set the operator will find,
-/// and naming that one is worse than naming none, because it reads as
-/// current and sends them at the wrong thing.
-#[cfg(unix)]
-#[test]
-fn a_restore_that_changed_the_channel_names_what_is_there_now() {
-    let run = point_channel(
-        Channel::Carrying("1.0.0-rc1"),
-        "1.0.0-rc2",
-        &["dist/latest.json", "delete-asset"],
-        &["digests-x86_64-unknown-linux-gnu.json"],
-    );
-    assert_ne!(
-        run.code, 0,
-        "a failed restore was survivable: {:?}",
-        run.calls
-    );
-    // The two saved manifests are back up, and the digests document this run
-    // added is still there because taking it off is the command that failed.
-    assert_eq!(
-        run.after,
-        Some(vec![
-            "digests-x86_64-unknown-linux-gnu.json".to_owned(),
-            "feed.json".to_owned(),
-            "latest.json".to_owned(),
-        ]),
-        "the restore left the channel unchanged, so this proves nothing: {:?}",
-        run.calls
-    );
-    assert!(
-        run.output
-            .contains("It carries digests-x86_64-unknown-linux-gnu.json feed.json latest.json"),
-        "{}",
-        run.output
-    );
-    // What the channel carried when the restore began, and so what a snapshot
-    // taken before it would have named.
-    assert!(
-        !run.output.contains("It carries feed.json latest.json"),
-        "the message names the channel as the restore found it: {}",
-        run.output
     );
 }
 
@@ -623,7 +413,7 @@ fn a_restore_that_changed_the_channel_names_what_is_there_now() {
 #[cfg(unix)]
 #[test]
 fn a_channel_a_write_did_not_finish_on_stops_the_run() {
-    let run = point_channel(Channel::HalfWritten, "1.0.0-rc2", &[], &[]);
+    let run = point_channel(Channel::HalfWritten, "1.0.0-rc2", &[]);
     assert_ne!(run.code, 0, "{:?}", run.calls);
     assert!(
         run.ran("release upload").is_none(),
@@ -648,8 +438,8 @@ fn a_channel_a_write_did_not_finish_on_stops_the_run() {
 #[cfg(unix)]
 #[test]
 fn a_run_that_stops_leaves_no_channel_behind() {
-    let unorderable = point_channel(Channel::Absent, "not a version", &[], &[]);
-    let empty = point_channel_staging(Channel::Absent, "1.0.0-rc2", &[], &[], &[]);
+    let unorderable = point_channel(Channel::Absent, "not a version", &[]);
+    let empty = point_channel_staging(Channel::Absent, "1.0.0-rc2", &[], &[]);
     for run in [unorderable, empty] {
         assert_ne!(run.code, 0, "{:?}", run.calls);
         assert!(
@@ -703,7 +493,7 @@ fn a_tag_behind_the_channel_leaves_it_alone() {
     ];
     for carried in versions {
         for tagged in versions {
-            let run = point_channel(Channel::Carrying(carried), tagged, &[], &[]);
+            let run = point_channel(Channel::Carrying(carried), tagged, &[]);
             assert_eq!(run.code, 0, "{carried} -> {tagged}: {:?}", run.calls);
             // Equal versions re-run the same tag, which refreshes rather
             // than rolls back, so only a strictly newer carried version

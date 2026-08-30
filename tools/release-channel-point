@@ -7,7 +7,8 @@
 # which name their downloads by the tag that built them. The release workflow's channel job is
 # the only caller; CHANNEL, NEW_VERSION, GITHUB_REPOSITORY and a GH_TOKEN gh
 # can use come from it. Exit 0 wrote the channel or left it alone on purpose,
-# exit 1 wrote nothing or says what it left behind.
+# exit 1 says what stopped it, and re-running the tag repairs a channel a
+# failed upload left short a manifest.
 #
 # One verdict decides the write, and only `write` and `hold` are verdicts.
 # Each read leaves either a channel state this run established or the reason
@@ -31,85 +32,9 @@ uploaded() {
   return 0
 }
 
-# The channel's copies of those, and so the ones this run has to be able to
-# put back. `gh release upload --clobber` deletes an asset before uploading
-# its replacement, so a copy taken now is the only copy of what the channel
-# had if that upload then fails. A channel carrying none of them leaves saved/
-# absent, which is that channel's pre-upload set just as truly.
-save_manifests() {
-  local patterns=() file name
-  while IFS= read -r file; do
-    name=$(basename "$file")
-    if grep -qxF "$name" <<< "$assets"; then patterns+=(--pattern "$name"); fi
-  done < <(uploaded)
-  [ ${#patterns[@]} -gt 0 ] || return 0
-  gh release download "$CHANNEL" --repo "$GITHUB_REPOSITORY" \
-    --dir saved "${patterns[@]}" --clobber
-}
-
-# What the channel carries, read at the moment of asking. The one reader of
-# this is an operator standing in front of a broken channel deciding what to
-# repair, and every restore command below changes the asset set on its way to
-# failing, so an answer from before the restore reads as current and sends
-# that operator at the wrong thing. A read this run cannot make says so
-# rather than falling back to one it made earlier.
-carrying_now() {
-  local now
-  if ! now=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${CHANNEL}" --jq '.assets[].name'); then
-    echo "a set this run could not read"
-    return 0
-  fi
-  now=$(paste -sd' ' - <<< "$now")
-  [ -n "$now" ] || now="no manifests"
-  echo "$now"
-}
-
-# Puts the channel back the way this run found it and says which in
-# `restored`: `removed` when the release this run created is gone, `put-back`
-# when the manifests it found are up and the ones it added are off. Anything
-# else is a channel nobody has repaired.
-#
-# Always returns 0. The verdict is `restored`, so a caller under `set -e`
-# reaches its `case` rather than exiting on this function's own status.
-#
-# What the channel carries is read rather than assumed: a failed upload stops
-# partway, and only the channel says how far it got. A read that fails leaves
-# `restored` empty, because a set this run cannot see is one it cannot claim
-# to have put back.
-restored=""
-restore() {
-  local file name now
-  now=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${CHANNEL}" --jq '.assets[].name') || return 0
-  # The tag stays behind. `gh release create` reuses an existing tag, so this
-  # run cannot tell one it made from one that was already there carrying no
-  # release, and deleting the second would destroy something it never
-  # created. A tag with no release on it publishes nothing either way.
-  if [ -n "$created" ]; then
-    if gh release delete "$CHANNEL" --repo "$GITHUB_REPOSITORY" --yes; then
-      restored=removed
-    fi
-    return 0
-  fi
-  if [ -n "$(ls -A saved 2>/dev/null)" ]; then
-    # Every saved asset, not the documents alone. A digests document and the
-    # signature beside it are one answer to a candidate: put half of it back
-    # and the channel reads as repaired while every update is refused.
-    gh release upload "$CHANNEL" saved/* --repo "$GITHUB_REPOSITORY" --clobber || return 0
-  fi
-  while IFS= read -r file; do
-    name=$(basename "$file")
-    if [ ! -f "saved/$name" ] && grep -qxF "$name" <<< "$now"; then
-      gh release delete-asset "$CHANNEL" "$name" --repo "$GITHUB_REPOSITORY" --yes || return 0
-    fi
-  done < <(uploaded)
-  restored=put-back
-  return 0
-}
-
 state=unknown
 why=""
 current=""
-created=""
 absent=""
 if ! tags=$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate --jq '.[].tag_name'); then
   why="this repository's releases could not be listed"
@@ -122,8 +47,6 @@ elif ! grep -qxF "$CHANNEL" <<< "$tags"; then
   state=fresh
 elif ! assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${CHANNEL}" --jq '.assets[].name'); then
   why="the ${CHANNEL} channel is published but its assets could not be read"
-elif ! save_manifests; then
-  why="the ${CHANNEL} channel carries a manifest that could not be downloaded"
 elif ! grep -qxF latest.json <<< "$assets"; then
   # Carrying nothing is a channel no write has landed on, and this run may
   # take it. Carrying something without a latest.json is a channel a write
@@ -135,6 +58,9 @@ elif ! grep -qxF latest.json <<< "$assets"; then
   else
     state=fresh
   fi
+elif ! gh release download "$CHANNEL" --repo "$GITHUB_REPOSITORY" \
+     --dir saved --pattern latest.json --clobber; then
+  why="the ${CHANNEL} channel's manifest could not be downloaded"
 else
   current=$(jq -r '.version // empty' saved/latest.json) || current=""
   if [ -n "$current" ]; then
@@ -187,10 +113,9 @@ case "$verdict" in
     exit 1 ;;
 esac
 
-# One list, resolved once: what is uploaded is what the restore above knows
-# to take back off. An unmatched glob left literal would name a file that is
-# not there, and a `dist` holding nothing at all would upload nothing while
-# reporting a channel it moved.
+# What `dist` holds, resolved before the write. An unmatched glob left literal
+# would name a file that is not there, and a `dist` holding nothing at all
+# would upload nothing while reporting a channel it moved.
 #
 # Built by reading rather than by `readarray`, which arrived in Bash 4:
 # `crates/cli/tests/release_workflow` runs this script on the macOS lane,
@@ -204,9 +129,7 @@ if [ "${#publishing[@]}" -eq 0 ]; then
   exit 1
 fi
 # The write begins here, past the verdict and past the list. A channel that
-# did not exist is published now, and `created` is what lets the restore take
-# it away again — an empty channel left behind is one candidates read as no
-# update at all.
+# did not exist is published now.
 if [ -n "$absent" ]; then
   if ! gh release create "$CHANNEL" --repo "$GITHUB_REPOSITORY" --prerelease \
        --title "Pre-release channel" \
@@ -214,24 +137,13 @@ if [ -n "$absent" ]; then
     echo "::error::Nothing was written to the ${CHANNEL} channel: it does not exist and could not be created. Re-run the tag."
     exit 1
   fi
-  created=1
 fi
 if ! gh release upload "$CHANNEL" "${publishing[@]}" \
      --repo "$GITHUB_REPOSITORY" --clobber; then
-  # An upload that failed after the delete leaves the channel short a
-  # manifest, and a candidate reading a channel with no latest.json sees no
-  # update at all. Not an atomic swap: the run fails whatever the restore
-  # does. What the restore may not do is report a channel it did not put
-  # back, because a half-written channel that announces itself as repaired is
-  # what stops anyone looking at it.
-  restore
-  case "$restored" in
-    removed)
-      echo "::error::Uploading to the ${CHANNEL} channel failed, and the channel this run created has been removed. Nothing is published there. Re-run the tag." ;;
-    put-back)
-      echo "::error::Uploading to the ${CHANNEL} channel failed; the channel is back as this run found it. Re-run the tag." ;;
-    *)
-      echo "::error::Uploading to the ${CHANNEL} channel failed and the channel could not be put back. It carries $(carrying_now). Candidates read that until a tag re-run repairs the channel." ;;
-  esac
+  # `--clobber` deletes an asset before uploading its replacement, so a
+  # failure partway leaves the channel short a manifest and candidates
+  # reading it see no update at all. Re-running the tag writes the whole set
+  # again, which is the repair.
+  echo "::error::Uploading to the ${CHANNEL} channel failed, and it may be short a manifest. Re-run the tag."
   exit 1
 fi
