@@ -259,6 +259,26 @@ fn a_checkout_published_before_the_rules_were_recorded_is_rebuilt() {
     assert!(store::published(&f.env, &key, &published.commit).is_some());
 }
 
+/// Callers test `published` before taking the lock, so two of them can
+/// miss the same receipt and both go on to publish. The one that wakes
+/// second finds the commit already there and hands back what is in place,
+/// rather than materializing over a directory the first caller is reading.
+/// Removing the mirror is what makes the answer observable: materializing
+/// again is then the one thing that cannot quietly succeed.
+#[test]
+fn a_publisher_that_wakes_to_a_published_commit_leaves_it_alone() {
+    let f = fixture();
+    let first = sync(&f.env, REPO, None).unwrap();
+    let key = key_for(&f.env);
+    let mirror = store::mirror_dir(&f.env, &key);
+    fs::remove_dir_all(&mirror).unwrap();
+
+    let again = store::publish(&f.env, &key, &mirror, &first.commit).unwrap();
+
+    assert_eq!(again, first.root);
+    assert!(body(&again).contains("v1"));
+}
+
 /// Two trees of one commit can share a signature, so a receipt visible
 /// while the old directory is still in place would vouch for the directory
 /// about to be moved out from under a reader. The order is observable at

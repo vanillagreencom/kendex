@@ -265,7 +265,17 @@ pub fn published(env: &Env, key: &str, commit: &str) -> Option<PathBuf> {
 /// a staging sibling and renamed into place, so an interrupted or failed
 /// publish leaves no directory anyone could read: not a partial one, and
 /// not the one it was replacing.
+///
+/// Every caller holds this repository's cache lock across the call, and
+/// this takes none of its own: an OS lock belongs to the open file
+/// description, so taking one here would report the caller's own as busy.
 pub fn publish(env: &Env, key: &str, mirror: &Path, commit: &str) -> Result<PathBuf> {
+    // Callers test `published` before taking the lock, so the commit can
+    // arrive while this one waits. Publishing over it would move a
+    // directory out from under whoever the first publisher handed it to.
+    if let Some(dir) = published(env, key, commit) {
+        return Ok(dir);
+    }
     let dir = checkout_dir(env, key, commit);
     let parent = dir.parent().unwrap_or(&dir).to_path_buf();
     fs::create_dir_all(&parent).map_err(|e| CoreError::io(&parent, e))?;
