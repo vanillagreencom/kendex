@@ -9,7 +9,7 @@
 //! `quoted` for a command a person is going to paste.
 
 mod stored;
-pub use stored::{folding_sibling, stored_spelling};
+pub use stored::folding_sibling;
 
 /// Room for the separator a namespaced name expands to, the `.disabled`
 /// parking suffix, and Copilot's `.agent.md` — inside the 255-byte

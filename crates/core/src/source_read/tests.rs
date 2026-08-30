@@ -191,3 +191,59 @@ fn skipped_names_are_pruned_from_trees() {
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].0, PathBuf::from("index.js"));
 }
+
+/// The probe surface keeps three answers apart where a boolean keeps two.
+/// A directory that can be listed but not traversed answers neither yes nor
+/// no about what is inside it, and a caller deciding what a write would
+/// destroy has to see that difference; a caller drawing rows reads it as a
+/// no, because it cannot draw what it cannot read either way.
+#[test]
+fn a_probe_says_yes_no_or_that_it_cannot_tell() {
+    let (_tmp, sealed) = fixture();
+    let file = sealed.root().join("skills/gh/SKILL.md");
+    let dir = sealed.root().join("skills/gh");
+    assert!(sealed.file_at(&file).expect("probe"));
+    assert!(!sealed.dir_at(&file).expect("probe"));
+    assert!(sealed.dir_at(&dir).expect("probe"));
+    assert!(!sealed.file_at(&dir).expect("probe"));
+
+    // Absent, said two ways. A name nothing holds, and a name built under
+    // a file — which is what a probe for `<entry>/SKILL.md` is whenever the
+    // entry beside an item is an ordinary file. Neither is a refused read,
+    // and calling either one an error would refuse every ordinary slot.
+    assert!(
+        sealed
+            .entry_at(&dir.join("nowhere"))
+            .expect("probe")
+            .is_none()
+    );
+    assert!(
+        sealed
+            .entry_at(&file.join("SKILL.md"))
+            .expect("probe")
+            .is_none()
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+        // Root traverses any directory whatever its mode, so there the
+        // denial under test does not exist and the file is simply there.
+        let denied = std::fs::metadata(&file).is_err();
+        let probed = sealed.file_at(&file);
+        let collapsed = sealed.is_file(&file);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+
+        match denied {
+            true => {
+                assert!(matches!(probed, Err(CoreError::Io { .. })), "{probed:?}");
+                assert!(!collapsed, "the tolerant reading answers no");
+            }
+            false => {
+                assert!(probed.expect("probe"));
+                assert!(collapsed);
+            }
+        }
+    }
+}

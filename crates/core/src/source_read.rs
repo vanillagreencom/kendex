@@ -120,12 +120,61 @@ impl SealedSource {
         Ok(())
     }
 
-    pub fn is_file(&self, path: &Path) -> bool {
-        self.contained(path).is_ok() && path.is_file()
+    /// What is at `path`: `Some` metadata when something is, `None` when
+    /// nothing is, and an error when the filesystem will not say. The one
+    /// place the three answers are kept apart, so that every question below
+    /// asks it once and none of them can invent a fourth.
+    ///
+    /// The reading for a caller deciding what a write would land on. A
+    /// directory can be listable without being traversable — mode 000 on a
+    /// child, or an ACL — so a probe into it fails while the item it holds
+    /// is on disk and about to be trashed. Absent and unanswerable are the
+    /// same word in a boolean, and that word is how a guard deletes what it
+    /// exists to protect.
+    pub fn entry_at(&self, path: &Path) -> Result<Option<fs::Metadata>> {
+        self.contained(path)?;
+        match fs::metadata(path) {
+            Ok(meta) => Ok(Some(meta)),
+            // Nothing is there, said two ways: no such name, and a name
+            // built under a file, which is how a probe for `<item>/SKILL.md`
+            // reads when the entry beside it is an ordinary file. Neither is
+            // a read the filesystem refused to make.
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                Ok(None)
+            }
+            Err(e) => Err(CoreError::io(path, e)),
+        }
     }
 
+    /// Whether a file is at `path`, or an error when the filesystem will
+    /// not say. See [`SealedSource::entry_at`].
+    pub fn file_at(&self, path: &Path) -> Result<bool> {
+        Ok(self.entry_at(path)?.is_some_and(|meta| meta.is_file()))
+    }
+
+    /// Whether a directory is at `path`, or an error when the filesystem
+    /// will not say. See [`SealedSource::entry_at`].
+    pub fn dir_at(&self, path: &Path) -> Result<bool> {
+        Ok(self.entry_at(path)?.is_some_and(|meta| meta.is_dir()))
+    }
+
+    /// Whether a file is at `path`, reading a question the filesystem will
+    /// not answer as a no. The reading for a caller drawing rows, which
+    /// cannot draw what it cannot read either way. It is the answer above
+    /// with the error collapsed, in one place, so the two never drift.
+    pub fn is_file(&self, path: &Path) -> bool {
+        self.file_at(path).unwrap_or(false)
+    }
+
+    /// Whether a directory is at `path`, reading a question the filesystem
+    /// will not answer as a no. See [`SealedSource::is_file`].
     pub fn is_dir(&self, path: &Path) -> bool {
-        self.contained(path).is_ok() && path.is_dir()
+        self.dir_at(path).unwrap_or(false)
     }
 
     pub fn read(&self, path: &Path) -> Result<Vec<u8>> {

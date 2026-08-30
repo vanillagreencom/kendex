@@ -425,3 +425,92 @@ fn a_plain_skill_whose_parent_will_not_enumerate_refuses() {
     );
     assert!(trash_is_empty(&env));
 }
+
+/// The third shape of the same failure, and the one a boolean probe hides.
+/// `plugin/item` sits beside the plain `plugin`, and its directory can be
+/// listed but not traversed — mode 000, or an ACL. The `SKILL.md` probe
+/// into it fails, and answered as "no item here" the slot reads as holding
+/// only the plain skill the capture replaces, so the trash takes the
+/// namespaced one with it and leaves its declaration pointing at nothing.
+#[cfg(unix)]
+#[test]
+fn a_plain_skill_over_a_child_that_cannot_be_probed_refuses() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    store_local_skill(&env, "plugin", "the earlier plain one");
+    let nested = store_local_skill(&env, "plugin/item", "the namespaced one");
+    fs::set_permissions(&nested, fs::Permissions::from_mode(0o000)).unwrap();
+    // Root traverses any directory whatever its mode, so there the denial
+    // under test does not exist and the refusal is the ordinary one.
+    let denied = fs::metadata(nested.join("SKILL.md")).is_err();
+
+    let held = home.join(".claude/skills/plugin");
+    fs::create_dir_all(&held).unwrap();
+    fs::write(held.join("SKILL.md"), "the plain one").unwrap();
+    let refused = adopt(
+        &env,
+        &Scope::Global,
+        ItemKind::Skill,
+        "plugin",
+        &[HarnessId::Claude],
+    )
+    .unwrap_err();
+    fs::set_permissions(&nested, fs::Permissions::from_mode(0o755)).unwrap();
+
+    match denied {
+        // The refusal names the probe it could not make, not the slot.
+        true => match &refused {
+            CoreError::Io { path, .. } => assert_eq!(path, &nested.join("SKILL.md")),
+            other => panic!("expected the unreadable probe, got {other:?}"),
+        },
+        false => assert!(refused.to_string().contains("plugin/item"), "{refused}"),
+    }
+    assert_eq!(
+        fs::read_to_string(nested.join("SKILL.md")).unwrap(),
+        "the namespaced one"
+    );
+    assert!(trash_is_empty(&env));
+}
+
+/// The parent scan is a read of a source, so it carries the reader's work
+/// bound like every other one. A kind directory past the bound is refused
+/// rather than scanned, which also keeps adoption from writing into a
+/// source that discovery will later refuse to read back. Nothing here is
+/// stored in the slot: the bound is the only reason to refuse, so the
+/// refusal is the bound's or it is nobody's.
+#[test]
+fn a_plain_skill_whose_parent_is_past_the_entry_bound_refuses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let unrelated = store_local_skill(&env, "unrelated", "somebody else's");
+    let kind_dir = crate::source::local_source_root(&env, &Scope::Global).join("skills");
+    for n in 0..4_096 {
+        fs::create_dir(kind_dir.join(format!("filler-{n:04}"))).unwrap();
+    }
+    assert!(!kind_dir.join("data-science").exists());
+
+    let held = home.join(".claude/skills/data-science");
+    fs::create_dir_all(&held).unwrap();
+    fs::write(held.join("SKILL.md"), "the plain one").unwrap();
+    let refused = adopt(
+        &env,
+        &Scope::Global,
+        ItemKind::Skill,
+        "data-science",
+        &[HarnessId::Claude],
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(refused, CoreError::SourceEscape { .. }),
+        "{refused:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(unrelated.join("SKILL.md")).unwrap(),
+        "somebody else's"
+    );
+    assert!(trash_is_empty(&env));
+}
