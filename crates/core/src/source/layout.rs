@@ -27,10 +27,57 @@ pub(super) fn fixed_kind_dir(kind: ItemKind) -> (&'static str, &'static str) {
 /// The skills one explicit catalog dir holds — a directory carrying `SKILL.md`,
 /// at the top level (`gh`) or one segment down (`plugin/item`).
 pub(super) fn flat_skills(sealed: &SealedSource, dir: &str) -> Result<Vec<String>> {
-    let is_skill = |path: &std::path::Path| sealed.is_file(&path.join("SKILL.md"));
+    let is_skill = |path: &std::path::Path| item_dir(sealed, ItemKind::Skill, path);
     nested_names(sealed, dir, &is_skill, |path| {
         path.file_name()?.to_str().map(str::to_owned)
     })
+}
+
+/// Whether this directory is an item of `kind` rather than a directory
+/// holding some. Only a skill is stored as a directory; every other kind's
+/// item is a file, so no directory is one.
+fn item_dir(sealed: &SealedSource, kind: ItemKind, dir: &std::path::Path) -> bool {
+    kind == ItemKind::Skill && sealed.is_file(&dir.join("SKILL.md"))
+}
+
+/// What the local source already stores in a plain name's slot, named as
+/// the path it sits at — or nothing, when the slot is free for the capture:
+/// the directory is absent, or it is that plain item itself and writing
+/// there replaces it.
+///
+/// The disk answers this, never a catalog listing. A listing says what a
+/// source OFFERS, and every rule it is drawn through — an unusable catalog
+/// offering nothing, a name filter, the support-directory names above —
+/// reads as an empty slot over a directory that is holding content. What
+/// the capture would write over is a question about bytes.
+///
+/// A folding sibling is the same slot: a volume that hands `Data-Science`
+/// and `data-science` to one directory keeps the stored item where the
+/// plain name is asking to write.
+pub(super) fn stored_in_slot(
+    sealed: &SealedSource,
+    kind: ItemKind,
+    slot: &std::path::Path,
+) -> Result<Option<String>> {
+    let held = match sealed.is_dir(slot) {
+        true => slot.to_path_buf(),
+        // Nothing is stored inside an absent directory, and nothing is
+        // stored inside a file — which is what every other kind's slot is.
+        false => match crate::names::folding_sibling(slot) {
+            Some(sibling) if sealed.is_dir(&sibling) => sibling,
+            _ => return Ok(None),
+        },
+    };
+    if item_dir(sealed, kind, &held) {
+        return Ok(None);
+    }
+    // A read that could not be made is not an empty directory: reading one
+    // as the other is how a guard deletes what it exists to protect.
+    let Some(first) = sealed.list_dir(&held)?.into_iter().next() else {
+        return Ok(None);
+    };
+    let held = sealed.relative(&first).unwrap_or(&first);
+    Ok(Some(crate::names::shown(&held.display().to_string())))
 }
 
 pub(super) fn agent_stems(sealed: &SealedSource, dir: &str) -> Result<Vec<String>> {
@@ -59,10 +106,9 @@ pub(super) fn ext_stems(sealed: &SealedSource, dir: &str, ext: &str) -> Result<V
 /// dead rows and, for a deceptive name, one whose shown spelling is not the
 /// name that lands on disk.
 ///
-/// A directory that will not list is an error, never an empty listing. The
-/// occupancy guard adoption asks before it replaces a slot reads through
-/// here, and a guard that reads "nothing is stored there" out of a read it
-/// could not make deletes what it was written to protect.
+/// A directory that will not list is an error, never an empty listing:
+/// what an unreadable directory costs is the calling surface's to decide,
+/// and a listing that answers "nothing" has taken that decision for it.
 fn nested_names(
     sealed: &SealedSource,
     dir: &str,

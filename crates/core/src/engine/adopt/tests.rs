@@ -481,6 +481,131 @@ fn a_plain_skill_over_a_slot_whose_listing_fails_refuses() {
     assert_eq!(trashed(), before);
 }
 
+/// A skill written straight into the global scope's local source. These
+/// controls ask what the slot HOLDS, and how it came to hold it is not part
+/// of that question.
+fn store_local_skill(env: &Env, rel: &str, body: &str) -> PathBuf {
+    let dir = crate::source::local_source_root(env, &Scope::Global)
+        .join("skills")
+        .join(rel);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("SKILL.md"), body).unwrap();
+    dir
+}
+
+/// The refusal a plain `name` gets at the global scope, with Claude holding
+/// a skill of that name for the capture to take.
+fn refuse_plain_skill(env: &Env, home: &Path, name: &str) -> String {
+    let held = home.join(".claude/skills").join(name);
+    fs::create_dir_all(&held).unwrap();
+    fs::write(held.join("SKILL.md"), "the plain one").unwrap();
+    adopt(
+        env,
+        &Scope::Global,
+        ItemKind::Skill,
+        name,
+        &[HarnessId::Claude],
+    )
+    .unwrap_err()
+    .to_string()
+}
+
+/// A local source whose own config will not parse offers nothing at all —
+/// every listing of it is empty, and an empty listing is not an empty
+/// directory. The skill stored in the slot is stored there either way.
+#[test]
+fn a_plain_skill_over_a_slot_in_an_unreadable_local_source_refuses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let stored = store_local_skill(&env, "data-science/eda", "the namespaced one");
+    let root = crate::source::local_source_root(&env, &Scope::Global);
+    fs::write(root.join("kendex.toml"), "schema = [").unwrap();
+
+    let refused = refuse_plain_skill(&env, tmp.path(), "data-science");
+
+    assert!(refused.contains("data-science/eda"), "{refused:?}");
+    assert_eq!(
+        fs::read_to_string(stored.join("SKILL.md")).unwrap(),
+        "the namespaced one"
+    );
+    assert!(trash_is_empty(&env));
+}
+
+/// A catalog that declares where its skills live: `skills/data-science` is
+/// this source's skill directory, so what it stores is listed as `foo/eda`
+/// — a name whose plugin half is not the slot's, and whose path is inside
+/// the slot regardless.
+#[test]
+fn a_plain_skill_over_a_slot_holding_a_differently_named_item_refuses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let stored = store_local_skill(&env, "data-science/foo/eda", "the stored one");
+    let root = crate::source::local_source_root(&env, &Scope::Global);
+    fs::write(
+        root.join("kendex.toml"),
+        "[catalog]\nskills = [\"skills/data-science\"]\n",
+    )
+    .unwrap();
+
+    let refused = refuse_plain_skill(&env, tmp.path(), "data-science");
+
+    assert!(refused.contains("data-science/foo"), "{refused:?}");
+    assert_eq!(
+        fs::read_to_string(stored.join("SKILL.md")).unwrap(),
+        "the stored one"
+    );
+    assert!(trash_is_empty(&env));
+}
+
+/// A listing skips a `tests` directory wherever it finds one — the support
+/// vocabulary a browse row is drawn through, since files there are about the
+/// items rather than items. A legal `tests/foo` is therefore a skill no
+/// listing names, and it occupies the plain `tests` slot all the same.
+#[test]
+fn a_plain_skill_over_a_slot_no_listing_names_refuses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let stored = store_local_skill(&env, "tests/foo", "the namespaced one");
+
+    let refused = refuse_plain_skill(&env, tmp.path(), "tests");
+
+    assert!(refused.contains("tests/foo"), "{refused:?}");
+    assert_eq!(
+        fs::read_to_string(stored.join("SKILL.md")).unwrap(),
+        "the namespaced one"
+    );
+    assert!(trash_is_empty(&env));
+}
+
+/// A slot holding this very name is not a collision. The plain item stored
+/// there is an earlier copy of the name being kept, and replacing it is
+/// what a capture over it is for — the refusal above is the collision's,
+/// not a refusal of every plain name whose slot exists.
+#[test]
+fn a_plain_skill_over_an_earlier_copy_of_itself_lands() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let stored = store_local_skill(&env, "handmade", "the earlier one");
+    let held = tmp.path().join(".claude/skills/handmade");
+    fs::create_dir_all(&held).unwrap();
+    fs::write(held.join("SKILL.md"), "the newer one").unwrap();
+
+    let plan = adopt(
+        &env,
+        &Scope::Global,
+        ItemKind::Skill,
+        "handmade",
+        &[HarnessId::Claude],
+    )
+    .unwrap();
+    crate::apply::execute(&env, &plan, None).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(stored.join("SKILL.md")).unwrap(),
+        "the newer one"
+    );
+}
+
 /// A refused name is printed, not run. The name reaches stderr through
 /// the CLI's `Error: {e}`, so a control sequence inside it would clear
 /// the reader's screen while telling them the name was refused.
