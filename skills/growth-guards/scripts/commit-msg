@@ -36,6 +36,8 @@ source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/settings.sh"
 # shellcheck source=lib/commit-header.sh
 source "$SCRIPT_DIR/lib/commit-header.sh"
+# shellcheck source=lib/changelog-grammar.sh
+source "$SCRIPT_DIR/lib/changelog-grammar.sh"
 
 usage() {
   cat <<'EOF'
@@ -53,16 +55,21 @@ Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
   GROWTH_GUARDS_COMMIT_TYPES   space-separated type list
                                (default "build chore ci docs feat fix perf refactor revert style test")
-  GROWTH_GUARDS_SUBJECT_MAX    characters allowed in the header (default 72)
+  GROWTH_GUARDS_SUBJECT_MAX    characters allowed in the header (default 72;
+                               counted the way the changelog cap is, so a
+                               multibyte header measures the same in every
+                               locale a hook may inherit)
   GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS
                                space-separated globs against the full
                                repo-relative path ('*' crosses '/'); a commit
                                that stages a matching path must also write a
                                changelog entry (default empty = rule off)
   GROWTH_GUARDS_CHANGELOG_PATHS   what counts as a written entry, with
-  GROWTH_GUARDS_CHANGELOG_RECORD  — the same paths the changelog-entries
+  GROWTH_GUARDS_CHANGELOG_RECORD  — the same two scopes the changelog-entries
                                check judges (defaults "changelog.d/*/*.md"
-                               and "CHANGELOG.md")
+                               and "CHANGELOG.md"). The record satisfies the
+                               rule but is not offered as a remedy: the other
+                               check refuses a hand-added [Unreleased] line
 
 `[no-changelog]` anywhere in the header escapes the changelog rule.
 
@@ -153,8 +160,12 @@ else
       "scope accepts uppercase issue keys and issue numbers, e.g. fix(ABC-123): tighten the gate / fix(#123): case-fold IDs" \
       "git-generated headers (Merge/Revert/Reapply, fixup!/squash!/amend!) pass unchanged"
   fi
-  if [ "${#HEADER}" -gt "$SUBJECT_MAX" ]; then
-    violation "subject is ${#HEADER} characters (max $SUBJECT_MAX): $HEADER" \
+  # gg_chars, not ${#HEADER}: bash counts in whatever locale the committer's
+  # shell happens to carry, and one message must not be accepted in one shell
+  # and refused in another.
+  header_chars="$(gg_chars "$HEADER")"
+  if [ "$header_chars" -gt "$SUBJECT_MAX" ]; then
+    violation "header is $header_chars characters (max $SUBJECT_MAX): $HEADER" \
       "move the detail into the body — the header is the one line every log shows"
   fi
 fi
@@ -163,15 +174,10 @@ fi
 # Runs over every header, generated ones included: what the commit CHANGES
 # decides this, not who wrote its first line.
 if [ -n "$REQUIRED" ]; then
-  ENTRY_RAW="$(gg_setting GROWTH_GUARDS_CHANGELOG_PATHS "changelog.d/*/*.md")" || exit 2
-  ENTRY_PATTERNS="$(gg_config_path_list "$ENTRY_RAW" changelog)" || exit 2
-  RECORD_RAW="$(gg_setting GROWTH_GUARDS_CHANGELOG_RECORD "CHANGELOG.md")" || exit 2
-  if [ -n "$RECORD_RAW" ]; then
-    RECORD="$(gg_config_path "$RECORD_RAW" changelog-record)" || exit 2
-    ENTRY_PATTERNS="${ENTRY_PATTERNS:+$ENTRY_PATTERNS }$RECORD"
-  fi
-  [ -n "$ENTRY_PATTERNS" ] \
-    || gg_config_error "GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS demands an entry, but GROWTH_GUARDS_CHANGELOG_PATHS and GROWTH_GUARDS_CHANGELOG_RECORD name nowhere one could be written"
+  # The same two scopes changelog-entries judges, resolved by the same
+  # library: the lane that names where an entry may be written and the lane
+  # that then judges it cannot come to different answers.
+  gg_changelog_scopes || exit 2
 
   # -z, so a path carrying a newline or a byte git would otherwise quote
   # reaches the globs as the bytes git recorded: a quoted name matches no
@@ -195,10 +201,17 @@ if [ -n "$REQUIRED" ]; then
     fi
   done <"$GG_TMP/staged.z"
 
+  # The record is compared as one value, never folded into the pattern list:
+  # a record path carrying a space would word-split into two globs there, and
+  # writing that very file would then satisfy nothing.
   entry=""
   while IFS= read -r -d '' f; do
+    if [ -n "$GG_CHANGELOG_RECORD" ] && [ "$f" = "$GG_CHANGELOG_RECORD" ]; then
+      entry="$f"
+      break
+    fi
     # shellcheck disable=SC2086
-    if gg_path_matches "$f" $ENTRY_PATTERNS; then
+    if gg_path_matches "$f" $GG_CHANGELOG_PATTERNS; then
       entry="$f"
       break
     fi
@@ -208,11 +221,15 @@ if [ -n "$REQUIRED" ]; then
     case "$HEADER" in
       *"[no-changelog]"*) echo "commit-msg: OK — [no-changelog] in the header waives the entry for $(gg_shown "$touched")" ;;
       *)
-        shown=""
-        for pat in $ENTRY_PATTERNS; do shown="${shown:+$shown }$(gg_shown "$pat")"; done
+        # The record is deliberately not offered here: changelog-entries runs
+        # earlier in the same commit chain and refuses a line added under
+        # [Unreleased] by hand, so pointing a writer at it would send them
+        # into the next lane's refusal.
         violation "$(gg_shown "$touched") changed without a changelog entry" \
-          "write one of: $shown" \
+          "write one of: $GG_CHANGELOG_SHOWN" \
           "or put [no-changelog] in the header when the commit changes nothing a consumer sees"
+        [ -z "$GG_CHANGELOG_RECORD" ] \
+          || echo "  $(gg_shown "$GG_CHANGELOG_RECORD") counts only for the release commit that collates the fragments"
         ;;
     esac
   fi

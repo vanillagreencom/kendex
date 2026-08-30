@@ -151,14 +151,14 @@ printf 'y\n' >>"$R/README.md"
 git -C "$R" add -A
 RC=0
 OUT="$(git -C "$R" commit -m "$LONG" 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"subject is 76 characters"*) true ;; *) false ;; esac \
+[ "$RC" -ne 0 ] && case "$OUT" in *"header is 76 characters"*) true ;; *) false ;; esac \
   && ok "a 76-character subject is refused, naming the count" \
   || bad "a 76-character subject is refused, naming the count" "rc=$RC out=$OUT"
 printf 'w\n' >>"$R/README.md"
 git -C "$R" add -A
 RC=0
 OUT="$(git -C "$R" commit -m "docs: $(printf 'x%.0s' $(seq 1 67))" 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"subject is 73 characters"*) true ;; *) false ;; esac \
+[ "$RC" -ne 0 ] && case "$OUT" in *"header is 73 characters"*) true ;; *) false ;; esac \
   && ok "73 characters is one too many" \
   || bad "73 characters is one too many" "rc=$RC out=$OUT"
 printf 'm\n' >>"$R/README.md"
@@ -180,7 +180,7 @@ printf 'c\n' >>"$R/README.md"
 git -C "$R" add -A
 RC=0
 OUT="$(git -C "$R" commit -F "$TMP/msg-with-comment" 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"subject is 76 characters"*) true ;; *) false ;; esac \
+[ "$RC" -ne 0 ] && case "$OUT" in *"header is 76 characters"*) true ;; *) false ;; esac \
   && ok "the header is the first non-blank non-comment line, not line 1" \
   || bad "the header is the first non-blank non-comment line, not line 1" "rc=$RC out=$OUT"
 printf 'f\n' >>"$R/README.md"
@@ -229,6 +229,43 @@ OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
 [ "$RC" -eq 0 ] && case "$OUT" in *"dropped the retired"*) false ;; *) true ;; esac \
   && ok "a hook that never had the lane is not rewritten" \
   || bad "a hook that never had the lane is not rewritten" "rc=$RC out=$OUT"
+
+[ -x "$HOOKS/commit-msg" ] \
+  && ok "the repaired hook keeps the execute bit git needs" \
+  || bad "the repaired hook keeps the execute bit git needs" "$(ls -l "$HOOKS/commit-msg")"
+# A probe the repair cannot complete must stop the run, not report the clone
+# armed while the hook still calls a script that is gone. grep spends 1 on
+# "not found" and 2 on "could not read it"; a shim ahead of PATH is what
+# separates the two branches, since the installer that runs first would refuse
+# a hook the filesystem really had made unreadable.
+awk -v sentinel="$SENTINEL" -v lane="$STALE_LANE" \
+  '{ print } index($0, sentinel) && !placed { print lane; placed = 1 }' \
+  "$HOOKS/commit-msg" >"$HOOKS/commit-msg.new"
+cat "$HOOKS/commit-msg.new" >"$HOOKS/commit-msg"
+rm -f "$HOOKS/commit-msg.new"
+GREP_SHIM="$TMP/grep-shim"
+mkdir -p "$GREP_SHIM"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'if [ "${1:-}" = "-Fxq" ]; then\n'
+  printf '  echo "grep: simulated read failure" >&2\n'
+  printf '  exit 2\n'
+  printf 'fi\n'
+  printf 'exec %s "$@"\n' "$(command -v grep)"
+} >"$GREP_SHIM/grep"
+chmod +x "$GREP_SHIM/grep"
+RC=0
+OUT="$(cd "$R" && PATH="$GREP_SHIM:$PATH" ./tools/setup 2>&1)" || RC=$?
+[ "$RC" -ne 0 ] && case "$OUT" in *"hooks armed"*) false ;; *"grep exit 2"*) true ;; *) false ;; esac \
+  && ok "a probe that could not run stops setup instead of reporting the clone armed" \
+  || bad "a probe that could not run stops setup" "rc=$RC out=$OUT"
+grep -qxF "$STALE_LANE" "$HOOKS/commit-msg" \
+  && ok "control: that hook really did still carry the retired lane" \
+  || bad "control: that hook really did still carry the retired lane" "$(cat "$HOOKS/commit-msg")"
+RC=0
+OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "with a working probe the same hook is repaired" \
+  || bad "with a working probe the same hook is repaired" "rc=$RC out=$OUT"
 
 echo "=== a clone armed by the old setup names both hooks to delete ==="
 new_fixture legacy

@@ -98,7 +98,8 @@ must be
   `deprecated`, `removed`, `fixed`, `security`), because that directory is
   the heading the collator writes it beneath;
 - exactly one Markdown list item — the first non-blank line opens with a
-  hyphen and a space and says something, every later line indents under it;
+  hyphen and a space and says something, and every later NON-BLANK line
+  indents under it, so an indented second paragraph is part of the entry;
 - within `GROWTH_GUARDS_CHANGELOG_CAP` characters (default 200).
 
 A long entry is named with its file, its length and its first line. One
@@ -171,8 +172,8 @@ Text that is not valid UTF-8 is a collection error naming the line, not a
 skip. git calls such a blob text whenever it holds no NUL, and there is no
 character count to take over it — a run of stray continuation bytes would
 otherwise measure as almost nothing. The quoted first line has every C0
-control and DEL replaced: bytes in a tracked file must not reach the reader's
-terminal through a diagnostic.
+control except tab, and DEL, replaced: bytes in a tracked file must not reach
+the reader's terminal through a diagnostic.
 
 ## prose
 
@@ -254,9 +255,13 @@ longer header is a body sentence on the line every log shows.
 **The changelog a commit owes.** When `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS`
 (empty by default) names a glob some staged path matches, the commit must also
 add or modify a path under `GROWTH_GUARDS_CHANGELOG_PATHS` or
-`GROWTH_GUARDS_CHANGELOG_RECORD` — the same paths changelog-entries judges —
-or carry `[no-changelog]` in the header. Deleting a fragment is not writing
-one, so only additions and modifications count as evidence.
+`GROWTH_GUARDS_CHANGELOG_RECORD` — the same two scopes changelog-entries
+judges, resolved by the same library — or carry `[no-changelog]` in the
+header. Deleting a fragment is not writing one, so only additions and
+modifications count as evidence. The remedy names the fragment globs alone:
+the record satisfies the rule, but writing a line into it by hand is what
+changelog-entries refuses earlier in the same commit chain, so it is offered
+only as the release commit's own write.
 
 Git-generated headers are exempt from shape and length alone: nobody chose
 their wording or their size. The changelog rule still runs over them — a

@@ -249,7 +249,7 @@ rep() { # CHAR N
 # "fix(KEN-1): " is twelve characters, so the subject is 12 + N.
 expect_pass "fix(KEN-1): $(rep x 60)" "a 72-character header passes"
 run_stdin "fix(KEN-1): $(rep x 61)"
-[ "$RC" -eq 1 ] && case "$OUT" in *"subject is 73 characters (max 72)"*) true ;; *) false ;; esac \
+[ "$RC" -eq 1 ] && case "$OUT" in *"header is 73 characters (max 72)"*) true ;; *) false ;; esac \
   && ok "73 characters fails, naming the count and the cap" \
   || bad "73 characters fails, naming the count and the cap" "rc=$RC out=$OUT"
 case "$OUT" in *"move the detail into the body"*) ok "the length diagnostic carries the remedy" ;; *) bad "the length diagnostic carries the remedy" "$OUT" ;; esac
@@ -262,11 +262,30 @@ run_stdin 'fix: x' "GROWTH_GUARDS_SUBJECT_MAX=0"
   && ok "a cap that is not a positive integer is exit 2" \
   || bad "a cap that is not a positive integer is exit 2" "rc=$RC out=$OUT"
 
+# Characters, not bytes, whatever locale the committer's shell carries. A
+# git hook inherits that environment, so a message measured in bytes is
+# accepted in one shell and refused in another.
+MULTI="fix(KEN-1): $(rep 'é' 55)" # 67 characters, 122 bytes
+for loc in C C.UTF-8 en_US.UTF-8; do
+  run_stdin "$MULTI" "LC_ALL=$loc"
+  [ "$RC" -eq 0 ] && ok "a 67-character multibyte header passes under $loc" \
+    || bad "a 67-character multibyte header passes under $loc" "rc=$RC out=$OUT"
+done
+# The control: one character more is over the cap in every one of them, so
+# the passes above are the count and not the rule declining to look.
+MULTI_OVER="fix(KEN-1): $(rep 'é' 61)" # 73 characters
+for loc in C C.UTF-8 en_US.UTF-8; do
+  run_stdin "$MULTI_OVER" "LC_ALL=$loc"
+  [ "$RC" -eq 1 ] && case "$OUT" in *"header is 73 characters (max 72)"*) true ;; *) false ;; esac \
+    && ok "and 73 of them is 73 characters under $loc, not its byte count" \
+    || bad "and 73 of them is 73 characters under $loc" "rc=$RC out=$OUT"
+done
+
 echo "=== shape and length are reported together, not one at a time ==="
 run_stdin "$(rep q 90)" "GROWTH_GUARDS_SUBJECT_MAX=20"
 [ "$RC" -eq 1 ] \
   && case "$OUT" in *"non-conventional header"*) true ;; *) false ;; esac \
-  && case "$OUT" in *"subject is 90 characters (max 20)"*) true ;; *) false ;; esac \
+  && case "$OUT" in *"header is 90 characters (max 20)"*) true ;; *) false ;; esac \
   && ok "one run names both the shape and the length" \
   || bad "one run names both the shape and the length" "rc=$RC out=$OUT"
 
@@ -302,10 +321,26 @@ run_rc 'fix(KEN-1): change a crate'
 [ "$RC" -eq 1 ] && case "$OUT" in *"crates/core/lib.rs changed without a changelog entry"*) true ;; *) false ;; esac \
   && ok "a staged crates/ change with no entry fails, naming the path" \
   || bad "a staged crates/ change with no entry fails, naming the path" "rc=$RC out=$OUT"
-case "$OUT" in *"changelog.d"*"CHANGELOG.md"*) ok "the diagnostic names where an entry may be written" ;; *) bad "the diagnostic names where an entry may be written" "$OUT" ;; esac
+case "$OUT" in *"write one of: changelog.d/*/*.md"*) ok "the diagnostic names the fragment globs, unescaped, as they have to be typed" ;;
+  *) bad "the diagnostic names the fragment globs unescaped" "$OUT" ;; esac
+# The record is NOT offered as a remedy: changelog-entries runs earlier in the
+# same chain and refuses a hand-added [Unreleased] line, so a writer who took
+# that advice would be refused by the next lane.
+printf '%s\n' "$OUT" | grep -F 'write one of:' | grep -qF 'CHANGELOG.md' \
+  && bad "the remedy does not send a writer at the record" "$OUT" \
+  || ok "the remedy does not send a writer at the record"
+case "$OUT" in *"CHANGELOG.md counts only for the release commit"*) ok "the record is named as the release commit's own write" ;;
+  *) bad "the record is named as the release commit's own write" "$OUT" ;; esac
 run_rc 'fix(KEN-1): change a crate [no-changelog]'
 [ "$RC" -eq 0 ] && ok "[no-changelog] in the header waives it" \
   || bad "[no-changelog] in the header waives it" "rc=$RC out=$OUT"
+# The control for that waiver: it is the HEADER that carries it. A body
+# mention is prose, and reading the whole message would let one waive a gate
+# every doc says lives on the subject line.
+run_rc "$(printf 'fix(KEN-1): change a crate\n\nThe rule here is [no-changelog] for pure refactors.\n')"
+[ "$RC" -eq 1 ] && case "$OUT" in *"changed without a changelog entry"*) true ;; *) false ;; esac \
+  && ok "control: [no-changelog] in the body alone waives nothing" \
+  || bad "control: [no-changelog] in the body alone waives nothing" "rc=$RC out=$OUT"
 # MUST: a git-generated header skips shape and length, never this rule.
 run_rc "Merge branch 'topic' into main"
 [ "$RC" -eq 1 ] && case "$OUT" in *"changed without a changelog entry"*) true ;; *) false ;; esac \
@@ -354,6 +389,19 @@ run_rc 'fix(KEN-4): change a crate under a quoted name'
 git -C "$RC_REPO" reset -q --hard HEAD
 rm -f "$RC_REPO/$QUOTED"
 
+# The second glob of the list is enforced as much as the first: this repo
+# ships "crates/* ui/*" and ui/ is the half nothing else here reaches.
+git -C "$RC_REPO" reset -q --hard HEAD
+mkdir -p "$RC_REPO/ui/src"
+printf 'export const x = 1;\n' >"$RC_REPO/ui/src/a.ts"
+git -C "$RC_REPO" add -A
+run_rc 'fix(KEN-6): change the UI'
+[ "$RC" -eq 1 ] && case "$OUT" in *"ui/src/a.ts changed without a changelog entry"*) true ;; *) false ;; esac \
+  && ok "a path matching the SECOND required glob owes an entry too, and is the one named" \
+  || bad "a path matching the second required glob owes an entry too" "rc=$RC out=$OUT"
+git -C "$RC_REPO" reset -q --hard HEAD
+rm -rf -- "${RC_REPO:?}/ui"
+
 echo "=== the required paths are configuration, validated like every other path ==="
 git -C "$RC_REPO" reset -q --hard HEAD
 printf 'fn yet() {}\n' >>"$RC_REPO/crates/core/lib.rs"
@@ -370,11 +418,43 @@ OUT="$(cd "$RC_REPO" && printf 'fix(KEN-3): change a crate\n' | GROWTH_GUARDS_CH
 [ "$RC" -eq 2 ] && case "$OUT" in *"must be repo-root-relative"*) true ;; *) false ;; esac \
   && ok "an absolute required path is a config error" \
   || bad "an absolute required path is a config error" "rc=$RC out=$OUT"
+# Every entry is validated, not the first: a list whose SECOND entry escapes
+# is the same config error.
 OUT=""; RC=0
-OUT="$(cd "$RC_REPO" && printf 'fix(KEN-3): change a crate\n' | GROWTH_GUARDS_CHANGELOG_PATHS="" GROWTH_GUARDS_CHANGELOG_RECORD="" "$CM" 2>&1)" || RC=$?
-[ "$RC" -eq 2 ] && case "$OUT" in *"name nowhere one could be written"*) true ;; *) false ;; esac \
-  && ok "obliging an entry with nowhere to write one is a config error" \
-  || bad "obliging an entry with nowhere to write one is a config error" "rc=$RC out=$OUT"
+OUT="$(cd "$RC_REPO" && printf 'fix(KEN-3): change a crate\n' | GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS="crates/* /etc/crates" "$CM" 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"must be repo-root-relative"*) true ;; *) false ;; esac \
+  && ok "a list whose second entry is absolute is a config error too" \
+  || bad "a list whose second entry is absolute is a config error too" "rc=$RC out=$OUT"
+# And a record carrying a space stays one value: word-split into the glob
+# list, writing that very file would satisfy nothing.
+git -C "$RC_REPO" reset -q --hard HEAD
+mkdir -p "$RC_REPO/docs"
+printf '# Changelog\n\n## [Unreleased]\n' >"$RC_REPO/docs/My Changelog.md"
+printf 'fn spaced() {}\n' >>"$RC_REPO/crates/core/lib.rs"
+git -C "$RC_REPO" add -A
+OUT=""; RC=0
+OUT="$(cd "$RC_REPO" && printf 'fix(KEN-5): change a crate\n' | GROWTH_GUARDS_CHANGELOG_RECORD="docs/My Changelog.md" "$CM" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "a record path carrying a space satisfies the rule when it is written" \
+  || bad "a record path carrying a space satisfies the rule when it is written" "rc=$RC out=$OUT"
+# The control: the same commit without that file owes an entry, so the pass
+# above is the record matching and not the rule going quiet.
+git -C "$RC_REPO" rm -q --cached "docs/My Changelog.md"
+OUT=""; RC=0
+OUT="$(cd "$RC_REPO" && printf 'fix(KEN-5): change a crate\n' | GROWTH_GUARDS_CHANGELOG_RECORD="docs/My Changelog.md" "$CM" 2>&1)" || RC=$?
+[ "$RC" -eq 1 ] && ok "control: without it the same commit still owes an entry" \
+  || bad "control: without it the same commit still owes an entry" "rc=$RC out=$OUT"
+git -C "$RC_REPO" reset -q --hard HEAD
+rm -rf -- "${RC_REPO:?}/docs"
+OUT=""; RC=0
+OUT="$(cd "$RC_REPO" && printf 'fix(KEN-3): change a crate\n' | GROWTH_GUARDS_CHANGELOG_PATHS="" "$CM" 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"GROWTH_GUARDS_CHANGELOG_PATHS names no path"*) true ;; *) false ;; esac \
+  && ok "an empty fragment glob list is the same config error both lanes give" \
+  || bad "an empty fragment glob list is the same config error both lanes give" "rc=$RC out=$OUT"
+OUT=""; RC=0
+OUT="$(cd "$RC_REPO" && printf 'fix(KEN-3): change a crate\n' | GROWTH_GUARDS_CHANGELOG_RECORD=changelog.d/fixed/x.md "$CM" 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"is also matched by GROWTH_GUARDS_CHANGELOG_PATHS"*) true ;; *) false ;; esac \
+  && ok "and the overlap between the two scopes is one judgement, made in the shared resolution" \
+  || bad "and the overlap between the two scopes is one judgement" "rc=$RC out=$OUT"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

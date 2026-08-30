@@ -6,6 +6,8 @@ One CHANGELOG entry per file. Two branches never write the same
 - **Path**: `changelog.d/<section>/<name>.md`, a real file and not a symlink.
   The section is one of `added`, `changed`, `deprecated`, `removed`, `fixed`,
   `security`. Name the file after the issue: `changelog.d/fixed/<issue>.md`.
+  Anything else tracked under `changelog.d`, this README excepted, is refused
+  — nothing would ever fold it in.
 - **Content**: exactly one Markdown list item — the first non-blank line opens
   with `- ` and says something, every later line indents under it, and the
   whole entry runs at most 200 characters, whitespace runs collapsed, however
@@ -20,9 +22,11 @@ One CHANGELOG entry per file. Two branches never write the same
   emitted in Keep a Changelog order and carrying their blocks in file order.
 
 The format has one judge: the growth-guards `changelog-entries` lane, pointed
-at this directory by `GROWTH_GUARDS_CHANGELOG_PATHS`. It runs at every commit
-and `tools/changelog-collate` calls it before it writes. Exit codes follow
-the guard family: 0 clean, 1 a fragment it refuses, 2 could not run.
+at this directory by `GROWTH_GUARDS_CHANGELOG_PATHS`. It runs at every commit,
+and `tools/changelog-collate` asks it which paths are fragments and which
+section each is in before folding anything in — the collator decides none of
+that itself. Exit codes follow the guard family: 0 clean, 1 a fragment the
+judge refuses, 2 could not run.
 
 That same lane refuses any line under `## [Unreleased]` in `CHANGELOG.md`
 that HEAD does not already carry. `GROWTH_GUARDS_CHANGELOG_COLLATE=1`

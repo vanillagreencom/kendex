@@ -286,7 +286,7 @@ run_ce
 [ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/notes is in the fragment tree but is not a fragment"*) true ;; *) false ;; esac \
   && ok "a path in a section directory that no glob covers is refused, naming the globs" \
   || bad "a path in a section directory that no glob covers is refused" "rc=$RC out=$OUT"
-case "$OUT" in *"changelog.d/\\*/\\*.md"*) ok "the refusal names what a fragment must match" ;; *) bad "the refusal names what a fragment must match" "$OUT" ;; esac
+case "$OUT" in *"changelog.d/*/*.md"*) ok "the refusal names what a fragment must match" ;; *) bad "the refusal names what a fragment must match" "$OUT" ;; esac
 git -C "$R" rm -q --cached changelog.d/fixed/notes
 rm -f "$R/changelog.d/fixed/notes"
 # A symlink there is refused the same way, so its target's bytes are never
@@ -397,6 +397,31 @@ run_ce
   && ok "a binary blob is refused, not measured as text" \
   || bad "a binary blob is refused" "rc=$RC out=$OUT"
 case "$OUT" in *"characters (cap"*) bad "no length may be reported for a binary blob" "$OUT" ;; *) ok "no length is reported for a binary blob" ;; esac
+# git classifies on the leading bytes alone, and so does this check: a NUL
+# past that sample is a blob both call text. Sizing the sample differently
+# would make one of them disagree with the other.
+mkdir -p "$R/changelog.d/added"
+{
+  printf -- '- '
+  rep x 8100
+  LC_ALL=C awk 'BEGIN { printf "%c", 0 }'
+  printf 'tail\n'
+} >"$R/changelog.d/added/late-nul.md"
+stage
+[ -n "$(git -C "$R" grep --cached -I -l . -- changelog.d/added)" ] \
+  && ok "fixture: git calls a blob with its only NUL past the sample text" \
+  || bad "fixture: git calls a blob with its only NUL past the sample text" "git grep skipped it"
+run_ce
+# Read as text, so the NUL in it is a byte with no character count — the
+# text-scope refusal, never the binary one. A sample sized past that byte
+# would call the same blob binary and disagree with git about it.
+[ "$RC" -eq 2 ] && case "$OUT" in *"late-nul.md line 1 is not valid UTF-8"*) true ;; *) false ;; esac \
+  && ok "so this check reads it as text too, and refuses the byte rather than the file" \
+  || bad "so this check reads it as text too" "rc=$RC out=$OUT"
+case "$OUT" in *"binary content"*) bad "no blob git calls text may be refused as binary" "$OUT" ;;
+  *) ok "no blob git calls text is refused as binary" ;; esac
+git -C "$R" rm -q --cached changelog.d/added/late-nul.md
+rm -f "$R/changelog.d/added/late-nul.md"
 # The control: high bytes carrying no NUL are text to git and to this check
 # alike, so the refusal above is the NUL classification and not a file the
 # check declines to read for having bytes over 127 in it.
@@ -459,6 +484,12 @@ run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=docs/*/*.md'
 [ "$RC" -eq 0 ] && case "$OUT" in *"no tracked file matches"*"docs"*) true ;; *) false ;; esac \
   && ok "configured paths matching no tracked file are a clean pass" \
   || bad "configured paths matching no tracked file are a clean pass" "rc=$RC out=$OUT"
+# Every glob in the list is matched, not the first: only the second one here
+# reaches the over-cap fragment.
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=docs/*/*.md changelog.d/*/*.md'
+[ "$RC" -eq 1 ] && case "$OUT" in *"long entry: changelog.d/fixed/ken-1.md"*) true ;; *) false ;; esac \
+  && ok "the SECOND glob of the list reaches the fragment the first does not, and measures it" \
+  || bad "the second glob of the list reaches and measures the fragment" "rc=$RC out=$OUT"
 
 echo "=== a configured path is validated, never quietly matched against nothing ==="
 run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=/etc/CHANGELOG.md'
@@ -517,197 +548,6 @@ stage
 run_ce
 [ "$RC" -eq 1 ] && ok "control: staging the same edit does fail it" \
   || bad "control: staging the same edit does fail it" "rc=$RC out=$OUT"
-
-echo "=== the record gains no line under [Unreleased] that HEAD does not carry ==="
-new_repo record
-# One writer for every variant: the added line goes under [Unreleased],
-# which is where appending to a file that ends in a released section does not
-# put it.
-record() { # [EXTRA-LINE]
-  {
-    printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n'
-    printf -- '- A wrapped entry\n  second line.\n- One line.\n'
-    [ $# -eq 0 ] || printf -- '%s\n' "$1"
-    printf '\n## [1.0.0] - 2026-01-01\n\n- A released entry.\n'
-  } >"$R/CHANGELOG.md"
-}
-record
-stage
-run_ce
-[ "$RC" -eq 0 ] && case "$OUT" in *"unchanged under [Unreleased]"*) false ;; *) true ;; esac \
-  && ok "a record HEAD does not carry yet is not judged — a first CHANGELOG is not a hand edit" \
-  || bad "a record HEAD does not carry yet is not judged" "rc=$RC out=$OUT"
-git -C "$R" commit -qm base
-run_ce
-[ "$RC" -eq 0 ] && case "$OUT" in *"CHANGELOG.md unchanged under [Unreleased]"*) true ;; *) false ;; esac \
-  && ok "an untouched record passes and the verdict says it was judged" \
-  || bad "an untouched record passes and the verdict says it was judged" "rc=$RC out=$OUT"
-record '- A hand-written line.'
-stage
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"CHANGELOG.md gained lines under [Unreleased]"*"- A hand-written line."*) true ;; *) false ;; esac \
-  && ok "a hand-written [Unreleased] line fails, quoting the line" \
-  || bad "a hand-written [Unreleased] line fails, quoting the line" "rc=$RC out=$OUT"
-case "$OUT" in *"A released entry"*) bad "no untouched line is named as gained" "$OUT" ;; *) ok "no untouched line is named as gained" ;; esac
-run_ce_env 'GROWTH_GUARDS_CHANGELOG_COLLATE=1'
-[ "$RC" -eq 0 ] && ok "GROWTH_GUARDS_CHANGELOG_COLLATE=1 declares the collator's write" \
-  || bad "GROWTH_GUARDS_CHANGELOG_COLLATE=1 declares the collator's write" "rc=$RC out=$OUT"
-run_ce_env 'GROWTH_GUARDS_CHANGELOG_RECORD='
-[ "$RC" -eq 0 ] && ok "an empty record setting switches the scope off" \
-  || bad "an empty record setting switches the scope off" "rc=$RC out=$OUT"
-# A second copy of a line HEAD carries once is a line this commit gained.
-record '- One line.'
-stage
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"gained lines under [Unreleased]"*"- One line."*) true ;; *) false ;; esac \
-  && ok "a duplicated [Unreleased] line fails, quoting it" \
-  || bad "a duplicated [Unreleased] line fails, quoting it" "rc=$RC out=$OUT"
-# Blank lines are not content: padding alone cannot refuse, and what keeping
-# it out of the compared sets holds is the diagnostic.
-printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- A wrapped entry\n  second line.\n\n\n\n- One line.\n\n## [1.0.0] - 2026-01-01\n\n- A released entry.\n' >"$R/CHANGELOG.md"
-stage
-run_ce
-[ "$RC" -eq 0 ] && ok "blank padding under [Unreleased] is not a gained line" \
-  || bad "blank padding under [Unreleased] is not a gained line" "rc=$RC out=$OUT"
-# Rotating the section into a released version gains nothing.
-printf '# Changelog\n\n## [Unreleased]\n\n## [1.1.0] - 2026-02-01\n\n### Fixed\n\n- A wrapped entry\n  second line.\n- One line.\n\n## [1.0.0] - 2026-01-01\n\n- A released entry.\n' >"$R/CHANGELOG.md"
-stage
-run_ce
-[ "$RC" -eq 0 ] && ok "rotating [Unreleased] into a released version adds no line" \
-  || bad "rotating [Unreleased] into a released version adds no line" "rc=$RC out=$OUT"
-
-# More gained lines than the diagnostic quotes, and one carrying an escape
-# that sorts into the quoted five: the count is capped and the record's own
-# bytes never reach the reader's terminal.
-{
-  printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n'
-  printf -- '- A wrapped entry\n  second line.\n- One line.\n'
-  printf -- '- 0 gained with an escape \033[31mred\033[0m.\n'
-  printf -- '- %s gained.\n' 1 2 3 4 5 6
-  printf '\n## [1.0.0] - 2026-01-01\n\n- A released entry.\n'
-} >"$R/CHANGELOG.md"
-stage
-run_ce
-[ "$RC" -eq 1 ] && ok "seven gained lines are refused" \
-  || bad "seven gained lines are refused" "rc=$RC out=$OUT"
-[ "$(printf '%s\n' "$OUT" | grep -c '^    - ')" -eq 5 ] \
-  && ok "the diagnostic quotes five of them, not all seven" \
-  || bad "the diagnostic quotes five of them, not all seven" "$OUT"
-case "$OUT" in *"?[31mred?[0m"*) ok "the escape in a quoted line is replaced" ;; *) bad "the escape in a quoted line is replaced" "$OUT" ;; esac
-printf '%s' "$OUT" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\037\177]')" \
-  && bad "no control byte from the record may reach the output" "$OUT" \
-  || ok "no control byte from the record reaches the output"
-
-echo "=== the heading is found by structure, never by substring ==="
-new_repo heading
-printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n- A released entry.\n' >"$R/CHANGELOG.md"
-stage
-git -C "$R" commit -qm base
-# A fenced block naming the heading opens no section, so the lines under it
-# are still the released ones nobody may claim are unreleased.
-printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n```\n## [Unreleased]\n```\n\n- A released entry.\n- A line that would be gained if the fence counted.\n' >"$R/CHANGELOG.md"
-stage
-run_ce
-[ "$RC" -eq 0 ] && ok "a fenced mention of the heading opens no [Unreleased] section" \
-  || bad "a fenced mention of the heading opens no [Unreleased] section" "rc=$RC out=$OUT"
-# The control: the same line under a real heading is refused, so the pass
-# above is the fence and not a rule that stopped looking.
-printf '# Changelog\n\n## [Unreleased]\n\n- A line that would be gained if the fence counted.\n\n## [1.0.0] - 2026-01-01\n\n- A released entry.\n' >"$R/CHANGELOG.md"
-stage
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"gained lines under [Unreleased]"*) true ;; *) false ;; esac \
-  && ok "control: the same line under a real heading is refused" \
-  || bad "control: the same line under a real heading is refused" "rc=$RC out=$OUT"
-# A closing hash sequence and up to three leading spaces are still the heading.
-printf '# Changelog\n\n   ## [Unreleased] ##\n\n- A gained line.\n\n## [1.0.0] - 2026-01-01\n\n- A released entry.\n' >"$R/CHANGELOG.md"
-stage
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"gained lines under [Unreleased]"*"- A gained line."*) true ;; *) false ;; esac \
-  && ok "an indented heading with a closing hash sequence still opens the section" \
-  || bad "an indented heading with a closing hash sequence still opens the section" "rc=$RC out=$OUT"
-# Four leading spaces is an indented code block, not a heading.
-printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n    ## [Unreleased]\n\n- A released entry.\n- Not gained.\n' >"$R/CHANGELOG.md"
-stage
-run_ce
-[ "$RC" -eq 0 ] && ok "four leading spaces open no heading" \
-  || bad "four leading spaces open no heading" "rc=$RC out=$OUT"
-# A level-3 heading inside the section does not close it.
-printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- A gained line under a sub-heading.\n\n## [1.0.0] - 2026-01-01\n\n- A released entry.\n' >"$R/CHANGELOG.md"
-stage
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"- A gained line under a sub-heading."*) true ;; *) false ;; esac \
-  && ok "a level-3 heading does not close the section" \
-  || bad "a level-3 heading does not close the section" "rc=$RC out=$OUT"
-
-echo "=== an unclosed fence fails closed; a shorter run does not close a longer one ==="
-new_repo fences
-printf -- '- A fragment.\n' | frag fixed ken-1.md
-printf '# Changelog\n\n## [Unreleased]\n\n- One line.\n' >"$R/CHANGELOG.md"
-stage
-git -C "$R" commit -qm base
-# A stray opening fence above the heading: a parser that swallows headings
-# while a fence is open finds no section on either side, compares nothing to
-# nothing, and calls a hand-written line unchanged.
-printf '# Changelog\n\n```\n\n## [Unreleased]\n\n- One line.\n- SNEAKED IN BY HAND.\n' >"$R/CHANGELOG.md"
-stage
-run_ce
-[ "$RC" -eq 2 ] && case "$OUT" in *"leaves a code fence unclosed"*) true ;; *) false ;; esac \
-  && ok "an unterminated fence is exit 2, naming what could not be located" \
-  || bad "an unterminated fence is exit 2" "rc=$RC out=$OUT"
-case "$OUT" in *"unchanged under [Unreleased]"*) bad "no run may call the record unchanged over a document it could not read" "$OUT" ;;
-  *) ok "no run calls the record unchanged over a document it could not read" ;; esac
-# A three-backtick line inside a four-backtick block closes nothing, so the
-# real four-backtick close is what ends it and the heading after it is found.
-{
-  printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n'
-  printf '````\n```\n````\n\n'
-  printf '## [Unreleased]\n\n- One line.\n- SNEAKED IN BY HAND.\n'
-} >"$R/CHANGELOG.md"
-stage
-run_ce
-[ "$RC" -eq 1 ] && case "$OUT" in *"gained lines under [Unreleased]"*"- SNEAKED IN BY HAND."*) true ;; *) false ;; esac \
-  && ok "a shorter run inside a longer fence does not end it, and the heading after it is found" \
-  || bad "a shorter run inside a longer fence does not end it" "rc=$RC out=$OUT"
-# The control: the same document with nothing added passes, so the refusal
-# above is the line and not the fence shape failing outright.
-{
-  printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n'
-  printf '````\n```\n````\n\n'
-  printf '## [Unreleased]\n\n- One line.\n'
-} >"$R/CHANGELOG.md"
-stage
-git -C "$R" commit -qm "chore: carry the fenced record"
-run_ce
-[ "$RC" -eq 0 ] && ok "control: the same fenced document with nothing added passes" \
-  || bad "control: the same fenced document with nothing added passes" "rc=$RC out=$OUT"
-echo "=== a record scope that stands down says which way it stood down ==="
-new_repo standdown
-printf -- '- A fragment.\n' | frag fixed ken-1.md
-run_ce
-[ "$RC" -eq 0 ] && case "$OUT" in *"no record to judge"*"is not tracked"*) true ;; *) false ;; esac \
-  && ok "an untracked record says so" \
-  || bad "an untracked record says so" "rc=$RC out=$OUT"
-printf '# Changelog\n\n## [Unreleased]\n\n- One line.\n' >"$R/CHANGELOG.md"
-stage
-run_ce
-[ "$RC" -eq 0 ] && case "$OUT" in *"HEAD carries no"*) true ;; *) false ;; esac \
-  && ok "a record HEAD does not carry yet says so" \
-  || bad "a record HEAD does not carry yet says so" "rc=$RC out=$OUT"
-git -C "$R" commit -qm base
-run_ce_env 'GROWTH_GUARDS_CHANGELOG_COLLATE=1'
-[ "$RC" -eq 0 ] && case "$OUT" in *"NOT judged"*"GROWTH_GUARDS_CHANGELOG_COLLATE=1"*) true ;; *) false ;; esac \
-  && ok "a disarmed gate says it was disarmed, and by what" \
-  || bad "a disarmed gate says it was disarmed, and by what" "rc=$RC out=$OUT"
-case "$OUT" in *"unchanged under [Unreleased]"*) bad "a disarmed gate never claims the record is unchanged" "$OUT" ;;
-  *) ok "a disarmed gate never claims the record is unchanged" ;; esac
-run_ce_env 'GROWTH_GUARDS_CHANGELOG_RECORD='
-[ "$RC" -eq 0 ] && case "$OUT" in *"no record scope"*"is empty"*) true ;; *) false ;; esac \
-  && ok "an empty record setting says the scope is off" \
-  || bad "an empty record setting says the scope is off" "rc=$RC out=$OUT"
-run_ce
-[ "$RC" -eq 0 ] && case "$OUT" in *"unchanged under [Unreleased]"*) true ;; *) false ;; esac \
-  && ok "control: judged and clean says exactly that" \
-  || bad "control: judged and clean says exactly that" "rc=$RC out=$OUT"
 
 echo "=== hostile bytes in a name or a pattern never leave their line ==="
 new_repo hostile

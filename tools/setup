@@ -32,13 +32,37 @@ not_armed() {
 
 # Drop the retired lane, byte for byte, and leave a hook that never had it
 # untouched. The bytes after it are the hook's own, final newline included.
+#
+# The replacement is built beside the hook and renamed into place. Writing
+# back over the live file would truncate a script git executes on every
+# commit, in the .git every work tree of this checkout shares, and an
+# interrupt or a full disk between the truncate and the last write would
+# leave a partial one there.
 drop_stale_lane() { # HOOK-FILE
-  local hook="$1" tmp="" body=""
+  local hook="$1" tmp="" body="" found=0
   local ends_nl=1
   [ -f "$hook" ] || return 0
-  grep -Fxq -- "$STALE_LANE" "$hook" || return 0
+  # grep spends 1 on "not found" and 2 on "could not read it". Reading the
+  # second as the first is this repair concluding there is nothing to do from
+  # a probe that never ran, and then reporting the clone armed.
+  grep -Fxq -- "$STALE_LANE" "$hook" || found=$?
+  case "$found" in
+    0) ;;
+    1) return 0 ;;
+    *)
+      echo "setup: could not read $hook to look for the retired tools/commit-msg lane (grep exit $found) — the hook is unchanged and may still call it" >&2
+      exit 1
+      ;;
+  esac
   [ -n "$(tail -c 1 -- "$hook")" ] && ends_nl=0
   tmp="$(mktemp -- "$hook.tmp.XXXXXX")"
+  # cp -p first, for the mode git needs on a hook; the redirect below then
+  # replaces the content it just copied. chmod --reference is not portable.
+  cp -p -- "$hook" "$tmp" || {
+    rm -f -- "$tmp"
+    echo "setup: could not take $hook's mode — the hook is unchanged" >&2
+    exit 1
+  }
   awk -v lane="$STALE_LANE" '$0 == lane { next } { print }' "$hook" >"$tmp" || {
     rm -f -- "$tmp"
     echo "setup: $hook could not be rewritten to drop the retired tools/commit-msg lane" >&2
@@ -48,8 +72,11 @@ drop_stale_lane() { # HOOK-FILE
     body="$(cat -- "$tmp")"
     printf '%s' "$body" >"$tmp"
   fi
-  cat -- "$tmp" >"$hook"
-  rm -f -- "$tmp"
+  mv -- "$tmp" "$hook" || {
+    rm -f -- "$tmp"
+    echo "setup: could not replace $hook — inspect it before trusting it" >&2
+    exit 1
+  }
   echo "setup: dropped the retired tools/commit-msg lane from $hook"
 }
 

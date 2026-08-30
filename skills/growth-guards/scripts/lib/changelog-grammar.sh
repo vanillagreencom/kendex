@@ -1,10 +1,36 @@
 # shellcheck shell=bash
-# The grammars the changelog-entries check judges by, kept apart from the scan
-# that runs them: what a fragment IS, what an entry IS, and where the record's
-# [Unreleased] section starts and stops.
+# What a changelog IS to this family: where its two scopes live, and the
+# grammars each is judged by — what a fragment is, what an entry measures,
+# and where the record's [Unreleased] section starts and stops. Kept apart
+# from the scans that run them, and shared, so the changelog-entries check and
+# the commit-msg lane cannot come to different answers about the same repo.
 #
 # Sourced, never executed.
 set -euo pipefail
+
+# The two scopes, resolved once. Sets GG_CHANGELOG_PATTERNS (space-separated
+# fragment globs), GG_CHANGELOG_SHOWN (that list as a reader must type it) and
+# GG_CHANGELOG_RECORD (the collated record, empty when that scope is off).
+# The caller has cd'd to the repository root and runs under `set -f`.
+gg_changelog_scopes() {
+  local raw
+  raw="$(gg_setting GROWTH_GUARDS_CHANGELOG_PATHS "changelog.d/*/*.md")" || return 1
+  # The fragment globs load through lib/configured-paths.sh, the same way
+  # every lane scoped by a configured path list loads its own — validation,
+  # the empty-list refusal and the matcher all come from there.
+  gg_load_path_globs "$raw" changelog GROWTH_GUARDS_CHANGELOG_PATHS || return 1
+  GG_CHANGELOG_PATTERNS="$GG_PATH_GLOBS"
+  GG_CHANGELOG_SHOWN="$(gg_scrubbed "$GG_CHANGELOG_PATTERNS")"
+  raw="$(gg_setting GROWTH_GUARDS_CHANGELOG_RECORD "CHANGELOG.md")" || return 1
+  GG_CHANGELOG_RECORD=""
+  [ -n "$raw" ] || return 0
+  GG_CHANGELOG_RECORD="$(gg_config_path "$raw" changelog-record)" || return 1
+  # The two scopes judge by opposite rules — one entry per file against a file
+  # of many — so a path in both is a configuration that cannot pass. One
+  # judgement, made here, for every lane that reads these settings.
+  ! gg_matches_path_glob "$GG_CHANGELOG_RECORD" \
+    || gg_config_error "GROWTH_GUARDS_CHANGELOG_RECORD ($(gg_shown "$GG_CHANGELOG_RECORD")) is also matched by GROWTH_GUARDS_CHANGELOG_PATHS — the collated record is not a fragment"
+}
 
 # A fragment is one Markdown list item: it opens with a hyphen and a space,
 # and every later line indents under it. A second marker or a heading would
@@ -38,16 +64,15 @@ END { if (!seen) print empty }
 # comes out — there is no second entry to find a boundary for.
 #
 # LC_ALL=C is what makes the character count exact: it puts awk on bytes, and
-# the continuation bytes subtracted below are what turn bytes back into
-# characters. Under a UTF-8 locale the class would match nothing and every
+# gg_chars subtracts the continuation bytes to turn bytes back into
+# characters. Under a UTF-8 locale its class would match nothing and every
 # multibyte entry would count short. The same byte view is what lets CTRL name
 # the C0 controls and DEL exactly, which the quoted first line is stripped of
 # — an escape sequence, a carriage return or a backspace in a tracked file
 # must not reach the reader's terminal through a diagnostic. Tab survives, and
 # so do high bytes: they are the UTF-8 an entry is legitimately written in.
-GG_ENTRY_AWK='
+GG_ENTRY_AWK="$GG_CHARS_AWK_FN"'
 BEGIN {
-  CONT = "[\200-\277]"
   CTRL = "[\001-\010\013-\037\177]"
   # Strict UTF-8, spelled out as the byte grammar RFC 3629 defines: the count
   # below is "bytes that are not continuation bytes", which is the character
@@ -63,7 +88,6 @@ BEGIN {
   UTF8 = UTF8 "|[\361-\363][\200-\277][\200-\277][\200-\277]"
   UTF8 = UTF8 "|\364[\200-\217][\200-\277][\200-\277])*$"
 }
-function chars(s,   n, c) { n = length(s); c = gsub(CONT, "", s); return n - c }
 { line = $0; sub(/\r$/, "", line) }
 line !~ UTF8 { printf "X\t%d\n", NR; bad = 1; exit }
 {
@@ -76,7 +100,7 @@ END {
   sub(/^ /, "", text)
   sub(/ $/, "", text)
   gsub(CTRL, "?", first)
-  printf "M\t%d\t%s\n", chars(text), first
+  printf "M\t%d\t%s\n", gg_chars(text), first
 }
 '
 

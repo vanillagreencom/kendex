@@ -1,1 +1,0 @@
-- growth-guards: `changelog-entries` judges changelog fragments and the collated record's `[Unreleased]` list. **Breaking:** `GROWTH_GUARDS_CHANGELOG_PATHS` now defaults to `changelog.d/*/*.md`.

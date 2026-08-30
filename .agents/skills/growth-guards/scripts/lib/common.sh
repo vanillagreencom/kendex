@@ -146,6 +146,31 @@ gg_config_path() { # RAW LABEL — normalized on stdout; nonzero + ::error on st
   printf '%s' "$norm"
 }
 
+# The family's character count, as awk source: bytes that are not UTF-8
+# continuation bytes, read under LC_ALL=C. One definition, because every cap
+# in this package counts one way — bash's ${#var} follows the ambient locale,
+# and a git hook inherits whatever environment the committer has, so the same
+# text would be accepted in one shell and refused in another. Bytes that are
+# not valid UTF-8 have no character count; they measure as themselves, which
+# can only over-count and never lets an over-long value through.
+GG_CHARS_AWK_FN='
+function gg_chars(s,   n, c) { n = length(s); c = gsub(/[\200-\277]/, "", s); return n - c }
+'
+
+gg_chars() { # TEXT — its character count on stdout
+  printf '%s' "$1" | LC_ALL=C awk "$GG_CHARS_AWK_FN"'{ total += gg_chars($0) } END { print total + 0 }'
+}
+
+# Somebody's configured bytes, shown the way they have to be typed back. Not
+# gg_shown: %q escapes the globs out of a value whose whole purpose is to be
+# copied into a settings file or a path. Every C0 control except tab, and
+# DEL, is replaced instead, and a newline becomes one of those replacements,
+# so the value reaches the reader on one line and carries nothing a terminal
+# would act on.
+gg_scrubbed() { # VALUE — the value on one line, controls replaced
+  printf '%s' "$1" | LC_ALL=C awk '{ gsub(/[\001-\010\013-\037\177]/, "?"); printf "%s%s", sep, $0; sep = "?" }'
+}
+
 # A setting holding a LIST of path globs, validated the way one path is. The
 # caller word-splits the result, so every check that reads a glob list applies
 # the same path discipline: absolute, escaping and '-'-leading entries are

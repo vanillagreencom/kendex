@@ -40,12 +40,11 @@ gg_load_path_globs() { # RAW-LIST LABEL KEY — fills GG_PATH_GLOBS and _SHOWN
   GG_PATH_GLOBS="$(gg_config_path_list "$raw" "$label")" || return 1
   [ -n "$GG_PATH_GLOBS" ] \
     || gg_config_error "$key names no path — name at least one, or drop this check from GROWTH_GUARDS_CHECKS"
-  # The same list rendered for messages: a configured pattern is somebody's
-  # bytes too, and %q would escape the globs out of the copy that has to
-  # match.
-  for pat in $GG_PATH_GLOBS; do
-    GG_PATH_GLOBS_SHOWN="${GG_PATH_GLOBS_SHOWN:+$GG_PATH_GLOBS_SHOWN }$(gg_shown "$pat")"
-  done
+  # The same list rendered for messages. Not gg_shown: %q escapes the globs
+  # out of a value whose whole purpose is to be typed back into a settings
+  # file, so a remedy would name a path that cannot exist. gg_scrubbed keeps
+  # the bytes and replaces only what a terminal would act on.
+  GG_PATH_GLOBS_SHOWN="$(gg_scrubbed "$GG_PATH_GLOBS")"
 }
 
 gg_matches_path_glob() { # PATH — 0 when some configured glob matches the full path

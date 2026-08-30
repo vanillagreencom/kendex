@@ -133,13 +133,13 @@ gg_repo_root_cd
 CAP="$(gg_setting GROWTH_GUARDS_CHANGELOG_CAP 200)" || exit 2
 gg_positive_int "$CAP" "GROWTH_GUARDS_CHANGELOG_CAP"
 
-PATHS_RAW="$(gg_setting GROWTH_GUARDS_CHANGELOG_PATHS "changelog.d/*/*.md")" || exit 2
-
-# The path list, its validation and its matcher are the family's, shared with
-# every lane scoped the same way: lib/configured-paths.sh § configured path
-# globs.
-gg_load_path_globs "$PATHS_RAW" changelog GROWTH_GUARDS_CHANGELOG_PATHS || exit 2
-PATTERNS_SHOWN="$GG_PATH_GLOBS_SHOWN"
+# Both scopes, resolved by the library the commit-msg lane reads too — which
+# loads the fragment globs through lib/configured-paths.sh, the same way
+# every lane scoped by a path list does.
+gg_changelog_scopes || exit 2
+PATTERNS="$GG_CHANGELOG_PATTERNS"
+PATTERNS_SHOWN="$GG_CHANGELOG_SHOWN"
+RECORD="$GG_CHANGELOG_RECORD"
 
 # Where the fragments live: each pattern's leading run of glob-free
 # directories, stopping before the first globbed segment and before the file
@@ -148,7 +148,7 @@ PATTERNS_SHOWN="$GG_PATH_GLOBS_SHOWN"
 # sitting in the fragment tree that nothing would ever fold in is the silent
 # drop this judge exists to stop.
 ROOTS=""
-for pat in $GG_PATH_GLOBS; do
+for pat in $PATTERNS; do
   root=""
   rest="$pat"
   while [ -n "$rest" ]; do
@@ -165,15 +165,6 @@ for pat in $GG_PATH_GLOBS; do
   esac
 done
 
-RECORD_RAW="$(gg_setting GROWTH_GUARDS_CHANGELOG_RECORD "CHANGELOG.md")" || exit 2
-RECORD=""
-if [ -n "$RECORD_RAW" ]; then
-  RECORD="$(gg_config_path "$RECORD_RAW" changelog-record)" || exit 2
-  # The two scopes judge by opposite rules — one entry per file against a
-  # file of many — so a path in both is a configuration that cannot pass.
-  ! gg_matches_path_glob "$RECORD" \
-    || gg_config_error "GROWTH_GUARDS_CHANGELOG_RECORD ($(gg_shown "$RECORD")) is also matched by GROWTH_GUARDS_CHANGELOG_PATHS — the collated record is not a fragment"
-fi
 
 gg_tmpdir
 : >"$GG_TMP/list.z"
@@ -261,9 +252,9 @@ while IFS= read -r -d '' rec; do
       M)
         [ "$a" -gt "$CAP" ] || continue
         echo "changelog-entries FAIL long entry: $(gg_shown "$f") — $a characters (cap $CAP)"
-        # Content, not a name: the awk pass already replaced every C0 control
-        # and DEL, a newline cannot survive a line read, and %q here would
-        # render a legible entry as an escaped blob.
+        # Content, not a name: the awk pass already replaced every C0
+        # control except tab, and DEL; a newline cannot survive a line read,
+        # and %q here would render a legible entry as an escaped blob.
         echo "  entry: $b"
         echo "  remedies: state the outcome and stop; a Breaking migration note stays inline, and the reasoning belongs in the commit"
         violations=$((violations + 1))
@@ -332,10 +323,10 @@ else
       RECORD_NOTE="; $(gg_shown "$RECORD") unchanged under [Unreleased]"
     else
       echo "changelog-entries FAIL $(gg_shown "$RECORD") gained lines under [Unreleased]"
-      # The first five, with every C0 control and DEL replaced: these are the
-      # record's own bytes, and an escape sequence in one must not reach the
-      # reader's terminal. awk caps the count itself rather than piping into
-      # `head`, whose exit would break the pipeline under pipefail.
+      # The first five, with every C0 control except tab, and DEL, replaced:
+      # these are the record's own bytes, and an escape sequence in one must
+      # not reach the reader's terminal. awk caps the count itself rather than
+      # piping into `head`, whose exit would break the pipeline under pipefail.
       printf '%s\n' "$added" | LC_ALL=C awk 'NR <= 5 { gsub(/[\001-\010\013-\037\177]/, "?"); print "    " $0 }'
       echo "  write $PATTERNS_SHOWN instead — the collator folds fragments in at release; GROWTH_GUARDS_CHANGELOG_COLLATE=1 declares that write"
       violations=$((violations + 1))
