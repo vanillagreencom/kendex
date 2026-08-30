@@ -367,11 +367,16 @@ run_sb
   || bad "vanished blob is exit 2 with git's error line" "rc=$RC out=$OUT"
 case "$OUT" in *"suppression-ban: OK"*) bad "no OK verdict may accompany an unread blob" "$OUT" ;; *) ok "no OK verdict accompanies the unread blob" ;; esac
 
-# The bare-allow count call bypasses the shared lane helper; a shim erroring
-# ONLY that call proves its own guard (a real unreadable .rs blob is caught
-# earlier, by the gate-1 lane scan above).
+# The per-carrier count is gate 2's own call, made after the shared listing
+# has already named the carrier; a shim erroring ONLY that call proves its
+# own guard (a real unreadable .rs blob is caught earlier, by the gate-1 lane
+# scan above). The fixture carries a baselined bare allow, so the count call
+# runs and the shim-free control is clean.
 new_repo countfail
+mkdir -p "$R/tools"
 printf 'fn main() {}\n' >"$R/ok.rs"
+printf '#[allow(dead_code)]\nfn b() {}\n' >"$R/bare.rs"
+printf 'bare.rs\t1\n' >"$R/tools/suppression-baseline.tsv"
 git -C "$R" add -A
 run_sb
 [ "$RC" -eq 0 ] && ok "shim-free control: the countfail fixture passes with the real git" \
@@ -381,7 +386,7 @@ mkdir -p "$COUNT_SHIM"
 cat >"$COUNT_SHIM/git" <<EOF
 #!/usr/bin/env bash
 for a in "\$@"; do
-  if [ "\$a" = "-cIE" ]; then
+  if [ "\$a" = "-acE" ]; then
     echo "error: 'phantom.rs': unable to read 0000000000000000000000000000000000000000" >&2
     exit 1
   fi

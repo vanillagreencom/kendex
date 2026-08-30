@@ -400,6 +400,14 @@ run_tb --staged
 [ "$RC" -eq 0 ] && case "$OUT" in *"the staged diff adds no work markers"*) true ;; *) false ;; esac \
   && ok "a genuinely binary blob whose bytes spell a marker does not fire" \
   || bad "a binary blob does not fire" "rc=$RC out=$OUT"
+# An unread match leaves a trace and qualifies the verdict, rather than
+# riding inside a plain OK over content the lane deliberately did not read.
+case "$OUT" in
+  *"not measured: asset.png — binary content"*"1 matched path(s) not measured"*)
+    ok "the skipped carrier is named and carried into the verdict"
+    ;;
+  *) bad "the skipped carrier is named and carried into the verdict" "out=$OUT" ;;
+esac
 
 # The must-fail control: the same bytes with the NULs taken out are a text
 # file, and a text file is read whatever it is called.
@@ -655,7 +663,7 @@ exec "$REAL_GIT" "\$@"
 EOF
 chmod +x "$CATFILE_SHIM/git"
 OUT="$(cd "$R" && PATH="$CATFILE_SHIM:$PATH" "$TB" --staged 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 2 ] && case "$OUT" in *"could not read the staged blob"*) true ;; *) false ;; esac \
+[ "$RC" -eq 2 ] && case "$OUT" in *"cannot read blob"*"refusing to skip an unread work marker"*) true ;; *) false ;; esac \
   && ok "a content sniff that cannot read the blob is exit 2, never OK" \
   || bad "a broken content sniff is exit 2" "rc=$RC out=$OUT"
 case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany a broken content sniff" "$OUT" ;; *) ok "no OK verdict accompanies the broken content sniff" ;; esac
@@ -692,7 +700,7 @@ EOF
 chmod +x "$COUNT_SHIM/wc"
 rm -f "$TMP/wc-fired"
 OUT="$(cd "$R" && PATH="$COUNT_SHIM:$PATH" "$TB" --staged 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 2 ] && case "$OUT" in *"could not size the first block of the staged blob"*) true ;; *) false ;; esac \
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not sample ok.rs to classify its content"*) true ;; *) false ;; esac \
   && ok "a first block that cannot be sized is exit 2, never OK" \
   || bad "an unsized first block is exit 2" "rc=$RC out=$OUT"
 case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany an unsized first block" "$OUT" ;; *) ok "no OK verdict accompanies the unsized first block" ;; esac
@@ -708,7 +716,7 @@ exit 1
 EOF
 chmod +x "$TR_SHIM/tr"
 OUT="$(cd "$R" && PATH="$TR_SHIM:$PATH" "$TB" --staged 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 2 ] && case "$OUT" in *"could not count the NUL-free bytes of the staged blob"*) true ;; *) false ;; esac \
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not sample ok.rs to classify its content"*) true ;; *) false ;; esac \
   && ok "a NUL-free count that cannot run is exit 2, never OK" \
   || bad "a broken NUL-free count is exit 2" "rc=$RC out=$OUT"
 case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany a broken NUL-free count" "$OUT" ;; *) ok "no OK verdict accompanies the broken NUL-free count" ;; esac

@@ -22,13 +22,15 @@ the words. A space between them exempts nothing.
   read whole. `git diff --cached` supplies the base, so a repository with
   no commits yet judges its first commit like any other. Content decides
   what it reads and an attribute never does: an attributes rule cannot hide
-  a path from it, while a blob whose first block carries a NUL is skipped
-  as the asset it is.
+  a path from it, while a blob whose first block carries a NUL is named as
+  unmeasured, the asset it is.
 - (default) — every tracked file, read from the index. This is the CI
   scope, and the only one that sees a marker no commit is touching. Content
   governs here as it does at commit — the shared index scan forces text, so
   an attributes rule cannot put a file outside it, and sniffs each file it
-  names for a NUL in its leading bytes, so an asset is not decoded.
+  names for a NUL in its leading bytes, so an asset is not decoded. A named
+  path either scope could not decode is carried into the verdict as
+  unmeasured, never folded into a clean total.
 
 ## byte-ceiling
 
@@ -61,7 +63,9 @@ its lint with a stated reason stays legal (`# noqa: E501`,
 
 **Bare-allow ratchet (Rust)** — reasonless `#[allow(dead_code)]` /
 `#[allow(unused…)]` attributes are counted per file; an attribute carrying
-`reason = "..."` does not count. Legacy counts freeze in a tighten-only
+`reason = "..."` does not count. The count runs over the family's shared
+index listing, so an attributes row can neither drop a bare allow out of it
+nor let an asset into it. Legacy counts freeze in a tighten-only
 baseline: new bare allows, growth past a row, and a baseline looser than
 reality all fail. `--update` lowers/removes rows and re-checks; it never
 adds a row and never raises one, so deliberate growth — and the first

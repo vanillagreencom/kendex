@@ -38,8 +38,8 @@ GG_SETTINGS_INDEX_OWNED=0
 # In-flight staging file for gg_install_file, so an interrupt between its
 # creation and its rename leaves nothing beside the destination.
 GG_INSTALL_TMP=""
-# Extra `git grep` flags for gg_grep_lane, set by a check before it calls the
-# lane and empty for every check that does not. Case sensitivity is the one
+# Extra `git grep` flags for the index lanes below, set by a check before it
+# calls one and empty for every check that does not. Case sensitivity is the one
 # thing it carries: a lane banning comment markers or lint pragmas matches
 # their exact spelling, while a lane banning WORDS wants -i, where a
 # sentence-initial capital is the same word.
@@ -310,37 +310,55 @@ gg_grep_guard() { # STATUS ERRFILE CONTEXT — returns only when the scan is com
   [ -z "$first_err" ] || gg_collection_error "git grep could not read staged content while $context ($first_err)"
 }
 
-# One banned shape, scanned over INDEX content in two phases: the offending
-# FILES (-l -z, so a path containing ':' cannot garble parsing), then the
-# numbered hits per file, where the known path prefix strips exactly. The
-# per-file pass is line-oriented, so a path embedding a newline yields no
-# DETAIL lines — the file still fails phase one.
+# One banned shape, listed over INDEX content: the tracked files whose staged
+# blob carries it, minus the excluded paths and the blobs whose own bytes are
+# binary. Survivors land NUL-delimited in OUTFILE (-l -z, so a path containing
+# ':' cannot garble parsing).
 #
-# CONTENT decides what is scannable here and an attribute never does. Both
-# scans force text (-a): `git grep -I` asks the path's userdiff driver, so one
-# committed `*.ext -diff` or `*.ext binary` row makes git call every matching
-# blob binary and drop it with no status and no stderr — a whole extension
-# reading as clean. The two scans move TOGETHER; a text-forced listing over a
-# binary-skipping detail scan names a file the detail scan then finds nothing
-# in, which the invariant below turns into a spurious exit 2. What forcing
-# text lets through is judged on content instead: a listed blob carrying a NUL
-# in its leading bytes is a genuine asset, is skipped, and never reaches a
-# violation record as raw bytes. That is the same answer todo-ban's commit
+# CONTENT decides what is scannable here and an attribute never does. The
+# listing forces text (-a): `git grep -I` asks the path's userdiff driver, so
+# one committed `*.ext -diff` or `*.ext binary` row makes git call every
+# matching blob binary and drop it with no status and no stderr — a whole
+# extension reading as clean. What forcing text lets through is judged on
+# content instead: a listed blob carrying a NUL in its leading bytes is a
+# genuine asset and is NAMED as unmeasured, so it never reaches a violation
+# record as raw bytes and never rides inside a clean total either. Only a path
+# the listing NAMED is read, so the sniff costs one `cat-file` per matching
+# file, never one per tracked file. That is the same answer todo-ban's commit
 # lane gives the same question.
 # Needs GG_TMP (gg_tmpdir) and the excludes already loaded.
-gg_grep_lane() { # LABEL ERE REMEDY PATHSPEC... — numbered violations on stdout
-  local label="$1" ere="$2" remedy="$3" status=0 f hit_status hit
+gg_content_carriers() { # OUTFILE LABEL ERE PATHSPEC... — measurable carriers, NUL-delimited
+  local out="$1" label="$2" ere="$3" status=0 f
   shift 3
   gg_require_merged_index "$@"
-  LC_ALL=C git grep --cached -alzE ${GG_GREP_LANE_FLAGS[@]+"${GG_GREP_LANE_FLAGS[@]}"} "$ere" -- "$@" >"$GG_TMP/lane.z" 2>"$GG_TMP/lane.err" || status=$?
-  gg_grep_guard "$status" "$GG_TMP/lane.err" "scanning tracked files for $label"
+  LC_ALL=C git grep --cached -alzE ${GG_GREP_LANE_FLAGS[@]+"${GG_GREP_LANE_FLAGS[@]}"} "$ere" -- "$@" >"$GG_TMP/carriers.z" 2>"$GG_TMP/carriers.err" || status=$?
+  gg_grep_guard "$status" "$GG_TMP/carriers.err" "scanning tracked files for $label"
+  : >"$out"
   while IFS= read -r -d '' f; do
     gg_is_excluded "$f" && continue
     # The stage-0 blob at that exact path, so the sniff reads the same bytes
-    # the scan matched. Only a path the listing NAMED is read, so this costs
-    # one `cat-file` per matching file, never one per tracked file.
+    # the listing matched.
     gg_read_blob ":0:$f" "$f" "$label"
-    gg_blob_is_binary "$GG_TMP/blob" "$f" && continue
+    if gg_blob_is_binary "$GG_TMP/blob" "$f"; then
+      gg_note_skip "$f" "binary content, not text"
+      continue
+    fi
+    printf '%s\0' "$f" >>"$out"
+  done <"$GG_TMP/carriers.z"
+}
+
+# The same shape detailed per carrier: the numbered hits in each listed file,
+# where the known path prefix strips exactly. The detail pass is
+# line-oriented, so a path embedding a newline yields no DETAIL lines — the
+# file still fails the listing. Both scans force text and move TOGETHER; a
+# text-forced listing over a binary-skipping detail scan names a file the
+# detail scan then finds nothing in, which the invariant below turns into a
+# spurious exit 2.
+gg_grep_lane() { # LABEL ERE REMEDY PATHSPEC... — numbered violations on stdout
+  local label="$1" ere="$2" remedy="$3" f hit_status hit
+  shift 3
+  gg_content_carriers "$GG_TMP/lane.z" "$label" "$ere" "$@"
+  while IFS= read -r -d '' f; do
     hit_status=0
     LC_ALL=C git grep --cached -anE ${GG_GREP_LANE_FLAGS[@]+"${GG_GREP_LANE_FLAGS[@]}"} "$ere" -- ":(literal)$f" >"$GG_TMP/lane.hits" 2>"$GG_TMP/lane.err" || hit_status=$?
     gg_grep_guard "$hit_status" "$GG_TMP/lane.err" "detailing the $label hits in '$f'"

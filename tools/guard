@@ -132,10 +132,10 @@ done)
 # through the shared rooted() helper. Older fixtures stay out of this
 # diff-scoped rule.
 if git cat-file -e 'HEAD^{commit}' 2>/dev/null; then
-  temp_fixture_diff=$(git diff --no-color --unified=100000 --no-ext-diff HEAD -- 'crates/*/tests/*.rs') ||
+  temp_fixture_diff=$(git diff --no-color --unified=100000 --no-ext-diff --text HEAD -- 'crates/*/tests/*.rs') ||
     say "test fixture changes could not be read"
 else
-  temp_fixture_diff=$(git diff --cached --no-color --unified=100000 --no-ext-diff -- 'crates/*/tests/*.rs') ||
+  temp_fixture_diff=$(git diff --cached --no-color --unified=100000 --no-ext-diff --text -- 'crates/*/tests/*.rs') ||
     say "test fixture changes could not be read"
 fi
 if ! temp_fixture_hits=$(awk '

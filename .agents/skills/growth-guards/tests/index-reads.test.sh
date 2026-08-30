@@ -529,6 +529,52 @@ run_check suppression-ban
   && ok "a '-diff' row cannot hide a blanket suppression" \
   || bad "'-diff' row cannot hide a blanket suppression" "rc=$RC out=$OUT"
 
+# Gate 2, the bare-allow ratchet, counts over that same content rule. An
+# attributes row that emptied its count file would read as "no bare allows
+# anywhere", and the stale rows that follow print a remedy — `--update` —
+# that erases the ratchet while the violations stand.
+new_repo attrs-ratchet
+mkdir -p "$R/tools"
+printf '#[allow(dead_code)]\nfn a() {}\n' >"$R/a.rs"
+printf '#[allow(dead_code)]\nfn b() {}\n' >"$R/b.rs"
+printf 'b.rs\t1\n' >"$R/tools/suppression-baseline.tsv"
+git -C "$R" add -A
+run_check suppression-ban
+[ "$RC" -eq 1 ] && case "$OUT" in *"new bare allow: a.rs"*) true ;; *) false ;; esac \
+  && ok "control: the unbaselined bare allow fails with no attributes row" \
+  || bad "control: unbaselined bare allow fails without the row" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"stale baseline row: b.rs"*) bad "control: a live baseline row is not called stale" "out=$OUT" ;;
+  *) ok "control: a live baseline row is not called stale" ;;
+esac
+
+printf '*.rs -diff\n' >"$R/.gitattributes"
+git -C "$R" add -A
+run_check suppression-ban
+[ "$RC" -eq 1 ] && case "$OUT" in *"new bare allow: a.rs"*) true ;; *) false ;; esac \
+  && ok "a '-diff' row cannot hide a bare allow from the ratchet count" \
+  || bad "'-diff' row cannot hide a bare allow" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"stale baseline row: b.rs"*) bad "an emptied count never turns a live row stale" "out=$OUT" ;;
+  *) ok "an emptied count never turns a live row stale" ;;
+esac
+case "$OUT" in
+  *"suppression-ban: OK"*) bad "no clean verdict accompanies the hidden bare allows" "out=$OUT" ;;
+  *) ok "no clean verdict accompanies the hidden bare allows" ;;
+esac
+
+# The remedy those stale rows print, followed to its end: --update must not
+# be able to write a 0-row baseline while both files still carry bare
+# allows. The baseline is tighten-only, so a row dropped here never returns.
+RC=0
+OUT="$(cd "$R" && "$SCRIPTS/suppression-ban" --update 2>&1)" || RC=$?
+[ "$(cat "$R/tools/suppression-baseline.tsv")" = "b.rs${TAB}1" ] \
+  && ok "--update cannot be led into erasing the ratchet" \
+  || bad "--update cannot be led into erasing the ratchet" "baseline=$(cat "$R/tools/suppression-baseline.tsv") out=$OUT"
+[ "$RC" -eq 1 ] && case "$OUT" in *"new bare allow: a.rs"*) true ;; *) false ;; esac \
+  && ok "the re-check after --update still fails the bare allow" \
+  || bad "the re-check after --update still fails" "rc=$RC out=$OUT"
+
 # The other half of forcing text: what the scan may NOT decode. The judgement
 # is the blob's own bytes — a NUL in its leading block, git's content rule —
 # so an asset whose bytes happen to spell the shape is skipped rather than
@@ -541,6 +587,21 @@ run_check todo-ban
   && ok "a blob whose leading bytes carry a NUL is not scanned" \
   || bad "binary blob is not scanned" "rc=$RC out=$OUT"
 case "$OUT" in *"$MARKER"*) bad "no raw bytes from the asset reach the output" "$OUT" ;; *) ok "no raw bytes from the asset reach the output" ;; esac
+# The path MATCHED the banned shape and was then left unread, so it is named
+# and counted apart: an unqualified OK here would be a clean verdict over
+# content the lane deliberately did not scan.
+case "$OUT" in
+  *"todo-ban: not measured: logo.png — binary content"*)
+    ok "the unread match is named, not silently dropped"
+    ;;
+  *) bad "the unread match is named" "out=$OUT" ;;
+esac
+case "$OUT" in
+  *"OK — no work markers in tracked files; 1 matched path(s) not measured"*)
+    ok "the verdict carries the qualifier rather than reading as a plain OK"
+    ;;
+  *) bad "the verdict carries the qualifier" "out=$OUT" ;;
+esac
 # Control: the same bytes without the NUL are text, and text is scanned.
 printf 'PNG  %s: not a marker\n' "$MARKER" >"$R/logo.png"
 git -C "$R" add -A
@@ -548,6 +609,10 @@ run_check todo-ban
 [ "$RC" -eq 1 ] && case "$OUT" in *"work marker: logo.png:1:"*) true ;; *) false ;; esac \
   && ok "control: the same bytes without the NUL are scanned as text" \
   || bad "control: same bytes without the NUL are scanned" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"not measured"*) bad "control: a scanned path is never named as unmeasured" "out=$OUT" ;;
+  *) ok "control: a scanned path is never named as unmeasured" ;;
+esac
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

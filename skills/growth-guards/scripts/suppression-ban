@@ -144,21 +144,33 @@ while IFS= read -r -d '' f; do
   esac
 done <"$GG_TMP/rs.z"
 
-status=0
-gg_require_merged_index '*.rs'
-LC_ALL=C git grep --cached -cIE "$BARE_ERE" -- '*.rs' >"$GG_TMP/bare.raw" 2>"$GG_TMP/bare.err" || status=$?
-gg_grep_guard "$status" "$GG_TMP/bare.err" "counting bare allows"
+# Content governs the ratchet's scan the way it governs the blanket lanes:
+# the carriers are listed with text forced and each is sniffed on its own
+# bytes, so no attributes row can drop a bare allow out of the count — a
+# count file that came back empty would read as "no bare allows anywhere",
+# and the printed remedy for the stale rows that follow would talk the
+# operator into erasing the ratchet. The count is then taken per surviving
+# path, so it costs one re-scan per carrier and none per clean tracked file.
+gg_content_carriers "$GG_TMP/bare.z" "bare allow" "$BARE_ERE" '*.rs'
 
 : >"$GG_TMP/counts.raw"
-while IFS= read -r row; do
+while IFS= read -r -d '' f; do
+  cnt_status=0
+  LC_ALL=C git grep --cached -acE "$BARE_ERE" -- ":(literal)$f" >"$GG_TMP/bare.count" 2>"$GG_TMP/bare.err" || cnt_status=$?
+  gg_grep_guard "$cnt_status" "$GG_TMP/bare.err" "counting the bare allows in '$f'"
+  # This path just listed as a carrier; anything but a clean re-scan means the
+  # measurement is broken, and a count that never arrived must not read as 0.
+  [ "$cnt_status" -eq 0 ] || gg_collection_error "git grep could not count the bare allows in '$f' (exit $cnt_status)"
+  row=""
+  # `read`, not a capture: the count file is one line, and an empty file
+  # must reach the parse guard below rather than aborting the run.
+  IFS= read -r row <"$GG_TMP/bare.count" || true
   cnt="${row##*:}"
-  f="${row%:*}"
   case "$cnt" in
-    "" | *[!0-9]*) gg_collection_error "unparseable count row from git grep: '$row'" ;;
+    "" | *[!0-9]* | 0) gg_collection_error "unparseable count row from git grep: '$row'" ;;
   esac
-  gg_is_excluded "$f" && continue
   printf '%s\t%s\n' "$f" "$cnt" >>"$GG_TMP/counts.raw"
-done <"$GG_TMP/bare.raw"
+done <"$GG_TMP/bare.z"
 LC_ALL=C sort "$GG_TMP/counts.raw" >"$GG_TMP/counts.tsv"
 
 # Baseline load + hygiene: worktree file first; a tracked-but-absent
@@ -319,9 +331,15 @@ while IFS="$GG_TAB" read -r kind path n b; do
   esac
 done <"$GG_TMP/violations.tsv"
 
+# A carrier the scans could not decode is named as unmeasured, never folded
+# into a clean total: an OK that covers content nothing read is the silent
+# pass this family refuses.
+UNMEASURED=""
+[ "$GG_WALK_SKIPPED" -eq 0 ] || UNMEASURED="; $GG_WALK_SKIPPED matched path(s) not measured"
+
 total=$((BLANKET_VIOLATIONS + ratchet_violations))
 if [ "$total" -gt 0 ]; then
-  echo "suppression-ban: $total violation(s) — $BLANKET_VIOLATIONS blanket, $ratchet_violations ratchet (baseline $BASELINE_FILE)"
+  echo "suppression-ban: $total violation(s) — $BLANKET_VIOLATIONS blanket, $ratchet_violations ratchet (baseline $BASELINE_FILE)$UNMEASURED"
   exit 1
 fi
-echo "suppression-ban: OK — no blanket suppressions, bare allows within baseline $BASELINE_FILE"
+echo "suppression-ban: OK — no blanket suppressions, bare allows within baseline $BASELINE_FILE$UNMEASURED"

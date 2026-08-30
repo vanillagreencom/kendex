@@ -73,8 +73,13 @@ gg_grep_lane "conflict marker" "$MARKER_ERE" \
   "finish the merge and delete the marker lines; a file that legitimately carries the trio at column 0 belongs in $EXCLUDES_FILE with a reason" \
   .
 
+# A carrier the lane could not decode is named as unmeasured, never folded
+# into a clean total.
+UNMEASURED=""
+[ "$GG_WALK_SKIPPED" -eq 0 ] || UNMEASURED="; $GG_WALK_SKIPPED matched path(s) not measured"
+
 if [ "$GG_VIOLATIONS" -gt 0 ]; then
-  echo "conflict-markers: $GG_VIOLATIONS conflict marker(s) — excludes $EXCLUDES_FILE"
+  echo "conflict-markers: $GG_VIOLATIONS conflict marker(s) — excludes $EXCLUDES_FILE$UNMEASURED"
   exit 1
 fi
-echo "conflict-markers: OK — no conflict markers in tracked files"
+echo "conflict-markers: OK — no conflict markers in tracked files$UNMEASURED"
