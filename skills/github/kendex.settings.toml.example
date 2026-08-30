@@ -1,9 +1,10 @@
 [env]
 
 # GITHUB — the review bot this repo trusts, its issue-id shape, and the
-# timeouts around `gh` (github skill).
-# Project-scope `kendex add` / `kendex refresh` merge these defaults into
-# <project>/kendex.settings.toml (never overwriting existing keys). Tokens
+# timeouts around `gh` (github skill). `kendex add` writes the keys marked
+# `# required` below into <project>/kendex.settings.toml, once, when this
+# skill arrives; every other key here ships the value its own scripts
+# already read, and assigning it there is how a project changes one. Tokens
 # are not settings: keep GH_TOKEN and friends in `.env.local`. Full
 # reference: github README.md.
 

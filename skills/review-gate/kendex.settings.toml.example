@@ -1,12 +1,14 @@
 [env]
 
-# REVIEW GATE — shared merge-gate engine (review-gate skill).
-# Project-scope `kendex add` / `kendex refresh` merge these defaults into
-# <project>/kendex.settings.toml (never overwriting existing keys). Keys
-# resolve env > .env.local > .kendex/settings.toml > this file > built-in
-# default (REVIEW_GATE_MODE reads only env and this committed file); list
-# values pack into one string with ';' separators. Full reference:
-# review-gate SKILL.md, references/settings.md, and references/adoption.md.
+# REVIEW GATE — shared merge-gate engine (review-gate skill). `kendex add`
+# writes the keys marked `# required` below into
+# <project>/kendex.settings.toml, once, when this skill arrives; every other
+# key here ships the value its own scripts already read, and assigning it
+# there is how a project changes one. Keys resolve env > .env.local >
+# .kendex/settings.toml > this file > built-in default (REVIEW_GATE_MODE
+# reads only env and this committed file); list values pack into one string
+# with ';' separators. Full reference: review-gate SKILL.md,
+# references/settings.md, and references/adoption.md.
 
 # Commit-status context the gate posts — the required check name in branch
 # protection. Keep it stable: changing it strands the old required context

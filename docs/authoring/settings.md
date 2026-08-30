@@ -1,9 +1,12 @@
 # Settings a skill declares
 
-A skill ships a `kendex.settings.toml.example` at its root for the keys it
-wants seeded. On a project install kendex reads that file's `[env]` table and
-merges each key, together with the comment block directly above it, into the
-consuming repo's `kendex.settings.toml`.
+A skill ships a `kendex.settings.toml.example` at its root for every key it
+reads. The file does two jobs. It DECLARES the keys, which is what the app's
+Settings pane renders and what a save is checked against. And it SEEDS the
+ones it marks `# required`: when the skill arrives in a project, kendex reads
+that file's `[env]` table and writes each marked key, together with the
+comment block directly above it, into the consuming repo's
+`kendex.settings.toml`.
 
 Seeding is a skill's alone. An agent, hook, command or MCP server that ships
 one of these files installs normally and seeds nothing — the file is inert,
@@ -12,10 +15,10 @@ least one harness here targets, and it runs before any skill tree is written:
 a plan whose every rendering is refused still seeds. A global install seeds
 nothing.
 
-Not every key a skill reads belongs in that file. A key it documents but does
-not seed — an opt-in that ships a working default, an override seam — is
-explained in the skill's `SKILL.md`, which is the body a marketplace page
-shows for a skill. A `README.md` beside it ships with the skill and appears in
+Every key a skill reads belongs in that file, whether or not it is marked:
+declaring one costs a consumer nothing and is what lets them set it from the
+app. The `SKILL.md` is where the reference table lives, and it is the body a
+marketplace page shows for a skill. A `README.md` beside it ships with the skill and appears in
 the page's file list, but it is not what the page renders. For the other kinds
 the rendered body is the package's one file: the agent's or command's markdown
 after its frontmatter, and a hook script or MCP config whole, comments
@@ -25,6 +28,29 @@ Start from
 [`templates/kendex.settings.toml.example`](templates/kendex.settings.toml.example).
 
 ## What an install writes, and what it leaves
+
+Mark a key `# required` when the consumer has to decide it — when there is no
+answer a default could stand in for. `LINEAR_TEAM` is one: empty, every Linear
+write refuses rather than guess a team. A key whose empty or shipped value
+already does something sensible is not one, however important it is; its
+comment says what that value does, and a consumer who wants another writes it
+themselves.
+
+Everything else stays declared and is never written. A key holding the value
+your own code reads when nothing assigns it buys the consumer nothing and
+costs them a line in a tracked file, which comes back on the next run every
+time they delete it.
+
+The marker is the template's own word: it is cut off before the assignment is
+written, so a consumer's file never carries it. Anything else after a value is
+a finding — a misspelled marker loads exactly as a correct one does, so
+nothing downstream would ever say the key had quietly stopped being written.
+
+The write happens once, when the skill arrives. Later passes over the same
+project write nothing: a refresh leaves the file byte-identical, and a key the
+consumer deleted stays deleted. The one other thing that inserts a key is a
+save from the app, which seeds the key it names so the value has an assignment
+to land on.
 
 A key already assigned in the consumer's file is never seeded over, and no
 install rewrites a value. The presence check is deliberately wider than what
@@ -55,7 +81,7 @@ is copied into the consumer's `kendex.settings.toml`, and
   letter or underscore. Anything else, `FOO-BAR` and `"WAIT"` included, is
   seeded and then read by nothing.
 - A value is one double-quoted string on one line, containing no `"` and no
-  `\`, optionally followed by a `#` comment.
+  `\`. The only thing that may follow it is `# required`.
 - Each key gets a comment block immediately above it. A blank line between
   them, or another assignment, ends the block. That comment is what the
   consumer reads beside the key in their own settings file.

@@ -22,7 +22,9 @@ use kendex_core::settings_file::{
 };
 use kendex_core::settings_view::{ScopeSettings, SkillTemplate, scope_settings};
 
-const TEMPLATE: &str = "[env]\n# Which reviewers run by default.\nREVIEWERS = \"arch,security\"\n\n# How deep.\nDEPTH = \"2\"\n";
+/// One key the consumer must decide, which an install writes, and one
+/// that ships a working default, which only a save ever puts in the file.
+const TEMPLATE: &str = "[env]\n# Which reviewers run by default.\nREVIEWERS = \"arch,security\" # required\n\n# How deep.\nDEPTH = \"2\"\n";
 
 struct Fixture {
     _tmp: tempfile::TempDir,
@@ -168,11 +170,18 @@ fn the_read_model_carries_the_explainer_the_default_and_the_current_value() {
     let f = fixture(TEMPLATE);
     install(&f);
     let text = fs::read_to_string(settings_path(&f)).unwrap();
-    fs::write(settings_path(&f), text.replace("\"2\"", "\"9\"")).unwrap();
+    fs::write(
+        settings_path(&f),
+        text.replace("\"arch,security\"", "\"mine\""),
+    )
+    .unwrap();
 
     let read = scope_settings(&f.env, &f.scope).unwrap();
     assert!(read.applies);
     assert_eq!(read.base, base_now(&f));
+    // Both states a declared key can be in: one the install wrote and the
+    // person then changed, and one no install writes, which the page
+    // shows against its default until somebody sets it.
     assert_eq!(
         rows_of(&read, "review"),
         vec![
@@ -180,18 +189,11 @@ fn the_read_model_carries_the_explainer_the_default_and_the_current_value() {
                 "REVIEWERS".to_owned(),
                 "arch,security".to_owned(),
                 Current::Value {
-                    value: "arch,security".to_owned(),
+                    value: "mine".to_owned(),
                     line: 7,
                 }
             ),
-            (
-                "DEPTH".to_owned(),
-                "2".to_owned(),
-                Current::Value {
-                    value: "9".to_owned(),
-                    line: 10,
-                }
-            ),
+            ("DEPTH".to_owned(), "2".to_owned(), Current::Absent),
         ]
     );
 }
@@ -334,7 +336,7 @@ fn a_settings_copy_that_went_stale_refuses_and_the_newer_file_stands() {
     // The writer in between.
     let newer = fs::read_to_string(settings_path(&f))
         .unwrap()
-        .replace("\"2\"", "\"someone else\"");
+        .replace("\"arch,security\"", "\"someone else\"");
     fs::write(settings_path(&f), &newer).unwrap();
 
     let refused = save(&f, vec![set("REVIEWERS", "arch")], held).unwrap_err();
@@ -447,7 +449,7 @@ fn a_reset_writes_the_template_default_back() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_invalid_template_still_reports_what_seeding_wrote() {
-    let f = fixture("[env]\nREVIEWERS = \"arch\"\n");
+    let f = fixture("[env]\nREVIEWERS = \"arch\" # required\n");
     install(&f);
     let read = scope_settings(&f.env, &f.scope).unwrap();
     let review = read.skills.iter().find(|s| s.skill == "review").unwrap();
@@ -574,7 +576,7 @@ fn a_refusal_names_the_file_the_same_way_through_a_link() {
     let held = base_now(&f);
     let newer = fs::read_to_string(settings_path(&f))
         .unwrap()
-        .replace("\"2\"", "\"someone else\"");
+        .replace("\"arch,security\"", "\"someone else\"");
     fs::write(settings_path(&f), &newer).unwrap();
 
     let refused = save(&f, vec![set("REVIEWERS", "arch")], held).unwrap_err();

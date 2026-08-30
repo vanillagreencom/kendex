@@ -13,8 +13,8 @@
 #   unread   the loaders load the file and never export KEY
 plain	loads	WAIT	"900"	[env]\n# How long to wait.\nWAIT = "900"
 empty-value	loads	WAIT	""	[env]\n# How long to wait.\nWAIT = ""
-trailing-comment	loads	WAIT	"900"	[env]\n# How long to wait.\nWAIT = "900" # seconds
-trailing-comment-tight	loads	WAIT	"900"	[env]\n# How long to wait.\nWAIT = "900"#seconds
+trailing-comment	loads	WAIT	"900"	[env]\n# How long to wait.\nWAIT = "900" # required
+trailing-comment-tight	loads	WAIT	"900"	[env]\n# How long to wait.\nWAIT = "900"#required
 indented-key	loads	WAIT	"900"	[env]\n# How long to wait.\n  WAIT = "900"
 value-holds-equals	loads	WAIT	"a=b"	[env]\n# A pair.\nWAIT = "a=b"
 value-holds-hash	loads	WAIT	"a#b"	[env]\n# A hash.\nWAIT = "a#b"

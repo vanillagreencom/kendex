@@ -1,9 +1,10 @@
 [env]
 
 # DECIDER — where this project keeps its decision records (decider skill).
-# Project-scope `kendex add` / `kendex refresh` merge these defaults into
-# <project>/kendex.settings.toml (never overwriting existing keys). Full
-# reference: decider README.md.
+# `kendex add` writes the keys marked `# required` below into
+# <project>/kendex.settings.toml, once, when this skill arrives; every other
+# key here ships the value its own scripts already read, and assigning it
+# there is how a project changes one. Full reference: decider README.md.
 
 # Directory holding the decision documents and their INDEX.md. Empty =
 # auto-discovery, walking up for a `docs/decisions`, `decisions`,

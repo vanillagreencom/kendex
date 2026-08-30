@@ -1,10 +1,11 @@
 [env]
 
 # WORKTREE — where worktrees land, what gets linked into them, and the git
-# identity their commits carry (worktree skill).
-# Project-scope `kendex add` / `kendex refresh` merge these defaults into
-# <project>/kendex.settings.toml (never overwriting existing keys). Every
-# key here is inert while empty; full reference: worktree README.md.
+# identity their commits carry (worktree skill). `kendex add` writes the
+# keys marked `# required` below into <project>/kendex.settings.toml, once,
+# when this skill arrives; every other key here ships the value its own
+# scripts already read, and assigning it there is how a project changes one.
+# Every key here is inert while empty; full reference: worktree README.md.
 
 # Base branch new worktrees fork from. Empty = detection from `origin/HEAD`,
 # falling back to `main`.

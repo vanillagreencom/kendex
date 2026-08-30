@@ -125,10 +125,32 @@ fn decoded_value_reads_only_plain_one_line_strings() {
 }
 
 #[test]
-fn a_trailing_comment_rides_with_the_value() {
-    let read = read("[env]\n# How long to wait.\nWAIT = \"900\" # seconds\n");
-    assert!(read.findings.is_empty(), "{:?}", read.findings);
-    assert_eq!(read.entries[0].value, "900");
+fn the_required_marker_rides_with_the_value_and_nothing_else_may() {
+    let marked = read("[env]\n# How long to wait.\nWAIT = \"900\" # required\n");
+    assert!(marked.findings.is_empty(), "{:?}", marked.findings);
+    assert_eq!(marked.entries[0].value, "900");
+    assert!(marked.entries[0].required);
+
+    // A misspelled marker loads exactly as a correct one does, so the
+    // loaders never see it and the key silently stops being written.
+    let typo = read("[env]\n# How long to wait.\nWAIT = \"900\" # requried\n");
+    assert_eq!(
+        typo.findings
+            .iter()
+            .map(|finding| finding.line)
+            .collect::<Vec<_>>(),
+        [3]
+    );
+    assert!(
+        typo.findings[0].problem.contains("#requried"),
+        "{:?}",
+        typo.findings
+    );
+    assert!(!typo.entries[0].required);
+
+    let plain = read("[env]\n# How long to wait.\nWAIT = \"900\"\n");
+    assert!(plain.findings.is_empty(), "{:?}", plain.findings);
+    assert!(!plain.entries[0].required);
 }
 
 #[test]

@@ -10,6 +10,7 @@ fn seeded(owner: &str, key: &str, line: &str) -> SeededEnv {
             key: key.to_owned(),
             comment: vec![format!("# what {key} does")],
             assignment: line.to_owned(),
+            required: false,
         },
         owner: owner.to_owned(),
     }
@@ -291,8 +292,12 @@ fn either_quoted_spelling_is_ambiguous_and_blocks_a_seed() {
             "{spelling} must block a seed of MODE"
         );
         assert!(
-            crate::settings_seed::merge(Some(&file), &[seeded("noise", "MODE", "MODE = \"q\"")])
-                .is_none(),
+            crate::settings_seed::merge(
+                Some(&file),
+                &[seeded("noise", "MODE", "MODE = \"q\"")],
+                &crate::settings_seed::Seeding::new([], ["MODE".to_owned()]),
+            )
+            .is_none(),
             "{spelling} must not be seeded over"
         );
     }
@@ -320,8 +325,12 @@ fn a_dotted_key_is_ambiguous_and_blocks_a_seed_of_its_first_segment() {
             "{spelling} must block a seed of MODE"
         );
         assert!(
-            crate::settings_seed::merge(Some(&file), &[seeded("noise", "MODE", "MODE = \"q\"")])
-                .is_none(),
+            crate::settings_seed::merge(
+                Some(&file),
+                &[seeded("noise", "MODE", "MODE = \"q\"")],
+                &crate::settings_seed::Seeding::new([], ["MODE".to_owned()]),
+            )
+            .is_none(),
             "{spelling} must not be seeded over"
         );
 

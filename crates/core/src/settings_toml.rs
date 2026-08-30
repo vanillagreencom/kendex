@@ -249,5 +249,20 @@ pub fn decoded(value: &str) -> Option<String> {
     quoted_span(value, 0).map(|inner| value[inner].to_owned())
 }
 
+/// What a readable value carries after itself, without the `#`, and where
+/// on the line it starts. `None` where the line ends at the closing quote,
+/// or where the value is not one [`quoted_span`] reads at all.
+///
+/// The offset comes back with the text because a caller that strips the
+/// comment has to cut the line, and re-finding the `#` would find the
+/// first one on the line — which, in `KEY = "a # b" # note`, sits inside
+/// the value.
+pub fn trailing_comment(value: &str) -> Option<(usize, &str)> {
+    let inner = quoted_span(value, 0)?;
+    let after = &value[inner.end + 1..];
+    let at = after.find('#')?;
+    Some((inner.end + 1 + at, after[at + 1..].trim()))
+}
+
 #[cfg(test)]
 mod tests;

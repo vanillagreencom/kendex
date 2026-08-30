@@ -1,9 +1,10 @@
 [env]
 
-# DEV — the command dev agents run to validate a change (dev skill).
-# Project-scope `kendex add` / `kendex refresh` merge these defaults into
-# <project>/kendex.settings.toml (never overwriting existing keys). Full
-# reference: dev README.md.
+# DEV — the command dev agents run to validate a change (dev skill). `kendex
+# add` writes the keys marked `# required` below into
+# <project>/kendex.settings.toml, once, when this skill arrives; every other
+# key here ships the value its own scripts already read, and assigning it
+# there is how a project changes one. Full reference: dev README.md.
 
 # The project's validation command, run from the worktree root — point it at
 # a diff-scoped validator where one exists. Empty = the project's documented

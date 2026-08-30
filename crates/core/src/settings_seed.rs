@@ -42,6 +42,10 @@ pub use write::{merge, record_seeds};
 
 pub const SETTINGS_FILE: &str = "kendex.settings.toml";
 pub const SETTINGS_TEMPLATE: &str = "kendex.settings.toml.example";
+/// What a template writes after a value to mark the key as one the
+/// consumer must answer: `LINEAR_TEAM = "" # required`. Cut off before the
+/// assignment is written, so the word never reaches a consumer's file.
+pub const REQUIRED_MARKER: &str = "required";
 /// The settings file seeding targets in this project.
 pub fn settings_file_path(project_root: &std::path::Path) -> std::path::PathBuf {
     project_root.join(SETTINGS_FILE)
@@ -63,6 +67,12 @@ pub struct EnvEntry {
     /// apart from the comment because which lines are the value is the
     /// walk's answer, not a count off one end of a list of both.
     pub assignment: String,
+    /// Whether the template marks this key as one the consumer has to
+    /// decide, which is the only reason an install writes a key into
+    /// their file. Every other key ships a value its own code already
+    /// reads, so writing it would put a line in a tracked file that
+    /// changes nothing.
+    pub required: bool,
 }
 
 impl EnvEntry {
@@ -206,6 +216,15 @@ pub fn extract_env_entries(template: &str) -> Vec<EnvEntry> {
                     continue;
                 };
                 let comment = std::mem::take(&mut pending);
+                // The marker is the template's own word and never the
+                // consumer's: where it is there, the assignment is cut
+                // back to its closing quote before anything is written.
+                // Only a value that closes on this line can carry one, so
+                // a multiline value has none to find.
+                let marker = row.assignment().and_then(|(_, value, at)| {
+                    let (offset, said) = crate::settings_toml::trailing_comment(value)?;
+                    (said == REQUIRED_MARKER).then_some(at - row.at + offset)
+                });
                 // The assignment runs to wherever its value closes. Every
                 // line under an open value is one the walk called
                 // `InValue`, so the run is exactly this entry's.
@@ -235,10 +254,14 @@ pub fn extract_env_entries(template: &str) -> Vec<EnvEntry> {
                 if open || broken {
                     assignment.clear();
                 }
+                if let Some(cut) = marker.filter(|_| !assignment.is_empty()) {
+                    assignment.truncate(assignment[..cut].trim_end().len());
+                }
                 entries.push(EnvEntry {
                     key,
                     comment,
                     assignment,
+                    required: marker.is_some(),
                 });
             }
         }
@@ -282,6 +305,76 @@ pub fn writable_all<'a>(
 /// full, which is the case [`unterminated_notes`] owns.
 pub fn writable_for<'a>(entries: &'a [SeededEnv], key: &str) -> Option<&'a SeededEnv> {
     writable_all(entries, key).next()
+}
+
+/// Why this pass may put a key in the consumer's file, which is the whole
+/// of what an install writes there.
+///
+/// A template applies ONCE, when its skill arrives. What it writes then is
+/// the keys it marks `# required` — the ones the consumer has to decide,
+/// which have no answer a default could stand in for. Every later pass
+/// over the same scope writes none of it, so a refresh leaves the file as
+/// it found it and a key the consumer deleted stays deleted.
+///
+/// A save is the other reason. The app writes values for keys no seed ever
+/// wrote, and a value needs an assignment to land on, so the keys one save
+/// names are inserted by the same pass that then sets them.
+#[derive(Debug, Default, Clone)]
+pub struct Seeding {
+    /// Skills whose template this pass applies: the ones arriving now.
+    arriving: std::collections::BTreeSet<String>,
+    /// Keys this pass is about to set a value on.
+    edited: std::collections::BTreeSet<String>,
+}
+
+impl Seeding {
+    pub fn new(
+        arriving: impl IntoIterator<Item = String>,
+        edited: impl IntoIterator<Item = String>,
+    ) -> Self {
+        Seeding {
+            arriving: arriving.into_iter().collect(),
+            edited: edited.into_iter().collect(),
+        }
+    }
+
+    /// What one pass over a scope may write. A skill is arriving when the
+    /// lock does not carry it yet: a name already there is one an earlier
+    /// pass installed, so this pass is that skill's refresh and its
+    /// template writes nothing.
+    pub fn for_pass(
+        entries: &[SeededEnv],
+        installed: &std::collections::BTreeSet<String>,
+        edited: impl IntoIterator<Item = String>,
+    ) -> Self {
+        Seeding::new(
+            entries
+                .iter()
+                .map(|seeded| seeded.owner.clone())
+                .filter(|owner| !installed.contains(owner)),
+            edited,
+        )
+    }
+
+    /// Whether this declaration is one the pass writes. The one statement
+    /// of the rule: `merge` writes exactly what this admits and
+    /// [`record_seeds`] records exactly what it chose, so the bytes and
+    /// the ledger cannot come to different answers.
+    fn writes(&self, seeded: &SeededEnv) -> bool {
+        (seeded.entry.required && self.arriving.contains(&seeded.owner))
+            || self.edited.contains(&seeded.entry.key)
+    }
+}
+
+/// The declaration this pass writes for a key, or `None` where it writes
+/// none. [`writable_all`] still supplies the candidates and their order,
+/// so the choice stays the one chooser every consumer asks.
+pub fn seeding_for<'a>(
+    entries: &'a [SeededEnv],
+    key: &str,
+    seeding: &Seeding,
+) -> Option<&'a SeededEnv> {
+    writable_all(entries, key).find(|seeded| seeding.writes(seeded))
 }
 
 #[cfg(test)]

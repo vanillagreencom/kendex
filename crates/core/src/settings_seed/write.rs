@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::lock::SettingsSeed;
 use crate::settings_toml::Row;
 
-use super::{SeededEnv, assigned_keys, env_blocked, opens_env, table_row, writable_for};
+use super::{SeededEnv, Seeding, assigned_keys, env_blocked, opens_env, seeding_for, table_row};
 
 /// The terminator new lines are written with: whatever the file's first
 /// terminated line uses, `\n` where it has nothing to say.
@@ -61,11 +61,20 @@ fn render_entries(entries: &[&SeededEnv], eol: &str) -> String {
     out
 }
 
-/// Merge missing entries into the settings text, byte-faithfully: the
-/// inserted block is the only change, spelled in the file's own line
-/// terminator. `None` = nothing to add. Returns the new text plus the keys
-/// that were added.
-pub fn merge(original: Option<&str>, entries: &[SeededEnv]) -> Option<(String, Vec<String>)> {
+/// Merge into the settings text the entries `seeding` admits, byte-
+/// faithfully: the inserted block is the only change, spelled in the
+/// file's own line terminator. `None` = nothing to add. Returns the new
+/// text plus the keys that were added.
+///
+/// What is written is [`Seeding`]'s answer, not "every key the file does
+/// not have". A template's other keys ship values their own code already
+/// reads, so writing them would put lines in a tracked file that change
+/// nothing and come back after every deletion.
+pub fn merge(
+    original: Option<&str>,
+    entries: &[SeededEnv],
+    seeding: &Seeding,
+) -> Option<(String, Vec<String>)> {
     // Nowhere to write: the plan reports the shape, and no byte moves.
     if original.is_some_and(|text| env_blocked(text).is_some()) {
         return None;
@@ -76,7 +85,7 @@ pub fn merge(original: Option<&str>, entries: &[SeededEnv]) -> Option<(String, V
         .into_iter()
         .collect();
     // Each distinct key once, in declaration order, taken from the one
-    // declaration that speaks for it. The winner comes from `writable_for`
+    // declaration that speaks for it. The winner comes from `seeding_for`
     // rather than being re-derived here, so the bytes written, the ledger
     // and the notes cannot name three different skills.
     let mut seen: BTreeSet<&str> = BTreeSet::new();
@@ -84,7 +93,7 @@ pub fn merge(original: Option<&str>, entries: &[SeededEnv]) -> Option<(String, V
         .iter()
         .filter(|seeded| seen.insert(seeded.entry.key.as_str()))
         .filter(|seeded| !existing.contains(&seeded.entry.key))
-        .filter_map(|seeded| writable_for(entries, &seeded.entry.key))
+        .filter_map(|seeded| seeding_for(entries, &seeded.entry.key, seeding))
         .collect();
     if missing.is_empty() {
         return None;
@@ -142,16 +151,17 @@ pub fn merge(original: Option<&str>, entries: &[SeededEnv]) -> Option<(String, V
 }
 
 /// The ledger records the added entries were seeded, each under the owner
-/// whose lines were written — asked of [`writable_for`], the same question
+/// whose lines were written — asked of [`seeding_for`], the same question
 /// `merge` asked, so the record names the skill that actually supplied the
 /// bytes.
 pub fn record_seeds(
     seeds: &mut BTreeMap<String, SettingsSeed>,
     entries: &[SeededEnv],
     added: &[String],
+    seeding: &Seeding,
 ) {
     for key in added {
-        if let Some(seeded) = writable_for(entries, key) {
+        if let Some(seeded) = seeding_for(entries, key, seeding) {
             seeds.insert(key.clone(), seeded.seed_record());
         }
     }

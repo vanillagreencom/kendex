@@ -1,6 +1,8 @@
 //! Settings seeding through real applies: a skill that ships
-//! `kendex.settings.toml.example` merges its `[env]` defaults into the
-//! project's settings file — write-if-absent per key, user edits win.
+//! `kendex.settings.toml.example` writes its `# required` keys into the
+//! project's settings file when the skill arrives — write-if-absent per
+//! key, user edits win. Its other keys ship values their own code already
+//! reads and never reach the file.
 #![cfg(unix)]
 
 #[path = "../../test_util.rs"]
@@ -15,8 +17,9 @@ use kendex_core::engine::audit;
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::model::Scope;
 
-const TEMPLATE: &str =
-    "[env]\n# Which reviewers run by default.\nREVIEWERS = \"arch,security\"\n\nDEPTH = \"2\"\n";
+/// One key the consumer has to decide and one that ships a working
+/// default: what an install writes, and what it leaves in the template.
+const TEMPLATE: &str = "[env]\n# Which reviewers run by default.\nREVIEWERS = \"arch,security\" # required\n\nDEPTH = \"2\"\n";
 
 struct Fixture {
     _tmp: tempfile::TempDir,
@@ -79,7 +82,14 @@ fn seeds_env_defaults_and_never_overwrites_user_values() {
     assert!(seeded.contains("[env]"));
     assert!(seeded.contains("# Which reviewers run by default."));
     assert!(seeded.contains("REVIEWERS = \"arch,security\""));
-    assert!(seeded.contains("DEPTH = \"2\""));
+    assert!(
+        !seeded.contains("# required"),
+        "the marker is the template's word, not the consumer's: {seeded}"
+    );
+    assert!(
+        !seeded.contains("DEPTH"),
+        "a key whose default the skill already reads is not written: {seeded}"
+    );
 
     // A user-edited value survives every later apply, wherever it lives.
     let edited = seeded.replace("\"arch,security\"", "\"mine\"");
@@ -104,7 +114,106 @@ fn seeds_env_defaults_and_never_overwrites_user_values() {
     let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
     let record = lock.settings_seeds.get("REVIEWERS").unwrap();
     assert_eq!(record.owner.as_deref(), Some("review"));
-    assert!(lock.settings_seeds.contains_key("DEPTH"));
+    assert!(!lock.settings_seeds.contains_key("DEPTH"));
+}
+
+/// The template applies once, when the skill arrives. Every later pass
+/// over the same project writes nothing into the settings file — so a
+/// refresh leaves it byte-identical, and a key the consumer decided to
+/// delete stays deleted instead of coming back on the next run.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_refresh_writes_nothing_the_arrival_already_settled() {
+    let f = fixture(true);
+    apply_now(&f);
+    let settings_path = f.project.join("kendex.settings.toml");
+    let arrived = fs::read_to_string(&settings_path).unwrap();
+    assert!(
+        arrived.contains("REVIEWERS"),
+        "the arrival seeded: {arrived}"
+    );
+
+    // Byte-identical across a refresh that changes nothing else.
+    apply_now(&f);
+    assert_eq!(fs::read_to_string(&settings_path).unwrap(), arrived);
+
+    // The consumer decides they do not want the key after all.
+    let without = arrived
+        .lines()
+        .filter(|line| !line.starts_with("REVIEWERS"))
+        .map(|line| format!("{line}\n"))
+        .collect::<String>();
+    assert!(!without.contains("REVIEWERS ="), "the fixture removed it");
+    fs::write(&settings_path, &without).unwrap();
+
+    let report = audit(&f.env, &f.scope).unwrap();
+    assert!(
+        !report
+            .plan
+            .ops
+            .iter()
+            .any(|op| op.line().contains("kendex.settings.toml")),
+        "a refresh plans no write for the settings file: {:?}",
+        report
+            .plan
+            .ops
+            .iter()
+            .map(|op| &op.description)
+            .collect::<Vec<_>>()
+    );
+    apply::execute(&f.env, &report.plan, None).unwrap();
+    assert_eq!(
+        fs::read_to_string(&settings_path).unwrap(),
+        without,
+        "a deleted key stays deleted"
+    );
+}
+
+/// A skill arriving into a project that already has others writes its own
+/// required keys and touches nothing theirs — the arrival test is per
+/// skill, not per project.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_second_skill_arriving_later_seeds_only_its_own() {
+    let f = fixture(true);
+    apply_now(&f);
+    let settings_path = f.project.join("kendex.settings.toml");
+    let first = fs::read_to_string(&settings_path).unwrap();
+
+    let later = f
+        .project
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("catalog/skills/later");
+    fs::create_dir_all(&later).unwrap();
+    fs::write(
+        later.join("SKILL.md"),
+        "---\nname: later\ndescription: arrives second\n---\nBody.\n",
+    )
+    .unwrap();
+    fs::write(
+        later.join("kendex.settings.toml.example"),
+        "[env]\n# The lane it runs.\nLATER_LANE = \"\" # required\n\n# How deep.\nLATER_DEPTH = \"3\"\n",
+    )
+    .unwrap();
+    let manifest = f.project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        format!("{text}\n[skills.later]\nsource = \"cat\"\nenabled = true\n"),
+    )
+    .unwrap();
+    apply_now(&f);
+
+    let after = fs::read_to_string(&settings_path).unwrap();
+    assert!(
+        after.starts_with(&first),
+        "the first skill's lines are untouched: {after}"
+    );
+    assert!(after.contains("LATER_LANE = \"\""), "{after}");
+    assert!(!after.contains("LATER_DEPTH"), "{after}");
 }
 
 #[test]
@@ -225,7 +334,7 @@ fn a_skill_with_findings_installs_and_seeds_like_any_other() {
     .unwrap();
     fs::write(
         hostile.join("kendex.settings.toml.example"),
-        "[env]\n# Planted.\nHOSTILE_KEY = \"1\"\n",
+        "[env]\n# Planted.\nHOSTILE_KEY = \"1\" # required\n",
     )
     .unwrap();
     let manifest = f.project.join("kendex.toml");
@@ -375,9 +484,18 @@ fn many_owners(templates: &[(&str, &str)]) -> Fixture {
 #[allow(clippy::unwrap_used)]
 fn a_key_shipped_with_differing_defaults_gets_one_grouped_note() {
     let f = many_owners(&[
-        ("alpha", "[env]\n# How long to wait.\nWAIT = \"900\"\n"),
-        ("beta", "[env]\n# How long to wait.\nWAIT = \"900\"\n"),
-        ("gamma", "[env]\n# How long to wait.\nWAIT = \"600\"\n"),
+        (
+            "alpha",
+            "[env]\n# How long to wait.\nWAIT = \"900\" # required\n",
+        ),
+        (
+            "beta",
+            "[env]\n# How long to wait.\nWAIT = \"900\" # required\n",
+        ),
+        (
+            "gamma",
+            "[env]\n# How long to wait.\nWAIT = \"600\" # required\n",
+        ),
     ]);
     let notes = audit(&f.env, &f.scope).unwrap().notes;
     let about: Vec<&String> = notes.iter().filter(|note| note.contains("WAIT")).collect();
@@ -397,8 +515,14 @@ fn a_key_shipped_with_differing_defaults_gets_one_grouped_note() {
 #[allow(clippy::unwrap_used)]
 fn a_key_shipped_with_one_default_everywhere_is_silent() {
     let f = many_owners(&[
-        ("alpha", "[env]\n# The gate.\nMODE = \"enforce\"\n"),
-        ("beta", "[env]\n# The gate.\nMODE = \"enforce\"\n"),
+        (
+            "alpha",
+            "[env]\n# The gate.\nMODE = \"enforce\" # required\n",
+        ),
+        (
+            "beta",
+            "[env]\n# The gate.\nMODE = \"enforce\" # required\n",
+        ),
     ]);
     let notes = audit(&f.env, &f.scope).unwrap().notes;
     assert!(!notes.iter().any(|note| note.contains("MODE")), "{notes:?}");
@@ -412,8 +536,14 @@ fn a_key_shipped_with_one_default_everywhere_is_silent() {
 #[allow(clippy::unwrap_used)]
 fn the_note_claims_no_write_for_a_key_the_file_already_assigns() {
     let f = many_owners(&[
-        ("alpha", "[env]\n# How long to wait.\nWAIT = \"900\"\n"),
-        ("beta", "[env]\n# How long to wait.\nWAIT = \"600\"\n"),
+        (
+            "alpha",
+            "[env]\n# How long to wait.\nWAIT = \"900\" # required\n",
+        ),
+        (
+            "beta",
+            "[env]\n# How long to wait.\nWAIT = \"600\" # required\n",
+        ),
     ]);
     let settings = f.project.join("kendex.settings.toml");
     fs::write(&settings, "[env]\n# Mine.\nWAIT = \"5\"\n").unwrap();

@@ -234,12 +234,12 @@ fn the_recorded_owner_speaks_for_a_key_several_skills_ship() {
 fn merge_seeds_the_first_writable_declaration_and_records_it_as_owner() {
     let mut entries = seeded("[env]\n# First.\nDEPTH = \"1\"\n", "first");
     entries.extend(seeded("[env]\n# Second.\nDEPTH = \"2\"\n", "second"));
-    let (out, added) = merge(Some("[env]\n"), &entries).unwrap();
+    let (out, added) = merge(Some("[env]\n"), &entries, &super::all(&entries)).unwrap();
     assert_eq!(added, ["DEPTH"]);
     assert!(out.contains("# First.\nDEPTH = \"1\""), "{out}");
     assert!(!out.contains("# Second."));
     let mut ledger = BTreeMap::new();
-    record_seeds(&mut ledger, &entries, &added);
+    record_seeds(&mut ledger, &entries, &added, &super::all(&entries));
     assert_eq!(ledger.get("DEPTH").unwrap().owner.as_deref(), Some("first"));
 }
 

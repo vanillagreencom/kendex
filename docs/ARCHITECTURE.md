@@ -452,12 +452,12 @@ lives in one capability table read by core and UI.
   mechanism: same script, same kill-switch, fire-and-forget into session
   start; a reloaded or resumed session never repeats it.
 - **A seeded settings comment refreshes only while provably unedited.**
-  Skills seed `[env]` defaults into `kendex.settings.toml` write-if-absent;
-  the lock keeps, per key, the seeding skill and the FNV-1a hash of its
-  comment. A revision rewrites that comment only while its text still hashes
-  to the record and the template is the recorded owner's. A v1 record
-  imports with no owner, earned only where the comment is word for word
-  v1's. Where several skills ship one key, the first whose template
+  A skill writes its `# required` keys into `kendex.settings.toml` on arrival
+  and nothing on a refresh; the lock keeps, per key, the seeding skill and the
+  FNV-1a hash of its comment. A revision rewrites that comment only while its
+  text still hashes to the record and the template is the recorded owner's. A
+  v1 record imports with no owner, earned only where the comment is word for
+  word v1's. Where several skills ship one key, the first whose template
   completes the value is seeded, refresh follows that owner, a bare key is
   never adopted, and a note names every owner and differing default. A value
   no template completes is seeded from none, under a note naming the key.

@@ -34,6 +34,7 @@ docs live in README.md.
   that is the directory this installer writes
 - `scripts/lib/skill-roots.sh` — the one definition of the skills roots
   every search here uses, including the copy baked into the helper
+- `kendex.settings.toml.example` — settings template for consumers
 - `SKILL.md` — agent-facing skill definition
 - `README.md` — consumer documentation
 - `CHECKS.md` — what each check bans, and how it is scoped

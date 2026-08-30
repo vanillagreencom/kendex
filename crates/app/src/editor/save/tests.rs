@@ -365,6 +365,9 @@ fn rejected_edits_come_back_with_their_fix_string() {
     assert!(error.contains("fix: declare [sources.gone]"), "{error}");
 }
 
+/// A key the skill's own code already defaults, which an install never
+/// writes. The app is what puts it in the file, and only when someone
+/// changes it.
 const TEMPLATE: &str = "[env]\n# Which reviewers run by default.\nREVIEWERS = \"arch,security\"\n";
 
 /// A project whose one installed skill ships settings, so a save has both
@@ -411,9 +414,11 @@ fn a_manifest_and_a_settings_draft_land_in_one_save() {
     let (tmp, env, scope) = scope_with_settings_skill();
     let settings = tmp.path().join("dev/app/kendex.settings.toml");
     let manifest_path = manifest::manifest_path(&env, &scope);
-    // The first save seeds the file; the second edits what it seeded.
+    // An install writes none of this template, so the save is the first
+    // thing to reach the file: it holds no bytes, and the write makes it.
     write_customize(&env, scope.clone(), None, None).unwrap();
-    let held = Base::of(&std::fs::read_to_string(&settings).unwrap());
+    assert!(!settings.exists(), "an install wrote nothing here");
+    let held = Base::claimed(None);
 
     let (read, base) = manifest::read_for_mutation(&manifest_path).unwrap();
     let mut edited = read.unwrap();
@@ -454,7 +459,16 @@ fn a_stale_settings_copy_refuses_and_takes_the_manifest_edit_with_it() {
     let (tmp, env, scope) = scope_with_settings_skill();
     let settings = tmp.path().join("dev/app/kendex.settings.toml");
     let manifest_path = manifest::manifest_path(&env, &scope);
-    write_customize(&env, scope.clone(), None, None).unwrap();
+    write_customize(
+        &env,
+        scope.clone(),
+        None,
+        Some(kendex_core::settings_file::SettingsDraft {
+            edits: vec![edit("REVIEWERS", "arch,security")],
+            base: Base::claimed(None),
+        }),
+    )
+    .unwrap();
     let held = Base::of(&std::fs::read_to_string(&settings).unwrap());
 
     // The writer in between.
@@ -492,20 +506,21 @@ fn a_settings_only_save_carries_no_manifest_draft() {
     let (tmp, env, scope) = scope_with_settings_skill();
     let settings = tmp.path().join("dev/app/kendex.settings.toml");
     write_customize(&env, scope.clone(), None, None).unwrap();
-    let held = Base::of(&std::fs::read_to_string(&settings).unwrap());
+    assert!(!settings.exists(), "an install wrote nothing here");
     write_customize(
         &env,
         scope,
         None,
         Some(kendex_core::settings_file::SettingsDraft {
             edits: vec![edit("REVIEWERS", "arch")],
-            base: held,
+            base: Base::claimed(None),
         }),
     )
     .unwrap();
+    let written = std::fs::read_to_string(&settings).unwrap();
+    assert!(written.contains("REVIEWERS = \"arch\""), "{written}");
     assert!(
-        std::fs::read_to_string(&settings)
-            .unwrap()
-            .contains("REVIEWERS = \"arch\"")
+        written.contains("# Which reviewers run by default."),
+        "the key arrives with the explainer the template ships: {written}"
     );
 }

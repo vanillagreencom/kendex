@@ -543,3 +543,24 @@ fn a_form_the_grammar_cannot_continue_says_so_without_carrying() {
         ]
     );
 }
+
+/// What follows a readable value, and where. The offset matters because a
+/// caller cutting the comment off cannot re-find the `#`: the first one on
+/// the line may be inside the value.
+#[test]
+fn a_trailing_comment_is_read_with_the_offset_that_cuts_it() {
+    assert_eq!(
+        trailing_comment(" \"900\" # required"),
+        Some((7, "required"))
+    );
+    assert_eq!(trailing_comment(" \"900\"#required"), Some((6, "required")));
+    assert_eq!(trailing_comment(" \"900\" #"), Some((7, "")));
+    assert_eq!(trailing_comment(" \"900\""), None);
+    assert_eq!(trailing_comment(" \"a # b\""), None);
+    let value = " \"a # b\" # required";
+    let (at, said) = trailing_comment(value).expect("the comment after the value");
+    assert_eq!(said, "required");
+    assert_eq!(&value[..at], " \"a # b\" ");
+    // Not a value the loaders read: nothing to say about what follows it.
+    assert_eq!(trailing_comment(" 900 # required"), None);
+}

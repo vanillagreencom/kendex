@@ -69,7 +69,7 @@ fn the_note_names_the_owner_whose_value_merge_actually_seeds() {
         ]
     );
     // And alpha is what merge writes, which is what the note claims.
-    let (merged, added) = merge(None, &entries).unwrap();
+    let (merged, added) = merge(None, &entries, &super::all(&entries)).unwrap();
     assert_eq!(added, ["WAIT"]);
     assert!(merged.contains("WAIT = \"900\" # seconds"), "{merged}");
 }

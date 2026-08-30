@@ -124,10 +124,6 @@ Layering and reasoning: [README](README.md).
 | `GROWTH_GUARDS_SUBJECT_MAX` | `72` | Characters allowed in a hand-written commit header. |
 | `GROWTH_GUARDS_PRE_COMMIT_LOCAL` | *(empty)* | Repo-root-relative executable the pre-commit shim runs last. |
 
-This skill writes nothing into a consumer's `kendex.settings.toml`. Every
-key above ships a working default, so a repository assigns only the ones
-it wants to change.
-
 Resolution order for every key: explicit environment > `.env.local` >
 `.kendex/settings.toml` > the repo's committed `kendex.settings.toml` (flat
 `KEY = "value"` under `[env]`; other tables are ignored) > built-in default;

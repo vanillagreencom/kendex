@@ -1,10 +1,17 @@
 # This file is your skill's settings declaration, not a settings file anyone
 # edits. Ship it at your skill's root: seeding runs for skills only, and the
 # same file under an agent, hook, command or MCP server installs without
-# seeding anything. On a project install kendex merges each key below — with
-# the comment block directly above it — into the consuming repo's
-# `kendex.settings.toml`. A key already assigned there is left as it is, and
-# no install rewrites a value; users edit theirs in that file, not here.
+# seeding anything.
+#
+# Two jobs, and the second is the bigger one. It DECLARES every key your
+# skill reads: the app's Settings pane renders a row per key here, with this
+# comment beside it, and a save of a key no template declares is refused. And
+# it SEEDS — but only the keys you mark `# required`, and only when the skill
+# arrives in a project. Those are the keys the consumer has to decide, the
+# ones with no answer a default could stand in for. Everything else ships the
+# value your own code reads when nothing assigns it, so writing it into a
+# consumer's tracked file would put a line there that changes nothing and
+# comes back every time they delete it. Nothing here is written on a refresh.
 #
 # Commit-safe values only. A value that must stay out of git (a token, a
 # credential, a personal identifier) never appears here as an assignment:
@@ -14,14 +21,20 @@
 # Grammar: one `[env]` table, its header a lone `[env]` on its own line; a
 # comment block immediately above every key, with no blank line and no other
 # assignment between them; every key a shell identifier; every value a
-# single-line double-quoted string containing no `"` and no `\`, an optional
-# trailing `#` comment aside. Seeding takes whatever it recognizes and says
-# nothing about the rest, so run `kendex marketplace check` on your catalog:
-# it reads this file the way a consumer's shell will read what seeding wrote.
+# single-line double-quoted string containing no `"` and no `\`. The only
+# thing that may follow a value is `# required`. Seeding takes whatever it
+# recognizes and says nothing about the rest, so run `kendex marketplace
+# check` on your catalog: it reads this file the way a consumer's shell will
+# read what seeding wrote, and it names a marker you misspelled.
 
 [env]
 
 # Prefix your keys with the skill name, upper-snake. This comment is what
-# the consumer reads beside the key in their own settings file, so say what
-# the key does and what an empty value means.
+# the consumer reads beside the key, in the app and in their own settings
+# file, so say what the key does and what an empty value means.
 MY_SKILL_TIMEOUT = "30"
+
+# A key with no default that works: the consumer has to decide it, so the
+# marker puts it in their file when the skill arrives, with this comment
+# above it. The marker is the template's own word and is never written out.
+MY_SKILL_TEAM = "" # required

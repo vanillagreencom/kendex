@@ -7,6 +7,13 @@ mod refresh;
 
 const TEMPLATE: &str = "# ignored preamble\n[env]\n# Which reviewer set to run.\n# Comma separated.\nREVIEWERS = \"arch,security\"\n\nDEPTH = \"2\"\n\n[other]\nX = \"1\"\n";
 
+/// A [`Seeding`] admitting every declaration handed to it. What a test
+/// whose subject is the bytes a write produces wants: which keys an
+/// install chooses is a different question, pinned by its own tests.
+fn all(entries: &[SeededEnv]) -> Seeding {
+    Seeding::new([], entries.iter().map(|s| s.entry.key.clone()))
+}
+
 fn seeded(template: &str, owner: &str) -> Vec<SeededEnv> {
     extract_env_entries(template)
         .into_iter()
@@ -27,25 +34,69 @@ fn entries_carry_their_comment_blocks() {
     assert_eq!(entries[1].key, "DEPTH");
 }
 
+/// The marker says the key is one the consumer must decide, and it is the
+/// template's own word: what gets written is the assignment without it.
+#[test]
+fn the_required_marker_marks_the_entry_and_never_reaches_the_bytes() {
+    let entries = extract_env_entries(
+        "[env]\n# The team.\nTEAM = \"\" # required\n\n# How deep.\nDEPTH = \"2\"\n",
+    );
+    assert_eq!(entries[0].key, "TEAM");
+    assert!(entries[0].required);
+    assert_eq!(entries[0].assignment, "TEAM = \"\"");
+    assert!(!entries[1].required);
+    assert_eq!(entries[1].assignment, "DEPTH = \"2\"");
+
+    // A `#` inside the value is the value's, not a marker.
+    let inside = extract_env_entries("[env]\n# A hash.\nA = \"x # required\"\n");
+    assert!(!inside[0].required);
+    assert_eq!(inside[0].assignment, "A = \"x # required\"");
+}
+
+/// What an install writes: the marked keys of the skills arriving, and the
+/// keys a save names. Nothing else, on any pass.
+#[test]
+fn seeding_admits_the_marked_keys_of_an_arriving_skill_and_the_edited_ones() {
+    let entries = seeded(
+        "[env]\n# The team.\nTEAM = \"\" # required\n\n# How deep.\nDEPTH = \"2\"\n",
+        "review",
+    );
+    let arriving = Seeding::new(["review".to_owned()], []);
+    let (_, added) = merge(Some("[env]\n"), &entries, &arriving).expect("TEAM is missing");
+    assert_eq!(added, ["TEAM"]);
+
+    // The same skill on a later pass is not arriving, and writes nothing.
+    assert!(merge(Some("[env]\n"), &entries, &Seeding::new([], [])).is_none());
+
+    // Another skill arriving does not carry this one's keys in with it.
+    let others = Seeding::new(["elsewhere".to_owned()], []);
+    assert!(merge(Some("[env]\n"), &entries, &others).is_none());
+
+    // A save reaches a key no arrival ever writes.
+    let editing = Seeding::new([], ["DEPTH".to_owned()]);
+    let (_, added) = merge(Some("[env]\n"), &entries, &editing).expect("DEPTH is missing");
+    assert_eq!(added, ["DEPTH"]);
+}
+
 #[test]
 fn merge_is_write_if_absent_with_file_wide_uniqueness() {
     let entries = seeded(TEMPLATE, "review");
     // Key already assigned under a DIFFERENT table still blocks the add.
     let existing = "[custom]\nREVIEWERS = \"mine\"\n\n[env]\nOTHER = \"x\"\n";
-    let (merged, added) = merge(Some(existing), &entries).unwrap();
+    let (merged, added) = merge(Some(existing), &entries, &all(&entries)).unwrap();
     assert_eq!(added, ["DEPTH"]);
     assert!(merged.contains("REVIEWERS = \"mine\""));
     assert!(!merged.contains("arch,security"));
     assert!(merged.contains("DEPTH = \"2\""));
     assert!(merged.ends_with("DEPTH = \"2\"\n"));
 
-    assert!(merge(Some(&merged), &entries).is_none());
+    assert!(merge(Some(&merged), &entries, &all(&entries)).is_none());
 }
 
 #[test]
 fn fresh_file_gets_the_seeded_header() {
     let entries = seeded(TEMPLATE, "review");
-    let (created, added) = merge(None, &entries).unwrap();
+    let (created, added) = merge(None, &entries, &all(&entries)).unwrap();
     assert_eq!(added, ["REVIEWERS", "DEPTH"]);
     assert!(created.starts_with("# Public kendex settings"));
     assert!(created.contains("[env]\n# Which reviewer set to run."));
@@ -55,7 +106,7 @@ fn fresh_file_gets_the_seeded_header() {
 fn merge_changes_nothing_outside_the_inserted_block() {
     let entries = seeded("[env]\nDEPTH = \"2\"\n", "review");
     let original = "# mine\r\n[env]\r\nREVIEWERS = \"mine\"\r\n\r\n[custom]\r\nX = \"1\"\r\n";
-    let (merged, added) = merge(Some(original), &entries).unwrap();
+    let (merged, added) = merge(Some(original), &entries, &all(&entries)).unwrap();
     assert_eq!(added, ["DEPTH"]);
     // The block lands inside [env] in the file's own line terminator; every
     // original byte survives, in order.
@@ -68,7 +119,7 @@ fn merge_changes_nothing_outside_the_inserted_block() {
 fn merge_at_file_end_repairs_a_missing_terminator_once() {
     let entries = seeded("[env]\nDEPTH = \"2\"\n", "review");
     let original = "[env]\nREVIEWERS = \"mine\"";
-    let (merged, _) = merge(Some(original), &entries).unwrap();
+    let (merged, _) = merge(Some(original), &entries, &all(&entries)).unwrap();
     assert!(
         merged.starts_with("[env]\nREVIEWERS = \"mine\"\n"),
         "{merged:?}"
@@ -87,13 +138,14 @@ fn a_seed_lands_after_the_env_table_and_never_inside_a_value() {
             key: "DEPTH".to_owned(),
             comment: vec!["# How deep.".to_owned()],
             assignment: "DEPTH = \"2\"".to_owned(),
+            required: false,
         },
         owner: "review".to_owned(),
     }];
 
     // A nested array bracket is not a table header.
     let nested = "[env]\nLIST = [\n  []\n]\n";
-    let (text, added) = merge(Some(nested), &seeded).expect("DEPTH is missing");
+    let (text, added) = merge(Some(nested), &seeded, &all(&seeded)).expect("DEPTH is missing");
     assert_eq!(added, vec!["DEPTH".to_owned()]);
     assert!(
         text.starts_with("[env]\nLIST = [\n  []\n]\n"),
@@ -103,7 +155,7 @@ fn a_seed_lands_after_the_env_table_and_never_inside_a_value() {
 
     // And a header the boundary test used to miss ends the section.
     let commented = "[env]\nMODE = \"a\"\n\n[other] # note\nKEEP = \"b\"\n";
-    let (text, _) = merge(Some(commented), &seeded).expect("DEPTH is missing");
+    let (text, _) = merge(Some(commented), &seeded, &all(&seeded)).expect("DEPTH is missing");
     let depth = text.find("DEPTH").expect("seeded");
     let other = text.find("[other]").expect("kept");
     assert!(
@@ -124,11 +176,12 @@ fn a_header_the_loaders_refuse_is_still_the_table_a_seed_lands_in() {
             key: "DEPTH".to_owned(),
             comment: vec!["# How deep.".to_owned()],
             assignment: "DEPTH = \"2\"".to_owned(),
+            required: false,
         },
         owner: "review".to_owned(),
     }];
     let file = "[env] # the table\nMODE = \"a\"\n\n[other]\nKEEP = \"b\"\n";
-    let (text, _) = merge(Some(file), &seeded).expect("DEPTH is missing");
+    let (text, _) = merge(Some(file), &seeded, &all(&seeded)).expect("DEPTH is missing");
 
     // Counted through the reader rather than by string, because what
     // matters is how many rows OPEN the table, not how the header reads.
@@ -173,12 +226,13 @@ fn any_spelling_of_the_env_header_is_the_table_a_seed_lands_in() {
             key: "DEPTH".to_owned(),
             comment: vec!["# How deep.".to_owned()],
             assignment: "DEPTH = \"2\"".to_owned(),
+            required: false,
         },
         owner: "review".to_owned(),
     }];
     for header in ["[env]", "[env] # note", "[ env ]", "[\"env\"]", "['env']"] {
         let file = format!("{header}\nMODE = \"a\"\n\n[other]\nKEEP = \"b\"\n");
-        let (text, _) = merge(Some(&file), &seeded).expect("DEPTH is missing");
+        let (text, _) = merge(Some(&file), &seeded, &all(&seeded)).expect("DEPTH is missing");
         assert_eq!(
             crate::settings_toml::rows(&text)
                 .iter()
@@ -205,13 +259,14 @@ fn an_env_declared_as_an_array_of_tables_is_refused_rather_than_seeded() {
             key: "DEPTH".to_owned(),
             comment: vec!["# How deep.".to_owned()],
             assignment: "DEPTH = \"2\"".to_owned(),
+            required: false,
         },
         owner: "review".to_owned(),
     }];
     let file = "[[env]]\nMODE = \"a\"\n";
     assert_eq!(env_blocked(file), Some(EnvBlocked::Array(1)));
     assert_eq!(
-        merge(Some(file), &seeded),
+        merge(Some(file), &seeded, &all(&seeded)),
         None,
         "nothing may be written into a file with nowhere to write"
     );
@@ -229,6 +284,7 @@ fn a_top_level_env_assignment_is_refused_rather_than_seeded() {
             key: "DEPTH".to_owned(),
             comment: vec!["# How deep.".to_owned()],
             assignment: "DEPTH = \"2\"".to_owned(),
+            required: false,
         },
         owner: "review".to_owned(),
     }];
@@ -243,7 +299,7 @@ fn a_top_level_env_assignment_is_refused_rather_than_seeded() {
             "{file}"
         );
         assert_eq!(
-            merge(Some(file), &seeded),
+            merge(Some(file), &seeded, &all(&seeded)),
             None,
             "{file}: nothing may be written into a file with nowhere to write"
         );
@@ -253,7 +309,7 @@ fn a_top_level_env_assignment_is_refused_rather_than_seeded() {
     let nested = "[other]\nenv.MODE = \"a\"\n";
     assert_eq!(env_blocked(nested), None);
     assert!(
-        merge(Some(nested), &seeded).is_some(),
+        merge(Some(nested), &seeded, &all(&seeded)).is_some(),
         "another table's env is not this file's env"
     );
 }
@@ -284,7 +340,8 @@ fn a_value_spanning_lines_is_seeded_whole() {
         assert_eq!(entries[0].assignment, format!("BLOB = {value}"), "{value}");
         assert!(entries[0].complete(), "{value}");
 
-        let (text, added) = merge(None, &seeded(&template, "review")).expect("both are missing");
+        let shipped = seeded(&template, "review");
+        let (text, added) = merge(None, &shipped, &all(&shipped)).expect("both are missing");
         assert_eq!(added, ["BLOB", "DEPTH"], "{value}");
         // Spelled as the template spells it, and closed: the seeded file
         // parses, and BLOB reads back as the value the template declares.
@@ -314,7 +371,7 @@ fn a_value_nothing_closes_is_refused_by_name() {
     assert!(entries[1].assignment.is_empty(), "{entries:?}");
 
     let shipped = seeded(template, "review");
-    let (text, added) = merge(None, &shipped).expect("DEPTH is missing");
+    let (text, added) = merge(None, &shipped, &all(&shipped)).expect("DEPTH is missing");
     assert_eq!(added, ["DEPTH"]);
     assert!(
         !text.contains("BLOB"),
@@ -332,7 +389,7 @@ fn a_value_nothing_closes_is_refused_by_name() {
     let whole = seeded("[env]\n# A blob.\nBLOB = \"ok\"\n", "other");
     let both: Vec<SeededEnv> = shipped.iter().cloned().chain(whole).collect();
     assert!(unterminated_notes(&both).is_empty(), "{both:?}");
-    let (text, added) = merge(None, &both).expect("both are missing");
+    let (text, added) = merge(None, &both, &all(&both)).expect("both are missing");
     assert_eq!(added, ["DEPTH", "BLOB"]);
     assert!(text.contains("BLOB = \"ok\""), "{text}");
 }
@@ -357,7 +414,7 @@ fn a_one_line_value_left_unterminated_is_refused_by_name() {
         assert!(entries[0].assignment.is_empty(), "{template:?}");
 
         let shipped = seeded(template, "review");
-        let written = merge(None, &shipped);
+        let written = merge(None, &shipped, &all(&shipped));
         assert!(
             !written
                 .as_ref()
@@ -386,14 +443,14 @@ fn a_broken_declaration_before_a_valid_one_never_becomes_the_owner() {
     assert_eq!(shipped.len(), 2, "both declarations are entries");
 
     // The bytes written.
-    let (text, added) = merge(None, &shipped).expect("MODE is missing");
+    let (text, added) = merge(None, &shipped, &all(&shipped)).expect("MODE is missing");
     assert_eq!(added, ["MODE"]);
     assert!(text.contains("MODE = \"real\""), "{text}");
     assert!(text.contains("# Ours."), "the winner's comment too: {text}");
 
     // The ledger.
     let mut ledger = BTreeMap::new();
-    record_seeds(&mut ledger, &shipped, &added);
+    record_seeds(&mut ledger, &shipped, &added, &all(&shipped));
     assert_eq!(ledger["MODE"].owner.as_deref(), Some("good"));
 
     // The selection everyone asks.
@@ -435,7 +492,7 @@ fn an_inline_table_left_open_is_refused_by_name() {
         assert!(!entries[0].complete(), "{template:?}: {entries:?}");
 
         let shipped = seeded(template, "review");
-        let written = merge(None, &shipped);
+        let written = merge(None, &shipped, &all(&shipped));
         assert!(
             !written
                 .as_ref()
@@ -470,7 +527,7 @@ fn an_inline_table_that_closes_seeds_like_any_other_value() {
 
         let shipped = seeded(&template, "review");
         assert!(unterminated_notes(&shipped).is_empty(), "{value}");
-        let (text, added) = merge(None, &shipped).expect("MAP is missing");
+        let (text, added) = merge(None, &shipped, &all(&shipped)).expect("MAP is missing");
         assert_eq!(added, ["MAP"], "{value}");
         let want: toml::Table = template.parse().expect("the template parses");
         let got: toml::Table = text
@@ -489,7 +546,8 @@ fn an_inline_table_that_closes_seeds_like_any_other_value() {
 fn a_values_own_newlines_survive_a_file_that_spells_them_differently() {
     let template = "[env]\n# A blob.\nBLOB = \"\"\"\nline one\nline two\n\"\"\"\n";
     let file = "[env]\r\nMODE = \"a\"\r\n";
-    let (out, added) = merge(Some(file), &seeded(template, "review")).expect("BLOB is missing");
+    let shipped = seeded(template, "review");
+    let (out, added) = merge(Some(file), &shipped, &all(&shipped)).expect("BLOB is missing");
     assert_eq!(added, ["BLOB"]);
 
     // The value arrives exactly as the template spelled it.
@@ -512,7 +570,8 @@ fn a_values_own_newlines_survive_a_file_that_spells_them_differently() {
 
     // The other direction too: a CRLF template into an LF file.
     let crlf = "[env]\r\n# A blob.\r\nBLOB = \"\"\"\r\nline one\r\n\"\"\"\r\n";
-    let (out, _) = merge(Some("[env]\nMODE = \"a\"\n"), &seeded(crlf, "review")).expect("missing");
+    let shipped = seeded(crlf, "review");
+    let (out, _) = merge(Some("[env]\nMODE = \"a\"\n"), &shipped, &all(&shipped)).expect("missing");
     assert!(
         out.contains("BLOB = \"\"\"\r\nline one\r\n\"\"\""),
         "{out:?}"
@@ -543,7 +602,7 @@ fn an_incomplete_declaration_is_not_a_default_to_disagree_with() {
         seed_notes(&shipped)
     );
 
-    let (text, added) = merge(None, &shipped).expect("BLOB is missing");
+    let (text, added) = merge(None, &shipped, &all(&shipped)).expect("BLOB is missing");
     assert_eq!(added, ["BLOB"]);
     assert!(text.contains("BLOB = \"ok\""), "{text}");
 
@@ -603,7 +662,7 @@ fn an_inline_table_spanning_lines_is_seeded_whole() {
 
         let shipped = seeded(&template, "review");
         assert!(seed_notes(&shipped).is_empty(), "{value}");
-        let (text, added) = merge(None, &shipped).expect("MAP is missing");
+        let (text, added) = merge(None, &shipped, &all(&shipped)).expect("MAP is missing");
         assert_eq!(added, ["MAP"], "{value}");
         let want: toml::Table = template.parse().expect("the template parses");
         let got: toml::Table = text
@@ -621,7 +680,8 @@ fn a_key_under_an_inline_table_belongs_to_whichever_owns_its_line() {
     let inside = "[env]\n# A map.\nMAP = {\na = 1\n}\n\n# How deep.\nDEPTH = \"2\"\n";
     assert_eq!(entry_keys(&extract_env_entries(inside)), ["MAP", "DEPTH"]);
 
-    let (text, added) = merge(None, &seeded(inside, "review")).expect("both are missing");
+    let shipped = seeded(inside, "review");
+    let (text, added) = merge(None, &shipped, &all(&shipped)).expect("both are missing");
     assert_eq!(added, ["MAP", "DEPTH"]);
     let got: toml::Table = text.parse().expect("the seeded file parses");
     assert!(got["env"]["MAP"].get("a").is_some(), "{text}");

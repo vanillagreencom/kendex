@@ -73,6 +73,9 @@ pub struct TemplateEntry {
     /// The default with its quotes removed. There are no escapes to
     /// decode: a value carrying `"` or `\` is a finding, not a row.
     pub value: String,
+    /// Whether the template marks this key as one the consumer must
+    /// decide, which is what an install writes into their file.
+    pub required: bool,
     /// 1-based first and last line of the comment block.
     pub comment_span: (u32, u32),
     /// 1-based line the assignment sits on.
@@ -258,6 +261,21 @@ fn scan(text: &str) -> (TemplateRead, BTreeSet<u32>) {
             }
             continue;
         }
+        // What a template may write after a value is the required marker
+        // and nothing else. A misspelling loads exactly as a correct
+        // marker does, so the loaders have no opinion on it and nothing
+        // downstream would ever say the key quietly stopped being one an
+        // install writes.
+        let marker = crate::settings_toml::trailing_comment(value).map(|(_, said)| said);
+        if let Some(said) = marker
+            && said != crate::settings_seed::REQUIRED_MARKER
+        {
+            read.findings.push(TemplateFinding {
+                line,
+                problem: format!("{key} carries `#{said}` after its value, and the only marker a template writes there is `# {}`", crate::settings_seed::REQUIRED_MARKER),
+                fix: format!("write `# {}` where the consumer must decide the key, and nothing after the value otherwise", crate::settings_seed::REQUIRED_MARKER),
+            });
+        }
         // A value the strict reader cannot decode is this line's syntax,
         // and TOML will refuse the same line in its own generic words.
         // Every other check here is a template rule the parser has no
@@ -278,6 +296,7 @@ fn scan(text: &str) -> (TemplateRead, BTreeSet<u32>) {
                 comment_span: (taken[0].0, taken[taken.len() - 1].0),
                 comment: taken.into_iter().map(|(_, text)| text).collect(),
                 value,
+                required: marker == Some(crate::settings_seed::REQUIRED_MARKER),
                 line,
             });
         }

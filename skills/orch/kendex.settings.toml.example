@@ -1,10 +1,11 @@
 [env]
 
 # ORCH — PR review gate, CI waits, reviewer fan-out, and handoff lanes.
-# Project-scope `kendex add` / `kendex refresh` merge these defaults into
-# <project>/kendex.settings.toml (never overwriting existing keys). Comments
-# here are one-line intent + landmines; full key reference: orch README.md /
-# DEVELOPMENT.md.
+# `kendex add` writes the keys marked `# required` below into
+# <project>/kendex.settings.toml, once, when this skill arrives; every other
+# key here ships the value its own scripts already read, and assigning it
+# there is how a project changes one. Comments here are one-line intent +
+# landmines; full key reference: orch README.md / DEVELOPMENT.md.
 
 # Directory orch keeps its per-issue workflow state in; the `--state-dir`
 # flag wins where both are set.

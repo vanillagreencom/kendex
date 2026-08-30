@@ -385,9 +385,9 @@ fn span_for(text: &str, key: &str, path: &Path) -> Refused<Range<usize>> {
             lines,
             problem,
         }),
-        // Seeding runs first and inserts every declared key the file does
-        // not already assign, so nothing readable is missing by the time
-        // an edit is written.
+        // Seeding runs first over the keys this save names — most of them
+        // are keys no install ever wrote — so nothing readable is missing
+        // by the time an edit reaches this.
         Current::Absent => Err(SettingsRefusal::Value {
             key: key.to_owned(),
             problem: "it is not assigned in this file and seeding did not insert it".to_owned(),
