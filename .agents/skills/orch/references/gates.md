@@ -25,6 +25,14 @@ The reviewer-gate settings — `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_Q
 
 Per-verdict routing lives in the workflows (`submit-pr.md` § 4, `merge-pr.md` § 5); each verdict's semantics live in that script's `--help`.
 
+A wait is a running waiter, never a session sitting at its prompt. CI is not
+what an open PR waits on: a reviewer posts on its own schedule, often after
+the checks are green, and a session that stopped to watch CI sees neither the
+thread nor the gate. Each waiter above reads the three states that decide the
+PR together — GitHub's merge state, the gate status with its description, and
+the unresolved thread count — so the answer arrives as a verdict rather than
+as a poll a session has to remember to run.
+
 ## Waiter auth ladder
 
 All three waiters share `scripts/lib/gh-auth.sh`, wrapping the GitHub skill's helpers: env-first, each candidate source probed at most once, exit `3` on hard auth failure. Summary in each `--help`; full ladder in `DEVELOPMENT.md`.
