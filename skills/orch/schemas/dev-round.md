@@ -58,7 +58,7 @@ Protected additions are:
 - `skills/*/scripts/` and `.agents/skills/*/scripts/`;
 - root or nested `src/test/`;
 - directories named `helper`, `helpers`, `test-helper`, `test-helpers`, `test_helper`, `test_helpers`, `test-util`, `test-utils`, `test_util`, or `test_utils`;
-- `lib`, `support`, `util`, or `utils` below a `test/`, `tests/`, or `__tests__/` path component;
+- any later `helper`, `helpers`, `lib`, `support`, `util`, or `utils` directory component after a `test`, `tests`, or `__tests__` component, regardless of intervening suite directories;
 - repository-relative paths containing `test-helper`, `test_helper`, `test-util`, or `test_util`;
 - files below a `test/`, `tests/`, or `__tests__/` path component whose basename before the first extension contains lowercase `helper`, `test-util`, or `test_util`, including suffix forms and dotfiles.
 

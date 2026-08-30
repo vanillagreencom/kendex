@@ -298,7 +298,7 @@ analysis_incomplete() {
 }
 
 is_protected_addition() {
-  local path="$1" basename stem
+  local path="$1" basename stem remaining component in_test_path=false
   case "$path" in
     *test-helper*|*test_helper*|*test-util*|*test_util*) return 0 ;;
   esac
@@ -309,24 +309,31 @@ is_protected_addition() {
     test-helper/*|test-helpers/*|test_helper/*|test_helpers/*|\
     test-util/*|test-utils/*|test_util/*|test_utils/*|\
     */test-helper/*|*/test-helpers/*|*/test_helper/*|*/test_helpers/*|\
-    */test-util/*|*/test-utils/*|*/test_util/*|*/test_utils/*|\
-    test/lib/*|tests/lib/*|__tests__/lib/*|test/support/*|tests/support/*|__tests__/support/*|\
-    test/util/*|tests/util/*|__tests__/util/*|test/utils/*|tests/utils/*|__tests__/utils/*|\
-    */test/lib/*|*/tests/lib/*|*/__tests__/lib/*|*/test/support/*|*/tests/support/*|*/__tests__/support/*|\
-    */test/util/*|*/tests/util/*|*/__tests__/util/*|*/test/utils/*|*/tests/utils/*|*/__tests__/utils/*)
+    */test-util/*|*/test-utils/*|*/test_util/*|*/test_utils/*)
       return 0
       ;;
   esac
+  remaining="$path"
+  while [[ "$remaining" == */* ]]; do
+    component="${remaining%%/*}"
+    remaining="${remaining#*/}"
+    if [[ "$in_test_path" == "true" ]]; then
+      case "$component" in
+        helper|helpers|support|lib|util|utils) return 0 ;;
+      esac
+    fi
+    case "$component" in
+      test|tests|__tests__) in_test_path=true ;;
+    esac
+  done
   basename="${path##*/}"
   while [[ "$basename" == .* ]]; do basename="${basename#.}"; done
   stem="${basename%%.*}"
-  case "$path" in
-    test/*|tests/*|__tests__/*|*/test/*|*/tests/*|*/__tests__/*)
-      case "$stem" in
-        *helper*|*test-util*|*test_util*) return 0 ;;
-      esac
-      ;;
-  esac
+  if [[ "$in_test_path" == "true" ]]; then
+    case "$stem" in
+      *helper*|*test-util*|*test_util*) return 0 ;;
+    esac
+  fi
   return 1
 }
 
