@@ -473,13 +473,16 @@ fn candidates_are_path_then_the_installer_s_own_dirs_without_repeats() {
     let home = Path::new("/home/pat");
     let home_bin = home.join(INSTALLER_HOME_BIN);
     let system = Path::new(INSTALLER_SYSTEM_BIN).join(COMMAND_NAME);
-    let path = std::ffi::OsString::from(format!("{}:/usr/bin", home_bin.display()));
+    // `PATH` is built by the rule that reads it back: Windows splits on
+    // `;`, and a hand-written `:` leaves the whole variable as one entry.
+    let other = Path::new("/usr/bin");
+    let path = std::env::join_paths([home_bin.as_path(), other]).unwrap();
 
     assert_eq!(
-        command_candidates(home, Some(&path)),
+        command_candidates(home, Some(path.as_os_str())),
         vec![
             home_bin.join(COMMAND_NAME),
-            PathBuf::from(format!("/usr/bin/{COMMAND_NAME}")),
+            other.join(COMMAND_NAME),
             system.clone(),
         ]
     );

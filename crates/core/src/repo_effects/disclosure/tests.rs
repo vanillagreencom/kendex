@@ -39,11 +39,16 @@ fn project(root: &Path) -> Scope {
 /// A declared `.git/...` path is named where git keeps it — in a linked
 /// worktree that is the main checkout's directory, not this one's — and
 /// flagged as shared; a path under the project is neither.
+///
+/// Every fixture root in this file is reduced, here and below. A root is
+/// not only what the test feeds in and expects back: it is also what git
+/// itself is given, as a `worktree add` argument and as a working
+/// directory, and git refuses the extended-length form.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn git_paths_land_in_the_common_dir_and_read_as_shared() {
     let tmp = tempfile::tempdir().unwrap();
-    let main = tmp.path().canonicalize().unwrap().join("main");
+    let main = crate::paths::canonical(tmp.path()).unwrap().join("main");
     fs::create_dir_all(&main).unwrap();
     git(&main, &["init", "--quiet", "-b", "main"]);
     fs::write(main.join("README"), "x").unwrap();
@@ -61,7 +66,7 @@ fn git_paths_land_in_the_common_dir_and_read_as_shared() {
             "one",
         ],
     );
-    let linked = tmp.path().canonicalize().unwrap().join("linked");
+    let linked = crate::paths::canonical(tmp.path()).unwrap().join("linked");
     git(
         &main,
         &["worktree", "add", "--quiet", linked.to_str().unwrap()],
@@ -99,7 +104,7 @@ fn git_paths_land_in_the_common_dir_and_read_as_shared() {
 #[allow(clippy::unwrap_used)]
 fn a_git_path_is_read_by_components_not_by_prefix() {
     let tmp = tempfile::tempdir().unwrap();
-    let repo = tmp.path().canonicalize().unwrap().join("repo");
+    let repo = crate::paths::canonical(tmp.path()).unwrap().join("repo");
     fs::create_dir_all(&repo).unwrap();
     git(&repo, &["init", "--quiet", "-b", "main"]);
     let common = crate::guard::Repo::at(&repo).unwrap().common_dir;

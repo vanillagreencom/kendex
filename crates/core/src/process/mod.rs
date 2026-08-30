@@ -58,19 +58,22 @@ const GIT_REDIRECTS: &[&str] = &[
 /// `protocol.ext.allow`: the `ext::` transport runs a shell command named in
 /// the URL, and a manifest's `repo` string is what reaches `git clone`.
 ///
-/// `core.autocrlf` and `core.eol`: a checkout hands kendex the content a
-/// catalog offered, and it has to be the same content on every host — the
-/// bytes are what a package installs and what a comparison is against. Git
-/// rewrites line endings on the way out of the object store when either of
-/// these says to, so on a host that says so every text file gains a
-/// carriage return per line and stops being what the repository holds. Git
-/// for Windows' installer writes `core.autocrlf=true` into the system
-/// config, which is what the GitHub Actions Windows runner carries;
-/// `core.eol` decides the same question for a repository whose own
-/// `.gitattributes` marks files as text, and defaults to the platform's
-/// ending. Both are shut here rather than per call site because the
-/// conversion belongs to every checkout, not to one command, and shutting
-/// one alone leaves the other door open.
+/// `core.autocrlf` and `core.eol`: what a catalog checks out must not
+/// depend on which host checked it out. Both settings tell git to rewrite
+/// line endings on the way out of the object store, and Git for Windows'
+/// installer writes `autocrlf=true` into the system config — which is what
+/// the GitHub Actions Windows runner carries — so the same catalog gave
+/// one set of bytes there and another on Linux. Pinned here, every host
+/// agrees.
+///
+/// What that leaves is what the repository declares for itself: a
+/// `.gitattributes` is an attribute and outranks any configuration, so a
+/// catalog committing `* text eol=crlf` still gets CRLF. It gets it
+/// equally on every host, which is the property kendex needs; the claim is
+/// deliberately this narrow rather than "the bytes the blob holds". Both
+/// settings are pinned rather than one, because `core.eol` decides for a
+/// repository that marks its files as text and `core.autocrlf` for one
+/// that does not.
 const PINNED: &[&str] = &[
     "protocol.ext.allow=never",
     "core.autocrlf=false",

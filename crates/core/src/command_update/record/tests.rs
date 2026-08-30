@@ -21,17 +21,25 @@ fn a_record_that_is_not_a_path_and_a_digest_is_no_record() {
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
     assert_eq!(recorded_command(&env), None, "nothing written at all");
 
+    // Where a record on this host names the command. `is_absolute` is a
+    // lexical test, so a Unix-shaped literal is a relative path on Windows
+    // and every case below would be refused for the wrong reason — the
+    // shape of the path rather than the fault the case is about.
+    let installed = match cfg!(windows) {
+        true => r"C:\Program Files\kendex\kendex.exe",
+        false => "/usr/local/bin/kendex",
+    };
     let digest = crate::hash::sha256_hex(WRAPPER);
     for written in [
         String::new(),
         "  \n".to_owned(),
         // The path alone: the whole of the record before the digest
         // existed, and a build that acted on it would replace by name.
-        "/usr/local/bin/kendex\n".to_owned(),
+        format!("{installed}\n"),
         format!("bin/kendex\n{digest}\n"),
-        format!("/usr/local/bin/kendex\n{}\n", &digest[..63]),
-        format!("/usr/local/bin/kendex\n{}z\n", &digest[..63]),
-        format!("/usr/local/bin/kendex\n{digest}{digest}\n"),
+        format!("{installed}\n{}\n", &digest[..63]),
+        format!("{installed}\n{}z\n", &digest[..63]),
+        format!("{installed}\n{digest}{digest}\n"),
     ] {
         std::fs::write(&file, &written).unwrap();
         assert_eq!(recorded_command(&env), None, "{written:?}");
@@ -39,11 +47,11 @@ fn a_record_that_is_not_a_path_and_a_digest_is_no_record() {
 
     // The control: the same file, well formed, is read. Without it every
     // assertion above passes for a reader that returns `None` always.
-    record_command(&env, Path::new("/usr/local/bin/kendex"), WRAPPER).unwrap();
+    record_command(&env, Path::new(installed), WRAPPER).unwrap();
     assert_eq!(
         recorded_command(&env),
         Some(InstalledCommand {
-            path: PathBuf::from("/usr/local/bin/kendex"),
+            path: PathBuf::from(installed),
             digest,
         })
     );

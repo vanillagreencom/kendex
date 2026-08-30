@@ -253,13 +253,17 @@ mod tests {
         assert!(posture_notes(&linked).is_empty());
 
         std::fs::write(main.join(".git/info/exclude"), ".agents/\n").unwrap();
+        // The expected text is built the way the note is built, off the
+        // main checkout alone. A separator written in by hand would be the
+        // wrong side of the comparison: the note names a file for the
+        // person at this machine, so it is spelled the way this platform
+        // spells one.
+        let exclude = Repo::at(&main).unwrap().common_dir.join("info/exclude");
+        let named = format!("{} ignores .agents —", exclude.display());
         for root in [&main, &linked] {
             let notes = posture_notes(root);
             assert_eq!(notes.len(), 1, "{notes:?}");
-            assert!(
-                notes[0].contains("info/exclude ignores .agents —"),
-                "{notes:?}"
-            );
+            assert!(notes[0].starts_with(&named), "{notes:?}");
             assert!(!notes[0].contains("linked"), "{notes:?}");
         }
     }

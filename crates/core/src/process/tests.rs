@@ -37,11 +37,11 @@ fn git_runs_without_redirecting_environment_and_without_prompts() {
 }
 
 /// Git converts line endings on checkout when the config it reads says to,
-/// and a converted file is no longer the content the catalog offered. The
-/// host that asks for this by default is Windows, but neither setting is
-/// Windows-only, so the arrangement that host makes is built here instead
-/// — a repository whose own config asks for the conversion, which outranks
-/// everything but the command line.
+/// so a host whose config says to hands back different bytes than a host
+/// whose config does not. The host that asks by default is Windows, but
+/// neither setting is Windows-only, so the arrangement that host makes is
+/// built here instead — a repository whose own config asks for the
+/// conversion, which outranks everything but the command line.
 #[test]
 fn a_repository_asking_for_line_ending_conversion_is_still_checked_out_as_committed() {
     for asked in [
