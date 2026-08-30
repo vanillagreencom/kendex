@@ -32,8 +32,10 @@ similar = "2"
 yaml-rust2 = "0.10"
 fd-lock = "4"
 # Already in the tree under fd-lock; used directly for the explicit unlock
-# that releases a lock's open file description before the fd closes.
-rustix = { version = "1", features = ["fs"] }
+# that releases a lock's open file description before the fd closes, and
+# for the effective uid, which is how a run learns it is privileged without
+# reading a variable whoever invoked it chose.
+rustix = { version = "1", features = ["fs", "process"] }
 unicode-normalization = "0.1"
 semver = "1"
 # The app already verifies its own downloads with these, through

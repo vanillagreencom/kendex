@@ -7,6 +7,8 @@
 //! record instead, so the next run from the recorded path moves this one to
 //! the bytes it finds there. Read by `command_update::command_beside_app`,
 //! which will not replace a file no record vouches for.
+//!
+//! Nothing here is written by a privileged run. See [`acting_as_root`].
 
 use std::path::{Path, PathBuf};
 
@@ -30,6 +32,39 @@ pub struct InstalledCommand {
     pub digest: String,
 }
 
+/// Whether this process is acting as root.
+///
+/// Every path written below is resolved from the environment this process
+/// was handed — `HOME` and `XDG_DATA_HOME` decide where [`Env`] puts the
+/// record — and a privileged run was handed that environment by whoever
+/// invoked it. `sudo` resets it on most machines, but a `sudoers` carrying
+/// `env_keep HOME` does not, and then a root process opens a file every
+/// component of whose name belongs to the invoking account: a link there
+/// is followed, and root writes wherever it points.
+///
+/// So a run acting as root writes no record. Nothing is lost by that:
+/// [`refresh_the_replaced_bytes`] moves the digest on any later run from
+/// the recorded path, so the person's own next unprivileged run — any
+/// verb, `--version` included — records the bytes the privileged run put
+/// there, into the file their own account owns.
+///
+/// The effective uid and nothing else. `sudo`, `su`, `doas` and a root
+/// login are one case here and none of them is distinguishable by a
+/// variable: `SUDO_USER` and its neighbours are set by whoever invoked the
+/// command, so a check reading one would be a check the invoker decides.
+#[cfg(unix)]
+fn acting_as_root() -> bool {
+    rustix::process::geteuid().is_root()
+}
+
+/// Windows has no uid to answer with, and none of the elevation this
+/// guards for — a command re-run under another account against the first
+/// account's environment — is reachable there.
+#[cfg(not(unix))]
+fn acting_as_root() -> bool {
+    false
+}
+
 /// The `kendex` command an installer recorded.
 ///
 /// Absent where nothing has been recorded — an install older than this
@@ -50,7 +85,20 @@ pub fn recorded_command(env: &Env) -> Option<InstalledCommand> {
 /// the command there, and rewritten by whatever replaces it: a record left
 /// naming bytes that are gone is a record that stops matching, which
 /// refuses a command kendex does own rather than replacing one it does not.
+///
+/// A run acting as root writes nothing and says so with success — see
+/// [`acting_as_root`].
 pub fn record_command(env: &Env, path: &Path, bytes: &[u8]) -> Result<(), String> {
+    record_command_as(env, path, bytes, acting_as_root())
+}
+
+/// The write itself, told who is making it. Split out so a test can drive
+/// the root arm on a machine where it cannot become root; every caller in
+/// the tree reaches it through [`record_command`], which asks the process.
+fn record_command_as(env: &Env, path: &Path, bytes: &[u8], root: bool) -> Result<(), String> {
+    if root {
+        return Ok(());
+    }
     let file = env.installed_command_file();
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent)
@@ -129,7 +177,20 @@ fn stage(
 /// reads it as no record and the app refuses the command, which is the safe
 /// direction; `kendex update` rewrites it, because that is the run replacing
 /// the bytes.
+///
+/// A run acting as root writes nothing here either — see [`acting_as_root`].
 pub fn record_first_run(env: &Env, running: &Path) -> Result<(), String> {
+    record_first_run_as(env, running, acting_as_root())
+}
+
+/// The bootstrap itself, told who is making it. Split for the reason
+/// [`record_command_as`] is, and guarded before the directory is made:
+/// `create_dir_all` under a root run is already root writing into a tree
+/// the invoking account named.
+fn record_first_run_as(env: &Env, running: &Path, root: bool) -> Result<(), String> {
+    if root {
+        return Ok(());
+    }
     let file = env.installed_command_file();
     let Some(parent) = file.parent() else {
         return Err(format!("{} names no directory", file.display()));

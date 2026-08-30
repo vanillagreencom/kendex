@@ -152,3 +152,84 @@ fn a_staging_write_with_no_free_name_fails() {
         "the taken name was written anyway"
     );
 }
+
+/// A run acting as root writes no record, wherever `HOME` points it.
+///
+/// The case: `sudoers` carrying `env_keep HOME`, so an elevated `kendex
+/// update` resolves the record path out of the invoking account's home and
+/// root then opens a file every component of whose name that account can
+/// replace. Both writers are driven — `record_first_run`, which every verb
+/// reaches before its arguments are parsed, and `record_command`, which
+/// `kendex update` reaches after the bytes land — and neither leaves so
+/// much as the directory behind.
+///
+/// Root is passed in rather than become: this suite runs as a person. What
+/// is real is everything else — the same `Env`, the same functions, a home
+/// on disk. The control is the second half, where the identical calls with
+/// the identical fixture write both records; without it every assertion
+/// above would hold for a pair of functions that never wrote anything.
+#[test]
+#[cfg(unix)]
+fn a_run_acting_as_root_writes_no_record() {
+    let dir = tempfile::tempdir().unwrap();
+    // The home an elevated run would be pointed at: this account's, kept
+    // across the privilege change by the sudoers policy.
+    let theirs = dir.path().join("home");
+    let env = Env::host_rooted(&theirs);
+    let file = env.installed_command_file();
+    let running = dir.path().join("kendex");
+    std::fs::write(&running, WRAPPER).unwrap();
+
+    record_first_run_as(&env, &running, true).unwrap();
+    record_command_as(&env, &running, WRAPPER, true).unwrap();
+    assert!(
+        !file.exists(),
+        "{} was written by a root run",
+        file.display()
+    );
+    assert!(
+        !file.parent().unwrap().exists(),
+        "{} was created by a root run",
+        file.parent().unwrap().display()
+    );
+
+    // The control. Same home, same file, same bytes, and the only thing
+    // that changed is who is making the write.
+    record_first_run_as(&env, &running, false).unwrap();
+    assert_eq!(
+        recorded_command(&env),
+        Some(InstalledCommand {
+            path: running.clone(),
+            digest: crate::hash::sha256_hex(WRAPPER),
+        }),
+        "the bootstrap did not write where the root arm was asked not to"
+    );
+    let replaced = b"the bytes that replaced it";
+    record_command_as(&env, &running, replaced, false).unwrap();
+    assert_eq!(
+        recorded_command(&env).unwrap().digest,
+        crate::hash::sha256_hex(replaced),
+        "the update write did not land where the root arm was asked not to"
+    );
+}
+
+/// The guard is wired to this process's own uid and not to a constant.
+/// Read the other way round, an unprivileged run still records: the public
+/// entry points ask [`acting_as_root`], the suite runs as a person, and the
+/// record lands. A build that answered `true` always would strand every
+/// person on the record they already had.
+#[test]
+#[cfg(unix)]
+fn an_unprivileged_run_still_records() {
+    assert!(!acting_as_root(), "this suite is meant to run unprivileged");
+    let dir = tempfile::tempdir().unwrap();
+    let env = Env::host_rooted(dir.path());
+    let running = dir.path().join("kendex");
+    std::fs::write(&running, WRAPPER).unwrap();
+
+    record_first_run(&env, &running).unwrap();
+    assert_eq!(
+        recorded_command(&env).map(|record| record.digest),
+        Some(crate::hash::sha256_hex(WRAPPER))
+    );
+}
