@@ -270,13 +270,10 @@ Omit empty categories. Decline any item that cannot affect real usage with a one
 
 ### At The Cap
 
-The cap decides before any delegation. Read the re-review cycles already entered:
+The cap decides before any delegation. Read the re-review cycles already entered and the cap they are measured against:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{rereview_cycles: (.rereview_cycles // 0)}'
-```
-
-```bash
 .agents/skills/orch/scripts/orch-env REVIEW_MAX_CYCLES 4
 ```
 
