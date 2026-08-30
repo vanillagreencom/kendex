@@ -61,13 +61,31 @@ PATTERN="$PATTERN"'|(^|[^[:alnum:]_])coproc([[:blank:]]|$)'
 # regexes; anchored on one side only, they missed a quoted left boundary and
 # a case arm running straight into the next pattern.
 #
-# What no anchor decides is which of two identical texts is code. `x\(|& cat`
-# is a pipe and `[\(|&]` is a character class; `x[;&b)` is a case arm and
-# `[a;&b]` is a class again. Separating those is parsing, not matching, so
-# the anchors take the shapes a pipeline has and let a regex literal that
-# spells one through in either direction. That is why a scan is a backstop
-# and never the rule: each of these has a Bash 3.2 spelling — `2>&1 |` for
-# the pipe, `>>file 2>&1` for the redirection, a repeated case body for the
+# WHAT THIS CANNOT DECIDE, named so the next reader does not file it again.
+# A regex reads text; deciding which text is code is parsing. Every line here
+# is that boundary rather than an oversight, and the ones that are misses are
+# checked as misses in tools/tests/data/bash32-uncatchable.txt, so this list
+# cannot quietly go stale:
+#
+#   - a redirection straight after the operator, `printf x |&>out`. Admitting
+#     > and < there reddens the awk pattern at
+#     skills/reviewer/tests/harness-safe-shell-lint.test.sh:104, which spells
+#     |&> and is legal source. One or the other, never both.
+#   - a bracket expression whose members spell an operator between word
+#     characters: `[a;&b]` reads exactly as the case arm `x;&b)`, and is
+#     flagged. Same for `[\(|&]` against `x\(|& cat`.
+#   - an operator inside a string or a comment. `msg="a |& b"` is flagged,
+#     and so is one written in prose in a suite that does not strip comments.
+#   - a construct assembled at runtime: eval, a command held in a variable, a
+#     heredoc piped to bash.
+#   - a declaration split over a backslash continuation, which a line-oriented
+#     scan does not see at all.
+#
+# What covers these is not another pattern. Each SKILL.md declares the shell
+# floor its scripts run on, and a lane running these suites under a real Bash
+# 3.2 on the macOS runner is filed as the follow-up to this PR. Until that
+# lands, every construct above has a Bash 3.2 spelling — `2>&1 |` for the
+# pipe, `>>file 2>&1` for the redirection, a repeated case body for the
 # fallthrough — and a script that writes those needs no verdict here.
 PATTERN="$PATTERN"'|(^|[^;(]|\\[;(])\|&([[:blank:]]|$|[[:alnum:]_.~$"])|&>>|(^|[^|]);;?&([^]|]|$)'
 # --- shared bash32 pattern set: end

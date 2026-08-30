@@ -63,3 +63,5 @@ cmd |&$RUNNER
 cmd |&"$log"
 case $x in a) printf x[;&b) :;; esac
   a) [ -n "$v" ];& b) :;;
+case x in x) printf \[;& y) :;; esac
+case x in x) printf [;& y) :;; esac

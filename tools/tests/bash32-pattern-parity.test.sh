@@ -288,10 +288,13 @@ ok "the block parses as a PATTERN chain and was never executed"
 # not a failure, and would land in the variable it was refusing to fill.
 PROBES=""
 CONTROLS=""
+UNCATCHABLE=""
 fixture_status=0
 PROBES="$(cat tools/tests/data/bash32-probes.txt)" || fixture_status=$?
 CONTROLS="$(cat tools/tests/data/bash32-controls.txt)" || fixture_status=$?
-if [ "$fixture_status" -ne 0 ] || [ -z "$PROBES" ] || [ -z "$CONTROLS" ]; then
+UNCATCHABLE="$(cat tools/tests/data/bash32-uncatchable.txt)" || fixture_status=$?
+if [ "$fixture_status" -ne 0 ] || [ -z "$PROBES" ] || [ -z "$CONTROLS" ] ||
+  [ -z "$UNCATCHABLE" ]; then
   bad "a fixture under tools/tests/data is missing or empty, so the proof has no cases"
   verdict
   exit
@@ -329,6 +332,22 @@ if [ -n "$false_positives" ]; then
   bad "the set flags Bash 3.2-legal source" "$(printf '%s\n' "$false_positives" | head -20)"
 else
   ok "no Bash 3.2-legal control line is flagged"
+fi
+
+# The stated limit is a list, and this is what keeps it from going stale. Each
+# of these is named in the block as a shape a text scan cannot decide, so each
+# must still go unflagged; closing one is a contract change and reds here
+# until the block's list is rewritten to match.
+status=0
+now_caught="$(scan hit "$PATTERN" "$UNCATCHABLE")" || status=$?
+if [ "$status" -ne 0 ]; then
+  bad "the stated-limit scan could not run (grep exited nonzero)"
+elif [ -n "$now_caught" ]; then
+  bad "the set now flags a construct the block says it cannot decide" \
+    "$(printf '%s\n' "$now_caught" | head -10)
+rewrite the block's stated limit, or take the line out of the fixture"
+else
+  ok "every shape the block calls undecidable is still unflagged"
 fi
 
 # Both checks above read the pattern rather than passing on their own shape: a
