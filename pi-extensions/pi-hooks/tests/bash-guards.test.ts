@@ -350,6 +350,20 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		await both(`cat <<-EOF\n\tgit commit ${nv} here\n\tEOF\ngit commit -m x`, "allow", "refuse");
 	});
 
+	test("a substitution close does not end the word", async () => {
+		// `$(true)#x` is one word to bash, so the hash touching the close is an
+		// ordinary character. Ending the word there made it a comment opener, and
+		// everything after it — the commit included — was discarded as a comment.
+		const nv = "--no-" + "verify";
+		const touching = `echo $(true)#x && git commit ${nv} -m x`;
+		await both(touching, "refuse", "refuse");
+		const named = await gate(armed, touching);
+		if (named.verdict.kind !== "refuse") throw new Error("unreachable");
+		expect(named.verdict.reason).toContain(`'${nv}' bypasses`);
+		// The control: a hash that is its own word still opens a comment.
+		await both(`echo $(true) # x && git commit ${nv} -m x`, "allow", "allow");
+	});
+
 	test("a construct the scanner never heard of leaves the words standing", async () => {
 		// Each of these desynchronised the argv parser that stood here, and each is
 		// closed by the rule reading live words instead: `coproc` is named nowhere.

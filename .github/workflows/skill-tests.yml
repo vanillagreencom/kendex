@@ -12,8 +12,7 @@ name: Skill Tests
 # before the merge, and again on the push to main as the post-merge record.
 # The shell shard and the cross-platform cargo lanes are the exceptions; each
 # says why. The review gate never conditions CI (it answers review-only; see
-# the review-gate skill) — there is no gate job here and nothing reads the
-# predicate.
+# the review-gate skill) — no gate job here reads the predicate.
 #
 # Heavy jobs run on Blacksmith when the org's CI_RUNNER_* variables are set,
 # falling back to GitHub-hosted so the workflow runs anywhere.
@@ -43,8 +42,8 @@ jobs:
     name: Skill suites shard (${{ matrix.shard }})
     # A pull request narrows the shard LIST, never the job's `if`: `matrix` is no
     # context a job condition may read, and GitHub answers one that does with
-    # "Unrecognized named-value", invalidating the whole file. `strategy` reads
-    # `github`. Shell runs on PRs so a hang in it is red there, not an ejection.
+    # "Unrecognized named-value", invalidating the file. `strategy` reads
+    # `github`; shell runs on PRs so a hang in it is red there.
     strategy:
       fail-fast: false
       matrix:

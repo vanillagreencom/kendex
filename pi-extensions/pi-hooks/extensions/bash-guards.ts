@@ -236,8 +236,9 @@ export function scanCommand(command: string): CommandScan {
 		} else if (ch === "#") {
 			while (i < n && command[i] !== "\n") i++;
 		} else if (ch === ")" && depth > 0) {
+			// The close does not end the word: `$(true)#x` is one word to bash, so a
+			// hash touching it is an ordinary character rather than a comment opener.
 			depth--;
-			flush();
 			i++;
 		} else if (depth > 0) {
 			flush();

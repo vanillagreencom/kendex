@@ -544,6 +544,22 @@ both 'cat <<EOF\n\tEOF\n\"\nEOF\ngit commit '"$NV"' -m \"x\"' 2 2 "a tab-indente
 both 'cat <<-EOF\n\tgit commit '"$NV"' here\n\tEOF\ngit commit -m x' 0 2 "a tab-indented EOF under <<-"
 
 echo
+echo "a substitution close does not end the word"
+
+# `$(true)#x` is one word to bash, so the hash touching the close is an
+# ordinary character. Ending the word there made it a comment opener, and
+# everything after it — the commit included — was discarded as a comment.
+# shellcheck disable=SC2016
+both 'echo $(true)#x && git commit '"$NV"' -m x' 2 2 "a hash touching a substitution close"
+# shellcheck disable=SC2016
+run_hook "$ARMED" "$(payload 'echo $(true)#x && git commit '"$NV"' -m x')" CHAIN_EXIT=0
+assert_contains "$err" "'--no-verify' bypasses" "the touching-hash form names the flag behind it"
+
+# The control: a hash that is its own word still opens a comment.
+# shellcheck disable=SC2016
+both 'echo $(true) # x && git commit '"$NV"' -m x' 0 0 "a hash standing as its own word"
+
+echo
 echo "a construct the scanner never heard of leaves the words standing"
 
 # Each of these desynchronised the argv parser that stood here, and each is

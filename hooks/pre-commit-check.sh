@@ -4,7 +4,7 @@
 # event: PreToolUse
 # matcher: Bash
 # description: On a git commit, defer to the working directory's armed git hooks — both pre-commit and commit-msg, marked and executable (kendex guard install arms them). Otherwise the commit is refused naming that command: arming is the local act that says a person wants this repository's committed scripts run on their commits, and this hook never runs them on their behalf. Where one is armed, a command that sidesteps it with git's no-verify flag, -n, or a core.hooksPath override is refused: git would skip the commit-msg hook too, and nothing here can check the message. The command is split into simple commands and only its live words are judged: heredoc bodies and comment tails are text, a quoted word is a live word whose text is its unquoted content, and a `git` word with a later `commit` word is the commit. Whole words decide, so a quoted --no-verify is the flag while a commit message naming it is one long word of prose. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
-# safety: Refuses a commit from a working directory with no armed git pre-commit hook rather than running that repository's own scripts to check it, and refuses a git commit argv that bypasses an armed hook (no-verify, -n) or injects git configuration that could (a global -c or --config-env option, a GIT_CONFIG_* assignment, a git config write of core.hooksPath); it models no argv, so a construct it does not recognise leaves the words standing and is judged rather than passing unjudged, and its blind spot is the other way round: text a shell would run but this drops, inside quotes or a heredoc body, and a commit aimed at another repository is that repository's armed hook's to gate.
+# safety: Refuses a commit from a working directory with no armed git pre-commit hook rather than running that repository's own scripts to check it, and refuses a commit whose live words include one that bypasses an armed hook (no-verify, -n) or injects git configuration that could (-c, --config-env, a GIT_CONFIG_* assignment, a core.hooksPath key, an alias definition); it models no argv, so a construct it does not recognise leaves the words standing and is judged rather than passing unjudged, and its blind spot is the other way round: text a shell would run but this drops, inside quotes or a heredoc body, and a commit aimed at another repository is that repository's armed hook's to gate.
 # timeout: 60
 # ---
 
@@ -164,7 +164,9 @@ function scan(cmd,   n, i, ch, c2, d, j, start) {
       while (i <= n && substr(cmd, i, 1) != "\n") i++
       continue
     }
-    if (ch == ")" && d > 0) { d--; flush_word(); i++; continue }
+    # The close does not end the word: `$(true)#x` is one word to bash, so a
+    # hash touching it is an ordinary character rather than a comment opener.
+    if (ch == ")" && d > 0) { d--; i++; continue }
     if (d > 0) { flush_word(); i++; continue }
     end_command()
     if (ch == "\n") i = heredoc_bodies(cmd, i, n)
@@ -254,7 +256,7 @@ done <<<"$ANALYSIS"
 
 [ -n "$COMMIT" ] || exit 0
 
-# Repository-moving words (-C, --git-dir, --work-tree in the git argv, a `cd`,
+# Repository-moving words (-C, --git-dir, --work-tree, a `cd` command,
 # a GIT_DIR or GIT_WORK_TREE assignment) mean the commit may land elsewhere.
 # This lane never follows them: where it cannot defer it names the directory it
 # judged and leaves the target to the target's own hook.
@@ -289,7 +291,7 @@ if [ "$HOOKS_PATH_STATUS" -eq 1 ] \
   && grep -qF -- "$MARKER" "$HOOKS_DIR/commit-msg" 2>/dev/null; then
   ARMED=1
 fi
-# An armed hook means git gates the commit; an argv sidestepping it is refused.
+# An armed hook means git gates the commit; a word sidestepping it is refused.
 if [ -n "$ARMED" ]; then
   [ -n "$BYPASS" ] || exit 0
   echo "pre-commit-check: '$BYPASS' bypasses this repository's armed git hooks or injects configuration that could, and the commit-msg gate cannot be checked from here — commit without bypassing hooks or passing git configuration; git runs the installed pre-commit and commit-msg hooks itself" >&2
