@@ -1,10 +1,11 @@
 # size-ratchet
 
 A tighten-only gate on file size. New code cannot introduce a tracked file
-over the line threshold; files already over it are frozen in a baseline at
-their current counts and may only shrink. Growth is never automated away:
-the single path to a bigger number is a human editing the baseline row in a
-reviewed diff, with the justification on the record. Flags and exit codes:
+over its threshold; files already over it are frozen in a baseline at their
+current sizes and may only shrink. Growth is never automated away: the single
+path to a bigger number is a human editing the baseline row in a reviewed
+diff, declared with `RATCHET_RAISE=1`, and refused outright in a frozen
+class. Markdown is measured in bytes and code in lines. Flags and exit codes:
 `size-ratchet --help`; verdicts: [Semantics](#semantics); internals:
 `DEVELOPMENT.md`.
 
@@ -20,32 +21,66 @@ reviewed diff, with the justification on the record. Flags and exit codes:
 ## Semantics
 
 - **Scope**: every tracked file (`git ls-files`), tests included, minus the
-  exclusion list. Lines are newline counts (`wc -l`).
-- **Threshold**: default `400` lines, override via `SIZE_RATCHET_THRESHOLD`.
-  `SIZE_RATCHET_CLASSES` maps globs to thresholds so one repo can run more
-  than one number — see [Path classes](#path-classes). Every file resolves to
+  exclusion list.
+- **Units**: a class threshold counts LINES when it is a bare number and
+  BYTES when it carries the `k` suffix (`24k` = 24×1024 bytes). Lines are
+  newline counts. The shipped list measures markdown in bytes, because a line
+  count on prose moves 60% under a re-wrap, and everything else in lines.
+- **Threshold**: `SIZE_RATCHET_CLASSES` first, then the shipped
+  `SIZE_RATCHET_DEFAULT_CLASSES`, then `SIZE_RATCHET_THRESHOLD` (default
+  `400` lines) — see [Path classes](#path-classes). Every file resolves to
   exactly one threshold, and every other semantic runs per file against it.
 - **FAIL** (exit 1) on any of:
   1. **New offender** — a file over its threshold with no baseline row.
-  2. **Growth** — a baselined file whose actual count exceeds its row.
+  2. **Growth** — a baselined file whose actual size exceeds its row.
   3. **Baseline looser than reality** — a row above the file's actual
-     count, a row for a file now at/under its threshold, or a row for a
+     size, a row for a file now at/under its threshold, or a row for a
      file that left the tracked set (deleted, or newly excluded). The
      ratchet must move down; stale slack is a failure, not headroom.
-  4. **A test row added or raised** — [DEVELOPMENT.md](DEVELOPMENT.md#test-rows-are-never-raised).
+  4. **A row in the wrong unit** — a byte class carrying a line row, or the
+     reverse. The number counts something else, so `--update` re-measures it
+     instead of comparing it.
+  5. **A row added or raised over HEAD's baseline** — see
+     [Raising a row](#raising-a-row).
 - **`--staged`** counts index blobs for every tracked file rather than
   preferring the worktree copy: what the commit records is the blob. Use it
   in a pre-commit hook; CI, which checks out a clean tree, does not need it.
-- **`--update`** tightens only: it lowers rows to the actual count and
-  removes rows for files now at/under their own threshold or no longer
-  counted — never adds a row, never raises a number — then re-checks, so it
-  still exits 1 while growth or new offenders remain.
+  It also runs the `--update` rewrite itself and stages the baseline, so a
+  commit that shrinks a limited file passes on the first attempt. Two
+  accepted edges, neither of which loosens a row: a `git commit -- <paths>`
+  commit acquires the baseline change, and unrelated unstaged row edits in
+  the baseline are staged along with it.
+- **`--update`** tightens only: it lowers rows to the actual size, re-measures
+  rows whose unit no longer matches their class, and removes rows for files
+  now at/under their own threshold or no longer counted — never adds a row,
+  never raises a number — then re-checks, so it still exits 1 while growth or
+  new offenders remain.
 - Exit codes: `0` clean, `1` violations, `2` usage/config/collection error.
+
+## Raising a row
+
+A baseline row is the only way past a threshold, so a row a change adds or
+raises is that threshold routed around.
+
+- **Frozen classes** (`SIZE_RATCHET_FROZEN_CLASSES`, default every markdown
+  class and every test class) refuse a raise outright. A test splits and a
+  document is cut; neither is ever the fix that needs the added lines.
+- **Every other added or raised row** needs `RATCHET_RAISE=1` on the
+  invocation. No commit message is read — a pre-commit hook cannot see one —
+  so the reason belongs in the commit body, where review reads it.
+- A repo whose HEAD carries no baseline rows yet is bootstrapping, and the
+  gate stays quiet until its first row set is committed.
 
 ## Baseline format
 
 `tools/size-ratchet-baseline.tsv` by default (`SIZE_RATCHET_BASELINE` or
-`--baseline FILE` to relocate). One row per frozen offender, `path<TAB>lines`.
+`--baseline FILE` to relocate). One row per frozen offender, `path<TAB>size`,
+the size suffixed `b` when its class counts bytes:
+
+```
+docs/handbook.md	86104b
+crates/core/src/error.rs	495
+```
 
 Rows are `LC_ALL=C` sorted, paths unique, counts positive. A malformed,
 unsorted, or duplicated baseline is a config error (exit 2), not a silent
@@ -55,35 +90,53 @@ pass — the file is reviewed input, so it fails loud.
 
 `--update` never adds rows, so the first baseline has its own mode:
 `size-ratchet --seed` writes every tracked, non-excluded file over its
-deciding threshold at its current count, `LC_ALL=C` sorted. It refuses once
+deciding threshold at its current size, `LC_ALL=C` sorted. It refuses once
 the baseline has rows in the worktree, the index **or** `HEAD` — the ratchet
 is live there. The seeded file lands uncommitted, so the initial freeze is
 still a reviewed diff.
 
 ## Path classes
 
-`SIZE_RATCHET_CLASSES` gives a repo more than one threshold without any
-local code. It is one line of `pattern=threshold` entries separated by `;`:
+A file's threshold is the **first** entry whose pattern matches its full
+repo-relative path across `SIZE_RATCHET_CLASSES`, then
+`SIZE_RATCHET_DEFAULT_CLASSES`, else `SIZE_RATCHET_THRESHOLD`. Patterns are
+the same shell globs as the exclusion list (`*` crosses `/`), matched by the
+same matcher. A pattern cannot contain `;`, which separates entries.
+
+The package ships this list, so a repo that configures nothing still runs it:
+
+| Class | Threshold |
+|---|---|
+| `AGENTS.md`, `CLAUDE.md`, and their nested forms | 24k bytes |
+| `*/SKILL.md` | 24k bytes |
+| `*/workflows/*.md` | 40k bytes |
+| every other `*.md` | 64k bytes |
+| `*/tests/*`, `*/test/*`, `*/__tests__/*`, `*/tests.rs`, `*test_util.rs`, `*.test.*`, `*.spec.*` | 800 lines |
+| everything else | `SIZE_RATCHET_THRESHOLD`, 400 lines |
+
+A repo overrides a class, never the list: its own entries are matched first,
+and the shipped list decides everything they leave alone.
 
 ```toml
 [env]
-SIZE_RATCHET_THRESHOLD = "400"
-SIZE_RATCHET_CLASSES = "tests/*=800;*/tests/*=800;*.test.*=800"
+SIZE_RATCHET_CLASSES = "*/SKILL.md=32k"
 ```
 
-A file's threshold is the **first** entry whose pattern matches its full
-repo-relative path, else `SIZE_RATCHET_THRESHOLD`. Patterns are the same
-shell globs as the exclusion list (`*` crosses `/`), matched by the same
-matcher. A pattern cannot contain `;`, which separates entries.
+`SIZE_RATCHET_DEFAULT_CLASSES = ""` runs with no classes at all.
 
-A directory name takes **both** forms, as above: `*/tests/*` requires a
-slash-delimited prefix, so a root-level `tests/` matches only `tests/*`.
+A directory name takes **both** forms: `*/tests/*` requires a
+slash-delimited prefix, so a root-level `tests/` needs its own `tests/*`
+entry.
 
 ## Exclusion list
 
 `tools/size-ratchet-excludes` by default (`SIZE_RATCHET_EXCLUDES` or
 `--excludes FILE`). One pattern per line, with a mandatory reason —
 `pattern<TAB>reason`.
+
+The package applies its own exclusions on top of that list — currently
+`CHANGELOG*.md`, where one long file is the documented norm and the entries,
+not the file, are what carry a rule.
 
 The pattern is a shell glob matched against the full repo-relative path (`*`
 crosses `/`). Blank lines and `#` comments are ignored; a pattern without a
@@ -101,7 +154,9 @@ src/gen/*.rs	generated bindings
 | Key | Default | Meaning |
 |---|---|---|
 | `SIZE_RATCHET_THRESHOLD` | `400` | Line threshold for paths matching no class. |
-| `SIZE_RATCHET_CLASSES` | *(none)* | Per-path-class thresholds, `pattern=threshold` separated by `;`. |
+| `SIZE_RATCHET_CLASSES` | *(none)* | This repo's overrides, `pattern=threshold` separated by `;`, matched before the shipped list. |
+| `SIZE_RATCHET_DEFAULT_CLASSES` | *(the shipped list)* | The class list the package ships; empty runs with no classes. |
+| `SIZE_RATCHET_FROZEN_CLASSES` | *(markdown and tests)* | `;`-separated globs whose rows may never rise. |
 | `SIZE_RATCHET_BASELINE` | `tools/size-ratchet-baseline.tsv` | Baseline path. |
 | `SIZE_RATCHET_EXCLUDES` | `tools/size-ratchet-excludes` | Exclusion-list path. |
 
@@ -114,6 +169,10 @@ uses `KEY=value` or `export KEY=value`, parsed, never sourced. A source that exi
 (`--baseline=`, `--baseline ""`) is a config error, never a silent fall back
 to the default path. All relative paths are repo-root-relative; the script
 `cd`s to `git rev-parse --show-toplevel` before resolving anything.
+
+`RATCHET_RAISE=1` is not configuration: it is a per-invocation declaration
+that this run's added or raised rows are deliberate, read from the
+environment alone.
 
 ## Requirements
 

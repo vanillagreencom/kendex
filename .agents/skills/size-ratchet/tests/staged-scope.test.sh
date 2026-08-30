@@ -10,7 +10,11 @@ SR="$SKILL_DIR/scripts/size-ratchet"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sr-staged.XXXXXX")"
 trap 'rm -rf -- "$TMP"' EXIT
 
-unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE 2>/dev/null || true
+unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_DEFAULT_CLASSES SIZE_RATCHET_FROZEN_CLASSES SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE 2>/dev/null || true
+# The shipped class list and frozen list are policy, pinned by
+# shipped-defaults.test.sh. Every fixture here declares its own thresholds,
+# so both start empty and a case that needs one sets it.
+export SIZE_RATCHET_DEFAULT_CLASSES="" SIZE_RATCHET_FROZEN_CLASSES=""
 
 PASS=0
 FAIL=0
@@ -105,8 +109,13 @@ run_sr --staged
 [ "$RC" -eq 1 ] && ok "an unstaged baseline bump does not authorize staged growth" \
   || bad "unstaged baseline bump rejected" "rc=$RC out=$OUT"
 git -C "$R" add tools/size-ratchet-baseline.tsv
+# Staged, the row is a RAISE over HEAD's, so the declaration is what carries
+# it — the raise gate is orthogonal to which snapshot the run reads.
 run_sr --staged
-[ "$RC" -eq 0 ] && ok "control: staging the baseline row alongside it passes" \
+[ "$RC" -eq 1 ] && ok "staging the raise alone is still a refusal — the row rose over HEAD's" \
+  || bad "staged raise without a declaration" "rc=$RC out=$OUT"
+OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 RATCHET_RAISE=1 "$SR" --staged 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 0 ] && ok "control: staging the baseline row and declaring the raise passes" \
   || bad "staged baseline row passes" "rc=$RC out=$OUT"
 
 new_repo policy-excludes
@@ -140,6 +149,27 @@ run_sr --staged
 run_sr
 [ "$RC" -eq 0 ] && ok "control: the default mode still reads the worktree copy" \
   || bad "default mode reads worktree baseline" "rc=$RC out=$OUT"
+
+# The --staged rewrite must not put it back either. The recreated row here is
+# LOOSE, so the rewrite has something to do and would stage the file — which
+# is the one way the deletion could be undone by the gate that judges it.
+new_repo policy-deleted-loose
+mkdir -p "$R/tools"
+mkfile big.txt 40
+printf 'big.txt\t40\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+git -C "$R" commit -q -m seed
+git -C "$R" rm -q --cached tools/size-ratchet-baseline.tsv
+printf 'big.txt\t60\n' >"$R/tools/size-ratchet-baseline.tsv"
+run_sr --staged
+staged_del="$(git -C "$R" diff --cached --diff-filter=D --name-only)"
+case "$staged_del" in
+  *tools/size-ratchet-baseline.tsv*) ok "the staged deletion still stands — the rewrite left the recreated copy alone" ;;
+  *) bad "the staged deletion still stands" "deleted-in-index=$staged_del out=$OUT" ;;
+esac
+[ "$(cat "$R/tools/size-ratchet-baseline.tsv")" = "$(printf 'big.txt\t60')" ] \
+  && ok "and the worktree copy is untouched" \
+  || bad "the worktree copy is untouched" "row=$(cat "$R/tools/size-ratchet-baseline.tsv")"
 
 echo "=== staged mode reads tracked settings from the index ==="
 new_repo policy-settings
@@ -284,7 +314,9 @@ git -C "$R" commit -q -m seed
 # An unstaged freeze row must survive an --update even under --staged, which
 # rewrites the worktree file it therefore has to read.
 printf 'also.txt\t30\nbig.txt\t40\n' >"$R/tools/size-ratchet-baseline.tsv"
-run_sr --staged --update
+# The added row is one HEAD's baseline does not carry, so the run declares it;
+# what is under test here is that --update reads and keeps the worktree copy.
+OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 RATCHET_RAISE=1 "$SR" --staged --update 2>&1)" && RC=0 || RC=$?
 [ "$RC" -eq 0 ] && ok "--staged --update keeps an unstaged freeze row" \
   || bad "staged update keeps unstaged row" "rc=$RC row=$(cat "$R/tools/size-ratchet-baseline.tsv") out=$OUT"
 case "$(cat "$R/tools/size-ratchet-baseline.tsv")" in

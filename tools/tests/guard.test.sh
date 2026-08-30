@@ -1,31 +1,27 @@
 #!/usr/bin/env bash
 # Pins what tools/guard still judges once the shipped packages judge the
-# rest: the size-ratchet baseline may only tighten unless RATCHET_RAISE=1
-# says otherwise, the fragment format the collator refuses is refused at
-# commit too, and the [Unreleased] list gains lines only under
-# CHANGELOG_COLLATE=1 — a verdict that must not turn on the caller's
-# collation.
-# It also pins the absence — a line cap, a work marker, a blanket allow, an
-# oversized file and an over-long changelog entry all pass here, because
-# size-ratchet, todo-ban, suppression-ban, byte-ceiling and changelog-entries
-# are the judges of those. The failing direction runs first so a green pass is
-# evidence, not a check that cannot fail.
+# rest: the fragment format the collator refuses is refused at commit too,
+# and the [Unreleased] list gains lines only under CHANGELOG_COLLATE=1 — a
+# verdict that must not turn on the caller's collation.
+# It also pins the absence — a size cap, a raised size-ratchet row, a work
+# marker, a blanket allow, an oversized file and an over-long changelog entry
+# all pass here, because size-ratchet, todo-ban, suppression-ban,
+# byte-ceiling and changelog-entries are the judges of those. The failing
+# direction runs first so a green pass is evidence, not a check that cannot
+# fail.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUARD="$(cd "$TEST_DIR/.." && pwd)/guard"
 REPO="$(cd "$TEST_DIR/../.." && pwd)"
-RATCHET="$REPO/.agents/skills/size-ratchet/scripts/size-ratchet"
 CHANGELOG_ENTRIES="$REPO/.agents/skills/growth-guards/scripts/changelog-entries"
+RATCHET="$REPO/.agents/skills/size-ratchet/scripts/size-ratchet"
 REAL_GIT="$(command -v git)"
 REAL_AWK="$(command -v awk)"
 # Enforcement in this repo rests on this key, and a glob matching no tracked
 # file is a documented clean pass — so a hardcoded copy here would stay green
 # after the key stopped reaching the fragment tree.
 CHANGELOG_PATHS="$(sed -n 's/^GROWTH_GUARDS_CHANGELOG_PATHS = "\(.*\)"$/\1/p' "$REPO/kendex.settings.toml")"
-# The repo's own classes line, read where it lives: the seam pinned below is
-# between two judges reading one policy, so the test may not restate it.
-CLASSES="$(sed -n 's/^SIZE_RATCHET_CLASSES = "\(.*\)"$/\1/p' "$REPO/kendex.settings.toml")"
 TMP="$(mktemp -d)"
 mkdir -p "$TMP/nohooks"
 trap 'rm -rf "$TMP"' EXIT
@@ -72,12 +68,6 @@ run_guard() { # [VAR=VALUE...] — sets OUT and RC
   OUT="$(cd "$R" && env "$@" "$GUARD" 2>&1)" || RC=$?
 }
 
-run_ratchet() { # sets OUT and RC — the repo's classes, nothing else
-  OUT=""
-  RC=0
-  OUT="$(cd "$R" && env SIZE_RATCHET_CLASSES="$CLASSES" "$RATCHET" 2>&1)" || RC=$?
-}
-
 TAB="$(printf '\t')"
 
 echo "=== new temporary fixtures derive their canonical root at creation ==="
@@ -87,7 +77,7 @@ temp_case() { # pass|refuse LABEL SOURCE-LINE...
   shift 2
   printf '%s\n' "$@" >"$R/crates/core/tests/temp_path.rs"
   git -C "$R" add -A
-  run_guard RATCHET_RAISE=
+  run_guard
   if [ "$expected" = pass ] && [ "$RC" -eq 0 ]; then
     ok "$label"
   elif [ "$expected" = refuse ] && [ "$RC" -ne 0 ] && [[ "$OUT" == *"temporary fixture bypasses rooted()"* ]]; then
@@ -144,11 +134,11 @@ fi
 exec "$REAL_AWK" "$@"
 SH
 chmod +x "$R/fake-bin/git" "$R/fake-bin/awk"
-run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" REAL_AWK="$REAL_AWK" FAIL_TEMP_DIFF=1
+run_guard PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" REAL_AWK="$REAL_AWK" FAIL_TEMP_DIFF=1
 [ "$RC" -ne 0 ] && case "$OUT" in *"test fixture changes could not be read"*) true ;; *) false ;; esac \
   && ok "a failed fixture diff blocks guard" \
   || bad "a failed fixture diff blocks guard" "rc=$RC out=$OUT"
-run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" REAL_AWK="$REAL_AWK" FAIL_TEMP_AWK=1
+run_guard PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" REAL_AWK="$REAL_AWK" FAIL_TEMP_AWK=1
 [ "$RC" -ne 0 ] && case "$OUT" in *"temporary fixture declarations could not be checked"*) true ;; *) false ;; esac \
   && ok "a failed fixture parser blocks guard" \
   || bad "a failed fixture parser blocks guard" "rc=$RC out=$OUT"
@@ -190,11 +180,11 @@ check_call() { # TARGET — the one cargo line guard is allowed to run for it
   printf 'check -p kendex-core -p kendex-cli --all-targets --target %s' "$1"
 }
 : >"$CARGO_CALL_LOG"
-run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_LIST_RESULT=1
+run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_LIST_RESULT=1
 [ "$RC" -ne 0 ] && case "$OUT" in *"rustup could not list installed targets"*) true ;; *) false ;; esac \
   && ok "a failed installed-target lookup blocks guard" \
   || bad "a failed installed-target lookup blocks guard" "rc=$RC out=$OUT"
-run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS=x86_64-unknown-linux-gnu
+run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS=x86_64-unknown-linux-gnu
 [ "$RC" -ne 0 ] &&
   case "$OUT" in *"Rust target $APPLE is not installed"*) true ;; *) false ;; esac &&
   case "$OUT" in *"Rust target $WINDOWS is not installed"*) true ;; *) false ;; esac \
@@ -206,20 +196,20 @@ else
   ok "a missing target is not handed to cargo"
 fi
 : >"$CARGO_CALL_LOG"
-run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS="$WINDOWS"
+run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS="$WINDOWS"
 [ "$RC" -ne 0 ] && case "$OUT" in *"Rust target $APPLE is not installed"*) true ;; *) false ;; esac &&
   [ "$(grep -cFx "$(check_call "$WINDOWS")" "$CARGO_CALL_LOG")" -eq 1 ] \
   && ok "a missing target does not stop the targets after it" \
   || bad "a missing target does not stop the targets after it" "rc=$RC out=$OUT log=$(cat "$CARGO_CALL_LOG")"
 for failing in "$APPLE" "$WINDOWS"; do
   : >"$CARGO_CALL_LOG"
-  run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS="$BOTH" CROSS_CHECK_FAIL="$failing"
+  run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS="$BOTH" CROSS_CHECK_FAIL="$failing"
   [ "$RC" -ne 0 ] && case "$OUT" in *"$failing core and CLI test targets failed to compile"*) true ;; *) false ;; esac \
     && ok "a failing $failing compiler verdict blocks guard, naming it" \
     || bad "a failing $failing compiler verdict blocks guard, naming it" "rc=$RC out=$OUT"
 done
 : >"$CARGO_CALL_LOG"
-run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS="$BOTH"
+run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS="$BOTH"
 [ "$RC" -eq 0 ] \
   && ok "installed targets that all compile reach the host suite" \
   || bad "installed targets that all compile reach the host suite" "rc=$RC out=$OUT"
@@ -230,37 +220,14 @@ run_guard RATCHET_RAISE= PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LO
 git -C "$R" reset -q HEAD -- Cargo.toml
 rm -f "$R/Cargo.toml"
 
-echo "=== a baseline row this change adds is a raise ==="
-mkfile crates/big.rs 401
-baseline "crates/big.rs${TAB}401"
-git -C "$R" add -A
-run_guard RATCHET_RAISE=
-[ "$RC" -ne 0 ] && case "$OUT" in *"baseline rows went up"*"new row: crates/big.rs"*) true ;; *) false ;; esac \
-  && ok "a new baseline row fails, naming the path" \
-  || bad "a new baseline row fails, naming the path" "rc=$RC out=$OUT"
-run_guard RATCHET_RAISE=1
-[ "$RC" -eq 0 ] && ok "RATCHET_RAISE=1 declares the new row" \
-  || bad "RATCHET_RAISE=1 declares the new row" "rc=$RC out=$OUT"
-git -C "$R" commit -q -m "chore: baseline the file"
-
-echo "=== a row that goes up is a raise; one that goes down is not ==="
-mkfile crates/big.rs 450
-baseline "crates/big.rs${TAB}450"
-git -C "$R" add -A
-run_guard RATCHET_RAISE=
-[ "$RC" -ne 0 ] && case "$OUT" in *"baseline rows went up"*"crates/big.rs: 401 -> 450"*) true ;; *) false ;; esac \
-  && ok "a raised row fails, naming both counts" \
-  || bad "a raised row fails, naming both counts" "rc=$RC out=$OUT"
-run_guard RATCHET_RAISE=1
-[ "$RC" -eq 0 ] && ok "RATCHET_RAISE=1 declares the raise" \
-  || bad "RATCHET_RAISE=1 declares the raise" "rc=$RC out=$OUT"
-baseline "crates/big.rs${TAB}380"
-git -C "$R" add -A
-run_guard RATCHET_RAISE=
-[ "$RC" -eq 0 ] && ok "a tightened row passes without declaring anything" \
-  || bad "a tightened row passes without declaring anything" "rc=$RC out=$OUT"
-
 echo "=== the shipped packages' verdicts are not twinned here ==="
+# HEAD has to carry a row set for the ratchet's added-row verdict to have
+# anything to compare against: against an empty baseline every row reads as a
+# bootstrap one, and the control below would pass without judging anything.
+mkfile crates/existing.rs 401
+baseline "crates/existing.rs${TAB}401"
+git -C "$R" add -A
+git -C "$R" commit -q -m "chore: a baseline with a row in it"
 mkfile crates/uncapped.rs 401
 mkfile ui/uncapped.ts 300
 printf '// %s: unfinished\n' "TO""DO" >"$R/crates/marker.rs" # split, or todo-ban fails this file
@@ -269,11 +236,21 @@ head -c 300000 /dev/zero | tr '\0' 'x' >"$R/crates/huge.bin"
 mkdir -p "$R/changelog.d/fixed"
 LONG="$(head -c 260 /dev/zero | tr '\0' 'e')"
 printf -- '- %s\n' "$LONG" >"$R/changelog.d/fixed/ken-long.md"
+mkfile crates/rowed.rs 401
+baseline "crates/existing.rs${TAB}401" "crates/rowed.rs${TAB}401"
 git -C "$R" add -A
-run_guard RATCHET_RAISE=
+run_guard
 [ "$RC" -eq 0 ] \
-  && ok "an over-cap file, a work marker, a blanket allow, a 300 KB file and an over-long changelog entry all pass — the packages judge those" \
-  || bad "an over-cap file, a work marker, a blanket allow, a 300 KB file and an over-long changelog entry all pass — the packages judge those" "rc=$RC out=$OUT"
+  && ok "an over-cap file, an undeclared baseline row, a work marker, a blanket allow, a 300 KB file and an over-long changelog entry all pass — the packages judge those" \
+  || bad "an over-cap file, an undeclared baseline row, a work marker, a blanket allow, a 300 KB file and an over-long changelog entry all pass — the packages judge those" "rc=$RC out=$OUT"
+# The control for the row: size-ratchet itself refuses the same undeclared
+# row, so guard's silence about baseline rows is a delegation and not a gap.
+SR_OUT=""
+SR_RC=0
+SR_OUT="$(cd "$R" && "$RATCHET" 2>&1)" || SR_RC=$?
+[ "$SR_RC" -eq 1 ] && case "$SR_OUT" in *"baseline row added: crates/rowed.rs"*) true ;; *) false ;; esac \
+  && ok "control: size-ratchet refuses the undeclared row guard passed" \
+  || bad "control: size-ratchet refuses the undeclared row guard passed" "rc=$SR_RC out=$SR_OUT"
 # The control for the entry: the package lane that owns it does refuse the
 # same fragment under THIS repository's configured paths, so guard's silence
 # is a delegation and not a gap, and the key is proven to reach the tree
@@ -283,7 +260,8 @@ CE_RC=0
 [ "$CE_RC" -eq 1 ] \
   && ok "control: under the repo's own configured paths, changelog-entries refuses the fragment guard passed" \
   || bad "control: under the repo's own configured paths, changelog-entries refuses the fragment guard passed" "rc=$CE_RC paths=$CHANGELOG_PATHS"
-rm -f "$R/crates/uncapped.rs" "$R/ui/uncapped.ts" "$R/crates/marker.rs" "$R/crates/blanket.rs" "$R/crates/huge.bin" "$R/changelog.d/fixed/ken-long.md"
+rm -f "$R/crates/uncapped.rs" "$R/ui/uncapped.ts" "$R/crates/marker.rs" "$R/crates/blanket.rs" "$R/crates/huge.bin" "$R/changelog.d/fixed/ken-long.md" "$R/crates/rowed.rs" "$R/crates/existing.rs"
+: >"$R/tools/size-ratchet-baseline.tsv"
 git -C "$R" add -A
 
 echo "=== the fragment format is the collator's verdict, carried by guard ==="
@@ -293,7 +271,7 @@ echo "=== the fragment format is the collator's verdict, carried by guard ==="
 mkdir -p "$R/changelog.d/fixed"
 printf -- '- A fragment.\n' >"$R/changelog.d/fixed/ken-1.md"
 git -C "$R" add -A
-run_guard RATCHET_RAISE=
+run_guard
 [ "$RC" -eq 0 ] && ok "a well-formed fragment passes" \
   || bad "a well-formed fragment passes" "rc=$RC out=$OUT"
 # Keep a Changelog's six sections, written out rather than read from the
@@ -305,7 +283,7 @@ for s in $SECTION_DIRS; do
   printf -- '- An entry filed under %s.\n' "$s" >"$R/changelog.d/$s/ken-2.md"
 done
 git -C "$R" add -A
-run_guard RATCHET_RAISE=
+run_guard
 [ "$RC" -eq 0 ] && ok "a fragment under each of the six sections passes" \
   || bad "a fragment under each of the six sections passes" "rc=$RC out=$OUT"
 for s in $SECTION_DIRS; do
@@ -318,28 +296,28 @@ git -C "$R" add -A
 
 printf -- '- Stray.\n' >"$R/changelog.d/loose.md"
 git -C "$R" add -A
-run_guard RATCHET_RAISE=
+run_guard
 [ "$RC" -ne 0 ] && case "$OUT" in *"the collator refuses"*"changelog.d/loose.md is not a changelog fragment"*) true ;; *) false ;; esac \
   && ok "guard carries the collator's refusal, naming the file" \
   || bad "guard carries the collator's refusal, naming the file" "rc=$RC out=$OUT"
 rm -f "$R/changelog.d/loose.md"
 printf -- '- One entry.\n- A second entry.\n' >"$R/changelog.d/fixed/ken-3.md"
 git -C "$R" add -A
-run_guard RATCHET_RAISE=
+run_guard
 [ "$RC" -ne 0 ] && case "$OUT" in *"changelog.d/fixed/ken-3.md holds more than the one entry"*) true ;; *) false ;; esac \
   && ok "a two-entry fragment is refused at commit, not at release" \
   || bad "a two-entry fragment is refused at commit, not at release" "rc=$RC out=$OUT"
 rm -f "$R/changelog.d/fixed/ken-3.md"
 git -C "$R" add -A
 mv "$R/tools/changelog-collate" "$R/tools/changelog-collate.away"
-run_guard RATCHET_RAISE=
+run_guard
 mv "$R/tools/changelog-collate.away" "$R/tools/changelog-collate"
 [ "$RC" -ne 0 ] && case "$OUT" in *"tools/changelog-collate is missing or not executable"*) true ;; *) false ;; esac \
   && ok "a missing collator fails closed, naming the check that could not run" \
   || bad "a missing collator fails closed, naming the check that could not run" "rc=$RC out=$OUT"
 printf '# changelog.d\n\nNot a list item either.\n' >"$R/changelog.d/README.md"
 git -C "$R" add -A
-run_guard RATCHET_RAISE=
+run_guard
 [ "$RC" -eq 0 ] && ok "the README is not judged as a fragment" \
   || bad "the README is not judged as a fragment" "rc=$RC out=$OUT"
 
@@ -350,21 +328,21 @@ git -C "$R" add -A
 git -C "$R" commit -q -m "chore: land the changelog"
 printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- A wrapped entry\n  second line\n  third line.\n- One line.\n- A hand-written line.\n' >"$R/CHANGELOG.md"
 git -C "$R" add -A
-run_guard RATCHET_RAISE=
+run_guard
 [ "$RC" -ne 0 ] && case "$OUT" in *"gained lines under [Unreleased]"*"- A hand-written line."*) true ;; *) false ;; esac \
   && ok "a hand-written [Unreleased] line fails, quoting the line" \
   || bad "a hand-written [Unreleased] line fails, quoting the line" "rc=$RC out=$OUT"
-run_guard RATCHET_RAISE= CHANGELOG_COLLATE=1
+run_guard CHANGELOG_COLLATE=1
 [ "$RC" -eq 0 ] && ok "CHANGELOG_COLLATE=1 declares the collator's write" \
   || bad "CHANGELOG_COLLATE=1 declares the collator's write" "rc=$RC out=$OUT"
 printf '# Changelog\n\n## [Unreleased]\n\n## [1.0.0] - 2026-01-01\n\n### Fixed\n\n- A wrapped entry\n  second line\n  third line.\n- One line.\n' >"$R/CHANGELOG.md"
 git -C "$R" add -A
-run_guard RATCHET_RAISE=
+run_guard
 [ "$RC" -eq 0 ] && ok "rotating [Unreleased] into a released version adds no line" \
   || bad "rotating [Unreleased] into a released version adds no line" "rc=$RC out=$OUT"
 if [ "$(id -u)" -ne 0 ]; then
   chmod 000 "$R/CHANGELOG.md"
-  run_guard RATCHET_RAISE=
+  run_guard
   chmod 644 "$R/CHANGELOG.md"
   [ "$RC" -ne 0 ] && case "$OUT" in *"could not be compared against HEAD"*) true ;; *) false ;; esac \
     && ok "an unreadable CHANGELOG fails the [Unreleased] rule closed too" \
@@ -379,7 +357,7 @@ git -C "$R" add -A
 git -C "$R" commit -q -m "chore: rotate the changelog"
 printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- One line.\n\n\n\n- Another line.\n\n- A real new line.\n\n## [1.0.0] - 2026-01-01\n' >"$R/CHANGELOG.md"
 git -C "$R" add -A
-run_guard RATCHET_RAISE=
+run_guard
 [ "$RC" -ne 0 ] && case "$OUT" in *"gained lines under [Unreleased]"*"- A real new line."*) true ;; *) false ;; esac \
   && ok "an entry added beside blank padding is refused, quoting the entry" \
   || bad "an entry added beside blank padding is refused, quoting the entry" "rc=$RC out=$OUT"
@@ -411,12 +389,12 @@ if [ -z "$COLLATE_LOCALE" ]; then
 else
   printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- **Breaking:** alpha.\n- plain beta.\n- `code` gamma.\n' >"$R/CHANGELOG.md"
   git -C "$R" add -A
-  run_guard RATCHET_RAISE= LC_ALL="$COLLATE_LOCALE"
+  run_guard LC_ALL="$COLLATE_LOCALE"
   [ "$RC" -eq 0 ] && ok "a deletion-only edit passes under $COLLATE_LOCALE" \
     || bad "a deletion-only edit passes under $COLLATE_LOCALE" "rc=$RC out=$OUT"
   printf "$UR"'- A hand-written line.\n' >"$R/CHANGELOG.md"
   git -C "$R" add -A
-  run_guard RATCHET_RAISE= LC_ALL="$COLLATE_LOCALE"
+  run_guard LC_ALL="$COLLATE_LOCALE"
   [ "$RC" -ne 0 ] && case "$OUT" in *"gained lines under [Unreleased]"*"- A hand-written line."*) true ;; *) false ;; esac \
     && ok "under $COLLATE_LOCALE the one added line is the only one named" \
     || bad "under $COLLATE_LOCALE the one added line is the only one named" "rc=$RC out=$OUT"
@@ -426,38 +404,15 @@ fi
 echo "=== a second copy of an entry is a line the tree gained ==="
 printf "$UR"'- Zeta delta.\n' >"$R/CHANGELOG.md"
 git -C "$R" add -A
-run_guard RATCHET_RAISE=
+run_guard
 [ "$RC" -ne 0 ] && case "$OUT" in *"gained lines under [Unreleased]"*"- Zeta delta."*) true ;; *) false ;; esac \
   && ok "a duplicated [Unreleased] line fails, quoting it" \
   || bad "a duplicated [Unreleased] line fails, quoting it" "rc=$RC out=$OUT"
 printf "$UR" >"$R/CHANGELOG.md"
 git -C "$R" add -A
-run_guard RATCHET_RAISE=
+run_guard
 [ "$RC" -eq 0 ] && ok "control: the same file with no duplicate passes" \
   || bad "control: the same file with no duplicate passes" "rc=$RC out=$OUT"
-
-echo "=== a test row RATCHET_RAISE declares is still refused by the ratchet ==="
-# Guard judges the declaration; the ratchet judges the row. A test is never
-# raised, so the declaration does not carry it — and the seam only holds if
-# the two are asked in the same repo state.
-mkfile crates/big.rs 450
-mkfile ui/x.test.ts 800
-baseline "crates/big.rs${TAB}450"
-git -C "$R" add -A
-run_ratchet
-[ "$RC" -eq 0 ] && ok "control: a test exactly at its class threshold needs no row" \
-  || bad "control: a test exactly at its class threshold needs no row" "rc=$RC out=$OUT"
-mkfile ui/x.test.ts 801
-baseline "crates/big.rs${TAB}450" "ui/x.test.ts${TAB}801"
-git -C "$R" add -A
-run_guard RATCHET_RAISE=1
-[ "$RC" -eq 0 ] && ok "guard takes the declaration for both new rows" \
-  || bad "guard takes the declaration for both new rows" "rc=$RC out=$OUT"
-run_ratchet
-[ "$RC" -eq 1 ] && case "$OUT" in *"test baseline row added: ui/x.test.ts"*) true ;; *) false ;; esac \
-  && ok "the ratchet refuses the test row the declaration would have carried" \
-  || bad "the ratchet refuses the test row the declaration would have carried" "rc=$RC out=$OUT"
-case "$OUT" in *"crates/big.rs"*) bad "the non-test row raised in the same diff is not refused" "$OUT" ;; *) ok "the non-test row raised in the same diff is not refused" ;; esac
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

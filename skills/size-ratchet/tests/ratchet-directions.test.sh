@@ -12,7 +12,11 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 # Hermetic: a leaked setting would mask every case below.
-unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE 2>/dev/null || true
+unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_DEFAULT_CLASSES SIZE_RATCHET_FROZEN_CLASSES SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE 2>/dev/null || true
+# The shipped class list and frozen list are policy, pinned by
+# shipped-defaults.test.sh. Every fixture here declares its own thresholds,
+# so both start empty and a case that needs one sets it.
+export SIZE_RATCHET_DEFAULT_CLASSES="" SIZE_RATCHET_FROZEN_CLASSES=""
 
 PASS=0
 FAIL=0
@@ -40,6 +44,14 @@ run_sr() { # [args...] — run in $R at threshold 10; sets OUT and RC
   OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 "$SR" "$@" 2>&1)" || RC=$?
 }
 
+# The same run with `*.test.*` frozen, for the cases about a class whose rows
+# never rise. RAISE=1 declares the raise the way a commit does.
+run_frozen() { # [args...]
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 SIZE_RATCHET_FROZEN_CLASSES='*.test.*' RATCHET_RAISE="${RAISE:-}" "$SR" "$@" 2>&1)" || RC=$?
+}
+
 echo "=== control: a clean repo passes, including a file exactly AT the threshold ==="
 new_repo clean
 mkfile a.txt 5
@@ -60,15 +72,18 @@ run_sr
   || bad "one line over the threshold fails as a new offender" "rc=$RC out=$OUT"
 case "$OUT" in *"$REMEDY"*) ok "new-offender diagnostic carries the remedy verbatim" ;; *) bad "new-offender diagnostic carries the remedy verbatim" "$OUT" ;; esac
 
-echo "=== a test offender gets the split remedy alone ==="
+echo "=== a frozen-class offender gets the split remedy alone ==="
 new_repo testoff
 mkfile x.test.txt 11
 git -C "$R" add -A
-run_sr
+run_frozen
 [ "$RC" -eq 1 ] && case "$OUT" in *"new offender: x.test.txt"*) true ;; *) false ;; esac \
-  && ok "a test path over the threshold is still a new offender" \
-  || bad "a test path over the threshold is still a new offender" "rc=$RC out=$OUT"
-case "$OUT" in *RATCHET_RAISE*) bad "a test offender is never offered a raise" "$OUT" ;; *) ok "a test offender is never offered a raise" ;; esac
+  && ok "a frozen path over the threshold is still a new offender" \
+  || bad "a frozen path over the threshold is still a new offender" "rc=$RC out=$OUT"
+case "$OUT" in *RATCHET_RAISE*) bad "a frozen offender is never offered a raise" "$OUT" ;; *) ok "a frozen offender is never offered a raise" ;; esac
+# The control: the same file outside the frozen list is offered the raise.
+run_sr
+case "$OUT" in *RATCHET_RAISE*) ok "control: an unfrozen offender is offered the declaration" ;; *) bad "control: an unfrozen offender is offered the declaration" "$OUT" ;; esac
 
 echo "=== a baseline row at the current count freezes the offender ==="
 new_repo frozen
@@ -234,7 +249,7 @@ git -C "$R" add -A
 run_sr --baseline custom-baseline.tsv
 [ "$RC" -eq 0 ] && ok "--baseline points the check at a custom path" || bad "--baseline points the check at a custom path" "rc=$RC out=$OUT"
 
-echo "=== a test row is frozen where HEAD froze it, never added or raised ==="
+echo "=== a row a change adds or raises is declared, and a frozen one is refused ==="
 BASE="tools/size-ratchet-baseline.tsv"
 commit_baselined() { # NAME PATH LINES ROWLINES — fixture whose HEAD carries the row
   new_repo "$1"
@@ -245,45 +260,58 @@ commit_baselined() { # NAME PATH LINES ROWLINES — fixture whose HEAD carries t
   git -C "$R" commit -q -m "seed: a baselined offender"
 }
 commit_baselined testhead x.test.txt 15 15
-run_sr
-[ "$RC" -eq 0 ] && ok "a test row already at HEAD is grandfathered" \
-  || bad "a test row already at HEAD is grandfathered" "rc=$RC out=$OUT"
+run_frozen
+[ "$RC" -eq 0 ] && ok "a row already at HEAD is grandfathered" \
+  || bad "a row already at HEAD is grandfathered" "rc=$RC out=$OUT"
 mkfile x.test.txt 20
 printf 'x.test.txt\t20\n' >"$R/$BASE"
 git -C "$R" add -A
-run_sr
-[ "$RC" -eq 1 ] && case "$OUT" in *"test baseline row raised: x.test.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
-  && ok "raising a test row fails, naming both counts" \
-  || bad "raising a test row fails, naming both counts" "rc=$RC out=$OUT"
-case "$OUT" in *"a test is never raised"*) ok "the raise diagnostic offers the split remedy alone" ;; *) bad "the raise diagnostic offers the split remedy alone" "$OUT" ;; esac
+run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"frozen baseline row raised: x.test.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
+  && ok "raising a frozen row fails, naming both counts" \
+  || bad "raising a frozen row fails, naming both counts" "rc=$RC out=$OUT"
+case "$OUT" in *"refuses a raise whatever RATCHET_RAISE says"*) ok "the raise diagnostic says the declaration will not help" ;; *) bad "the raise diagnostic says the declaration will not help" "$OUT" ;; esac
+RAISE=1 run_frozen
+[ "$RC" -eq 1 ] && ok "and the declaration really does not help — a frozen raise is refused with it" \
+  || bad "a frozen raise is refused even when declared" "rc=$RC out=$OUT"
 # HEAD carries a baseline, but no row for this path: adding one is the same
-# refusal routed around.
+# threshold routed around, and the declaration is what carries it.
 commit_baselined testnew other.txt 15 15
 mkfile y.test.txt 15
 printf 'other.txt\t15\ny.test.txt\t15\n' >"$R/$BASE"
 git -C "$R" add -A
-run_sr
-[ "$RC" -eq 1 ] && case "$OUT" in *"test baseline row added: y.test.txt — 15 lines > threshold 10"*) true ;; *) false ;; esac \
-  && ok "adding a test row fails, naming the count and threshold" \
-  || bad "adding a test row fails, naming the count and threshold" "rc=$RC out=$OUT"
-# The control that keeps this gate test-class only.
+run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline row added: y.test.txt — 15 lines > threshold 10"*) true ;; *) false ;; esac \
+  && ok "adding a row fails undeclared, naming the count and threshold" \
+  || bad "adding a row fails undeclared, naming the count and threshold" "rc=$RC out=$OUT"
+# A new path still gets its bootstrap row: the frozen list refuses raises, not
+# first rows.
+RAISE=1 run_frozen
+[ "$RC" -eq 0 ] && ok "a declared bootstrap row passes even in a frozen class" \
+  || bad "a declared bootstrap row passes even in a frozen class" "rc=$RC out=$OUT"
+# The control that this gate is not frozen-class only: an ordinary row is
+# refused undeclared and passes declared.
 commit_baselined nontest plain.txt 15 15
 mkfile plain.txt 20
 printf 'plain.txt\t20\n' >"$R/$BASE"
 git -C "$R" add -A
-run_sr
-[ "$RC" -eq 0 ] && ok "control: raising a NON-test row is not this gate's business" \
-  || bad "control: raising a NON-test row is not this gate's business" "rc=$RC out=$OUT"
-# A row for a test at or under its threshold is stale, and stale is the one
+run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline row raised: plain.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
+  && ok "raising an unfrozen row is refused undeclared" \
+  || bad "raising an unfrozen row is refused undeclared" "rc=$RC out=$OUT"
+RAISE=1 run_frozen
+[ "$RC" -eq 0 ] && ok "control: the declaration carries an unfrozen raise" \
+  || bad "control: the declaration carries an unfrozen raise" "rc=$RC out=$OUT"
+# A row for a file at or under its threshold is stale, and stale is the one
 # thing to say about it.
 commit_baselined stale z.test.txt 15 15
 mkfile z.test.txt 5
 git -C "$R" add -A
-run_sr
+run_frozen
 [ "$RC" -eq 1 ] && case "$OUT" in *"stale baseline row: z.test.txt"*) true ;; *) false ;; esac \
-  && ok "a test row under the threshold is stale" \
-  || bad "a test row under the threshold is stale" "rc=$RC out=$OUT"
-case "$OUT" in *"test baseline row"*) bad "one root cause is reported once" "$OUT" ;; *) ok "one root cause is reported once" ;; esac
+  && ok "a row under the threshold is stale" \
+  || bad "a row under the threshold is stale" "rc=$RC out=$OUT"
+case "$OUT" in *"row raised"* | *"row added"*) bad "one root cause is reported once" "$OUT" ;; *) ok "one root cause is reported once" ;; esac
 # A placeholder committed empty is not a row set: judging against it would
 # call every row of the first real baseline one this change added.
 new_repo emptyhead
@@ -295,9 +323,9 @@ git -C "$R" commit -q -m "seed: an empty baseline placeholder"
 mkfile w.test.txt 15
 printf 'w.test.txt\t15\n' >"$R/$BASE"
 git -C "$R" add -A
-run_sr
-[ "$RC" -eq 0 ] && ok "a zero-row HEAD baseline is no baseline, so the first test row passes" \
-  || bad "a zero-row HEAD baseline is no baseline, so the first test row passes" "rc=$RC out=$OUT"
+run_frozen
+[ "$RC" -eq 0 ] && ok "a zero-row HEAD baseline is no baseline, so the first row passes undeclared" \
+  || bad "a zero-row HEAD baseline is no baseline, so the first row passes undeclared" "rc=$RC out=$OUT"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -256,12 +256,6 @@ GH_ISSUE_PATTERN = "ken-[0-9]+"
 LINEAR_FORMAT = "safe"
 ORCH_STATE_DIR = "tmp"
 
-# File-size ratchet classes: the ceiling a path gets when it is not the
-# default. Tests and generated READMEs earn room the default does not give;
-# ui/ TypeScript is held to 250, tighter than Rust, because a component that
-# long has stopped being one component.
-SIZE_RATCHET_CLASSES = "*/README.md=120;*/tests/*=800;*/test/*=800;*/__tests__/*=800;*/tests.rs=800;*test_util.rs=800;*.test.*=800;ui/*.ts=250;ui/*.tsx=250"
-
 # ── Worktrees ────────────────────────────────────────────────────────────
 # What a fresh issue worktree gets from this checkout: only paths git does
 # not carry. An entry does nothing when git carries every path under it, and

@@ -6,7 +6,7 @@ live in README.md.
 ## Structure
 
 - `scripts/size-ratchet` — the whole gate: collection, class resolution,
-  verdicts, `--update`, `--seed`
+  verdicts, the tighten-only rewrite, `--seed`
 - `scripts/lib/settings.sh` — layered settings resolution
 - `SKILL.md` — agent-facing skill definition
 - `README.md` — consumer documentation
@@ -15,6 +15,21 @@ live in README.md.
 
 `bash tests/*.sh` is the lane `tools/validate-changed` derives for a change
 under this skill.
+
+## Units
+
+A class threshold carries its unit: a bare number counts lines, a `k` suffix
+counts kibibytes. Markdown is measured in bytes because a line count on it
+moves 60% under a re-wrap and varies twofold in density between repos, while
+the byte count does not; code keeps lines, which is what every linter caps.
+
+The unit rides beside the threshold through class resolution (`PU`), through
+collection (one pending batch per unit, so an interleaved tree still batches
+rather than degrading to a call per file), into the counts rows, and out
+again as a baseline row's `b` suffix. Nothing compares across units: a row
+whose unit no longer matches its class is reported as one to RE-MEASURE, and
+`--update` rewrites it at the current size in the new unit. That is the whole
+migration path — one `--update` per repo, and no mode of its own.
 
 ## Collection
 
@@ -37,17 +52,49 @@ a TRACKED baseline, exclusion list or settings source is read from the index
 too, so an unstaged edit to any of them cannot authorize growth the commit
 does not carry, and a policy file staged for DELETION governs as absent. An
 untracked source (a personal `.env.local`) is still the worktree copy, and
-an explicit environment variable still wins over everything.
+an explicit environment variable still wins over everything. The one thing
+`--staged` reads from the worktree is the baseline it is about to REWRITE —
+see the next section, where the verdict still comes from the index copy.
+
+## The tighten-only rewrite
+
+`--update` and `--staged` run the same rewrite: rows lowered to the measured
+size, rows re-measured where their unit changed, rows removed for files now
+at/under their threshold or out of the counted set, and never a row added or
+raised. `--staged` runs it so a commit that SHRINKS a limited file passes on
+the first attempt instead of failing, waiting for a `--update`, and being
+made again; it then stages the result.
+
+That rewrite reads the WORKTREE copy of the baseline, which is what gets
+staged — rebuilding from the index copy would delete a developer's unstaged
+row edits rather than carrying them. Two accepted edges follow, both visible
+in the diff: a `git commit -- <paths>` commit acquires the baseline change,
+and unrelated unstaged row edits go into the index with it. Neither loosens a
+row: the rewrite is tighten-only against the STAGED content, so an unstaged
+raise is pulled back down to the measured size, and when no rewrite happens
+the INDEX copy governs the verdict, so a row the worktree carries and the
+commit does not still fails the run.
+
+The baseline is itself a counted file, so the rewrite reconciles its own row
+against the file it is about to become. A line row settles in one pass —
+editing a value in place cannot change a line count — but a byte row does
+not, since the digits are part of the length it records, so the pass repeats
+to a fixed point and a candidate that will not settle fails loud rather than
+being written out to fail its own check.
 
 ## `--seed`
 
 `--seed` collects by the same pass the gate itself trusts (index blobs,
-symlink skipping, tab/newline refusal), `LC_ALL=C` sorted, with a self-row
-when the baseline outgrows its own threshold. It refuses a baseline that
-already has rows in the worktree, the index **or** `HEAD`: the ratchet is
-live there, and growth stays a reviewed hand-edit — staging the baseline's
-deletion or truncation is not a reseed ticket. The seeded file lands
-uncommitted, so every frozen offender enters the record deliberately.
+symlink skipping, tab/newline refusal), `LC_ALL=C` sorted, each row in its
+class's unit, with a self-row when the baseline outgrows its own threshold —
+solved by the same fixed-point iteration, because the row's own digits are
+part of what it measures.
+
+It refuses a baseline that already has rows in the worktree, the index **or**
+`HEAD`: the ratchet is live there, and growth stays a reviewed hand-edit —
+staging the baseline's deletion or truncation is not a reseed ticket. The
+seeded file lands uncommitted, so every frozen offender enters the record
+deliberately.
 
 In a sparse checkout that omits the baseline file, checks still run against
 the index copy, but `--update` refuses (it will not rewrite a file the
@@ -59,15 +106,22 @@ then rerun.
 
 ## Path-class evaluation
 
+The class list a path is matched against is `SIZE_RATCHET_CLASSES` (the
+repo's own overrides) followed by `SIZE_RATCHET_DEFAULT_CLASSES` (the list
+the package ships), first match wins. A repo therefore overrides a class
+without restating the list, and `SIZE_RATCHET_DEFAULT_CLASSES=""` is exact
+single-threshold behavior. Markdown entries come before the test entries in
+the shipped list, so a README or a doc under a `tests/` directory is judged
+as the document it is.
+
 A directory name takes both class forms: `*` may match nothing but the
 literal `/` in `*/tests/*` still must be there, so `*/tests/*` covers
 `pkg/tests/x` and never a root-level `tests/x` — that one needs `tests/*`.
 
-Whitespace around a `SIZE_RATCHET_CLASSES` entry and around its `=` is
-ignored, and an empty entry is skipped. A malformed entry — no `=`, an empty
-pattern, a threshold that is not a positive integer — is a config error
-(exit 2) naming the entry, never a silent fall back to the base threshold.
-Unset or empty is exact single-threshold behavior.
+Whitespace around an entry and around its `=` is ignored, and an empty entry
+is skipped. A malformed entry — no `=`, an empty pattern, a threshold that is
+not a positive integer with an optional `k` — is a config error (exit 2)
+naming the entry, never a silent fall back to the base threshold.
 
 Classes move only the number a path is judged against: new-offender, growth,
 and stale-row detection and the tighten-only `--update` all run per file
@@ -92,11 +146,15 @@ explicit environment variables and the built-in defaults.
 
 ## Migration
 
-Consumers already running a size ratchet with this exact baseline format
-(`path<TAB>lines`, `LC_ALL=C` sorted) can swap this script in drop-in: keep
+Consumers already running a size ratchet with this baseline format
+(`path<TAB>size`, `LC_ALL=C` sorted) can swap this script in drop-in: keep
 the existing baseline file where it is and point `SIZE_RATCHET_BASELINE`
-(or `--baseline`) at it. Semantics are unchanged by agreement across repos:
-same three failure directions, same tighten-only `--update`.
+(or `--baseline`) at it. Rows written before the units existed carry no
+suffix and read as line counts, which is what they were.
+
+A baseline whose markdown rows are line counts migrates in one `--update`:
+each such row is re-measured in bytes, or removed where the file is under its
+byte class, and the run reports no growth doing it.
 
 A repo adopting the `400` default over a looser one gains offenders in the
 range between the two thresholds. Order matters: declare
@@ -107,21 +165,28 @@ immediately failing migration.
 
 `--update` never adds rows, so the freeze is one hand-edit: with the classes
 declared, run the check and turn each reported `new offender` line into a
-`path<TAB>lines` row (see
+`path<TAB>size` row (see
 [Seeding a first baseline](README.md#seeding-a-first-baseline)), then commit
 that baseline together with the settings change. Declaring
 `SIZE_RATCHET_THRESHOLD` explicitly keeps the previous number instead.
 
-## Test rows are never raised
+## Added and raised rows
 
-A test splits; it is never raised, and a hand-edited baseline row is the
-only way past a threshold. So a row for a test-class path — `*/tests/*`,
-`*/test/*`, `*/__tests__/*`, `*/tests.rs`, `*test_util.rs`, `*.test.*` —
-that HEAD's baseline does not carry, or carries lower, fails: `test
-baseline row added` and `test baseline row raised`.
+A hand-edited baseline row is the only way past a threshold, so a row a
+change adds or raises is that threshold routed around. `RATCHET_RAISE=1` on
+the invocation declares it: `baseline row added` and `baseline row raised`
+fail without it. No commit message is read, because a pre-commit hook cannot
+see one — the reason belongs in the commit body, where review reads it.
+
+`SIZE_RATCHET_FROZEN_CLASSES` refuses a RAISE regardless of that
+declaration, and defaults to every markdown class and every test class. It
+does not refuse a first row: a new path still gets its bootstrap row, which
+is what a repo adopting a class needs on day one.
 
 Rows already at HEAD are grandfathered, because the gate judges the change
 and not the history it inherited. A HEAD with no baseline (an unborn HEAD,
 a first `--seed`, a baseline this change introduces) has nothing to compare
 and the rule stays quiet. A row whose file is at or under its threshold is
-reported as stale instead, so one root cause reads as one verdict.
+reported as stale instead, so one root cause reads as one verdict. A unit
+change is never a raise: the two numbers are not comparable, so the row is
+re-measured and the gate says nothing about it.

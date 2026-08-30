@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # kendex guardrails — the repo-specific rules, run as the last lane of the
 # growth-guards pre-commit chain (GROWTH_GUARDS_PRE_COMMIT_LOCAL). Every rule
-# a shipped package already judges is that package's: size-ratchet caps lines,
-# byte-ceiling caps bytes, changelog-entries caps changelog entries, todo-ban
-# catches work markers, suppression-ban catches blanket allows,
-# conflict-markers catches merge markers, prose keeps history out of the
-# markdown agents load. What is here is what none of them ships.
+# a shipped package already judges is that package's: size-ratchet caps file
+# size and gates its own baseline rows, byte-ceiling caps bytes,
+# changelog-entries caps changelog entries, todo-ban catches work markers,
+# suppression-ban catches blanket allows, conflict-markers catches merge
+# markers, prose keeps history out of the markdown agents load. What is here
+# is what none of them ships.
 # Checks the working tree, not the staged index — accepted trade-off:
 # agents commit whole files; partial staging is out of scope.
 set -uo pipefail
@@ -48,7 +49,8 @@ fi
 # Two branches that both write CHANGELOG.md's [Unreleased] list insert at the
 # same line, and the merge queue ejects the trailing one. Entries go to
 # changelog.d instead. CHANGELOG_COLLATE=1 is the release commit saying the
-# new lines are the collator's, the way RATCHET_RAISE=1 declares a baseline.
+# new lines are the collator's, the way RATCHET_RAISE=1 declares a raised
+# size-ratchet row.
 if [ "${CHANGELOG_COLLATE:-}" != "1" ] && [ -f CHANGELOG.md ] && git cat-file -e HEAD:CHANGELOG.md 2>/dev/null; then
   unreleased() { awk '/^## / { seen = ($0 ~ /^## \[Unreleased\]/); next } seen && NF'; }
   # One collation for the sort and for comm, or comm calls a byte-ordered
@@ -61,17 +63,6 @@ $(printf '%s\n' "$added" | head -5 | sed 's/^/  /')"
   else
     say "CHANGELOG.md could not be compared against HEAD — the [Unreleased] rule could not run"
   fi
-fi
-
-# The size-ratchet baseline only tightens. Raising a row is a decision, not
-# a remedy: RATCHET_RAISE=1 on the commit says so out loud.
-if [ "${RATCHET_RAISE:-}" != "1" ] && git cat-file -e HEAD:tools/size-ratchet-baseline.tsv 2>/dev/null; then
-  raised=$({ join -t "$(printf '\t')" <(git show HEAD:tools/size-ratchet-baseline.tsv | sort) <(sort tools/size-ratchet-baseline.tsv) |
-    awk -F'\t' '$3 > $2 { print "  " $1 ": " $2 " -> " $3 }';
-    comm -13 <(git show HEAD:tools/size-ratchet-baseline.tsv | cut -f1 | sort) <(cut -f1 tools/size-ratchet-baseline.tsv | sort) |
-    sed 's/^/  new row: /'; })
-  [ -n "$raised" ] && say "size-ratchet baseline rows went up — split at a seam; RATCHET_RAISE=1 only when the new lines are the fix with no seam, or fragments of one concept merged back into one file:
-$raised"
 fi
 
 # Every module that reads a catalog's own bytes is listed, so a raw read of a

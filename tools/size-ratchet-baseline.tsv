@@ -8,7 +8,6 @@ crates/core/src/engine/pi_hooks_move/preflight.rs	765
 crates/core/src/error.rs	509
 crates/core/src/remote/store.rs	405
 crates/core/src/settings_file.rs	408
-docs/ARCHITECTURE.md	801
 hooks/block-repo-copy.sh	511
 pi-extensions/pi-agents-tmux/extensions/subagent/browser.ts	650
 pi-extensions/pi-agents-tmux/extensions/subagent/dashboard.ts	431
@@ -72,7 +71,6 @@ skills/github/scripts/lib/verify-lib.sh	415
 skills/github/tests/git-diff-summary-cfg-test-declaration.test.sh	2128
 skills/growth-guards/scripts/install-git-hooks	548
 skills/growth-guards/scripts/lib/settings.sh	467
-skills/iced-rs/examples/README.md	122
 skills/iced-rs/examples/changelog/src/changelog.rs	418
 skills/iced-rs/examples/color_palette/src/main.rs	479
 skills/iced-rs/examples/custom_shader/src/scene/pipeline.rs	584
@@ -90,9 +88,6 @@ skills/iced-rs/iced_wgpu/src/lib.rs	960
 skills/iced-rs/iced_wgpu/src/text.rs	649
 skills/iced-rs/iced_wgpu/src/triangle.rs	887
 skills/iced-rs/iced_wgpu/src/window/compositor.rs	427
-skills/iced-rs/references/api-module-tree.md	1111
-skills/iced-rs/references/guide-custom-overlays.md	479
-skills/iced-rs/references/guide-custom-widgets.md	424
 skills/linear/scripts/commands/cache-query.sh	1366
 skills/linear/scripts/commands/initiatives.sh	492
 skills/linear/scripts/commands/issues.sh	3376
@@ -118,7 +113,6 @@ skills/orch/tests/ci_wait.sh	824
 skills/orch/tests/lanes.sh	890
 skills/orch/tests/oversee_watch.sh	814
 skills/orch/tests/queue_wait.sh	920
-skills/orch/workflows/review-pr.md	474
 skills/preflight/scripts/preflight	1175
 skills/review-gate/scripts/pr-watch.sh	854
 skills/review-gate/scripts/review-predicate-selftest.sh	2514
@@ -134,9 +128,8 @@ skills/second-opinion/tests/cli-failure-gate.test.sh	1211
 skills/second-opinion/tests/lane-scratch-durability.test.sh	999
 skills/second-opinion/tests/review-dual-model.test.sh	1516
 skills/size-ratchet/scripts/lib/settings.sh	456
-skills/size-ratchet/scripts/size-ratchet	1099
+skills/size-ratchet/scripts/size-ratchet	1459
 skills/worktree/scripts/worktree	4980
 skills/worktree/scripts/worktree-session-guard	1197
 skills/worktree/tests/worktree_session_guard.sh	1282
-ui/src/stores/marketplaces.ts	282
 ui/src/stores/settings.ts	521

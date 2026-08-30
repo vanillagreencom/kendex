@@ -13,7 +13,11 @@ SR="$SKILL_DIR/scripts/size-ratchet"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE 2>/dev/null || true
+unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_DEFAULT_CLASSES SIZE_RATCHET_FROZEN_CLASSES SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE 2>/dev/null || true
+# The shipped class list and frozen list are policy, pinned by
+# shipped-defaults.test.sh. Every fixture here declares its own thresholds,
+# so both start empty and a case that needs one sets it.
+export SIZE_RATCHET_DEFAULT_CLASSES="" SIZE_RATCHET_FROZEN_CLASSES=""
 
 PASS=0
 FAIL=0
@@ -236,7 +240,7 @@ else
   bad "missing '=' is a config error" "rc=$RC out=$OUT"
 fi
 run_raw SIZE_RATCHET_THRESHOLD=400 'SIZE_RATCHET_CLASSES=*/tests/*=eight-hundred'
-if [ "$RC" -eq 2 ] && case "$OUT" in *"needs a positive integer threshold, got 'eight-hundred'"*) true ;; *) false ;; esac; then
+if [ "$RC" -eq 2 ] && case "$OUT" in *"needs a positive integer threshold, optionally with the 'k' byte suffix, got 'eight-hundred'"*) true ;; *) false ;; esac; then
   ok "a non-integer threshold is exit 2 naming the entry and the bad value"
 else
   bad "non-integer threshold is a config error" "rc=$RC out=$OUT"

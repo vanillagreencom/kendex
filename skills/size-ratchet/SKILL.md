@@ -19,9 +19,10 @@ tags: [automation]
 
 **No tracked file gets bigger than its threshold, and files already over
 it only shrink.** Existing offenders are frozen in a baseline at their
-current line counts; everything else stays at or under its path class's
-threshold. Baseline rows only go down or away; a number goes up only by a
-human editing the row in a reviewed diff.
+current sizes; everything else stays at or under its path class's
+threshold. Markdown is measured in bytes and code in lines. Baseline rows
+only go down or away; a number goes up only by a human editing the row in a
+reviewed diff, and never at all in a frozen class.
 
 ```bash
 .agents/skills/size-ratchet/scripts/size-ratchet            # check (pre-PR / CI)
@@ -31,15 +32,21 @@ human editing the row in a reviewed diff.
 ```
 
 Flags, `SIZE_RATCHET_*` keys, and exit codes: `size-ratchet --help`.
-Verdict classes, semantics, baseline/excludes formats, path classes, and
-seeding: [README.md](README.md). Collection internals and the migration
-note for repos already using this format: [DEVELOPMENT.md](DEVELOPMENT.md).
+Verdict classes, semantics, units, the shipped class list, baseline/excludes
+formats, and seeding: [README.md](README.md). Collection internals and the
+migration note for repos already using this format:
+[DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Responding to a failure
 
-Every diagnostic names the file, its count, the baseline row it violated,
+Every diagnostic names the file, its size, the baseline row it violated,
 the deciding threshold (class pattern or default), and the remedy: *split
 at a concept seam*.
+
+Two verdicts are not a size problem and take no judgment. **A row in the
+wrong unit** is a class that changed what it counts: run `--update`, which
+re-measures the row. **A shrunk row** under `--staged` is already lowered
+and staged by the run itself.
 
 **Check composition before the seam.** A file over its cap whose bulk is
 inline tests needs those tests moved to the language's separate-test
@@ -74,8 +81,8 @@ count is worse than the long file: prefer the raise.
 A file header that justifies the file's existence by a line threshold is
 the author writing down that the seam is not real.
 
-**Raising a row** (`RATCHET_RAISE=1`, reason in the commit body) is
-correct in exactly two cases, both for hand-written files:
+**Raising a row** (`RATCHET_RAISE=1` on the invocation, reason in the
+commit body) is correct in exactly two cases, both for hand-written files:
 1. The added lines are the fix for the reported symptom and the file has
    no concept seam.
 2. **Merging fragments**: files that are one concept read together —
@@ -83,16 +90,18 @@ correct in exactly two cases, both for hand-written files:
    are combined back into one, and the merged file's row rises to its
    real size. Shrink or delete the emptied rows in the same diff.
 
-Never raise for tests, docs, comments, or lines a review round asked
-for — those either fit, split at a real seam, or do not belong. **The gate
-enforces the test half itself**: a baseline row for a test-class path that
-is absent from HEAD's baseline, or lower there, fails whatever the commit
-declares. Rows already at HEAD are grandfathered. Generated
-and vendored content is never raised either: it is excluded (the
+The gate enforces both halves of that itself. A row a change adds or raises
+over HEAD's baseline fails unless the run carries `RATCHET_RAISE=1`, and a
+row in a **frozen class** — every markdown class and every test class by
+default — fails whatever it carries: a test splits and a document is cut, so
+no declaration buys either one more room. Rows already at HEAD are
+grandfathered, and a repo with no committed row set yet is bootstrapping.
+Generated and vendored content is never raised either: it is excluded (the
 exclusion list, `pattern<TAB>reason`) and leaves the counted set.
 
 **A threshold change requires a fragment sweep.** In either direction it
 strands the splits made under the previous number: a repo that loosens already
 holds those fragments, a repo that tightens is about to create them. A seam
-that fits only the old number is not evidence of a seam.
+that fits only the old number is not evidence of a seam. A change of UNIT is
+a change of threshold too, since the number a path is judged against moves.
 [references/threshold-change.md](references/threshold-change.md).
