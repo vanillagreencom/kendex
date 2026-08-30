@@ -298,7 +298,7 @@ jobs:
           path: |
             dist/latest.json
             dist/feed.json
-            dist/digests-*.json
+            dist/digests-*
           if-no-files-found: error
 
   # Because "latest" skips pre-releases, a candidate has no way to reach the

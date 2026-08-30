@@ -70,10 +70,11 @@ enum Channel<'a> {
 /// its target, so the guard cannot hold a list of them and these tests would
 /// not notice a guard that published the manifests alone.
 #[cfg(unix)]
-const STAGED: [&str; 3] = [
+const STAGED: [&str; 4] = [
     "latest.json",
     "feed.json",
     "digests-x86_64-unknown-linux-gnu.json",
+    "digests-x86_64-unknown-linux-gnu.json.sig",
 ];
 
 /// Runs the guard with `gh` stubbed. `fail` holds fragments of the `gh`
@@ -355,14 +356,26 @@ fn every_candidate_replaces_both_manifests_on_the_channel() {
             );
         }
         assert!(upload.contains("--clobber"), "{upload}");
-        // The digests document too: it is published by the same upload and
-        // named for a target, so a guard that listed its files by hand would
-        // carry the manifests and leave every candidate unable to check what
-        // it downloaded.
-        assert!(
-            upload.contains("dist/digests-x86_64-unknown-linux-gnu.json"),
-            "the digests document missing from {upload}"
-        );
+        // The digests document and the signature beside it, named the way
+        // an update names them rather than spelled here: a guard that
+        // published the document alone leaves every candidate holding a
+        // statement it cannot check, which reads as a broken update path
+        // and not as a channel missing a file.
+        let document = kendex_core::release_digests::release_digests_url(
+            kendex_core::update_channel::PRERELEASE_MANIFEST_URL,
+            "x86_64-unknown-linux-gnu",
+        )
+        .unwrap();
+        for url in [
+            document.clone(),
+            kendex_core::update_feed::signature_url(&document),
+        ] {
+            let file = url.rsplit('/').next().unwrap_or_default();
+            assert!(
+                upload.contains(&format!("dist/{file}")),
+                "dist/{file} missing from {upload}"
+            );
+        }
     }
 }
 

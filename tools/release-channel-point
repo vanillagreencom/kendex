@@ -3,8 +3,8 @@
 # `prerelease` release whose latest.json and feed.json each new candidate
 # overwrites, which is the URL `update_channel::feed_url_for` sends a
 # candidate to. Uploads dist/latest.json, dist/feed.json and the release's
-# per-target digests documents, which name their downloads by the tag that
-# built them. The release workflow's channel job is
+# per-target digests documents with the signatures published beside them,
+# which name their downloads by the tag that built them. The release workflow's channel job is
 # the only caller; CHANNEL, NEW_VERSION, GITHUB_REPOSITORY and a GH_TOKEN gh
 # can use come from it. Exit 0 wrote the channel or left it alone on purpose,
 # exit 1 wrote nothing or says what it left behind.
@@ -25,7 +25,7 @@ set -euo pipefail
 # published and a build that gains a target needs no edit here.
 uploaded() {
   local file
-  for file in dist/latest.json dist/feed.json dist/digests-*.json; do
+  for file in dist/latest.json dist/feed.json dist/digests-*; do
     [ -f "$file" ] && printf '%s\n' "$file"
   done
   return 0
@@ -180,8 +180,15 @@ esac
 # to take back off. An unmatched glob left literal would name a file that is
 # not there, and a `dist` holding nothing at all would upload nothing while
 # reporting a channel it moved.
-readarray -t publishing < <(uploaded)
-if [ ${#publishing[@]} -eq 0 ]; then
+#
+# Built by reading rather than by `readarray`, which arrived in Bash 4:
+# `crates/cli/tests/release_workflow` runs this script on the macOS lane,
+# where /bin/bash is 3.2.
+publishing=()
+while IFS= read -r file; do
+  publishing+=("$file")
+done < <(uploaded)
+if [ "${#publishing[@]}" -eq 0 ]; then
   echo "::error::Nothing was written to the ${CHANNEL} channel: this run was handed no manifests to publish. Re-run the tag."
   exit 1
 fi
