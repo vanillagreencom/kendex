@@ -74,17 +74,23 @@ would leave an appended guard unreachable. Ours runs, blocks on any nonzero,
 and then falls through to whatever the hook already did — whose own exit
 status still decides.
 
-Repeat runs are no-ops, and repairs. A hook counts as current only when it
-carries the EXACT delegating line on a line of its own — a line that was
-commented out, truncated, or left behind by an older version is rewritten,
-not trusted — and a hook whose executable bit was cleared gets it back,
-because git silently ignores a hook it cannot execute. An existing
-`pre-commit`/`commit-msg` keeps its content and its own exit status; a hook
-that is symlinked, deliberately disabled (not executable), or whose shebang
-names an interpreter that is not a POSIX-compatible shell is left alone
-entirely (reported, and the install exits 1). A file at the helper path that
-this installer did not write is never overwritten. A bare repository is
-refused — there is no work tree to guard.
+Repeat runs are no-ops, and repairs. A consumer's own hook counts as current
+only when it carries the EXACT delegating line on a line of its own — a line
+that was commented out, truncated, or left behind by an older version is
+rewritten, not trusted. A hook this installer CREATED is owned whole, the way
+`--uninstall` deletes such a file outright: it is current only when its bytes
+are exactly the shebang, the delegating line and the created marker, and
+anything else in it is rewritten away rather than repaired around. A hook
+whose executable bit was cleared gets it back, because git silently ignores a
+hook it cannot execute. An existing `pre-commit`/`commit-msg` keeps its
+content, its shebang and its own exit status; a hook that is symlinked,
+deliberately disabled (not executable), whose shebang names an interpreter
+that is not a POSIX-compatible shell, or whose shebang names a shell outside
+the trusted full paths under `/bin` and `/usr/bin`, is left alone entirely
+(reported, and the install exits 1). That trusted-path rule holds at install
+exactly as it does at `--check`, whoever wrote the hook. A file at the helper
+path that this installer did not write is never overwritten. A bare
+repository is refused — there is no work tree to guard.
 
 Linked worktrees share the install, since git resolves their hooks to the
 main checkout's hooks directory. The same sharing governs removal, and it

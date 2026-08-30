@@ -236,6 +236,12 @@ OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
   && case "$OUT" in *".git/hooks/pre-commit AND .git/hooks/commit-msg"*) true ;; *) false ;; esac \
   && ok "setup stops and names both refused hooks, not just pre-commit" \
   || bad "setup stops and names both refused hooks, not just pre-commit" "rc=$RC out=$OUT"
+# The remedy prints for every refusal, so matching it alone passes on a
+# wrong-cause message. The installer's own reason is asserted separately.
+case "$OUT" in
+  *"cannot be verified"*) ok "and the installer's own reason reaches the operator" ;;
+  *) bad "the installer's reason reaches the operator" "out=$OUT" ;;
+esac
 rm -f "$HOOKS/pre-commit"
 RC=0
 OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?

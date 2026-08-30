@@ -117,8 +117,8 @@ esac
   && ok "and leaves it byte for byte, shebang included" \
   || bad "our untrusted shim was rewritten" "$(cat "$R44/.git/hooks/pre-commit")"
 check_in "$R44"
-[ "$RC" -ne 0 ] && ok "and --check agrees it is not armed" \
-  || bad "check agrees on our untrusted shim" "rc=$RC out=$OUT"
+[ "$RC" -eq 2 ] && ok "and --check calls it unverifiable, not merely not armed" \
+  || bad "check calls our untrusted shim unverifiable" "rc=$RC out=$OUT"
 
 echo "=== a shim carrying the guard line elsewhere is unverifiable, not ungated ==="
 # --check writes nothing, so it does not get to assume the shim in front of
