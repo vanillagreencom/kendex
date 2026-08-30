@@ -118,7 +118,10 @@ fi
 cat > "$BIN/chmod" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ -f "$WATCH_SUPERVISOR_PID_DELAY" && "${*: -1}" == */supervisor.pid ]]; then sleep 6; fi
+if [[ -f "$WATCH_SUPERVISOR_PID_GATE.enabled" && "${*: -1}" == */supervisor.pid ]]; then
+  touch "$WATCH_SUPERVISOR_PID_GATE.entered"
+  while [[ ! -f "$WATCH_SUPERVISOR_PID_GATE.release" ]]; do sleep 0.05; done
+fi
 exec "$WATCH_REAL_CHMOD" "$@"
 EOF
 chmod +x "$BIN/chmod"
@@ -137,12 +140,17 @@ cat > "$BIN/ps" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${MERGE_QUEUE_FORCE_PS_IDENTITY:-0}" == 1 ]]; then printf '%s\n' "$*" >> "$WATCH_PS_LOG"; fi
+if [[ -f "$WATCH_SUPERVISOR_PID_GATE.enabled" ]]; then
+  calls=0; [[ ! -f "$WATCH_SUPERVISOR_PID_GATE.calls" ]] || calls=$(cat < "$WATCH_SUPERVISOR_PID_GATE.calls")
+  calls=$((calls+1)); printf '%s\n' "$calls" > "$WATCH_SUPERVISOR_PID_GATE.calls"
+  [[ "$calls" -lt 2 ]] || touch "$WATCH_SUPERVISOR_PID_GATE.release"
+fi
 exec "$WATCH_REAL_PS" "$@"
 EOF
 chmod +x "$BIN/ps"
 export PATH="$BIN:$PATH" WATCH_MODE="$MODE" WATCH_RELEASE="$RELEASE" WATCH_HEAD_FILE="$HEAD_FILE" WATCH_MAIN="$MAIN" WATCH_WORKTREE="$WT"
 export WATCH_GH_PAUSE="$TMP/gh-pause" WATCH_SETUP_GATE="$TMP/setup-gate" WATCH_REAL_SETSID="$REAL_SETSID" WATCH_CLEANUP_FAIL="$TMP/cleanup-fail" WATCH_CLEANUP_INTERRUPT="$TMP/cleanup-interrupt"
-export WATCH_SETSID_FAIL="$TMP/setsid-fail" WATCH_SETSID_DELAY="$TMP/setsid-delay" WATCH_CLEANUP_PAUSE="$TMP/cleanup-pause" WATCH_AUTH_LOG="$TMP/auth.log" WATCH_WORKER_LOG="$TMP/worker.log" WATCH_REAL_CHMOD="$REAL_CHMOD" WATCH_REAL_FLOCK="$REAL_FLOCK" WATCH_FAIL_FLOCK_GATE="$TMP/fail-flock-gate" WATCH_REAL_PS="$REAL_PS" WATCH_PS_LOG="$TMP/ps.log" WATCH_SUPERVISOR_PID_DELAY="$TMP/supervisor-pid-delay" GH_REPO=wrong/repository GITHUB_REPOSITORY=wrong/repository
+export WATCH_SETSID_FAIL="$TMP/setsid-fail" WATCH_SETSID_DELAY="$TMP/setsid-delay" WATCH_CLEANUP_PAUSE="$TMP/cleanup-pause" WATCH_AUTH_LOG="$TMP/auth.log" WATCH_WORKER_LOG="$TMP/worker.log" WATCH_REAL_CHMOD="$REAL_CHMOD" WATCH_REAL_FLOCK="$REAL_FLOCK" WATCH_FAIL_FLOCK_GATE="$TMP/fail-flock-gate" WATCH_REAL_PS="$REAL_PS" WATCH_PS_LOG="$TMP/ps.log" WATCH_SUPERVISOR_PID_GATE="$TMP/supervisor-pid-gate" GH_REPO=wrong/repository GITHUB_REPOSITORY=wrong/repository
 touch "$WATCH_PS_LOG"
 unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN
 init_out=$("$SCRIPTS/merge-queue-watch" init --worktree "$WT" --issue KEN-829 --branch watch-test)
@@ -385,12 +393,17 @@ eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -
 "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
 
 prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
-touch "$WATCH_SUPERVISOR_PID_DELAY"
+rm -f -- "$WATCH_SUPERVISOR_PID_GATE.entered" "$WATCH_SUPERVISOR_PID_GATE.release" "$WATCH_SUPERVISOR_PID_GATE.calls"
+touch "$WATCH_SUPERVISOR_PID_GATE.enabled"
+export MERGE_QUEUE_FORCE_PS_IDENTITY=1
 set +e
 "$SCRIPTS/merge-queue-watch" launch --root "$MAIN" --issue KEN-829 --watch-id "$watch" --poll 1 --max-wait 10 >/dev/null 2>&1
 setup_rc=$?
 set -e
-rm -f -- "$WATCH_SUPERVISOR_PID_DELAY"
+unset MERGE_QUEUE_FORCE_PS_IDENTITY
+wait_exists "$WATCH_SUPERVISOR_PID_GATE.entered" && ok "supervisor setup entered the explicit delay gate" || bad "supervisor setup bypassed the explicit delay gate"
+wait_exists "$WATCH_SUPERVISOR_PID_GATE.release" && ok "teardown released the delayed supervisor" || bad "teardown never released the delayed supervisor"
+rm -f -- "$WATCH_SUPERVISOR_PID_GATE.enabled" "$WATCH_SUPERVISOR_PID_GATE.entered" "$WATCH_SUPERVISOR_PID_GATE.release" "$WATCH_SUPERVISOR_PID_GATE.calls"
 if [[ "$setup_rc" -ne 0 ]]; then ok "supervisor failure before ready exits nonzero"; else bad "supervisor failure before ready exited zero"; fi
 eq "$(jq -r .verdict "$artifact")" unknown "dead supervisor publishes its setup failure"
 old_inode=$(inode "$artifact")
