@@ -5,33 +5,51 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORCH="$(cd "$TEST_DIR/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+mkdir -p "$TMP/repo/.agents/skills" "$TMP/bin"
+ln -s "$ORCH" "$TMP/repo/.agents/skills/orch"
+git -C "$TMP/repo" init -q
 
-cat > "$TMP/event" <<'EOF'
+cat > "$TMP/bin/gh" <<'EOF'
 #!/usr/bin/env bash
-set -euo pipefail
+case "${1:-} ${2:-}" in
+  'auth status') echo logged-in ;;
+  'pr list') echo '[]' ;;
+  *) echo "unexpected gh: $*" >&2; exit 1 ;;
+esac
+EOF
+cat > "$TMP/bin/pr-watch" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+cat > "$TMP/bin/event" <<'EOF'
+#!/usr/bin/env bash
 [[ "${*: -1}" == KEN-829 ]] || exit 1
 printf 'ready KEN-829 WATCH-123\n'
 EOF
-chmod +x "$TMP/event"
+chmod +x "$TMP/bin/gh" "$TMP/bin/pr-watch" "$TMP/bin/event"
 
-out=$( (
-  SCRIPT_DIR="$ORCH/scripts"
-  PROJECT_ROOT="$TMP"
-  WORK_DIR="$TMP"
-  ITEMS=(KEN-829)
-  OVERSEE_WATCH_MERGE_QUEUE_WATCH="$TMP/event"
-  pr_watch_context() { :; }
-  die() { echo "$*" >&2; exit 2; }
-  source "$ORCH/scripts/lib/merge-queue-events.sh"
-  check_merge_lifecycle
-) )
-
-[[ "$out" == "EVENT merge-verdict KEN-829 WATCH-123" ]] || {
-  printf 'FAIL: lifecycle event was not forwarded: %s\n' "$out" >&2
-  exit 1
+run_watch() {
+  local script="$1"
+  (cd "$TMP/repo" && PATH="$TMP/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN \
+    OVERSEE_WATCH_PR_WATCH="$TMP/bin/pr-watch" OVERSEE_WATCH_MERGE_QUEUE_WATCH="$TMP/bin/event" \
+    "$script" --interval 0 --max-loops 1 --repo owner/repo --item KEN-829)
 }
-grep -Fxq '  check_merge_lifecycle' "$ORCH/scripts/oversee-watch" || {
-  echo 'FAIL: oversee-watch does not invoke the lifecycle event check' >&2
-  exit 1
+
+out=$(run_watch "$ORCH/scripts/oversee-watch")
+[[ "$out" == "EVENT merge-verdict KEN-829 WATCH-123" ]] || {
+  printf 'FAIL: oversee-watch did not forward lifecycle event: %s\n' "$out" >&2; exit 1;
+}
+
+mkdir -p "$TMP/skills/orch"
+cp -R "$ORCH/scripts" "$TMP/skills/orch/"
+ln -s "$(cd "$ORCH/.." && pwd)/github" "$TMP/skills/github"
+count=$(grep -Fxc '  check_merge_lifecycle' "$TMP/skills/orch/scripts/oversee-watch")
+[[ "$count" -eq 1 ]] || { echo 'FAIL: lifecycle invocation count changed' >&2; exit 1; }
+sed -i.bak 's/^  check_merge_lifecycle$/  : # check_merge_lifecycle/' "$TMP/skills/orch/scripts/oversee-watch"
+rm -f "$TMP/skills/orch/scripts/oversee-watch.bak"
+printf '\ncheck_merge_lifecycle\n' >> "$TMP/skills/orch/scripts/oversee-watch"
+mutant=$(run_watch "$TMP/skills/orch/scripts/oversee-watch")
+[[ "$mutant" == EVENT\ heartbeat* ]] || {
+  printf 'FAIL: unreachable EOF decoy revived lifecycle event: %s\n' "$mutant" >&2; exit 1;
 }
 echo 'merge-queue-oversee: pass'

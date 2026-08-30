@@ -10,8 +10,10 @@ ok() { PASS=$((PASS+1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL+1)); printf '  FAIL  %s\n' "$1"; }
 eq() { if [[ "$1" == "$2" ]]; then ok "$3"; else bad "$3 (expected $2, got $1)"; fi; }
 wait_file() { local i; for ((i=0;i<100;i++)); do [[ -s "$1" ]] && return 0; sleep 0.05; done; return 1; }
+wait_exists() { local i; for ((i=0;i<100;i++)); do [[ -e "$1" ]] && return 0; sleep 0.05; done; return 1; }
 
 MAIN="$TMP/main" WT="$TMP/worktree" BIN="$TMP/bin" SCRIPTS="$TMP/orch/scripts"
+REAL_SETSID=$(command -v setsid || true)
 mkdir -p "$MAIN" "$BIN" "$SCRIPTS/lib"
 git -C "$MAIN" init -q
 git -C "$MAIN" config user.email test@example.com
@@ -19,6 +21,15 @@ git -C "$MAIN" config user.name Test
 touch "$MAIN/seed"; git -C "$MAIN" add seed; git -C "$MAIN" commit -qm seed
 git -C "$MAIN" branch watch-test
 git -C "$MAIN" worktree add -q "$WT" watch-test
+mkdir -p "$MAIN/.agents/skills/worktree/scripts"
+cat > "$MAIN/.agents/skills/worktree/scripts/worktree" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == remove && "$2" == KEN-829 ]]
+[[ ! -f "$WATCH_CLEANUP_FAIL" ]] || { echo 'cleanup refused' >&2; exit 9; }
+git -C "$WATCH_MAIN" worktree remove --force "$WATCH_WORKTREE"
+EOF
+chmod +x "$MAIN/.agents/skills/worktree/scripts/worktree"
 cp "$ORCH/scripts/merge-queue-watch" "$ORCH/scripts/workflow-state" "$ORCH/scripts/orch-env" "$SCRIPTS/"
 cp "$ORCH/scripts/lib/merge-queue-supervisor.sh" "$SCRIPTS/lib/"
 cp "$ORCH/scripts/lib/kendex-env.sh" "$SCRIPTS/lib/"
@@ -37,6 +48,7 @@ case "$mode" in
   ejected) printf '{"status":"complete","verdict":"ejected","cause":"merge_group_failed"}\n'; exit 1 ;;
   disarmed) printf '{"status":"complete","verdict":"disarmed","cause":"auto_merge_cleared"}\n'; exit 1 ;;
   dequeued) printf '{"status":"complete","verdict":"dequeued","cause":"late_findings"}\n'; exit 1 ;;
+  dequeue_failed) printf '{"status":"error","verdict":"dequeued","cause":"late_findings_dequeue_failed","error":"disable failed"}\n'; exit 1 ;;
   stalled) printf '{"status":"timeout","verdict":"queued","cause":"stalled"}\n'; exit 1 ;;
   progressing) printf '{"status":"timeout","verdict":"queued","cause":"still_progressing"}\n'; exit 1 ;;
   not_queued) printf '{"status":"timeout","verdict":"not_queued","cause":"never_armed"}\n'; exit 1 ;;
@@ -51,6 +63,7 @@ cat > "$BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-} ${2:-}" == "pr view" ]]; then
+  if [[ -f "$WATCH_GH_PAUSE.enabled" ]]; then touch "$WATCH_GH_PAUSE.entered"; while [[ ! -f "$WATCH_GH_PAUSE.release" ]]; do sleep 0.05; done; fi
   head=$(cat < "$WATCH_HEAD_FILE")
   mode=$(cat < "$WATCH_MODE")
   case "$mode" in merged) state=MERGED ;; closed) state=CLOSED ;; *) state=OPEN ;; esac
@@ -62,7 +75,17 @@ echo "unexpected gh: $*" >&2
 exit 1
 EOF
 chmod +x "$BIN/gh"
-export PATH="$BIN:$PATH" WATCH_MODE="$MODE" WATCH_RELEASE="$RELEASE" WATCH_HEAD_FILE="$HEAD_FILE"
+if [[ -n "$REAL_SETSID" ]]; then
+cat > "$BIN/setsid" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -f "$WATCH_SETUP_GATE.enabled" ]]; then touch "$WATCH_SETUP_GATE.entered"; while [[ ! -f "$WATCH_SETUP_GATE.release" ]]; do sleep 0.05; done; fi
+exec "$WATCH_REAL_SETSID" "$@"
+EOF
+chmod +x "$BIN/setsid"
+fi
+export PATH="$BIN:$PATH" WATCH_MODE="$MODE" WATCH_RELEASE="$RELEASE" WATCH_HEAD_FILE="$HEAD_FILE" WATCH_MAIN="$MAIN" WATCH_WORKTREE="$WT"
+export WATCH_GH_PAUSE="$TMP/gh-pause" WATCH_SETUP_GATE="$TMP/setup-gate" WATCH_REAL_SETSID="$REAL_SETSID" WATCH_CLEANUP_FAIL="$TMP/cleanup-fail"
 "$SCRIPTS/workflow-state" --state-dir "$WT/tmp" init KEN-829 --worktree "$WT" --branch watch-test >/dev/null
 
 prepare() {
@@ -87,6 +110,10 @@ verdict_case() {
   launch_bounded "$watch"; touch "$RELEASE"; wait_file "$artifact" || bad "$mode verdict missing"
   result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
   eq "$(jq -r .action <<<"$result")" "$expected" "$mode maps to $expected"
+  if [[ "$mode" == dequeue_failed ]]; then
+    eq "$(jq -r .verdict_cause <<<"$result")" late_findings_dequeue_failed "dequeue failure keeps its cause"
+    eq "$(jq -r .error <<<"$result")" 'disable failed' "dequeue failure keeps producer error"
+  fi
   "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
 }
 echo "=== durable merge queue lifecycle ==="
@@ -103,11 +130,19 @@ eq "$(jq -r .watch_id "$artifact")" "$watch" "artifact binds watch id"
 eq "$(jq -r .expected_head "$artifact")" "$HEAD_A" "artifact binds expected head"
 event_out=$("$SCRIPTS/merge-queue-watch" event --root "$MAIN" --issue KEN-829)
 if [[ "$event_out" == ready* ]]; then ok "fleet event wakes the owner once verdict exists"; else bad "fleet event missing"; fi
+event_again=$("$SCRIPTS/merge-queue-watch" event --root "$MAIN" --issue KEN-829)
+eq "$event_again" "$event_out" "fleet wake remains level-triggered until consume"
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .action <<<"$result")" postmerge "merged verdict claims postmerge action"
 "$SCRIPTS/merge-queue-watch" merge-pr-complete --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
 eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" awaiting_lane_postmerge "merge-pr completion waits for lane acknowledgment"
-"$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue KEN-829 --watch-id "$watch" --result pass >/dev/null
+set +e
+"$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue KEN-829 --watch-id "$watch" --result pass >/dev/null 2>&1
+early_ack_rc=$?
+set -e
+if [[ "$early_ack_rc" -ne 0 ]]; then ok "pass acknowledgment refuses before cleanup"; else bad "pass acknowledgment completed before cleanup"; fi
+printf 'first postmerge stopped\n' > "$TMP/first.err"
+"$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue KEN-829 --watch-id "$watch" --result fail --diagnostic-file "$TMP/first.err" >/dev/null
 
 prep=$(prepare ejected review 0); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
 launch_bounded "$watch"; touch "$RELEASE"; wait_file "$artifact" || bad "ejected verdict missing"
@@ -128,6 +163,7 @@ eq "$(jq -r .status <<<"$result")" failed "recovery cap terminalizes state"
 
 verdict_case disarmed recovery
 verdict_case dequeued triage
+verdict_case dequeue_failed manual_dequeue
 verdict_case stalled recovery
 verdict_case progressing rewatch
 verdict_case not_queued rearm
@@ -137,13 +173,16 @@ launch_bounded "$watch"; touch "$RELEASE"; wait_file "$artifact" || bad "head-mi
 printf '%s\n' "$HEAD_B" > "$HEAD_FILE"
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .status <<<"$result")" failed "live head mismatch blocks merged poststeps"
-eq "$(jq -r .diagnostic.cause <<<"$result")" head_mismatch "head mismatch names its cause"
+eq "$(jq -r .verdict_cause <<<"$result")" head_mismatch "head mismatch names the routing cause"
+eq "$(jq -r .diagnostic.cause <<<"$result")" merged "head mismatch preserves the producer verdict"
 printf '%s\n' "$HEAD_A" > "$HEAD_FILE"
 
 prep=$(prepare malformed); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
 launch_bounded "$watch"; touch "$RELEASE"; wait_file "$artifact" || bad "malformed-worker error artifact missing"
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .status <<<"$result")" failed "unknown worker output terminalizes failed"
+eq "$(jq -r .worker_exit_code <<<"$result")" 7 "unknown output preserves worker exit"
+if [[ "$(jq -r .diagnostic_path <<<"$result")" == /* ]]; then ok "unknown output preserves absolute producer diagnostics"; else bad "unknown output lost diagnostics"; fi
 
 prep=$(prepare closed); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
 launch_bounded "$watch"; touch "$RELEASE"; wait_file "$artifact" || bad "closed verdict missing"
@@ -153,6 +192,47 @@ eq "$(jq -r .status <<<"$result")" abandoned "closed verdict terminalizes abando
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .diagnostic.cause <<<"$result")" watch_lost "missing stale artifact fails closed"
+
+prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
+"$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause arm_failed >/dev/null
+set +e
+"$SCRIPTS/merge-queue-watch" launch --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null 2>&1
+revive_rc=$?
+set -e
+if [[ "$revive_rc" -ne 0 ]]; then ok "failed prepared state cannot be revived by launch"; else bad "launch revived failed state"; fi
+
+prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
+touch "$WATCH_GH_PAUSE.enabled"
+"$SCRIPTS/merge-queue-watch" direct-merged --root "$MAIN" --issue KEN-829 --watch-id "$watch" >"$TMP/direct.out" 2>"$TMP/direct.err" & direct_pid=$!
+wait_exists "$WATCH_GH_PAUSE.entered" || bad "direct merge did not enter validation gate"
+"$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause arm_failed >/dev/null
+touch "$WATCH_GH_PAUSE.release"
+set +e; wait "$direct_pid"; direct_rc=$?; set -e
+if [[ "$direct_rc" -ne 0 ]]; then ok "fail wins against an in-flight direct merge claim"; else bad "direct merge revived failed state"; fi
+rm -f "$WATCH_GH_PAUSE.enabled" "$WATCH_GH_PAUSE.entered" "$WATCH_GH_PAUSE.release"
+
+if [[ -n "$REAL_SETSID" ]]; then
+  prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
+  touch "$WATCH_SETUP_GATE.enabled"
+  "$SCRIPTS/merge-queue-watch" launch --root "$MAIN" --issue KEN-829 --watch-id "$watch" --poll 1 --max-wait 10 >"$TMP/gated-launch.out" 2>"$TMP/gated-launch.err" & gated_pid=$!
+  wait_exists "$WATCH_SETUP_GATE.entered" || bad "launch did not enter setup gate"
+  set +e; early_event=$("$SCRIPTS/merge-queue-watch" event --root "$MAIN" --issue KEN-829); early_rc=$?; set -e
+  if [[ "$early_rc" -ne 0 && -z "$early_event" ]]; then ok "fleet event ignores owned launch setup"; else bad "fleet event raced launch setup"; fi
+  touch "$WATCH_SETUP_GATE.release"; wait "$gated_pid"
+  eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" watching "launch owns setup through watching transition"
+  "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
+  rm -f "$WATCH_SETUP_GATE.enabled" "$WATCH_SETUP_GATE.entered" "$WATCH_SETUP_GATE.release"
+else
+  ok "launch setup race control skipped without setsid"
+fi
+
+prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
+launch_bounded "$watch"; supervisor=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .supervisor_pid)
+state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
+jq '.deadline=0' "$state_path" > "$TMP/expired.json"; chmod 600 "$TMP/expired.json"; mv "$TMP/expired.json" "$state_path"
+result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .diagnostic.cause <<<"$result")" watch_lost "overdue live supervisor fails closed"
+if ! kill -0 "$supervisor" 2>/dev/null; then ok "overdue verified supervisor is terminated"; else bad "overdue supervisor survived consume"; fi
 
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
 launch_bounded "$watch"; supervisor=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .supervisor_pid)
@@ -179,10 +259,29 @@ printf 'install verification failed\n' > "$TMP/postmerge.err"
 "$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue KEN-829 --watch-id "$watch" --result fail --diagnostic-file "$TMP/postmerge.err" >/dev/null
 eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" failed "failed lane acknowledgment terminalizes failed"
 
+prep=$(prepare disarmed); watch=$(jq -r .watch_id <<<"$prep")
+set +e
+"$SCRIPTS/merge-queue-watch" direct-merged --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null 2>&1
+invalid_direct_rc=$?
+set -e
+if [[ "$invalid_direct_rc" -ne 0 ]]; then ok "direct merge validation fails closed at the process boundary"; else bad "direct merge validation exited zero"; fi
+
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
 "$SCRIPTS/merge-queue-watch" direct-merged --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
 "$SCRIPTS/merge-queue-watch" merge-pr-complete --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
-git -C "$MAIN" worktree remove --force "$WT"
+touch "$WATCH_CLEANUP_FAIL"
+set +e; "$SCRIPTS/merge-queue-watch" cleanup --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null 2>"$TMP/cleanup.err"; cleanup_rc=$?; set -e
+if [[ "$cleanup_rc" -ne 0 ]]; then ok "cleanup failure returns nonzero"; else bad "cleanup failure exited zero"; fi
+eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .cleanup.status)" failed "cleanup failure remains resumable for failed acknowledgment"
+"$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue KEN-829 --watch-id "$watch" --result fail --diagnostic-file "$TMP/cleanup.err" >/dev/null
+rm -f "$WATCH_CLEANUP_FAIL"
+
+prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
+"$SCRIPTS/merge-queue-watch" direct-merged --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
+"$SCRIPTS/merge-queue-watch" merge-pr-complete --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
+(cd "$WT" && "$SCRIPTS/merge-queue-watch" cleanup --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null)
+if [[ ! -d "$WT" ]]; then ok "cleanup safely removes the lane's original cwd"; else bad "cleanup left the issue worktree"; fi
+eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" cleanup_complete "cleanup completes before final acknowledgment"
 "$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue KEN-829 --watch-id "$watch" --result pass >/dev/null
 eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" complete "lane acknowledgment survives worktree cleanup"
 

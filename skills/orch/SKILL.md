@@ -104,8 +104,8 @@ unrelated work. It alone validates repository, PR, prepared head, watch ID,
 artifact, live head, supervisor lease, deadline, gate mode, and recovery count;
 it atomically claims one normalized action. Route that action through
 `merge-pr.md` § 5. A merged action finishes merge-pr steps 2-4, then
-`lane-postmerge.md` records the project-specific result. Only its explicit
-acknowledgment makes the lifecycle complete. The overseer wakes and confirms;
+`lane-postmerge.md` records the project-specific result, removes the issue
+worktree from the main repository, then acknowledges. Only that acknowledgment makes the lifecycle complete. The overseer wakes and confirms;
 it never consumes, recovers, or completes a lane's lifecycle.
 
 ## Schemas

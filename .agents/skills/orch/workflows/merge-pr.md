@@ -191,6 +191,7 @@ Use the output as `MAIN_REPO_ROOT`.
    | `postmerge` | Step 2 |
    | `recovery` | Recovery cycle below, using the persisted gate mode and recovery count |
    | `triage` | Late-findings triage below |
+   | `manual_dequeue` | Confirm dequeue or disarm before late-findings triage |
    | `rewatch` | Prepare and launch a new watch without re-arming |
    | `rearm` | Prepare, re-arm the exact head once, and launch |
    | `failed`, `abandoned` | Hand back with the durable diagnostic; no replay |
@@ -268,7 +269,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    The outputs are `[LOCAL_SHA]` and `[ORIGIN_SHA]`. A failed ref read stays in the warning as its cause. Never record the sync as done.
 
-4. **Clean up branches and worktrees**, scoped to this PR by default — never enumerate unrelated branches or sibling worktrees.
+4. **Prepare branch and worktree cleanup**, scoped to this PR by default — never enumerate unrelated branches or sibling worktrees.
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --jq .headRefName
@@ -307,14 +308,8 @@ Use the output as `MAIN_REPO_ROOT`.
    .agents/skills/orch/scripts/merge-queue-watch merge-pr-complete --root [MAIN_REPO_ROOT] --issue [STATE_KEY] --watch-id [WATCH_ID]
    ```
 
-   Finally, when the rule selected the worktree for removal, remove it — **last** (it destroys
-   the session cwd):
-
-   ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/worktree/scripts/worktree remove "[ISSUE_ID]"
-   ```
-
-   If that prints `SESSION CWD DESTROYED`, present § 6 immediately and tell the user to end the session.
+   Keep the issue worktree through the managed lane post-merge phase. That phase
+   removes it from the main repository after project verification succeeds.
 
 ## 6. Present Results
 
@@ -342,14 +337,14 @@ A completed merge uses the result below.
 | Field | Value |
 |-------|-------|
 | Branch | [BRANCH_NAME] (deleted / kept) |
-| Worktree | removed / kept — [cause] |
+| Worktree | pending lane cleanup / kept — [cause] |
 | Issue Tracker | [ISSUE_ID] → Done (completed by the lane after merge) |
 | Container | [PARENT_ID] → Done / deferred — [pending ids, restorations, or cause] |
 | Base sync | local `[BASE_BRANCH]` → [NEW_SHA] |
 
 </output_format>
 
-The `Container` row appears only when § 5 step 2 found a container parent. The `Base sync` row is never omitted. When § 5 step 3 hit a blocking outcome it carries the warning instead of a sha: `⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`. The `Worktree` row reports `removed`, or `kept — [dirty tree | branch not merged | foreign lease]` when the § 5 step 4 rule declined removal (no worktree existed → omit the row). Add a `Review gate` row only when the merge did not proceed on a plain `approved`/`reviewed` verdict — `⚠️ reviewer-down proceed (no reviewer posted; PR_REVIEW_ON_TIMEOUT=proceed)` or `⚠️ forced (user override)`.
+The `Container` row appears only when § 5 step 2 found a container parent. The `Base sync` row is never omitted. When § 5 step 3 hit a blocking outcome it carries the warning instead of a sha: `⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`. The `Worktree` row reports `pending lane cleanup`, or `kept — [dirty tree | branch not merged | foreign lease]` when § 5 step 4 found it ineligible (no worktree existed → omit the row). Add a `Review gate` row only when the merge did not proceed on a plain `approved`/`reviewed` verdict — `⚠️ reviewer-down proceed (no reviewer posted; PR_REVIEW_ON_TIMEOUT=proceed)` or `⚠️ forced (user override)`.
 
 For `merge-pr all`, add the cross-PR analysis and a merge table:
 
