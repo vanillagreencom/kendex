@@ -259,7 +259,7 @@ write_manual_pending() {
   chmod 600 "$PENDING"
 }
 
-for pending_mode in empty invalid_status truncated malformed count_mismatch digest_mismatch; do
+for pending_mode in empty invalid_status truncated malformed malformed_trailer extra_trailer invalid_source count_mismatch digest_mismatch; do
   reset_state
   mkdir -p "$(dirname "$RECOVERY")"
   write_test_envelope resolved "$RECOVERY" $'CHILD-2\tCanceled\t0'
@@ -268,6 +268,9 @@ for pending_mode in empty invalid_status truncated malformed count_mismatch dige
     invalid_status) write_manual_pending invalid $'CHILD-2\tCanceled\t0\tdurable' 1 actual ;;
     truncated) printf 'unresolved\nCHILD-2\tCanceled\t0\tdurable\n' > "$PENDING" ;;
     malformed) write_manual_pending unresolved 'bad-row' 1 actual ;;
+    malformed_trailer) write_manual_pending unresolved $'CHILD-2\tCanceled\t0\tdurable' 1 actual; awk -F '\t' 'BEGIN { OFS="\t" } $1 == "complete" { $1="done" } { print }' "$PENDING" > "$PENDING.bad"; mv "$PENDING.bad" "$PENDING" ;;
+    extra_trailer) write_manual_pending unresolved $'CHILD-2\tCanceled\t0\tdurable' 1 actual; awk '$1 == "complete" { print $0 "\textra"; next } { print }' "$PENDING" > "$PENDING.bad"; mv "$PENDING.bad" "$PENDING" ;;
+    invalid_source) write_manual_pending unresolved $'CHILD-2\tCanceled\t0\tinvalid' 1 actual ;;
     count_mismatch) write_manual_pending unresolved $'CHILD-2\tCanceled\t0\tdurable' 2 actual ;;
     digest_mismatch) write_manual_pending unresolved $'CHILD-2\tCanceled\t0\tdurable' 1 deadbeef ;;
   esac
@@ -279,6 +282,8 @@ for pending_mode in empty invalid_status truncated malformed count_mismatch dige
   assert_eq "$(cat "$RECOVERY")" "$before_active" "$pending_mode pending envelope leaves active state unchanged"
   assert_eq "$(cat "$PENDING")" "$before_pending" "$pending_mode pending envelope remains untouched"
   [[ ! -e "$FAKE_LINEAR_ROOT/linear.calls" ]] && ok "$pending_mode pending envelope fails before Linear access" || fail "$pending_mode pending envelope fails before Linear access"
+  case "$pending_mode" in empty) cause='envelope is empty' ;; malformed_trailer|extra_trailer) cause='invalid completion trailer' ;; invalid_source) cause='invalid unresolved body' ;; *) continue ;; esac
+  assert_contains "$TMP_ROOT/pending-$pending_mode.err" "$cause" "$pending_mode pending envelope reports its exact cause"
 done
 
 STATUS_MUTANT="$SANDBOX/skills/orch/scripts/container-close-envelope-mutant"
@@ -297,6 +302,17 @@ run_close >/dev/null 2>&1 || rc=$?
 [[ ! -e "$PENDING" && "$(sed -n '1p' "$RECOVERY")" == invalid ]] && ok "status tautology promotes an invalid pending envelope" || fail "status tautology promotes an invalid pending envelope"
 cp "$REPO_ROOT/skills/orch/scripts/container-close-envelope" "$SANDBOX/skills/orch/scripts/container-close-envelope"
 chmod +x "$SANDBOX/skills/orch/scripts/container-close-envelope"
+
+for guard in empty trailer source; do
+  GUARD_MUTANT="$TMP_ROOT/envelope-$guard-mutant"
+  case "$guard" in
+    empty) assert_eq "$(grep -Fc '[[ -s "$envelope" ]] ||' "$REPO_ROOT/skills/orch/scripts/container-close-envelope")" "1" "empty control finds its guard"; awk 'index($0, "[[ -s \"$envelope\" ]] ||") { print "    :"; next } { print }' "$REPO_ROOT/skills/orch/scripts/container-close-envelope" > "$GUARD_MUTANT"; : > "$PENDING" ;;
+    trailer) assert_eq "$(grep -Fc '[[ "$marker" == complete' "$REPO_ROOT/skills/orch/scripts/container-close-envelope")" "1" "trailer control finds its guard"; awk 'index($0, "[[ \"$marker\" == complete") { getline; print "    :"; next } { print }' "$REPO_ROOT/skills/orch/scripts/container-close-envelope" > "$GUARD_MUTANT"; write_manual_pending unresolved $'CHILD-2\tCanceled\t0\tdurable' 1 actual; awk '$1 == "complete" { print $0 "\textra"; next } { print }' "$PENDING" > "$PENDING.bad"; mv "$PENDING.bad" "$PENDING" ;;
+    source) assert_eq "$(grep -Fc '$4 != "durable"' "$REPO_ROOT/skills/orch/scripts/container-close-envelope")" "1" "source control finds its guard"; awk 'index($0, "$4 != \"durable\"") { print "      awk -F '\''\\t'\'' '\''NF != 4 || $1 == \"\" || $2 == \"\" || $3 !~ /^[0-9]+$/ { exit 1 }'\'' \"$body\""; next } { print }' "$REPO_ROOT/skills/orch/scripts/container-close-envelope" > "$GUARD_MUTANT"; write_manual_pending unresolved $'CHILD-2\tCanceled\t0\tinvalid' 1 actual ;;
+  esac
+  chmod +x "$GUARD_MUTANT"; rc=0; "$GUARD_MUTANT" validate "$PENDING" "$TMP_ROOT/mutant-body" >"$TMP_ROOT/mutant-$guard.out" 2>"$TMP_ROOT/mutant-$guard.err" || rc=$?
+  case "$guard" in empty) [[ $rc -ne 0 ]] && ! grep -Fq 'envelope is empty' "$TMP_ROOT/mutant-$guard.err" && ok "empty guard mutation changes the required cause" || fail "empty guard mutation changes the required cause" ;; *) [[ $rc -eq 0 ]] && ok "$guard guard mutation accepts its invalid envelope" || fail "$guard guard mutation accepts its invalid envelope" ;; esac
+done
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Todo","state_type":"unstarted"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
