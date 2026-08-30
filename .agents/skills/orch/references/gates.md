@@ -20,7 +20,7 @@ The reviewer-gate settings — `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_Q
 |------------|------|
 | Reviewer verdict on one PR | `approval-wait` — statuses `approved`/`reviewed`/`changes_requested`/`comments`/`timeout`/`proceeded`/`error` |
 | CI on one PR | `ci-wait` — verdicts `pass`/`fail`/`pending`/`none` |
-| Merge-queue / auto-merge outcome | `queue-wait` — verdicts `merged`/`ejected`/`disarmed`/`dequeued`/`closed`/`queued`/`not_queued` |
+| Merge-queue / auto-merge outcome | `queue-wait` — its verdict set is the § Verdicts table in `queue-wait --help`, which grows |
 | Many PRs, long horizon | `pr-watch.sh` — § Multi-PR watching |
 
 Per-verdict routing lives in the workflows (`submit-pr.md` § 4, `merge-pr.md` § 5); each verdict's semantics live in that script's `--help`.

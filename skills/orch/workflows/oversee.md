@@ -71,8 +71,9 @@ handled under these rules:
   through a lane as its own item — the overseer still implements nothing.
   Deterministic beats prose where it stays simple; complex or brittle
   machinery is worse than either.
-- **Compact a lane before it runs out.** Every tick reads each live lane's
-  context use:
+- **Compact a lane before it runs out.** At every § 4 event — the cadence
+  this whole block runs on, and the only one the loop makes observable —
+  read each live lane's context use:
 
   ```bash
   .agents/skills/orch/scripts/lanes context

@@ -176,14 +176,24 @@ Use the output as `MAIN_REPO_ROOT`.
 
    **Restack cycle** — the base, not CI, is the blocker; never route a conflict into ci-fix:
 
-   1. `[MAIN_REPO_ROOT]/.agents/skills/worktree/scripts/worktree create [ISSUE] --restack` — the guarded rebase, which pauses in the conflict state. Resolve each file it lists, stage it with `git -C [WT_PATH] add [FILE]`, then `worktree restack continue [ISSUE]`, repeating while it stops. No worktree for `[ISSUE]`, or a rebase that cannot be resolved → surface the conflicting paths and hand back; never force-push over the base.
-   2. Push the restacked branch:
+   1. **Out of the queue and unarmed before anything is pushed.** A queued PR rejects the push, and an arming that survives the restack fires on the new head as soon as its checks clear — before step 4 re-confirms the gate. From the same verdict JSON: `in_merge_queue` true → dequeue it (GraphQL `dequeuePullRequest` — its `id` input takes the PR node id); `auto_merge_enabled` true → disable auto-merge. Re-read both and confirm they are off; either still set → hand back rather than push.
+   2. Bind `[WT_PATH]`, then run the guarded rebase:
+
+      ```bash
+      [MAIN_REPO_ROOT]/.agents/skills/worktree/scripts/worktree path [ISSUE]
+      ```
+      ```bash
+      [MAIN_REPO_ROOT]/.agents/skills/worktree/scripts/worktree create [ISSUE] --restack
+      ```
+
+      It pauses in the conflict state. Resolve each file it lists, stage it with `git -C [WT_PATH] add [FILE]`, then `worktree restack continue [ISSUE]`, repeating while it stops. No worktree for `[ISSUE]`, or a rebase that cannot be resolved → surface the conflicting paths and hand back; never force-push over the base.
+   3. Push the restacked branch:
 
       ```bash
       [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/worktree-push --worktree [WT_PATH] --issue [ISSUE]
       ```
 
-   3. The restack moved the head: re-confirm the gate exactly as recovery step 2 above, then re-run `pr-merge [PR_NUMBER] --auto` and `queue-wait` with a fresh poll budget.
+   4. The restack moved the head: re-confirm the gate exactly as recovery step 2 above, then re-run `pr-merge [PR_NUMBER] --auto` and `queue-wait` with a fresh poll budget — the re-arm step 1 undid.
 
    **Late-findings triage** — the findings, not CI, are the blocker:
 

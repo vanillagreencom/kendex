@@ -88,11 +88,11 @@ read failed — a failed read is unknown, never zero (absorbed, warned after
 3 consecutive failures, never compared), so a read failure can neither
 fabricate nor erase movement.
 
-Ejection/disarm verdicts are confirmed across QUEUE_WAIT_CONFIRM_POLLS
-consecutive polls (default 2) before they terminate the wait, so a single
-eventually-consistent blip in the GraphQL view cannot trigger a spurious
-recovery cycle. A candidate observed at least once still wins at the
-deadline — a real ejection is never downgraded to "still queued".
+A verdict is confirmed across QUEUE_WAIT_CONFIRM_POLLS consecutive polls
+(default 2) before it terminates the wait, so one blip cannot trigger a
+spurious recovery cycle. Exempt are the three read outright: merged and
+closed from the PR's own state, dequeued from this script's own mutation.
+A candidate seen once still wins at the deadline: never "still queued".
 
 Failed-required-check probe (--no-check-probe to disable): detection of
 the failed-required-check disarm cause is delegated to
@@ -174,8 +174,8 @@ Environment (orch-env ladder: parent env > .env.local > .kendex/settings.toml /
                 armed (default 120). Enqueue registration lags the merge
                 call; past the window the explicit never-armed diagnostic
                 fires instead of burning the budget on a never-armed merge.
-  QUEUE_WAIT_CONFIRM_POLLS  consecutive polls that must agree before an
-                ejection/disarm terminates the wait (default 2).
+  QUEUE_WAIT_CONFIRM_POLLS  consecutive polls that must agree before a
+                confirmed verdict terminates the wait (default 2).
   QUEUE_WAIT_PROBE_INTERVAL minimum seconds between delegated ci-wait
                 probes and between late-findings guard probes, each on its
                 own clock (default 120).

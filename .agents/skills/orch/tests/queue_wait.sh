@@ -228,7 +228,7 @@ case "${1:-}" in
   pr)
     if [[ "${2:-}" == "view" ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
-      if _args_have_sub "state,mergedAt" "$@"; then
+      if _args_have "state,mergedAt,mergeable" "$@"; then  # EXACT: a substring match serves this fixture whatever fields were asked for, so a dropped field would read as empty with the suite green
         _emit_fixture state "$(_next prview)"
       fi
       if _args_have "headRefOid" "$@"; then

@@ -62,6 +62,7 @@ ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
 
 # Sequenced `gh` stub, one poll per numbered fixture:
 #   $STUB_SEQ_DIR/state-<n>.json   `pr view --json state,mergedAt,mergeable`
+#                                  (matched EXACTLY: see _args_have below)
 #   $STUB_SEQ_DIR/queue-<n>.json   queue-membership GraphQL body
 # `<prefix>-last.json` serves every poll past the last numbered fixture.
 # Review-thread reads answer with an empty set so the late-findings guard
@@ -99,6 +100,18 @@ _args_have_sub() {
   return 1
 }
 
+# Exact, for the field list itself. Every verdict here is routed off a field
+# the query names, so a substring match would serve the fixture whatever was
+# asked for and a dropped field would read as empty with the suite green.
+_args_have() {
+  local needle="$1" a
+  shift
+  for a in "$@"; do
+    [[ "$a" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
 case "${1:-}" in
   auth) [[ "${2:-}" == "status" ]] && { echo "Logged in"; exit 0; } ;;
   repo) [[ "${2:-}" == "view" ]] && { echo "owner/repo"; exit 0; } ;;
@@ -114,7 +127,7 @@ case "${1:-}" in
     ;;
   pr)
     if [[ "${2:-}" == "view" ]]; then
-      if _args_have_sub "state,mergedAt" "$@"; then
+      if _args_have "state,mergedAt,mergeable" "$@"; then
         _emit_fixture state "$(_next prview)"
       fi
       echo "CLEAN"
@@ -181,8 +194,10 @@ assert_eq "$(jq -r .cause <<<"$out")" "base_conflict" "conflicting names its cau
 
 # --- 2. confirmed across polls, like every other terminal verdict ----------
 # A single CONFLICTING read between two clean ones is GitHub recomputing, not
-# a conflict; with the confirmation raised past the budget the wait keeps
-# running rather than sending a lane into a restack it does not need.
+# a conflict: at a two-poll confirmation it never reaches a verdict, and the
+# wait keeps running rather than sending a lane into a restack it does not
+# need. QUEUE_WAIT_CONFIRM_POLLS is passed here rather than inherited, so a
+# change to run_queue_wait's shared default cannot quietly void the case.
 new_case conflicting_blip
 write_fixture state 1 "$(pr_state OPEN MERGEABLE)"
 write_fixture state 2 "$(pr_state OPEN CONFLICTING)"

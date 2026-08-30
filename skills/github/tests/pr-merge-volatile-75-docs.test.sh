@@ -82,10 +82,16 @@ assert_matches "$table" 'README\.md § Exit 75 recovery' \
 readme_src=$(sed -n '/^## Exit 75 recovery$/,/^## /p' "$REPO_ROOT/skills/github/README.md")
 assert_matches "$readme_src" 'exits 75 when the PR is queued or auto-merge is armed' \
   "README states the volatile 75 contract"
-assert_matches "$readme_src" 're-arm on `ejected`, `disarmed` and' \
-  "README routes only genuine disarm verdicts to re-arm"
-assert_matches "$readme_src" '`dequeued` means late review findings' \
-  "README routes dequeued to findings triage, not re-arm"
+# The verdict set grows (queue-wait gained `conflicting`), so the README
+# points at queue-wait's own table instead of restating it — a list here was
+# a fifth copy going stale on every addition. What it must still carry is the
+# refusal that keeps an unrouted verdict from being re-armed.
+assert_matches "$readme_src" 'queue-wait --help` § Verdicts' \
+  "README points at queue-wait's own verdict table rather than restating it"
+assert_matches "$readme_src" 'never re-arm a verdict whose entry does not call for a' \
+  "README refuses a re-arm on any verdict that table does not route to one"
+assert_matches "$readme_src" 'until it is restacked' \
+  "README routes a base conflict to a restack, never a re-arm or a CI repair"
 assert_matches "$readme_src" 'is a CI repair first' \
   "README requires the CI repair before re-arming an ejected head"
 assert_matches "$table" 'await-mergeable` is not that' \

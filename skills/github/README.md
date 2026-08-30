@@ -80,11 +80,13 @@ review-gate beside this one):
 - `GH_REPO=<owner/repo> .agents/skills/review-gate/scripts/pr-watch.sh` is one
   pass that prints `disarmed … (re-arm)` lines.
 
-Route the verdict: re-arm on `ejected`, `disarmed` and the memoryless
-`not_queued` — after repairing what the cause names (a
-`merge_group_failed`/`check_failed` cause is a CI repair first, else the same
-head ejects again); `dequeued` means late review findings — triage them first;
-`closed` and `unknown` are terminal. Re-arm with
+Route each verdict as `queue-wait --help` § Verdicts prescribes — that table
+is the route, and it grows; a verdict this README named would go stale in it.
+Two rules survive here: never re-arm a verdict whose entry does not call for a
+re-arm (a head GitHub reports in conflict with its base merges through
+nothing until it is restacked), and where an entry does, re-arm only after
+repairing what the `cause` names — a `merge_group_failed`/`check_failed`
+cause is a CI repair first, else the same head ejects again. Re-arm with
 `.agents/skills/github/scripts/github.sh pr-merge <N> --auto`.
 
 Where branch protection *is* enabled, the opposite problem appears: after a
