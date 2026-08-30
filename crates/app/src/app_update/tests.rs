@@ -2,6 +2,10 @@ use kendex_core::install_channel::HostProbe as _;
 
 use super::*;
 
+#[path = "../../../test_util.rs"]
+mod test_util;
+use test_util::no_record_on_this_runner;
+
 #[test]
 fn only_debug_builds_accept_a_feed_override() {
     let fixture = "file:///fixtures/feed.json".to_owned();
@@ -283,6 +287,9 @@ fn a_failed_app_half_says_whether_the_command_went_ahead_of_it() {
 /// kendex in.
 #[test]
 fn the_app_s_own_image_is_never_the_command_it_carries() {
+    if no_record_on_this_runner() {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let bin = dir.path().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
@@ -379,6 +386,9 @@ fn a_recorded_command(dir: &tempfile::TempDir) -> (Env, std::ffi::OsString, Path
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_command_that_changed_under_the_card_refuses_the_install() {
+    if no_record_on_this_runner() {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let (env, path_var, command) = a_recorded_command(&dir);
     let install = AppInstall::AppImage(None);
@@ -413,6 +423,9 @@ fn a_command_that_changed_under_the_card_refuses_the_install() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_command_that_became_ours_under_the_card_refuses_too() {
+    if no_record_on_this_runner() {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let (env, path_var, command) = a_recorded_command(&dir);
     let install = AppInstall::AppImage(None);

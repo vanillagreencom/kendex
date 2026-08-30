@@ -5,11 +5,18 @@
 //! the defect was never that the write was wrong, it was that nothing
 //! called it outside `kendex update`, and a test that calls the seam
 //! itself would have passed throughout.
+//!
+//! Which is why every case here needs a runner that can write a record.
+//! A run acting as root writes none, and the refusals below — a record
+//! left alone, a link not written through, a pipe never opened — are the
+//! same nothing the guard produces, so under a root runner they would
+//! hold without the code under test having decided anything. Each says so
+//! and stops instead; see `no_record_on_this_runner`.
 #![cfg(unix)]
 
 #[path = "../../test_util.rs"]
 mod test_util;
-use test_util::rooted;
+use test_util::{no_record_on_this_runner, rooted};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -132,6 +139,9 @@ fn older_than_the_command(link: &Path, command: &Path) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn any_verb_records_the_command_an_install_never_recorded() {
+    if no_record_on_this_runner() {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     // The canonical root, and the same one handed to the run: a resolver
     // asked about a different spelling of that directory reads an empty one.
@@ -166,6 +176,9 @@ fn any_verb_records_the_command_an_install_never_recorded() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_forms_clap_answers_itself_record_the_command_too() {
+    if no_record_on_this_runner() {
+        return;
+    }
     for form in ["--version", "--help"] {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
@@ -194,6 +207,9 @@ fn the_forms_clap_answers_itself_record_the_command_too() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_record_already_there_is_not_written_over_by_a_first_run() {
+    if no_record_on_this_runner() {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = kendex_core::env::Env::host_rooted(&home);
@@ -241,6 +257,9 @@ fn a_record_already_there_is_not_written_over_by_a_first_run() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn concurrent_first_runs_leave_one_whole_record() {
+    if no_record_on_this_runner() {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = kendex_core::env::Env::host_rooted(&home);
@@ -288,6 +307,9 @@ fn concurrent_first_runs_leave_one_whole_record() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_run_does_not_take_the_record_off_another_install() {
+    if no_record_on_this_runner() {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = kendex_core::env::Env::host_rooted(&home);
@@ -305,18 +327,17 @@ fn a_run_does_not_take_the_record_off_another_install() {
     );
 }
 
-/// The bytes a record names after the run that replaced them wrote its own
-/// record somewhere else. What an elevated `kendex update` leaves behind:
-/// the path is still the person's command, the digest is a file that is
-/// gone, and `command_beside_app` stops matching the one command the card
-/// was offering.
+/// The bytes a record names after the run that replaced them wrote no
+/// record. What an elevated `kendex update` leaves behind: the path is
+/// still the person's command, the digest is a file that is gone, and
+/// `command_beside_app` stops matching the one command the card was
+/// offering.
 const REPLACED: &[u8] = b"the bytes an elevated update replaced";
 
-/// A replacement made with privilege the app lacks writes its record into
-/// the privileged account's data directory, so this one keeps naming bytes
-/// that are gone. The next run from the recorded path is running those new
-/// bytes, which is the same proof a first run offers, and it says what is
-/// there now.
+/// A replacement made with privilege the app lacks writes no record at
+/// all, so this one keeps naming bytes that are gone. The next run from
+/// the recorded path is running those new bytes, which is the same proof
+/// a first run offers, and it says what is there now.
 ///
 /// Read back through the resolver rather than off the file: what has to
 /// hold is the answer the app gets, and a test that parses the file itself
@@ -324,6 +345,9 @@ const REPLACED: &[u8] = b"the bytes an elevated update replaced";
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_run_from_the_recorded_path_says_what_replaced_its_bytes() {
+    if no_record_on_this_runner() {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = kendex_core::env::Env::host_rooted(&home);
@@ -357,6 +381,9 @@ fn a_run_from_the_recorded_path_says_what_replaced_its_bytes() {
 #[cfg(target_os = "linux")]
 #[allow(clippy::unwrap_used)]
 fn the_record_a_run_moves_is_the_one_xdg_data_home_names() {
+    if no_record_on_this_runner() {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     // A second home whose Linux data directory is the one the run is told
@@ -394,6 +421,9 @@ fn the_record_a_run_moves_is_the_one_xdg_data_home_names() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_run_does_not_say_what_replaced_another_installs_bytes() {
+    if no_record_on_this_runner() {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = kendex_core::env::Env::host_rooted(&home);
@@ -430,6 +460,9 @@ fn a_run_does_not_say_what_replaced_another_installs_bytes() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_record_that_still_matches_keeps_its_content_and_stops_being_reread() {
+    if no_record_on_this_runner() {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = kendex_core::env::Env::host_rooted(&home);
@@ -472,6 +505,9 @@ fn a_record_that_still_matches_keeps_its_content_and_stops_being_reread() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_repair_leaves_the_record_naming_the_bytes_it_read() {
+    if no_record_on_this_runner() {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = kendex_core::env::Env::host_rooted(&home);
@@ -497,6 +533,9 @@ fn a_repair_leaves_the_record_naming_the_bytes_it_read() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_pipe_at_the_record_path_does_not_hold_the_command() {
+    if no_record_on_this_runner() {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = kendex_core::env::Env::host_rooted(&home);
@@ -526,6 +565,9 @@ fn a_pipe_at_the_record_path_does_not_hold_the_command() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_link_at_the_record_path_is_not_written_through() {
+    if no_record_on_this_runner() {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = kendex_core::env::Env::host_rooted(&home);

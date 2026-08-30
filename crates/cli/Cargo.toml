@@ -27,5 +27,11 @@ toml.workspace = true
 # path is a grammar, not a substitution. Already in the tree under tauri.
 url = "2"
 
+[target.'cfg(unix)'.dev-dependencies]
+# The effective uid, read straight from the syscall so a suite can say why
+# it can observe no record on a runner that is already root — a read the
+# guard under test cannot answer for. Already in the workspace under core.
+rustix.workspace = true
+
 [lints]
 workspace = true

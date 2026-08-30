@@ -34,3 +34,43 @@ pub fn source_path(path: &Path) -> String {
         .trim_end()
         .to_owned()
 }
+
+/// Whether this runner can observe the record `kendex` writes for the
+/// command it installed.
+///
+/// A run acting as root writes none, so a case that drives the writers —
+/// through the entry points, or through the built binary — has nothing to
+/// look at on a runner that is already root, which a root dev container
+/// is. Those cases say so and stop, rather than asserting against a record
+/// that was never written: several would otherwise pass, holding for a
+/// write that was refused instead of for the run that was meant to make
+/// it.
+///
+/// The uid comes from the syscall rather than from the guard that reads
+/// it. Asked the other way round, a build whose guard answered a constant
+/// would talk these cases out of running on the very runner that would
+/// have caught it.
+#[cfg(unix)]
+#[allow(
+    dead_code,
+    clippy::print_stderr,
+    reason = "every test binary includes this whole module and uses the part it needs; a skipped case has to say so"
+)]
+pub fn no_record_on_this_runner() -> bool {
+    let root = rustix::process::geteuid().is_root();
+    if root {
+        eprintln!("skipped: a run acting as root writes no record");
+    }
+    root
+}
+
+/// Windows has no uid to read and none of the elevation the guard turns
+/// on, so every such case runs there.
+#[cfg(not(unix))]
+#[allow(
+    dead_code,
+    reason = "every test binary includes this whole module and uses the part it needs"
+)]
+pub fn no_record_on_this_runner() -> bool {
+    false
+}

@@ -3,12 +3,11 @@
 //!
 //! `install.sh` writes it, `kendex update` refreshes it for the binary it
 //! is running as, and every replacement rewrites it for the bytes that
-//! landed. A replacement made under another account writes that account's
-//! record instead, so the next run from the recorded path moves this one to
-//! the bytes it finds there. Read by `command_update::command_beside_app`,
-//! which will not replace a file no record vouches for.
-//!
-//! Nothing here is written by a privileged run. See [`acting_as_root`].
+//! landed. A replacement made by a privileged run writes no record at all
+//! — see [`acting_as_root`] — so the next run from the recorded path moves
+//! this one to the bytes it finds there. Read by
+//! `command_update::command_beside_app`, which will not replace a file no
+//! record vouches for.
 
 use std::path::{Path, PathBuf};
 
@@ -92,10 +91,15 @@ pub fn record_command(env: &Env, path: &Path, bytes: &[u8]) -> Result<(), String
     record_command_as(env, path, bytes, acting_as_root())
 }
 
-/// The write itself, told who is making it. Split out so a test can drive
-/// the root arm on a machine where it cannot become root; every caller in
-/// the tree reaches it through [`record_command`], which asks the process.
-fn record_command_as(env: &Env, path: &Path, bytes: &[u8], root: bool) -> Result<(), String> {
+/// The write itself, told who is making it. Split out so a suite can drive
+/// either arm whatever uid it is running under; every caller outside a test
+/// reaches it through [`record_command`], which asks the process.
+pub(super) fn record_command_as(
+    env: &Env,
+    path: &Path,
+    bytes: &[u8],
+    root: bool,
+) -> Result<(), String> {
     if root {
         return Ok(());
     }
@@ -187,7 +191,7 @@ pub fn record_first_run(env: &Env, running: &Path) -> Result<(), String> {
 /// [`record_command_as`] is, and guarded before the directory is made:
 /// `create_dir_all` under a root run is already root writing into a tree
 /// the invoking account named.
-fn record_first_run_as(env: &Env, running: &Path, root: bool) -> Result<(), String> {
+pub(super) fn record_first_run_as(env: &Env, running: &Path, root: bool) -> Result<(), String> {
     if root {
         return Ok(());
     }
@@ -259,12 +263,12 @@ fn record_first_run_as(env: &Env, running: &Path, root: bool) -> Result<(), Stri
 /// Move the digest of a record that names the file this process is running
 /// from, where the bytes at that file are no longer the ones it names.
 ///
-/// An update run with the privilege the desktop app lacks writes its record
-/// into the privileged account's data directory, so the record here keeps
-/// naming the bytes that run replaced. `command_beside_app` then stops
-/// matching a command kendex does own, and the card that offered the one
-/// command out of that state falls to the arm that names nobody. The person
-/// is left with a current command the app will never offer to move again.
+/// An update run with the privilege the desktop app lacks writes no record
+/// at all — see [`acting_as_root`] — so the record here keeps naming the
+/// bytes that run replaced. `command_beside_app` then stops matching a
+/// command kendex does own, and the card that offered the one command out
+/// of that state falls to the arm that names nobody. The person is left
+/// with a current command the app will never offer to move again.
 ///
 /// What licenses the write is what licenses a first run, and it is the same
 /// file: a process running from the recorded path is the recorded command,
@@ -354,10 +358,21 @@ fn stamp(file: &Path, written_at: std::time::SystemTime) -> Result<(), String> {
 
 /// The same record, taken from a file already on disk — the running
 /// command identifying itself, where the bytes are not in hand.
+///
+/// A run acting as root writes nothing here either — see
+/// [`acting_as_root`].
 pub fn record_installed(env: &Env, path: &Path) -> Result<(), String> {
+    record_installed_as(env, path, acting_as_root())
+}
+
+/// The read and the write, told who is making them. Split for the reason
+/// [`record_command_as`] is. The read happens either way: it is the caller's
+/// own file, and a root arm that skipped it would leave a suite unable to
+/// tell a refused write from a missing fixture.
+pub(super) fn record_installed_as(env: &Env, path: &Path, root: bool) -> Result<(), String> {
     let bytes = std::fs::read(path)
         .map_err(|error| format!("{} could not be read: {error}", path.display()))?;
-    record_command(env, path, &bytes)
+    record_command_as(env, path, &bytes, root)
 }
 
 #[cfg(test)]

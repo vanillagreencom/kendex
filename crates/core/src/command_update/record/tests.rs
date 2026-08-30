@@ -1,6 +1,13 @@
 //! What the record proves about a file, and what it refuses to prove.
 //! The lookup itself lives in the parent; these are the arms that turn on
 //! the record alone, against real files rather than a described machine.
+//!
+//! The writes below go through the `_as` seam with the identity spelled
+//! out, rather than through the entry points that ask this process. None
+//! of these tests is about privilege, and a suite run as root — a root
+//! dev container is one — would otherwise assert against records the
+//! guard refused to write. That the entry points do ask the process is
+//! proved once, in `a_public_write_follows_this_process_uid`.
 
 use super::*;
 
@@ -47,7 +54,7 @@ fn a_record_that_is_not_a_path_and_a_digest_is_no_record() {
 
     // The control: the same file, well formed, is read. Without it every
     // assertion above passes for a reader that returns `None` always.
-    record_command(&env, Path::new(installed), WRAPPER).unwrap();
+    record_command_as(&env, Path::new(installed), WRAPPER, false).unwrap();
     assert_eq!(
         recorded_command(&env),
         Some(InstalledCommand {
@@ -68,7 +75,7 @@ fn a_first_run_vouches_for_its_own_file_and_no_other() {
     let env = Env::host_rooted(dir.path());
     let ours = dir.path().join("kendex");
     std::fs::write(&ours, b"the binary that ran").unwrap();
-    record_first_run(&env, &ours).unwrap();
+    record_first_run_as(&env, &ours, false).unwrap();
 
     let wrapper = dir.path().join("bin/kendex");
     std::fs::create_dir_all(wrapper.parent().unwrap()).unwrap();
@@ -163,11 +170,12 @@ fn a_staging_write_with_no_free_name_fails() {
 /// `kendex update` reaches after the bytes land — and neither leaves so
 /// much as the directory behind.
 ///
-/// Root is passed in rather than become: this suite runs as a person. What
-/// is real is everything else — the same `Env`, the same functions, a home
-/// on disk. The control is the second half, where the identical calls with
-/// the identical fixture write both records; without it every assertion
-/// above would hold for a pair of functions that never wrote anything.
+/// Root is passed in rather than become: a suite does not choose the uid it
+/// is started under. What is real is everything else — the same `Env`, the
+/// same functions, a home on disk. The control is the second half, where
+/// the identical calls with the identical fixture write both records;
+/// without it every assertion above would hold for a pair of functions
+/// that never wrote anything.
 #[test]
 #[cfg(unix)]
 fn a_run_acting_as_root_writes_no_record() {
@@ -214,22 +222,49 @@ fn a_run_acting_as_root_writes_no_record() {
 }
 
 /// The guard is wired to this process's own uid and not to a constant.
-/// Read the other way round, an unprivileged run still records: the public
-/// entry points ask [`acting_as_root`], the suite runs as a person, and the
-/// record lands. A build that answered `true` always would strand every
-/// person on the record they already had.
+///
+/// The one test here that drives a public entry point, and the one that
+/// has to: what the seam above cannot show is that anything reads the uid
+/// at all. So the entry point is called and its answer held against the
+/// uid read independently — from the syscall, not from [`acting_as_root`],
+/// which is the function this is checking the wiring of.
+///
+/// Both directions fall out of that. A build answering `true` always
+/// strands every person on the record they already had, and fails this on
+/// any unprivileged runner, which is every CI job; a build answering
+/// `false` always is the defect this change exists to close, and fails it
+/// under a root runner. Neither uid is skipped and neither passes for
+/// free.
 #[test]
 #[cfg(unix)]
-fn an_unprivileged_run_still_records() {
-    assert!(!acting_as_root(), "this suite is meant to run unprivileged");
+fn a_public_write_follows_this_process_uid() {
+    let privileged = rustix::process::geteuid().is_root();
     let dir = tempfile::tempdir().unwrap();
     let env = Env::host_rooted(dir.path());
     let running = dir.path().join("kendex");
     std::fs::write(&running, WRAPPER).unwrap();
 
     record_first_run(&env, &running).unwrap();
+
     assert_eq!(
         recorded_command(&env).map(|record| record.digest),
-        Some(crate::hash::sha256_hex(WRAPPER))
+        (!privileged).then(|| crate::hash::sha256_hex(WRAPPER)),
+        "the entry point did not follow this process's uid (root: {privileged})"
+    );
+
+    // The control, on a home of its own: the same write told the opposite
+    // identity does the opposite thing. Without it the assertion above
+    // holds for a writer that never writes, and for one that always does.
+    let other = tempfile::tempdir().unwrap();
+    let env = Env::host_rooted(other.path());
+    let running = other.path().join("kendex");
+    std::fs::write(&running, WRAPPER).unwrap();
+
+    record_first_run_as(&env, &running, !privileged).unwrap();
+
+    assert_eq!(
+        recorded_command(&env).map(|record| record.digest),
+        privileged.then(|| crate::hash::sha256_hex(WRAPPER)),
+        "the write does the same thing whichever identity it is told"
     );
 }

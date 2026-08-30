@@ -8,6 +8,10 @@ use super::*;
 mod fixture_url;
 use fixture_url::file_url;
 
+#[path = "../../../../test_util.rs"]
+mod test_util;
+use test_util::no_record_on_this_runner;
+
 /// The one skew this order can still leave is an app already across
 /// and a command that would not move. It is not a dead end — the
 /// command's version is unchanged, so the next run reads newer and
@@ -451,6 +455,9 @@ fn missing_asset_message_never_calls_current_or_older_available() {
 /// refuse the app the command it just brought current.
 #[test]
 fn an_update_records_the_command_it_is_running_as() {
+    if no_record_on_this_runner() {
+        return;
+    }
     for force in [true, false] {
         let dir = tempfile::tempdir().unwrap();
         let (env, feed_url, installed) = a_release_is_out(&dir);
@@ -492,6 +499,9 @@ fn an_update_records_the_command_it_is_running_as() {
 /// existed is missing, and the digest is what makes it usable.
 #[test]
 fn a_run_with_nothing_to_do_records_the_bytes_already_installed() {
+    if no_record_on_this_runner() {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let (env, _, installed) = a_release_is_out(&dir);
     // A feed offering exactly what is running: nothing to fetch, nothing
@@ -532,6 +542,11 @@ fn a_run_with_nothing_to_do_records_the_bytes_already_installed() {
 /// tell the app to replace bytes the CLI just refused to touch.
 #[test]
 fn a_package_managed_run_records_nothing() {
+    // The nothing this asserts is the package-managed arm's. Under a
+    // root runner it would be the guard's, and every arm would pass.
+    if no_record_on_this_runner() {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let (env, feed_url, installed) = a_release_is_out(&dir);
     let brew = InstallChannel::Managed {

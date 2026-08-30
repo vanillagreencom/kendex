@@ -2267,6 +2267,7 @@ version = "5.0.1"
 dependencies = [
  "kendex-core",
  "png 0.18.1",
+ "rustix",
  "serde",
  "serde_json",
  "specta",
@@ -2288,6 +2289,7 @@ dependencies = [
  "clap",
  "cliclack",
  "kendex-core",
+ "rustix",
  "serde_json",
  "tempfile",
  "toml 1.1.4+spec-1.1.0",
