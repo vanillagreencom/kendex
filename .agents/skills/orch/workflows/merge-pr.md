@@ -50,7 +50,7 @@ High-severity findings (conflicts) abort early with the issues shown. Otherwise 
 
 ### 3.2 Act On The Result
 
-`CHECK.state` decides first: `MERGED` → run § 4 EXCEPT § 4.1 and § 5's preamble (`MAIN_REPO_ROOT`), then continue at § 5 step 2 for tracker sync, base sync, and cleanup, skipping step 1; `CLOSED` → report that it was closed unmerged and stop.
+`CHECK.state` decides first: `MERGED` → set `[ALREADY_MERGED]=true`, run § 4 EXCEPT § 4.1, then enter § 5 step 1 to create and claim its lifecycle before post-merge work; `CLOSED` → report that it was closed unmerged and stop.
 
 `can_merge: true` → § 4, showing any warnings. `false` → show the issues with their suggested fixes and ask: `Skip` | `Fix and retry` | `Force merge`.
 
@@ -73,10 +73,27 @@ Bot-specific signals — emoji reactions, sticky-comment prose, checklist text �
 ```bash
 .agents/skills/github/scripts/github.sh pr-issue [PR_NUMBER] --format=text
 .agents/skills/worktree/scripts/worktree exists "$ISSUE"
+.agents/skills/worktree/scripts/worktree path "$ISSUE"
 .agents/skills/github/scripts/github.sh bot-token
 ```
 
-Note whether a worktree exists for `ISSUE` — § 5 step 4 disposes of it by rule, no question. `bot-token` reporting `.configured: false` → ask `Merge as current user` | `Abort`.
+Use the outputs as `[STATE_KEY]`, `[CLEANUP_WORKTREE]`, and `[WORKTREE_PATH]`.
+When no issue worktree exists, set `[WORKTREE_PATH]` to `[MAIN_REPO_ROOT]` and
+`[CLEANUP_WORKTREE]=false`. Read the PR branch, then initialize workflow state;
+the command is idempotent for managed sessions and creates it for standalone
+`merge-pr`:
+
+```bash
+.agents/skills/orch/scripts/git-context common-root .
+```
+```bash
+env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --jq .headRefName
+```
+```bash
+.agents/skills/orch/scripts/merge-queue-watch init --worktree [WORKTREE_PATH] --issue [STATE_KEY] --branch [PR_BRANCH]
+```
+
+`bot-token` reporting `.configured: false` → ask `Merge as current user` | `Abort`.
 
 ### 4.1 Detach Orphaned Children
 
@@ -126,17 +143,9 @@ Use the output as `MAIN_REPO_ROOT`.
 
 1. **Merge**, before any cleanup:
 
-   ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] [--force]
-   ```
-
-   Exit `0` = merged → step 2.
-
-   Exit `1` BLOCKED → run `[MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]` and route on its `cause:` line: `ci_pending` — or `none` when the merge output names a base branch requiring merges through a queue — → prepare the durable watch before re-running with `--auto`. Any other cause is surfaced with the printed detail and returns to § 3.2.
-
-   Resolve the repository, gate mode, and exact head before arming. `[STATE_KEY]`
-   must already have workflow state. `[RECOVERY_COUNT]` is `0` on the first
-   attempt and the latest consume result thereafter.
+   Resolve the repository, gate mode, and exact head, then prepare the lifecycle
+   before any immediate or queued merge attempt. `[RECOVERY_COUNT]` is `0` on
+   the first attempt and the latest consume result thereafter.
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh repo view --json nameWithOwner --jq .nameWithOwner
@@ -148,8 +157,19 @@ Use the output as `MAIN_REPO_ROOT`.
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
    ```
    ```bash
-   .agents/skills/orch/scripts/merge-queue-watch prepare --worktree [WORKTREE_PATH] --issue [STATE_KEY] --repo [OWNER/REPO] --pr [PR_NUMBER] --head [PREPARED_HEAD] --root [MAIN_REPO_ROOT] --gate-mode [GATE_MODE] --recovery-count [RECOVERY_COUNT]
+   .agents/skills/orch/scripts/merge-queue-watch prepare --worktree [WORKTREE_PATH] --issue [STATE_KEY] --repo [OWNER/REPO] --pr [PR_NUMBER] --head [PREPARED_HEAD] --root [MAIN_REPO_ROOT] --gate-mode [GATE_MODE] --recovery-count [RECOVERY_COUNT] --cleanup-worktree [CLEANUP_WORKTREE]
    ```
+
+   `[ALREADY_MERGED]=true` skips the mutation, runs `direct-merged` below, and
+   continues to step 2. Otherwise attempt only the prepared head:
+
+   ```bash
+   [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] [--force] --expected-head [PREPARED_HEAD]
+   ```
+
+   Exit `0` runs `direct-merged` below, then continues to step 2.
+
+   Exit `1` BLOCKED → run `[MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]` and route on its `cause:` line: `ci_pending` — or `none` when the merge output names a base branch requiring merges through a queue — → re-run the prepared head with `--auto`. Any other cause terminalizes the prepared lifecycle with `--cause merge_blocked`, surfaces the detail, and returns to § 3.2.
 
    The prepare result supplies `[WATCH_ID]`, `[PREPARED_HEAD]`, and the absolute
    artifact and diagnostic paths. Arm only that head:
@@ -189,11 +209,17 @@ Use the output as `MAIN_REPO_ROOT`.
    |----------|-------|
    | `pending` | Return; the detached supervisor is live and within its deadline |
    | `postmerge` | Step 2 |
+   | `resume_postmerge` | Resume the already-claimed step 2 path after interruption |
    | `recovery` | Recovery cycle below, using the persisted gate mode and recovery count |
+   | `resume_recovery` | Resume the persisted recovery cycle; do not increment or delegate a new cycle |
    | `triage` | Late-findings triage below |
+   | `resume_triage`, `resume_manual_dequeue` | Resume the already-claimed review path |
    | `manual_dequeue` | Confirm dequeue or disarm before late-findings triage |
    | `rewatch` | Prepare and launch a new watch without re-arming |
    | `rearm` | Prepare, re-arm the exact head once, and launch |
+   | `resume_rewatch`, `resume_rearm` | Resume the claimed next-generation setup without replaying consume |
+   | `lane_postmerge`, `resume_cleanup`, `acknowledge` | Continue in `lane-postmerge.md`; never replay merge-pr steps 2-4 |
+   | `complete` | No-op; lifecycle already finished |
    | `failed`, `abandoned` | Hand back with the durable diagnostic; no replay |
 
    **Recovery cycle** — route the failure back into ci-fix, never fix CI by hand:

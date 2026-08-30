@@ -116,10 +116,15 @@ The three waiters exit `3` on hard auth failure — [references/gates.md](refere
 unrelated work. It alone validates repository, PR, prepared head, watch ID,
 artifact, live head, supervisor lease, deadline, gate mode, and recovery count;
 it atomically claims one normalized action. Route that action through
-`merge-pr.md` § 5. A merged action finishes merge-pr steps 2-4, then
+`merge-pr.md` § 5. Repeated consume calls return phase-specific resume or no-op
+actions rather than the initial claim. A merged action finishes merge-pr steps 2-4, then
 `lane-postmerge.md` records the project-specific result, removes the issue
 worktree from the main repository, then acknowledges. Only that acknowledgment makes the lifecycle complete. The overseer wakes and confirms;
 it never consumes, recovers, or completes a lane's lifecycle.
+
+Standalone merge-pr resolves the PR's issue and worktree, then calls
+`merge-queue-watch init` before preparation. With no issue worktree, state lives
+in the main checkout and lifecycle cleanup is explicitly disabled.
 
 ## Schemas
 

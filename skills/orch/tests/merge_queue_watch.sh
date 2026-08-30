@@ -21,6 +21,8 @@ git -C "$MAIN" config user.name Test
 touch "$MAIN/seed"; git -C "$MAIN" add seed; git -C "$MAIN" commit -qm seed
 git -C "$MAIN" branch watch-test
 git -C "$MAIN" worktree add -q "$WT" watch-test
+ln -s "$(cd "$ORCH/.." && pwd)/github" "$TMP/github"
+printf 'GH_BOT_TOKEN=ghp_project\n' > "$MAIN/.env.local"
 mkdir -p "$MAIN/.agents/skills/worktree/scripts"
 cat > "$MAIN/.agents/skills/worktree/scripts/worktree" <<'EOF'
 #!/usr/bin/env bash
@@ -32,6 +34,7 @@ EOF
 chmod +x "$MAIN/.agents/skills/worktree/scripts/worktree"
 cp "$ORCH/scripts/merge-queue-watch" "$ORCH/scripts/workflow-state" "$ORCH/scripts/orch-env" "$SCRIPTS/"
 cp "$ORCH/scripts/lib/merge-queue-supervisor.sh" "$SCRIPTS/lib/"
+cp "$ORCH/scripts/lib/merge-queue-state.sh" "$SCRIPTS/lib/"
 cp "$ORCH/scripts/lib/kendex-env.sh" "$SCRIPTS/lib/"
 
 MODE="$TMP/mode" RELEASE="$TMP/release" HEAD_FILE="$TMP/head"
@@ -63,6 +66,8 @@ cat > "$BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-} ${2:-}" == "pr view" ]]; then
+  [[ "${GH_TOKEN:-}" == ghp_project ]] || { echo 'no shared project token' >&2; exit 1; }
+  printf '%s\n' "${GH_TOKEN:-none}" >> "$WATCH_AUTH_LOG"
   if [[ -f "$WATCH_GH_PAUSE.enabled" ]]; then touch "$WATCH_GH_PAUSE.entered"; while [[ ! -f "$WATCH_GH_PAUSE.release" ]]; do sleep 0.05; done; fi
   head=$(cat < "$WATCH_HEAD_FILE")
   mode=$(cat < "$WATCH_MODE")
@@ -70,6 +75,10 @@ if [[ "${1:-} ${2:-}" == "pr view" ]]; then
   if [[ "$*" == *"--jq"* ]]; then printf '%s\n' "$head"; fi
   if [[ "$*" != *"--jq"* ]]; then printf '{"headRefOid":"%s","state":"%s"}\n' "$head" "$state"; fi
   exit 0
+fi
+if [[ "${1:-} ${2:-}" == "auth status" || "${1:-} ${2:-}" == "api user" ]]; then
+  [[ "${GH_TOKEN:-}" == ghp_project ]] || exit 1
+  echo authenticated; exit 0
 fi
 echo "unexpected gh: $*" >&2
 exit 1
@@ -85,8 +94,10 @@ EOF
 chmod +x "$BIN/setsid"
 fi
 export PATH="$BIN:$PATH" WATCH_MODE="$MODE" WATCH_RELEASE="$RELEASE" WATCH_HEAD_FILE="$HEAD_FILE" WATCH_MAIN="$MAIN" WATCH_WORKTREE="$WT"
-export WATCH_GH_PAUSE="$TMP/gh-pause" WATCH_SETUP_GATE="$TMP/setup-gate" WATCH_REAL_SETSID="$REAL_SETSID" WATCH_CLEANUP_FAIL="$TMP/cleanup-fail"
-"$SCRIPTS/workflow-state" --state-dir "$WT/tmp" init KEN-829 --worktree "$WT" --branch watch-test >/dev/null
+export WATCH_GH_PAUSE="$TMP/gh-pause" WATCH_SETUP_GATE="$TMP/setup-gate" WATCH_REAL_SETSID="$REAL_SETSID" WATCH_CLEANUP_FAIL="$TMP/cleanup-fail" WATCH_AUTH_LOG="$TMP/auth.log"
+unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN
+init_out=$("$SCRIPTS/merge-queue-watch" init --worktree "$WT" --issue KEN-829 --branch watch-test)
+eq "$(jq -r .exists <<<"$init_out")" true "standalone init creates workflow state"
 
 prepare() {
   rm -f "$RELEASE"
@@ -134,8 +145,13 @@ event_again=$("$SCRIPTS/merge-queue-watch" event --root "$MAIN" --issue KEN-829)
 eq "$event_again" "$event_out" "fleet wake remains level-triggered until consume"
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .action <<<"$result")" postmerge "merged verdict claims postmerge action"
+grep -Fxq ghp_project "$WATCH_AUTH_LOG" && ok "live PR reads use the shared project token ladder" || bad "live PR read bypassed project token"
+replay=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .action <<<"$replay")" resume_postmerge "claimed postmerge replays as an explicit resume phase"
 "$SCRIPTS/merge-queue-watch" merge-pr-complete --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
 eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" awaiting_lane_postmerge "merge-pr completion waits for lane acknowledgment"
+replay=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .action <<<"$replay")" lane_postmerge "awaiting phase cannot replay merge-pr poststeps"
 set +e
 "$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue KEN-829 --watch-id "$watch" --result pass >/dev/null 2>&1
 early_ack_rc=$?
@@ -150,6 +166,8 @@ result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .action <<<"$result")" recovery "ejected verdict claims recovery"
 eq "$(jq -r .recovery_count <<<"$result")" 1 "recovery claim increments durable count"
 eq "$(jq -r .gate_mode <<<"$result")" review "recovery keeps gate mode across boundary"
+replay=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .action <<<"$replay")" resume_recovery "claimed recovery cannot replay the initial action"
 set +e
 prepare ejected off 0 >/dev/null 2>"$TMP/reset.err"
 reset_rc=$?
@@ -282,8 +300,21 @@ prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
 (cd "$WT" && "$SCRIPTS/merge-queue-watch" cleanup --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null)
 if [[ ! -d "$WT" ]]; then ok "cleanup safely removes the lane's original cwd"; else bad "cleanup left the issue worktree"; fi
 eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" cleanup_complete "cleanup completes before final acknowledgment"
+replay=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .action <<<"$replay")" acknowledge "cleanup completion resumes only acknowledgment"
 "$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue KEN-829 --watch-id "$watch" --result pass >/dev/null
 eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" complete "lane acknowledgment survives worktree cleanup"
+replay=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .action <<<"$replay")" complete "completed lifecycle consumes as no-op"
+
+"$SCRIPTS/merge-queue-watch" init --worktree "$MAIN" --issue KEN-829 --branch watch-test >/dev/null
+prep=$("$SCRIPTS/merge-queue-watch" prepare --worktree "$MAIN" --issue KEN-829 --repo owner/repo --pr 42 --head "$HEAD_A" --root "$MAIN" --gate-mode off --recovery-count 0 --cleanup-worktree false)
+watch=$(jq -r .watch_id <<<"$prep")
+"$SCRIPTS/merge-queue-watch" direct-merged --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
+"$SCRIPTS/merge-queue-watch" merge-pr-complete --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
+"$SCRIPTS/merge-queue-watch" cleanup --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
+"$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue KEN-829 --watch-id "$watch" --result pass >/dev/null
+if [[ -d "$MAIN/.git" ]]; then ok "standalone lifecycle never treats main as issue worktree"; else bad "standalone cleanup removed main repository"; fi
 
 printf 'merge-queue-watch: %d pass, %d fail\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

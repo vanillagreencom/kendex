@@ -16,9 +16,11 @@ audit() {
   local file="$1" body line previous=0 at
   body=$(section "$file")
   for line in \
-    '.agents/skills/orch/scripts/merge-queue-watch prepare --worktree [WORKTREE_PATH] --issue [STATE_KEY] --repo [OWNER/REPO] --pr [PR_NUMBER] --head [PREPARED_HEAD] --root [MAIN_REPO_ROOT] --gate-mode [GATE_MODE] --recovery-count [RECOVERY_COUNT]' \
+    '.agents/skills/orch/scripts/merge-queue-watch prepare --worktree [WORKTREE_PATH] --issue [STATE_KEY] --repo [OWNER/REPO] --pr [PR_NUMBER] --head [PREPARED_HEAD] --root [MAIN_REPO_ROOT] --gate-mode [GATE_MODE] --recovery-count [RECOVERY_COUNT] --cleanup-worktree [CLEANUP_WORKTREE]' \
+    '[MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] [--force] --expected-head [PREPARED_HEAD]' \
     '[MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] --auto --expected-head [PREPARED_HEAD]' \
     '.agents/skills/orch/scripts/merge-queue-watch launch --root [MAIN_REPO_ROOT] --issue [STATE_KEY] --watch-id [WATCH_ID]' \
+    '.agents/skills/orch/scripts/merge-queue-watch direct-merged --root [MAIN_REPO_ROOT] --issue [STATE_KEY] --watch-id [WATCH_ID]' \
     '.agents/skills/orch/scripts/merge-queue-watch consume --root [MAIN_REPO_ROOT] --issue [STATE_KEY]' \
     '[MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues complete [ISSUE]' \
     '[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/sync-base [MAIN_REPO_ROOT]' \
@@ -34,7 +36,8 @@ audit() {
     '| `triage` | Late-findings triage below |' \
     '| `manual_dequeue` | Confirm dequeue or disarm before late-findings triage |' \
     '| `rewatch` | Prepare and launch a new watch without re-arming |' \
-    '| `rearm` | Prepare, re-arm the exact head once, and launch |'; do
+    '| `rearm` | Prepare, re-arm the exact head once, and launch |' \
+    '| `resume_rewatch`, `resume_rearm` | Resume the claimed next-generation setup without replaying consume |'; do
     [[ $(grep -Fxc -- "   $line" <<<"$body") -eq 1 ]] || return 1
   done
 }
@@ -51,6 +54,8 @@ audit_lane() {
 
 echo "=== merge queue workflow command ownership ==="
 if audit "$MERGE"; then ok "live prepare, exact-head arm, launch, consume, and completion commands are executable and ordered"; else bad "workflow command chain"; fi
+if grep -Fq '.agents/skills/orch/scripts/merge-queue-watch init --worktree [WORKTREE_PATH] --issue [STATE_KEY] --branch [PR_BRANCH]' "$MERGE" && \
+  grep -Fq '`MERGED` → set `[ALREADY_MERGED]=true`' "$MERGE"; then ok "standalone and already-merged routes initialize lifecycle state"; else bad "standalone or already-merged lifecycle route"; fi
 if audit_lane "$LANE"; then ok "lane cleanup precedes final acknowledgment"; else bad "lane cleanup and acknowledgment chain"; fi
 if grep -Fq 'workflows/lane-postmerge.md' "$ORCH/workflows/start-worktree.md" && \
   grep -Fq 'workflows/lane-postmerge.md' "$ORCH/workflows/submit-pr.md"; then ok "managed callers run the lane acknowledgment workflow"; else bad "managed continuation wiring"; fi

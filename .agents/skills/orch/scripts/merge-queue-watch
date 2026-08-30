@@ -4,11 +4,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SELF="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}"
 WORKFLOW_STATE="$SCRIPT_DIR/workflow-state"
+# shellcheck source=lib/merge-queue-state.sh
+source "$SCRIPT_DIR/lib/merge-queue-state.sh"
 
 die() { echo "merge-queue-watch: $1" >&2; exit 1; }
 usage() {
   cat <<'EOF'
 Usage:
+  merge-queue-watch init --worktree PATH --issue ID --branch BRANCH
   merge-queue-watch prepare --worktree PATH --issue ID --repo OWNER/REPO --pr N --head SHA --root PATH --gate-mode MODE [--recovery-count N]
   merge-queue-watch launch --root PATH --issue ID --watch-id ID [--poll N] [--max-wait N]
   merge-queue-watch consume --root PATH --issue ID
@@ -17,7 +20,7 @@ Usage:
   merge-queue-watch merge-pr-complete --root PATH --issue ID --watch-id ID
   merge-queue-watch cleanup --root PATH --issue ID --watch-id ID
   merge-queue-watch acknowledge --root PATH --issue ID --watch-id ID --result pass|fail [--diagnostic-file PATH]
-  merge-queue-watch fail --root PATH --issue ID --watch-id ID --cause arm_failed|launch_failed|operator_abandoned
+  merge-queue-watch fail --root PATH --issue ID --watch-id ID --cause arm_failed|merge_blocked|launch_failed|operator_abandoned
   merge-queue-watch inspect --root PATH --issue ID
 
 The durable lifecycle file lives under the shared git directory, so worktree
@@ -61,13 +64,6 @@ fail_state() {
       .diagnostic={cause:$cause, detail:$detail} | .updated_at=(now|floor) end' \
     --arg watch "$WATCH_ID" --arg cause "$cause" --arg detail "$detail"
 }
-json_report() {
-  jq -c '{issue_id,watch_id,status,action,repository,pr_number,head_sha,
-          gate_mode,recovery_count,artifact_path,log_path,deadline,
-          verdict,verdict_cause,lane_postmerge,cleanup,diagnostic,
-          error:(.diagnostic.error // null),worker_exit_code:(.diagnostic.worker_exit_code // null),
-          diagnostic_path:(.diagnostic.diagnostic_path // .log_path)}' "$STATE_FILE"
-}
 parse_root_issue() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -107,25 +103,29 @@ terminate_supervisor() {
   return 1
 }
 live_pr() {
-  local repo pr
+  local repo pr router
   repo=$(state_value .repository); pr=$(state_value .pr_number)
-  gh pr view "$pr" --repo "$repo" --json headRefOid,state 2>/dev/null
+  router="$SCRIPT_DIR/../../github/scripts/github.sh"
+  [[ -x "$router" ]] || return 1
+  "$router" -C "$ROOT" pr-view "$pr" --json headRefOid,state 2>/dev/null
 }
 
 prepare() {
-  local worktree="" repo="" pr="" head="" gate="" recovery=0
+  local worktree="" repo="" pr="" head="" gate="" recovery=0 cleanup=true
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --worktree) worktree="${2:-}"; shift 2 ;; --issue) ISSUE="${2:-}"; shift 2 ;;
       --repo) repo="${2:-}"; shift 2 ;; --pr) pr="${2:-}"; shift 2 ;;
       --head) head="${2:-}"; shift 2 ;; --root) ROOT="${2:-}"; shift 2 ;;
       --gate-mode) gate="${2:-}"; shift 2 ;; --recovery-count) recovery="${2:-}"; shift 2 ;;
+      --cleanup-worktree) cleanup="${2:-}"; shift 2 ;;
       *) die "unknown prepare option: $1" ;;
     esac
   done
   [[ -d "$worktree" && -n "$ISSUE" && "$repo" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]] || die "prepare identity is incomplete"
   [[ "$pr" =~ ^[1-9][0-9]*$ && "$head" =~ ^[0-9a-fA-F]{40}$ ]] || die "prepare PR/head is malformed"
   [[ "$gate" =~ ^(approval|review|off)$ && "$recovery" =~ ^[0-9]+$ ]] || die "prepare gate mode or recovery count is malformed"
+  [[ "$cleanup" == true || "$cleanup" == false ]] || die "prepare cleanup flag is malformed"
   resolve_state
   local now watch_dir artifact log runtime new_state old_status="" pointer
   now=$(date +%s); WATCH_ID="$now-$$-$RANDOM$RANDOM"
@@ -139,13 +139,13 @@ prepare() {
   jq -n --arg issue "$ISSUE" --arg repo "$repo" --argjson pr "$pr" --arg head "${head,,}" \
     --arg watch "$WATCH_ID" --arg gate "$gate" --argjson recovery "$recovery" \
     --arg root "$ROOT" --arg worktree "$(cd "$worktree" && pwd -P)" \
-    --arg artifact "$artifact" --arg log "$log" --arg runtime "$runtime" --argjson now "$now" \
+    --arg artifact "$artifact" --arg log "$log" --arg runtime "$runtime" --argjson now "$now" --argjson cleanup "$cleanup" \
     '{schema_version:1,issue_id:$issue,repository:$repo,pr_number:$pr,head_sha:$head,
       watch_id:$watch,gate_mode:$gate,recovery_count:$recovery,main_repo_root:$root,
       worktree:$worktree,artifact_path:$artifact,log_path:$log,runtime_dir:$runtime,
       prepared_at:$now,status:"prepared",action:null,terminal:false,
       supervisor_pid:null,launched_at:null,deadline:null,lane_postmerge:null,
-      cleanup:{status:"not_started",diagnostic:null},diagnostic:null}' > "$new_state"
+      cleanup:{required:$cleanup,status:"not_started",diagnostic:null},diagnostic:null}' > "$new_state"
   (
     flock -w 10 9 || exit 1
     if [[ -f "$STATE_FILE" ]]; then
@@ -245,7 +245,7 @@ consume() {
   WATCH_ID=$(state_value .watch_id)
   local status artifact pid deadline now token body live live_state observed expected verdict result cause action diag error_text exit_code diag_path
   status=$(state_value .status)
-  case "$status" in claimed|failed|abandoned|awaiting_lane_postmerge|cleanup_pending|cleanup_complete|complete) json_report; return ;; esac
+  case "$status" in claimed|failed|abandoned|awaiting_lane_postmerge|cleanup_pending|cleanup_complete|complete) consume_report; return ;; esac
   artifact=$(state_value .artifact_path); now=$(date +%s); deadline=$(state_value '.deadline // 0')
   if [[ "$status" == launching && "$now" -le "$deadline" ]]; then
     jq -cn --arg watch "$WATCH_ID" '{status:"launching",watch_id:$watch,action:"pending"}'; return
@@ -327,25 +327,28 @@ merge_pr_complete() {
   parse_root_issue "$@"; [[ "$(state_value .watch_id)" == "$WATCH_ID" ]] || die "watch id changed"
   atomic_update 'if .watch_id!=$watch or .status!="claimed" or .action!="postmerge" then error("postmerge was not claimed") else
     .status="awaiting_lane_postmerge"|.lane_postmerge={status:"pending",result:null,diagnostic:null}|
-    .cleanup={status:"pending",diagnostic:null}|.merge_pr_completed_at=(now|floor)|.updated_at=(now|floor) end' --arg watch "$WATCH_ID"
+    .cleanup=(.cleanup+{status:"pending",diagnostic:null})|.merge_pr_completed_at=(now|floor)|.updated_at=(now|floor) end' --arg watch "$WATCH_ID"
   json_report
 }
 
 cleanup_worktree() {
   parse_root_issue "$@"; [[ "$(state_value .watch_id)" == "$WATCH_ID" ]] || die "watch id changed"
-  local worktree helper output rc=0 diagnostic
+  local worktree helper output rc=0 diagnostic required
   worktree=$(state_value .worktree); helper="$ROOT/.agents/skills/worktree/scripts/worktree"
+  required=$(state_value .cleanup.required)
   atomic_update 'if .watch_id!=$watch or .status!="awaiting_lane_postmerge" or .cleanup.status!="pending" then error("cleanup is not pending") else
     .status="cleanup_pending"|.cleanup.status="running"|.updated_at=(now|floor) end' --arg watch "$WATCH_ID"
-  if [[ -d "$worktree" ]]; then
+  if [[ "$required" == true && -d "$worktree" ]]; then
     [[ -x "$helper" ]] || { atomic_update 'if .watch_id!=$watch or .status!="cleanup_pending" then error("cleanup claim lost") else .status="awaiting_lane_postmerge"|.cleanup={status:"failed",diagnostic:("helper missing: "+$helper)} end' --arg watch "$WATCH_ID" --arg helper "$helper"; die "cleanup helper is missing: $helper"; }
     cd "$ROOT" || die "cannot enter main repository for cleanup"
     set +e
     output=$("$helper" remove "$ISSUE" 2>&1)
     rc=$?
     set -e
-  else
+  elif [[ "$required" == true ]]; then
     output="worktree already absent: $worktree"
+  else
+    output="no issue worktree requires cleanup"
   fi
   if [[ "$rc" -ne 0 ]]; then
     diagnostic="$(state_value .runtime_dir)/cleanup-diagnostic.$$"
@@ -380,7 +383,7 @@ fail_command() {
   local cause="" pid=""
   while [[ $# -gt 0 ]]; do case "$1" in --root) ROOT="${2:-}"; shift 2 ;; --issue) ISSUE="${2:-}"; shift 2 ;;
     --watch-id) WATCH_ID="${2:-}"; shift 2 ;; --cause) cause="${2:-}"; shift 2 ;; *) die "unknown fail option: $1" ;; esac; done
-  resolve_state; require_state; [[ "$cause" =~ ^(arm_failed|launch_failed|operator_abandoned)$ ]] || die "invalid failure cause"
+  resolve_state; require_state; [[ "$cause" =~ ^(arm_failed|merge_blocked|launch_failed|operator_abandoned)$ ]] || die "invalid failure cause"
   WATCH_ID="${WATCH_ID:-$(state_value .watch_id)}"; pid=$(supervisor_pid)
   fail_state "$cause" "$cause"; terminate_supervisor "$pid" || true; json_report
 }
@@ -389,7 +392,7 @@ inspect() { parse_root_issue "$@"; cat < "$STATE_FILE"; }
 
 action="${1:-}"; [[ -n "$action" ]] || { usage; exit 2; }; shift
 case "$action" in
-  prepare) prepare "$@" ;; launch) launch "$@" ;; consume) consume "$@" ;; event) event "$@" ;;
+  init) merge_queue_init_workflow_state "$@" ;; prepare) prepare "$@" ;; launch) launch "$@" ;; consume) consume "$@" ;; event) event "$@" ;;
   direct-merged) direct_merged "$@" ;; merge-pr-complete) merge_pr_complete "$@" ;; cleanup) cleanup_worktree "$@" ;;
   acknowledge) acknowledge "$@" ;; fail) fail_command "$@" ;; inspect) inspect "$@" ;;
   __supervise) source "$SCRIPT_DIR/lib/merge-queue-supervisor.sh"; merge_queue_supervise "$@" ;;
