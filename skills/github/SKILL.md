@@ -114,11 +114,11 @@ parsing stderr:
 | `1`  | BLOCKED | `CLOSED (not merged) PR #N` | PR is closed unmerged; nothing attempted |
 
 Exit `75` is not a resting state: an ejection or a failed protection check
-disarms it silently. The caller that armed it launches
-`.agents/skills/orch/scripts/queue-wait <N> --detach --output <path>`, records
-that artifact path with the PR and exact head, and re-arms after repairing what
-the verdict names. The one-shot worker writes a durable verdict; it is not a
-watcher daemon. The review-gate reducer can still report fleet attention.
+disarms it silently. The caller prepares and launches
+`.agents/skills/orch/scripts/merge-queue-watch`, which binds the repository,
+PR, expected head, and watch generation before arming. Its one-shot worker
+writes a durable verdict and claims one recovery action. The review-gate
+reducer can still report fleet attention.
 Verdict routing is in README.md § Exit 75 recovery. `await-mergeable` is not
 that watcher — it returns as soon as GitHub computes a merge state.
 

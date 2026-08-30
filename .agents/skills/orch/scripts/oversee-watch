@@ -76,7 +76,8 @@ kendex_load_project_env "$PROJECT_ROOT"
 source "$SCRIPT_DIR/lib/gh-auth.sh"
 # shellcheck source=lib/lane-claims.sh
 source "$SCRIPT_DIR/lib/lane-claims.sh"
-
+# shellcheck source=lib/merge-queue-events.sh
+source "$SCRIPT_DIR/lib/merge-queue-events.sh"
 PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}"
 PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 
@@ -153,6 +154,7 @@ Events, checked in this order every pass:
                              line per PR; the item's head branch is its id,
                              lowercased, in this repo — a fork's PR on the
                              same branch name is not the item's)
+  EVENT merge-verdict <item> <watch-id>  wake its lane to consume the lifecycle
   EVENT window-gone <lane>   a listed tmux window no longer exists
   EVENT lane-exited <lane>   the window is alive but the pane's current
                              command is a bare shell (bash/zsh/fish/sh/dash,
@@ -393,15 +395,12 @@ check_pr_watch() {
 
 check_merged() {
   [[ -n "$ITEM_BRANCHES" ]] || return 0
-  # One --head query per live item: an item count bounded by the lane cap,
-  # and no listing window a busy repo can push an item's merge out of.
   local errf="$WORK_DIR/merged.err" branch list hit hits=""
   while IFS= read -r branch; do
     [[ -n "$branch" ]] || continue
     list="$(gh pr list --repo "$REPO" --head "$branch" --state merged --limit 10 --json number,headRefName,headRepositoryOwner,mergedAt 2>"$errf")" \
       || die "gh pr list --state merged failed for $REPO (--head $branch): $(cat "$errf")"
-    # --head matches by branch NAME, so a fork's PR on the same name lands in
-    # this list; only a head in this repo can be a lane's own PR.
+    # Reject a fork's PR on the same branch name.
     hit="$(jq -r --arg branch "$branch" --arg owner "$REPO_OWNER" --argjson since "$SINCE_EPOCH" '
       [ .[]
         | select(.headRefName | ascii_downcase == $branch)
@@ -647,6 +646,7 @@ loop=0
 while :; do
   loop=$((loop + 1))
   check_pr_watch
+  check_merge_lifecycle
   check_merged
   check_lanes
   [[ "$loop" -lt "$MAX_LOOPS" ]] || heartbeat

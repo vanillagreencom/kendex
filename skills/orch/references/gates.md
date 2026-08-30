@@ -20,7 +20,7 @@ The reviewer-gate settings — `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_Q
 |------------|------|
 | Reviewer verdict on one PR | `approval-wait` — statuses `approved`/`reviewed`/`changes_requested`/`comments`/`timeout`/`proceeded`/`error` |
 | CI on one PR | `ci-wait` — verdicts `pass`/`fail`/`pending`/`none` |
-| Merge-queue / auto-merge outcome | `queue-wait` — its verdict set is the § Verdicts table in `queue-wait --help`, which grows |
+| Merge-queue / auto-merge outcome | `queue-wait` produces verdicts; `merge-queue-watch` owns detached execution, identity, liveness, and consumption |
 | Many PRs, long horizon | `pr-watch.sh` — § Multi-PR watching |
 
 Per-verdict routing lives in the workflows (`submit-pr.md` § 4, `merge-pr.md` § 5); each verdict's semantics live in that script's `--help`.
@@ -31,4 +31,14 @@ All three waiters share `scripts/lib/gh-auth.sh`, wrapping the GitHub skill's he
 
 ## Multi-PR watching
 
-The waiters above are single-PR foreground waits. For many PRs across a long horizon, the review-gate skill (optional dependency) ships `scripts/pr-watch.sh`, a needs-attention reducer — contract in `pr-watch.sh --help`, wrap-in-anything loop in review-gate's adoption guide. Orch consumes it through `oversee-watch` (`--help`) when the script is installed. The fallback without it is per-PR `approval-wait`/`queue-wait` polling, which cannot detect `gate-stale`: the waiters never read `REVIEW_GATE_CONTEXT` or verify writer convergence, so a PR that reads reviewed-and-clean but sits unmerged warrants a manual gate-status check (`gh api repos/<owner>/<repo>/commits/<head>/statuses`) and a writer dispatch.
+The waiters above are single-PR waits. `merge-queue-watch` runs queue-wait as
+one detached generation and exits after that generation publishes a result; it
+is not a shared watcher. For many PRs across a long horizon, the review-gate skill (optional
+dependency) ships `scripts/pr-watch.sh`, a needs-attention reducer — contract
+in `pr-watch.sh --help`, wrap-in-anything loop in review-gate's adoption guide.
+Orch consumes it through `oversee-watch` (`--help`) when the script is installed.
+The fallback without it is per-PR `approval-wait`/`queue-wait`, which cannot
+detect `gate-stale`: the waiters never read `REVIEW_GATE_CONTEXT` or verify
+writer convergence, so a PR that reads reviewed-and-clean but sits unmerged
+warrants a manual gate-status check
+(`gh api repos/<owner>/<repo>/commits/<head>/statuses`) and a writer dispatch.

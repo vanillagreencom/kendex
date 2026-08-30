@@ -73,6 +73,8 @@ Options:
   --auto           If immediate merge is blocked, enable GitHub auto-merge
                    (will fire when CI + branch protection clear). Exits 75.
                    Never bypasses actionable unresolved review threads.
+  --expected-head SHA
+                   Bind GitHub's match-head merge guard to prepared SHA.
   --dry-run        Show what would happen without merging
 
 Modes:
@@ -465,7 +467,7 @@ post_merge_snapshot() {
 
 main() {
     local pr_num="" method="--squash" delete_branch=true
-    local check_only=false force=false dry_run=false auto=false
+    local check_only=false force=false dry_run=false auto=false supplied_head=""
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -501,6 +503,7 @@ main() {
             auto=true
             shift
             ;;
+        --expected-head) supplied_head="${2:-}"; shift 2 ;;
         --dry-run)
             dry_run=true
             shift
@@ -528,6 +531,9 @@ main() {
     if [ -z "$pr_num" ]; then
         echo '{"error": "PR number required"}' >&2
         exit 1
+    fi
+    if [ -n "$supplied_head" ] && ! [[ "$supplied_head" =~ ^[0-9a-fA-F]{40}$ ]]; then
+        echo "Error: --expected-head must be a 40-character commit SHA" >&2; exit 1
     fi
 
     # Check-only mode: JSON on stdout stays the machine interface; the verdict
@@ -607,15 +613,17 @@ main() {
 
     # Resolve and guard the exact head before mutating merge state. This prevents
     # a review/CI race from queuing or merging a newer, unverified commit.
-    local expected_head
-    if ! expected_head=$(gh_with_token "$token" pr view "$pr_num" --json headRefOid --jq '.headRefOid' 2>/dev/null) || [ -z "$expected_head" ]; then
+    local expected_head current_head
+    if ! current_head=$(gh_with_token "$token" pr view "$pr_num" --json headRefOid --jq '.headRefOid' 2>/dev/null) || [ -z "$current_head" ]; then
         echo "BLOCKED PR #$pr_num — could not resolve exact head SHA for guarded merge" >&2
         exit 1
     fi
+    expected_head="${supplied_head:-$current_head}"
+    if [ "$current_head" != "$expected_head" ]; then
+        echo "BLOCKED PR #$pr_num — prepared head changed before merge attempt (expected=$expected_head, actual=$current_head)" >&2; exit 1
+    fi
 
-    # Build merge command. --auto enables GitHub's auto-merge — it queues the
-    # merge to fire when CI + branch protection clear, returning success now.
-    # Without --auto, gh attempts an immediate merge and fails if blocked.
+    # --auto queues the exact head until GitHub's requirements clear.
     local -a cmd=(pr merge "$pr_num" "$method" --match-head-commit "$expected_head")
     [ "$auto" = true ] && cmd+=(--auto)
 
@@ -627,20 +635,8 @@ main() {
         merge_output=$(gh_with_token "" "${cmd[@]}" 2>&1) || merge_exit=$?
     fi
 
-    # Determine outcome from one authenticated post-call snapshot, taken
-    # REGARDLESS of gh's exit code. gh's exit status is not authoritative for
-    # merge-queue repositories:
-    #   - a required queue can return SUCCESS while the PR stays OPEN with a
-    #     null autoMergeRequest, and
-    #   - a re-invocation of `--auto` on an ALREADY-QUEUED PR returns NONZERO
-    #     even though GitHub still reports it queued, isInMergeQueue: true
-    #    .
-    # Only the GraphQL snapshot (state + mergeQueueEntry) is authoritative, so
-    # take it first and classify from it. This deliberately does not gate on
-    # gh's "already queued" stderr wording — that text is a version- and
-    # API-dependent GraphQL error and cannot be pinned reliably. The snapshot
-    # decides, and it is fail-closed: a genuine failure leaves no active queue
-    # entry.
+    # The post-call snapshot decides queue enrollment. gh can exit either way,
+    # and its already-queued stderr is version-dependent.
     local post_snapshot post_state post_auto post_head post_in_queue post_queue_entry post_queue_state
     post_snapshot=$(post_merge_snapshot "$pr_num" "$token")
     post_state=$(jq -r '.state' <<<"$post_snapshot")

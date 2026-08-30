@@ -3,14 +3,12 @@
 print_usage() {
   cat <<'USAGE'
 Usage: queue-wait <PR#> [poll_interval] [max_wait] [--json] [--no-check-probe]
-                  [--no-guard] [--detach --output <path>]
+                  [--no-guard]
 
-Wait for a merge-queue / auto-merge outcome on a PR. Every foreground exit
-path emits a final result on stdout — a "Merge queue: ..." line, or a JSON
-object with --json — so callers can route merged vs ejected vs disarmed vs
-still-queued deterministically (kendex#819). Detached launch instead prints
-the artifact path and returns after readiness; its worker publishes that same
-JSON result later. This is the merge-pr queue watch as one command (accepted
+Wait for a merge-queue / auto-merge outcome on a PR. Every exit path emits a
+final result on stdout — a "Merge queue: ..." line, or a JSON object with
+--json — so callers can route merged vs ejected vs disarmed vs still-queued
+deterministically (kendex#819). This is the merge-pr queue watch as one command (accepted
 by the Codex approval=never classifier where a sleep-poll loop is rejected)
 and the only place WAS_QUEUED lives: whether ANY earlier poll observed the PR
 queued or armed. Separate tool calls carry no memory, so an orchestrator
@@ -27,16 +25,6 @@ approval-wait owns the review gate.
   --no-check-probe  skip the failed-required-check ci-wait delegation
   --no-guard     skip the late-findings guard (no dequeue on unresolved
                  review threads while queued)
-  --detach       launch this same wait as a detached one-shot worker and
-                 return after its readiness handshake; requires --output
-  --output PATH  atomically publish the detached JSON verdict at PATH
-
-Detached mode backgrounds this same waiter, not a watcher daemon. The launch
-returns 0 once the worker is ready and prints `artifact: PATH`; the worker later
-publishes one owner-only JSON artifact. No partial artifact is visible. Read the
-artifact at the lane's next workflow boundary and route its verdict through the
-same merge-pr table as foreground output.
-
 Each poll reads both signals the merge-pr routing table consumes:
 `gh pr view <PR> --json state,mergedAt` plus the GraphQL isInMergeQueue /
 mergeQueueEntry { state position headCommit { oid } } / autoMergeRequest
@@ -171,7 +159,7 @@ Environment (orch-env ladder: parent env > .env.local > .kendex/settings.toml /
                 own clock (default 120).
 
 Exit codes:
-  0  merged, or detached worker launched and ready
+  0  merged
   1  ejected, disarmed, dequeued, closed, still-queued at the deadline,
      never armed, or a non-auth error
   2  usage error: missing PR#, unknown flag, or non-integer argument

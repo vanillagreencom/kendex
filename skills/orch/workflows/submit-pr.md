@@ -364,7 +364,7 @@ Linear items also get it on the issue; GitHub items get linkage through `Closes 
 .agents/skills/orch/scripts/orch-env ORCH_MERGE_AUTONOMY ask
 ```
 
-`auto` → merge without asking: `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7 → end`. Anything else → ask `orch merge-pr [PR_NUMBER]` | `Skip`, and on merge run the same workflow. `MERGE_READY = false` never auto-merges.
+`auto` → merge without asking: `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7 → workflows/lane-postmerge.md → end`. Anything else → ask `orch merge-pr [PR_NUMBER]` | `Skip`, and on merge run the same workflows. `MERGE_READY = false` never auto-merges.
 
 ---
 

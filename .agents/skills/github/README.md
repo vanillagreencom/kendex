@@ -69,25 +69,21 @@ It is also policy, not mechanism — the gate binds only merges routed through
 
 `pr-merge --auto` exits 75 when the PR is queued or auto-merge is armed. That
 state is volatile — an ejection or a failed protection check disarms it
-silently — so the caller keeps re-running a watcher until the PR is `MERGED`;
-neither watcher is durable, and both live in sibling skills (install orch and
-review-gate beside this one):
+silently — so the caller prepares the orch lifecycle with the repository, PR,
+and exact head before arming. Its one-shot waiter publishes a durable verdict
+and exits. The helpers live in sibling skills (install orch and review-gate
+beside this one):
 
-- `.agents/skills/orch/scripts/queue-wait <N>` polls to a bounded budget and
-  returns a terminal verdict with its cause, or `queued` (run it again). A
-  re-run carries no memory of the earlier run, so an ejection between two runs
-  comes back as `not_queued`/`never_armed`.
+- `.agents/skills/orch/scripts/merge-queue-watch` runs queue-wait, preserves
+  its cross-poll memory through a bounded budget, validates the prepared head,
+  and atomically claims recovery or post-merge work at the next lane boundary.
 - `GH_REPO=<owner/repo> .agents/skills/review-gate/scripts/pr-watch.sh` is one
   pass that prints `disarmed … (re-arm)` lines.
 
-Route each verdict by the table in
-`.agents/skills/orch/workflows/merge-pr.md` § 5 step 1 — a list here would be
-a copy going stale on each addition to the verdict set;
-`queue-wait --help` § Verdicts is where each verdict's meaning lives.
-A verdict with no row there is never re-armed: surface it and hand it back.
-Whatever the route, repair what the `cause` names before re-arming: a
+Route the verdict: re-arm on `ejected`, `disarmed` and `not_queued` — after repairing what the cause names (a
 `merge_group_failed`/`check_failed` cause is a CI repair first, else the same
-head ejects again. Re-arm with
+head ejects again); `dequeued` means late review findings — triage them first;
+`closed` and `unknown` are terminal. Re-arm with
 `.agents/skills/github/scripts/github.sh pr-merge <N> --auto`.
 
 Where branch protection *is* enabled, the opposite problem appears: after a
