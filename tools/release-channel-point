@@ -7,8 +7,17 @@
 # which name their downloads by the tag that built them. The release workflow's channel job is
 # the only caller; CHANNEL, NEW_VERSION, GITHUB_REPOSITORY and a GH_TOKEN gh
 # can use come from it. Exit 0 wrote the channel or left it alone on purpose,
-# exit 1 says what stopped it, and re-running the tag repairs a channel a
-# failed upload left short a manifest.
+# exit 1 says what stopped it.
+#
+# Only one failure leaves the channel changed, and how it is repaired depends
+# on which manifest went with it. `gh release upload --clobber` deletes an
+# asset before uploading its replacement, so an upload that fell over partway
+# either left latest.json up, in which case re-running the tag writes the
+# whole set again, or took it off, in which case the check below refuses the
+# channel on every later run and a person has to delete what is left on it
+# before a tag re-run can write. Nothing here repairs the second state,
+# because a run that cannot read a version off the channel cannot tell a
+# leftover from a release it would be rolling back.
 #
 # One verdict decides the write, and only `write` and `hold` are verdicts.
 # Each read leaves either a channel state this run established or the reason
@@ -59,10 +68,10 @@ elif ! grep -qxF latest.json <<< "$assets"; then
     state=fresh
   fi
 elif ! gh release download "$CHANNEL" --repo "$GITHUB_REPOSITORY" \
-     --dir saved --pattern latest.json --clobber; then
+     --dir manifest --pattern latest.json --clobber; then
   why="the ${CHANNEL} channel's manifest could not be downloaded"
 else
-  current=$(jq -r '.version // empty' saved/latest.json) || current=""
+  current=$(jq -r '.version // empty' manifest/latest.json) || current=""
   if [ -n "$current" ]; then
     state=carrying
   else
@@ -128,6 +137,16 @@ if [ "${#publishing[@]}" -eq 0 ]; then
   echo "::error::Nothing was written to the ${CHANNEL} channel: this run was handed no manifests to publish. Re-run the tag."
   exit 1
 fi
+# The two manifests are one answer. Publishing feed.json over a latest.json
+# this run was not handed leaves the channel naming one version in the file
+# candidates read and another in the file they check it against, and nothing
+# downstream reports that as wrong.
+case " ${publishing[*]} " in
+  *" dist/latest.json "*) ;;
+  *)
+    echo "::error::Nothing was written to the ${CHANNEL} channel: this run was handed no latest.json, and the channel's manifests are published together or not at all. Re-run the tag."
+    exit 1 ;;
+esac
 # The write begins here, past the verdict and past the list. A channel that
 # did not exist is published now.
 if [ -n "$absent" ]; then
@@ -140,10 +159,15 @@ if [ -n "$absent" ]; then
 fi
 if ! gh release upload "$CHANNEL" "${publishing[@]}" \
      --repo "$GITHUB_REPOSITORY" --clobber; then
-  # `--clobber` deletes an asset before uploading its replacement, so a
-  # failure partway leaves the channel short a manifest and candidates
-  # reading it see no update at all. Re-running the tag writes the whole set
-  # again, which is the repair.
-  echo "::error::Uploading to the ${CHANNEL} channel failed, and it may be short a manifest. Re-run the tag."
+  # Which repair this needs is not something the run can read off its own
+  # failure, so the message names both. A channel still carrying latest.json
+  # is one the next tag run writes over. A channel that lost it is one every
+  # later run refuses at the check above, and the assets left on it have to
+  # go before a tag re-run means anything.
+  published=""
+  if [ -n "$absent" ]; then
+    published=" This run published that channel, so what is on it is what landed before the failure."
+  fi
+  echo "::error::Uploading to the ${CHANNEL} channel failed, and it may be short a manifest.${published} Re-run the tag if the channel still carries latest.json: that writes the whole set again. If it does not, every run refuses the channel until someone deletes the assets left on it, and only then does re-running the tag publish anything."
   exit 1
 fi

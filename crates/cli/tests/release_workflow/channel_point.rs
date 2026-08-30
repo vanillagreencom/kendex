@@ -59,7 +59,8 @@ enum Channel<'a> {
     /// Published, its manifest naming this version.
     Carrying(&'a str),
     /// Published, carrying `feed.json` and no `latest.json` — the shape a
-    /// half-written channel is left in, which the guard reads as fresh.
+    /// half-written channel is left in, and the one the guard refuses
+    /// because nothing on it can say what version it holds.
     HalfWritten,
     /// Published, with a manifest that names no version at all.
     Unreadable,
@@ -77,165 +78,202 @@ const STAGED: [&str; 4] = [
     "digests-x86_64-unknown-linux-gnu.json.sig",
 ];
 
-/// Runs the guard with `gh` stubbed. `fail` holds fragments of the `gh`
-/// calls that should fail, standing in for the transient errors every read
-/// here has to tell apart from an answer.
+/// One channel and one `dist`, which the guard can be run against more than
+/// once. What a failed run leaves behind is what the next run reads, so the
+/// two are asked of the same channel rather than of a second fixture posed
+/// to look like the first one's wreckage.
 ///
 /// The stub keeps the channel as a directory, one file per asset, so a call
 /// reads what the calls before it actually wrote. A run cannot be shown a
 /// channel that never existed, and the assertions below are about the state
 /// the run left rather than the calls it happened to make.
 #[cfg(unix)]
+struct Fixture {
+    /// Held for its `Drop`: the paths below live inside it.
+    _dir: tempfile::TempDir,
+    root: std::path::PathBuf,
+    published: std::path::PathBuf,
+    manifest: String,
+}
+
+#[cfg(unix)]
 #[allow(clippy::unwrap_used)]
+impl Fixture {
+    fn new(channel: Channel, staged: &[&str]) -> Fixture {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let root = rooted(&dir);
+        let dist = root.join("dist");
+        fs::create_dir_all(&dist).unwrap();
+        for name in staged {
+            fs::write(dist.join(name), "{}").unwrap();
+        }
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(
+            bin.join("gh"),
+            "#!/bin/sh\n\
+             printf '%s\\n' \"$*\" >> \"$GH_LOG\"\n\
+             if [ -s \"$GH_FAIL\" ] && printf '%s\\n' \"$*\" | grep -qFf \"$GH_FAIL\"; then\n\
+               if [ \"$1 $2\" = \"release upload\" ]; then\n\
+                 # `--clobber` deletes an asset before uploading its\n\
+                 # replacement, so an upload that fails loses what it was\n\
+                 # replacing. GH_LANDED names the replacements that got up\n\
+                 # before it gave up.\n\
+                 shift 3\n\
+                 while [ $# -gt 0 ]; do\n\
+                   case \"$1\" in --repo) shift 2; continue ;; --*) shift; continue ;; esac\n\
+                   rm -f \"$GH_CHANNEL/$(basename \"$1\")\"\n\
+                   shift\n\
+                 done\n\
+                 for name in $GH_LANDED; do touch \"$GH_CHANNEL/$name\"; done\n\
+               fi\n\
+               exit 1\n\
+             fi\n\
+             case \"$1 $2\" in\n\
+               \"release create\") mkdir -p \"$GH_CHANNEL\"; exit 0 ;;\n\
+               \"release upload\")\n\
+                 shift 3\n\
+                 while [ $# -gt 0 ]; do\n\
+                   case \"$1\" in --repo) shift 2; continue ;; --*) shift; continue ;; esac\n\
+                   touch \"$GH_CHANNEL/$(basename \"$1\")\"\n\
+                   shift\n\
+                 done\n\
+                 exit 0 ;;\n\
+               \"release download\")\n\
+                 dir=\"\"; want=\"\"\n\
+                 while [ $# -gt 0 ]; do\n\
+                   [ \"$1\" = \"--dir\" ] && dir=$2\n\
+                   [ \"$1\" = \"--pattern\" ] && want=\"$want $2\"\n\
+                   shift\n\
+                 done\n\
+                 [ -n \"$dir\" ] || exit 1\n\
+                 # The channel's version is the only thing the guard comes\n\
+                 # down here for. Any other pattern is a call it does not\n\
+                 # make, and answering one would document behaviour it does\n\
+                 # not have.\n\
+                 [ \"$want\" = \" latest.json\" ] || exit 1\n\
+                 mkdir -p \"$dir\"\n\
+                 if [ -e \"$GH_CHANNEL/latest.json\" ]; then\n\
+                   printf '%s\\n' \"$GH_MANIFEST\" > \"$dir/latest.json\"\n\
+                 fi\n\
+                 exit 0 ;;\n\
+             esac\n\
+             case \"$2\" in\n\
+               */releases)\n\
+                 [ -d \"$GH_CHANNEL\" ] && printf '%s\\n' \"$CHANNEL\"\n\
+                 exit 0\n\
+                 ;;\n\
+               */releases/tags/*)\n\
+                 [ -d \"$GH_CHANNEL\" ] || exit 1\n\
+                 ls \"$GH_CHANNEL\"\n\
+                 exit 0\n\
+                 ;;\n\
+             esac\n\
+             exit 0\n",
+        )
+        .unwrap();
+        fs::set_permissions(bin.join("gh"), fs::Permissions::from_mode(0o755)).unwrap();
+
+        let published = root.join("channel");
+        let manifest = match channel {
+            Channel::Carrying(version) => format!(r#"{{"version":"{version}"}}"#),
+            _ => "{}".to_owned(),
+        };
+        if !matches!(channel, Channel::Absent) {
+            fs::create_dir_all(&published).unwrap();
+        }
+        if matches!(channel, Channel::Carrying(_) | Channel::Unreadable) {
+            for name in ["latest.json", "feed.json"] {
+                fs::write(published.join(name), "").unwrap();
+            }
+        }
+        if matches!(channel, Channel::HalfWritten) {
+            fs::write(published.join("feed.json"), "").unwrap();
+        }
+        Fixture {
+            _dir: dir,
+            root,
+            published,
+            manifest,
+        }
+    }
+
+    /// Runs the guard. `fail` holds fragments of the `gh` calls that should
+    /// fail, standing in for the transient errors every read here has to
+    /// tell apart from an answer; `landed` names the assets a failing upload
+    /// gets onto the channel before it gives up.
+    fn run(&self, new_version: &str, fail: &[&str], landed: &[&str]) -> Pointed {
+        let log = self.root.join("gh.log");
+        let failing = self.root.join("gh.fail");
+        // Per run, so the calls below are this run's and not the last one's.
+        fs::write(&log, "").unwrap();
+        fs::write(&failing, fail.join("\n")).unwrap();
+        let run = std::process::Command::new(channel_script())
+            .current_dir(&self.root)
+            .env_clear()
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    self.root.join("bin").display(),
+                    std::env::var("PATH").unwrap_or_default()
+                ),
+            )
+            .env("GH_LOG", &log)
+            .env("GH_FAIL", &failing)
+            .env("GH_LANDED", landed.join(" "))
+            .env("GH_CHANNEL", &self.published)
+            .env("GH_MANIFEST", &self.manifest)
+            .env("GITHUB_REPOSITORY", "vanillagreencom/kendex")
+            .env("CHANNEL", channel_step_env("CHANNEL"))
+            .env("NEW_VERSION", new_version)
+            .env("GH_TOKEN", "token")
+            .output()
+            .unwrap();
+        let calls = fs::read_to_string(&log)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        let after = fs::read_dir(&self.published).ok().map(|entries| {
+            let mut names: Vec<String> = entries
+                .filter_map(Result::ok)
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        });
+        Pointed {
+            code: run.status.code().unwrap_or(-1),
+            calls,
+            output: format!(
+                "{}{}",
+                String::from_utf8_lossy(&run.stdout),
+                String::from_utf8_lossy(&run.stderr)
+            ),
+            after,
+        }
+    }
+}
+
+/// One run against a channel in this state, with the release's whole output
+/// staged.
+#[cfg(unix)]
 fn point_channel(channel: Channel, new_version: &str, fail: &[&str]) -> Pointed {
     point_channel_staging(channel, new_version, fail, &STAGED)
 }
 
 /// The same, with the release's output named rather than assumed, for the
-/// case that is about what `dist` held.
+/// cases that are about what `dist` held.
 #[cfg(unix)]
-#[allow(clippy::unwrap_used)]
 fn point_channel_staging(
     channel: Channel,
     new_version: &str,
     fail: &[&str],
     staged: &[&str],
 ) -> Pointed {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = tempfile::tempdir().unwrap();
-    let root = rooted(&dir);
-    let dist = root.join("dist");
-    fs::create_dir_all(&dist).unwrap();
-    for name in staged {
-        fs::write(dist.join(name), "{}").unwrap();
-    }
-    let bin = root.join("bin");
-    fs::create_dir_all(&bin).unwrap();
-    let log = root.join("gh.log");
-    let failing = root.join("gh.fail");
-    fs::write(&failing, fail.join("\n")).unwrap();
-    let published = root.join("channel");
-    fs::write(
-        bin.join("gh"),
-        "#!/bin/sh\n\
-         printf '%s\\n' \"$*\" >> \"$GH_LOG\"\n\
-         if [ -s \"$GH_FAIL\" ] && printf '%s\\n' \"$*\" | grep -qFf \"$GH_FAIL\"; then\n\
-           exit 1\n\
-         fi\n\
-         case \"$1 $2\" in\n\
-           \"release create\") mkdir -p \"$GH_CHANNEL\"; exit 0 ;;\n\
-           \"release delete\") rm -rf \"$GH_CHANNEL\"; exit 0 ;;\n\
-           \"release delete-asset\")\n\
-             [ -e \"$GH_CHANNEL/$4\" ] || exit 1\n\
-             rm -f \"$GH_CHANNEL/$4\"\n\
-             exit 0 ;;\n\
-           \"release upload\")\n\
-             shift 3\n\
-             while [ $# -gt 0 ]; do\n\
-               case \"$1\" in --repo) shift 2; continue ;; --*) shift; continue ;; esac\n\
-               touch \"$GH_CHANNEL/$(basename \"$1\")\"\n\
-               shift\n\
-             done\n\
-             exit 0 ;;\n\
-           \"release download\")\n\
-             dir=\"\"; want=\"\"\n\
-             while [ $# -gt 0 ]; do\n\
-               [ \"$1\" = \"--dir\" ] && dir=$2\n\
-               [ \"$1\" = \"--pattern\" ] && want=\"$want $2\"\n\
-               shift\n\
-             done\n\
-             [ -n \"$dir\" ] || exit 1\n\
-             mkdir -p \"$dir\"\n\
-             for name in $want; do\n\
-               [ -e \"$GH_CHANNEL/$name\" ] || continue\n\
-               case \"$name\" in\n\
-                 latest.json) printf '%s\\n' \"$GH_MANIFEST\" > \"$dir/latest.json\" ;;\n\
-                 feed.json) printf '%s\\n' \"$GH_FEED\" > \"$dir/feed.json\" ;;\n\
-                 *) cp \"$GH_CHANNEL/$name\" \"$dir/$name\" ;;\n\
-               esac\n\
-             done\n\
-             exit 0 ;;\n\
-         esac\n\
-         case \"$2\" in\n\
-           */releases)\n\
-             [ -d \"$GH_CHANNEL\" ] && printf '%s\\n' \"$CHANNEL\"\n\
-             exit 0\n\
-             ;;\n\
-           */releases/tags/*)\n\
-             [ -d \"$GH_CHANNEL\" ] || exit 1\n\
-             ls \"$GH_CHANNEL\"\n\
-             exit 0\n\
-             ;;\n\
-         esac\n\
-         exit 0\n",
-    )
-    .unwrap();
-    fs::set_permissions(bin.join("gh"), fs::Permissions::from_mode(0o755)).unwrap();
-
-    let manifest = match channel {
-        Channel::Carrying(version) => format!(r#"{{"version":"{version}"}}"#),
-        _ => "{}".to_owned(),
-    };
-    if !matches!(channel, Channel::Absent) {
-        fs::create_dir_all(&published).unwrap();
-    }
-    if matches!(channel, Channel::Carrying(_) | Channel::Unreadable) {
-        for name in ["latest.json", "feed.json"] {
-            fs::write(published.join(name), "").unwrap();
-        }
-    }
-    if matches!(channel, Channel::HalfWritten) {
-        fs::write(published.join("feed.json"), "").unwrap();
-    }
-
-    let run = std::process::Command::new(channel_script())
-        .current_dir(&root)
-        .env_clear()
-        .env(
-            "PATH",
-            format!(
-                "{}:{}",
-                bin.display(),
-                std::env::var("PATH").unwrap_or_default()
-            ),
-        )
-        .env("GH_LOG", &log)
-        .env("GH_FAIL", &failing)
-        .env("GH_CHANNEL", &published)
-        .env("GH_MANIFEST", &manifest)
-        .env(
-            "GH_FEED",
-            r#"{"schema":1,"version":"published","assets":{}}"#,
-        )
-        .env("GITHUB_REPOSITORY", "vanillagreencom/kendex")
-        .env("CHANNEL", channel_step_env("CHANNEL"))
-        .env("NEW_VERSION", new_version)
-        .env("GH_TOKEN", "token")
-        .output()
-        .unwrap();
-    let calls = fs::read_to_string(&log)
-        .unwrap_or_default()
-        .lines()
-        .map(str::to_owned)
-        .collect();
-    let after = fs::read_dir(&published).ok().map(|entries| {
-        let mut names: Vec<String> = entries
-            .filter_map(Result::ok)
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .collect();
-        names.sort();
-        names
-    });
-    Pointed {
-        code: run.status.code().unwrap_or(-1),
-        calls,
-        output: format!(
-            "{}{}",
-            String::from_utf8_lossy(&run.stdout),
-            String::from_utf8_lossy(&run.stderr)
-        ),
-        after,
-    }
+    Fixture::new(channel, staged).run(new_version, fail, &[])
 }
 
 /// A read that failed is not an empty channel. Every one of these leaves
@@ -401,6 +439,120 @@ fn a_run_handed_no_manifests_writes_nothing() {
         run.ran("release upload").is_none(),
         "an empty dist still uploaded: {:?}",
         run.calls
+    );
+}
+
+/// The upload is the one call that changes the channel, and the branch that
+/// catches it failing has to fail the job. A guard that printed its error and
+/// then exited 0 would let the release workflow's channel job go green with
+/// the channel short a manifest, which every candidate machine reads as no
+/// update at all.
+///
+/// Which repair it needs is not something the run can read off its own
+/// failure, so the message names both, and both are asserted: a channel that
+/// kept its latest.json is one the next tag run writes over, and a channel
+/// that lost it needs a person before any tag run means anything.
+#[cfg(unix)]
+#[test]
+fn a_failed_upload_fails_the_job_and_names_both_repairs() {
+    let run = Fixture::new(Channel::Carrying("1.0.0-rc1"), &STAGED).run(
+        "1.0.0-rc2",
+        &["dist/latest.json"],
+        &["latest.json", "feed.json"],
+    );
+    assert_ne!(
+        run.code, 0,
+        "a failed upload was survivable: {:?}",
+        run.calls
+    );
+    // The fixture reached the upload rather than stopping at an earlier read,
+    // so it is that branch this exercises and not one above it.
+    assert!(
+        run.ran("release upload").is_some(),
+        "the run never got as far as the upload: {:?}",
+        run.calls
+    );
+    for said in [
+        "Uploading to the prerelease channel failed",
+        "Re-run the tag if the channel still carries latest.json",
+        "deletes the assets left on it",
+    ] {
+        assert!(run.output.contains(said), "{said} missing: {}", run.output);
+    }
+}
+
+/// The other half of that message, driven. An upload that fails after
+/// `--clobber` has deleted latest.json leaves the channel carrying assets
+/// nothing can read a version off, and the guard refuses exactly that state
+/// — so the tag re-run the operator would otherwise reach for publishes
+/// nothing, and the channel needs a person first. Both runs are against the
+/// one channel: the second reads what the first actually left.
+#[cfg(unix)]
+#[test]
+fn a_failed_upload_that_lost_latest_json_refuses_every_later_run() {
+    let channel = Fixture::new(Channel::Carrying("1.0.0-rc1"), &STAGED);
+    let failed = channel.run("1.0.0-rc2", &["dist/latest.json"], &["feed.json"]);
+    assert_ne!(
+        failed.code, 0,
+        "a failed upload was survivable: {:?}",
+        failed.calls
+    );
+    assert_eq!(
+        failed.after,
+        Some(vec!["feed.json".to_owned()]),
+        "the fixture did not lose latest.json, so this proves nothing: {:?}",
+        failed.calls
+    );
+
+    // The re-run the message would send them on, with nothing failing.
+    let again = channel.run("1.0.0-rc2", &[], &[]);
+    assert_ne!(
+        again.code, 0,
+        "the re-run wrote over a channel nothing can read: {:?}",
+        again.calls
+    );
+    assert!(
+        again.ran("release upload").is_none(),
+        "the re-run published over the leftovers: {:?}",
+        again.calls
+    );
+    assert!(
+        again.output.contains("carries assets but no latest.json"),
+        "{}",
+        again.output
+    );
+    assert_eq!(
+        again.after,
+        Some(vec!["feed.json".to_owned()]),
+        "the re-run changed the channel it refused: {:?}",
+        again.calls
+    );
+}
+
+/// The channel's two manifests are one answer. Handed a `dist` carrying
+/// feed.json and no latest.json, a run that published what it had would leave
+/// the channel naming one version in the file candidates read and another in
+/// the file they check it against, and nothing downstream reports that as
+/// wrong.
+#[cfg(unix)]
+#[test]
+fn a_run_handed_no_latest_json_writes_nothing() {
+    let run = point_channel_staging(
+        Channel::Carrying("1.0.0-rc1"),
+        "1.0.0-rc2",
+        &[],
+        &["feed.json", "digests-x86_64-unknown-linux-gnu.json"],
+    );
+    assert_ne!(run.code, 0, "{:?}", run.calls);
+    assert!(
+        run.ran("release upload").is_none(),
+        "half the answer still went up: {:?}",
+        run.calls
+    );
+    assert!(
+        run.output.contains("was handed no latest.json"),
+        "the run did not say what it found: {}",
+        run.output
     );
 }
 
