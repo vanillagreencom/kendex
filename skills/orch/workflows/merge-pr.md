@@ -191,7 +191,7 @@ Use the output as `MAIN_REPO_ROOT`.
    .agents/skills/orch/scripts/merge-queue-watch direct-merged --root [MAIN_REPO_ROOT] --issue [STATE_KEY] --watch-id [WATCH_ID]
    ```
 
-   Launch terminalizes setup failures. When exact-head arming fails, record that terminal cause before handback:
+   Launch setup failures persist `resume_launch`; fix the diagnostic and rerun launch for the same watch. Do not hand back while that action is active. Exact-head arm failures remain terminal:
 
    ```bash
    .agents/skills/orch/scripts/merge-queue-watch fail --root [MAIN_REPO_ROOT] --issue [STATE_KEY] --watch-id [WATCH_ID] --cause arm_failed
@@ -207,6 +207,7 @@ Use the output as `MAIN_REPO_ROOT`.
    | `action` | Route |
    |----------|-------|
    | `pending` | Return; the detached supervisor is live and within its deadline |
+   | `resume_launch` | Fix the persisted setup failure and rerun launch for the same watch; never hand back |
    | `postmerge` | Step 2 |
    | `resume_postmerge` | Resume the already-claimed step 2 path after interruption |
    | `restack`, `resume_restack` | Run or resume the guarded Restack cycle below |
@@ -239,9 +240,8 @@ Use the output as `MAIN_REPO_ROOT`.
 
    3. Return to step 1's prepare, exact-head arm, and launch sequence.
 
-   **Restack cycle** — the base, not CI, is the blocker. Follow
-   `workflows/merge-pr-restack.md`, then return to step 1's prepare, exact-head
-   arm, and launch sequence. Never route a conflict into ci-fix.
+   **Restack cycle** — the base, not CI, is the blocker. Follow `workflows/merge-pr-restack.md`,
+   then return to step 1's exact-head sequence. Never route a conflict into ci-fix.
 
    **Late-findings triage** — the findings, not CI, are the blocker:
 

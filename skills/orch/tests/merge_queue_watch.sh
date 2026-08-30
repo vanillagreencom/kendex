@@ -43,6 +43,7 @@ cp "$ORCH/scripts/lib/kendex-env.sh" "$SCRIPTS/lib/"
 
 MODE="$TMP/mode" RELEASE="$TMP/release" HEAD_FILE="$TMP/head"
 HEAD_A=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+HEAD_INPUT=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 HEAD_B=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 printf '%s\n' "$HEAD_A" > "$HEAD_FILE"
 cat > "$SCRIPTS/queue-wait" <<'EOF'
@@ -99,6 +100,7 @@ if [[ -n "$REAL_SETSID" ]]; then
 cat > "$BIN/setsid" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+[[ ! -f "$WATCH_SETSID_FAIL" ]] || exit 41
 if [[ -f "$WATCH_SETUP_GATE.enabled" ]]; then touch "$WATCH_SETUP_GATE.entered"; while [[ ! -f "$WATCH_SETUP_GATE.release" ]]; do sleep 0.05; done; fi
 exec "$WATCH_REAL_SETSID" "$@"
 EOF
@@ -106,7 +108,7 @@ chmod +x "$BIN/setsid"
 fi
 export PATH="$BIN:$PATH" WATCH_MODE="$MODE" WATCH_RELEASE="$RELEASE" WATCH_HEAD_FILE="$HEAD_FILE" WATCH_MAIN="$MAIN" WATCH_WORKTREE="$WT"
 export WATCH_GH_PAUSE="$TMP/gh-pause" WATCH_SETUP_GATE="$TMP/setup-gate" WATCH_REAL_SETSID="$REAL_SETSID" WATCH_CLEANUP_FAIL="$TMP/cleanup-fail" WATCH_CLEANUP_INTERRUPT="$TMP/cleanup-interrupt"
-export WATCH_CLEANUP_PAUSE="$TMP/cleanup-pause" WATCH_AUTH_LOG="$TMP/auth.log" WATCH_WORKER_LOG="$TMP/worker.log" GH_REPO=wrong/repository GITHUB_REPOSITORY=wrong/repository
+export WATCH_SETSID_FAIL="$TMP/setsid-fail" WATCH_CLEANUP_PAUSE="$TMP/cleanup-pause" WATCH_AUTH_LOG="$TMP/auth.log" WATCH_WORKER_LOG="$TMP/worker.log" GH_REPO=wrong/repository GITHUB_REPOSITORY=wrong/repository
 unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN
 init_out=$("$SCRIPTS/merge-queue-watch" init --worktree "$WT" --issue KEN-829 --branch watch-test)
 eq "$(jq -r .exists <<<"$init_out")" true "standalone init creates workflow state"
@@ -115,7 +117,7 @@ prepare() {
   rm -f "$RELEASE"
   printf '%s\n' "$1" > "$MODE"
   "$SCRIPTS/merge-queue-watch" prepare --worktree "$WT" --issue KEN-829 \
-    --repo owner/repo --pr 42 --head "$HEAD_A" --root "$MAIN" --gate-mode "${2:-off}" --recovery-count "${3:-0}"
+    --repo owner/repo --pr 42 --head "$HEAD_INPUT" --root "$MAIN" --gate-mode "${2:-off}" --recovery-count "${3:-0}"
 }
 launch_bounded() {
   local watch="$1" out="$TMP/launch.out" err="$TMP/launch.err" pid i rc=0
@@ -200,6 +202,16 @@ verdict_case stalled recovery
 verdict_case progressing rewatch
 verdict_case not_queued rearm
 
+prep=$(prepare dequeue_failed); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
+launch_bounded "$watch"; touch "$RELEASE"; wait_file "$artifact" || bad "dequeue-race verdict missing"
+printf 'merged\n' > "$MODE"
+result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .action <<<"$result")" postmerge "live merged race outranks manual dequeue"
+eq "$(jq -r .verdict_cause <<<"$result")" merged_race "merged dequeue race records its route"
+"$SCRIPTS/merge-queue-watch" merge-pr-complete --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
+printf 'race control complete\n' > "$TMP/race.err"
+"$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue KEN-829 --watch-id "$watch" --result fail --diagnostic-file "$TMP/race.err" >/dev/null
+
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
 launch_bounded "$watch"; touch "$RELEASE"; wait_file "$artifact" || bad "head-mismatch verdict missing"
 printf '%s\n' "$HEAD_B" > "$HEAD_FILE"
@@ -254,9 +266,55 @@ if [[ -n "$REAL_SETSID" ]]; then
   eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" watching "launch owns setup through watching transition"
   "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
   rm -f "$WATCH_SETUP_GATE.enabled" "$WATCH_SETUP_GATE.entered" "$WATCH_SETUP_GATE.release"
+
+  prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
+  touch "$WATCH_SETSID_FAIL"
+  set +e; "$SCRIPTS/merge-queue-watch" launch --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null 2>&1; setsid_rc=$?; set -e
+  [[ "$setsid_rc" -ne 0 ]] && ok "detached launcher failure exits nonzero" || bad "detached launcher failure reported success"
+  replay=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
+  eq "$(jq -r .action <<<"$replay")" resume_launch "post-arm launcher failure remains recoverable"
+  rm -f "$WATCH_SETSID_FAIL"
+  launch_bounded "$watch"
+  "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
 else
   ok "launch setup race control skipped without setsid"
 fi
+
+prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
+state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
+jq '.status="launching"|.setup_deadline=0|.deadline=((now|floor)+600)' "$state_path" > "$TMP/orphan.json"
+chmod 600 "$TMP/orphan.json"; mv "$TMP/orphan.json" "$state_path"
+result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .action <<<"$result")" resume_launch "orphaned launching state wakes into launch recovery"
+"$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
+
+prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
+launch_bounded "$watch"
+state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
+jq '.status="launching"|.setup_deadline=((now|floor)+10)' "$state_path" > "$TMP/live-launch.json"
+chmod 600 "$TMP/live-launch.json"; mv "$TMP/live-launch.json" "$state_path"
+result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .action <<<"$result")" pending "live supervisor stays pending inside setup race window"
+eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" launching "consumer does not steal an active launch transition"
+jq '.setup_deadline=0' "$state_path" > "$TMP/live-launch-expired.json"
+chmod 600 "$TMP/live-launch-expired.json"; mv "$TMP/live-launch-expired.json" "$state_path"
+event_out=$("$SCRIPTS/merge-queue-watch" event --root "$MAIN" --issue KEN-829)
+[[ "$event_out" == ready* ]] && ok "expired orphaned launch wakes despite live supervisor" || bad "expired orphaned launch did not wake"
+result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .action <<<"$result")" pending "expired orphaned launch adopts the live supervisor"
+eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" watching "orphaned live supervisor becomes watching"
+"$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
+
+prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
+state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
+jq '.status="launching"|.setup_deadline=((now|floor)+10)|.deadline=((now|floor)+600)' "$state_path" > "$TMP/completed-launch.json"
+chmod 600 "$TMP/completed-launch.json"; mv "$TMP/completed-launch.json" "$state_path"
+jq -n --arg watch "$watch" --arg head "$HEAD_A" '{schema_version:1,status:"complete",verdict:"merged",repository:"owner/repo",pr_number:42,expected_head:$head,observed_head:"",watch_id:$watch}' > "$artifact"
+result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .action <<<"$result")" postmerge "completed artifact outranks launching setup state"
+"$SCRIPTS/merge-queue-watch" merge-pr-complete --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
+printf 'launch artifact control complete\n' > "$TMP/launch-artifact.err"
+"$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue KEN-829 --watch-id "$watch" --result fail --diagnostic-file "$TMP/launch-artifact.err" >/dev/null
 
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
 launch_bounded "$watch"; supervisor=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .supervisor_pid)
@@ -269,6 +327,7 @@ if ! kill -0 "$supervisor" 2>/dev/null; then ok "overdue verified supervisor is 
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
 launch_bounded "$watch"; supervisor=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .supervisor_pid)
 kill -TERM "$supervisor"; wait_file "$artifact" || bad "signaled supervisor did not publish error"
+printf 'ejected\n' > "$MODE"
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .status <<<"$result")" failed "supervisor signal becomes terminal failed"
 if [[ "$(jq -r .diagnostic_path "$artifact")" == /* ]]; then ok "signal artifact preserves absolute diagnostics"; else bad "signal artifact diagnostic path is not absolute"; fi
@@ -282,7 +341,12 @@ set -e
 mv "$SCRIPTS/queue-wait.off" "$SCRIPTS/queue-wait"
 if [[ "$setup_rc" -ne 0 ]]; then ok "setup failure exits nonzero"; else bad "setup failure exited zero"; fi
 if [[ "$setup_error" == *"$SCRIPTS/queue-wait"* && "$setup_error" == *"diagnostics:"* ]]; then ok "setup failure preserves absolute diagnostics"; else bad "setup failure diagnostic is incomplete"; fi
-eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" failed "setup failure terminalizes durable state"
+eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" launch_failed "setup failure remains an active lifecycle"
+replay=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .action <<<"$replay")" resume_launch "setup failure cannot hand back before launch recovery"
+launch_bounded "$watch"
+eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" watching "same watch retries after setup repair"
+"$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
 
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
 "$SCRIPTS/merge-queue-watch" direct-merged --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
@@ -367,6 +431,15 @@ eq "$(jq -r .issue_id <<<"$prep")" pr-42 "issue-less standalone lifecycle uses t
 "$SCRIPTS/merge-queue-watch" cleanup --root "$MAIN" --issue pr-42 --watch-id "$watch" >/dev/null
 "$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue pr-42 --watch-id "$watch" --result pass >/dev/null
 if [[ -d "$MAIN/.git" ]]; then ok "standalone lifecycle never treats main as issue worktree"; else bad "standalone cleanup removed main repository"; fi
+
+portable_watch() { ! grep -Eq '\$\{[^}]+,,\}' "$1"; }
+if portable_watch "$ORCH/scripts/merge-queue-watch"; then ok "head normalization stays compatible with Bash 3.2"; else bad "Bash 4 lowercase expansion remains"; fi
+cp "$ORCH/scripts/merge-queue-watch" "$TMP/nonportable-watch"
+count=$(grep -Fc "head=\$(printf '%s' \"\$head\" | tr '[:upper:]' '[:lower:]')" "$TMP/nonportable-watch")
+[[ "$count" -eq 1 ]] || { bad "portability mutation fixture count"; exit 1; }
+sed -i.bak 's/head=$(printf '\''%s'\'' "$head" | tr '\''\[:upper:\]'\'' '\''\[:lower:\]'\'')/head="${head,,}"/' "$TMP/nonportable-watch"
+rm -f "$TMP/nonportable-watch.bak"
+if portable_watch "$TMP/nonportable-watch"; then bad "Bash 4 lowercase mutant survived"; else ok "Bash 4 lowercase mutant is killed"; fi
 
 printf 'merge-queue-watch: %d pass, %d fail\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

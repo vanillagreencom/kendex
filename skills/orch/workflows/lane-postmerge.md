@@ -31,7 +31,7 @@ armed or nonmerged result.
    Both `removed` and safety-preserving `kept` dispositions are complete:
 
    ```bash
-   .agents/skills/orch/scripts/merge-queue-watch acknowledge --root [MAIN_REPO_ROOT] --issue [STATE_KEY] --watch-id [WATCH_ID] --result pass
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/merge-queue-watch acknowledge --root [MAIN_REPO_ROOT] --issue [STATE_KEY] --watch-id [WATCH_ID] --result pass
    ```
 
    On project work or cleanup failure, write the command and diagnostic to `[DIAGNOSTIC_FILE]`, then
@@ -39,5 +39,5 @@ armed or nonmerged result.
    overseer reports it instead of advancing the item:
 
    ```bash
-   .agents/skills/orch/scripts/merge-queue-watch acknowledge --root [MAIN_REPO_ROOT] --issue [STATE_KEY] --watch-id [WATCH_ID] --result fail --diagnostic-file [DIAGNOSTIC_FILE]
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/merge-queue-watch acknowledge --root [MAIN_REPO_ROOT] --issue [STATE_KEY] --watch-id [WATCH_ID] --result fail --diagnostic-file [DIAGNOSTIC_FILE]
    ```

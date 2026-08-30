@@ -10,6 +10,7 @@ json_report() { jq -c "$MERGE_QUEUE_REPORT_FILTER" "$STATE_FILE"; }
 consume_report() {
   jq -c "$MERGE_QUEUE_REPORT_FILTER | .claimed_action=.action |
     .action=(if .status==\"claimed\" then \"resume_\"+(.action // \"unknown\")
+      elif .status==\"launch_failed\" then \"resume_launch\"
       elif .status==\"awaiting_lane_postmerge\" then \"lane_postmerge\"
       elif .status==\"cleanup_pending\" then \"resume_cleanup\"
       elif .status==\"cleanup_complete\" then \"acknowledge\"

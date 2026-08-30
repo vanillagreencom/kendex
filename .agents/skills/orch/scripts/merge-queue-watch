@@ -102,6 +102,15 @@ terminate_supervisor() {
   for ((i=0; i<20; i++)); do kill -0 "$pid" 2>/dev/null || return 0; sleep 0.1; done
   return 1
 }
+launch_failure() {
+  local detail="$1" pid
+  pid=$(supervisor_pid); [[ -z "$pid" ]] || terminate_supervisor "$pid" || true
+  atomic_update 'if .watch_id!=$watch or (.status|IN("prepared","launching")|not) then error("launch claim lost") else
+      .status="launch_failed"|.action="launch"|.terminal=false|.supervisor_pid=null|
+      .diagnostic={cause:"launch_failed",detail:$detail}|.updated_at=(now|floor) end' \
+    --arg watch "$WATCH_ID" --arg detail "$detail" \
+    || die "could not claim launch recovery; inspect the active lifecycle before handback"
+}
 live_pr() {
   local repo pr router
   repo=$(state_value .repository); pr=$(state_value .pr_number)
@@ -125,6 +134,7 @@ prepare() {
   done
   [[ -d "$worktree" && -n "$ISSUE" && "$repo" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]] || die "prepare identity is incomplete"
   [[ "$pr" =~ ^[1-9][0-9]*$ && "$head" =~ ^[0-9a-fA-F]{40}$ ]] || die "prepare PR/head is malformed"
+  head=$(printf '%s' "$head" | tr '[:upper:]' '[:lower:]') || die "cannot normalize prepared head"
   [[ "$gate" =~ ^(approval|review|off)$ && "$recovery" =~ ^[0-9]+$ ]] || die "prepare gate mode or recovery count is malformed"
   [[ "$cleanup" == true || "$cleanup" == false ]] || die "prepare cleanup flag is malformed"
   resolve_state
@@ -138,7 +148,7 @@ prepare() {
   mkdir -- "$runtime" && chmod 700 "$runtime"
   printf '%s\n' "$WATCH_ID" > "$runtime/token" && chmod 600 "$runtime/token"
   new_state="$watch_dir/prepared.json"
-  jq -n --arg issue "$ISSUE" --arg repo "$repo" --argjson pr "$pr" --arg head "${head,,}" \
+  jq -n --arg issue "$ISSUE" --arg repo "$repo" --argjson pr "$pr" --arg head "$head" \
     --arg watch "$WATCH_ID" --arg gate "$gate" --argjson recovery "$recovery" \
     --arg root "$ROOT" --arg worktree "$(cd "$worktree" && pwd -P)" --arg worktree_branch "$worktree_branch" \
     --arg artifact "$artifact" --arg log "$log" --arg runtime "$runtime" --argjson now "$now" --argjson cleanup "$cleanup" \
@@ -153,7 +163,7 @@ prepare() {
     if [[ -f "$STATE_FILE" ]]; then
       old_status=$(jq -r '.status // ""' "$STATE_FILE")
       case "$old_status" in
-        prepared|launching|watching|awaiting_lane_postmerge|cleanup_pending|cleanup_complete) exit 2 ;;
+        prepared|launching|launch_failed|watching|awaiting_lane_postmerge|cleanup_pending|cleanup_complete) exit 2 ;;
         claimed)
           [[ "$(jq -r '.action' "$STATE_FILE")" != postmerge ]] || exit 2
           [[ "$(jq -r '.gate_mode' "$STATE_FILE")" == "$gate" && "$(jq -r '.recovery_count' "$STATE_FILE")" == "$recovery" ]] || exit 3
@@ -163,7 +173,7 @@ prepare() {
     chmod 600 "$new_state" && mv -f -- "$new_state" "$STATE_FILE"
   ) 9>"$STATE_FILE.lock" || { rm -rf -- "$watch_dir"; die "active lifecycle already exists"; }
   pointer=$(jq -cn --arg path "$STATE_FILE" --arg watch "$WATCH_ID" --arg repo "$repo" \
-    --argjson pr "$pr" --arg head "${head,,}" '{state_path:$path,watch_id:$watch,repository:$repo,pr_number:$pr,head_sha:$head}')
+    --argjson pr "$pr" --arg head "$head" '{state_path:$path,watch_id:$watch,repository:$repo,pr_number:$pr,head_sha:$head}')
   if ! (cd "$worktree" && "$WORKFLOW_STATE" update "$ISSUE" --argjson watch "$pointer" '.merge_queue_watch=$watch'); then
     fail_state workflow_state_failed "could not record durable lifecycle pointer"
     die "could not record lifecycle pointer in workflow state"
@@ -183,17 +193,18 @@ launch() {
   now=$(date +%s); deadline=$((now + max_wait + 90)); runtime=$(state_value .runtime_dir); log=$(state_value .log_path)
   waiter="$SCRIPT_DIR/queue-wait"
   if [[ ! -x "$waiter" ]]; then
-    fail_state launch_failed "queue-wait is missing: $waiter; diagnostics: $log"
+    launch_failure "queue-wait is missing: $waiter; diagnostics: $log"
     die "queue-wait is missing: $waiter; diagnostics: $log"
   fi
   if command -v setsid >/dev/null 2>&1; then method="setsid"; else method="nohup"; fi
-  atomic_update 'if .watch_id!=$watch or .head_sha!=$head or .status!="prepared" then error("prepared claim lost") else
-      .status="launching"|.launch_method=$method|.launched_at=$now|.deadline=$deadline|.updated_at=$now end' \
+  atomic_update 'if .watch_id!=$watch or .head_sha!=$head or (.status|IN("prepared","launch_failed")|not) then error("prepared claim lost") else
+      .status="launching"|.action=null|.diagnostic=null|.launch_method=$method|.launched_at=$now|
+      .setup_deadline=($now+10)|.deadline=$deadline|.updated_at=$now end' \
     --arg watch "$WATCH_ID" --arg head "$(state_value .head_sha)" --arg method "$method" --argjson now "$now" --argjson deadline "$deadline" \
     || die "prepared lifecycle was terminalized before launch"
   if [[ "$method" == setsid ]]; then
     setsid -f "$SELF" __supervise "$STATE_FILE" "$WATCH_ID" "$waiter" "$poll" "$max_wait" >> "$log" 2>&1 \
-      || { fail_state launch_failed "setsid could not launch supervisor"; die "detached supervisor launch failed; see $log"; }
+      || { launch_failure "setsid could not launch supervisor; see $log"; die "detached supervisor launch failed; see $log"; }
   else
     nohup "$SELF" __supervise "$STATE_FILE" "$WATCH_ID" "$waiter" "$poll" "$max_wait" </dev/null >> "$log" 2>&1 &
   fi
@@ -203,12 +214,12 @@ launch() {
     sleep 0.05
   done
   if [[ ! -f "$ready" ]]; then
-    fail_state launch_failed "supervisor did not establish worker liveness; see $log"
+    launch_failure "supervisor did not establish worker liveness; see $log"
     tail -20 "$log" >&2 || true
     die "supervisor setup failed; diagnostics: $log"
   fi
   pid=$(cat < "$runtime/supervisor.pid")
-  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || { fail_state launch_failed "supervisor pid is malformed"; die "supervisor pid is malformed"; }
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || { launch_failure "supervisor pid is malformed"; die "supervisor pid is malformed"; }
   if ! atomic_update 'if .watch_id!=$watch or .status!="launching" then error("launch claim lost") else
       .status="watching"|.supervisor_pid=$pid|.updated_at=(now|floor) end' --arg watch "$WATCH_ID" --argjson pid "$pid"; then
     terminate_supervisor "$pid" || true
@@ -247,10 +258,22 @@ consume() {
   WATCH_ID=$(state_value .watch_id)
   local status artifact pid deadline now token body live live_state observed expected verdict result cause action diag error_text exit_code diag_path unconfirmed
   status=$(state_value .status)
-  case "$status" in claimed|failed|abandoned|awaiting_lane_postmerge|cleanup_pending|cleanup_complete|complete) consume_report; return ;; esac
+  case "$status" in claimed|launch_failed|failed|abandoned|awaiting_lane_postmerge|cleanup_pending|cleanup_complete|complete) consume_report; return ;; esac
   artifact=$(state_value .artifact_path); now=$(date +%s); deadline=$(state_value '.deadline // 0')
-  if [[ "$status" == launching && "$now" -le "$deadline" ]]; then
-    jq -cn --arg watch "$WATCH_ID" '{status:"launching",watch_id:$watch,action:"pending"}'; return
+  if [[ "$status" == launching && ! -s "$artifact" ]]; then
+    pid=$(supervisor_pid)
+    if supervisor_live "$pid"; then
+      if [[ "$now" -le "$(state_value '.setup_deadline // 0')" ]]; then
+        jq -cn --arg watch "$WATCH_ID" '{status:"launching",watch_id:$watch,action:"pending"}'; return
+      fi
+      atomic_update 'if .watch_id==$watch and .status=="launching" then .status="watching"|.supervisor_pid=$pid|.updated_at=(now|floor) else . end' \
+        --arg watch "$WATCH_ID" --argjson pid "$pid"; status=watching
+    elif [[ -z "$pid" && "$now" -le "$(state_value '.setup_deadline // 0')" ]]; then
+      jq -cn --arg watch "$WATCH_ID" '{status:"launching",watch_id:$watch,action:"pending"}'; return
+    else
+      launch_failure "launching supervisor died or missed its setup deadline; see $(state_value .log_path)"
+      consume_report; return
+    fi
   fi
   if [[ ! -s "$artifact" ]]; then
     pid=$(supervisor_pid); token=$(state_value '.runtime_dir + "/token"')
@@ -281,15 +304,16 @@ consume() {
     --arg expected "$expected" --arg observed "$observed" --arg live "$live" --arg state "$live_state" \
     '{cause:$cause,error:(if $error=="" then null else $error end),unconfirmed_verdict:(if $unconfirmed=="" then null else $unconfirmed end),worker_exit_code:(if $exit=="" then null else ($exit|tonumber) end),
       diagnostic_path:$path,head_verification:{expected:$expected,artifact_observed:$observed,live:$live,live_state:$state}}' > "$diag"
+  if [[ -z "$live" ]]; then claim failed "$verdict" live_pr_unreadable "$diag"; rm -f -- "$diag"; return; fi
+  if [[ "$live" != "$expected" || ( -n "$observed" && "$observed" != "$expected" ) ]]; then
+    claim failed "$verdict" head_mismatch "$diag"; rm -f -- "$diag"; return
+  fi
+  if [[ "$live_state" == MERGED ]]; then claim postmerge merged merged_race "$diag"; rm -f -- "$diag"; return; fi
   if [[ "$result" == error && "$verdict:$cause" == dequeued:late_findings_dequeue_failed ]]; then
     claim manual_dequeue "$verdict" "$cause" "$diag"; rm -f -- "$diag"; return
   fi
   if [[ "$result" == error || "$verdict" == unknown ]]; then
     claim failed "$verdict" "${cause:-watch_error}" "$diag"; rm -f -- "$diag"; return
-  fi
-  if [[ -z "$live" ]]; then claim failed "$verdict" live_pr_unreadable "$diag"; rm -f -- "$diag"; return; fi
-  if [[ "$live" != "$expected" || ( -n "$observed" && "$observed" != "$expected" ) ]]; then
-    claim failed "$verdict" head_mismatch "$diag"; rm -f -- "$diag"; return
   fi
   case "$verdict:$live_state" in merged:MERGED|closed:CLOSED|unknown:*|conflicting:OPEN|ejected:OPEN|disarmed:OPEN|dequeued:OPEN|queued:OPEN|not_queued:OPEN) ;; *)
     claim failed "$verdict" live_state_mismatch "$diag"; rm -f -- "$diag"; return ;; esac
@@ -306,9 +330,13 @@ event() {
   [[ -n "$ROOT" && -n "$ISSUE" ]] || die "--root and --issue are required"
   resolve_state; [[ -f "$STATE_FILE" ]] || exit 1; WATCH_ID=$(state_value .watch_id)
   local status artifact pid deadline now
-  status=$(state_value .status); [[ "$status" == watching || "$status" == launching ]] || exit 1
+  status=$(state_value .status); [[ "$status" == watching || "$status" == launching || "$status" == launch_failed ]] || exit 1
+  [[ "$status" == launch_failed ]] && { printf 'ready %s %s\n' "$ISSUE" "$WATCH_ID"; return 0; }
   artifact=$(state_value .artifact_path); deadline=$(state_value '.deadline // 0'); now=$(date +%s); pid=$(supervisor_pid)
-  [[ "$status" == launching && "$now" -le "$deadline" ]] && exit 1
+  if [[ "$status" == launching && ! -s "$artifact" ]]; then
+    if supervisor_live "$pid"; then [[ "$now" -le "$(state_value '.setup_deadline // 0')" ]] && exit 1; printf 'ready %s %s\n' "$ISSUE" "$WATCH_ID"; return 0; fi
+    [[ -z "$pid" && "$now" -le "$(state_value '.setup_deadline // 0')" ]] && exit 1
+  fi
   if [[ -s "$artifact" ]] || [[ "$now" -gt "$deadline" ]] || ! supervisor_live "$pid"; then printf 'ready %s %s\n' "$ISSUE" "$WATCH_ID"; return 0; fi
   exit 1
 }

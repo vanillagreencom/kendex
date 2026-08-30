@@ -32,6 +32,7 @@ audit() {
   done
   for line in \
     '| `postmerge` | Step 2 |' \
+    '| `resume_launch` | Fix the persisted setup failure and rerun launch for the same watch; never hand back |' \
     '| `restack`, `resume_restack` | Run or resume the guarded Restack cycle below |' \
     '| `recovery` | Recovery cycle below, using the persisted gate mode and recovery count |' \
     '| `triage` | Late-findings triage below |' \
@@ -47,7 +48,7 @@ audit_lane() {
   body=$(cat "$1")
   for line in \
     '   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/merge-queue-watch cleanup --root [MAIN_REPO_ROOT] --issue [STATE_KEY] --watch-id [WATCH_ID]' \
-    '   .agents/skills/orch/scripts/merge-queue-watch acknowledge --root [MAIN_REPO_ROOT] --issue [STATE_KEY] --watch-id [WATCH_ID] --result pass'; do
+    '   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/merge-queue-watch acknowledge --root [MAIN_REPO_ROOT] --issue [STATE_KEY] --watch-id [WATCH_ID] --result pass'; do
     [[ $(grep -Fxc -- "$line" <<<"$body") -eq 1 ]] || return 1
     at=$(grep -Fn -- "$line" <<<"$body" | cut -d: -f1); [[ "$at" -gt "$previous" ]] || return 1; previous="$at"
   done
@@ -61,6 +62,8 @@ if grep -Fq '.agents/skills/orch/scripts/merge-queue-watch init --worktree [WORK
 if audit_lane "$LANE"; then ok "lane cleanup precedes final acknowledgment"; else bad "lane cleanup and acknowledgment chain"; fi
 if grep -Fq '`cleanup_pending` when resuming an interrupted cleanup claim' "$LANE" && \
   grep -Fq 'safety-preserving `kept` dispositions are complete' "$LANE"; then ok "lane resumes cleanup and acknowledges kept worktrees"; else bad "lane cleanup resume or kept acknowledgment doctrine"; fi
+if grep -Fq '[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/merge-queue-watch acknowledge --root [MAIN_REPO_ROOT] --issue [STATE_KEY] --watch-id [WATCH_ID] --result fail' "$LANE"; then ok "failed lane acknowledgment also uses the surviving main repository"; else bad "failed acknowledgment can use a deleted cwd"; fi
+if [[ ! -e "$ORCH/scripts/lib/queue-wait-help.sh" ]] && ! grep -Fq 'queue-wait-help.sh' "$ORCH/scripts/queue-wait"; then ok "dead queue-wait help library is absent"; else bad "dead queue-wait help library remains"; fi
 if grep -Fq 'workflows/lane-postmerge.md' "$ORCH/workflows/start-worktree.md" && \
   grep -Fq 'workflows/lane-postmerge.md' "$ORCH/workflows/submit-pr.md"; then ok "managed callers run the lane acknowledgment workflow"; else bad "managed continuation wiring"; fi
 if grep -Fq '`workflows/merge-pr-restack.md`' "$MERGE" && \
@@ -105,6 +108,13 @@ cp "$MERGE" "$TMP/restack.md"
 sed -i.bak 's/| `restack`, `resume_restack` |/| `restack-disabled` |/' "$TMP/restack.md"
 rm -f "$TMP/restack.md.bak"
 if audit "$TMP/restack.md"; then bad "restack action mutant survived"; else ok "restack action mutant is killed"; fi
+
+cp "$LANE" "$TMP/relative-ack.md"
+count=$(grep -Fc '[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/merge-queue-watch acknowledge' "$TMP/relative-ack.md")
+[[ "$count" -eq 2 ]] || { bad "absolute acknowledgment mutation fixture count"; exit 1; }
+sed -i.bak 's|\[MAIN_REPO_ROOT\]/\.agents/skills/orch/scripts/merge-queue-watch acknowledge|.agents/skills/orch/scripts/merge-queue-watch acknowledge|g' "$TMP/relative-ack.md"
+rm -f "$TMP/relative-ack.md.bak"
+if audit_lane "$TMP/relative-ack.md"; then bad "relative acknowledgment mutant survived"; else ok "relative acknowledgment mutant is killed"; fi
 
 printf 'merge-queue-workflow: %d pass, %d fail\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
