@@ -1,10 +1,6 @@
 use std::path::{Path, PathBuf};
 
-<<<<<<< HEAD
-use kendex_core::command_update::{fetch, record_command, replace_executable};
-=======
-use kendex_core::command_update::{download, record_command, record_installed};
->>>>>>> c8d81d730 (fix(KEN-444): the record says which file, and where it can be written)
+use kendex_core::command_update::{fetch, record_command, record_installed, replace_executable};
 use kendex_core::env::Env;
 use kendex_core::install_channel::{Host, HostProbe, InstallChannel, for_cli};
 use kendex_core::names::shown;
@@ -167,7 +163,7 @@ fn run_on(
     // that replaced them. Left stale it stops matching, and the app then
     // refuses a command it does own — the safe direction, and one the next
     // run of this command undoes either way.
-    if let Err(why) = record_command(env, current_exe, &command.bytes) {
+    if let Err(why) = record_command(env, current_exe, &binary) {
         say(&format!(
             "the desktop app will not update this command until it can be recorded: {why}"
         ));

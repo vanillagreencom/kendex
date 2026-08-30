@@ -47,13 +47,14 @@ export const commands = {
 	/**
 	 *  Replace this install with the latest release and relaunch into it,
 	 *  carrying across a `kendex` command that is kendex's to replace. One
-	 *  another installer owns stays where it is, named on the card by
-	 *  `app_update_command_channel` before this ever runs — and `shown` is
-	 *  what that card said, so a command that changed since is refused rather
-	 *  than acted on in silence. The separately signed
-	 *  updater manifest is the delivery path for the app and verifies itself;
-	 *  the command's own bytes are held to the same key the CLI holds them to.
-	 *  A failure leaves the running app untouched and usable.
+	 *  another installer owns stays where it is, named on the card before this
+	 *  runs; `shown` is what that card said, so a command that changed since is
+	 *  refused rather than acted on in silence. The manifest names a download
+	 *  and the signature over it, the release's own digests document names what
+	 *  this release published for this target, and the app's bytes are held to
+	 *  both. The discovery feed never supplies an install URL, and the command's
+	 *  bytes are held to the key the CLI holds them to. A failure leaves the
+	 *  running app untouched and usable.
 	 * 
 	 *  The command moves first. What this flow's notice card reads is the
 	 *  app's own baked version, so the app is the state marker here and is

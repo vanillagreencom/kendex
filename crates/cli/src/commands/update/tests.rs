@@ -462,6 +462,7 @@ fn an_update_records_the_command_it_is_running_as() {
             &installed,
             &InstallChannel::Direct,
             TEST_KEY,
+            TEST_TARGET,
         )
         .unwrap();
 
@@ -512,6 +513,7 @@ fn a_run_with_nothing_to_do_records_the_bytes_already_installed() {
         &installed,
         &InstallChannel::Direct,
         TEST_KEY,
+        TEST_TARGET,
     )
     .unwrap();
 
@@ -537,7 +539,16 @@ fn a_package_managed_run_records_nothing() {
         command: "brew upgrade kendex-cli".to_owned(),
     };
 
-    run_on(&env, false, &feed_url, &installed, &brew, TEST_KEY).unwrap();
+    run_on(
+        &env,
+        false,
+        &feed_url,
+        &installed,
+        &brew,
+        TEST_KEY,
+        TEST_TARGET,
+    )
+    .unwrap();
 
     assert_eq!(kendex_core::command_update::recorded_command(&env), None);
 }

@@ -328,23 +328,14 @@ fn app_half_failed(release: &str, half: CommandHalf, error: &str) -> String {
 
 /// Replace this install with the latest release and relaunch into it,
 /// carrying across a `kendex` command that is kendex's to replace. One
-/// another installer owns stays where it is, named on the card by
-<<<<<<< HEAD
-/// `app_update_command_channel` before this ever runs. The manifest names a
-/// download and the signature over it; the release's own digests document
-/// names which download this release published for this target, and the
-/// app's bytes are held to both before anything is installed. The discovery
-/// feed never supplies an install URL, and the command's own bytes are held
-/// to the same key the CLI holds them to. A failure leaves the running app
-/// untouched and usable.
-=======
-/// `app_update_command_channel` before this ever runs — and `shown` is
-/// what that card said, so a command that changed since is refused rather
-/// than acted on in silence. The separately signed
-/// updater manifest is the delivery path for the app and verifies itself;
-/// the command's own bytes are held to the same key the CLI holds them to.
-/// A failure leaves the running app untouched and usable.
->>>>>>> af37782ce (fix(KEN-444): a command that changed under the card is not acted on)
+/// another installer owns stays where it is, named on the card before this
+/// runs; `shown` is what that card said, so a command that changed since is
+/// refused rather than acted on in silence. The manifest names a download
+/// and the signature over it, the release's own digests document names what
+/// this release published for this target, and the app's bytes are held to
+/// both. The discovery feed never supplies an install URL, and the command's
+/// bytes are held to the key the CLI holds them to. A failure leaves the
+/// running app untouched and usable.
 ///
 /// The command moves first. What this flow's notice card reads is the
 /// app's own baked version, so the app is the state marker here and is
@@ -375,23 +366,15 @@ pub async fn app_update_install(
         .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "this build is already the latest release".to_owned())?;
-<<<<<<< HEAD
-    let half = move_the_command(install, update.version.clone()).await?;
+    let half = move_the_command(install, update.version.clone(), shown).await?;
     // Downloaded, then judged, then installed: the plugin's own check runs
-    // on the way down, and what this release published for this target is
-    // what says those bytes are the ones the version being installed
-    // names. The read is blocking, so it runs off the async runtime.
-    //
-    // Every failure from here reports the command half too. It has already
-    // moved by now, so a bare app error would leave a person reading that
-    // the app did not update while their terminal answers the new version.
+    // on the way down, and what this release published for this target says
+    // those bytes are the version being installed. The read is blocking, so
+    // it runs off the async runtime. Every failure from here names the
+    // command half too — it has moved by now, and a bare app error would
+    // report no update while the terminal answers the new version.
     let bytes = update
         .download(|_chunk, _total| {}, || {})
-=======
-    let half = move_the_command(install, update.version.clone(), shown).await?;
-    update
-        .download_and_install(|_chunk, _total| {}, || {})
->>>>>>> af37782ce (fix(KEN-444): a command that changed under the card is not acted on)
         .await
         .map_err(|error| app_half_failed(&update.version, half, &error.to_string()))?;
     let offered = update.version.clone();
