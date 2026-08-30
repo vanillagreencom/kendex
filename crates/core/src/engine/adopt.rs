@@ -83,10 +83,7 @@ pub fn adopt(
         shared, content, ..
     } = &seen;
     if shared.is_none() && content.is_empty() && !local_item.exists() {
-        return Err(CoreError::ItemNotInSource {
-            name: name.to_owned(),
-            source_name: format!("nothing at {} to adopt", first_position.display()),
-        });
+        return Err(nothing_at(name, first_position));
     }
 
     let in_place = inplace::home(scope, kind, name).is_some();
@@ -149,10 +146,6 @@ fn move_ops(
             },
         })
         .collect();
-    let nothing_here = || CoreError::ItemNotInSource {
-        name: name.to_owned(),
-        source_name: format!("nothing at {} to adopt", first_position.display()),
-    };
     match (shared, in_place) {
         (Some((_, shared)), true) => ops.extend(inplace::relocate_ops(
             name,
@@ -163,7 +156,7 @@ fn move_ops(
         (None, true) => {
             let held: Vec<PathBuf> = content.iter().map(|(_, path)| path.clone()).collect();
             if held.is_empty() {
-                return Err(nothing_here());
+                return Err(nothing_at(name, first_position));
             }
             ops.extend(inplace::relocate_ops(name, &held, &[], local_item)?);
         }
@@ -242,6 +235,19 @@ fn local_item_path(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Resu
             name: name.to_owned(),
             source_name: format!("adopt does not support {} yet", other.name()),
         }),
+    }
+}
+
+/// The positions the tools named hold nothing the capture could take.
+/// Said once for both callers: the sentence is the same fact whether the
+/// whole read came back empty or only the in-place arm found no content,
+/// and one string is one place for the spelling to be right. The position
+/// is text the reader is shown rather than a path going back to the
+/// operating system, so `paths::slashed` spells it.
+fn nothing_at(name: &str, position: &Path) -> CoreError {
+    CoreError::ItemNotInSource {
+        name: name.to_owned(),
+        source_name: format!("nothing at {} to adopt", crate::paths::slashed(position)),
     }
 }
 

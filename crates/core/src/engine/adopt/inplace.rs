@@ -85,7 +85,12 @@ pub(super) fn relocate_ops(
     if let Some(wrong) = held.iter().find(|path| !path.join(MARKER).is_file()) {
         return Err(CoreError::ItemNotInSource {
             name: name.to_owned(),
-            source_name: format!("{} is not a folder holding a {MARKER}", wrong.display()),
+            // Text the reader is shown, not a path going back to the
+            // operating system, so `paths::slashed` spells it.
+            source_name: format!(
+                "{} is not a folder holding a {MARKER}",
+                crate::paths::slashed(wrong)
+            ),
         });
     }
     let mut ops = Vec::new();

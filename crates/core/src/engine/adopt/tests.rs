@@ -458,3 +458,56 @@ fn the_nesting_refusal_holds_under_a_symlinked_ancestor() {
         HarnessId::Claude
     ));
 }
+
+/// Every adopt refusal that names a position spells it with `/`, whatever
+/// the platform builds the path with. The three below are the ones that
+/// print a position rather than an item name: the read that found nothing
+/// anywhere, the in-place arm that found the home but no content to move
+/// into it, and the folder wearing a skill's name without its marker.
+///
+/// The assertion is a tail spelled `/` in this source and never through
+/// `paths::slashed`, so the two sides only agree where the value really
+/// goes through that rule. On a host where `/` already separates, nothing
+/// here can fail; the lane this holds is Windows, where the unfixed sites
+/// read `app\.claude\skills\ghost`.
+#[test]
+fn an_adopt_refusal_spells_the_position_it_names_with_slashes() {
+    let tail = "app/.claude/skills/ghost";
+
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let project = tmp.path().join("app");
+    fs::create_dir_all(&project).unwrap();
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    let nowhere = adopt(&env, &scope, ItemKind::Skill, "ghost", &[HarnessId::Claude]).unwrap_err();
+    assert!(nowhere.to_string().contains(tail), "{nowhere}");
+
+    // The shared tree already holds the name, so the read gets past the
+    // first refusal and the in-place arm makes the same complaint.
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let project = tmp.path().join("app");
+    fs::create_dir_all(project.join(".agents/skills/ghost")).unwrap();
+    fs::write(project.join(".agents/skills/ghost/SKILL.md"), "mine").unwrap();
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    let no_content =
+        adopt(&env, &scope, ItemKind::Skill, "ghost", &[HarnessId::Claude]).unwrap_err();
+    assert!(no_content.to_string().contains(tail), "{no_content}");
+
+    // A directory under the name with no marker in it: content to move,
+    // and nothing that reads back as a skill.
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let project = tmp.path().join("app");
+    fs::create_dir_all(project.join(".claude/skills/ghost")).unwrap();
+    fs::write(project.join(".claude/skills/ghost/notes.md"), "mine").unwrap();
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    let unmarked = adopt(&env, &scope, ItemKind::Skill, "ghost", &[HarnessId::Claude]).unwrap_err();
+    assert!(unmarked.to_string().contains(tail), "{unmarked}");
+}
