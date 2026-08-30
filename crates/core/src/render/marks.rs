@@ -290,8 +290,14 @@ fn past_attribute(text: &str) -> Option<&str> {
 }
 
 /// Whether what stands past a `<` is one whole tag with nothing but
-/// whitespace behind it: a name, any attributes and `>` for an open tag,
-/// or `/`, a name and `>` for a closing one.
+/// whitespace behind it: a name, any attributes and `>` for an open tag, or
+/// `/`, a name and `>` for a closing one.
+///
+/// An open tag naming one of the raw-text elements is not one of these.
+/// Markdown gives those their own kind, which ends at a closing tag rather
+/// than at a blank line, and a line that fails that kind's start condition
+/// — `<script/>`, which ends the tag before the space or `>` it wants —
+/// opens no block at all.
 fn whole_tag(after: &str) -> bool {
     if let Some(closing) = after.strip_prefix('/') {
         return past_name(closing).is_some_and(shuts);
@@ -299,6 +305,10 @@ fn whole_tag(after: &str) -> bool {
     let Some(mut rest) = past_name(after) else {
         return false;
     };
+    let name = &after[..after.len() - rest.len()];
+    if RAW_TAGS.iter().any(|raw| name.eq_ignore_ascii_case(raw)) {
+        return false;
+    }
     while let Some(more) = past_attribute(rest) {
         rest = more;
     }

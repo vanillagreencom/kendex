@@ -179,13 +179,19 @@ fn walk(lines: &[&str], placed: &mut [Placed]) {
             open = None;
             continue;
         }
+        // The paragraph this line could continue: one standing at this
+        // depth or shallower. A line entering a deeper quote has left the
+        // paragraph above it whatever else the line turns out to be, so
+        // every question below asks this rather than whether any
+        // paragraph at all is open.
+        let running = open.filter(|para| depth <= para.depth);
         if let Some((marker, run, _)) = fence_marker(rest) {
             fence = Some(Fence { marker, run, depth });
             open = None;
             code = None;
             continue;
         }
-        if let Some(kind) = html_opens(rest, open.is_some()) {
+        if let Some(kind) = html_opens(rest, running.is_some()) {
             raw = (!html_closes(kind, rest)).then_some(Raw { kind, depth });
             open = None;
             code = None;
@@ -194,14 +200,13 @@ fn walk(lines: &[&str], placed: &mut [Placed]) {
         // A thematic break, a setext underline and a blockquote marker with
         // nothing behind it each end the block above them and carry no
         // inline content of their own.
-        let underline = open.is_some_and(|para| para.depth == depth) && setext_underline(rest);
+        let underline = running.is_some_and(|para| para.depth == depth) && setext_underline(rest);
         if thematic_break(rest) || underline || rest.trim().is_empty() {
             open = None;
             code = None;
             continue;
         }
-        let continues = open
-            .is_some_and(|para| depth <= para.depth && !atx_heading(rest) && !list_marker(rest));
+        let continues = running.is_some() && !atx_heading(rest) && !list_marker(rest);
         if !continues && indented(rest) {
             if let Some((held, from)) = code
                 && held == depth
@@ -215,7 +220,7 @@ fn walk(lines: &[&str], placed: &mut [Placed]) {
             continue;
         }
         code = None;
-        match (continues, open) {
+        match (continues, running) {
             (true, Some(para)) => placed[at].block = Some(para.block),
             _ => {
                 placed[at].block = Some(next);

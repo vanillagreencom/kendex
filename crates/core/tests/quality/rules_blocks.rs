@@ -439,3 +439,98 @@ fn safety_bypass_leaves_a_span_under_a_tag_that_holds_nothing() {
         holding.findings
     );
 }
+
+/// A line entering a deeper quote has left the paragraph above it, so the
+/// paragraph that decides whether a whole tag may open a block is the one
+/// this line could continue rather than any open paragraph at all. Asking
+/// the question globally refused the tag, read both quoted lines as one
+/// paragraph, paired the backticks and suppressed a real bypass.
+///
+/// The control is the second case, and it is the rule the gate is for: at
+/// the paragraph's own depth the tag does continue it, and the span across
+/// it is real.
+#[test]
+fn safety_bypass_opens_a_block_at_a_tag_that_entered_a_deeper_quote() {
+    let deeper = skill(&[(
+        "SKILL.md",
+        "Read this.\n> <span>\n> The bypass is `git commit --no-verify`, never run it.\n",
+    )]);
+    assert_eq!(
+        severity_of(&deeper, "safety-bypass"),
+        Some(Severity::High),
+        "{:?}",
+        deeper.findings
+    );
+
+    let alongside = skill(&[(
+        "SKILL.md",
+        "> The bypass is `git commit\n> <span>\n> --no-verify`, never run it.\n",
+    )]);
+    assert!(
+        !rules_hit(&alongside).contains(&"safety-bypass"),
+        "{:?}",
+        alongside.findings
+    );
+}
+
+/// A tag naming a raw-text element opens no whole-tag block: markdown gives
+/// those their own kind, and a line failing that kind's start condition
+/// opens nothing at all. Taking `<textarea/>` for a whole tag started a
+/// block that runs to the next blank line, threw away the span below it,
+/// and reported the switch that span quoted.
+///
+/// The control is the second case: written so the raw-text kind does start,
+/// the block holds its content and the marks in there are not markdown's.
+#[test]
+fn safety_bypass_opens_no_block_at_a_raw_text_tag_that_holds_nothing() {
+    let empty = skill(&[(
+        "SKILL.md",
+        "<textarea/>\nThe bypass is `git commit --no-verify`, never run it.\n",
+    )]);
+    assert!(
+        !rules_hit(&empty).contains(&"safety-bypass"),
+        "{:?}",
+        empty.findings
+    );
+
+    let holding = skill(&[(
+        "SKILL.md",
+        "<textarea>\nThe bypass is `git commit --no-verify`, never run it.\n</textarea>\n",
+    )]);
+    assert_eq!(
+        severity_of(&holding, "safety-bypass"),
+        Some(Severity::Critical),
+        "{:?}",
+        holding.findings
+    );
+}
+
+/// A declaration is `<!` and an ASCII letter of either case, and it opens a
+/// block that ends on the `>` its own line carries. Both spellings of a
+/// doctype are the same block, so a span cannot survive one and be cut by
+/// the other — which is what reading the letter's case as part of the
+/// condition would do.
+#[test]
+fn safety_bypass_reads_a_declaration_the_same_in_either_case() {
+    let lower = skill(&[(
+        "SKILL.md",
+        "The bypass is `git commit\n<!doctype html>\n--no-verify`, never run it.\n",
+    )]);
+    let upper = skill(&[(
+        "SKILL.md",
+        "The bypass is `git commit\n<!DOCTYPE html>\n--no-verify`, never run it.\n",
+    )]);
+    assert_eq!(
+        severity_of(&lower, "safety-bypass"),
+        Some(Severity::Critical),
+        "{:?}",
+        lower.findings
+    );
+    assert_eq!(
+        severity_of(&lower, "safety-bypass"),
+        severity_of(&upper, "safety-bypass"),
+        "{:?} {:?}",
+        lower.findings,
+        upper.findings
+    );
+}
