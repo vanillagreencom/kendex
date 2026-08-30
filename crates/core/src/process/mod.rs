@@ -62,20 +62,24 @@ const PINNED: &[&str] = &["protocol.ext.allow=never"];
 /// Settled on top of [`PINNED`], for the one call that writes catalog
 /// content this machine then reads.
 ///
-/// What a catalog checks out must not depend on which host checked it out.
-/// Both settings tell git to rewrite line endings as it writes a working
-/// tree, and Git for Windows' installer puts `autocrlf=true` in the system
-/// config — which is what the GitHub Actions Windows runner carries — so
-/// the same catalog gave one set of bytes there and another on Linux.
-/// Settled here, every host agrees. Both rather than one, because
-/// `core.eol` decides for a repository that marks its files as text and
-/// `core.autocrlf` for one that does not.
+/// What the host's git is configured to do to line endings must not decide
+/// what a catalog checks out. Both settings tell git to rewrite them as it
+/// writes a working tree, and Git for Windows' installer puts
+/// `autocrlf=true` in the system config — which is what the GitHub Actions
+/// Windows runner carries — so the same catalog gave one set of bytes
+/// there and another on Linux. Settled here, that configuration no longer
+/// reaches the write. Both rather than one, because `core.eol` decides for
+/// a repository that marks its files as text and `core.autocrlf` for one
+/// that does not.
 ///
-/// What that leaves is what the repository declares for itself: a
-/// `.gitattributes` is an attribute and outranks any configuration, so a
-/// catalog committing `* text eol=crlf` still gets CRLF. It gets it
-/// equally on every host, which is the property kendex needs; the claim is
-/// deliberately this narrow rather than "the bytes the blob holds".
+/// That is the whole of what they buy, and it is smaller than "the same
+/// bytes on every host". An attribute outranks configuration, so a catalog
+/// committing `* text eol=crlf` still gets CRLF; and an attribute may
+/// select `filter=<driver>`, whose `smudge` command lives in
+/// configuration, so one commit lands one way on a host that defines the
+/// driver and another on a host that does not. Neither is bypassed here,
+/// because whose intent wins between a repository and the machine reading
+/// it is a product question rather than this module's. KEN-850 owns it.
 ///
 /// It goes nowhere else, and the reach is the point rather than an
 /// oversight. A call that only *inspects* a repository is asking what that
