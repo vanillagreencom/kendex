@@ -27,13 +27,29 @@ export type HookKey = Exclude<keyof typeof DEFAULTS, "clippyTimeoutMs" | "driftC
 /**
  * Pi's global root, resolved the way the Pi adapter resolves it
  * (`crates/core/src/harness/pi.rs::default_global_root`):
- * `PI_CODING_AGENT_DIR` when set, else `~/.pi/agent`. An empty value counts as
- * unset — it names no directory, and honouring it would root the whole global
- * scope at the process cwd.
+ * `PI_CODING_AGENT_DIR` when the variable is DEFINED, an empty value included,
+ * else `~/.pi/agent`.
+ *
+ * The adapter reads the variable through `std::env::var(k).ok()`
+ * (`crates/core/src/env.rs`), so an empty value reaches it as `Some("")` and
+ * roots the global scope at the process cwd. This has to read it the same way.
+ * Empty-means-unset is the nicer reading, but it made the two halves disagree:
+ * kendex rendered the global guards under one root while this carrier searched
+ * another, found no script there, and allowed the command. A hook that is not
+ * found is allowed, so a disagreement about where the guards live is a silent
+ * allow, and that is the defect here rather than what an empty value ought to
+ * mean. An empty value is a strange root either way; it is now the same strange
+ * root on both sides.
+ *
+ * `resolve("")` is the process cwd, which is as close as this can come: the
+ * adapter's empty root is a relative path, resolved by whatever cwd the kendex
+ * process had when it wrote. The two name one directory whenever the Pi session
+ * and the kendex run share a cwd, which is the ordinary case, and was true of
+ * no case at all before.
  */
 export function piUserDir(): string {
 	const override = process.env.PI_CODING_AGENT_DIR;
-	if (override) return resolve(override);
+	if (override !== undefined) return resolve(override);
 	const home = homedir();
 	if (!home) return resolve(".pi", "agent");
 	return resolve(home, ".pi", "agent");

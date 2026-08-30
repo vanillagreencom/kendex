@@ -522,11 +522,48 @@ describe("pi-hooks rendered-hook resolution", () => {
 			// answers whether or not the workspace is trusted.
 			const untrusted = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, { cwd: project, isProjectTrusted: () => false }) as { block?: boolean };
 			expect(untrusted.block).toBe(true);
+		} finally {
+			if (saved === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = saved;
+			rmSync(agentDir, { recursive: true, force: true });
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
 
-			// An empty value names no directory and counts as unset.
+	// Where the two halves used to disagree. The Pi adapter reads the variable
+	// with `std::env::var().ok()`, so an empty value reaches it as `Some("")`
+	// and roots the global scope at the process cwd; this carrier read it as
+	// falsy and looked in `~/.pi/agent`. kendex rendered the global guards into
+	// one tree, the carrier searched the other, found nothing, and allowed the
+	// command — the silent-allow shape, since a hook that is not found is
+	// allowed. Both sides now name one directory.
+	test("an empty PI_CODING_AGENT_DIR roots the global scope where the renderer roots it", async () => {
+		const agentDir = mkdtempSync(join(tmpdir(), "pi-hooks-emptyvar-"));
+		const project = initRustRepo("pi-hooks-emptyroot-");
+		const log = join(agentDir, "payload.log");
+		const saved = process.env.PI_CODING_AGENT_DIR;
+		const savedCwd = process.cwd();
+		try {
+			mkdirSync(join(agentDir, "kendex", "hooks"), { recursive: true });
+			const script = join(agentDir, "kendex", "hooks", "pre-commit-check.sh");
+			writeFileSync(script, `#!/usr/bin/env bash\nset -euo pipefail\ncat >> ${JSON.stringify(log)}\necho "the cwd-rooted hook ran" >&2\nexit 2\n`);
+			chmodSync(script, 0o755);
+			const handler = installToolCallHandler();
+
+			// An empty root is a relative path on both sides, so the directory it
+			// names is whichever cwd the process has. This is the renderer's own
+			// answer for an empty value, reached from the carrier.
+			process.chdir(agentDir);
 			process.env.PI_CODING_AGENT_DIR = "";
+			const result = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project)) as { block?: boolean; reason?: string };
+			expect(result).toEqual({ block: true, reason: "the cwd-rooted hook ran" });
+
+			// The control, and the half that must not move: unset is still
+			// `~/.pi/agent`, never the cwd, so this same script is invisible.
+			delete process.env.PI_CODING_AGENT_DIR;
 			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project))).toBeUndefined();
 		} finally {
+			process.chdir(savedCwd);
 			if (saved === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = saved;
 			rmSync(agentDir, { recursive: true, force: true });
