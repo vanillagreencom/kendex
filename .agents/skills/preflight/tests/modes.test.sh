@@ -448,6 +448,130 @@ else
   bad "a stage-prefixed path is judged on its own bytes, not on its shortened sibling's" "rc=$RC out=$OUT"
 fi
 
+# The header state machine, pinned where excluding carriers cannot reach.
+# `+++ b/<path>` is a file header only where git can have written one: inside
+# the preamble a `diff --git` line opens, directly after `--- `. A hunk BODY
+# spells the same shape at column 0 whenever an added line reads `++ b/<path>`,
+# and an unanchored parser hands the victim's record to the carrier — the
+# splitter then reopens that record and truncates the findings already
+# collected for it. The carrier here is ORDINARY TEXT that content
+# classification correctly refuses to exclude, so no exclusion closes this:
+# only the anchor does.
+#
+# Both fixtures share the shape that makes the loss happen: the carrier sorts
+# AFTER the victim and writes at least one row under its OWN name before
+# forging, so the forged rows arrive as a second, non-adjacent group.
+forge_carrier() { # PATH — a text carrier whose third added line forges a header
+  printf 'seed\nnormal\n++ b/docs/staged.md\njunk\n' >"$R/$1"
+}
+
+# Variant one: a NUL-free blob a committed `-diff` row marks binary. The
+# --text pin gives it hunks it would not otherwise have had, and content
+# classification correctly calls it text, so it is correctly NOT excluded.
+seed attributed-text-forged-header
+printf '%s' "$CITE" >"$R/docs/staged.md"
+printf '*.txt -diff\n' >"$R/.gitattributes"
+forge_carrier zz.txt
+git -C "$R" add -A
+NOTEXT="$(git -C "$R" -c core.quotePath=false diff --cached --no-color --unified=0 -- zz.txt)"
+case "$NOTEXT" in
+  *"Binary files"*) ok "fixture: the '-diff' row really does make the unpinned diff go binary" ;;
+  *) bad "fixture: the '-diff' row makes the unpinned diff go binary" "diff=$NOTEXT" ;;
+esac
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
+  ok "an attributed-text carrier cannot forge a header over another file's record"
+else
+  bad "an attributed-text carrier cannot forge a header over another file's record" "rc=$RC out=$OUT"
+fi
+printf 'seed\nnormal\njunk\n' >"$R/zz.txt"
+git -C "$R" add zz.txt
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
+  ok "control: the same fixture without the forged line reports the same finding"
+else
+  bad "control: the same fixture without the forged line reports the same finding" "rc=$RC out=$OUT"
+fi
+
+# Variant two: no attributes row at all. A plain text file reaches the parser
+# by every route, on every scope, with nothing to exclude it by.
+seed plain-text-forged-header
+printf '%s' "$CITE" >"$R/docs/staged.md"
+forge_carrier zz.txt
+git -C "$R" add -A
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
+  ok "a plain text carrier cannot forge a header over another file's record"
+else
+  bad "a plain text carrier cannot forge a header over another file's record" "rc=$RC out=$OUT"
+fi
+run_pf
+if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
+  ok "--base holds the same line against the plain text carrier"
+else
+  bad "--base holds the same line against the plain text carrier" "rc=$RC out=$OUT"
+fi
+printf 'seed\nnormal\njunk\n' >"$R/zz.txt"
+git -C "$R" add zz.txt
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
+  ok "control: the plain text fixture without the forged line reports the same finding"
+else
+  bad "control: the plain text fixture without the forged line reports the same finding" "rc=$RC out=$OUT"
+fi
+
+# A flag set by `--- ` alone would still be forgeable: with --unified=0 a
+# hunk emits its removed lines before its added ones, so ONE hunk that
+# replaces a line reading `-- a/<x>` with one reading `++ b/<victim>` spells
+# the whole header pair at column 0. `diff --git` is the record no body can
+# spell, which is why the flag is anchored there rather than on `--- `.
+seed forged-header-pair
+printf 'seed\nfiller\n-- a/x\ntail\n' >"$R/zz.txt"
+git -C "$R" add zz.txt
+git -C "$R" commit -qm carrier
+printf '%s' "$CITE" >"$R/docs/staged.md"
+printf 'seed\nnormal\nfiller\n++ b/docs/staged.md\njunk\ntail\n' >"$R/zz.txt"
+git -C "$R" add -A
+# Every half of the shape matters. The first hunk gives the carrier a record
+# under its OWN name, without which there is nothing to reopen and nothing to
+# truncate. The second spells the pair on ADJACENT records, which is what a
+# flag set by `--- ` alone accepts, and puts an added line AFTER it, without
+# which the forged header re-points at nothing.
+PAIR="$(git -C "$R" diff --cached --no-color --unified=0 -- zz.txt | grep -A2 -e '^--- a/x$' | tr '\n' '|')"
+case "$PAIR" in
+  "--- a/x|+++ b/docs/staged.md|+junk|")
+    ok "fixture: the hunk body spells the header pair, with a line after it"
+    ;;
+  *) bad "fixture: the hunk body spells the header pair, with a line after it" "got=$PAIR" ;;
+esac
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
+  ok "a forged '---'/'+++' PAIR cannot re-point the parse either"
+else
+  bad "a forged '---'/'+++' PAIR cannot re-point the parse either" "rc=$RC out=$OUT"
+fi
+# Anchored on `--- ` alone this same fixture re-points the parse and the
+# splitter refusal below fires instead — a loud exit 2 rather than a lost
+# finding, which is the guard doing its job over a parser that let the
+# forgery through. The measurement is the ordinary verdict, not the refusal.
+if has "arrived in two separate groups"; then
+  bad "the forgery never reaches the splitter's refusal" "out=$OUT"
+else
+  ok "the forgery never reaches the splitter's refusal"
+fi
+
+# The forged line is not swallowed either: it is content of the file that
+# carries it, so a lane scanning that file's added lines still sees it.
+seed forged-line-is-content
+printf 'seed\nnormal\n++ b/docs/staged.md\nmkdir -p /tmp/preflight-fixture\n' >"$R/zz.txt"
+git -C "$R" add -A
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "zz.txt:4: [hardcoded-temp-path]"; then
+  ok "a rejected header record leaves the lines after it attributed to their own file"
+else
+  bad "a rejected header record leaves the lines after it attributed to their own file" "rc=$RC out=$OUT"
+fi
+
 echo "=== content the run cannot read fails loudly, never a clean verdict ==="
 
 # A read that FAILS is not a verdict of "no lines". The path is already inside

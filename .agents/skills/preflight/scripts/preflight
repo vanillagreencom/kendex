@@ -245,8 +245,25 @@ else
       git_diff --unified=0 --no-color --no-renames --diff-filter=d "$BASE" -- ${PATCH_EXCLUDE[@]+"${PATCH_EXCLUDE[@]}"} >"$TMP/patch" || env_error "git diff against $BASE failed"
       ;;
   esac
+  # A `+++ b/<path>` record re-points the whole parse at another file, so it
+  # is honoured only where git can actually have written one: inside the
+  # preamble a `diff --git` line opens, on the record directly after `--- `.
+  # A hunk BODY can spell either header at column 0 — an added line reading
+  # `++ b/<victim>` renders as `+++ b/<victim>`, a removed line reading
+  # `-- a/<x>` as `--- a/<x>` — and an unanchored parser accepts that forgery,
+  # hands the victim's record to the carrier and lets the splitter below
+  # truncate the findings already collected for it. `diff --git` is the one
+  # anchor a body cannot forge: every body record carries a `+`, `-` or `\`
+  # in column 0. Excluding the carriers cannot close this — binary content,
+  # a stage-0 path, an attributed-text blob and a plain text file all reach
+  # the parser by different routes — so the state machine refuses the forgery
+  # instead, and an unanchored `+++ ` record falls through to be recorded as
+  # what it is: an added line of the file that carries it.
   awk -v out="$TMP/added.tsv" '
-    /^\+\+\+ / {
+    /^diff --git / { state = 1; cur = ""; ln = 0; next }
+    /^--- / { state = (state == 1) ? 2 : 0; next }
+    state == 2 && /^\+\+\+ / {
+      state = 3
       rest = substr($0, 5)
       cur = ""
       if (rest == "/dev/null") next
@@ -259,6 +276,7 @@ else
       next
     }
     /^@@ / {
+      state = 0
       ln = 0
       if (cur == "") next
       h = $3
@@ -289,17 +307,32 @@ fi
 
 # Split the added lines into one `line<TAB>content` file per changed file,
 # named by that file's position in files.list. Both producers group their
-# records by path, so one output file is open at a time.
+# records by path, so one output file is open at a time — and a path is
+# opened with ">" exactly once. A SECOND, non-adjacent group for a path
+# already closed would reopen its record and truncate the lines collected
+# for it, which is how a hijacked record turned into a LOST finding rather
+# than a duplicated one. The parser above no longer accepts the forged header
+# that produced such a group, so this can only fire on a producer bug; either
+# way the record set is wrong and no verdict may be reported over it.
+split_status=0
 awk -F'\t' -v dir="$TMP" -v listfile="$TMP/files.list" '
   FILENAME == listfile { idx[$0] = FNR; next }
   {
     if (!($1 in idx)) next
-    if ($1 != cur) { if (out != "") close(out); cur = $1; out = dir "/rec." idx[$1] }
+    if ($1 != cur) {
+      if ($1 in seen) { print $1; exit 3 }
+      seen[$1] = 1
+      if (out != "") close(out)
+      cur = $1
+      out = dir "/rec." idx[$1]
+    }
     s = $2
     for (i = 3; i <= NF; i++) s = s "\t" $i
     print s >out
   }
-' "$TMP/files.list" "$TMP/added.tsv"
+' "$TMP/files.list" "$TMP/added.tsv" >"$TMP/split.err" || split_status=$?
+[ "$split_status" -eq 0 ] \
+  || env_error "the added lines for '$(cat "$TMP/split.err")' arrived in two separate groups — refusing to report over a record set whose second group would truncate the first"
 
 git ls-files >"$TMP/tracked.list" || env_error "git ls-files failed"
 # Every directory that holds tracked files, at every depth — plus the
