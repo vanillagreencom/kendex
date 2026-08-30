@@ -82,42 +82,69 @@ always carries the open and close markers).
 
 ## changelog-entries
 
-A changelog entry longer than `GROWTH_GUARDS_CHANGELOG_CAP` characters
-(default 200) fails, naming the file, the entry's line, its length and its
-first line. One number is the whole rule — no line counting and no
-continuation grammar — so an entry that states its outcome passes however it
-is wrapped.
+One judge over two scopes: the fragments a branch writes, and the collated
+record a release folds them into.
 
-An entry opens on a list marker (`-`, `*`, `+`) at column 0 followed by a
-space or tab, so a horizontal rule or a front-matter fence opens none. It runs
-to the next such marker, an ATX heading (up to three leading spaces, one to
-six hashes, then a space, a tab, or end of line — so a continuation naming an
-issue number opens none, and neither does a line indented four spaces), or a
-blank line followed by a line that is neither indented nor a marker. A blank line alone does not end it: an indented
-second paragraph is part of the entry, the shape a Markdown list item and the
-fragment tooling both accept, and an indented bullet belongs to the entry it
-sits under rather than being one. Its text is those lines with CR stripped and
-whitespace runs collapsed to one space. The count is in characters: a UTF-8
-sequence counts once, so an em dash costs one.
+### Fragments
 
-A configured path that is not readable changelog text is named as unmeasured
-and counted apart from the clean total: a path git tracks as a symlink or a
-submodule gitlink, and a blob git would call binary, which the sibling checks'
-`--cached` scans skip the same way.
+`GROWTH_GUARDS_CHANGELOG_PATHS` (default `changelog.d/*/*.md`) is a
+space-separated list of shell globs matched against the full repo-relative
+path, `*` crossing `/` as in the excludes lists. Every matched tracked path
+must be
+
+- a real text file — a path git tracks as a symlink or a submodule gitlink,
+  and a blob git would call binary, are refused, not skipped;
+- directly under a Keep a Changelog section directory (`added`, `changed`,
+  `deprecated`, `removed`, `fixed`, `security`), because that directory is
+  the heading the collator writes it beneath;
+- exactly one Markdown list item — the first non-blank line opens with a
+  hyphen and a space and says something, every later line indents under it;
+- within `GROWTH_GUARDS_CHANGELOG_CAP` characters (default 200).
+
+A long entry is named with its file, its length and its first line. One
+number is the whole length rule — no line counting — so an entry that states
+its outcome passes however it is wrapped.
+
+Paths matching no tracked file are a clean pass: a repository with no
+fragments has nothing to judge. An empty list is a config error; the way to
+switch the check off is to drop it from `GROWTH_GUARDS_CHECKS`.
+
+### The record
+
+`GROWTH_GUARDS_CHANGELOG_RECORD` (default `CHANGELOG.md`; empty switches this
+scope off) is the collated file. A line the index carries under its
+`## [Unreleased]` heading that HEAD does not is refused: two branches that
+both write that list insert at the same place and the merge queue ejects the
+trailing one, so entries are written as fragments and folded in at release.
+
+The heading is found by structure, never by substring — a fenced block is
+opened and closed by three or more backticks or tildes and holds no headings,
+a level-1 or level-2 ATX heading switches the section on or off, and
+everything else inside it is content. So a fragment or an example quoting
+`## [Unreleased]` moves nothing.
+
+The scope is judged only when HEAD already carries the record: a repository
+writing its first one is not hand-editing a collated file.
+`GROWTH_GUARDS_CHANGELOG_COLLATE=1` in the environment declares the
+collator's own write, the way `RATCHET_RAISE=1` declares a baseline. A path
+in both scopes is a config error — they judge by opposite rules.
+
+### Measuring one entry
+
+A fragment is one entry, so measuring it is joining it: every line with CR
+stripped, whitespace runs collapsed to one space, the result trimmed. There is
+no second entry to find a boundary for — the shape rule above is what
+guarantees that, and it is what refuses a heading or a second marker inside a
+fragment. The count is in characters: a UTF-8 sequence counts once, so an em
+dash costs one, and a fragment wrapped over four indented lines measures the
+same as the same text on one.
 
 Text that is not valid UTF-8 is a collection error naming the line, not a
 skip. git calls such a blob text whenever it holds no NUL, and there is no
 character count to take over it — a run of stray continuation bytes would
-otherwise measure as almost nothing.
-
-`GROWTH_GUARDS_CHANGELOG_PATHS` (default `CHANGELOG.md`) is a
-space-separated list of shell globs matched against the full repo-relative
-path, `*` crossing `/` as in the excludes lists. Paths matching no tracked
-file are a clean pass — a repository with no changelog has nothing to judge —
-and a repository keeping one entry per file names that tree instead
-(`changelog.d/*/*.md`, whose two segments keep a `changelog.d/README.md` out).
-An empty list is a config error; the way to switch the check off is to drop
-it from `GROWTH_GUARDS_CHECKS`.
+otherwise measure as almost nothing. The quoted first line has every C0
+control and DEL replaced: bytes in a tracked file must not reach the reader's
+terminal through a diagnostic.
 
 ## prose
 
@@ -184,8 +211,29 @@ skip.
 ## commit-msg
 
 Conventional-commit gate over one message, shaped for the git `commit-msg`
-hook (`commit-msg FILE`, or stdin when FILE is absent/`-`). The header — the
-first non-blank, non-comment line — must match `type(scope)!: subject`, the
-scope and `!` optional. Types come from `GROWTH_GUARDS_COMMIT_TYPES`; the
-scope class `[#A-Za-z0-9 _.,/-]+` passes uppercase issue keys
-(`fix(ABC-123): ...`) and issue numbers (`fix(#123): ...`).
+hook (`commit-msg FILE`, or stdin when FILE is absent/`-`). Every
+commit-message rule lives here, because only this hook sees the subject.
+
+**Shape.** The header — the first non-blank, non-comment line — must match
+`type(scope)!: subject`, the scope and `!` optional. Types come from
+`GROWTH_GUARDS_COMMIT_TYPES`; the scope class `[#A-Za-z0-9 _.,/-]+` passes
+uppercase issue keys (`fix(ABC-123): ...`) and issue numbers
+(`fix(#123): ...`).
+
+**Length.** At most `GROWTH_GUARDS_SUBJECT_MAX` characters (default 72). A
+longer header is a body sentence on the line every log shows.
+
+**The changelog a commit owes.** When `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS`
+(empty by default) names a glob some staged path matches, the commit must also
+add or modify a path under `GROWTH_GUARDS_CHANGELOG_PATHS` or
+`GROWTH_GUARDS_CHANGELOG_RECORD` — the same paths changelog-entries judges —
+or carry `[no-changelog]` in the header. Deleting a fragment is not writing
+one, so only additions and modifications count as evidence.
+
+Git-generated headers are exempt from shape and length alone: nobody chose
+their wording or their size. The changelog rule still runs over them — a
+merge that carries code carries its entry — and `[no-changelog]` still
+escapes it.
+
+Every applicable rule reports before the verdict, so one run names everything
+wrong with the message rather than the first thing.

@@ -7,13 +7,23 @@
 # GROWTH_GUARDS_* key ships a default that needs no attention, and the full
 # list is in the skill's SKILL.md.
 
-# Where the changelog-entries check looks: a space-separated list of shell
-# globs against the full repo-relative path (`*` crosses `/`). Paths matching
-# no tracked file are a clean pass, so a project with no changelog needs no
-# change here; a project keeping one entry per file names that tree instead
-# (e.g. "CHANGELOG.md changelog.d/*/*.md"). The cap itself is
-# GROWTH_GUARDS_CHANGELOG_CAP, 200 characters per entry.
-GROWTH_GUARDS_CHANGELOG_PATHS = "CHANGELOG.md"
+# The changelog-entries fragment tree: a space-separated list of shell globs
+# against the full repo-relative path (`*` crosses `/`). Each match must be
+# one Markdown list item under a Keep a Changelog section directory, within
+# GROWTH_GUARDS_CHANGELOG_CAP characters. Paths matching no tracked file are
+# a clean pass, so a project with no fragments needs no change here.
+GROWTH_GUARDS_CHANGELOG_PATHS = "changelog.d/*/*.md"
+
+# The collated record the same check's other scope judges: a line this commit
+# adds under its `## [Unreleased]` heading is refused, because entries are
+# written as fragments and folded in at release. Empty = no record scope.
+GROWTH_GUARDS_CHANGELOG_RECORD = "CHANGELOG.md"
+
+# Paths whose change obliges a changelog entry, checked by the commit-msg
+# lane over the staged file list: a commit touching one must also write a
+# fragment or the record, or carry [no-changelog] in its subject. Empty =
+# rule off.
+GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS = ""
 
 # Repo-local check the pre-commit shim runs LAST: a repo-root-relative
 # executable following the family exit contract (0 clean, 1 violations,

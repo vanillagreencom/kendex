@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# Pins tools/changelog-collate: it judges the fragments git carries before it
-# writes anything, folds them under their own section in Keep a Changelog
-# order and filename order, deletes every one of them, and leaves CHANGELOG.md
-# whole when it refuses. The refusing direction runs first in every pair, and
-# each refusal is checked to have left CHANGELOG.md and the fragments as they
-# were — a collator that half-writes or half-deletes is the failure this
-# replaces. --check runs the same judgment and writes nothing.
+# Pins tools/changelog-collate: it calls the growth-guards changelog-entries
+# lane over the fragments git carries before it writes anything, carries that
+# lane's verdict out as its own, folds every fragment under its own section in
+# Keep a Changelog order and filename order, deletes every one of them, and
+# leaves CHANGELOG.md whole when it refuses. The refusing direction runs first
+# in every pair, and each refusal is checked to have left CHANGELOG.md and the
+# fragments as they were — a collator that half-writes or half-deletes is the
+# failure this replaces.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COLLATE="$(cd "$TEST_DIR/.." && pwd)/changelog-collate"
+REPO="$(cd "$TEST_DIR/../.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'chmod -R u+w "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT
 
@@ -19,7 +21,9 @@ ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
 R="$TMP/repo"
-mkdir -p "$R"
+mkdir -p "$R/.agents/skills/growth-guards"
+# The collator calls the judge at the path a clone carries it.
+cp -R "$REPO/.agents/skills/growth-guards/scripts" "$R/.agents/skills/growth-guards/scripts"
 git -C "$R" init -q
 git -C "$R" symbolic-ref HEAD refs/heads/main
 git -C "$R" config user.email test@example.com
@@ -56,7 +60,10 @@ EOF
 fragment() { # SECTION NAME CONTENT — written and staged, the way a commit carries it
   mkdir -p "$R/changelog.d/$1"
   printf '%s' "$3" >"$R/changelog.d/$1/$2"
-  git -C "$R" add -A
+  # changelog.d alone: a case that edits CHANGELOG.md on disk means the
+  # collator to read it, not the judge's record scope to see a staged hand
+  # edit — which is its own refusal, pinned below.
+  git -C "$R" add -A -- changelog.d
 }
 
 run_collate() { # [ARG...] — sets OUT and RC
@@ -102,9 +109,11 @@ fragment fixed ken-1.md '- A placeable fragment.
 printf -- '- Stray.\n' >"$R/changelog.d/loose.md"
 git -C "$R" add -A
 run_collate
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/loose.md is not a changelog fragment"*) true ;; *) false ;; esac \
-  && ok "a file outside a section directory exits 1, naming it" \
-  || bad "a file outside a section directory exits 1, naming it" "rc=$RC out=$OUT"
+# Outside the fragment glob, so the judge never sees it: the collation has no
+# heading to put it under, and leaving it behind is a silent drop.
+[ "$RC" -eq 2 ] && case "$OUT" in *"changelog.d/loose.md is under changelog.d but is not a fragment"*) true ;; *) false ;; esac \
+  && ok "a file outside a section directory exits 2, naming it" \
+  || bad "a file outside a section directory exits 2, naming it" "rc=$RC out=$OUT"
 untouched && ok "CHANGELOG.md is untouched by the refusal" \
   || bad "CHANGELOG.md is untouched by the refusal" "$(diff "$TMP/before" "$R/CHANGELOG.md" || true)"
 [ -f "$R/changelog.d/fixed/ken-1.md" ] && ok "the placeable fragment is not deleted by the refusal" \
@@ -114,15 +123,15 @@ reset
 fragment bogus ken-1.md '- Wrong section.
 '
 run_collate
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/bogus/ken-1.md names no known section"*) true ;; *) false ;; esac \
-  && ok "an unknown section directory exits 1, naming it" \
-  || bad "an unknown section directory exits 1, naming it" "rc=$RC out=$OUT"
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/bogus/ken-1.md names no section"*) true ;; *) false ;; esac \
+  && ok "an unknown section directory is the judge's refusal, carried out as exit 1" \
+  || bad "an unknown section directory is the judge's refusal, carried out as exit 1" "rc=$RC out=$OUT"
 
 reset
 fragment fixed/deeper ken-2.md '- Deeper.
 '
 run_collate
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/deeper/ken-2.md sits below a section directory"*) true ;; *) false ;; esac \
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/deeper/ken-2.md names no section"*) true ;; *) false ;; esac \
   && ok "a fragment below a section directory exits 1, naming it" \
   || bad "a fragment below a section directory exits 1, naming it" "rc=$RC out=$OUT"
 
@@ -192,7 +201,7 @@ mkdir -p "$R/changelog.d/fixed"
 ln -s ../../CHANGELOG.md "$R/changelog.d/fixed/link.md"
 git -C "$R" add -A
 run_collate
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/link.md is a symlink"*) true ;; *) false ;; esac \
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/link.md is tracked as a symlink"*) true ;; *) false ;; esac \
   && ok "a symlinked fragment exits 1 rather than being followed or skipped" \
   || bad "a symlinked fragment exits 1 rather than being followed or skipped" "rc=$RC out=$OUT"
 untouched && ok "the symlink target is untouched" \
@@ -208,25 +217,31 @@ run_collate
 [ "$RC" -eq 0 ] && ok "an entry with indented continuation lines is taken" \
   || bad "an entry with indented continuation lines is taken" "rc=$RC out=$OUT"
 
-echo "=== --check judges the same fragments and writes nothing ==="
-reset
-fragment fixed two.md '- First entry.
-- Second entry.
-'
-run_collate --check
-[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/two.md holds more than the one entry"*) true ;; *) false ;; esac \
-  && ok "--check exits 1 on a fragment the format refuses" \
-  || bad "--check exits 1 on a fragment the format refuses" "rc=$RC out=$OUT"
+echo "=== the judge is the one that refuses, and a judge that cannot run stops the run ==="
 reset
 fragment fixed ken-1.md '- A good entry.
 '
-run_collate --check
-[ "$RC" -eq 0 ] && [ -z "$OUT" ] && ok "--check is silent and exits 0 on a good fragment" \
-  || bad "--check is silent and exits 0 on a good fragment" "rc=$RC out=$OUT"
-untouched && ok "--check writes no CHANGELOG.md" \
-  || bad "--check writes no CHANGELOG.md" "it changed"
-[ -f "$R/changelog.d/fixed/ken-1.md" ] && ok "--check deletes no fragment" \
-  || bad "--check deletes no fragment" "it is gone"
+mv "$R/.agents/skills/growth-guards/scripts/changelog-entries" "$TMP/judge.away"
+run_collate
+mv "$TMP/judge.away" "$R/.agents/skills/growth-guards/scripts/changelog-entries"
+[ "$RC" -eq 2 ] && case "$OUT" in *"changelog-entries is missing or not executable"*) true ;; *) false ;; esac \
+  && ok "a missing judge exits 2 rather than folding unjudged fragments in" \
+  || bad "a missing judge exits 2 rather than folding unjudged fragments in" "rc=$RC out=$OUT"
+untouched && ok "CHANGELOG.md is untouched when the judge cannot run" \
+  || bad "CHANGELOG.md is untouched when the judge cannot run" "it changed"
+[ -f "$R/changelog.d/fixed/ken-1.md" ] && ok "the fragment survives a missing judge" \
+  || bad "the fragment survives a missing judge" "it is gone"
+
+reset
+fragment fixed long.md "- $(head -c 260 /dev/zero | tr '\0' 'e')
+"
+run_collate
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/long.md"*"characters (cap 200)"*) true ;; *) false ;; esac \
+  && ok "the cap is the judge's, and the collation carries its exit 1" \
+  || bad "the cap is the judge's, and the collation carries its exit 1" "rc=$RC out=$OUT"
+untouched && ok "CHANGELOG.md is untouched by the over-cap refusal" \
+  || bad "CHANGELOG.md is untouched by the over-cap refusal" "it changed"
+
 run_collate --bogus
 [ "$RC" -eq 2 ] && case "$OUT" in *usage*) true ;; *) false ;; esac \
   && ok "an unknown flag exits 2" \
@@ -248,9 +263,9 @@ case "$(cat "$R/CHANGELOG.md")" in *"An untracked entry"*) bad "the untracked fr
 rm -f "$R/changelog.d/.DS_Store" "$R/changelog.d/fixed/untracked.md"
 
 echo "=== a fragment the index carries and the disk does not is a deletion ==="
-# The release runs the collation, then tools/guard, then stages: between the
-# first two the fragments are gone from the disk and still in the index, and
-# guard's --check has to pass over exactly that state.
+# The release runs the collation and then stages: in between, the fragments
+# are gone from the disk and still in the index, which is a changelog.d the
+# index and the disk disagree about.
 reset
 fragment fixed ken-1.md '- An entry the release folds in.
 '
@@ -258,17 +273,23 @@ git -C "$R" commit -q -m "chore: carry a fragment"
 run_collate
 [ "$RC" -eq 0 ] && ok "the collation folds the committed fragment in" \
   || bad "the collation folds the committed fragment in" "rc=$RC out=$OUT"
-run_collate --check
-[ "$RC" -eq 0 ] && [ -z "$OUT" ] && ok "--check passes over the deletion the collation just made" \
-  || bad "--check passes over the deletion the collation just made" "rc=$RC out=$OUT"
 run_collate
-[ "$RC" -eq 2 ] && case "$OUT" in *"changelog.d/fixed/ken-1.md is in the index but not a file on disk"*) true ;; *) false ;; esac \
-  && ok "the writing mode still refuses that same missing path" \
-  || bad "the writing mode still refuses that same missing path" "rc=$RC out=$OUT"
+[ "$RC" -eq 2 ] && case "$OUT" in *"differs between git and the working tree"*"changelog.d/fixed/ken-1.md"*) true ;; *) false ;; esac \
+  && ok "a second run over that state refuses instead of folding the deletion in again" \
+  || bad "a second run over that state refuses instead of folding the deletion in again" "rc=$RC out=$OUT"
+# The collated CHANGELOG.md goes into the index with the deletion, which is
+# exactly the write the record scope refuses undeclared — so the release
+# commit's declaration is what lets the state through.
 git -C "$R" add -A
-run_collate --check
-[ "$RC" -eq 0 ] && ok "--check is still clean once the deletion is staged" \
-  || bad "--check is still clean once the deletion is staged" "rc=$RC out=$OUT"
+run_collate
+[ "$RC" -eq 1 ] && case "$OUT" in *"gained lines under [Unreleased]"*) true ;; *) false ;; esac \
+  && ok "the staged collation is refused while nothing declares it" \
+  || bad "the staged collation is refused while nothing declares it" "rc=$RC out=$OUT"
+OUT=""
+RC=0
+OUT="$(cd "$R" && GROWTH_GUARDS_CHANGELOG_COLLATE=1 "$COLLATE" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "GROWTH_GUARDS_CHANGELOG_COLLATE=1 declares it, and there is nothing left to collate" \
+  || bad "GROWTH_GUARDS_CHANGELOG_COLLATE=1 declares it, and there is nothing left to collate" "rc=$RC out=$OUT"
 
 echo "=== the write refuses a changelog.d git and the disk disagree about ==="
 # The run folds in the file on disk and then deletes it. An unstaged edit
@@ -287,9 +308,6 @@ untouched && ok "CHANGELOG.md is untouched by the dirty refusal" \
   || bad "the unstaged fragment is not deleted" "it is gone"
 case "$(cat "$R/changelog.d/fixed/ken-1.md")" in *"unstaged rewrite"*) ok "the unstaged edit is still in the file" ;;
   *) bad "the unstaged edit is still in the file" "$(cat "$R/changelog.d/fixed/ken-1.md")" ;; esac
-run_collate --check
-[ "$RC" -eq 0 ] && ok "--check takes the same tree: it writes and deletes nothing" \
-  || bad "--check takes the same tree: it writes and deletes nothing" "rc=$RC out=$OUT"
 git -C "$R" add -A
 run_collate
 [ "$RC" -eq 0 ] && ok "staging the edit lets the write proceed" \

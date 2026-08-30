@@ -2,13 +2,15 @@
 # Arm the commit guards — run once per clone.
 #
 # The growth-guards installer owns .git/hooks. Its pre-commit line runs the
-# package chain, which ends in tools/guard (GROWTH_GUARDS_PRE_COMMIT_LOCAL).
-# The commit-msg chain has no such repo-local lane, so this repo's own rule is
-# spliced in directly below the installer's delegate line: appended at the end
-# it would sit under whatever else the hook already runs, and a body that
-# exits first would leave the changelog rule unreachable. The lane is called,
-# never exec'd, and only its refusal ends the hook — the same shape the
-# installer's own line has, so a consumer body below still runs.
+# package chain, which ends in tools/guard (GROWTH_GUARDS_PRE_COMMIT_LOCAL);
+# its commit-msg line runs the package's message gate, which holds every
+# commit-message rule this repo has. There is no repo-local commit-msg lane
+# to splice in beside it.
+#
+# A clone armed before that consolidation carries a spliced call to
+# tools/commit-msg, which no longer exists, so every commit there fails
+# closed. This run takes that line back out — hooks live in the shared
+# .git of the checkout and all its work trees, so one run repairs them all.
 #
 # Whether the shims are armed is the installer's verdict to give, not this
 # script's to infer from a file that exists: git may be reading hooks from
@@ -17,9 +19,8 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 INSTALLER=.agents/skills/growth-guards/scripts/install-git-hooks
-# Trailing marker on the installer's own delegate line.
-SENTINEL="# kendex-guards-hook"
-LANE='"$(git rev-parse --show-toplevel)/tools/commit-msg" "$@" || exit $?'
+# The line older clones carry, matched whole so nothing else is touched.
+STALE_LANE='"$(git rev-parse --show-toplevel)/tools/commit-msg" "$@" || exit $?'
 
 not_armed() {
   echo "setup: the guard shims are not armed (the report above says why). A clone armed by the old tools/setup carries hooks the installer will not rewrite, because it refuses an interpreter it cannot verify: delete .git/hooks/pre-commit AND .git/hooks/commit-msg, then run this again." >&2
@@ -29,22 +30,18 @@ not_armed() {
 "$INSTALLER" || not_armed
 "$INSTALLER" --check || not_armed
 
-# Splice the repo lane in below the delegate line, dropping any copy already
-# in the file so a re-run repairs rather than stacks. The bytes after the
-# delegate line are the hook's own, final newline included.
-splice_lane() { # HOOK-FILE
+# Drop the retired lane, byte for byte, and leave a hook that never had it
+# untouched. The bytes after it are the hook's own, final newline included.
+drop_stale_lane() { # HOOK-FILE
   local hook="$1" tmp="" body=""
   local ends_nl=1
+  [ -f "$hook" ] || return 0
+  grep -Fxq -- "$STALE_LANE" "$hook" || return 0
   [ -n "$(tail -c 1 -- "$hook")" ] && ends_nl=0
   tmp="$(mktemp -- "$hook.tmp.XXXXXX")"
-  awk -v lane="$LANE" -v sentinel="$SENTINEL" '
-    $0 == lane { next }
-    { print }
-    !placed && index($0, sentinel) { print lane; placed = 1 }
-    END { exit placed ? 0 : 1 }
-  ' "$hook" >"$tmp" || {
+  awk -v lane="$STALE_LANE" '$0 == lane { next } { print }' "$hook" >"$tmp" || {
     rm -f -- "$tmp"
-    echo "setup: $hook carries no growth-guards delegate line, so there is nothing to run this repo's rule after" >&2
+    echo "setup: $hook could not be rewritten to drop the retired tools/commit-msg lane" >&2
     exit 1
   }
   if [ "$ends_nl" -eq 0 ]; then
@@ -53,7 +50,8 @@ splice_lane() { # HOOK-FILE
   fi
   cat -- "$tmp" >"$hook"
   rm -f -- "$tmp"
+  echo "setup: dropped the retired tools/commit-msg lane from $hook"
 }
 
-splice_lane "$(git rev-parse --git-common-dir)/hooks/commit-msg"
-echo "hooks armed; repo commit-msg lane wired"
+drop_stale_lane "$(git rev-parse --git-common-dir)/hooks/commit-msg"
+echo "hooks armed"

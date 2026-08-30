@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Pins for scripts/commit-msg: the conventional header shape in both
-# directions, the two MUSTs from the family contract — uppercase issue
-# keys in scopes pass, git-generated messages pass — plus header
-# extraction, type-list configuration, and the exit-2 usage/collection
-# lanes.
+# Pins for scripts/commit-msg, which carries every commit-message rule: the
+# conventional header shape in both directions, the subject cap, and the
+# changelog a commit owes for touching the configured paths. Plus the two
+# MUSTs from the family contract — uppercase issue keys in scopes pass,
+# git-generated messages pass shape and length — header extraction, type-list
+# configuration, and the exit-2 usage/collection lanes. A git-generated header
+# is exempt from shape and length ALONE: the changelog rule still runs over it.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,7 +13,9 @@ SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 CM="$SKILL_DIR/scripts/commit-msg"
 . "$TEST_DIR/lib/harness.bash"
 
-unset GROWTH_GUARDS_COMMIT_TYPES GROWTH_GUARDS_SETTINGS_FILE 2>/dev/null || true
+unset GROWTH_GUARDS_COMMIT_TYPES GROWTH_GUARDS_SUBJECT_MAX \
+  GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS GROWTH_GUARDS_CHANGELOG_PATHS \
+  GROWTH_GUARDS_CHANGELOG_RECORD GROWTH_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 PASS=0
 FAIL=0
@@ -230,6 +234,147 @@ OUT="$(cd "$RH" && printf 'feat: recreated list must not authorize\n' | PATH="$G
 [ "$RC" -eq 2 ] && case "$OUT" in *"(git ls-tree exit 71)"*) true ;; *) false ;; esac \
   && ok "a failing HEAD probe is exit 2, never authority for the recreated list" \
   || bad "gg HEAD-probe failure" "rc=$RC out=$OUT"
+
+echo "=== the subject cap: 72 by default, and it is configurable ==="
+# N copies of a character, so a fixture states the length it means instead of
+# carrying a literal nobody can count.
+rep() { # CHAR N
+  local c="$1" n="$2" i=0 out=""
+  while [ "$i" -lt "$n" ]; do
+    out="$out$c"
+    i=$((i + 1))
+  done
+  printf '%s' "$out"
+}
+# "fix(KEN-1): " is twelve characters, so the subject is 12 + N.
+expect_pass "fix(KEN-1): $(rep x 60)" "a 72-character header passes"
+run_stdin "fix(KEN-1): $(rep x 61)"
+[ "$RC" -eq 1 ] && case "$OUT" in *"subject is 73 characters (max 72)"*) true ;; *) false ;; esac \
+  && ok "73 characters fails, naming the count and the cap" \
+  || bad "73 characters fails, naming the count and the cap" "rc=$RC out=$OUT"
+case "$OUT" in *"move the detail into the body"*) ok "the length diagnostic carries the remedy" ;; *) bad "the length diagnostic carries the remedy" "$OUT" ;; esac
+expect_pass "Merge $(rep x 90)" "a long Merge header is exempt from the cap"
+expect_pass "fixup! fix(KEN-1): $(rep x 90)" "a long fixup! header is exempt too"
+expect_pass "fix(KEN-1): $(rep x 61)" "a raised cap admits the same header" "GROWTH_GUARDS_SUBJECT_MAX=100"
+expect_fail "fix(KEN-1): $(rep x 20)" "a lowered cap refuses a header the default admits" "GROWTH_GUARDS_SUBJECT_MAX=20"
+run_stdin 'fix: x' "GROWTH_GUARDS_SUBJECT_MAX=0"
+[ "$RC" -eq 2 ] && case "$OUT" in *"must be a positive integer"*) true ;; *) false ;; esac \
+  && ok "a cap that is not a positive integer is exit 2" \
+  || bad "a cap that is not a positive integer is exit 2" "rc=$RC out=$OUT"
+
+echo "=== shape and length are reported together, not one at a time ==="
+run_stdin "$(rep q 90)" "GROWTH_GUARDS_SUBJECT_MAX=20"
+[ "$RC" -eq 1 ] \
+  && case "$OUT" in *"non-conventional header"*) true ;; *) false ;; esac \
+  && case "$OUT" in *"subject is 90 characters (max 20)"*) true ;; *) false ;; esac \
+  && ok "one run names both the shape and the length" \
+  || bad "one run names both the shape and the length" "rc=$RC out=$OUT"
+
+echo "=== a commit touching the required paths owes a changelog entry ==="
+RC_REPO="$TMP/repo-changelog"
+mkdir -p "$RC_REPO/crates/core" "$RC_REPO/docs"
+git -C "$RC_REPO" -c init.defaultBranch=main init -q
+git -C "$RC_REPO" config user.email test@example.com
+git -C "$RC_REPO" config user.name test
+printf '[env]\nGROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS = "crates/* ui/*"\n' >"$RC_REPO/kendex.settings.toml"
+printf '# Changelog\n\n## [Unreleased]\n' >"$RC_REPO/CHANGELOG.md"
+printf 'fn main() {}\n' >"$RC_REPO/crates/core/lib.rs"
+git -C "$RC_REPO" add -A
+git -C "$RC_REPO" commit -qm "chore: base"
+
+run_rc() { # MESSAGE — run in the changelog fixture; sets OUT and RC
+  OUT=""
+  RC=0
+  OUT="$(cd "$RC_REPO" && printf '%s\n' "$1" | "$CM" 2>&1)" || RC=$?
+}
+
+# Nothing staged under the required paths: the rule is silent.
+printf 'notes\n' >"$RC_REPO/docs/notes.md"
+git -C "$RC_REPO" add -A
+run_rc 'docs: a note'
+[ "$RC" -eq 0 ] && case "$OUT" in *"changelog entry"*) false ;; *) true ;; esac \
+  && ok "a commit touching none of the required paths owes nothing" \
+  || bad "a commit touching none of the required paths owes nothing" "rc=$RC out=$OUT"
+
+printf 'fn added() {}\n' >>"$RC_REPO/crates/core/lib.rs"
+git -C "$RC_REPO" add -A
+run_rc 'fix(KEN-1): change a crate'
+[ "$RC" -eq 1 ] && case "$OUT" in *"crates/core/lib.rs changed without a changelog entry"*) true ;; *) false ;; esac \
+  && ok "a staged crates/ change with no entry fails, naming the path" \
+  || bad "a staged crates/ change with no entry fails, naming the path" "rc=$RC out=$OUT"
+case "$OUT" in *"changelog.d"*"CHANGELOG.md"*) ok "the diagnostic names where an entry may be written" ;; *) bad "the diagnostic names where an entry may be written" "$OUT" ;; esac
+run_rc 'fix(KEN-1): change a crate [no-changelog]'
+[ "$RC" -eq 0 ] && ok "[no-changelog] in the header waives it" \
+  || bad "[no-changelog] in the header waives it" "rc=$RC out=$OUT"
+# MUST: a git-generated header skips shape and length, never this rule.
+run_rc "Merge branch 'topic' into main"
+[ "$RC" -eq 1 ] && case "$OUT" in *"changed without a changelog entry"*) true ;; *) false ;; esac \
+  && ok "MUST: the changelog rule runs over a git-generated header too" \
+  || bad "MUST: the changelog rule runs over a git-generated header too" "rc=$RC out=$OUT"
+run_rc "Merge branch 'topic' into main [no-changelog]"
+[ "$RC" -eq 0 ] && ok "control: [no-changelog] escapes it on a generated header as well" \
+  || bad "control: [no-changelog] escapes it on a generated header as well" "rc=$RC out=$OUT"
+
+mkdir -p "$RC_REPO/changelog.d/fixed"
+printf -- '- A fix consumers see.\n' >"$RC_REPO/changelog.d/fixed/ken-1.md"
+git -C "$RC_REPO" add -A
+run_rc 'fix(KEN-1): change a crate'
+[ "$RC" -eq 0 ] && ok "a staged fragment satisfies it" \
+  || bad "a staged fragment satisfies it" "rc=$RC out=$OUT"
+# Deleting a fragment is not writing one.
+git -C "$RC_REPO" commit -qm "fix(KEN-1): change a crate"
+printf 'fn more() {}\n' >>"$RC_REPO/crates/core/lib.rs"
+rm -f "$RC_REPO/changelog.d/fixed/ken-1.md"
+git -C "$RC_REPO" add -A
+run_rc 'fix(KEN-2): change a crate again'
+[ "$RC" -eq 1 ] && case "$OUT" in *"changed without a changelog entry"*) true ;; *) false ;; esac \
+  && ok "deleting a fragment is not writing one" \
+  || bad "deleting a fragment is not writing one" "rc=$RC out=$OUT"
+# The record counts too, which is what the release commit needs.
+printf '# Changelog\n\n## [Unreleased]\n\n- A fix consumers see.\n' >"$RC_REPO/CHANGELOG.md"
+git -C "$RC_REPO" add -A
+run_rc 'chore(release): collate the changelog'
+[ "$RC" -eq 0 ] && ok "the collated record counts as the entry" \
+  || bad "the collated record counts as the entry" "rc=$RC out=$OUT"
+
+# A path git would quote in its text output — the name carries a byte outside
+# ASCII — still reaches the globs as the bytes git recorded. A quoted name
+# matches no glob, and the rule would stop seeing the file it is about.
+git -C "$RC_REPO" reset -q --hard HEAD
+QUOTED="$(printf 'crates/core/na\303\257ve.rs')"
+printf 'fn quoted() {}\n' >"$RC_REPO/$QUOTED"
+git -C "$RC_REPO" add -A
+[ -n "$(cd "$RC_REPO" && git diff --cached --name-only | grep '"')" ] \
+  && ok "fixture: git's text output really does quote this name" \
+  || bad "fixture: git's text output really does quote this name" "$(cd "$RC_REPO" && git diff --cached --name-only)"
+run_rc 'fix(KEN-4): change a crate under a quoted name'
+[ "$RC" -eq 1 ] && case "$OUT" in *"changed without a changelog entry"*) true ;; *) false ;; esac \
+  && ok "a required path git would quote is still matched" \
+  || bad "a required path git would quote is still matched" "rc=$RC out=$OUT"
+git -C "$RC_REPO" reset -q --hard HEAD
+rm -f "$RC_REPO/$QUOTED"
+
+echo "=== the required paths are configuration, validated like every other path ==="
+git -C "$RC_REPO" reset -q --hard HEAD
+printf 'fn yet() {}\n' >>"$RC_REPO/crates/core/lib.rs"
+git -C "$RC_REPO" add -A
+run_rc 'fix(KEN-3): change a crate'
+[ "$RC" -eq 1 ] && ok "control: the committed settings still oblige an entry" \
+  || bad "control: the committed settings still oblige an entry" "rc=$RC out=$OUT"
+OUT=""; RC=0
+OUT="$(cd "$RC_REPO" && printf 'fix(KEN-3): change a crate\n' | GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS= "$CM" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "an explicitly empty list switches the rule off" \
+  || bad "an explicitly empty list switches the rule off" "rc=$RC out=$OUT"
+OUT=""; RC=0
+OUT="$(cd "$RC_REPO" && printf 'fix(KEN-3): change a crate\n' | GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS=/etc/crates "$CM" 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"must be repo-root-relative"*) true ;; *) false ;; esac \
+  && ok "an absolute required path is a config error" \
+  || bad "an absolute required path is a config error" "rc=$RC out=$OUT"
+OUT=""; RC=0
+OUT="$(cd "$RC_REPO" && printf 'fix(KEN-3): change a crate\n' | GROWTH_GUARDS_CHANGELOG_PATHS="" GROWTH_GUARDS_CHANGELOG_RECORD="" "$CM" 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"name nowhere one could be written"*) true ;; *) false ;; esac \
+  && ok "obliging an entry with nowhere to write one is a config error" \
+  || bad "obliging an entry with nowhere to write one is a config error" "rc=$RC out=$OUT"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

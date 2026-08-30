@@ -2,8 +2,9 @@
 
 Seven checks that stop quiet repo decay, one family beside `size-ratchet`:
 work markers, oversized additions, blanket lint suppression, conflict
-markers, over-long changelog entries, history in the markdown agents load,
-and non-conventional commit messages.
+markers, a changelog whose fragments are malformed or over-long or whose
+collated record was hand-edited, history in the markdown agents load, and
+commit messages that break shape, length or the changelog a commit owes.
 One idiom, one exit contract — `0` clean, `1` violations, `2`
 usage/config/collection error. Scans read INDEX content and skip binaries.
 Requirements: `git`, `awk`, the usual POSIX userland; Bash 3.2 compatible

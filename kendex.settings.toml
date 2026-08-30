@@ -236,14 +236,18 @@ DEV_VALIDATE_CMD = "tools/guard"
 # fresh clone arms hooks that gate none of them.
 GROWTH_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"
 
-# The changelog-entries lane reads the fragment tree alone. CHANGELOG.md is
-# absent on purpose: it is the released record, and much of it predates this
-# cap, so pointing the lane at it would refuse every commit over entries no
-# one may rewrite. Every entry that can still be written arrives as a
-# fragment and is measured here; the collator copies it into CHANGELOG.md
-# unchanged at release. The two-segment glob also keeps changelog.d/README.md
-# out — its bullets document the format and are not entries.
+# The fragment scope of the changelog-entries lane. The two-segment glob
+# keeps changelog.d/README.md out — its bullets document the format and are
+# not entries. CHANGELOG.md is the lane's other scope,
+# GROWTH_GUARDS_CHANGELOG_RECORD, judged by a different rule: entries there
+# are the collator's, so only lines this commit ADDS under [Unreleased] are
+# refused and the released history no one may rewrite is never measured.
 GROWTH_GUARDS_CHANGELOG_PATHS = "changelog.d/*/*.md"
+
+# Paths whose change obliges a changelog entry, checked by the commit-msg
+# lane: crates/ and ui/ are what a consumer sees. [no-changelog] in the
+# subject is the escape for a change none of them notices.
+GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS = "crates/* ui/*"
 
 GH_BOT_USERNAME = ""
 GH_VERIFY_CMD = ""

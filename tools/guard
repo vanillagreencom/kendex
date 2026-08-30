@@ -3,10 +3,10 @@
 # growth-guards pre-commit chain (GROWTH_GUARDS_PRE_COMMIT_LOCAL). Every rule
 # a shipped package already judges is that package's: size-ratchet caps file
 # size and gates its own baseline rows, byte-ceiling caps bytes,
-# changelog-entries caps changelog entries, todo-ban catches work markers,
-# suppression-ban catches blanket allows, conflict-markers catches merge
-# markers, prose keeps history out of the markdown agents load. What is here
-# is what none of them ships.
+# changelog-entries judges the changelog (fragments and the collated record
+# alike), todo-ban catches work markers, suppression-ban catches blanket
+# allows, conflict-markers catches merge markers, prose keeps history out of
+# the markdown agents load. What is here is what none of them ships.
 # Checks the working tree, not the staged index — accepted trade-off:
 # agents commit whole files; partial staging is out of scope.
 set -uo pipefail
@@ -33,37 +33,6 @@ scan() {
     grep -nHE "$pat" "$f" || true
   done <<<"$files"
 }
-
-# The fragment format has one judge, and it is the tool that has to read the
-# fragments: tools/changelog-collate --check names every path and body it
-# would refuse, and writes nothing.
-if [ -x tools/changelog-collate ]; then
-  if ! collate_out=$(tools/changelog-collate --check 2>&1); then
-    say "changelog.d holds a fragment the collator refuses:
-$(printf '%s\n' "$collate_out" | head -5 | sed 's/^/  /')"
-  fi
-else
-  say "tools/changelog-collate is missing or not executable — the fragment format check could not run"
-fi
-
-# Two branches that both write CHANGELOG.md's [Unreleased] list insert at the
-# same line, and the merge queue ejects the trailing one. Entries go to
-# changelog.d instead. CHANGELOG_COLLATE=1 is the release commit saying the
-# new lines are the collator's, the way RATCHET_RAISE=1 declares a raised
-# size-ratchet row.
-if [ "${CHANGELOG_COLLATE:-}" != "1" ] && [ -f CHANGELOG.md ] && git cat-file -e HEAD:CHANGELOG.md 2>/dev/null; then
-  unreleased() { awk '/^## / { seen = ($0 ~ /^## \[Unreleased\]/); next } seen && NF'; }
-  # One collation for the sort and for comm, or comm calls a byte-ordered
-  # file unsorted and prints lines neither side gained. No -u either: a
-  # second copy of a line HEAD carries once is a line this tree gained.
-  if head_ur=$(git show HEAD:CHANGELOG.md | unreleased) && work_ur=$(unreleased <CHANGELOG.md) &&
-    added=$(LC_ALL=C comm -13 <(printf '%s\n' "$head_ur" | LC_ALL=C sort) <(printf '%s\n' "$work_ur" | LC_ALL=C sort)); then
-    [ -n "$added" ] && say "CHANGELOG.md gained lines under [Unreleased] — write changelog.d/<section>/<name>.md instead; tools/changelog-collate folds it in at release:
-$(printf '%s\n' "$added" | head -5 | sed 's/^/  /')"
-  else
-    say "CHANGELOG.md could not be compared against HEAD — the [Unreleased] rule could not run"
-  fi
-fi
 
 # Every module that reads a catalog's own bytes is listed, so a raw read of a
 # catalog path is caught wherever it is added. source/browse/safety.rs is not

@@ -1,28 +1,36 @@
 #!/usr/bin/env bash
-# changelog-entries — a changelog entry over the character cap fails
-# (default 200). One number is the whole rule: no line counting, so an entry
-# that states its outcome passes however it is wrapped.
+# changelog-entries — the one judge of a repository's changelog, over two
+# scopes.
 #
-# An entry opens on a list marker (-, *, +) at column 0 followed by a space
-# or tab, and runs to the next such marker, an ATX heading, or a blank line
-# followed by a line that is neither indented nor a marker. A blank line
-# alone does not end it: a second paragraph indented under the marker is
-# part of the entry, which is the shape a Markdown list item and this
-# family's fragment tooling both accept. Entry text is those lines with CR
-# stripped and whitespace runs collapsed to one space, counted in
-# characters — UTF-8 sequences count once, so an em dash costs what it
-# reads as.
+# FRAGMENTS (GROWTH_GUARDS_CHANGELOG_PATHS, default changelog.d/*/*.md). One
+# entry per file, so two branches never write the same line. Each matched
+# path must be a real text file (a symlink, a gitlink or a binary blob is
+# refused, not skipped), sit directly under a Keep a Changelog section
+# directory, hold exactly one Markdown list item, and that entry must be
+# within the character cap (default 200). One number is the whole length
+# rule: no line counting, so an entry that states its outcome passes however
+# it is wrapped.
 #
-# Content comes from the index, like the other scans, and a blob git would
-# call binary is skipped the way their --cached scans skip one. A configured
-# path that is not readable changelog text — a symlink, a submodule gitlink,
-# binary content — is named as unmeasured rather than folded into the clean
-# count. Text that is not valid UTF-8 has no character count to take, so it
-# is a collection error naming the line, never a measurement: git calls such
-# a blob text whenever it carries no NUL, and counting it would read a run of
-# stray bytes as almost no characters at all. Configured paths matching no
-# tracked file are a clean pass: a repository with no changelog has nothing
-# to judge.
+# THE RECORD (GROWTH_GUARDS_CHANGELOG_RECORD, default CHANGELOG.md). The
+# released record is collated, never hand-written: a line under its
+# `## [Unreleased]` heading that HEAD does not already carry is refused, so
+# two branches cannot both insert at the same place and eject each other from
+# the merge queue. The heading is found by ATX structure outside fenced code,
+# never by substring, so text mentioning `[Unreleased]` decides nothing.
+# GROWTH_GUARDS_CHANGELOG_COLLATE=1 in the environment declares the
+# collator's own write, the way RATCHET_RAISE=1 declares a baseline.
+#
+# A fragment is one entry, so measuring one is joining its lines: CR
+# stripped, whitespace runs collapsed to one space, counted in characters —
+# UTF-8 sequences count once, so an em dash costs what it reads as, and an
+# entry that states its outcome passes however it is wrapped.
+#
+# Content comes from the index, like the other scans. Text that is not valid
+# UTF-8 has no character count to take, so it is a collection error naming
+# the line, never a measurement: git calls such a blob text whenever it
+# carries no NUL, and counting it would read a run of stray bytes as almost
+# no characters at all. Configured paths matching no tracked file are a clean
+# pass: a repository with no changelog has nothing to judge.
 #
 # Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 set -euo pipefail
@@ -41,23 +49,36 @@ GG_CHECK="changelog-entries"
 source "$SCRIPT_DIR/lib/common.sh"
 # shellcheck source=lib/settings.sh
 source "$SCRIPT_DIR/lib/settings.sh"
+# shellcheck source=lib/changelog-grammar.sh
+source "$SCRIPT_DIR/lib/changelog-grammar.sh"
+
+# The Keep a Changelog sections, and the only directory names a fragment may
+# sit under: the collator writes each fragment beneath the heading its
+# directory names, and has nowhere to put one that names no section.
+SECTIONS=" added changed deprecated removed fixed security "
 
 usage() {
   cat <<'EOF'
 usage: changelog-entries
 
-A changelog entry longer than the cap fails. An entry opens on a list
-marker (-, *, +) at column 0 followed by a space or tab, and runs to the
-next such marker, an ATX heading (up to three leading spaces, one to six
-hashes, then a space, a tab, or end of line), or a blank line followed by a
-line that is neither indented nor a marker — so an indented second paragraph
-is part of the entry. Its text is those lines with CR stripped and whitespace runs
+Two scopes, one judge.
+
+Fragments (GROWTH_GUARDS_CHANGELOG_PATHS): every matched tracked path must
+be a real text file, sit directly under a section directory (added, changed,
+deprecated, removed, fixed, security), hold exactly one Markdown list item —
+the first non-blank line opens with a hyphen and a space and says something,
+every later line indents under it — and measure within the cap. A symlink, a
+submodule gitlink or a binary blob at a configured path is refused. The
+measurement joins the fragment's lines with CR stripped and whitespace runs
 collapsed to one space, counted in characters.
 
-Tracked content is read from the index. A configured path git tracks as a
-symlink or submodule, or whose content is binary, is named as unmeasured;
-text that is not valid UTF-8 has no character count and is a collection
-error. Paths matching no tracked file are a clean pass.
+The record (GROWTH_GUARDS_CHANGELOG_RECORD): a line the index carries under
+its `## [Unreleased]` heading that HEAD does not is refused — entries are
+written as fragments and collated at release. The heading is found by ATX
+structure outside fenced code, never by substring.
+
+Tracked content is read from the index; text that is not valid UTF-8 is a
+collection error. Paths matching no tracked file are a clean pass.
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -65,7 +86,13 @@ kendex.settings.toml [env] > default):
   GROWTH_GUARDS_CHANGELOG_PATHS   space-separated shell globs against the
                                   full repo-relative path, '*' crossing
                                   '/' as in the excludes lists
-                                  (default CHANGELOG.md)
+                                  (default changelog.d/*/*.md)
+  GROWTH_GUARDS_CHANGELOG_RECORD  the collated record file
+                                  (default CHANGELOG.md; empty = no record
+                                  scope)
+
+GROWTH_GUARDS_CHANGELOG_COLLATE=1 in the environment declares the collator's
+own write under [Unreleased].
 
 Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 EOF
@@ -86,136 +113,169 @@ gg_repo_root_cd
 CAP="$(gg_setting GROWTH_GUARDS_CHANGELOG_CAP 200)" || exit 2
 gg_positive_int "$CAP" "GROWTH_GUARDS_CHANGELOG_CAP"
 
-PATHS_RAW="$(gg_setting GROWTH_GUARDS_CHANGELOG_PATHS "CHANGELOG.md")" || exit 2
+PATHS_RAW="$(gg_setting GROWTH_GUARDS_CHANGELOG_PATHS "changelog.d/*/*.md")" || exit 2
 
 # The path list, its validation and its matcher are the family's, shared with
-# the sibling lane scoped the same way: lib/configured-paths.sh § configured
-# path globs.
+# every lane scoped the same way: lib/configured-paths.sh § configured path
+# globs.
 gg_load_path_globs "$PATHS_RAW" changelog GROWTH_GUARDS_CHANGELOG_PATHS || exit 2
+PATTERNS_SHOWN="$GG_PATH_GLOBS_SHOWN"
 
-# Violation rows as "V<TAB>line<TAB>characters<TAB>first line", then one
-# "N<TAB>count" tally so the clean verdict reports what it measured rather
-# than asserting it. LC_ALL=C is what makes the character count exact: it
-# puts awk on bytes, and the continuation bytes subtracted below are what
-# turn bytes back into characters. Under a UTF-8 locale the class would
-# match nothing and every multibyte entry would count short. The same byte
-# view is what lets CTRL name the C0 controls and DEL exactly, which the
-# quoted first line is stripped of — an escape sequence, a carriage return
-# or a backspace in a tracked file must not reach the reader's terminal
-# through a diagnostic. Tab survives, and so do high bytes: they are the
-# UTF-8 an entry is legitimately written in.
-ENTRY_AWK='
-BEGIN {
-  CONT = "[\200-\277]"
-  CTRL = "[\001-\010\013-\037\177]"
-  # Strict UTF-8, spelled out as the byte grammar RFC 3629 defines: the count
-  # below is "bytes that are not continuation bytes", which is the character
-  # count only while every continuation byte follows a lead byte that claims
-  # it. A line of stray continuation bytes would otherwise measure as nothing.
-  UTF8 = "^([\001-\177]"
-  UTF8 = UTF8 "|[\302-\337][\200-\277]"
-  UTF8 = UTF8 "|\340[\240-\277][\200-\277]"
-  UTF8 = UTF8 "|[\341-\354][\200-\277][\200-\277]"
-  UTF8 = UTF8 "|\355[\200-\237][\200-\277]"
-  UTF8 = UTF8 "|[\356-\357][\200-\277][\200-\277]"
-  UTF8 = UTF8 "|\360[\220-\277][\200-\277][\200-\277]"
-  UTF8 = UTF8 "|[\361-\363][\200-\277][\200-\277][\200-\277]"
-  UTF8 = UTF8 "|\364[\200-\217][\200-\277][\200-\277])*$"
-}
-function chars(s,   n, c) { n = length(s); c = gsub(CONT, "", s); return n - c }
-# ATX syntax, whole: up to three leading spaces, then one to six hashes, then
-# a space, a tab, or end of line. Nothing else decides whether a line is a
-# heading, so all three parts are here — a predicate that reads "opens with a
-# hash" folds a continuation naming an issue number into nothing, and one that
-# demands column zero folds an indented heading into the entry above it. Four
-# leading spaces is an indented code block and stays a continuation. Spelled
-# as loops because a {1,6} interval is not portable across the awks this
-# family runs under.
-function is_heading(l,   i, n, c) {
-  i = 0
-  while (i < 3 && substr(l, i + 1, 1) == " ") i++
-  if (substr(l, i + 1, 1) != "#") return 0
-  n = 0
-  while (substr(l, i + n + 1, 1) == "#") n++
-  if (n > 6) return 0
-  c = substr(l, i + n + 1, 1)
-  return (c == "" || c == " " || c == "\t")
-}
-function flush(   t, len, label) {
-  blank = 0
-  if (!open) return
-  open = 0
-  total++
-  t = text
-  gsub(/[ \t]+/, " ", t)
-  sub(/^ /, "", t)
-  sub(/ $/, "", t)
-  len = chars(t)
-  if (len > cap) {
-    label = first
-    gsub(CTRL, "?", label)
-    printf "V\t%d\t%d\t%s\n", start, len, label
-  }
-}
-{ line = $0; sub(/\r$/, "", line) }
-line !~ UTF8                      { printf "X\t%d\n", NR; bad = 1; exit }
-line ~ /^[ \t]*$/                 { if (open) blank = 1; next }
-line ~ /^[-*+][ \t]/              { flush(); open = 1; start = NR; first = line; text = line; next }
-is_heading(line)                  { flush(); next }
-open && blank && line !~ /^[ \t]/ { flush(); next }
-open                              { text = text " " line; blank = 0 }
-END { if (!bad) { flush(); printf "N\t%d\n", total } }
-'
+RECORD_RAW="$(gg_setting GROWTH_GUARDS_CHANGELOG_RECORD "CHANGELOG.md")" || exit 2
+RECORD=""
+if [ -n "$RECORD_RAW" ]; then
+  RECORD="$(gg_config_path "$RECORD_RAW" changelog-record)" || exit 2
+  # The two scopes judge by opposite rules — one entry per file against a
+  # file of many — so a path in both is a configuration that cannot pass.
+  ! gg_matches_path_glob "$RECORD" \
+    || gg_config_error "GROWTH_GUARDS_CHANGELOG_RECORD ($(gg_shown "$RECORD")) is also matched by GROWTH_GUARDS_CHANGELOG_PATHS — the collated record is not a fragment"
+fi
 
 gg_tmpdir
 
 checked=0
-entries=0
 violations=0
+RECORD_SHA=""
+RECORD_MODE=""
 
-# The walk over the configured paths — the records, the glob match, and the
-# shapes at a configured path that are not changelog text — is the family's:
-# lib/configured-paths.sh § one walk over the configured paths. A symlink is
-# named as unmeasured rather than followed; this lane measures the file at
-# the path it was pointed at.
-measure_entries() { # PATH BLOBFILE
-  local f="$1" blob="$2" status=0 kind a b c
+refuse() { # PATH COMPLAINT [REMEDY]
+  echo "changelog-entries FAIL $(gg_shown "$1") $2"
+  [ $# -lt 3 ] || echo "  $3"
+  violations=$((violations + 1))
+}
+
+# The records and the glob match are the family's walk in spirit, but not its
+# shape: lib/configured-paths.sh names a symlink, a gitlink or a binary blob
+# as unmeasured and reads on, and a fragment tree cannot afford that — a path
+# nothing measures is one the collator would fold in verbatim. Every one of
+# them is a violation here.
+# ls-files -s emits one record per STAGE for an unmerged path, so the walk
+# below would read rival blobs as separate files.
+gg_require_merged_index
+git ls-files -sz >"$GG_TMP/files.z" || gg_collection_error "git ls-files failed"
+
+while IFS= read -r -d '' rec; do
+  # Record shape: "<mode> <sha> <stage>\t<path>".
+  f="${rec#*"$GG_TAB"}"
+  mode="${rec%% *}"
+  rest="${rec#* }"
+  sha="${rest%% *}"
+  if [ -n "$RECORD" ] && [ "$f" = "$RECORD" ]; then
+    RECORD_SHA="$sha"
+    RECORD_MODE="$mode"
+  fi
+  gg_matches_path_glob "$f" || continue
+  case "$mode" in
+    120000)
+      refuse "$f" "is tracked as a symlink" "a fragment is a file of its own"
+      continue
+      ;;
+    160000)
+      refuse "$f" "is tracked as a submodule gitlink" "a fragment is a file of its own"
+      continue
+      ;;
+  esac
+  # The section is the directory the fragment sits directly under, because
+  # that is the heading the collator writes it beneath.
+  dir="${f%/*}"
+  sec="${dir##*/}"
+  if [ "$dir" = "$f" ] || [ "${SECTIONS#*" $sec "}" = "$SECTIONS" ]; then
+    refuse "$f" "names no section" "a fragment is <dir>/<section>/<name>.md, section one of:${SECTIONS% }"
+    continue
+  fi
+  gg_read_blob "$sha" "$f" changelog
+  if gg_blob_is_binary "$GG_TMP/blob" "$f"; then
+    refuse "$f" "holds binary content" "a fragment is the Markdown list item it becomes"
+    continue
+  fi
+  shape="$(LC_ALL=C awk "$GG_SHAPE_AWK" <"$GG_TMP/blob")" \
+    || gg_collection_error "could not read the shape of $(gg_shown "$f")"
+  if [ -n "$shape" ]; then
+    refuse "$f" "$shape"
+    continue
+  fi
   checked=$((checked + 1))
-  LC_ALL=C awk -v cap="$CAP" "$ENTRY_AWK" <"$blob" >"$GG_TMP/report" || status=$?
-  [ "$status" -eq 0 ] || gg_collection_error "could not measure the entries in $(gg_shown "$f") (awk exit $status)"
-  while IFS="$GG_TAB" read -r kind a b c; do
+  status=0
+  LC_ALL=C awk "$GG_ENTRY_AWK" <"$GG_TMP/blob" >"$GG_TMP/report" || status=$?
+  [ "$status" -eq 0 ] || gg_collection_error "could not measure the entry in $(gg_shown "$f") (awk exit $status)"
+  while IFS="$GG_TAB" read -r kind a b; do
     case "$kind" in
-      N) entries=$((entries + a)) ;;
       X) gg_collection_error "$(gg_shown "$f") line $a is not valid UTF-8 — an entry with no character count cannot be measured against the cap" ;;
-      V)
-        echo "changelog-entries FAIL long entry: $(gg_shown "$f"):$a — $b characters (cap $CAP)"
+      M)
+        [ "$a" -gt "$CAP" ] || continue
+        echo "changelog-entries FAIL long entry: $(gg_shown "$f") — $a characters (cap $CAP)"
         # Content, not a name: the awk pass already replaced every C0 control
         # and DEL, a newline cannot survive a line read, and %q here would
         # render a legible entry as an escaped blob.
-        echo "  entry: $c"
+        echo "  entry: $b"
         echo "  remedies: state the outcome and stop; a Breaking migration note stays inline, and the reasoning belongs in the commit"
         violations=$((violations + 1))
         ;;
       *) gg_collection_error "unrecognized measurement record $(gg_shown "$kind") while reading $(gg_shown "$f")" ;;
     esac
   done <"$GG_TMP/report"
-}
+done <"$GG_TMP/files.z"
 
-gg_walk_configured_paths "changelog text" changelog measure_entries
-skipped="$GG_WALK_SKIPPED"
+# --- the record scope --------------------------------------------------------
+# Only when HEAD already carries the record: a repository writing its first
+# CHANGELOG.md is not hand-editing a collated one, and every line of it would
+# read as gained.
+record_judged=0
+if [ -n "$RECORD" ] && [ -n "$RECORD_SHA" ] && [ "${GROWTH_GUARDS_CHANGELOG_COLLATE:-}" != "1" ]; then
+  case "$RECORD_MODE" in
+    120000 | 160000) gg_collection_error "$(gg_shown "$RECORD") is tracked as a symlink or gitlink — the record could not be read" ;;
+  esac
+  head_entry=""
+  head_status=0
+  git rev-parse --verify --quiet HEAD >/dev/null 2>&1 || head_status=$?
+  case "$head_status" in
+    0)
+      tree_status=0
+      head_entry="$(git ls-tree HEAD -- ":(literal)$RECORD")" || tree_status=$?
+      [ "$tree_status" -eq 0 ] \
+        || gg_collection_error "could not probe HEAD for $(gg_shown "$RECORD") (git ls-tree exit $tree_status)"
+      ;;
+    1) ;;
+    *) gg_collection_error "could not resolve HEAD while reading $(gg_shown "$RECORD") (git rev-parse exit $head_status)" ;;
+  esac
+  if [ -n "$head_entry" ]; then
+    record_judged=1
+    git cat-file blob "$RECORD_SHA" >"$GG_TMP/record.index" \
+      || gg_collection_error "could not read the staged $(gg_shown "$RECORD")"
+    git show "HEAD:$RECORD" >"$GG_TMP/record.head" \
+      || gg_collection_error "could not read HEAD's $(gg_shown "$RECORD")"
+    for side in index head; do
+      LC_ALL=C awk "$GG_UNRELEASED_AWK" <"$GG_TMP/record.$side" >"$GG_TMP/ur.$side" \
+        || gg_collection_error "could not read the [Unreleased] section of the $side copy of $(gg_shown "$RECORD")"
+      LC_ALL=C sort -o "$GG_TMP/ur.$side" "$GG_TMP/ur.$side" \
+        || gg_collection_error "could not order the [Unreleased] lines of the $side copy of $(gg_shown "$RECORD")"
+    done
+    # No comm -u: a second copy of a line HEAD carries once is a line this
+    # commit gained.
+    added="$(LC_ALL=C comm -13 "$GG_TMP/ur.head" "$GG_TMP/ur.index")" \
+      || gg_collection_error "could not compare the [Unreleased] section of $(gg_shown "$RECORD") against HEAD"
+    if [ -n "$added" ]; then
+      echo "changelog-entries FAIL $(gg_shown "$RECORD") gained lines under [Unreleased]"
+      # The first five, with every C0 control and DEL replaced: these are the
+      # record's own bytes, and an escape sequence in one must not reach the
+      # reader's terminal. awk caps the count itself rather than piping into
+      # `head`, whose exit would break the pipeline under pipefail.
+      printf '%s\n' "$added" | LC_ALL=C awk 'NR <= 5 { gsub(/[\001-\010\013-\037\177]/, "?"); print "    " $0 }'
+      echo "  write $PATTERNS_SHOWN instead — the collator folds fragments in at release; GROWTH_GUARDS_CHANGELOG_COLLATE=1 declares that write"
+      violations=$((violations + 1))
+    fi
+  fi
+fi
 
-UNMEASURED=""
-[ "$skipped" -eq 0 ] || UNMEASURED="; $skipped matched path(s) not measured"
+RECORD_NOTE=""
+[ "$record_judged" -eq 0 ] || RECORD_NOTE="; $(gg_shown "$RECORD") unchanged under [Unreleased]"
 
 if [ "$violations" -gt 0 ]; then
-  echo "changelog-entries: $violations entry(ies) over the cap — cap $CAP characters, $entries entry(ies) in $checked file(s)$UNMEASURED"
+  echo "changelog-entries: $violations violation(s) — cap $CAP characters, $checked fragment(s) measured"
   exit 1
 fi
-# Only when NOTHING matched: a path that matched and was skipped is reported
-# as skipped above, and telling its reader that no file matched would send
-# them to widen a glob that was already right.
-if [ "$checked" -eq 0 ] && [ "$skipped" -eq 0 ]; then
-  echo "changelog-entries: OK — no tracked file matches GROWTH_GUARDS_CHANGELOG_PATHS ($GG_PATH_GLOBS_SHOWN)"
+if [ "$checked" -eq 0 ]; then
+  echo "changelog-entries: OK — no tracked file matches GROWTH_GUARDS_CHANGELOG_PATHS ($PATTERNS_SHOWN)$RECORD_NOTE"
   exit 0
 fi
-echo "changelog-entries: OK — $entries entry(ies) in $checked file(s) within the cap ($CAP characters)$UNMEASURED"
+echo "changelog-entries: OK — $checked fragment(s) within the cap ($CAP characters)$RECORD_NOTE"

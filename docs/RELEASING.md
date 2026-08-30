@@ -139,15 +139,16 @@ updater artifacts, so set `TAURI_SIGNING_PRIVATE_KEY` or pass `--no-sign`.
 
 Entries are written one file at a time, under
 `changelog.d/<section>/<name>.md` (`changelog.d/README.md` has the format).
-Nothing edits `CHANGELOG.md` by hand: `tools/guard` refuses a line under
-`## [Unreleased]` that HEAD does not already carry.
+Nothing edits `CHANGELOG.md` by hand: the growth-guards `changelog-entries`
+lane refuses a line under `## [Unreleased]` that HEAD does not already carry.
 
 Before tagging, run `tools/changelog-collate`. It folds every fragment git
 carries into `## [Unreleased]` under its section heading, in Keep a Changelog
 order and filename order within a section, then deletes the fragments; no
 fragments is a no-op. Exit codes follow the guard family: 0 clean, 1 a
-fragment the format refuses, 2 could not run — and nothing is written until
-every fragment passes, so `CHANGELOG.md` is replaced whole or not at all. It
+fragment the judge refuses, 2 could not run — the collation calls the
+`changelog-entries` lane before it writes, and nothing is written until every
+fragment passes, so `CHANGELOG.md` is replaced whole or not at all. It
 reads each fragment from the working tree, so it also refuses a `changelog.d`
 the index and the disk disagree about, rather than publishing an unstaged
 edit and deleting it. A nonzero exit halts the release: read the message, fix
@@ -155,9 +156,9 @@ the fragment or `CHANGELOG.md`, run it again. Then rename `## [Unreleased]` to
 `## [X.Y.Z] - YYYY-MM-DD` and open a fresh empty one, which leaves the guard
 nothing gained to refuse.
 
-`CHANGELOG_COLLATE=1` declares a deliberate write under `## [Unreleased]`.
-It is needed only when the guard or the commit runs while the collated
-entries are still under that heading.
+`GROWTH_GUARDS_CHANGELOG_COLLATE=1` declares a deliberate write under
+`## [Unreleased]`. It is needed only when the guard or the commit runs while
+the collated entries are still under that heading.
 
 ## Version bumps
 

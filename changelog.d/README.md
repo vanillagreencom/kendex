@@ -19,13 +19,17 @@ One CHANGELOG entry per file. Two branches never write the same
   fragments. Two headings for one section collapse into a single heading,
   emitted in Keep a Changelog order and carrying their blocks in file order.
 
-`tools/changelog-collate --check` judges the fragments and writes nothing;
-`tools/guard` runs it, so the format has one judge. Exit codes follow the
-guard family: 0 clean, 1 a fragment the format refuses, 2 could not run. The
-length has one judge too, the growth-guards `changelog-entries` lane, pointed
-at this directory by `GROWTH_GUARDS_CHANGELOG_PATHS`.
+The format has one judge: the growth-guards `changelog-entries` lane, pointed
+at this directory by `GROWTH_GUARDS_CHANGELOG_PATHS`. It runs at every commit
+and `tools/changelog-collate` calls it before it writes. Exit codes follow
+the guard family: 0 clean, 1 a fragment it refuses, 2 could not run.
 
-`tools/guard` refuses any line under `## [Unreleased]` that HEAD does not
-already carry. `CHANGELOG_COLLATE=1` declares a deliberate write there,
-needed only when the guard or the commit runs while collated entries are
-still under that heading.
+That same lane refuses any line under `## [Unreleased]` in `CHANGELOG.md`
+that HEAD does not already carry. `GROWTH_GUARDS_CHANGELOG_COLLATE=1`
+declares a deliberate write there, needed only when the guard or the commit
+runs while collated entries are still under that heading.
+
+A commit touching `crates/` or `ui/` without one of these files is refused by
+the growth-guards `commit-msg` lane, which reads
+`GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS`; `[no-changelog]` in the subject is
+the escape.

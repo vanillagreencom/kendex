@@ -1,0 +1,1 @@
+- growth-guards: the `commit-msg` lane now also caps the subject (`GROWTH_GUARDS_SUBJECT_MAX`, default 72) and demands a changelog entry for `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS`.

@@ -1,12 +1,29 @@
 #!/usr/bin/env bash
-# commit-msg — conventional-commit gate over one message, built to sit
+# commit-msg — the whole commit-message gate over one message, built to sit
 # directly in .git/hooks/commit-msg (it takes the message file git passes, or
-# stdin). The header (first non-blank, non-comment line) must be
-# `type(scope)!: subject`; git-generated messages pass unchanged.
+# stdin). Three rules, because only a commit-msg hook sees the subject and no
+# other lane can carry them:
+#
+#   header shape   the first non-blank, non-comment line is `type(scope)!: subject`
+#   subject length at most GROWTH_GUARDS_SUBJECT_MAX characters
+#   changelog      a commit touching GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS
+#                  writes a changelog entry, or says [no-changelog]
+#
+# Git-generated headers (Merge, Revert, Reapply, fixup!, squash!, amend!) are
+# exempt from shape and length alone: nobody chose their wording or their
+# size. The changelog rule still runs over them — a merge that carries code
+# carries its entry — and [no-changelog] still escapes it.
+#
+# Every applicable rule reports before the verdict: a run names everything
+# wrong with the message, never the first thing.
 #
 # Exit codes: 0 pass; 1 violation; 2 usage/config/collection error (an
 # unreadable message file is a collection error, never a pass).
 set -euo pipefail
+# Pathname expansion off: the configured paths are globs matched against the
+# index, and splitting them into words would otherwise expand each against the
+# work tree.
+set -f
 
 GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
 GG_BOOT="${GG_BOOT%x}"
@@ -24,16 +41,30 @@ usage() {
   cat <<'EOF'
 usage: commit-msg [FILE]
 
-Checks the commit message in FILE (or on stdin when FILE is absent or '-')
-against the conventional format `type(scope)!: subject`. Scope and '!' are
-optional; uppercase issue keys (fix(ABC-123): ...) are accepted;
-git-generated messages (Merge/Revert/Reapply, fixup!/squash!/amend!) pass
-unchanged. Wire it as .git/hooks/commit-msg: `commit-msg "$1"`.
+Checks the commit message in FILE (or on stdin when FILE is absent or '-'):
+the conventional header `type(scope)!: subject` (scope and '!' optional;
+uppercase issue keys, fix(ABC-123): ..., are accepted), the subject's
+length, and a changelog entry for a commit that touches the configured
+paths. Git-generated messages (Merge/Revert/Reapply, fixup!/squash!/amend!)
+skip the shape and length rules and keep the changelog one. Wire it as
+.git/hooks/commit-msg: `commit-msg "$1"`.
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
   GROWTH_GUARDS_COMMIT_TYPES   space-separated type list
                                (default "build chore ci docs feat fix perf refactor revert style test")
+  GROWTH_GUARDS_SUBJECT_MAX    characters allowed in the header (default 72)
+  GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS
+                               space-separated globs against the full
+                               repo-relative path ('*' crosses '/'); a commit
+                               that stages a matching path must also write a
+                               changelog entry (default empty = rule off)
+  GROWTH_GUARDS_CHANGELOG_PATHS   what counts as a written entry, with
+  GROWTH_GUARDS_CHANGELOG_RECORD  — the same paths the changelog-entries
+                               check judges (defaults "changelog.d/*/*.md"
+                               and "CHANGELOG.md")
+
+`[no-changelog]` anywhere in the header escapes the changelog rule.
 
 Exit codes: 0 pass; 1 violation; 2 usage/config/collection error.
 EOF
@@ -67,7 +98,7 @@ else
 fi
 
 gg_repo_root_cd
-# The accepted type list is the one the commit carries, not an unstaged edit.
+# The accepted rules are the ones the commit carries, not an unstaged edit.
 gg_settings_index_mode
 
 TYPES="$(gg_setting GROWTH_GUARDS_COMMIT_TYPES "build chore ci docs feat fix perf refactor revert style test")" || exit 2
@@ -80,6 +111,12 @@ for t in $TYPES; do
 done
 [ -n "$TYPE_ALT" ] || gg_config_error "GROWTH_GUARDS_COMMIT_TYPES resolved empty — at least one type is required"
 
+SUBJECT_MAX="$(gg_setting GROWTH_GUARDS_SUBJECT_MAX 72)" || exit 2
+gg_positive_int "$SUBJECT_MAX" "GROWTH_GUARDS_SUBJECT_MAX"
+
+REQUIRED_RAW="$(gg_setting GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS "")" || exit 2
+REQUIRED="$(gg_config_path_list "$REQUIRED_RAW" changelog-required)" || exit 2
+
 gg_commit_header "$MSG"
 HEADER="$GG_COMMIT_HEADER"
 
@@ -88,23 +125,97 @@ if [ -z "$HEADER" ]; then
   exit 1
 fi
 
-if gg_git_generated_header "$HEADER"; then
-  echo "commit-msg: OK — git-generated header accepted: $HEADER"
-  exit 0
+FAILED=0
+violation() { # HEADLINE [DETAIL...]
+  local detail
+  echo "commit-msg FAIL $1"
+  shift
+  for detail in "$@"; do echo "  $detail"; done
+  FAILED=1
+}
+
+GENERATED=0
+if gg_git_generated_header "$HEADER"; then GENERATED=1; fi
+
+# --- header shape and length: a hand-written header only ---------------------
+if [ "$GENERATED" -eq 1 ]; then
+  echo "commit-msg: git-generated header — shape and length not judged: $HEADER"
+else
+  HEADER_ERE="^($TYPE_ALT)(\([#A-Za-z0-9 _.,/-]+\))?!?: [^[:space:]]"
+  match_status=0
+  printf '%s\n' "$HEADER" | grep -qE "$HEADER_ERE" || match_status=$?
+  [ "$match_status" -le 1 ] || gg_collection_error "grep failed matching the header (exit $match_status)"
+  if [ "$match_status" -eq 0 ]; then
+    echo "commit-msg: OK — conventional header: $HEADER"
+  else
+    violation "non-conventional header: $HEADER" \
+      "expected: type(scope)!: subject — scope and '!' optional; types: $TYPES" \
+      "scope accepts uppercase issue keys and issue numbers, e.g. fix(ABC-123): tighten the gate / fix(#123): case-fold IDs" \
+      "git-generated headers (Merge/Revert/Reapply, fixup!/squash!/amend!) pass unchanged"
+  fi
+  if [ "${#HEADER}" -gt "$SUBJECT_MAX" ]; then
+    violation "subject is ${#HEADER} characters (max $SUBJECT_MAX): $HEADER" \
+      "move the detail into the body — the header is the one line every log shows"
+  fi
 fi
 
-HEADER_ERE="^($TYPE_ALT)(\([#A-Za-z0-9 _.,/-]+\))?!?: [^[:space:]]"
-match_status=0
-printf '%s\n' "$HEADER" | grep -qE "$HEADER_ERE" || match_status=$?
-[ "$match_status" -le 1 ] || gg_collection_error "grep failed matching the header (exit $match_status)"
+# --- a commit touching the required paths carries a changelog entry ----------
+# Runs over every header, generated ones included: what the commit CHANGES
+# decides this, not who wrote its first line.
+if [ -n "$REQUIRED" ]; then
+  ENTRY_RAW="$(gg_setting GROWTH_GUARDS_CHANGELOG_PATHS "changelog.d/*/*.md")" || exit 2
+  ENTRY_PATTERNS="$(gg_config_path_list "$ENTRY_RAW" changelog)" || exit 2
+  RECORD_RAW="$(gg_setting GROWTH_GUARDS_CHANGELOG_RECORD "CHANGELOG.md")" || exit 2
+  if [ -n "$RECORD_RAW" ]; then
+    RECORD="$(gg_config_path "$RECORD_RAW" changelog-record)" || exit 2
+    ENTRY_PATTERNS="${ENTRY_PATTERNS:+$ENTRY_PATTERNS }$RECORD"
+  fi
+  [ -n "$ENTRY_PATTERNS" ] \
+    || gg_config_error "GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS demands an entry, but GROWTH_GUARDS_CHANGELOG_PATHS and GROWTH_GUARDS_CHANGELOG_RECORD name nowhere one could be written"
 
-if [ "$match_status" -eq 0 ]; then
-  echo "commit-msg: OK — conventional header: $HEADER"
-  exit 0
+  # -z, so a path carrying a newline or a byte git would otherwise quote
+  # reaches the globs as the bytes git recorded: a quoted name matches no
+  # glob, which is a rule that stops seeing the files it is about. Read back
+  # from a FILE rather than a pipe, so the loops set variables in this shell.
+  gg_tmpdir
+  git diff --cached --name-only -z >"$GG_TMP/staged.z" \
+    || gg_collection_error "could not read the staged file list — the changelog rule could not run"
+  # Deleting a fragment is not writing one, and the staged list does not say
+  # which it was. Evidence of an entry comes from the additions and
+  # modifications alone.
+  git diff --cached --name-only --diff-filter=AM -z >"$GG_TMP/written.z" \
+    || gg_collection_error "could not read the staged additions — the changelog rule could not run"
+
+  touched=""
+  while IFS= read -r -d '' f; do
+    # shellcheck disable=SC2086
+    if gg_path_matches "$f" $REQUIRED; then
+      touched="$f"
+      break
+    fi
+  done <"$GG_TMP/staged.z"
+
+  entry=""
+  while IFS= read -r -d '' f; do
+    # shellcheck disable=SC2086
+    if gg_path_matches "$f" $ENTRY_PATTERNS; then
+      entry="$f"
+      break
+    fi
+  done <"$GG_TMP/written.z"
+
+  if [ -n "$touched" ] && [ -z "$entry" ]; then
+    case "$HEADER" in
+      *"[no-changelog]"*) echo "commit-msg: OK — [no-changelog] in the header waives the entry for $(gg_shown "$touched")" ;;
+      *)
+        shown=""
+        for pat in $ENTRY_PATTERNS; do shown="${shown:+$shown }$(gg_shown "$pat")"; done
+        violation "$(gg_shown "$touched") changed without a changelog entry" \
+          "write one of: $shown" \
+          "or put [no-changelog] in the header when the commit changes nothing a consumer sees"
+        ;;
+    esac
+  fi
 fi
 
-echo "commit-msg FAIL non-conventional header: $HEADER"
-echo "  expected: type(scope)!: subject — scope and '!' optional; types: $TYPES"
-echo "  scope accepts uppercase issue keys and issue numbers, e.g. fix(ABC-123): tighten the gate / fix(#123): case-fold IDs"
-echo "  git-generated headers (Merge/Revert/Reapply, fixup!/squash!/amend!) pass unchanged"
-exit 1
+exit "$FAILED"

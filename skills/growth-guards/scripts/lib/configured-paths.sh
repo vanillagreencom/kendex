@@ -24,7 +24,7 @@ GG_PATH_GLOBS=""
 GG_PATH_GLOBS_SHOWN=""
 
 gg_load_path_globs() { # RAW-LIST LABEL KEY — fills GG_PATH_GLOBS and _SHOWN
-  local raw="$1" label="$2" key="$3" pat norm
+  local raw="$1" label="$2" key="$3" pat
   # The precondition enforces itself. Without `set -f` the failure is
   # invisible — no status, no message, just a scan over whatever the work
   # tree happens to hold — so a lane that forgot it must not run at all.
@@ -32,30 +32,26 @@ gg_load_path_globs() { # RAW-LIST LABEL KEY — fills GG_PATH_GLOBS and _SHOWN
     *f*) ;;
     *) gg_config_error "gg_load_path_globs: pathname expansion is on; the caller must run under 'set -f' or the configured globs resolve against the work tree instead of matching the index" ;;
   esac
+  # The validation loop is gg_config_path_list's, in lib/common.sh: a lane
+  # that reads two configured lists calls that directly, and one scoped by a
+  # single list arrives here, so both go through one spelling of it.
   GG_PATH_GLOBS=""
   GG_PATH_GLOBS_SHOWN=""
-  for pat in $raw; do
-    norm="$(gg_config_path "$pat" "$label")" || return 1
-    GG_PATH_GLOBS="${GG_PATH_GLOBS:+$GG_PATH_GLOBS }$norm"
-    # The same list rendered for messages: a configured pattern is somebody's
-    # bytes too, and %q would escape the globs out of the copy that has to
-    # match.
-    GG_PATH_GLOBS_SHOWN="${GG_PATH_GLOBS_SHOWN:+$GG_PATH_GLOBS_SHOWN }$(gg_shown "$norm")"
-  done
+  GG_PATH_GLOBS="$(gg_config_path_list "$raw" "$label")" || return 1
   [ -n "$GG_PATH_GLOBS" ] \
     || gg_config_error "$key names no path — name at least one, or drop this check from GROWTH_GUARDS_CHECKS"
+  # The same list rendered for messages: a configured pattern is somebody's
+  # bytes too, and %q would escape the globs out of the copy that has to
+  # match.
+  for pat in $GG_PATH_GLOBS; do
+    GG_PATH_GLOBS_SHOWN="${GG_PATH_GLOBS_SHOWN:+$GG_PATH_GLOBS_SHOWN }$(gg_shown "$pat")"
+  done
 }
 
 gg_matches_path_glob() { # PATH — 0 when some configured glob matches the full path
-  local path="$1" pat
-  for pat in $GG_PATH_GLOBS; do
-    # $pat must expand unquoted to act as a glob.
-    # shellcheck disable=SC2254
-    case "$path" in
-      $pat) return 0 ;;
-    esac
-  done
-  return 1
+  # The loaded list, matched by the one spelling in lib/common.sh.
+  # shellcheck disable=SC2086
+  gg_path_matches "$1" $GG_PATH_GLOBS
 }
 
 # git calls a blob binary when a NUL byte falls in its leading bytes, and the
