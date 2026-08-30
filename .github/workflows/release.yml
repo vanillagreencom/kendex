@@ -291,7 +291,7 @@ jobs:
           files: dist/*
           draft: ${{ steps.tag.outputs.prerelease == 'false' }}
           prerelease: ${{ steps.tag.outputs.prerelease == 'true' }}
-      # The channel job writes these two onto the fixed pre-release release.
+      # The channel job writes these onto the fixed pre-release release.
       - uses: actions/upload-artifact@v4
         with:
           name: manifests
@@ -302,11 +302,11 @@ jobs:
           if-no-files-found: error
 
   # Because "latest" skips pre-releases, a candidate has no way to reach the
-  # next one. This release is that way: one fixed tag whose two manifests are
-  # overwritten by each new candidate, which is the URL
-  # `update_channel::feed_url_for` sends a candidate to. The manifests name
-  # their downloads by the tag that built them, so what they point at is that
-  # tag's own release, published by the job above.
+  # next one. This release is that way: one fixed tag whose manifests and
+  # digests documents are overwritten by each new candidate, which is the URL
+  # `update_channel::feed_url_for` sends a candidate to. They name their
+  # downloads by the tag that built them, so what they point at is that tag's
+  # own release, published by the job above.
   #
   # That one mutable pointer is what the concurrency group is for: two runs
   # interleaving their reads and writes of it would leave the older manifests

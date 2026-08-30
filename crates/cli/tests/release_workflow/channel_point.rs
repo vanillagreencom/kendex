@@ -65,6 +65,17 @@ enum Channel<'a> {
     Unreadable,
 }
 
+/// What a release job leaves in `dist` for the channel to publish: the two
+/// manifests and one per-target digests document. The digests name carries
+/// its target, so the guard cannot hold a list of them and these tests would
+/// not notice a guard that published the manifests alone.
+#[cfg(unix)]
+const STAGED: [&str; 3] = [
+    "latest.json",
+    "feed.json",
+    "digests-x86_64-unknown-linux-gnu.json",
+];
+
 /// Runs the guard with `gh` stubbed. `fail` holds fragments of the `gh`
 /// calls that should fail, standing in for the transient errors every read
 /// here has to tell apart from an answer; `landed` names the manifests a
@@ -77,12 +88,26 @@ enum Channel<'a> {
 #[cfg(unix)]
 #[allow(clippy::unwrap_used)]
 fn point_channel(channel: Channel, new_version: &str, fail: &[&str], landed: &[&str]) -> Pointed {
+    point_channel_staging(channel, new_version, fail, landed, &STAGED)
+}
+
+/// The same, with the release's output named rather than assumed, for the
+/// case that is about what `dist` held.
+#[cfg(unix)]
+#[allow(clippy::unwrap_used)]
+fn point_channel_staging(
+    channel: Channel,
+    new_version: &str,
+    fail: &[&str],
+    landed: &[&str],
+    staged: &[&str],
+) -> Pointed {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let root = rooted(&dir);
     let dist = root.join("dist");
     fs::create_dir_all(&dist).unwrap();
-    for name in ["latest.json", "feed.json"] {
+    for name in staged {
         fs::write(dist.join(name), "{}").unwrap();
     }
     let bin = root.join("bin");
@@ -330,7 +355,31 @@ fn every_candidate_replaces_both_manifests_on_the_channel() {
             );
         }
         assert!(upload.contains("--clobber"), "{upload}");
+        // The digests document too: it is published by the same upload and
+        // named for a target, so a guard that listed its files by hand would
+        // carry the manifests and leave every candidate unable to check what
+        // it downloaded.
+        assert!(
+            upload.contains("dist/digests-x86_64-unknown-linux-gnu.json"),
+            "the digests document missing from {upload}"
+        );
     }
+}
+
+/// Handed nothing to publish, the run stops rather than reporting a channel
+/// it moved. An unmatched glob is left literal by the shell, so an upload
+/// built by pasting patterns together names files that are not there and a
+/// `dist` that arrived empty would still read as a channel repointed.
+#[cfg(unix)]
+#[test]
+fn a_run_handed_no_manifests_writes_nothing() {
+    let run = point_channel_staging(Channel::Carrying("1.0.0-rc1"), "1.0.0-rc2", &[], &[], &[]);
+    assert_ne!(run.code, 0, "{:?}", run.calls);
+    assert!(
+        run.ran("release upload").is_none(),
+        "an empty dist still uploaded: {:?}",
+        run.calls
+    );
 }
 
 /// `gh release upload --clobber` deletes an asset before uploading its

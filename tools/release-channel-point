@@ -2,8 +2,9 @@
 # Points the pre-release channel at the tag being published: one fixed
 # `prerelease` release whose latest.json and feed.json each new candidate
 # overwrites, which is the URL `update_channel::feed_url_for` sends a
-# candidate to. Uploads dist/latest.json and dist/feed.json, which name their
-# downloads by the tag that built them. The release workflow's channel job is
+# candidate to. Uploads dist/latest.json, dist/feed.json and the release's
+# per-target digests documents, which name their downloads by the tag that
+# built them. The release workflow's channel job is
 # the only caller; CHANNEL, NEW_VERSION, GITHUB_REPOSITORY and a GH_TOKEN gh
 # can use come from it. Exit 0 wrote the channel or left it alone on purpose,
 # exit 1 wrote nothing or says what it left behind.
@@ -18,16 +19,29 @@
 # through.
 set -euo pipefail
 
-# The manifests this run is about to replace, and so the ones it has to be
-# able to put back. `gh release upload --clobber` deletes an asset before
-# uploading its replacement, so a copy taken now is the only copy of what the
-# channel had if that upload then fails. A channel carrying neither leaves
-# saved/ absent, which is that channel's pre-upload set just as truly.
-save_manifests() {
-  local patterns=() name
-  for name in latest.json feed.json; do
-    if grep -qxF "$name" <<< "$assets"; then patterns+=(--pattern "$name"); fi
+# What this run puts on the channel, read off the files it was handed rather
+# than listed here. The two manifests are fixed, but a digests document
+# carries the target it was built for, so the set is whatever the release
+# published and a build that gains a target needs no edit here.
+uploaded() {
+  local file
+  for file in dist/latest.json dist/feed.json dist/digests-*.json; do
+    [ -f "$file" ] && printf '%s\n' "$file"
   done
+  return 0
+}
+
+# The channel's copies of those, and so the ones this run has to be able to
+# put back. `gh release upload --clobber` deletes an asset before uploading
+# its replacement, so a copy taken now is the only copy of what the channel
+# had if that upload then fails. A channel carrying none of them leaves saved/
+# absent, which is that channel's pre-upload set just as truly.
+save_manifests() {
+  local patterns=() file name
+  while IFS= read -r file; do
+    name=$(basename "$file")
+    if grep -qxF "$name" <<< "$assets"; then patterns+=(--pattern "$name"); fi
+  done < <(uploaded)
   [ ${#patterns[@]} -gt 0 ] || return 0
   gh release download "$CHANNEL" --repo "$GITHUB_REPOSITORY" \
     --dir saved "${patterns[@]}" --clobber
@@ -64,7 +78,7 @@ carrying_now() {
 # to have put back.
 restored=""
 restore() {
-  local name now
+  local file name now
   now=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${CHANNEL}" --jq '.assets[].name') || return 0
   # The tag stays behind. `gh release create` reuses an existing tag, so this
   # run cannot tell one it made from one that was already there carrying no
@@ -79,11 +93,12 @@ restore() {
   if [ -n "$(ls -A saved 2>/dev/null)" ]; then
     gh release upload "$CHANNEL" saved/*.json --repo "$GITHUB_REPOSITORY" --clobber || return 0
   fi
-  for name in latest.json feed.json; do
+  while IFS= read -r file; do
+    name=$(basename "$file")
     if [ ! -f "saved/$name" ] && grep -qxF "$name" <<< "$now"; then
       gh release delete-asset "$CHANNEL" "$name" --repo "$GITHUB_REPOSITORY" --yes || return 0
     fi
-  done
+  done < <(uploaded)
   restored=put-back
   return 0
 }
@@ -161,7 +176,16 @@ case "$verdict" in
     exit 1 ;;
 esac
 
-if ! gh release upload "$CHANNEL" dist/latest.json dist/feed.json \
+# One list, resolved once: what is uploaded is what the restore above knows
+# to take back off. An unmatched glob left literal would name a file that is
+# not there, and a `dist` holding nothing at all would upload nothing while
+# reporting a channel it moved.
+readarray -t publishing < <(uploaded)
+if [ ${#publishing[@]} -eq 0 ]; then
+  echo "::error::Nothing was written to the ${CHANNEL} channel: this run was handed no manifests to publish. Re-run the tag."
+  exit 1
+fi
+if ! gh release upload "$CHANNEL" "${publishing[@]}" \
      --repo "$GITHUB_REPOSITORY" --clobber; then
   # An upload that failed after the delete leaves the channel short a
   # manifest, and a candidate reading a channel with no latest.json sees no
