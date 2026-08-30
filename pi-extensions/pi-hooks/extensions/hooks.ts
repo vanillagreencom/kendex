@@ -5,7 +5,7 @@ import { isBareCd, preCommitGate } from "./bash-guards.js";
 import { refusalReason, repoCopyRefusal } from "./repo-copy-guard.js";
 import { getBool, getNumber, readConfig, recordProjectTrust } from "./config.js";
 import { deliverDrift, runDriftCheck } from "./drift-check.js";
-import { workspaceClippyErrors } from "./lint-hooks.js";
+import { workspaceClippyOutcome } from "./lint-hooks.js";
 
 const INSTALL_SYMBOL = Symbol.for("kendex.pi-hooks.installed");
 
@@ -113,14 +113,22 @@ export default function piHooks(pi: ExtensionAPI): void {
 		if (!getBool(cfg, "taskCompletedCheck")) return undefined;
 		if (turn.rustFilesTouched.size === 0) return undefined;
 
-		const issues = workspaceClippyErrors(ctx.cwd, getNumber(cfg, "clippyTimeoutMs"));
-		if (issues.length > 0 && ctx.hasUI) {
-			const preview = issues.slice(0, 5).join("\n");
-			ctx.ui.notify(
-				`pi-hooks: clippy reported ${issues.length} workspace error(s) at turn end:\n${preview}`,
-				"warning",
-			);
-		}
+		const outcome = workspaceClippyOutcome(ctx.cwd, getNumber(cfg, "clippyTimeoutMs"));
+		if (outcome.kind === "clean") return undefined;
+		const summary = outcome.kind === "errors"
+			? `pi-hooks: clippy reported ${outcome.lines.length} workspace error(s) at turn end:\n${outcome.lines.slice(0, 5).join("\n")}`
+			: `pi-hooks: end-of-turn clippy proved nothing about the tree: ${outcome.reason}.`;
+
+		// Pi discards a turn_end handler's return value, so the summary reaches
+		// the agent as a steering message instead: the loop drains those right
+		// after this event, so it lands in the next request whether or not a
+		// screen exists. `display: false` leaves interactive rendering to the
+		// notification below, which a headless session never sees.
+		pi.sendMessage(
+			{ customType: "kendex-clippy", content: summary, display: false },
+			{ triggerTurn: false },
+		);
+		if (ctx.hasUI) ctx.ui.notify(summary, outcome.kind === "errors" ? "warning" : "info");
 		return undefined;
 	});
 }

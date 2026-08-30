@@ -7,6 +7,10 @@ export type CargoResult = CommandResult;
 export function runCargo(args: string[], cwd: string, timeoutMs: number): CargoResult {
 	const result = spawnSync("cargo", args, {
 		cwd,
+		// The default already is process.env, but only as it stood when the
+		// runtime snapshotted it; naming it reads the live object, which is
+		// what lets a test put a fake cargo on PATH.
+		env: process.env,
 		encoding: "utf8",
 		timeout: Math.max(1, timeoutMs),
 		maxBuffer: 16 * 1024 * 1024,
