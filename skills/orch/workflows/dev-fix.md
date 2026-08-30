@@ -88,10 +88,14 @@ Cancel ends the workflow; a selection goes to § 2.
 
    `worktree-claim` exit 75 aborts the delegation (another session holds this worktree; stderr names the holder); exit 1 stops the workflow and is reported. Its printed token is the delegation's `Worktree Lease:` line.
 
-   Then persist the delegated item set on disk. Write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]"}`, one per delegated item. `[ITEM_TEXT]` is that item's formatted block verbatim. Decide whether this fix round may add files under `crates/`, `skills/*/scripts/`, `tools/`, or a test-helper path. The default is none. When a file is required, append one `--add [REPO_RELATIVE_PATH]` per exact path:
+   Then persist the delegated item set on disk. Write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]"}`, one per delegated item. `[ITEM_TEXT]` is that item's formatted block verbatim.
+
+   Decide whether this fix round may add protected files. Protected additions are root `crates/` and `tools/`; `skills/*/scripts/` and `.agents/skills/*/scripts/`; root or nested `src/test/`; directories named `helper`, `helpers`, `test-helper`, `test-helpers`, `test_helper`, `test_helpers`, `test-util`, `test-utils`, `test_util`, or `test_utils`; `lib`, `support`, `util`, or `utils` below `test/` or `tests/`; and files whose basename before the first extension has one of those helper or test-helper spellings. Renames and moves are not additions. The default is none.
+
+   When the list is non-empty, write `[WORKTREE_PATH]/tmp/dev-round-adds-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of exact repository-relative paths. Pass only that data-file path to the writer:
 
    ```bash
-   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json [--add [REPO_RELATIVE_PATH]]...
+   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json [--adds-file [WORKTREE_PATH]/tmp/dev-round-adds-[DEV_ROUND_ID].json]
    ```
 
    `--issue` takes the normalized workflow-state key — the value the delegation's `Artifact Key:` line carries. Only when every item's text is plain (no backticks or quotes) may you pass `--item [N] '[ITEM_TEXT]'` pairs inline in one command instead.
@@ -132,7 +136,7 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND] --expect-items-from-round
    ```
 
-   `--expect-items-from-round` reads the step-4 record and requires the artifact's `items[]` to cover EXACTLY that set — each item once, no unknowns or duplicates, valid decisions, non-empty reasoning. On exit 2 (record missing) the step-4 persistence never ran: write the record now from the delegated items still in context and re-run; only if that context is also gone, fall back to `--expect-items [ITEM_NUMBERS]` with numbers you can still prove.
+   `--expect-items-from-round` reads the step-4 record and its immutable authorization under the repository's git common directory. It requires an exact match and requires the artifact's `items[]` to cover that set, each item once with no unknowns or duplicates, valid decisions, and non-empty reasoning. Exit 2 means authorization cannot be established. Never recreate either record after delegation and never fall back to `--expect-items`; mint and delegate a fresh round.
 
    **Check B**:
 

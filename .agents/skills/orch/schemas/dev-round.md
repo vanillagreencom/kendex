@@ -4,7 +4,7 @@ The on-disk record of a fix round's delegated items, starting commit, and allowe
 
 ## Identity: the round id
 
-Filename: `[WORKTREE_PATH]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json`, carrying `"round_id": ROUND_ID` inside. Readers reject a record whose internal token differs from the expected round id.
+The recovery copy is `[WORKTREE_PATH]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json`. The authorization is `<git-common-dir>/kendex/dev-round-authorizations/[ISSUE_ID]-[ROUND_ID].json`, outside the delegated worktree. Both carry `"round_id": ROUND_ID`; readers require both regular files and exact equality across issue, round id, base SHA, additions, and items.
 
 `[ISSUE_ID]` is the normalized workflow-state key — dev-side workflows name the same value `[ARTIFACT_KEY]`, and a bundled round uses the Parent ID. It and `[ROUND_ID]` must match `^[A-Za-z0-9._-]+$` with no `..`.
 
@@ -29,18 +29,21 @@ Filename: `[WORKTREE_PATH]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json`, carrying `
 | `round_id` | Yes | `--round-id` | Per-delegation token; equals the filename token and the round's `dev_round_id` |
 | `issue` | Yes | `--issue` | Normalized workflow-state key |
 | `base_sha` | Yes | captured from `HEAD` | Commit at delegation time |
-| `adds` | Yes | repeated `--add PATH` | Exact repository-relative files the round may add; an empty array allows none |
+| `adds` | Yes | `--adds-file JSON_PATH` | Exact repository-relative files the round may add; an empty array allows none |
 | `items` | Yes (>=1) | `--items-file` or `--item N TEXT` | `n` is the delegated item number (a unique integer >= 0), `text` the item's formatted block verbatim |
 
 `--items-file` is the default route: build the array with the harness file-write tool. The inline `--item N TEXT` form is equivalent when every item's text is plain, with `N` a canonical integer. The two sources are mutually exclusive; `dev-round-write --help` is the flag reference.
 
-An `Adds:` delegation line maps to one `--add` per path. The writer rejects absolute paths, empty components, `.` and `..` components, newlines, and duplicates. Omit the line and flags when no additions are allowed.
+An `Adds:` delegation line maps to a JSON array passed through `--adds-file`; repository paths never enter shell command text. The writer and reader reject absolute paths, leading or trailing empty components, double slashes, `.` and `..` components, newlines, carriage returns, and duplicates. Omit the line and flag when no additions are allowed.
 
-**Immutable per round.** Re-running with byte-identical content is an idempotent retry; different content under the same round id exits 2. A changed delegation mints a new round id. An analysis round has no delegated items and writes no record — the writer rejects an empty set.
+The external authorization adds `"schema_version": 1` and `"worktree": "[CANONICAL_WORKTREE_ROOT]"` to the same issue, round, base, additions, and items fields.
+
+**Immutable per round.** Re-running when both records exist with byte-identical content is an idempotent retry. Different content, a missing half, or a symlink exits 2. Never recreate either half after delegation and never fall back to an unbound item list. Mint a new round. An analysis round has no delegated items and writes no record.
 
 ## Readers
 
-- **`dev-artifact-check --expect-items-from-round`** derives the exact expected item-number set from `items[].n`. It also compares `base_sha...HEAD` and refuses an addition under `crates/`, `tools/`, `skills/*/scripts/`, `*/src/test/`, test `lib`, `helper`, `helpers`, `support`, `util`, or `utils` directories, and filenames containing `test-helper` or `test_util`, unless `adds` names the exact path. The refusal's `files` array names every path. Git rename detection excludes moves and renames.
+- **`dev-artifact-check --expect-items-from-round`** derives the expected items and additions from the external authorization after checking the worktree copy exactly matches it. It compares `base_sha...HEAD` through a checked, NUL-delimited Git probe. Comparison failures return `comparison_failed`; an unusable classifier result returns `classifier_failed`.
+- **Protected additions** are root `crates/` and `tools/`; `skills/*/scripts/` and `.agents/skills/*/scripts/`; root or nested `src/test/`; directories named `helper`, `helpers`, `test-helper`, `test-helpers`, `test_helper`, `test_helpers`, `test-util`, `test-utils`, `test_util`, or `test_utils`; `lib`, `support`, `util`, or `utils` below `test/` or `tests/`; and files whose basename before the first extension has one of those helper or test-helper spellings. `unapproved_additions` returns every refused path in `files`. Git rename detection keeps moves and renames outside the additions gate.
 - **A respawned dev agent** reads `items[]` to recover the item numbers and texts.
 - **The tail-reconciliation nudge** points at the record.
 

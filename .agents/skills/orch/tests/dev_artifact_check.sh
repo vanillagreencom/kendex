@@ -374,14 +374,23 @@ git -C "$adds_wt" config commit.gpgsign false
 git -C "$adds_wt" commit -q --allow-empty -m base
 
 "$ROUND_WRITE" --worktree "$adds_wt" --issue issue-826 --round-id 1-1 --item 1 "fix finding" >/dev/null
-mkdir -p "$adds_wt/crates/new-parser" "$adds_wt/skills/orch/scripts" "$adds_wt/tools" "$adds_wt/ui/src/test"
+mkdir -p "$adds_wt/.agents/skills/orch/scripts" "$adds_wt/crates/new-parser" "$adds_wt/helpers" \
+  "$adds_wt/pkg/test_helpers" "$adds_wt/skills/orch/scripts" "$adds_wt/src" \
+  "$adds_wt/test/support" "$adds_wt/tools" "$adds_wt/ui/src/test"
+printf 'installed\n' > "$adds_wt/.agents/skills/orch/scripts/installed-check"
 printf 'crate\n' > "$adds_wt/crates/new-parser/lib.rs"
+printf 'root helper\n' > "$adds_wt/helpers/root-helper.ts"
+printf 'nested helper\n' > "$adds_wt/pkg/test_helpers/nested.ts"
 printf 'script\n' > "$adds_wt/skills/orch/scripts/new-check"
+printf 'basename helper\n' > "$adds_wt/src/test_utils.rs"
+printf 'root test support\n' > "$adds_wt/test/support/root-support.sh"
 printf 'tool\n' > "$adds_wt/tools/new-tool"
 newline_path=$'tools/new\nline'
 printf 'odd path\n' > "$adds_wt/$newline_path"
 printf 'helper\n' > "$adds_wt/ui/src/test/round-helper.ts"
-git -C "$adds_wt" add crates/new-parser/lib.rs skills/orch/scripts/new-check tools/new-tool "$newline_path" ui/src/test/round-helper.ts
+git -C "$adds_wt" add .agents/skills/orch/scripts/installed-check crates/new-parser/lib.rs \
+  helpers/root-helper.ts pkg/test_helpers/nested.ts skills/orch/scripts/new-check \
+  src/test_utils.rs test/support/root-support.sh tools/new-tool "$newline_path" ui/src/test/round-helper.ts
 git -C "$adds_wt" commit -q -m additions
 adds_head="$(git -C "$adds_wt" rev-parse HEAD)"
 "$WRITE" --worktree "$adds_wt" --kind fix --issue issue-826 --round-id 1-1 --branch b --commit "$adds_head" \
@@ -391,20 +400,25 @@ adds_out="$("$CHECK" --worktree "$adds_wt" --issue issue-826 --round-id 1-1 --ex
 adds_rc=$?
 set -e
 assert_eq "$adds_rc" "1" "an unlisted sensitive addition refuses acceptance"
+assert_eq "$(jq -r '.ok' <<<"$adds_out")" "false" "the refusal reports ok false"
+assert_eq "$(jq -r '.verdict' <<<"$adds_out")" "retry" "the refusal routes to retry"
+assert_eq "$(jq -r '.path' <<<"$adds_out")" "$adds_wt/tmp/dev-return-issue-826-1-1.json" "the refusal binds the artifact path"
 assert_eq "$(jq -r '.reason' <<<"$adds_out")" "unapproved_additions" "the refusal has a distinct reason"
 assert_eq "$(jq -c '.files' <<<"$adds_out")" \
-  '["crates/new-parser/lib.rs","skills/orch/scripts/new-check","tools/new\nline","tools/new-tool","ui/src/test/round-helper.ts"]' \
+  '[".agents/skills/orch/scripts/installed-check","crates/new-parser/lib.rs","helpers/root-helper.ts","pkg/test_helpers/nested.ts","skills/orch/scripts/new-check","src/test_utils.rs","test/support/root-support.sh","tools/new\nline","tools/new-tool","ui/src/test/round-helper.ts"]' \
   "the refusal names every unlisted addition"
 
+allowed_adds="$TMP_ROOT/allowed-adds.json"
+printf '%s' '["crates/allowed/lib.rs","skills/orch/scripts/allowed-check","tools/allowed tool;still-data","ui/src/test/allowed-helper.ts"]' > "$allowed_adds"
 "$ROUND_WRITE" --worktree "$adds_wt" --issue issue-826 --round-id 2-2 --item 1 "fix finding" \
-  --add crates/allowed/lib.rs --add skills/orch/scripts/allowed-check \
-  --add tools/allowed-tool --add ui/src/test/allowed-helper.ts >/dev/null
+  --adds-file "$allowed_adds" >/dev/null
 mkdir -p "$adds_wt/crates/allowed"
 printf 'crate\n' > "$adds_wt/crates/allowed/lib.rs"
 printf 'script\n' > "$adds_wt/skills/orch/scripts/allowed-check"
-printf 'tool\n' > "$adds_wt/tools/allowed-tool"
+printf 'tool\n' > "$adds_wt/tools/allowed tool;still-data"
 printf 'helper\n' > "$adds_wt/ui/src/test/allowed-helper.ts"
-git -C "$adds_wt" add crates/allowed/lib.rs skills/orch/scripts/allowed-check tools/allowed-tool ui/src/test/allowed-helper.ts
+git -C "$adds_wt" add crates/allowed/lib.rs skills/orch/scripts/allowed-check \
+  "tools/allowed tool;still-data" ui/src/test/allowed-helper.ts
 git -C "$adds_wt" commit -q -m allowed-additions
 allowed_head="$(git -C "$adds_wt" rev-parse HEAD)"
 "$WRITE" --worktree "$adds_wt" --kind fix --issue issue-826 --round-id 2-2 --branch b --commit "$allowed_head" \
@@ -423,6 +437,43 @@ move_head="$(git -C "$adds_wt" rev-parse HEAD)"
   --validate pass --item 1 Applied done >/dev/null
 assert_eq "$(reason --worktree "$adds_wt" --issue issue-826 --round-id 3-3 --expect-items-from-round)" "valid" \
   "a moved file is not treated as an addition"
+
+# A three-dot comparison with no merge base is a distinct failed probe, never
+# an empty violation set or unapproved_additions with no files.
+diverge_wt="$TMP_ROOT/diverge"
+mkdir -p "$diverge_wt"
+git -C "$diverge_wt" init -q -b main
+git -C "$diverge_wt" config user.email test@example.com
+git -C "$diverge_wt" config user.name Test
+git -C "$diverge_wt" config commit.gpgsign false
+git -C "$diverge_wt" commit -q --allow-empty -m base
+"$ROUND_WRITE" --worktree "$diverge_wt" --issue issue-826 --round-id 4-4 --item 1 compare >/dev/null
+git -C "$diverge_wt" checkout -q --orphan divergent
+git -C "$diverge_wt" commit -q --allow-empty -m divergent
+diverge_head="$(git -C "$diverge_wt" rev-parse HEAD)"
+"$WRITE" --worktree "$diverge_wt" --kind fix --issue issue-826 --round-id 4-4 --branch divergent \
+  --commit "$diverge_head" --validate pass --item 1 Applied done >/dev/null
+set +e
+diverge_out="$("$CHECK" --worktree "$diverge_wt" --issue issue-826 --round-id 4-4 --expect-items-from-round 2>/dev/null)"
+diverge_rc=$?
+set -e
+assert_eq "$diverge_rc" "1" "a comparison with no merge base fails acceptance"
+assert_eq "$(jq -r '.ok' <<<"$diverge_out")" "false" "comparison failure reports ok false"
+assert_eq "$(jq -r '.verdict' <<<"$diverge_out")" "retry" "comparison failure routes to retry"
+assert_eq "$(jq -r '.reason' <<<"$diverge_out")" "comparison_failed" "comparison failure has a distinct reason"
+assert_eq "$(jq -c '.files' <<<"$diverge_out")" "[]" "comparison failure does not fabricate refused files"
+routing_mutant="$TMP_ROOT/routing-mutant"
+cp "$CHECK" "$routing_mutant"
+sed -i 's/emit false "$file" "comparison_failed"/emit false "$file" "unapproved_additions"/' "$routing_mutant"
+chmod +x "$routing_mutant"
+set +e
+routing_mutant_out="$("$routing_mutant" --worktree "$diverge_wt" --issue issue-826 --round-id 4-4 --expect-items-from-round 2>/dev/null)"
+set -e
+if [[ "$(jq -r '.reason' <<<"$routing_mutant_out")" == "comparison_failed" ]]; then
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "routing control detects a comparison-failure misroute"
+else
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "routing control detects a comparison-failure misroute"
+fi
 
 # --- kendex#994: the recorded commit must name a real object in the worktree's repo ---
 # Case 1 (hyprtrade CC-1006): a dev agent hand-reconstructed a full SHA from the
@@ -539,8 +590,8 @@ assert_file_contains "$orch_dev_fix" "$WATCHDOG_STAMP" "orch dev-fix still stamp
 assert_file_contains "$orch_dev_fix" "$ROUND_STAMP" "orch dev-fix mints dev_round_id before delegation"
 assert_file_contains "$orch_dev_fix" "$ROUND_CHECK_EXPECT" "orch dev-fix accepts via round-mode dev-artifact-check WITH --expect-items-from-round in one command"
 assert_file_contains "$orch_dev_fix" "$ROUND_ITEMS_PERSIST" "orch dev-fix persists the delegated item set at stamp time (kendex#1230)"
-assert_file_contains "$orch_dev_fix" "Adds: [REPO_RELATIVE_PATH]" "orch dev-fix delegation carries the optional Adds line"
-assert_file_contains "$orch_dev_fix" "--add [REPO_RELATIVE_PATH]" "orch dev-fix records each allowed path in the round record"
+assert_file_not_contains "$orch_dev_fix" "write the record now" "orch dev-fix never recreates missing round state after delegation"
+assert_file_not_contains "$orch_dev_fix" "only if that context is also gone, fall back" "orch dev-fix never bypasses authorization with a typed item set"
 assert_file_contains "$orch_dev_fix" "Round ID: [DEV_ROUND_ID]" "orch dev-fix delegation carries the Round ID line"
 assert_file_contains "$orch_dev_fix" "$ARTIFACT_KEY_LINE" "orch dev-fix delegation carries the Artifact Key line"
 
@@ -549,8 +600,6 @@ assert_file_contains "$review_pr_comments" "$WATCHDOG_STAMP" "review-pr-comments
 assert_file_contains "$review_pr_comments" "$ROUND_STAMP" "review-pr-comments § 6.1 mints dev_round_id before delegation"
 assert_file_contains "$review_pr_comments" "$ROUND_CHECK_EXPECT" "review-pr-comments accepts via round-mode dev-artifact-check WITH --expect-items-from-round in one command"
 assert_file_contains "$review_pr_comments" "$ROUND_ITEMS_PERSIST" "review-pr-comments persists each group's delegated item set at stamp time (kendex#1230)"
-assert_file_contains "$review_pr_comments" "Adds: [REPO_RELATIVE_PATH]" "review-pr-comments delegation carries the optional Adds line"
-assert_file_contains "$review_pr_comments" "--add [REPO_RELATIVE_PATH]" "review-pr-comments records each allowed path in the round record"
 assert_file_contains "$review_pr_comments" "Round ID: [DEV_ROUND_ID]" "review-pr-comments delegation carries the Round ID line"
 assert_file_contains "$review_pr_comments" "$ARTIFACT_KEY_LINE" "review-pr-comments delegation carries the Artifact Key line"
 
@@ -634,6 +683,8 @@ assert_contains_str() {
 assert_contains_str "$check_help" "Gates ordered:" "--help documents the gate ordering"
 assert_contains_str "$check_help" "commit_unresolvable" "--help documents the commit gate"
 assert_contains_str "$check_help" "unapproved_additions" "--help documents the additions gate"
+assert_contains_str "$check_help" "comparison_failed" "--help documents Git comparison failures"
+assert_contains_str "$check_help" "classifier_failed" "--help documents classifier failures"
 assert_contains_str "$check_help" "incomplete" "--help documents the incomplete reason"
 artifact_checks_ref="$REPO_ROOT/skills/orch/references/artifact-checks.md"
 assert_file_contains "$artifact_checks_ref" "--help" "artifact-checks reference routes to the help contracts"
@@ -650,6 +701,8 @@ assert_file_contains "$dev_round_schema" "dev-round-write" "dev-round schema ref
 assert_file_contains "$dev_round_schema" "round_id" "dev-round schema documents round_id identity"
 assert_file_contains "$dev_round_schema" "base_sha" "dev-round schema documents the fix round base"
 assert_file_contains "$dev_round_schema" "adds" "dev-round schema documents allowed additions"
+assert_file_contains "$dev_round_schema" "git-common-dir" "dev-round schema documents external authorization storage"
+assert_file_contains "$dev_round_schema" "never fall back" "dev-round schema forbids post-delegation recovery bypass"
 assert_file_contains "$dev_round_schema" "--expect-items-from-round" "dev-round schema documents the check-side reader"
 
 # --- kendex#884: the note has to reach the orchestrator, not just the file ---

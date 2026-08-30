@@ -13,6 +13,7 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 WRITE="$REPO_ROOT/skills/orch/scripts/dev-round-write"
+CHECK="$REPO_ROOT/skills/orch/scripts/dev-artifact-check"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
@@ -27,6 +28,59 @@ assert_eq() {
   else
     FAIL=$((FAIL + 1))
     printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
+  fi
+}
+
+fenced_block_with() {
+  local file="$1" needle="$2"
+  awk -v needle="$needle" '
+    /^[[:space:]]*```/ {
+      if (!inside) { inside = 1; block = $0 ORS; next }
+      block = block $0 ORS
+      if (index(block, needle) > 0) { printf "%s", block; exit }
+      inside = 0; block = ""; next
+    }
+    inside { block = block $0 ORS }
+  ' "$file"
+}
+
+delegation_block() {
+  local file="$1" needle="$2"
+  awk -v needle="$needle" '
+    /<delegation_format>/ { inside = 1; block = "" }
+    inside { block = block $0 ORS }
+    /<\/delegation_format>/ && inside {
+      if (index(block, needle) > 0) { printf "%s", block; exit }
+      inside = 0; block = ""
+    }
+  ' "$file"
+}
+
+function_block() {
+  local file="$1" function_name="$2" start
+  start="^${function_name}[(][)]"
+  awk -v start="$start" '
+    $0 ~ start { inside = 1 }
+    inside { print }
+    inside && /^}/ { exit }
+  ' "$file"
+}
+
+assert_text_matches() {
+  local text="$1" pattern="$2" name="$3"
+  if grep -Eq -- "$pattern" <<<"$text"; then
+    PASS=$((PASS + 1)); printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        missing live pattern: %s\n' "$name" "$pattern"
+  fi
+}
+
+assert_text_not_matches() {
+  local text="$1" pattern="$2" name="$3"
+  if grep -Eq -- "$pattern" <<<"$text"; then
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        unexpected live pattern: %s\n' "$name" "$pattern"
+  else
+    PASS=$((PASS + 1)); printf '  ok    %s\n' "$name"
   fi
 }
 
@@ -51,6 +105,8 @@ git -C "$worktree" config commit.gpgsign false
 git -C "$worktree" commit -q --allow-empty -m base
 base_sha="$(git -C "$worktree" rev-parse HEAD)"
 RID="1750000000-77"
+adds_file="$TMP_ROOT/adds.json"
+printf '%s' '["crates/parser/src/lib.rs","skills/orch/scripts/new-check"]' > "$adds_file"
 
 # --- valid: two-item round record ---
 ITEM1='#1 | security-review | src/auth.rs
@@ -61,7 +117,7 @@ Description: "no coverage for expired token"
 Recommendation: "add expiry regression test"'
 out="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id "$RID" \
   --item 1 "$ITEM1" --item 2 "$ITEM2" \
-  --add crates/parser/src/lib.rs --add skills/orch/scripts/new-check)"
+  --adds-file "$adds_file")"
 assert_eq "$out" "$worktree/tmp/dev-round-issue-1230-$RID.json" "prints the round-scoped record path"
 assert_eq "$([[ -f "$out" ]] && echo yes)" "yes" "wrote the file"
 assert_eq "$(jq -r '.schema_version' "$out")" "2" ".schema_version is 2"
@@ -70,6 +126,12 @@ assert_eq "$(jq -r '.round_id' "$out")" "$RID" ".round_id matches --round-id (in
 assert_eq "$(jq -r '.issue' "$out")" "issue-1230" ".issue is the normalized state key"
 assert_eq "$(jq -r '.base_sha' "$out")" "$base_sha" ".base_sha records HEAD at delegation"
 assert_eq "$(jq -c '.adds' "$out")" '["crates/parser/src/lib.rs","skills/orch/scripts/new-check"]' ".adds records each allowed new path"
+auth="$worktree/.git/kendex/dev-round-authorizations/issue-1230-$RID.json"
+assert_eq "$([[ -f "$auth" && ! -L "$auth" ]] && echo yes)" "yes" "writes the authorization outside the worktree"
+assert_eq "$(jq -r '.worktree' "$auth")" "$worktree" "authorization binds the canonical worktree"
+assert_eq "$(jq -r '.base_sha' "$auth")" "$base_sha" "authorization binds the delegation-time base"
+assert_eq "$(jq -c '.adds' "$auth")" '["crates/parser/src/lib.rs","skills/orch/scripts/new-check"]' "authorization binds the allowed paths"
+assert_eq "$(jq -c '.items' "$auth")" "$(jq -c '.items' "$out")" "authorization binds the delegated items"
 assert_eq "$(jq -r '.items | length' "$out")" "2" ".items carries one entry per --item"
 assert_eq "$(jq -r '.items[0].n' "$out")" "1" "first item keeps its delegated number"
 assert_eq "$(jq -r '.items[0].n | type' "$out")" "number" ".items[].n is a JSON number"
@@ -82,12 +144,60 @@ assert_eq "$(jq -r '.items[1].text' "$out")" "$ITEM2" ".items[].text preserves t
 # refused: a changed delegation needs a NEW round id.
 out_rerun="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id "$RID" \
   --item 1 "$ITEM1" --item 2 "$ITEM2" \
-  --add crates/parser/src/lib.rs --add skills/orch/scripts/new-check)"
+  --adds-file "$adds_file")"
 assert_eq "$out_rerun" "$out" "identical re-invocation is idempotent (exit 0, same path)"
 assert_eq "$(jq -c '[.items[].n]' "$out")" "[1,2]" "identical re-invocation leaves the record unchanged"
 assert_exit2 "a different item set under the same round id exits 2 (immutable round)" \
   --worktree "$worktree" --issue issue-1230 --round-id "$RID" --item 3 "replacement"
 assert_eq "$(jq -c '[.items[].n]' "$out")" "[1,2]" "the refused rewrite left the original record intact"
+
+# A partial record pair is never repaired after delegation. The orchestrator
+# mints a fresh round instead of recreating authorization or baseline state.
+partial_round="$worktree/tmp/dev-round-issue-1230-6-6.json"
+"$WRITE" --worktree "$worktree" --issue issue-1230 --round-id 6-6 --item 1 partial >/dev/null
+partial_auth="$worktree/.git/kendex/dev-round-authorizations/issue-1230-6-6.json"
+rm -f "$partial_round"
+assert_exit2 "missing worktree record is not recreated from authorization" \
+  --worktree "$worktree" --issue issue-1230 --round-id 6-6 --item 1 partial
+assert_eq "$([[ -e "$partial_round" ]] && echo yes || echo no)" "no" "refused recovery leaves the worktree record missing"
+"$WRITE" --worktree "$worktree" --issue issue-1230 --round-id 7-7 --item 1 partial >/dev/null
+partial_round="$worktree/tmp/dev-round-issue-1230-7-7.json"
+partial_auth="$worktree/.git/kendex/dev-round-authorizations/issue-1230-7-7.json"
+rm -f "$partial_auth"
+assert_exit2 "missing authorization is not recreated from the worktree record" \
+  --worktree "$worktree" --issue issue-1230 --round-id 7-7 --item 1 partial
+assert_eq "$([[ -e "$partial_auth" ]] && echo yes || echo no)" "no" "refused recovery leaves authorization missing"
+set +e
+"$CHECK" --worktree "$worktree" --issue issue-1230 --round-id 7-7 --expect-items-from-round >/dev/null 2>&1
+assert_eq "$?" "2" "acceptance fails closed when external authorization is missing"
+set -e
+
+"$WRITE" --worktree "$worktree" --issue issue-1230 --round-id 8-8 --item 1 schema >/dev/null
+auth8="$worktree/.git/kendex/dev-round-authorizations/issue-1230-8-8.json"
+jq '.base_sha = 42' "$auth8" > "$TMP_ROOT/auth8.json"
+mv "$TMP_ROOT/auth8.json" "$auth8"
+set +e
+"$CHECK" --worktree "$worktree" --issue issue-1230 --round-id 8-8 --expect-items-from-round >/dev/null 2>&1
+assert_eq "$?" "2" "authorization with a non-string base_sha fails its schema arm"
+set -e
+
+"$WRITE" --worktree "$worktree" --issue issue-1230 --round-id 9-9 --item 1 schema >/dev/null
+auth9="$worktree/.git/kendex/dev-round-authorizations/issue-1230-9-9.json"
+jq '.adds = ["tools/"]' "$auth9" > "$TMP_ROOT/auth9.json"
+mv "$TMP_ROOT/auth9.json" "$auth9"
+set +e
+"$CHECK" --worktree "$worktree" --issue issue-1230 --round-id 9-9 --expect-items-from-round >/dev/null 2>&1
+assert_eq "$?" "2" "authorization with an empty path component fails its adds schema arm"
+set -e
+
+"$WRITE" --worktree "$worktree" --issue issue-1230 --round-id 10-10 --item 1 schema >/dev/null
+round10="$worktree/tmp/dev-round-issue-1230-10-10.json"
+jq '.adds = ["tools/extra"]' "$round10" > "$TMP_ROOT/round10.json"
+mv "$TMP_ROOT/round10.json" "$round10"
+set +e
+"$CHECK" --worktree "$worktree" --issue issue-1230 --round-id 10-10 --expect-items-from-round >/dev/null 2>&1
+assert_eq "$?" "2" "worktree record differing from external authorization fails closed"
+set -e
 
 # --- a fresh round id scopes a distinct file; the prior round's record survives ---
 out2="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id 2-2 --item 1 "next round")"
@@ -171,12 +281,73 @@ assert_exit2 "duplicate --issue exits 2 (no silent last-wins)" \
   --worktree "$worktree" --issue i --issue j --round-id 1-1 --item 1 t
 assert_exit2 "unknown argument exits 2" \
   --worktree "$worktree" --issue i --round-id 1-1 --item 1 t --bogus
-assert_exit2 "absolute --add path exits 2" \
-  --worktree "$worktree" --issue i --round-id 1-1 --item 1 t --add /tools/new
-assert_exit2 "traversing --add path exits 2" \
-  --worktree "$worktree" --issue i --round-id 1-1 --item 1 t --add tools/../new
-assert_exit2 "duplicate --add path exits 2" \
-  --worktree "$worktree" --issue i --round-id 1-1 --item 1 t --add tools/new --add tools/new
+printf '%s' '["/tools/new"]' > "$adds_file"
+assert_exit2 "absolute path in --adds-file exits 2" \
+  --worktree "$worktree" --issue i --round-id 1-1 --item 1 t --adds-file "$adds_file"
+printf '%s' '["tools/"]' > "$adds_file"
+assert_exit2 "trailing slash in --adds-file exits 2" \
+  --worktree "$worktree" --issue i --round-id 1-1 --item 1 t --adds-file "$adds_file"
+printf '%s' '["tools//new"]' > "$adds_file"
+assert_exit2 "double slash in --adds-file exits 2" \
+  --worktree "$worktree" --issue i --round-id 1-1 --item 1 t --adds-file "$adds_file"
+printf '%s' '["tools/."]' > "$adds_file"
+assert_exit2 "terminal dot component in --adds-file exits 2" \
+  --worktree "$worktree" --issue i --round-id 1-1 --item 1 t --adds-file "$adds_file"
+printf '%s' '["tools/./new"]' > "$adds_file"
+assert_exit2 "interior dot component in --adds-file exits 2" \
+  --worktree "$worktree" --issue i --round-id 1-1 --item 1 t --adds-file "$adds_file"
+printf '%s' '["tools/../new"]' > "$adds_file"
+assert_exit2 "traversing path in --adds-file exits 2" \
+  --worktree "$worktree" --issue i --round-id 1-1 --item 1 t --adds-file "$adds_file"
+printf '%s' '["tools/new\nline"]' > "$adds_file"
+assert_exit2 "newline in --adds-file exits 2" \
+  --worktree "$worktree" --issue i --round-id 1-1 --item 1 t --adds-file "$adds_file"
+printf '%s' '["tools/new\rline"]' > "$adds_file"
+assert_exit2 "carriage return in --adds-file exits 2" \
+  --worktree "$worktree" --issue i --round-id 1-1 --item 1 t --adds-file "$adds_file"
+printf '%s' '["tools/new","tools/new"]' > "$adds_file"
+assert_exit2 "duplicate path in --adds-file exits 2" \
+  --worktree "$worktree" --issue i --round-id 1-1 --item 1 t --adds-file "$adds_file"
+
+# Live workflow blocks own the additions-file transport. Prose and commented
+# decoys outside those blocks cannot satisfy these controls.
+for workflow in dev-fix review-pr-comments; do
+  workflow_file="$REPO_ROOT/skills/orch/workflows/$workflow.md"
+  round_block="$(fenced_block_with "$workflow_file" "dev-round-write --worktree")"
+  delegation="$(delegation_block "$workflow_file" "Adds: [REPO_RELATIVE_PATH]")"
+  assert_text_matches "$round_block" '^[[:space:]]*\.agents/.+dev-round-write .+--adds-file ' "$workflow live command passes an additions data file"
+  assert_text_not_matches "$round_block" '(^|[[:space:]])--add([[:space:]]|$)' "$workflow live command carries no repository path argument"
+  assert_text_matches "$delegation" '^[[:space:]]*\[If the round may add files: "Adds: \[REPO_RELATIVE_PATH\]' "$workflow live delegation carries the optional Adds line"
+done
+
+command_mutant="$TMP_ROOT/dev-fix-command-mutant.md"
+cp "$REPO_ROOT/skills/orch/workflows/dev-fix.md" "$command_mutant"
+sed -i '/dev-round-write --worktree/ s/^[[:space:]]*/# /' "$command_mutant"
+printf '\n--adds-file decoy outside the command block\n' >> "$command_mutant"
+mutant_round_block="$(fenced_block_with "$command_mutant" "dev-round-write --worktree")"
+assert_text_not_matches "$mutant_round_block" '^[[:space:]]*\.agents/.+dev-round-write .+--adds-file ' "workflow control rejects a commented live command plus prose decoy"
+
+delegation_mutant="$TMP_ROOT/dev-fix-delegation-mutant.md"
+cp "$REPO_ROOT/skills/orch/workflows/dev-fix.md" "$delegation_mutant"
+sed -i '/^   \[If the round may add files: "Adds:/ s/^/   <!-- /; /^   <!-- .*Adds:/ s/$/ -->/' "$delegation_mutant"
+printf '\nAdds: [REPO_RELATIVE_PATH] prose decoy\n' >> "$delegation_mutant"
+mutant_delegation="$(delegation_block "$delegation_mutant" "Adds: [REPO_RELATIVE_PATH]")"
+assert_text_not_matches "$mutant_delegation" '^[[:space:]]*\[If the round may add files: "Adds: \[REPO_RELATIVE_PATH\]' "workflow control rejects an inert delegation line plus prose decoy"
+
+if grep -Fq '< <(' "$CHECK" || grep -Fq '$!' "$CHECK"; then
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "Git probe avoids process-substitution PID behavior"
+else
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "Git probe avoids process-substitution PID behavior"
+fi
+classifier_block="$(function_block "$CHECK" collect_unapproved_additions)"
+assert_text_matches "$classifier_block" '\[\[ -s "\$result" \]\]' "classifier rejects an empty result file"
+assert_text_matches "$classifier_block" 'type == "array"' "classifier requires an array result"
+assert_text_matches "$classifier_block" 'all\(\.\[\]; type == "string"\)' "classifier requires string result entries"
+classifier_mutant="$TMP_ROOT/classifier-mutant"
+cp "$CHECK" "$classifier_mutant"
+sed -i '/\[\[ -s "\$result" \]\]/d' "$classifier_mutant"
+mutant_classifier_block="$(function_block "$classifier_mutant" collect_unapproved_additions)"
+assert_text_not_matches "$mutant_classifier_block" '\[\[ -s "\$result" \]\]' "classifier control detects a removed empty-result guard"
 
 set +e
 "$WRITE" -h >/dev/null 2>&1

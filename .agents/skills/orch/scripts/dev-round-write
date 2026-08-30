@@ -12,10 +12,10 @@
 # immediately after stamping the round (`workflow-state new-round-id`), before
 # delegating.
 #
-# The record follows the dev-return round-token discipline (kendex#776): it is
-# named [WORKTREE]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json AND carries
-# "round_id": ROUND_ID inside, so a copied/renamed file from another round can
-# never stand in for this round's record. Readers:
+# The recovery copy follows the dev-return round-token discipline (kendex#776):
+# it is named [WORKTREE]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json and carries
+# "round_id": ROUND_ID inside. The authorization lives under the repository's
+# git common directory, outside the delegated worktree. Readers:
 #   - dev-artifact-check --expect-items-from-round derives the exact expected
 #     item-number set from it (rejecting a record whose internal token differs);
 #   - a respawned dev agent (dev/workflows/dev-fix.md § 6) reads items[].text
@@ -26,7 +26,7 @@
 # Usage:
 #   dev-round-write --worktree PATH --issue ID --round-id RID \
 #     (--item N TEXT [--item N TEXT]... | --items-file JSON_PATH) \
-#     [--add REPO_RELATIVE_PATH]...
+#     [--adds-file JSON_PATH]
 #
 # One --item per delegated review item: N is the item's delegated number (the
 # `#[N]` in the formatted items — a set, so duplicates are rejected; canonical
@@ -46,12 +46,12 @@
 # round id (`workflow-state new-round-id`), which is the round-token
 # discipline: one token, one delegation, one item set.
 #
-# Each --add records a file the orchestrator authorized this fix round to add.
-# The writer records HEAD as the comparison base used at acceptance.
+# --adds-file carries the files the orchestrator authorized this fix round to
+# add. The writer records HEAD as the comparison base used at acceptance.
 #
 # Record schema — canonical source of truth: skills/orch/schemas/dev-round.md
 #   {
-#     "schema_version": 2,                  // required, number
+#     "schema_version": 2,                  // worktree recovery copy
 #     "round_id": "[ROUND_ID]",             // required, matches the filename token
 #     "issue": "[ISSUE_ID]",                // required, normalized state key
 #     "base_sha": "[HEAD_AT_DELEGATION]",    // required, full commit id
@@ -59,10 +59,9 @@
 #     "items": [{"n": 1, "text": "…"}]      // required, >=1 entry
 #   }
 #
-# It is a sanctioned single-command invocation (harness-safe: one command with
-# explicit arguments, no shell redirection in the caller's command; the write is
-# internal and atomic — temp file + mv). Writes the record and prints its
-# absolute path (one line). All usage/validation errors exit 2.
+# It is a sanctioned single-command invocation. Writes the recovery copy and
+# immutable external authorization, then prints the recovery path. All
+# usage/validation errors exit 2.
 
 set -euo pipefail
 
@@ -83,10 +82,11 @@ usage() {
 Usage:
   dev-round-write --worktree PATH --issue ID --round-id RID \
     (--item N TEXT [--item N TEXT]... | --items-file JSON_PATH) \
-    [--add REPO_RELATIVE_PATH]...
+    [--adds-file JSON_PATH]
 
 Persists the round's delegated item set to PATH/tmp/dev-round-ID-RID.json
-(atomically) and prints its absolute path. One --item per delegated review
+(atomically), writes matching authorization outside PATH under the git common
+directory, and prints the recovery path. One --item per delegated review
 item: N is the item's delegated number (duplicates rejected — the set is what
 dev-artifact-check --expect-items-from-round checks against; canonical integer,
 no leading zeros), TEXT is the item's full formatted block verbatim (non-empty
@@ -99,10 +99,13 @@ success; different content under the same round id exits 2 — a changed
 delegation needs a NEW round id. The record is read back by
 dev-artifact-check --expect-items-from-round, by a respawned dev agent
 recovering its items, and by the tail-reconciliation nudge.
-Each --add names one repository-relative file the fix round may add. Omit it to
-allow none. Absolute, traversing, empty, and duplicate paths are rejected. The
+--adds-file is a JSON array of repository-relative files the fix round may add.
+Omit it to allow none. Absolute, traversing, empty-component, multiline, and
+duplicate paths are rejected. Paths stay in the file channel, never argv. The
 record captures the worktree's current HEAD as base_sha; a worktree with no
 resolvable HEAD is rejected.
+Both record halves must already exist or both be absent. A missing half is
+never recreated; mint a new round.
 --issue / --round-id must match
 ^[A-Za-z0-9._-]+$ with no '..'. Canonical schema:
 skills/orch/schemas/dev-round.md.
@@ -113,7 +116,7 @@ EOF
 # legitimate prose that merely begins with '--'.
 is_own_flag() {
   case "$1" in
-    --worktree|--issue|--round-id|--item|--items-file|--add|-h|--help) return 0 ;;
+    --worktree|--issue|--round-id|--item|--items-file|--adds-file|-h|--help) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -139,30 +142,19 @@ check_id_token() {
     || die "$1 '$2' must match ${ID_GRAMMAR} with no '..' (path-safe: no '/' or whitespace)"
 }
 
-check_add_path() {
-  local path="$1"
-  [[ -n "$path" ]] || die "--add requires a non-empty repository-relative path"
-  [[ "$path" != /* && "$path" != *$'\n'* && "$path" != *$'\r'* ]] \
-    || die "--add path '$path' must be a single-line repository-relative path"
-  [[ "$path" != "." && "$path" != ".." && "$path" != ./* && "$path" != */./* \
-     && "$path" != */. && "$path" != ../* && "$path" != */../* && "$path" != */.. \
-     && "$path" != *//* ]] \
-    || die "--add path '$path' must not contain '.', '..', or empty path components"
-}
-
 worktree=""
 issue=""
 round_id=""
 items_file=""
+adds_file=""
 item_n=()
 item_text=()
-adds=()
 seen_n=" "
-seen_adds=$'\n'
 worktree_given=false
 issue_given=false
 round_id_given=false
 items_file_given=false
+adds_file_given=false
 
 while (( $# > 0 )); do
   case "$1" in
@@ -170,16 +162,7 @@ while (( $# > 0 )); do
     --issue)    need "$1" $# "${2:-}"; no_dup "$1" "$issue_given";    issue_given=true;    issue="$2"; shift 2 ;;
     --round-id) need "$1" $# "${2:-}"; no_dup "$1" "$round_id_given"; round_id_given=true; round_id="$2"; shift 2 ;;
     --items-file) need "$1" $# "${2:-}"; no_dup "$1" "$items_file_given"; items_file_given=true; items_file="$2"; shift 2 ;;
-    --add)
-      need "$1" $# "${2:-}"
-      check_add_path "$2"
-      case "$seen_adds" in
-        *$'\n'"$2"$'\n'*) die "duplicate --add path '$2': each allowed addition is named once" ;;
-      esac
-      adds+=("$2")
-      seen_adds="$seen_adds$2"$'\n'
-      shift 2
-      ;;
+    --adds-file) need "$1" $# "${2:-}"; no_dup "$1" "$adds_file_given"; adds_file_given=true; adds_file="$2"; shift 2 ;;
     --item)
       # Consumes exactly 2 args: N TEXT.
       if (( $# < 3 )); then
@@ -217,6 +200,10 @@ check_id_token --issue "$issue"
 check_id_token --round-id "$round_id"
 base_sha="$(git -C "$worktree" rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" \
   || die "worktree '$worktree' has no resolvable HEAD commit to record as the round base"
+worktree_root="$(git -C "$worktree" rev-parse --show-toplevel 2>/dev/null)" \
+  || die "worktree '$worktree' has no repository root"
+git_common_dir="$(git -C "$worktree" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
+  || die "worktree '$worktree' has no resolvable git common directory"
 
 # --- Exactly one item source: inline --item xor --items-file ---
 if [[ "$items_file_given" == "true" ]] && (( ${#item_n[@]} > 0 )); then
@@ -255,8 +242,19 @@ else
   )"
 fi
 
-if (( ${#adds[@]} > 0 )); then
-  adds_json="$(jq -n '$ARGS.positional' --args "${adds[@]}")"
+if [[ "$adds_file_given" == "true" ]]; then
+  [[ -n "$adds_file" ]] || die "--adds-file requires a non-empty path"
+  [[ -f "$adds_file" ]] || die "--adds-file path '$adds_file' does not exist"
+  jq -e '
+    (type == "array")
+    and all(.[];
+          (type == "string") and (. != "") and (startswith("/") | not)
+          and (contains("\n") | not) and (contains("\r") | not)
+          and (split("/") | all(. != "" and . != "." and . != "..")))
+    and (length == (unique | length))
+  ' "$adds_file" >/dev/null 2>&1 \
+    || die "--adds-file '$adds_file' must be a JSON array of unique, single-line repository-relative paths with no empty, '.', or '..' components"
+  adds_json="$(jq -c '.' "$adds_file")"
 else
   adds_json='[]'
 fi
@@ -265,10 +263,24 @@ fi
 mkdir -p "$worktree/tmp"
 out_dir="$(cd "$worktree/tmp" && pwd)"
 out="$out_dir/dev-round-$issue-$round_id.json"
+auth_dir="$git_common_dir/kendex/dev-round-authorizations"
+mkdir -p "$auth_dir"
+auth="$auth_dir/$issue-$round_id.json"
 
-# --- Write atomically: build to a same-dir temp file, then mv over the target ---
+out_exists=false
+auth_exists=false
+[[ -e "$out" || -L "$out" ]] && out_exists=true
+[[ -e "$auth" || -L "$auth" ]] && auth_exists=true
+if [[ "$out_exists" != "$auth_exists" ]]; then
+  die "round $issue/$round_id has only one of its worktree record and external authorization; partial records are never repaired — mint a NEW round id"
+fi
+[[ ! -L "$out" && ! -L "$auth" ]] \
+  || die "round $issue/$round_id record paths must not be symlinks"
+
+# --- Write atomically: build same-directory temporary files, then link them. ---
 tmp="$(mktemp "$out_dir/.dev-round-$issue.XXXXXX")"
-trap 'rm -f "$tmp"' EXIT
+auth_tmp="$(mktemp "$auth_dir/.dev-round-auth-$issue.XXXXXX")"
+trap 'rm -f "$tmp" "$auth_tmp"' EXIT
 
 jq -n \
   --argjson schema_version 2 \
@@ -286,6 +298,24 @@ jq -n \
      items: $items
    }' > "$tmp"
 
+jq -n \
+  --argjson schema_version 1 \
+  --arg round_id "$round_id" \
+  --arg issue "$issue" \
+  --arg worktree "$worktree_root" \
+  --arg base_sha "$base_sha" \
+  --argjson adds "$adds_json" \
+  --argjson items "$items_json" \
+  '{
+     schema_version: $schema_version,
+     round_id: $round_id,
+     issue: $issue,
+     worktree: $worktree,
+     base_sha: $base_sha,
+     adds: $adds,
+     items: $items
+   }' > "$auth_tmp"
+
 # --- Same-round records are immutable ---
 # The record is the authoritative delegated set for exactly one delegation.
 # An identical re-invocation (a retry after an unclear failure) is idempotent;
@@ -299,16 +329,22 @@ jq -n \
 # ln(2) fails with EEXIST atomically, so exactly one contender places the
 # record; every other lands in the comparison branch below, where an
 # identical retry is idempotent and a divergent one refuses.
-if ln "$tmp" "$out" 2>/dev/null; then
-  rm -f "$tmp"
-  trap - EXIT
-  printf '%s\n' "$out"
-  exit 0
+if [[ "$auth_exists" == "true" ]]; then
+  cmp -s "$tmp" "$out" \
+    || die "round record $out already exists with different content — a changed delegation needs a NEW round id"
+  cmp -s "$auth_tmp" "$auth" \
+    || die "external authorization $auth already exists with different content — a changed delegation needs a NEW round id"
+else
+  if ! ln "$auth_tmp" "$auth" 2>/dev/null; then
+    cmp -s "$auth_tmp" "$auth" \
+      || die "external authorization $auth raced with different content — mint a NEW round id"
+  fi
+  if ! ln "$tmp" "$out" 2>/dev/null; then
+    cmp -s "$tmp" "$out" \
+      || die "round record $out raced with different content — mint a NEW round id"
+  fi
 fi
-if cmp -s "$tmp" "$out"; then
-  rm -f "$tmp"
-  trap - EXIT
-  printf '%s\n' "$out"
-  exit 0
-fi
-die "round record $out already exists with different content — the delegated set is stamped once per round; a changed delegation needs a NEW round id (workflow-state new-round-id)"
+
+rm -f "$tmp" "$auth_tmp"
+trap - EXIT
+printf '%s\n' "$out"
