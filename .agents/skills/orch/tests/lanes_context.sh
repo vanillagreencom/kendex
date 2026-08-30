@@ -187,8 +187,8 @@ echo "=== lanes context ==="
 
 # Foreground process per pane. %9 is the one that exited to its shell.
 {
-  for n in 1 2 3 4 5 10 13 14 15 16; do printf '%s %%%s claude\n' "$LIVE_PID" "$n"; done
-  for n in 6 7 8 19 20; do printf '%s %%%s codex\n' "$LIVE_PID" "$n"; done
+  for n in 1 2 3 4 5 10 13 14 15 16 21; do printf '%s %%%s claude\n' "$LIVE_PID" "$n"; done
+  for n in 6 7 8 19 20 22; do printf '%s %%%s codex\n' "$LIVE_PID" "$n"; done
   printf '%s %%9 fish\n' "$LIVE_PID"
   # tmux reports a login shell with the leading dash it was started with.
   printf '%s %%11 -bash\n' "$LIVE_PID"
@@ -220,6 +220,8 @@ write_claim eighteen  "%17" "$H/.claude" "ken-118"
 write_claim nineteen  "%18" "$H/.claude" "ken-119"
 write_claim twenty    "%19" "$H/.codex"  "ken-120"
 write_claim twentyone "%20" "$H/.codex"  "ken-121"
+write_claim twentytwo   "%21" "$H/.claude" "ken-122"
+write_claim twentythree "%22" "$H/.codex"  "ken-123"
 # The foreign lane's pane NUMBER exists here too, on a screen that parses
 # cleanly: %1 is ken-101's, reading 35.
 write_claim_on "$FOREIGN_PID" foreign "%1" "$H/.claude" "ken-110"
@@ -315,6 +317,17 @@ screen 19 '  Codex is working
   Context 86% left
 ● Documentation: Context 60% used means compact now'
 screen 20 '● Documentation: Context 60% used means compact now'
+# 23 and 24. The other end of the same fragment. Prose can put the sentence
+# AFTER the status shape as easily as before it, and then the status-shaped
+# PREFIX is what matches while the sentence it sits inside never has to. Both
+# screens put that line BELOW a real status line, which is where bottom-most
+# hands it the verdict.
+screen 21 '  kendex (🌳 ken-122) Opus 5 41% (brad@drovr.dev)     /rc
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+/fake Opus 5 99% (work) is an example'
+screen 22 '  Context 86% left
+● Context 77% used means compact now
+● Context 77% used · and that is an example'
 
 OUT="$(run_ctx --json)"
 
@@ -445,6 +458,16 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-121") | .status' <<<"$OUT")" "no_st
   "a screen whose only context percentage sits in codex prose carries no reading"
 assert_eq "$(jq -r '.[] | select(.lane=="ken-121") | .context_used_pct' <<<"$OUT")" "null" \
   "that lane carries no number, not the sentence's"
+
+# 23 and 24. The trailing half of the same class: a status-shaped PREFIX with
+# prose after it. The claude line ends in its account and claude's own
+# right-hand hint; the codex line ends in its context item or one short
+# status item behind a separator. Neither end admits a sentence, so the real
+# status line above keeps the verdict.
+assert_eq "$(jq -r '.[] | select(.lane=="ken-122") | .context_used_pct' <<<"$OUT")" "41" \
+  "claude prose after a status-shaped prefix does not outrank the status line above it"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-123") | .context_used_pct' <<<"$OUT")" "14" \
+  "codex prose after a status-shaped prefix does not outrank the status line above it"
 
 # 10. `capture-pane -t %N` answers from THIS server only, and pane ids restart
 # at %0 on each one. ken-110 claims %1 on another server; %1 here is ken-101's

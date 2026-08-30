@@ -310,7 +310,7 @@ collect_broken() {
 
 ORCH_DOCS=()
 while IFS= read -r orch_doc; do ORCH_DOCS+=("$orch_doc"); done < <(orch_docs)
-refs="$(scan_refs "${ORCH_DOCS[@]}")"
+refs="$(scan_refs ${ORCH_DOCS[@]+"${ORCH_DOCS[@]}"})"
 ref_count="$(grep -c . <<<"$refs" || true)"
 broken="$(collect_broken <<<"$refs")"
 
@@ -342,7 +342,7 @@ if [[ ! -e "$SKILL_DIR/$control_ref" ]]; then
 else
   fail "planted control asset unexpectedly exists"
 fi
-control_broken="$(scan_refs "${ORCH_DOCS[@]}" "$control_doc" | collect_broken)"
+control_broken="$(scan_refs ${ORCH_DOCS[@]+"${ORCH_DOCS[@]}"} "$control_doc" | collect_broken)"
 if grep -Fqx "$control_ref" <<<"$control_broken"; then
   pass "the reference pipeline reports a planted broken reference (teeth)"
 else

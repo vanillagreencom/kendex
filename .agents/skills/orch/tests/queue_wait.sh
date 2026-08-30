@@ -345,7 +345,7 @@ run_queue_wait() {
            QUEUE_WAIT_CONFIRM_POLLS=2 \
            QUEUE_WAIT_ARM_GRACE=120 \
            QUEUE_WAIT_PROBE_INTERVAL=0 \
-           "${env_args[@]}" \
+           ${env_args[@]+"${env_args[@]}"} \
            .agents/skills/orch/scripts/queue-wait "$@")
 }
 

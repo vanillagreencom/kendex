@@ -324,7 +324,7 @@ start_cmd() {
     # would expand the very brackets this quoting exists to protect.
     read -r -a flag_tokens <<<"$LAUNCH_FLAGS"
     local tok
-    for tok in "${flag_tokens[@]}"; do
+    for tok in ${flag_tokens[@]+"${flag_tokens[@]}"}; do
       flags+="'$tok' "
     done
   fi

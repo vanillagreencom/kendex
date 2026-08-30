@@ -79,18 +79,25 @@ lane_context_emit() {
 # and the harness spells it differently in different places. The claude
 # reading is a WHOLE LINE, never a fragment of one: the status line runs
 # `<cwd> [(<branch>)] <model> <version> [(<window>)] <N>% (<account>)`, so a
-# match starts at the line's own beginning with a working directory and ends
-# in a parenthesised account. Prose carries the model-and-percentage fragment
-# too — `Opus 5 92% is already heavily used` — and under a bottom-most rule
-# a sentence like that outranks the real status line above it. The branch
-# parenthetical is optional: a lane outside a repository has none, and a
-# session that has not rendered a percentage yet matches nothing at all.
-# The codex reading is a WHOLE LINE for the same reason: the context item
-# OPENS its line — leading whitespace or box decoration only, nothing
-# alphanumeric — and what may follow it is another status item behind a
-# separator, never running text. `Documentation: Context 60% used means
-# compact now` carries the fragment and is not a status line, and under a
-# bottom-most rule that sentence would otherwise take the verdict from the
+# match starts at the line's own beginning with a working directory and runs
+# to the line's own END. BOTH ends, because either alone leaves the fragment
+# in: prose carries it before — `Opus 5 92% is already heavily used` — and
+# after — `/fake Opus 5 99% (work) is an example`, whose status-shaped PREFIX
+# matched while the sentence it sits in did not have to. Under a bottom-most
+# rule either sentence outranks the real status line above it. What the
+# account may be followed by is claude's own right-hand hint, a slash
+# command (`/rc`) — never running text. The branch parenthetical is optional:
+# a lane outside a repository has none, and a session that has not rendered a
+# percentage yet matches nothing at all.
+# The codex reading is a WHOLE LINE at both ends for the same reason: the
+# context item OPENS its line — leading whitespace or box decoration only,
+# nothing alphanumeric — and what may follow it is another status item behind
+# a separator, never running text. `Documentation: Context 60% used means
+# compact now` fails the opening; `Context 60% used means compact now` fails
+# the end; and `Context 60% used · and that is an example` fails it too,
+# because a trailing item is capped at three tokens — the longest status item
+# this reader has seen (`Opus 5 41%`) — where a sentence is longer. Each is a
+# fragment a bottom-most rule would otherwise let take the verdict from the
 # real line above it.
 # The codex shape is tested first and consumes its line, so a screen carrying
 # both never takes the claude direction for a codex reading. Codex's status
@@ -102,7 +109,7 @@ lane_context_parse() {
   out="$(awk '
     {
       low = tolower($0)
-      if (match(low, /^[^a-z0-9]*context:?[ \t]+[0-9]+%[ \t]+(left|used)([ \t]+(·|[|])[ \t]+.*)?[ \t]*$/)) {
+      if (match(low, /^[^a-z0-9]*context:?[ \t]+[0-9]+%[ \t]+(left|used)([ \t]+(·|[|])[ \t]+[^ \t]+([ \t]+[^ \t]+){0,2})?[ \t]*$/)) {
         s = substr(low, RSTART, RLENGTH)
         match(s, /[0-9]+%[ \t]+(left|used)/)
         s = substr(s, RSTART, RLENGTH)
@@ -111,11 +118,11 @@ lane_context_parse() {
         if (s + 0 <= 100) { harness = "codex"; used = remaining ? 100 - (s + 0) : s + 0 }
         next
       }
-      if (match(low, /^[ \t]*[^ \t()]+([ \t]+\([^)]*\))?[ \t]+(opus|sonnet|haiku|fable)[ \t]+[0-9]+(\.[0-9]+)?([ \t]*\([^)]*\))?[ \t]+[0-9]+%[ \t]+\([^) \t]+\)/)) {
+      if (match(low, /^[ \t]*[^ \t()]+([ \t]+\([^)]*\))?[ \t]+(opus|sonnet|haiku|fable)[ \t]+[0-9]+(\.[0-9]+)?([ \t]*\([^)]*\))?[ \t]+[0-9]+%[ \t]+\([^) \t]+\)([ \t]+\/[^ \t]*)*[ \t]*$/)) {
         s = substr(low, RSTART, RLENGTH)
-        sub(/[ \t]+\([^)]*\)$/, "", s)
-        sub(/%$/, "", s)
-        sub(/^.*[^0-9]/, "", s)
+        match(s, /[0-9]+%[ \t]+\([^) \t]+\)/)
+        s = substr(s, RSTART, RLENGTH)
+        sub(/%.*$/, "", s)
         if (s != "" && s + 0 <= 100) { harness = "claude"; used = s + 0 }
       }
     }

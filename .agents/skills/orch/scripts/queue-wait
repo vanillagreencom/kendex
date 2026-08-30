@@ -100,7 +100,15 @@ check_failed disarm (ci-wait's, reported under the same `disarmed` name),
 and not_queued. The count is the whole rule and the deadline is not an
 exception to it: a candidate that never reaches the count terminates
 nothing and is reported as "still queued", named in unconfirmed_verdict so
-the reading is not lost. While a candidate is waiting for its confirmation
+the reading is not lost. So that the deadline does not simply CUT a
+confirmation short, the polls a standing candidate still needs are moved
+INSIDE the budget — the gap before each shrinks to fit, at most
+QUEUE_WAIT_CONFIRM_POLLS - 1 times per run, and max_wait stays the upper
+bound it is documented as. ejected and disarmed are transitions, observed
+once as queued-then-out or armed-then-unarmed, and a re-run starts with
+those priors false: an ejection cut off by the deadline is re-observed by
+nobody, where conflicting is read from mergeable every poll and a re-run
+sees it again. While a candidate is waiting for its confirmation
 the failed-check probe is skipped too, so one probe observation cannot
 overtake a standing conflict and route it to a CI cycle. A poll that routes
 nothing clears the candidate, so an earlier reading already contradicted is
@@ -875,6 +883,42 @@ clear_candidate() {
   candidate_count=0
 }
 
+# Gap before the next poll, in $poll_gap. Normally POLL_INTERVAL; shortened
+# while a candidate still owes confirmation polls the remaining budget cannot
+# fit at that interval, so the confirmation finishes INSIDE the budget instead
+# of being cut off by it. ejected and disarmed are TRANSITIONS — was_in_queue
+# then out, was_queued then unarmed — and a re-run of this script starts with
+# those priors false, so a candidate the deadline cuts off is re-observed by
+# no one: the caller re-runs, reads not_queued, and merge-pr re-arms a PR the
+# queue already threw out. conflicting is read from mergeable on every poll
+# and survives a re-run, which is why only these two are lost.
+#
+# Bounded twice over: never past the deadline, and at most CONFIRM_POLLS - 1
+# shortened gaps per run, so a candidate flapping in the last seconds cannot
+# spin the poll loop. A shortened gap is a weaker blip filter than a full
+# interval — two reads seconds apart rather than minutes — and it is still
+# two independent reads, against losing the observation entirely.
+poll_gap="$POLL_INTERVAL"
+confirm_squeezes=0
+MAX_CONFIRM_SQUEEZES=$((CONFIRM_POLLS - 1))
+
+set_next_poll_gap() {
+  local need remaining
+  poll_gap="$POLL_INTERVAL"
+  [[ -n "$candidate_verdict" ]] || return 0
+  [ "$confirm_squeezes" -lt "$MAX_CONFIRM_SQUEEZES" ] || return 0
+  need=$((CONFIRM_POLLS - candidate_count))
+  [ "$need" -gt 0 ] || return 0
+  update_elapsed
+  remaining=$((MAX_WAIT - elapsed))
+  [ "$remaining" -gt 0 ] || return 0
+  [ $((need * POLL_INTERVAL)) -gt "$remaining" ] || return 0
+  confirm_squeezes=$((confirm_squeezes + 1))
+  # One slot more than the polls owed: the last gap must not land exactly on
+  # the deadline, or the loop ends with the poll it was shortened for unmade.
+  poll_gap=$((remaining / (need + 1)))
+}
+
 # Consecutive polls whose GraphQL body could not be read as a pull request.
 # A single unreadable body is absorbed; a persistent one is an error, never a
 # silent "still queued".
@@ -1056,7 +1100,8 @@ while [ "$polls" -eq 0 ] || [ "$elapsed" -lt "$MAX_WAIT" ]; do
     fi
   fi
 
-  sleep_within_budget "$POLL_INTERVAL"
+  set_next_poll_gap
+  sleep_within_budget "$poll_gap"
 done
 
 # Deadline reached. The confirmation count is the whole rule and the deadline
@@ -1064,7 +1109,9 @@ done
 # observation, and handing it back here would give it the name a confirmed
 # verdict carries, which is the routing the count exists to prevent. It is
 # not lost either — emit_result names it in unconfirmed_verdict beside the
-# timeout, so the caller sees the reading without routing on it.
+# timeout, so the caller sees the reading without routing on it. A standing
+# candidate is polled to its count before here (set_next_poll_gap), so what
+# reaches this line is one the remaining budget could not fit even shortened.
 if [[ "$was_queued" == "false" ]]; then
   last_cause="never_armed"
   emit_result "timeout" "not_queued"
