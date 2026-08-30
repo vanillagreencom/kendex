@@ -124,7 +124,7 @@ while [ $# -gt 0 ]; do
       exit 0
       ;;
     --list) LIST=1 ;;
-    *) gg_config_error "unknown argument '$1' (see --help)" ;;
+    *) gg_config_error "unknown argument $(gg_shown "$1") (see --help)" ;;
   esac
   shift
 done

@@ -457,6 +457,23 @@ untouched && ok "CHANGELOG.md is untouched by that refusal" \
 no_leftover && ok "no replacement file is left behind" \
   || bad "no replacement file is left behind" "$(ls "$R")"
 
+# A heading that merely BEGINS with the canonical text is a different heading,
+# and this is the refusal that matters most: the collator folds fragments into
+# the bounds it is handed and then deletes the fragment files, so a prefix
+# match would consume entries into a section nobody meant and leave no copy.
+reset
+fragment fixed ken-1.md '- A fragment.
+'
+printf '# Changelog\n\n## [Unreleased] archive\n\n- Released.\n' | record_is
+run_collate
+[ "$RC" -eq 2 ] && case "$OUT" in *"no '## [Unreleased]' heading"*) true ;; *) false ;; esac \
+  && ok "a heading that only begins with [Unreleased] exits 2" \
+  || bad "a heading that only begins with [Unreleased] exits 2" "rc=$RC out=$OUT"
+untouched && ok "CHANGELOG.md is untouched by that refusal" \
+  || bad "CHANGELOG.md is untouched by that refusal" "it changed"
+[ -f "$R/changelog.d/fixed/ken-1.md" ] && ok "and the fragment it would have consumed is still there" \
+  || bad "and the fragment it would have consumed is still there" "$(ls -R "$R/changelog.d")"
+
 reset
 fragment fixed ken-1.md '- A fragment.
 '

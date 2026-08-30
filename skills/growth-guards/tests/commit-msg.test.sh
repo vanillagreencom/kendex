@@ -342,6 +342,39 @@ run_stdin "$(rep q 90)" "GROWTH_GUARDS_SUBJECT_MAX=20"
   && ok "one run names both the shape and the length" \
   || bad "one run names both the shape and the length" "rc=$RC out=$OUT"
 
+echo "=== the header reaches every message rendered, never raw ==="
+# A commit object carries whatever bytes were written into it, and a generated
+# revert or fixup header carries a subject copied out of history nobody here
+# reviewed. Either can spell terminal control codes, so no message may hand
+# them on: an ESC in a header would otherwise repaint the reader's terminal or
+# forge a second diagnostic line under this hook's own name.
+ESC="$(printf '\033')"
+case "fix: a subject with ${ESC}[31m in it" in
+  *"$ESC"*) ok "must-fail: the fixture header really carries an ESC byte" ;;
+  *) bad "the fixture header carries no ESC" "nothing to render" ;;
+esac
+# The conventional path: the header is echoed back on the OK line.
+run_stdin "fix: a subject with ${ESC}[31m in it"
+[ "$RC" -eq 0 ] && case "$OUT" in *"$ESC"*) false ;; *) true ;; esac \
+  && ok "no raw ESC reaches the OK line that quotes the header" \
+  || bad "no raw ESC reaches the OK line that quotes the header" "rc=$RC out=$(printf '%s' "$OUT" | cat -v)"
+case "$OUT" in *"conventional header: fix: a subject with ?[31m in it"*) ok "and the byte is shown as a replacement, in place" ;;
+  *) bad "the ESC is shown as a replacement in place" "$(printf '%s' "$OUT" | cat -v)" ;; esac
+# The violation path: the same bytes in a header the shape rule refuses.
+run_stdin "no type here ${ESC}[31m at all"
+[ "$RC" -eq 1 ] && case "$OUT" in *"$ESC"*) false ;; *) true ;; esac \
+  && ok "no raw ESC reaches the shape violation that quotes the header" \
+  || bad "no raw ESC reaches the shape violation that quotes the header" "rc=$RC out=$(printf '%s' "$OUT" | cat -v)"
+# The length path, and the generated-header path that skips both rules.
+run_stdin "fix: a subject with ${ESC}[31m in it" "GROWTH_GUARDS_SUBJECT_MAX=5"
+[ "$RC" -eq 1 ] && case "$OUT" in *"$ESC"*) false ;; *) true ;; esac \
+  && ok "no raw ESC reaches the length violation that quotes the header" \
+  || bad "no raw ESC reaches the length violation that quotes the header" "rc=$RC out=$(printf '%s' "$OUT" | cat -v)"
+run_stdin "Revert \"fix: a subject with ${ESC}[31m in it\""
+[ "$RC" -eq 0 ] && case "$OUT" in *"$ESC"*) false ;; *) true ;; esac \
+  && ok "no raw ESC reaches the generated-header notice, which quotes it too" \
+  || bad "no raw ESC reaches the generated-header notice" "rc=$RC out=$(printf '%s' "$OUT" | cat -v)"
+
 echo "=== a commit touching the required paths owes a changelog entry ==="
 RC_REPO="$TMP/repo-changelog"
 mkdir -p "$RC_REPO/crates/core" "$RC_REPO/docs"

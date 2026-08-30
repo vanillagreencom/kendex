@@ -16,7 +16,17 @@
 # script's to infer from a file that exists: git may be reading hooks from
 # somewhere else entirely.
 set -euo pipefail
-cd "$(git rev-parse --show-toplevel)"
+
+# Every probe here answers a question this repair acts on, so each one is
+# read for whether it RAN before it is read for what it said. A `$(...)` that
+# failed hands back an empty string, which spells a plausible answer at each
+# of these sites — a change of directory that stays put, a hooks path of
+# `/hooks/commit-msg` that no clone has — and the run goes on to report
+# `hooks armed` over a repair it never made.
+ROOT=""
+ROOT="$(git rev-parse --show-toplevel)" \
+  || { echo "setup: not inside a git work tree — the guards could not be armed" >&2; exit 1; }
+cd "$ROOT" || { echo "setup: could not enter $ROOT — the guards could not be armed" >&2; exit 1; }
 
 INSTALLER=.agents/skills/growth-guards/scripts/install-git-hooks
 # The line older clones carry, matched whole so nothing else is touched.
@@ -40,7 +50,7 @@ not_armed() {
 # leave a partial one there.
 drop_stale_lane() { # HOOK-FILE
   local hook="$1" tmp="" body="" found=0
-  local ends_nl=1
+  local ends_nl=1 last="" tail_status=0
   [ -f "$hook" ] || return 0
   # grep spends 1 on "not found" and 2 on "could not read it". Reading the
   # second as the first is this repair concluding there is nothing to do from
@@ -54,7 +64,16 @@ drop_stale_lane() { # HOOK-FILE
       exit 1
       ;;
   esac
-  [ -n "$(tail -c 1 -- "$hook")" ] && ends_nl=0
+  # The same rule as the grep above, one probe further on: tail spends its
+  # status on whether it could READ the hook, and `[ -n "$(...)" ]` throws
+  # that away. An unreadable hook would look like one ending in a newline,
+  # and this repair would rewrite it and report the clone armed.
+  last="$(tail -c 1 -- "$hook")" || tail_status=$?
+  if [ "$tail_status" -ne 0 ]; then
+    echo "setup: could not read the last byte of $hook (tail exit $tail_status) — the hook is unchanged and may still call the retired tools/commit-msg lane" >&2
+    exit 1
+  fi
+  [ -n "$last" ] && ends_nl=0
   tmp="$(mktemp -- "$hook.tmp.XXXXXX")"
   # cp -p first, for the mode git needs on a hook; the redirect below then
   # replaces the content it just copied. chmod --reference is not portable.
@@ -80,5 +99,8 @@ drop_stale_lane() { # HOOK-FILE
   echo "setup: dropped the retired tools/commit-msg lane from $hook"
 }
 
-drop_stale_lane "$(git rev-parse --git-common-dir)/hooks/commit-msg"
+COMMON_DIR=""
+COMMON_DIR="$(git rev-parse --git-common-dir)" \
+  || { echo "setup: could not locate the shared .git directory — the hooks were not inspected" >&2; exit 1; }
+drop_stale_lane "$COMMON_DIR/hooks/commit-msg"
 echo "hooks armed"

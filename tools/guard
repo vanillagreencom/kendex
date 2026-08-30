@@ -17,6 +17,16 @@ say() {
   fail=1
 }
 
+# The hit lines below are a tracked file's own bytes, and a source file may
+# carry an ESC or another C0 control as legitimate content. Printed raw they
+# reach a terminal as control codes rather than as the line that broke a rule,
+# so every hit goes through here: one line each, every C0 control except tab
+# and DEL replaced. The growth-guards library spells this gg_scrubbed; this
+# script does not load it, and the rule is small enough to carry itself.
+show() { # HITS — the same lines, safe to print
+  printf '%s\n' "$1" | LC_ALL=C awk '{ gsub(/[\001-\010\013-\037\177]/, "?"); print }'
+}
+
 files=$({ git ls-files; git diff --cached --name-only; } | sort -u)
 
 # Content rules over hand-written source. Every caller names the tree it
@@ -43,25 +53,25 @@ scan() {
 # install back to CLI-only.
 hits=$(scan 'class Kendex < Formula' '^packaging/homebrew/')
 [ -n "$hits" ] && {
-  echo "$hits"
+  show "$hits"
   say "a Homebrew formula claims the plain kendex name — the cask owns it; name the formula KendexCli"
 }
 
 hits=$(scan 'std::fs::read|crate::fs::read' '^crates/core/src/(source\.rs|check_catalog\.rs|library\.rs|source/(about|browse|bundles|catalog|config|discover|index|meta|plugin_registry)\.rs|source/browse/preview\.rs|render/skill\.rs|engine/(desired|ops))|^crates/app/src/editor\.rs')
 [ -n "$hits" ] && {
-  echo "$hits" | head -5
+  show "$hits" | head -5
   say "raw filesystem read over catalog paths — go through source_read::SealedSource"
 }
 
 hits=$(scan '@tauri-apps/' '^ui/src/')
 [ -n "$hits" ] && {
-  echo "$hits"
+  show "$hits"
   say "UI reaches Tauri directly — only generated ui/src/bindings.ts may import @tauri-apps"
 }
 
 hits=$(scan '#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?\b|rgba?\(|hsla?\(' '^ui/src/.*\.tsx?$')
 [ -n "$hits" ] && {
-  echo "$hits" | head -5
+  show "$hits" | head -5
   say "raw color literal in UI code — use theme tokens; color lives in the stylesheet"
 }
 
@@ -75,7 +85,7 @@ hits=$(scan '#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?\b|rgba?\(|hsla?\(' '^ui/src/.*\.ts
 # and are likewise not tool launches.
 hits=$(scan 'Command::new' '^crates/(core|cli)/src/' | grep -v '^crates/core/src/process/')
 [ -n "$hits" ] && {
-  echo "$hits" | head -5
+  show "$hits" | head -5
   say "raw Command::new — external processes go through process::Hardened"
 }
 
@@ -93,7 +103,7 @@ hits=$(grep -rlE '\.env\("HOME"' crates/*/tests 2>/dev/null | while IFS= read -r
   ' "$f"
 done)
 [ -n "$hits" ] && {
-  echo "$hits" | head -5
+  show "$hits" | head -5
   say 'fixture HOME without KENDEX_REAL_HOME on the next line — that command would run in the dev sandbox'
 }
 
@@ -166,7 +176,7 @@ if ! temp_fixture_hits=$(awk '
   say "temporary fixture declarations could not be checked"
 fi
 [ -n "$temp_fixture_hits" ] && {
-  echo "$temp_fixture_hits" | head -5
+  show "$temp_fixture_hits" | head -5
   say 'temporary fixture bypasses rooted(): import crates/test_util.rs and bind the canonical root on the next source line'
 }
 

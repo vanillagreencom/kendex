@@ -139,6 +139,14 @@ END {
 # added example counts as much as an added bullet. A code span or a fenced
 # example naming `## [Unreleased]` therefore moves nothing.
 #
+# The heading matches on EQUALITY, case-folded, once its leading spaces,
+# its hashes and any closing hashes come off. A prefix test would make
+# `## [Unreleased] archive` the canonical section, and the collator folds
+# fragments into whatever bounds it is handed and then deletes the fragment
+# files — entries consumed by a heading nobody meant, and no copy left to
+# recover them from. A record with no `## [Unreleased]` heading has no
+# section at all, which is what its readers refuse.
+#
 # Two readers, one grammar. The default emits the section's CONTENT, which is
 # what a commit's lines are compared against. `-v emit=bounds` emits where the
 # section BEGINS and ENDS instead, as NUL-free records:
@@ -188,7 +196,7 @@ function content(l) { if (inside && emit != "bounds") print l }
   lvl = heading_level(line)
   if (lvl == 1 || lvl == 2) {
     if (inside && emit == "bounds") printf "end\t%d\n", NR
-    inside = (lvl == 2 && index(tolower(heading_text(line)), "[unreleased]") == 1)
+    inside = (lvl == 2 && tolower(heading_text(line)) == "[unreleased]")
     if (inside && emit == "bounds") printf "unreleased\t%d\n", NR
     next
   }

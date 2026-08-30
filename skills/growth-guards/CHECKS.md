@@ -161,7 +161,10 @@ least that length in the same character with nothing but whitespace after it,
 so a three-backtick line inside a four-backtick block does not end it. Nothing
 inside a fence is a heading; a level-1 or level-2 ATX heading switches the
 section on or off, and everything else inside it is content. So a fragment or
-an example quoting `## [Unreleased]` moves nothing.
+an example quoting `## [Unreleased]` moves nothing. The heading text matches
+on equality, case-folded, once its leading spaces and hashes come off, so
+`## [Unreleased] archive` is a different heading and opens no section. A
+record with none is refused rather than collated against the nearest thing.
 
 An unterminated fence is exit 2 naming the file, not a clean pass. It leaves
 the parser unable to say where the section starts or stops, and a stray

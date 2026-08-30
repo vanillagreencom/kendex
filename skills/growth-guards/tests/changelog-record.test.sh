@@ -173,6 +173,21 @@ run_ce
 [ "$RC" -eq 1 ] && case "$OUT" in *"gained lines under [Unreleased]"*"- A gained line."*) true ;; *) false ;; esac \
   && ok "an indented heading with a closing hash sequence still opens the section" \
   || bad "an indented heading with a closing hash sequence still opens the section" "rc=$RC out=$OUT"
+# A heading that only STARTS with the canonical text is a different heading.
+# The bounds this grammar emits are what the collator splits and deletes
+# fragments against, so a prefix match would hand it a section nobody meant.
+printf '# Changelog\n\n## [Unreleased] archive\n\n- A gained line.\n\n## [1.0.0] - 2026-01-01\n\n- A released entry.\n' >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 0 ] && ok "a heading that merely begins with [Unreleased] opens no section" \
+  || bad "a heading that merely begins with [Unreleased] opens no section" "rc=$RC out=$OUT"
+# The control: the exact heading, differing only in case, does open it.
+printf '# Changelog\n\n## [UNRELEASED]\n\n- A gained line.\n\n## [1.0.0] - 2026-01-01\n\n- A released entry.\n' >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"gained lines under [Unreleased]"*"- A gained line."*) true ;; *) false ;; esac \
+  && ok "control: the exact heading opens it whatever its case" \
+  || bad "control: the exact heading opens it whatever its case" "rc=$RC out=$OUT"
 # Four leading spaces is an indented code block, not a heading.
 printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n    ## [Unreleased]\n\n- A released entry.\n- Not gained.\n' >"$R/CHANGELOG.md"
 stage

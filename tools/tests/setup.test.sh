@@ -296,6 +296,55 @@ OUT="$(cd "$R" && PATH="$GREP_SHIM:$PATH" ./tools/setup 2>&1)" || RC=$?
 grep -qxF "$STALE_LANE" "$HOOKS/commit-msg" \
   && ok "control: that hook really did still carry the retired lane" \
   || bad "control: that hook really did still carry the retired lane" "$(cat "$HOOKS/commit-msg")"
+# The next probe down the same repair, and the same rule: tail spends its
+# status on whether it could READ the hook, and a discarded status would make
+# an unreadable hook look like one ending in a newline. The lane is still in
+# the hook here, so the run reaches tail at all.
+TAIL_SHIM="$TMP/tail-shim"
+mkdir -p "$TAIL_SHIM"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'if [ "${1:-}" = "-c" ]; then\n'
+  printf '  echo "tail: simulated read failure" >&2\n'
+  printf '  exit 1\n'
+  printf 'fi\n'
+  printf 'exec %s "$@"\n' "$(command -v tail)"
+} >"$TAIL_SHIM/tail"
+chmod +x "$TAIL_SHIM/tail"
+RC=0
+OUT="$(cd "$R" && PATH="$TAIL_SHIM:$PATH" ./tools/setup 2>&1)" || RC=$?
+[ "$RC" -ne 0 ] && case "$OUT" in *"hooks armed"*) false ;; *"tail exit 1"*) true ;; *) false ;; esac \
+  && ok "a final-byte probe that could not run stops setup too" \
+  || bad "a final-byte probe that could not run stops setup too" "rc=$RC out=$OUT"
+grep -qxF "$STALE_LANE" "$HOOKS/commit-msg" \
+  && ok "control: that hook is unchanged, retired lane and all" \
+  || bad "control: that hook is unchanged, retired lane and all" "$(cat "$HOOKS/commit-msg")"
+
+# The hooks path itself is a probe. Failed, it hands back an empty string,
+# `/hooks/commit-msg` is a file no clone has, and the repair would find
+# nothing to do and report the clone armed. The shim fails only the bare
+# `rev-parse --git-common-dir` this script runs: every call the installer
+# makes carries -C, so the verdict it gives first is its own.
+GIT_SHIM="$TMP/git-shim"
+mkdir -p "$GIT_SHIM"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'if [ "${1:-}" = "rev-parse" ] && [ "${2:-}" = "--git-common-dir" ]; then\n'
+  printf '  echo "git: simulated failure" >&2\n'
+  printf '  exit 128\n'
+  printf 'fi\n'
+  printf 'exec %s "$@"\n' "$(command -v git)"
+} >"$GIT_SHIM/git"
+chmod +x "$GIT_SHIM/git"
+RC=0
+OUT="$(cd "$R" && PATH="$GIT_SHIM:$PATH" ./tools/setup 2>&1)" || RC=$?
+[ "$RC" -ne 0 ] && case "$OUT" in *"hooks armed"*) false ;; *"could not locate the shared .git directory"*) true ;; *) false ;; esac \
+  && ok "a hooks path that could not be resolved stops setup" \
+  || bad "a hooks path that could not be resolved stops setup" "rc=$RC out=$OUT"
+grep -qxF "$STALE_LANE" "$HOOKS/commit-msg" \
+  && ok "control: that hook is unchanged there too" \
+  || bad "control: that hook is unchanged there too" "$(cat "$HOOKS/commit-msg")"
+
 RC=0
 OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
 [ "$RC" -eq 0 ] && ok "with a working probe the same hook is repaired" \
@@ -345,6 +394,18 @@ OUT="$(cd "$E" && ./tools/setup 2>&1)" || RC=$?
 grep -qxF "$STALE_LANE" "$E/.git/hooks/commit-msg" \
   && ok "the stale hook is left alone — the repair runs only past the installer's verdict" \
   || bad "the stale hook is left alone" "$(cat "$E/.git/hooks/commit-msg")"
+
+echo "=== setup outside a work tree says so, rather than working somewhere else ==="
+# The first probe of all. Unread, its empty answer is a change of directory
+# that stays put, and the run would go on to blame the installer for a
+# verdict it never reached.
+NOREPO="$TMP/no-repo"
+mkdir -p "$NOREPO"
+RC=0
+OUT="$(cd "$NOREPO" && "$R/tools/setup" 2>&1)" || RC=$?
+[ "$RC" -ne 0 ] && case "$OUT" in *"hooks armed"*) false ;; *"not inside a git work tree"*) true ;; *) false ;; esac \
+  && ok "setup run outside a work tree names that, not the installer" \
+  || bad "setup run outside a work tree names that, not the installer" "rc=$RC out=$OUT"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

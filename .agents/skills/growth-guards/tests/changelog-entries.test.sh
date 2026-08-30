@@ -676,7 +676,7 @@ run_ce_env 'GROWTH_GUARDS_CHANGELOG_RECORD=changelog.d/fixed/ken-1.md'
   && ok "a record inside the fragment globs is a config error — the two scopes judge by opposite rules" \
   || bad "a record inside the fragment globs is a config error" "rc=$RC out=$OUT"
 run_ce --all
-[ "$RC" -eq 2 ] && case "$OUT" in *"unknown argument '--all'"*) true ;; *) false ;; esac \
+[ "$RC" -eq 2 ] && case "$OUT" in *"unknown argument --all"*) true ;; *) false ;; esac \
   && ok "an unknown argument is a config error" \
   || bad "an unknown argument is a config error" "rc=$RC out=$OUT"
 

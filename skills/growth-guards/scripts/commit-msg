@@ -85,7 +85,7 @@ while [ $# -gt 0 ]; do
       usage
       exit 0
       ;;
-    --*) gg_config_error "unknown argument '$1' (see --help)" ;;
+    --*) gg_config_error "unknown argument $(gg_shown "$1") (see --help)" ;;
     *)
       [ -z "$MSG_FILE" ] || gg_config_error "at most one message file (see --help)"
       MSG_FILE="$1"
@@ -99,10 +99,10 @@ done
 if [ -z "$MSG_FILE" ] || [ "$MSG_FILE" = "-" ]; then
   MSG="$(cat)" || gg_collection_error "could not read the commit message from stdin"
 else
-  [ -f "$MSG_FILE" ] || gg_config_error "no such message file: $MSG_FILE"
+  [ -f "$MSG_FILE" ] || gg_config_error "no such message file: $(gg_shown "$MSG_FILE")"
   # not-a-path: a commit message, and trailing blank lines are not part
   # of it — git strips them itself before the hook ever sees the file.
-  MSG="$(cat -- "$MSG_FILE")" || gg_collection_error "could not read the commit message file: $MSG_FILE"
+  MSG="$(cat -- "$MSG_FILE")" || gg_collection_error "could not read the commit message file: $(gg_shown "$MSG_FILE")"
 fi
 
 gg_repo_root_cd
@@ -113,7 +113,7 @@ TYPES="$(gg_setting GROWTH_GUARDS_COMMIT_TYPES "build chore ci docs feat fix per
 TYPE_ALT=""
 for t in $TYPES; do
   case "$t" in
-    "" | *[!a-z0-9-]*) gg_config_error "GROWTH_GUARDS_COMMIT_TYPES entry '$t' is not a lowercase type name" ;;
+    "" | *[!a-z0-9-]*) gg_config_error "GROWTH_GUARDS_COMMIT_TYPES entry '$(gg_scrubbed "$t")' is not a lowercase type name" ;;
   esac
   TYPE_ALT="${TYPE_ALT:+$TYPE_ALT|}$t"
 done
@@ -145,9 +145,18 @@ violation() { # HEADLINE [DETAIL...]
 GENERATED=0
 if gg_git_generated_header "$HEADER"; then GENERATED=1; fi
 
+# The header is somebody else's bytes: a commit object carries whatever was
+# written into it, and a generated revert or fixup header carries a subject
+# copied out of history that nobody here reviewed. Every message below shows
+# HEADER_SHOWN, never HEADER — gg_scrubbed and not gg_shown because the
+# writer has to retype this line to fix it, and %q would hand them a spelling
+# that is not the one their message needs. The judging still reads HEADER: it
+# is the bytes git will store that the rules are about.
+HEADER_SHOWN="$(gg_scrubbed "$HEADER")"
+
 # --- header shape and length: a hand-written header only ---------------------
 if [ "$GENERATED" -eq 1 ]; then
-  echo "commit-msg: git-generated header — shape and length not judged: $HEADER"
+  echo "commit-msg: git-generated header — shape and length not judged: $HEADER_SHOWN"
 else
   HEADER_ERE="^($TYPE_ALT)(\([#A-Za-z0-9 _.,/-]+\))?!?: [^[:space:]]"
   match_status=0
@@ -158,9 +167,9 @@ else
   printf '%s\n' "$HEADER" | LC_ALL=C grep -qE "$HEADER_ERE" || match_status=$?
   [ "$match_status" -le 1 ] || gg_collection_error "grep failed matching the header (exit $match_status)"
   if [ "$match_status" -eq 0 ]; then
-    echo "commit-msg: OK — conventional header: $HEADER"
+    echo "commit-msg: OK — conventional header: $HEADER_SHOWN"
   else
-    violation "non-conventional header: $HEADER" \
+    violation "non-conventional header: $HEADER_SHOWN" \
       "expected: type(scope)!: subject — scope and '!' optional; types: $TYPES" \
       "scope accepts uppercase issue keys and issue numbers, e.g. fix(ABC-123): tighten the gate / fix(#123): case-fold IDs" \
       "git-generated headers (Merge/Revert/Reapply, fixup!/squash!/amend!) pass unchanged"
@@ -170,7 +179,7 @@ else
   # and refused in another.
   header_chars="$(gg_chars "$HEADER")"
   if [ "$header_chars" -gt "$SUBJECT_MAX" ]; then
-    violation "header is $header_chars characters (max $SUBJECT_MAX): $HEADER" \
+    violation "header is $header_chars characters (max $SUBJECT_MAX): $HEADER_SHOWN" \
       "move the detail into the body — the header is the one line every log shows"
   fi
 fi
@@ -221,16 +230,16 @@ if [ -n "$REQUIRED" ]; then
   : >"$GG_TMP/written.z"
   while IFS= read -r -d '' status; do
     IFS= read -r -d '' src \
-      || gg_collection_error "the staged file list ended mid-record after status '$status' — the changelog rule could not run"
+      || gg_collection_error "the staged file list ended mid-record after status $(gg_shown "$status") — the changelog rule could not run"
     case "$status" in
       R*)
         IFS= read -r -d '' dest \
-          || gg_collection_error "the staged file list ended before the destination of a '$status' record — the changelog rule could not run"
+          || gg_collection_error "the staged file list ended before the destination of a $(gg_shown "$status") record — the changelog rule could not run"
         printf '%s\0' "$src" "$dest" >>"$GG_TMP/staged.z"
         printf '%s\0' "$dest" >>"$GG_TMP/written.z"
         ;;
       C*)
-        gg_collection_error "git reported a copy ('$status') though this scan pins diff.renames=true — the changelog rule could not run"
+        gg_collection_error "git reported a copy ($(gg_shown "$status")) though this scan pins diff.renames=true — the changelog rule could not run"
         ;;
       A* | M* | T*)
         printf '%s\0' "$src" >>"$GG_TMP/staged.z"
