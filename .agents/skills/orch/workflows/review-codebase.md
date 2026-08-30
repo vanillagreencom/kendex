@@ -31,6 +31,7 @@ Resolve the reviewer mode per [SKILL.md § Agent Lifecycle](../SKILL.md#agent-li
 Follow workflow: .agents/skills/reviewer/workflows/codebase-review.md
 
 Worktree: [WT_PATH]
+Worktree Check: `pwd` before any repo-relative command. It must print [WT_PATH]; your shell can start in another lane's worktree, where a bare `git status` or `tools/guard` answers confidently about the wrong tree. Any other path — `cd [WT_PATH]`, re-run `pwd`, and report where it started.
 Scope: Whole codebase. Inspect tracked, non-generated project code, plus the tests, configs, and docs relevant to your review domain. Do not sample or restrict to changed files. No PR, no issue, no diff.
 Exclusions: generated artifacts, dependency and vendor directories, build outputs, binary assets, harness mirrors, and lockfiles unless your domain specifically requires them.
 </delegation_format>
