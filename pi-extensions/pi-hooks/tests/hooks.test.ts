@@ -285,7 +285,7 @@ type TurnHandler = (event: Record<string, unknown>, ctx: Record<string, unknown>
 type SentMessage = { customType: string; content: string; display: boolean };
 /** Both arguments of every `pi.sendMessage` call: the options decide delivery, so they are asserted. */
 type SentCall = { message: SentMessage; options: Record<string, unknown> | undefined };
-type TurnHooks = { onToolResult: TurnHandler; onTurnEnd: TurnHandler; sent: SentCall[] };
+type TurnHooks = { onToolResult: TurnHandler; onTurnEnd: TurnHandler; onSessionStart: TurnHandler; sent: SentCall[] };
 
 function installTurnHandlers(): TurnHooks {
 	const handlers = new Map<string, TurnHandler>();
@@ -301,8 +301,9 @@ function installTurnHandlers(): TurnHooks {
 	piHooks(pi as never);
 	const onToolResult = handlers.get("tool_result");
 	const onTurnEnd = handlers.get("turn_end");
-	if (!onToolResult || !onTurnEnd) throw new Error("turn hooks were not registered");
-	return { onToolResult, onTurnEnd, sent };
+	const onSessionStart = handlers.get("session_start");
+	if (!onToolResult || !onTurnEnd || !onSessionStart) throw new Error("turn hooks were not registered");
+	return { onToolResult, onTurnEnd, onSessionStart, sent };
 }
 
 /** A project whose settings arm the end-of-turn check the fixtures above leave off. */
@@ -312,7 +313,7 @@ function initClippyProject(): string {
 	writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({
 		kendex: {
 			extensionManager: {
-				config: { [CONFIG_ID]: { enabled: true, taskCompletedCheck: true, clippyTimeoutMs: 4000 } },
+				config: { [CONFIG_ID]: { enabled: true, taskCompletedCheck: true, sessionDriftCheck: false, clippyTimeoutMs: 4000 } },
 			},
 		},
 	}));
@@ -572,6 +573,34 @@ describe("pi-hooks end-of-turn clippy", () => {
 			});
 		} finally {
 			delete process.env.FAKE_CLIPPY_LOC;
+			rmSync(project, { recursive: true, force: true });
+			rmSync(cargoRoot, { recursive: true, force: true });
+		}
+	});
+
+	// The fingerprint lives as long as the installed extension, but Pi starts a
+	// new conversation in that same process. `/usr/lib/pi/docs/extensions.md`
+	// gives the whole reason set as startup | reload | new | resume | fork, and
+	// only `reload` leaves the conversation standing, so only `reload` keeps the
+	// suppression. Anything else would carry one conversation's report into the
+	// next and swallow its first failing turn.
+	test("every session boundary but a reload steers a failure the last one reported", async () => {
+		const project = initClippyProject();
+		const cargoRoot = mkdtempSync(join(tmpdir(), "pi-hooks-cargo-"));
+		try {
+			await onPath(fakeClippyBin(cargoRoot, project), async () => {
+				const steersAfter: Record<string, number> = {};
+				for (const reason of ["startup", "reload", "new", "resume", "fork"]) {
+					const hooks = installTurnHandlers();
+					const ctx = { cwd: project, isProjectTrusted: () => true };
+					await editingTurn(hooks, project, ctx);
+					await hooks.onSessionStart({ reason }, ctx);
+					await editingTurn(hooks, project, ctx);
+					steersAfter[reason] = hooks.sent.length;
+				}
+				expect(steersAfter).toEqual({ startup: 2, reload: 1, new: 2, resume: 2, fork: 2 });
+			});
+		} finally {
 			rmSync(project, { recursive: true, force: true });
 			rmSync(cargoRoot, { recursive: true, force: true });
 		}

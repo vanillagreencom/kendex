@@ -62,7 +62,7 @@
         {
           "key": "taskCompletedCheck",
           "label": "End-of-turn clippy",
-          "description": "At turn end, if any .rs files were touched during the turn, run a final `cargo clippy --workspace --all-targets -- -D warnings` and steer the result to the agent, so a headless session reads it in the turn that follows; an interactive session also gets a UI notification. A run whose whole clippy output matches the last one steered is notified but not steered again, so an agent that cannot fix an error is told once rather than looped. A run that established nothing \u2014 no workspace root, a timeout, a clippy failure printing no error line \u2014 says so rather than passing as clean. Pi has no equivalent of Claude Code's `TaskCompleted` block semantics, so this is advisory.",
+          "description": "At turn end, if any .rs files were touched during the turn, run a final `cargo clippy --workspace --all-targets -- -D warnings` and steer the result to the agent, so a headless session reads it in the turn that follows; an interactive session also gets a UI notification. A run whose whole clippy output matches the last one steered is notified but not steered again, so an agent that cannot fix an error is told once rather than looped. Starting a session clears that memory, so a new conversation is never denied its first report. A run that established nothing \u2014 no workspace root, a timeout, a clippy failure printing no error line \u2014 says so rather than passing as clean. Pi has no equivalent of Claude Code's `TaskCompleted` block semantics, so this is advisory.",
           "type": "boolean",
           "default": true,
           "category": "Rust",

@@ -35,6 +35,14 @@ export default function piHooks(pi: ExtensionAPI): void {
 	// place. Fire-and-forget — an informational check never gates startup.
 	pi.on("session_start", (event, ctx: ExtensionContext) => {
 		recordProjectTrust(ctx);
+		// The fingerprint is per conversation, and every reason but `reload`
+		// starts a different one in this same process (`/new`, `/resume`,
+		// `/fork` and `/clone` all shut the session down and start another;
+		// `reload` only re-runs extensions in place). Carrying it across that
+		// boundary would suppress the new conversation's first failing turn,
+		// which in a headless run has no notification to fall back on. Ahead of
+		// every config read: a reset must not depend on a toggle.
+		if (event.reason !== "reload") lastClippyFingerprint = undefined;
 		if (event.reason === "reload" || event.reason === "resume") return;
 		const cfg = readConfig(ctx.cwd);
 		if (!getBool(cfg, "enabled") || !getBool(cfg, "sessionDriftCheck")) return;
