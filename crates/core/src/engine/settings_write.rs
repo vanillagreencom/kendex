@@ -37,11 +37,13 @@ fn cannot_write(scope: &Scope, file: String, detail: String) -> DriftRow {
     }
 }
 
-/// Skills may ship `[env]` defaults; missing keys merge into the project's
-/// kendex.settings.toml write-if-absent (v1 semantics — a key the user set
-/// anywhere in the file is never touched), and seeded comment blocks whose
-/// template improved are refreshed while provably unedited — gated by the
-/// lock's per-key ledger, which this plan carries forward on `new_lock`.
+/// What this pass writes into the project's kendex.settings.toml. A skill
+/// arriving here writes the keys its template marks `# required`, and a
+/// save writes the keys it names; a key the file already assigns anywhere
+/// is never touched, and a skill the lock already carries writes nothing at
+/// all. Seeded comment blocks whose template improved are refreshed while
+/// provably unedited, gated by the lock's per-key ledger, which this plan
+/// carries forward on `new_lock`.
 ///
 /// A person's own edits are the third thing that reaches this file, and
 /// they compose here rather than following as a second write: a manifest

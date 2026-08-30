@@ -1,11 +1,11 @@
 # Settings a skill declares
 
-A skill ships a `kendex.settings.toml.example` at its root for every key it
-reads. The file does two jobs. It DECLARES the keys, which is what the app's
-Settings pane renders and what a save is checked against. And it SEEDS the
-ones it marks `# required`: when the skill arrives in a project, kendex reads
-that file's `[env]` table and writes each marked key, together with the
-comment block directly above it, into the consuming repo's
+A skill ships a `kendex.settings.toml.example` at its root for the keys a
+consumer sets. The file does two jobs. It DECLARES those keys, which is what
+the app's Settings pane renders and what a save is checked against. And it
+SEEDS the ones it marks `# required`: when the skill arrives in a project,
+kendex reads that file's `[env]` table and writes each marked key, together
+with the comment block directly above it, into the consuming repo's
 `kendex.settings.toml`.
 
 Seeding is a skill's alone. An agent, hook, command or MCP server that ships
@@ -15,9 +15,14 @@ least one harness here targets, and it runs before any skill tree is written:
 a plan whose every rendering is refused still seeds. A global install seeds
 nothing.
 
-Every key a skill reads belongs in that file, whether or not it is marked:
-declaring one costs a consumer nothing and is what lets them set it from the
-app. The `SKILL.md` is where the reference table lives, and it is the body a
+Declaring a key is what puts it in front of a person. The app shows one row
+per declared key and refuses to save a key no template declares, and declaring
+costs a consumer nothing at install time, since only a marked key is written.
+So declare what somebody might reasonably change, and leave out what only a
+maintainer or a test ever touches, such as a scan's exclusion-file path or a
+cap nobody tunes. An undeclared key is read the same way and is set by hand, in
+`kendex.settings.toml` or any layer above it. Every key belongs in the
+`SKILL.md` table either way; that is the reference, and it is the body a
 marketplace page shows for a skill. A `README.md` beside it ships with the skill and appears in
 the page's file list, but it is not what the page renders. For the other kinds
 the rendered body is the package's one file: the agent's or command's markdown

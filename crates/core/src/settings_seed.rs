@@ -1,10 +1,15 @@
 //! `kendex.settings.toml` seeding — skills ship a
-//! `kendex.settings.toml.example` and their `[env]` entries merge into the
-//! project's settings file, write-if-absent per key: comment blocks travel
-//! with their key. The shell-side readers consume the `[env]` table only,
-//! but the presence check here stays file-wide, conservatively: seeding
-//! must never add a key that some assignment outside `[env]` already
-//! names.
+//! `kendex.settings.toml.example`, and the `[env]` entries [`Seeding`]
+//! admits merge into the project's settings file, write-if-absent per key:
+//! comment blocks travel with their key. What it admits is a narrow set. A
+//! template applies once, when its skill arrives, and writes then only the
+//! keys it marks `# required`; a save writes the keys it names. Nothing
+//! else here ever reaches a consumer's file, so a refresh leaves it
+//! byte-identical and a key deleted from it stays deleted.
+//!
+//! The shell-side readers consume the `[env]` table only, but the presence
+//! check here stays file-wide, conservatively: seeding must never add a key
+//! that some assignment outside `[env]` already names.
 //!
 //! An entry is written whole or not at all. A value TOML lets span lines
 //! carries every one of them; a value nothing closes has no complete text
